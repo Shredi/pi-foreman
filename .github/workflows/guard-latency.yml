@@ -1,0 +1,74 @@
+name: guard-latency
+on:
+  push:
+    branches: [design/architecture]
+    paths:
+      - design/probes/guard_latency.py
+      - .github/workflows/guard-latency.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  latency:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.9", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: Shredi/fable5-opus5-orchestrator
+          ref: 1be496030986cb89154b8346f5ae0ce2f6660ce1
+          path: guard-repo
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Python-spawned timings
+        run: python design/probes/guard_latency.py guard-repo --out py-results.json
+      - name: Node-spawned timings
+        shell: bash
+        env:
+          GUARD_REPO: guard-repo
+          OUT: node-results.json
+        run: |
+          cat > node-probe.js <<'JS'
+          const { spawnSync } = require("child_process");
+          const fs = require("fs"), os = require("os"), path = require("path");
+          const py = process.platform === "win32" ? "python" : "python3";
+          const input = JSON.stringify({ session_id: "latency-probe", cwd: os.tmpdir(),
+            hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls" } });
+          const guard = path.join(process.env.GUARD_REPO, "scripts", "destructive_guard.py");
+          const cases = { "bare python": ["-c", "pass"], "destructive_guard": [guard] };
+          const q = (s, p) => s[Math.min(s.length - 1, Math.round(p / 100 * (s.length - 1)))];
+          const res = { os: process.platform, node: process.version, cases: {} };
+          let md = "### Node spawnSync latency: " + process.platform + "\n\n| case | cold p50 | warm p50 | warm p95 | warm max | exit |\n|---|---|---|---|---|---|\n";
+          for (const [name, argv] of Object.entries(cases)) {
+            const t = [], codes = new Set();
+            for (let i = 0; i < 55; i++) {
+              const s = process.hrtime.bigint();
+              const r = spawnSync(py, argv, { input, encoding: "utf8" });
+              t.push(Number(process.hrtime.bigint() - s) / 1e6);
+              codes.add(r.status === null ? String(r.error) : r.status);
+            }
+            const f = (a) => a.map((x) => +x.toFixed(1));
+            const cold = f(t.slice(0, 5).sort((a, b) => a - b)), warm = f(t.slice(5).sort((a, b) => a - b));
+            res.cases[name] = { cold_p50: q(cold, 50), warm: { p50: q(warm, 50), p95: q(warm, 95), max: warm[warm.length - 1] }, exit_codes: [...codes] };
+            md += `| ${name} | ${q(cold, 50)} | ${q(warm, 50)} | ${q(warm, 95)} | ${warm[warm.length - 1]} | ${[...codes]} |\n`;
+          }
+          console.log(md);
+          fs.writeFileSync(process.env.OUT, JSON.stringify(res, null, 2));
+          if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + "\n");
+          JS
+          node node-probe.js
+      - uses: actions/upload-artifact@v7
+        with:
+          name: guard-latency-${{ matrix.os }}-py${{ matrix.python }}
+          path: |
+            py-results.json
+            node-results.json
