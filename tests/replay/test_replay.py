@@ -235,6 +235,18 @@ class TestRequiredChildExtension(ReplayCase):
         self.assertIsNotNone(child, "adapter did not load in the child")
         self.golden("child_extension", {"child": shape(child)})
 
+    def test_missing_required_extension_blocks_launch(self):
+        """Fail closed: a required child extension that cannot be resolved blocks every launch,
+        so no child ever runs without the guards (hands-on item 51)."""
+        missing = str(driver.FAKE_PROVIDER.parent / "does-not-exist" / "missing-ext.ts")
+        rig = self.rig("childext-missing", load_fixture("child_extension"),
+                       config={"safety": {"requiredChildExtensions": [str(driver.FAKE_PROVIDER), missing]}})
+        pi = rig.start()
+        res = tool_results(pi.prompt("[[replay:f1]] start", timeout=60))
+        pi.close()
+        self.assertEqual([(n, e) for n, e, _ in res], [("subagent", True)])
+        self.assertIn("the launch is blocked", res[0][2])
+
 
 if __name__ == "__main__":
     unittest.main()

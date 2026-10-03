@@ -32,6 +32,17 @@ jobs:
         run: node --test "extensions/core-adapter/test/*.test.ts"
       - name: installer tests (dry-run, idempotent second run, remove)
         run: node --test "tests/installer/*.test.mjs"
+      - name: install Pi (pinned)
+        run: npm install -g @earendil-works/pi-coding-agent@1.0.0
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/pi-foreman-replay-cache
+          key: pi-subagents-0.75.0-${{ runner.os }}
+      - name: replay scenarios (fake provider only, no secrets)
+        env:
+          FOREMAN_REPLAY_REQUIRED: "1"
+          FOREMAN_REPLAY_CACHE: ${{ runner.temp }}/pi-foreman-replay-cache
+        run: python -m unittest discover -s tests/replay -v
       - name: ledger shims on Windows (cmd and PowerShell)
         if: runner.os == 'Windows'
         shell: pwsh

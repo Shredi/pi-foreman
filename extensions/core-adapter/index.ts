@@ -44,6 +44,7 @@ interface Session {
   ceremony: CeremonyState;
   registration?: Registration;
   registrationError?: string;
+  childExtensionErrors?: string[];
   registrationVia?: string;
   childExtensions: { id: string; path: string }[];
   stopContinued: boolean;
@@ -189,6 +190,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   async function registerChildExtensions(s: Session, ctx: ExtensionContext): Promise<void> {
     const extra = normaliseChildExtensions(get(s.config.config, "safety.requiredChildExtensions"), s.agentDir);
+    s.childExtensionErrors = extra.errors;
     for (const e of extra.errors) ctx.ui.notify(`pi-foreman: ${e}`, "error");
     s.childExtensions = [{ id: ADAPTER_ID, path: ENTRY }, ...extra.list.filter((e) => e.id !== ADAPTER_ID)];
     try {
@@ -199,6 +201,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.registrationError = (err as Error).message;
       ctx.ui.notify(`pi-foreman: could not register required child extensions (${s.registrationError}). Children would run without the guards; run /foreman doctor.`, "error");
     }
+  }
+
+  // Fail closed: a child must never start without every required child extension.
+  function childLaunchBlock(s: Session, toolName: string): string | undefined {
+    if (toolName !== "subagent") return undefined;
+    if (!s.registration) {
+      return `pi-foreman: required child extensions are not registered${s.registrationError ? ` (${s.registrationError})` : ""}, so children would run without the guards; the launch is blocked. Fix safety.requiredChildExtensions, restart the session and run /foreman doctor.`;
+    }
+    if (s.childExtensionErrors && s.childExtensionErrors.length > 0) {
+      return `pi-foreman: required child extension config has errors (${s.childExtensionErrors.join("; ")}); the launch is blocked. Fix safety.requiredChildExtensions and restart the session.`;
+    }
+    return undefined;
   }
 
   function payloadCtx(s: Session, ctx: ExtensionContext): PayloadContext {
@@ -270,6 +284,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     try {
       const s = await ensureSession(ctx);
       const input = event.input as Record<string, unknown>;
+      const blocked = childLaunchBlock(s, event.toolName);
+      if (blocked) return { block: true, reason: blocked };
       const pc = payloadCtx(s, ctx);
       for (const guard of mapping.pre) {
         let agents: string[] = [];
