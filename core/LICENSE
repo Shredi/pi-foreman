@@ -1,18 +1,3 @@
-pi-foreman
-
-The Python core to be vendored under core/, and instruction text derived from
-it, come from the project "fable5-opus5-orchestrator",
-Copyright (c) 2026 Yusuf Demirkoparan, released under the MIT License:
-https://github.com/Rylaa/fable5-opus5-orchestrator
-
-The vendored code is taken from the fork "Shredi/fable5-opus5-orchestrator"
-(https://github.com/Shredi/fable5-opus5-orchestrator, also MIT), pinned in
-core/VERSION; its LICENSE file carries the same notice as below.
-
-Its licence text follows verbatim.
-
-----------------------------------------------------------------------
-
 MIT License
 
 Copyright (c) 2026 Yusuf Demirkoparan
