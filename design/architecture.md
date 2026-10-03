@@ -8,7 +8,7 @@
 | Evidence date | 2026-10-03, Pi `@earendil-works/pi-coding-agent` 1.0.0, Node 22, hands-on runs in throwaway directories |
 | Evidence format | "hands-on 2026-10-03, Pi 1.0.0, `<package>@<version>`: result". Tests that did not run are marked "not tested". |
 | Latency run | https://github.com/Shredi/pi-foreman/actions/runs/37120750064 |
-| Upstream core | Python core from `Shredi/fable5-opus5-orchestrator` (MIT), a fork of `Rylaa/fable5-orchestrator`, credited in `NOTICE` |
+| Upstream core | Python core from `Shredi/fable5-opus5-orchestrator` (MIT), a fork of `Rylaa/fable5-opus5-orchestrator` (now `Rylaa/fable5-opus5.5-orchestrator`), credited in `NOTICE` |
 
 ## 1. Goals and non-goals
 
@@ -327,12 +327,12 @@ Results return through pi-subagents' async notifications. The foreman waits, bou
 | Ledger, gates, git guards, precondition ops, ceremony, `/retro`, trace, installer | **own** | n/a | Design |
 | Claude provider (private) | adopt `pi-claude-bridge` in L2 | 0.9.1 | Hands-on: child turns, thinking level reached |
 | Copilot, Codex subscription | Pi built-in providers | Pi 1.0.0 | Source read: Copilot device-flow `/login github-copilot` or `COPILOT_GITHUB_TOKEN`. Not run. |
-| MCP | **adopt Pi built-in**; `pi-mcp-adapter` 5.0.0 opt-in overlay only | Pi 1.0.0 (docs, types) | The adapter replaces the built-in, rewrites user settings, and hides per-tool gating behind one proxy tool. Not run. |
+| MCP | **adopt Pi built-in (pending hands-on in Phase 2)**; `pi-mcp-adapter` 5.0.0 opt-in overlay only | Pi 1.0.0 (docs, types) | The adapter replaces the built-in, rewrites user settings, and hides per-tool gating behind one proxy tool. Not run. |
 | Codemode | adopt Pi built-in | Pi 1.0.0 | Hands-on in child |
 | Background tasks | **avoid** `pi-background-tasks`; candidate `pi-better-background-tasks` | 2.6.9 (source read) / 0.6.3 (not tested) | 2.6.9 impersonates the Claude Code client on the `anthropic` provider, and its Pi peer range is `^0.81–0.84` |
 | Claude Code child runner | private advisory option only | pi-subagents 0.75.0 (docs) | Async only; no Pi guards inside; writer profile has no Bash |
 | Plan mode, intercom, todo, web search | candidates, not adopted yet | not tested | Decided with evidence in Phases 2 and 4 |
-| Benchmark runner | adopt Harbor | not run | Design only |
+| Benchmark runner | adopt Harbor (pending hands-on in Phase 2b) | not run | Design only |
 
 ## 14. Changes from the master plan
 
