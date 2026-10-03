@@ -203,7 +203,7 @@ The ledger, spawn gate, write gate and stop gate come from the vendored core (§
 |---|---|---|
 | `bash`, `powershell` | `Bash` | destructive guard (pre) |
 | `write` | `Write` | write gate (pre), ledger bind (post) |
-| `edit` | `Edit` | write gate (pre), ledger bind (post) |
+| `edit` | `Edit` | ledger bind (post). Not write-gated, as in the core's own hook config: the gate would deny the Edit that binds an existing ledger. |
 | `subagent` | `Agent` | spawn gate (pre; the input is the task text) |
 | `read`, `grep`, `find`, `ls` | `Read`/`Grep`/`Glob` | none today (Claude-only read guard not ported) |
 | `codemode` | none | Inner tool calls pass through `tool_call` individually (Pi: nested `ctx.executeTool` calls are hooked). Replay test in Phase 2. |
@@ -232,9 +232,8 @@ How `tool_call` results are translated:
 - Spawns `<python> core/scripts/<guard>.py`, with the hook JSON on stdin and a 5 s timeout.
 - Environment:
   - `FABLE_ORCH_HARNESS=pi`.
-  - The core root variable (`CLAUDE_PLUGIN_ROOT` in core 0.22.0) points at `core/`. This switches the core's gates off legacy ledger discovery, so a session only ever sees its own ledger. A harness-neutral switch in the fork is a follow-up.
+  - `FABLE_ORCH_SESSION_BINDING=1` (core ≥ 0.22.1) switches the core's gates off legacy ledger discovery, so a session only ever sees its own ledger. `FABLE_ORCH_METRICS_DIR` puts the core's metrics into pi-foreman's state dir.
   - The session id variables are set to the Pi session id.
-  - Metrics are redirected to pi-foreman's state dir in the Pi agent dir, not another harness's dir.
 
 **Session binding.** `ctx.sessionManager.getSessionId()` (Pi 1.0.0 `SessionManager.getSessionId(): string`) becomes `session_id` in every payload. Shell tools already receive `PI_SESSION_ID`, so `ledger` CLI calls from bash bind to the same session. The adapter puts pi-foreman's `bin/` (shims `ledger`, `ledger.cmd`, `ledger.ps1` that run `core/scripts/ledger.py` with the resolved Python) on `PATH` for the `bash` and `powershell` tools.
 
@@ -323,7 +322,7 @@ Results return through pi-subagents' async notifications. The foreman waits, bou
 | Permission map | **adopt** `@gotgenes/pi-permission-system` | 39.0.2 | Hands-on: ask rules, detached-child forwarding, authorizer chain resolves |
 | Model review | **adopt, pinned, conditional** `pi-permission-ai-guard` | 0.13.0 | Hands-on: called and allowed at runtime with PS 39.0.2. Declared PS range `<37`; deny and defer paths not tested. |
 | Model review (rejected) | `@mzwing/pi-permission-auto-review` / `pi-verdict` | 0.7.0 / 0.14.0 | Auto-review needs Node ≥ 24 and PS 33–36. pi-verdict runs its own gate beside PS (double prompts). Load test only. |
-| Destructive/secret guard | **own** (vendored core) | core 0.22.0 @ fork SHA `d14ec6b` (latency run: `1be4960`) | CI latency run on three OSes |
+| Destructive/secret guard | **own** (vendored core) | core 0.22.1 @ fork SHA `1b51ec1` (latency run: `1be4960`) | CI latency run on three OSes |
 | Ledger, gates, git guards, precondition ops, ceremony, `/retro`, trace, installer | **own** | n/a | Design |
 | Claude provider (private) | adopt `pi-claude-bridge` in L2 | 0.9.1 | Hands-on: child turns, thinking level reached |
 | Copilot, Codex subscription | Pi built-in providers | Pi 1.0.0 | Source read: Copilot device-flow `/login github-copilot` or `COPILOT_GITHUB_TOKEN`. Not run. |

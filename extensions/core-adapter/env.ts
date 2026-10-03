@@ -17,7 +17,7 @@ export function isStrippedKey(key: string): boolean {
 
 export interface GuardEnvInput {
   base: Env;
-  /** `<package>/core`, exported as CLAUDE_PLUGIN_ROOT (turns on the core's no-legacy-discovery mode). */
+  /** `<package>/core`. Session binding (no legacy discovery) is switched on by FABLE_ORCH_SESSION_BINDING=1. */
   coreDir: string;
   sessionId: string;
   guard: GuardName;
@@ -37,12 +37,11 @@ export function buildGuardEnv(input: GuardEnvInput): Record<string, string> {
     out[key] = value;
   }
   out.FABLE_ORCH_HARNESS = "pi";
-  out.CLAUDE_PLUGIN_ROOT = input.coreDir;
+  out.FABLE_ORCH_SESSION_BINDING = "1";
   out.CLAUDE_CODE_SESSION_ID = input.sessionId;
   out.PI_SESSION_ID = input.sessionId;
-  // The core's metrics dir is hard-coded to ~/.claude/fable-orch; only HOME could move it,
-  // and HOME is also the guards' ledger-search boundary and protected-path anchor.
-  out.FABLE_ORCH_METRICS = "0";
+  // Core metrics go into pi-foreman's state dir, never another harness's folder.
+  out.FABLE_ORCH_METRICS_DIR = input.markerDir;
   // Claude-only duties of the stop hook: tmux teammate reaping and the `ps` walk.
   out.FABLE_ORCH_SWARM_CLEANUP = "0";
   out.FABLE_ORCH_TEAMMATE_STOP = "1";

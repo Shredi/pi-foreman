@@ -19,10 +19,12 @@ const host = {
 test("guard env sets harness, plugin root and Pi session id", () => {
   const env = buildGuardEnv({ base: host, coreDir: "/pkg/core", sessionId: "pi-1", guard: "ledger_guard_spawn", markerDir: "/agent/pi-foreman/state" });
   assert.equal(env.FABLE_ORCH_HARNESS, "pi");
-  assert.equal(env.CLAUDE_PLUGIN_ROOT, "/pkg/core");
+  assert.equal(env.FABLE_ORCH_SESSION_BINDING, "1");
+  assert.equal(env.CLAUDE_PLUGIN_ROOT, undefined);
   assert.equal(env.CLAUDE_CODE_SESSION_ID, "pi-1");
   assert.equal(env.PI_SESSION_ID, "pi-1");
-  assert.equal(env.FABLE_ORCH_METRICS, "0");
+  assert.equal(env.FABLE_ORCH_METRICS, undefined);
+  assert.equal(env.FABLE_ORCH_METRICS_DIR, env.TMPDIR);
   assert.equal(env.FABLE_ORCH_SWARM_CLEANUP, "0");
   assert.equal(env.PATH, "/usr/bin");
 });

@@ -1,0 +1,204 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = fs.realpathSync(path.resolve(HERE, "..", ".."));
+const SETUP = path.join(ROOT, "setup.mjs");
+const FAKE_PI = path.join(HERE, "fixtures", "fake-pi.mjs");
+
+function fresh() {
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-installer-")));
+  const agentDir = path.join(base, "agent");
+  const cwd = path.join(base, "project");
+  fs.mkdirSync(agentDir);
+  fs.mkdirSync(cwd);
+  return { base, agentDir, cwd, log: `${base}-calls.jsonl` };
+}
+
+function run(env, args, extraEnv = {}) {
+  const r = spawnSync(process.execPath, [SETUP, ...args, "--agent-dir", env.agentDir], {
+    cwd: env.cwd,
+    encoding: "utf8",
+    env: { ...process.env, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log, ...extraEnv },
+  });
+  return { code: r.status, out: `${r.stdout}${r.stderr}`, stdout: r.stdout, stderr: r.stderr };
+}
+
+function calls(env) {
+  try {
+    return fs.readFileSync(env.log, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l).args);
+  } catch {
+    return [];
+  }
+}
+const installs = (env) => calls(env).filter((a) => a[0] === "install" || a[0] === "remove");
+
+function snapshot(dir) {
+  const out = {};
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else out[path.relative(dir, p)] = fs.readFileSync(p, "utf8");
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+const readSettings = (env) => JSON.parse(fs.readFileSync(path.join(env.agentDir, "settings.json"), "utf8"));
+const backups = (env) => fs.readdirSync(env.agentDir).filter((f) => f.startsWith("settings.json.bak-"));
+const SEED = { theme: "dark", packages: ["npm:some-provider@1.2.3"], defaultModel: "x/y", zeta: 1, alpha: 2 };
+
+function seed(env, obj = SEED) {
+  fs.writeFileSync(path.join(env.agentDir, "settings.json"), `${JSON.stringify(obj, null, 2)}\n`);
+}
+
+function pythonValidate(env) {
+  const [cmd, pre] = process.platform === "win32" ? ["py", ["-3"]] : ["python3", []];
+  const r = spawnSync(cmd, [...pre, "-E", "-s", path.join(ROOT, "scripts", "foreman_config.py"), "validate", "--json", "--agent-dir", env.agentDir], { encoding: "utf8" });
+  return { code: r.status, data: JSON.parse(r.stdout) };
+}
+
+test("dry run writes nothing and runs no install", () => {
+  const env = fresh();
+  seed(env);
+  const before = snapshot(env.base);
+  const r = run(env, ["--dry-run"]);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(snapshot(env.base), before);
+  assert.deepEqual(installs(env), []);
+  assert.match(r.out, /would run: pi install npm:pi-subagents@0\.75\.0/);
+  assert.match(r.out, /would run: pi install /);
+  assert.match(r.out, /^\+\+\+ b\/settings\.json/m);
+  assert.match(r.out, /permission rules: Phase 3, skipped/);
+});
+
+test("first run backs up, writes the managed block, keeps user keys in order", () => {
+  const env = fresh();
+  seed(env);
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  assert.equal(backups(env).length, 1);
+  const bak = JSON.parse(fs.readFileSync(path.join(env.agentDir, backups(env)[0]), "utf8"));
+  assert.deepEqual(bak, SEED);
+  const s = readSettings(env);
+  assert.deepEqual(Object.keys(s).slice(0, 5), Object.keys(SEED));
+  assert.equal(s.theme, "dark");
+  assert.equal(s.subagents.agentOverrides.builder.tools.includes("edit"), true);
+  assert.ok(s.packages.includes("npm:some-provider@1.2.3"));
+  assert.ok(s.packages.includes("npm:pi-subagents@0.75.0"));
+  assert.equal(s.packages.some((p) => p.includes("permission")), false);
+  const managed = JSON.parse(fs.readFileSync(path.join(env.agentDir, "pi-foreman", "managed.json"), "utf8"));
+  assert.match(Object.values(managed.entries)[0].subagentsHash, /^[0-9a-f]{64}$/);
+  const inst = installs(env).map((a) => a[1]);
+  assert.deepEqual(inst, ["npm:pi-subagents@0.75.0", ROOT]);
+  assert.match(fs.readFileSync(path.join(env.agentDir, "settings.json"), "utf8"), /^ {2}"theme"/m);
+});
+
+test("second run is a no-op: no writes, no installs", () => {
+  const env = fresh();
+  seed(env);
+  assert.equal(run(env, []).code, 0);
+  fs.rmSync(env.log);
+  const before = snapshot(env.base);
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(snapshot(env.base), before);
+  assert.deepEqual(installs(env), []);
+  assert.match(r.out, /up to date/);
+});
+
+test("hand-edited block is backed up and overwritten", () => {
+  const env = fresh();
+  seed(env);
+  assert.equal(run(env, []).code, 0);
+  const s = readSettings(env);
+  s.subagents.agentOverrides.builder.tools = ["read"];
+  fs.writeFileSync(path.join(env.agentDir, "settings.json"), `${JSON.stringify(s, null, 2)}\n`);
+  const before = backups(env).length;
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /edited by hand/);
+  assert.equal(backups(env).length, before + 1);
+  const newest = backups(env).sort().pop();
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(env.agentDir, newest), "utf8")).subagents.agentOverrides.builder.tools, ["read"]);
+  assert.equal(readSettings(env).subagents.agentOverrides.builder.tools.length > 1, true);
+});
+
+test("foreman.json template is written only if absent and validates cleanly", () => {
+  const env = fresh();
+  assert.equal(run(env, []).code, 0);
+  const v = pythonValidate(env);
+  assert.equal(v.code, 0);
+  assert.deepEqual(v.data.warnings, []);
+  assert.deepEqual(v.data.errors, []);
+
+  const env2 = fresh();
+  const mine = '{"version": 1, "providers": {}, "fanout": {"max": 2}}\n';
+  fs.writeFileSync(path.join(env2.agentDir, "foreman.json"), mine);
+  assert.equal(run(env2, []).code, 0);
+  assert.equal(fs.readFileSync(path.join(env2.agentDir, "foreman.json"), "utf8"), mine);
+});
+
+test("--remove drops only managed entries", () => {
+  const env = fresh();
+  seed(env);
+  assert.equal(run(env, []).code, 0);
+  const s = readSettings(env);
+  s.subagents.extraUserKey = true;
+  fs.writeFileSync(path.join(env.agentDir, "settings.json"), `${JSON.stringify(s, null, 2)}\n`);
+  const r = run(env, ["--remove"]);
+  assert.equal(r.code, 0, r.out);
+  const after = readSettings(env);
+  assert.equal(after.subagents.agentOverrides, undefined);
+  assert.equal(after.subagents.agentOverridesByProvider, undefined);
+  assert.equal(after.subagents.extraUserKey, true);
+  assert.equal(after.theme, "dark");
+  assert.ok(after.packages.includes("npm:some-provider@1.2.3"));
+  assert.ok(after.packages.includes("npm:pi-subagents@0.75.0"));
+  assert.equal(after.packages.some((p) => p.endsWith(path.basename(ROOT)) && !p.startsWith("npm:")), false);
+  assert.equal(fs.existsSync(path.join(env.agentDir, "foreman.json")), true);
+  assert.ok(backups(env).length >= 1);
+  // a second remove has nothing left to do
+  assert.match(run(env, ["--remove"]).out, /up to date/);
+});
+
+test("--remove keeps a hand-edited block", () => {
+  const env = fresh();
+  assert.equal(run(env, []).code, 0);
+  const s = readSettings(env);
+  s.subagents.agentOverrides.builder.tools = ["read"];
+  fs.writeFileSync(path.join(env.agentDir, "settings.json"), `${JSON.stringify(s, null, 2)}\n`);
+  assert.equal(run(env, ["--remove"]).code, 0);
+  assert.deepEqual(readSettings(env).subagents.agentOverrides.builder.tools, ["read"]);
+});
+
+test("Pi outside 1.0.x is refused and nothing is written", () => {
+  const env = fresh();
+  seed(env);
+  const before = snapshot(env.base);
+  const r = run(env, [], { FAKE_PI_VERSION: "1.1.0" });
+  assert.notEqual(r.code, 0);
+  assert.match(r.out, /outside the supported range 1\.0\.x/);
+  assert.deepEqual(snapshot(env.base), before);
+  assert.deepEqual(installs(env), []);
+});
+
+test("overlay needs an exact version", () => {
+  const env = fresh();
+  for (const bad of ["npm:@org/overlay", "npm:@org/overlay@^1.0.0", "npm:@org/overlay@latest", "@org/overlay@1.0.0"]) {
+    const r = run(env, ["--overlay", bad]);
+    assert.notEqual(r.code, 0, bad);
+    assert.match(r.out, /exact version/);
+  }
+  assert.deepEqual(installs(env), []);
+  const ok = run(env, ["--overlay", "npm:@org/overlay@1.2.3"]);
+  assert.equal(ok.code, 0, ok.out);
+  assert.ok(installs(env).some((a) => a[1] === "npm:@org/overlay@1.2.3"));
+});
