@@ -30,3 +30,24 @@ jobs:
           python scripts/pull_core.py --conformance
       - name: adapter tests
         run: node --test "extensions/core-adapter/test/*.test.ts"
+      - name: ledger shims on Windows (cmd and PowerShell)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $proj = Join-Path $env:RUNNER_TEMP 'shim-proj'
+          New-Item -ItemType Directory -Force (Join-Path $proj '.workflow') | Out-Null
+          $led = Join-Path $proj '.workflow\LEDGER-shim.md'
+          Set-Content -Path $led -Value "# LEDGER`n`n- [ ] 1. one`n- [ ] V. fresh-eyes verification passed"
+          function Check($name, $out, $code) {
+            $text = $out -join "`n"
+            if ($code -ne 0 -or $text -notmatch '2 open item') { throw "$name failed (exit $code): $text" }
+            Write-Output "$name ok"
+          }
+          $env:PI_FOREMAN_PYTHON = (Get-Command python).Source
+          $out = cmd /c "bin\ledger.cmd -f `"$led`" status"; Check 'ledger.cmd' $out $LASTEXITCODE
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File bin\ledger.ps1 -f $led status; Check 'ledger.ps1 (powershell, Bypass)' $out $LASTEXITCODE
+          $out = pwsh -NoProfile -ExecutionPolicy Bypass -File bin\ledger.ps1 -f $led status; Check 'ledger.ps1 (pwsh, Bypass)' $out $LASTEXITCODE
+          $out = pwsh -NoProfile -File bin\ledger.ps1 -f $led status 2>&1
+          if ($LASTEXITCODE -ne 0) { Write-Output "ledger.ps1 without Bypass: blocked (exit $LASTEXITCODE); ledger.cmd is the fallback" } else { Write-Output "ledger.ps1 without Bypass: runs under the runner's default policy" }
+          Remove-Item Env:PI_FOREMAN_PYTHON
+          $out = cmd /c "bin\ledger.cmd -f `"$led`" status"; Check 'ledger.cmd (py launcher fallback)' $out $LASTEXITCODE

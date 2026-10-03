@@ -203,7 +203,7 @@ The ledger, spawn gate, write gate and stop gate come from the vendored core (§
 |---|---|---|
 | `bash`, `powershell` | `Bash` | destructive guard (pre) |
 | `write` | `Write` | write gate (pre), ledger bind (post) |
-| `edit` | `Edit` | write gate (pre), ledger bind (post) |
+| `edit` | `Edit` | ledger bind (post). Not write-gated, as in the core's own hook config: the gate would deny the Edit that binds an existing ledger. |
 | `subagent` | `Agent` | spawn gate (pre; the input is the task text) |
 | `read`, `grep`, `find`, `ls` | `Read`/`Grep`/`Glob` | none today (Claude-only read guard not ported) |
 | `codemode` | none | Inner tool calls pass through `tool_call` individually (Pi: nested `ctx.executeTool` calls are hooked). Replay test in Phase 2. |
