@@ -43,7 +43,7 @@ def main():
     repo = args[0] if args else os.environ.get("GUARD_REPO")
     if not repo:
         sys.exit("usage: guard_latency.py GUARD_REPO [--out FILE]")
-    scripts = os.path.join(repo, "scripts")
+    scripts = os.path.join(os.path.abspath(repo), "scripts")
     cwd = tempfile.gettempdir()
     base = {"session_id": "latency-probe", "cwd": cwd}
     bash = json.dumps(dict(base, hook_event_name="PreToolUse", tool_name="Bash",
