@@ -1,6 +1,6 @@
 pi-foreman
 
-The Python core to be vendored under core/, and instruction text derived from
+The Python core vendored under core/, and instruction text derived from
 it, come from the project "fable5-opus5-orchestrator",
 Copyright (c) 2026 Yusuf Demirkoparan, released under the MIT License:
 https://github.com/Rylaa/fable5-opus5-orchestrator

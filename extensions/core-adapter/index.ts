@@ -11,7 +11,8 @@ import type { MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
-import { childRoleIds, roleLaunchBlock } from "./roles.ts";
+import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
+import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents } from "./payload.ts";
@@ -43,6 +44,8 @@ interface Session {
   markerDir: string;
   python: PythonResolution;
   config: MergedConfig;
+  /** Provider `config.roles` was resolved for (re-resolved on a provider switch). */
+  configProvider: string | undefined;
   ceremony: CeremonyState;
   registration?: Registration;
   registrationError?: string;
@@ -91,7 +94,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
     const hint = pythonPathHint(PKG_ROOT, agentDir, cwd, trusted);
     let python = await pythonCache.get(id, () => resolvePython({ configPath: hint, envPath: ORIGINAL_PI_FOREMAN_PYTHON, platform, spawner }));
-    const config = await loadMergedConfig({ python: python.ok ? python.info.executable : null, pkgRoot: PKG_ROOT, provider: ctx.model?.provider, agentDir, projectDir: cwd, trusted, spawner });
+    const provider = ctx.model?.provider;
+    const config = await loadMergedConfig({ python: python.ok ? python.info.executable : null, pkgRoot: PKG_ROOT, provider, agentDir, projectDir: cwd, trusted, spawner });
     const merged = get(config.config, "python.path");
     if (typeof merged === "string" && merged.trim() && merged !== hint) {
       // python.path came from a layer the hint does not read (L3, session): honour it.
@@ -107,6 +111,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       markerDir,
       python,
       config,
+      configProvider: provider,
       ceremony: initialCeremony(get(config.config, "ceremony.default")),
       childExtensions: [],
       stopContinued: false,
@@ -217,6 +222,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return undefined;
   }
 
+  /**
+   * Role models for the provider the session is on now. The merged config is resolved for the
+   * provider at session start; after a model switch to another provider (user, or the foreman
+   * model itself) the roles are resolved again for the new one. A failed re-resolve fails closed.
+   */
+  async function currentRoles(s: Session, ctx: ExtensionContext): Promise<RoleResolution> {
+    const provider = ctx.model?.provider;
+    if (s.config.source === "cli" && provider !== s.configProvider) {
+      const fresh = await loadMergedConfig({ python: pyPath(s), pkgRoot: PKG_ROOT, provider, agentDir: s.agentDir, projectDir: s.cwd, trusted: safeTrusted(ctx), spawner });
+      if (fresh.source !== "cli") return { provider, roles: {}, source: "defaults" };
+      s.config.roles = fresh.roles;
+      s.configProvider = provider;
+    }
+    return { provider: s.configProvider, roles: s.config.roles, source: s.config.source };
+  }
+
   function payloadCtx(s: Session, ctx: ExtensionContext): PayloadContext {
     let transcriptPath: string | undefined;
     try {
@@ -295,6 +316,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === "subagent") {
         const refused = roleLaunchBlock(input, childRoleIds(get(s.config.config, "roles")));
         if (refused) return { block: true, reason: refused };
+        const noModel = roleModelBlock(input, await currentRoles(s, ctx));
+        if (noModel) return { block: true, reason: noModel };
       }
       const pc = payloadCtx(s, ctx);
       for (const guard of mapping.pre) {

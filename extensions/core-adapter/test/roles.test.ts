@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { childRoleIds, roleLaunchBlock } from "../roles.ts";
+import { childRoleIds, roleLaunchBlock, roleModelBlock } from "../roles.ts";
+import type { RoleResolution } from "../roles.ts";
 
 const ROLES = { foreman: {}, explorer: {}, builder: {}, reviewer: {}, "senior-reviewer": {}, finalizer: {} };
 const allowed = childRoleIds(ROLES);
@@ -40,4 +41,41 @@ test("an overlay-added role is allowed", () => {
   const withOverlay = childRoleIds({ ...ROLES, "doc-writer": {} });
   assert.equal(roleLaunchBlock({ agent: "doc-writer", task: "t" }, withOverlay), undefined);
   assert.equal(roleLaunchBlock({ agent: "doc-writer", task: "t" }, allowed)?.includes("agent 'doc-writer'"), true);
+});
+
+const RESOLVED: RoleResolution = {
+  provider: "fake",
+  source: "cli",
+  roles: {
+    explorer: { model: "fake/explorer" },
+    builder: { error: "role builder has no model for provider fake and no fallback" },
+    reviewer: { thinking: "low" },
+    finalizer: { model: "other/finalizer" }, // resolved through providers.fake.fallback
+  },
+};
+const NO_BUILDER = "pi-foreman: role 'builder' has no model for provider 'fake' and no fallback; add providers.fake.roles.builder.model to foreman.json (or a providers.fake.fallback) and restart the session.";
+
+test("model check: resolved and fallback-resolved roles pass", () => {
+  assert.equal(roleModelBlock({ agent: "explorer", task: "t" }, RESOLVED), undefined);
+  assert.equal(roleModelBlock({ agent: "finalizer", task: "t" }, RESOLVED), undefined);
+});
+
+test("model check: role with a resolve error or without a model is refused", () => {
+  assert.equal(roleModelBlock({ agent: "builder", task: "t" }, RESOLVED), NO_BUILDER);
+  assert.match(roleModelBlock({ agent: "reviewer", task: "t" }, RESOLVED) ?? "", /role 'reviewer' has no model for provider 'fake'/);
+  assert.match(roleModelBlock({ agent: "senior-reviewer", task: "t" }, RESOLVED) ?? "", /role 'senior-reviewer'/);
+});
+
+test("model check: no roles map, no provider or no config CLI is refused", () => {
+  assert.match(roleModelBlock({ agent: "explorer", task: "t" }, { ...RESOLVED, roles: {} }) ?? "", /role 'explorer' has no model/);
+  assert.match(roleModelBlock({ agent: "explorer", task: "t" }, { provider: undefined, roles: {}, source: "cli" }) ?? "", /no provider is active/);
+  assert.match(roleModelBlock({ agent: "explorer", task: "t" }, { ...RESOLVED, source: "defaults" }) ?? "", /config could not be loaded/);
+});
+
+test("model check: management calls pass, tasks and chain entries are checked", () => {
+  assert.equal(roleModelBlock({ action: "status", agent: "builder" }, RESOLVED), undefined);
+  assert.equal(roleModelBlock({ action: "list" }, { provider: undefined, roles: {}, source: "defaults" }), undefined);
+  assert.equal(roleModelBlock({ tasks: [{ agent: "explorer", task: "a" }, { agent: "builder", task: "b" }] }, RESOLVED), NO_BUILDER);
+  assert.equal(roleModelBlock({ chain: [{ agent: "explorer" }, { parallel: [{ agent: "finalizer", task: "x" }] }] }, RESOLVED), undefined);
+  assert.equal(roleModelBlock({ chain: [{ agent: "explorer" }, { parallel: [{ agent: "builder", task: "x" }] }] }, RESOLVED), NO_BUILDER);
 });

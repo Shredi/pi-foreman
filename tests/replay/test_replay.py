@@ -297,5 +297,27 @@ class TestRoleAllowlist(ReplayCase):
         self.golden("role_allowlist", {"foreman": foreman})
 
 
+class TestRoleModel(ReplayCase):
+    """Design §3: a role without a model for the active provider is a launch error, never a
+    silent default. `builder` is unmapped under the fake provider; `explorer` still launches."""
+
+    def test_unmapped_role_refused_mapped_role_launched(self):
+        rig = self.rig("rolemodel", load_fixture("role_model"), unmapped=("builder",))
+        pi = rig.start()
+        sid = pi.session_id()
+        [(_, err, text)] = tool_results(pi.prompt("[[replay:m1]] start", timeout=60), "subagent")
+        self.assertTrue(err)
+        self.assertIn("pi-foreman: role 'builder' has no model for provider '%s' and no fallback; add providers.%s.roles.builder.model to foreman.json" % (PROVIDER_A, PROVIDER_A), text)
+        [(_, err, text)] = tool_results(pi.prompt("[[replay:m2]] start", timeout=60), "subagent")
+        self.assertFalse(err, text)
+        notice, _ = pi.wait_child_notify(timeout=90)
+        self.assertIn("explorer child result", notice)
+        pi.close()
+        t = rig.traces()
+        foreman = shape(t.pop("trace-" + sid))
+        self.assertEqual([r["role"] for r in foreman if r["event"] == "role_launch"], ["explorer"])
+        self.golden("role_model", {"foreman": foreman})
+
+
 if __name__ == "__main__":
     unittest.main()
