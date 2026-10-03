@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { afterSpawn, beforeSpawn, escalate, gateThreshold, initialCeremony, isTier, onFileChanged, parseTierHeader, promptSignals, tierLine, userOverride } from "./ceremony.ts";
+import { afterSpawn, beforeSpawn, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, promptSignals, tierLine, userOverride } from "./ceremony.ts";
 import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint } from "./config.ts";
 import type { MergedConfig } from "./config.ts";
@@ -12,6 +12,7 @@ import { loadRegister, normaliseChildExtensions, registrationPathLabel } from ".
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
+import { applyLaunchModels } from "./launchmodel.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
@@ -155,8 +156,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const ledger = boundLedger(s.markerDir, s.id);
     if (!ledger) return;
     try {
-      const tier = parseTierHeader(fs.readFileSync(ledger, "utf8"));
-      if (tier) setCeremony(s, escalate(s.ceremony, tier, "ledger", `ledger header Tier: ${tier}`));
+      const { tier, reason } = ledgerTier(fs.readFileSync(ledger, "utf8"));
+      setCeremony(s, escalate(s.ceremony, tier, "ledger", reason));
     } catch {
       // unreadable ledger: keep the tier
     }
@@ -316,8 +317,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === "subagent") {
         const refused = roleLaunchBlock(input, childRoleIds(get(s.config.config, "roles")));
         if (refused) return { block: true, reason: refused };
-        const noModel = roleModelBlock(input, await currentRoles(s, ctx));
+        const resolution = await currentRoles(s, ctx);
+        const noModel = roleModelBlock(input, resolution);
         if (noModel) return { block: true, reason: noModel };
+        for (const o of applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"))) {
+          s.trace?.emit({ event: "model_override", role: o.role, model: o.model });
+        }
       }
       const pc = payloadCtx(s, ctx);
       for (const guard of mapping.pre) {

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { afterSpawn, beforeSpawn, escalate, gateThreshold, initialCeremony, onFileChanged, parseTierHeader, promptSignals, userOverride } from "../ceremony.ts";
+import { afterSpawn, beforeSpawn, escalate, gateThreshold, initialCeremony, ledgerTier, onFileChanged, parseTierHeader, promptSignals, userOverride } from "../ceremony.ts";
 
 test("automatic changes only escalate", () => {
   let s = escalate(initialCeremony("standard"), "heavy", "auto", "signal");
@@ -52,4 +52,15 @@ test("ledger header, file count and prompt signals", () => {
   assert.deepEqual(promptSignals("Please fix CI and the public API docs", ["ci", "public-api", "auth"]), ["ci", "public-api"]);
   assert.deepEqual(promptSignals("decide on a city", ["ci"]), []);
   assert.deepEqual(promptSignals("we are deleting old rows", ["delete"]), ["delete"]);
+});
+
+test("a bound ledger without a Tier: line counts as standard; no ledger stays untriaged", () => {
+  const untriaged = initialCeremony("standard");
+  assert.equal(gateThreshold(untriaged), null);
+  const { tier, reason } = ledgerTier("# LEDGER\n\n- [ ] 1. x");
+  assert.equal(tier, "standard");
+  const bound = escalate(untriaged, tier, "ledger", reason);
+  assert.deepEqual([bound.tier, bound.source], ["standard", "ledger"]);
+  assert.equal(gateThreshold(bound), 0);
+  assert.equal(ledgerTier("# L\nTier: trivial").tier, "trivial");
 });

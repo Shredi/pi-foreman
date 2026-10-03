@@ -133,7 +133,7 @@ How thinking reaches each provider (Pi 1.0.0 catalogue and source):
 | Codex subscription | Login through Pi's built-in `openai-codex` provider | Not run |
 | claude-bridge | Passed through | Hands-on 2026-10-03, Pi 1.0.0, pi-claude-bridge@0.9.1: `:high` → child `thinking_level_change high` |
 
-- **Per-launch override.** pi-subagents 0.75.0 accepts a level only on a full id. `explorer[model=<provider>/<model>:low]` works. `explorer[model=:high]` fails for native children with "Unknown subagent model" (hands-on 2026-10-03). So the foreman restates the role's mapped model plus the suffix, clamped by `maxThinking`. If a provider rejects suffixed ids, `subagents.disableThinking` applies.
+- **Per-launch override.** pi-subagents 0.75.0 accepts a level only on a full id. `explorer[model=<provider>/<model>:low]` works. `explorer[model=:high]` fails for native children with "Unknown subagent model" (hands-on 2026-10-03). So the adapter writes every launch's `model` (top level, or each `tasks`/`chain` entry) as the role's mapped `<provider>/<model>:<thinking>` for the active provider; a level the foreman passed is kept, clamped by `maxThinking`, and a different model it passed is replaced and traced as `model_override`. If a provider rejects suffixed ids, `subagents.disableThinking` applies.
 - **Explicit fallback.** `providers.<p>.fallback` names one provider. Fallback happens only on auth failure or unavailability. A fallback to a higher `costTier` needs a one-time confirmation per session. A role never escalates upward on its own.
 - **Fan-out width.** `fanout.max` sets the number of concurrent children (default 3). It is an ordinary preference.
 
@@ -180,7 +180,7 @@ The ledger, spawn gate, write gate and stop gate come from the vendored core (§
 
 **Tiers and the gate.** The core's spawn gate stays the enforcement; the tier is only the foreman's routing. A trivial task has no ledger and at most one short `explorer` launch, which stays below the gate's threshold. Standard and heavy tasks write the ledger first; the gate denies further launches until the session has its own ledger, and the stop gate blocks ending while items are open.
 
-The foreman creates the ledger with the `write` tool, never through the shell, so the write binds the session to it; the tier is a line `Tier: <tier>` directly under the ledger title.
+The foreman creates the ledger with the `write` tool, never through the shell, so the write binds the session to it; the tier is a line `Tier: <tier>` directly under the ledger title, and a bound ledger without that line counts as `standard`.
 
 **`/retro` friction metrics.** These are read from the Pi session JSONL, the permission-system review log and the trace. Content is never printed.
 

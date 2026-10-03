@@ -4,7 +4,8 @@
 // LEDGER_GUARD_THRESHOLD (ledger_guard_spawn.py threshold()):
 //   trivial, or no tier decided yet  -> core default threshold (1500 chars): one short
 //                                       explorer launch passes without a ledger
-//   standard / heavy                 -> threshold 0: any launch with task text needs this
+//   standard / heavy                 -> threshold 0 (a bound ledger without a Tier: line
+//                                       counts as standard): any launch with task text needs this
 //                                       session's own ledger first
 // A second launch, or a non-explorer launch, while trivial escalates to standard first.
 
@@ -49,6 +50,15 @@ export function parseTierHeader(text: string): Tier | null {
   const head = text.split(/\r?\n/).slice(0, 40).join("\n");
   const m = /^[\s>*_-]*\**\s*Tier\s*\**\s*:\s*\**\s*(trivial|standard|heavy)\b/im.exec(head);
   return m ? (m[1].toLowerCase() as Tier) : null;
+}
+
+/**
+ * Tier a bound ledger stands for: its `Tier:` header, or `standard` when it has none (decision
+ * C12, the stricter option: a ledger means the task was not trivial). No ledger stays untriaged.
+ */
+export function ledgerTier(text: string): { tier: Tier; reason: string } {
+  const tier = parseTierHeader(text);
+  return tier ? { tier, reason: `ledger header Tier: ${tier}` } : { tier: "standard", reason: "bound ledger without a Tier: line" };
 }
 
 /** Before a subagent launch reaches the gate. */

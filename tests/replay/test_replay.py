@@ -319,5 +319,56 @@ class TestRoleModel(ReplayCase):
         self.golden("role_model", {"foreman": foreman})
 
 
+def _project_map():
+    """Project-layer role map: explorer on a model id other than the parent's, per provider."""
+    m = driver.provider_map((PROVIDER_A, PROVIDER_B))
+    m[PROVIDER_A]["roles"]["explorer"] = {"model": PROVIDER_A + "/builder"}
+    m[PROVIDER_B]["roles"]["explorer"] = {"model": PROVIDER_B + "/reviewer"}
+    return {"providers": m}
+
+
+class TestLaunchModel(ReplayCase):
+    """The role map decides the child model at launch (decision C13 follow-up): the map lives
+    only in the trusted project layer and the user-level generated block maps nothing, so
+    without the adapter's rewrite the child would inherit the parent's model."""
+
+    def _rig(self, name):
+        rig = self.rig(name, load_fixture("project_map"), providers=(PROVIDER_A, PROVIDER_B),
+                       l2_providers=False, project_config=_project_map())
+        block = json.loads((rig.agent / "settings.json").read_text("utf-8"))["subagents"]
+        self.assertEqual(block.get("agentOverridesByProvider") or {}, {})
+        return rig
+
+    def _launch(self, rig, pi, tag, expect_model):
+        res = tool_results(pi.prompt("[[replay:%s]] start" % tag, timeout=60))
+        self.assertEqual([(n, e) for n, e, _ in res], [("subagent", False)], res)
+        notice, _ = pi.wait_child_notify(timeout=90)
+        self.assertIn("child result", notice)
+        child = trace_of(rig.traces(), "child", expect_model)
+        self.assertIsNotNone(child, "no child on %s: %s" % (expect_model, json.dumps(rig.traces())[:1500]))
+        self.assertEqual([r["model"] for r in child if r.get("event") in ("session_start", "llm")], [expect_model] * 2)
+
+    def test_project_map_decides_child_model(self):
+        rig = self._rig("launchmodel")
+        pi = rig.start()
+        self._launch(rig, pi, "q1", PROVIDER_A + "/builder")
+        pi.close()
+        self.assertIsNone(trace_of(rig.traces(), "child", PROVIDER_A + "/foreman"))
+
+    def test_provider_switch_mid_session_uses_new_map(self):
+        rig = self._rig("launchmodel-switch")
+        pi = rig.start()
+        sid = pi.session_id()
+        self._launch(rig, pi, "q1", PROVIDER_A + "/builder")
+        pi.request({"type": "set_model", "provider": PROVIDER_B, "modelId": "foreman"})
+        # q2: the foreman names its own model; the provider B map replaces it.
+        self._launch(rig, pi, "q2", PROVIDER_B + "/reviewer")
+        pi.close()
+        foreman = shape(rig.traces()["trace-" + sid])
+        self.assertEqual([r for r in foreman if r["event"] == "model_override"],
+                         [{"event": "model_override", "role": "explorer", "model": PROVIDER_B + "/reviewer"}])
+        self.golden("launch_model_switch", {"foreman": foreman})
+
+
 if __name__ == "__main__":
     unittest.main()

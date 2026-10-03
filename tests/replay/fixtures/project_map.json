@@ -1,0 +1,20 @@
+{
+ "foreman": {
+  "q1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:child]] short task"}}]},
+   {"text": "Launched."},
+   {"text": "Explorer reported."}
+  ],
+  "q2": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:child]] short task", "model": "foreman-fake-b/foreman"}}]},
+   {"text": "Launched."},
+   {"text": "Explorer reported."}
+  ]
+ },
+ "builder": {
+  "child": [{"text": "child result on the mapped model"}]
+ },
+ "reviewer": {
+  "child": [{"text": "child result on the provider b map"}]
+ }
+}
