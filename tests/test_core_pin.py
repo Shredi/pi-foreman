@@ -4,7 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CORE = ROOT / "core"
-PINNED_SHA = "d14ec6b16e6f50f71e767b6b96a2505f2bb26967"
+PINNED_SHA = "1b51ec10e0c5896e67ae867dd4bb542324400e50"
 GENERATED = ("VERSION", "MANIFEST")
 IGNORED_PARTS = ("__pycache__", ".pytest_cache")
 
