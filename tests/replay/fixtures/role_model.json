@@ -1,0 +1,16 @@
+{
+ "foreman": {
+  "m1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:unmapped]] short task"}}]},
+   {"text": "Refused."}
+  ],
+  "m2": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:mapped]] short task"}}]},
+   {"text": "Launched."},
+   {"text": "Explorer reported."}
+  ]
+ },
+ "explorer": {
+  "mapped": [{"text": "explorer child result"}]
+ }
+}

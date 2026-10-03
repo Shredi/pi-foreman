@@ -89,14 +89,14 @@ def deep_merge(base, over):
     return out
 
 
-def provider_map(providers):
-    return {p: {"roles": {r: {"model": "%s/%s" % (p, r)} for r in ROLES}} for p in providers}
+def provider_map(providers, unmapped=()):
+    return {p: {"roles": {r: {"model": "%s/%s" % (p, r)} for r in ROLES if r not in unmapped}} for p in providers}
 
 
 class Rig:
     """One throwaway Pi world: agent dir + project + tmp, plus the processes started in it."""
 
-    def __init__(self, name, script, providers=(PROVIDER_A,), config=None, settings=None):
+    def __init__(self, name, script, providers=(PROVIDER_A,), config=None, settings=None, unmapped=()):
         self.root = Path(tempfile.mkdtemp(prefix="pf-replay-%s-" % name)).resolve()
         self.agent = self.root / "agent"
         self.project = self.root / "project"
@@ -107,7 +107,7 @@ class Rig:
         self.script = self.root / "script.json"
         self.script.write_text(json.dumps(script, indent=1), "utf-8")
         l2 = {
-            "providers": provider_map(providers),
+            "providers": provider_map(providers, unmapped),
             "trace": {"enabled": True},
             "safety": {"requiredChildExtensions": [str(FAKE_PROVIDER)]},
         }
@@ -116,7 +116,8 @@ class Rig:
         (self.agent / "foreman.json").write_text(json.dumps(l2, indent=1), "utf-8")
         gen = _run([sys.executable, str(REPO / "scripts" / "foreman_config.py"), "generate-subagents", "--json",
                     "--agent-dir", str(self.agent), "--project-dir", str(self.project)], 60)
-        if gen.returncode != 0:
+        # Exit 3 = roles without a model (expected when `unmapped` is set); the block is still written.
+        if gen.returncode != 0 and not (unmapped and gen.returncode == 3):
             raise RuntimeError("generate-subagents failed: %s" % gen.stderr.decode())
         block = json.loads(gen.stdout.decode())["subagents"]
         st = {"packages": [str(pi_subagents_dir()), str(REPO)], "subagents": block}
