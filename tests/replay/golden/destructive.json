@@ -1,0 +1,40 @@
+{
+ "session": [
+  {
+   "event": "session_start",
+   "role": "foreman",
+   "model": "foreman-fake/foreman",
+   "tier": "standard"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Bash",
+   "guard": "destructive_guard",
+   "decision": "deny"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Bash",
+   "guard": "destructive_guard",
+   "decision": "deny"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  }
+ ]
+}

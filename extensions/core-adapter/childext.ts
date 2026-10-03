@@ -85,6 +85,13 @@ export const registerViaGlobalRegistry: RegisterFn = (input) => {
   };
 };
 
+/** Doctor wording for the active registration path (R3). */
+export function registrationPathLabel(via: string | undefined): string {
+  if (via === "pi-subagents") return "package import (pi-subagents/required-child-extensions)";
+  if (via === "global registry v1") return "global-symbol registry (Symbol.for(\"pi-subagents.required-child-extensions.v1\"))";
+  return "none";
+}
+
 export async function loadRegister(): Promise<{ fn: RegisterFn; via: string }> {
   try {
     const mod = (await import("pi-subagents/required-child-extensions")) as { registerRequiredChildExtensions?: RegisterFn };

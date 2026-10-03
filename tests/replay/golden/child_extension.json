@@ -1,0 +1,30 @@
+{
+ "child": [
+  {
+   "event": "session_start",
+   "role": "child",
+   "model": "foreman-fake/explorer",
+   "tier": "standard"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/explorer"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Bash",
+   "guard": "destructive_guard",
+   "decision": "deny"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/explorer"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  }
+ ]
+}

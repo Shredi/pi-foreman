@@ -8,7 +8,7 @@ import { afterSpawn, beforeSpawn, escalate, gateThreshold, initialCeremony, isTi
 import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint } from "./config.ts";
 import type { MergedConfig } from "./config.ts";
-import { loadRegister, normaliseChildExtensions } from "./childext.ts";
+import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
 import type { Registration } from "./childext.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
@@ -22,6 +22,8 @@ import type { Spawner } from "./spawn.ts";
 import { mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
+import { openTrace } from "./trace.ts";
+import type { TraceWriter } from "./trace.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = fileURLToPath(import.meta.url);
@@ -46,6 +48,7 @@ interface Session {
   childExtensions: { id: string; path: string }[];
   stopContinued: boolean;
   notified: Set<string>;
+  trace: TraceWriter | null;
 }
 
 export interface AdapterDeps {
@@ -105,8 +108,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       childExtensions: [],
       stopContinued: false,
       notified: new Set(),
+      trace: openTrace({ enabled: get(config.config, "trace.enabled"), dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: id }),
     };
     sessions.set(id, s);
+    s.trace?.emit({ event: "session_start", role: s.isChild ? "child" : "foreman", model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null, tier: s.ceremony.tier });
 
     try {
       ensureSessionMarker(markerDir, id, Date.now() / 1000);
@@ -123,6 +128,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return s;
   }
 
+  /** Every tier change goes through here so the trace sees it. */
+  function setCeremony(s: Session, next: CeremonyState): void {
+    const before = s.ceremony.tier;
+    s.ceremony = next;
+    if (next.tier !== before) s.trace?.emit({ event: "tier", tier: next.tier });
+  }
+
   function sessionFor(ctx: ExtensionContext): Session | undefined {
     return sessions.get(ctx.sessionManager.getSessionId());
   }
@@ -136,7 +148,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!ledger) return;
     try {
       const tier = parseTierHeader(fs.readFileSync(ledger, "utf8"));
-      if (tier) s.ceremony = escalate(s.ceremony, tier, "ledger", `ledger header Tier: ${tier}`);
+      if (tier) setCeremony(s, escalate(s.ceremony, tier, "ledger", `ledger header Tier: ${tier}`));
     } catch {
       // unreadable ledger: keep the tier
     }
@@ -199,10 +211,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { sessionId: s.id, cwd: ctx.cwd, transcriptPath, home: os.homedir() };
   }
 
-  async function run(s: Session, ctx: ExtensionContext, guard: GuardName, payload: unknown) {
+  async function run(s: Session, ctx: ExtensionContext, guard: GuardName, payload: unknown, toolFamily: string | null) {
     const env = buildGuardEnv({ base: process.env, coreDir: CORE_DIR, sessionId: s.id, guard, markerDir: s.markerDir, threshold: guard === "ledger_guard_spawn" ? gateThreshold(s.ceremony) : null });
+    const started = Date.now();
     const r = await runGuard({ python: pyPath(s), coreDir: CORE_DIR, guard, payload, env, cwd: ctx.cwd, spawner });
-    return evaluateRun(guard, r, pyPath(s));
+    const outcome = evaluateRun(guard, r, pyPath(s));
+    s.trace?.emit({ event: "guard", guard, toolFamily, decision: outcome.kind === "failure" ? "error" : outcome.d.decision, latencyMs: Date.now() - started });
+    return outcome;
   }
 
   // ------------------------------------------------------------------ events
@@ -235,7 +250,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const s = await ensureSession(ctx);
     s.stopContinued = false;
     const signals = promptSignals(event.prompt ?? "", get(s.config.config, "ceremony.heavySignals"));
-    if (signals.length) s.ceremony = escalate(s.ceremony, "heavy", "auto", `heavy signal in the request: ${signals.join(", ")}`);
+    if (signals.length) setCeremony(s, escalate(s.ceremony, "heavy", "auto", `heavy signal in the request: ${signals.join(", ")}`));
     if (s.isChild) return;
     if (instructionsCache === undefined) {
       try {
@@ -260,9 +275,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         let agents: string[] = [];
         if (guard === "ledger_guard_spawn") {
           agents = subagentAgents(input);
-          s.ceremony = beforeSpawn(s.ceremony, agents);
+          setCeremony(s, beforeSpawn(s.ceremony, agents));
         }
-        const outcome = await run(s, ctx, guard, preToolPayload(event.toolName, input, pc));
+        const outcome = await run(s, ctx, guard, preToolPayload(event.toolName, input, pc), mapping.coreName);
         const target = guard === "ledger_guard_write" ? resolveToolPath(input.path, ctx.cwd, os.homedir()) : null;
         const t = await translateToolCall({
           guard,
@@ -273,8 +288,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           ledgerTarget: target ? isLedgerTarget(target) : false,
         });
         if (t.openFailure) notifyOnce(s, ctx, `open:${guard}`, t.openFailure);
+        if (outcome.kind === "decision" && outcome.d.decision === "ask") s.trace?.emit({ event: "ask", guard, toolFamily: mapping.coreName, decision: askOutcome(s.isChild, t.result?.reason) });
         if (t.result) return t.result;
-        if (guard === "ledger_guard_spawn" && agents.length > 0) s.ceremony = afterSpawn(s.ceremony);
+        if (guard === "ledger_guard_spawn" && agents.length > 0) {
+          setCeremony(s, afterSpawn(s.ceremony));
+          for (const role of agents) s.trace?.emit({ event: "role_launch", role });
+        }
       }
       return undefined;
     } catch (err) {
@@ -282,20 +301,31 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
   });
 
+  pi.on("message_end", async (event, ctx) => {
+    const m = event.message as { role?: string; provider?: string; model?: string; usage?: { input?: number; output?: number; cost?: { total?: number } } };
+    if (m.role !== "assistant") return undefined;
+    sessionFor(ctx)?.trace?.emit({ event: "llm", model: m.provider && m.model ? `${m.provider}/${m.model}` : null, tokensIn: m.usage?.input, tokensOut: m.usage?.output, cost: m.usage?.cost?.total });
+    return undefined;
+  });
+
   pi.on("tool_result", async (event, ctx) => {
+    if (event.toolName === "subagent") {
+      const s = sessionFor(ctx);
+      for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_result", role, exit: event.isError ? 1 : 0 });
+    }
     const mapping = mapTool(event.toolName);
     if (mapping.post.length === 0 || event.isError) return undefined;
     try {
       const s = await ensureSession(ctx);
       const input = event.input as Record<string, unknown>;
       for (const guard of mapping.post) {
-        const outcome = await run(s, ctx, guard, postToolPayload(event.toolName, input, payloadCtx(s, ctx), event.isError));
+        const outcome = await run(s, ctx, guard, postToolPayload(event.toolName, input, payloadCtx(s, ctx), event.isError), mapping.coreName);
         if (outcome.kind === "failure") notifyOnce(s, ctx, `open:${guard}`, outcome.message);
       }
       const file = resolveToolPath(input.path, ctx.cwd, os.homedir());
       if (file) {
         const heavy = Number(get(s.config.config, "ceremony.heavyFileCount"));
-        s.ceremony = onFileChanged(s.ceremony, file, Number.isFinite(heavy) ? heavy : 0);
+        setCeremony(s, onFileChanged(s.ceremony, file, Number.isFinite(heavy) ? heavy : 0));
       }
       refreshLedgerTier(s);
     } catch {
@@ -307,11 +337,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("agent_before_settle", async (event, ctx) => {
     if (event.outcome !== "completed") return undefined;
     const s = await ensureSession(ctx);
-    const outcome = await run(s, ctx, "ledger_guard_stop", stopPayload(payloadCtx(s, ctx), s.stopContinued));
+    const outcome = await run(s, ctx, "ledger_guard_stop", stopPayload(payloadCtx(s, ctx), s.stopContinued), "Stop");
     const r = translateStop(outcome);
     if (r.openFailure) notifyOnce(s, ctx, "open:ledger_guard_stop", r.openFailure);
     if (!r.hold) return undefined;
     s.stopContinued = true;
+    s.trace?.emit({ event: "stop_hold", guard: "ledger_guard_stop", decision: "continue" });
     return {
       entries: [...event.entries, { type: "custom_message" as const, customType: "pi-foreman-stop-gate", content: r.reason ?? "", display: true }],
       continue: true,
@@ -333,7 +364,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         ctx.ui.notify("Usage: /ceremony trivial|standard|heavy", "warning");
         return;
       }
-      s.ceremony = userOverride(s.ceremony, want);
+      setCeremony(s, userOverride(s.ceremony, want));
       ctx.ui.notify(tierLine(s.ceremony), "info");
     },
   });
@@ -390,6 +421,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (s.registration) ok(`required child extensions registered (${s.registrationVia}, requireForAllRunners)`);
     else fail(`required child extensions not registered${s.registrationError ? `: ${s.registrationError}` : ""}`, "check the paths above and restart the session.");
+    out.push(`INFO required child extension registration path: ${registrationPathLabel(s.registrationVia)}`);
 
     const providers = get(s.config.config, "providers");
     const names = providers && typeof providers === "object" ? Object.keys(providers as object).filter((p) => p !== "allowed") : [];
@@ -410,6 +442,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     out.push(`INFO ceremony: ${tierLine(s.ceremony)}`);
     return out;
   }
+}
+
+/** Trace label for a core-guard ask, from the translated block reason (undefined = approved). */
+function askOutcome(isChild: boolean, reason: string | undefined): string {
+  if (reason === undefined) return "approved";
+  if (isChild) return "child";
+  if (reason.startsWith("Denied by the user.")) return "denied";
+  return "no-ui";
 }
 
 function safeTrusted(ctx: ExtensionContext): boolean {

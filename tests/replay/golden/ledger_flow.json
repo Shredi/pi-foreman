@@ -1,0 +1,148 @@
+{
+ "sessionA": [
+  {
+   "event": "session_start",
+   "role": "foreman",
+   "model": "foreman-fake/foreman",
+   "tier": "standard"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Agent",
+   "guard": "ledger_guard_spawn",
+   "decision": "deny"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Write",
+   "guard": "ledger_guard_write",
+   "decision": "none"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Write",
+   "guard": "ledger_bind",
+   "decision": "none"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Bash",
+   "guard": "destructive_guard",
+   "decision": "none"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Agent",
+   "guard": "ledger_guard_spawn",
+   "decision": "none"
+  },
+  {
+   "event": "role_launch",
+   "role": "explorer"
+  },
+  {
+   "event": "role_result",
+   "role": "explorer",
+   "exit": 0
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "deny"
+  },
+  {
+   "event": "stop_hold",
+   "guard": "ledger_guard_stop",
+   "decision": "continue"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  }
+ ],
+ "sessionB": [
+  {
+   "event": "session_start",
+   "role": "foreman",
+   "model": "foreman-fake/foreman",
+   "tier": "standard"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Agent",
+   "guard": "ledger_guard_spawn",
+   "decision": "deny"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Bash",
+   "guard": "destructive_guard",
+   "decision": "none"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  }
+ ]
+}

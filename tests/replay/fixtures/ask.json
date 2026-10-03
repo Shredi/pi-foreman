@@ -1,0 +1,8 @@
+{
+ "foreman": {
+  "d1": [
+   {"tools": [{"name": "bash", "arguments": {"command": "true || find ./pf-replay-ask -delete"}}]},
+   {"text": "Asked."}
+  ]
+ }
+}

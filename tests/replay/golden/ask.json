@@ -1,0 +1,132 @@
+{
+ "rpc": [
+  {
+   "event": "session_start",
+   "role": "foreman",
+   "model": "foreman-fake/foreman",
+   "tier": "standard"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Bash",
+   "guard": "destructive_guard",
+   "decision": "ask"
+  },
+  {
+   "event": "ask",
+   "toolFamily": "Bash",
+   "guard": "destructive_guard",
+   "decision": "approved"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Bash",
+   "guard": "destructive_guard",
+   "decision": "ask"
+  },
+  {
+   "event": "ask",
+   "toolFamily": "Bash",
+   "guard": "destructive_guard",
+   "decision": "denied"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  }
+ ],
+ "printAndJson": [
+  [
+   {
+    "event": "session_start",
+    "role": "foreman",
+    "model": "foreman-fake/foreman",
+    "tier": "standard"
+   },
+   {
+    "event": "llm",
+    "model": "foreman-fake/foreman"
+   },
+   {
+    "event": "guard",
+    "toolFamily": "Bash",
+    "guard": "destructive_guard",
+    "decision": "ask"
+   },
+   {
+    "event": "ask",
+    "toolFamily": "Bash",
+    "guard": "destructive_guard",
+    "decision": "no-ui"
+   },
+   {
+    "event": "llm",
+    "model": "foreman-fake/foreman"
+   },
+   {
+    "event": "guard",
+    "toolFamily": "Stop",
+    "guard": "ledger_guard_stop",
+    "decision": "none"
+   }
+  ],
+  [
+   {
+    "event": "session_start",
+    "role": "foreman",
+    "model": "foreman-fake/foreman",
+    "tier": "standard"
+   },
+   {
+    "event": "llm",
+    "model": "foreman-fake/foreman"
+   },
+   {
+    "event": "guard",
+    "toolFamily": "Bash",
+    "guard": "destructive_guard",
+    "decision": "ask"
+   },
+   {
+    "event": "ask",
+    "toolFamily": "Bash",
+    "guard": "destructive_guard",
+    "decision": "no-ui"
+   },
+   {
+    "event": "llm",
+    "model": "foreman-fake/foreman"
+   },
+   {
+    "event": "guard",
+    "toolFamily": "Stop",
+    "guard": "ledger_guard_stop",
+    "decision": "none"
+   }
+  ]
+ ]
+}
