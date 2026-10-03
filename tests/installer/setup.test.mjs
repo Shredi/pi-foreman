@@ -91,6 +91,7 @@ test("first run backs up, writes the managed block, keeps user keys in order", (
   assert.deepEqual(Object.keys(s).slice(0, 5), Object.keys(SEED));
   assert.equal(s.theme, "dark");
   assert.equal(s.subagents.agentOverrides.builder.tools.includes("edit"), true);
+  assert.equal(s.subagents.forceTopLevelAsync, true);
   assert.ok(s.packages.includes("npm:some-provider@1.2.3"));
   assert.ok(s.packages.includes("npm:pi-subagents@0.75.0"));
   assert.equal(s.packages.some((p) => p.includes("permission")), false);
@@ -158,6 +159,7 @@ test("--remove drops only managed entries", () => {
   const after = readSettings(env);
   assert.equal(after.subagents.agentOverrides, undefined);
   assert.equal(after.subagents.agentOverridesByProvider, undefined);
+  assert.equal(after.subagents.forceTopLevelAsync, undefined);
   assert.equal(after.subagents.extraUserKey, true);
   assert.equal(after.theme, "dark");
   assert.ok(after.packages.includes("npm:some-provider@1.2.3"));

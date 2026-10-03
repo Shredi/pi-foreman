@@ -10,6 +10,7 @@ import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint } f
 import type { MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
 import type { Registration } from "./childext.ts";
+import { forceDetached } from "./detach.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents } from "./payload.ts";
@@ -286,6 +287,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const input = event.input as Record<string, unknown>;
       const blocked = childLaunchBlock(s, event.toolName);
       if (blocked) return { block: true, reason: blocked };
+      if (event.toolName === "subagent" && forceDetached(input)) {
+        notifyOnce(s, ctx, "detach", "pi-foreman: child launches are always detached; async:false was overridden");
+        s.trace?.emit({ event: "detach_override" });
+      }
       const pc = payloadCtx(s, ctx);
       for (const guard of mapping.pre) {
         let agents: string[] = [];
@@ -425,7 +430,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!generated) fail("could not generate the subagents block", "fix Python/config first.");
     else {
       const have = (settings?.subagents ?? {}) as Record<string, unknown>;
-      const keys = ["agentOverridesByProvider", "agentOverrides"];
+      const keys = ["agentOverridesByProvider", "agentOverrides", "forceTopLevelAsync"];
       const same = keys.every((k) => canonical(have[k] ?? null) === canonical((generated as Record<string, unknown>)[k] ?? null));
       if (same) ok("generated subagents block in settings.json is in sync");
       else fail("subagents block in settings.json differs from generate-subagents", "run /foreman apply or the installer to regenerate it.");

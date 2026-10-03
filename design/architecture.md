@@ -271,6 +271,8 @@ Every role is launched detached (`async: true` in the role frontmatter) with the
 - A strict tool allowlist. Extension tools are not inherited and must be listed with their path. Hands-on 2026-10-03: an unlisted tool was absent, and a listed one ran.
 - A model resolved from the provider map.
 
+An explicit `async: false` in a call would beat the frontmatter, so the adapter rewrites every `subagent` call to `async: true` (and drops `foregroundOnly`), and the generated `subagents` block sets `forceTopLevelAsync: true`.
+
 Results return through pi-subagents' async notifications. The foreman waits, bounded by `fanout.max`. pi-subagents writes run state (`run-history.jsonl`, `missions/`) to the Pi agent dir, so the replay rig and tests always set `PI_CODING_AGENT_DIR` to a temp dir.
 
 ## 10. Replay rig and tests
