@@ -1,0 +1,93 @@
+{
+ "foreman": [
+  {
+   "event": "session_start",
+   "role": "foreman",
+   "model": "foreman-fake/foreman",
+   "tier": "standard"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Agent",
+   "guard": "ledger_guard_spawn",
+   "decision": "none"
+  },
+  {
+   "event": "role_launch",
+   "role": "explorer"
+  },
+  {
+   "event": "role_result",
+   "role": "explorer",
+   "exit": 0
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake-b/foreman"
+  },
+  {
+   "event": "model_override",
+   "role": "explorer",
+   "model": "foreman-fake-b/reviewer"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Agent",
+   "guard": "ledger_guard_spawn",
+   "decision": "none"
+  },
+  {
+   "event": "role_launch",
+   "role": "explorer"
+  },
+  {
+   "event": "role_result",
+   "role": "explorer",
+   "exit": 0
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake-b/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake-b/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  }
+ ]
+}

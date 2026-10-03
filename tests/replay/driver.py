@@ -96,7 +96,11 @@ def provider_map(providers, unmapped=()):
 class Rig:
     """One throwaway Pi world: agent dir + project + tmp, plus the processes started in it."""
 
-    def __init__(self, name, script, providers=(PROVIDER_A,), config=None, settings=None, unmapped=()):
+    def __init__(self, name, script, providers=(PROVIDER_A,), config=None, settings=None, unmapped=(),
+                 project_config=None, l2_providers=True):
+        """`project_config` is written to project/.pi/foreman.json after the user block is
+        generated (Pi runs with --approve, so the adapter trusts it); `l2_providers=False` leaves
+        the L2 `providers` map, and so the generated agentOverridesByProvider, empty."""
         self.root = Path(tempfile.mkdtemp(prefix="pf-replay-%s-" % name)).resolve()
         self.agent = self.root / "agent"
         self.project = self.root / "project"
@@ -107,7 +111,7 @@ class Rig:
         self.script = self.root / "script.json"
         self.script.write_text(json.dumps(script, indent=1), "utf-8")
         l2 = {
-            "providers": provider_map(providers, unmapped),
+            "providers": provider_map(providers, unmapped) if l2_providers else {},
             "trace": {"enabled": True},
             "safety": {"requiredChildExtensions": [str(FAKE_PROVIDER)]},
         }
@@ -117,13 +121,16 @@ class Rig:
         gen = _run([sys.executable, str(REPO / "scripts" / "foreman_config.py"), "generate-subagents", "--json",
                     "--agent-dir", str(self.agent), "--project-dir", str(self.project)], 60)
         # Exit 3 = roles without a model (expected when `unmapped` is set); the block is still written.
-        if gen.returncode != 0 and not (unmapped and gen.returncode == 3):
+        if gen.returncode != 0 and not ((unmapped or not l2_providers) and gen.returncode == 3):
             raise RuntimeError("generate-subagents failed: %s" % gen.stderr.decode())
         block = json.loads(gen.stdout.decode())["subagents"]
         st = {"packages": [str(pi_subagents_dir()), str(REPO)], "subagents": block}
         if settings:
             st = deep_merge(st, settings)
         (self.agent / "settings.json").write_text(json.dumps(st, indent=1), "utf-8")
+        if project_config is not None:
+            (self.project / ".pi").mkdir()
+            (self.project / ".pi" / "foreman.json").write_text(json.dumps(project_config, indent=1), "utf-8")
         self.procs = []
 
     @property
