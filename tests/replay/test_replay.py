@@ -274,5 +274,28 @@ class TestDetachedLaunch(ReplayCase):
         self.golden("detach", {"foreman": foreman, "children": children})
 
 
+class TestRoleAllowlist(ReplayCase):
+    """A launch of a pi-subagents builtin (`worker`) is refused with the allowlist reason; a
+    configured role (`builder`) launches detached."""
+
+    def test_builtin_refused_role_launched(self):
+        rig = self.rig("roles", load_fixture("role_allowlist"))
+        pi = rig.start()
+        sid = pi.session_id()
+        [(_, err, text)] = tool_results(pi.prompt("[[replay:r1]] start", timeout=60), "subagent")
+        self.assertTrue(err)
+        self.assertIn("pi-foreman: agent 'worker' is not a pi-foreman role; launch one of: explorer, builder, reviewer, senior-reviewer, finalizer", text)
+        [(_, err, text)] = tool_results(pi.prompt("[[replay:r2]] start", timeout=60), "subagent")
+        self.assertFalse(err, text)
+        self.assertNotIn("builder child result", text)  # detached: the result arrives as a notice
+        notice, _ = pi.wait_child_notify(timeout=90)
+        self.assertIn("builder child result", notice)
+        pi.close()
+        t = rig.traces()
+        foreman = shape(t.pop("trace-" + sid))
+        self.assertEqual([r["role"] for r in foreman if r["event"] == "role_launch"], ["builder"])
+        self.golden("role_allowlist", {"foreman": foreman})
+
+
 if __name__ == "__main__":
     unittest.main()
