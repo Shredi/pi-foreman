@@ -248,5 +248,31 @@ class TestRequiredChildExtension(ReplayCase):
         self.assertIn("the launch is blocked", res[0][2])
 
 
+class TestDetachedLaunch(ReplayCase):
+    """Item 73: a foreman call with `async: false` or `foregroundOnly: true` still launches
+    detached. forceTopLevelAsync is switched off here so the adapter rewrite alone is tested."""
+
+    def test_foreground_requests_run_detached(self):
+        rig = self.rig("detach", load_fixture("detach"), settings={"subagents": {"forceTopLevelAsync": False}})
+        pi = rig.start()
+        sid = pi.session_id()
+        for tag, child_text in (("g1", "child result one"), ("g2", "child result two")):
+            recs = pi.prompt("[[replay:%s]] start" % tag, timeout=60)
+            [(_, err, text)] = tool_results(recs, "subagent")
+            self.assertFalse(err, text)
+            self.assertNotIn(child_text, text)  # a foreground run would return the child's output here
+            notice, _ = pi.wait_child_notify(timeout=90)
+            self.assertIn(child_text, notice)
+            if tag == "g1":
+                self.assertEqual(len([n for n in notifications(recs) if "always detached" in n]), 1)
+        pi.close()
+        t = rig.traces()
+        foreman = shape(t.pop("trace-" + sid))
+        self.assertEqual([r for r in foreman if r["event"] == "detach_override"], [{"event": "detach_override"}] * 2)
+        children = sorted((shape(v) for v in t.values() if v and v[0].get("role") == "child"), key=json.dumps)
+        self.assertEqual(len(children), 2, "adapter did not load in both children")
+        self.golden("detach", {"foreman": foreman, "children": children})
+
+
 if __name__ == "__main__":
     unittest.main()

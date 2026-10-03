@@ -360,7 +360,8 @@ def generate_subagents(cfg):
     pi-subagents parses agentOverridesByProvider entries with the same parser as
     agentOverrides, so `tools` is accepted per provider. A per-provider `tools`
     array is therefore written only where the provider's codemode switch differs
-    from the role default.
+    from the role default. `forceTopLevelAsync` makes every depth-0 launch detached even
+    when a call passes `async: false` (design section 9).
     """
     by_provider, overrides, errors = {}, {}, []
     for role in CHILD_ROLES:
@@ -383,7 +384,8 @@ def generate_subagents(cfg):
                 e["tools"] = r["tools"]
             entries[role] = e
         by_provider[provider] = entries
-    return {"subagents": {"agentOverridesByProvider": by_provider, "agentOverrides": overrides},
+    return {"subagents": {"agentOverridesByProvider": by_provider, "agentOverrides": overrides,
+                          "forceTopLevelAsync": True},
             "errors": errors}
 
 

@@ -1,0 +1,18 @@
+{
+ "foreman": {
+  "g1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:fg]] short task", "async": false}}]},
+   {"text": "Launched."},
+   {"text": "Explorer reported."}
+  ],
+  "g2": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:fgonly]] short task", "foregroundOnly": true}}]},
+   {"text": "Launched."},
+   {"text": "Explorer reported."}
+  ]
+ },
+ "explorer": {
+  "fg": [{"text": "child result one"}],
+  "fgonly": [{"text": "child result two"}]
+ }
+}

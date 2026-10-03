@@ -169,6 +169,8 @@ class ConfigTest(unittest.TestCase):
         out = fc.generate_subagents(cfg)
         sub = out["subagents"]
         self.assertEqual(out["errors"], [])
+        self.assertEqual(set(sub), {"agentOverridesByProvider", "agentOverrides", "forceTopLevelAsync"})
+        self.assertIs(sub["forceTopLevelAsync"], True)
         self.assertEqual(set(sub["agentOverridesByProvider"]["p1"]), set(fc.CHILD_ROLES))
         self.assertEqual(sub["agentOverridesByProvider"]["p1"]["builder"],
                          {"model": "p1/m-builder", "thinking": "low"})

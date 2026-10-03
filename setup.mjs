@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = fs.realpathSync(path.dirname(fileURLToPath(import.meta.url)));
 const WIN = process.platform === "win32";
-const MANAGED_KEYS = ["agentOverridesByProvider", "agentOverrides"]; // same keys as /foreman doctor
+const MANAGED_KEYS = ["agentOverridesByProvider", "agentOverrides", "forceTopLevelAsync"]; // same keys as /foreman doctor
 const MIN_PY = [3, 9];
 const PROBE_CODE = "import sys;print('%d.%d' % sys.version_info[:2]);print(sys.executable)";
 const OVERLAY_RE = /^npm:(@[a-z0-9~][a-z0-9._~-]*\/)?[a-z0-9~][a-z0-9._~-]*@\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
