@@ -180,6 +180,8 @@ The ledger, spawn gate, write gate and stop gate come from the vendored core (§
 
 **Tiers and the gate.** The core's spawn gate stays the enforcement; the tier is only the foreman's routing. A trivial task has no ledger and at most one short `explorer` launch, which stays below the gate's threshold. Standard and heavy tasks write the ledger first; the gate denies further launches until the session has its own ledger, and the stop gate blocks ending while items are open.
 
+The foreman creates the ledger with the `write` tool, never through the shell, so the write binds the session to it; the tier is a line `Tier: <tier>` directly under the ledger title.
+
 **`/retro` friction metrics.** These are read from the Pi session JSONL, the permission-system review log and the trace. Content is never printed.
 
 | Metric | Definition |
@@ -272,6 +274,8 @@ Every role is launched detached (`async: true` in the role frontmatter) with the
 - A model resolved from the provider map.
 
 An explicit `async: false` in a call would beat the frontmatter, so the adapter rewrites every `subagent` call to `async: true` (and drops `foregroundOnly`), and the generated `subagents` block sets `forceTopLevelAsync: true`.
+
+Launches are limited to the configured child role ids (the keys of `roles` except `foreman`, overlay roles included): the adapter refuses any other agent, such as a pi-subagents builtin, in `agent`, `tasks[]`, `chain[]` or `chain[].parallel[]`, and lets management calls (`action`) pass.
 
 Results return through pi-subagents' async notifications. The foreman waits, bounded by `fanout.max`. pi-subagents writes run state (`run-history.jsonl`, `missions/`) to the Pi agent dir, so the replay rig and tests always set `PI_CODING_AGENT_DIR` to a temp dir.
 

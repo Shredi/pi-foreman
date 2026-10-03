@@ -1,0 +1,16 @@
+{
+ "foreman": {
+  "r1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "worker", "task": "[[replay:builtin]] short task"}}]},
+   {"text": "Refused."}
+  ],
+  "r2": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:role]] short task"}}]},
+   {"text": "Launched."},
+   {"text": "Builder reported."}
+  ]
+ },
+ "builder": {
+  "role": [{"text": "builder child result"}]
+ }
+}

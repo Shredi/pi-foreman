@@ -11,6 +11,7 @@ import type { MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
+import { childRoleIds, roleLaunchBlock } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents } from "./payload.ts";
@@ -290,6 +291,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === "subagent" && forceDetached(input)) {
         notifyOnce(s, ctx, "detach", "pi-foreman: child launches are always detached; async:false was overridden");
         s.trace?.emit({ event: "detach_override" });
+      }
+      if (event.toolName === "subagent") {
+        const refused = roleLaunchBlock(input, childRoleIds(get(s.config.config, "roles")));
+        if (refused) return { block: true, reason: refused };
       }
       const pc = payloadCtx(s, ctx);
       for (const guard of mapping.pre) {
