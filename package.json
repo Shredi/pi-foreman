@@ -25,7 +25,8 @@
   },
   "scripts": {
     "test": "python -m unittest discover -s tests -v",
-    "test:node": "node --test \"extensions/core-adapter/test/*.test.ts\""
+    "test:node": "node --test \"extensions/core-adapter/test/*.test.ts\"",
+    "test:installer": "node --test \"tests/installer/*.test.mjs\""
   },
   "type": "module"
 }

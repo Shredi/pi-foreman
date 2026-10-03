@@ -30,6 +30,8 @@ jobs:
           python scripts/pull_core.py --conformance
       - name: adapter tests
         run: node --test "extensions/core-adapter/test/*.test.ts"
+      - name: installer tests (dry-run, idempotent second run, remove)
+        run: node --test "tests/installer/*.test.mjs"
       - name: ledger shims on Windows (cmd and PowerShell)
         if: runner.os == 'Windows'
         shell: pwsh
