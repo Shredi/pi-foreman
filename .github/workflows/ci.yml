@@ -17,4 +17,16 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m unittest discover -s tests -v
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: python unit tests
+        run: python -m unittest discover -s tests -v
+      - name: core pin check
+        run: python scripts/pull_core.py --check
+      - name: core conformance (upstream tests at the pinned sha, summary only)
+        run: |
+          python -m pip install -q pytest
+          python scripts/pull_core.py --conformance
+      - name: adapter tests
+        run: node --test "extensions/core-adapter/test/*.test.ts"
