@@ -1,0 +1,13 @@
+{
+ "foreman": {
+  "w1": [
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-other.md", "content": "# Requirements Ledger: other\n\n- [ ] 1. owned by the first session\n"}}]},
+   {"text": "Ledger written."},
+   {"text": "Item stays open for now."}
+  ],
+  "w2": [
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-other.md", "content": "# Requirements Ledger: hijacked\n\n- [x] 1. overwritten by the second session\n"}}]},
+   {"text": "The write gate refused."}
+  ]
+ }
+}

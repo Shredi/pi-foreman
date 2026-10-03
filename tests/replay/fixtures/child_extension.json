@@ -1,0 +1,15 @@
+{
+ "foreman": {
+  "f1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:guarded]] short task"}}]},
+   {"text": "Launched."},
+   {"text": "Explorer reported."}
+  ]
+ },
+ "explorer": {
+  "guarded": [
+   {"tools": [{"name": "bash", "arguments": {"command": "shred --version"}}]},
+   {"text": "child: the guard refused"}
+  ]
+ }
+}

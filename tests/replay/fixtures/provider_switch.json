@@ -1,0 +1,12 @@
+{
+ "foreman": {
+  "p1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:child]] short task"}}]},
+   {"text": "Launched."},
+   {"text": "Explorer reported."}
+  ]
+ },
+ "explorer": {
+  "child": [{"text": "child result"}]
+ }
+}

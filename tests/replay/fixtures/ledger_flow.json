@@ -1,0 +1,24 @@
+{
+ "foreman": {
+  "a1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:child]] {{PAD}}"}}]},
+   {"text": "The spawn gate wants a ledger first."}
+  ],
+  "a2": [
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-replay.md", "content": "# Requirements Ledger: replay\n\n- [ ] 1. first synthetic item\n- [ ] 2. second synthetic item\n"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "ledger status"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:child]] {{PAD}}"}}]},
+   {"text": "Launched the explorer."},
+   {"text": "Items are still open; waiting for the explorer."},
+   {"text": "The explorer reported back."}
+  ],
+  "b1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:child]] {{PAD}}"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "ledger status"}}]},
+   {"text": "No ledger of my own."}
+  ]
+ },
+ "explorer": {
+  "child": [{"text": "child result"}]
+ }
+}

@@ -1,0 +1,9 @@
+{
+ "foreman": {
+  "c1": [
+   {"tools": [{"name": "bash", "arguments": {"command": "shred --version"}}]},
+   {"tools": [{"name": "codemode", "arguments": {"code": "const r = await tools.bash({ command: \"shred --version\" });\ntext(r.output);"}}]},
+   {"text": "Both were refused."}
+  ]
+ }
+}
