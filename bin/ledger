@@ -1,0 +1,23 @@
+#!/bin/sh
+# pi-foreman: `ledger` for Pi's bash tool (the adapter prepends this bin/ to PATH).
+# Runs the vendored core's ledger.py, bound to the same session as the guards:
+#   PI_SESSION_ID        set by Pi for every shell command -> CLAUDE_CODE_SESSION_ID (what ledger.py reads)
+#   PI_FOREMAN_STATE_DIR marker directory chosen by the adapter -> TMPDIR (where ledger.py looks)
+#   PI_FOREMAN_PYTHON    interpreter the adapter resolved (fallback: python3, then python)
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+script="$here/../core/scripts/ledger.py"
+py="${PI_FOREMAN_PYTHON:-}"
+if [ -z "$py" ]; then
+    if command -v python3 >/dev/null 2>&1; then py=python3; else py=python; fi
+fi
+if [ -n "${PI_SESSION_ID:-}" ]; then
+    CLAUDE_CODE_SESSION_ID="$PI_SESSION_ID"
+    export CLAUDE_CODE_SESSION_ID
+else
+    unset CLAUDE_CODE_SESSION_ID
+fi
+if [ -n "${PI_FOREMAN_STATE_DIR:-}" ]; then
+    TMPDIR="$PI_FOREMAN_STATE_DIR"
+    export TMPDIR
+fi
+exec "$py" -E -s "$script" "$@"
