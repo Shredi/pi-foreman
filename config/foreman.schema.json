@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Shredi/pi-foreman/config/foreman.schema.json",
+  "title": "pi-foreman configuration",
+  "description": "One config layer or the merged result. Layers: L1 defaults, L3 organisation package, L2 <agent dir>/foreman.json, project .pi/foreman.json (trusted only, may only tighten safety.*), session. Merge is plain last-wins per key.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": { "type": "integer", "minimum": 1, "maximum": 1, "description": "Config format version." },
+    "displayNames": {
+      "type": ["string", "object"],
+      "description": "A preset name from displayPresets (\"classic\" or \"plain\" ship in L1) or a per-id map {role id: display name}. Display names are cosmetic; no code compares them.",
+      "additionalProperties": { "type": "string" }
+    },
+    "displayPresets": {
+      "type": "object",
+      "description": "Named display-name presets, each a map {role id: display name}.",
+      "additionalProperties": { "type": "object", "additionalProperties": { "type": "string" } }
+    },
+    "roles": {
+      "type": "object",
+      "description": "Per-role settings keyed by neutral role id (explorer, builder, reviewer, senior-reviewer, finalizer, foreman, or an overlay role).",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "file": { "type": "string", "description": "Path of a role file that replaces the prompt (L2/L3 only)." },
+          "promptAppend": { "type": "string", "description": "Text appended to the role prompt." },
+          "tools": { "type": "array", "items": { "type": "string" }, "description": "Strict tool allowlist. Written as a JSON array into the generated settings. For the foreman it is informational." },
+          "codemode": { "type": "boolean", "description": "Add the codemode tool to this role. Overridden per provider by providers.<p>.roles.<id>.codemode." },
+          "launch": { "type": "string", "enum": ["detached"], "description": "How the role is launched. Only detached is supported: detached children forward permission asks to the parent." }
+        }
+      }
+    },
+    "providers": {
+      "type": "object",
+      "description": "Provider map keyed by Pi provider id (for example github-copilot, openrouter). L1 ships none; overlays supply it.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "costTier": { "type": "integer", "minimum": 0, "description": "Relative cost tier. A fallback to a higher tier needs one confirmation per session." },
+          "roles": {
+            "type": "object",
+            "description": "Role to model map for this provider.",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "model": { "type": "string", "description": "Full model id as Pi expects it, for example <provider>/<model>." },
+                "thinking": { "type": "string", "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"], "description": "Thinking level, capped by maxThinking." },
+                "codemode": { "type": "boolean", "description": "Per role and provider override of roles.<id>.codemode." }
+              }
+            }
+          },
+          "fallback": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["provider"],
+            "description": "One explicit fallback provider that resolves roles this provider does not map. Used only on auth failure or unavailability.",
+            "properties": {
+              "provider": { "type": "string", "description": "Provider id whose map is used for roles missing here." },
+              "confirm": { "type": "boolean", "description": "Ask once per session before using the fallback." }
+            }
+          }
+        }
+      }
+    },
+    "fanout": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "max": { "type": "integer", "minimum": 1, "maximum": 16, "description": "Maximum concurrent children." } }
+    },
+    "maxThinking": { "type": "string", "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"], "description": "Ceiling for every role's thinking level." },
+    "ceremony": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": { "type": "string", "enum": ["trivial", "standard", "heavy"], "description": "Tier assumed when no signal applies." },
+        "heavySignals": { "type": "array", "items": { "type": "string" }, "description": "Keywords or areas that make a task heavy." },
+        "heavyFileCount": { "type": "integer", "minimum": 1, "description": "A task touching more files than this is heavy." },
+        "overrides": {
+          "type": "object",
+          "description": "Per-repository-path tier, {path: tier}.",
+          "additionalProperties": { "type": "string", "enum": ["trivial", "standard", "heavy"] }
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "description": "Safety policy. An invalid value anywhere here reverts the whole subtree to the L1 values. The project layer can only tighten it.",
+      "additionalProperties": false,
+      "properties": {
+        "permissions": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "deny": { "type": "array", "items": { "type": "string" }, "description": "Permission rules that are always denied. A project can add entries, not remove them." },
+            "ask": { "type": "array", "items": { "type": "string" }, "description": "Permission rules that need approval. A project can add entries, not remove them." },
+            "allow": { "type": "array", "items": { "type": "string" }, "description": "Permission rules allowed without asking. A project cannot extend it." }
+          }
+        },
+        "requiredChildExtensions": { "type": "array", "items": { "type": "string" }, "description": "Extension paths every child must load. A project can add entries, not remove them." },
+        "children": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "mayPush": { "type": "boolean", "description": "Whether children may push. A project can only set false." } }
+        },
+        "review": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "required": { "type": "boolean", "description": "Require a review before close-out. A project can only set true." } }
+        },
+        "git": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "protectedBranches": { "type": "array", "items": { "type": "string" }, "description": "Branches that never receive a force push. A project can add entries, not remove them." } }
+        },
+        "preconditionOps": { "type": "object", "description": "Settings for the precondition-checked operations. A project cannot set it." }
+      }
+    },
+    "python": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "path": { "type": ["string", "null"], "description": "Python interpreter (3.9 or newer). null means auto-detect." } }
+    },
+    "trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Write the opt-in allowlisted trace." },
+        "dir": { "type": ["string", "null"], "description": "Trace directory. null means the state dir." }
+      }
+    }
+  }
+}

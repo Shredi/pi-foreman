@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "displayNames": "classic",
+  "displayPresets": {
+    "classic": {
+      "foreman": "Picard",
+      "explorer": "Dora",
+      "builder": "Bob",
+      "reviewer": "Watson",
+      "senior-reviewer": "Sherlock",
+      "finalizer": "Gandalf"
+    },
+    "plain": {
+      "foreman": "foreman",
+      "explorer": "explorer",
+      "builder": "builder",
+      "reviewer": "reviewer",
+      "senior-reviewer": "senior-reviewer",
+      "finalizer": "finalizer"
+    }
+  },
+  "roles": {
+    "foreman": { "tools": [], "codemode": true },
+    "explorer": { "tools": ["read", "ls", "grep", "find", "bash"], "codemode": true, "launch": "detached" },
+    "builder": { "tools": ["read", "ls", "grep", "find", "bash", "edit", "write"], "codemode": false, "launch": "detached" },
+    "reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "codemode": false, "launch": "detached" },
+    "senior-reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "codemode": false, "launch": "detached" },
+    "finalizer": { "tools": ["read", "ls", "grep", "find", "bash", "edit"], "codemode": false, "launch": "detached" }
+  },
+  "providers": {},
+  "fanout": { "max": 3 },
+  "maxThinking": "high",
+  "ceremony": {
+    "default": "standard",
+    "heavySignals": ["delete", "migration", "safety", "auth", "ci", "release", "public-api"],
+    "heavyFileCount": 8,
+    "overrides": {}
+  },
+  "safety": {
+    "permissions": { "deny": [], "ask": [] },
+    "requiredChildExtensions": [],
+    "children": { "mayPush": false },
+    "review": { "required": false },
+    "git": { "protectedBranches": ["main", "master"] }
+  },
+  "python": { "path": null },
+  "trace": { "enabled": false, "dir": null }
+}

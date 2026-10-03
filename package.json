@@ -1,0 +1,17 @@
+{
+  "name": "pi-foreman",
+  "version": "0.0.0",
+  "description": "Orchestration harness for the pi coding agent: foreman session, five subagent roles, ledger, guards.",
+  "private": true,
+  "license": "MIT",
+  "keywords": ["pi-package"],
+  "engines": { "node": ">=22" },
+  "pi": {
+    "extensions": ["./extensions/core-adapter/index.ts"],
+    "subagents": { "agents": ["./agents"] },
+    "skills": ["./skills"]
+  },
+  "scripts": {
+    "test": "python -m unittest discover -s tests -v"
+  }
+}
