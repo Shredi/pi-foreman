@@ -1,0 +1,1 @@
+`median()` in /app/stats.py returns the wrong value for lists with an even number of elements. Fix it so it returns the mean of the two middle values. Keep the existing behaviour for odd lengths and the ValueError for an empty list.

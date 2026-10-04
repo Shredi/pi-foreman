@@ -1,0 +1,40 @@
+{
+ "foreman": {
+  "detach_probe": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:detach_probe_child]] Run compute.py and write its output to result.txt."
+      }
+     }
+    ]
+   },
+   {
+    "text": "Launched the builder; its result arrives as a notice."
+   },
+   {
+    "text": "The builder reported back; result.txt is written."
+   }
+  ]
+ },
+ "builder": {
+  "detach_probe_child": [
+   {
+    "tools": [
+     {
+      "name": "bash",
+      "arguments": {
+       "command": "sleep 8 && python3 compute.py > result.txt"
+      }
+     }
+    ]
+   },
+   {
+    "text": "result.txt written after a delay."
+   }
+  ]
+ }
+}

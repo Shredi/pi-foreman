@@ -41,6 +41,14 @@ The installer installs `pi-subagents` (pinned in `packages.lock.json`) and regis
 Then re-run `node setup.mjs` to regenerate the block, and run `/foreman doctor` in Pi. Tests:
 `node --test "tests/installer/*.test.mjs"`.
 
+## Benchmark (`foreman bench`)
+
+`python scripts/foreman_bench.py run --preset bench/presets/smoke.json` runs the preset's rows over a
+[Harbor](https://github.com/harbor-framework/harbor) task dir (`--tasks DIR` or `bench.tasks_dir`) in local
+Docker; a second `run` resumes, `table` prints the counters (success, tokens, wall time, tool calls,
+approvals, guard blocks). Needs `uv tool install harbor`; Harbor telemetry is always switched off. The
+Harbor agents live in `bench/harbor_agent.py` and are not part of the installed package.
+
 ## License
 
 MIT, see `LICENSE`. Upstream attributions are in `NOTICE`.
