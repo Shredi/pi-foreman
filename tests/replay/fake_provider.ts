@@ -13,6 +13,9 @@
 // Reviewer models (`<provider>/review-<kind>`) ignore the script and answer every request with
 // a fixed verdict, for the model-review link: allow, deny-high, deny-low, defer, garbage, empty,
 // error (the provider throws) and hang (never answers until aborted).
+//
+// FOREMAN_FAKE_CALLS=<file> appends "<provider>/<model> <tag>" per provider call (tests assert a
+// request never reached the provider).
 import * as fs from "node:fs";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Model, SimpleStreamOptions, TranscriptContext } from "@earendil-works/pi-ai";
@@ -78,6 +81,14 @@ export function pickStep(script: Script, modelId: string, messages: { role: stri
 let counter = 0;
 
 function streamFake(model: Model<Api>, context: TranscriptContext, options?: SimpleStreamOptions): AssistantMessageEventStream {
+  const log = process.env.FOREMAN_FAKE_CALLS;
+  if (log) {
+    try {
+      fs.appendFileSync(log, `${model.provider}/${model.id} ${locate(context.messages as { role: string; content: unknown }[])?.[0] ?? "-"}\n`);
+    } catch {
+      // the log is a test aid only
+    }
+  }
   if (model.id === "review-error") throw new Error("fake: scripted provider failure");
   const stream = createAssistantMessageEventStream();
   const step: Step = model.id.startsWith("review-") ? { text: REVIEW_REPLIES[model.id] } : pickStep(loadScript(), model.id, context.messages as { role: string; content: unknown }[]);
@@ -135,7 +146,17 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
 }
 
 export default function fakeProvider(pi: ExtensionAPI): void {
-  for (const name of PROVIDERS) {
+  // `/replay-trigger <tag>` starts a run the way a detached child's completion notice does:
+  // sendMessage with triggerTurn (no input / before_agent_start event).
+  pi.registerCommand("replay-trigger", {
+    description: "replay only: start a run through sendMessage(triggerTurn)",
+    handler: async (args: string) => {
+      pi.sendMessage({ customType: "replay-trigger", content: `[[replay:${args.trim() || "t"}]] child finished`, display: true }, { triggerTurn: true });
+    },
+  });
+  // FOREMAN_FAKE_BRIDGE=1 also registers the fake under the claude-bridge provider name, so the
+  // adapter treats the session as a claude-bridge session (the real bridge is never loaded).
+  for (const name of process.env.FOREMAN_FAKE_BRIDGE === "1" ? [...PROVIDERS, "claude-bridge"] : PROVIDERS) {
     pi.registerProvider(name, {
       name: `pi-foreman replay fake (${name})`,
       baseUrl: "http://127.0.0.1:9",

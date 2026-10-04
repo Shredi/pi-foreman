@@ -47,7 +47,8 @@
 //  6. The overlay ignores PS's per-agent frontmatter and `yoloMode`: deny is deny.
 //  7. Write protection (baseline `protect`, overlay only; PS cannot tell reads from writes):
 //     `.git` (S1/S2, every session), the project's `.pi/` and `.agents/`, `<agentDir>`'s
-//     foreman.json, settings.json, agents/, npm/, extensions/, pi-foreman/claude-config/, the
+//     foreman.json, settings.json, agents/, npm/, extensions/, pi-foreman/claude-config/ and
+//     pi-foreman/state/ (the drift snapshots and their seen markers), the
 //     project's `.claude/` and `.mcp.json`, `~/.claude/`, `~/.gitconfig` and the git config
 //     dirs (asked in the foreman, denied in children) and the package root (file tools; shell
 //     words in children only). Paths resolve symlinks of the deepest existing ancestor, so a
