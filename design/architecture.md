@@ -40,7 +40,7 @@
 | Providers and models | `providers.<p>` block; the provider itself as a Pi extension (`registerProvider`) | Per leaf, last layer wins (§3) |
 | Display names | `displayNames` preset or per-id map | Last layer wins |
 | Skills | `skills/` in the overlay package (Pi skills format) | Pi's own resolution; a same-name skill in an overlay shadows L1 with a warning |
-| Permission rules | `safety.permissions` entries, merged into the permission-system config (Phase 3) | Last layer wins (§3); a project file may only add `deny`/`ask` entries |
+| Permission rules | `safety.permissions` entries, generated into the permission-system config, plus the adapter overlay (§5) | Last layer wins (§3); a project file may only add `deny`/`ask` entries |
 | Guards and child extensions | `safety.requiredChildExtensions` (paths in the overlay package) | Last layer wins (§3); a project file may only add entries |
 | MCP servers | Pi `mcp.json` or `registerMcpServer` from the overlay extension | Pi's rule: a same-name `mcp.json` entry wins |
 | Events | Listen on `pi.events` `foreman:*` (`role_launch`, `role_result`, `ledger_phase`, `ceremony_tier`, `retro`) | Read-only notifications. Veto power only through the overlay's own `tool_call` handler or permission rules. |
@@ -62,9 +62,9 @@
 |---|---|---|
 | Scalar or list | `displayNames.*`, `providers.*.roles.*.model/thinking`, `roles.*.codemode`, `ceremony.*`, `fanout.max`, `maxThinking`, `safety.*` | Last wins |
 | Map | `providers`, `roles`, `safety` | Deep merge; leaves are last-wins |
-| Project file on `safety.*` | `safety.children.mayPush`, `safety.review.required`, `safety.permissions.deny/ask`, `safety.requiredChildExtensions`, `safety.git.protectedBranches` | Tighten only: booleans move to the stricter value, lists gain entries, nothing is removed |
+| Project file on `safety.*` (and some other keys, §5 table) | `safety.children.mayPush`, `safety.review.required`, `safety.permissions.deny/ask`, `safety.requiredChildExtensions`, `safety.git.protectedBranches` | Tighten only: booleans move to the stricter value, lists gain entries, nothing is removed |
 
-**Keys:** `version`, `displayNames`, `roles.<id>.{file, promptAppend, tools, codemode, launch}`, `providers.<p>.roles.<id>.{model, thinking, codemode}`, `providers.<p>.{costTier, fallback}`, `fanout.max`, `maxThinking`, `ceremony.{default, heavySignals, overrides}`, `safety.{permissions, review, git, children, requiredChildExtensions, preconditionOps}`, `python.path`, `trace.{enabled, dir}`.
+**Keys:** `version`, `displayNames`, `roles.<id>.{file, promptAppend, tools, codemode, launch}`, `providers.<p>.roles.<id>.{model, thinking, codemode}`, `providers.<p>.{costTier, fallback}`, `fanout.max`, `maxThinking`, `ceremony.{default, heavySignals, overrides}`, `safety.{permissions, review, git, children, requiredChildExtensions, ops, subagents}`, `bridge.isolateClaudeConfig`, `providers.<p>.review`, `python.path`, `trace.{enabled, dir}`. Which layer may set which key: §5.
 
 **Validation.** A JSON Schema is shipped in `config/foreman.schema.json`. A stdlib Python validator (`scripts/foreman_config.py`, a supported subset of the schema) runs in three places: the installer, CI, and once at `session_start`, through the adapter (about 50 ms). Rules:
 - An unknown key gives a warning.
@@ -141,19 +141,35 @@ How thinking reaches each provider (Pi 1.0.0 catalogue and source):
 
 | Layer | Mechanism | Scope | On error |
 |---|---|---|---|
-| 1. Permission map | `@gotgenes/pi-permission-system` 39.0.2: allow/ask/deny, bash wildcards, path and MCP rules; L1 rules plus overlay rules (§2) | Main + children (required child extension) | Fail-closed (package behaviour) |
-| 2. Destructive/secret guard | Vendored core `destructive_guard.py` via the adapter (§7) on `bash`/`powershell` | Main + children (required child extension) | Fail-closed: a missing interpreter, a timeout or a non-zero exit blocks the shell call with a reason that explains the fix. This is stricter than the core's own fail-open, on purpose. |
-| 3. Model review of `ask` | `pi-permission-ai-guard` 0.13.0 as an authorizer-chain link (`authorizerChain: ["ai-guard"]`) | Asks on bash, MCP and skill surfaces | Fail-safe: an error, timeout or unsure result defers to the normal human prompt |
-| 4. Git guards (own) | Commit lint (message format, attribution, staged-paths only, public-repo grep hook point) and push lint (no force to protected branches). In children, these are blocked: `git push`, `reset --hard`, `checkout -- <path>`, `restore`, `clean -f`, `stash drop/clear`, `branch -D`, `worktree remove --force`. | Main: lint. Children: block. | Fail-closed |
-| 5. Required child extensions | `registerRequiredChildExtensions({extensions: [permission system, core adapter, git child guard], requireForAllRunners: true})` at `session_start`, disposed at `session_shutdown` | Every child | Launch refused if an extension cannot load (hands-on check in Phase 2) |
-| 6. Supervisor channel | Children can ask the parent through `contact_supervisor`. The foreman prompt and policy treat such requests as untrusted, and the foreman never runs a tool a child's allowlist lacks. Retro counts these requests. | Foreman | n/a |
+| 1. Permission map | `@gotgenes/pi-permission-system` 39.0.2 (PS): allow/ask/deny, bash wildcards, path and MCP rules. The installer generates PS's global file from L1 → L3 → L2 rules; it owns that file (changes are backed up, then overwritten), and user rules belong in `foreman.json`. The adapter also enforces an overlay by itself, before and independent of PS (below). | Main + children (required child extension) | Fail-closed (package behaviour) |
+| 2. Destructive/secret guard | Vendored core `destructive_guard.py` via the adapter (§7) on `bash`/`powershell`. The adapter checks the payload first and sets two opt-in switches for the core: `FABLE_ORCH_GUARD_FAIL_CLOSED=1` (an internal error exits non-zero) and `FABLE_ORCH_GUARD_BIN` (empty: no PATH rewrite). Until the re-pin it drops the core's PATH rewrite itself. PowerShell patterns arrive with the next fork release (patch delivered, re-pin pending). | Main + children (required child extension) | Fail-closed: a missing interpreter, a timeout, a non-zero exit or a shell call without a command string blocks it, with a reason that explains the fix. This is stricter than the core's own fail-open, on purpose. |
+| 3. Model review of `ask` | Own chain link `foreman-review` on PS's authorizer seam. It reads `providers.<active>.review` (`model`, `timeoutMs`, default 15 s) on every ask. | Asks on bash, MCP and skill surfaces; children defer | Fail-safe: an error, timeout, unsure, soft deny or no review model defers to the human prompt. Only an allow, or a deny with high or critical risk, decides. |
+| 4. Git guards (own) | `scripts/git_guard.py` (own lexer for bash, PowerShell and cmd; recursion to depth 4; aliases resolved). Main: commit lint (message pattern, required and forbidden trailers, no `-a`/pathspec commit, hook `safety.git.commit.checkCommand` for the public-repo grep) and push lint (no force, mirror, delete or `+refspec` on protected branches, also through configured refspecs). Children: see the list below. | Main: lint. Children: block. | Fail-closed: an unreadable command that mentions git is blocked in children and asked in main |
+| 5. Required child extensions | `registerRequiredChildExtensions({extensions: [permission system, core adapter, git child guard], requireForAllRunners: true})` at `session_start`, disposed at `session_shutdown`. Every launch uses `agentScope: "user"`, so project agents cannot redefine a role. | Every child | Launch refused if an extension cannot load (hands-on check in Phase 2) |
+| 6. Supervisor channel | Children can ask the parent through `contact_supervisor`. The foreman prompt treats such requests as untrusted. While a request is open (until the foreman's reply or the child's end), any foreman tool outside the requesting role's `tools` is blocked, except the reply, reads and run status. Trace event `supervisor_request`. Limit: after the reply the foreman can act on its own, and only the prompt rule covers that. | Foreman | n/a |
+
+**Layer 1b: adapter deny overlay.** PS's own merge can loosen (a project `bash: "allow"` replaces the global deny map), and PS has no session scope. So the adapter enforces the merged deny set (baseline, L1 → L3 → L2, plus project and session additions) in `tool_call`, before PS. Deny beats any allow. Project and session `ask` entries are confirmed in TUI/RPC and denied in print mode and in children. A `.pi/extensions/pi-permission-system` file shipped by a repository can at most turn an ask into an allow; the adapter warns at `session_start` and `/foreman doctor` fails on it. Every word of a shell command is resolved (`~`, `$HOME`, globs in every segment, ANSI-C quoting, braces, case folding on macOS and Windows, symlinks, inline `python -c`/`node -e` strings) and checked, so `cat .env`, `head ~/.ssh/id_x` and `git diff --no-index a .env` deny. The baseline `protect` block adds write protection that PS cannot express: `.git` is denied for every session; the project's `.pi/` and `.agents/`, the agent dir's `foreman.json`, `settings.json`, `agents/`, `npm/` and `extensions/`, and the package root are asked in the foreman and denied in children. Where the overlay matcher differs from PS:
+- It looks up deny rules inside `-c` strings, `eval`, `find -exec` and wrappers. PS floors those to `ask`.
+- It checks path-shaped words whether or not the file exists. PS checks a bare name only when it exists.
+- It uses a hand-written lexer, not PS's bash grammar. Heredoc bodies are lexed as plain words, so more words are checked, never fewer.
+- Path patterns fold case on macOS and Windows and ignore the separator on Windows.
+- It ignores per-agent frontmatter and `yoloMode`.
+- Not modelled by either: other shell variables, command output used as a path, `cd` tracking, hard links. A recursive command over an ancestor directory (`grep -r x ~`) is not caught.
+
+**Children, git guard.** Blocked: `push` (also through an alias, a computed word or `-c`), `reset --hard/--merge/--keep`, `checkout -- <path>`, `checkout -f/--force`, `switch -f/--force/--discard-changes`, `restore`, `clean` without `-n`, `stash drop/clear`, `branch -D`, moves of protected refs (`branch -f/-m`, `checkout -B`, `switch -C`), `worktree remove --force`, `update-ref -d`, `reflog expire`, `gc --prune`, `read-tree -u`, `checkout-index -f`, `fetch +ref:ref`, `send-pack`, and `git config`/`-c` for `remote.*`, `push.*` and `include.*`. Dynamic program words (`X='git push'; $X`) that mention git are unreadable and therefore blocked.
+
+**Not a sandbox.** The guards work on command strings. Allowing the repo's test and build commands (`npm test`, `pytest`) means allowing code the agent may just have written, such as a changed `package.json` script or a `conftest.py`. For children three layers still hold: the push credentials are removed from their environment, `.git` writes are denied (no planted hooks or `core.fsmonitor`), and the git guard blocks the git forms. Direct `ssh` with an unencrypted key is only covered by the `~/.ssh` path deny.
+
+**Child env (security review S9).** A child's env has `SSH_AUTH_SOCK`, `GH_TOKEN`, `GITHUB_TOKEN` and similar variables removed, the credential helper reset, `core.sshCommand=false` and an invalid `pushInsteadOf` set. Consequence: children cannot fetch from private remotes or use `gh`. The foreman does the network git. `safety.children.mayPush: true` (L1/L3/L2 only) lifts it.
+
+**Layer 3, why an own link.** `pi-permission-ai-guard` 0.13.0 reads its config once at `session_start` and builds its reviewer pool once; its session overrides cover only mode and notification level. Switching to a provider with another review model therefore needs a restart (probe: after a switch, the old reviewer still decided). Its verdict paths did behave: allow no prompt, deny-high denied, soft deny, defer, garbage, empty reply, provider error and hang all reached the human prompt. So `foreman-review` (about 150 lines) keeps those semantics, with its own try/catch and timeout, and ai-guard is not installed. A failure of the link shows the human prompt, never a block or a silent allow. Each decision is logged to PS's review log without the command, and `scripts/review_log_stats.py` counts approvals per session.
 
 Evidence:
 - Layer 1, hands-on 2026-10-03, Pi 1.0.0, pi-subagents@0.75.0 + pi-permission-system@39.0.2:
   - A **detached** child's `ask` reached the parent as `extension_ui_request` with the options "Yes / Yes, for this session / No / No, provide reason", and both approve and deny round-tripped.
   - A **foreground** child (`async:false`) ran ungated without the required extension, and with it the ask was auto-denied ("no interactive UI"). So every role launches detached (`roles.*.launch`).
   - `@gotgenes/pi-subagents`@22.0.0 forwards foreground asks and is the fallback (§13).
-- Layer 3, hands-on 2026-10-03, Pi 1.0.0, ai-guard@0.13.0 + PS@39.0.2: the link was called and allowed `echo hello` in 922 ms. Only the allow path was exercised. The package's declared PS range is `<37`, so it is pinned and re-tested on every PS bump. The fallback is a small own chain link on the documented seam.
+- Layer 3, hands-on 2026-10-03 and 2026-10-04, Pi 1.0.0, ai-guard@0.13.0 + PS@39.0.2: the verdict paths worked (see above), the provider switch did not. Replacement `foreman-review`: replay covers allow, deny-high, deny-low, defer, garbage, empty, error, hang and a provider switch without restart.
 - Layer 5, hands-on 2026-10-03, pi-subagents@0.75.0: a required child extension blocked a marker command in the child, and the control run without it did not block.
 
 ### Precondition-checked operations (replaces the dry-run/apply helper step)
@@ -162,11 +178,49 @@ The tools are registered by pi-foreman. The logic is own Python in `scripts/safe
 
 | Tool | Preconditions (all required) | Action |
 |---|---|---|
-| `foreman_worktree_remove` | The path is a linked worktree of the current repo (not the main one). `git status --porcelain` is empty, including untracked files. The worktree HEAD is merged into the base branch, or contained in its pushed upstream. No stash entries reference the branch. | `git worktree remove <path>` (no `--force`), then `git branch -d` (never `-D`) |
+| `foreman_worktree_remove` | The path is a linked worktree of the current repo (not the main one). `git status --porcelain` is empty, including untracked files. There are no ignored files, except paths under `safety.ops.worktreeDisposable`. The worktree HEAD is merged into the base branch, or contained in its pushed upstream. No stash entries reference the branch. | `git worktree remove <path>` (no `--force`), then `git branch -d` (never `-D`) |
 | `foreman_move` | The real paths of source and destination are inside the workspace root, with symlinks resolved. The destination does not exist. Neither path is inside `.git/`. A tracked source is clean. | `git mv` if tracked, otherwise a rename with no-overwrite semantics |
 | `foreman_copy` | Same path rules. The destination does not exist. The source is a regular file or directory under a size cap. | Exclusive-create copy (`COPYFILE_EXCL` semantics) |
 
-All three are recorded in the trace (§10) and counted by `/retro`.
+All three are recorded in the trace (§10, field `precondition`, name only) and counted by `/retro`.
+
+- **Who gets them.** The builder has `foreman_move` and `foreman_copy`. `foreman_worktree_remove` is for the foreman only. The overlay treats the tools' paths like file-tool paths: `foreman_copy .env x` and a move into `.git/` deny.
+- **Ignored files.** `git worktree remove` deletes ignored files, and they can hold results that exist nowhere else (this repo's `.workflow/` is one). So any ignored file outside `safety.ops.worktreeDisposable` (default `node_modules/`, `target/`, `dist/`, `build/`, `__pycache__/`, `.venv/`) fails the precondition. A project cannot extend that list.
+- **Directory-move limit.** The standard library has no `RENAME_NOREPLACE`. A directory or untracked symlink is moved by check-then-rename, so another process could create the destination in between. Files use `os.link` plus unlink, and tracked paths use `git mv`, so the window exists for directories only. Symlinks are resolved once; a swap after the check is not detected.
+
+### Safety and loosening keys by layer
+
+Direction: **tighten** keys may be set by every layer; the project file (`.pi/foreman.json`) and the session may only make them stricter. **Loosen** keys are set by L1, L3 and L2 only; the project file ignores them with a warning, and the session drops them.
+
+| Key | Layer | Direction | Project / session |
+|---|---|---|---|
+| `safety.children.mayPush` | 1, 4 | `true` loosens | only `false` |
+| `safety.review.required` | 3 | `true` is strict | only `true` |
+| `safety.permissions.deny`, `ask`, `paths.deny`, `paths.ask` | 1 | tighten | entries are added |
+| `safety.permissions.allow` | 1 | loosen | cannot be extended (intersection) |
+| `safety.permissions.projectCommands` | 1 | loosen (allows commands) | ignored |
+| `safety.requiredChildExtensions` | 5 | tighten | entries are added |
+| `safety.git.protectedBranches` | 4 | tighten | entries are added |
+| `safety.git.commit.requiredTrailers`, `forbiddenTrailers` | 4 | tighten | entries are added |
+| `safety.git.commit.messagePattern` | 4 | loosen (a pattern can accept anything) | ignored |
+| `safety.git.commit.checkCommand` | 4 | runs a program | ignored |
+| `safety.ops.copyMaxBytes` | ops | lower is tighter | only a lower value |
+| `safety.ops.worktreeDisposable`, `safety.ops.baseBranch` | ops | loosen | ignored |
+| `safety.subagents.allowWorkflow` | launch | `true` loosens (workflow scripts and `schedule.*` can name any agent) | ignored |
+| `python.*` (also `python.path`) | 2, 4 | chooses the executable that runs every guard | ignored |
+| `roles.*.tools` | 5 | narrow only | intersection with the L1 → L3 → L2 list |
+| `roles.<new id>`, `providers.*.roles.<new id>` | 5 | a new launchable role | ignored |
+| `roles.*.launch`, `roles.*.file` | 5 | loosen | ignored |
+| `roles.*.codemode`, `providers.*.roles.*.codemode` | 5 | `true` adds a tool | only `false` |
+| `providers.*.review` | 3 | a review model approves asks | ignored |
+| `bridge.isolateClaudeConfig` | bridge | `false` loosens | ignored |
+| `trace.dir` | trace | writes outside the workspace | only inside the workspace (symlinks resolved) |
+
+Each layer is validated on its own: an invalid safety entry is dropped from that layer only, with a warning. Documented limit: `maxThinking` is plain last-wins, so a project can raise the thinking ceiling. It costs money and grants no access. Subagent management actions are a fail-closed allowlist; `resume` passes only for a run this session launched, with the same role and mapped model. Checking launches made inside workflow scripts is Phase 4 (§15).
+
+### Bridge isolation
+
+A claude-bridge turn loads the host's Claude Code setup (settings, hooks, plugins, `CLAUDE.md`) through the SDK child, which also pulls the host orchestrator profile into the prompt. `bridge.isolateClaudeConfig` (`"auto"` by default: on when the active provider is `claude-bridge`) makes the adapter set `CLAUDE_CONFIG_DIR` to `<agent dir>/pi-foreman/claude-config/` (mode 0700) at `session_start` and `model_select`. `/foreman doctor` checks that the folder holds no `settings*.json`, `plugins/`, `hooks/`, `CLAUDE.md`, `agents/`, `skills/` or `commands/`, and that a login is present (presence only, never the value). One-time login: run `CLAUDE_CONFIG_DIR=<folder> claude`, then `/login`, or set `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`). Hands-on 2026-10-04, Pi 1.0.0, pi-claude-bridge@0.9.1, Sonnet: with the key the host profile was absent and the same question wrote 325 cache tokens instead of 2372; without a login the turn fails with "Not logged in". The folder also receives cloud-fetched `remote-settings.json` and `policy-limits.json`, which the doctor does not flag.
 
 ## 6. Ledger, gates and proportional ceremony
 
@@ -203,7 +257,7 @@ The foreman creates the ledger with the `write` tool, never through the shell, s
 
 | Pi tool | Core name | Guards fired |
 |---|---|---|
-| `bash`, `powershell` | `Bash` | destructive guard (pre) |
+| `bash`, `powershell` | `Bash` | destructive guard, git guard (pre); both fail closed |
 | `write` | `Write` | write gate (pre), ledger bind (post) |
 | `edit` | `Edit` | ledger bind (post). Not write-gated, as in the core's own hook config: the gate would deny the Edit that binds an existing ledger. |
 | `subagent` | `Agent` | spawn gate (pre; the input is the task text) |
@@ -214,7 +268,8 @@ The foreman creates the ledger with the `write` tool, never through the shell, s
 | Pi event | Core script | Translation |
 |---|---|---|
 | `before_agent_start` | none: pi-foreman's own `instructions/foreman.md` | System-prompt section, main session only. The core's `inject_instructions` is not called: its text names Claude model tiers and it reads Claude config dirs. |
-| `tool_call` | `destructive_guard`, `ledger_guard_write`, `ledger_guard_spawn` | Result handling below |
+| `tool_call` | permission overlay, `destructive_guard`, `git_guard` (own, `scripts/git_guard.py`), `ledger_guard_write`, `ledger_guard_spawn` | Result handling below |
+| permission asks | `foreman-review` chain link (own, layer 3) | allow, deny or defer to the human prompt |
 | `tool_result` | `ledger_bind` | Side effect only |
 | `agent_before_settle` | `ledger_guard_stop` | Block → `{continue: true}` plus the reason as a message |
 
@@ -299,7 +354,7 @@ Results return through pi-subagents' async notifications. The foreman waits, bou
 | 2. Python | Same resolution as §7. If no Python ≥ 3.9 is found, the installer stops with OS-specific instructions. |
 | 3. Packages | `pi install npm:<pkg>@<exact>` for pi-foreman and each pinned package from `packages.lock.json`. Pi and pi-permission-system are pinned in lockstep, because a PS major tracks Pi majors. `--project` uses `-l` and notes that project packages load only after trust; headless runs need `--approve`. |
 | 4. Settings merge | User `settings.json`: add or update only the entries pi-foreman manages, and write the generated `subagents` block (§3). Never remove or reorder user keys. Back up to `settings.json.bak-<timestamp>` before the first change. |
-| 5. Policy | Merge L1 permission rules into the permission-system config: union for deny/ask, and user rules kept. Add `authorizerChain` only if model review is enabled. |
+| 5. Policy | Generate the permission-system global file from the L1 → L3 → L2 rules. The installer owns it: a hand edit is backed up and overwritten, and user rules go into `foreman.json`. `authorizerChain` is `["foreman-review"]`. `/foreman doctor` reports drift. |
 | 6. Config | Write a commented `foreman.json` template only if it is absent |
 | 7. Doctor | `/foreman doctor` checks: Python, the generated block in sync, required child extensions resolvable, auth per provider in the map |
 
@@ -326,10 +381,10 @@ Results return through pi-subagents' async notifications. The foreman waits, bou
 | Subagents | **adopt** `pi-subagents`, every role detached | 0.75.0 | Hands-on: package roles discovered and launched; provider switch changes child model; full-id thinking override; codemode in child; required child extension blocks; strict tool allowlist. FAIL: foreground ask forwarding. |
 | Subagents (fallback) | fallback `@gotgenes/pi-subagents`, used only if the primary blocks | 22.0.0 | Hands-on: forwards foreground asks. Role and provider features not tested. |
 | Permission map | **adopt** `@gotgenes/pi-permission-system` | 39.0.2 | Hands-on: ask rules, detached-child forwarding, authorizer chain resolves |
-| Model review | **adopt, pinned, conditional** `pi-permission-ai-guard` | 0.13.0 | Hands-on: called and allowed at runtime with PS 39.0.2. Declared PS range `<37`; deny and defer paths not tested. |
+| Model review | **own** chain link `foreman-review` (replaces `pi-permission-ai-guard`) | n/a | ai-guard 0.13.0 ran with PS 39.0.2 and all verdict paths behaved, but its reviewer cannot switch with the provider without a restart. Replay covers all paths and the switch. |
 | Model review (rejected) | `@mzwing/pi-permission-auto-review` / `pi-verdict` | 0.7.0 / 0.14.0 | Auto-review needs Node ≥ 24 and PS 33–36. pi-verdict runs its own gate beside PS (double prompts). Load test only. |
 | Destructive/secret guard | **own** (vendored core) | core 0.22.1 @ fork SHA `6e876d1` (latency run: `1be4960`) | CI latency run on three OSes |
-| Ledger, gates, git guards, precondition ops, ceremony, `/retro`, trace, installer | **own** | n/a | Design |
+| Ledger, gates, git guards, permission overlay, bridge isolation, precondition ops, ceremony, `/retro`, trace, installer | **own** | n/a | Design |
 | Claude provider (private) | adopt `pi-claude-bridge` in L2 | 0.9.1 | Hands-on: child turns, thinking level reached |
 | Copilot, Codex subscription | Pi built-in providers | Pi 1.0.0 | Source read: Copilot device-flow `/login github-copilot` or `COPILOT_GITHUB_TOKEN`. Not run. |
 | MCP | **adopt Pi built-in (pending hands-on in Phase 2)**; `pi-mcp-adapter` 5.0.0 opt-in overlay only | Pi 1.0.0 (docs, types) | The adapter replaces the built-in, rewrites user settings, and hides per-tool gating behind one proxy tool. Not run. |
@@ -347,7 +402,7 @@ Results return through pi-subagents' async notifications. The foreman waits, bou
 | 2 | Subagent roles launch **detached**, with permission system, guard and git child guard as required child extensions (`requireForAllRunners`) | Foreground children run ungated, or are auto-denied |
 | 3 | A per-launch thinking change restates the full `provider/model:level`, not a bare `:level` | A bare level fails for native children in pi-subagents 0.75.0 |
 | 4 | pi-foreman's `providers.*` is the source, and the pi-subagents block is generated from it | The foreman entry, codemode switch, fallback and fan-out need one file. pi-subagents' mechanism is still used. |
-| 5 | Model review is pinned and conditional, with an own chain link as fallback | No package is compatible by manifest with the only PS line that runs on Pi 1.0 |
+| 5 | Model review is an own chain link, `foreman-review`; ai-guard is not installed (supersedes the first plan: pinned ai-guard with the own link as fallback) | ai-guard cannot switch the reviewing model with the provider without a restart |
 | 6 | `pi-background-tasks` dropped | Client impersonation by default, and the peer range excludes Pi 1.0 |
 | 7 | MCP decided: Pi built-in, adapter as opt-in only | Per-tool gating, no settings mutation, native to Pi 1.0 |
 | 8 | The foreman is a main-session role with its own provider-map entry, applied via `setModel`/`setThinkingLevel` | It is not a subagent, but it must follow the provider switch |
@@ -358,6 +413,12 @@ Results return through pi-subagents' async notifications. The foreman waits, bou
 | 13 | Asks get a real prompt in TUI and RPC. Only print mode and children deny. | Unlike Codex, Pi has an interactive confirm API |
 | 14 | The precondition-op logic is own Python in `scripts/`, not in the vendored core, and the vendoring script is Python, not make | The core is never edited, and make is not available on Windows by default |
 | 15 | Skills in `.agents/skills/` are for Pi only | Claude Code 2.1.288 does not load them (headless check). See open items. |
+| 16 | The adapter enforces the merged deny set and a write-protection block itself, before PS. The installer owns the generated PS file. | PS's merge can loosen and it has no session scope |
+| 17 | Children get an env without push credentials; the foreman does network git | Allowed test commands run agent-written code (security review S9) |
+| 18 | Project and session layers cannot loosen `python.*`, `roles.*.tools`, new role ids, `roles.*.launch/file`, codemode, `providers.*.review`, `bridge.*`, `trace.dir` outside the workspace (table in §5) | A cloned repository is not trusted. Confirmed by the owner. |
+| 19 | `workflow`, `schedule.*` and agent-definition actions are blocked by default (`safety.subagents.allowWorkflow`) | They can name any agent and skip the role allowlist and the model check |
+| 20 | The builder gets `foreman_move` and `foreman_copy`; worktree removal needs no ignored files outside `worktreeDisposable` | Ignored files can hold the only copy of a result |
+| 21 | Bridge sessions run with an own empty Claude config folder | Owner decision: the host setup leaked into bridge turns |
 
 ## 15. Open items for the owner
 
@@ -366,16 +427,19 @@ Results return through pi-subagents' async notifications. The foreman waits, bou
 | 1 | Does thinking reach Copilot models? | With the Copilot provider active, run `/run explorer[model=github-copilot/<model>:low]` and then `:high`. Check `thinking_level_change` in the child session file and that the request is not rejected. Try one Claude, one GPT and one Gemini-flash model (the last should show no effect). |
 | 2 | The forwarded-ask dialog in the interactive TUI | In the TUI, start a detached child that hits an `ask` rule. Check that the dialog appears and that both answers round-trip. Headless RPC already passed. |
 | 3 | The `py -3` launcher on a real Windows host | `/foreman doctor` timing |
-| 4 | ai-guard deny and defer paths, and behaviour on a PS bump | Phase 3 replay scenarios before the pin is relaxed |
+| 4 | Closed: ai-guard replaced by `foreman-review` (§5, §14 #5) | n/a |
 | 5 | Required child extension missing at launch | Hands-on in Phase 2. The expected result is that the launch is refused. |
-| 6 | Destructive-guard coverage of PowerShell (`Remove-Item -Recurse`, etc.) | The core's patterns are POSIX-oriented. Phase 3 adds PowerShell cases upstream in the fork, never in the vendored copy. |
+| 6 | Closed for now: PowerShell patch delivered to the fork (patterns, cases, opt-in fail-closed and guard-bin switches). Until the re-pin, the baseline asks for `Remove-Item -R*`, `ri`, `rd /s`, `del /s`. | Re-pin: see #7 |
+| 7 | Re-pin the vendored core after the fork's PowerShell release | `scripts/pull_core.py`, then the guard tests and the core conformance suite |
+| 8 | Phase 4: check launches inside workflow scripts and scheduled runs. No `tool_call` fires for those children. | Needs an upstream veto hook per workflow child launch, or the child extension asserting its own role and model against the map at `session_start` (the robust check). Until then `allowWorkflow` stays off. |
+| 9 | Core guard review at the fork (internal error paths, the fail-closed switch) | The security review did not read `destructive_guard.py` (a safety classifier stopped it); the parent's verifier covers it at the fork |
 
 ## 16. Decisions (owner review, 2026-10-03)
 
 | # | Decision |
 |---|---|
 | 1 | Subagents: `pi-subagents` 0.75.0, every role detached, policy extensions required in every child. The fallback package is used only if this one blocks. |
-| 2 | Permission map `@gotgenes/pi-permission-system` 39.0.2, pinned with Pi. Model review `pi-permission-ai-guard` 0.13.0, pinned; Phase 3 wires and tests it. |
+| 2 | Permission map `@gotgenes/pi-permission-system` 39.0.2, pinned with Pi. Model review `pi-permission-ai-guard` 0.13.0, pinned; Phase 3 wires and tests it (superseded 2026-10-04: own link `foreman-review`, §14 #5). |
 | 3 | MCP: Pi built-in. No background-tasks package. |
 | 4 | Codemode works for all six roles; the shipped default is on only for `foreman` and `explorer` until benchmark numbers exist. The switch per role and per role × provider stays. |
 | 5 | Display preset "classic": Picard, Dora, Bob, Watson, Sherlock, Gandalf. |
