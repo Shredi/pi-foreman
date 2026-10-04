@@ -8,7 +8,7 @@
   },
   "packages": [
     { "name": "pi-subagents", "version": "0.75.0", "mode": "install" },
-    { "name": "@gotgenes/pi-permission-system", "version": "39.0.2", "mode": "phase3" },
+    { "name": "@gotgenes/pi-permission-system", "version": "39.0.2", "mode": "install" },
     { "name": "pi-permission-ai-guard", "version": "0.13.0", "mode": "phase3" },
     { "name": "pi-foreman", "mode": "local" }
   ]

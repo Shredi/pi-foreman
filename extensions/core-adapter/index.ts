@@ -9,6 +9,9 @@ import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint } from "./config.ts";
 import type { MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
+import { buildOverlayRules, checkToolCall, isOverlayTool, OVERLAY_UNAVAILABLE, readBaseline, resolveDecision } from "./permoverlay.ts";
+import type { OverlayRules } from "./permoverlay.ts";
+import { permFileState, PS_CHILD_ID, PS_PACKAGE, psProjectConfigPath, renderPermissions, resolvePermissionSystem } from "./permsys.ts";
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
@@ -51,6 +54,10 @@ interface Session {
   registration?: Registration;
   registrationError?: string;
   childExtensionErrors?: string[];
+  /** Set when the permission system cannot be resolved: child launches are refused. */
+  permissionSystemError?: string;
+  /** Deny/ask rules enforced before the permission system; null = baseline unreadable (fail closed). */
+  overlay: OverlayRules | null;
   registrationVia?: string;
   childExtensions: { id: string; path: string }[];
   stopContinued: boolean;
@@ -71,6 +78,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   let userPickedModel = false;
   let applyingModel = false;
   let instructionsCache: string | null | undefined;
+  const baseline = readBaseline(PKG_ROOT);
 
   const pyPath = (s: Session): string | null => (s.python.ok ? s.python.info.executable : null);
 
@@ -113,6 +121,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       python,
       config,
       configProvider: provider,
+      overlay: baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir) : null,
       ceremony: initialCeremony(get(config.config, "ceremony.default")),
       childExtensions: [],
       stopContinued: false,
@@ -200,7 +209,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const extra = normaliseChildExtensions(get(s.config.config, "safety.requiredChildExtensions"), s.agentDir);
     s.childExtensionErrors = extra.errors;
     for (const e of extra.errors) ctx.ui.notify(`pi-foreman: ${e}`, "error");
-    s.childExtensions = [{ id: ADAPTER_ID, path: ENTRY }, ...extra.list.filter((e) => e.id !== ADAPTER_ID)];
+    // The permission system is required in every child (design section 5): unresolvable = launches refused.
+    const ps = resolvePermissionSystem({ agentDir: s.agentDir, cwd: s.cwd, pkgRoot: PKG_ROOT });
+    s.permissionSystemError = ps ? undefined : `${PS_PACKAGE} is not installed or not resolvable`;
+    if (s.permissionSystemError) ctx.ui.notify(`pi-foreman: ${s.permissionSystemError}. Children would run without permission checks, so launches are blocked. Run the installer (node setup.mjs), restart and run /foreman doctor.`, "error");
+    s.childExtensions = [{ id: ADAPTER_ID, path: ENTRY }, ...(ps ? [{ id: PS_CHILD_ID, path: ps }] : []), ...extra.list.filter((e) => e.id !== ADAPTER_ID && e.id !== PS_CHILD_ID)];
     try {
       const { fn, via } = await loadRegister();
       s.registration = fn({ sessionId: s.id, extensions: s.childExtensions, requireForAllRunners: true });
@@ -216,6 +229,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (toolName !== "subagent") return undefined;
     if (!s.registration) {
       return `pi-foreman: required child extensions are not registered${s.registrationError ? ` (${s.registrationError})` : ""}, so children would run without the guards; the launch is blocked. Fix safety.requiredChildExtensions, restart the session and run /foreman doctor.`;
+    }
+    if (s.permissionSystemError) {
+      return `pi-foreman: ${s.permissionSystemError}, so children would run without permission checks; the launch is blocked. Run the installer (node setup.mjs), restart the session and run /foreman doctor.`;
     }
     if (s.childExtensionErrors && s.childExtensionErrors.length > 0) {
       return `pi-foreman: required child extension config has errors (${s.childExtensionErrors.join("; ")}); the launch is blocked. Fix safety.requiredChildExtensions and restart the session.`;
@@ -264,6 +280,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const s = await startSession(ctx);
     if (!s.isChild && (event.reason === "startup" || event.reason === "new")) await applyForemanModel(s, ctx);
     await registerChildExtensions(s, ctx);
+    if (fs.existsSync(psProjectConfigPath(s.cwd))) {
+      notifyOnce(s, ctx, "ps-project-file", `pi-foreman: ${psProjectConfigPath(s.cwd)} exists. A project permission file can loosen the permission system's rules (it applies once the project is trusted). pi-foreman still enforces its deny rules itself, but put your rules in foreman.json and remove this file. /foreman doctor fails while it exists.`);
+    }
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
@@ -302,7 +321,25 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     event.systemPromptOptions.sections["pi-foreman"] = text;
   });
 
+  /** Overlay check (see permoverlay.ts); undefined = let the call go on. */
+  async function overlayBlock(s: Session, ctx: ExtensionContext, toolName: string, input: Record<string, unknown>) {
+    if (!s.overlay) return { block: true as const, reason: OVERLAY_UNAVAILABLE };
+    const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform });
+    const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: (title, msg) => ctx.ui.confirm(title, msg) });
+    if (d) s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: r ? (d.kind === "deny" ? "deny" : "ask-denied") : "ask-approved" });
+    return r;
+  }
+
   pi.on("tool_call", async (event, ctx) => {
+    // First of all, before the permission system and the core guards: the overlay's deny/ask rules.
+    if (isOverlayTool(event.toolName)) {
+      try {
+        const blocked = await overlayBlock(await ensureSession(ctx), ctx, event.toolName, event.input as Record<string, unknown>);
+        if (blocked) return blocked;
+      } catch (err) {
+        return { block: true, reason: `pi-foreman: adapter error in the permission overlay (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
+      }
+    }
     const mapping = mapTool(event.toolName);
     if (mapping.pre.length === 0) return undefined;
     try {
@@ -490,6 +527,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (configured) ok(`auth for provider ${p}`);
       else fail(`no auth for provider ${p}`, `run /login ${p} or set its API key environment variable.`);
     }
+
+    if (s.permissionSystemError) fail(s.permissionSystemError, "run the installer (node setup.mjs); the package is pinned in packages.lock.json.");
+    else ok(`permission system resolvable (${PS_PACKAGE})`);
+    if (s.overlay) ok(`permission overlay active (${s.overlay.bashDeny.length} command deny, ${s.overlay.pathRules.length} path rules, ${s.overlay.bashAsk.length + s.overlay.pathAsk.length} project/session ask)`);
+    else fail("permission overlay baseline unreadable (shell and file tools are blocked)", "reinstall pi-foreman: config/permissions.baseline.json is part of the package.");
+    if (fs.existsSync(psProjectConfigPath(s.cwd))) fail(`project permission file ${psProjectConfigPath(s.cwd)} exists; it can loosen the permission system's rules`, "delete it and put your rules in foreman.json (the overlay still enforces denies, but asks and allows would be affected).");
+    else ok("no project permission file");
+    const wanted = await renderPermissions({ python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, cwd: s.cwd, spawner });
+    const pf = permFileState(s.agentDir, wanted);
+    if (pf.state === "ok") ok("generated permission-system config is in sync");
+    else if (pf.state === "missing") fail("generated permission-system config is missing", "run the installer (node setup.mjs).");
+    else if (pf.state === "unreadable") fail("generated permission-system config is not valid JSON", "run the installer (node setup.mjs); it backs the file up first.");
+    else if (pf.state === "stale") fail(`generated permission-system config is out of date: ${pf.detail}`, "run the installer (node setup.mjs).");
+    else fail(`generated permission-system config was edited: ${pf.detail}. The installer owns this file`, "put your rules in foreman.json (safety.permissions) and run the installer; it backs the edited file up.");
 
     if (fs.existsSync(markerPath(s.markerDir, s.id))) ok(`session marker in ${s.markerDir}`);
     else fail("session marker missing", `make ${s.markerDir} writable and restart the session.`);

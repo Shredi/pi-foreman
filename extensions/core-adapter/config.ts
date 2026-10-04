@@ -14,6 +14,8 @@ export interface MergedConfig {
   roles: Record<string, Json>;
   /** "cli" = foreman_config.py answered; "defaults" = L1 file read directly. */
   source: "cli" | "defaults";
+  /** safety.permissions after L1 -> L3 -> L2, before the project and session layers (cli only). */
+  basePermissions?: Json;
 }
 
 const CONFIG_TIMEOUT_MS = 10_000;
@@ -112,6 +114,7 @@ export async function loadMergedConfig(input: LoadInput): Promise<MergedConfig> 
     safetyFallback: data.safetyFallback === true,
     roles: data.roles && typeof data.roles === "object" ? (data.roles as Record<string, Json>) : {},
     source: "cli",
+    basePermissions: data.basePermissions && typeof data.basePermissions === "object" ? (data.basePermissions as Json) : undefined,
   };
 }
 
