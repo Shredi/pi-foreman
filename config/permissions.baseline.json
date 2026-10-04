@@ -59,7 +59,11 @@
       "node --test *",
       "python -m unittest *",
       "python3 -m unittest *",
-      "pytest *"
+      "pytest *",
+      "ledger status *",
+      "ledger mark *",
+      "ledger add *",
+      "ledger note *"
     ],
     "ask": [
       "find * -exec*",
