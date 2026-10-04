@@ -24,6 +24,8 @@ The project layer is not trusted: for `safety.*` it can only tighten.
     safety.permissions.allow         cannot be extended (result = intersection)
     any other safety.* key           ignored with a warning
 
+bridge.isolateClaudeConfig (not under safety) is ignored in the project file: switching
+it off loosens the isolation of the host's Claude Code config.
 Every other key in the project file is plain last-wins.
 
 Validation uses a supported subset of foreman.schema.json: type (also a list
@@ -149,6 +151,9 @@ def project_apply(base, proj, warnings):
     """Merge the project layer: plain last-wins, except safety only tightens."""
     proj = copy.deepcopy(proj)
     safety = proj.pop("safety", None)
+    if isinstance(proj.get("bridge"), dict) and "isolateClaudeConfig" in proj["bridge"]:
+        del proj["bridge"]["isolateClaudeConfig"]
+        warnings.append("project bridge.isolateClaudeConfig ignored: the project may not set this key")
     merged = deep_merge(base, proj)
     if safety is None:
         return merged

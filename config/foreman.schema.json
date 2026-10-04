@@ -119,6 +119,11 @@
         "preconditionOps": { "type": "object", "description": "Settings for the precondition-checked operations. A project cannot set it." }
       }
     },
+    "bridge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "isolateClaudeConfig": { "type": ["boolean", "string"], "enum": [true, false, "auto"], "description": "Point CLAUDE_CONFIG_DIR at an empty pi-foreman folder so the claude bridge ignores the host's Claude Code settings, hooks, plugins and CLAUDE.md. auto = on when the active provider is claude-bridge. A project cannot set it." } }
+    },
     "python": {
       "type": "object",
       "additionalProperties": false,
