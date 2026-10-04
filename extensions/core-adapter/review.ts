@@ -26,7 +26,21 @@ export const MAX_VALUE = 4000;
 
 export type Verdict = { kind: "allow" } | { kind: "deny"; reason?: string } | { kind: "defer" };
 /** What happened, for the review log and the trace: allow, deny, soft-deny, defer, garbage, empty, error, timeout, ... */
-export type Outcome = { verdict: Verdict; label: string; riskLevel?: string };
+export type Outcome = { verdict: Verdict; label: string; riskLevel?: string; errorKind?: string };
+
+/**
+ * Why a review call failed, short enough for the log and the trace: `auth`, `aborted`, or
+ * `provider_error:<first 60 chars of the provider's message>` (`no_model` and `internal` are set
+ * by the caller). The reviewed value is cut out of the message first, so a provider that echoes
+ * its input cannot put the command into the log.
+ */
+export function errorKind(message: unknown, value = ""): string {
+  let m = String(message ?? "").replace(/\s+/g, " ").trim();
+  for (const v of [value, value.trim(), value.replace(/\s+/g, " ").trim()]) if (v.length >= 4) m = m.split(v).join("<value>");
+  if (/not logged in|unauthori[sz]ed|\b40[13]\b|api key|credential|authenticat|not configured/i.test(m)) return "auth";
+  if (/^abort/i.test(m)) return "aborted";
+  return `provider_error:${m.slice(0, 60) || "unknown"}`;
+}
 
 export interface ReviewTarget {
   provider: string;
@@ -214,24 +228,30 @@ export class ForemanReview {
       else if (reviewValue(d).length > MAX_VALUE) out = { verdict: { kind: "defer" }, label: "truncated" };
       else {
         model = `${target.provider}/${target.modelId}`;
-        out = await this.callModel(s, target, requestText(d, surface, s));
+        out = await this.callModel(s, target, requestText(d, surface, s), reviewValue(d));
       }
-      s?.trace?.({ event: "review", decision: out.label, model, latencyMs: Date.now() - started });
+      s?.trace?.({ event: "review", decision: out.label, model, latencyMs: Date.now() - started, errorKind: out.errorKind ?? null });
     } catch {
-      out = { verdict: { kind: "defer" }, label: "error" };
+      out = { verdict: { kind: "defer" }, label: "error", errorKind: "internal" };
     }
     try {
-      log?.review("foreman_review.decision", { requestId: d.requestId ?? null, sessionId: id, model, verdict: out.verdict.kind, outcome: out.label, riskLevel: out.riskLevel ?? null, latencyMs: Date.now() - started });
+      log?.review("foreman_review.decision", { requestId: d.requestId ?? null, sessionId: id, model, verdict: out.verdict.kind, outcome: out.label, errorKind: out.errorKind ?? null, riskLevel: out.riskLevel ?? null, latencyMs: Date.now() - started });
     } catch {
       // logging is best effort
     }
     return out.verdict;
   }
 
-  private async callModel(s: ReviewSession, t: ReviewTarget, text: string): Promise<Outcome> {
-    const defer = (label: string): Outcome => ({ verdict: { kind: "defer" }, label });
+  // A one-shot call marked `cacheRetention: "none"`, as Pi marks its own one-off summarizer
+  // calls. claude-bridge (0.9.1) serves an unmarked call as a turn of the running session and
+  // fails it at once ("prompt-capture: no capture for this N-char system prompt"), because the
+  // review prompt is not one Pi assembled; a marked call runs in a separate Claude Code process
+  // with no tools, no settings sources and one turn. Other providers read the marker as "no
+  // prompt cache", which costs nothing for a one-shot call.
+  private async callModel(s: ReviewSession, t: ReviewTarget, text: string, value: string): Promise<Outcome> {
+    const defer = (label: string, kind?: string): Outcome => ({ verdict: { kind: "defer" }, label, ...(kind ? { errorKind: kind } : {}) });
     const model = s.registry.find(t.provider, t.modelId);
-    if (!model) return defer("model-unresolved");
+    if (!model) return defer("model-unresolved", "no_model");
     const ac = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<"timeout">((resolve) => {
@@ -242,11 +262,13 @@ export class ForemanReview {
     });
     try {
       const call = Promise.resolve()
-        .then(() => s.registry.complete(model as never, { systemPrompt: SYSTEM_PROMPT, messages: [{ role: "user", content: text, timestamp: Date.now() }] } as never, { signal: ac.signal, maxTokens: 1024 } as never))
-        .catch(() => "error" as const);
+        .then(() => s.registry.complete(model as never, { systemPrompt: SYSTEM_PROMPT, messages: [{ role: "user", content: text, timestamp: Date.now() }] } as never, { signal: ac.signal, maxTokens: 1024, cacheRetention: "none" } as never))
+        .catch((e: unknown) => ({ thrown: e instanceof Error ? e.message : String(e) }));
       const r = await Promise.race([call, timeout]);
       if (r === "timeout") return defer("timeout");
-      if (r === "error" || !r || r.stopReason === "error" || r.stopReason === "aborted") return defer("error");
+      if (!r) return defer("error", "provider_error:no reply");
+      if ("thrown" in r) return defer("error", errorKind(r.thrown, value));
+      if (r.stopReason === "error" || r.stopReason === "aborted") return defer("error", errorKind(r.errorMessage ?? r.stopReason, value));
       return parseVerdict(replyText(r.content));
     } finally {
       if (timer) clearTimeout(timer);
