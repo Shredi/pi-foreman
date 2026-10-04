@@ -173,6 +173,10 @@ How thinking reaches each provider (Pi 1.0.0 catalogue and source):
 - A nested `.git` created through `foreman_copy`.
 - Very long commands make the guards time out; the call is then blocked (fail-closed), not reviewed.
 - The PowerShell lookup can fall back to the project's `node_modules`.
+- Files outside the protected set that run later: `.husky/*`, `.github/workflows/*`, `.envrc`, `.vscode/tasks.json`, `~/.zshrc`, `~/.local/bin/*` (writes outside the workspace ask through the permission system; inside it they pass).
+- Credential sources not in the deny list: cloud CLI default credentials (for example gcloud ADC), `ssh-add -L`, `git credential-osxkeychain get`; and agent-dir files such as `models.json`, `prompts/`, `skills/`.
+- Git config drift gate (security review T1): it covers the repository's own config, worktree config, in-repo includes and hooks; not global or system config, not includes pointing outside, and not git run indirectly by the foreman (inside `npm test`). Any change asks, including a child's allowed `user.name`. A change a child makes while the foreman's own git command runs is absorbed by the re-snapshot after it. `filter.*.clean` and `diff.external` are covered only by the drift ask.
+- The installer (`setup.mjs`) resolves Python without the workspace check the adapter applies.
 
 **Child env (security review S9).** A child's env has `SSH_AUTH_SOCK`, `GH_TOKEN`, `GITHUB_TOKEN` and similar variables removed, the credential helper reset, `core.sshCommand=false` and an invalid `pushInsteadOf` set. This is a speed bump, not a boundary: the plain `git fetch`/`git push` and `gh` calls fail, but code a child runs can still reach the `gh` keyring, ssh keys or credential helpers (see "Not a sandbox"). The foreman does the network git. `safety.children.mayPush: true` (L1/L3/L2 only) lifts it.
 
