@@ -39,6 +39,8 @@ ignores them (above) and the session layer drops them with a warning.
 
 bridge.isolateClaudeConfig (not under safety) is ignored in the project file: switching
 it off loosens the isolation of the host's Claude Code config.
+providers.<p>.review (not under safety) is ignored in the project and session layers: a
+review model lets the model approve asks, which loosens.
 Every other key in the project file is plain last-wins.
 
 Validation uses a supported subset of foreman.schema.json: type (also a list
@@ -199,6 +201,11 @@ def project_apply(base, proj, warnings, who="project"):
     if isinstance(proj.get("bridge"), dict) and "isolateClaudeConfig" in proj["bridge"]:
         del proj["bridge"]["isolateClaudeConfig"]
         warnings.append(who + " bridge.isolateClaudeConfig ignored: the %s may not set this key" % who)
+    if isinstance(proj.get("providers"), dict):
+        for name, entry in proj["providers"].items():
+            if isinstance(entry, dict) and "review" in entry:
+                del entry["review"]
+                warnings.append("%s providers.%s.review ignored: the %s may not set this key (it loosens)" % (who, name, who))
     merged = deep_merge(base, proj)
     if safety is None:
         return merged

@@ -9,6 +9,10 @@
 // The tag comes from the newest user message that carries `[[replay:<tag>]]` (a prompt from
 // the driver, or a child's task text). The step index is the number of assistant messages
 // after that user message, so the script is stateless across processes and turns.
+//
+// Reviewer models (`<provider>/review-<kind>`) ignore the script and answer every request with
+// a fixed verdict, for the model-review link: allow, deny-high, deny-low, defer, garbage, empty,
+// error (the provider throws) and hang (never answers until aborted).
 import * as fs from "node:fs";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Model, SimpleStreamOptions, TranscriptContext } from "@earendil-works/pi-ai";
@@ -16,6 +20,15 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export const PROVIDERS = ["foreman-fake", "foreman-fake-b"];
 export const ROLE_MODELS = ["foreman", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"];
+export const REVIEW_MODELS = ["allow", "deny-high", "deny-low", "defer", "garbage", "empty", "error", "hang"].map((k) => `review-${k}`);
+const REVIEW_REPLIES: Record<string, string> = {
+  "review-allow": '{"verdict":"allow"}',
+  "review-deny-high": '{"verdict":"deny","reason":"scripted hard deny","riskLevel":"high"}',
+  "review-deny-low": '{"verdict":"deny","reason":"scripted soft deny","riskLevel":"low"}',
+  "review-defer": '{"verdict":"defer","reason":"scripted unsure","lean":"allow"}',
+  "review-garbage": "Sure, that looks fine to me.",
+  "review-empty": "",
+};
 const TAG = /\[\[replay:([A-Za-z0-9_.-]+)\]\]/;
 
 interface Step {
@@ -65,8 +78,9 @@ export function pickStep(script: Script, modelId: string, messages: { role: stri
 let counter = 0;
 
 function streamFake(model: Model<Api>, context: TranscriptContext, options?: SimpleStreamOptions): AssistantMessageEventStream {
+  if (model.id === "review-error") throw new Error("fake: scripted provider failure");
   const stream = createAssistantMessageEventStream();
-  const step = pickStep(loadScript(), model.id, context.messages as { role: string; content: unknown }[]);
+  const step: Step = model.id.startsWith("review-") ? { text: REVIEW_REPLIES[model.id] } : pickStep(loadScript(), model.id, context.messages as { role: string; content: unknown }[]);
   const output: AssistantMessage = {
     role: "assistant",
     content: [],
@@ -77,6 +91,17 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
     stopReason: "stop",
     timestamp: Date.now(),
   } as AssistantMessage;
+  if (model.id === "review-hang") {
+    const abort = (): void => {
+      output.stopReason = "aborted";
+      output.errorMessage = "Request was aborted";
+      stream.push({ type: "error", reason: "aborted", error: output });
+      stream.end();
+    };
+    if (options?.signal?.aborted) queueMicrotask(abort);
+    else options?.signal?.addEventListener("abort", abort, { once: true });
+    return stream;
+  }
   queueMicrotask(() => {
     if (options?.signal?.aborted) {
       output.stopReason = "aborted";
@@ -116,7 +141,7 @@ export default function fakeProvider(pi: ExtensionAPI): void {
       baseUrl: "http://127.0.0.1:9",
       apiKey: "fake-key",
       api: "foreman-fake-api" as Api,
-      models: ROLE_MODELS.map((id) => ({
+      models: [...ROLE_MODELS, ...REVIEW_MODELS].map((id) => ({
         id,
         name: `${name} ${id}`,
         reasoning: false,

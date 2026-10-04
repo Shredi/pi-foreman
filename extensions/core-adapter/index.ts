@@ -22,6 +22,7 @@ import { gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BridgeIsolation, isolationDir, isolationDoctor, isolationOn } from "./bridgeiso.ts";
 import { applyLaunchModels } from "./launchmodel.ts";
+import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
@@ -92,6 +93,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   let applyingModel = false;
   let instructionsCache: string | null | undefined;
   const bridgeIso = new BridgeIsolation();
+  const review = new ForemanReview();
+  pi.events?.on("permissions:ready", (payload: unknown) => review.onReady(payload));
   let isoSetting: unknown = "auto";
   const baseline = readBaseline(PKG_ROOT);
 
@@ -303,6 +306,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   pi.on("session_start", async (event, ctx) => {
     const s = await startSession(ctx);
+    review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r) });
     if (!s.isChild && (event.reason === "startup" || event.reason === "new")) await applyForemanModel(s, ctx);
     await registerChildExtensions(s, ctx);
     if (fs.existsSync(psProjectConfigPath(s.cwd))) {
@@ -319,11 +323,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // already gone
     }
     s.registration = undefined;
+    review.drop(s.id);
     pythonCache.drop(s.id);
     sessions.delete(s.id);
   });
 
   pi.on("model_select", async (event, ctx) => {
+    const sid = sessionFor(ctx)?.id;
+    if (sid) review.setProvider(sid, event.model?.provider);
     try {
       bridgeIso.apply(process.env, sessionFor(ctx)?.agentDir ?? piAgentDir(process.env, os.homedir()), isoSetting, event.model?.provider);
     } catch {
@@ -336,6 +343,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("before_agent_start", async (event, ctx) => {
     const s = await ensureSession(ctx);
     s.stopContinued = false;
+    review.setIntent(s.id, event.prompt ?? "");
     const signals = promptSignals(event.prompt ?? "", get(s.config.config, "ceremony.heavySignals"));
     if (signals.length) setCeremony(s, escalate(s.ceremony, "heavy", "auto", `heavy signal in the request: ${signals.join(", ")}`));
     if (s.isChild) return;
@@ -617,6 +625,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
 
     if (isolationOn(isoSetting, ctx.model?.provider)) out.push(...isolationDoctor({ dir: isolationDir(s.agentDir), env: process.env, platform }));
+    const rt = reviewTarget(s.config.config, ctx.model?.provider);
+    if (!rt) out.push(`WARN no review model for provider ${ctx.model?.provider ?? "(none)"}: model review (${REVIEW_LINK}) is off, every ask goes to you — set providers.<p>.review.model in foreman.json`);
+    else if (!ctx.modelRegistry.find(rt.provider, rt.modelId)) fail(`review model ${rt.provider}/${rt.modelId} not in the model registry; asks go to you`, "correct providers.<p>.review.model.");
+    else ok(`model review: ${rt.provider}/${rt.modelId} (timeout ${rt.timeoutMs} ms)`);
     if (s.permissionSystemError) fail(s.permissionSystemError, "run the installer (node setup.mjs); the package is pinned in packages.lock.json.");
     else ok(`permission system resolvable (${PS_PACKAGE})`);
     if (s.overlay) ok(`permission overlay active (${s.overlay.bashDeny.length} command deny, ${s.overlay.pathRules.length} path rules, ${s.overlay.bashAsk.length + s.overlay.pathAsk.length} project/session ask)`);

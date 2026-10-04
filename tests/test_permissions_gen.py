@@ -84,7 +84,8 @@ class GeneratorTest(unittest.TestCase):
         json.dumps(out)
         for state in out["permission"]["bash"].values():
             self.assertTrue(state in ("allow", "ask") or state["action"] == "deny")
-        self.assertEqual(set(out), {"permission", "shellTools", "permissionReviewLog"})
+        self.assertEqual(set(out), {"permission", "shellTools", "permissionReviewLog", "authorizerChain"})
+        self.assertEqual(out["authorizerChain"], ["foreman-review"])
 
 
 class TightenTableTest(unittest.TestCase):

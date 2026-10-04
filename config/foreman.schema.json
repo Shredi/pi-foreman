@@ -53,6 +53,15 @@
               }
             }
           },
+          "review": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Model review of permission asks (link foreman-review) while this provider is active. Without it every ask goes to the human. Ignored in the project and session layers (it loosens).",
+            "properties": {
+              "model": { "type": "string", "description": "Reviewer model, <provider>/<model> or a bare model id of this provider." },
+              "timeoutMs": { "type": "integer", "minimum": 100, "description": "Review timeout in ms (default 15000); a timeout defers to the human." }
+            }
+          },
           "fallback": {
             "type": "object",
             "additionalProperties": false,
