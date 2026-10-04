@@ -256,3 +256,31 @@ test("--remove deletes an unchanged permission-system config (with a backup) and
   assert.equal(run(env2, ["--remove"]).code, 0);
   assert.equal(fs.existsSync(permFile(env2)), true);
 });
+
+test("pi-foreman is placed before pi-claude-bridge in packages: dry run shows it, the run backs up and moves it, a rerun is a no-op", () => {
+  const env = fresh();
+  const seeded = { theme: "dark", packages: ["npm:pi-claude-bridge@0.9.1", "npm:some-provider@1.2.3"] };
+  seed(env, seeded);
+  const before = snapshot(env.base);
+  const dry = run(env, ["--dry-run"]);
+  assert.equal(dry.code, 0, dry.out);
+  assert.match(dry.out, /packages: would move pi-foreman before pi-claude-bridge/);
+  assert.match(dry.out, /^-\s+"npm:pi-claude-bridge@0\.9\.1",$/m);
+  assert.deepEqual(snapshot(env.base), before, "dry run writes nothing");
+
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  const pk = readSettings(env).packages;
+  const foreman = pk.findIndex((p) => path.resolve(env.agentDir, p) === ROOT);
+  assert.ok(foreman >= 0 && foreman < pk.indexOf("npm:pi-claude-bridge@0.9.1"), JSON.stringify(pk));
+  assert.equal(backups(env).length, 1);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(env.agentDir, backups(env)[0]), "utf8")), seeded);
+
+  fs.rmSync(env.log);
+  const settled = snapshot(env.base);
+  const again = run(env, []);
+  assert.equal(again.code, 0, again.out);
+  assert.doesNotMatch(again.out, /move pi-foreman/);
+  assert.deepEqual(snapshot(env.base), settled);
+  assert.match(again.out, /up to date/);
+});

@@ -139,6 +139,7 @@
       "{cwd}/.agents/*",
       "{agentDir}/foreman.json",
       "{agentDir}/settings.json",
+      "{agentDir}/claude-bridge.json",
       "{agentDir}/agents",
       "{agentDir}/agents/*",
       "{agentDir}/npm",

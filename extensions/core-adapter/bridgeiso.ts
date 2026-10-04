@@ -155,35 +155,56 @@ const PATHLIKE_KEY = /path|executable|exe$|command|cmd|binary|program|script|hel
  * `unreadable` for the doctor only.
  */
 export function projectBridgeConfigRisks(cwd: string): string[] {
+  const k = bridgeConfigKeys(path.join(cwd, ...PROJECT_BRIDGE_CONFIG.split("/")));
+  if (!k) return [];
+  if (k.unreadable) return [`${PROJECT_BRIDGE_CONFIG} (unreadable; the bridge ignores it)`];
+  const keys = [...k.path, ...k.other];
+  return keys.length ? [`${PROJECT_BRIDGE_CONFIG} (${keys.join(", ")})`] : [];
+}
+
+/**
+ * The user-level bridge config `<agentDir>/claude-bridge.json`, judged by the same keys. An
+ * executable path there may be the user's own choice, so it only warns; AskClaude and
+ * strictMcpConfig false fail as in the project file.
+ */
+export function userBridgeConfigRisks(agentDir: string): { fail: string[]; warn: string[] } {
+  const k = bridgeConfigKeys(path.join(agentDir, "claude-bridge.json"));
+  if (!k) return { fail: [], warn: [] };
+  if (k.unreadable) return { fail: [], warn: ["unreadable; the bridge ignores it"] };
+  return { fail: k.other, warn: k.path };
+}
+
+/** Judged keys of one bridge config file: `path` = executable/path-like keys, `other` = AskClaude and MCP loosening; null = no file. */
+function bridgeConfigKeys(file: string): { path: string[]; other: string[]; unreadable: boolean } | null {
   let raw: string;
   try {
-    raw = fs.readFileSync(path.join(cwd, ...PROJECT_BRIDGE_CONFIG.split("/")), "utf8");
+    raw = fs.readFileSync(file, "utf8");
   } catch {
-    return [];
+    return null;
   }
   let data: unknown;
   try {
     data = JSON.parse(raw);
   } catch {
-    return [`${PROJECT_BRIDGE_CONFIG} (unreadable; the bridge ignores it)`];
+    return { path: [], other: [], unreadable: true };
   }
-  if (!data || typeof data !== "object" || Array.isArray(data)) return [];
-  const keys: string[] = [];
+  const out = { path: [] as string[], other: [] as string[], unreadable: false };
+  if (!data || typeof data !== "object" || Array.isArray(data)) return out;
   const walk = (o: unknown, prefix: string, depth: number): void => {
     if (!o || typeof o !== "object" || Array.isArray(o) || depth > 4) return;
     for (const [k, v] of Object.entries(o as Record<string, unknown>)) {
       const name = prefix ? `${prefix}.${k}` : k;
-      if (PATHLIKE_KEY.test(k) && v !== null && v !== false && v !== "") keys.push(name);
+      if (PATHLIKE_KEY.test(k) && v !== null && v !== false && v !== "") out.path.push(name);
       walk(v, name, depth + 1);
     }
   };
   walk(data, "", 0);
   const d = data as { askClaude?: unknown; provider?: unknown };
   const sub = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
-  if (sub(d.askClaude).enabled === true) keys.push("askClaude.enabled");
-  if (sub(d.askClaude).defaultMode === "full") keys.push('askClaude.defaultMode "full"');
-  if (sub(d.provider).strictMcpConfig === false) keys.push("provider.strictMcpConfig false");
-  return keys.length ? [`${PROJECT_BRIDGE_CONFIG} (${keys.join(", ")})`] : [];
+  if (sub(d.askClaude).enabled === true) out.other.push("askClaude.enabled");
+  if (sub(d.askClaude).defaultMode === "full") out.other.push('askClaude.defaultMode "full"');
+  if (sub(d.provider).strictMcpConfig === false) out.other.push("provider.strictMcpConfig false");
+  return out;
 }
 
 export const PROJECT_BRIDGE_FIX = "remove those keys from .pi/claude-bridge.json (an executable path there is the program claude-bridge starts for every turn and summary; AskClaude runs with the project's settings and bypassPermissions; strictMcpConfig false loads project MCP servers), or set them in your user claude-bridge.json if you meant them.";
@@ -203,12 +224,31 @@ function packageSpec(e: unknown): string {
  * user packages, each in list order (package-manager.js:708-715); `-e` extensions load before
  * both (resource-loader.js:403) and are not seen here.
  */
-export function bridgeLoadOrder(projectPackages: unknown, userPackages: unknown, pkgRoot: string): "no-bridge" | "foreman-first" | "bridge-first" | "unknown" {
-  const list = [...(Array.isArray(projectPackages) ? projectPackages : []), ...(Array.isArray(userPackages) ? userPackages : [])].map(packageSpec);
+export function bridgeLoadOrder(projectPackages: unknown, userPackages: unknown, pkgRoot: string, projectBase = ".", userBase = "."): "no-bridge" | "foreman-first" | "bridge-first" | "unknown" {
+  // Pi stores a local package path relative to the settings file's folder.
+  const local = (s: string, base: string): string => {
+    if (!s || /^(npm|git|https?|ssh):/.test(s) || s.startsWith("git@")) return s;
+    const abs = path.resolve(base, s);
+    try {
+      return fs.realpathSync(abs);
+    } catch {
+      return abs;
+    }
+  };
+  const list = [
+    ...(Array.isArray(projectPackages) ? projectPackages : []).map((e) => local(packageSpec(e), projectBase)),
+    ...(Array.isArray(userPackages) ? userPackages : []).map((e) => local(packageSpec(e), userBase)),
+  ];
   const norm = (s: string): string => s.replace(/\\/g, "/").replace(/\/+$/, "");
+  let root = pkgRoot;
+  try {
+    root = fs.realpathSync(pkgRoot);
+  } catch {
+    root = pkgRoot;
+  }
   const bridge = list.findIndex((s) => /(^|[/:@])pi-claude-bridge(@|$|\/)/.test(s));
   if (bridge < 0) return "no-bridge";
-  const foreman = list.findIndex((s) => norm(s) === norm(pkgRoot) || /(^|[/:])pi-foreman(@|$)/.test(norm(s)));
+  const foreman = list.findIndex((s) => norm(s) === norm(root) || norm(s) === norm(pkgRoot) || /^npm:pi-foreman(@|$)/.test(s));
   if (foreman < 0) return "unknown";
   return foreman < bridge ? "foreman-first" : "bridge-first";
 }

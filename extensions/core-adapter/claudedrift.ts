@@ -40,11 +40,34 @@ const REQUIRED_FILES = CLAUDE_PROJECT_FILES.slice(0, 3);
 /** File name -> content hash, or "absent". */
 export type ClaudeSnapshot = Record<string, string>;
 
-export function takeClaudeSnapshot(cwd: string): ClaudeSnapshot {
+/** Snapshot key of the user-level bridge config `<agentDir>/claude-bridge.json` (merged under the project file). */
+export const USER_BRIDGE_FILE = "<agentDir>/claude-bridge.json";
+
+/**
+ * Hash of the user bridge config without `startupNoticeShown`, which the bridge itself writes
+ * there once (src/config.ts markStartupNoticeShown); unparseable content is hashed as is.
+ */
+function userBridgeHash(buf: Buffer): string {
+  try {
+    const o = JSON.parse(buf.toString("utf8")) as unknown;
+    if (o && typeof o === "object" && !Array.isArray(o)) {
+      delete (o as Record<string, unknown>).startupNoticeShown;
+      // only the bridge's own marker: no settings, same as no file
+      return Object.keys(o).length ? sha(JSON.stringify(o)) : "absent";
+    }
+  } catch {
+    // hashed raw below
+  }
+  return sha(buf);
+}
+
+export function takeClaudeSnapshot(cwd: string, agentDir?: string): ClaudeSnapshot {
   const out: ClaudeSnapshot = {};
-  for (const name of CLAUDE_PROJECT_FILES) {
+  const files: Array<[string, string, (b: Buffer) => string]> = CLAUDE_PROJECT_FILES.map((name) => [name, path.join(cwd, ...name.split("/")), sha]);
+  if (agentDir) files.push([USER_BRIDGE_FILE, path.join(agentDir, "claude-bridge.json"), userBridgeHash]);
+  for (const [name, file, hash] of files) {
     try {
-      out[name] = sha(fs.readFileSync(path.join(cwd, ...name.split("/"))));
+      out[name] = hash(fs.readFileSync(file));
     } catch (err) {
       out[name] = (err as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : "unreadable";
     }
@@ -56,7 +79,7 @@ export function takeClaudeSnapshot(cwd: string): ClaudeSnapshot {
 export function diffClaudeSnapshots(before: ClaudeSnapshot | null, after: ClaudeSnapshot): string[] {
   if (!before) return [];
   const out: string[] = [];
-  for (const name of CLAUDE_PROJECT_FILES) {
+  for (const name of Object.keys(after)) {
     const a = before[name] ?? "absent";
     const b = after[name];
     if (a === b) continue;
@@ -72,6 +95,8 @@ export class ClaudeConfigWatch {
   /** Set when the stored snapshot was missing or corrupt for a workspace that had one; asks until approved. */
   tamper: string | null = null;
   private stateFile: string | null = null;
+  /** Agent dir for the user-level bridge config (bind); undefined = not tracked. */
+  private agentDir: string | undefined;
 
   private set(s: ClaudeSnapshot): void {
     this.snap = s;
@@ -79,7 +104,8 @@ export class ClaudeConfigWatch {
   }
 
   /** Foreman session start: load the stored snapshot (or take the first one); returns the drift since. */
-  bind(stateDir: string, cwd: string): string[] {
+  bind(stateDir: string, cwd: string, agentDir?: string): string[] {
+    this.agentDir = agentDir;
     this.stateFile = stateFileFor(stateDir, "claudecfg", cwd);
     const st = loadState(this.stateFile, "Claude Code config", (o) => {
       const r = o as { v?: number; files?: unknown } | null;
@@ -89,18 +115,18 @@ export class ClaudeConfigWatch {
     if (st.kind !== "stored") {
       this.firstBaseline = st.kind === "first";
       this.tamper = st.kind === "tampered" ? st.line : null;
-      if (st.kind === "first") this.set(takeClaudeSnapshot(cwd));
-      else this.snap = takeClaudeSnapshot(cwd);
+      if (st.kind === "first") this.set(takeClaudeSnapshot(cwd, this.agentDir));
+      else this.snap = takeClaudeSnapshot(cwd, this.agentDir);
       return this.tamper ? [this.tamper] : [];
     }
     this.snap = st.data;
-    return diffClaudeSnapshots(st.data, takeClaudeSnapshot(cwd));
+    return diffClaudeSnapshots(st.data, takeClaudeSnapshot(cwd, this.agentDir));
   }
 
   /** Drift lines now, without asking (empty = none). */
   pending(cwd: string): string[] {
     if (!this.snap) return [];
-    return [...(this.tamper ? [this.tamper] : []), ...diffClaudeSnapshots(this.snap, takeClaudeSnapshot(cwd))];
+    return [...(this.tamper ? [this.tamper] : []), ...diffClaudeSnapshots(this.snap, takeClaudeSnapshot(cwd, this.agentDir))];
   }
 
   /** Before a claude-bridge prompt or model request / on the switch to claude-bridge. Undefined = go on. */
@@ -122,7 +148,7 @@ export class ClaudeConfigWatch {
     trace({ event: "claude_config_drift", decision });
     if (decision === "approved") {
       this.tamper = null;
-      this.set(takeClaudeSnapshot(cwd));
+      this.set(takeClaudeSnapshot(cwd, this.agentDir));
       return undefined;
     }
     if (decision === "denied") return { block: true, reason: `Denied by the user. pi-foreman: project Claude Code or claude-bridge config drift.\n${summary}` };

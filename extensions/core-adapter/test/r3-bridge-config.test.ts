@@ -11,7 +11,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import coreAdapter from "../index.ts";
 import { ClaudeConfigWatch, takeClaudeSnapshot } from "../claudedrift.ts";
-import { bridgeLoadOrder, projectBridgeConfigRisks } from "../bridgeiso.ts";
+import { bridgeLoadOrder, projectBridgeConfigRisks, userBridgeConfigRisks } from "../bridgeiso.ts";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import { ForemanReview } from "../review.ts";
 import type { RegistryLike } from "../review.ts";
@@ -73,6 +73,47 @@ test("R3-H1: bridgeLoadOrder reads project then user packages", () => {
   assert.equal(bridgeLoadOrder([{ source: "npm:pi-foreman@1.0.0" }], ["npm:pi-claude-bridge@0.9.1"], root), "foreman-first");
   assert.equal(bridgeLoadOrder(["npm:pi-claude-bridge@0.9.1"], [root], root), "bridge-first");
   assert.equal(bridgeLoadOrder(undefined, ["npm:pi-claude-bridge"], root), "unknown");
+  // Pi stores a local checkout relative to the settings folder
+  assert.equal(bridgeLoadOrder(undefined, ["npm:pi-claude-bridge@0.9.1", "../../opt/pi-foreman"], root, "/p/.pi", "/a/b"), "bridge-first");
+  assert.equal(bridgeLoadOrder(undefined, ["../../opt/pi-foreman", "npm:pi-claude-bridge@0.9.1"], root, "/p/.pi", "/a/b"), "foreman-first");
+});
+
+test("user-level <agentDir>/claude-bridge.json: drift-checked (the bridge's own startupNoticeShown ignored), protected, judged with a WARN for an executable path", async (t) => {
+  const root = tmp(t, "pf-r3u-");
+  const state = path.join(root, "state");
+  const proj = path.join(root, "proj");
+  const home = path.join(root, "home");
+  const agentDir = path.join(home, ".pi", "agent");
+  for (const d of [state, proj, agentDir]) fs.mkdirSync(d, { recursive: true });
+  const userCfg = path.join(agentDir, "claude-bridge.json");
+  fs.writeFileSync(userCfg, JSON.stringify({ provider: { plan: "max" } }));
+  const c = new ClaudeConfigWatch();
+  assert.deepEqual(c.bind(state, proj, agentDir), []);
+  fs.writeFileSync(userCfg, JSON.stringify({ provider: { plan: "max" }, startupNoticeShown: "2026-10-04" }));
+  assert.deepEqual(c.pending(proj), [], "the bridge's own marker is not drift");
+  fs.writeFileSync(userCfg, JSON.stringify({ provider: { plan: "max", pathToClaudeCodeExecutable: path.join(root, "no-such-cc") } }));
+  assert.deepEqual(c.pending(proj), ["<agentDir>/claude-bridge.json: changed"]);
+  assert.match((await c.check(proj, "x", PRINT, noTrace))?.reason ?? "", /no UI/);
+  assert.deepEqual(new ClaudeConfigWatch().bind(state, proj, agentDir), ["<agentDir>/claude-bridge.json: changed"], "persists across sessions");
+
+  const fresh = tmp(t, "pf-r3u2-");
+  fs.writeFileSync(path.join(fresh, "claude-bridge.json"), JSON.stringify({ startupNoticeShown: "2026-10-04" }));
+  assert.equal(takeClaudeSnapshot(proj, fresh)["<agentDir>/claude-bridge.json"], "absent", "marker-only file = no settings");
+
+  assert.deepEqual(userBridgeConfigRisks(agentDir), { fail: [], warn: ["provider.pathToClaudeCodeExecutable"] });
+  fs.writeFileSync(userCfg, JSON.stringify({ askClaude: { enabled: true }, provider: { strictMcpConfig: false } }));
+  assert.deepEqual(userBridgeConfigRisks(agentDir), { fail: ["askClaude.enabled", "provider.strictMcpConfig false"], warn: [] });
+  assert.deepEqual(userBridgeConfigRisks(path.join(root, "none")), { fail: [], warn: [] });
+
+  const r = buildOverlayRules(readBaseline(PKG)!, {}, {}, agentDir, path.join(root, "pkg"));
+  for (const [tool, input] of [
+    ["write", { path: userCfg, content: "{}" }],
+    ["bash", { command: "echo '{}' > ~/.pi/agent/claude-bridge.json" }],
+  ] as Array<[string, Record<string, unknown>]>) {
+    for (const [role, want] of [["main", "ask"], ["child", "deny"]] as const) {
+      assert.equal(checkToolCall(r, tool, input, { cwd: proj, home, platform: process.platform, role })?.kind, want, `${role} ${tool}`);
+    }
+  }
 });
 
 test("R3-H1 / round 3: protect set covers .pi/claude-bridge.json and remove/rename of the state folder's ancestors", (t) => {
