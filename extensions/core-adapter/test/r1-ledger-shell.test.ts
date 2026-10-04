@@ -31,6 +31,7 @@ test("R1: ledger bound via the adapter is what `ledger status` sees from a shell
     const pi = {
       on: (name: string, h: Handler) => void handlers.set(name, h),
       registerCommand: () => undefined,
+      registerTool: () => undefined,
       getActiveTools: () => [] as string[],
       setActiveTools: () => undefined,
       setModel: async () => true,

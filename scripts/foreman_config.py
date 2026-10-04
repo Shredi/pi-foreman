@@ -22,6 +22,9 @@ The project layer is not trusted: for `safety.*` it can only tighten.
     safety.requiredChildExtensions   union
     safety.git.protectedBranches     union
     safety.permissions.allow         cannot be extended (result = intersection)
+    safety.ops.copyMaxBytes          lower = tighter; only a lower value is accepted
+    safety.ops.worktreeDisposable    loosens: ignored with a warning
+    safety.ops.baseBranch            loosens: ignored with a warning
     any other safety.* key           ignored with a warning
 
 bridge.isolateClaudeConfig (not under safety) is ignored in the project file: switching
@@ -65,6 +68,7 @@ TIGHTEN = {
     ("requiredChildExtensions",): "union",
     ("git", "protectedBranches"): "union",
     ("permissions", "allow"): "intersect",
+    ("ops", "copyMaxBytes"): "lower_only",
 }
 
 
@@ -193,6 +197,13 @@ def project_apply(base, proj, warnings):
                 cur[keys[-1]] = val
             elif have is not val:
                 warnings.append("project %s ignored: it would loosen the policy" % name)
+        elif rule == "lower_only":
+            if not isinstance(val, int) or isinstance(val, bool) or val < 0:
+                warnings.append("project %s ignored: not a non-negative integer" % name)
+            elif isinstance(have, int) and not isinstance(have, bool) and val > have:
+                warnings.append("project %s ignored: it would loosen the policy" % name)
+            else:
+                cur[keys[-1]] = val
         elif not isinstance(val, list):
             warnings.append("project %s ignored: not a list" % name)
         elif rule == "union":
