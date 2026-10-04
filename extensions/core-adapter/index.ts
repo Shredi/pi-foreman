@@ -14,6 +14,7 @@ import type { OverlayRules } from "./permoverlay.ts";
 import { permFileState, PS_CHILD_ID, PS_PACKAGE, psProjectConfigPath, renderPermissions, resolvePermissionSystem } from "./permsys.ts";
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
+import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { recordLaunch, subagentActionCheck } from "./actions.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -139,7 +140,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       python,
       config,
       configProvider: provider,
-      overlay: baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir) : null,
+      overlay: baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT) : null,
       ceremony: initialCeremony(get(config.config, "ceremony.default")),
       childExtensions: [],
       stopContinued: false,
@@ -169,6 +170,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const e of config.errors) ctx.ui.notify(e, "error");
     if (config.safetyFallback && config.source === "cli") ctx.ui.notify("pi-foreman: invalid safety config; L1 safety values apply.", "warning");
     for (const w of config.warnings) ctx.ui.notify(`pi-foreman config: ${w}`, "warning");
+    if (!s.isChild) for (const sh of shadowedRoles(cwd, childRoleIds(get(config.config, "roles")), home)) ctx.ui.notify(`pi-foreman: project agent shadows a role (${sh}); ${SHADOW_FIX}`, "warning");
     return s;
   }
 
@@ -377,7 +379,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Overlay check (see permoverlay.ts); undefined = let the call go on. */
   async function overlayBlock(s: Session, ctx: ExtensionContext, toolName: string, input: Record<string, unknown>) {
     if (!s.overlay) return { block: true as const, reason: OVERLAY_UNAVAILABLE };
-    const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform });
+    const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main" });
     const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: (title, msg) => ctx.ui.confirm(title, msg) });
     if (d) s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: r ? (d.kind === "deny" ? "deny" : "ask-denied") : "ask-approved" });
     return r;
@@ -409,6 +411,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (act.block) return { block: true, reason: act.block };
         if (act.unchecked) notifyOnce(s, ctx, `workflow:${act.unchecked}`, `pi-foreman: safety.subagents.allowWorkflow is on; '${act.unchecked}' launches are not checked against the role allowlist or the role map.`);
       }
+      if (event.toolName === "subagent" && forceUserScope(input)) notifyOnce(s, ctx, "agentScope", "pi-foreman: child launches use agentScope \"user\" (project agents cannot redefine a role); the requested scope was overridden");
       if (event.toolName === "subagent" && forceDetached(input)) {
         notifyOnce(s, ctx, "detach", "pi-foreman: child launches are always detached; async:false was overridden");
         s.trace?.emit({ event: "detach_override" });
@@ -635,6 +638,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     else fail("permission overlay baseline unreadable (shell and file tools are blocked)", "reinstall pi-foreman: config/permissions.baseline.json is part of the package.");
     if (fs.existsSync(psProjectConfigPath(s.cwd))) fail(`project permission file ${psProjectConfigPath(s.cwd)} exists; it can loosen the permission system's rules`, "delete it and put your rules in foreman.json (the overlay still enforces denies, but asks and allows would be affected).");
     else ok("no project permission file");
+    for (const sh of shadowedRoles(s.cwd, childRoleIds(get(s.config.config, "roles")))) out.push(`WARN project agent shadows a role (${sh}) — fix: ${SHADOW_FIX}`);
     const wanted = await renderPermissions({ python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, cwd: s.cwd, spawner });
     const pf = permFileState(s.agentDir, wanted);
     if (pf.state === "ok") ok("generated permission-system config is in sync");

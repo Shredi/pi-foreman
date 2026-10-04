@@ -16,7 +16,9 @@
   },
   "externalDirectory": "ask",
   "shellTools": {
-    "powershell": { "commandArgument": "command" }
+    "powershell": {
+      "commandArgument": "command"
+    }
   },
   "bash": {
     "allow": [
@@ -60,6 +62,8 @@
       "pytest *"
     ],
     "ask": [
+      "find * -exec*",
+      "find * -execdir*",
       "find * -delete*",
       "Remove-Item * -R*",
       "remove-item * -r*",
@@ -99,6 +103,41 @@
       "*.env.example",
       "*.env.sample",
       "*.env.template"
+    ]
+  },
+  "protect": {
+    "comment": "Write protection, enforced by the adapter overlay only (the permission system's path rules cannot tell a read from a write). Each pattern is checked against the path of write/edit, the destination (and a moved source) of foreman_move/foreman_copy and, except writeAsk, every path word of a shell command. deny: every session. ask: the foreman is asked, children are denied. childDeny: children only. writeAsk: like ask, but file tools only (shell commands may read and run the package). {cwd} is the session cwd, {pkgRoot} the pi-foreman package root.",
+    "deny": [
+      "*/.git",
+      "*/.git/*"
+    ],
+    "ask": [
+      "{cwd}/.pi",
+      "{cwd}/.pi/*",
+      "{cwd}/.agents",
+      "{cwd}/.agents/*",
+      "{agentDir}/foreman.json",
+      "{agentDir}/settings.json",
+      "{agentDir}/agents",
+      "{agentDir}/agents/*",
+      "{agentDir}/npm",
+      "{agentDir}/npm/*",
+      "{agentDir}/extensions",
+      "{agentDir}/extensions/*"
+    ],
+    "childDeny": [
+      "*/.pi/agents",
+      "*/.pi/agents/*",
+      "*/.pi/settings.json",
+      "*/.pi/foreman.json",
+      "*/.pi/extensions/*",
+      "*/.pi/npm/*",
+      "*/.agents",
+      "*/.agents/*"
+    ],
+    "writeAsk": [
+      "{pkgRoot}",
+      "{pkgRoot}/*"
     ]
   }
 }

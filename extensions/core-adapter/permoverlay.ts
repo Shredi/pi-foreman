@@ -12,18 +12,24 @@
 //
 // Matcher differences from PS (tree-sitter bash parser + wildcard matcher), by design:
 //  1. Wildcards are PS's: `*` = any characters including `/` (so `**` == `*`), `?` = one
-//     character, a trailing ` *` also matches the bare command. Bash patterns are case-sensitive
-//     (case-insensitive for the powershell tool); path patterns are case-insensitive and
-//     separator-agnostic on win32 only.
+//     character, a trailing ` *` also matches the bare command; a `/` in a pattern also matches
+//     `\`. Bash patterns are case-sensitive (case-insensitive for the powershell tool); path
+//     patterns are case-insensitive on darwin and win32 (case-insensitive file systems, so
+//     `.ENV` is `.env`) and separator-agnostic on win32.
 //  2. Parsing: PS uses a real bash grammar. This is a small hand-written lexer (quotes, `\`
-//     escapes, `; && || | & newline ( ) ` and `<`/`>`, `$(...)` and backticks anywhere, `# `
-//     comments, `sh|bash|zsh|... -c`, `eval`, `pwsh -c`, `find -exec`, wrapper commands like
-//     sudo/env/nohup/xargs up to depth 4). PS floors the same constructs to `ask`; here a deny
-//     rule is looked up inside them instead. Heredoc bodies are lexed as ordinary text (more
-//     words are checked, never fewer).
+//     escapes, ANSI-C `$'\x2e'` quoting, `; && || | & newline ( ) ` and `<`/`>`, `$(...)` and
+//     backticks anywhere, `# ` comments, `sh|bash|zsh|... -c`, `eval`, `pwsh -c`, `find -exec`,
+//     wrapper commands like sudo/env/nohup/xargs up to depth 4). PS floors the same constructs
+//     to `ask`; here a deny rule is looked up inside them instead. Heredoc bodies are lexed as
+//     ordinary text (more words are checked, never fewer). Brace expansion (`.{e,x}nv`,
+//     `{1..3}`) is applied to every word, quoted or not (more words, never fewer). Inline code
+//     of `python -c`, `node -e/-p`, `perl -e`, `ruby -e` is split into its string literals, and
+//     literals joined by `+`/`.` are joined (`"."+"env"`), each checked as a path. On win32 a
+//     bash command is lexed a second time with `\` kept literal (native `C:\...` paths), and
+//     `/c/...` is read as `C:/...`.
 //  3. Paths in shell commands: EVERY word of every command (options' `=value` parts, redirect
-//     targets, quoted words) is resolved (`~`, `$HOME`, cwd, `..`, symlinks, a trailing glob in
-//     the last segment) and checked against the deny paths, so `cat .env`, `head ~/.ssh/id_x`,
+//     targets, quoted words) is resolved (`~`, `$HOME`, cwd, `..`, symlinks, globs in any
+//     segment) and checked against the deny paths, so `cat .env`, `head ~/.ssh/id_x`,
 //     `grep -r t .env`, `grep -r x ~/.ssh`, `git diff --no-index a .env` all deny. PS gates only
 //     tokens it classifies as path candidates and, for a bare name, only when the file exists;
 //     here a path-shaped word (contains `/` or `\`, or starts with `.` or `~`) is checked whether or not the file
@@ -32,12 +38,20 @@
 //     `<dir>/` (`~/.ssh`, `~/.aws`), but not when it is an ANCESTOR (`grep -r x ~`): like PS,
 //     the overlay does not know what a recursive command will walk into.
 //  4. Not modelled (both PS and the overlay): other shell variables, command output used as a
-//     path, ANSI-C `$'\x2e'` quoting, globs in a directory segment, `cd` tracking (the overlay
-//     checks words against the session cwd and as typed).
+//     path, `cd` tracking (the overlay checks words against the session cwd and as typed),
+//     hard links, string building beyond adjacent literals in inline code, heredoc-fed scripts
+//     (`python3 - <<EOF`: the body's words are checked only as plain words).
 //  5. Exceptions: the baseline lists `*.env.example` etc. as exceptions; they apply as in the
 //     generated PS file (last matching rule wins, exceptions sit after the baseline denies and
 //     before the user's own denies).
 //  6. The overlay ignores PS's per-agent frontmatter and `yoloMode`: deny is deny.
+//  7. Write protection (baseline `protect`, overlay only; PS cannot tell reads from writes):
+//     `.git` (S1/S2, every session), the project's `.pi/` and `.agents/`, `<agentDir>`'s
+//     foreman.json, settings.json, agents/, npm/, extensions/ (asked in the foreman, denied in
+//     children) and the package root (file tools only). Checked on write/edit, the paths of
+//     foreman_move/foreman_copy and, as for deny paths, every shell word — so in a shell
+//     command these also block reads (`cat .git/config`); `git status` names no such path.
+//     grep's `glob` and find's `pattern` are checked joined to the tool's `path`.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Json } from "./config.ts";
@@ -47,16 +61,26 @@ export interface PathRule {
   action: "deny" | "allow";
 }
 
+/** Write protection: `main`/`child` = the decision per session kind; `shell` = also shell words. */
+export interface ProtectRule {
+  pattern: string;
+  main: "deny" | "ask" | null;
+  child: "deny";
+  shell: boolean;
+}
+
 export interface OverlayRules {
   bashDeny: string[];
   bashAsk: string[];
   pathRules: PathRule[];
   pathAsk: string[];
+  protect: ProtectRule[];
 }
 
 export interface Baseline {
   bash: { deny: string[]; ask: string[] };
   paths: { deny: string[]; except: string[] };
+  protect: { deny: string[]; ask: string[]; childDeny: string[]; writeAsk: string[] };
 }
 
 export type Decision = { kind: "deny" | "ask"; reason: string };
@@ -67,6 +91,8 @@ export interface MatchCtx {
   platform: string;
   /** Shell grammar of the tool: bash-like or PowerShell. */
   shell?: "posix" | "powershell";
+  /** Session kind for the write protection (default main). */
+  role?: "main" | "child";
   exists?: (p: string) => boolean;
   isDir?: (p: string) => boolean;
   realpath?: (p: string) => string | null;
@@ -81,7 +107,12 @@ export function readBaseline(pkgRoot: string): Baseline | null {
     const raw = JSON.parse(fs.readFileSync(path.join(pkgRoot, "config", "permissions.baseline.json"), "utf8")) as Json;
     const bash = obj(raw.bash);
     const paths = obj(raw.paths);
-    return { bash: { deny: strs(bash.deny), ask: strs(bash.ask) }, paths: { deny: strs(paths.deny), except: strs(paths.except) } };
+    const pr = obj(raw.protect);
+    return {
+      bash: { deny: strs(bash.deny), ask: strs(bash.ask) },
+      paths: { deny: strs(paths.deny), except: strs(paths.except) },
+      protect: { deny: strs(pr.deny), ask: strs(pr.ask), childDeny: strs(pr.childDeny), writeAsk: strs(pr.writeAsk) },
+    };
   } catch {
     return null;
   }
@@ -96,10 +127,16 @@ function without(list: string[], base: string[]): string[] {
  * the project and session layers (the config CLI's `basePermissions`); asks present there are
  * PS's job, only the added ones are enforced here. Without `base` no ask is enforced.
  */
-export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unknown, agentDir: string): OverlayRules {
+export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unknown, agentDir: string, pkgRoot?: string): OverlayRules {
   const m = obj(merged);
   const b = obj(base);
-  const sub = (p: string): string => p.replace(/\{agentDir\}/g, agentDir.split(path.sep).join("/"));
+  const slash = (d: string): string => d.split(path.sep).join("/").replace(/\/+$/, "");
+  const sub = (p: string): string => p.replace(/\{agentDir\}/g, slash(agentDir));
+  const prot = (list: string[] | undefined, main: ProtectRule["main"], shell: boolean): ProtectRule[] =>
+    (list ?? [])
+      .filter((p) => pkgRoot !== undefined || !p.includes("{pkgRoot}"))
+      .map((p) => ({ pattern: sub(p).replace(/\{pkgRoot\}/g, slash(pkgRoot ?? "")), main, child: "deny", shell }));
+  const pb = baseline.protect;
   const mp = obj(m.paths);
   const bp = obj(b.paths);
   const hasBase = Object.keys(b).length > 0;
@@ -112,6 +149,7 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
       ...strs(mp.deny).map((pattern): PathRule => ({ pattern: sub(pattern), action: "deny" })),
     ],
     pathAsk: hasBase ? without(strs(mp.ask), strs(bp.ask)) : [],
+    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true), ...prot(pb?.childDeny, null, true), ...prot(pb?.writeAsk, "ask", false)],
   };
 }
 
@@ -136,7 +174,7 @@ export function wildcardRegExp(pattern: string, opts: { home: string; ignoreCase
   if (opts.foldSeparators) expanded = expanded.replace(/\\/g, "/");
   let escaped = expanded
     .split("*")
-    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\?/g, "."))
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\?/g, ".").replace(/\//g, () => "[\\\\/]"))
     .join(".*");
   if (escaped.endsWith(" .*")) escaped = `${escaped.slice(0, -3)}( .*)?`;
   const re = new RegExp(`^${escaped}$`, opts.ignoreCase ? "si" : "s");
@@ -148,9 +186,13 @@ function bashMatches(pattern: string, text: string, ctx: MatchCtx): boolean {
   return wildcardRegExp(pattern, { home: ctx.home, ignoreCase: ctx.shell === "powershell", foldSeparators: false }).test(text);
 }
 
+/** Case-insensitive file systems by default: path rules fold case there. */
+export const foldsCase = (platform: string): boolean => platform === "win32" || platform === "darwin";
+
 function pathMatches(pattern: string, value: string, ctx: MatchCtx): boolean {
   const win = ctx.platform === "win32";
-  return wildcardRegExp(pattern, { home: ctx.home, ignoreCase: win, foldSeparators: win }).test(win ? value.replace(/\\/g, "/") : value);
+  const pat = pattern.includes("{cwd}") ? pattern.replace(/\{cwd\}/g, ctx.cwd.split(/[\\/]/).join("/").replace(/\/+$/, "")) : pattern;
+  return wildcardRegExp(pat, { home: ctx.home, ignoreCase: foldsCase(ctx.platform), foldSeparators: win }).test(win ? value.replace(/\\/g, "/") : value);
 }
 
 // --------------------------------------------------------------------- lexer
@@ -204,6 +246,130 @@ function substitutions(src: string, shell: "posix" | "powershell"): string[] {
   return out;
 }
 
+const ANSI: Record<string, string> = { n: "\n", t: "\t", r: "\r", a: "\x07", b: "\b", e: "\x1b", E: "\x1b", f: "\f", v: "\v", "\\": "\\", "'": "'", '"': '"', "?": "?" };
+
+/** Body of `$'...'` from `start` (after the quote) -> [decoded text, index of the closing quote]. Port of git_guard.py's decoder. */
+function ansiC(src: string, start: number): [string, number] {
+  let out = "";
+  let j = start;
+  while (j < src.length) {
+    const c = src[j];
+    if (c === "'") return [out, j];
+    if (c === "\\" && j + 1 < src.length) {
+      const e = src[j + 1];
+      let m: RegExpExecArray | null;
+      if (e in ANSI) {
+        out += ANSI[e];
+        j += 2;
+      } else if ((e === "x" || e === "u" || e === "U") && (m = new RegExp(`^[0-9A-Fa-f]{1,${e === "x" ? 2 : e === "u" ? 4 : 8}}`).exec(src.slice(j + 2)))) {
+        const cp = parseInt(m[0], 16);
+        out += cp <= 0x10ffff ? String.fromCodePoint(cp) : "";
+        j += 2 + m[0].length;
+      } else if ((m = /^[0-7]{1,3}/.exec(src.slice(j + 1)))) {
+        out += String.fromCharCode(parseInt(m[0], 8) & 0xff);
+        j += 1 + m[0].length;
+      } else if (e === "c" && j + 2 < src.length) {
+        out += String.fromCharCode(src.charCodeAt(j + 2) & 0x1f);
+        j += 3;
+      } else {
+        out += "\\" + e;
+        j += 2;
+      }
+      continue;
+    }
+    out += c;
+    j++;
+  }
+  return [out, src.length];
+}
+
+/** Bash brace expansion of one word (`a{b,c}d`, `{1..3}`, nested), at most `budget` results; [] when it has none. */
+export function expandBraces(w: string, budget = 64): string[] {
+  for (let i = 0; i < w.length; i++) {
+    if (w[i] !== "{" || w[i - 1] === "$") continue;
+    let depth = 0;
+    const commas: number[] = [];
+    let j = i;
+    for (; j < w.length; j++) {
+      if (w[j] === "{") depth++;
+      else if (w[j] === "}" && --depth === 0) break;
+      else if (w[j] === "," && depth === 1) commas.push(j);
+    }
+    if (j >= w.length) return [];
+    const body = w.slice(i + 1, j);
+    let alts: string[] | null = null;
+    if (commas.length) alts = [i, ...commas].map((k, n) => w.slice(k + 1, n < commas.length ? commas[n] : j));
+    else {
+      const r = /^(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])$/.exec(body);
+      if (r) {
+        const num = /\d/.test(r[1]);
+        const a = num ? parseInt(r[1], 10) : r[1].charCodeAt(0);
+        const b = num ? parseInt(r[2], 10) : r[2].charCodeAt(0);
+        alts = [];
+        for (let k = a; alts.length < budget && (a <= b ? k <= b : k >= b); k += a <= b ? 1 : -1) alts.push(num ? String(k) : String.fromCharCode(k));
+      }
+    }
+    if (!alts) continue;
+    const out: string[] = [];
+    for (const alt of alts) {
+      const next = w.slice(0, i) + alt + w.slice(j + 1);
+      const more = expandBraces(next, budget - out.length);
+      for (const x of more.length ? more : [next]) {
+        out.push(x);
+        if (out.length >= budget) return out;
+      }
+    }
+    return out;
+  }
+  return [];
+}
+
+const INTERPRETERS: { re: RegExp; flag: RegExp }[] = [
+  { re: /^python[0-9.]*$|^pypy[0-9.]*$/, flag: /^-[A-Za-z]*c$/ },
+  { re: /^(node|nodejs|bun|deno)$/, flag: /^(-[A-Za-z]*[ep]|--eval|--print)$/ },
+  { re: /^perl[0-9.]*$/, flag: /^-[A-Za-z]*[eE]$/ },
+  { re: /^ruby[0-9.]*$/, flag: /^-[A-Za-z]*e$/ },
+];
+
+/** The inline code of `python -c CODE`, `node -e CODE`, `perl -e CODE`, `ruby -e CODE`, or null. */
+function inlineCode(core: string[]): string | null {
+  if (!core.length) return null;
+  const it = INTERPRETERS.find((x) => x.re.test(baseName(core[0])));
+  if (!it) return null;
+  for (let k = 1; k < core.length; k++) {
+    const eq = /^--(eval|print)=(.*)$/s.exec(core[k]);
+    if (eq && it.flag.test(`--${eq[1]}`)) return eq[2];
+    if (it.flag.test(core[k])) return core[k + 1] ?? null;
+  }
+  return null;
+}
+
+/** String literals of inline code, plus runs of literals joined by `+`, `.` or nothing (`"."+"env"` -> `.env`). */
+export function codeLiterals(code: string): string[] {
+  const lits: { text: string; start: number; end: number }[] = [];
+  for (let i = 0; i < code.length; i++) {
+    const q = code[i];
+    if (q !== "'" && q !== '"' && q !== "`") continue;
+    let text = "";
+    let j = i + 1;
+    for (; j < code.length && code[j] !== q; j++) {
+      if (code[j] === "\\" && j + 1 < code.length) j++;
+      text += code[j];
+    }
+    lits.push({ text, start: i, end: j });
+    i = j;
+  }
+  const out = lits.map((l) => l.text);
+  for (let a = 0; a < lits.length; a++) {
+    let joined = lits[a].text;
+    for (let b = a + 1; b < lits.length && /^\s*[+.]?\s*$/.test(code.slice(lits[b - 1].end + 1, lits[b].start)); b++) {
+      joined += lits[b].text;
+      out.push(joined);
+    }
+  }
+  return out.filter(Boolean);
+}
+
 /** pipelines -> units -> words (quotes removed). */
 export function parseShell(src: string, shell: "posix" | "powershell" = "posix"): Parsed {
   const pipelines: string[][][] = [];
@@ -234,7 +400,13 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
       if (src[i + 1] === "\n") i++;
       else if (i + 1 < src.length) add(src[++i]);
     } else if (!posix && c === "\\") add(c);
-    else if (c === "'") {
+    else if (posix && c === "$" && src[i + 1] === "'") {
+      const [text, end] = ansiC(src, i + 2);
+      add(text);
+      i = end;
+    } else if (posix && c === "$" && src[i + 1] === '"') {
+      // $"..." (locale translation): the double-quoted string follows
+    } else if (c === "'") {
       const j = src.indexOf("'", i + 1);
       const end = j < 0 ? src.length : j;
       add(src.slice(i + 1, end));
@@ -346,6 +518,8 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
     out.unitTexts.push(...v.texts);
     const inner = innerScript(v.core);
     if (inner && depth < MAX_DEPTH) collect(inner.script, inner.shell, depth + 1, out);
+    const code = inlineCode(v.core);
+    if (code) out.words.push(...codeLiterals(code));
     const exec = v.core.findIndex((x) => x === "-exec" || x === "-execdir" || x === "-ok" || x === "-okdir");
     if (exec >= 0 && depth < MAX_DEPTH) {
       const rest = v.core.slice(exec + 1);
@@ -377,12 +551,62 @@ function expandWord(w: string, ctx: MatchCtx): string {
   if (s === "~") s = ctx.home;
   else if (s.startsWith("~/") || s.startsWith("~\\")) s = ctx.home + s.slice(1);
   s = s.replace(/^\$\{?HOME\}?(?=$|[\\/])/, ctx.home);
+  // Git Bash / MSYS drive paths: /c/dir/x -> c:/dir/x
+  if (ctx.platform === "win32") s = s.replace(/^\/([A-Za-z])(?=$|\/)/, "$1:");
   return s.replace(/^\$env:(USERPROFILE|HOME)(?=$|[\\/])/i, ctx.home);
 }
 
+/** Bash glob of one path segment: `*`, `?`, `[...]` / `[!...]`; an unclosed `[` is literal. */
 function globRegExp(segment: string): RegExp {
-  const body = segment.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
-  return new RegExp(`^${body}$`, "s");
+  let body = "";
+  for (let i = 0; i < segment.length; i++) {
+    const c = segment[i];
+    if (c === "*") body += ".*";
+    else if (c === "?") body += ".";
+    else if (c === "[") {
+      let j = i + 1;
+      if (segment[j] === "!" || segment[j] === "^") j++;
+      if (segment[j] === "]") j++;
+      while (j < segment.length && segment[j] !== "]") j++;
+      if (j >= segment.length) {
+        body += "\\[";
+        continue;
+      }
+      let cls = segment.slice(i + 1, j).replace(/\\/g, "\\\\");
+      if (cls.startsWith("!")) cls = `^${cls.slice(1)}`;
+      body += `[${cls}]`;
+      i = j;
+    } else body += c.replace(/[.+^${}()|\\\]]/g, "\\$&");
+  }
+  try {
+    return new RegExp(`^${body}$`, "s");
+  } catch {
+    return /^$/;
+  }
+}
+
+const MAX_GLOB = 200;
+
+/** Every existing path a glob (in any segment, `~/.s*\/id_x`, `.ss[h]/x`) expands to, at most MAX_GLOB. */
+function expandGlob(abs: string, p: path.PlatformPath, fsx: ReturnType<typeof defaults>): string[] {
+  const root = p.parse(abs).root;
+  const segs = abs.slice(root.length).split(/[\\/]+/).filter(Boolean);
+  let cur = [root];
+  for (const seg of segs) {
+    if (!GLOB.test(seg)) {
+      cur = cur.map((d) => p.join(d, seg));
+      continue;
+    }
+    const re = globRegExp(seg);
+    const next: string[] = [];
+    for (const d of cur) {
+      for (const name of fsx.list(d)) if (re.test(name) && (name.startsWith(".") || !seg.startsWith("."))) next.push(p.join(d, name));
+      if (next.length >= MAX_GLOB) break;
+    }
+    cur = next.slice(0, MAX_GLOB);
+    if (!cur.length) break;
+  }
+  return cur;
 }
 
 /**
@@ -415,9 +639,11 @@ function tokenCandidates(word: string, ctx: MatchCtx, depth: number): string[] {
   const real = fsx.realpath(abs);
   if (real && real !== abs) add(real);
   if (GLOB.test(s)) {
-    const dir = p.dirname(abs);
-    const re = globRegExp(p.basename(abs));
-    if (!GLOB.test(dir)) for (const name of fsx.list(dir)) if (re.test(name) && (name.startsWith(".") || !p.basename(abs).startsWith("."))) add(p.join(dir, name));
+    for (const x of expandGlob(abs, p, fsx)) {
+      add(x);
+      const r = fsx.realpath(x);
+      if (r && r !== x) add(r);
+    }
   }
   return out;
 }
@@ -444,38 +670,99 @@ export function checkShell(rules: OverlayRules, command: string, ctx: MatchCtx):
   const shell = ctx.shell ?? "posix";
   const c: Collected = { unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [] };
   collect(command, shell, 0, c);
+  if (ctx.platform === "win32" && shell === "posix") {
+    // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
+    const raw: Collected = { unitTexts: [], pipeTexts: [], words: [] };
+    collect(command, "powershell", 0, raw);
+    c.words.push(...raw.words);
+  }
+  const words = [...new Set(c.words.flatMap((w) => [w, ...expandBraces(w)]))];
   const texts = [...c.unitTexts, ...c.pipeTexts];
   for (const pat of rules.bashDeny) {
     if (texts.some((t) => bashMatches(pat, t, ctx))) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (command rule '${pat}'). This cannot be approved; use another way.` };
   }
-  for (const w of c.words) {
+  for (const w of words) {
     const hit = pathDeny(rules.pathRules, w, ctx);
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(w)}'). Secret and policy paths are off limits to the agent, also through shell commands.` };
   }
+  const prot = words.map((w) => ({ w, hit: protectHit(rules.protect, w, ctx, true) })).filter((x) => x.hit);
+  const pd = prot.find((x) => x.hit!.kind === "deny");
+  if (pd) return protectDecision(pd.hit!, pd.w, "shell command");
   for (const pat of rules.bashAsk) {
     if (texts.some((t) => bashMatches(pat, t, ctx))) return { kind: "ask", reason: `pi-foreman: this command needs approval (project/session rule '${pat}').` };
   }
-  for (const w of c.words) {
+  for (const w of words) {
     const pat = pathAskHit(rules.pathAsk, w, ctx);
     if (pat) return { kind: "ask", reason: `pi-foreman: this path needs approval (project/session rule '${pat}' matched '${clip(w)}').` };
   }
+  if (prot.length) return protectDecision(prot[0].hit!, prot[0].w, "shell command");
   return null;
 }
 
-const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls"]);
+/** The strictest write-protection decision for one path word (deny before ask), or null. */
+function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: boolean): { kind: "deny" | "ask"; rule: ProtectRule } | null {
+  const child = ctx.role === "child";
+  let ask: ProtectRule | null = null;
+  const cands = pathCandidates(word, ctx);
+  for (const r of rules) {
+    if (shell && !r.shell) continue;
+    const kind = child ? r.child : r.main;
+    if (!kind || (kind === "ask" && ask)) continue;
+    if (!cands.some((x) => pathMatches(r.pattern, x, ctx))) continue;
+    if (kind === "deny") return { kind, rule: r };
+    ask = r;
+  }
+  return ask ? { kind: "ask", rule: ask } : null;
+}
+
+function protectDecision(hit: { kind: "deny" | "ask"; rule: ProtectRule }, word: string, what: string): Decision {
+  return hit.kind === "deny"
+    ? { kind: "deny", reason: `pi-foreman: denied by the write protection (rule '${hit.rule.pattern}' matched '${clip(word)}' in a ${what}). Git internals, agent and harness configuration are off limits${hit.rule.main === "ask" ? " to subagents; ask the foreman" : ""}.` }
+    : { kind: "ask", reason: `pi-foreman: this changes protected configuration (rule '${hit.rule.pattern}' matched '${clip(word)}' in a ${what}) and needs approval.` };
+}
+
+const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls", "foreman_move", "foreman_copy"]);
 
 export function isOverlayTool(toolName: string): boolean {
   return toolName === "bash" || toolName === "powershell" || PATH_TOOLS.has(toolName);
 }
 
+/** The paths one file-tool call touches; `write` = it creates, changes or removes that path. */
+function toolPaths(toolName: string, input: Record<string, unknown>): { value: string; write: boolean }[] {
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
+  const out: { value: string; write: boolean }[] = [];
+  const push = (v: unknown, write: boolean): void => {
+    const s = str(v);
+    if (s !== undefined) out.push({ value: s, write });
+  };
+  if (toolName === "foreman_move" || toolName === "foreman_copy") {
+    push(input.src, toolName === "foreman_move");
+    push(input.dst, true);
+    return out;
+  }
+  const write = toolName === "write" || toolName === "edit";
+  for (const v of [input.path, input.file_path, input.filePath]) push(v, write);
+  // grep's glob and find's pattern select files below `path`: check them joined to it
+  const glob = toolName === "grep" ? str(input.glob) : toolName === "find" ? str(input.pattern) : undefined;
+  if (glob !== undefined) push(/^([\\/~$]|[A-Za-z]:)/.test(glob) ? glob : `${(str(input.path) ?? ".").replace(/[\\/]+$/, "")}/${glob}`, false);
+  return out;
+}
+
 export function checkPathTool(rules: OverlayRules, toolName: string, input: Record<string, unknown>, ctx: MatchCtx): Decision | null {
   if (!PATH_TOOLS.has(toolName)) return null;
-  const raw = [input.path, input.file_path, input.filePath].find((x) => typeof x === "string" && x.length > 0) as string | undefined;
-  if (raw === undefined) return null;
-  const hit = pathDeny(rules.pathRules, raw, ctx);
-  if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(raw)}' for ${toolName}).` };
-  const pat = pathAskHit(rules.pathAsk, raw, ctx);
-  return pat ? { kind: "ask", reason: `pi-foreman: this path needs approval (project/session rule '${pat}' matched '${clip(raw)}').` } : null;
+  const paths = toolPaths(toolName, input);
+  for (const { value } of paths) {
+    const hit = pathDeny(rules.pathRules, value, ctx);
+    if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(value)}' for ${toolName}).` };
+  }
+  const prot = paths.filter((x) => x.write).map((x) => ({ w: x.value, hit: protectHit(rules.protect, x.value, ctx, false) })).filter((x) => x.hit);
+  const pd = prot.find((x) => x.hit!.kind === "deny");
+  if (pd) return protectDecision(pd.hit!, pd.w, `${toolName} call`);
+  for (const { value } of paths) {
+    const pat = pathAskHit(rules.pathAsk, value, ctx);
+    if (pat) return { kind: "ask", reason: `pi-foreman: this path needs approval (project/session rule '${pat}' matched '${clip(value)}').` };
+  }
+  return prot.length ? protectDecision(prot[0].hit!, prot[0].w, `${toolName} call`) : null;
 }
 
 export function checkToolCall(rules: OverlayRules, toolName: string, input: Record<string, unknown>, ctx: MatchCtx): Decision | null {
