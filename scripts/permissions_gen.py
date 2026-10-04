@@ -27,6 +27,7 @@ sys.path.insert(0, str(HERE))
 import foreman_config as fc  # noqa: E402
 
 BASELINE_PATH = fc.ROOT / "config" / "permissions.baseline.json"
+REVIEW_LINK = "foreman-review"
 DENY_BASH_REASON = "pi-foreman safety policy: this command is denied (safety.permissions.deny / baseline)"
 DENY_PATH_REASON = "pi-foreman safety policy: this path is denied (safety.permissions.paths.deny / baseline)"
 
@@ -91,6 +92,8 @@ def render(perms, agent_dir):
     if baseline.get("shellTools"):
         out["shellTools"] = baseline["shellTools"]
     out["permissionReviewLog"] = True
+    # model review of asks: pi-foreman's own link (extensions/core-adapter/review.ts)
+    out["authorizerChain"] = [REVIEW_LINK]
     return out
 
 

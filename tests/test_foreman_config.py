@@ -120,6 +120,14 @@ class ConfigTest(unittest.TestCase):
         self.assertIs(res["config"]["bridge"]["isolateClaudeConfig"], False)
         self.assertIn("bridge.isolateClaudeConfig", "\n".join(res["warnings"]))
 
+    def test_review_model_only_from_user_or_overlay(self):
+        self.l2({"providers": {"p1": {"review": {"model": "p1/small", "timeoutMs": 5000}}}})
+        self.proj({"providers": {"p1": {"review": {"model": "p1/other"}}, "p2": {"review": {"model": "p2/x"}}}})
+        res = self.load(trusted_project=True)
+        self.assertEqual(res["config"]["providers"]["p1"]["review"], {"model": "p1/small", "timeoutMs": 5000})
+        self.assertNotIn("review", res["config"]["providers"].get("p2", {}))
+        self.assertIn("providers.p2.review", "\n".join(res["warnings"]))
+
     def test_project_cannot_add_allow(self):
         self.proj({"safety": {"permissions": {"allow": ["rm *"]}}})
         res = self.load(trusted_project=True)

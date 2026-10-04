@@ -1,0 +1,8 @@
+{
+ "foreman": {
+  "r1": [
+   {"tools": [{"name": "bash", "arguments": {"command": "uname -s"}}]},
+   {"text": "Done."}
+  ]
+ }
+}
