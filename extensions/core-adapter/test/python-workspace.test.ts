@@ -78,7 +78,7 @@ test("win32: a bare name found on PATH inside the workspace is not probed", asyn
   const repo = tempDir(t, true);
   const bin = path.join(repo, ".venv", "Scripts");
   fs.mkdirSync(bin, { recursive: true });
-  fs.writeFileSync(path.join(bin, "python.exe"), "");
+  fs.writeFileSync(path.join(bin, "python.EXE"), ""); // PATHEXT case, so the lookup also matches on case-sensitive hosts
   const { spawner, calls } = fake({ python: out("3.12", "C:/Python312/python.exe", "C:/Python312/python.exe", "C:/Python312") });
   const r = await resolvePython({ platform: "win32", spawner, cwd: repo, env: { PATH: bin } });
   assert.ok(!r.ok);
