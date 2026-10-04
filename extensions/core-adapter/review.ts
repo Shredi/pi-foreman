@@ -16,6 +16,7 @@
 import { randomBytes } from "node:crypto";
 import type { Json } from "./config.ts";
 import { get } from "./config.ts";
+import { BRIDGE_PROVIDER } from "./bridgeiso.ts";
 
 export const REVIEW_LINK = "foreman-review";
 export const DEFAULT_REVIEW_TIMEOUT_MS = 15_000;
@@ -129,6 +130,8 @@ export interface ReviewSession {
   registry: RegistryLike;
   intent: string;
   trace?: (rec: Record<string, unknown>) => void;
+  /** Unapproved project Claude Code / claude-bridge config drift (claudedrift.ts); non-empty = never call claude-bridge. */
+  bridgeDrift?: () => string[];
 }
 
 interface PermissionsServiceLike {
@@ -250,6 +253,17 @@ export class ForemanReview {
   // prompt cache", which costs nothing for a one-shot call.
   private async callModel(s: ReviewSession, t: ReviewTarget, text: string, value: string): Promise<Outcome> {
     const defer = (label: string, kind?: string): Outcome => ({ verdict: { kind: "defer" }, label, ...(kind ? { errorKind: kind } : {}) });
+    // The bridge's one-shot call re-reads .pi/claude-bridge.json and may start the program it
+    // names (R3-H1): with unapproved drift the ask goes to the human instead.
+    if (t.provider === BRIDGE_PROVIDER) {
+      let drift: string[];
+      try {
+        drift = s.bridgeDrift ? s.bridgeDrift() : [];
+      } catch {
+        drift = ["drift check failed"];
+      }
+      if (drift.length) return defer("claude-config-drift", "claude_config_drift");
+    }
     const model = s.registry.find(t.provider, t.modelId);
     if (!model) return defer("model-unresolved", "no_model");
     const ac = new AbortController();

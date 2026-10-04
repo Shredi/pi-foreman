@@ -21,7 +21,7 @@ import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
-import { BRIDGE_PROVIDER, BridgeIsolation, isolationDir, isolationDoctor, isolationOn, PROJECT_CLAUDE_FIX, projectClaudeRisks } from "./bridgeiso.ts";
+import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, isolationDir, isolationDoctor, isolationOn, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels } from "./launchmodel.ts";
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import type { RoleResolution } from "./roles.ts";
@@ -167,6 +167,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const claudeRisks = provider === BRIDGE_PROVIDER ? projectClaudeRisks(cwd) : [];
     if (claudeRisks.length) ctx.ui.notify(`pi-foreman: project Claude Code config runs in claude-bridge turns: ${claudeRisks.join(", ")}. Fix: ${PROJECT_CLAUDE_FIX}`, "error");
+    const bridgeCfgRisks = projectBridgeConfigRisks(cwd);
+    if (bridgeCfgRisks.length) ctx.ui.notify(`pi-foreman: the project's claude-bridge config makes the bridge run what the project chose: ${bridgeCfgRisks.join(", ")}. Fix: ${PROJECT_BRIDGE_FIX}`, "error");
     s.trace?.emit({ event: "session_start", role: s.isChild ? "child" : "foreman", model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null, tier: s.ceremony.tier });
 
     try {
@@ -181,8 +183,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s.isChild) {
       const gitLines = s.gitDrift.bind(markerDir, cwd, home);
       if (gitLines.length) ctx.ui.notify(`pi-foreman: the repository's git config or hooks changed since the last session; the next foreman git run or child launch asks.\n${gitLines.join("\n")}`, "warning");
-      const cfgLines = s.claudeCfg.bind(markerDir, cwd);
-      if (cfgLines.length) ctx.ui.notify(`pi-foreman: project Claude Code config changed since the last session; the next claude-bridge prompt asks.\n${cfgLines.join("\n")}`, "warning");
+      const cfgLines = s.claudeCfg.bind(markerDir, cwd, agentDir);
+      if (cfgLines.length) ctx.ui.notify(`pi-foreman: project Claude Code or claude-bridge config changed since the last session; the next claude-bridge request or summary asks.\n${cfgLines.join("\n")}`, "warning");
       const first = [s.gitDrift.firstBaseline ? "the repository's git config and hooks" : "", s.claudeCfg.firstBaseline ? "the project's Claude Code config" : ""].filter(Boolean);
       if (first.length) ctx.ui.notify(`pi-foreman: first session on this workspace: took the baseline snapshot of ${first.join(" and ")}. Later changes ask before the foreman's git runs, child launches and claude-bridge requests.`, "info");
     }
@@ -329,7 +331,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   pi.on("session_start", async (event, ctx) => {
     const s = await startSession(ctx);
-    review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r) });
+    review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [] });
     if (!s.isChild && (event.reason === "startup" || event.reason === "new")) await applyForemanModel(s, ctx);
     await registerChildExtensions(s, ctx);
     if (fs.existsSync(psProjectConfigPath(s.cwd))) {
@@ -394,6 +396,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     pi.sendMessage({ customType: "pi-foreman-blocked", content: `The claude-bridge run was stopped before the model request.\n${b.reason}`, display: true }, { triggerTurn: false });
     return undefined;
   });
+
+  // Compaction and branch summaries on claude-bridge start a separate Claude Code process that
+  // re-reads .pi/claude-bridge.json (bridge src/index.ts:576-596); mid-run compaction comes
+  // before the next request's `context` event. Cancel on unapproved drift (R3-H1). Effective
+  // only when pi-foreman loads before pi-claude-bridge (the doctor checks the order).
+  async function bridgeSummaryGate(ctx: ExtensionContext, what: string): Promise<{ cancel: true } | undefined> {
+    const s = sessionFor(ctx);
+    if (!s || s.isChild || ctx.model?.provider !== BRIDGE_PROVIDER) return undefined;
+    const b = await s.claudeCfg.check(ctx.cwd, `this ${what}`, driftAsk(ctx), (r) => s.trace?.emit(r));
+    if (!b) return undefined;
+    ctx.ui.notify(`${b.reason}\nThe ${what} was cancelled.`, "error");
+    if (!ctx.hasUI) process.stderr.write(`${b.reason}\n`);
+    return { cancel: true };
+  }
+  pi.on("session_before_compact", async (_event, ctx) => bridgeSummaryGate(ctx, "claude-bridge compaction summary"));
+  pi.on("session_before_tree", async (_event, ctx) => bridgeSummaryGate(ctx, "claude-bridge branch summary"));
 
   // A cache-warming refresh re-sends the last request, which on claude-bridge starts Claude Code.
   pi.on("cache_warming_decision", async (_event, ctx) => {
@@ -709,6 +727,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (risks.length) fail(`project Claude Code config runs in claude-bridge turns: ${risks.join(", ")}`, PROJECT_CLAUDE_FIX);
       else ok("no project Claude Code hooks, command helpers or .mcp.json");
     }
+    const bridgeCfg = projectBridgeConfigRisks(s.cwd);
+    if (bridgeCfg.length) fail(`project claude-bridge config: ${bridgeCfg.join(", ")}`, PROJECT_BRIDGE_FIX);
+    else ok("no executable path, AskClaude or strictMcpConfig false in .pi/claude-bridge.json");
+    const userBridge = userBridgeConfigRisks(s.agentDir);
+    const userBridgeFile = path.join(s.agentDir, "claude-bridge.json");
+    if (userBridge.fail.length) fail(`user claude-bridge config ${userBridgeFile}: ${userBridge.fail.join(", ")}`, "remove them unless you meant them: AskClaude runs Claude Code with the project's settings and bypassPermissions, and strictMcpConfig false loads project MCP servers in every bridge turn.");
+    if (userBridge.warn.length) out.push(`WARN user claude-bridge config ${userBridgeFile} sets ${userBridge.warn.join(", ")}: claude-bridge starts that program for every turn and summary. Fine if you set it on purpose; pi-foreman asks before bridge use when this file changes.`);
+    if (!userBridge.fail.length && !userBridge.warn.length) ok("no executable path, AskClaude or strictMcpConfig false in the user claude-bridge config");
+    let projectSettings: Record<string, unknown> | null = null;
+    try {
+      projectSettings = JSON.parse(fs.readFileSync(path.join(s.cwd, ".pi", "settings.json"), "utf8"));
+    } catch {
+      projectSettings = null;
+    }
+    const order = bridgeLoadOrder(projectSettings?.packages, settings?.packages, PKG_ROOT, path.join(s.cwd, ".pi"), s.agentDir);
+    if (order === "bridge-first") fail("pi-claude-bridge loads before pi-foreman, so its compaction and branch-summary takeover runs before pi-foreman's config-drift check", "list pi-foreman before pi-claude-bridge in settings.json packages.");
+    else if (order === "foreman-first") ok("pi-foreman loads before pi-claude-bridge (the drift check precedes the bridge's summaries)");
+    else if (order === "unknown") out.push("INFO load order of pi-foreman and pi-claude-bridge not found in settings.json packages");
     const rt = reviewTarget(s.config.config, ctx.model?.provider);
     if (!rt) out.push(`WARN no review model for provider ${ctx.model?.provider ?? "(none)"}: model review (${REVIEW_LINK}) is off, every ask goes to you — set providers.<p>.review.model in foreman.json`);
     else if (!ctx.modelRegistry.find(rt.provider, rt.modelId)) fail(`review model ${rt.provider}/${rt.modelId} not in the model registry; asks go to you`, "correct providers.<p>.review.model.");

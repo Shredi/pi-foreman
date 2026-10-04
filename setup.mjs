@@ -282,6 +282,30 @@ function isRecorded(settings, spec, baseDir) {
   return false;
 }
 
+const isBridgeEntry = (e) => /(^|[/:@])pi-claude-bridge(@|$|\/)/.test(entrySource(e) ?? "");
+const isForemanEntry = (e, baseDir) => {
+  const src = entrySource(e);
+  if (!src) return false;
+  if (/^npm:pi-foreman(@|$)/.test(src)) return true;
+  return isRecorded({ packages: [e] }, ROOT, baseDir);
+};
+
+/**
+ * `packages` with the pi-foreman entry moved right before the first pi-claude-bridge entry, or
+ * null when no move is needed. Pi runs session_before_compact / session_before_tree handlers in
+ * load order (= this list order) and stops at the first cancel; the bridge's own handler starts
+ * Claude Code, so pi-foreman's config-drift check has to come first.
+ */
+function foremanBeforeBridge(list, baseDir) {
+  if (!Array.isArray(list)) return null;
+  const bridge = list.findIndex(isBridgeEntry);
+  const foreman = list.findIndex((e) => isForemanEntry(e, baseDir));
+  if (bridge < 0 || foreman < 0 || foreman < bridge) return null;
+  const out = list.filter((_, i) => i !== foreman);
+  out.splice(bridge, 0, list[foreman]);
+  return out;
+}
+
 // ---------------------------------------------------------------- main
 
 function main(argv) {
@@ -414,6 +438,14 @@ function main(argv) {
     for (const w of want) say(`  package ${w.label}: ${todo.includes(w) ? "to install" : "already recorded"}`);
     const installArgs = todo.map((w) => ["install", w.spec, ...(opts.project ? ["-l"] : [])]);
     if (installArgs.length) anyChange = true;
+    // load order: pi-foreman before pi-claude-bridge (after `pi install` appended what was missing)
+    const plannedPackages = [...(Array.isArray(settings.packages) ? settings.packages : []), ...todo.map((w) => (w.spec === ROOT ? path.relative(baseDir, ROOT) : w.spec))];
+    const reordered = foremanBeforeBridge(plannedPackages, baseDir);
+    if (reordered) {
+      anyChange = true;
+      say(`packages: ${dry ? "would move" : "moving"} pi-foreman before pi-claude-bridge, so its config-drift check runs before the bridge's compaction and branch summaries`);
+      say(unifiedDiff(path.basename(settingsFile), toJson({ ...settings, packages: plannedPackages }), toJson({ ...settings, packages: reordered })));
+    }
     if (opts.project) say("  note: project packages load only after the project is trusted; headless runs need `pi --approve` (or `-a`).");
 
     // settings merge
@@ -478,15 +510,17 @@ function main(argv) {
       for (const a of installArgs) say(`would run: pi ${a.join(" ")}`);
       if (needRecord || permNeedRecord) say(`would record the managed hash in ${managedFile}`);
     } else if (anyChange) {
-      if (installArgs.length || !same) backup();
+      if (installArgs.length || !same || reordered) backup();
       for (const a of installArgs) runOrDie(a);
       let finalBlock = pick(next.subagents);
-      if (!same) {
+      if (!same || reordered) {
         // pi edits `packages` in the same file, so merge into what is on disk now
         const fresh = parseJsonObject(readText(settingsFile), settingsFile) ?? {};
-        applyWanted(fresh);
+        if (!same) applyWanted(fresh);
+        const order = foremanBeforeBridge(fresh.packages, baseDir);
+        if (order) fresh.packages = order;
         writeFile(settingsFile, toJson(fresh));
-        finalBlock = pick(fresh.subagents);
+        if (!same) finalBlock = pick(fresh.subagents);
       }
       managed.entries[settingsFile] = { subagentsHash: sha(finalBlock) };
       if (!permSame) {
