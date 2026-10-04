@@ -43,6 +43,7 @@
     "review": { "required": false },
     "git": { "protectedBranches": ["main", "master"] }
   },
+  "bridge": { "isolateClaudeConfig": "auto" },
   "python": { "path": null },
   "trace": { "enabled": false, "dir": null }
 }

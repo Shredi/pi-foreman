@@ -12,6 +12,7 @@ import { loadRegister, normaliseChildExtensions, registrationPathLabel } from ".
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
+import { BridgeIsolation, isolationDir, isolationDoctor, isolationOn } from "./bridgeiso.ts";
 import { applyLaunchModels } from "./launchmodel.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
@@ -71,6 +72,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   let userPickedModel = false;
   let applyingModel = false;
   let instructionsCache: string | null | undefined;
+  const bridgeIso = new BridgeIsolation();
+  let isoSetting: unknown = "auto";
 
   const pyPath = (s: Session): string | null => (s.python.ok ? s.python.info.executable : null);
 
@@ -120,6 +123,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       trace: openTrace({ enabled: get(config.config, "trace.enabled"), dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: id }),
     };
     sessions.set(id, s);
+    isoSetting = get(config.config, "bridge.isolateClaudeConfig");
+    try {
+      bridgeIso.apply(process.env, agentDir, isoSetting, provider);
+    } catch (err) {
+      ctx.ui.notify(`pi-foreman: could not prepare the bridge config folder (${(err as Error).message}).`, "warning");
+    }
     s.trace?.emit({ event: "session_start", role: s.isChild ? "child" : "foreman", model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null, tier: s.ceremony.tier });
 
     try {
@@ -279,7 +288,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     sessions.delete(s.id);
   });
 
-  pi.on("model_select", async (event) => {
+  pi.on("model_select", async (event, ctx) => {
+    try {
+      bridgeIso.apply(process.env, sessionFor(ctx)?.agentDir ?? piAgentDir(process.env, os.homedir()), isoSetting, event.model?.provider);
+    } catch {
+      // doctor reports the folder
+    }
     if (applyingModel) return;
     if (event.source === "set" || event.source === "cycle") userPickedModel = true;
   });
@@ -490,6 +504,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (configured) ok(`auth for provider ${p}`);
       else fail(`no auth for provider ${p}`, `run /login ${p} or set its API key environment variable.`);
     }
+
+    if (isolationOn(isoSetting, ctx.model?.provider)) out.push(...isolationDoctor({ dir: isolationDir(s.agentDir), env: process.env, platform }));
 
     if (fs.existsSync(markerPath(s.markerDir, s.id))) ok(`session marker in ${s.markerDir}`);
     else fail("session marker missing", `make ${s.markerDir} writable and restart the session.`);

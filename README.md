@@ -41,6 +41,22 @@ The installer installs `pi-subagents` (pinned in `packages.lock.json`) and regis
 Then re-run `node setup.mjs` to regenerate the block, and run `/foreman doctor` in Pi. Tests:
 `node --test "tests/installer/*.test.mjs"`.
 
+### Claude bridge: log in once
+
+When the active provider is `claude-bridge`, pi-foreman points `CLAUDE_CONFIG_DIR` at an empty folder,
+`<agent dir>/pi-foreman/claude-config/`, so the host's Claude Code settings, hooks, plugins and
+`CLAUDE.md` do not load into every bridge turn (config key `bridge.isolateClaudeConfig`: `"auto"` by
+default, `true`, or `false`; a project file cannot set it). The folder starts without a login, and the
+installer does not log in. Do one of these once:
+
+```sh
+CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude    # then /login
+claude setup-token                                                 # then export CLAUDE_CODE_OAUTH_TOKEN
+```
+
+`/foreman doctor` fails if the folder holds host config and reports whether a login is present
+(never its value).
+
 ## License
 
 MIT, see `LICENSE`. Upstream attributions are in `NOTICE`.
