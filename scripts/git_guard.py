@@ -619,6 +619,14 @@ EXEC_KEY = re.compile(
 CHILD_CONFIG_DENY = re.compile(
     r"^((remote|push|include|includeif|credential)(\..*)?|branch\..+\.pushremote|"
     r"core\.(hookspath|fsmonitor|sshcommand)|diff\.external|.+\.textconv)$")
+# The only config keys a child may write with `git config` (review T5: an allowlist, not a
+# deny list; every other key, url.*.insteadOf, protocol.*.allow, remote.* and the program keys
+# included, is denied). user.name / user.email: a child commits in its worktree and may need
+# an identity; neither runs a program nor changes a push target. commit.gpgsign is left out:
+# a child can pass `-c commit.gpgsign=false` per command, which persists nothing.
+CHILD_CONFIG_ALLOW = frozenset(("user.name", "user.email"))
+# `git remote` subcommands that change remotes (reads: -v, show, get-url, update, prune stay).
+CHILD_REMOTE_DENY = frozenset(("add", "set-url", "rename", "remove", "rm", "set-head", "set-branches"))
 # Config the main-mode push lint reads (inline `-c` values are passed to its `git config` reads).
 PUSH_CONFIG = re.compile(r"^(remote\..+\.(push|mirror)|remote\.pushdefault|push\.default|"
                          r"branch\..+\.(pushremote|remote|merge))$")
@@ -1555,6 +1563,8 @@ def child_rules(s, rest, ctx, call):
                       "format"))
         if has(opts, "D") or (has(opts, "d", "delete") and has(opts, "f", "force")):
             return no("branch -D")
+        if has(opts, "u", "set-upstream-to", "unset-upstream"):
+            return no("branch --set-upstream-to/--unset-upstream (changes the push and pull target)")
         if has(opts, "f", "force", "m", "M", "move", "c", "C", "copy"):
             # Moving, renaming onto or copying onto a branch: a protected one may not be touched.
             moving = has(opts, "m", "M", "move", "c", "C", "copy")
@@ -1613,12 +1623,22 @@ def child_rules(s, rest, ctx, call):
             reading = True  # `git config <key>` reads
         if reading:
             return OK
-        for t in words:
-            k = t.lower()
-            if k == "alias" or k.startswith("alias."):
-                return no("config %s" % t)
-            if EXEC_KEY.match(k) or CHILD_CONFIG_DENY.match(k):
-                return no("config %s" % t)
+        if has(opts, "global", "system", "file", "f"):
+            return no("config --global/--system/--file (writes outside this repository)")
+        if has(opts, "rename-section", "remove-section") or words[:1] in (["rename-section"], ["remove-section"]):
+            return no("config --rename-section/--remove-section")
+        key_words = words[1:2] if words[:1] in (["set"], ["unset"]) else words[:1]
+        if not key_words or any(w.dynamic for w in pos):
+            return no("config with an unreadable key")
+        if key_words[0].lower() not in CHILD_CONFIG_ALLOW:
+            return no("config %s (children may set only %s)" % (key_words[0], ", ".join(sorted(CHILD_CONFIG_ALLOW))))
+        return OK
+    if s == "remote":
+        sub = rest[0].text.lower() if rest else ""
+        if rest and rest[0].dynamic:
+            return no("remote with a computed subcommand")
+        if sub in CHILD_REMOTE_DENY:
+            return no("remote %s (changes where fetches and pushes go)" % sub)
         return OK
     if s == "read-tree":
         opts, _, _, _ = parse_opts(rest, known=("reset", "prefix", "index-output", "trivial", "aggressive",

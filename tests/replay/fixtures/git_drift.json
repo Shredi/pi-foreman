@@ -1,0 +1,18 @@
+{
+ "foreman": {
+  "g1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:idle]] do nothing"}}]},
+   {"text": "Launched."},
+   {"text": "Builder reported."}
+  ],
+  "g2": [
+   {"tools": [{"name": "bash", "arguments": {"command": "git status --porcelain"}}]},
+   {"text": "Status asked."}
+  ]
+ },
+ "builder": {
+  "idle": [
+   {"text": "child: done"}
+  ]
+ }
+}

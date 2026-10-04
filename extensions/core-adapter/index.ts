@@ -27,6 +27,7 @@ import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv } from "./childenv.ts";
+import { GitDriftWatch, patchForemanGitEnv } from "./gitdrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents } from "./payload.ts";
 import type { PayloadContext } from "./payload.ts";
@@ -79,6 +80,8 @@ interface Session {
   runs: RunRegistry;
   /** Open child supervisor requests (supervisor.ts). */
   supervisor: SupervisorWindow;
+  /** Git config/hooks snapshot taken at child launches, checked before foreman git (gitdrift.ts). */
+  gitDrift: GitDriftWatch;
 }
 
 export interface AdapterDeps {
@@ -122,14 +125,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
 
     const hint = pythonPathHint(PKG_ROOT, agentDir);
-    let python = await pythonCache.get(id, () => resolvePython({ configPath: hint, envPath: ORIGINAL_PI_FOREMAN_PYTHON, platform, spawner }));
+    let python = await pythonCache.get(id, () => resolvePython({ configPath: hint, envPath: ORIGINAL_PI_FOREMAN_PYTHON, platform, spawner, cwd }));
     const provider = ctx.model?.provider;
     const config = await loadMergedConfig({ python: python.ok ? python.info.executable : null, pkgRoot: PKG_ROOT, provider, agentDir, projectDir: cwd, trusted, spawner });
     const merged = get(config.config, "python.path");
     if (typeof merged === "string" && merged.trim() && merged !== hint) {
       // python.path came from a layer the hint does not read (L3): honour it.
       pythonCache.drop(id);
-      python = await pythonCache.get(id, () => resolvePython({ configPath: merged, envPath: ORIGINAL_PI_FOREMAN_PYTHON, platform, spawner }));
+      python = await pythonCache.get(id, () => resolvePython({ configPath: merged, envPath: ORIGINAL_PI_FOREMAN_PYTHON, platform, spawner, cwd }));
     }
 
     const s: Session = {
@@ -148,6 +151,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       notified: new Set(),
       runs: new Map(),
       supervisor: new SupervisorWindow(),
+      gitDrift: new GitDriftWatch(),
       trace: openTrace({ enabled: get(config.config, "trace.enabled"), dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: id }),
     };
     sessions.set(id, s);
@@ -169,6 +173,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     refreshLedgerTier(s);
     patchShellEnv({ env: process.env, binDir: BIN_DIR, python: pyPath(s), markerDir });
     if (s.isChild && get(config.config, "safety.children.mayPush") !== true) patchChildGitEnv(process.env);
+    if (!s.isChild) patchForemanGitEnv(process.env);
 
     if (!python.ok) ctx.ui.notify(`pi-foreman: no Python ≥ 3.9 found — shell commands and subagent launches are blocked until it is fixed. ${NO_PYTHON_FIX}`, "error");
     for (const e of config.errors) ctx.ui.notify(e, "error");
@@ -443,6 +448,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         // Children get the git guard in child mode from extensions/git-guard; main mode is the foreman lint.
         if (guard === "git_guard" && (s.isChild || !mainNeedsGitGuard(input.command))) continue;
+        if (guard === "git_guard") {
+          const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this git command", driftAsk(ctx), (r) => s.trace?.emit(r), event.toolCallId);
+          if (drift) return drift;
+        }
         const payload = guard === "git_guard" ? gitGuardPayload(event.toolName, input, pc, get(s.config.config, "safety.git")) : preToolPayload(event.toolName, input, pc);
         const outcome = await run(s, ctx, guard, payload, mapping.coreName);
         if (guard === "destructive_guard" && outcome.kind === "decision" && dropDeadPathRewrite(outcome.d, input.command, os.homedir())) {
@@ -465,6 +474,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           for (const role of agents) s.trace?.emit({ event: "role_launch", role });
         }
       }
+      if (event.toolName === "subagent" && !s.isChild) {
+        // Changes since the last launch are checked first, so a new launch cannot absorb them.
+        const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this child launch", driftAsk(ctx), (r) => s.trace?.emit(r));
+        if (drift) return drift;
+        s.gitDrift.snapshot(ctx.cwd, os.homedir());
+      }
       return undefined;
     } catch (err) {
       return { block: true, reason: `pi-foreman: adapter error before ${event.toolName} (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
@@ -484,6 +499,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.on("tool_result", async (event, ctx) => {
+    sessionFor(ctx)?.gitDrift.after(ctx.cwd, os.homedir(), event.toolCallId);
     if (event.toolName === SUPERVISOR_TOOL) {
       const s = sessionFor(ctx);
       const closed = s?.supervisor.onSupervisorResult(event.details, event.isError);
@@ -539,6 +555,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return { python: pyPath(s), isChild: s.isChild, opsConfig: get(s.config.config, "safety.ops"), trace: (r) => s.trace?.emit(r) };
     },
     script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
+    preflight: async (ctx, op, callId) => {
+      const s = await ensureSession(ctx);
+      if (op !== "worktree_remove" || s.isChild) return undefined;
+      return s.gitDrift.gate(ctx.cwd, os.homedir(), "foreman_worktree_remove", driftAsk(ctx), (r) => s.trace?.emit(r), callId);
+    },
     spawner,
     env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
   });
@@ -585,6 +606,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
     if (s.python.ok) ok(`Python ${s.python.info.version.join(".")} at ${s.python.info.executable} (${s.python.info.source})`);
     else fail(`no Python ≥ 3.9 (tried: ${s.python.rejected.join("; ") || "nothing"})`, NO_PYTHON_FIX.replace(/; run \/foreman doctor\.$/, "."));
+    for (const r of s.python.rejected) if (r.includes("inside the workspace")) out.push(`INFO Python candidate ${r}: the guards never run on an interpreter or venv a child can write; use one outside the project (python.path in your user foreman.json or PI_FOREMAN_PYTHON).`);
 
     if (fs.existsSync(path.join(CORE_DIR, "scripts", "destructive_guard.py"))) ok(`core scripts at ${CORE_DIR}`);
     else fail(`core scripts missing under ${CORE_DIR}`, "reinstall pi-foreman (core/ is vendored with the package).");
@@ -669,6 +691,10 @@ function askOutcome(isChild: boolean, reason: string | undefined): string {
   if (isChild) return "child";
   if (reason.startsWith("Denied by the user.")) return "denied";
   return "no-ui";
+}
+
+function driftAsk(ctx: ExtensionContext) {
+  return { mode: ctx.mode, hasUI: ctx.hasUI, confirm: (title: string, msg: string) => ctx.ui.confirm(title, msg) };
 }
 
 function safeTrusted(ctx: ExtensionContext): boolean {
