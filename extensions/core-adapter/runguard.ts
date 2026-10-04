@@ -16,6 +16,8 @@ export interface RunGuardInput {
   coreDir: string;
   guard: GuardName;
   payload: unknown;
+  /** Extra argv after the script path (git_guard: --mode main/child). */
+  args?: string[];
   env: Record<string, string>;
   cwd: string;
   spawner: Spawner;
@@ -26,7 +28,7 @@ export async function runGuard(input: RunGuardInput): Promise<GuardRun> {
   if (!input.python) return { status: "failed", failure: "no-python", detail: "no Python >= 3.9 found" };
   const script = path.join(input.coreDir, "scripts", `${input.guard}.py`);
   // -E: ignore PYTHONPATH & co. (a stray json.py must not shadow the stdlib); -s: no user site.
-  const r = await input.spawner(input.python, ["-E", "-s", script], {
+  const r = await input.spawner(input.python, ["-E", "-s", script, ...(input.args ?? [])], {
     input: asciiJson(input.payload),
     env: input.env,
     cwd: input.cwd,

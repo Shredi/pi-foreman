@@ -21,6 +21,9 @@ The project layer is not trusted: for `safety.*` it can only tighten.
     safety.permissions.deny/ask      union (entries are added, never removed)
     safety.requiredChildExtensions   union
     safety.git.protectedBranches     union
+    safety.git.commit.requiredTrailers / forbiddenTrailers   union
+    safety.git.commit.messagePattern ignored (a pattern can loosen the lint)
+    safety.git.commit.checkCommand   ignored (it executes a program; L3/L2 only)
     safety.permissions.allow         cannot be extended (result = intersection)
     any other safety.* key           ignored with a warning
 
@@ -45,6 +48,7 @@ import argparse
 import copy
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -62,6 +66,8 @@ TIGHTEN = {
     ("permissions", "ask"): "union",
     ("requiredChildExtensions",): "union",
     ("git", "protectedBranches"): "union",
+    ("git", "commit", "requiredTrailers"): "union",
+    ("git", "commit", "forbiddenTrailers"): "union",
     ("permissions", "allow"): "intersect",
 }
 
@@ -140,6 +146,17 @@ def semantic_issues(cfg):
     presets = cfg.get("displayPresets")
     if isinstance(dn, str) and isinstance(presets, dict) and dn not in presets:
         issues.append(("error", "displayNames", "displayNames: unknown preset %s" % dn))
+    commit = ((cfg.get("safety") or {}).get("git") or {}).get("commit") or {}
+    if isinstance(commit, dict):
+        for key in ("messagePattern", "requiredTrailers", "forbiddenTrailers"):
+            val = commit.get(key)
+            for pat in (val if isinstance(val, list) else [val]):
+                if isinstance(pat, str):
+                    try:
+                        re.compile(pat)
+                    except re.error as exc:
+                        path = "safety.git.commit." + key
+                        issues.append(("error", path, "%s: invalid regular expression %r (%s)" % (path, pat, exc)))
     return issues
 
 
