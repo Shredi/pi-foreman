@@ -24,12 +24,22 @@ Modes
          (bash -c, eval, env, xargs, sudo, pwsh -Command, ...), git aliases and
          `-c alias.*`. A command it cannot read that mentions git is blocked.
   main   Commit lint (message pattern, trailers, explicit staging, check command)
-         and push lint (no force, mirror or delete on protected branches).
+         and push lint (no force, mirror or delete on protected branches; a push
+         without refspecs is read through the target remote's configured
+         remote.<r>.push / remote.<r>.mirror, inline `-c` values included).
          A command it cannot read that mentions git is an ask.
+
+"Cannot read" includes a computed program word ($X, "$@", $(...), & $x, & (...))
+in a command that names git anywhere, even only in an assignment or here-string.
+Protected-branch names match case-insensitively on every platform.
 
 The guard reads command strings only. It runs git read-only (`git config`,
 `git symbolic-ref`, `git diff --cached`) and the configured check command.
 It is not a sandbox: a script or build file can still call git.
+
+Known limits (main mode): only `git commit` and `git push` are linted. `git merge`,
+`git tag`, `git commit-tree` and `git send-pack` are not checked for message format
+or protected-branch force updates (children may not run send-pack at all).
 """
 from __future__ import annotations
 
@@ -147,9 +157,11 @@ class Lexer(object):
         self.wstart = 0
         self.redir = None
         self.pending = []
+        self.callop = False  # PowerShell: the last token was the `&` or `.` call operator
 
     # ------------------------------------------------------------- word helpers
     def start(self, i):
+        self.callop = False
         if self.w is None:
             self.w = []
             self.wdyn = False
@@ -173,6 +185,7 @@ class Lexer(object):
     def end_seg(self, i, pipe_next=False):
         self.end_word(i)
         self.redir = None
+        self.callop = False
         c = self.cur
         if c.words or c.herestrings or any(p[3] is c for p in self.pending):
             self.segs.append(c)
@@ -461,9 +474,29 @@ class Lexer(object):
                 self.start(i)
                 i = self.cmdvar(i)
                 continue
+            if f == "powershell" and c == "." and self.w is None and not self.cur.words and \
+                    (i + 1 >= n or s[i + 1] in " \t"):
+                # `. <command>` dot-sources; kept as the program word `.`.
+                self.cur.words.append(Word("."))
+                i += 1
+                self.callop = True
+                continue
+            if f == "powershell" and c == "(" and self.callop and self.w is None:
+                # `& (<expr>) args`: the program is computed.
+                k = self.match_close(i, "(", ")")
+                self.subs.append(s[i + 1:k])
+                self.start(i)
+                self.dyn()
+                i = k + 1
+                continue
             if c in ";&|":
                 self.end_word(i)
                 two = s[i:i + 2]
+                if f == "powershell" and c == "&" and two != "&&":
+                    self.end_seg(i)
+                    i += 1
+                    self.callop = True
+                    continue
                 if f == "bash" and c == "&" and two == "&>":
                     i += 3 if s[i:i + 3] == "&>>" else 2
                     self.redir = "file"
@@ -581,6 +614,17 @@ EXEC_KEY = re.compile(
     r"credential(\..+)?\.helper|gpg(\..+)?\.program|uploadpack\.packobjectshook|"
     r"remote\..+\.(receivepack|uploadpack|vcs)|sendemail\..+|difftool\..+\.cmd|mergetool\..+\.cmd|"
     r"core\.hookspath)$")
+# Config a child may not write with `git config`: it changes where pushes go, pulls in other
+# config files, or makes git run a program.
+CHILD_CONFIG_DENY = re.compile(
+    r"^((remote|push|include|includeif|credential)(\..*)?|branch\..+\.pushremote|"
+    r"core\.(hookspath|fsmonitor|sshcommand)|diff\.external|.+\.textconv)$")
+# Config the main-mode push lint reads (inline `-c` values are passed to its `git config` reads).
+PUSH_CONFIG = re.compile(r"^(remote\..+\.(push|mirror)|remote\.pushdefault|push\.default|"
+                         r"branch\..+\.(pushremote|remote|merge))$")
+# Environment variables whose value git runs as a command.
+EXEC_ENV = {"GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_PAGER", "GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF",
+            "GIT_ASKPASS", "EDITOR", "VISUAL", "PAGER"}
 ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
 GIT_CONFIG_ENV = re.compile(r"^GIT_CONFIG", re.I)
 
@@ -610,6 +654,48 @@ class Ctx(object):
         self.cfg = config
         self.env = dict(os.environ if env is None else env)
         self._alias_cache = {}
+        self.root = None    # (text, flavor) of the whole command
+        self._stray = None
+
+
+def stray_git(text, flavor, depth=0):
+    """True when the command names git anywhere other than as a plainly written program
+    word: in an assignment, an argument (`set -- git push`), a here-string or heredoc,
+    a substitution. A computed program word in such a command may well be git."""
+    if depth > MAX_DEPTH:
+        return mentions_git(text)
+    try:
+        lx = lex(text, flavor)
+    except LexError:
+        return mentions_git(text)
+    if any(stray_git(sub, flavor, depth + 1) for sub in lx.subs):
+        return True
+    kw = KEYWORDS[flavor]
+    for seg in lx.segs:
+        if any(mentions_git(w.text) for w in seg.herestrings) or mentions_git(*seg.heredocs):
+            return True
+        prog = None
+        for k, w in enumerate(seg.words):
+            t = w.text if flavor == "bash" else w.text.lower()
+            if w.dynamic or not (t in kw or (flavor == "bash" and ASSIGN.match(w.text))):
+                prog = k
+                break
+        for k, w in enumerate(seg.words):
+            if k == prog and not w.dynamic and is_git_name(prog_name(w.text)):
+                continue
+            if mentions_git(w.text):
+                return True
+    return False
+
+
+def involves_git(ctx, seg=None, *texts):
+    """The segment (or the given texts) names git, or the whole command names git in a
+    position other than a plain git program word."""
+    if mentions_git(seg.raw() if seg is not None else "", *texts):
+        return True
+    if ctx._stray is None:
+        ctx._stray = bool(ctx.root) and stray_git(ctx.root[0], ctx.root[1])
+    return ctx._stray
 
 
 def deny(reason):
@@ -652,6 +738,8 @@ def joined(words):
 
 
 def analyze_text(text, flavor, ctx, depth):
+    if ctx.root is None:
+        ctx.root = (text, flavor)
     if depth > MAX_DEPTH:
         if mentions_git(text):
             return unreadable(ctx, "nested more than %d levels" % MAX_DEPTH)
@@ -750,7 +838,7 @@ def run_command(words, seg, flavor, ctx, depth, envs, xargs_repl=None, via_xargs
         probe = Ctx("child", ctx.cwd, ctx.cfg, ctx.env)
         probe._alias_cache = ctx._alias_cache
         guess = git_args(words[1:], seg, flavor, probe, depth, envs, via_xargs, xargs_repl, guessing=True)
-        if guess.level > ALLOW or mentions_git(seg.raw(), *[w.text for w in words]):
+        if guess.level > ALLOW or involves_git(ctx, seg, *[w.text for w in words]):
             return unreadable(ctx, "the program name is computed")
         return OK
     name = prog_name(cmd.text)
@@ -785,13 +873,28 @@ def run_command(words, seg, flavor, ctx, depth, envs, xargs_repl=None, via_xargs
             if w.text.lower() in ("/c", "/k", "/r"):
                 rest = args[k + 1:]
                 if any(x.dynamic for x in rest):
-                    return unreadable(ctx, "cmd /c with a computed command") if mentions_git(seg.raw()) else d
-                return worst(d, analyze_text(" ".join(x.raw for x in rest), "cmd", ctx, depth + 1))
+                    return unreadable(ctx, "cmd /c with a computed command") if involves_git(ctx, seg) else d
+                line = " ".join(x.raw for x in rest)
+                if line.startswith('"') and line.count('"') >= 2:
+                    # cmd /c "git push": cmd drops the first and the last quote.
+                    e = line.rfind('"')
+                    line = line[1:e] + line[e + 1:]
+                return worst(d, analyze_text(line, "cmd", ctx, depth + 1))
         return d
+    if name in (".", "source"):
+        if flavor == "powershell" and args and not args[0].dynamic and is_git_name(prog_name(args[0].text)):
+            return worst(d, run_command(args, seg, flavor, ctx, depth, envs))
+        if args and involves_git(ctx, seg):
+            return unreadable(ctx, "a sourced script")
+        return d
+    if name == "alias" and flavor == "bash" and any(mentions_git(w.text) for w in args):
+        return unreadable(ctx, "a shell alias")
+    if name in ("set-alias", "new-alias", "sal", "nal") and involves_git(ctx, seg):
+        return unreadable(ctx, "a PowerShell alias")
     if name == "eval" or name in ("invoke-expression", "iex"):
         rest = [w for w in args if w.text.lower() not in ("-command",)]
         if any(w.dynamic for w in rest):
-            return unreadable(ctx, "%s of a computed string" % name) if mentions_git(seg.raw()) else d
+            return unreadable(ctx, "%s of a computed string" % name) if involves_git(ctx, seg) else d
         sub_flavor = "powershell" if name != "eval" else flavor
         return worst(d, analyze_text(joined(rest), sub_flavor, ctx, depth + 1))
     if name in ("start-process", "saps", "start") and flavor != "bash":
@@ -806,7 +909,7 @@ def run_command(words, seg, flavor, ctx, depth, envs, xargs_repl=None, via_xargs
         rest = strip_options(args, argful=("-n", "--interval", "-d", "--differences", "-q", "--equexit"))
         if rest:
             if any(w.dynamic for w in rest):
-                return unreadable(ctx, "watch of a computed command") if mentions_git(seg.raw()) else d
+                return unreadable(ctx, "watch of a computed command") if involves_git(ctx, seg) else d
             return worst(d, analyze_text(joined(rest), "bash", ctx, depth + 1))
         return d
     wrappers = {
@@ -858,7 +961,7 @@ def shell_call(args, seg, flavor, ctx, depth, envs):
         w = args[i]
         t = w.text
         if w.dynamic and t.startswith("-"):
-            return unreadable(ctx, "shell options are computed") if mentions_git(seg.raw()) else OK
+            return unreadable(ctx, "shell options are computed") if involves_git(ctx, seg) else OK
         if t == "--" or t == "-":
             i += 1
             break
@@ -878,7 +981,7 @@ def shell_call(args, seg, flavor, ctx, depth, envs):
         if not pos:
             return OK
         if pos[0].dynamic:
-            return unreadable(ctx, "shell -c of a computed string") if mentions_git(seg.raw()) else OK
+            return unreadable(ctx, "shell -c of a computed string") if involves_git(ctx, seg) else OK
         return analyze_text(pos[0].text, flavor, ctx, depth + 1)
     if pos:
         return OK  # a script file: not readable from the command line
@@ -914,7 +1017,7 @@ def pwsh_call(args, seg, ctx, depth):
         if t.startswith("/"):
             t = "-" + t[1:]
         if w.dynamic and t.startswith("-"):
-            return unreadable(ctx, "PowerShell options are computed") if mentions_git(seg.raw()) else OK
+            return unreadable(ctx, "PowerShell options are computed") if involves_git(ctx, seg) else OK
         if not t.startswith("-") or t == "-":
             break
         key = t.split(":", 1)[0]
@@ -925,7 +1028,7 @@ def pwsh_call(args, seg, ctx, depth):
             if rest and rest[0].text == "-":
                 return stdin_script(seg, "powershell", ctx, depth)
             if any(x.dynamic for x in rest):
-                return unreadable(ctx, "PowerShell -Command with a computed string") if mentions_git(seg.raw()) else OK
+                return unreadable(ctx, "PowerShell -Command with a computed string") if involves_git(ctx, seg) else OK
             return analyze_text(joined(rest), "powershell", ctx, depth + 1)
         if key in ("-file", "-f") or (len(key) >= 3 and "-file".startswith(key)):
             return OK
@@ -933,7 +1036,7 @@ def pwsh_call(args, seg, ctx, depth):
     rest = args[i:]
     if rest:
         if any(x.dynamic for x in rest):
-            return unreadable(ctx, "PowerShell with a computed command") if mentions_git(seg.raw()) else OK
+            return unreadable(ctx, "PowerShell with a computed command") if involves_git(ctx, seg) else OK
         return analyze_text(joined(rest), "powershell", ctx, depth + 1)
     return stdin_script(seg, "powershell", ctx, depth)
 
@@ -990,7 +1093,7 @@ def env_call(args, seg, flavor, ctx, depth, envs):
                 s_arg = Word(t.split("=", 1)[1] if t.startswith("--") else t[2:], w.dynamic)
                 i += 1
             if s_arg.dynamic:
-                return unreadable(ctx, "env -S with a computed string") if mentions_git(seg.raw()) else OK
+                return unreadable(ctx, "env -S with a computed string") if involves_git(ctx, seg) else OK
             text = s_arg.text + " " + " ".join(x.raw for x in args[i:])
             return analyze_text(text, flavor, ctx, depth + 1)
         if t == "--":
@@ -1090,6 +1193,13 @@ def git_args(args, seg, flavor, ctx, depth, envs, via_xargs=False, xargs_repl=No
         for k in envs:
             if GIT_CONFIG_ENV.match(k):
                 return deny("children may not inject git configuration through the environment (%s)." % k)
+    if not guessing and call is None:
+        # Commands git runs from the environment: read them like any other command.
+        for k, v in envs.items():
+            if k.upper() in EXEC_ENV and v:
+                d = analyze_text(v, "bash", ctx, depth + 1)
+                if d.level > ALLOW:
+                    return d
     call = call or GitCall(ctx)
     i = 0
     while i < len(args):
@@ -1125,11 +1235,14 @@ def git_args(args, seg, flavor, ctx, depth, envs, via_xargs=False, xargs_repl=No
                     return d
             elif key == "--config-env":
                 ck = val.split("=", 1)[0].lower()
-                if ck.startswith("alias.") or EXEC_KEY.match(ck):
+                if ck.startswith("alias.") or EXEC_KEY.match(ck) or CHILD_CONFIG_DENY.match(ck):
                     if ctx.mode == "child":
                         return deny("children may not set %s through --config-env." % ck)
                     if ck.startswith("alias."):
                         call.cfg_aliases[ck[6:]] = None
+                if ctx.mode == "main" and PUSH_CONFIG.match(ck):
+                    return ask("push configuration %s comes from the environment (--config-env); "
+                               "the guard cannot check the push target." % ck)
             continue
         if t in GIT_FLAGS:
             i += 1
@@ -1154,9 +1267,15 @@ def git_config_override(kv, call, ctx, depth):
             return deny("children may not define git aliases (-c %s)." % key)
         call.cfg_aliases[k[6:]] = val
         return OK
-    if EXEC_KEY.match(k) and ctx.mode == "child":
+    if ctx.mode == "child" and re.match(r"^include(if\..+)?\.path$", k):
+        return deny("children may not include other git config files (-c %s)." % key)
+    if PUSH_CONFIG.match(k):
+        call.passthrough.extend(["-c", kv])  # the push lint reads it back with `git config`
+    if EXEC_KEY.match(k):
         if k == "core.hookspath":
-            return deny("children may not point git at another hooks directory (-c %s)." % key)
+            if ctx.mode == "child":
+                return deny("children may not point git at another hooks directory (-c %s)." % key)
+            return OK
         return analyze_text(val.lstrip("!"), "bash", ctx, depth + 1)
     return OK
 
@@ -1302,7 +1421,7 @@ def git_sub(sub, rest, seg, flavor, ctx, depth, envs, via_xargs, xargs_repl, cal
                 d = Decision(d.level, d.reason + " (through git alias %s = %s)" % (sub, value[:120]))
             return d
         return OK
-    if s in ("submodule", "rebase", "bisect"):
+    if s in ("submodule", "rebase", "bisect", "difftool"):
         d = nested_commands(s, rest, seg, flavor, ctx, depth, envs)
         if d.level > ALLOW:
             return d
@@ -1338,6 +1457,19 @@ def nested_commands(s, rest, seg, flavor, ctx, depth, envs):
                 return unreadable(ctx, "git rebase --exec with a computed command")
             d = worst(d, analyze_text(v.text, "bash", ctx, depth + 1))
         return d
+    if s == "difftool":
+        opts, _, _, _ = parse_opts(rest, short_arg="xtX", known=("extcmd", "tool", "gui", "no-gui", "dir-diff",
+                                                                "prompt", "no-prompt", "symlinks", "no-symlinks",
+                                                                "tool-help", "trust-exit-code"),
+                                   long_arg=("extcmd", "tool"))
+        d = OK
+        for v in values(opts, "x", "extcmd"):
+            if v is None:
+                continue
+            if v.dynamic:
+                return unreadable(ctx, "git difftool --extcmd with a computed command")
+            d = worst(d, analyze_text(v.text, "bash", ctx, depth + 1))
+        return d
     if s == "bisect":
         texts = [w.text for w in rest]
         if texts[:1] == ["run"]:
@@ -1361,8 +1493,10 @@ def child_rules(s, rest, ctx, call):
     if s == "reset":
         opts, _, _, _ = parse_opts(rest, known=("hard", "soft", "mixed", "merge", "keep", "quiet", "patch",
                                                  "pathspec-from-file"), long_arg=("pathspec-from-file",))
-        if has(opts, "hard"):
-            return no("reset --hard")
+        for o in ("hard", "merge", "keep"):
+            if has(opts, o):
+                # --merge and --keep still drop work (unmerged entries, the moved-over commits).
+                return no("reset --%s" % o)
         return OK
     if s == "checkout":
         opts, pos, dd, _ = parse_opts(rest, short_arg="bB", known=(
@@ -1376,6 +1510,9 @@ def child_rules(s, rest, ctx, call):
             return no("checkout -- <path>")
         if has(opts, "pathspec-from-file"):
             return no("checkout --pathspec-from-file")
+        for v in values(opts, "B"):
+            if v is not None and protected_ref(ctx, call, v.text):
+                return no("checkout -B %s (resets a protected branch)" % v.text)
         creating = has(opts, "b", "B", "orphan")
         for w in pos:
             t = w.text
@@ -1393,6 +1530,9 @@ def child_rules(s, rest, ctx, call):
             long_arg=("create", "force-create", "orphan"))
         if has(opts, "f", "force", "discard-changes"):
             return no("switch --force/--discard-changes")
+        for v in values(opts, "C", "force-create"):
+            if v is not None and protected_ref(ctx, call, v.text):
+                return no("switch -C %s (resets a protected branch)" % v.text)
         return OK
     if s == "clean":
         opts, _, _, _ = parse_opts(rest, short_arg="e", known=("force", "dry-run", "quiet", "exclude", "interactive"),
@@ -1406,7 +1546,7 @@ def child_rules(s, rest, ctx, call):
             return no("stash " + sub)
         return OK
     if s == "branch":
-        opts, _, _, _ = parse_opts(rest, short_arg="u", known=(
+        opts, pos, _, _ = parse_opts(rest, short_arg="u", known=(
             "delete", "force", "move", "copy", "list", "all", "remotes", "verbose", "quiet", "track", "no-track",
             "set-upstream-to", "unset-upstream", "contains", "no-contains", "merged", "no-merged", "points-at",
             "sort", "format", "column", "no-column", "edit-description", "show-current", "create-reflog",
@@ -1415,6 +1555,12 @@ def child_rules(s, rest, ctx, call):
                       "format"))
         if has(opts, "D") or (has(opts, "d", "delete") and has(opts, "f", "force")):
             return no("branch -D")
+        if has(opts, "f", "force", "m", "M", "move", "c", "C", "copy"):
+            # Moving, renaming onto or copying onto a branch: a protected one may not be touched.
+            moving = has(opts, "m", "M", "move", "c", "C", "copy")
+            for w in (pos if moving else pos[:1]):
+                if protected_ref(ctx, call, w.text):
+                    return no("branch %s (moves the protected branch %s)" % (" ".join(x.text for x in rest), w.text))
         return OK
     if s == "worktree":
         sub = rest[0].text if rest else ""
@@ -1424,12 +1570,14 @@ def child_rules(s, rest, ctx, call):
                 return no("worktree remove --force")
         return OK
     if s == "update-ref":
-        opts, _, _, _ = parse_opts(rest, short_arg="m", known=("stdin", "no-deref", "create-reflog", "message"),
+        opts, pos, _, _ = parse_opts(rest, short_arg="m", known=("stdin", "no-deref", "create-reflog", "message"),
                                    long_arg=("message",))
         if has(opts, "d"):
             return no("update-ref -d")
         if has(opts, "stdin"):
             return no("update-ref --stdin")
+        if pos and protected_ref(ctx, call, pos[0].text):
+            return no("update-ref %s (moves a protected branch)" % pos[0].text)
         return OK
     if s == "reflog":
         sub = rest[0].text if rest else ""
@@ -1469,10 +1617,75 @@ def child_rules(s, rest, ctx, call):
             k = t.lower()
             if k == "alias" or k.startswith("alias."):
                 return no("config %s" % t)
-            if EXEC_KEY.match(k):
+            if EXEC_KEY.match(k) or CHILD_CONFIG_DENY.match(k):
                 return no("config %s" % t)
         return OK
+    if s == "read-tree":
+        opts, _, _, _ = parse_opts(rest, known=("reset", "prefix", "index-output", "trivial", "aggressive",
+                                                 "dry-run", "exclude-per-directory", "empty", "quiet",
+                                                 "no-sparse-checkout", "recurse-submodules"))
+        if has(opts, "u", "reset"):
+            return no("read-tree -u/--reset")
+        return OK
+    if s == "checkout-index":
+        opts, _, _, _ = parse_opts(rest, short_arg="", known=("force", "all", "index", "quiet", "no-create",
+                                                              "stage", "prefix", "temp", "stdin", "ignore-skip-worktree-bits"))
+        if has(opts, "f", "force", "a", "all"):
+            return no("checkout-index -f/-a")
+        return OK
+    if s == "rm":
+        opts, _, _, _ = parse_opts(rest, known=("force", "cached", "dry-run", "quiet", "ignore-unmatch",
+                                                 "sparse", "pathspec-from-file", "pathspec-file-nul"),
+                                   long_arg=("pathspec-from-file",))
+        if has(opts, "n", "dry-run", "cached"):
+            return OK
+        if has(opts, "f", "force", "r"):
+            return no("rm -f/-r")
+        return OK
+    if s == "fetch":
+        opts, pos, dd, _ = parse_opts(rest, short_arg="jo", known=FETCH_KNOWN, long_arg=FETCH_ARG)
+        forced = has(opts, "f", "force")
+        for w in (pos + list(dd))[1:]:
+            r = w.text
+            if (forced or r.startswith("+")) and ":" in r:
+                dst = strip_ref(r.split(":", 1)[1])
+                if dst and protected_hit(ctx, dst):
+                    return no("fetch %s (forced update of protected branch %s)" % (r, dst))
+        return OK
     return OK
+
+
+FETCH_KNOWN = ("all", "append", "atomic", "depth", "deepen", "shallow-since", "shallow-exclude", "unshallow",
+               "update-shallow", "negotiation-tip", "negotiate-only", "dry-run", "porcelain", "write-fetch-head",
+               "force", "keep", "multiple", "auto-maintenance", "auto-gc", "write-commit-graph", "prefetch",
+               "prune", "prune-tags", "no-tags", "refetch", "refmap", "tags", "recurse-submodules", "jobs",
+               "no-recurse-submodules", "set-upstream", "submodule-prefix", "update-head-ok", "upload-pack",
+               "quiet", "verbose", "progress", "server-option", "show-forced-updates", "ipv4", "ipv6")
+FETCH_ARG = ("depth", "deepen", "shallow-since", "shallow-exclude", "negotiation-tip", "refmap",
+             "recurse-submodules", "jobs", "submodule-prefix", "upload-pack", "server-option")
+
+
+def protected_hit(ctx, branch):
+    """The protected-branch pattern `branch` matches, or None.
+
+    Case-insensitive everywhere: on macOS and Windows `Main` and `main` are the same loose
+    ref file, and the remote's file system is unknown. Over-matching only refuses a branch
+    whose name differs from a protected one by case."""
+    b = branch.lower()
+    for p in ctx.cfg.get("protectedBranches") or []:
+        if not isinstance(p, str) or not p:
+            continue
+        q = p.lower()
+        if fnmatch.fnmatchcase(b, q) or ("*" in b and fnmatch.fnmatchcase(q, b)):
+            return p
+    return None
+
+
+def protected_ref(ctx, call, ref, envs=None):
+    """`ref` (a branch name, refs/heads/<name>, or HEAD) names a protected branch."""
+    if ref in ("HEAD", "@"):
+        ref = current_branch(call, ctx, envs or {}) or ""
+    return bool(ref) and protected_hit(ctx, strip_ref(ref)) is not None
 
 
 CHILD_WHY = {
@@ -1485,13 +1698,17 @@ CHILD_WHY = {
     "restore": "it discards uncommitted changes",
     "clean": "it deletes untracked files",
     "stash": "it deletes stashed work",
-    "branch": "it deletes an unmerged branch",
+    "branch": "it deletes an unmerged branch or moves a protected one",
     "worktree": "it deletes a worktree with changes",
     "update-ref": "it deletes or rewrites refs",
     "reflog": "it removes the recovery log",
     "gc": "it removes the objects needed for recovery",
     "prune": "it removes the objects needed for recovery",
-    "config": "it would change what git runs",
+    "config": "it would change what git runs or where it pushes",
+    "read-tree": "it overwrites uncommitted changes",
+    "checkout-index": "it overwrites uncommitted changes",
+    "rm": "it deletes files from the work tree",
+    "fetch": "only the foreman moves protected branches",
 }
 
 
@@ -1523,6 +1740,7 @@ def commit_lint(rest, ctx, call, envs):
     if has(opts, "C", "c", "reuse-message", "reedit-message", "fixup", "squash", "t", "template"):
         return ask("the commit message is taken from elsewhere; %s." % USE_M)
     parts = []
+    from_file = False  # a -F file's text never goes into a deny reason
     for name, v in opts:
         if name in ("m", "message"):
             if v is None:
@@ -1539,11 +1757,13 @@ def commit_lint(rest, ctx, call, envs):
             try:
                 with open(path, "rb") as fh:
                     parts.append(fh.read(1 << 20).decode("utf-8", "replace"))
+                from_file = True
             except OSError:
                 return ask("cannot read the message file %s; %s." % (v.text, USE_M))
     if not parts:
         return ask("the commit message is not on the command line (editor or --amend reuse); %s." % USE_M)
-    message = "\n\n".join(p.strip("\n") for p in parts)
+    # CRLF files (Windows editors, text-mode writes): git's cleanup drops the CR too.
+    message = "\n\n".join(p.replace("\r\n", "\n").strip("\n") for p in parts)
     trailers = trailer_lines(message)
     for v in values(opts, "trailer"):
         if v is not None:
@@ -1562,6 +1782,8 @@ def commit_lint(rest, ctx, call, envs):
         except re.error as exc:
             return deny("safety.git.commit.messagePattern is not a valid regular expression (%s)." % exc)
         if not ok:
+            if from_file:
+                return deny("commit message does not match safety.git.commit.messagePattern %s." % pattern)
             return deny("commit subject %r does not match safety.git.commit.messagePattern %s." % (subject[:120], pattern))
     for req in cc.get("requiredTrailers") or []:
         try:
@@ -1575,6 +1797,9 @@ def commit_lint(rest, ctx, call, envs):
         except re.error as exc:
             return deny("invalid forbiddenTrailers entry %r (%s)." % (bad, exc))
         if hit:
+            if from_file:
+                return deny("commit message has a trailer matching forbidden pattern %r "
+                            "(safety.git.commit.forbiddenTrailers)." % bad)
             return deny("commit trailer %r is not allowed (safety.git.commit.forbiddenTrailers: %r)." % (hit[:120], bad))
     check = cc.get("checkCommand")
     if isinstance(check, list) and check and all(isinstance(x, str) for x in check):
@@ -1645,28 +1870,33 @@ def push_lint(rest, ctx, call, envs):
     if mirror:
         return deny("push --mirror is not allowed while safety.git.protectedBranches is set (%s)." % ", ".join(protected))
     if dyn:
-        if force or delete:
-            return ask("forced or deleting push with a computed argument; the guard cannot tell the target branch.")
-        return OK
-    refspecs = pos[1:]
+        return ask("the push has a computed argument (remote or refspec); the guard cannot tell the target "
+                   "branch. Write it out.")
+    current = current_branch(call, ctx, envs)
+    remote = pos[0].text if pos else push_remote(call, ctx, envs, current)
+    if remote and git_bool(config_values(call, ctx, envs, "remote.%s.mirror" % remote)):
+        return deny("remote %s is configured as a mirror (remote.%s.mirror); a push to it is not allowed while "
+                    "safety.git.protectedBranches is set." % (remote, remote))
+    refspecs = [w.text for w in pos[1:]]
+    configured = False
+    if not refspecs and not every and remote:
+        # `git push [<remote>]` without refspecs uses remote.<remote>.push when it is set.
+        refspecs = config_values(call, ctx, envs, "remote.%s.push" % remote)
+        configured = bool(refspecs)
     targets = []  # (branch pattern, destructive)
-    current = None
     if refspecs:
-        for w in refspecs:
-            r = w.text
+        for r in refspecs:
             plus = r.startswith("+")
             r = r[1:] if plus else r
-            if ":" in r:
+            if r == ":":
+                src = dst = "*"  # matching branches
+            elif ":" in r:
                 src, dst = r.split(":", 1)
                 if not dst:
                     dst = src
             else:
                 src = dst = r
-            if src in ("HEAD", "@") and dst == src:
-                current = current or current_branch(call, ctx, envs)
-                dst = current or ""
-            elif dst in ("HEAD", "@"):
-                current = current or current_branch(call, ctx, envs)
+            if dst in ("HEAD", "@"):
                 dst = current or ""
             targets.append((strip_ref(dst), plus or force or delete or src == ""))
     else:
@@ -1674,7 +1904,6 @@ def push_lint(rest, ctx, call, envs):
         if every:
             implicit.add("*")
         if force or delete:
-            current = current_branch(call, ctx, envs)
             if current:
                 implicit.add(current)
                 up = upstream_branch(call, ctx, envs, current)
@@ -1686,12 +1915,34 @@ def push_lint(rest, ctx, call, envs):
     for dst, destructive in targets:
         if not destructive or not dst:
             continue
-        for p in protected:
-            if fnmatch.fnmatchcase(dst, p) or ("*" in dst and fnmatch.fnmatchcase(p, dst)):
-                kind = "delete" if (delete or dst == "") else "force push"
-                return deny("%s to protected branch %s is not allowed (safety.git.protectedBranches)." %
-                            (kind, p if "*" in dst else dst))
+        p = protected_hit(ctx, dst)
+        if p:
+            kind = "delete" if (delete or dst == "") else "force push"
+            where = " (configured refspec remote.%s.push)" % remote if configured else ""
+            return deny("%s to protected branch %s is not allowed%s (safety.git.protectedBranches)." %
+                        (kind, p if "*" in dst else dst, where))
     return OK
+
+
+def config_values(call, ctx, envs, key):
+    """Every value of `key` git would see (repo, user and inline `-c` config); read-only."""
+    out = run_git(call, ctx, ["config", "--get-all", key], envs)
+    return [ln for ln in out.splitlines() if ln.strip()] if out else []
+
+
+def git_bool(vals):
+    return bool(vals) and vals[-1].strip().lower() in ("true", "yes", "on", "1")
+
+
+def push_remote(call, ctx, envs, current):
+    """The remote a bare `git push` goes to."""
+    keys = (["branch.%s.pushRemote" % current] if current else []) + ["remote.pushDefault"] + \
+        (["branch.%s.remote" % current] if current else [])
+    for k in keys:
+        v = config_values(call, ctx, envs, k)
+        if v:
+            return v[-1].strip()
+    return "origin"
 
 
 def strip_ref(ref):

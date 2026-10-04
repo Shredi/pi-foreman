@@ -78,7 +78,7 @@ TABLE = [
     # destructive forms (child)
     ("git reset --hard HEAD~1", "bash", D, A),
     ("git reset --ha", "bash", D, A),           # git accepts unique prefixes
-    ("git reset --keep HEAD~1", "bash", A, A),
+    ("git reset --keep HEAD~1", "bash", D, A),   # --keep/--merge still drop work (S20)
     ("git reset HEAD a.txt", "bash", A, A),
     ("git checkout -- a.txt", "bash", D, A),
     ("git checkout .", "bash", D, A),
@@ -141,6 +141,73 @@ TABLE = [
     ("git push origin main", "bash", D, A),
     ("git push --dry-run --force origin main", "bash", D, A),
     ("git -c alias.pf='push --force' pf origin main", "bash", D, D),
+    # S7: inline push config (main reads it back); child may not write push/remote/include config
+    ("git -c remote.origin.push=+refs/heads/*:refs/heads/* push", "bash", D, D),
+    ("git -c remote.origin.push=refs/heads/*:refs/heads/* push", "bash", D, A),
+    ("git -c remote.origin.mirror=true push origin feature", "bash", D, D),
+    ("git config remote.origin.push '+refs/heads/*:refs/heads/*'", "bash", D, A),
+    ("git config --unset remote.origin.push", "bash", D, A),
+    ("git config remote.origin.mirror true", "bash", D, A),
+    ("git config push.default matching", "bash", D, A),
+    ("git config --local include.path ../evil", "bash", D, A),
+    ("git config includeIf.gitdir:x/.path y", "bash", D, A),
+    ("git config core.sshCommand x", "bash", D, A),
+    ("git config credential.helper store", "bash", D, A),
+    ("git config diff.x.textconv cat", "bash", D, A),
+    ("git config --get remote.origin.push", "bash", A, A),
+    ("git config remote.origin.url", "bash", A, A),
+    # S8: computed program word in a command that names git anywhere
+    ("X='git push'; $X", "bash", D, Q),
+    ("X=\"git push origin HEAD:main --force\"; $X", "bash", D, Q),
+    ("set -- git push; \"$@\"", "bash", D, Q),
+    ("read -r c <<< 'git push'; $c", "bash", D, Q),
+    ("IFS=_; x=git_push; $x", "bash", D, Q),
+    ("alias p='git push'; p", "bash", D, Q),
+    ("printf 'git push' > s; . ./s", "bash", D, Q),
+    ("x='git push'; eval $x", "bash", D, Q),
+    ("source .venv/bin/activate && git status", "bash", A, A),
+    # S19 / S20
+    ("git -c include.path=/tmp/evil status", "bash", D, A),
+    ("git read-tree -u -m HEAD", "bash", D, A),
+    ("git read-tree --reset HEAD", "bash", D, A),
+    ("git checkout-index -f a.txt", "bash", D, A),
+    ("git checkout-index -a", "bash", D, A),
+    ("git rm -rf .", "bash", D, A),
+    ("git rm -r src", "bash", D, A),
+    ("git rm --cached -r .", "bash", A, A),
+    ("git reset --merge", "bash", D, A),
+    ("git update-ref refs/heads/main HEAD~1", "bash", D, A),
+    ("git branch -f main HEAD~1", "bash", D, A),
+    ("git branch -f feature main", "bash", A, A),
+    ("git branch -m main old", "bash", D, A),
+    ("git checkout -B main HEAD~1", "bash", D, A),
+    ("git switch -C master", "bash", D, A),
+    ("git fetch origin +main:main", "bash", D, A),
+    ("git fetch origin main:main", "bash", A, A),
+    # S21: PowerShell / cmd
+    ("& (\"gi\"+\"t\") push", "powershell", D, Q),
+    ("& $x push", "powershell", D, Q),
+    ("Set-Alias g git; g push", "powershell", D, Q),
+    ("New-Alias g git; g push", "powershell", D, Q),
+    ("& (Get-Command git) push", "powershell", D, Q),
+    ("Get-Command git | ForEach-Object { & $_ push }", "powershell", D, Q),
+    ("[Diagnostics.Process]::Start('git','push')", "powershell", D, Q),
+    (". git push", "powershell", D, A),
+    ("Set-Content s.ps1 'git push'; . ./s.ps1", "powershell", D, Q),
+    ("& { git status }", "powershell", A, A),
+    ("cmd /c \"git push\"", "cmd", D, A),
+    # S22: commands git runs from env and config values
+    ("GIT_EDITOR='git push' git commit", "bash", D, Q),
+    ("GIT_PAGER='git push' git log", "bash", D, A),
+    ("git difftool -x 'git push'", "bash", D, A),
+    ("git -c core.editor='git push' commit -m 'feat: x'", "bash", D, A),
+    ("GIT_SEQUENCE_EDITOR='git push --force origin main' git rebase -i HEAD~2", "bash", D, D),
+    # S23 / S24 / S25
+    ("git push origin $(echo +main)", "bash", D, Q),
+    ("git push origin \"$B\"", "bash", D, Q),
+    ("git push origin +HEAD:Main", "bash", D, D),
+    ("git push -f origin MASTER", "bash", D, D),
+    ("git send-pack origin main", "bash", D, A),
 ]
 
 
@@ -222,6 +289,48 @@ class RepoTest(unittest.TestCase):
         self.assertIn("requiredTrailers", reason)
         self.assertEqual(decide("git commit -m 'feat: y' --trailer 'Co-Authored-By: B'", "main", cwd=self.repo, config=cfg)[0], A)
         self.assertEqual(decide("git commit -m 'anything'", "main", cwd=self.repo, config={"commit": {"messagePattern": "^any"}})[0], A)
+
+    def test_crlf_message_file(self):
+        # Windows editors (and text-mode writes there) produce CRLF; trailers must still parse.
+        Path(self.repo, "msg.txt").write_bytes(b"feat(x): y\r\n\r\nbody\r\n\r\nCo-Authored-By: A <a@example.invalid>\r\n")
+        cfg = {"commit": {"requiredTrailers": ["^Co-Authored-By: "]}}
+        self.assertEqual(decide("git commit -F msg.txt", "main", cwd=self.repo, config=cfg)[0], A)
+
+    def test_deny_reason_never_quotes_the_message_file(self):
+        Path(self.repo, "msg.txt").write_text("private-subject-text\n\nbody\n\nX-Secret: private-trailer-text\n")
+        got, reason = decide("git commit -F msg.txt", "main", cwd=self.repo)
+        self.assertEqual(got, D)
+        self.assertIn("does not match", reason)
+        self.assertNotIn("private-subject-text", reason)
+        got, reason = decide("git commit -F msg.txt", "main", cwd=self.repo,
+                             config={"commit": {"messagePattern": "^private", "forbiddenTrailers": ["^X-Secret"]}})
+        self.assertEqual(got, D)
+        self.assertNotIn("private-trailer-text", reason)
+
+    def test_configured_push_refspec_mirror_and_push_remote(self):
+        git(self.repo, "config", "remote.origin.url", "/nonexistent")
+        git(self.repo, "config", "remote.origin.push", "+refs/heads/*:refs/heads/*")
+        for cmd in ("git push", "git push origin"):
+            got, reason = decide(cmd, "main", cwd=self.repo)
+            self.assertEqual(got, D, cmd)
+            self.assertIn("remote.origin.push", reason)
+        self.assertEqual(decide("git push origin feature", "main", cwd=self.repo)[0], A)  # explicit refspec wins
+        git(self.repo, "config", "--unset", "remote.origin.push")
+        self.assertEqual(decide("git push", "main", cwd=self.repo)[0], A)
+        git(self.repo, "config", "remote.origin.mirror", "true")
+        self.assertEqual(decide("git push origin feature", "main", cwd=self.repo)[0], D)
+        git(self.repo, "config", "--unset", "remote.origin.mirror")
+        # a bare push goes to branch.<current>.pushRemote
+        git(self.repo, "config", "remote.up.url", "/nonexistent")
+        git(self.repo, "config", "remote.up.push", "+HEAD:refs/heads/main")
+        self.assertEqual(decide("git push", "main", cwd=self.repo)[0], A)
+        git(self.repo, "config", "branch.main.pushRemote", "up")
+        self.assertEqual(decide("git push", "main", cwd=self.repo)[0], D)
+
+    def test_child_may_not_move_protected_head(self):
+        self.assertEqual(decide("git update-ref HEAD HEAD~1", "child", cwd=self.repo)[0], D)
+        git(self.repo, "checkout", "-q", "-b", "feature")
+        self.assertEqual(decide("git update-ref HEAD HEAD~1", "child", cwd=self.repo)[0], A)
 
     def test_check_command_gets_the_staged_diff(self):
         Path(self.repo, "a.txt").write_text("a\nSECRET-MARKER\n")
