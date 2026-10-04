@@ -67,6 +67,9 @@ export function parseHookStdout(stdout: string): { ok: true; d: HookDecision } |
   if (hso && typeof hso === "object") {
     const h = hso as Record<string, unknown>;
     const pd = h.permissionDecision;
+    // an unknown or wrong-case decision ("Deny", "block") is unreadable output: the guard's fail
+    // policy applies (closed guards block), never a silent allow (U15)
+    if (pd !== undefined && pd !== null && pd !== "deny" && pd !== "ask" && pd !== "allow") return { ok: false };
     const decision = pd === "deny" || pd === "ask" || pd === "allow" ? pd : "none";
     const d: HookDecision = { decision };
     if (typeof h.permissionDecisionReason === "string") d.reason = h.permissionDecisionReason;

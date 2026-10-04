@@ -54,7 +54,8 @@ Keys outside safety that the project and session layers cannot loosen either
     roles.<new id>                   ignored (only ids present after L1 -> L3 -> L2)
     providers.*.roles.<new id>       ignored
     trace.dir                        only inside the workspace (the nearest directory holding
-                                     .git at or above the project dir, symlinks resolved)
+                                     .git at or above the project dir, symlinks resolved),
+                                     never inside a .git or .pi directory
 
 providers.*.roles.*.model and providers.*.fallback stay settable from the project (a
 project picks its models). roles.*.promptAppend stays settable: repository text reaches
@@ -209,6 +210,9 @@ def restrict_layer(base, proj, who, warnings, project_dir):
         if target != root and root not in target.parents:
             del trace["dir"]
             warnings.append("%s trace.dir ignored: it must resolve inside the workspace" % who)
+        elif any(part.lower() in (".git", ".pi") for part in target.relative_to(root).parts):
+            del trace["dir"]
+            warnings.append("%s trace.dir ignored: it must not be inside a .git or .pi directory" % who)
 
 
 def drop_loosening(data, layer, warnings):

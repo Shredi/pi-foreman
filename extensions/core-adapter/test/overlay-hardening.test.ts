@@ -71,7 +71,7 @@ test("S3/S6/S17/S27: agent and harness configuration is asked in the foreman, de
     [["write", { path: at(agentDir, "extensions", "evil", "index.ts"), content: "x" }], "ask", "deny"],
     [["write", { path: at(agentDir, "agents", "builder.md"), content: "x" }], "ask", "deny"],
     [["write", { path: at(pkgRoot, "scripts", "git_guard.py"), content: "x" }], "ask", "deny"],
-    [sh(`python3 ${at(pkgRoot, "scripts", "x.py")}`), "pass", "pass"],
+    [sh(`python3 ${at(pkgRoot, "scripts", "x.py")}`), "pass", "deny"], // T11: children may not name the package root in a shell
     [["read", { path: ".pi/foreman.json" }], "pass", "pass"],
     [["write", { path: "src/a.ts", content: "x" }], "pass", "pass"],
   ]);
