@@ -18,6 +18,7 @@ import { recordLaunch, subagentActionCheck } from "./actions.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
+import { gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BridgeIsolation, isolationDir, isolationDoctor, isolationOn } from "./bridgeiso.ts";
 import { applyLaunchModels } from "./launchmodel.ts";
@@ -44,6 +45,8 @@ const PKG_ROOT = path.resolve(HERE, "..", "..");
 const CORE_DIR = path.join(PKG_ROOT, "core");
 const BIN_DIR = path.join(PKG_ROOT, "bin");
 const ADAPTER_ID = "pi-foreman-core-adapter";
+const GIT_GUARD_ID = "pi-foreman-git-guard";
+const GIT_GUARD_ENTRY = path.join(PKG_ROOT, "extensions", "git-guard", "index.ts");
 const ORIGINAL_PI_FOREMAN_PYTHON = process.env.PI_FOREMAN_PYTHON;
 
 interface Session {
@@ -233,7 +236,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const ps = resolvePermissionSystem({ agentDir: s.agentDir, cwd: s.cwd, pkgRoot: PKG_ROOT });
     s.permissionSystemError = ps ? undefined : `${PS_PACKAGE} is not installed or not resolvable`;
     if (s.permissionSystemError) ctx.ui.notify(`pi-foreman: ${s.permissionSystemError}. Children would run without permission checks, so launches are blocked. Run the installer (node setup.mjs), restart and run /foreman doctor.`, "error");
-    s.childExtensions = [{ id: ADAPTER_ID, path: ENTRY }, ...(ps ? [{ id: PS_CHILD_ID, path: ps }] : []), ...extra.list.filter((e) => e.id !== ADAPTER_ID && e.id !== PS_CHILD_ID)];
+    s.childExtensions = [{ id: ADAPTER_ID, path: ENTRY }, { id: GIT_GUARD_ID, path: GIT_GUARD_ENTRY }, ...(ps ? [{ id: PS_CHILD_ID, path: ps }] : []), ...extra.list.filter((e) => e.id !== ADAPTER_ID && e.id !== GIT_GUARD_ID && e.id !== PS_CHILD_ID)];
     try {
       const { fn, via } = await loadRegister();
       s.registration = fn({ sessionId: s.id, extensions: s.childExtensions, requireForAllRunners: true });
@@ -288,7 +291,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   async function run(s: Session, ctx: ExtensionContext, guard: GuardName, payload: unknown, toolFamily: string | null) {
     const env = buildGuardEnv({ base: process.env, coreDir: CORE_DIR, sessionId: s.id, guard, markerDir: s.markerDir, threshold: guard === "ledger_guard_spawn" ? gateThreshold(s.ceremony) : null });
     const started = Date.now();
-    const r = await runGuard({ python: pyPath(s), coreDir: CORE_DIR, guard, payload, env, cwd: ctx.cwd, spawner });
+    const r = guard === "git_guard"
+      ? await runGitGuard({ python: pyPath(s), pkgRoot: PKG_ROOT, mode: "main", payload, env, cwd: ctx.cwd, spawner })
+      : await runGuard({ python: pyPath(s), coreDir: CORE_DIR, guard, payload, env, cwd: ctx.cwd, spawner });
     const outcome = evaluateRun(guard, r, pyPath(s));
     s.trace?.emit({ event: "guard", guard, toolFamily, decision: outcome.kind === "failure" ? "error" : outcome.d.decision, latencyMs: Date.now() - started });
     return outcome;
@@ -421,7 +426,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           agents = subagentAgents(input);
           setCeremony(s, beforeSpawn(s.ceremony, agents));
         }
-        const outcome = await run(s, ctx, guard, preToolPayload(event.toolName, input, pc), mapping.coreName);
+        // Children get the git guard in child mode from extensions/git-guard; main mode is the foreman lint.
+        if (guard === "git_guard" && (s.isChild || !mainNeedsGitGuard(input.command))) continue;
+        const payload = guard === "git_guard" ? gitGuardPayload(event.toolName, input, pc, get(s.config.config, "safety.git")) : preToolPayload(event.toolName, input, pc);
+        const outcome = await run(s, ctx, guard, payload, mapping.coreName);
         if (guard === "destructive_guard" && outcome.kind === "decision" && dropDeadPathRewrite(outcome.d, input.command, os.homedir())) {
           s.trace?.emit({ event: "guard_rewrite_dropped", guard, toolFamily: mapping.coreName });
         }
