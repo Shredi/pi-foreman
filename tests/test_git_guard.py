@@ -267,7 +267,10 @@ class ConfigLayerTest(unittest.TestCase):
         self.assertIn("safety.git.commit.checkCommand", warn)
         (agent / "foreman.json").write_text(json.dumps({"safety": {"git": {"commit": {"messagePattern": "("}}}}))
         res = fc.load_config(agent_dir=str(agent), project_dir=str(proj))
-        self.assertTrue(res["safetyFallback"])
+        # an invalid L2 pattern is dropped alone (S5); the default stays
+        self.assertFalse(res["safetyFallback"])
+        self.assertEqual(res["config"]["safety"]["git"]["commit"]["messagePattern"], gg.DEFAULT_MESSAGE_PATTERN)
+        self.assertIn("invalid regular expression", "\n".join(res["warnings"]))
 
 
 class CliTest(unittest.TestCase):

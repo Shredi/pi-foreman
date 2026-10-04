@@ -37,17 +37,39 @@ layer: it goes through the same rules. Neither can set a key that is not in the 
 Loosening keys (LOOSEN_ONLY) are set by L1, L3 and L2 only: the project layer
 ignores them (above) and the session layer drops them with a warning.
 
-bridge.isolateClaudeConfig (not under safety) is ignored in the project file: switching
-it off loosens the isolation of the host's Claude Code config.
-providers.<p>.review (not under safety) is ignored in the project and session layers: a
-review model lets the model approve asks, which loosens.
-Every other key in the project file is plain last-wins.
+Keys outside safety that the project and session layers cannot loosen either
+(IGNORED_KEYS, ROLE_RULES, TRACE_DIR_IN_WORKSPACE; "*" = any key):
+
+    key                              project / session value
+    -------------------------------  -----------------------------------------
+    bridge.isolateClaudeConfig       ignored (switching it off loosens the host config isolation)
+    providers.*.review               ignored (a review model approves asks)
+    python.path                      ignored (it chooses the executable that runs every guard)
+    python.*                         ignored
+    roles.*.launch                   ignored
+    roles.*.file                     ignored (a role file replaces the prompt)
+    roles.<id>.tools                 narrow only (intersection with the L1 -> L3 -> L2 list)
+    roles.*.codemode                 only false is accepted (true adds the codemode tool)
+    providers.*.roles.*.codemode     only false is accepted
+    roles.<new id>                   ignored (only ids present after L1 -> L3 -> L2)
+    providers.*.roles.<new id>       ignored
+    trace.dir                        only inside the workspace (the nearest directory holding
+                                     .git at or above the project dir, symlinks resolved)
+
+providers.*.roles.*.model and providers.*.fallback stay settable from the project (a
+project picks its models). roles.*.promptAppend stays settable: repository text reaches
+the model anyway and is untrusted input either way. Every other key in the project file
+is plain last-wins.
+Documented limit: maxThinking is plain last-wins, so a project can raise the thinking
+ceiling (it costs money, it grants no access).
 
 Validation uses a supported subset of foreman.schema.json: type (also a list
 of types), enum, properties, additionalProperties (false = unknown-key warning,
 object = value schema), items, required, minimum, maximum. An unknown key is a
-warning. An invalid value under `safety` after the merge reverts the whole
-`safety` subtree to the L1 values (safetyFallback) with a warning. Any other
+warning. Every layer above L1 is validated on its own before it is merged: an
+invalid value under `safety` is dropped from that layer only (list items one by
+one), with a warning. An invalid `safety` value left after the merge (an L1 bug)
+reverts the whole `safety` subtree to the L1 values (safetyFallback). Any other
 invalid value is an error.
 
 Role resolution never falls back silently: a role needs a model in
@@ -90,6 +112,103 @@ TIGHTEN = {
 
 # safety.* keys that only loosen: never from the project or session layer
 LOOSEN_ONLY = [("subagents", "allowWorkflow")]
+
+
+# Keys outside safety that the project and session layers may not set (module docstring).
+# One row per rule so a rule can be reverted on its own.
+IGNORED_KEYS = [
+    (("bridge", "isolateClaudeConfig"), "it loosens the host config isolation"),
+    (("providers", "*", "review"), "it loosens: a review model approves asks"),
+    (("python", "path"), "it chooses the executable that runs every guard"),
+    (("python", "*"), "interpreter settings come from the user or overlay config"),
+    (("roles", "*", "launch"), "the launch mode comes from the user or overlay config"),
+    (("roles", "*", "file"), "a role file replaces the prompt: user or overlay config only"),
+]
+# codemode adds a tool, so the project and session layers may only switch it off.
+CODEMODE_FALSE_ONLY = True
+# roles.<id> in the project and session layers: "intersect" = narrow only. NEW_ROLE_IDS
+# "ignore" drops role ids not present after L1 -> L3 -> L2.
+ROLE_RULES = {"tools": "intersect"}
+NEW_ROLE_IDS = "ignore"
+# trace.dir from the project or session layer must resolve inside the workspace.
+TRACE_DIR_IN_WORKSPACE = True
+
+
+def _drop_pattern(node, keys, done, who, why, warnings):
+    if not isinstance(node, dict):
+        return
+    for name in (list(node) if keys[0] == "*" else [keys[0]]):
+        if name not in node:
+            continue
+        path = done + (name,)
+        if len(keys) == 1:
+            del node[name]
+            warnings.append("%s %s ignored: the %s may not set this key (%s)" % (who, ".".join(path), who, why))
+        else:
+            _drop_pattern(node[name], keys[1:], path, who, why, warnings)
+
+
+def workspace_root(project_dir):
+    """The nearest directory at or above project_dir holding `.git` (symlinks resolved), else project_dir."""
+    start = Path(os.path.realpath(str(project_dir)))
+    for d in [start] + list(start.parents):
+        if os.path.lexists(str(d / ".git")):
+            return d
+    return start
+
+
+def restrict_layer(base, proj, who, warnings, project_dir):
+    """Drop or narrow, in place, the non-safety keys the project or session layer may not loosen."""
+    for keys, why in IGNORED_KEYS:
+        _drop_pattern(proj, keys, (), who, why, warnings)
+    roles = proj.get("roles")
+    base_roles = base.get("roles") if isinstance(base.get("roles"), dict) else {}
+    if isinstance(roles, dict):
+        for rid in list(roles):
+            if NEW_ROLE_IDS == "ignore" and rid not in base_roles:
+                del roles[rid]
+                warnings.append("%s roles.%s ignored: the %s may not add a role" % (who, rid, who))
+                continue
+            entry = roles[rid]
+            for key, rule in ROLE_RULES.items():
+                if rule != "intersect" or not isinstance(entry, dict) or key not in entry:
+                    continue
+                have, want = (base_roles.get(rid) or {}).get(key), entry[key]
+                if not isinstance(want, list) or not isinstance(have, list):
+                    del entry[key]
+                    warnings.append("%s roles.%s.%s ignored: the %s can only narrow it" % (who, rid, key, who))
+                    continue
+                dropped = [x for x in want if x not in have]
+                if dropped:
+                    warnings.append("%s roles.%s.%s: entries not extended: %s" % (who, rid, key, ", ".join(map(str, dropped))))
+                entry[key] = [x for x in have if x in want]
+    def codemode_off_only(entry, label):
+        if CODEMODE_FALSE_ONLY and isinstance(entry, dict) and "codemode" in entry and entry["codemode"] is not False:
+            del entry["codemode"]
+            warnings.append("%s %s.codemode ignored: the %s may only set false (it adds a tool)" % (who, label, who))
+
+    if isinstance(roles, dict):
+        for rid, entry in roles.items():
+            codemode_off_only(entry, "roles." + rid)
+    if isinstance(proj.get("providers"), dict):
+        for pname, pentry in proj["providers"].items():
+            proles = pentry.get("roles") if isinstance(pentry, dict) else None
+            if not isinstance(proles, dict):
+                continue
+            for rid in list(proles):
+                label = "providers.%s.roles.%s" % (pname, rid)
+                if NEW_ROLE_IDS == "ignore" and rid not in base_roles:
+                    del proles[rid]
+                    warnings.append("%s %s ignored: no such role after the user and overlay config" % (who, label))
+                else:
+                    codemode_off_only(proles[rid], label)
+    trace = proj.get("trace")
+    if TRACE_DIR_IN_WORKSPACE and isinstance(trace, dict) and isinstance(trace.get("dir"), str):
+        root = workspace_root(project_dir)
+        target = Path(os.path.realpath(os.path.join(str(project_dir), trace["dir"])))
+        if target != root and root not in target.parents:
+            del trace["dir"]
+            warnings.append("%s trace.dir ignored: it must resolve inside the workspace" % who)
 
 
 def drop_loosening(data, layer, warnings):
@@ -194,18 +313,11 @@ def semantic_issues(cfg):
 
 # -------------------------------------------------------------------- layers
 
-def project_apply(base, proj, warnings, who="project"):
+def project_apply(base, proj, warnings, who="project", project_dir=None):
     """Merge the project (or session) layer: plain last-wins, except safety only tightens."""
     proj = copy.deepcopy(proj)
     safety = proj.pop("safety", None)
-    if isinstance(proj.get("bridge"), dict) and "isolateClaudeConfig" in proj["bridge"]:
-        del proj["bridge"]["isolateClaudeConfig"]
-        warnings.append(who + " bridge.isolateClaudeConfig ignored: the %s may not set this key" % who)
-    if isinstance(proj.get("providers"), dict):
-        for name, entry in proj["providers"].items():
-            if isinstance(entry, dict) and "review" in entry:
-                del entry["review"]
-                warnings.append("%s providers.%s.review ignored: the %s may not set this key (it loosens)" % (who, name, who))
+    restrict_layer(base, proj, who, warnings, project_dir or os.getcwd())
     merged = deep_merge(base, proj)
     if safety is None:
         return merged
@@ -270,6 +382,30 @@ def project_apply(base, proj, warnings, who="project"):
     return merged
 
 
+_SEG = re.compile(r"\.?([^.\[\]]+)|\[(\d+)\]")
+
+
+def drop_invalid_safety(name, data, schema, warnings):
+    """Validate one layer; remove each invalid safety entry from it (in place), with a warning."""
+    issues = []
+    validate_schema(data, schema, "", issues)
+    issues.extend(semantic_issues(data))
+    paths = []
+    for kind, path, msg in issues:
+        if kind == "error" and (path == "safety" or path.startswith("safety.")):
+            warnings.append("%s invalid safety value dropped: %s" % (name, msg))
+            paths.append([int(m.group(2)) if m.group(2) else m.group(1) for m in _SEG.finditer(path)])
+    # higher list indices first, so one deletion does not shift the next
+    for segs in sorted(paths, key=lambda p: [x if isinstance(x, int) else -1 for x in p], reverse=True):
+        cur = data
+        try:
+            for seg in segs[:-1]:
+                cur = cur[seg]
+            del cur[segs[-1]]
+        except (KeyError, IndexError, TypeError):
+            pass
+
+
 def resolve_agent_dir(agent_dir=None):
     if agent_dir:
         return Path(agent_dir)
@@ -322,6 +458,7 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
         if not isinstance(data, dict):
             errors.append("%s config is not a JSON object (%s)" % (name, path))
             return None
+        drop_invalid_safety(name, data, schema, warnings)
         return data
 
     l3 = list(discover_l3(agent)) + [(Path(p).name, Path(p)) for p in l3_paths]
@@ -342,15 +479,16 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
         if pf.is_file():
             data = load_layer("project", pf)
             if data is not None:
-                cfg = project_apply(cfg, data, warnings)
+                cfg = project_apply(cfg, data, warnings, "project", project_dir or os.getcwd())
                 layers.append("project")
     if session_json:
         try:
             data = json.loads(session_json)
             if not isinstance(data, dict):
                 raise ValueError("not an object")
+            drop_invalid_safety("session", data, schema, warnings)
             drop_loosening(data, "session", warnings)
-            cfg = project_apply(cfg, data, warnings, "session")
+            cfg = project_apply(cfg, data, warnings, "session", project_dir or os.getcwd())
             layers.append("session")
         except ValueError as exc:
             errors.append("session config invalid: %s" % exc)

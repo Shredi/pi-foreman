@@ -141,13 +141,14 @@ class ConfigTest(unittest.TestCase):
         self.assertIn("unknown key fanout.wide", res["warnings"])
         self.assertEqual(res["errors"], [])
 
-    def test_invalid_safety_falls_back(self):
+    def test_invalid_safety_drops_only_that_entry(self):
         self.l2({"safety": {"children": {"mayPush": "yes"}, "git": {"protectedBranches": ["dev"]}}})
         res = self.load()
-        self.assertTrue(res["safetyFallback"])
-        self.assertEqual(res["config"]["safety"], fc.read_json(fc.DEFAULTS_PATH)["safety"])
+        self.assertFalse(res["safetyFallback"])
+        self.assertIs(res["config"]["safety"]["children"]["mayPush"], False)
+        self.assertEqual(res["config"]["safety"]["git"]["protectedBranches"], ["dev"])
         self.assertEqual(res["errors"], [])
-        self.assertTrue(any("safety" in w for w in res["warnings"]))
+        self.assertTrue(any("L2 invalid safety value dropped: safety.children.mayPush" in w for w in res["warnings"]))
 
     def test_invalid_other_value_is_error(self):
         self.l2({"fanout": {"max": 0}})

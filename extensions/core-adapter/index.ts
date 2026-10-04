@@ -25,6 +25,7 @@ import { applyLaunchModels } from "./launchmodel.ts";
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
+import { patchChildGitEnv } from "./childenv.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents } from "./payload.ts";
 import type { PayloadContext } from "./payload.ts";
@@ -119,13 +120,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       markerDir = os.tmpdir();
     }
 
-    const hint = pythonPathHint(PKG_ROOT, agentDir, cwd, trusted);
+    const hint = pythonPathHint(PKG_ROOT, agentDir);
     let python = await pythonCache.get(id, () => resolvePython({ configPath: hint, envPath: ORIGINAL_PI_FOREMAN_PYTHON, platform, spawner }));
     const provider = ctx.model?.provider;
     const config = await loadMergedConfig({ python: python.ok ? python.info.executable : null, pkgRoot: PKG_ROOT, provider, agentDir, projectDir: cwd, trusted, spawner });
     const merged = get(config.config, "python.path");
     if (typeof merged === "string" && merged.trim() && merged !== hint) {
-      // python.path came from a layer the hint does not read (L3, session): honour it.
+      // python.path came from a layer the hint does not read (L3): honour it.
       pythonCache.drop(id);
       python = await pythonCache.get(id, () => resolvePython({ configPath: merged, envPath: ORIGINAL_PI_FOREMAN_PYTHON, platform, spawner }));
     }
@@ -164,6 +165,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     refreshLedgerTier(s);
     patchShellEnv({ env: process.env, binDir: BIN_DIR, python: pyPath(s), markerDir });
+    if (s.isChild && get(config.config, "safety.children.mayPush") !== true) patchChildGitEnv(process.env);
 
     if (!python.ok) ctx.ui.notify(`pi-foreman: no Python ≥ 3.9 found — shell commands and subagent launches are blocked until it is fixed. ${NO_PYTHON_FIX}`, "error");
     for (const e of config.errors) ctx.ui.notify(e, "error");

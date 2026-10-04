@@ -26,9 +26,9 @@
         "properties": {
           "file": { "type": "string", "description": "Path of a role file that replaces the prompt (L2/L3 only)." },
           "promptAppend": { "type": "string", "description": "Text appended to the role prompt." },
-          "tools": { "type": "array", "items": { "type": "string" }, "description": "Strict tool allowlist. Written as a JSON array into the generated settings. For the foreman it is informational." },
+          "tools": { "type": "array", "items": { "type": "string" }, "description": "Strict tool allowlist. Written as a JSON array into the generated settings. For the foreman it is informational. A project or session can only narrow it (intersection), and cannot add role ids." },
           "codemode": { "type": "boolean", "description": "Add the codemode tool to this role. Overridden per provider by providers.<p>.roles.<id>.codemode." },
-          "launch": { "type": "string", "enum": ["detached"], "description": "How the role is launched. Only detached is supported: detached children forward permission asks to the parent." }
+          "launch": { "type": "string", "enum": ["detached"], "description": "How the role is launched. Only detached is supported: detached children forward permission asks to the parent. A project or session cannot set it." }
         }
       }
     },
@@ -97,7 +97,7 @@
     },
     "safety": {
       "type": "object",
-      "description": "Safety policy. An invalid value anywhere here reverts the whole subtree to the L1 values. The project layer can only tighten it.",
+      "description": "Safety policy. An invalid value in a layer is dropped from that layer with a warning; the other layers still apply. The project layer can only tighten it.",
       "additionalProperties": false,
       "properties": {
         "permissions": {
@@ -173,14 +173,14 @@
     "python": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "path": { "type": ["string", "null"], "description": "Python interpreter (3.9 or newer). null means auto-detect." } }
+      "properties": { "path": { "type": ["string", "null"], "description": "Python interpreter (3.9 or newer). null means auto-detect. It runs every guard, so a project or session value is ignored." } }
     },
     "trace": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "enabled": { "type": "boolean", "description": "Write the opt-in allowlisted trace." },
-        "dir": { "type": ["string", "null"], "description": "Trace directory. null means the state dir." }
+        "dir": { "type": ["string", "null"], "description": "Trace directory. null means the state dir. A project or session value must resolve inside the workspace, else it is ignored." }
       }
     }
   }
