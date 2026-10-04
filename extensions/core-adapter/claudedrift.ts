@@ -3,7 +3,12 @@
 // claude-bridge turns run Claude Code in the session cwd with its default setting sources, so
 // `{cwd}/.claude/settings.json`, `{cwd}/.claude/settings.local.json` and `{cwd}/.mcp.json` can
 // run commands (hooks, helpers). A child's allowed `npm test` can write them without naming the
-// path. This keeps content hashes of those three files (names and hashes only, never content),
+// path. `{cwd}/.pi/claude-bridge.json` is the bridge's own project config (pi-claude-bridge
+// 0.9.1 src/config.ts:84-91, merged over `<agentDir>/claude-bridge.json`; the only project-level
+// bridge config file): it can name the program the bridge spawns
+// (`provider.pathToClaudeCodeExecutable`), and compaction/branch summaries and the review link
+// re-read it on every call (src/index.ts:576-596). This keeps content hashes of those four files
+// (names and hashes only, never content),
 // persisted per workspace (realpath of cwd) in the pi-foreman state dir. A change since the last
 // snapshot is an ask; without a UI it blocks. Approve re-snapshots. Checked:
 //  - before every model request on claude-bridge (Pi's `context` event), which covers every run
@@ -11,7 +16,12 @@
 //    follow-ups and steers. A block aborts the run before the request reaches the provider;
 //  - on Pi's `input` event (typed and RPC prompts are refused before a run starts at all);
 //  - on the switch to claude-bridge (`model_select`; notify only);
-//  - cache-warming refreshes of a claude-bridge request are stopped while drift is pending.
+//  - cache-warming refreshes of a claude-bridge request are stopped while drift is pending;
+//  - before a compaction or branch summary on claude-bridge (`session_before_compact`,
+//    `session_before_tree`; a block cancels it). Pi stops at the first cancelling handler in
+//    extension load order, so this precedes the bridge's own takeover only when pi-foreman
+//    loads first (doctor);
+//  - the review link never calls a claude-bridge model while drift is pending (review.ts).
 // A true first session on a workspace takes the snapshot with a visible notice; a snapshot that
 // is missing (its seen marker exists) or corrupt is drift, never a silent fresh baseline.
 //
@@ -23,7 +33,9 @@ import * as path from "node:path";
 import type { DriftAskEnv, DriftDecision } from "./gitdrift.ts";
 import { loadState, sha, stateFileFor, writeState } from "./gitdrift.ts";
 
-export const CLAUDE_PROJECT_FILES = [".claude/settings.json", ".claude/settings.local.json", ".mcp.json"];
+export const CLAUDE_PROJECT_FILES = [".claude/settings.json", ".claude/settings.local.json", ".mcp.json", ".pi/claude-bridge.json"];
+/** Files every stored snapshot has; a snapshot from before `.pi/claude-bridge.json` was added lacks it (read as "absent", so an existing file is drift once). */
+const REQUIRED_FILES = CLAUDE_PROJECT_FILES.slice(0, 3);
 
 /** File name -> content hash, or "absent". */
 export type ClaudeSnapshot = Record<string, string>;
@@ -72,7 +84,7 @@ export class ClaudeConfigWatch {
     const st = loadState(this.stateFile, "Claude Code config", (o) => {
       const r = o as { v?: number; files?: unknown } | null;
       const files = r && r.v === 1 && r.files && typeof r.files === "object" && !Array.isArray(r.files) ? (r.files as Record<string, unknown>) : null;
-      return files && CLAUDE_PROJECT_FILES.every((n) => typeof files[n] === "string") ? (files as ClaudeSnapshot) : null;
+      return files && REQUIRED_FILES.every((n) => typeof files[n] === "string") && Object.values(files).every((v) => typeof v === "string") ? (files as ClaudeSnapshot) : null;
     });
     if (st.kind !== "stored") {
       this.firstBaseline = st.kind === "first";
@@ -98,10 +110,10 @@ export class ClaudeConfigWatch {
     const summary = lines.join("\n");
     let decision: DriftDecision = "no-ui";
     if ((ask.mode === "tui" || ask.mode === "rpc") && ask.hasUI && ask.confirm) {
-      const msg = `Project Claude Code config changed since pi-foreman last checked it (a child may have written it; claude-bridge turns load it and it can run commands; content is not shown):\n${summary}\nRun ${what} anyway? Inspect the files first.`;
+      const msg = `Project Claude Code or claude-bridge config changed since pi-foreman last checked it (a child may have written it; claude-bridge turns and summaries load it and it can run commands or name the program the bridge starts; content is not shown):\n${summary}\nRun ${what} anyway? Inspect the files first.`;
       let ok = false;
       try {
-        ok = await ask.confirm("pi-foreman: project Claude Code config changed", msg);
+        ok = await ask.confirm("pi-foreman: project Claude Code or claude-bridge config changed", msg);
       } catch {
         ok = false;
       }
@@ -113,7 +125,7 @@ export class ClaudeConfigWatch {
       this.set(takeClaudeSnapshot(cwd));
       return undefined;
     }
-    if (decision === "denied") return { block: true, reason: `Denied by the user. pi-foreman: project Claude Code config drift.\n${summary}` };
-    return { block: true, reason: `pi-foreman: project Claude Code config changed since pi-foreman last checked it, and there is no UI to approve ${what} (mode: ${ask.mode}); it is blocked. Inspect the files, then start a session with a UI to approve.\n${summary}` };
+    if (decision === "denied") return { block: true, reason: `Denied by the user. pi-foreman: project Claude Code or claude-bridge config drift.\n${summary}` };
+    return { block: true, reason: `pi-foreman: project Claude Code or claude-bridge config changed since pi-foreman last checked it, and there is no UI to approve ${what} (mode: ${ask.mode}); it is blocked. Inspect the files, then start a session with a UI to approve.\n${summary}` };
   }
 }

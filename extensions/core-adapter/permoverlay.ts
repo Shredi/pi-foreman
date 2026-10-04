@@ -57,6 +57,11 @@
 //     foreman_move/foreman_copy and, as for deny paths, every shell word — so in a shell
 //     command these also block reads (`cat .git/config`); `git status` names no such path.
 //     grep's `glob` and find's `pattern` are checked joined to the tool's `path`.
+//     removeAsk (`<agentDir>` and `<agentDir>/pi-foreman`, the ancestors of the state folder):
+//     only a remove or rename of the folder itself is asked/denied — an operand of rm, rmdir,
+//     unlink, trash, mv, rename, del/rd, Remove-Item/Move-Item/Rename-Item and aliases, find
+//     -delete, a literal in inline code (`python -c`), or foreman_move's source. Reads and
+//     listings of those folders stay allowed; `cd` + a relative operand is not seen (item 4).
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Json } from "./config.ts";
@@ -74,6 +79,8 @@ export interface ProtectRule {
   shell: boolean;
   /** Children: also check shell words (writeAsk: the package root, T11). */
   childShell?: boolean;
+  /** removeAsk: only a remove or rename of the path itself (operands of rm/mv/trash/..., inline code, foreman_move src). */
+  removeOnly?: boolean;
 }
 
 export interface OverlayRules {
@@ -87,7 +94,7 @@ export interface OverlayRules {
 export interface Baseline {
   bash: { deny: string[]; ask: string[] };
   paths: { deny: string[]; except: string[] };
-  protect: { deny: string[]; ask: string[]; childDeny: string[]; writeAsk: string[] };
+  protect: { deny: string[]; ask: string[]; childDeny: string[]; writeAsk: string[]; removeAsk?: string[] };
 }
 
 export type Decision = { kind: "deny" | "ask"; reason: string };
@@ -118,7 +125,7 @@ export function readBaseline(pkgRoot: string): Baseline | null {
     return {
       bash: { deny: strs(bash.deny), ask: strs(bash.ask) },
       paths: { deny: strs(paths.deny), except: strs(paths.except) },
-      protect: { deny: strs(pr.deny), ask: strs(pr.ask), childDeny: strs(pr.childDeny), writeAsk: strs(pr.writeAsk) },
+      protect: { deny: strs(pr.deny), ask: strs(pr.ask), childDeny: strs(pr.childDeny), writeAsk: strs(pr.writeAsk), removeAsk: strs(pr.removeAsk) },
     };
   } catch {
     return null;
@@ -163,7 +170,7 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
       ...strs(mp.deny).map((pattern): PathRule => ({ pattern: sub(pattern), action: "deny" })),
     ],
     pathAsk: hasBase ? without(strs(mp.ask), strs(bp.ask)) : [],
-    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true), ...prot(pb?.childDeny, null, true), ...prot(pb?.writeAsk, "ask", false)],
+    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true), ...prot(pb?.childDeny, null, true), ...prot(pb?.writeAsk, "ask", false), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true }))],
   };
 }
 
@@ -568,7 +575,12 @@ interface Collected {
   unitTexts: string[];
   pipeTexts: string[];
   words: string[];
+  /** Operands of a remove/rename command and inline-code literals (removeAsk). */
+  removeWords?: string[];
 }
+
+/** Commands that remove or rename their operands (POSIX, Windows, PowerShell names and aliases). */
+const REMOVERS = new Set(["rm", "rmdir", "unlink", "trash", "trash-put", "gio", "mv", "rename", "ren", "move", "del", "erase", "rd", "srm", "shred", "remove-item", "ri", "rni", "rename-item", "move-item", "mi"]);
 
 const MAX_DEPTH = 4;
 
@@ -583,6 +595,11 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
     if (inner && depth < MAX_DEPTH) collect(inner.script, inner.shell, depth + 1, out);
     const code = inlineCode(v.core);
     if (code) out.words.push(...codeLiterals(code));
+    if (out.removeWords) {
+      if (code) out.removeWords.push(...codeLiterals(code));
+      const verb = v.core.length ? baseName(v.core[0]) : "";
+      if (REMOVERS.has(verb) || (verb === "find" && v.core.includes("-delete"))) out.removeWords.push(...v.core.slice(1));
+    }
     const exec = v.core.findIndex((x) => x === "-exec" || x === "-execdir" || x === "-ok" || x === "-okdir");
     if (exec >= 0 && depth < MAX_DEPTH) {
       const rest = v.core.slice(exec + 1);
@@ -754,15 +771,17 @@ const clip = (s: string): string => (s.length > 120 ? `${s.slice(0, 117)}...` : 
 
 export function checkShell(rules: OverlayRules, command: string, ctx: MatchCtx): Decision | null {
   const shell = ctx.shell ?? "posix";
-  const c: Collected = { unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [] };
+  const c: Collected = { unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [] };
   collect(command, shell, 0, c);
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
-    const raw: Collected = { unitTexts: [], pipeTexts: [], words: [] };
+    const raw: Collected = { unitTexts: [], pipeTexts: [], words: [], removeWords: [] };
     collect(command, "powershell", 0, raw);
     c.words.push(...raw.words);
+    c.removeWords!.push(...raw.removeWords!);
   }
   const words = [...new Set(c.words.flatMap((w) => [w, ...expandBraces(w)]))];
+  const removed = new Set(c.removeWords!.flatMap((w) => [w, ...expandBraces(w)]));
   const texts = [...c.unitTexts, ...c.pipeTexts];
   for (const pat of rules.bashDeny) {
     if (texts.some((t) => bashMatches(pat, t, ctx))) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (command rule '${pat}'). This cannot be approved; use another way.` };
@@ -771,7 +790,7 @@ export function checkShell(rules: OverlayRules, command: string, ctx: MatchCtx):
     const hit = pathDeny(rules.pathRules, w, ctx);
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(w)}'). Secret and policy paths are off limits to the agent, also through shell commands.` };
   }
-  const prot = words.map((w) => ({ w, hit: protectHit(rules.protect, w, ctx, true) })).filter((x) => x.hit);
+  const prot = words.map((w) => ({ w, hit: protectHit(rules.protect, w, ctx, true, removed.has(w)) })).filter((x) => x.hit);
   const pd = prot.find((x) => x.hit!.kind === "deny");
   if (pd) return protectDecision(pd.hit!, pd.w, "shell command");
   for (const pat of rules.bashAsk) {
@@ -786,12 +805,13 @@ export function checkShell(rules: OverlayRules, command: string, ctx: MatchCtx):
 }
 
 /** The strictest write-protection decision for one path word (deny before ask), or null. */
-function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: boolean): ProtectHit | null {
+function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: boolean, remove = false): ProtectHit | null {
   const child = ctx.role === "child";
   let ask: ProtectHit | null = null;
   const cands = pathCandidates(word, ctx);
   const guessed = ctx.platform === "win32" ? shortNameVariants(cands, rules.map((r) => r.pattern)) : [];
   for (const r of rules) {
+    if (r.removeOnly && !remove) continue;
     if (shell && !r.shell && !(child && r.childShell)) continue;
     const kind = child ? r.child : r.main;
     if (!kind || (kind === "ask" && ask && !ask.shortName)) continue;
@@ -823,16 +843,16 @@ export function isOverlayTool(toolName: string): boolean {
   return toolName === "bash" || toolName === "powershell" || PATH_TOOLS.has(toolName);
 }
 
-/** The paths one file-tool call touches; `write` = it creates, changes or removes that path. */
-function toolPaths(toolName: string, input: Record<string, unknown>): { value: string; write: boolean }[] {
+/** The paths one file-tool call touches; `write` = it creates, changes or removes that path; `remove` = it removes or renames it. */
+function toolPaths(toolName: string, input: Record<string, unknown>): { value: string; write: boolean; remove?: boolean }[] {
   const str = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
-  const out: { value: string; write: boolean }[] = [];
-  const push = (v: unknown, write: boolean): void => {
+  const out: { value: string; write: boolean; remove?: boolean }[] = [];
+  const push = (v: unknown, write: boolean, remove = false): void => {
     const s = str(v);
-    if (s !== undefined) out.push({ value: s, write });
+    if (s !== undefined) out.push({ value: s, write, remove });
   };
   if (toolName === "foreman_move" || toolName === "foreman_copy") {
-    push(input.src, toolName === "foreman_move");
+    push(input.src, toolName === "foreman_move", toolName === "foreman_move");
     push(input.dst, true);
     return out;
   }
@@ -851,7 +871,7 @@ export function checkPathTool(rules: OverlayRules, toolName: string, input: Reco
     const hit = pathDeny(rules.pathRules, value, ctx);
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(value)}' for ${toolName}).` };
   }
-  const prot = paths.filter((x) => x.write).map((x) => ({ w: x.value, hit: protectHit(rules.protect, x.value, ctx, false) })).filter((x) => x.hit);
+  const prot = paths.filter((x) => x.write).map((x) => ({ w: x.value, hit: protectHit(rules.protect, x.value, ctx, false, x.remove === true) })).filter((x) => x.hit);
   const pd = prot.find((x) => x.hit!.kind === "deny");
   if (pd) return protectDecision(pd.hit!, pd.w, `${toolName} call`);
   for (const { value } of paths) {

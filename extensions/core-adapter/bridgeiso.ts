@@ -129,3 +129,86 @@ export function projectClaudeRisks(cwd: string): string[] {
 }
 
 export const PROJECT_CLAUDE_FIX = "review and remove them (hooks, command helpers such as apiKeyHelper or awsAuthRefresh, and MCP servers in project files run as you in every claude-bridge turn, also when a subagent wrote them), or use another provider for this project.";
+
+/** The bridge's project config (pi-claude-bridge 0.9.1 src/config.ts:84-91: `<cwd>/.pi/claude-bridge.json`, merged over the global one). */
+export const PROJECT_BRIDGE_CONFIG = ".pi/claude-bridge.json";
+
+/** Key names that point at a program, script or path the bridge could run (future keys included). */
+const PATHLIKE_KEY = /path|executable|exe$|command|cmd|binary|program|script|helper|wrapper/i;
+
+/**
+ * Keys of the project bridge config that make a claude-bridge turn or summary run something the
+ * project chose (R3-H1). Judged keys (0.9.1 Config):
+ *  - provider.pathToClaudeCodeExecutable: the program every bridge turn, summary and AskClaude
+ *    call spawns. FAIL. Any other key at any depth whose name looks like a path, executable,
+ *    command, script or helper: FAIL (future keys of that kind);
+ *  - askClaude.enabled true: registers AskClaude, which runs Claude Code with the project's
+ *    setting sources and bypassPermissions. FAIL. askClaude.defaultMode "full": makes that
+ *    full-tool mode the default when the user enabled AskClaude globally. FAIL;
+ *  - provider.strictMcpConfig false: lets `.mcp.json` and project MCP servers load in bridge
+ *    turns. FAIL;
+ *  - not flagged: provider.autoMemoryEnabled (memory files, runs nothing), plan,
+ *    longContextExtraUsage, forceTwoHundredK (model and billing), startupNoticeShown, and
+ *    askClaude name/label/description/defaultIsolated/appendSkills/allowFullMode (allowFullMode
+ *    defaults to true, so true changes nothing; false only restricts).
+ * An unparseable file is ignored by the bridge (tryParseJson returns {}), so it is reported as
+ * `unreadable` for the doctor only.
+ */
+export function projectBridgeConfigRisks(cwd: string): string[] {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(path.join(cwd, ...PROJECT_BRIDGE_CONFIG.split("/")), "utf8");
+  } catch {
+    return [];
+  }
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return [`${PROJECT_BRIDGE_CONFIG} (unreadable; the bridge ignores it)`];
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) return [];
+  const keys: string[] = [];
+  const walk = (o: unknown, prefix: string, depth: number): void => {
+    if (!o || typeof o !== "object" || Array.isArray(o) || depth > 4) return;
+    for (const [k, v] of Object.entries(o as Record<string, unknown>)) {
+      const name = prefix ? `${prefix}.${k}` : k;
+      if (PATHLIKE_KEY.test(k) && v !== null && v !== false && v !== "") keys.push(name);
+      walk(v, name, depth + 1);
+    }
+  };
+  walk(data, "", 0);
+  const d = data as { askClaude?: unknown; provider?: unknown };
+  const sub = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+  if (sub(d.askClaude).enabled === true) keys.push("askClaude.enabled");
+  if (sub(d.askClaude).defaultMode === "full") keys.push('askClaude.defaultMode "full"');
+  if (sub(d.provider).strictMcpConfig === false) keys.push("provider.strictMcpConfig false");
+  return keys.length ? [`${PROJECT_BRIDGE_CONFIG} (${keys.join(", ")})`] : [];
+}
+
+export const PROJECT_BRIDGE_FIX = "remove those keys from .pi/claude-bridge.json (an executable path there is the program claude-bridge starts for every turn and summary; AskClaude runs with the project's settings and bypassPermissions; strictMcpConfig false loads project MCP servers), or set them in your user claude-bridge.json if you meant them.";
+
+/** Package spec of a settings.packages entry (string or `{ source }`). */
+function packageSpec(e: unknown): string {
+  if (typeof e === "string") return e;
+  if (e && typeof e === "object" && typeof (e as { source?: unknown }).source === "string") return (e as { source: string }).source;
+  return "";
+}
+
+/**
+ * Whether pi-foreman's extension loads before pi-claude-bridge. Pi runs a session_before_compact /
+ * session_before_tree handler per extension in load order and stops at the first cancel
+ * (runner.js:813-822); the bridge's own handler for those events starts Claude Code, so the
+ * drift cancel works only when pi-foreman comes first. Load order = project packages, then
+ * user packages, each in list order (package-manager.js:708-715); `-e` extensions load before
+ * both (resource-loader.js:403) and are not seen here.
+ */
+export function bridgeLoadOrder(projectPackages: unknown, userPackages: unknown, pkgRoot: string): "no-bridge" | "foreman-first" | "bridge-first" | "unknown" {
+  const list = [...(Array.isArray(projectPackages) ? projectPackages : []), ...(Array.isArray(userPackages) ? userPackages : [])].map(packageSpec);
+  const norm = (s: string): string => s.replace(/\\/g, "/").replace(/\/+$/, "");
+  const bridge = list.findIndex((s) => /(^|[/:@])pi-claude-bridge(@|$|\/)/.test(s));
+  if (bridge < 0) return "no-bridge";
+  const foreman = list.findIndex((s) => norm(s) === norm(pkgRoot) || /(^|[/:])pi-foreman(@|$)/.test(norm(s)));
+  if (foreman < 0) return "unknown";
+  return foreman < bridge ? "foreman-first" : "bridge-first";
+}
