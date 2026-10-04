@@ -95,9 +95,18 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "deny": { "type": "array", "items": { "type": "string" }, "description": "Permission rules that are always denied. A project can add entries, not remove them." },
-            "ask": { "type": "array", "items": { "type": "string" }, "description": "Permission rules that need approval. A project can add entries, not remove them." },
-            "allow": { "type": "array", "items": { "type": "string" }, "description": "Permission rules allowed without asking. A project cannot extend it." }
+            "deny": { "type": "array", "items": { "type": "string" }, "description": "Bash patterns that are always denied, on top of the baseline. A project can add entries, not remove them." },
+            "ask": { "type": "array", "items": { "type": "string" }, "description": "Bash patterns that need approval. A project can add entries, not remove them." },
+            "allow": { "type": "array", "items": { "type": "string" }, "description": "Bash patterns (permission-system wildcard syntax) allowed without asking, on top of the baseline. A project or session cannot extend it." },
+            "projectCommands": { "type": "array", "items": { "type": "string" }, "description": "The repo's own test and build commands, as bash patterns; allowed without asking. A project or session cannot set it." },
+            "paths": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "deny": { "type": "array", "items": { "type": "string" }, "description": "Path patterns that tools and shell commands may never touch, on top of the baseline secret paths. A project can add entries, not remove them." },
+                "ask": { "type": "array", "items": { "type": "string" }, "description": "Path patterns that need approval. A project can add entries, not remove them." }
+              }
+            }
           }
         },
         "requiredChildExtensions": { "type": "array", "items": { "type": "string" }, "description": "Extension paths every child must load. A project can add entries, not remove them." },

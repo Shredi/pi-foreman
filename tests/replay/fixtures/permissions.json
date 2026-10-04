@@ -1,0 +1,33 @@
+{
+ "foreman": {
+  "m1": [
+   {"tools": [
+     {"name": "bash", "arguments": {"command": "cat .env"}},
+     {"name": "read", "arguments": {"path": ".env"}},
+     {"name": "bash", "arguments": {"command": "grep -r token .env"}},
+     {"name": "read", "arguments": {"path": "notes.txt"}}
+   ]},
+   {"text": "Done."}
+  ],
+  "c1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:secret]] short task"}}]},
+   {"text": "Launched."},
+   {"text": "Explorer reported."}
+  ],
+  "c2": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:needs-ask]] short task"}}]},
+   {"text": "Launched."},
+   {"text": "Explorer reported."}
+  ]
+ },
+ "explorer": {
+  "secret": [
+   {"tools": [{"name": "bash", "arguments": {"command": "head -n1 .env"}}]},
+   {"text": "child: secret read finished"}
+  ],
+  "needs-ask": [
+   {"tools": [{"name": "bash", "arguments": {"command": "uname -s"}}]},
+   {"text": "child: ask finished"}
+  ]
+ }
+}

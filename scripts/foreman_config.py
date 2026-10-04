@@ -12,13 +12,16 @@ scalars and lists are replaced):
     project  <project dir>/.pi/foreman.json, only with --trusted-project
     session  --session-json '<json>'
 
-The project layer is not trusted: for `safety.*` it can only tighten.
+The project layer is not trusted: for `safety.*` it can only tighten. So is the session
+layer: it goes through the same rules. Neither can set a key that is not in the table.
 
     key                              direction (project value)
     -------------------------------  -----------------------------------------
     safety.children.mayPush          true = permissive; only false is accepted
     safety.review.required           true = strict; only true is accepted
     safety.permissions.deny/ask      union (entries are added, never removed)
+    safety.permissions.paths.deny/ask  union
+    safety.permissions.projectCommands  ignored with a warning (it loosens: allows commands)
     safety.requiredChildExtensions   union
     safety.git.protectedBranches     union
     safety.permissions.allow         cannot be extended (result = intersection)
@@ -69,6 +72,8 @@ TIGHTEN = {
     ("review", "required"): "true_only",
     ("permissions", "deny"): "union",
     ("permissions", "ask"): "union",
+    ("permissions", "paths", "deny"): "union",
+    ("permissions", "paths", "ask"): "union",
     ("requiredChildExtensions",): "union",
     ("git", "protectedBranches"): "union",
     ("permissions", "allow"): "intersect",
@@ -170,18 +175,18 @@ def semantic_issues(cfg):
 
 # -------------------------------------------------------------------- layers
 
-def project_apply(base, proj, warnings):
-    """Merge the project layer: plain last-wins, except safety only tightens."""
+def project_apply(base, proj, warnings, who="project"):
+    """Merge the project (or session) layer: plain last-wins, except safety only tightens."""
     proj = copy.deepcopy(proj)
     safety = proj.pop("safety", None)
     if isinstance(proj.get("bridge"), dict) and "isolateClaudeConfig" in proj["bridge"]:
         del proj["bridge"]["isolateClaudeConfig"]
-        warnings.append("project bridge.isolateClaudeConfig ignored: the project may not set this key")
+        warnings.append(who + " bridge.isolateClaudeConfig ignored: the %s may not set this key" % who)
     merged = deep_merge(base, proj)
     if safety is None:
         return merged
     if not isinstance(safety, dict):
-        warnings.append("project safety ignored: not an object")
+        warnings.append(who + " safety ignored: not an object")
         return merged
     result = copy.deepcopy(base.get("safety", {}))
 
@@ -195,9 +200,10 @@ def project_apply(base, proj, warnings):
 
     for keys, val in leaves(safety, ()):
         name = "safety." + ".".join(keys)
+        label = who + " " + name
         rule = TIGHTEN.get(keys)
         if rule is None:
-            warnings.append("project %s ignored: the project may not set this key" % name)
+            warnings.append("%s ignored: the %s may not set this key" % (label, who))
             continue
         cur = result
         for k in keys[:-1]:
@@ -205,36 +211,36 @@ def project_apply(base, proj, warnings):
             if not isinstance(cur, dict):
                 break
         if not isinstance(cur, dict):
-            warnings.append("project %s ignored: parent is not an object" % name)
+            warnings.append("%s ignored: parent is not an object" % label)
             continue
         have = cur.get(keys[-1])
         if rule in ("false_only", "true_only"):
             want = rule == "true_only"
             if not isinstance(val, bool):
-                warnings.append("project %s ignored: not a boolean" % name)
+                warnings.append("%s ignored: not a boolean" % label)
             elif val == want:
                 cur[keys[-1]] = val
             elif have is not val:
-                warnings.append("project %s ignored: it would loosen the policy" % name)
+                warnings.append("%s ignored: it would loosen the policy" % label)
         elif rule == "lower_only":
             if not isinstance(val, int) or isinstance(val, bool) or val < 0:
-                warnings.append("project %s ignored: not a non-negative integer" % name)
+                warnings.append("%s ignored: not a non-negative integer" % label)
             elif isinstance(have, int) and not isinstance(have, bool) and val > have:
-                warnings.append("project %s ignored: it would loosen the policy" % name)
+                warnings.append("%s ignored: it would loosen the policy" % label)
             else:
                 cur[keys[-1]] = val
         elif not isinstance(val, list):
-            warnings.append("project %s ignored: not a list" % name)
+            warnings.append("%s ignored: not a list" % label)
         elif rule == "union":
             cur[keys[-1]] = list(have if isinstance(have, list) else []) + [
                 x for x in val if x not in (have if isinstance(have, list) else [])]
         elif rule == "intersect":
             if not isinstance(have, list):
-                warnings.append("project %s ignored: a project cannot extend allow" % name)
+                warnings.append("%s ignored: the %s cannot extend allow" % (label, who))
             else:
                 dropped = [x for x in val if x not in have]
                 if dropped:
-                    warnings.append("project %s: entries not extended: %s" % (name, ", ".join(map(str, dropped))))
+                    warnings.append("%s: entries not extended: %s" % (label, ", ".join(map(str, dropped))))
                 cur[keys[-1]] = [x for x in have if x in val]
     merged["safety"] = result
     return merged
@@ -306,6 +312,7 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
         if data is not None:
             cfg = deep_merge(cfg, data)
             layers.append("L2")
+    base_permissions = copy.deepcopy((cfg.get("safety") or {}).get("permissions"))
     if trusted_project:
         pf = Path(project_dir or os.getcwd()) / ".pi" / "foreman.json"
         if pf.is_file():
@@ -319,7 +326,7 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
             if not isinstance(data, dict):
                 raise ValueError("not an object")
             drop_loosening(data, "session", warnings)
-            cfg = deep_merge(cfg, data)
+            cfg = project_apply(cfg, data, warnings, "session")
             layers.append("session")
         except ValueError as exc:
             errors.append("session config invalid: %s" % exc)
@@ -341,9 +348,12 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
             errors.append(msg)
     if fallback:
         cfg["safety"] = copy.deepcopy(l1["safety"])
+        base_permissions = copy.deepcopy(l1["safety"].get("permissions"))
         warnings.append("safety config invalid: reverted to L1 safety values")
+    # basePermissions: safety.permissions after L1 -> L3 -> L2, before the project and session
+    # layers. The adapter overlay enforces what those two added on top of it.
     return {"config": cfg, "warnings": warnings, "errors": errors,
-            "safetyFallback": fallback, "layers": layers}
+            "safetyFallback": fallback, "layers": layers, "basePermissions": base_permissions}
 
 
 # ---------------------------------------------------------------- resolution

@@ -37,7 +37,7 @@
     "overrides": {}
   },
   "safety": {
-    "permissions": { "deny": [], "ask": [] },
+    "permissions": { "allow": [], "ask": [], "deny": [], "paths": { "deny": [], "ask": [] }, "projectCommands": [] },
     "requiredChildExtensions": [],
     "children": { "mayPush": false },
     "review": { "required": false },

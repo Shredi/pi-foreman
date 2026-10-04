@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "comment": "L1 baseline for the permission rules (design section 5). Patterns use the wildcard syntax of @gotgenes/pi-permission-system: * matches any characters including /, ? one character, a trailing ' *' also matches the bare command. {agentDir} is replaced by the Pi agent dir. The codemode tool is deliberately NOT allowlisted: inner calls are gated individually, codemode itself stays at the default. Layers add to these lists through safety.permissions in foreman.json; nothing below can be removed by a layer.",
+  "tools": {
+    "read": "allow",
+    "grep": "allow",
+    "find": "allow",
+    "ls": "allow",
+    "write": "allow",
+    "edit": "allow",
+    "subagent": "allow",
+    "subagent_supervisor": "allow",
+    "foreman_worktree_remove": "allow",
+    "foreman_move": "allow",
+    "foreman_copy": "allow"
+  },
+  "externalDirectory": "ask",
+  "shellTools": {
+    "powershell": { "commandArgument": "command" }
+  },
+  "bash": {
+    "allow": [
+      "git status *",
+      "git diff *",
+      "git log *",
+      "git show *",
+      "git blame *",
+      "git rev-parse *",
+      "git ls-files *",
+      "git branch",
+      "git branch -a",
+      "git branch -r",
+      "git branch -v",
+      "git branch -vv",
+      "git branch --list *",
+      "git branch --show-current",
+      "git worktree list *",
+      "git stash list *",
+      "ls *",
+      "tree *",
+      "pwd",
+      "cat *",
+      "head *",
+      "tail *",
+      "wc *",
+      "rg *",
+      "grep *",
+      "find *",
+      "stat *",
+      "file *",
+      "diff *",
+      "which *",
+      "echo *",
+      "npm test *",
+      "npm run test *",
+      "npm run build *",
+      "node --test *",
+      "python -m unittest *",
+      "python3 -m unittest *",
+      "pytest *"
+    ],
+    "ask": [
+      "find * -delete*",
+      "Remove-Item * -R*",
+      "remove-item * -r*",
+      "ri *",
+      "rd /s*",
+      "rmdir /s*",
+      "del /s*"
+    ],
+    "deny": [
+      "sudo *",
+      "doas *",
+      "curl * | sh *",
+      "curl * | bash *",
+      "curl * | zsh *",
+      "curl * | sudo *",
+      "wget * | sh *",
+      "wget * | bash *",
+      "wget * | zsh *",
+      "wget * | sudo *"
+    ]
+  },
+  "paths": {
+    "deny": [
+      "*.env",
+      "*.env.*",
+      "*/.ssh/*",
+      "*.pem",
+      "*.key",
+      "*/credentials",
+      "*/credentials.*",
+      "~/.aws/*",
+      "{agentDir}/auth.json",
+      "{agentDir}/extensions/pi-permission-system/*",
+      "*/.pi/extensions/pi-permission-system/*"
+    ],
+    "except": [
+      "*.env.example",
+      "*.env.sample",
+      "*.env.template"
+    ]
+  }
+}

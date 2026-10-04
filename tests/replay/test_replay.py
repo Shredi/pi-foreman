@@ -27,6 +27,7 @@ def _unavailable():
     try:
         driver.pi_cli()
         driver.pi_subagents_dir()
+        driver.permission_system_dir()
     except Exception as exc:  # noqa: BLE001 - any setup failure means "cannot replay here"
         return str(exc)
     return None

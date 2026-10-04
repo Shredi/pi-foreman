@@ -123,7 +123,7 @@ class ConfigTest(unittest.TestCase):
     def test_project_cannot_add_allow(self):
         self.proj({"safety": {"permissions": {"allow": ["rm *"]}}})
         res = self.load(trusted_project=True)
-        self.assertNotIn("allow", res["config"]["safety"]["permissions"])
+        self.assertEqual(res["config"]["safety"]["permissions"]["allow"], [])
         self.assertIn("safety.permissions.allow", "\n".join(res["warnings"]))
 
     def test_unknown_key_warns(self):
