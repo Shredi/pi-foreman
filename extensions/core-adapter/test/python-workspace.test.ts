@@ -61,7 +61,9 @@ test("outside a repo only a venv/.venv below the cwd is rejected", async (t) => 
   assert.equal(good.info.executable, tool);
 });
 
-test("a bare name found on PATH inside the workspace is not probed", async (t) => {
+// Simulates a POSIX PATH (":"-separated); Windows temp paths carry a drive letter, so this one
+// runs on POSIX hosts only. The win32 variant below runs everywhere.
+test("a bare name found on PATH inside the workspace is not probed", { skip: process.platform === "win32" }, async (t) => {
   const repo = tempDir(t, true);
   const bin = path.join(repo, ".venv", "bin");
   fs.mkdirSync(bin, { recursive: true });
@@ -70,4 +72,15 @@ test("a bare name found on PATH inside the workspace is not probed", async (t) =
   const r = await resolvePython({ platform: "linux", spawner, cwd: repo, env: { PATH: bin } });
   assert.ok(r.ok);
   assert.deepEqual(calls, ["python"]);
+});
+
+test("win32: a bare name found on PATH inside the workspace is not probed", async (t) => {
+  const repo = tempDir(t, true);
+  const bin = path.join(repo, ".venv", "Scripts");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, "python.exe"), "");
+  const { spawner, calls } = fake({ python: out("3.12", "C:/Python312/python.exe", "C:/Python312/python.exe", "C:/Python312") });
+  const r = await resolvePython({ platform: "win32", spawner, cwd: repo, env: { PATH: bin } });
+  assert.ok(!r.ok);
+  assert.deepEqual(calls, ["py"]);
 });
