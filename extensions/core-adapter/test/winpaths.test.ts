@@ -41,6 +41,12 @@ test("win32: an 8.3 short name where a protected name sits is asked (foreman) / 
   assert.match(r!.reason, /8\.3 short name/);
 });
 
+test("win32: an 8.3 short name of a deny-path folder is denied", () => {
+  assert.equal(both("bash", { command: "cat ~\\SSH~1\\id_ed25519" }), "deny/deny");
+  assert.equal(both("read", { path: "C:\\Profiles\\u\\AWS~1\\config" }), "deny/deny");
+  assert.equal(both("read", { path: "C:\\Profiles\\u\\DOCUME~1\\x.txt" }), "pass/pass");
+});
+
 test("win32: short names elsewhere change nothing", () => {
   assert.equal(both("write", { path: "C:\\PROGRA~1\\app\\settings.json" }), "pass/pass");
   assert.equal(both("write", { path: "PROGRA~1\\x.txt" }), "pass/pass", "does not fit a protected name");

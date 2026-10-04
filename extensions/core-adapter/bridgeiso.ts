@@ -94,9 +94,10 @@ export function isolationDoctor(input: IsoDoctorInput): string[] {
 /**
  * Claude Code settings keys that run a command or script (CC 2.1.289 settings schema): hooks,
  * auth/header helpers, cloud auth refresh/export, status lines, file suggestion and the
- * process wrapper. `policyHelper` is honoured only from admin policy sources, so it is not listed.
+ * process wrapper; `env` (it reaches every command CC spawns, e.g. `NODE_OPTIONS`) and
+ * `enabledPlugins`/`extraKnownMarketplaces` (plugins bring hooks and MCP servers). `policyHelper` is honoured only from admin policy sources, so it is not listed.
  */
-export const COMMAND_SETTINGS_KEYS = ["hooks", "apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "gcpAuthRefresh", "otelHeadersHelper", "proxyAuthHelper", "statusLine", "subagentStatusLine", "fileSuggestion", "processWrapper"];
+export const COMMAND_SETTINGS_KEYS = ["hooks", "apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "gcpAuthRefresh", "otelHeadersHelper", "proxyAuthHelper", "statusLine", "subagentStatusLine", "fileSuggestion", "processWrapper", "env", "enabledPlugins", "extraKnownMarketplaces"];
 
 /**
  * Project-level Claude Code config that runs code in a claude-bridge turn (U1): isolation covers

@@ -70,7 +70,7 @@ test("doctor probes the keychain service for the folder on macOS only", () => {
 test("M2: every command-running settings key is a project finding", () => {
   const p = tmp();
   fs.mkdirSync(path.join(p, ".claude"));
-  fs.writeFileSync(path.join(p, ".claude", "settings.json"), JSON.stringify({ awsAuthRefresh: "x", awsCredentialExport: "x", otelHeadersHelper: "x", gcpAuthRefresh: "x", proxyAuthHelper: "x", statusLine: {}, model: "m" }));
-  assert.deepEqual(projectClaudeRisks(p), [".claude/settings.json (awsAuthRefresh, awsCredentialExport, gcpAuthRefresh, otelHeadersHelper, proxyAuthHelper, statusLine)"]);
+  fs.writeFileSync(path.join(p, ".claude", "settings.json"), JSON.stringify({ awsAuthRefresh: "x", awsCredentialExport: "x", otelHeadersHelper: "x", gcpAuthRefresh: "x", proxyAuthHelper: "x", statusLine: {}, env: {}, enabledPlugins: {}, extraKnownMarketplaces: {}, model: "m" }));
+  assert.deepEqual(projectClaudeRisks(p), [".claude/settings.json (awsAuthRefresh, awsCredentialExport, gcpAuthRefresh, otelHeadersHelper, proxyAuthHelper, statusLine, env, enabledPlugins, extraKnownMarketplaces)"]);
   fs.rmSync(p, { recursive: true, force: true });
 });

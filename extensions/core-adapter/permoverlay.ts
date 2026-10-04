@@ -234,12 +234,12 @@ export function shortNameFits(short: string, long: string): boolean {
 
 /**
  * Win32 8.3 spellings (M1): each candidate with every short-name segment (`CLAUDE~1`) replaced by
- * the literal segments of the protect patterns it could abbreviate. Only those spellings that
- * then match a protect pattern decide, so a `PROGRA~1` in an unrelated path changes nothing:
+ * the literal segments of the (protect or deny) patterns it could abbreviate. Only those
+ * spellings that then match a pattern decide, so a `PROGRA~1` in an unrelated path changes nothing:
  * the short name must sit exactly where a protected name sits and fit that name.
  */
-function shortNameVariants(cands: string[], rules: ProtectRule[]): string[] {
-  const names = [...new Set(rules.flatMap((r) => r.pattern.split(/[\\/]/)).filter((s) => s && !/[*?]/.test(s)))];
+function shortNameVariants(cands: string[], patterns: string[]): string[] {
+  const names = [...new Set(patterns.flatMap((p) => p.split(/[\\/]/)).filter((s) => s && !/[*?]/.test(s)))];
   const out: string[] = [];
   for (const cand of cands) {
     const segs = winSegments(cand).split("/");
@@ -732,7 +732,9 @@ function tokenCandidates(word: string, ctx: MatchCtx, depth: number): string[] {
 }
 
 function pathDeny(rules: PathRule[], word: string, ctx: MatchCtx): PathRule | null {
-  for (const cand of pathCandidates(word, ctx)) {
+  const cands = pathCandidates(word, ctx);
+  const denyPats = rules.filter((r) => r.action === "deny").map((r) => r.pattern);
+  for (const cand of ctx.platform === "win32" ? [...cands, ...shortNameVariants(cands, denyPats)] : cands) {
     let verdict: PathRule | null = null;
     for (const r of rules) if (pathMatches(r.pattern, cand, ctx)) verdict = r;
     if (verdict && verdict.action === "deny") return verdict;
@@ -787,7 +789,7 @@ function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: bo
   const child = ctx.role === "child";
   let ask: ProtectHit | null = null;
   const cands = pathCandidates(word, ctx);
-  const guessed = ctx.platform === "win32" ? shortNameVariants(cands, rules) : [];
+  const guessed = ctx.platform === "win32" ? shortNameVariants(cands, rules.map((r) => r.pattern)) : [];
   for (const r of rules) {
     if (shell && !r.shell && !(child && r.childShell)) continue;
     const kind = child ? r.child : r.main;
