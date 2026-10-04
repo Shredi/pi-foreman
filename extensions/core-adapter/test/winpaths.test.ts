@@ -68,10 +68,12 @@ test("win32 host: real trailing-dot and short-name spellings reach the protected
     const k = (p: string): string => ["main", "child"].map((r) => checkToolCall(rules, "write", { path: p }, ctx(r as "main" | "child"))?.kind ?? "pass").join("/");
     // The overlay must catch the trailing-dot spelling whatever the file API does with it.
     assert.equal(k(path.join(cwd, ".claude.", "settings.json")), "ask/deny");
-    // Win32 path normalisation (used by shells such as cmd) strips the trailing dot, so the file
-    // lands in .claude. Node's fs keeps the dot and fails with ENOENT, so cmd writes the probe.
-    execFileSync("cmd", ["/d", "/c", `echo x> "${path.join(cwd, ".claude.", "probe.txt")}"`]);
-    assert.ok(fs.existsSync(path.join(cwd, ".claude", "probe.txt")), "cmd strips the trailing dot");
+    assert.equal(k(path.join(cwd, ".claude", "settings.json.")), "ask/deny");
+    // On the CI runners Win32 rejects a trailing dot on a middle segment ("syntax is incorrect")
+    // but strips it from the last one, so the real-disk probe uses the last segment. Node's fs
+    // keeps the dot (ENOENT), so cmd writes the probe.
+    execFileSync("cmd", ["/d", "/c", `echo x> "${path.join(cwd, ".claude", "probe.txt.")}"`]);
+    assert.ok(fs.existsSync(path.join(cwd, ".claude", "probe.txt")), "Win32 strips the trailing dot of the last segment");
     const short = execFileSync("cmd", ["/d", "/c", `for %I in ("${path.join(cwd, ".claude")}") do @echo %~sI`], { encoding: "utf8" }).trim();
     const name = path.basename(short);
     if (!name.includes("~")) {
