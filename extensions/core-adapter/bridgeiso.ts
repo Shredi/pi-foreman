@@ -9,6 +9,8 @@ import * as path from "node:path";
 export const BRIDGE_PROVIDER = "claude-bridge";
 /** Entries that make the folder a non-empty Claude Code config. */
 export const FORBIDDEN_ENTRIES = ["settings.json", "settings.local.json", "plugins", "hooks", "CLAUDE.md", "agents", "skills", "commands"];
+/** Files Claude Code fetches from the account's cloud settings into the config folder (not host config). */
+export const CLOUD_ENTRIES = ["remote-settings.json", "policy-limits.json"];
 
 type Env = Record<string, string | undefined>;
 
@@ -78,6 +80,8 @@ export function isolationDoctor(input: IsoDoctorInput): string[] {
   const present = FORBIDDEN_ENTRIES.filter((e) => fs.existsSync(path.join(input.dir, e)));
   if (present.length) out.push(`FAIL bridge isolation folder ${input.dir} holds host config (${present.join(", ")}) — fix: remove those entries; the folder must hold only login data.`);
   else out.push(`OK   bridge isolation folder ${input.dir} holds no settings, hooks, plugins, CLAUDE.md, agents, skills or commands`);
+  const cloud = CLOUD_ENTRIES.filter((e) => fs.existsSync(path.join(input.dir, e)));
+  if (cloud.length) out.push(`INFO bridge isolation folder holds cloud-fetched ${cloud.join(", ")} (written by Claude Code from the account's managed settings; not host config)`);
   const login: string[] = [];
   if (fs.existsSync(path.join(input.dir, ".credentials.json"))) login.push("credentials file");
   if (input.platform === "darwin" && (input.keychain ?? macKeychainProbe)(keychainService(input.dir))) login.push("keychain entry");
@@ -86,3 +90,34 @@ export function isolationDoctor(input: IsoDoctorInput): string[] {
   else out.push(`WARN bridge login not found for ${input.dir} — fix: run CLAUDE_CONFIG_DIR=${input.dir} claude, then /login; or set CLAUDE_CODE_OAUTH_TOKEN (claude setup-token).`);
   return out;
 }
+
+/**
+ * Project-level Claude Code config that runs code in a claude-bridge turn (U1): isolation covers
+ * the user level only; the bridge still loads the project's setting sources. Returns findings
+ * like `.claude/settings.json (hooks)` and `.mcp.json`; empty when there is nothing to fear.
+ * CLAUDE.md is not listed: the bridge excludes it (claudeMdExcludes).
+ */
+export function projectClaudeRisks(cwd: string): string[] {
+  const out: string[] = [];
+  const dir = path.join(cwd, ".claude");
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(dir).filter((n) => /^settings.*\.json$/i.test(n)).sort();
+  } catch {
+    names = [];
+  }
+  for (const n of names) {
+    let keys: string[] = [];
+    try {
+      const data = JSON.parse(fs.readFileSync(path.join(dir, n), "utf8")) as unknown;
+      if (data && typeof data === "object" && !Array.isArray(data)) keys = ["hooks", "apiKeyHelper"].filter((k) => k in (data as object));
+    } catch {
+      keys = ["unreadable"];
+    }
+    if (keys.length) out.push(`.claude/${n} (${keys.join(", ")})`);
+  }
+  if (fs.existsSync(path.join(cwd, ".mcp.json"))) out.push(".mcp.json");
+  return out;
+}
+
+export const PROJECT_CLAUDE_FIX = "review and remove them (hooks, apiKeyHelper and MCP servers in project files run as you in every claude-bridge turn, also when a subagent wrote them), or use another provider for this project.";

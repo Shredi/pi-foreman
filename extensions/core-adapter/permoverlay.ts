@@ -47,8 +47,12 @@
 //  6. The overlay ignores PS's per-agent frontmatter and `yoloMode`: deny is deny.
 //  7. Write protection (baseline `protect`, overlay only; PS cannot tell reads from writes):
 //     `.git` (S1/S2, every session), the project's `.pi/` and `.agents/`, `<agentDir>`'s
-//     foreman.json, settings.json, agents/, npm/, extensions/ (asked in the foreman, denied in
-//     children) and the package root (file tools only). Checked on write/edit, the paths of
+//     foreman.json, settings.json, agents/, npm/, extensions/, pi-foreman/claude-config/, the
+//     project's `.claude/` and `.mcp.json`, `~/.claude/`, `~/.gitconfig` and the git config
+//     dirs (asked in the foreman, denied in children) and the package root (file tools; shell
+//     words in children only). Paths resolve symlinks of the deepest existing ancestor, so a
+//     new file below a symlinked directory is seen at its target; `<rev>:<path>` words are
+//     also checked by their path part. Checked on write/edit, the paths of
 //     foreman_move/foreman_copy and, as for deny paths, every shell word — so in a shell
 //     command these also block reads (`cat .git/config`); `git status` names no such path.
 //     grep's `glob` and find's `pattern` are checked joined to the tool's `path`.
@@ -67,6 +71,8 @@ export interface ProtectRule {
   main: "deny" | "ask" | null;
   child: "deny";
   shell: boolean;
+  /** Children: also check shell words (writeAsk: the package root, T11). */
+  childShell?: boolean;
 }
 
 export interface OverlayRules {
@@ -127,15 +133,22 @@ function without(list: string[], base: string[]): string[] {
  * the project and session layers (the config CLI's `basePermissions`); asks present there are
  * PS's job, only the added ones are enforced here. Without `base` no ask is enforced.
  */
-export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unknown, agentDir: string, pkgRoot?: string): OverlayRules {
+export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unknown, agentDir: string, pkgRoot?: string, xdgConfigHome: string | undefined = process.env.XDG_CONFIG_HOME): OverlayRules {
   const m = obj(merged);
   const b = obj(base);
   const slash = (d: string): string => d.split(path.sep).join("/").replace(/\/+$/, "");
   const sub = (p: string): string => p.replace(/\{agentDir\}/g, slash(agentDir));
+  const xdg = xdgConfigHome && path.isAbsolute(xdgConfigHome) ? xdgConfigHome : undefined;
   const prot = (list: string[] | undefined, main: ProtectRule["main"], shell: boolean): ProtectRule[] =>
     (list ?? [])
-      .filter((p) => pkgRoot !== undefined || !p.includes("{pkgRoot}"))
-      .map((p) => ({ pattern: sub(p).replace(/\{pkgRoot\}/g, slash(pkgRoot ?? "")), main, child: "deny", shell }));
+      .filter((p) => (pkgRoot !== undefined || !p.includes("{pkgRoot}")) && (xdg !== undefined || !p.includes("{xdgConfigHome}")))
+      .map((p) => ({
+        pattern: sub(p).replace(/\{pkgRoot\}/g, slash(pkgRoot ?? "")).replace(/\{xdgConfigHome\}/g, slash(xdg ?? "")),
+        main,
+        child: "deny",
+        shell,
+        childShell: true,
+      }));
   const pb = baseline.protect;
   const mp = obj(m.paths);
   const bp = obj(b.paths);
@@ -618,6 +631,24 @@ function pathCandidates(word: string, ctx: MatchCtx): string[] {
   return parts.flatMap((x) => tokenCandidates(x, ctx, 0));
 }
 
+/**
+ * realpath of the deepest existing ancestor with the missing tail re-appended (T3): a new file
+ * below a symlinked directory (`gd/hooks/pre-commit`, gd -> .git) resolves to its real target.
+ */
+function realDeep(abs: string, p: path.PlatformPath, fsx: ReturnType<typeof defaults>): string | null {
+  const tail: string[] = [];
+  let cur = abs;
+  for (let n = 0; n < 64; n++) {
+    const real = fsx.realpath(cur);
+    if (real) return tail.length ? p.join(real, ...tail.reverse()) : real;
+    const parent = p.dirname(cur);
+    if (parent === cur) return null;
+    tail.push(p.basename(cur));
+    cur = parent;
+  }
+  return null;
+}
+
 function tokenCandidates(word: string, ctx: MatchCtx, depth: number): string[] {
   const fsx = defaults(ctx);
   const p = ctx.platform === "win32" ? path.win32 : path.posix;
@@ -625,6 +656,9 @@ function tokenCandidates(word: string, ctx: MatchCtx, depth: number): string[] {
   const out: string[] = [];
   const eq = s.indexOf("=");
   if (eq > 0 && depth === 0) out.push(...tokenCandidates(s.slice(eq + 1), ctx, 1));
+  // `<rev>:<path>` (`git show HEAD:.env`, T14): the part after the first `:` is a path too
+  const colon = s.indexOf(":");
+  if (colon >= 0 && depth < 2 && !/^[A-Za-z]:([\\/]|$)/.test(s)) out.push(...tokenCandidates(s.slice(colon + 1), ctx, 2));
   if (!s) return out;
   const abs = p.resolve(ctx.cwd, s);
   const pathShaped = /^[.~]|[\\/]/.test(s);
@@ -636,7 +670,7 @@ function tokenCandidates(word: string, ctx: MatchCtx, depth: number): string[] {
   };
   if (s !== abs) out.push(s);
   add(abs);
-  const real = fsx.realpath(abs);
+  const real = realDeep(abs, p, fsx);
   if (real && real !== abs) add(real);
   if (GLOB.test(s)) {
     for (const x of expandGlob(abs, p, fsx)) {
@@ -705,7 +739,7 @@ function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: bo
   let ask: ProtectRule | null = null;
   const cands = pathCandidates(word, ctx);
   for (const r of rules) {
-    if (shell && !r.shell) continue;
+    if (shell && !r.shell && !(child && r.childShell)) continue;
     const kind = child ? r.child : r.main;
     if (!kind || (kind === "ask" && ask)) continue;
     if (!cands.some((x) => pathMatches(r.pattern, x, ctx))) continue;

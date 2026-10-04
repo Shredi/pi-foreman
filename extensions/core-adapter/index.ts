@@ -21,7 +21,7 @@ import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
-import { BridgeIsolation, isolationDir, isolationDoctor, isolationOn } from "./bridgeiso.ts";
+import { BRIDGE_PROVIDER, BridgeIsolation, isolationDir, isolationDoctor, isolationOn, PROJECT_CLAUDE_FIX, projectClaudeRisks } from "./bridgeiso.ts";
 import { applyLaunchModels } from "./launchmodel.ts";
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import type { RoleResolution } from "./roles.ts";
@@ -157,6 +157,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     } catch (err) {
       ctx.ui.notify(`pi-foreman: could not prepare the bridge config folder (${(err as Error).message}).`, "warning");
     }
+    const claudeRisks = provider === BRIDGE_PROVIDER ? projectClaudeRisks(cwd) : [];
+    if (claudeRisks.length) ctx.ui.notify(`pi-foreman: project Claude Code config runs in claude-bridge turns: ${claudeRisks.join(", ")}. Fix: ${PROJECT_CLAUDE_FIX}`, "error");
     s.trace?.emit({ event: "session_start", role: s.isChild ? "child" : "foreman", model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null, tier: s.ceremony.tier });
 
     try {
@@ -630,6 +632,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
 
     if (isolationOn(isoSetting, ctx.model?.provider)) out.push(...isolationDoctor({ dir: isolationDir(s.agentDir), env: process.env, platform }));
+    if (ctx.model?.provider === BRIDGE_PROVIDER) {
+      const risks = projectClaudeRisks(s.cwd);
+      if (risks.length) fail(`project Claude Code config runs in claude-bridge turns: ${risks.join(", ")}`, PROJECT_CLAUDE_FIX);
+      else ok("no project Claude Code hooks, apiKeyHelper or .mcp.json");
+    }
     const rt = reviewTarget(s.config.config, ctx.model?.provider);
     if (!rt) out.push(`WARN no review model for provider ${ctx.model?.provider ?? "(none)"}: model review (${REVIEW_LINK}) is off, every ask goes to you — set providers.<p>.review.model in foreman.json`);
     else if (!ctx.modelRegistry.find(rt.provider, rt.modelId)) fail(`review model ${rt.provider}/${rt.modelId} not in the model registry; asks go to you`, "correct providers.<p>.review.model.");

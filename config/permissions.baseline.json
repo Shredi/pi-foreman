@@ -82,7 +82,13 @@
       "wget * | sh *",
       "wget * | bash *",
       "wget * | zsh *",
-      "wget * | sudo *"
+      "wget * | sudo *",
+      "gh auth token*",
+      "gh auth status --show-token*",
+      "git credential fill*",
+      "security find-generic-password* -w*",
+      "security find-generic-password* -g*",
+      "security find-internet-password*"
     ]
   },
   "paths": {
@@ -97,7 +103,17 @@
       "~/.aws/*",
       "{agentDir}/auth.json",
       "{agentDir}/extensions/pi-permission-system/*",
-      "*/.pi/extensions/pi-permission-system/*"
+      "*/.pi/extensions/pi-permission-system/*",
+      "~/.git-credentials",
+      "~/.config/gh/*",
+      "~/.netrc",
+      "~/_netrc",
+      "~/.npmrc",
+      "~/.pypirc",
+      "~/.docker/config.json",
+      "~/.kube/config",
+      "~/.config/hub",
+      "~/.config/glab-cli/*"
     ],
     "except": [
       "*.env.example",
@@ -106,7 +122,7 @@
     ]
   },
   "protect": {
-    "comment": "Write protection, enforced by the adapter overlay only (the permission system's path rules cannot tell a read from a write). Each pattern is checked against the path of write/edit, the destination (and a moved source) of foreman_move/foreman_copy and, except writeAsk, every path word of a shell command. deny: every session. ask: the foreman is asked, children are denied. childDeny: children only. writeAsk: like ask, but file tools only (shell commands may read and run the package). {cwd} is the session cwd, {pkgRoot} the pi-foreman package root.",
+    "comment": "Write protection, enforced by the adapter overlay only (the permission system's path rules cannot tell a read from a write). Each pattern is checked against the path of write/edit, the destination (and a moved source) of foreman_move/foreman_copy and, except writeAsk, every path word of a shell command. deny: every session. ask: the foreman is asked, children are denied. childDeny: children only. writeAsk: like ask, but shell words are checked in children only (the foreman's shell may read and run the package). {cwd} is the session cwd, {pkgRoot} the pi-foreman package root. {xdgConfigHome} is $XDG_CONFIG_HOME (patterns using it are dropped when it is unset). CLAUDE.md is not protected: claude-bridge excludes CLAUDE.md and .claude/rules from its turns (claudeMdExcludes), so it is ordinary project text.",
     "deny": [
       "*/.git",
       "*/.git/*"
@@ -123,7 +139,19 @@
       "{agentDir}/npm",
       "{agentDir}/npm/*",
       "{agentDir}/extensions",
-      "{agentDir}/extensions/*"
+      "{agentDir}/extensions/*",
+      "{cwd}/.claude",
+      "{cwd}/.claude/*",
+      "{cwd}/.mcp.json",
+      "{agentDir}/pi-foreman/claude-config",
+      "{agentDir}/pi-foreman/claude-config/*",
+      "~/.claude",
+      "~/.claude/*",
+      "~/.gitconfig",
+      "~/.config/git",
+      "~/.config/git/*",
+      "{xdgConfigHome}/git",
+      "{xdgConfigHome}/git/*"
     ],
     "childDeny": [
       "*/.pi/agents",

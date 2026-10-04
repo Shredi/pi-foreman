@@ -133,6 +133,12 @@ class LayerRulesTest(unittest.TestCase):
             self.assertIsNone(res["config"]["trace"]["dir"], value)
             self.assertIn("project trace.dir ignored", "\n".join(res["warnings"]))
 
+    def test_trace_dir_not_in_git_or_pi(self):
+        for value in [".git/hooks", ".pi", "sub/.GIT/x", ".pi/agents"]:
+            res = self.load(proj={"trace": {"dir": value}})
+            self.assertIsNone(res["config"]["trace"]["dir"], value)
+            self.assertIn("must not be inside a .git or .pi directory", "\n".join(res["warnings"]))
+
 
 if __name__ == "__main__":
     unittest.main()
