@@ -12,13 +12,25 @@
 //   hint in the command. `core.untrackedCache` is not added: it is a cache switch and runs
 //   nothing. Repo hooks stay enabled (legitimate pre-commit hooks), so:
 // - a snapshot of the repo's local git config files and hooks, taken before every child launch
-//   that passes, compared before the foreman's next git command and before
-//   foreman_worktree_remove. A change is an ask (never values, only which keys / hook files),
-//   denied without a UI. Only file reads here; no git process is started.
+//   that passes, compared before every foreman git run: the foreman's shell git commands, every
+//   foreman safe op (foreman_move, foreman_copy, foreman_worktree_remove all run git through
+//   scripts/safe_ops.py) and the main-mode git guard (it runs `git config`/`git diff --cached`
+//   after the gate). A change is an ask (never values, only which keys / hook files), denied
+//   without a UI. Only file reads here; no git process is started.
+//   Covered: common dir config/config.worktree, in-repo includes, every linked worktree's
+//   config.worktree/commondir/gitdir/.git file, info/attributes (common dir and per worktree),
+//   the hooks dir, and absorbed submodule git dirs (`modules/**`: config, info/attributes,
+//   hooks/*), since `git status` runs submodule clean filters.
+// - the snapshot is persisted per workspace (key: realpath of the git common dir) in the
+//   pi-foreman state dir, as names and hashes only, and loaded at session start, so a change
+//   planted during an earlier session asks too. With no stored snapshot (first session on a
+//   workspace) the current state is taken silently as the baseline.
 //
 // Limits: a change a child makes while the foreman's own git command runs is absorbed by the
 // re-snapshot after that command; config outside the repo (global, system, includes that point
-// outside the repo or its git dir) is not snapshotted (the include key itself is).
+// outside the repo or its git dir) is not snapshotted (the include key itself is); submodules
+// whose `.git` is a directory inside their work tree (not absorbed) are not snapshotted; two
+// foreman sessions on one workspace share the stored snapshot (last write wins).
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -93,11 +105,12 @@ interface FileSnap {
 
 export interface GitSnapshot {
   files: Map<string, FileSnap>;
-  hooksDir: string;
+  /** Hash of the hooks dir path (the path is a config value, so it is never stored). */
+  hooksDirId: string;
   hooks: Map<string, string>;
 }
 
-const sha = (s: string | Buffer): string => crypto.createHash("sha256").update(s).digest("hex").slice(0, 16);
+export const sha =(s: string | Buffer): string => crypto.createHash("sha256").update(s).digest("hex").slice(0, 16);
 
 /** Minimal git-config reader: key names (lower-cased section and name) and values. */
 export function parseGitConfig(text: string): Array<[string, string]> {
@@ -140,7 +153,8 @@ export function takeGitSnapshot(cwd: string, home: string): GitSnapshot | null {
     return p;
   };
   let hooksPath: string | null = null;
-  const addConfig = (p: string, depth: number): void => {
+  // `own` = false for submodule git dirs: their core.hooksPath is a key change, not this repo's hooks dir.
+  const addConfig = (p: string, depth: number, own = true): void => {
     const lbl = label(p);
     if (files.has(lbl) || depth > 5) return;
     const text = readText(p);
@@ -150,20 +164,59 @@ export function takeGitSnapshot(cwd: string, home: string): GitSnapshot | null {
     for (const [k, v] of entries) grouped.set(k, [...(grouped.get(k) ?? []), v]);
     files.set(lbl, { hash: sha(text), keys: new Map([...grouped].map(([k, vs]) => [k, sha(vs.join("\0"))])) });
     for (const [k, v] of entries) {
-      if (k === "core.hookspath") hooksPath = v.replace(/^"(.*)"$/, "$1");
+      if (k === "core.hookspath" && own) hooksPath = v.replace(/^"(.*)"$/, "$1");
       if (!/^include(if\..*)?\.path$/.test(k)) continue;
       let target = v.replace(/^"(.*)"$/, "$1");
       if (target.startsWith("~/")) target = path.join(home, target.slice(2));
       target = path.resolve(path.dirname(p), target);
-      if (roots.some((r) => inside(r, target))) addConfig(target, depth + 1);
+      if (roots.some((r) => inside(r, target))) addConfig(target, depth + 1, own);
     }
   };
   const addRaw = (p: string): void => {
     const text = readText(p);
     if (text !== null) files.set(label(p), { hash: sha(text), keys: null });
   };
+  const isFile = (p: string): boolean => {
+    try {
+      return fs.statSync(p).isFile();
+    } catch {
+      return false;
+    }
+  };
+  const subdirs = (d: string): string[] => {
+    try {
+      return fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    } catch {
+      return [];
+    }
+  };
   addConfig(path.join(repo.commonDir, "config"), 0);
   addConfig(path.join(repo.commonDir, "config.worktree"), 0);
+  addRaw(path.join(repo.commonDir, "info", "attributes"));
+  // Absorbed submodule git dirs: modules/<name>/ (names may contain `/`), nested under modules/<name>/modules/.
+  let budget = 500;
+  const walkModules = (dir: string, depth: number): void => {
+    if (depth > 8) return;
+    for (const n of subdirs(dir)) {
+      if (--budget < 0) return;
+      const d = path.join(dir, n);
+      if (!isFile(path.join(d, "config"))) {
+        walkModules(d, depth + 1);
+        continue;
+      }
+      addConfig(path.join(d, "config"), 0, false);
+      addRaw(path.join(d, "info", "attributes"));
+      let hookNames: string[] = [];
+      try {
+        hookNames = fs.readdirSync(path.join(d, "hooks")).sort();
+      } catch {
+        hookNames = [];
+      }
+      for (const h of hookNames) if (isFile(path.join(d, "hooks", h))) addRaw(path.join(d, "hooks", h));
+      walkModules(path.join(d, "modules"), depth + 1);
+    }
+  };
+  walkModules(path.join(repo.commonDir, "modules"), 0);
   // Linked worktrees: their own config and the files that say where their git dir is
   // (foreman_worktree_remove runs git inside one of them).
   let names: string[] = [];
@@ -175,6 +228,7 @@ export function takeGitSnapshot(cwd: string, home: string): GitSnapshot | null {
   for (const n of names) {
     const wd = path.join(repo.commonDir, "worktrees", n);
     addConfig(path.join(wd, "config.worktree"), 0);
+    addRaw(path.join(wd, "info", "attributes"));
     addRaw(path.join(wd, "commondir"));
     addRaw(path.join(wd, "gitdir"));
     const dotGit = (readText(path.join(wd, "gitdir")) ?? "").trim();
@@ -203,7 +257,67 @@ export function takeGitSnapshot(cwd: string, home: string): GitSnapshot | null {
       hooks.set(name, "unreadable");
     }
   }
-  return { files, hooksDir, hooks };
+  return { files, hooksDirId: sha(hooksDir), hooks };
+}
+
+// ------------------------------------------------------------ persisted snapshots (names and hashes only)
+
+/** State file for a workspace: `<stateDir>/<prefix>-<hash of the realpath of key>.json`. */
+export function stateFileFor(stateDir: string, prefix: string, key: string): string {
+  let real = key;
+  try {
+    real = fs.realpathSync(key);
+  } catch {
+    real = path.resolve(key);
+  }
+  return path.join(stateDir, `${prefix}-${sha(real)}.json`);
+}
+
+export function readState(file: string | null): unknown {
+  if (!file) return null;
+  const text = readText(file);
+  if (text === null) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/** Best effort: write via a temp file and rename. */
+export function writeState(file: string | null, data: unknown): void {
+  if (!file) return;
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify(data));
+    fs.renameSync(tmp, file);
+  } catch {
+    // The in-memory snapshot still works; the next session takes a fresh one.
+  }
+}
+
+export function serializeGitSnapshot(s: GitSnapshot): unknown {
+  return {
+    v: 1,
+    files: [...s.files].map(([l, f]) => [l, f.hash, f.keys ? [...f.keys] : null]),
+    hooksDirId: s.hooksDirId,
+    hooks: [...s.hooks],
+  };
+}
+
+export function deserializeGitSnapshot(o: unknown): GitSnapshot | null {
+  const r = o as { v?: number; files?: unknown; hooksDirId?: unknown; hooks?: unknown } | null;
+  if (!r || r.v !== 1 || !Array.isArray(r.files) || typeof r.hooksDirId !== "string" || !Array.isArray(r.hooks)) return null;
+  try {
+    const files = new Map<string, FileSnap>();
+    for (const [l, h, k] of r.files as Array<[string, string, Array<[string, string]> | null]>) {
+      files.set(String(l), { hash: String(h), keys: Array.isArray(k) ? new Map(k.map(([a, b]) => [String(a), String(b)])) : null });
+    }
+    return { files, hooksDirId: r.hooksDirId, hooks: new Map((r.hooks as Array<[string, string]>).map(([a, b]) => [String(a), String(b)])) };
+  } catch {
+    return null;
+  }
 }
 
 const MAX_ITEMS = 12;
@@ -244,7 +358,7 @@ export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot 
     const parts = [listed("added", added), listed("changed", changed), listed("removed", removed)].filter(Boolean);
     out.push(`${clean(lbl)}: ${parts.length ? parts.join("; ") : "content changed"}`);
   }
-  if (before.hooksDir !== after.hooksDir) out.push("hooks directory changed (core.hooksPath)");
+  if (before.hooksDirId !== after.hooksDirId) out.push("hooks directory changed (core.hooksPath)");
   const hooks = [...new Set([...before.hooks.keys(), ...after.hooks.keys()])].sort();
   const hAdded = hooks.filter((h) => !before.hooks.has(h));
   const hRemoved = hooks.filter((h) => !after.hooks.has(h));
@@ -270,7 +384,7 @@ export async function checkGitDrift(before: GitSnapshot | null, cwd: string, hom
   const lines = diffGitSnapshots(before, before ? takeGitSnapshot(cwd, home) : null);
   if (!lines.length) return { decision: "none" };
   const summary = lines.join("\n");
-  const msg = `The repository's git config or hooks changed since the last child launch (a child may have planted them; values are not shown):\n${summary}\nRun ${what} anyway? Inspect with \`git config --local --list --show-origin\` and the hooks directory first.`;
+  const msg = `The repository's git config or hooks changed since pi-foreman last checked them (last child launch, own git call or an earlier session; a child may have planted them; values are not shown):\n${summary}\nRun ${what} anyway? Inspect with \`git config --local --list --show-origin\` and the hooks directory first.`;
   if ((ask.mode === "tui" || ask.mode === "rpc") && ask.hasUI && ask.confirm) {
     let ok = false;
     try {
@@ -281,17 +395,41 @@ export async function checkGitDrift(before: GitSnapshot | null, cwd: string, hom
     if (ok) return { decision: "approved" };
     return { decision: "denied", reason: `Denied by the user. pi-foreman: git config drift.\n${summary}` };
   }
-  return { decision: "no-ui", reason: `pi-foreman: the repository's git config or hooks changed since the last child launch, and there is no UI to approve ${what} (mode: ${ask.mode}); it is blocked.\n${summary}` };
+  return { decision: "no-ui", reason: `pi-foreman: the repository's git config or hooks changed since pi-foreman last checked them, and there is no UI to approve ${what} (mode: ${ask.mode}); it is blocked.\n${summary}` };
 }
 
 /** Per-session state: the snapshot and the foreman git calls that passed the gate. */
 export class GitDriftWatch {
   snap: GitSnapshot | null = null;
+  private stateFile: string | null = null;
   private readonly passed = new Set<string>();
+
+  private set(s: GitSnapshot | null): void {
+    this.snap = s;
+    if (s) writeState(this.stateFile, serializeGitSnapshot(s));
+  }
+
+  /**
+   * Foreman session start: load the workspace's stored snapshot as the baseline and return
+   * what changed since (empty = nothing, or no stored snapshot: then the current state is
+   * taken silently). The next gate asks about the returned changes.
+   */
+  bind(stateDir: string, cwd: string, home: string): string[] {
+    const repo = locateRepo(cwd);
+    if (!repo) return [];
+    this.stateFile = stateFileFor(stateDir, "gitdrift", repo.commonDir);
+    const stored = deserializeGitSnapshot(readState(this.stateFile));
+    if (!stored) {
+      this.set(takeGitSnapshot(cwd, home));
+      return [];
+    }
+    this.snap = stored;
+    return diffGitSnapshots(stored, takeGitSnapshot(cwd, home));
+  }
 
   /** Before a child launch that passed every other check (after `gate`). */
   snapshot(cwd: string, home: string): void {
-    this.snap = takeGitSnapshot(cwd, home);
+    this.set(takeGitSnapshot(cwd, home));
   }
 
   /** Before a foreman git command / worktree removal / child launch. Undefined = go on. */
@@ -300,7 +438,7 @@ export class GitDriftWatch {
     const r = await checkGitDrift(this.snap, cwd, home, what, ask);
     if (r.decision !== "none") trace({ event: "git_config_drift", decision: r.decision });
     if (r.decision === "denied" || r.decision === "no-ui") return { block: true, reason: r.reason ?? "pi-foreman: git config drift." };
-    if (r.decision === "approved") this.snap = takeGitSnapshot(cwd, home);
+    if (r.decision === "approved") this.set(takeGitSnapshot(cwd, home));
     if (callId) this.passed.add(callId);
     return undefined;
   }
@@ -308,6 +446,16 @@ export class GitDriftWatch {
   /** After the foreman's own git call ran: its own config changes (push -u, branch -d) become the baseline. */
   after(cwd: string, home: string, callId: string): void {
     if (!this.passed.delete(callId) || !this.snap) return;
-    this.snap = takeGitSnapshot(cwd, home);
+    this.set(takeGitSnapshot(cwd, home));
   }
+}
+
+/**
+ * Preflight for the foreman safe ops (safeops.ts): every op runs git through safe_ops.py
+ * (move: ls-files/status/mv, which run clean filters; copy: rev-parse; worktree_remove:
+ * status/worktree/branch), so each one is gated. Children are not gated here.
+ */
+export function safeOpDriftPreflight(watch: GitDriftWatch, isChild: boolean, cwd: string, home: string, op: string, ask: DriftAskEnv, trace: (r: Record<string, unknown>) => void, callId: string): Promise<{ block: true; reason: string } | undefined> {
+  if (isChild) return Promise.resolve(undefined);
+  return watch.gate(cwd, home, `foreman_${op}`, ask, trace, callId);
 }

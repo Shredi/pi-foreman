@@ -27,7 +27,8 @@ import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv } from "./childenv.ts";
-import { GitDriftWatch, patchForemanGitEnv } from "./gitdrift.ts";
+import { GitDriftWatch, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
+import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents } from "./payload.ts";
 import type { PayloadContext } from "./payload.ts";
@@ -82,6 +83,8 @@ interface Session {
   supervisor: SupervisorWindow;
   /** Git config/hooks snapshot taken at child launches, checked before foreman git (gitdrift.ts). */
   gitDrift: GitDriftWatch;
+  /** Project Claude Code config snapshot, checked before claude-bridge prompts (claudedrift.ts). */
+  claudeCfg: ClaudeConfigWatch;
 }
 
 export interface AdapterDeps {
@@ -152,6 +155,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       runs: new Map(),
       supervisor: new SupervisorWindow(),
       gitDrift: new GitDriftWatch(),
+      claudeCfg: new ClaudeConfigWatch(),
       trace: openTrace({ enabled: get(config.config, "trace.enabled"), dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: id }),
     };
     sessions.set(id, s);
@@ -174,6 +178,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     patchShellEnv({ env: process.env, binDir: BIN_DIR, python: pyPath(s), markerDir });
     if (s.isChild && get(config.config, "safety.children.mayPush") !== true) patchChildGitEnv(process.env);
     if (!s.isChild) patchForemanGitEnv(process.env);
+    if (!s.isChild) {
+      const gitLines = s.gitDrift.bind(markerDir, cwd, home);
+      if (gitLines.length) ctx.ui.notify(`pi-foreman: the repository's git config or hooks changed since the last session; the next foreman git run or child launch asks.\n${gitLines.join("\n")}`, "warning");
+      const cfgLines = s.claudeCfg.bind(markerDir, cwd);
+      if (cfgLines.length) ctx.ui.notify(`pi-foreman: project Claude Code config changed since the last session; the next claude-bridge prompt asks.\n${cfgLines.join("\n")}`, "warning");
+    }
 
     if (!python.ok) ctx.ui.notify(`pi-foreman: no Python ≥ 3.9 found — shell commands and subagent launches are blocked until it is fixed. ${NO_PYTHON_FIX}`, "error");
     for (const e of config.errors) ctx.ui.notify(e, "error");
@@ -351,6 +361,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (risks.length) ctx.ui.notify(`pi-foreman: project Claude Code config runs in claude-bridge turns: ${risks.join(", ")}. Fix: ${PROJECT_CLAUDE_FIX}`, "error");
     if (applyingModel) return;
     if (event.source === "set" || event.source === "cycle") userPickedModel = true;
+    const ms = sessionFor(ctx);
+    if (ms && !ms.isChild && event.model?.provider === BRIDGE_PROVIDER && event.previousModel?.provider !== BRIDGE_PROVIDER) {
+      const b = await ms.claudeCfg.check(ctx.cwd, "claude-bridge turns", driftAsk(ctx), (r) => ms.trace?.emit(r));
+      if (b) ctx.ui.notify(`${b.reason}\nThe next claude-bridge prompt asks again.`, "error");
+    }
+  });
+
+  // Project Claude Code config drift: ask before a claude-bridge prompt runs (claudedrift.ts).
+  pi.on("input", async (_event, ctx) => {
+    const s = sessionFor(ctx);
+    if (!s || s.isChild || ctx.model?.provider !== BRIDGE_PROVIDER) return { action: "continue" as const };
+    const b = await s.claudeCfg.check(ctx.cwd, "this claude-bridge prompt", driftAsk(ctx), (r) => s.trace?.emit(r));
+    if (!b) return { action: "continue" as const };
+    ctx.ui.notify(b.reason, "error");
+    if (!ctx.hasUI) process.stderr.write(`${b.reason}\n`);
+    return { action: "handled" as const };
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
@@ -559,8 +585,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
     preflight: async (ctx, op, callId) => {
       const s = await ensureSession(ctx);
-      if (op !== "worktree_remove" || s.isChild) return undefined;
-      return s.gitDrift.gate(ctx.cwd, os.homedir(), "foreman_worktree_remove", driftAsk(ctx), (r) => s.trace?.emit(r), callId);
+      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), op, driftAsk(ctx), (r) => s.trace?.emit(r), callId);
     },
     spawner,
     env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
