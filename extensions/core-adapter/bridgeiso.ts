@@ -239,16 +239,17 @@ export function bridgeLoadOrder(projectPackages: unknown, userPackages: unknown,
     ...(Array.isArray(projectPackages) ? projectPackages : []).map((e) => local(packageSpec(e), projectBase)),
     ...(Array.isArray(userPackages) ? userPackages : []).map((e) => local(packageSpec(e), userBase)),
   ];
-  const norm = (s: string): string => s.replace(/\\/g, "/").replace(/\/+$/, "");
-  let root = pkgRoot;
-  try {
-    root = fs.realpathSync(pkgRoot);
-  } catch {
-    root = pkgRoot;
-  }
+  // The root is resolved the same way as the entries (a drive is added on Windows), and paths
+  // compare case-insensitively where the file system does.
+  const fold = process.platform === "win32" || process.platform === "darwin";
+  const norm = (s: string): string => {
+    const n = s.replace(/\\/g, "/").replace(/\/+$/, "");
+    return fold ? n.toLowerCase() : n;
+  };
+  const roots = new Set([norm(pkgRoot), norm(local(pkgRoot, "."))]);
   const bridge = list.findIndex((s) => /(^|[/:@])pi-claude-bridge(@|$|\/)/.test(s));
   if (bridge < 0) return "no-bridge";
-  const foreman = list.findIndex((s) => norm(s) === norm(root) || norm(s) === norm(pkgRoot) || /^npm:pi-foreman(@|$)/.test(s));
+  const foreman = list.findIndex((s) => roots.has(norm(s)) || /^npm:pi-foreman(@|$)/.test(s));
   if (foreman < 0) return "unknown";
   return foreman < bridge ? "foreman-first" : "bridge-first";
 }

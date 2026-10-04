@@ -221,3 +221,17 @@ test("R3-H1: session_before_compact / session_before_tree cancel on claude-bridg
   assert.equal(await compact({ reason: "threshold" }, ctx("claude-bridge", false)), undefined, "approved state is the new baseline");
   await handlers.get("session_shutdown")!({}, ctx(undefined, false));
 });
+
+test("win32 (simulated): a Windows path in inline code is seen with single, doubled or raw-string backslashes", () => {
+  const home = "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\pf\\home";
+  const agentDir = `${home}\\.pi\\agent`;
+  const pf = `${agentDir}\\pi-foreman`;
+  const r = buildOverlayRules(readBaseline(PKG)!, {}, {}, agentDir, "C:\\pkg");
+  const kind = (command: string, role: "main" | "child"): string =>
+    checkToolCall(r, "bash", { command }, { cwd: "C:\\proj", home, platform: "win32", role, exists: () => false, isDir: () => false, realpath: () => null, list: () => [] })?.kind ?? "pass";
+  for (const lit of [`'${pf}'`, `r'${pf}'`, `'${pf.replace(/\\/g, "\\\\")}'`]) {
+    const command = `python3 -c "import shutil; shutil.rmtree(${lit})"`;
+    assert.equal(kind(command, "main"), "ask", command);
+    assert.equal(kind(command, "child"), "deny", command);
+  }
+});

@@ -417,6 +417,7 @@ function inlineCode(core: string[]): string | null {
 /** String literals of inline code, plus runs of literals joined by `+`, `.` or nothing (`"."+"env"` -> `.env`). */
 export function codeLiterals(code: string): string[] {
   const lits: { text: string; start: number; end: number }[] = [];
+  const rawLits: string[] = [];
   for (let i = 0; i < code.length; i++) {
     const q = code[i];
     if (q !== "'" && q !== '"' && q !== "`") continue;
@@ -427,9 +428,12 @@ export function codeLiterals(code: string): string[] {
       text += code[j];
     }
     lits.push({ text, start: i, end: j });
+    // as written too: a raw string (`r'C:\x'`) or an unknown escape keeps its backslashes (Windows paths)
+    const raw = code.slice(i + 1, j);
+    if (raw !== text) rawLits.push(raw);
     i = j;
   }
-  const out = lits.map((l) => l.text);
+  const out = [...lits.map((l) => l.text), ...rawLits];
   for (let a = 0; a < lits.length; a++) {
     let joined = lits[a].text;
     for (let b = a + 1; b < lits.length && /^\s*[+.]?\s*$/.test(code.slice(lits[b - 1].end + 1, lits[b].start)); b++) {
