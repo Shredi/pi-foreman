@@ -64,6 +64,40 @@ class LayerRulesTest(unittest.TestCase):
                     "roles.explorer.launch ignored", "roles.reviewer.tools: entries not extended: foreman_move"):
             self.assertIn(key, joined)
 
+    def test_role_file_ignored_prompt_append_kept(self):
+        res = self.load(l2={"roles": {"builder": {"file": "/opt/roles/builder.md"}}},
+                        proj={"roles": {"builder": {"file": "evil.md", "promptAppend": "repo note"}}},
+                        session={"roles": {"explorer": {"file": "evil2.md"}}})
+        roles = res["config"]["roles"]
+        self.assertEqual(roles["builder"]["file"], "/opt/roles/builder.md")
+        self.assertEqual(roles["builder"]["promptAppend"], "repo note")
+        self.assertNotIn("file", roles["explorer"])
+        joined = "\n".join(res["warnings"])
+        self.assertIn("project roles.builder.file ignored", joined)
+        self.assertIn("session roles.explorer.file ignored", joined)
+
+    def test_codemode_only_switched_off(self):
+        res = self.load(l2={"providers": {"p1": {"roles": {"builder": {"model": "p1/b"},
+                                                           "explorer": {"model": "p1/e", "codemode": True}}}}},
+                        proj={"roles": {"builder": {"codemode": True}, "explorer": {"codemode": False}},
+                              "providers": {"p1": {"roles": {"builder": {"codemode": True},
+                                                             "explorer": {"codemode": False}}}}})
+        cfg = res["config"]
+        self.assertIs(cfg["roles"]["builder"]["codemode"], False)
+        self.assertIs(cfg["roles"]["explorer"]["codemode"], False)
+        self.assertNotIn("codemode", cfg["providers"]["p1"]["roles"]["builder"])
+        self.assertIs(cfg["providers"]["p1"]["roles"]["explorer"]["codemode"], False)
+        joined = "\n".join(res["warnings"])
+        self.assertIn("project roles.builder.codemode ignored", joined)
+        self.assertIn("project providers.p1.roles.builder.codemode ignored", joined)
+
+    def test_provider_roles_for_unknown_ids_ignored(self):
+        res = self.load(proj={"providers": {"p1": {"roles": {"intruder": {"model": "p1/x"},
+                                                             "builder": {"model": "p1/b"}}}}})
+        proles = res["config"]["providers"]["p1"]["roles"]
+        self.assertEqual(set(proles), {"builder"})
+        self.assertIn("project providers.p1.roles.intruder ignored", "\n".join(res["warnings"]))
+
     def test_project_still_picks_models_and_fallback(self):
         res = self.load(proj={"providers": {"p1": {"roles": {"builder": {"model": "p1/b"}},
                                                    "fallback": {"provider": "p2"}}}})

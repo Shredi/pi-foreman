@@ -47,13 +47,19 @@ Keys outside safety that the project and session layers cannot loosen either
     python.path                      ignored (it chooses the executable that runs every guard)
     python.*                         ignored
     roles.*.launch                   ignored
+    roles.*.file                     ignored (a role file replaces the prompt)
     roles.<id>.tools                 narrow only (intersection with the L1 -> L3 -> L2 list)
+    roles.*.codemode                 only false is accepted (true adds the codemode tool)
+    providers.*.roles.*.codemode     only false is accepted
     roles.<new id>                   ignored (only ids present after L1 -> L3 -> L2)
+    providers.*.roles.<new id>       ignored
     trace.dir                        only inside the workspace (the nearest directory holding
                                      .git at or above the project dir, symlinks resolved)
 
 providers.*.roles.*.model and providers.*.fallback stay settable from the project (a
-project picks its models). Every other key in the project file is plain last-wins.
+project picks its models). roles.*.promptAppend stays settable: repository text reaches
+the model anyway and is untrusted input either way. Every other key in the project file
+is plain last-wins.
 Documented limit: maxThinking is plain last-wins, so a project can raise the thinking
 ceiling (it costs money, it grants no access).
 
@@ -116,7 +122,10 @@ IGNORED_KEYS = [
     (("python", "path"), "it chooses the executable that runs every guard"),
     (("python", "*"), "interpreter settings come from the user or overlay config"),
     (("roles", "*", "launch"), "the launch mode comes from the user or overlay config"),
+    (("roles", "*", "file"), "a role file replaces the prompt: user or overlay config only"),
 ]
+# codemode adds a tool, so the project and session layers may only switch it off.
+CODEMODE_FALSE_ONLY = True
 # roles.<id> in the project and session layers: "intersect" = narrow only. NEW_ROLE_IDS
 # "ignore" drops role ids not present after L1 -> L3 -> L2.
 ROLE_RULES = {"tools": "intersect"}
@@ -173,6 +182,26 @@ def restrict_layer(base, proj, who, warnings, project_dir):
                 if dropped:
                     warnings.append("%s roles.%s.%s: entries not extended: %s" % (who, rid, key, ", ".join(map(str, dropped))))
                 entry[key] = [x for x in have if x in want]
+    def codemode_off_only(entry, label):
+        if CODEMODE_FALSE_ONLY and isinstance(entry, dict) and "codemode" in entry and entry["codemode"] is not False:
+            del entry["codemode"]
+            warnings.append("%s %s.codemode ignored: the %s may only set false (it adds a tool)" % (who, label, who))
+
+    if isinstance(roles, dict):
+        for rid, entry in roles.items():
+            codemode_off_only(entry, "roles." + rid)
+    if isinstance(proj.get("providers"), dict):
+        for pname, pentry in proj["providers"].items():
+            proles = pentry.get("roles") if isinstance(pentry, dict) else None
+            if not isinstance(proles, dict):
+                continue
+            for rid in list(proles):
+                label = "providers.%s.roles.%s" % (pname, rid)
+                if NEW_ROLE_IDS == "ignore" and rid not in base_roles:
+                    del proles[rid]
+                    warnings.append("%s %s ignored: no such role after the user and overlay config" % (who, label))
+                else:
+                    codemode_off_only(proles[rid], label)
     trace = proj.get("trace")
     if TRACE_DIR_IN_WORKSPACE and isinstance(trace, dict) and isinstance(trace.get("dir"), str):
         root = workspace_root(project_dir)

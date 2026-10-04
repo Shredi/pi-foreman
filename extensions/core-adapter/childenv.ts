@@ -7,10 +7,13 @@
 // their env from process.env at each command start). Consequence: children cannot fetch from
 // private remotes or use gh either; the foreman does network git.
 //
-// Limits: an unencrypted key file under ~/.ssh is still readable by a program the child runs
-// (core.sshCommand=false stops git from using ssh, but code can call ssh itself), and a
-// remote.<n>.pushurl is not rewritten by pushInsteadOf. The other layers (git guard, path
-// overlay on ~/.ssh) cover the direct forms.
+// Limits (other layers hold there):
+// - Direct ssh with an unencrypted key: core.sshCommand=false stops git's own ssh, but code
+//   the child runs can call ssh (or a library) with a key file under ~/.ssh itself. The path
+//   overlay's deny on ~/.ssh covers the direct tool and shell forms.
+// - A remote.<n>.pushurl is not rewritten by pushInsteadOf (git applies it to url only).
+//   The git guard's child push block and the deny on child writes to .git/config (review
+//   S1/S7, other safety-wave items) are the layers that keep a child from using or planting one.
 import type { Env } from "./env.ts";
 
 /** Variables that carry or reach push credentials; removed from a child's env. */
