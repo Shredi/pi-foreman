@@ -57,7 +57,8 @@
 //     foreman_move/foreman_copy and, as for deny paths, every shell word — so in a shell
 //     command these also block reads (`cat .git/config`); `git status` names no such path.
 //     grep's `glob` and find's `pattern` are checked joined to the tool's `path`.
-//     removeAsk (`<agentDir>` and `<agentDir>/pi-foreman`, the ancestors of the state folder):
+//     removeAsk (`<agentDir>`, its parent (`~/.pi` by default) and `<agentDir>/pi-foreman`, the
+//     ancestors of the state folder):
 //     only a remove or rename of the folder itself is asked/denied — an operand of rm, rmdir,
 //     unlink, trash, mv, rename, del/rd, Remove-Item/Move-Item/Rename-Item and aliases, find
 //     -delete, a literal in inline code (`python -c`), or foreman_move's source. Reads and
@@ -145,7 +146,9 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
   const m = obj(merged);
   const b = obj(base);
   const slash = (d: string): string => d.split(path.sep).join("/").replace(/\/+$/, "");
-  const sub = (p: string): string => p.replace(/\{agentDir\}/g, slash(agentDir));
+  // {agentDirParent}: the agent dir's parent (`~/.pi` by default), derived, never hard-coded.
+  const parent = slash(agentDir).replace(/[\\/][^\\/]*$/, "") || "/";
+  const sub = (p: string): string => p.replace(/\{agentDirParent\}/g, parent).replace(/\{agentDir\}/g, slash(agentDir));
   const xdg = xdgConfigHome && path.isAbsolute(xdgConfigHome) ? xdgConfigHome : undefined;
   const prot = (list: string[] | undefined, main: ProtectRule["main"], shell: boolean): ProtectRule[] =>
     (list ?? [])

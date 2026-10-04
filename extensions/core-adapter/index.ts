@@ -21,7 +21,7 @@ import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
-import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, isolationDir, isolationDoctor, isolationOn, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
+import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels } from "./launchmodel.ts";
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import type { RoleResolution } from "./roles.ts";
@@ -334,6 +334,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [] });
     if (!s.isChild && (event.reason === "startup" || event.reason === "new")) await applyForemanModel(s, ctx);
     await registerChildExtensions(s, ctx);
+    const orderNotice = s.isChild ? null : loadOrderNotice(s.cwd, s.agentDir, PKG_ROOT);
+    if (orderNotice) notifyOnce(s, ctx, "load-order", orderNotice, "warning");
     if (fs.existsSync(psProjectConfigPath(s.cwd))) {
       notifyOnce(s, ctx, "ps-project-file", `pi-foreman: ${psProjectConfigPath(s.cwd)} exists. A project permission file can loosen the permission system's rules (it applies once the project is trusted). pi-foreman still enforces its deny rules itself, but put your rules in foreman.json and remove this file. /foreman doctor fails while it exists.`);
     }

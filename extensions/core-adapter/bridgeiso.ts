@@ -253,3 +253,19 @@ export function bridgeLoadOrder(projectPackages: unknown, userPackages: unknown,
   if (foreman < 0) return "unknown";
   return foreman < bridge ? "foreman-first" : "bridge-first";
 }
+
+export const LOAD_ORDER_NOTICE = "pi-foreman: pi-claude-bridge loads before pi-foreman, so the bridge's compaction and branch summaries run before pi-foreman's config-drift check. Fix: re-run the installer (node setup.mjs), which moves pi-foreman first.";
+
+/** Session-start warning when pi-claude-bridge loads first (reads the project and user settings.json). */
+export function loadOrderNotice(cwd: string, agentDir: string, pkgRoot: string): string | null {
+  const packages = (file: string): unknown => {
+    try {
+      return (JSON.parse(fs.readFileSync(file, "utf8")) as { packages?: unknown } | null)?.packages;
+    } catch {
+      return undefined;
+    }
+  };
+  const projectBase = path.join(cwd, ".pi");
+  const order = bridgeLoadOrder(packages(path.join(projectBase, "settings.json")), packages(path.join(agentDir, "settings.json")), pkgRoot, projectBase, agentDir);
+  return order === "bridge-first" ? LOAD_ORDER_NOTICE : null;
+}

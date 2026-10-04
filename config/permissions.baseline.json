@@ -126,7 +126,7 @@
     ]
   },
   "protect": {
-    "comment": "Write protection, enforced by the adapter overlay only (the permission system's path rules cannot tell a read from a write). Each pattern is checked against the path of write/edit, the destination (and a moved source) of foreman_move/foreman_copy and, except writeAsk, every path word of a shell command. deny: every session. ask: the foreman is asked, children are denied. childDeny: children only. removeAsk: like ask, but only for a remove or rename of the path itself (rm, rmdir, trash, mv, Remove-Item and the like, inline code of python -c/node -e, the moved source of foreman_move); reading or listing it stays allowed. writeAsk: like ask, but shell words are checked in children only (the foreman's shell may read and run the package). {cwd} is the session cwd, {pkgRoot} the pi-foreman package root. {xdgConfigHome} is $XDG_CONFIG_HOME (patterns using it are dropped when it is unset). CLAUDE.md is not protected: claude-bridge excludes CLAUDE.md and .claude/rules from its turns (claudeMdExcludes), so it is ordinary project text.",
+    "comment": "Write protection, enforced by the adapter overlay only (the permission system's path rules cannot tell a read from a write). Each pattern is checked against the path of write/edit, the destination (and a moved source) of foreman_move/foreman_copy and, except writeAsk, every path word of a shell command. deny: every session. ask: the foreman is asked, children are denied. childDeny: children only. removeAsk: like ask, but only for a remove or rename of the path itself (rm, rmdir, trash, mv, Remove-Item and the like, inline code of python -c/node -e, the moved source of foreman_move); reading or listing it stays allowed. writeAsk: like ask, but shell words are checked in children only (the foreman's shell may read and run the package). {cwd} is the session cwd, {agentDirParent} the agent dir's parent folder (~/.pi by default), {pkgRoot} the pi-foreman package root. {xdgConfigHome} is $XDG_CONFIG_HOME (patterns using it are dropped when it is unset). CLAUDE.md is not protected: claude-bridge excludes CLAUDE.md and .claude/rules from its turns (claudeMdExcludes), so it is ordinary project text.",
     "deny": [
       "*/.git",
       "*/.git/*"
@@ -173,6 +173,7 @@
       "*/.agents/*"
     ],
     "removeAsk": [
+      "{agentDirParent}",
       "{agentDir}",
       "{agentDir}/pi-foreman"
     ],
