@@ -328,7 +328,7 @@ Results return through pi-subagents' async notifications. The foreman waits, bou
 | Permission map | **adopt** `@gotgenes/pi-permission-system` | 39.0.2 | Hands-on: ask rules, detached-child forwarding, authorizer chain resolves |
 | Model review | **adopt, pinned, conditional** `pi-permission-ai-guard` | 0.13.0 | Hands-on: called and allowed at runtime with PS 39.0.2. Declared PS range `<37`; deny and defer paths not tested. |
 | Model review (rejected) | `@mzwing/pi-permission-auto-review` / `pi-verdict` | 0.7.0 / 0.14.0 | Auto-review needs Node ≥ 24 and PS 33–36. pi-verdict runs its own gate beside PS (double prompts). Load test only. |
-| Destructive/secret guard | **own** (vendored core) | core 0.22.1 @ fork SHA `6e876d1` (latency run: `1be4960`) | CI latency run on three OSes |
+| Destructive/secret guard | **own** (vendored core) | core 0.23.0 @ fork SHA `8376da1` (latency run: `1be4960`) | CI latency run on three OSes |
 | Ledger, gates, git guards, precondition ops, ceremony, `/retro`, trace, installer | **own** | n/a | Design |
 | Claude provider (private) | adopt `pi-claude-bridge` in L2 | 0.9.1 | Hands-on: child turns, thinking level reached |
 | Copilot, Codex subscription | Pi built-in providers | Pi 1.0.0 | Source read: Copilot device-flow `/login github-copilot` or `COPILOT_GITHUB_TOKEN`. Not run. |
