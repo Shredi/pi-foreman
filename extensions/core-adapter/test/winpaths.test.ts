@@ -66,10 +66,12 @@ test("win32 host: real trailing-dot and short-name spellings reach the protected
     const rules = buildOverlayRules(baseline, {}, {}, path.join(root, "home", ".pi", "agent"));
     const ctx = (role: "main" | "child"): MatchCtx => ({ cwd, home: path.join(root, "home"), platform: "win32", role });
     const k = (p: string): string => ["main", "child"].map((r) => checkToolCall(rules, "write", { path: p }, ctx(r as "main" | "child"))?.kind ?? "pass").join("/");
-    // the OS strips the trailing dot: the file lands in .claude
-    fs.writeFileSync(path.join(cwd, ".claude.", "probe.txt"), "x");
-    assert.ok(fs.existsSync(path.join(cwd, ".claude", "probe.txt")));
+    // The overlay must catch the trailing-dot spelling whatever the file API does with it.
     assert.equal(k(path.join(cwd, ".claude.", "settings.json")), "ask/deny");
+    // Win32 path normalisation (used by shells such as cmd) strips the trailing dot, so the file
+    // lands in .claude. Node's fs keeps the dot and fails with ENOENT, so cmd writes the probe.
+    execFileSync("cmd", ["/d", "/c", `echo x> "${path.join(cwd, ".claude.", "probe.txt")}"`]);
+    assert.ok(fs.existsSync(path.join(cwd, ".claude", "probe.txt")), "cmd strips the trailing dot");
     const short = execFileSync("cmd", ["/d", "/c", `for %I in ("${path.join(cwd, ".claude")}") do @echo %~sI`], { encoding: "utf8" }).trim();
     const name = path.basename(short);
     if (!name.includes("~")) {
