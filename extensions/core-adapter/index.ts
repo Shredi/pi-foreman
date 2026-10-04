@@ -183,6 +183,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (gitLines.length) ctx.ui.notify(`pi-foreman: the repository's git config or hooks changed since the last session; the next foreman git run or child launch asks.\n${gitLines.join("\n")}`, "warning");
       const cfgLines = s.claudeCfg.bind(markerDir, cwd);
       if (cfgLines.length) ctx.ui.notify(`pi-foreman: project Claude Code config changed since the last session; the next claude-bridge prompt asks.\n${cfgLines.join("\n")}`, "warning");
+      const first = [s.gitDrift.firstBaseline ? "the repository's git config and hooks" : "", s.claudeCfg.firstBaseline ? "the project's Claude Code config" : ""].filter(Boolean);
+      if (first.length) ctx.ui.notify(`pi-foreman: first session on this workspace: took the baseline snapshot of ${first.join(" and ")}. Later changes ask before the foreman's git runs, child launches and claude-bridge requests.`, "info");
     }
 
     if (!python.ok) ctx.ui.notify(`pi-foreman: no Python ≥ 3.9 found — shell commands and subagent launches are blocked until it is fixed. ${NO_PYTHON_FIX}`, "error");
@@ -377,6 +379,27 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     ctx.ui.notify(b.reason, "error");
     if (!ctx.hasUI) process.stderr.write(`${b.reason}\n`);
     return { action: "handled" as const };
+  });
+
+  // Every model request, so every run start: typed/RPC prompts, runs a child's completion
+  // notice starts (triggerTurn), follow-ups, steers (R2-H1). Blocking = abort before the request.
+  pi.on("context", async (_event, ctx) => {
+    const s = sessionFor(ctx);
+    if (!s || s.isChild || ctx.model?.provider !== BRIDGE_PROVIDER) return undefined;
+    const b = await s.claudeCfg.check(ctx.cwd, "this claude-bridge run", driftAsk(ctx), (r) => s.trace?.emit(r));
+    if (!b) return undefined;
+    ctx.abort();
+    ctx.ui.notify(b.reason, "error");
+    if (!ctx.hasUI) process.stderr.write(`${b.reason}\n`);
+    pi.sendMessage({ customType: "pi-foreman-blocked", content: `The claude-bridge run was stopped before the model request.\n${b.reason}`, display: true }, { triggerTurn: false });
+    return undefined;
+  });
+
+  // A cache-warming refresh re-sends the last request, which on claude-bridge starts Claude Code.
+  pi.on("cache_warming_decision", async (_event, ctx) => {
+    const s = sessionFor(ctx);
+    if (s && !s.isChild && ctx.model?.provider === BRIDGE_PROVIDER && s.claudeCfg.pending(ctx.cwd).length) return { action: "stop" as const };
+    return undefined;
   });
 
   pi.on("before_agent_start", async (event, ctx) => {

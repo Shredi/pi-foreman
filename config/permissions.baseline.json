@@ -149,6 +149,8 @@
       "{cwd}/.mcp.json",
       "{agentDir}/pi-foreman/claude-config",
       "{agentDir}/pi-foreman/claude-config/*",
+      "{agentDir}/pi-foreman/state",
+      "{agentDir}/pi-foreman/state/*",
       "~/.claude",
       "~/.claude/*",
       "~/.gitconfig",

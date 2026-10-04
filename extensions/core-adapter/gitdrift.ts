@@ -284,7 +284,7 @@ export function readState(file: string | null): unknown {
   }
 }
 
-/** Best effort: write via a temp file and rename. */
+/** Best effort: write via a temp file and rename; then make sure the workspace's seen marker exists. */
 export function writeState(file: string | null, data: unknown): void {
   if (!file) return;
   const tmp = `${file}.${process.pid}.tmp`;
@@ -292,9 +292,49 @@ export function writeState(file: string | null, data: unknown): void {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(tmp, JSON.stringify(data));
     fs.renameSync(tmp, file);
+    markSeen(file);
   } catch {
     // The in-memory snapshot still works; the next session takes a fresh one.
   }
+}
+
+/**
+ * Seen marker (security re-check R2-M1): `<state file minus .json>.seen`, created with the first
+ * stored snapshot of a workspace and never removed by pi-foreman. A snapshot that is missing while
+ * its marker exists, or that does not parse, is tampering, not a first session.
+ */
+function seenFile(file: string): string {
+  return `${file.replace(/\.json$/, "")}.seen`;
+}
+
+function markSeen(file: string): void {
+  try {
+    fs.writeFileSync(seenFile(file), "pi-foreman: a drift snapshot existed for this workspace; do not delete\n", { flag: "wx" });
+  } catch {
+    // exists already (or the state dir is not writable: then no snapshot is stored either)
+  }
+}
+
+/**
+ * Load a stored snapshot. `parse` validates it (null = invalid). No file and no seen marker =
+ * a true first session; no file with a marker, or a file that does not read, parse or validate =
+ * tampered (the caller asks; without a UI it blocks).
+ */
+export function loadState<T>(file: string, what: string, parse: (o: unknown) => T | null): { kind: "first" } | { kind: "stored"; data: T } | { kind: "tampered"; line: string } {
+  const text = readText(file);
+  if (text === null) {
+    if (!fs.existsSync(file) && !fs.existsSync(seenFile(file))) return { kind: "first" };
+    return { kind: "tampered", line: `pi-foreman state: the stored ${what} snapshot for this workspace is ${fs.existsSync(file) ? "unreadable" : "missing"} (one existed before)` };
+  }
+  let data: T | null = null;
+  try {
+    data = parse(JSON.parse(text));
+  } catch {
+    data = null;
+  }
+  if (data === null) return { kind: "tampered", line: `pi-foreman state: the stored ${what} snapshot for this workspace is corrupt or truncated` };
+  markSeen(file); // snapshots stored before the marker existed
+  return { kind: "stored", data };
 }
 
 export function serializeGitSnapshot(s: GitSnapshot): unknown {
@@ -380,8 +420,8 @@ export type DriftDecision = "none" | "approved" | "denied" | "no-ui";
  * Compare `before` with the repo now. No change -> "none". A change -> confirm in TUI/RPC with
  * a UI, otherwise "no-ui" (blocked). The caller re-snapshots after "approved".
  */
-export async function checkGitDrift(before: GitSnapshot | null, cwd: string, home: string, what: string, ask: DriftAskEnv): Promise<{ decision: DriftDecision; reason?: string }> {
-  const lines = diffGitSnapshots(before, before ? takeGitSnapshot(cwd, home) : null);
+export async function checkGitDrift(before: GitSnapshot | null, cwd: string, home: string, what: string, ask: DriftAskEnv, extra: string[] = []): Promise<{ decision: DriftDecision; reason?: string }> {
+  const lines = [...extra, ...diffGitSnapshots(before, before ? takeGitSnapshot(cwd, home) : null)];
   if (!lines.length) return { decision: "none" };
   const summary = lines.join("\n");
   const msg = `The repository's git config or hooks changed since pi-foreman last checked them (last child launch, own git call or an earlier session; a child may have planted them; values are not shown):\n${summary}\nRun ${what} anyway? Inspect with \`git config --local --list --show-origin\` and the hooks directory first.`;
@@ -401,6 +441,10 @@ export async function checkGitDrift(before: GitSnapshot | null, cwd: string, hom
 /** Per-session state: the snapshot and the foreman git calls that passed the gate. */
 export class GitDriftWatch {
   snap: GitSnapshot | null = null;
+  /** True when bind found no snapshot and no seen marker and took the baseline (shown to the user). */
+  firstBaseline = false;
+  /** Set when the stored snapshot was missing or corrupt for a workspace that had one; asks until approved. */
+  tamper: string | null = null;
   private stateFile: string | null = null;
   private readonly passed = new Set<string>();
 
@@ -411,20 +455,24 @@ export class GitDriftWatch {
 
   /**
    * Foreman session start: load the workspace's stored snapshot as the baseline and return
-   * what changed since (empty = nothing, or no stored snapshot: then the current state is
-   * taken silently). The next gate asks about the returned changes.
+   * what changed since (empty = nothing, or a true first session: then the current state is
+   * taken and `firstBaseline` is set for a visible notice). A missing or corrupt snapshot for a
+   * workspace that had one is returned as a drift line. The next gate asks about the returned changes.
    */
   bind(stateDir: string, cwd: string, home: string): string[] {
     const repo = locateRepo(cwd);
     if (!repo) return [];
     this.stateFile = stateFileFor(stateDir, "gitdrift", repo.commonDir);
-    const stored = deserializeGitSnapshot(readState(this.stateFile));
-    if (!stored) {
-      this.set(takeGitSnapshot(cwd, home));
-      return [];
+    const st = loadState(this.stateFile, "git config", deserializeGitSnapshot);
+    if (st.kind !== "stored") {
+      this.firstBaseline = st.kind === "first";
+      this.tamper = st.kind === "tampered" ? st.line : null;
+      this.snap = takeGitSnapshot(cwd, home);
+      if (st.kind === "first") this.set(this.snap);
+      return this.tamper ? [this.tamper] : [];
     }
-    this.snap = stored;
-    return diffGitSnapshots(stored, takeGitSnapshot(cwd, home));
+    this.snap = st.data;
+    return diffGitSnapshots(st.data, takeGitSnapshot(cwd, home));
   }
 
   /** Before a child launch that passed every other check (after `gate`). */
@@ -435,10 +483,13 @@ export class GitDriftWatch {
   /** Before a foreman git command / worktree removal / child launch. Undefined = go on. */
   async gate(cwd: string, home: string, what: string, ask: DriftAskEnv, trace: (r: Record<string, unknown>) => void, callId?: string): Promise<{ block: true; reason: string } | undefined> {
     if (!this.snap) return undefined;
-    const r = await checkGitDrift(this.snap, cwd, home, what, ask);
+    const r = await checkGitDrift(this.snap, cwd, home, what, ask, this.tamper ? [this.tamper] : []);
     if (r.decision !== "none") trace({ event: "git_config_drift", decision: r.decision });
     if (r.decision === "denied" || r.decision === "no-ui") return { block: true, reason: r.reason ?? "pi-foreman: git config drift." };
-    if (r.decision === "approved") this.set(takeGitSnapshot(cwd, home));
+    if (r.decision === "approved") {
+      this.tamper = null;
+      this.set(takeGitSnapshot(cwd, home));
+    }
     if (callId) this.passed.add(callId);
     return undefined;
   }
