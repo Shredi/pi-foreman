@@ -1,0 +1,32 @@
+schema_version = "1.1"
+
+[task]
+name = "pi-foreman-bench/m1-recheck"
+description = "M1 re-check: the standard calc/subtract task through the foreman flow (ledger, explorer, builder, reviewer)."
+authors = []
+keywords = ["synthetic", "python", "m1"]
+
+[metadata]
+difficulty = "easy"
+category = "programming"
+tags = ["synthetic", "pi-foreman-bench"]
+
+[verifier]
+timeout_sec = 120.0
+
+[agent]
+timeout_sec = 2400.0
+
+[environment]
+build_timeout_sec = 900.0
+cpus = 2
+memory_mb = 4096
+storage_mb = 10240
+gpus = 0
+mcp_servers = []
+
+[verifier.env]
+
+[environment.env]
+
+[solution.env]

@@ -13,6 +13,11 @@ A wall-clock cap (the cell's budget cap) ends the session early.
 `--driver print` runs `pi --print --mode json` instead and returns when Pi exits, which is
 what Harbor's stock Pi adapter does.
 
+`--setup-check` sends no prompt and calls no model: it builds the same agent dir and Pi env
+(without the token), runs `pi --list-models` and the Agent SDK's native `claude --version`,
+checks that CLAUDE_CONFIG_DIR is a fresh empty dir and stats the token file (mode, owner,
+size; never read), then deletes the token file. Results go to bench-run.json `setup_check`.
+
 A provider answer "usage limit reached" ends the session at once and is recorded as an
 infrastructure error, not as a task result.
 
@@ -69,7 +74,9 @@ def async_runs(temp_root):
         try:
             rec["mtime"] = st.stat().st_mtime
             data = json.loads(st.read_text("utf-8"))
-            rec.update({"state": data.get("state"), "startedAt": data.get("startedAt"), "lastUpdate": data.get("lastUpdate")})
+            rec.update({"state": data.get("state"), "startedAt": data.get("startedAt"), "lastUpdate": data.get("lastUpdate"),
+                        "agents": [s.get("agent") for s in data.get("steps") or [] if isinstance(s, dict)] or
+                        ([data["agent"]] if isinstance(data.get("agent"), str) else [])})
         except (OSError, ValueError):
             pass
         out.append(rec)
@@ -126,10 +133,15 @@ def build_world(args, row):
     return agent
 
 
+SCRUB = ("PI_", "FOREMAN_", "CLAUDE_", "ANTHROPIC_")
+
+
 def pi_env(args, agent, secret):
     root = Path(args.work)
     claude_dir = Path(tempfile.mkdtemp(prefix="claude-config-", dir=str(root)))
-    env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("PI_", "FOREMAN_", "CLAUDE_", "ANTHROPIC_"))}
+    # Inherited ANTHROPIC_* / CLAUDE_* vars would redirect the bridge's Claude child (bridge
+    # issue #107), so none reach Pi; only the fresh config dir and the token are set.
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith(SCRUB)}
     env.update({"PI_CODING_AGENT_DIR": str(agent), "PI_SUBAGENTS_TEMP_ROOT": str(root / "subagents"),
                 "TMPDIR": str(root / "tmp"), "TEMP": str(root / "tmp"), "TMP": str(root / "tmp"),
                 "CLAUDE_CONFIG_DIR": str(claude_dir)})
@@ -258,6 +270,16 @@ def collect(args, agent, status):
         (out / "trace").mkdir(exist_ok=True)
         for f in state.glob("trace-*.jsonl"):
             shutil.copy2(str(f), str(out / "trace" / f.name))
+        # Session markers (session id + bound ledger path) for the task verifiers.
+        (out / "state").mkdir(exist_ok=True)
+        for f in state.glob("fable-orch-model-*.json"):
+            shutil.copy2(str(f), str(out / "state" / f.name))
+    runs = Path(args.work) / "subagents" / "async-subagent-runs"
+    if runs.is_dir():
+        (out / "async-runs").mkdir(exist_ok=True)
+        for d in runs.iterdir():
+            if (d / "status.json").is_file():
+                shutil.copy2(str(d / "status.json"), str(out / "async-runs" / ("%s.json" % d.name)))
     if status.get("infra_error"):
         return
     for f in sessions.rglob("*.jsonl"):
@@ -280,13 +302,56 @@ def versions(row):
                                  timeout=60).stdout.decode().strip().splitlines()[-1]
     except (OSError, subprocess.SubprocessError, IndexError):
         v["pi"] = None
-    for pkg in row.get("_packages") or []:
+    for pkg in list(row.get("_packages") or []) + list(row.get("_version_packages") or []):
         try:
             meta = json.loads((Path(pkg) / "package.json").read_text("utf-8"))
             v[meta.get("name", pkg)] = meta.get("version")
         except (OSError, ValueError):
             pass
     return v
+
+
+def setup_check(args, row, env):
+    """Zero-model install check (no prompt, no token in env)."""
+    import glob
+    import stat as stat_mod
+    res = {"claude_config_dir_before": empty_dir_check(env["CLAUDE_CONFIG_DIR"])}
+
+    def run(cmd):
+        try:
+            r = subprocess.run(cmd, env=env, cwd=args.cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, timeout=120)
+            return r.returncode, r.stdout.decode("utf-8", "replace")
+        except (OSError, subprocess.SubprocessError) as e:
+            return None, str(e)
+
+    code, out = run([shutil.which("pi") or "pi", "--list-models"])
+    res["list_models_exit"] = code
+    res["claude_bridge_models"] = sorted({w for line in out.splitlines() for w in line.split()
+                                          if w.startswith("claude-") and w != "claude-bridge"} if "claude-bridge" in out else set())
+    res["list_models_lines"] = [l.strip() for l in out.splitlines() if "claude-bridge" in l][:20]
+    bins = sorted(glob.glob(row.get("_claude_bin_glob") or "")) if row.get("_claude_bin_glob") else []
+    res["claude_bin"] = bins[0] if bins else None
+    if bins:
+        code, out = run([bins[0], "--version"])
+        res["claude_version_exit"] = code
+        res["claude_version"] = out.strip().splitlines()[-1] if out.strip() else None
+    res["claude_config_dir_after"] = empty_dir_check(env["CLAUDE_CONFIG_DIR"])
+    res["scrubbed_env_present"] = sorted(k for k in env if k.upper().startswith(("ANTHROPIC_",)) or
+                                         (k.upper().startswith("CLAUDE_") and k != "CLAUDE_CONFIG_DIR"))
+    if args.secret_file:
+        try:
+            st = os.stat(args.secret_file)
+            res["token_file"] = {"exists": True, "mode": oct(stat_mod.S_IMODE(st.st_mode)), "size_gt_0": st.st_size > 0,
+                                 "owner_is_agent_user": st.st_uid == os.getuid(),
+                                 "readable": os.access(args.secret_file, os.R_OK)}
+        except OSError:
+            res["token_file"] = {"exists": False}
+        try:
+            os.unlink(args.secret_file)
+        except OSError:
+            pass
+    return res
 
 
 def main(argv=None):
@@ -301,10 +366,20 @@ def main(argv=None):
     ap.add_argument("--quiet-seconds", type=float, default=10.0)
     ap.add_argument("--fake-script", default=None)
     ap.add_argument("--secret-file", default=None)
+    ap.add_argument("--setup-check", action="store_true", help="no prompt, no model: install checks only")
     args = ap.parse_args(argv)
     row = json.loads(Path(args.row).read_text("utf-8"))
     Path(args.out).mkdir(parents=True, exist_ok=True)
     status = {"driver": args.driver, "row": row.get("id"), "waiter_start_ms": int(time.time() * 1000)}
+    if args.setup_check:
+        agent = build_world(args, row)
+        env = pi_env(args, agent, None)
+        status["versions"] = versions(row)
+        status["setup_check"] = setup_check(args, row, env)
+        status["status"] = "setup_only"
+        write_json(Path(args.out) / "bench-run.json", status)
+        print(json.dumps({"status": "setup_only"}))
+        return 0
     secret = read_secret(args.secret_file)
     agent = build_world(args, row)
     env = pi_env(args, agent, secret)

@@ -1,0 +1,1 @@
+Standard task for this repository: add a function subtract(a, b) to calc.py and a unittest for it in test_calc.py. Follow your foreman rules: write the ledger first, then launch explorer, builder and reviewer one after another, mark the ledger items with the ledger command as they are verified, and stop when every item is closed. Keep every child task short.

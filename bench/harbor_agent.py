@@ -10,10 +10,15 @@ PYTHONPATH).
   PlainPi    Pi alone (plus the provider package), same waiter.
 
 Agent kwargs (`--ak key=value`): preset=<path to a bench preset JSON>, row=<row id>,
-driver=rpc|print (print = Harbor's stock adapter style, `pi --print --mode json`).
+driver=rpc|print (print = Harbor's stock adapter style, `pi --print --mode json`),
+setup_only=1 (install, then run the zero-model setup checks of bench/wait_session.py
+--setup-check instead of the prompt; no model is called).
 
 Rows on the replay fake provider (`foreman-fake`) load tests/replay/fake_provider.ts and
-bench/fake_script.json; every other row installs pi-claude-bridge.
+bench/fake_script.json (a row's `replay_tag` is appended to the instruction as a hidden
+`[[replay:<tag>]]` marker, so a task's real instruction can be replayed unchanged); every
+other row installs pi-claude-bridge plus the Claude Agent SDK and its native binary for the
+container's platform.
 
 Token for real rows: read on the host from FOREMAN_BENCH_OAUTH_TOKEN_FILE (a path outside the
 repository) or FOREMAN_BENCH_OAUTH_TOKEN, uploaded as a 0600 file to /tmp/pf-secret in the
@@ -25,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -40,6 +46,9 @@ PI_PACKAGE = "@earendil-works/pi-coding-agent"
 PI_VERSION = "1.0.0"
 SUBAGENTS = "pi-subagents@0.75.0"
 BRIDGE = "pi-claude-bridge@0.9.1"
+# The bridge asks for ^0.3.284; pinned to the version the stage-1 model check used. npm picks
+# the platform package (claude-agent-sdk-linux-<arch>) from the SDK's optional dependencies.
+AGENT_SDK = "@anthropic-ai/claude-agent-sdk@0.3.288"
 FAKE_PROVIDERS = ("foreman-fake", "foreman-fake-b")
 ROLES = ["foreman", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
 
@@ -47,6 +56,7 @@ R_REPO = "/opt/pi-foreman"
 R_NPM = "/opt/pf-npm"
 R_WORK = "/tmp/pf-bench"
 R_SECRET = "/tmp/pf-secret/token"
+CLAUDE_BIN_GLOB = R_NPM + "/node_modules/@anthropic-ai/claude-agent-sdk-linux-*/claude"
 NVM = '[ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh"; '
 NODE_INSTALL = (
     "command -v node >/dev/null 2>&1 || { curl -fsSL -o /tmp/nvm-install.sh "
@@ -87,36 +97,60 @@ def tracked_copy(dest):
         shutil.copy2(str(src), str(dst))
 
 
-def summarize_logs(logs_dir):
+CHILD_SESSION = re.compile(r"^subagent-(.+?)-[0-9a-f]{8}-[0-9a-f]{4}-")
+
+
+def summarize_logs(logs_dir, main_role="main"):
     """Counters only, from the synced /logs/agent: tokens over the foreman and every child
-    session, tool calls, approvals and guard blocks from the pi-foreman traces."""
+    session (per model and per role), the thinking levels the sessions ran with, tool calls,
+    approvals and guard blocks from the pi-foreman traces. A child session's role comes from
+    the session name pi-subagents gives it (`subagent-<role>-<run id>-<n>`); every other
+    session counts as `main_role`."""
     logs = Path(logs_dir)
     tok = {"input": 0, "cacheRead": 0, "cacheWrite": 0, "output": 0}
     cost = 0.0
     tool_calls = 0
     sessions = 0
     by_model = {}
+    by_role = {}
+    thinking_by_model = {}
+    thinking_by_role = {}
     for f in sorted((logs / "sessions").rglob("*.jsonl")) if (logs / "sessions").is_dir() else []:
         if "subagent-artifacts" in f.parts:
             continue  # transcripts duplicate the child session file
         sessions += 1
+        role = main_role
+        levels = set()
+        models = set()
         for line in f.read_text("utf-8", "replace").splitlines():
             try:
                 rec = json.loads(line)
             except ValueError:
                 continue
+            if rec.get("type") == "session_info":
+                hit = CHILD_SESSION.match(str(rec.get("name") or ""))
+                role = hit.group(1) if hit else role
+            elif rec.get("type") == "thinking_level_change" and rec.get("thinkingLevel"):
+                levels.add(str(rec["thinkingLevel"]))
             msg = rec.get("message") if rec.get("type") == "message" else None
             if not isinstance(msg, dict) or msg.get("role") != "assistant":
                 continue
             usage = msg.get("usage") or {}
             model = "%s/%s" % (msg.get("provider"), msg.get("model"))
+            models.add(model)
             m = by_model.setdefault(model, {"input": 0, "cacheRead": 0, "cacheWrite": 0, "output": 0})
+            r = by_role.setdefault(role, {"input": 0, "cacheRead": 0, "cacheWrite": 0, "output": 0})
             for k in tok:
                 v = int(usage.get(k) or 0)
                 tok[k] += v
                 m[k] += v
+                r[k] += v
             cost += float((usage.get("cost") or {}).get("total") or 0)
             tool_calls += sum(1 for c in msg.get("content") or [] if isinstance(c, dict) and c.get("type") == "toolCall")
+        for model in models:
+            thinking_by_model.setdefault(model, set()).update(levels)
+        if models:
+            thinking_by_role.setdefault(role, set()).update(levels)
     approvals = guard_blocks = 0
     roles = {}
     for f in sorted((logs / "trace").glob("trace-*.jsonl")) if (logs / "trace").is_dir() else []:
@@ -132,7 +166,10 @@ def summarize_logs(logs_dir):
                 guard_blocks += 1
             elif ev == "role_launch":
                 roles[rec.get("role")] = roles.get(rec.get("role"), 0) + 1
-    return {"tokens": dict(tok, total=sum(tok.values())), "tokens_by_model": by_model, "cost_usd": cost,
+    return {"tokens": dict(tok, total=sum(tok.values())), "tokens_by_model": by_model,
+            "tokens_by_role": {k: dict(v, total=sum(v.values())) for k, v in by_role.items()},
+            "thinking_by_model": {k: sorted(v) for k, v in thinking_by_model.items()},
+            "thinking_by_role": {k: sorted(v) for k, v in thinking_by_role.items()}, "cost_usd": cost,
             "tool_calls": tool_calls, "approvals": approvals, "guard_blocks": guard_blocks, "sessions": sessions,
             "role_launches": roles}
 
@@ -140,7 +177,7 @@ def summarize_logs(logs_dir):
 class _BenchPi(BaseInstalledAgent):
     KIND = "foreman"
 
-    def __init__(self, *args, preset=None, row=None, driver=None, **kwargs):
+    def __init__(self, *args, preset=None, row=None, driver=None, setup_only=None, **kwargs):
         super().__init__(*args, **kwargs)
         if not preset or not row:
             raise ValueError("bench agents need --ak preset=<file> --ak row=<id>")
@@ -154,6 +191,7 @@ class _BenchPi(BaseInstalledAgent):
         self.row.setdefault("model", "%s/foreman" % provider)
         if self.KIND == "foreman":
             self.row.setdefault("roles", {r: {"model": "%s/%s" % (provider, r)} for r in ROLES})
+        self.setup_only = str(setup_only or "").lower() in ("1", "true", "yes")
         self.commit, self.dirty = repo_state()
 
     def version(self):
@@ -174,10 +212,13 @@ class _BenchPi(BaseInstalledAgent):
         await self.ensure_system_dependencies(environment, ("curl", "git", "python3", "ca_certificates"))
         await self.exec_as_root(environment, command="set -e; " + NODE_INSTALL + "; " + NVM +
                                 "npm install -g --no-audit --no-fund --ignore-scripts %s@%s && pi --version" % (PI_PACKAGE, PI_VERSION))
-        npm = ([SUBAGENTS] if self.KIND == "foreman" else []) + ([] if self.fake else [BRIDGE])
+        npm = ([SUBAGENTS] if self.KIND == "foreman" else []) + ([] if self.fake else [BRIDGE, AGENT_SDK])
         if npm:
             await self.exec_as_root(environment, command=NVM + "mkdir -p %s && npm install --no-audit --no-fund --prefix %s %s"
                                     % (R_NPM, R_NPM, " ".join(npm)))
+        if not self.fake:  # fail the install, not the cell, when the native binary is missing
+            await self.exec_as_root(environment, command="set -e; b=$(ls %s 2>/dev/null | head -n 1); test -x \"$b\"; "
+                                    "\"$b\" --version" % CLAUDE_BIN_GLOB)
         with tempfile.TemporaryDirectory(prefix="pf-bench-repo-") as tmp:
             tracked_copy(tmp)
             await environment.upload_dir(tmp, R_REPO)
@@ -198,11 +239,17 @@ class _BenchPi(BaseInstalledAgent):
     async def run(self, instruction: str, environment: BaseEnvironment, context: AgentContext) -> None:
         row = dict(self.row)
         row["_packages"] = self.packages()
+        if not self.fake:
+            row["_version_packages"] = [R_NPM + "/node_modules/@anthropic-ai/claude-agent-sdk"]
+            row["_claude_bin_glob"] = CLAUDE_BIN_GLOB
         fake_ext = R_REPO + "/tests/replay/fake_provider.ts"
         row["_extensions"] = [fake_ext] if self.fake else []
         row["_required_child_extensions"] = [fake_ext] if self.fake and self.KIND == "foreman" else []
         await self._upload_json(environment, row, R_WORK + "/row.json")
-        await self._upload_json(environment, self.render_instruction(instruction), R_WORK + "/instruction.md")
+        text = self.render_instruction(instruction)
+        if self.fake and row.get("replay_tag"):
+            text += "\n\n<!-- [[replay:%s]] -->\n" % row["replay_tag"]
+        await self._upload_json(environment, text, R_WORK + "/instruction.md")
         secret_arg = ""
         token = self._token()
         if token:
@@ -211,17 +258,23 @@ class _BenchPi(BaseInstalledAgent):
                 fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 with os.fdopen(fd, "w") as fh:
                     fh.write(token)
-                await self.exec_as_root(environment, command="mkdir -p /tmp/pf-secret && chmod 777 /tmp/pf-secret")
+                await self.exec_as_root(environment, command="mkdir -p /tmp/pf-secret")
                 await environment.upload_file(p, R_SECRET)
-            await self.exec_as_root(environment, command="chmod 666 " + R_SECRET)
+            # Owned by the agent user, 0600, in a 0700 dir: only the waiter can read it.
+            ids = ((await self.exec_as_agent(environment, command="echo $(id -u):$(id -g)")).stdout or "").strip()
+            if not all(x.isdigit() for x in ids.split(":")) or ids.count(":") != 1:
+                raise RuntimeError("cannot resolve the agent user's uid:gid")
+            await self.exec_as_root(environment, command="chown -R %s /tmp/pf-secret && chmod 700 /tmp/pf-secret && chmod 600 %s"
+                                    % (ids, R_SECRET))
             secret_arg = " --secret-file " + R_SECRET
         cap = float(row.get("cap_seconds") or 1800)
         quiet = float(row.get("quiet_seconds") or (3 if self.fake else 10))
         out = str(self.environment_logs_dir)
         cmd = (NVM + "python3 %s/bench/wait_session.py --row %s/row.json --instruction-file %s/instruction.md "
-               '--cwd "$PWD" --work %s/w --out %s --driver %s --cap-seconds %s --quiet-seconds %s%s%s'
+               '--cwd "$PWD" --work %s/w --out %s --driver %s --cap-seconds %s --quiet-seconds %s%s%s%s'
                % (R_REPO, R_WORK, R_WORK, R_WORK, shlex.quote(out), self.driver, cap, quiet,
-                  " --fake-script %s/bench/fake_script.json" % R_REPO if self.fake else "", secret_arg))
+                  " --fake-script %s/bench/fake_script.json" % R_REPO if self.fake else "", secret_arg,
+                  " --setup-check" if self.setup_only else ""))
         await self.exec_as_agent(environment, command=cmd, timeout_sec=int(cap + 300))
         status = self._status()
         if status.get("infra_error") == "usage_limit":
@@ -236,12 +289,14 @@ class _BenchPi(BaseInstalledAgent):
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         status = self._status()
-        c = summarize_logs(self.logs_dir)
+        c = summarize_logs(self.logs_dir, "foreman" if self.KIND == "foreman" else "main")
         t = c["tokens"]
         context.n_input_tokens = t["input"] + t["cacheRead"] + t["cacheWrite"]
         context.n_cache_tokens = t["cacheRead"]
         context.n_output_tokens = t["output"]
         context.cost_usd = c["cost_usd"] or None
+        # Configured levels; None = unset, i.e. the shipped role default (no level, so Pi's
+        # default applies). The levels the sessions actually ran with are in counters.
         thinking = {"main": self.row.get("thinking")}
         thinking.update({r: v.get("thinking") for r, v in (self.row.get("roles") or {}).items()})
         context.metadata = dict(context.metadata or {}, bench={
@@ -258,6 +313,7 @@ class _BenchPi(BaseInstalledAgent):
             "pi_seconds": status.get("pi_seconds"),
             "waiter_start_ms": status.get("waiter_start_ms"), "waiter_end_ms": status.get("waiter_end_ms"),
             "async_runs_at_end": status.get("async_runs_at_end"),
+            "setup_check": status.get("setup_check"),
         })
 
 

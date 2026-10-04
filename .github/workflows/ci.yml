@@ -100,3 +100,8 @@ jobs:
           assert b["claude_config_dir"]["empty"], b["claude_config_dir"]
           print("bench smoke ok: child finished %d ms before the verifier; tokens %s" % (v - max(x["lastUpdate"] for x in runs), b["counters"]["tokens"]["total"]))
           EOF
+      - name: M1 re-check hidden check on the fake provider (scripted good run 1, no-reviewer run 0)
+        run: |
+          python scripts/foreman_bench.py run --preset bench/presets/smoke.json --rows m1-fake-good m1-fake-bad --task m1-recheck --jobs-dir "$RUNNER_TEMP/bench-jobs"
+          python scripts/foreman_bench.py table --preset bench/presets/smoke.json --jobs-dir "$RUNNER_TEMP/bench-jobs" --json > "$RUNNER_TEMP/m1.json"
+          python -c "import json,sys; c={(r['row'],r['task']):r for r in json.load(open(sys.argv[1]))['cells']}; g=c[('m1-fake-good','m1-recheck')]; b=c[('m1-fake-bad','m1-recheck')]; assert (g['counted'],g['success'],b['counted'],b['success'])==(1,1,1,0), (g,b); print('m1 re-check check ok: good 1, bad 0')" "$RUNNER_TEMP/m1.json"

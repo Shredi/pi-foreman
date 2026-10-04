@@ -18,6 +18,113 @@
    {
     "text": "The builder reported back; result.txt is written."
    }
+  ],
+  "m1_good": [
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-subtract.md",
+       "content": "# Ledger: subtract\nTier: standard\n\n- [ ] 1. calc.py has subtract(a, b) returning a - b\n- [ ] 2. test_calc.py has a unittest for subtract\n- [ ] 3. Existing tests still pass\n- [ ] V. fresh-eyes verification passed\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "explorer",
+       "task": "[[replay:m1_explorer]] Report where add() and its test live."
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:m1_builder]] Add subtract(a, b) to calc.py and a unittest to test_calc.py."
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:m1_reviewer]] Verify the change, run the tests and close V."
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "bash",
+      "arguments": {
+       "command": "for i in $(seq 180); do grep -q '\\[x\\] V\\.' .workflow/LEDGER-subtract.md && break; sleep 1; done; ledger mark 1 && ledger mark 2 && ledger mark 3 && ledger status"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Every ledger item is closed."
+   }
+  ],
+  "m1_bad": [
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-subtract.md",
+       "content": "# Ledger: subtract\nTier: standard\n\n- [ ] 1. calc.py has subtract(a, b) returning a - b\n- [ ] 2. test_calc.py has a unittest for subtract\n- [ ] 3. Existing tests still pass\n- [ ] V. fresh-eyes verification passed\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "explorer",
+       "task": "[[replay:m1_explorer]] Report where add() and its test live."
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:m1_builder]] Add subtract(a, b) to calc.py and a unittest to test_calc.py."
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "bash",
+      "arguments": {
+       "command": "for i in $(seq 120); do grep -q subtract /app/test_calc.py && break; sleep 1; done; ledger mark 1 && ledger mark 2 && ledger mark 3 && ledger mark V --verifier && ledger status"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Every ledger item is closed (no reviewer)."
+   }
   ]
  },
  "builder": {
@@ -34,6 +141,55 @@
    },
    {
     "text": "result.txt written after a delay."
+   }
+  ],
+  "m1_builder": [
+   {
+    "tools": [
+     {
+      "name": "bash",
+      "arguments": {
+       "command": "cd /app && printf '\\n\\ndef subtract(a, b):\\n    return a - b\\n' >> calc.py && python3 -c \"p='test_calc.py'; s=open(p).read(); s=s.replace('from calc import add', 'from calc import add, subtract'); s=s.replace('5)\\n', '5)\\n\\n    def test_subtract(self):\\n        self.assertEqual(subtract(5, 3), 2)\\n', 1); open(p, 'w').write(s)\" && python3 -m unittest -q"
+      }
+     }
+    ]
+   },
+   {
+    "text": "subtract added with a test."
+   }
+  ]
+ },
+ "explorer": {
+  "m1_explorer": [
+   {
+    "tools": [
+     {
+      "name": "bash",
+      "arguments": {
+       "command": "cd /app && cat calc.py test_calc.py"
+      }
+     }
+    ]
+   },
+   {
+    "text": "add() is in calc.py, its test in test_calc.py."
+   }
+  ]
+ },
+ "reviewer": {
+  "m1_reviewer": [
+   {
+    "tools": [
+     {
+      "name": "bash",
+      "arguments": {
+       "command": "cd /app && for i in $(seq 120); do grep -q subtract /app/test_calc.py && break; sleep 1; done; python3 -m unittest -q && ledger -f /app/.workflow/LEDGER-subtract.md mark V --verifier"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Tests pass; V closed."
    }
   ]
  }

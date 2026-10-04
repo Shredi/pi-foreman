@@ -47,7 +47,7 @@ class BenchTest(unittest.TestCase):
 
     def args(self, **kw):
         base = dict(preset=str(self.preset), tasks=None, jobs_dir=str(self.jobs), rows=None, task=None, repeats=None,
-                    harbor="harbor", dry_run=False)
+                    harbor="harbor", dry_run=False, token_cap=None, setup_only=False)
         base.update(kw)
         return Namespace(**base)
 
@@ -108,6 +108,70 @@ class BenchTest(unittest.TestCase):
         self.assertEqual(beta["meta"]["pi_foreman_commit"], "abc")
         self.assertEqual((rows[("R2", "alpha")]["counted"], rows[("R2", "alpha")]["infra_errors"]), (0, 1))
         self.assertIn("200 [100-300]", fb.format_table(list(rows.values())))
+
+    def write_preset(self, **bench):
+        data = json.loads(json.dumps(PRESET))
+        data["rows"].append({"id": "RS", "agent": "foreman", "provider": "foreman-fake"})
+        data["bench"].update(bench)
+        self.preset.write_text(json.dumps(data))
+        return fb.load_preset(self.preset)
+
+    def test_order_first_then_repeat_task_row(self):
+        preset = self.write_preset(tasks=["beta", "alpha"], first={"row": "R2", "task": "alpha"})
+        order = [fb.cell_id(r["id"], t, k) for r, t, k, _ in fb.cells(preset, fb.tasks_dir(preset))]
+        self.assertEqual(order[:4], ["R2__alpha__r1", "R1__beta__r1", "R2__beta__r1", "RS__beta__r1"])
+        self.assertEqual(order[4:7], ["R1__alpha__r1", "R2__alpha__r1", "RS__alpha__r1"])
+        self.assertEqual(order[7], "R1__beta__r2")
+        self.assertEqual(len(order), 1 + 3 * 2 * 2)
+        self.assertEqual(fb.first_summary(preset, fb.tasks_dir(preset), self.jobs)["finished"], False)
+        with self.assertRaises(SystemExit):
+            fb.cells(self.write_preset(tasks=["gamma"]), self.root / "tasks")
+
+    def test_token_cap_stops_before_next_cell(self):
+        self.write_preset(token_cap=250)
+        calls = []
+
+        def runner(cmd, env, cwd):
+            calls.append(cmd[cmd.index("--job-name") + 1])
+            self.job(calls[-1], trial(tokens=100))
+
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = fb.run(self.args(), runner=runner)
+        self.assertEqual(rc, fb.EXIT_TOKEN_CAP)
+        self.assertEqual(len(calls), 3)  # 100, 200 < 250 -> run; 300 >= 250 -> stop
+        self.assertIn("token cap reached (300 of 250", out.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()):  # resume: finished cells still count; flag overrides
+            self.assertEqual(fb.run(self.args(token_cap=300), runner=runner), fb.EXIT_TOKEN_CAP)
+            self.assertEqual(fb.run(self.args(token_cap=10 ** 9, rows=["R1"]), runner=runner), 0)
+        self.assertEqual(len(calls), 3 + 3)  # R1 alpha r1 was done; beta r1, alpha r2, beta r2 ran
+
+    def test_row_summary_per_tier_and_first_cell_roles(self):
+        preset = self.write_preset(first={"row": "R2", "task": "alpha"})
+
+        def rec(reward, opus, sonnet):
+            r = trial(reward=reward, tokens=opus + sonnet)
+            r["agent_result"]["metadata"]["bench"]["counters"].update(
+                tokens_by_model={"b/claude-opus-5-5": {"input": opus, "output": 0},
+                                 "b/claude-sonnet-5-5": {"input": sonnet, "output": 0}},
+                tokens_by_role={"foreman": {"total": opus}, "builder": {"total": sonnet}})
+            return r
+
+        self.job("R2__alpha__r1__a", rec(1.0, 1000, 50))  # the first cell, excluded from the row summary
+        self.job("R2__beta__r1__a", rec(1.0, 100, 10))
+        self.job("R2__beta__r2__a", rec(0.0, 300, 30))
+        tdir = fb.tasks_dir(preset)
+        r2 = {r["row"]: r for r in fb.row_summary(preset, tdir, self.jobs)}["R2"]
+        self.assertEqual((r2["success"], r2["counted"]), (1, 2))
+        self.assertEqual(r2["tokens_by_tier"]["opus"], {"median": 200, "min": 100, "max": 300})
+        self.assertEqual(r2["tokens_by_tier"]["sonnet"], {"median": 20, "min": 10, "max": 30})
+        first = fb.first_summary(preset, tdir, self.jobs)
+        self.assertEqual((first["cell"], first["reward"]), ("R2__alpha__r1", 1.0))
+        self.assertEqual(first["tokens_by_role"]["foreman"]["total"], 1000)
+        text = fb.format_summary(fb.row_summary(preset, tdir, self.jobs), first)
+        self.assertIn("tokens opus", text)
+        self.assertIn("200 [100-300]", text)
+        self.assertEqual(fb.tier("claude-bridge/claude-fable-5-1"), "fable")
+        self.assertEqual(fb.tier("foreman-fake/builder"), "builder")
 
     def test_waiter_usage_limit_and_active_runs(self):
         err = {"message": {"role": "assistant", "stopReason": "error", "errorMessage": "Claude usage limit reached; resets at 5pm"}}
