@@ -145,6 +145,23 @@ class BenchTest(unittest.TestCase):
             self.assertEqual(fb.run(self.args(token_cap=10 ** 9, rows=["R1"]), runner=runner), 0)
         self.assertEqual(len(calls), 3 + 3)  # R1 alpha r1 was done; beta r1, alpha r2, beta r2 ran
 
+    def test_two_consecutive_infra_cells_stop(self):
+        outcomes = iter([trial(reward=None, exc="AgentAuthenticationError"), trial(), None,
+                         trial(reward=None, exc="ApiOverloadedError")])
+        calls = []
+
+        def runner(cmd, env, cwd):
+            calls.append(cmd[cmd.index("--job-name") + 1])
+            rec = next(outcomes)
+            if rec is not None:  # None: the job left no trial result
+                self.job(calls[-1], rec)
+
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = fb.run(self.args(), runner=runner)
+        self.assertEqual(rc, fb.EXIT_INFRA_STREAK)
+        self.assertEqual(len(calls), 4)  # infra, ok (resets), no result, infra -> stop
+        self.assertIn("2 consecutive infrastructure-error cells", out.getvalue())
+
     def test_row_summary_per_tier_and_first_cell_roles(self):
         preset = self.write_preset(first={"row": "R2", "task": "alpha"})
 

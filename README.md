@@ -49,7 +49,7 @@ Docker; a second `run` resumes, `table` prints the counters (success, tokens, wa
 approvals, guard blocks). Needs `uv tool install harbor`; Harbor telemetry is always switched off. The
 Harbor agents live in `bench/harbor_agent.py` and are not part of the installed package.
 `--dry-run` prints the cell order, `--token-cap N` stops cleanly (exit 4) once finished cells used N
-tokens, `--setup-only` installs one cell's agent and runs zero-model checks without a prompt.
+tokens (two consecutive infrastructure-error cells stop it with exit 5), `--setup-only` installs one cell's agent and runs zero-model checks without a prompt.
 `bench/tasks/m1-recheck` re-checks the M1 standard task (ledger, explorer, builder, reviewer).
 
 ## License

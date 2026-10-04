@@ -25,8 +25,9 @@ counted result, so a second `run` resumes; infrastructure-error cells are re-run
 invocation, never within the same one. A provider usage-limit answer stops the run at once
 (exit 3); rerun later to resume. Token cap (--token-cap or bench.token_cap): before each cell
 the tokens of every finished attempt of the preset's matrix are summed (resumed runs
-included); at or above the cap the run stops cleanly (exit 4). The per-cell wall cap is the
-row's cap_seconds.
+included); at or above the cap the run stops cleanly (exit 4). Two consecutive
+infrastructure-error cells in one invocation stop the run too (exit 5). The per-cell wall cap
+is the row's cap_seconds.
 
 Harbor telemetry is always switched off for every Harbor process (HARBOR_TELEMETRY=off); the
 script never passes --upload or --launch. The result table holds counters only.
@@ -51,6 +52,8 @@ INFRA_EXC = {USAGE_LIMIT_EXC, "ApiRateLimitError", "ApiOverloadedError", "ApiInt
              "AgentAuthenticationError", "ModelNotFoundError", "EnvironmentStartTimeoutError"}
 EXIT_USAGE_LIMIT = 3
 EXIT_TOKEN_CAP = 4
+EXIT_INFRA_STREAK = 5
+INFRA_STREAK_MAX = 2  # consecutive infrastructure-error cells (e.g. auth failing in every container)
 TIERS = ("fable", "opus", "sonnet", "haiku")
 
 
@@ -272,7 +275,7 @@ def run(args, runner=subprocess.run, now=time.time):
     matrix = cells(preset, tdir)
     cap = token_cap(preset, getattr(args, "token_cap", None))
     env = harbor_env()
-    ran = skipped = 0
+    ran = skipped = streak = 0
     if args.dry_run:
         print("bench: dry run, %d cell(s) in order; token cap %s; jobs dir %s" % (len(todo), cap or "none", jdir), flush=True)
     for i, (row, task, k, path) in enumerate(todo, 1):
@@ -297,14 +300,20 @@ def run(args, runner=subprocess.run, now=time.time):
         runner(cmd, env=env, cwd=str(REPO))
         ran += 1
         rec = read_trial(jdir / job)
-        if rec is None:
-            print("bench: %s left no trial result (infrastructure error; rerun to retry)" % cid, flush=True)
-            continue
-        if rec["infra"] == "usage_limit":
+        if rec is not None and rec["infra"] == "usage_limit":
             print("bench: provider usage limit reached in %s; stopping. The cell is not counted; rerun later to resume." % cid,
                   flush=True)
             return EXIT_USAGE_LIMIT
-        print("bench: %s reward=%s%s" % (cid, rec["reward"], " infra=%s" % rec["infra"] if rec["infra"] else ""), flush=True)
+        if rec is None:
+            print("bench: %s left no trial result (infrastructure error; rerun to retry)" % cid, flush=True)
+        else:
+            print("bench: %s reward=%s%s" % (cid, rec["reward"], " infra=%s" % rec["infra"] if rec["infra"] else ""), flush=True)
+        streak = streak + 1 if rec is None or rec["infra"] else 0
+        if streak >= INFRA_STREAK_MAX:
+            print("bench: %d consecutive infrastructure-error cells (last %s: %s); stopping. Check the trial logs "
+                  "(auth, Docker, install), then rerun to resume." % (streak, cid, rec["infra"] if rec else "no trial result"),
+                  flush=True)
+            return EXIT_INFRA_STREAK
     print("bench: %d cell(s) run, %d already finished" % (ran, skipped), flush=True)
     return 0
 
