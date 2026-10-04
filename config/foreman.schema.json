@@ -116,6 +116,11 @@
           "additionalProperties": false,
           "properties": { "protectedBranches": { "type": "array", "items": { "type": "string" }, "description": "Branches that never receive a force push. A project can add entries, not remove them." } }
         },
+        "subagents": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "allowWorkflow": { "type": "boolean", "description": "Let subagent workflow scripts and schedule.* actions through; they can launch any agent with any model, unchecked by the role allowlist and the role map. Loosening key: L1, overlays and the user file only; project and session values are ignored." } }
+        },
         "preconditionOps": { "type": "object", "description": "Settings for the precondition-checked operations. A project cannot set it." }
       }
     },

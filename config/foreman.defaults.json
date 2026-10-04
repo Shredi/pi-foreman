@@ -41,7 +41,8 @@
     "requiredChildExtensions": [],
     "children": { "mayPush": false },
     "review": { "required": false },
-    "git": { "protectedBranches": ["main", "master"] }
+    "git": { "protectedBranches": ["main", "master"] },
+    "subagents": { "allowWorkflow": false }
   },
   "python": { "path": null },
   "trace": { "enabled": false, "dir": null }
