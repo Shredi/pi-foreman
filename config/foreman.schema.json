@@ -126,6 +126,11 @@
             "baseBranch": { "type": ["string", "null"], "description": "Base branch for the merged check of foreman_worktree_remove; null = origin HEAD, else main, else master. A project cannot set it." }
           }
         },
+        "subagents": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "allowWorkflow": { "type": "boolean", "description": "Let subagent workflow scripts and schedule.* actions through; they can launch any agent with any model, unchecked by the role allowlist and the role map. Loosening key: L1, overlays and the user file only; project and session values are ignored." } }
+        },
         "preconditionOps": { "type": "object", "description": "Settings for the precondition-checked operations. A project cannot set it." }
       }
     },

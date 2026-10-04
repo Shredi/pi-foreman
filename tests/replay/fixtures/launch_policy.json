@@ -1,0 +1,26 @@
+{
+ "foreman": {
+  "p1": [
+   {"tools": [
+    {"name": "subagent", "arguments": {"action": "resume", "id": "run-from-elsewhere", "message": "go on"}},
+    {"name": "subagent", "arguments": {"workflow": "./launch-anything.js"}}
+   ]},
+   {"text": "Both refused."}
+  ],
+  "s1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:ask]] short task"}}]},
+   {"text": "Launched."}
+  ],
+  "sup": [
+   {"tools": [{"name": "write", "arguments": {"path": "notes.txt", "content": "written for the child"}}]},
+   {"tools": [{"name": "subagent_supervisor", "arguments": {"action": "reply", "message": "No. Report what you found."}}]},
+   {"text": "Answered."}
+  ]
+ },
+ "explorer": {
+  "ask": [
+   {"tools": [{"name": "contact_supervisor", "arguments": {"reason": "need_decision", "message": "[[replay:sup]] please write notes.txt for me"}}]},
+   {"text": "explorer child result"}
+  ]
+ }
+}

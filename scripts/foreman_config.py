@@ -25,7 +25,11 @@ The project layer is not trusted: for `safety.*` it can only tighten.
     safety.ops.copyMaxBytes          lower = tighter; only a lower value is accepted
     safety.ops.worktreeDisposable    loosens: ignored with a warning
     safety.ops.baseBranch            loosens: ignored with a warning
+    safety.subagents.allowWorkflow   loosening key: ignored with a warning
     any other safety.* key           ignored with a warning
+
+Loosening keys (LOOSEN_ONLY) are set by L1, L3 and L2 only: the project layer
+ignores them (above) and the session layer drops them with a warning.
 
 bridge.isolateClaudeConfig (not under safety) is ignored in the project file: switching
 it off loosens the isolation of the host's Claude Code config.
@@ -70,6 +74,21 @@ TIGHTEN = {
     ("permissions", "allow"): "intersect",
     ("ops", "copyMaxBytes"): "lower_only",
 }
+
+# safety.* keys that only loosen: never from the project or session layer
+LOOSEN_ONLY = [("subagents", "allowWorkflow")]
+
+
+def drop_loosening(data, layer, warnings):
+    """Remove LOOSEN_ONLY keys from a layer dict in place, with a warning each."""
+    for keys in LOOSEN_ONLY:
+        cur = data.get("safety")
+        for k in keys[:-1]:
+            cur = cur.get(k) if isinstance(cur, dict) else None
+        if isinstance(cur, dict) and keys[-1] in cur:
+            del cur[keys[-1]]
+            warnings.append("%s safety.%s ignored: a loosening key, set it in the user or overlay config"
+                            % (layer, ".".join(keys)))
 
 
 class ConfigError(Exception):
@@ -299,6 +318,7 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
             data = json.loads(session_json)
             if not isinstance(data, dict):
                 raise ValueError("not an object")
+            drop_loosening(data, "session", warnings)
             cfg = deep_merge(cfg, data)
             layers.append("session")
         except ValueError as exc:

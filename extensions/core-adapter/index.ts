@@ -11,6 +11,10 @@ import type { MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
+import { recordLaunch, subagentActionCheck } from "./actions.ts";
+import type { RunRegistry } from "./actions.ts";
+import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
+import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BridgeIsolation, isolationDir, isolationDoctor, isolationOn } from "./bridgeiso.ts";
 import { applyLaunchModels } from "./launchmodel.ts";
@@ -58,6 +62,10 @@ interface Session {
   stopContinued: boolean;
   notified: Set<string>;
   trace: TraceWriter | null;
+  /** Runs this session launched (resume provenance, actions.ts). */
+  runs: RunRegistry;
+  /** Open child supervisor requests (supervisor.ts). */
+  supervisor: SupervisorWindow;
 }
 
 export interface AdapterDeps {
@@ -121,6 +129,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       childExtensions: [],
       stopContinued: false,
       notified: new Set(),
+      runs: new Map(),
+      supervisor: new SupervisorWindow(),
       trace: openTrace({ enabled: get(config.config, "trace.enabled"), dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: id }),
     };
     sessions.set(id, s);
@@ -317,7 +327,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     event.systemPromptOptions.sections["pi-foreman"] = text;
   });
 
+  /** Layer 6: while a child's supervisor request is open, only that role's tools (supervisor.ts). */
+  function supervisorBlock(s: Session | undefined, toolName: string, input: unknown): { block: true; reason: string } | undefined {
+    if (!s) return undefined;
+    const hit = s.supervisor.check(toolName, input, (role) => roleToolsFrom(s.config.roles, get(s.config.config, "roles"), role));
+    if (!hit) return undefined;
+    s.trace?.emit({ event: "supervisor_request", role: hit.role, decision: "blocked_tool", toolFamily: toolName });
+    return { block: true, reason: hit.reason };
+  }
+
+  for (const channel of RUN_END_EVENTS) {
+    pi.events?.on(channel, (data) => {
+      for (const s of sessions.values()) s.supervisor.onRunEnd(data);
+    });
+  }
+
   pi.on("tool_call", async (event, ctx) => {
+    const sup = supervisorBlock(sessionFor(ctx), event.toolName, event.input);
+    if (sup) return sup;
     const mapping = mapTool(event.toolName);
     if (mapping.pre.length === 0) return undefined;
     try {
@@ -325,6 +352,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const input = event.input as Record<string, unknown>;
       const blocked = childLaunchBlock(s, event.toolName);
       if (blocked) return { block: true, reason: blocked };
+      if (event.toolName === "subagent") {
+        const resolution = await currentRoles(s, ctx);
+        const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
+        const act = subagentActionCheck(input, { allowWorkflow, runs: s.runs, allowed: childRoleIds(get(s.config.config, "roles")), resolution, maxThinking: get(s.config.config, "maxThinking") });
+        if (act.block) return { block: true, reason: act.block };
+        if (act.unchecked) notifyOnce(s, ctx, `workflow:${act.unchecked}`, `pi-foreman: safety.subagents.allowWorkflow is on; '${act.unchecked}' launches are not checked against the role allowlist or the role map.`);
+      }
       if (event.toolName === "subagent" && forceDetached(input)) {
         notifyOnce(s, ctx, "detach", "pi-foreman: child launches are always detached; async:false was overridden");
         s.trace?.emit({ event: "detach_override" });
@@ -342,11 +376,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const pc = payloadCtx(s, ctx);
       for (const guard of mapping.pre) {
         let agents: string[] = [];
+        if (guard === "destructive_guard") {
+          const bad = guardPayloadBlock(event.toolName, input);
+          if (bad) return { block: true, reason: bad };
+        }
         if (guard === "ledger_guard_spawn") {
           agents = subagentAgents(input);
           setCeremony(s, beforeSpawn(s.ceremony, agents));
         }
         const outcome = await run(s, ctx, guard, preToolPayload(event.toolName, input, pc), mapping.coreName);
+        if (guard === "destructive_guard" && outcome.kind === "decision" && dropDeadPathRewrite(outcome.d, input.command, os.homedir())) {
+          s.trace?.emit({ event: "guard_rewrite_dropped", guard, toolFamily: mapping.coreName });
+        }
         const target = guard === "ledger_guard_write" ? resolveToolPath(input.path, ctx.cwd, os.homedir()) : null;
         const t = await translateToolCall({
           guard,
@@ -372,14 +413,25 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   pi.on("message_end", async (event, ctx) => {
     const m = event.message as { role?: string; provider?: string; model?: string; usage?: { input?: number; output?: number; cost?: { total?: number } } };
+    if (m.role === "custom") {
+      const s = sessionFor(ctx);
+      const opened = s?.supervisor.onMessage(event.message);
+      if (opened) s?.trace?.emit({ event: "supervisor_request", role: opened.role, decision: "open" });
+    }
     if (m.role !== "assistant") return undefined;
     sessionFor(ctx)?.trace?.emit({ event: "llm", model: m.provider && m.model ? `${m.provider}/${m.model}` : null, tokensIn: m.usage?.input, tokensOut: m.usage?.output, cost: m.usage?.cost?.total });
     return undefined;
   });
 
   pi.on("tool_result", async (event, ctx) => {
+    if (event.toolName === SUPERVISOR_TOOL) {
+      const s = sessionFor(ctx);
+      const closed = s?.supervisor.onSupervisorResult(event.details, event.isError);
+      if (closed) s?.trace?.emit({ event: "supervisor_request", role: closed.role, decision: "replied" });
+    }
     if (event.toolName === "subagent") {
       const s = sessionFor(ctx);
+      if (s) recordLaunch(s.runs, event.input, event.details, event.isError);
       for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_result", role, exit: event.isError ? 1 : 0 });
     }
     const mapping = mapTool(event.toolName);

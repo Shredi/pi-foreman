@@ -10,6 +10,8 @@
 // validated before the tool_call hook; the executor reads an entry's own `model`, which wins
 // over the top-level one, so each entry gets its role's model and the top-level one is dropped.
 
+import { isActionCall } from "./actions.ts";
+
 type Json = Record<string, unknown>;
 
 export const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -58,11 +60,12 @@ export function launchModel(role: string, roles: Record<string, Json>, passed: u
  * Write the mapped model into a `subagent` call in place: the top-level `model` for a single
  * `agent` launch, each entry's `model` in `tasks`, `chain` and `chain[].parallel`. A top-level
  * model passed with tasks/chain counts as the foreman's choice for entries without their own.
- * Management calls (non-empty `action`) are left alone. Returns the overrides to trace.
+ * Calls with an action are left alone: management calls launch nothing, and `resume` reuses the
+ * persisted model (actions.ts checks it against the map). Returns the overrides to trace.
  */
 export function applyLaunchModels(input: Json, roles: Record<string, Json>, maxThinking: unknown): ModelOverride[] {
   if (!isObj(input)) return [];
-  if (typeof input.action === "string" && input.action !== "") return [];
+  if (isActionCall(input)) return [];
   const overrides: ModelOverride[] = [];
   const set = (o: Json, passed: unknown): void => {
     if (typeof o.agent !== "string" || o.agent === "") return;
