@@ -21,6 +21,7 @@ import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
 import { runGuard } from "./runguard.ts";
+import { registerSafeOps } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
 import type { Spawner } from "./spawn.ts";
 import { mapTool } from "./toolmap.ts";
@@ -401,6 +402,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       entries: [...event.entries, { type: "custom_message" as const, customType: "pi-foreman-stop-gate", content: r.reason ?? "", display: true }],
       continue: true,
     };
+  });
+
+  // ------------------------------------------------------------------- tools
+
+  registerSafeOps(pi, {
+    isChild: process.env.PI_SUBAGENT_CHILD === "1",
+    session: async (ctx) => {
+      const s = await ensureSession(ctx);
+      return { python: pyPath(s), isChild: s.isChild, opsConfig: get(s.config.config, "safety.ops"), trace: (r) => s.trace?.emit(r) };
+    },
+    script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
+    spawner,
+    env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
   });
 
   // ---------------------------------------------------------------- commands
