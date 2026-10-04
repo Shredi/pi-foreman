@@ -92,6 +92,13 @@ export function isolationDoctor(input: IsoDoctorInput): string[] {
 }
 
 /**
+ * Claude Code settings keys that run a command or script (CC 2.1.289 settings schema): hooks,
+ * auth/header helpers, cloud auth refresh/export, status lines, file suggestion and the
+ * process wrapper. `policyHelper` is honoured only from admin policy sources, so it is not listed.
+ */
+export const COMMAND_SETTINGS_KEYS = ["hooks", "apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "gcpAuthRefresh", "otelHeadersHelper", "proxyAuthHelper", "statusLine", "subagentStatusLine", "fileSuggestion", "processWrapper"];
+
+/**
  * Project-level Claude Code config that runs code in a claude-bridge turn (U1): isolation covers
  * the user level only; the bridge still loads the project's setting sources. Returns findings
  * like `.claude/settings.json (hooks)` and `.mcp.json`; empty when there is nothing to fear.
@@ -110,7 +117,7 @@ export function projectClaudeRisks(cwd: string): string[] {
     let keys: string[] = [];
     try {
       const data = JSON.parse(fs.readFileSync(path.join(dir, n), "utf8")) as unknown;
-      if (data && typeof data === "object" && !Array.isArray(data)) keys = ["hooks", "apiKeyHelper"].filter((k) => k in (data as object));
+      if (data && typeof data === "object" && !Array.isArray(data)) keys = COMMAND_SETTINGS_KEYS.filter((k) => k in (data as object));
     } catch {
       keys = ["unreadable"];
     }
@@ -120,4 +127,4 @@ export function projectClaudeRisks(cwd: string): string[] {
   return out;
 }
 
-export const PROJECT_CLAUDE_FIX = "review and remove them (hooks, apiKeyHelper and MCP servers in project files run as you in every claude-bridge turn, also when a subagent wrote them), or use another provider for this project.";
+export const PROJECT_CLAUDE_FIX = "review and remove them (hooks, command helpers such as apiKeyHelper or awsAuthRefresh, and MCP servers in project files run as you in every claude-bridge turn, also when a subagent wrote them), or use another provider for this project.";

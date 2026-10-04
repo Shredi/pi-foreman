@@ -347,6 +347,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     } catch {
       // doctor reports the folder
     }
+    const risks = event.model?.provider === BRIDGE_PROVIDER ? projectClaudeRisks(ctx.cwd) : [];
+    if (risks.length) ctx.ui.notify(`pi-foreman: project Claude Code config runs in claude-bridge turns: ${risks.join(", ")}. Fix: ${PROJECT_CLAUDE_FIX}`, "error");
     if (applyingModel) return;
     if (event.source === "set" || event.source === "cycle") userPickedModel = true;
   });
@@ -657,7 +659,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (ctx.model?.provider === BRIDGE_PROVIDER) {
       const risks = projectClaudeRisks(s.cwd);
       if (risks.length) fail(`project Claude Code config runs in claude-bridge turns: ${risks.join(", ")}`, PROJECT_CLAUDE_FIX);
-      else ok("no project Claude Code hooks, apiKeyHelper or .mcp.json");
+      else ok("no project Claude Code hooks, command helpers or .mcp.json");
     }
     const rt = reviewTarget(s.config.config, ctx.model?.provider);
     if (!rt) out.push(`WARN no review model for provider ${ctx.model?.provider ?? "(none)"}: model review (${REVIEW_LINK}) is off, every ask goes to you — set providers.<p>.review.model in foreman.json`);

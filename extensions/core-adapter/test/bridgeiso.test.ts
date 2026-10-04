@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { BridgeIsolation, isolationDir, isolationDoctor, isolationOn, keychainService } from "../bridgeiso.ts";
+import { BridgeIsolation, isolationDir, isolationDoctor, isolationOn, keychainService, projectClaudeRisks } from "../bridgeiso.ts";
 
 const tmp = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "pf-iso-"));
 
@@ -65,4 +65,12 @@ test("doctor probes the keychain service for the folder on macOS only", () => {
   assert.match(keychainService(dir), /^Claude Code-credentials-[0-9a-f]{8}$/);
   isolationDoctor({ dir, env: {}, platform: "linux", keychain: probe });
   assert.equal(seen.length, 1);
+});
+
+test("M2: every command-running settings key is a project finding", () => {
+  const p = tmp();
+  fs.mkdirSync(path.join(p, ".claude"));
+  fs.writeFileSync(path.join(p, ".claude", "settings.json"), JSON.stringify({ awsAuthRefresh: "x", awsCredentialExport: "x", otelHeadersHelper: "x", gcpAuthRefresh: "x", proxyAuthHelper: "x", statusLine: {}, model: "m" }));
+  assert.deepEqual(projectClaudeRisks(p), [".claude/settings.json (awsAuthRefresh, awsCredentialExport, gcpAuthRefresh, otelHeadersHelper, proxyAuthHelper, statusLine)"]);
+  fs.rmSync(p, { recursive: true, force: true });
 });
