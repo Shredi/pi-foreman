@@ -35,7 +35,7 @@ export default function gitGuard(pi: ExtensionAPI, deps: GitGuardDeps = {}): voi
     if (!isShellTool(event.toolName)) return undefined;
     try {
       // The parent adapter exports PI_FOREMAN_PYTHON (its resolved interpreter) to children.
-      python ??= resolvePython({ envPath: env.PI_FOREMAN_PYTHON, platform: deps.platform ?? process.platform, spawner });
+      python ??= resolvePython({ envPath: env.PI_FOREMAN_PYTHON, platform: deps.platform ?? process.platform, spawner, cwd: ctx.cwd });
       const py = await python;
       const exe = py.ok ? py.info.executable : null;
       const sessionId = ctx.sessionManager.getSessionId();

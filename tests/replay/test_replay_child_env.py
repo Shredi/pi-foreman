@@ -34,7 +34,8 @@ class TestChildEnv(ReplayCase):
             [path] = [p for p in rig.root.rglob(file) if p.is_file()]
             return path.read_text("utf-8").split()
 
-        self.assertEqual(names("main-env.txt"), ["GCM_INTERACTIVE", "GH_TOKEN", "GIT_TERMINAL_PROMPT", "SSH_AUTH_SOCK"])
+        # The foreman's GIT_CONFIG_COUNT carries core.fsmonitor=false / protocol.ext.allow=never (T1).
+        self.assertEqual(names("main-env.txt"), ["GCM_INTERACTIVE", "GH_TOKEN", "GIT_CONFIG_COUNT", "GIT_TERMINAL_PROMPT", "SSH_AUTH_SOCK"])
         self.assertEqual(names("child-env.txt"), ["GCM_INTERACTIVE", "GIT_CONFIG_COUNT", "GIT_TERMINAL_PROMPT"])
 
 

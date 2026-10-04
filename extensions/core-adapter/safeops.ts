@@ -102,6 +102,8 @@ export interface SafeOpsDeps {
   spawner: Spawner;
   env(): Record<string, string>;
   timeoutMs?: number;
+  /** Runs before the script (foreman git-config drift check); a block refuses the op. */
+  preflight?(ctx: ExtensionContext, op: SafeOp, callId: string): Promise<{ block: true; reason: string } | undefined>;
 }
 
 export function registerSafeOps(pi: Pick<ExtensionAPI, "registerTool">, deps: SafeOpsDeps): string[] {
@@ -115,7 +117,7 @@ export function registerSafeOps(pi: Pick<ExtensionAPI, "registerTool">, deps: Sa
       description: t.description,
       // Plain JSON Schema: Pi validates schemas without the TypeBox marker the same way.
       parameters: t.parameters as never,
-      async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+      async execute(id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
         let s: SafeOpsSession;
         try {
           s = await deps.session(ctx);
@@ -125,6 +127,11 @@ export function registerSafeOps(pi: Pick<ExtensionAPI, "registerTool">, deps: Sa
         if (t.foremanOnly && s.isChild) {
           s.trace({ event: "safe_op", toolFamily: t.op, decision: "error" });
           return failure(`${t.name} is for the foreman only; nothing was done.`, { decision: "error" });
+        }
+        const pre = deps.preflight ? await deps.preflight(ctx, t.op, id) : undefined;
+        if (pre) {
+          s.trace({ event: "safe_op", toolFamily: t.op, decision: "blocked" });
+          return failure(`${t.name}: ${pre.reason} Nothing was done.`, { decision: "blocked" });
         }
         const outcome = await runSafeOp({ python: s.python, script: deps.script, op: t.op, args: params, cwd: ctx.cwd, config: s.opsConfig, env: deps.env(), spawner: deps.spawner, timeoutMs: deps.timeoutMs });
         if (outcome.kind === "ran") {

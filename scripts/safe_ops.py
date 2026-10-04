@@ -28,6 +28,7 @@ Documented limits:
 """
 from __future__ import annotations
 
+import atexit
 import fnmatch
 import json
 import os
@@ -36,6 +37,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 
 DEFAULT_COPY_MAX_BYTES = 100 * 1024 * 1024
 DEFAULT_DISPOSABLE = ["node_modules/", "target/", "dist/", "build/", "__pycache__/", ".venv/"]
@@ -62,17 +64,44 @@ class ActionError(Exception):
 
 def _git_env():
     env = dict(os.environ)
-    env.update({"GIT_LITERAL_PATHSPECS": "1", "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"})
+    env.update({"GIT_LITERAL_PATHSPECS": "1", "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C",
+                "GIT_CONFIG_NOSYSTEM": "1"})
     for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
         env.pop(k, None)
     return env
+
+
+_EMPTY_HOOKS = []
+
+
+def _empty_hooks_dir():
+    """An empty directory of our own for core.hooksPath, removed (os.rmdir: only if empty) at exit."""
+    if not _EMPTY_HOOKS:
+        d = tempfile.mkdtemp(prefix="pf-nohooks-")
+        _EMPTY_HOOKS.append(d)
+        atexit.register(lambda: os.path.isdir(d) and os.rmdir(d))
+    return _EMPTY_HOOKS[0]
+
+
+def git_hardening():
+    """`-c` options for every git call (security review cycle 2, T1).
+
+    A child can plant config or hooks in the shared repo; these git calls run with the
+    foreman's credentials. core.fsmonitor=false: `git status` would run a planted fsmonitor
+    program. protocol.ext.allow=never: no `ext::` transport from a planted url.insteadOf.
+    core.hooksPath=<empty dir>: safe_ops needs no hooks; `git mv` and `git worktree remove` run
+    none, but `git branch -d` updates a ref and so runs a reference-transaction hook. With
+    GIT_CONFIG_NOSYSTEM=1 (env) the system config is not read either.
+    """
+    return ["-c", "core.fsmonitor=false", "-c", "protocol.ext.allow=never",
+            "-c", "core.hooksPath=" + _empty_hooks_dir()]
 
 
 def git(args, cwd, check=False):
     exe = shutil.which("git")
     if not exe:
         raise Precondition("git_missing", "git is not on PATH")
-    r = subprocess.run([exe] + list(args), cwd=cwd, env=_git_env(), stdin=subprocess.DEVNULL,
+    r = subprocess.run([exe] + git_hardening() + list(args), cwd=cwd, env=_git_env(), stdin=subprocess.DEVNULL,
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=GIT_TIMEOUT)
     out = r.stdout.decode("utf-8", "surrogateescape")
     if check and r.returncode != 0:

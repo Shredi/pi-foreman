@@ -47,23 +47,31 @@ function keyOf(env: Env, name: string): string | undefined {
   return Object.keys(env).find((k) => k.toUpperCase() === name);
 }
 
+/**
+ * Append `entries` to the GIT_CONFIG_COUNT/KEY/VALUE list in `env`. Existing entries are kept;
+ * idempotent: when the same block already is the tail of the list (so it still wins), nothing is added.
+ */
+export function appendGitConfigEnv(env: Env, entries: Array<[string, string]>): void {
+  const countKey = keyOf(env, "GIT_CONFIG_COUNT") ?? "GIT_CONFIG_COUNT";
+  const raw = env[countKey];
+  let n = raw !== undefined && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : 0;
+  const at = (i: number): [string | undefined, string | undefined] => [env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]];
+  const m = entries.length;
+  if (n >= m && entries.every(([k, v], j) => { const [ek, ev] = at(n - m + j); return ek === k && ev === v; })) return;
+  for (const [k, v] of entries) {
+    env[`GIT_CONFIG_KEY_${n}`] = k;
+    env[`GIT_CONFIG_VALUE_${n}`] = v;
+    n += 1;
+  }
+  env[countKey] = String(n);
+}
+
 /** Patch `env` in place (process.env in the adapter). Idempotent; existing GIT_CONFIG_* entries are kept. */
 export function patchChildGitEnv(env: Env): void {
   for (const name of CHILD_UNSET) {
     for (const k of Object.keys(env)) if (k.toUpperCase() === name) delete env[k];
   }
   for (const [k, v] of Object.entries(CHILD_SET)) env[keyOf(env, k) ?? k] = v;
-  const countKey = keyOf(env, "GIT_CONFIG_COUNT") ?? "GIT_CONFIG_COUNT";
-  const raw = env[countKey];
-  let n = raw !== undefined && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : 0;
-  const at = (i: number): [string | undefined, string | undefined] => [env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]];
-  // Already applied (a nested child inherits the patched env): our entries are the last ones.
-  const m = CHILD_GIT_CONFIG.length;
-  if (n >= m && CHILD_GIT_CONFIG.every(([k, v], j) => { const [ek, ev] = at(n - m + j); return ek === k && ev === v; })) return;
-  for (const [k, v] of CHILD_GIT_CONFIG) {
-    env[`GIT_CONFIG_KEY_${n}`] = k;
-    env[`GIT_CONFIG_VALUE_${n}`] = v;
-    n += 1;
-  }
-  env[countKey] = String(n);
+  // A nested child inherits the patched env: the block is found and not appended twice.
+  appendGitConfigEnv(env, CHILD_GIT_CONFIG);
 }
