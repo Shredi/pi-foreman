@@ -202,10 +202,59 @@ function bashMatches(pattern: string, text: string, ctx: MatchCtx): boolean {
 /** Case-insensitive file systems by default: path rules fold case there. */
 export const foldsCase = (platform: string): boolean => platform === "win32" || platform === "darwin";
 
+/** Win32 path normalisation (M1): every segment loses trailing dots and spaces (`.git.\config` is `.git\config`). */
+export function winSegments(value: string): string {
+  return value
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((seg) => (/^\.+$/.test(seg) ? seg : seg.replace(/[. ]+$/, "")))
+    .join("/");
+}
+
 function pathMatches(pattern: string, value: string, ctx: MatchCtx): boolean {
   const win = ctx.platform === "win32";
   const pat = pattern.includes("{cwd}") ? pattern.replace(/\{cwd\}/g, ctx.cwd.split(/[\\/]/).join("/").replace(/\/+$/, "")) : pattern;
-  return wildcardRegExp(pat, { home: ctx.home, ignoreCase: foldsCase(ctx.platform), foldSeparators: win }).test(win ? value.replace(/\\/g, "/") : value);
+  return wildcardRegExp(pat, { home: ctx.home, ignoreCase: foldsCase(ctx.platform), foldSeparators: win }).test(win ? winSegments(value) : value);
+}
+
+const SHORT_NAME = /^[^~\\/]{1,6}~[0-9]+(\.[^\\/]{0,3})?$/i;
+
+/**
+ * Could the 8.3 short name `short` stand for `long`? Windows builds it from the long name with
+ * dots and spaces removed, upper case, `+,;=[]` as `_`: the first six characters (`~1`..`~4`) or
+ * two characters plus a 4-hex hash (`~5` on). The extension is not compared (more matches, never fewer).
+ */
+export function shortNameFits(short: string, long: string): boolean {
+  const base = short.slice(0, short.indexOf("~")).toUpperCase();
+  const norm = (s: string): string => s.toUpperCase().replace(/[. ]/g, "").replace(/[+,;=[\]]/g, "_");
+  const lastDot = long.lastIndexOf(".");
+  const forms = [norm(long), ...(lastDot > 0 ? [norm(long.slice(0, lastDot))] : [])];
+  return forms.some((f) => f.length > 0 && (f.slice(0, 6) === base || (/^..[0-9A-F]{4}$/.test(base) && f.slice(0, 2) === base.slice(0, 2))));
+}
+
+/**
+ * Win32 8.3 spellings (M1): each candidate with every short-name segment (`CLAUDE~1`) replaced by
+ * the literal segments of the (protect or deny) patterns it could abbreviate. Only those
+ * spellings that then match a pattern decide, so a `PROGRA~1` in an unrelated path changes nothing:
+ * the short name must sit exactly where a protected name sits and fit that name.
+ */
+function shortNameVariants(cands: string[], patterns: string[]): string[] {
+  const names = [...new Set(patterns.flatMap((p) => p.split(/[\\/]/)).filter((s) => s && !/[*?]/.test(s)))];
+  const out: string[] = [];
+  for (const cand of cands) {
+    const segs = winSegments(cand).split("/");
+    if (!segs.some((s) => SHORT_NAME.test(s))) continue;
+    let variants: string[][] = [[]];
+    for (const seg of segs) {
+      const alts = SHORT_NAME.test(seg) ? [seg, ...names.filter((n) => shortNameFits(seg, n))] : [seg];
+      variants = variants.flatMap((v) => alts.map((a) => [...v, a])).slice(0, 64);
+    }
+    for (const v of variants) {
+      const joined = v.join("/");
+      if (joined !== segs.join("/")) out.push(joined);
+    }
+  }
+  return out;
 }
 
 // --------------------------------------------------------------------- lexer
@@ -661,7 +710,7 @@ function tokenCandidates(word: string, ctx: MatchCtx, depth: number): string[] {
   if (colon >= 0 && depth < 2 && !/^[A-Za-z]:([\\/]|$)/.test(s)) out.push(...tokenCandidates(s.slice(colon + 1), ctx, 2));
   if (!s) return out;
   const abs = p.resolve(ctx.cwd, s);
-  const pathShaped = /^[.~]|[\\/]/.test(s);
+  const pathShaped = /^[.~]|[\\/]/.test(s) || (ctx.platform === "win32" && SHORT_NAME.test(s));
   if (!pathShaped && !fsx.exists(abs)) return out;
   const add = (x: string): void => {
     out.push(x);
@@ -683,7 +732,9 @@ function tokenCandidates(word: string, ctx: MatchCtx, depth: number): string[] {
 }
 
 function pathDeny(rules: PathRule[], word: string, ctx: MatchCtx): PathRule | null {
-  for (const cand of pathCandidates(word, ctx)) {
+  const cands = pathCandidates(word, ctx);
+  const denyPats = rules.filter((r) => r.action === "deny").map((r) => r.pattern);
+  for (const cand of ctx.platform === "win32" ? [...cands, ...shortNameVariants(cands, denyPats)] : cands) {
     let verdict: PathRule | null = null;
     for (const r of rules) if (pathMatches(r.pattern, cand, ctx)) verdict = r;
     if (verdict && verdict.action === "deny") return verdict;
@@ -734,25 +785,35 @@ export function checkShell(rules: OverlayRules, command: string, ctx: MatchCtx):
 }
 
 /** The strictest write-protection decision for one path word (deny before ask), or null. */
-function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: boolean): { kind: "deny" | "ask"; rule: ProtectRule } | null {
+function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: boolean): ProtectHit | null {
   const child = ctx.role === "child";
-  let ask: ProtectRule | null = null;
+  let ask: ProtectHit | null = null;
   const cands = pathCandidates(word, ctx);
+  const guessed = ctx.platform === "win32" ? shortNameVariants(cands, rules.map((r) => r.pattern)) : [];
   for (const r of rules) {
     if (shell && !r.shell && !(child && r.childShell)) continue;
     const kind = child ? r.child : r.main;
-    if (!kind || (kind === "ask" && ask)) continue;
-    if (!cands.some((x) => pathMatches(r.pattern, x, ctx))) continue;
-    if (kind === "deny") return { kind, rule: r };
-    ask = r;
+    if (!kind || (kind === "ask" && ask && !ask.shortName)) continue;
+    const exact = cands.some((x) => pathMatches(r.pattern, x, ctx));
+    if (!exact && !guessed.some((x) => pathMatches(r.pattern, x, ctx))) continue;
+    if (kind === "deny") return { kind, rule: r, shortName: !exact };
+    if (!ask || (ask.shortName && exact)) ask = { kind, rule: r, shortName: !exact };
   }
-  return ask ? { kind: "ask", rule: ask } : null;
+  return ask;
 }
 
-function protectDecision(hit: { kind: "deny" | "ask"; rule: ProtectRule }, word: string, what: string): Decision {
+interface ProtectHit {
+  kind: "deny" | "ask";
+  rule: ProtectRule;
+  /** Matched only when an 8.3 short-name segment is read as the protected name (win32). */
+  shortName: boolean;
+}
+
+function protectDecision(hit: ProtectHit, word: string, what: string): Decision {
+  const how = hit.shortName ? `matched '${clip(word)}' read as a Windows 8.3 short name, which may be the protected path,` : `matched '${clip(word)}'`;
   return hit.kind === "deny"
-    ? { kind: "deny", reason: `pi-foreman: denied by the write protection (rule '${hit.rule.pattern}' matched '${clip(word)}' in a ${what}). Git internals, agent and harness configuration are off limits${hit.rule.main === "ask" ? " to subagents; ask the foreman" : ""}.` }
-    : { kind: "ask", reason: `pi-foreman: this changes protected configuration (rule '${hit.rule.pattern}' matched '${clip(word)}' in a ${what}) and needs approval.` };
+    ? { kind: "deny", reason: `pi-foreman: denied by the write protection (rule '${hit.rule.pattern}' ${how} in a ${what}). Git internals, agent and harness configuration are off limits${hit.rule.main === "ask" ? " to subagents; ask the foreman" : ""}.` }
+    : { kind: "ask", reason: `pi-foreman: this changes protected configuration (rule '${hit.rule.pattern}' ${how} in a ${what}) and needs approval.` };
 }
 
 const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls", "foreman_move", "foreman_copy"]);
