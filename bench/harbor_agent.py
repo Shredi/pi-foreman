@@ -30,7 +30,8 @@ token-persistence notes).
 Pi, the waiter and the bridge's Claude Code child run as AGENT_USER, not root: Claude Code
 refuses --dangerously-skip-permissions as root. install() creates that user and hands it the
 task's working dir (chown -R of the image WORKDIR), root's git identity and a prefilled Go build
-cache; the verifier still runs as the task's own user.
+cache; the verifier still runs as the task's own user (git marks every dir safe system-wide in
+the container, so a root verifier can run git on the agent-owned repo).
 """
 from __future__ import annotations
 
@@ -83,6 +84,8 @@ AGENT_USER_SETUP = (
     'case "$PWD" in /|/root|/home|/usr|/usr/*|/etc|/etc/*|/bin|/sbin|/lib|/lib/*|/opt|/tmp|/var|/proc|/sys|/dev) '
     'echo "pf-bench: refusing to hand the system dir $PWD to {u}" >&2; exit 1;; esac; '
     'chown -R {u}: "$PWD"; '
+    # The verifier runs as root on a repo now owned by the agent user: no "dubious ownership".
+    "if command -v git >/dev/null 2>&1; then git config --system --add safe.directory '*'; fi; "
     "if [ -f /root/.gitconfig ]; then cp /root/.gitconfig {h}/.gitconfig; fi; "
     "if [ -d /root/.cache/go-build ]; then mkdir -p {h}/.cache && cp -a /root/.cache/go-build {h}/.cache/; fi; "
     "chown -R {u}: {h}"
