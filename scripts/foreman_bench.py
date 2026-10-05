@@ -4,7 +4,7 @@
 
     python scripts/foreman_bench.py run   --preset bench/presets/smoke.json [--tasks DIR] [--jobs-dir DIR]
                                           [--token-cap N] [--dry-run] [--setup-only]
-    python scripts/foreman_bench.py table --preset bench/presets/smoke.json [--jobs-dir DIR] [--json]
+    python scripts/foreman_bench.py table --preset bench/presets/smoke.json [--jobs-dir DIR] [--json] [--cost]
 
 Preset (JSON):
     {"bench": {"tasks_dir": "<dir, relative to the preset file>", "repeats": 3, "jobs_dir": "<optional>",
@@ -234,14 +234,17 @@ def read_trial(job_dir):
             infra = "interrupted"
         if not infra:
             infra = agent_infra(f.parent / "agent" / "rpc.jsonl", (counters.get("tokens") or {}).get("total"))
-        by_tier = {}
+        by_tier, usage = {}, {}
         for model, t in (counters.get("tokens_by_model") or {}).items():
             by_tier[tier(model)] = by_tier.get(tier(model), 0) + sum(int(v or 0) for v in t.values())
+            u = usage.setdefault(str(model).rsplit("/", 1)[-1], {k: 0 for k in TOKEN_KINDS})
+            for k in TOKEN_KINDS:
+                u[k] += int((t or {}).get(k) or 0)
         return {
             "job": Path(job_dir).name, "reward": reward, "success": reward is not None and float(reward) >= 1.0,
             "infra": infra, "exception": exc,
             "tokens": (counters.get("tokens") or {}).get("total"),
-            "tokens_by_tier": by_tier, "tokens_by_role": counters.get("tokens_by_role"),
+            "tokens_by_tier": by_tier, "usage_by_model": usage, "tokens_by_role": counters.get("tokens_by_role"),
             "wall_seconds": _seconds(r.get("agent_execution")),
             "tool_calls": counters.get("tool_calls"), "approvals": counters.get("approvals"),
             "guard_blocks": counters.get("guard_blocks"),
@@ -250,6 +253,68 @@ def read_trial(job_dir):
                          thinking_seen=counters.get("thinking_by_role")),
         }
     return None
+
+
+TOKEN_KINDS = ("input", "cacheRead", "cacheWrite", "output")
+PRICES_FILE = REPO / "bench" / "prices.json"
+COST_LABEL = "list-price equivalent (runs go through the subscription)"
+
+
+def load_prices(path=None):
+    """Price file: {"source", "retrieved", "models": {bare model id: {input, output, cache_read, cache_write_5m,
+    cache_write_1h}}} in USD per MTok. Replaceable data."""
+    return json.loads(Path(path or PRICES_FILE).read_text("utf-8"))
+
+
+def cost_of(rec, prices):
+    """List-price cost of one finished record from its recorded tokens. Cache writes are priced at the 5-minute
+    rate (the records do not tell 5m from 1h); `usd_1h` is the same total with every write at the 1-hour rate.
+    None when the record has no usage; models without a price are listed in `unpriced` and left out."""
+    usage = rec.get("usage_by_model") or {}
+    if not usage:
+        return None
+    known = prices.get("models") or {}
+    out = {"usd": 0.0, "usd_1h": 0.0, "by_tier": {}, "read_tokens": 0, "write_tokens": 0, "read_usd": 0.0,
+           "write_usd": 0.0, "unpriced": []}
+    for model, u in usage.items():
+        p = known.get(model)
+        if not p:
+            out["unpriced"].append(model)
+            continue
+        base = (u["input"] * p["input"] + u["output"] * p["output"]) / 1e6
+        rd = u["cacheRead"] * p["cache_read"] / 1e6
+        w5 = u["cacheWrite"] * p["cache_write_5m"] / 1e6
+        w1 = u["cacheWrite"] * p["cache_write_1h"] / 1e6
+        t = tier(model)
+        out["by_tier"][t] = out["by_tier"].get(t, 0.0) + base + rd + w5
+        out["usd"] += base + rd + w5
+        out["usd_1h"] += base + rd + w1
+        out["read_tokens"] += u["cacheRead"]
+        out["write_tokens"] += u["cacheWrite"]
+        out["read_usd"] += rd
+        out["write_usd"] += w5
+    return out
+
+
+def _share(a, b):
+    return a / (a + b) if a + b else None
+
+
+def cost_stats(done, prices):
+    """Median/min/max over the counted records: total USD (5m writes, and with 1h writes), USD per tier, cache
+    read and write tokens and cost, and the warm share (read / (read + write)) by tokens and by cost."""
+    cs = [c for c in (cost_of(r, prices) for r in done) if c]
+    if not cs:
+        return None
+    tiers = sorted({t for c in cs for t in c["by_tier"]})
+    shares = lambda a, b: [x for x in (_share(c[a], c[b]) for c in cs) if x is not None]  # noqa: E731
+    return {"usd": _stat([c["usd"] for c in cs]), "usd_1h": _stat([c["usd_1h"] for c in cs]),
+            "by_tier": {t: _stat([c["by_tier"].get(t, 0.0) for c in cs]) for t in tiers},
+            "read_tokens": _stat([c["read_tokens"] for c in cs]), "write_tokens": _stat([c["write_tokens"] for c in cs]),
+            "read_usd": _stat([c["read_usd"] for c in cs]), "write_usd": _stat([c["write_usd"] for c in cs]),
+            "warm_share_tokens": _stat(shares("read_tokens", "write_tokens")),
+            "warm_share_usd": _stat(shares("read_usd", "write_usd")),
+            "unpriced": sorted({m for c in cs for m in c["unpriced"]})}
 
 
 def tier(model):
@@ -457,7 +522,7 @@ def _stat(values):
     return {"median": statistics.median(vals), "min": min(vals), "max": max(vals)}
 
 
-def table(preset, tdir, jdir):
+def table(preset, tdir, jdir, prices=None):
     """Rows of the result table: one per (row, task), counters only."""
     out = []
     groups = {}
@@ -474,6 +539,7 @@ def table(preset, tdir, jdir):
             "tool_calls": _stat([r["tool_calls"] for r in done]), "approvals": _stat([r["approvals"] for r in done]),
             "guard_blocks": _stat([r["guard_blocks"] for r in done]),
             "meta": done[-1]["meta"] if done else None,
+            **({"cost": cost_stats(done, prices)} if prices else {}),
         })
     return out
 
@@ -483,7 +549,7 @@ def _tier_stats(done):
     return {t: _stat([(r.get("tokens_by_tier") or {}).get(t, 0) for r in done]) for t in tiers}
 
 
-def row_summary(preset, tdir, jdir):
+def row_summary(preset, tdir, jdir, prices=None):
     """One entry per row over every matrix cell (the `first` cell excluded): success, tokens
     per model tier (median and range over cells), wall time, tool calls, approvals, guard blocks."""
     first = first_cell(preset, tdir)
@@ -501,6 +567,7 @@ def row_summary(preset, tdir, jdir):
             "tokens": _stat([r["tokens"] for r in done]), "tokens_by_tier": _tier_stats(done),
             "wall_seconds": _stat([r["wall_seconds"] for r in done]), "tool_calls": _stat([r["tool_calls"] for r in done]),
             "approvals": _stat([r["approvals"] for r in done]), "guard_blocks": _stat([r["guard_blocks"] for r in done]),
+            **({"cost": cost_stats(done, prices)} if prices else {}),
         })
     return out
 
@@ -547,6 +614,49 @@ def format_summary(summary, first=None):
     return "\n".join(text)
 
 
+def _usd(s):
+    if not s:
+        return "-"
+    f = "$%.2f"
+    return f % s["median"] if s["min"] == s["max"] else (f + " [" + f + "-" + f + "]") % (s["median"], s["min"], s["max"])
+
+
+def _pct(s):
+    if not s:
+        return "-"
+    f = "%.0f%%"
+    if s["min"] == s["max"]:
+        return f % (100 * s["median"])
+    return (f + " [" + f + "-" + f + "]") % (100 * s["median"], 100 * s["min"], 100 * s["max"])
+
+
+def format_cost(summary, rows, prices):
+    """The cost block: per row and per (row, task), dollars per tier plus the warm/cold cache split."""
+    out = ["Cost, %s. Median [min-max] over counted cells (first cell excluded from the per-row block)." % COST_LABEL,
+           "Prices: %s, retrieved %s (bench/prices.json). Cache writes are priced at the 5-minute rate; the records do not "
+           "tell 5-minute from 1-hour writes, so 'usd 1h' shows the same cells with every write at the 1-hour rate "
+           "(upper bound). Warm = cache read / (cache read + cache write), by tokens and by cost." % (
+               prices.get("source"), prices.get("retrieved"))]
+    for title, items, keys in (("Per row", summary, ["row"]), ("Per row and task", rows, ["row", "task"])):
+        tiers = sorted({t for r in items if r.get("cost") for t in r["cost"]["by_tier"]})
+        head = keys + ["usd (5m writes)"] + ["usd %s" % t for t in tiers] + [
+            "usd 1h", "cache read tok", "cache write tok", "warm tok", "read usd", "write usd", "warm usd"]
+        lines = []
+        for r in items:
+            c = r.get("cost")
+            if not c:
+                lines.append([r[k] for k in keys] + ["-"] * (len(head) - len(keys)))
+                continue
+            lines.append([r[k] for k in keys] + [_usd(c["usd"])] + [_usd(c["by_tier"].get(t)) for t in tiers] + [
+                _usd(c["usd_1h"]), _fmt(c["read_tokens"]), _fmt(c["write_tokens"]), _pct(c["warm_share_tokens"]),
+                _usd(c["read_usd"]), _usd(c["write_usd"]), _pct(c["warm_share_usd"])])
+        out += ["", title + ":"] + _columns(head, lines)
+    unpriced = sorted({m for r in summary + rows if r.get("cost") for m in r["cost"]["unpriced"]})
+    if unpriced:
+        out.append("Not priced (left out of the totals): %s" % ", ".join(unpriced))
+    return "\n".join(out)
+
+
 def format_table(rows):
     head = ["row", "task", "success", "tokens", "wall s", "tool calls", "approvals", "guard blocks"]
     lines = []
@@ -587,16 +697,22 @@ def main(argv=None):
     r.add_argument("--setup-only", action="store_true",
                    help="install check for the first selected cell: install, zero-model checks, no prompt")
     sub.choices["table"].add_argument("--json", action="store_true")
+    sub.choices["table"].add_argument("--cost", action="store_true",
+                                      help="add the list-price-equivalent cost block (prices from bench/prices.json)")
+    sub.choices["table"].add_argument("--prices", default=None, help="price file (default: bench/prices.json)")
     args = ap.parse_args(argv)
     if args.cmd == "run":
         return run(args)
     preset = load_preset(args.preset)
     tdir, jdir = tasks_dir(preset, args.tasks), jobs_dir(preset, args.jobs_dir)
-    rows, summary, first = table(preset, tdir, jdir), row_summary(preset, tdir, jdir), first_summary(preset, tdir, jdir)
+    prices = load_prices(args.prices) if args.cost else None
+    rows, summary = table(preset, tdir, jdir, prices), row_summary(preset, tdir, jdir, prices)
+    first = first_summary(preset, tdir, jdir)
     if args.json:
         print(json.dumps({"rows": summary, "first": first, "cells": rows}, indent=1))
     else:
-        print(format_summary(summary, first) + "\n\nPer row and task:\n" + format_table(rows))
+        text = format_summary(summary, first) + "\n\nPer row and task:\n" + format_table(rows)
+        print(text + ("\n\n" + format_cost(summary, rows, prices) if prices else ""))
     return 0
 
 

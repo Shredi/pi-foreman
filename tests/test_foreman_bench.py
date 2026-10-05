@@ -258,6 +258,52 @@ class BenchTest(unittest.TestCase):
         self.assertEqual(fb.tier("claude-bridge/claude-fable-5-1"), "fable")
         self.assertEqual(fb.tier("foreman-fake/builder"), "builder")
 
+    def test_cost_view_list_prices_and_warm_share(self):
+        preset = self.write_preset()
+
+        def rec(opus, fable, other=None):
+            r = trial()
+            tbm = {"b/claude-opus-5-5": opus, "b/claude-fable-5-1": fable}
+            tbm.update(other or {})
+            r["agent_result"]["metadata"]["bench"]["counters"]["tokens_by_model"] = tbm
+            return r
+
+        # opus: 1M in, 1M out, 2M read, 1M write -> 4 + 20 + 0.40 + 5 = 29.40 (1h write: 32.40)
+        # fable: 1M read only -> 0.25
+        self.job("R2__beta__r1__a", rec({"input": 10**6, "output": 10**6, "cacheRead": 2 * 10**6, "cacheWrite": 10**6},
+                                        {"cacheRead": 10**6}))
+        self.job("R2__beta__r2__a", rec({"cacheWrite": 10**6}, {}, {"b/mystery-1": {"input": 5}}))
+        tdir = fb.tasks_dir(preset)
+        prices = fb.load_prices()
+        self.assertEqual(prices["retrieved"], "2026-10-04")
+        c = fb.cost_of(fb.counted(fb.cell_results(self.jobs, "R2__beta__r1")), prices)
+        self.assertAlmostEqual(c["usd"], 29.65)
+        self.assertAlmostEqual(c["usd_1h"], 32.65)
+        self.assertAlmostEqual(c["by_tier"]["opus"], 29.40)
+        self.assertAlmostEqual(c["by_tier"]["fable"], 0.25)
+        self.assertAlmostEqual(c["read_usd"], 0.65)
+        rows = {(r["row"], r["task"]): r for r in fb.table(preset, tdir, self.jobs, prices)}
+        cell = rows[("R2", "beta")]["cost"]
+        self.assertAlmostEqual(cell["usd"]["max"], 29.65)
+        self.assertAlmostEqual(cell["usd"]["min"], 5.0)
+        self.assertEqual(cell["warm_share_tokens"]["max"], 0.75)  # 3M read / (3M read + 1M write)
+        self.assertEqual(cell["warm_share_tokens"]["min"], 0.0)
+        self.assertEqual(cell["unpriced"], ["mystery-1"])
+        row = fb.row_summary(preset, tdir, self.jobs, prices)[1]
+        self.assertEqual(row["row"], "R2")
+        self.assertAlmostEqual(row["cost"]["by_tier"]["fable"]["max"], 0.25)
+        self.assertNotIn("cost", fb.table(preset, tdir, self.jobs)[0])  # off unless prices are passed
+        text = fb.format_cost(fb.row_summary(preset, tdir, self.jobs, prices), list(rows.values()), prices)
+        self.assertIn("list-price equivalent (runs go through the subscription)", text)
+        self.assertIn("5-minute rate", text)
+        self.assertIn("Not priced", text)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(fb.main(["table", "--preset", str(self.preset), "--jobs-dir", str(self.jobs), "--cost"]), 0)
+        self.assertIn("usd opus", out.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            fb.main(["table", "--preset", str(self.preset), "--jobs-dir", str(self.jobs)])
+        self.assertNotIn("list-price", out.getvalue())
+
     def test_waiter_usage_limit_and_active_runs(self):
         err = {"message": {"role": "assistant", "stopReason": "error", "errorMessage": "Claude usage limit reached; resets at 5pm"}}
         self.assertTrue(ws.usage_limit_error(err))
