@@ -162,6 +162,74 @@ class BenchTest(unittest.TestCase):
         self.assertEqual(len(calls), 4)  # infra, ok (resets), no result, infra -> stop
         self.assertIn("2 consecutive infrastructure-error cells", out.getvalue())
 
+    def rpc(self, name, assistant):
+        """rpc.jsonl shaped like the waiter's log of a real cell (made-up content)."""
+        d = self.jobs / name / "trial-1" / "agent"
+        d.mkdir(parents=True, exist_ok=True)
+        recs = [{"type": "response", "id": "bench-prompt", "command": "prompt", "success": True}, {"type": "agent_start"},
+                {"type": "turn_start"},
+                {"type": "message_start", "message": {"role": "user", "content": [{"type": "text", "text": "task"}],
+                                                      "timestamp": 1}},
+                {"type": "message_end", "message": {"role": "user", "content": [{"type": "text", "text": "task"}],
+                                                    "timestamp": 1}}]
+        if assistant:
+            recs += [{"type": t, "message": dict(assistant, role="assistant", timestamp=2)}
+                     for t in ("message_start", "message_end", "turn_end")]
+        recs += [{"type": "agent_end", "messages": []}, {"type": "agent_settled"}]
+        (d / "rpc.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
+
+    def test_failed_first_turn_and_zero_tokens_are_infra_and_stop(self):
+        bridge_err = {"content": [], "provider": "claude-bridge", "model": "claude-x", "stopReason": "error",
+                      "errorMessage": "Claude Code process exited with code 1. stderr: refused",
+                      "usage": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0}}
+        ok = {"content": [{"type": "text", "text": "done"}], "stopReason": "stop", "usage": {"input": 10, "output": 5}}
+        self.job("R1__alpha__r1__a", trial(reward=0.0, tokens=0))
+        self.rpc("R1__alpha__r1__a", bridge_err)
+        self.job("R1__alpha__r2__a", trial(reward=0.0, tokens=15))
+        self.rpc("R1__alpha__r2__a", None)
+        self.job("R1__beta__r1__a", trial(reward=0.0, tokens=0))  # no rpc.jsonl: zero tokens alone
+        self.job("R1__beta__r2__a", trial(reward=0.0, tokens=15))
+        self.rpc("R1__beta__r2__a", ok)
+        infra = {c: fb.cell_results(self.jobs, c)[0]["infra"] for c in
+                 ("R1__alpha__r1", "R1__alpha__r2", "R1__beta__r1", "R1__beta__r2")}
+        self.assertEqual(infra, {"R1__alpha__r1": "assistant_error", "R1__alpha__r2": "no_model_turn",
+                                 "R1__beta__r1": "zero_tokens", "R1__beta__r2": None})
+        calls = []
+
+        def runner(cmd, env, cwd):
+            calls.append(cmd[cmd.index("--job-name") + 1])
+            self.job(calls[-1], trial(reward=0.0, tokens=0))
+            self.rpc(calls[-1], bridge_err)
+
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = fb.run(self.args(rows=["R2"]), runner=runner)
+        self.assertEqual(rc, fb.EXIT_INFRA_STREAK)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("assistant_error", out.getvalue())
+
+    def test_signal_interrupts_cell_and_resume_reruns_it(self):
+        calls = []
+        clock = iter(range(1000, 2000, 10))
+
+        def runner(cmd, env, cwd):
+            calls.append(cmd[cmd.index("--job-name") + 1])
+            if len(calls) == 2:
+                fb._on_signal(fb.signal.SIGINT, None)  # owner stops the run mid-cell (no child: nothing to forward)
+            self.job(calls[-1], trial(reward=1.0))
+
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = fb.run(self.args(rows=["R1"]), runner=runner, now=lambda: next(clock))
+        self.assertEqual(rc, fb.EXIT_INTERRUPTED)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("interrupted", out.getvalue())
+        self.assertIn("Resume with the same `run` command", out.getvalue())
+        interrupted = calls[1].rsplit("__", 1)[0]
+        self.assertTrue((self.jobs / calls[1] / fb.INTERRUPTED_MARK).is_file())
+        self.assertIsNone(fb.counted(fb.cell_results(self.jobs, interrupted)))
+        with contextlib.redirect_stdout(io.StringIO()):  # resume: the interrupted cell runs again
+            self.assertEqual(fb.run(self.args(rows=["R1"]), runner=runner, now=lambda: next(clock)), 0)
+        self.assertTrue(calls[2].startswith(interrupted + "__"))
+
     def test_row_summary_per_tier_and_first_cell_roles(self):
         preset = self.write_preset(first={"row": "R2", "task": "alpha"})
 

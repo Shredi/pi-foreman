@@ -26,8 +26,18 @@ invocation, never within the same one. A provider usage-limit answer stops the r
 (exit 3); rerun later to resume. Token cap (--token-cap or bench.token_cap): before each cell
 the tokens of every finished attempt of the preset's matrix are summed (resumed runs
 included); at or above the cap the run stops cleanly (exit 4). Two consecutive
-infrastructure-error cells in one invocation stop the run too (exit 5). The per-cell wall cap
-is the row's cap_seconds.
+infrastructure-error cells in one invocation stop the run too (exit 5). Besides Harbor's own
+infrastructure exceptions, a cell is an infrastructure error when Pi never reached a model turn,
+its first assistant message ended with stopReason "error" (provider, bridge or auth failure),
+or the run used zero model tokens. SIGINT or SIGTERM stops the run cleanly (exit 6): the signal
+is forwarded to the running Harbor child, which cancels the trial and stops its environment
+(leftover containers of that trial are removed), and the interrupted cell is marked
+(bench-interrupted in its job dir) so it is never counted and a later `run` re-runs it. The
+per-cell wall cap is the row's cap_seconds.
+
+Run it on a host that cannot sleep (on AC power, lid open or clamshell with display): the
+first real run spent most of its ~6.7 h with the laptop asleep on battery, which stretched
+setup and quiet-period phases across sleep gaps.
 
 Harbor telemetry is always switched off for every Harbor process (HARBOR_TELEMETRY=off); the
 script never passes --upload or --launch. The result table holds counters only.
@@ -37,6 +47,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import signal
 import statistics
 import subprocess
 import sys
@@ -53,6 +65,9 @@ INFRA_EXC = {USAGE_LIMIT_EXC, "ApiRateLimitError", "ApiOverloadedError", "ApiInt
 EXIT_USAGE_LIMIT = 3
 EXIT_TOKEN_CAP = 4
 EXIT_INFRA_STREAK = 5
+EXIT_INTERRUPTED = 6
+INTERRUPTED_MARK = "bench-interrupted"  # in a job dir: the cell was stopped by SIGINT/SIGTERM, not counted
+HARBOR_STOP_GRACE = 300  # seconds Harbor gets after the forwarded signal to stop its environment
 INFRA_STREAK_MAX = 2  # consecutive infrastructure-error cells (e.g. auth failing in every container)
 TIERS = ("fable", "opus", "sonnet", "haiku")
 
@@ -166,6 +181,34 @@ def _seconds(timing):
         return None
 
 
+def agent_infra(rpc_log, tokens_total):
+    """Infrastructure error of an agent run that never really worked on the task, else None:
+    the main Pi session never reached a model turn (no assistant message in rpc.jsonl), its
+    first assistant message failed (stopReason "error": provider, bridge or auth failure), or
+    the run used zero model tokens. The rpc.jsonl checks apply only when the file exists."""
+    rpc_log = Path(rpc_log)
+    if rpc_log.is_file():
+        first = None
+        for line in rpc_log.read_text("utf-8", "replace").splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            msg = rec.get("message")
+            if rec.get("type") == "message_end" and isinstance(msg, dict) and msg.get("role") == "assistant":
+                first = msg
+                break
+        if first is None:
+            return "no_model_turn"
+        if first.get("stopReason") == "error":
+            return "assistant_error"
+    if tokens_total is not None and int(tokens_total) == 0:
+        return "zero_tokens"
+    return None
+
+
 def read_trial(job_dir):
     """The trial result.json of a one-trial job dir as a cell record, or None if absent."""
     for f in sorted(Path(job_dir).glob("*/result.json")):
@@ -187,6 +230,10 @@ def read_trial(job_dir):
         elif reward is None:
             infra = exc or "no_verifier_result"
         counters = bench.get("counters") or {}
+        if not infra and (Path(job_dir) / INTERRUPTED_MARK).is_file():
+            infra = "interrupted"
+        if not infra:
+            infra = agent_infra(f.parent / "agent" / "rpc.jsonl", (counters.get("tokens") or {}).get("total"))
         by_tier = {}
         for model, t in (counters.get("tokens_by_model") or {}).items():
             by_tier[tier(model)] = by_tier.get(tier(model), 0) + sum(int(v or 0) for v in t.values())
@@ -244,6 +291,66 @@ def token_cap(preset, override=None):
     return int(raw) if raw else None
 
 
+_STOP = {"signal": None, "at": None, "child": None}
+
+
+def _on_signal(signum, _frame):
+    """SIGINT/SIGTERM: remember it and forward SIGINT to the running Harbor child once (Harbor
+    then cancels the trial and stops its environment); a second signal terminates the child."""
+    first = _STOP["signal"] is None
+    if first:
+        _STOP["signal"], _STOP["at"] = signum, time.time()
+    child = _STOP["child"]
+    if child is None or child.poll() is not None:
+        return
+    try:
+        if not first:
+            child.terminate()
+        elif os.name == "nt":
+            child.send_signal(signal.CTRL_BREAK_EVENT)
+        else:
+            child.send_signal(signal.SIGINT)
+    except OSError:
+        pass
+
+
+def run_harbor(cmd, env, cwd):
+    """Run one `harbor run` in its own process group (a terminal Ctrl-C reaches only this
+    script, which forwards it). After a stop signal Harbor gets HARBOR_STOP_GRACE seconds to
+    clean up, then it is killed."""
+    kw = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+    child = subprocess.Popen(cmd, env=env, cwd=cwd, **kw)
+    _STOP["child"] = child
+    try:
+        while True:
+            try:
+                return child.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                if _STOP["at"] and time.time() - _STOP["at"] > HARBOR_STOP_GRACE:
+                    child.kill()
+                    return child.wait()
+    finally:
+        _STOP["child"] = None
+
+
+def remove_cell_containers(job_dir, runner=subprocess.run):
+    """Remove containers Harbor left behind for an interrupted job: its compose projects are
+    named after the trial (`<trial>__env`, sanitized as Harbor does)."""
+    for trial in sorted(Path(job_dir).iterdir()) if Path(job_dir).is_dir() else []:
+        if not trial.is_dir():
+            continue
+        name = (trial.name + "__env").lower()
+        name = re.sub(r"[^a-z0-9_-]", "-", name if re.match(r"^[a-z0-9]", name) else "0" + name)
+        try:
+            ids = runner(["docker", "ps", "-aq", "--filter", "label=com.docker.compose.project=%s" % name],
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=60).stdout.decode().split()
+            if ids:
+                runner(["docker", "rm", "-f"] + ids, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+                print("bench: removed %d leftover container(s) of %s" % (len(ids), name), flush=True)
+        except (OSError, subprocess.SubprocessError, AttributeError):
+            pass
+
+
 def setup_only(args, todo, preset, jdir, runner, now):
     """Install check for the first selected cell: the agent installs, runs the zero-model
     setup checks and returns before any prompt. The job is named setup__..., never a cell."""
@@ -265,7 +372,21 @@ def setup_only(args, todo, preset, jdir, runner, now):
     return 0 if check else 1
 
 
-def run(args, runner=subprocess.run, now=time.time):
+def run(args, runner=None, now=time.time):
+    """`run` with SIGINT/SIGTERM handling: a stop signal ends the run after the current cell's
+    Harbor child has stopped; that cell is marked interrupted (not counted) and exit is 6."""
+    _STOP.update(signal=None, at=None, child=None)
+    if runner is not None or args.dry_run or getattr(args, "setup_only", False):
+        return _run(args, runner or subprocess.run, now)
+    old = {s: signal.signal(s, _on_signal) for s in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        return _run(args, run_harbor, now)
+    finally:
+        for s, h in old.items():
+            signal.signal(s, h)
+
+
+def _run(args, runner, now):
     preset = load_preset(args.preset)
     tdir = tasks_dir(preset, args.tasks)
     jdir = jobs_dir(preset, args.jobs_dir)
@@ -297,7 +418,18 @@ def run(args, runner=subprocess.run, now=time.time):
         if args.dry_run:
             continue
         jdir.mkdir(parents=True, exist_ok=True)
-        runner(cmd, env=env, cwd=str(REPO))
+        started = _STOP["signal"] is None
+        if started:
+            runner(cmd, env=env, cwd=str(REPO))
+        if _STOP["signal"] is not None:
+            if started:  # the cell ran (partly): never count it, and leave no container behind
+                (jdir / job).mkdir(parents=True, exist_ok=True)
+                (jdir / job / INTERRUPTED_MARK).write_text("signal %s\n" % _STOP["signal"], "utf-8")
+                remove_cell_containers(jdir / job)
+            print("bench: interrupted (signal %s)%s; %d cell(s) finished in this invocation. "
+                  "Resume with the same `run` command." % (_STOP["signal"], " during %s, which is not counted" % cid
+                                                           if started else " before %s" % cid, ran), flush=True)
+            return EXIT_INTERRUPTED
         ran += 1
         rec = read_trial(jdir / job)
         if rec is not None and rec["infra"] == "usage_limit":

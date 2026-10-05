@@ -22,9 +22,15 @@ container's platform.
 
 Token for real rows: read on the host from FOREMAN_BENCH_OAUTH_TOKEN_FILE (a path outside the
 repository) or FOREMAN_BENCH_OAUTH_TOKEN, uploaded as a 0600 file to /tmp/pf-secret in the
-container, read and deleted by the waiter and handed to Pi only as CLAUDE_CODE_OAUTH_TOKEN in
-its process env. It is never passed via `--ae`, a kwarg or a command line, because Harbor
-persists those (see the bench token-persistence notes).
+container, owned by the non-root agent user (AGENT_USER) Pi runs as, read and deleted by the
+waiter and handed to Pi only as CLAUDE_CODE_OAUTH_TOKEN in its process env. It is never passed
+via `--ae`, a kwarg or a command line, because Harbor persists those (see the bench
+token-persistence notes).
+
+Pi, the waiter and the bridge's Claude Code child run as AGENT_USER, not root: Claude Code
+refuses --dangerously-skip-permissions as root. install() creates that user and hands it the
+task's working dir (chown -R of the image WORKDIR), root's git identity and a prefilled Go build
+cache; the verifier still runs as the task's own user.
 """
 from __future__ import annotations
 
@@ -57,12 +63,30 @@ R_NPM = "/opt/pf-npm"
 R_WORK = "/tmp/pf-bench"
 R_SECRET = "/tmp/pf-secret/token"
 CLAUDE_BIN_GLOB = R_NPM + "/node_modules/@anthropic-ai/claude-agent-sdk-linux-*/claude"
-NVM = '[ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh"; '
+# Pi (and so the bridge's Claude Code child) runs as this non-root user: Claude Code refuses
+# --dangerously-skip-permissions as root. Node lives in a shared nvm dir that user can read.
+AGENT_USER = "pfbench"
+AGENT_HOME = "/home/" + AGENT_USER
+R_NVM = "/opt/pf-nvm"
+NVM = 'export NVM_DIR=%s; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; ' % R_NVM
 NODE_INSTALL = (
-    "command -v node >/dev/null 2>&1 || { curl -fsSL -o /tmp/nvm-install.sh "
-    "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh && env -u NODE_VERSION bash /tmp/nvm-install.sh "
-    '&& . "$HOME/.nvm/nvm.sh" && nvm install 22 && nvm alias default 22; }'
+    "command -v node >/dev/null 2>&1 || { mkdir -p %s && curl -fsSL -o /tmp/nvm-install.sh "
+    "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh && env -u NODE_VERSION NVM_DIR=%s PROFILE=/dev/null "
+    'bash /tmp/nvm-install.sh && export NVM_DIR=%s && . "$NVM_DIR/nvm.sh" && nvm install 22 && nvm alias default 22; }'
+    % (R_NVM, R_NVM, R_NVM)
 )
+# Create the agent user and hand it the task's working dir (the image WORKDIR, the cwd of every
+# exec), root's git identity and a prefilled Go build cache. Refuses a system dir as workdir.
+AGENT_USER_SETUP = (
+    "set -e; id -u {u} >/dev/null 2>&1 || useradd -m -d {h} -s /bin/bash {u} 2>/dev/null "
+    "|| adduser -D -h {h} -s /bin/sh {u}; mkdir -p {h}; "
+    'case "$PWD" in /|/root|/home|/usr|/usr/*|/etc|/etc/*|/bin|/sbin|/lib|/lib/*|/opt|/tmp|/var|/proc|/sys|/dev) '
+    'echo "pf-bench: refusing to hand the system dir $PWD to {u}" >&2; exit 1;; esac; '
+    'chown -R {u}: "$PWD"; '
+    "if [ -f /root/.gitconfig ]; then cp /root/.gitconfig {h}/.gitconfig; fi; "
+    "if [ -d /root/.cache/go-build ]; then mkdir -p {h}/.cache && cp -a /root/.cache/go-build {h}/.cache/; fi; "
+    "chown -R {u}: {h}"
+).format(u=AGENT_USER, h=AGENT_HOME)
 
 
 def load_row(preset, row_id):
@@ -222,7 +246,11 @@ class _BenchPi(BaseInstalledAgent):
         with tempfile.TemporaryDirectory(prefix="pf-bench-repo-") as tmp:
             tracked_copy(tmp)
             await environment.upload_dir(tmp, R_REPO)
-        await self.exec_as_root(environment, command="chmod -R a+rX %s; mkdir -p %s && chmod 777 %s" % (R_REPO, R_WORK, R_WORK))
+        await self.exec_as_root(environment, command=AGENT_USER_SETUP)
+        logs = shlex.quote(str(self.environment_logs_dir))
+        await self.exec_as_root(environment, command="chmod -R a+rX %s; for d in %s %s; do [ ! -d $d ] || chmod -R a+rX $d; done; "
+                                "mkdir -p %s && chmod 777 %s; mkdir -p %s && chown %s: %s"
+                                % (R_REPO, R_NPM, R_NVM, R_WORK, R_WORK, logs, AGENT_USER, logs))
 
     def _token(self):
         path = os.environ.get("FOREMAN_BENCH_OAUTH_TOKEN_FILE")
@@ -260,22 +288,20 @@ class _BenchPi(BaseInstalledAgent):
                     fh.write(token)
                 await self.exec_as_root(environment, command="mkdir -p /tmp/pf-secret")
                 await environment.upload_file(p, R_SECRET)
-            # Owned by the agent user, 0600, in a 0700 dir: only the waiter can read it.
-            ids = ((await self.exec_as_agent(environment, command="echo $(id -u):$(id -g)")).stdout or "").strip()
-            if not all(x.isdigit() for x in ids.split(":")) or ids.count(":") != 1:
-                raise RuntimeError("cannot resolve the agent user's uid:gid")
-            await self.exec_as_root(environment, command="chown -R %s /tmp/pf-secret && chmod 700 /tmp/pf-secret && chmod 600 %s"
-                                    % (ids, R_SECRET))
+            # Owned by the agent user, 0600, in a 0700 dir: only the waiter (run as that user) can read it.
+            await self.exec_as_root(environment, command="chown -R %s: /tmp/pf-secret && chmod 700 /tmp/pf-secret && chmod 600 %s"
+                                    % (AGENT_USER, R_SECRET))
             secret_arg = " --secret-file " + R_SECRET
         cap = float(row.get("cap_seconds") or 1800)
         quiet = float(row.get("quiet_seconds") or (3 if self.fake else 10))
         out = str(self.environment_logs_dir)
-        cmd = (NVM + "python3 %s/bench/wait_session.py --row %s/row.json --instruction-file %s/instruction.md "
+        cmd = ("export HOME=%s USER=%s LOGNAME=%s; " % (AGENT_HOME, AGENT_USER, AGENT_USER) + NVM +
+               "python3 %s/bench/wait_session.py --row %s/row.json --instruction-file %s/instruction.md "
                '--cwd "$PWD" --work %s/w --out %s --driver %s --cap-seconds %s --quiet-seconds %s%s%s%s'
                % (R_REPO, R_WORK, R_WORK, R_WORK, shlex.quote(out), self.driver, cap, quiet,
                   " --fake-script %s/bench/fake_script.json" % R_REPO if self.fake else "", secret_arg,
                   " --setup-check" if self.setup_only else ""))
-        await self.exec_as_agent(environment, command=cmd, timeout_sec=int(cap + 300))
+        await self._exec(environment, cmd, user=AGENT_USER, timeout_sec=int(cap + 300))
         status = self._status()
         if status.get("infra_error") == "usage_limit":
             raise ApiUsageLimitError("provider usage limit reached: %s" % status.get("error", "")[:300])
