@@ -114,6 +114,14 @@ export function hostConfigFindings(dir: string): { fail: string[]; info: string[
     } catch {
       cached = false;
     }
+    const known = ["known_marketplaces.json", "marketplaces", "installed_plugins.json", "cache"];
+    let unknown: string[] = [];
+    try {
+      unknown = fs.readdirSync(plugins).filter((e) => !known.includes(e)).sort();
+    } catch {
+      unknown = ["unreadable"];
+    }
+    if (unknown.length) fail.push(`plugins/ unknown entries (${unknown.join(", ")})`);
     if (installed || cached || unreadable) fail.push(`plugins/ (${[installed && "installed plugins", cached && "plugin cache", unreadable && "unreadable installed_plugins.json"].filter(Boolean).join(", ")})`);
     else info.push("holds plugins/ with no installed plugin (marketplace catalog only)");
   }

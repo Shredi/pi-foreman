@@ -92,4 +92,7 @@ test("doctor judges settings and plugins by content, not existence", () => {
   assert.equal(fails(m), false);
   fs.writeFileSync(path.join(m, "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "x@y": [{ scope: "user" }] } }));
   assert.equal(fails(m), true);
+  const u = tmp();
+  fs.mkdirSync(path.join(u, "plugins", "data"), { recursive: true });
+  assert.match(isolationDoctor({ dir: u, env: {}, platform: "linux" })[0], /^FAIL .*plugins\/ unknown entries \(data\)/);
 });
