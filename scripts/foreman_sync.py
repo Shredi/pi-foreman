@@ -23,10 +23,10 @@ the loader the extension uses; the list comes from L1-L3 only):
   remote, else origin). Never forced, never anything that discards work.
 
 Git runs with the hardened environment and `-c` options of scripts/safe_ops.py: no system config,
-core.fsmonitor off, ext:: transport off, commit.gpgSign off, and core.hooksPath set to an empty
+core.fsmonitor off, ext:: transport off, commit.gpgSign and submodule.recurse off, and core.hooksPath set to an empty
 directory, so repository hooks (pre-commit, commit-msg, pre-push) do NOT run. A repo whose local or
 worktree config (includes followed) sets a key that runs code or redirects fetch/push (filters,
-textconv, ssh/proxy/askpass/credential helpers, gpg programs, url rewrites, push urls, pack programs,
+textconv/diff commands, attributes files, submodules, remote vcs helpers, ssh/proxy/askpass/credential helpers, gpg programs, url rewrites, push urls, pack programs,
 proxies, protocol allows, a branch remote that is not a configured remote, an include outside the
 git dir) is refused before any pull, add, commit or push; only the rule names are reported.
 Candidates are scanned whole as bytes (larger than 20 MiB: refused); symlinks and hard links are
@@ -65,8 +65,8 @@ CREATED_FILE = "created-branches.json"
 OK_STATUSES = ("clean", "committed", "pushed", "dry-run")
 
 SECRET_NAMES = [".env*", "*.pem", "*.key", "*.p12", "id_rsa*", "id_ed25519*", "*credential*", "*secret*", "*token*",
-                ".npmrc", ".netrc", ".pypirc", ".git-credentials", "*.kdbx"]
-TOKEN_RX = r"(?<![A-Za-z0-9_])(?:ghp_|gho_|ghs_|ghu_|github_pat_|npm_|glpat-|sk-ant-|xox[bap]-|xoxe[.-])[A-Za-z0-9_\-]{16,}"
+                ".npmrc", ".netrc", ".pypirc", ".git-credentials", "*.kdbx", "*.jks", "*.pfx", "id_ecdsa*"]
+TOKEN_RX = r"(?<![A-Za-z0-9_])(?:ghp_|gho_|ghs_|ghu_|ghr_|AIza|github_pat_|npm_|glpat-|sk-ant-|xox[bap]-|xoxe[.-])[A-Za-z0-9_\-]{16,}"
 SECRET_CONTENT = [
     ("private key header", re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----")),
     ("token prefix", re.compile(TOKEN_RX.encode("ascii"))),
@@ -78,6 +78,8 @@ REDACT = [(re.compile(r"(\w[\w+.\-]*://)[^/@\s]+@"), r"\1***@"), (re.compile(TOK
 # one is refused; only the rule name is reported (a url.<base> subsection can carry credentials).
 RISKY_KEYS = [(label, re.compile(rx), nonfalse) for label, rx, nonfalse in (
     ("filter.*", r"filter\..+", False), ("diff.*.textconv", r"diff\..+\.textconv", False),
+    ("diff.*.command", r"diff\..+\.command", False), ("core.attributesFile", r"core\.attributesfile", False),
+    ("submodule.*", r"submodule\..+", False), ("remote.*.vcs", r"remote\..+\.vcs", False),
     ("core.fsmonitor", r"core\.fsmonitor", True), ("core.hooksPath", r"core\.hookspath", False),
     ("core.sshCommand", r"core\.sshcommand", False), ("core.gitProxy", r"core\.gitproxy", False),
     ("core.askPass", r"core\.askpass", False), ("credential.*helper", r"credential\.(?:.+\.)?helper", False),
@@ -101,7 +103,7 @@ def git(args, cwd, stdin=None):
     if not exe:
         return 127, "", "git is not on PATH"
     try:
-        r = subprocess.run([exe, "-c", "commit.gpgSign=false"] + safe_ops.git_hardening() + list(args), cwd=cwd, env=safe_ops._git_env(),
+        r = subprocess.run([exe, "-c", "commit.gpgSign=false", "-c", "submodule.recurse=false"] + safe_ops.git_hardening() + list(args), cwd=cwd, env=safe_ops._git_env(),
                            input=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=GIT_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as exc:
         return 1, "", str(exc)

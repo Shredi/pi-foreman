@@ -138,6 +138,8 @@ class SyncTest(unittest.TestCase):
         outside = self.tmp / "outside.cfg"
         outside.write_text("[user]\n\tname = X\n")
         cases = [("filter.x.clean", "touch pwned", "filter.*"), ("diff.x.textconv", "cat", "diff.*.textconv"),
+                 ("diff.x.command", "x", "diff.*.command"), ("core.attributesFile", "x", "core.attributesFile"),
+                 ("submodule.recurse", "true", "submodule.*"), ("remote.origin.vcs", "x", "remote.*.vcs"),
                  ("core.sshCommand", "ssh -o X=y", "core.sshCommand"), ("core.hooksPath", "hooks", "core.hooksPath"),
                  ("credential.helper", "store", "credential.*helper"), ("gpg.ssh.program", "x", "gpg.*.program"),
                  ("commit.gpgSign", "true", "commit.gpgSign"),
@@ -175,11 +177,17 @@ class SyncTest(unittest.TestCase):
         (self.work / "notes" / "a.bin").write_bytes(pad + b"-----BEGIN PGP PRIVATE KEY BLOCK-----\nX\n")
         (self.work / "notes" / "b.md").write_bytes(b"x npm_" + b"A1b2C3d4E5f6G7h8I9j0" + b"\n")
         (self.work / "notes" / ".npmrc").write_text("x\n")
+        (self.work / "notes" / "c.md").write_bytes(b"x ghr_" + b"A1b2C3d4E5f6G7h8I9j0" + b"\n")
+        (self.work / "notes" / "d.md").write_bytes(b"x AIza" + b"SyA1b2C3d4E5f6G7h8I9j0K1l2M3n4o5p6q" + b"\n")
+        for name in ("k.jks", "k.pfx", "id_ecdsa.pub"):
+            (self.work / "notes" / name).write_text("x\n")
         code, rep = self.run_sync()
         self.assertEqual((code, rep["status"]), (1, "refused"))
         self.assertEqual({s["file"]: s["rule"] for s in rep["secrets"]},
                          {"notes/a.bin": "content: private key header", "notes/b.md": "content: token prefix",
-                          "notes/.npmrc": "name matches .npmrc"})
+                          "notes/.npmrc": "name matches .npmrc", "notes/c.md": "content: token prefix",
+                          "notes/d.md": "content: token prefix", "notes/k.jks": "name matches *.jks",
+                          "notes/k.pfx": "name matches *.pfx", "notes/id_ecdsa.pub": "name matches id_ecdsa*"})
 
     def test_too_large_and_links_refused(self):
         (self.work / "notes").mkdir()
