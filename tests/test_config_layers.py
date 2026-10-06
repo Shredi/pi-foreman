@@ -199,6 +199,28 @@ class LayerRulesTest(unittest.TestCase):
         res = self.load(l2={"ceremony": {"requireTriage": False}}, proj={}, session={})
         self.assertIs(res["config"]["ceremony"]["requireTriage"], False)
 
+    def test_ceremony_escalation_keys_tighten_only(self):
+        # MINOR-7: signals union only, file count lower only (>= 1), default raise only, wrong types dropped.
+        res = self.load(proj={"ceremony": {"heavySignals": ["schema"], "heavyFileCount": 50, "default": "trivial"}},
+                        session={"ceremony": {"heavyFileCount": 0, "revisionRounds": None}})
+        cer = res["config"]["ceremony"]
+        self.assertEqual(res["errors"], [])
+        self.assertEqual(cer["heavySignals"][-1], "schema")
+        self.assertIn("delete", cer["heavySignals"])
+        self.assertEqual((cer["heavyFileCount"], cer["default"]), (8, "standard"))
+        self.assertEqual(cer["revisionRounds"], {"standard": 1, "heavy": 2})
+        joined = "\n".join(res["warnings"])
+        self.assertIn("project ceremony.heavySignals: entries not removed: delete", joined)
+        self.assertIn("project ceremony.heavyFileCount ignored: it would loosen", joined)
+        self.assertIn("project ceremony.default ignored: it would lower the tier", joined)
+        self.assertIn("session ceremony.heavyFileCount ignored: below the minimum 1", joined)
+        self.assertIn("session ceremony.revisionRounds ignored: not an object", joined)
+        res = self.load(proj={"ceremony": None}, session={"ceremony": {"heavyFileCount": 3, "default": "heavy"}})
+        self.assertEqual(res["errors"], [])
+        self.assertEqual(len(res["config"]["ceremony"]["heavySignals"]), 7)
+        self.assertEqual((res["config"]["ceremony"]["heavyFileCount"], res["config"]["ceremony"]["default"]), (3, "heavy"))
+        self.assertIn("project ceremony ignored: not an object", "\n".join(res["warnings"]))
+
     def test_pin_role_model_settable_review_ignored(self):
         res = self.load(session={"providers": {"p1": {"roles": {"builder": {"model": "p1/s"}},
                                                       "review": {"model": "p1/r"}}}})

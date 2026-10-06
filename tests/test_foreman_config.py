@@ -183,6 +183,14 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(fc.resolve_role(cfg, "explorer", "p1")["strong"], {"model": "p2/E", "thinking": None})
         self.assertNotIn("strong", fc.resolve_role(cfg, "reviewer", "p1"))
 
+    def test_strong_only_from_the_provider_model_came_from(self):
+        # MINOR-8: p maps builder.model itself, so q's strong never applies, even with q as fallback.
+        self.l2({"providers": {"p": {"roles": {"builder": {"model": "p/b"}}, "fallback": {"provider": "q"}},
+                               "q": {"roles": {"builder": {"model": "q/b", "strong": {"model": "q/STRONG"}}}}}})
+        cfg = self.load()["config"]
+        self.assertEqual(fc.resolve_role(cfg, "builder", "p")["model"], "p/b")
+        self.assertNotIn("strong", fc.resolve_role(cfg, "builder", "p"))
+
     def test_resolve_all_includes_overlay_roles(self):
         self.l2({"roles": {"auditor": {"tools": ["read"]}},
                  "providers": {"p1": {"roles": {"auditor": {"model": "p1/a"}}}}})
