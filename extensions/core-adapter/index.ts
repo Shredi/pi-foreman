@@ -46,6 +46,8 @@ import type { TraceWriter } from "./trace.ts";
 import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, causeOfInput, formatSummary, PARENT_SESSION_ENV, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
+import { CompactionGate } from "./compaction.ts";
+import { UsageFooter } from "./footer.ts";
 import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { foremanTriage, GATED_TOOLS, triageAdvice, triageGateBlock, TRIAGE_TOOL } from "./triage.ts";
@@ -120,6 +122,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   let instructionsCache: string | null | undefined;
   const bridgeIso = new BridgeIsolation();
   const review = new ForemanReview();
+  const usageFooter = new UsageFooter();
+  const compactionGate = new CompactionGate();
   pi.events?.on("permissions:ready", (payload: unknown) => review.onReady(payload));
   let isoSetting: unknown = "auto";
   const baseline = readBaseline(PKG_ROOT);
@@ -389,6 +393,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     s.registration = undefined;
     review.drop(s.id);
+    usageFooter.drop(s.id);
+    compactionGate.reset(s.id);
     pythonCache.drop(s.id);
     sessions.delete(s.id);
   });
@@ -451,6 +457,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { cancel: true };
   }
   pi.on("session_before_compact", async (_event, ctx) => bridgeSummaryGate(ctx, "claude-bridge compaction summary"));
+  pi.on("turn_end", async (_event, ctx) => {
+    const s = sessionFor(ctx);
+    if (!s) return;
+    const cls = compactionGate.decide(s.id, ctx.model, ctx.getContextUsage(), { tiers: get(s.config.config, "compaction.priceTiers"), thresholds: get(s.config.config, "compaction.threshold") });
+    if (!cls) return;
+    s.trace?.emit({ event: "compact_tier", tier: cls, model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null });
+    ctx.compact();
+  });
+  pi.on("session_compact", async (_event, ctx) => { const s = sessionFor(ctx); if (s) compactionGate.reset(s.id); });
+  pi.on("session_compact_failed", async (_event, ctx) => { const s = sessionFor(ctx); if (s) compactionGate.reset(s.id); });
   pi.on("session_before_tree", async (_event, ctx) => bridgeSummaryGate(ctx, "claude-bridge branch summary"));
 
   // A cache-warming refresh re-sends the last request, which on claude-bridge starts Claude Code.
@@ -649,6 +665,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.turn.cacheRead += Number(m.usage?.cacheRead) || 0;
       s.turn.cacheWrite += Number(m.usage?.cacheWrite) || 0;
     }
+    usageFooter.update(s.id, ctx, event.message, { enabled: get(s.config.config, "footer.usage"), isChild: s.isChild, children: s.launches.size });
     return undefined;
   });
 
