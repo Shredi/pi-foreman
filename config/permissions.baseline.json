@@ -13,7 +13,8 @@
     "foreman_worktree_remove": "allow",
     "foreman_move": "allow",
     "foreman_copy": "allow",
-    "foreman_triage": "allow"
+    "foreman_triage": "allow",
+    "foreman_wait": "allow"
   },
   "externalDirectory": "ask",
   "shellTools": {

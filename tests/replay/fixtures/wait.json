@@ -1,0 +1,11 @@
+{
+ "foreman": {
+  "w1": [
+   {"tools": [{"name": "foreman_wait", "arguments": {"action": "start", "kind": "timer", "seconds": 1, "note": "[[replay:w2]] timer done"}}]},
+   {"tools": [{"name": "foreman_wait", "arguments": {"action": "start", "kind": "file", "path": "../outside.txt"}}]},
+   {"tools": [{"name": "foreman_wait", "arguments": {"action": "start", "kind": "file", "path": ".git/HEAD"}}]},
+   {"text": "Waiting."}
+  ],
+  "w2": [{"text": "Woken by the timer."}]
+ }
+}
