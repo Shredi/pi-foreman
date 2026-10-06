@@ -1,0 +1,11 @@
+{
+ "foreman": {
+  "ic1": [
+   {"tools": [{"name": "intercom", "arguments": {"action": "status"}}]},
+   {"tools": [{"name": "intercom", "arguments": {"action": "list"}}]},
+   {"tools": [{"name": "intercom", "arguments": {"action": "send", "cwd": ".", "openProjectPaneIfMissing": true, "message": "hello"}}]},
+   {"tools": [{"name": "intercom", "arguments": {"action": "send", "to": "peer@far-machine", "message": "hello"}}]},
+   {"text": "Done."}
+  ]
+ }
+}

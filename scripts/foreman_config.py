@@ -108,6 +108,9 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULTS_PATH = ROOT / "config" / "foreman.defaults.json"
 SCHEMA_PATH = ROOT / "config" / "foreman.schema.json"
 CHILD_ROLES = ["explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
+# Tools a child never gets, whatever roles.<id>.tools says: children reach the foreman through
+# contact_supervisor, never through pi-intercom (the adapter also refuses the tool in children).
+CHILD_DENIED_TOOLS = ("intercom",)
 THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 # project-layer tightening of safety.* (see module docstring)
@@ -684,6 +687,8 @@ def resolve_role(cfg, role, provider):
         source = fentry
     codemode = effective_codemode(cfg, provider, role)
     tools = list((cfg.get("roles") or {}).get(role, {}).get("tools", []))
+    if role != "foreman":
+        tools = [t for t in tools if t not in CHILD_DENIED_TOOLS]
     if codemode and "codemode" not in tools:
         tools.append("codemode")
     out = {"model": model, "thinking": cap_thinking(thinking, cfg.get("maxThinking")),
@@ -721,7 +726,7 @@ def generate_subagents(cfg):
     """
     by_provider, overrides, errors = {}, {}, []
     for role in CHILD_ROLES:
-        tools = list((cfg.get("roles") or {}).get(role, {}).get("tools", []))
+        tools = [t for t in (cfg.get("roles") or {}).get(role, {}).get("tools", []) if t not in CHILD_DENIED_TOOLS]
         if cfg.get("roles", {}).get(role, {}).get("codemode") and "codemode" not in tools:
             tools.append("codemode")
         overrides[role] = {"tools": tools}

@@ -13,7 +13,8 @@
     "foreman_worktree_remove": "allow",
     "foreman_move": "allow",
     "foreman_copy": "allow",
-    "foreman_triage": "allow"
+    "foreman_triage": "allow",
+    "intercom": "allow"
   },
   "externalDirectory": "ask",
   "shellTools": {
@@ -141,6 +142,8 @@
       "{agentDir}/foreman.json",
       "{agentDir}/settings.json",
       "{agentDir}/claude-bridge.json",
+      "{agentDir}/intercom",
+      "{agentDir}/intercom/*",
       "{agentDir}/agents",
       "{agentDir}/agents/*",
       "{agentDir}/npm",

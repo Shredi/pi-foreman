@@ -53,6 +53,7 @@ import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { foremanTriage, GATED_TOOLS, triageAdvice, triageGateBlock, TRIAGE_TOOL } from "./triage.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
 import type { RegistryLike } from "./modelcheck.ts";
+import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = fileURLToPath(import.meta.url);
@@ -102,7 +103,7 @@ interface Session {
   /** Launches this session recorded (launch id -> binding), for later kinds (revision, strong-relaunch). */
   launches: Map<string, LaunchBinding>;
   /** Foreman only: last trigger of the current run and its cache tokens, for the `turn` trace event. */
-  turn: { cause: TurnCause; cacheRead: number; cacheWrite: number };
+  turn: { cause: TurnCause; cacheRead: number; cacheWrite: number; intercomFrom?: string };
   /** Foreman only: builder revision rounds since the last user prompt or /ceremony tier change (rounds.ts). */
   rounds: RoundState;
 }
@@ -531,6 +532,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const sup = supervisorBlock(sessionFor(ctx), event.toolName, event.input);
     if (sup) return sup;
+    if (event.toolName === INTERCOM_TOOL) {
+      try {
+        const s = await ensureSession(ctx);
+        const reason = intercomBlock(event.toolName, event.input, { isChild: s.isChild, allowRemote: get(s.config.config, "intercom.allowRemote") === true, allowOpenPane: get(s.config.config, "intercom.allowOpenPane") === true });
+        s.trace?.emit({ event: "guard", guard: "intercom", toolFamily: "intercom", decision: reason ? "blocked" : "allowed" });
+        if (reason) return { block: true, reason };
+      } catch (err) {
+        return { block: true, reason: `pi-foreman: adapter error in the intercom guard (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
+      }
+    }
     if (GATED_TOOLS.has(event.toolName)) {
       const triage = await triageBlock(ctx, event.toolName, event.input as Record<string, unknown>);
       if (triage) return triage;
@@ -654,6 +665,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (opened) s?.trace?.emit({ event: "supervisor_request", role: opened.role, decision: "open" });
       const cause = causeOfCustom(m.customType);
       if (s && !s.isChild && cause) s.turn.cause = cause;
+      if (s && !s.isChild && m.customType === INTERCOM_MESSAGE_TYPE) s.turn.intercomFrom = intercomSender((event.message as { details?: unknown }).details);
       if (s && !s.isChild && m.customType === NOTIFY_TYPE) onCompletionNotice(s, (event.message as { content?: unknown }).content);
     }
     if (m.role !== "assistant") return undefined;
@@ -672,10 +684,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // Turn cause (D9, measurement only): the last trigger before or during a foreman run.
   pi.on("input", async (event, ctx) => {
     const s = sessionFor(ctx);
-    if (s && !s.isChild) s.turn.cause = causeOfInput(event.source);
+    if (s && !s.isChild) s.turn.cause = causeOfInput(event.source, event.text);
+    if (s && !s.isChild && s.turn.cause === "intercom") s.turn.intercomFrom = lastIntercomSender(ctx.sessionManager.getBranch()) ?? s.turn.intercomFrom;
     // D3: the owner is back in the loop, so revision rounds count from zero again.
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.rounds = initialRounds();
     return { action: "continue" as const };
+  });
+
+  // Intercom turns get a notice only; every gate applies unchanged (ledger item 4).
+  pi.on("agent_start", async (_event, ctx) => {
+    const s = sessionFor(ctx);
+    if (!s || s.isChild || s.turn.cause !== "intercom" || !s.turn.intercomFrom) return;
+    if (ctx.mode === "tui" || ctx.mode === "rpc") ctx.ui.notify(`pi-foreman: this turn was started by an intercom message from ${s.turn.intercomFrom}`, "info");
   });
 
   pi.on("agent_end", async (_event, ctx) => {
@@ -940,6 +960,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (order === "bridge-first") fail("pi-claude-bridge loads before pi-foreman, so its compaction and branch-summary takeover runs before pi-foreman's config-drift check", "list pi-foreman before pi-claude-bridge in settings.json packages.");
     else if (order === "foreman-first") ok("pi-foreman loads before pi-claude-bridge (the drift check precedes the bridge's summaries)");
     else if (order === "unknown") out.push("INFO load order of pi-foreman and pi-claude-bridge not found in settings.json packages");
+    out.push(...intercomDoctor(s.agentDir, [settings?.packages, projectSettings?.packages]));
     const rt = reviewTarget(s.config.config, ctx.model?.provider);
     if (!rt) out.push(`WARN no review model for provider ${ctx.model?.provider ?? "(none)"}: model review (${REVIEW_LINK}) is off, every ask goes to you — set providers.<p>.review.model in foreman.json`);
     else if (!ctx.modelRegistry.find(rt.provider, rt.modelId)) fail(`review model ${rt.provider}/${rt.modelId} not in the model registry; asks go to you`, "correct providers.<p>.review.model.");

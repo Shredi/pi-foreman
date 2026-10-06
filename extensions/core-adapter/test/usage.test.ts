@@ -109,3 +109,10 @@ test("turn cause: input source and pi-subagents message types", () => {
   assert.equal(causeOfCustom("subagent_supervisor_request"), "intercom");
   assert.equal(causeOfCustom("pi-foreman-stop-gate"), null);
 });
+
+test("turn cause: pi-intercom's inbound message and its idle wake prompt are intercom", () => {
+  assert.equal(causeOfCustom("intercom_message"), "intercom");
+  assert.equal(causeOfInput("extension", "New intercom message above."), "intercom");
+  assert.equal(causeOfInput("interactive", "New intercom message above."), "user");
+  assert.equal(causeOfInput("extension", "something else"), "other");
+});

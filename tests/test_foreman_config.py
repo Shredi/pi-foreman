@@ -225,6 +225,15 @@ class ConfigTest(unittest.TestCase):
                          ["read", "ls", "grep", "find", "bash", "edit"])
         json.dumps(out)
 
+    def test_children_never_get_the_intercom_tool(self):
+        self.l2({"providers": PROV})
+        cfg = self.load()["config"]
+        cfg["roles"]["builder"]["tools"].append("intercom")
+        cfg["roles"]["foreman"]["tools"] = ["read", "intercom"]
+        self.assertNotIn("intercom", fc.generate_subagents(cfg)["subagents"]["agentOverrides"]["builder"]["tools"])
+        self.assertNotIn("intercom", fc.resolve_role(cfg, "builder", "p1")["tools"])
+        self.assertIn("intercom", fc.resolve_role(cfg, "foreman", "p1")["tools"])
+
     def test_provider_codemode_override_writes_provider_tools(self):
         prov = json.loads(json.dumps(PROV))
         prov["p1"]["roles"]["builder"]["codemode"] = True

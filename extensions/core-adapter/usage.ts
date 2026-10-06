@@ -323,11 +323,20 @@ export type TurnCause = "user" | "child" | "intercom" | "other";
 
 /** pi-subagents 0.75.0 custom messages that report a child's end (notify.js, subagent-executor.js, wait-subscriptions.js). */
 export const CHILD_MESSAGE_TYPES = ["subagent-notify", "subagent-incremental-child-notify", "subagent-wait-subscription"];
-/** Its native intercom (supervisor) channel: a child's contact_supervisor request (intercom/native-supervisor-channel.js). */
-export const INTERCOM_MESSAGE_TYPES = ["subagent_supervisor_request"];
+/**
+ * Its native intercom (supervisor) channel: a child's contact_supervisor request (intercom/native-supervisor-channel.js),
+ * and pi-intercom 0.16.1's inbound message (index.ts:1291).
+ */
+export const INTERCOM_MESSAGE_TYPES = ["subagent_supervisor_request", "intercom_message"];
+/**
+ * pi-intercom 0.16.1 appends a message to an idle session without starting a run (Pi's extension
+ * `message_end` does not fire for that append), then wakes it with this extension prompt (index.ts:1302).
+ */
+export const INTERCOM_WAKE_TEXT = "New intercom message above.";
 
-/** Cause from an `input` event source: typed or RPC prompts are the user's. */
-export function causeOfInput(source: unknown): TurnCause {
+/** Cause from an `input` event: typed or RPC prompts are the user's, pi-intercom's wake prompt is intercom. */
+export function causeOfInput(source: unknown, text?: unknown): TurnCause {
+  if (source === "extension" && text === INTERCOM_WAKE_TEXT) return "intercom";
   return source === "interactive" || source === "rpc" ? "user" : "other";
 }
 

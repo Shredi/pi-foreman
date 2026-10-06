@@ -12,6 +12,7 @@ into the temp root, and inherited PI_* / FOREMAN_* variables are dropped.
 Environment knobs:
   FOREMAN_PI_CLI         path to Pi's cli.js (default: <npm root -g>/@earendil-works/pi-coding-agent/dist/bundle/cli.js)
   FOREMAN_PI_SUBAGENTS   path to an installed pi-subagents package dir (skips the npm install)
+  FOREMAN_PI_INTERCOM    path to an installed pi-intercom package dir (intercom rigs only)
   FOREMAN_REPLAY_CACHE   npm prefix used to install pi-subagents once (default: <tempdir>/pi-foreman-replay-cache)
   FOREMAN_REPLAY_KEEP=1  keep temp roots for inspection
 """
@@ -34,6 +35,7 @@ FAKE_PROVIDER = HERE / "fake_provider.ts"
 PI_SUBAGENTS_VERSION = "0.75.0"
 PERMISSION_SYSTEM = "@gotgenes/pi-permission-system"
 PERMISSION_SYSTEM_VERSION = "39.0.2"
+PI_INTERCOM_VERSION = "0.16.1"
 PROVIDER_A = "foreman-fake"
 PROVIDER_B = "foreman-fake-b"
 ROLES = ["foreman", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
@@ -100,6 +102,22 @@ def permission_system_dir():
     return pkg.resolve()
 
 
+def pi_intercom_dir():
+    """Installed pi-intercom (same cache prefix); loaded only by rigs made with intercom=True."""
+    env = os.environ.get("FOREMAN_PI_INTERCOM")
+    if env:
+        return Path(env).resolve()
+    cache = Path(os.environ.get("FOREMAN_REPLAY_CACHE") or Path(tempfile.gettempdir()) / "pi-foreman-replay-cache")
+    pkg = cache / "node_modules" / "pi-intercom"
+    manifest = pkg / "package.json"
+    if not manifest.is_file() or json.loads(manifest.read_text("utf-8")).get("version") != PI_INTERCOM_VERSION:
+        cache.mkdir(parents=True, exist_ok=True)
+        r = _run([_tool("npm"), "install", "--no-audit", "--no-fund", "--prefix", str(cache), "pi-intercom@" + PI_INTERCOM_VERSION], 600)
+        if r.returncode != 0:
+            raise RuntimeError("npm install pi-intercom failed: %s" % r.stderr.decode()[-500:])
+    return pkg.resolve()
+
+
 # permissions="open" keeps the older scenarios unchanged; "baseline" is what the installer writes.
 OPEN_PERMISSIONS = {"permission": {"*": "allow", "bash": {"*": "allow"}}}
 
@@ -119,11 +137,14 @@ class Rig:
     """One throwaway Pi world: agent dir + project + tmp, plus the processes started in it."""
 
     def __init__(self, name, script, providers=(PROVIDER_A,), config=None, settings=None, unmapped=(),
-                 project_config=None, l2_providers=True, permissions="open"):
+                 project_config=None, l2_providers=True, permissions="open", intercom=False):
         """`project_config` is written to project/.pi/foreman.json after the user block is
         generated (Pi runs with --approve, so the adapter trusts it); `l2_providers=False` leaves
         the L2 `providers` map, and so the generated agentOverridesByProvider, empty."""
-        self.root = Path(tempfile.mkdtemp(prefix="pf-replay-%s-" % name)).resolve()
+        # pi-intercom's broker socket lives in the agent dir; macOS caps socket paths at 103 bytes,
+        # which the default temp dir there exceeds, so intercom rigs use /tmp on POSIX.
+        base = "/tmp" if intercom and os.name != "nt" and os.path.isdir("/tmp") else None
+        self.root = Path(tempfile.mkdtemp(prefix="pf-replay-%s-" % name, dir=base)).resolve()
         self.agent = self.root / "agent"
         self.project = self.root / "project"
         self.tmp = self.root / "tmp"
@@ -147,6 +168,8 @@ class Rig:
             raise RuntimeError("generate-subagents failed: %s" % gen.stderr.decode())
         block = json.loads(gen.stdout.decode())["subagents"]
         st = {"packages": [str(pi_subagents_dir()), str(REPO), str(permission_system_dir())], "subagents": block}
+        if intercom:
+            st["packages"].append(str(pi_intercom_dir()))
         if settings:
             st = deep_merge(st, settings)
         (self.agent / "settings.json").write_text(json.dumps(st, indent=1), "utf-8")
@@ -232,8 +255,8 @@ class Rig:
         if os.environ.get("FOREMAN_REPLAY_KEEP") == "1":
             sys.stderr.write("replay: kept %s\n" % self.root)
             return
-        tmp_root = Path(tempfile.gettempdir()).resolve()
-        if tmp_root in self.root.parents and self.root.name.startswith("pf-replay-"):
+        tmp_roots = {Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve()}
+        if self.root.parent in tmp_roots and self.root.name.startswith("pf-replay-"):
             for _ in range(5):
                 try:
                     shutil.rmtree(str(self.root))
