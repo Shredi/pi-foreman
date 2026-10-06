@@ -51,6 +51,7 @@ import { UsageFooter } from "./footer.ts";
 import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait } from "./wait.ts";
+import { registerClose } from "./close.ts";
 import { foremanTriage, GATED_TOOLS, triageAdvice, triageGateBlock, TRIAGE_TOOL } from "./triage.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
 import type { RegistryLike } from "./modelcheck.ts";
@@ -813,12 +814,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   // D9 long wait (wait.ts): foreman only; the wake is an ordinary custom message (no gate bypass).
-  registerWait(pi, {
+  const waits = registerWait(pi, {
     home: os.homedir(),
     platform,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
       return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r) };
+    },
+  });
+
+  // D5 remote close (close.ts): `/foreman close` and a parent's intercom `foreman:close`; an ordinary close turn.
+  const close = registerClose(pi, {
+    platform,
+    activeWaits: (id) => waits.active(id),
+    session: async (ctx) => {
+      const s = await ensureSession(ctx);
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), runSync: (c) => runSync(s, c), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text };
     },
   });
 
@@ -868,10 +879,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   /** Run one scripts/*.py of the package with the resolved interpreter; the text to show. */
-  async function runScript(s: Session, script: string, args: string[]): Promise<{ text: string; ok: boolean }> {
+  async function runScript(s: Session, script: string, args: string[], timeoutMs = 60_000): Promise<{ text: string; ok: boolean }> {
     const py = pyPath(s);
     if (!py) return { text: `${script}: no usable Python (run /foreman doctor).`, ok: false };
-    const r = await spawner(py, ["-E", "-s", path.join(PKG_ROOT, "scripts", script), ...args], { timeoutMs: 60_000, cwd: s.cwd });
+    const r = await spawner(py, ["-E", "-s", path.join(PKG_ROOT, "scripts", script), ...args], { timeoutMs, cwd: s.cwd });
     const text = (r.stdout.trim() || r.stderr.trim() || `${script} produced no output.`);
     return { text, ok: !r.error && !r.timedOut && r.code === 0 };
   }
@@ -885,19 +896,46 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       const day = new Date().toISOString().slice(0, 10);
-      const args = ["--agent-dir", s.agentDir, "--review-log", path.join(s.agentDir, "extensions", "pi-permission-system", "logs", "pi-permission-system-permission-review.jsonl"), "--usage", s.usage.file, "--proposals-out", path.join(s.agentDir, "pi-foreman", "state", "retro", `permission-proposals-${day}.json`)];
-      const sessionFile = ctx.sessionManager.getSessionFile();
-      if (sessionFile) args.push("--session", sessionFile);
-      if (s.trace) args.push("--trace", s.trace.file);
+      const args = [...retroInputs(s, ctx, "--session"), "--proposals-out", path.join(s.agentDir, "pi-foreman", "state", "retro", `permission-proposals-${day}.json`)];
       const r = await runScript(s, "foreman_retro.py", args);
       ctx.ui.notify(r.text, r.ok ? "info" : "error");
     },
   });
 
+  /** Retro inputs of this session (agent dir, review log, usage, session file, trace). */
+  function retroInputs(s: Session, ctx: ExtensionContext, sessionFlag: string): string[] {
+    const args = ["--agent-dir", s.agentDir, "--review-log", path.join(s.agentDir, "extensions", "pi-permission-system", "logs", "pi-permission-system-permission-review.jsonl"), "--usage", s.usage.file];
+    const sessionFile = ctx.sessionManager.getSessionFile();
+    if (sessionFile) args.push(sessionFlag, sessionFile);
+    if (s.trace) args.push("--trace", s.trace.file);
+    return args;
+  }
+
+  /** scripts/foreman_sync.py for this session (/sync and remote close). */
+  function runSync(s: Session, ctx: ExtensionContext): Promise<{ text: string; ok: boolean }> {
+    const args = ["--cwd", s.cwd, "--state", path.join(s.agentDir, "pi-foreman", "state"), "--session", s.id, ...retroInputs(s, ctx, "--session-file")];
+    if (safeTrusted(ctx)) args.push("--trusted-project");
+    return runScript(s, "foreman_sync.py", args, 600_000);
+  }
+
+  pi.registerCommand("sync", {
+    description: "Pull, commit (explicit paths) and push the configured sync.repos, then the retro (foreman only)",
+    handler: async (_args, ctx) => {
+      const s = await ensureSession(ctx);
+      if (s.isChild) {
+        ctx.ui.notify("/sync is for the foreman only.", "warning");
+        return;
+      }
+      const r = await runSync(s, ctx);
+      ctx.ui.notify(r.text, r.ok ? "info" : "error");
+    },
+  });
+
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor | /foreman cost [workspace] | /foreman update-check",
+    description: "pi-foreman commands: /foreman doctor | /foreman cost [workspace] | /foreman update-check | /foreman close [result-path]",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
+      if (sub === "close") return close.command(args.trim().slice(sub.length), ctx);
       if (sub === "cost") {
         const s = await ensureSession(ctx);
         const ws = rest.join(" ").trim();
@@ -913,7 +951,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       if (sub !== "doctor") {
-        ctx.ui.notify("Usage: /foreman doctor | /foreman cost [workspace] | /foreman update-check", "warning");
+        ctx.ui.notify("Usage: /foreman doctor | /foreman cost [workspace] | /foreman update-check | /foreman close [result-path]", "warning");
         return;
       }
       const s = await ensureSession(ctx);

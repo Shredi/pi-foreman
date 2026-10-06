@@ -396,14 +396,15 @@ const PARAMS = {
 };
 
 /** Register `foreman_wait` (foreman sessions only) and its shutdown cleanup. */
-export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): void {
+export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]> } {
   const runtimes = new Map<string, { rt: WaitRuntime; ctx: ExtensionContext }>();
+  const handle = { active: (sessionId: string) => runtimes.get(sessionId)?.rt.list() ?? [] };
   pi.on("session_shutdown", async (_event, ctx) => {
     const id = ctx.sessionManager.getSessionId();
     runtimes.get(id)?.rt.dispose();
     runtimes.delete(id);
   });
-  if (process.env.PI_SUBAGENT_CHILD === "1") return;
+  if (process.env.PI_SUBAGENT_CHILD === "1") return handle;
   pi.registerTool({
     name: WAIT_TOOL,
     label: "Long wait",
@@ -466,4 +467,5 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       return text(`Wait ${r.id} (${spec.kind}) started; times out after ${l.maxSeconds}s. End your turn: you will be woken by one message${win > 0 ? ` (outcomes within ${win}s are batched)` : ""}.`, { decision: "start", id: r.id, kind: spec.kind });
     },
   } as never);
+  return handle;
 }

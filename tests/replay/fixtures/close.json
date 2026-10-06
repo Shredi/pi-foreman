@@ -1,0 +1,9 @@
+{
+ "foreman": {
+  "c1": [
+   {"text": "Ready."},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/result-close.md", "content": "# Result\n\nsummary: replay close\n"}}]},
+   {"text": "Result written."}
+  ]
+ }
+}

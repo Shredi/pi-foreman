@@ -319,7 +319,7 @@ export function formatSummary(sum: UsageSummary, title: string): string {
 
 // ------------------------------------------------------------- turn cause (D9)
 
-export type TurnCause = "user" | "child" | "intercom" | "wake" | "other";
+export type TurnCause = "user" | "child" | "intercom" | "wake" | "close" | "other";
 
 /** pi-subagents 0.75.0 custom messages that report a child's end (notify.js, subagent-executor.js, wait-subscriptions.js). */
 export const CHILD_MESSAGE_TYPES = ["subagent-notify", "subagent-incremental-child-notify", "subagent-wait-subscription"];
