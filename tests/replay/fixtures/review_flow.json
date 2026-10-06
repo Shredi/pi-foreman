@@ -1,0 +1,69 @@
+{
+ "foreman": {
+  "t0": [
+   {"tools": [{"name": "edit", "arguments": {"path": "a.txt", "edits": [{"oldText": "alpha", "newText": "beta"}]}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/notes.md", "content": "scratch notes\n"}}]},
+   {"text": "Edit refused; notes written."}
+  ],
+  "t1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "trivial", "reason": "one word in one file"}}]},
+   {"tools": [{"name": "edit", "arguments": {"path": "a.txt", "edits": [{"oldText": "alpha", "newText": "beta"}]}}]},
+   {"text": "Done."}
+  ],
+  "t2": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "edit", "arguments": {"path": "a.txt", "edits": [{"oldText": "alpha", "newText": "beta"}]}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-std.md", "content": "# Requirements Ledger: std\n\n- [ ] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "t3": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a migration"}}]},
+   {"tools": [{"name": "edit", "arguments": {"path": "a.txt", "edits": [{"oldText": "alpha", "newText": "beta"}]}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-heavy.md", "content": "# Requirements Ledger: heavy\n\n- [ ] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+
+  "s1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-rv.md", "content": "# Requirements Ledger: rv\n\n- [ ] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-s2]] build item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "s2": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-s3]] review item 1"}}]}, {"text": "Reviewer launched."}],
+  "s3": [{"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-s4]] fix the findings"}}]}, {"text": "Revision 1 launched."}],
+  "s4": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-s5]] review again"}}]}, {"text": "Reviewer launched."}],
+  "s5": [{"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] fix again"}}]}, {"text": "Reporting the open findings to the owner."}],
+  "s6": [{"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] the owner said go on"}}]}, {"text": "Builder launched."}],
+
+  "h1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a migration"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-hv.md", "content": "# Requirements Ledger: hv\n\n- [ ] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-h2]] build item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "h2": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-h3]] review"}}]}, {"text": "Reviewer launched."}],
+  "h3": [{"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-h4]] fix 1"}}]}, {"text": "Revision 1 launched."}],
+  "h4": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-h5]] review"}}]}, {"text": "Reviewer launched."}],
+  "h5": [{"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-h6]] fix 2"}}]}, {"text": "Revision 2 launched."}],
+  "h6": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-h7]] review"}}]}, {"text": "Reviewer launched."}],
+  "h7": [{"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] fix 3"}}]}, {"text": "Reporting the open findings to the owner."}]
+ },
+ "*": {
+  "quiet": [{"text": "child: nothing to report"}],
+  "b-s2": [{"text": "[[replay:s2]] built"}],
+  "b-s4": [{"text": "[[replay:s4]] fixed"}],
+  "b-h2": [{"text": "[[replay:h2]] built"}],
+  "b-h4": [{"text": "[[replay:h4]] fixed"}],
+  "b-h6": [{"text": "[[replay:h6]] fixed"}],
+  "r-s3": [
+   {"tools": [{"name": "edit", "arguments": {"path": "a.txt", "edits": [{"oldText": "alpha", "newText": "reviewer was here"}]}}]},
+   {"text": "[[replay:s3]] 1. FAIL a.txt:1\nOverall verdict: FAIL"}
+  ],
+  "r-s5": [{"text": "[[replay:s5]] 1. FAIL a.txt:1\nOverall verdict: FAIL"}],
+  "r-h3": [{"text": "[[replay:h3]] 1. FAIL a.txt:1\nOverall verdict: FAIL"}],
+  "r-h5": [{"text": "[[replay:h5]] 1. FAIL a.txt:1\nOverall verdict: FAIL"}],
+  "r-h7": [{"text": "[[replay:h7]] 1. FAIL a.txt:1\nOverall verdict: FAIL"}]
+ }
+}
