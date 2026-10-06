@@ -188,13 +188,18 @@ def summarize_logs(logs_dir, main_role="main"):
             thinking_by_model.setdefault(model, set()).update(levels)
         if models:
             thinking_by_role.setdefault(role, set()).update(levels)
-    approvals = guard_blocks = 0
+    approvals = guard_blocks = gate_blocks = revisions = 0
     roles = {}
-    for f in sorted((logs / "trace").glob("trace-*.jsonl")) if (logs / "trace").is_dir() else []:
+    reviewed = {}
+    tiers = {"recorded": None, "tier": None}
+    traces = trace_files(logs)
+    for f in traces:
         for line in f.read_text("utf-8", "replace").splitlines():
             try:
                 rec = json.loads(line)
             except ValueError:
+                continue
+            if not isinstance(rec, dict):
                 continue
             ev = rec.get("event")
             if ev == "ask":
@@ -203,12 +208,106 @@ def summarize_logs(logs_dir, main_role="main"):
                 guard_blocks += 1
             elif ev == "role_launch":
                 roles[rec.get("role")] = roles.get(rec.get("role"), 0) + 1
-    return {"tokens": dict(tok, total=sum(tok.values())), "tokens_by_model": by_model,
-            "tokens_by_role": {k: dict(v, total=sum(v.values())) for k, v in by_role.items()},
-            "thinking_by_model": {k: sorted(v) for k, v in thinking_by_model.items()},
-            "thinking_by_role": {k: sorted(v) for k, v in thinking_by_role.items()}, "cost_usd": cost,
-            "tool_calls": tool_calls, "approvals": approvals, "guard_blocks": guard_blocks, "sessions": sessions,
-            "role_launches": roles}
+            elif ev == "triage" and rec.get("decision") == "recorded" and rec.get("tier"):
+                tiers["recorded"] = str(rec["tier"])
+            elif ev == "tier" and rec.get("tier"):
+                tiers["tier"] = str(rec["tier"])
+            elif ev == "triage_gate" and rec.get("decision") == "blocked":
+                gate_blocks += 1
+            elif ev == "revision" and rec.get("decision") in ("revision", "strong-relaunch"):
+                revisions += 1
+            elif ev == "review":
+                d = str(rec.get("decision"))
+                reviewed[d] = reviewed.get(d, 0) + 1
+    by_rm = usage_by_role_model(logs)
+    log_total = sum(u[k] for m in by_rm.values() for u in m.values() for k in tok)
+    out = {"tokens": dict(tok, total=sum(tok.values())), "tokens_by_model": by_model,
+           "tokens_by_role": {k: dict(v, total=sum(v.values())) for k, v in by_role.items()},
+           "thinking_by_model": {k: sorted(v) for k, v in thinking_by_model.items()},
+           "thinking_by_role": {k: sorted(v) for k, v in thinking_by_role.items()}, "cost_usd": cost,
+           "tool_calls": tool_calls, "approvals": approvals, "guard_blocks": guard_blocks, "sessions": sessions,
+           "role_launches": roles}
+    if by_rm:
+        out["usage_by_role_model"] = by_rm
+        out["usage_log_delta"] = log_total - sum(tok.values())  # usage log total minus session-jsonl total
+    if traces:
+        out["triage"] = {"tier": tiers["recorded"] or tiers["tier"] or "untriaged", "launches": roles,
+                         "revisions": revisions, "gate_blocks": gate_blocks, "asks_reviewed": reviewed}
+    return out
+
+
+def trace_files(logs):
+    """Trace files of a cell: state/trace-*.jsonl (the copied state dir) and trace/trace-*.jsonl, one per name."""
+    seen = {}
+    for sub in ("state", "trace"):
+        d = Path(logs) / sub
+        for f in sorted(d.glob("trace-*.jsonl")) if d.is_dir() else []:
+            seen.setdefault(f.name, f)
+    return [seen[k] for k in sorted(seen)]
+
+
+def usage_by_role_model(logs):
+    """state/usage/*.jsonl (one line per assistant message_end, foreman and children) as
+    {role: {model: {input, cacheRead, cacheWrite, output, n}}}. Role "child" stays its own bucket."""
+    out = {}
+    d = Path(logs) / "state" / "usage"
+    for f in sorted(d.glob("*.jsonl")) if d.is_dir() else []:
+        for line in f.read_text("utf-8", "replace").splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            u = out.setdefault(str(rec.get("role") or "unknown"), {}).setdefault(
+                str(rec.get("model") or "unknown"), {"input": 0, "cacheRead": 0, "cacheWrite": 0, "output": 0, "n": 0})
+            for k in ("input", "cacheRead", "cacheWrite", "output"):
+                u[k] += int(rec.get(k) or 0)
+            u["n"] += 1
+    return out
+
+
+REFUSAL = re.compile(r"safeguards flagged|flagged this message", re.I)
+
+
+def _assistant_messages(path):
+    for line in Path(path).read_text("utf-8", "replace").splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        msg = rec.get("message") if isinstance(rec, dict) else None
+        if isinstance(msg, dict) and msg.get("role") == "assistant" and rec.get("type") in ("message", "message_end"):
+            yield msg
+
+
+def classify_infra(logs, status, tokens_total):
+    """metadata.bench.infra: {"flag", "reason", "detail"}. Reasons known here: usage_limit and provider_refusal
+    (waiter status, or a refusal text on an assistant message with stopReason error in the session or rpc files),
+    no_model_turn / assistant_error (rpc.jsonl), zero_tokens. interrupted and exception are the harness's
+    (foreman_bench.read_trial); a missing flag never overrides them."""
+    logs = Path(logs)
+    status = status or {}
+    if status.get("infra_error") in ("usage_limit", "provider_refusal"):
+        return {"flag": True, "reason": status["infra_error"], "detail": str(status.get("error") or "")[:300]}
+    files = sorted((logs / "sessions").rglob("*.jsonl")) if (logs / "sessions").is_dir() else []
+    rpc = logs / "rpc.jsonl"
+    for f in files + ([rpc] if rpc.is_file() else []):
+        if "subagent-artifacts" in f.parts:
+            continue
+        for msg in _assistant_messages(f):
+            text = "%s %s" % (msg.get("errorMessage") or "", json.dumps(msg.get("content") or ""))
+            if msg.get("stopReason") == "error" and REFUSAL.search(text):
+                return {"flag": True, "reason": "provider_refusal", "detail": text.strip()[:300]}
+    if rpc.is_file():
+        first = next(_assistant_messages(rpc), None)
+        if first is None:
+            return {"flag": True, "reason": "no_model_turn", "detail": "no assistant message in rpc.jsonl"}
+        if first.get("stopReason") == "error":
+            return {"flag": True, "reason": "assistant_error", "detail": str(first.get("errorMessage") or "")[:300]}
+    if tokens_total is not None and int(tokens_total) == 0:
+        return {"flag": True, "reason": "zero_tokens", "detail": "the run used zero model tokens"}
+    return {"flag": False, "reason": None, "detail": ""}
 
 
 class _BenchPi(BaseInstalledAgent):
@@ -361,6 +460,8 @@ class _BenchPi(BaseInstalledAgent):
             "waiter_start_ms": status.get("waiter_start_ms"), "waiter_end_ms": status.get("waiter_end_ms"),
             "async_runs_at_end": status.get("async_runs_at_end"),
             "setup_check": status.get("setup_check"),
+            "asks_denied": status.get("asks_denied") or [],
+            "infra": classify_infra(self.logs_dir, status, t["total"]),
         })
 
 

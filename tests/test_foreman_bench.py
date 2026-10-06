@@ -11,6 +11,17 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "bench"))
 import foreman_bench as fb  # noqa: E402
+import types  # noqa: E402
+for _m, _n in (("harbor", None), ("harbor.agents", None), ("harbor.agents.installed", None), ("harbor.agents.installed.base", ("ApiUsageLimitError", "BaseInstalledAgent")),
+               ("harbor.environments", None), ("harbor.environments.base", ("BaseEnvironment",)),
+               ("harbor.models", None), ("harbor.models.agent", None), ("harbor.models.agent.context", ("AgentContext",))):
+    if _m not in sys.modules:
+        _mod = types.ModuleType(_m)
+        for _a in _n or ():
+            setattr(_mod, _a, type(_a, (object,), {}))
+        sys.modules[_m] = _mod
+sys.path.insert(0, str(ROOT))
+from bench import harbor_agent as ha  # noqa: E402
 import wait_session as ws  # noqa: E402
 
 PRESET = {"bench": {"tasks_dir": "tasks", "repeats": 2},
@@ -315,6 +326,154 @@ class BenchTest(unittest.TestCase):
                 (runs / name / "status.json").write_text(json.dumps({"state": state}))
         (runs / ".active-runs").mkdir()
         self.assertEqual(sorted(r["runId"] for r in ws.active(ws.async_runs(self.root / "sub"))), ["b", "c"])
+
+
+    # ---- P3: infra shape, usage log, triage evidence ----
+    def logs(self, **files):
+        self.nlogs = getattr(self, "nlogs", 0) + 1
+        d = self.root / ("agentlogs%d" % self.nlogs)
+        for rel, lines in files.items():
+            f = d / rel.replace("__", "/")
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text("\n".join(json.dumps(x) for x in lines) + "\n")
+        return d
+
+    def test_cap_seconds_by_task_in_command(self):
+        row = PRESET["rows"][1]
+        cmd = fb.harbor_command(row, Path("/t/alpha"), "/p.json", Path("/j"), "x", cap_by_task={"alpha": 2400})
+        self.assertEqual(cmd[cmd.index("cap_seconds=2400") - 1], "--ak")
+        self.assertFalse([c for c in fb.harbor_command(row, Path("/t/beta"), "/p.json", Path("/j"), "x",
+                                                        cap_by_task={"alpha": 2400}) if c.startswith("cap_seconds")])
+
+    def test_infra_flag_shape_and_refusal_classification(self):
+        err = lambda text: {"type": "message_end", "message": {"role": "assistant", "stopReason": "error", "errorMessage": text}}  # noqa: E731
+        ok = {"type": "message_end", "message": {"role": "assistant", "stopReason": "stop", "content": []}}
+        clean = ha.classify_infra(self.logs(**{"rpc.jsonl": [ok]}), {}, 10)
+        self.assertEqual(clean, {"flag": False, "reason": None, "detail": ""})
+        # a refusal after a good first turn is still infra, even though the waiter missed it
+        r = ha.classify_infra(self.logs(**{"rpc.jsonl": [ok, err("Safeguards flagged this message")]}), {}, 10)
+        self.assertEqual((r["flag"], r["reason"]), (True, "provider_refusal"))
+        self.assertIn("Safeguards", r["detail"])
+        # the same text on a non-error message is not a refusal
+        text = {"type": "message_end", "message": {"role": "assistant", "stopReason": "stop", "content": "flagged this message"}}
+        self.assertFalse(ha.classify_infra(self.logs(**{"rpc.jsonl": [text]}), {}, 10)["flag"])
+        self.assertEqual(ha.classify_infra(self.logs(**{"rpc.jsonl": [err("boom")]}), {}, 10)["reason"], "assistant_error")
+        self.assertEqual(ha.classify_infra(self.logs(), {"infra_error": "usage_limit", "error": "x"}, 0)["reason"], "usage_limit")
+        self.assertEqual(ha.classify_infra(self.logs(), {}, 0)["reason"], "zero_tokens")
+
+    def infra_trial(self, reason, detail="d"):
+        rec = trial(reward=None)
+        rec["agent_result"]["metadata"]["bench"]["infra"] = {"flag": True, "reason": reason, "detail": detail}
+        return rec
+
+    def test_refusal_cell_is_rerun_and_listed_without_stopping(self):
+        self.job("R1__alpha__r1__a", self.infra_trial("provider_refusal", "x" * 200))
+        self.job("R1__alpha__r2__a", trial())
+        self.assertEqual(fb.cell_results(self.jobs, "R1__alpha__r1")[0]["infra"], "provider_refusal")
+        text = fb.format_infra(fb.infra_cells(fb.load_preset(self.preset), self.root / "tasks", self.jobs))
+        self.assertIn("provider_refusal", text)
+        self.assertIn("x" * 80, text)
+        self.assertNotIn("x" * 81, text)
+        calls = []
+
+        def runner(cmd, env, cwd):
+            calls.append(cmd[cmd.index("--job-name") + 1])
+            self.job(calls[-1], self.infra_trial("provider_refusal") if len(calls) == 1 else trial())
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = fb.run(self.args(rows=["R1"], task=["alpha"]), runner=runner)
+        self.assertEqual(rc, 0)  # refusal does not stop the run
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0].startswith("R1__alpha__r1__"))
+
+    def test_table_lists_infra_cells_and_new_columns(self):
+        self.job("R2__beta__r1__a", self.infra_trial("zero_tokens", "none"))
+        self.job("R2__beta__r2__a", trial())
+        preset = fb.load_preset(self.preset)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            fb.main(["table", "--preset", str(self.preset), "--jobs-dir", str(self.jobs)])
+        text = out.getvalue()
+        self.assertIn("Infra cells", text)
+        self.assertIn("R2__beta__r1  zero_tokens  none", text)
+        self.assertIn("guard blocks  tier  launches  revisions  asks_denied  gate_blocks", text)
+        rows = fb.table(preset, fb.tasks_dir(preset), self.jobs)
+        self.assertEqual([r for r in rows if r["row"] == "R2" and r["task"] == "beta"][0]["counted"], 1)
+
+    def test_usage_log_parse_and_delta(self):
+        line = lambda role, model, i: {"role": role, "model": model, "input": i, "cacheRead": 10, "cacheWrite": 1, "output": 2}  # noqa: E731
+        d = self.logs(**{"state__usage__s1.jsonl": [line("foreman", "m1", 5), line("child", "m1", 5), line("builder", "m2", 1)]})
+        c = ha.summarize_logs(d)
+        self.assertEqual(c["usage_by_role_model"]["child"]["m1"], {"input": 5, "cacheRead": 10, "cacheWrite": 1, "output": 2, "n": 1})
+        self.assertEqual(c["usage_log_delta"], 3 * 13 + 11 - 0)
+        rec = trial()
+        rec["agent_result"]["metadata"]["bench"]["counters"] = c
+        self.job("R2__beta__r1__a", rec)
+        self.assertEqual(fb.cell_results(self.jobs, "R2__beta__r1")[0]["usage_by_role_model"]["builder"]["m2"]["n"], 1)
+
+    def test_cost_per_role_block(self):
+        r = trial()
+        r["agent_result"]["metadata"]["bench"]["counters"].update(
+            tokens_by_model={"b/claude-opus-5-5": {"input": 10**6, "cacheRead": 0, "cacheWrite": 0, "output": 0}},
+            usage_by_role_model={"builder": {"claude-opus-5-5": {"input": 10**6, "cacheRead": 0, "cacheWrite": 0, "output": 0, "n": 1}},
+                                 "child": {"mystery": {"input": 1, "cacheRead": 0, "cacheWrite": 0, "output": 0, "n": 1}}})
+        self.job("R2__beta__r1__a", r)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            fb.main(["table", "--preset", str(self.preset), "--jobs-dir", str(self.jobs), "--cost"])
+        self.assertIn("cost per role", out.getvalue())
+        self.assertIn("$4.00", out.getvalue())
+        self.assertIn("mystery", out.getvalue())
+
+    def test_triage_counters_from_trace(self):
+        ev = lambda **k: k  # noqa: E731
+        d = self.logs(**{"state__trace-s1.jsonl": [
+            ev(event="tier", tier="light"), ev(event="triage", tier="standard", decision="refused"),
+            ev(event="triage", tier="deep", decision="recorded"), ev(event="role_launch", role="explorer"),
+            ev(event="role_launch", role="explorer"), ev(event="role_launch", role="builder"),
+            ev(event="revision", role="builder", decision="revision"), ev(event="revision", role="builder", decision="strong-relaunch"),
+            ev(event="revision", role="builder", decision="blocked"), ev(event="triage_gate", decision="blocked"),
+            ev(event="review", decision="allow"), ev(event="review", decision="allow"), ev(event="review", decision="deny")]})
+        t = ha.summarize_logs(d)["triage"]
+        self.assertEqual((t["tier"], t["revisions"], t["gate_blocks"]), ("deep", 2, 1))
+        self.assertEqual(t["launches"], {"explorer": 2, "builder": 1})
+        self.assertEqual(t["asks_reviewed"], {"allow": 2, "deny": 1})
+        self.assertEqual(ha.summarize_logs(self.logs(**{"state__trace-s2.jsonl": [ev(event="ask")]}))["triage"]["tier"], "untriaged")
+        rec = trial()
+        rec["agent_result"]["metadata"]["bench"].update(counters=dict(ha.summarize_logs(d), tokens={"total": 100}), asks_denied=[{"method": "confirm"}])
+        self.job("R2__beta__r1__a", rec)
+        row = [r for r in fb.table(fb.load_preset(self.preset), self.root / "tasks", self.jobs) if r["row"] == "R2" and r["task"] == "beta"][0]
+        self.assertEqual((row["tier"], row["launches"]["median"], row["asks_denied"]["median"]), ("deep", 3, 1))
+
+    def test_2a_style_job_without_new_files_still_tabulates(self):
+        self.job("R2__beta__r1__a", trial())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(fb.main(["table", "--preset", str(self.preset), "--jobs-dir", str(self.jobs), "--cost"]), 0)
+        self.assertNotIn("Infra cells", out.getvalue())
+
+
+    def test_old_job_dir_with_refusal_in_logs_is_infra(self):
+        d = self.jobs / "R1__alpha__r1__a"
+        self.job("R1__alpha__r1__a", trial())
+        agent = d / "trial-1" / "agent"
+        agent.mkdir()
+        (agent / "rpc.jsonl").write_text("\n".join(json.dumps(x) for x in (
+            {"type": "message_end", "message": {"role": "assistant", "stopReason": "stop", "content": []}},
+            {"type": "message_end", "message": {"role": "assistant", "stopReason": "error",
+                                                "errorMessage": "Safeguards flagged this message"}})) + "\n")
+        self.assertEqual(fb.cell_results(self.jobs, "R1__alpha__r1")[0]["infra"], "provider_refusal")
+
+    def test_per_row_summary_has_triage_columns(self):
+        rec = trial()
+        rec["agent_result"]["metadata"]["bench"]["counters"]["triage"] = {
+            "tier": "deep", "launches": {"builder": 2}, "revisions": 1, "gate_blocks": 0, "asks_reviewed": {}}
+        self.job("R2__beta__r1__a", rec)
+        preset = fb.load_preset(self.preset)
+        summ = fb.row_summary(preset, fb.tasks_dir(preset), self.jobs)
+        text = fb.format_summary(summ)
+        self.assertIn("guard blocks  tier  launches  revisions  asks_denied  gate_blocks", text)
+        self.assertEqual([r for r in summ if r["row"] == "R2"][0]["tier"], "deep")
 
 
 if __name__ == "__main__":
