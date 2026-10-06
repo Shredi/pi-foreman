@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOverlayRules, readBaseline } from "../permoverlay.ts";
 import { causeOfCustom } from "../usage.ts";
-import { checkRunId, checkWaitPath, Governor, parseStart, WaitRuntime, wakeMessage } from "../wait.ts";
+import { checkRunId, checkWaitPath, Governor, parseStart, resolveGh, WaitRuntime, wakeMessage } from "../wait.ts";
 import type { Outcome, Timers, WaitLimits } from "../wait.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -154,4 +154,36 @@ test("wait: every wait times out at wait.maxSeconds", () => {
 
 test("wait: causeOfCustom maps foreman_wake to the wake cause", () => {
   assert.equal(causeOfCustom("foreman_wake"), "wake");
+});
+
+test("wait: a file poll keeps a bounded number of timer handles", () => {
+  const { rt, clock } = runtime(LIMITS);
+  rt.start({ kind: "file", path: "/never", note: "" });
+  clock.advance(2000 * 500);
+  assert.ok(clock.pending() <= 2, `pending timers: ${clock.pending()}`);
+  rt.dispose();
+  assert.equal(clock.pending(), 0);
+});
+
+test("wait: ci start is refused when ghRefusal reports no gh", () => {
+  const clock = fakeClock();
+  const rt = new WaitRuntime({ timers: clock.timers, now: clock.now, limits: () => LIMITS, stat: () => null, alive: () => true, gh: () => Promise.reject(new Error("unused")), ghRefusal: () => "gh missing", wake: () => {}, trace: () => {} });
+  const r = rt.start({ kind: "ci", runId: "1", note: "" });
+  assert.ok("error" in r && r.error.includes("gh missing"));
+  assert.equal(rt.active, 0);
+});
+
+test("resolveGh: skips empty, relative and workspace PATH entries, so a planted gh is not picked", { skip: process.platform === "win32" }, () => {
+  const bin = path.join(root, "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  for (const d of [ws, bin]) {
+    fs.writeFileSync(path.join(d, "gh"), "#!/bin/sh\n");
+    fs.chmodSync(path.join(d, "gh"), 0o755);
+  }
+  const env = (p: string): NodeJS.ProcessEnv => ({ PATH: p });
+  assert.equal(resolveGh(ws, env([ "", ".", "bin", ws, bin].join(":")), "linux"), path.join(bin, "gh"));
+  assert.equal(resolveGh(ws, env(["", ".", "bin", ws, path.join(ws, "sub")].join(":")), "linux"), null);
+  assert.equal(resolveGh(ws, env(""), "linux"), null);
+  fs.unlinkSync(path.join(bin, "gh"));
+  assert.equal(resolveGh(ws, env([ws, bin].join(":")), "linux"), null);
 });
