@@ -96,7 +96,7 @@ function real(p: string): string {
 function within(root: string, p: string, platform: string, venvOnly: boolean): boolean {
   const fold = platform === "win32" || platform === "darwin" ? (s: string) => s.toLowerCase() : (s: string) => s;
   const rel = path.relative(fold(root), fold(p));
-  if (rel !== "" && (!rel || rel.startsWith("..") || path.isAbsolute(rel))) return false;
+  if (rel !== "" && (!rel || rel === ".." || rel.startsWith("../") || rel.startsWith("..\\") || path.isAbsolute(rel))) return false;
   return !venvOnly || rel.split(/[\\/]/).some((c) => c === ".venv" || c === "venv");
 }
 
