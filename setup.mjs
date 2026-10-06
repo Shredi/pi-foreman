@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // pi-foreman installer (design section 11). Plain Node >= 22 ESM, no dependencies.
-//   node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--remove] [--agent-dir <dir>]
+//   node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--remove] [--agent-dir <dir>]
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -14,7 +14,12 @@ const MANAGED_KEYS = ["agentOverridesByProvider", "agentOverrides", "forceTopLev
 const MIN_PY = [3, 9];
 const PROBE_CODE = "import sys;print('%d.%d' % sys.version_info[:2]);print(sys.executable)";
 const OVERLAY_RE = /^npm:(@[a-z0-9~][a-z0-9._~-]*\/)?[a-z0-9~][a-z0-9._~-]*@\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
-const USAGE = "Usage: node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--remove] [--agent-dir <dir>]";
+const USAGE = "Usage: node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--remove] [--agent-dir <dir>]\n  --no-intercom  do not install pi-intercom (installed by default) and do not write its config";
+const INTERCOM = "pi-intercom";
+// Written once when absent (never overwritten): wake on every inbound message, the human's input first.
+const INTERCOM_CONFIG = { inboundTrigger: "always", busyDelivery: "human-first" };
+// Keys that change the program pi-intercom starts or enable sends over SSH: trusted overrides, warned about.
+const INTERCOM_RISKY_KEYS = ["brokerCommand", "brokerArgs", "crossMachine"];
 
 class Fatal extends Error {
   constructor(message, code = 1) {
@@ -28,7 +33,7 @@ const say = (s = "") => console.log(s);
 // ---------------------------------------------------------------- helpers
 
 function parseArgs(argv) {
-  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null };
+  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false };
   for (let i = 0; i < argv.length; i++) {
     const eq = argv[i].startsWith("--") ? argv[i].indexOf("=") : -1;
     const flag = eq >= 0 ? argv[i].slice(0, eq) : argv[i];
@@ -41,6 +46,7 @@ function parseArgs(argv) {
     if (flag === "--dry-run") o.dryRun = true;
     else if (flag === "--project") o.project = true;
     else if (flag === "--remove") o.remove = true;
+    else if (flag === "--no-intercom") o.noIntercom = true;
     else if (flag === "--overlay") o.overlay = value();
     else if (flag === "--agent-dir") o.agentDir = value();
     else if (flag === "--help" || flag === "-h") throw new Fatal(USAGE, 0);
@@ -390,7 +396,7 @@ function main(argv) {
       say("pi-foreman: up to date, nothing to remove.");
       return;
     }
-    say("kept: foreman.json, backups, pi-subagents and any overlay (use `pi remove <source>` for those).");
+    say("kept: foreman.json, backups, pi-subagents, pi-intercom and its config, and any overlay (use `pi remove <source>` for those).");
     if (dry) return;
     backup();
     for (const c of cmds) runOrDie(c);
@@ -429,7 +435,8 @@ function main(argv) {
     // packages
     const want = [];
     for (const p of lock.packages) {
-      if (p.mode === "install") want.push({ spec: `npm:${p.name}@${p.version}`, label: `${p.name}@${p.version}` });
+      if (p.name === INTERCOM && opts.noIntercom) say(`  package ${p.name}@${p.version}: skipped (--no-intercom)`);
+      else if (p.mode === "install") want.push({ spec: `npm:${p.name}@${p.version}`, label: `${p.name}@${p.version}` });
       else if (p.mode === "local") want.push({ spec: ROOT, label: `${p.name} (local checkout ${ROOT})` });
       else if (p.mode === "phase3") say(`  pinned, installed from Phase 3: ${p.name}@${p.version}`);
     }
@@ -445,6 +452,26 @@ function main(argv) {
       anyChange = true;
       say(`packages: ${dry ? "would move" : "moving"} pi-foreman before pi-claude-bridge, so its config-drift check runs before the bridge's compaction and branch summaries`);
       say(unifiedDiff(path.basename(settingsFile), toJson({ ...settings, packages: plannedPackages }), toJson({ ...settings, packages: reordered })));
+    }
+    if (!opts.noIntercom) {
+      const icFile = path.join(agentDir, "intercom", "config.json");
+      const icText = readText(icFile);
+      if (icText === null) {
+        anyChange = true;
+        say(`intercom config: absent, ${dry ? "would create" : "creating"} ${icFile}`);
+        if (dry) say(unifiedDiff("intercom/config.json", null, toJson(INTERCOM_CONFIG)));
+        else writeFile(icFile, toJson(INTERCOM_CONFIG));
+      } else {
+        let ic = null;
+        try {
+          ic = parseJsonObject(icText, icFile);
+        } catch (err) {
+          say(`  warning: ${err.message}`);
+        }
+        const risky = ic ? INTERCOM_RISKY_KEYS.filter((k) => Object.prototype.hasOwnProperty.call(ic, k)) : [];
+        say("intercom config: present, left alone");
+        if (risky.length) say(`  warning: ${icFile} sets ${risky.join(", ")} (brokerCommand/brokerArgs choose the program pi-intercom starts as its broker, crossMachine enables sends over SSH); fine only if you set them on purpose.`);
+      }
     }
     if (opts.project) say("  note: project packages load only after the project is trusted; headless runs need `pi --approve` (or `-a`).");
 

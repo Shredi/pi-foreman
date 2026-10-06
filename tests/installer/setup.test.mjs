@@ -100,7 +100,7 @@ test("first run backs up, writes the managed block, keeps user keys in order", (
   const managed = JSON.parse(fs.readFileSync(path.join(env.agentDir, "pi-foreman", "managed.json"), "utf8"));
   assert.match(Object.values(managed.entries)[0].subagentsHash, /^[0-9a-f]{64}$/);
   const inst = installs(env).map((a) => a[1]);
-  assert.deepEqual(inst, ["npm:pi-subagents@0.75.0", "npm:@gotgenes/pi-permission-system@39.0.2", ROOT]);
+  assert.deepEqual(inst, ["npm:pi-subagents@0.75.0", "npm:@gotgenes/pi-permission-system@39.0.2", "npm:pi-intercom@0.16.1", ROOT]);
   assert.match(fs.readFileSync(path.join(env.agentDir, "settings.json"), "utf8"), /^ {2}"theme"/m);
 });
 
@@ -115,6 +115,40 @@ test("second run is a no-op: no writes, no installs", () => {
   assert.deepEqual(snapshot(env.base), before);
   assert.deepEqual(installs(env), []);
   assert.match(r.out, /up to date/);
+});
+
+const intercomCfg = (env) => path.join(env.agentDir, "intercom", "config.json");
+
+test("--no-intercom skips pi-intercom and its config, and says so in the dry run", () => {
+  const env = fresh();
+  seed(env);
+  const dry = run(env, ["--dry-run", "--no-intercom"]);
+  assert.equal(dry.code, 0, dry.out);
+  assert.match(dry.out, /package pi-intercom@0\.16\.1: skipped \(--no-intercom\)/);
+  assert.doesNotMatch(dry.out, /would run: pi install npm:pi-intercom/);
+  const r = run(env, ["--no-intercom"]);
+  assert.equal(r.code, 0, r.out);
+  assert.equal(installs(env).some((a) => a[1].includes("pi-intercom")), false);
+  assert.equal(fs.existsSync(intercomCfg(env)), false);
+  assert.match(run(env, ["--help"]).out, /--no-intercom/);
+});
+
+test("intercom config is written once (dry run shows it), never overwritten; trusted overrides warn", () => {
+  const env = fresh();
+  seed(env);
+  const dry = run(env, ["--dry-run"]);
+  assert.match(dry.out, /intercom config: absent, would create/);
+  assert.match(dry.out, /\+\s+"busyDelivery": "human-first"/);
+  assert.equal(fs.existsSync(intercomCfg(env)), false);
+  assert.equal(run(env, []).code, 0);
+  assert.deepEqual(JSON.parse(fs.readFileSync(intercomCfg(env), "utf8")), { inboundTrigger: "always", busyDelivery: "human-first" });
+  const own = { inboundTrigger: "replies", brokerCommand: "bun", crossMachine: { machineName: "m" } };
+  fs.writeFileSync(intercomCfg(env), JSON.stringify(own));
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(JSON.parse(fs.readFileSync(intercomCfg(env), "utf8")), own);
+  assert.match(r.out, /intercom config: present, left alone/);
+  assert.match(r.out, /warning: .*sets brokerCommand, crossMachine/);
 });
 
 test("hand-edited block is backed up and overwritten", () => {

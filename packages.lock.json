@@ -9,6 +9,7 @@
   "packages": [
     { "name": "pi-subagents", "version": "0.75.0", "mode": "install" },
     { "name": "@gotgenes/pi-permission-system", "version": "39.0.2", "mode": "install" },
+    { "name": "pi-intercom", "version": "0.16.1", "mode": "install" },
     { "name": "pi-foreman", "mode": "local" }
   ]
 }

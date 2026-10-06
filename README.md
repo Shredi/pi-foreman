@@ -16,13 +16,16 @@ node setup.mjs --remove    # remove only what the installer manages
 ```
 
 Options: `--overlay npm:<pkg>@<exact-version>` installs an organisation overlay (ranges are refused),
-`--agent-dir <dir>` overrides `PI_CODING_AGENT_DIR` / `~/.pi/agent`. Project packages load only after
+`--agent-dir <dir>` overrides `PI_CODING_AGENT_DIR` / `~/.pi/agent`, `--no-intercom` skips `pi-intercom`
+(installed by default, see below). Project packages load only after
 the project is trusted; headless runs need `pi --approve`. A second run changes nothing and says "up to date".
 
 The installer installs `pi-subagents` (pinned in `packages.lock.json`) and registers this checkout with
 `pi install <path>`. The permission packages are pinned but installed from Phase 3. It writes the generated
 `subagents` block into `settings.json` (backup `settings.json.bak-<timestamp>` first) and creates
-`<agent dir>/foreman.json` only if absent. Map each provider you use to models there:
+`<agent dir>/foreman.json` only if absent. Unless `--no-intercom`, it installs `pi-intercom` (pinned) and
+writes `<agent dir>/intercom/config.json` (`{"inboundTrigger":"always","busyDelivery":"human-first"}`) only if
+absent; an existing file that sets `brokerCommand`, `brokerArgs` or `crossMachine` gets a warning. Map each provider you use to models there:
 
 ```json
 {
