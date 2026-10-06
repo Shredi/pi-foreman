@@ -155,6 +155,26 @@ def wildcard_match(pattern, text):
     return re.match("^(?:" + rx + ")$", text, re.S | re.I) is not None
 
 
+RUNS_CODE_HEADS = {"node", "deno", "bun", "ruby", "perl", "php", "bash", "sh", "zsh", "pwsh", "powershell", "cmd",
+                   "osascript", "eval", "exec", "xargs", "env", "sudo", "ssh", "npx"}
+
+
+def runs_code(family):
+    """True for a family whose command runs arbitrary code or rewrites config (never proposed, S9)."""
+    toks = family.split()
+    if not toks:
+        return False
+    head = re.sub(r"\.(exe|cmd|bat|com)$", "", re.split(r"[\\/]", toks[0])[-1].lower())
+    if "=" in head or head in RUNS_CODE_HEADS or re.match(r"^python[\d.]*$", head) or re.match(r"^py(thon)?w?$", head):
+        return True
+    rest = toks[1:]
+    if head == "npm" and rest[:1] in (["exec"], ["x"]):
+        return True
+    if head == "git" and rest and (rest[0] == "config" or rest[0].startswith("-c")):
+        return True
+    return any(t in ("-exec", "-execdir", "-ok", "-okdir", "-delete") for t in rest)
+
+
 def propose(asks, min_reviews, rules):
     """Families approved >= min_reviews times in >= 2 sessions with no deny, minus rule-covered ones."""
     fam = {}
@@ -171,7 +191,7 @@ def propose(asks, min_reviews, rules):
     for name, f in sorted(fam.items()):
         if f["denies"] or f["approvals"] < min_reviews or len(f["sessions"]) < 2:
             continue
-        if name in ("(empty)",) or "N" in name.split() or "HASH" in name.split():
+        if name in ("(empty)",) or "N" in name.split() or "HASH" in name.split() or runs_code(name):
             continue
         if any(wildcard_match(r, name) or wildcard_match(r, name + " x") for r in rules):
             continue

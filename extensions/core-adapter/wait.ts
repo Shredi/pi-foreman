@@ -31,6 +31,7 @@ export const RUN_ID = /^\d{1,20}$/;
 export const NOTE_MAX = 200;
 export const POLL_MS: Record<WaitKind, number> = { timer: 0, file: 2000, pid: 2000, ci: 60_000 };
 export const CI_TIMEOUT_MS = 30_000;
+const GH_MISSING = "gh was not found on PATH outside the workspace (empty, relative and workspace PATH entries are skipped).";
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
 export interface WaitLimits {
@@ -207,6 +208,8 @@ export interface RuntimeDeps {
   /** False once the process is gone (ESRCH). */
   alive: (pid: number) => boolean;
   gh: (runId: string) => Promise<CiStatus>;
+  /** Why `gh` cannot be run (not found outside the workspace), else null. Absent = no check. */
+  ghRefusal?: () => string | null;
   wake: (outcomes: Outcome[]) => void;
   trace: (rec: Record<string, unknown>) => void;
 }
@@ -218,6 +221,8 @@ interface Entry {
   started: number;
   deadline: number;
   handles: unknown[];
+  /** The current poll timer only (replaced on each poll, so finished handles are not retained). */
+  pollHandle?: unknown;
   ghErrors: number;
   ghFirstError: string;
 }
@@ -245,6 +250,11 @@ export class WaitRuntime {
       this.d.trace({ event: "wait", decision: "refused", toolFamily: spec.kind });
       return { error: `${WAIT_TOOL}: ${this.waits.size} waits are active (wait.maxActive ${limits.maxActive}); cancel one first.` };
     }
+    const refusal = spec.kind === "ci" ? this.d.ghRefusal?.() ?? null : null;
+    if (refusal) {
+      this.d.trace({ event: "wait", decision: "refused", toolFamily: spec.kind });
+      return { error: `${WAIT_TOOL}: ${refusal}` };
+    }
     const id = `w${++this.seq}`;
     const now = this.d.now();
     const e: Entry = { id, kind: spec.kind, note: spec.note, started: now, deadline: now + limits.maxSeconds * 1000, handles: [], ghErrors: 0, ghFirstError: "" };
@@ -257,8 +267,7 @@ export class WaitRuntime {
   }
 
   private poll(e: Entry, spec: ValidSpec, delay: number): void {
-    e.handles.push(
-      this.d.timers.set(() => {
+    e.pollHandle = this.d.timers.set(() => {
         if (!this.waits.has(e.id)) return;
         if (spec.kind === "file") {
           const size = this.d.stat(spec.path);
@@ -283,14 +292,14 @@ export class WaitRuntime {
           return;
         }
         this.poll(e, spec, POLL_MS[spec.kind]);
-      }, delay),
-    );
+      }, delay);
   }
 
   private drop(id: string): Entry | undefined {
     const e = this.waits.get(id);
     if (!e) return undefined;
     for (const h of e.handles) this.d.timers.clear(h);
+    if (e.pollHandle !== undefined) this.d.timers.clear(e.pollHandle);
     this.waits.delete(id);
     return e;
   }
@@ -336,10 +345,37 @@ export function wakeMessage(outcomes: Outcome[]): { customType: string; content:
   return { customType: WAKE_MESSAGE_TYPE, content, display: true, details: { kinds: outcomes.map((o) => o.kind), ids: outcomes.map((o) => o.id) } };
 }
 
-/** `gh run view <id> --json status,conclusion,url` (no shell). */
+/**
+ * Absolute path of `gh` from PATH entries that are absolute and outside the workspace (S8): an empty,
+ * `.` or relative entry, or one inside the workspace, is skipped, so a planted gh is never run.
+ */
+export function resolveGh(workspace: string, env: NodeJS.ProcessEnv = process.env, platform: string = process.platform): string | null {
+  const win = platform === "win32";
+  const pathVar = (win ? Object.entries(env).find(([k]) => k.toLowerCase() === "path")?.[1] : env.PATH) ?? "";
+  const exts = win ? (env.PATHEXT || ".COM;.EXE").split(";").filter(Boolean) : [""];
+  const ws = realDeep(workspace);
+  for (const entry of pathVar.split(win ? ";" : ":")) {
+    const dir = entry.trim().replace(/^"(.*)"$/, "$1");
+    if (!dir || dir === "." || !path.isAbsolute(dir)) continue;
+    if (under(ws, realDeep(dir), platform)) continue;
+    for (const ext of exts) {
+      const cand = path.join(dir, `gh${ext}`);
+      try {
+        if (fs.statSync(cand).isFile()) return cand;
+      } catch {
+        // next candidate
+      }
+    }
+  }
+  return null;
+}
+
+/** `gh run view <id> --json status,conclusion,url` (no shell; gh resolved by resolveGh, cwd = workspace). */
 export function ghRunView(runId: string, cwd: string): Promise<CiStatus> {
   return new Promise((resolve, reject) => {
-    execFile("gh", ["run", "view", runId, "--json", "status,conclusion,url"], { cwd, timeout: CI_TIMEOUT_MS, windowsHide: true }, (err, stdout, stderr) => {
+    const gh = resolveGh(cwd);
+    if (!gh) return reject(new Error(GH_MISSING));
+    execFile(gh, ["run", "view", runId, "--json", "status,conclusion,url"], { cwd, timeout: CI_TIMEOUT_MS, windowsHide: true }, (err, stdout, stderr) => {
       if (err) return reject(new Error(String(stderr || "").trim() || err.message));
       try {
         const j = JSON.parse(String(stdout)) as Record<string, unknown>;
@@ -433,6 +469,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
           stat: fileSize,
           alive: processAlive,
           gh: (runId) => ghRunView(runId, workspaceOf(s.cwd).root),
+          ghRefusal: () => (resolveGh(workspaceOf(s.cwd).root) ? null : `ci waits are refused: ${GH_MISSING}`),
           trace: s.trace,
           wake: (outcomes) => {
             let idle = true;

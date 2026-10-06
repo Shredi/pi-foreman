@@ -129,6 +129,17 @@ class RetroTest(unittest.TestCase):
         self.assertIn("approvals: no data", text)
         self.assertIn("spawn cost: no data", text)
 
+    def test_code_running_families_are_never_proposed(self):
+        bad = ["python3 -c", "python3.12 script.py", "node -e", "/usr/bin/bash -c", "sh -c", "pwsh -Command", "cmd /c", "osascript -e",
+               "eval echo", "xargs rm", "env FOO=1", "sudo make", "ssh host", "git config", "git -c", "npx tool", "npm exec", "find -exec",
+               "FOO=1 make"]
+        for fam in bad:
+            self.assertTrue(fr.runs_code(fam), fam)
+        for fam in ["npm ci", "git status", "make test", "find ."]:
+            self.assertFalse(fr.runs_code(fam), fam)
+        asks = [{"family": f, "outcome": "approved", "session": sess} for f in bad + ["npm ci"] for sess in ("a", "b", "c")]
+        self.assertEqual([p["pattern"] for p in fr.propose(asks, 3, [])], ["npm ci *"])
+
     def test_selftest(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):

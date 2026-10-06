@@ -17,6 +17,21 @@ test("foreman text has warm/cold split and children; child text has no children"
   assert.equal(footerText(t, null), "↑1.2M ↓2.3k tok · $0.90 list (warm $0.50 / cold $0.30)");
 });
 
+test("zero reported cost is priced from the registry (bridge -> anthropic); no price shows n/a", () => {
+  const bridge = { role: "assistant", provider: "claude-bridge", model: "claude-x", usage: { input: 1_000_000, output: 1_000_000, cacheRead: 2_000_000, cacheWrite: 1_000_000, cost: { total: 0 } } };
+  const asked: string[] = [];
+  const registry = { find: (p: string, m: string) => (asked.push(`${p}/${m}`), p === "anthropic" && m === "claude-x" ? { cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } } : undefined) };
+  const t = zeroTotals();
+  addMessage(t, bridge, registry);
+  assert.deepEqual(asked, ["anthropic/claude-x"]);
+  assert.equal(footerText(t, null), "↑4.0M ↓1.0M tok · $22.35 list (warm $0.60 / cold $6.75)");
+  const n = zeroTotals();
+  addMessage(n, bridge, { find: () => undefined });
+  assert.equal(footerText(n, null), "↑4.0M ↓1.0M tok · n/a list (warm n/a / cold n/a)");
+  addMessage(n, MSG);
+  assert.match(footerText(n, null), /\$0\.90 \+ n\/a list/);
+});
+
 test("update sets status in tui/rpc, no-op in print/json or when disabled, never throws", () => {
   const calls: string[] = [];
   const mk = (mode: string) => ({ mode, ui: { setStatus: (k: string, v: string | undefined) => calls.push(`${k}=${v}`) } });
