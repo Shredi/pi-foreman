@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { closeFrom, CloseFlow, closePrompt, intercomClose, INTERCOM_WAKE_TEXT, parseCloseText, resultPath } from "../close.ts";
 import type { CloseDeps } from "../close.ts";
 
-const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-close-")));
+const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-close-")));
 const ws = path.join(root, "ws");
 const outside = path.join(root, "outside");
 for (const d of [path.join(ws, ".workflow"), outside]) fs.mkdirSync(d, { recursive: true });
