@@ -17,12 +17,13 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { get } from "./config.ts";
 import { workspaceOf } from "./python.ts";
 import { realDeep, under } from "./triage.ts";
+import { INTERCOM_MESSAGE_TYPE as INTERCOM_INBOUND_TYPE } from "./intercomguard.ts";
+import { INTERCOM_WAKE_TEXT } from "./usage.ts";
 
 export const CLOSE_TEXT = "foreman:close";
 export const PARENT_INTERCOM_ENV = "PI_FOREMAN_PARENT_INTERCOM";
-export const INTERCOM_INBOUND_TYPE = "intercom_message";
-/** pi-intercom's idle wake prompt after an inbound message (pi-intercom 0.16.1 index.ts). */
-export const INTERCOM_WAKE_TEXT = "New intercom message above.";
+export { INTERCOM_MESSAGE_TYPE as INTERCOM_INBOUND_TYPE } from "./intercomguard.ts";
+export { INTERCOM_WAKE_TEXT } from "./usage.ts";
 /** pi-intercom 0.16.1 extension-api.ts: outbox request event (reply to the sender). */
 export const INTERCOM_OUTBOX_EVENT = "intercom:outbox-request";
 export const CLOSE_SOURCES = ["herdr", "intercom-parent"] as const;
