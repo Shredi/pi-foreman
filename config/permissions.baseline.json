@@ -12,7 +12,8 @@
     "subagent_supervisor": "allow",
     "foreman_worktree_remove": "allow",
     "foreman_move": "allow",
-    "foreman_copy": "allow"
+    "foreman_copy": "allow",
+    "foreman_triage": "allow"
   },
   "externalDirectory": "ask",
   "shellTools": {
