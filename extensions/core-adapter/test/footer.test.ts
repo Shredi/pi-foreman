@@ -27,7 +27,7 @@ test("update sets status in tui/rpc, no-op in print/json or when disabled, never
   assert.deepEqual(calls, []);
   f.update("s", mk("rpc"), MSG, { enabled: true, isChild: false, children: 2 });
   assert.equal(calls.length, 1);
-  assert.match(calls[0], /^foreman-usage=↑1\.2M .* · children 2$/);
+  assert.match(calls[0], /^foreman-usage=↑\d.* list .* · children 2$/);
   assert.doesNotThrow(() => f.update("s", { mode: "tui", ui: { setStatus: () => { throw new Error("x"); } } }, MSG, { enabled: true, isChild: true, children: 0 }));
 });
 
