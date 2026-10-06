@@ -22,7 +22,7 @@ import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from
 import { gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
-import { applyLaunchModels } from "./launchmodel.ts";
+import { applyLaunchModels, applyLaunchTimeouts } from "./launchmodel.ts";
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
@@ -79,6 +79,8 @@ interface Session {
   trace: TraceWriter | null;
   /** Runs this session launched (resume provenance, actions.ts). */
   runs: RunRegistry;
+  /** Launch notices (strong model asked for but unmapped) by tool call id, added to the subagent result. */
+  launchNotices: Map<string, string[]>;
   /** Open child supervisor requests (supervisor.ts). */
   supervisor: SupervisorWindow;
   /** Git config/hooks snapshot taken at child launches, checked before foreman git (gitdrift.ts). */
@@ -153,6 +155,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       stopContinued: false,
       notified: new Set(),
       runs: new Map(),
+      launchNotices: new Map(),
       supervisor: new SupervisorWindow(),
       gitDrift: new GitDriftWatch(),
       claudeCfg: new ClaudeConfigWatch(),
@@ -484,6 +487,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const input = event.input as Record<string, unknown>;
       const blocked = childLaunchBlock(s, event.toolName);
       if (blocked) return { block: true, reason: blocked };
+      let notices: string[] = [];
       if (event.toolName === "subagent") {
         const resolution = await currentRoles(s, ctx);
         const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
@@ -502,9 +506,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const resolution = await currentRoles(s, ctx);
         const noModel = roleModelBlock(input, resolution);
         if (noModel) return { block: true, reason: noModel };
-        for (const o of applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"))) {
-          s.trace?.emit({ event: "model_override", role: o.role, model: o.model });
-        }
+        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider });
+        for (const o of launched.overrides) s.trace?.emit({ event: "model_override", role: o.role, model: o.model });
+        for (const n of launched.notices) s.trace?.emit({ event: "strong_unmapped", role: n.role, model: n.model, tier: s.ceremony.tier });
+        notices = launched.notices.map((n) => n.text);
+        applyLaunchTimeouts(input, get(s.config.config, "roles"));
       }
       const pc = payloadCtx(s, ctx);
       for (const guard of mapping.pre) {
@@ -551,6 +557,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (drift) return drift;
         s.gitDrift.snapshot(ctx.cwd, os.homedir());
       }
+      // Kept for the tool result only once the launch passed every check.
+      if (notices.length > 0) s.launchNotices.set(event.toolCallId, notices);
       return undefined;
     } catch (err) {
       return { block: true, reason: `pi-foreman: adapter error before ${event.toolName} (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
@@ -580,6 +588,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const s = sessionFor(ctx);
       if (s) recordLaunch(s.runs, event.input, event.details, event.isError);
       for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_result", role, exit: event.isError ? 1 : 0 });
+      const notices = s?.launchNotices.get(event.toolCallId);
+      if (s && notices) {
+        s.launchNotices.delete(event.toolCallId);
+        // subagent has no post guards (toolmap.ts), so the amended result can be returned here.
+        return { content: [...notices.map((text) => ({ type: "text" as const, text })), ...event.content] };
+      }
     }
     const mapping = mapTool(event.toolName);
     if (mapping.post.length === 0 || event.isError) return undefined;

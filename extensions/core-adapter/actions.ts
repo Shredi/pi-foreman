@@ -203,6 +203,7 @@ function resumeCheck(input: Json, c: ActionContext): ActionDecision {
   const now = launchModel(known.role, c.resolution.roles, undefined, c.maxThinking);
   if (!now) return fresh(known.role, `role '${known.role}' has no model for provider '${c.resolution.provider}'`);
   const mapped = splitLevel(now.model).base;
-  if (mapped !== known.model) return fresh(known.role, `run '${target}' ran on ${known.model}, the role map now gives ${mapped}`);
+  const strong = launchModel(known.role, c.resolution.roles, "strong", c.maxThinking);
+  if (mapped !== known.model && (!strong || splitLevel(strong.model).base !== known.model)) return fresh(known.role, `run '${target}' ran on ${known.model}, the role map now gives ${mapped}`);
   return {};
 }

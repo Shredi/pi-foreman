@@ -237,6 +237,11 @@ Direction: **tighten** keys may be set by every layer; the project file (`.pi/fo
 | `roles.*.launch`, `roles.*.file` | 5 | loosen | ignored |
 | `roles.*.codemode`, `providers.*.roles.*.codemode` | 5 | `true` adds a tool | only `false` |
 | `providers.*.review` | 3 | a review model approves asks | ignored |
+| `providers.*.roles.*.strong` | launch | picks a stronger, costlier model | ignored |
+| `providers.*.strongOnRevision` | launch | `true` loosens (revision rounds run on the strong model) | only `false` |
+| `ceremony.revisionRounds.standard`, `.heavy` | 6 | higher loosens | only a lower value |
+| `ceremony.requireTriage` | 6 | `false` loosens | only `true` |
+| `roles.*.timeoutMinutes` | launch | higher loosens | only a lower value |
 | `bridge.isolateClaudeConfig` | bridge | `false` loosens | ignored |
 | `trace.dir` | trace | writes outside the workspace | only inside the workspace (symlinks resolved) |
 
@@ -350,7 +355,8 @@ The threshold was a Windows warm p95 above 150 ms, and the measurement is far be
 Every role is launched detached (`async: true` in the role frontmatter) with these properties:
 - The required child extensions from §5. The policy extensions are required in every child.
 - A strict tool allowlist. Extension tools are not inherited and must be listed with their path. Hands-on 2026-10-03: an unlisted tool was absent, and a listed one ran.
-- A model resolved from the provider map.
+- A model resolved from the provider map. The foreman picks a strength with `model: "default"` or `"strong"` (an optional `:<level>` suffix is kept). Without a keyword the builder runs on `providers.<p>.roles.builder.strong` on a heavy tier, every other launch on the default model. `strong` without a mapped strong model launches the default model and says so in the tool result. A raw model id is replaced by the map.
+- A run-time limit: `timeoutMs` = `roles.<id>.timeoutMinutes`; a lower foreman value is kept. For tasks/chain it is the parent deadline (highest entry for tasks, sum of steps for a chain), since pi-subagents 0.75.0 reads no per-entry limit.
 
 An explicit `async: false` in a call would beat the frontmatter, so the adapter rewrites every `subagent` call to `async: true` (and drops `foregroundOnly`), and the generated `subagents` block sets `forceTopLevelAsync: true`.
 
