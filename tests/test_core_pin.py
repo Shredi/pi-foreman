@@ -38,6 +38,13 @@ class CorePinTest(unittest.TestCase):
         text = (CORE / "VERSION").read_text(encoding="utf-8")
         self.assertIn("sha: " + PINNED_SHA, text.splitlines())
 
+    def test_conformance_failure_names_only(self):
+        import sys
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import pull_core
+        lines = ["FAILED tests/a.py::test_x - AssertionError: boom", "FAILED tests/b.py::T::test_y", "1 failed in 0.1s"]
+        self.assertEqual(pull_core.failed_names(lines), ["tests/a.py::test_x", "tests/b.py::T::test_y"])
+
 
 if __name__ == "__main__":
     unittest.main()
