@@ -7,8 +7,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 export const BRIDGE_PROVIDER = "claude-bridge";
-/** Entries that make the folder a non-empty Claude Code config. */
-export const FORBIDDEN_ENTRIES = ["settings.json", "settings.local.json", "plugins", "hooks", "CLAUDE.md", "agents", "skills", "commands"];
+/** Entries that make the folder a non-empty Claude Code config by existing. settings*.json and plugins/ are judged by content (see hostConfigFindings). */
+export const FORBIDDEN_ENTRIES = ["hooks", "CLAUDE.md", "agents", "skills", "commands"];
+const SETTINGS_FILES = ["settings.json", "settings.local.json"];
 /** Files Claude Code fetches from the account's cloud settings into the config folder (not host config). */
 export const CLOUD_ENTRIES = ["remote-settings.json", "policy-limits.json"];
 
@@ -67,6 +68,60 @@ export const macKeychainProbe: KeychainProbe = (service) => {
   return r.status === 0;
 };
 
+/** Settings keys that load or run code, beyond COMMAND_SETTINGS_KEYS (defined below): MCP servers spawn processes. */
+const EXTRA_CODE_KEYS = ["mcpServers"];
+
+/**
+ * Judges the isolation folder by what can load code, not by existence: a settings file fails only
+ * when unparseable (as a JSON object) or when it has a code-loading key; installed plugins fail,
+ * a marketplace catalog alone does not. Other forbidden entries fail on existence.
+ */
+export function hostConfigFindings(dir: string): { fail: string[]; info: string[] } {
+  const fail: string[] = [];
+  const info: string[] = [];
+  const codeKeys = [...COMMAND_SETTINGS_KEYS, ...EXTRA_CODE_KEYS];
+  for (const n of SETTINGS_FILES) {
+    const f = path.join(dir, n);
+    if (!fs.existsSync(f)) continue;
+    try {
+      const data = JSON.parse(fs.readFileSync(f, "utf8")) as unknown;
+      if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("not an object");
+      const keys = Object.keys(data);
+      const bad = keys.filter((k) => codeKeys.includes(k));
+      if (bad.length) fail.push(`${n}: ${bad.join(", ")}`);
+      else info.push(`holds ${n} with harmless keys only (${keys.join(", ") || "none"})`);
+    } catch {
+      fail.push(`${n}: unreadable or not a JSON object`);
+    }
+  }
+  const plugins = path.join(dir, "plugins");
+  if (fs.existsSync(plugins)) {
+    let installed = false;
+    let unreadable = false;
+    const reg = path.join(plugins, "installed_plugins.json");
+    if (fs.existsSync(reg)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(reg, "utf8")) as { plugins?: unknown };
+        const p = data && typeof data === "object" ? data.plugins : undefined;
+        if (p && typeof p === "object") installed = Object.values(p as object).some((v) => (Array.isArray(v) ? v.length > 0 : true));
+      } catch {
+        unreadable = true;
+      }
+    }
+    let cached = false;
+    try {
+      cached = fs.readdirSync(path.join(plugins, "cache")).length > 0;
+    } catch {
+      cached = false;
+    }
+    if (installed || cached || unreadable) fail.push(`plugins/ (${[installed && "installed plugins", cached && "plugin cache", unreadable && "unreadable installed_plugins.json"].filter(Boolean).join(", ")})`);
+    else info.push("holds plugins/ with no installed plugin (marketplace catalog only)");
+  }
+  const present = FORBIDDEN_ENTRIES.filter((e) => fs.existsSync(path.join(dir, e)));
+  fail.push(...present);
+  return { fail, info };
+}
+
 export interface IsoDoctorInput {
   dir: string;
   env: Env;
@@ -77,9 +132,10 @@ export interface IsoDoctorInput {
 /** Doctor lines for an active isolation. Never prints a credential value. */
 export function isolationDoctor(input: IsoDoctorInput): string[] {
   const out: string[] = [];
-  const present = FORBIDDEN_ENTRIES.filter((e) => fs.existsSync(path.join(input.dir, e)));
-  if (present.length) out.push(`FAIL bridge isolation folder ${input.dir} holds host config (${present.join(", ")}) — fix: remove those entries; the folder must hold only login data.`);
-  else out.push(`OK   bridge isolation folder ${input.dir} holds no settings, hooks, plugins, CLAUDE.md, agents, skills or commands`);
+  const { fail, info } = hostConfigFindings(input.dir);
+  if (fail.length) out.push(`FAIL bridge isolation folder ${input.dir} holds host config (${fail.join(", ")}) — fix: remove those entries; the folder must hold only login data.`);
+  else out.push(`OK   bridge isolation folder ${input.dir} holds no code-loading settings, hooks, installed plugins, CLAUDE.md, agents, skills or commands`);
+  for (const i of info) out.push(`INFO bridge isolation folder ${i}`);
   const cloud = CLOUD_ENTRIES.filter((e) => fs.existsSync(path.join(input.dir, e)));
   if (cloud.length) out.push(`INFO bridge isolation folder holds cloud-fetched ${cloud.join(", ")} (written by Claude Code from the account's managed settings; not host config)`);
   const login: string[] = [];
