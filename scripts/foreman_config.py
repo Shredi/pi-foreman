@@ -132,13 +132,16 @@ IGNORED_KEYS = [
     (("providers", "*", "roles", "*", "strong"), "the strong model is picked in the user or overlay config"),
 ]
 # Keys outside safety that the project and session layers may only tighten (module docstring),
-# compared with the value after the earlier layers. Same rule names as TIGHTEN.
+# compared with the value after the earlier layers. Same rule names as TIGHTEN; a lower_only
+# value below LAYER_MINIMUM (the schema minimum) is dropped with a warning too, so a too-low
+# project value does not turn into a whole-config schema error.
 LAYER_TIGHTEN = [
     (("providers", "*", "strongOnRevision"), "false_only"),
     (("ceremony", "revisionRounds", "*"), "lower_only"),
     (("ceremony", "requireTriage"), "true_only"),
     (("roles", "*", "timeoutMinutes"), "lower_only"),
 ]
+LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0}
 # codemode adds a tool, so the project and session layers may only switch it off.
 CODEMODE_FALSE_ONLY = True
 # roles.<id> in the project and session layers: "intersect" = narrow only. NEW_ROLE_IDS
@@ -163,7 +166,7 @@ def _drop_pattern(node, keys, done, who, why, warnings):
             _drop_pattern(node[name], keys[1:], path, who, why, warnings)
 
 
-def _tighten_pattern(node, base, keys, rule, done, who, warnings):
+def _tighten_pattern(node, base, keys, rule, done, who, warnings, minimum=0):
     """Apply one LAYER_TIGHTEN rule in place: drop a value that would loosen `base`."""
     if not isinstance(node, dict):
         return
@@ -173,7 +176,7 @@ def _tighten_pattern(node, base, keys, rule, done, who, warnings):
         path = done + (name,)
         have = base.get(name) if isinstance(base, dict) else None
         if len(keys) > 1:
-            _tighten_pattern(node[name], have, keys[1:], rule, path, who, warnings)
+            _tighten_pattern(node[name], have, keys[1:], rule, path, who, warnings, minimum)
             continue
         val, label = node[name], who + " " + ".".join(path)
         if rule in ("false_only", "true_only"):
@@ -185,8 +188,10 @@ def _tighten_pattern(node, base, keys, rule, done, who, warnings):
             else:
                 continue
         else:  # lower_only
-            if not isinstance(val, int) or isinstance(val, bool) or val < 0:
-                why = "not a non-negative integer"
+            if not isinstance(val, int) or isinstance(val, bool):
+                why = "not an integer"
+            elif val < minimum:
+                why = "below the minimum %d" % minimum
             elif isinstance(have, int) and not isinstance(have, bool) and val > have:
                 why = "it would loosen the policy"
             else:
@@ -209,7 +214,8 @@ def restrict_layer(base, proj, who, warnings, project_dir):
     for keys, why in IGNORED_KEYS:
         _drop_pattern(proj, keys, (), who, why, warnings)
     for keys, rule in LAYER_TIGHTEN:
-        _tighten_pattern(proj, base, keys, rule, (), who, warnings)
+        minimum = next((LAYER_MINIMUM[k] for k in keys if k in LAYER_MINIMUM), 0)
+        _tighten_pattern(proj, base, keys, rule, (), who, warnings, minimum)
     roles = proj.get("roles")
     base_roles = base.get("roles") if isinstance(base.get("roles"), dict) else {}
     if isinstance(roles, dict):

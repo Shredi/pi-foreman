@@ -180,6 +180,16 @@ class LayerRulesTest(unittest.TestCase):
         self.assertIn("project roles.builder.timeoutMinutes ignored: it would loosen", joined)
         self.assertIn("session roles.reviewer.timeoutMinutes ignored: it would loosen", joined)
 
+    def test_lower_only_below_minimum_is_dropped_with_a_warning(self):
+        res = self.load(proj={"roles": {"builder": {"timeoutMinutes": 0}}},
+                        session={"ceremony": {"revisionRounds": {"standard": -1}}})
+        self.assertEqual(res["errors"], [])
+        self.assertEqual(res["config"]["roles"]["builder"]["timeoutMinutes"], 60)
+        self.assertEqual(res["config"]["ceremony"]["revisionRounds"]["standard"], 1)
+        joined = "\n".join(res["warnings"])
+        self.assertIn("project roles.builder.timeoutMinutes ignored: below the minimum 1", joined)
+        self.assertIn("session ceremony.revisionRounds.standard ignored: below the minimum 0", joined)
+
     def test_require_triage_true_only(self):
         res = self.load(proj={"ceremony": {"requireTriage": False}}, session={"ceremony": {"requireTriage": False}})
         self.assertIs(res["config"]["ceremony"]["requireTriage"], True)
