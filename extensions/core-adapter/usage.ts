@@ -319,12 +319,14 @@ export function formatSummary(sum: UsageSummary, title: string): string {
 
 // ------------------------------------------------------------- turn cause (D9)
 
-export type TurnCause = "user" | "child" | "intercom" | "other";
+export type TurnCause = "user" | "child" | "intercom" | "wake" | "other";
 
 /** pi-subagents 0.75.0 custom messages that report a child's end (notify.js, subagent-executor.js, wait-subscriptions.js). */
 export const CHILD_MESSAGE_TYPES = ["subagent-notify", "subagent-incremental-child-notify", "subagent-wait-subscription"];
 /** Its native intercom (supervisor) channel: a child's contact_supervisor request (intercom/native-supervisor-channel.js). */
 export const INTERCOM_MESSAGE_TYPES = ["subagent_supervisor_request"];
+/** pi-foreman's own long-wait wake-up (wait.ts). */
+export const WAKE_MESSAGE_TYPE = "foreman_wake";
 
 /** Cause from an `input` event source: typed or RPC prompts are the user's. */
 export function causeOfInput(source: unknown): TurnCause {
@@ -336,5 +338,6 @@ export function causeOfCustom(customType: unknown): TurnCause | null {
   if (typeof customType !== "string") return null;
   if (CHILD_MESSAGE_TYPES.includes(customType)) return "child";
   if (INTERCOM_MESSAGE_TYPES.includes(customType)) return "intercom";
+  if (customType === WAKE_MESSAGE_TYPE) return "wake";
   return null;
 }

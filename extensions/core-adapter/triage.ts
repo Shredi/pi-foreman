@@ -74,7 +74,7 @@ export function realDeep(abs: string): string {
   return abs;
 }
 
-function under(root: string, p: string, platform: string): boolean {
+export function under(root: string, p: string, platform: string): boolean {
   const fold = platform === "win32" || platform === "darwin" ? (s: string) => s.toLowerCase() : (s: string) => s;
   const rel = path.relative(fold(root), fold(p));
   const outside = rel === ".." || rel.startsWith("../") || rel.startsWith("..\\") || path.isAbsolute(rel);

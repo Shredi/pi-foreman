@@ -830,6 +830,11 @@ function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: bo
   return ask;
 }
 
+/** Whether a path falls under any write-protection rule (either session kind); foreman_wait's file bound (A4). */
+export function isProtectedPath(rules: OverlayRules, p: string, ctx: MatchCtx): boolean {
+  return protectHit(rules.protect, p, { ...ctx, role: "child" }, false) !== null;
+}
+
 interface ProtectHit {
   kind: "deny" | "ask";
   rule: ProtectRule;

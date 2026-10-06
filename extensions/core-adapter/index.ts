@@ -48,6 +48,7 @@ import type { LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.
 import { workspaceOf } from "./python.ts";
 import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
+import { registerWait } from "./wait.ts";
 import { foremanTriage, GATED_TOOLS, triageAdvice, triageGateBlock, TRIAGE_TOOL } from "./triage.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
 import type { RegistryLike } from "./modelcheck.ts";
@@ -100,7 +101,7 @@ interface Session {
   /** Launches this session recorded (launch id -> binding), for later kinds (revision, strong-relaunch). */
   launches: Map<string, LaunchBinding>;
   /** Foreman only: last trigger of the current run and its cache tokens, for the `turn` trace event. */
-  turn: { cause: TurnCause; cacheRead: number; cacheWrite: number };
+  turn: { cause: TurnCause; cacheRead: number; cacheWrite: number; wakeKinds?: string };
   /** Foreman only: builder revision rounds since the last user prompt or /ceremony tier change (rounds.ts). */
   rounds: RoundState;
 }
@@ -638,6 +639,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (opened) s?.trace?.emit({ event: "supervisor_request", role: opened.role, decision: "open" });
       const cause = causeOfCustom(m.customType);
       if (s && !s.isChild && cause) s.turn.cause = cause;
+      if (s && !s.isChild && cause === "wake") s.turn.wakeKinds = [...new Set((event.message as { details?: { kinds?: unknown[] } }).details?.kinds ?? [])].map(String).join(",");
       if (s && !s.isChild && m.customType === NOTIFY_TYPE) onCompletionNotice(s, (event.message as { content?: unknown }).content);
     }
     if (m.role !== "assistant") return undefined;
@@ -664,7 +666,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("agent_end", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild) return;
-    s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite });
+    s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite, wakeKinds: s.turn.cause === "wake" ? s.turn.wakeKinds : undefined });
     s.turn = { cause: "other", cacheRead: 0, cacheWrite: 0 };
   });
 
@@ -771,6 +773,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     },
     spawner,
     env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
+  });
+
+  // D9 long wait (wait.ts): foreman only; the wake is an ordinary custom message (no gate bypass).
+  registerWait(pi, {
+    home: os.homedir(),
+    platform,
+    session: async (ctx) => {
+      const s = await ensureSession(ctx);
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r) };
+    },
   });
 
   // D10: the foreman records its triage; children never get the tool.

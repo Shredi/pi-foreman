@@ -4,7 +4,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-export const TRACE_FIELDS = ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite"] as const;
+export const TRACE_FIELDS = ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "wakeKinds"] as const;
 export type TraceField = (typeof TRACE_FIELDS)[number];
 export type TraceRecord = Partial<Record<TraceField, string | number | boolean | null>>;
 
