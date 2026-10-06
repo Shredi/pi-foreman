@@ -51,6 +51,7 @@ import { UsageFooter } from "./footer.ts";
 import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait } from "./wait.ts";
+import { registerClose } from "./close.ts";
 import { foremanTriage, GATED_TOOLS, triageAdvice, triageGateBlock, TRIAGE_TOOL } from "./triage.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
 import type { RegistryLike } from "./modelcheck.ts";
@@ -793,12 +794,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   // D9 long wait (wait.ts): foreman only; the wake is an ordinary custom message (no gate bypass).
-  registerWait(pi, {
+  const waits = registerWait(pi, {
     home: os.homedir(),
     platform,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
       return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r) };
+    },
+  });
+
+  // D5 remote close (close.ts): `/foreman close` and a parent's intercom `foreman:close`; an ordinary close turn.
+  const close = registerClose(pi, {
+    platform,
+    activeWaits: (id) => waits.active(id),
+    session: async (ctx) => {
+      const s = await ensureSession(ctx);
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), runSync: (c) => runSync(s, c), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text };
     },
   });
 
@@ -901,9 +912,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor | /foreman cost [workspace] | /foreman update-check",
+    description: "pi-foreman commands: /foreman doctor | /foreman cost [workspace] | /foreman update-check | /foreman close [result-path]",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
+      if (sub === "close") return close.command(args.trim().slice(sub.length), ctx);
       if (sub === "cost") {
         const s = await ensureSession(ctx);
         const ws = rest.join(" ").trim();
@@ -919,7 +931,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       if (sub !== "doctor") {
-        ctx.ui.notify("Usage: /foreman doctor | /foreman cost [workspace] | /foreman update-check", "warning");
+        ctx.ui.notify("Usage: /foreman doctor | /foreman cost [workspace] | /foreman update-check | /foreman close [result-path]", "warning");
         return;
       }
       const s = await ensureSession(ctx);
