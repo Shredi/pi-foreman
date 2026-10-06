@@ -38,12 +38,17 @@ Loosening keys (LOOSEN_ONLY) are set by L1, L3 and L2 only: the project layer
 ignores them (above) and the session layer drops them with a warning.
 
 Keys outside safety that the project and session layers cannot loosen either
-(IGNORED_KEYS, ROLE_RULES, TRACE_DIR_IN_WORKSPACE; "*" = any key):
+(IGNORED_KEYS, LAYER_TIGHTEN, ROLE_RULES, TRACE_DIR_IN_WORKSPACE; "*" = any key):
 
     key                              project / session value
     -------------------------------  -----------------------------------------
     bridge.isolateClaudeConfig       ignored (switching it off loosens the host config isolation)
     providers.*.review               ignored (a review model approves asks)
+    providers.*.roles.*.strong       ignored (picks a stronger, costlier model; L1/L3/L2 only)
+    providers.*.strongOnRevision     only false is accepted (true relaunches on the strong model)
+    ceremony.revisionRounds.<tier>   lower only (a higher limit loosens the review loop)
+    ceremony.requireTriage           only true is accepted (false lets the foreman edit untriaged)
+    roles.*.timeoutMinutes           lower only (a higher limit lets a child run longer)
     python.path                      ignored (it chooses the executable that runs every guard)
     python.*                         ignored
     roles.*.launch                   ignored
@@ -124,6 +129,15 @@ IGNORED_KEYS = [
     (("python", "*"), "interpreter settings come from the user or overlay config"),
     (("roles", "*", "launch"), "the launch mode comes from the user or overlay config"),
     (("roles", "*", "file"), "a role file replaces the prompt: user or overlay config only"),
+    (("providers", "*", "roles", "*", "strong"), "the strong model is picked in the user or overlay config"),
+]
+# Keys outside safety that the project and session layers may only tighten (module docstring),
+# compared with the value after the earlier layers. Same rule names as TIGHTEN.
+LAYER_TIGHTEN = [
+    (("providers", "*", "strongOnRevision"), "false_only"),
+    (("ceremony", "revisionRounds", "*"), "lower_only"),
+    (("ceremony", "requireTriage"), "true_only"),
+    (("roles", "*", "timeoutMinutes"), "lower_only"),
 ]
 # codemode adds a tool, so the project and session layers may only switch it off.
 CODEMODE_FALSE_ONLY = True
@@ -149,6 +163,38 @@ def _drop_pattern(node, keys, done, who, why, warnings):
             _drop_pattern(node[name], keys[1:], path, who, why, warnings)
 
 
+def _tighten_pattern(node, base, keys, rule, done, who, warnings):
+    """Apply one LAYER_TIGHTEN rule in place: drop a value that would loosen `base`."""
+    if not isinstance(node, dict):
+        return
+    for name in (list(node) if keys[0] == "*" else [keys[0]]):
+        if name not in node:
+            continue
+        path = done + (name,)
+        have = base.get(name) if isinstance(base, dict) else None
+        if len(keys) > 1:
+            _tighten_pattern(node[name], have, keys[1:], rule, path, who, warnings)
+            continue
+        val, label = node[name], who + " " + ".".join(path)
+        if rule in ("false_only", "true_only"):
+            want = rule == "true_only"
+            if not isinstance(val, bool):
+                why = "not a boolean"
+            elif val != want and have is not val:
+                why = "it would loosen the policy"
+            else:
+                continue
+        else:  # lower_only
+            if not isinstance(val, int) or isinstance(val, bool) or val < 0:
+                why = "not a non-negative integer"
+            elif isinstance(have, int) and not isinstance(have, bool) and val > have:
+                why = "it would loosen the policy"
+            else:
+                continue
+        del node[name]
+        warnings.append("%s ignored: %s" % (label, why))
+
+
 def workspace_root(project_dir):
     """The nearest directory at or above project_dir holding `.git` (symlinks resolved), else project_dir."""
     start = Path(os.path.realpath(str(project_dir)))
@@ -162,6 +208,8 @@ def restrict_layer(base, proj, who, warnings, project_dir):
     """Drop or narrow, in place, the non-safety keys the project or session layer may not loosen."""
     for keys, why in IGNORED_KEYS:
         _drop_pattern(proj, keys, (), who, why, warnings)
+    for keys, rule in LAYER_TIGHTEN:
+        _tighten_pattern(proj, base, keys, rule, (), who, warnings)
     roles = proj.get("roles")
     base_roles = base.get("roles") if isinstance(base.get("roles"), dict) else {}
     if isinstance(roles, dict):
@@ -538,27 +586,41 @@ def cap_thinking(level, ceiling):
 
 
 def resolve_role(cfg, role, provider):
-    """Return {model, thinking, codemode, tools}; raise ConfigError if unresolvable."""
+    """Return {model, thinking, codemode, tools[, strong]}; raise ConfigError if unresolvable.
+
+    `strong` ({model, thinking}) is the role's strong model: the provider's own, else the
+    fallback provider's (like `model`); absent when neither maps one.
+    """
     providers = cfg.get("providers") or {}
     entry = (providers.get(provider) or {}).get("roles", {}).get(role) or {}
-    model, thinking, via = entry.get("model"), entry.get("thinking"), provider
+    fb = ((providers.get(provider) or {}).get("fallback") or {}).get("provider")
+    fentry = ((providers.get(fb) or {}).get("roles", {}).get(role) if fb else None) or {}
+    model, thinking = entry.get("model"), entry.get("thinking")
     if not model:
-        fb = ((providers.get(provider) or {}).get("fallback") or {}).get("provider")
-        fentry = (providers.get(fb) or {}).get("roles", {}).get(role) if fb else None
-        if not fb or not fentry or not fentry.get("model"):
+        if not fb or not fentry.get("model"):
             raise ConfigError("role %s has no model for provider %s and no fallback" % (role, provider))
-        model, thinking, via = fentry["model"], fentry.get("thinking"), fb
+        model, thinking = fentry["model"], fentry.get("thinking")
     codemode = effective_codemode(cfg, provider, role)
     tools = list((cfg.get("roles") or {}).get(role, {}).get("tools", []))
     if codemode and "codemode" not in tools:
         tools.append("codemode")
-    return {"model": model, "thinking": cap_thinking(thinking, cfg.get("maxThinking")),
-            "codemode": codemode, "tools": tools}
+    out = {"model": model, "thinking": cap_thinking(thinking, cfg.get("maxThinking")),
+           "codemode": codemode, "tools": tools}
+    strong = entry.get("strong") if isinstance(entry.get("strong"), dict) else fentry.get("strong")
+    if isinstance(strong, dict) and isinstance(strong.get("model"), str) and strong["model"]:
+        out["strong"] = {"model": strong["model"], "thinking": cap_thinking(strong.get("thinking"), cfg.get("maxThinking"))}
+    return out
+
+
+def child_roles(cfg):
+    """The built-in child roles, then every other role id of the merged `roles` (not foreman)."""
+    extra = sorted(r for r in (cfg.get("roles") or {}) if r != "foreman" and r not in CHILD_ROLES)
+    return list(CHILD_ROLES) + extra
 
 
 def resolve_all(cfg, provider):
     out = {}
-    for role in ["foreman"] + CHILD_ROLES:
+    for role in ["foreman"] + child_roles(cfg):
         try:
             out[role] = resolve_role(cfg, role, provider)
         except ConfigError as exc:

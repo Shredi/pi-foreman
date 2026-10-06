@@ -28,7 +28,8 @@
           "promptAppend": { "type": "string", "description": "Text appended to the role prompt." },
           "tools": { "type": "array", "items": { "type": "string" }, "description": "Strict tool allowlist. Written as a JSON array into the generated settings. For the foreman it is informational. A project or session can only narrow it (intersection), and cannot add role ids." },
           "codemode": { "type": "boolean", "description": "Add the codemode tool to this role. Overridden per provider by providers.<p>.roles.<id>.codemode." },
-          "launch": { "type": "string", "enum": ["detached"], "description": "How the role is launched. Only detached is supported: detached children forward permission asks to the parent. A project or session cannot set it." }
+          "launch": { "type": "string", "enum": ["detached"], "description": "How the role is launched. Only detached is supported: detached children forward permission asks to the parent. A project or session cannot set it." },
+          "timeoutMinutes": { "type": "integer", "minimum": 1, "description": "Run-time limit of one launch of this role; the adapter writes it into each launch as timeoutMs and clamps a longer foreman value down to it. A project or session can only lower it." }
         }
       }
     },
@@ -49,10 +50,21 @@
               "properties": {
                 "model": { "type": "string", "description": "Full model id as Pi expects it, for example <provider>/<model>." },
                 "thinking": { "type": "string", "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"], "description": "Thinking level, capped by maxThinking." },
-                "codemode": { "type": "boolean", "description": "Per role and provider override of roles.<id>.codemode." }
+                "codemode": { "type": "boolean", "description": "Per role and provider override of roles.<id>.codemode." },
+                "strong": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["model"],
+                  "description": "Stronger model for this role, picked by the strength keyword \"strong\" (the builder also on a heavy tier). User or overlay config only; a project or session value is ignored.",
+                  "properties": {
+                    "model": { "type": "string", "description": "Full model id, <provider>/<model>." },
+                    "thinking": { "type": "string", "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"], "description": "Thinking level, capped by maxThinking." }
+                  }
+                }
               }
             }
           },
+          "strongOnRevision": { "type": "boolean", "description": "Relaunch the builder on its strong model for a revision round (default false). A project or session can only set false." },
           "review": {
             "type": "object",
             "additionalProperties": false,
@@ -92,7 +104,17 @@
           "type": "object",
           "description": "Per-repository-path tier, {path: tier}.",
           "additionalProperties": { "type": "string", "enum": ["trivial", "standard", "heavy"] }
-        }
+        },
+        "revisionRounds": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Builder revision rounds after a review, per tier (trivial has none). A project or session can only lower each value.",
+          "properties": {
+            "standard": { "type": "integer", "minimum": 0 },
+            "heavy": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "requireTriage": { "type": "boolean", "description": "The foreman records a tier before it edits workspace files itself. A project or session can only set true." }
       }
     },
     "safety": {

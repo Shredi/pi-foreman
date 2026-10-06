@@ -139,6 +139,64 @@ class LayerRulesTest(unittest.TestCase):
             self.assertIsNone(res["config"]["trace"]["dir"], value)
             self.assertIn("must not be inside a .git or .pi directory", "\n".join(res["warnings"]))
 
+    def test_strong_model_only_from_l1_l3_l2(self):
+        l2 = {"providers": {"p1": {"roles": {"builder": {"model": "p1/b", "strong": {"model": "p1/big"}}}}}}
+        res = self.load(l2=l2, proj={"providers": {"p1": {"roles": {"builder": {"strong": {"model": "p1/x"}}}}}},
+                        session={"providers": {"p1": {"roles": {"builder": {"strong": {"model": "p1/y"}}}}}})
+        self.assertEqual(res["config"]["providers"]["p1"]["roles"]["builder"]["strong"], {"model": "p1/big"})
+        joined = "\n".join(res["warnings"])
+        self.assertIn("project providers.p1.roles.builder.strong ignored", joined)
+        self.assertIn("session providers.p1.roles.builder.strong ignored", joined)
+
+    def test_strong_on_revision_false_only(self):
+        res = self.load(proj={"providers": {"p1": {"strongOnRevision": True}}})
+        self.assertNotIn("strongOnRevision", res["config"]["providers"]["p1"])
+        self.assertIn("project providers.p1.strongOnRevision ignored: it would loosen", "\n".join(res["warnings"]))
+        res = self.load(l2={"providers": {"p1": {"strongOnRevision": True}}},
+                        proj={"providers": {"p1": {"strongOnRevision": False}}})
+        self.assertIs(res["config"]["providers"]["p1"]["strongOnRevision"], False)
+        res = self.load(l2={}, proj={}, session={"providers": {"p1": {"strongOnRevision": True}}})
+        self.assertNotIn("strongOnRevision", res["config"]["providers"]["p1"])
+        self.assertIn("session providers.p1.strongOnRevision ignored", "\n".join(res["warnings"]))
+
+    def test_revision_rounds_lower_only(self):
+        res = self.load(proj={"ceremony": {"revisionRounds": {"standard": 3, "heavy": 1}}},
+                        session={"ceremony": {"revisionRounds": {"heavy": 4}}})
+        self.assertEqual(res["config"]["ceremony"]["revisionRounds"], {"standard": 1, "heavy": 1})
+        joined = "\n".join(res["warnings"])
+        self.assertIn("project ceremony.revisionRounds.standard ignored: it would loosen", joined)
+        self.assertIn("session ceremony.revisionRounds.heavy ignored: it would loosen", joined)
+        res = self.load(l2={"ceremony": {"revisionRounds": {"heavy": 5}}}, proj={}, session={})
+        self.assertEqual(res["config"]["ceremony"]["revisionRounds"], {"standard": 1, "heavy": 5})
+
+    def test_timeout_minutes_lower_only(self):
+        res = self.load(l2={"roles": {"builder": {"timeoutMinutes": 90}}},
+                        proj={"roles": {"builder": {"timeoutMinutes": 120}, "explorer": {"timeoutMinutes": 10}}},
+                        session={"roles": {"reviewer": {"timeoutMinutes": 31}}})
+        roles = res["config"]["roles"]
+        self.assertEqual((roles["builder"]["timeoutMinutes"], roles["explorer"]["timeoutMinutes"],
+                          roles["reviewer"]["timeoutMinutes"]), (90, 10, 30))
+        joined = "\n".join(res["warnings"])
+        self.assertIn("project roles.builder.timeoutMinutes ignored: it would loosen", joined)
+        self.assertIn("session roles.reviewer.timeoutMinutes ignored: it would loosen", joined)
+
+    def test_require_triage_true_only(self):
+        res = self.load(proj={"ceremony": {"requireTriage": False}}, session={"ceremony": {"requireTriage": False}})
+        self.assertIs(res["config"]["ceremony"]["requireTriage"], True)
+        self.assertIn("project ceremony.requireTriage ignored", "\n".join(res["warnings"]))
+        res = self.load(l2={"ceremony": {"requireTriage": False}}, proj={"ceremony": {"requireTriage": True}}, session={})
+        self.assertIs(res["config"]["ceremony"]["requireTriage"], True)
+        res = self.load(l2={"ceremony": {"requireTriage": False}}, proj={}, session={})
+        self.assertIs(res["config"]["ceremony"]["requireTriage"], False)
+
+    def test_pin_role_model_settable_review_ignored(self):
+        res = self.load(session={"providers": {"p1": {"roles": {"builder": {"model": "p1/s"}},
+                                                      "review": {"model": "p1/r"}}}})
+        p1 = res["config"]["providers"]["p1"]
+        self.assertEqual(p1["roles"]["builder"]["model"], "p1/s")
+        self.assertNotIn("review", p1)
+        self.assertIn("session providers.p1.review ignored", "\n".join(res["warnings"]))
+
 
 if __name__ == "__main__":
     unittest.main()
