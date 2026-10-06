@@ -43,6 +43,9 @@ import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
 import { openTrace } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
+import { appendUsage, aggregate, bindLaunch, causeOfCustom, causeOfInput, formatSummary, PARENT_SESSION_ENV, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
+import type { LaunchBinding, LineContext, TurnCause } from "./usage.ts";
+import { workspaceOf } from "./python.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = fileURLToPath(import.meta.url);
@@ -85,6 +88,12 @@ interface Session {
   gitDrift: GitDriftWatch;
   /** Project Claude Code config snapshot, checked before claude-bridge prompts (claudedrift.ts). */
   claudeCfg: ClaudeConfigWatch;
+  /** Usage log (usage.ts): file and the fields every line of this session carries. */
+  usage: { file: string; line: LineContext };
+  /** Launches this session recorded (launch id -> binding), for later kinds (revision, strong-relaunch). */
+  launches: Map<string, LaunchBinding>;
+  /** Foreman only: last trigger of the current run and its cache tokens, for the `turn` trace event. */
+  turn: { cause: TurnCause; cacheRead: number; cacheWrite: number };
 }
 
 export interface AdapterDeps {
@@ -105,6 +114,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.events?.on("permissions:ready", (payload: unknown) => review.onReady(payload));
   let isoSetting: unknown = "auto";
   const baseline = readBaseline(PKG_ROOT);
+  // A child's launch binding is in the env while its extensions load (usage.ts); read it now.
+  const launchBinding = readBinding(process.env);
 
   const pyPath = (s: Session): string | null => (s.python.ok ? s.python.info.executable : null);
 
@@ -138,10 +149,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       python = await pythonCache.get(id, () => resolvePython({ configPath: merged, envPath: ORIGINAL_PI_FOREMAN_PYTHON, platform, spawner, cwd }));
     }
 
+    const isChild = process.env.PI_SUBAGENT_CHILD === "1";
+    const b = isChild ? launchBinding : null;
+    const foremanSession = isChild ? b?.foremanSession ?? process.env[PARENT_SESSION_ENV] ?? id : id;
+    const line: LineContext = { workspace: b?.workspace || workspaceOf(cwd).root, foremanSession, role: isChild ? b?.role ?? "child" : "foreman", launchId: b?.launchId ?? null, kind: isChild ? b?.kind ?? "first" : "foreman" };
     const s: Session = {
       id,
       cwd,
-      isChild: process.env.PI_SUBAGENT_CHILD === "1",
+      isChild,
       agentDir,
       markerDir,
       python,
@@ -157,6 +172,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       gitDrift: new GitDriftWatch(),
       claudeCfg: new ClaudeConfigWatch(),
       trace: openTrace({ enabled: get(config.config, "trace.enabled"), dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: id }),
+      usage: { file: usageFile(agentDir, foremanSession), line },
+      launches: new Map(),
+      turn: { cause: "other", cacheRead: 0, cacheWrite: 0 },
     };
     sessions.set(id, s);
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
@@ -551,6 +569,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (drift) return drift;
         s.gitDrift.snapshot(ctx.cwd, os.homedir());
       }
+      if (event.toolName === "subagent") recordLaunchUsage(s, ctx, input);
       return undefined;
     } catch (err) {
       return { block: true, reason: `pi-foreman: adapter error before ${event.toolName} (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
@@ -558,16 +577,48 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.on("message_end", async (event, ctx) => {
-    const m = event.message as { role?: string; provider?: string; model?: string; usage?: { input?: number; output?: number; cost?: { total?: number } } };
+    const m = event.message as { role?: string; customType?: string; provider?: string; model?: string; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: { total?: number } } };
     if (m.role === "custom") {
       const s = sessionFor(ctx);
       const opened = s?.supervisor.onMessage(event.message);
       if (opened) s?.trace?.emit({ event: "supervisor_request", role: opened.role, decision: "open" });
+      const cause = causeOfCustom(m.customType);
+      if (s && !s.isChild && cause) s.turn.cause = cause;
     }
     if (m.role !== "assistant") return undefined;
-    sessionFor(ctx)?.trace?.emit({ event: "llm", model: m.provider && m.model ? `${m.provider}/${m.model}` : null, tokensIn: m.usage?.input, tokensOut: m.usage?.output, cost: m.usage?.cost?.total });
+    const s = sessionFor(ctx);
+    s?.trace?.emit({ event: "llm", model: m.provider && m.model ? `${m.provider}/${m.model}` : null, tokensIn: m.usage?.input, tokensOut: m.usage?.output, cacheRead: m.usage?.cacheRead, cacheWrite: m.usage?.cacheWrite, cost: m.usage?.cost?.total });
+    if (!s) return undefined;
+    if (!appendUsage(s.usage.file, usageLine(s.usage.line, event.message))) notifyOnce(s, ctx, "usage", `pi-foreman: could not append to the usage log ${s.usage.file}; /foreman cost will be incomplete.`);
+    if (!s.isChild) {
+      s.turn.cacheRead += Number(m.usage?.cacheRead) || 0;
+      s.turn.cacheWrite += Number(m.usage?.cacheWrite) || 0;
+    }
     return undefined;
   });
+
+  // Turn cause (D9, measurement only): the last trigger before or during a foreman run.
+  pi.on("input", async (event, ctx) => {
+    const s = sessionFor(ctx);
+    if (s && !s.isChild) s.turn.cause = causeOfInput(event.source);
+    return { action: "continue" as const };
+  });
+
+  pi.on("agent_end", async (_event, ctx) => {
+    const s = sessionFor(ctx);
+    if (!s || s.isChild) return;
+    s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite });
+    s.turn = { cause: "other", cacheRead: 0, cacheWrite: 0 };
+  });
+
+  /** D8: give a single-child launch its usage binding (role, launch id, kind) through extensionBindings. */
+  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>): void {
+    const role = singleLaunchRole(input);
+    if (!role) return;
+    const model = typeof input.model === "string" && input.model ? input.model : null;
+    const b = recordUsageLaunch(s.launches, { foremanSession: s.usage.line.foremanSession, workspace: s.usage.line.workspace, role, model, activeProvider: ctx.model?.provider });
+    bindLaunch(input, b);
+  }
 
   pi.on("tool_result", async (event, ctx) => {
     sessionFor(ctx)?.gitDrift.after(ctx.cwd, os.homedir(), event.toolCallId);
@@ -655,11 +706,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor",
+    description: "pi-foreman commands: /foreman doctor | /foreman cost [workspace]",
     handler: async (args, ctx) => {
-      const sub = args.trim().split(/\s+/)[0] ?? "";
+      const [sub = "", ...rest] = args.trim().split(/\s+/);
+      if (sub === "cost") {
+        const s = await ensureSession(ctx);
+        const ws = rest.join(" ").trim();
+        const wsPath = ws ? workspaceOf(path.resolve(ctx.cwd, ws)).root : "";
+        const lines = ws ? readUsage(s.agentDir, { workspace: wsPath }) : readUsage(s.agentDir, { session: s.usage.line.foremanSession });
+        const title = ws ? `pi-foreman cost: all sessions in ${wsPath}` : `pi-foreman cost: session ${s.usage.line.foremanSession}`;
+        ctx.ui.notify(formatSummary(aggregate(lines), title), "info");
+        return;
+      }
       if (sub !== "doctor") {
-        ctx.ui.notify("Usage: /foreman doctor", "warning");
+        ctx.ui.notify("Usage: /foreman doctor | /foreman cost [workspace]", "warning");
         return;
       }
       const s = await ensureSession(ctx);
