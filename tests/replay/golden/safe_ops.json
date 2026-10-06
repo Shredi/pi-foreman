@@ -11,6 +11,19 @@
    "model": "foreman-fake/foreman"
   },
   {
+   "event": "tier",
+   "tier": "trivial"
+  },
+  {
+   "event": "triage",
+   "decision": "recorded",
+   "tier": "trivial"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
    "event": "guard",
    "toolFamily": "Write",
    "guard": "ledger_guard_write",

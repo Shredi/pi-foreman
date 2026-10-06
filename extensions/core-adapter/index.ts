@@ -15,14 +15,14 @@ import { permFileState, PS_CHILD_ID, PS_PACKAGE, psProjectConfigPath, renderPerm
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
-import { recordLaunch, subagentActionCheck } from "./actions.ts";
+import { isActionCall, recordLaunch, subagentActionCheck } from "./actions.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
-import { applyLaunchModels, applyLaunchTimeouts } from "./launchmodel.ts";
+import { applyLaunchModels, applyLaunchTimeouts, splitLevel, STRENGTHS } from "./launchmodel.ts";
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
@@ -44,8 +44,13 @@ import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
 import { openTrace } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
 import { appendUsage, aggregate, bindLaunch, causeOfCustom, causeOfInput, formatSummary, PARENT_SESSION_ENV, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
-import type { LaunchBinding, LineContext, TurnCause } from "./usage.ts";
+import type { LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
+import { afterBuilderLaunch, checkBuilderLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, REVIEW_ROLES, verdictOf } from "./rounds.ts";
+import type { RoundState } from "./rounds.ts";
+import { foremanTriage, GATED_TOOLS, triageAdvice, triageGateBlock, TRIAGE_TOOL } from "./triage.ts";
+import { familyWarnings, modelGaps } from "./modelcheck.ts";
+import type { RegistryLike } from "./modelcheck.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = fileURLToPath(import.meta.url);
@@ -96,6 +101,8 @@ interface Session {
   launches: Map<string, LaunchBinding>;
   /** Foreman only: last trigger of the current run and its cache tokens, for the `turn` trace event. */
   turn: { cause: TurnCause; cacheRead: number; cacheWrite: number };
+  /** Foreman only: builder revision rounds since the last user prompt or tier change (rounds.ts). */
+  rounds: RoundState;
 }
 
 export interface AdapterDeps {
@@ -178,6 +185,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       usage: { file: usageFile(agentDir, foremanSession), line },
       launches: new Map(),
       turn: { cause: "other", cacheRead: 0, cacheWrite: 0 },
+      rounds: initialRounds(),
     };
     sessions.set(id, s);
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
@@ -222,7 +230,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function setCeremony(s: Session, next: CeremonyState): void {
     const before = s.ceremony.tier;
     s.ceremony = next;
-    if (next.tier !== before) s.trace?.emit({ event: "tier", tier: next.tier });
+    if (next.tier !== before) {
+      s.trace?.emit({ event: "tier", tier: next.tier });
+      s.rounds = initialRounds();
+    }
   }
 
   function sessionFor(ctx: ExtensionContext): Session | undefined {
@@ -357,6 +368,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     await registerChildExtensions(s, ctx);
     const orderNotice = s.isChild ? null : loadOrderNotice(s.cwd, s.agentDir, PKG_ROOT);
     if (orderNotice) notifyOnce(s, ctx, "load-order", orderNotice, "warning");
+    const provider = ctx.model?.provider;
+    if (!s.isChild && provider && get(s.config.config, `providers.${provider}`)) {
+      const registry = ctx.modelRegistry as unknown as RegistryLike;
+      for (const gap of modelGaps(s.config.config, provider, registry)) notifyOnce(s, ctx, `model-gap:${gap}`, `pi-foreman: ${gap}; launches that need it fail. Fix the provider map or the login, then run /foreman doctor.`);
+      for (const w of familyWarnings(s.config.roles, provider, registry)) notifyOnce(s, ctx, `family:${w}`, w);
+    }
     if (fs.existsSync(psProjectConfigPath(s.cwd))) {
       notifyOnce(s, ctx, "ps-project-file", `pi-foreman: ${psProjectConfigPath(s.cwd)} exists. A project permission file can loosen the permission system's rules (it applies once the project is trusted). pi-foreman still enforces its deny rules itself, but put your rules in foreman.json and remove this file. /foreman doctor fails while it exists.`);
     }
@@ -498,6 +515,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const sup = supervisorBlock(sessionFor(ctx), event.toolName, event.input);
     if (sup) return sup;
+    if (GATED_TOOLS.has(event.toolName)) {
+      const triage = await triageBlock(ctx, event.toolName, event.input as Record<string, unknown>);
+      if (triage) return triage;
+    }
     const mapping = mapTool(event.toolName);
     if (mapping.pre.length === 0) return undefined;
     try {
@@ -506,6 +527,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const blocked = childLaunchBlock(s, event.toolName);
       if (blocked) return { block: true, reason: blocked };
       let notices: string[] = [];
+      let builderLaunch = false;
+      let revision = false;
+      let kind: LaunchKind | undefined;
       if (event.toolName === "subagent") {
         const resolution = await currentRoles(s, ctx);
         const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
@@ -524,7 +548,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const resolution = await currentRoles(s, ctx);
         const noModel = roleModelBlock(input, resolution);
         if (noModel) return { block: true, reason: noModel };
-        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider });
+        // D3/D4: a builder launch after a review of built work is a revision round. Checked here,
+        // on the guarded path; a refused launch counts and records nothing.
+        builderLaunch = !s.isChild && !isActionCall(input) && subagentAgents(input).includes("builder");
+        let preferStrong = false;
+        if (builderLaunch) {
+          const rc = checkBuilderLaunch(s.rounds, s.ceremony.tier, get(s.config.config, "ceremony.revisionRounds"));
+          if (rc.block) {
+            s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: "blocked" });
+            return { block: true, reason: rc.block };
+          }
+          revision = rc.revision;
+          const keyword = typeof input.model === "string" && (STRENGTHS as readonly string[]).includes(splitLevel(input.model.trim()).base);
+          preferStrong = revision && !keyword && get(s.config.config, `providers.${resolution.provider}.strongOnRevision`) === true;
+          kind = revision ? (preferStrong ? "strong-relaunch" : "revision") : undefined;
+        }
+        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong });
         for (const o of launched.overrides) s.trace?.emit({ event: "model_override", role: o.role, model: o.model });
         for (const n of launched.notices) s.trace?.emit({ event: "strong_unmapped", role: n.role, model: n.model, tier: s.ceremony.tier });
         notices = launched.notices.map((n) => n.text);
@@ -577,7 +616,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       // Kept for the tool result only once the launch passed every check.
       if (notices.length > 0) s.launchNotices.set(event.toolCallId, notices);
-      if (event.toolName === "subagent") recordLaunchUsage(s, ctx, input);
+      if (builderLaunch) {
+        s.rounds = afterBuilderLaunch(s.rounds, revision);
+        if (kind) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: kind });
+      }
+      if (event.toolName === "subagent") recordLaunchUsage(s, ctx, input, kind);
       return undefined;
     } catch (err) {
       return { block: true, reason: `pi-foreman: adapter error before ${event.toolName} (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
@@ -592,6 +635,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (opened) s?.trace?.emit({ event: "supervisor_request", role: opened.role, decision: "open" });
       const cause = causeOfCustom(m.customType);
       if (s && !s.isChild && cause) s.turn.cause = cause;
+      if (s && !s.isChild && m.customType === NOTIFY_TYPE) onCompletionNotice(s, (event.message as { content?: unknown }).content);
     }
     if (m.role !== "assistant") return undefined;
     const s = sessionFor(ctx);
@@ -609,6 +653,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("input", async (event, ctx) => {
     const s = sessionFor(ctx);
     if (s && !s.isChild) s.turn.cause = causeOfInput(event.source);
+    // D3: the owner is back in the loop, so revision rounds count from zero again.
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.rounds = initialRounds();
     return { action: "continue" as const };
   });
 
@@ -619,12 +665,36 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.turn = { cause: "other", cacheRead: 0, cacheWrite: 0 };
   });
 
+  /** D3: a detached child's completion notice; a finished review of built work may open a round. */
+  function onCompletionNotice(s: Session, content: unknown): void {
+    const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((c) => (c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string" ? (c as { text: string }).text : "")).join("\n") : "";
+    const reviews = completedAgents(text).filter((a) => REVIEW_ROLES.includes(a));
+    if (reviews.length === 0) return;
+    const verdict = verdictOf(text);
+    s.rounds = onReviewDone(s.rounds, verdict);
+    for (const role of reviews) s.trace?.emit({ event: "review_done", role, decision: verdict ?? "no-verdict" });
+  }
+
+  /** D10: the foreman's own file changes inside the workspace need a trivial triage. */
+  async function triageBlock(ctx: ExtensionContext, toolName: string, input: Record<string, unknown>): Promise<{ block: true; reason: string } | undefined> {
+    try {
+      const s = await ensureSession(ctx);
+      if (s.isChild || get(s.config.config, "ceremony.requireTriage") === false) return undefined;
+      const reason = triageGateBlock(toolName, input, s.ceremony, { cwd: ctx.cwd, home: os.homedir(), platform });
+      if (!reason) return undefined;
+      s.trace?.emit({ event: "triage_gate", toolFamily: toolName, tier: s.ceremony.tier, decision: "blocked" });
+      return { block: true, reason };
+    } catch (err) {
+      return { block: true, reason: `pi-foreman: adapter error in the triage gate (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
+    }
+  }
+
   /** D8: give a single-child launch its usage binding (role, launch id, kind) through extensionBindings. */
-  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>): void {
+  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, kind?: LaunchKind): void {
     const role = singleLaunchRole(input);
     if (!role) return;
     const model = typeof input.model === "string" && input.model ? input.model : null;
-    const b = recordUsageLaunch(s.launches, { foremanSession: s.usage.line.foremanSession, workspace: s.usage.line.workspace, role, model, activeProvider: ctx.model?.provider });
+    const b = recordUsageLaunch(s.launches, { foremanSession: s.usage.line.foremanSession, workspace: s.usage.line.workspace, role, model, kind, activeProvider: ctx.model?.provider });
     bindLaunch(input, b);
   }
 
@@ -698,6 +768,31 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     spawner,
     env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
   });
+
+  // D10: the foreman records its triage; children never get the tool.
+  if (process.env.PI_SUBAGENT_CHILD !== "1") {
+    pi.registerTool({
+      name: TRIAGE_TOOL,
+      label: "Record the tier",
+      description: "Record the ceremony tier of the current task (trivial, standard or heavy) with a one-line reason, before acting. Required before you change workspace files yourself: only a trivial tier allows that; at standard or heavy a builder makes the changes. Never lowers a tier that is already recorded or escalated.",
+      parameters: { type: "object", properties: { tier: { type: "string", enum: ["trivial", "standard", "heavy"] }, reason: { type: "string", minLength: 1, description: "Why this tier, in one line." } }, required: ["tier", "reason"], additionalProperties: false } as never,
+      async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+        const s = await ensureSession(ctx);
+        const refuse = (text: string) => ({ content: [{ type: "text" as const, text }], details: { decision: "refused" }, isError: true });
+        if (s.isChild) return refuse(`${TRIAGE_TOOL} is for the foreman only.`);
+        const tier = params.tier;
+        if (!isTier(tier)) return refuse(`${TRIAGE_TOOL}: tier must be trivial, standard or heavy.`);
+        const r = foremanTriage(s.ceremony, tier, typeof params.reason === "string" ? params.reason.slice(0, 200) : "");
+        if ("error" in r) {
+          s.trace?.emit({ event: "triage", tier, decision: "refused" });
+          return refuse(r.error);
+        }
+        setCeremony(s, r.state);
+        s.trace?.emit({ event: "triage", tier, decision: "recorded" });
+        return { content: [{ type: "text" as const, text: `${tierLine(s.ceremony)} ${triageAdvice(tier)}` }], details: { decision: "recorded", tier } };
+      },
+    } as never);
+  }
 
   // ---------------------------------------------------------------- commands
 
@@ -795,6 +890,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       if (configured) ok(`auth for provider ${p}`);
       else fail(`no auth for provider ${p}`, `run /login ${p} or set its API key environment variable.`);
+      const missing = modelGaps(s.config.config, p, ctx.modelRegistry as unknown as RegistryLike).filter((g) => g.startsWith("model "));
+      for (const g of missing) fail(g, "correct the model id in the provider map; Pi's model list shows what the registry has.");
+      if (missing.length === 0) ok(`every model mapped for ${p} is in the model registry`);
     }
 
     if (isolationOn(isoSetting, ctx.model?.provider)) out.push(...isolationDoctor({ dir: isolationDir(s.agentDir), env: process.env, platform }));

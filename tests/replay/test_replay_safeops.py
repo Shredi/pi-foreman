@@ -1,6 +1,7 @@
 """Replay: foreman_move through the real Pi tool path (design section 5, precondition ops).
 
-One move passes every precondition and runs without approval; the second targets the file the
+The foreman triages trivial first (the triage gate, plan D10, refuses its own workspace writes
+otherwise). One move passes every precondition and runs without approval; the second targets the file the
 first one created, fails `dst_exists` and changes nothing. The trace records `safe_op` with the
 precondition name only, never a path. Same prerequisites and skips as test_replay.py.
 """

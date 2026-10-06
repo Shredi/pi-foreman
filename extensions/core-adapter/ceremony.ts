@@ -10,7 +10,7 @@
 // A second launch, or a non-explorer launch, while trivial escalates to standard first.
 
 export type Tier = "trivial" | "standard" | "heavy";
-export type TierSource = "default" | "ledger" | "user" | "auto";
+export type TierSource = "default" | "ledger" | "user" | "auto" | "foreman";
 
 export const TIERS: readonly Tier[] = ["trivial", "standard", "heavy"];
 const RANK: Record<Tier, number> = { trivial: 0, standard: 1, heavy: 2 };
@@ -21,6 +21,8 @@ export interface CeremonyState {
   spawns: number;
   files: string[];
   reasons: string[];
+  /** The foreman, the user or a ledger header recorded a tier (a later escalation keeps it). */
+  triaged?: boolean;
 }
 
 export function isTier(v: unknown): v is Tier {
@@ -34,15 +36,15 @@ export function initialCeremony(defaultTier: unknown): CeremonyState {
 /** Automatic change: only upward. The config default is not a triage, so any tier replaces it. */
 export function escalate(s: CeremonyState, tier: Tier, source: "ledger" | "auto", reason: string): CeremonyState {
   if (s.source === "default" && source === "ledger") {
-    return { ...s, tier, source, reasons: [...s.reasons, reason] };
+    return { ...s, tier, source, reasons: [...s.reasons, reason], triaged: true };
   }
-  if (RANK[tier] <= RANK[s.tier]) return s;
-  return { ...s, tier, source, reasons: [...s.reasons, reason] };
+  if (RANK[tier] <= RANK[s.tier]) return source === "ledger" && !s.triaged ? { ...s, triaged: true } : s;
+  return { ...s, tier, source, reasons: [...s.reasons, reason], triaged: s.triaged || source === "ledger" };
 }
 
 /** `/ceremony <tier>`: the user may move the tier either way. */
 export function userOverride(s: CeremonyState, tier: Tier): CeremonyState {
-  return { ...s, tier, source: "user", reasons: [...s.reasons, `user set ${tier}`] };
+  return { ...s, tier, source: "user", reasons: [...s.reasons, `user set ${tier}`], triaged: true };
 }
 
 /** `Tier: <tier>` in the ledger header (first 40 lines; markdown emphasis allowed). */
@@ -102,6 +104,6 @@ export function gateThreshold(s: CeremonyState): number | null {
 }
 
 export function tierLine(s: CeremonyState): string {
-  const how = s.source === "default" ? "config default, not triaged yet" : s.source === "user" ? "set by the user" : s.source === "ledger" ? "from the ledger header" : "escalated automatically";
+  const how = s.source === "default" ? "config default, not triaged yet" : s.source === "user" ? "set by the user" : s.source === "ledger" ? "from the ledger header" : s.source === "foreman" ? "triaged by the foreman" : s.triaged ? "escalated automatically" : "escalated automatically, not triaged yet";
   return `Current ceremony tier: ${s.tier} (${how}).`;
 }

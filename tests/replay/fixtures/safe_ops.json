@@ -1,6 +1,7 @@
 {
  "foreman": {
   "s1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "trivial", "reason": "two scratch files and one rename"}}]},
    {"tools": [{"name": "write", "arguments": {"path": "a.txt", "content": "alpha\n"}}]},
    {"tools": [{"name": "write", "arguments": {"path": "c.txt", "content": "gamma\n"}}]},
    {"tools": [{"name": "foreman_move", "arguments": {"src": "a.txt", "dst": "b.txt"}}]},
