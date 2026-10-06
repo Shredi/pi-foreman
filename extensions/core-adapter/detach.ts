@@ -8,6 +8,8 @@
 // `chain[]` and `chain[].parallel[]`. Their entries are strict ({agent, task, as?, parallel?}),
 // so an entry only loses a forbidden value; nothing is added to it.
 
+import { isActionCall } from "./actions.ts";
+
 type Json = Record<string, unknown>;
 
 const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
@@ -36,7 +38,8 @@ function fix(o: Json, addAsync: boolean): boolean {
  */
 export function forceDetached(input: Json): boolean {
   if (!isObj(input)) return false;
-  const management = typeof input.action === "string" && input.action !== "";
+  // Action calls (allowlisted or checked in actions.ts) only lose an explicit false.
+  const management = isActionCall(input);
   let overridden = fix(input, !management);
   const visit = (list: unknown): void => {
     if (!Array.isArray(list)) return;

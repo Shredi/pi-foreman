@@ -112,10 +112,26 @@ class ConfigTest(unittest.TestCase):
         self.assertIs(res["config"]["safety"]["children"]["mayPush"], False)
         self.assertIn("safety.children.mayPush", "\n".join(res["warnings"]))
 
+    def test_bridge_isolation_default_and_project_cannot_switch_off(self):
+        self.assertEqual(self.load()["config"]["bridge"]["isolateClaudeConfig"], "auto")
+        self.l2({"bridge": {"isolateClaudeConfig": False}})
+        self.proj({"bridge": {"isolateClaudeConfig": True}})
+        res = self.load(trusted_project=True)
+        self.assertIs(res["config"]["bridge"]["isolateClaudeConfig"], False)
+        self.assertIn("bridge.isolateClaudeConfig", "\n".join(res["warnings"]))
+
+    def test_review_model_only_from_user_or_overlay(self):
+        self.l2({"providers": {"p1": {"review": {"model": "p1/small", "timeoutMs": 5000}}}})
+        self.proj({"providers": {"p1": {"review": {"model": "p1/other"}}, "p2": {"review": {"model": "p2/x"}}}})
+        res = self.load(trusted_project=True)
+        self.assertEqual(res["config"]["providers"]["p1"]["review"], {"model": "p1/small", "timeoutMs": 5000})
+        self.assertNotIn("review", res["config"]["providers"].get("p2", {}))
+        self.assertIn("providers.p2.review", "\n".join(res["warnings"]))
+
     def test_project_cannot_add_allow(self):
         self.proj({"safety": {"permissions": {"allow": ["rm *"]}}})
         res = self.load(trusted_project=True)
-        self.assertNotIn("allow", res["config"]["safety"]["permissions"])
+        self.assertEqual(res["config"]["safety"]["permissions"]["allow"], [])
         self.assertIn("safety.permissions.allow", "\n".join(res["warnings"]))
 
     def test_unknown_key_warns(self):
@@ -125,13 +141,14 @@ class ConfigTest(unittest.TestCase):
         self.assertIn("unknown key fanout.wide", res["warnings"])
         self.assertEqual(res["errors"], [])
 
-    def test_invalid_safety_falls_back(self):
+    def test_invalid_safety_drops_only_that_entry(self):
         self.l2({"safety": {"children": {"mayPush": "yes"}, "git": {"protectedBranches": ["dev"]}}})
         res = self.load()
-        self.assertTrue(res["safetyFallback"])
-        self.assertEqual(res["config"]["safety"], fc.read_json(fc.DEFAULTS_PATH)["safety"])
+        self.assertFalse(res["safetyFallback"])
+        self.assertIs(res["config"]["safety"]["children"]["mayPush"], False)
+        self.assertEqual(res["config"]["safety"]["git"]["protectedBranches"], ["dev"])
         self.assertEqual(res["errors"], [])
-        self.assertTrue(any("safety" in w for w in res["warnings"]))
+        self.assertTrue(any("L2 invalid safety value dropped: safety.children.mayPush" in w for w in res["warnings"]))
 
     def test_invalid_other_value_is_error(self):
         self.l2({"fanout": {"max": 0}})
@@ -154,6 +171,32 @@ class ConfigTest(unittest.TestCase):
         cfg = self.load()["config"]
         self.assertEqual(fc.resolve_role(cfg, "explorer", "p1")["model"], "p2/e")
         self.assertEqual(fc.resolve_role(cfg, "builder", "p1")["model"], "p1/b")
+
+    def test_strong_resolves_capped_and_via_fallback(self):
+        self.l2({"maxThinking": "high", "providers": {
+            "p1": {"roles": {"builder": {"model": "p1/b", "strong": {"model": "p1/big", "thinking": "max"}}},
+                   "fallback": {"provider": "p2"}},
+            "p2": {"roles": {"explorer": {"model": "p2/e", "strong": {"model": "p2/E"}},
+                             "reviewer": {"model": "p2/r"}}}}})
+        cfg = self.load()["config"]
+        self.assertEqual(fc.resolve_role(cfg, "builder", "p1")["strong"], {"model": "p1/big", "thinking": "high"})
+        self.assertEqual(fc.resolve_role(cfg, "explorer", "p1")["strong"], {"model": "p2/E", "thinking": None})
+        self.assertNotIn("strong", fc.resolve_role(cfg, "reviewer", "p1"))
+
+    def test_strong_only_from_the_provider_model_came_from(self):
+        # MINOR-8: p maps builder.model itself, so q's strong never applies, even with q as fallback.
+        self.l2({"providers": {"p": {"roles": {"builder": {"model": "p/b"}}, "fallback": {"provider": "q"}},
+                               "q": {"roles": {"builder": {"model": "q/b", "strong": {"model": "q/STRONG"}}}}}})
+        cfg = self.load()["config"]
+        self.assertEqual(fc.resolve_role(cfg, "builder", "p")["model"], "p/b")
+        self.assertNotIn("strong", fc.resolve_role(cfg, "builder", "p"))
+
+    def test_resolve_all_includes_overlay_roles(self):
+        self.l2({"roles": {"auditor": {"tools": ["read"]}},
+                 "providers": {"p1": {"roles": {"auditor": {"model": "p1/a"}}}}})
+        roles = fc.resolve_all(self.load()["config"], "p1")
+        self.assertEqual(roles["auditor"]["model"], "p1/a")
+        self.assertEqual(list(roles), ["foreman"] + fc.CHILD_ROLES + ["auditor"])
 
     def test_max_thinking_caps(self):
         self.l2({"maxThinking": "medium", "providers": {"p1": {"roles": {

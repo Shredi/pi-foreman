@@ -1,0 +1,16 @@
+{
+ "foreman": {
+  "h1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:pusher]] publish the work"}}]},
+   {"text": "Launched."},
+   {"text": "Builder reported."}
+  ]
+ },
+ "builder": {
+  "pusher": [
+   {"tools": [{"name": "bash", "arguments": {"command": "echo ok > control.txt"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "git push origin main || echo leaked > leaked.txt"}}]},
+   {"text": "child: push attempt finished"}
+  ]
+ }
+}

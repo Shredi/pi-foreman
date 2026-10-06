@@ -2,6 +2,7 @@
 // pi-subagents ships builtin agents (worker, scout, ...) that carry none of the role
 // definitions; a launch naming one is refused (fail closed). The allowed ids are the keys of
 // the merged config `roles` minus `foreman`, so overlay-added roles are allowed too.
+import { isManagementCall } from "./actions.ts";
 import { subagentAgents } from "./payload.ts";
 
 type Json = Record<string, unknown>;
@@ -14,12 +15,12 @@ export function childRoleIds(roles: unknown): string[] {
 
 /**
  * Block reason for a `subagent` call that names an agent outside `allowed`, or undefined.
- * Management calls (non-empty `action`) pass. Checks the top-level `agent` and every agent in
+ * Allowlisted non-launching actions pass (actions.ts; every other action is checked there). Checks the top-level `agent` and every agent in
  * `tasks[]`, `chain[]` and `chain[].parallel[]`.
  */
 export function roleLaunchBlock(input: Json, allowed: readonly string[]): string | undefined {
   if (!input || typeof input !== "object") return undefined;
-  if (typeof input.action === "string" && input.action !== "") return undefined;
+  if (isManagementCall(input)) return undefined;
   const refused = subagentAgents(input).find((a) => !allowed.includes(a));
   if (refused === undefined) return undefined;
   const list = allowed.length ? allowed.join(", ") : "(none configured)";
@@ -36,13 +37,13 @@ export interface RoleResolution {
 
 /**
  * Block reason for a `subagent` call that names a role without a resolved model for the active
- * provider, or undefined (design §3: never a silent default). Management calls pass. A role
+ * provider, or undefined (design §3: never a silent default). Allowlisted non-launching actions pass. A role
  * passes when `roles[<id>].model` is a non-empty string; foreman_config resolves a provider
  * fallback into that field. Fails closed when the config CLI did not run.
  */
 export function roleModelBlock(input: Json, res: RoleResolution): string | undefined {
   if (!input || typeof input !== "object") return undefined;
-  if (typeof input.action === "string" && input.action !== "") return undefined;
+  if (isManagementCall(input)) return undefined;
   const agents = subagentAgents(input);
   if (agents.length === 0) return undefined;
   if (res.source !== "cli") {

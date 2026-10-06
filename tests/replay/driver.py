@@ -32,6 +32,8 @@ REPO = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 FAKE_PROVIDER = HERE / "fake_provider.ts"
 PI_SUBAGENTS_VERSION = "0.75.0"
+PERMISSION_SYSTEM = "@gotgenes/pi-permission-system"
+PERMISSION_SYSTEM_VERSION = "39.0.2"
 PROVIDER_A = "foreman-fake"
 PROVIDER_B = "foreman-fake-b"
 ROLES = ["foreman", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
@@ -82,6 +84,26 @@ def pi_subagents_dir():
     return pkg.resolve()
 
 
+def permission_system_dir():
+    """Installed @gotgenes/pi-permission-system (same cache prefix as pi-subagents); required in every child."""
+    env = os.environ.get("FOREMAN_PERMISSION_SYSTEM")
+    if env:
+        return Path(env).resolve()
+    cache = Path(os.environ.get("FOREMAN_REPLAY_CACHE") or Path(tempfile.gettempdir()) / "pi-foreman-replay-cache")
+    pkg = cache / "node_modules" / "@gotgenes" / "pi-permission-system"
+    manifest = pkg / "package.json"
+    if not manifest.is_file() or json.loads(manifest.read_text("utf-8")).get("version") != PERMISSION_SYSTEM_VERSION:
+        cache.mkdir(parents=True, exist_ok=True)
+        r = _run([_tool("npm"), "install", "--no-audit", "--no-fund", "--prefix", str(cache), "%s@%s" % (PERMISSION_SYSTEM, PERMISSION_SYSTEM_VERSION)], 600)
+        if r.returncode != 0:
+            raise RuntimeError("npm install %s failed: %s" % (PERMISSION_SYSTEM, r.stderr.decode()[-500:]))
+    return pkg.resolve()
+
+
+# permissions="open" keeps the older scenarios unchanged; "baseline" is what the installer writes.
+OPEN_PERMISSIONS = {"permission": {"*": "allow", "bash": {"*": "allow"}}}
+
+
 def deep_merge(base, over):
     out = dict(base)
     for k, v in over.items():
@@ -97,7 +119,7 @@ class Rig:
     """One throwaway Pi world: agent dir + project + tmp, plus the processes started in it."""
 
     def __init__(self, name, script, providers=(PROVIDER_A,), config=None, settings=None, unmapped=(),
-                 project_config=None, l2_providers=True):
+                 project_config=None, l2_providers=True, permissions="open"):
         """`project_config` is written to project/.pi/foreman.json after the user block is
         generated (Pi runs with --approve, so the adapter trusts it); `l2_providers=False` leaves
         the L2 `providers` map, and so the generated agentOverridesByProvider, empty."""
@@ -124,10 +146,19 @@ class Rig:
         if gen.returncode != 0 and not ((unmapped or not l2_providers) and gen.returncode == 3):
             raise RuntimeError("generate-subagents failed: %s" % gen.stderr.decode())
         block = json.loads(gen.stdout.decode())["subagents"]
-        st = {"packages": [str(pi_subagents_dir()), str(REPO)], "subagents": block}
+        st = {"packages": [str(pi_subagents_dir()), str(REPO), str(permission_system_dir())], "subagents": block}
         if settings:
             st = deep_merge(st, settings)
         (self.agent / "settings.json").write_text(json.dumps(st, indent=1), "utf-8")
+        ps_cfg = self.agent / "extensions" / "pi-permission-system" / "config.json"
+        ps_cfg.parent.mkdir(parents=True)
+        if permissions == "baseline":
+            out = _run([sys.executable, str(REPO / "scripts" / "permissions_gen.py"), "render", "--agent-dir", str(self.agent)], 60)
+            if out.returncode != 0:
+                raise RuntimeError("permissions_gen failed: %s" % out.stderr.decode())
+            ps_cfg.write_text(json.dumps(json.loads(out.stdout.decode())["config"], indent=1), "utf-8")
+        else:
+            ps_cfg.write_text(json.dumps(OPEN_PERMISSIONS), "utf-8")
         if project_config is not None:
             (self.project / ".pi").mkdir()
             (self.project / ".pi" / "foreman.json").write_text(json.dumps(project_config, indent=1), "utf-8")

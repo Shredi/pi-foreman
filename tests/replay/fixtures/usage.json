@@ -1,0 +1,14 @@
+{
+ "foreman": {
+  "u1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:uchild]] small job"}}]},
+   {"text": "Launched."},
+   {"text": "Builder reported."}
+  ]
+ },
+ "builder": {
+  "uchild": [
+   {"text": "child: job done"}
+  ]
+ }
+}

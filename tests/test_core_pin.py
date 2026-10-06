@@ -4,7 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CORE = ROOT / "core"
-PINNED_SHA = "1b51ec10e0c5896e67ae867dd4bb542324400e50"
+PINNED_SHA = "8376da182fa50c4db3bb6291eec94101dbb25d9f"
 GENERATED = ("VERSION", "MANIFEST")
 IGNORED_PARTS = ("__pycache__", ".pytest_cache")
 
@@ -37,6 +37,13 @@ class CorePinTest(unittest.TestCase):
     def test_version_names_pinned_sha(self):
         text = (CORE / "VERSION").read_text(encoding="utf-8")
         self.assertIn("sha: " + PINNED_SHA, text.splitlines())
+
+    def test_conformance_failure_names_only(self):
+        import sys
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import pull_core
+        lines = ["FAILED tests/a.py::test_x - AssertionError: boom", "FAILED tests/b.py::T::test_y", "1 failed in 0.1s"]
+        self.assertEqual(pull_core.failed_names(lines), ["tests/a.py::test_x", "tests/b.py::T::test_y"])
 
 
 if __name__ == "__main__":

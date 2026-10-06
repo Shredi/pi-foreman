@@ -14,6 +14,8 @@ export interface MergedConfig {
   roles: Record<string, Json>;
   /** "cli" = foreman_config.py answered; "defaults" = L1 file read directly. */
   source: "cli" | "defaults";
+  /** safety.permissions after L1 -> L3 -> L2, before the project and session layers (cli only). */
+  basePermissions?: Json;
 }
 
 const CONFIG_TIMEOUT_MS = 10_000;
@@ -48,16 +50,13 @@ export function get(obj: unknown, dotted: string): unknown {
 
 /**
  * python.path before the CLI can run (the CLI itself needs Python): last wins over
- * L1 defaults, L2 `<agent dir>/foreman.json` and, when trusted, `.pi/foreman.json`.
+ * L1 defaults and L2 `<agent dir>/foreman.json`. Never the project file: python.path picks
+ * the executable that runs every guard (the CLI ignores a project or session value too).
  */
-export function pythonPathHint(pkgRoot: string, agentDir: string, projectDir: string, trusted: boolean): string | null {
+export function pythonPathHint(pkgRoot: string, agentDir: string): string | null {
   let value: unknown = get(readDefaults(pkgRoot), "python.path");
   const l2 = readJsonFile(path.join(agentDir, "foreman.json"));
   if (l2 && get(l2, "python.path") !== undefined) value = get(l2, "python.path");
-  if (trusted) {
-    const proj = readJsonFile(path.join(projectDir, ".pi", "foreman.json"));
-    if (proj && get(proj, "python.path") !== undefined) value = get(proj, "python.path");
-  }
   return typeof value === "string" && value.trim() ? value : null;
 }
 
@@ -112,6 +111,7 @@ export async function loadMergedConfig(input: LoadInput): Promise<MergedConfig> 
     safetyFallback: data.safetyFallback === true,
     roles: data.roles && typeof data.roles === "object" ? (data.roles as Record<string, Json>) : {},
     source: "cli",
+    basePermissions: data.basePermissions && typeof data.basePermissions === "object" ? (data.basePermissions as Json) : undefined,
   };
 }
 

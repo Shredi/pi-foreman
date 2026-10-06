@@ -76,7 +76,8 @@ test("dry run writes nothing and runs no install", () => {
   assert.match(r.out, /would run: pi install npm:pi-subagents@0\.75\.0/);
   assert.match(r.out, /would run: pi install /);
   assert.match(r.out, /^\+\+\+ b\/settings\.json/m);
-  assert.match(r.out, /permission rules: Phase 3, skipped/);
+  assert.match(r.out, /permission-system config: absent, would write/);
+  assert.equal(fs.existsSync(path.join(env.agentDir, "extensions")), false);
 });
 
 test("first run backs up, writes the managed block, keeps user keys in order", () => {
@@ -94,11 +95,12 @@ test("first run backs up, writes the managed block, keeps user keys in order", (
   assert.equal(s.subagents.forceTopLevelAsync, true);
   assert.ok(s.packages.includes("npm:some-provider@1.2.3"));
   assert.ok(s.packages.includes("npm:pi-subagents@0.75.0"));
-  assert.equal(s.packages.some((p) => p.includes("permission")), false);
+  assert.ok(s.packages.includes("npm:@gotgenes/pi-permission-system@39.0.2"));
+  assert.equal(s.packages.some((p) => p.includes("ai-guard")), false);
   const managed = JSON.parse(fs.readFileSync(path.join(env.agentDir, "pi-foreman", "managed.json"), "utf8"));
   assert.match(Object.values(managed.entries)[0].subagentsHash, /^[0-9a-f]{64}$/);
   const inst = installs(env).map((a) => a[1]);
-  assert.deepEqual(inst, ["npm:pi-subagents@0.75.0", ROOT]);
+  assert.deepEqual(inst, ["npm:pi-subagents@0.75.0", "npm:@gotgenes/pi-permission-system@39.0.2", ROOT]);
   assert.match(fs.readFileSync(path.join(env.agentDir, "settings.json"), "utf8"), /^ {2}"theme"/m);
 });
 
@@ -203,4 +205,82 @@ test("overlay needs an exact version", () => {
   const ok = run(env, ["--overlay", "npm:@org/overlay@1.2.3"]);
   assert.equal(ok.code, 0, ok.out);
   assert.ok(installs(env).some((a) => a[1] === "npm:@org/overlay@1.2.3"));
+});
+
+const permFile = (env) => path.join(env.agentDir, "extensions", "pi-permission-system", "config.json");
+const permBackups = (env) => fs.readdirSync(path.dirname(permFile(env))).filter((f) => f.startsWith("config.json.bak-"));
+
+test("permission-system config is generated, hashed in managed state, and a second run leaves it alone", () => {
+  const env = fresh();
+  fs.writeFileSync(path.join(env.agentDir, "foreman.json"), JSON.stringify({ version: 1, providers: {}, safety: { permissions: { deny: ["make nuke*"], projectCommands: ["make check *"] } } }));
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  const cfg = JSON.parse(fs.readFileSync(permFile(env), "utf8"));
+  assert.equal(cfg.permission.bash["git status *"], "allow");
+  assert.equal(cfg.permission.bash["make check *"], "allow");
+  assert.equal(cfg.permission.bash["make nuke*"].action, "deny");
+  assert.equal(cfg.permission.path["*.env"].action, "deny");
+  assert.ok(cfg.permission.path[`${env.agentDir.split(path.sep).join("/")}/auth.json`]);
+  const managed = JSON.parse(fs.readFileSync(path.join(env.agentDir, "pi-foreman", "managed.json"), "utf8"));
+  assert.match(managed.files[permFile(env)], /^[0-9a-f]{64}$/);
+  assert.equal(permBackups(env).length, 0);
+  const before = snapshot(env.base);
+  const again = run(env, []);
+  assert.match(again.out, /permission-system config: in sync/);
+  assert.deepEqual(snapshot(env.base), before);
+});
+
+test("a hand-edited permission-system config is backed up and overwritten; the notice names foreman.json", () => {
+  const env = fresh();
+  assert.equal(run(env, []).code, 0);
+  const edited = JSON.parse(fs.readFileSync(permFile(env), "utf8"));
+  edited.permission.bash = "allow";
+  fs.writeFileSync(permFile(env), `${JSON.stringify(edited, null, 2)}\n`);
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /edited by hand.*put your own rules in foreman\.json/s);
+  assert.equal(permBackups(env).length, 1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(path.dirname(permFile(env)), permBackups(env)[0]), "utf8")).permission.bash, "allow");
+  assert.equal(JSON.parse(fs.readFileSync(permFile(env), "utf8")).permission.bash["*"], "ask");
+});
+
+test("--remove deletes an unchanged permission-system config (with a backup) and keeps an edited one", () => {
+  const env = fresh();
+  assert.equal(run(env, []).code, 0);
+  assert.equal(run(env, ["--remove"]).code, 0);
+  assert.equal(fs.existsSync(permFile(env)), false);
+  assert.equal(permBackups(env).length, 1);
+  const env2 = fresh();
+  assert.equal(run(env2, []).code, 0);
+  fs.writeFileSync(permFile(env2), '{"permission": {"*": "allow"}}\n');
+  assert.equal(run(env2, ["--remove"]).code, 0);
+  assert.equal(fs.existsSync(permFile(env2)), true);
+});
+
+test("pi-foreman is placed before pi-claude-bridge in packages: dry run shows it, the run backs up and moves it, a rerun is a no-op", () => {
+  const env = fresh();
+  const seeded = { theme: "dark", packages: ["npm:pi-claude-bridge@0.9.1", "npm:some-provider@1.2.3"] };
+  seed(env, seeded);
+  const before = snapshot(env.base);
+  const dry = run(env, ["--dry-run"]);
+  assert.equal(dry.code, 0, dry.out);
+  assert.match(dry.out, /packages: would move pi-foreman before pi-claude-bridge/);
+  assert.match(dry.out, /^-\s+"npm:pi-claude-bridge@0\.9\.1",$/m);
+  assert.deepEqual(snapshot(env.base), before, "dry run writes nothing");
+
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  const pk = readSettings(env).packages;
+  const foreman = pk.findIndex((p) => path.resolve(env.agentDir, p) === ROOT);
+  assert.ok(foreman >= 0 && foreman < pk.indexOf("npm:pi-claude-bridge@0.9.1"), JSON.stringify(pk));
+  assert.equal(backups(env).length, 1);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(env.agentDir, backups(env)[0]), "utf8")), seeded);
+
+  fs.rmSync(env.log);
+  const settled = snapshot(env.base);
+  const again = run(env, []);
+  assert.equal(again.code, 0, again.out);
+  assert.doesNotMatch(again.out, /move pi-foreman/);
+  assert.deepEqual(snapshot(env.base), settled);
+  assert.match(again.out, /up to date/);
 });

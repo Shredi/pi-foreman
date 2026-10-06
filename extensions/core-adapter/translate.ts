@@ -20,6 +20,7 @@ export type GuardOutcome = { kind: "decision"; d: HookDecision } | { kind: "fail
  *                       does not freeze all editing
  *   ledger_bind         open: side effect only; the user is notified
  *   ledger_guard_stop   open: a broken gate must not trap the session in a continue loop
+ *   git_guard           closed: commit/push lint (main) and the child git block list
  */
 export type FailPolicy = "closed" | "open" | "closed-if-ledger-target";
 export const FAIL_POLICY: Record<GuardName, FailPolicy> = {
@@ -28,6 +29,7 @@ export const FAIL_POLICY: Record<GuardName, FailPolicy> = {
   ledger_guard_write: "closed-if-ledger-target",
   ledger_bind: "open",
   ledger_guard_stop: "open",
+  git_guard: "closed",
 };
 
 const LABEL: Record<GuardName, string> = {
@@ -36,6 +38,7 @@ const LABEL: Record<GuardName, string> = {
   ledger_guard_write: "ledger write gate",
   ledger_bind: "ledger binding",
   ledger_guard_stop: "stop gate",
+  git_guard: "git guard",
 };
 
 function parseJsonLoose(text: string): unknown {
@@ -64,6 +67,9 @@ export function parseHookStdout(stdout: string): { ok: true; d: HookDecision } |
   if (hso && typeof hso === "object") {
     const h = hso as Record<string, unknown>;
     const pd = h.permissionDecision;
+    // an unknown or wrong-case decision ("Deny", "block") is unreadable output: the guard's fail
+    // policy applies (closed guards block), never a silent allow (U15)
+    if (pd !== undefined && pd !== null && pd !== "deny" && pd !== "ask" && pd !== "allow") return { ok: false };
     const decision = pd === "deny" || pd === "ask" || pd === "allow" ? pd : "none";
     const d: HookDecision = { decision };
     if (typeof h.permissionDecisionReason === "string") d.reason = h.permissionDecisionReason;

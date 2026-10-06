@@ -48,6 +48,10 @@ export function buildGuardEnv(input: GuardEnvInput): Record<string, string> {
   if (input.guard === "destructive_guard") {
     // The destructive guard treats the temp dir as an allowed root: keep the host's.
     if (tmpdirHost !== undefined) out.TMPDIR = tmpdirHost;
+    // Opt-in switches of the fork patch (no effect on a core without it): exit 2 on an internal
+    // error instead of a silent allow, and no PATH rewrite to a guard bin dir (empty = none).
+    out.FABLE_ORCH_GUARD_FAIL_CLOSED = "1";
+    out.FABLE_ORCH_GUARD_BIN = "";
   } else {
     // Python's tempfile checks TMPDIR first on every OS: marker, task and stop sidecars.
     out.TMPDIR = input.markerDir;

@@ -9,6 +9,11 @@
 // `<provider>/<model>[:<level>]`. `tasks[]`, `chain[]` and `chain[].parallel[]` entries are
 // validated before the tool_call hook; the executor reads an entry's own `model`, which wins
 // over the top-level one, so each entry gets its role's model and the top-level one is dropped.
+// The default schema declares no `tasks`/`chain` (they are admitted at runtime, entries
+// unchecked); with `disabledFeatures: workflow-scripts` an entry allows only agent and task,
+// so a per-entry keyword from the foreman is rejected there and only the top-level one applies.
+
+import { isActionCall } from "./actions.ts";
 
 type Json = Record<string, unknown>;
 
@@ -37,44 +42,86 @@ export interface ModelOverride {
   model: string;
 }
 
+export type Tier = "trivial" | "standard" | "heavy";
+
+/** Strength keywords the foreman may pass as `model`, optionally with a `:<level>` suffix. */
+export const STRENGTHS = ["default", "strong"] as const;
+
+export interface LaunchOptions {
+  /** The foreman session's ceremony tier: a heavy tier launches the builder on its strong model. */
+  tier?: Tier;
+  /** Launch the builder on its strong model when no keyword is passed (H3 revision relaunch). */
+  preferStrong?: boolean;
+  /** Active provider, named in notices. */
+  provider?: string;
+}
+
+export interface LaunchResult {
+  model: string;
+  override?: ModelOverride;
+  /** One line for the tool result: strong was asked for, but no strong model is mapped. */
+  notice?: string;
+}
+
 /**
- * Model id for one launch of `role`: provider and model from the map (`roles[role].model`,
- * a full `<provider>/<model>` id); the level is the foreman's own when it passed one (capped
- * at `maxThinking`), else the role's mapped thinking (already capped by foreman_config); no
- * suffix when neither is set. `override` is set when the foreman named a different model.
+ * Model id for one launch of `role`, from the map (`roles[role]`, resolved by foreman_config).
+ * Strength: the keyword `default` or `strong` when the foreman passed one; with no keyword,
+ * `strong` for a builder launch on a heavy tier or with `preferStrong`, else `default`.
+ * `strong` uses `roles[role].strong` ({model, thinking}); when none is mapped the default model
+ * is used, and `notice` says so when strong was asked for (keyword or `preferStrong`; a heavy
+ * tier without a strong model stays silent). A raw model id is no keyword: it is replaced by the
+ * map at the strength above and reported as `override`. The level is the foreman's own when it
+ * passed one (capped at `maxThinking`), else the chosen model's mapped thinking (already capped
+ * by foreman_config); no suffix when neither is set.
  */
-export function launchModel(role: string, roles: Record<string, Json>, passed: unknown, maxThinking: unknown): { model: string; override?: ModelOverride } | undefined {
+export function launchModel(role: string, roles: Record<string, Json>, passed: unknown, maxThinking: unknown, opts: LaunchOptions = {}): LaunchResult | undefined {
   const r = roles[role];
   if (!isObj(r) || typeof r.model !== "string" || r.model === "") return undefined;
-  const mapped = splitLevel(r.model);
   const foreman = typeof passed === "string" ? splitLevel(passed.trim()) : { base: "", level: null };
-  const level = foreman.level ? clampLevel(foreman.level, maxThinking) : isLevel(r.thinking) ? r.thinking : mapped.level;
+  const keyword = (STRENGTHS as readonly string[]).includes(foreman.base) ? foreman.base : null;
+  const asked = keyword === "strong" || (keyword === null && role === "builder" && opts.preferStrong === true);
+  const wantStrong = asked || (keyword === null && role === "builder" && opts.tier === "heavy");
+  const strong = isObj(r.strong) && typeof r.strong.model === "string" && r.strong.model !== "" ? r.strong : null;
+  const pick = wantStrong && strong ? strong : r;
+  const mapped = splitLevel(pick.model as string);
+  const level = foreman.level ? clampLevel(foreman.level, maxThinking) : isLevel(pick.thinking) ? pick.thinking : mapped.level;
   const model = level ? `${mapped.base}:${level}` : mapped.base;
-  if (foreman.base !== "" && foreman.base !== mapped.base) return { model, override: { role, model: mapped.base } };
-  return { model };
+  const out: LaunchResult = { model };
+  if (keyword === null && foreman.base !== "" && foreman.base !== mapped.base) out.override = { role, model: mapped.base };
+  if (asked && !strong) out.notice = `pi-foreman: no strong model mapped for ${role} on ${opts.provider ?? "the active provider"}; launched on ${model}`;
+  return out;
+}
+
+/** What applyLaunchModels changed: overrides to trace, notices for the tool result. */
+export interface LaunchModels {
+  overrides: ModelOverride[];
+  /** Strong asked for but unmapped: the role, the model actually used and the line to show. */
+  notices: { role: string; model: string; text: string }[];
 }
 
 /**
  * Write the mapped model into a `subagent` call in place: the top-level `model` for a single
  * `agent` launch, each entry's `model` in `tasks`, `chain` and `chain[].parallel`. A top-level
- * model passed with tasks/chain counts as the foreman's choice for entries without their own.
- * Management calls (non-empty `action`) are left alone. Returns the overrides to trace.
+ * model (or keyword) passed with tasks/chain counts as the foreman's choice for entries without
+ * their own. Calls with an action are left alone: management calls launch nothing, and `resume`
+ * reuses the persisted model (actions.ts checks it against the map).
  */
-export function applyLaunchModels(input: Json, roles: Record<string, Json>, maxThinking: unknown): ModelOverride[] {
-  if (!isObj(input)) return [];
-  if (typeof input.action === "string" && input.action !== "") return [];
-  const overrides: ModelOverride[] = [];
+export function applyLaunchModels(input: Json, roles: Record<string, Json>, maxThinking: unknown, opts: LaunchOptions = {}): LaunchModels {
+  const out: LaunchModels = { overrides: [], notices: [] };
+  if (!isObj(input)) return out;
+  if (isActionCall(input)) return out;
   const set = (o: Json, passed: unknown): void => {
     if (typeof o.agent !== "string" || o.agent === "") return;
-    const res = launchModel(o.agent, roles, passed, maxThinking);
+    const res = launchModel(o.agent, roles, passed, maxThinking, opts);
     if (!res) return;
     o.model = res.model;
-    if (res.override) overrides.push(res.override);
+    if (res.override) out.overrides.push(res.override);
+    if (res.notice && !out.notices.some((n) => n.text === res.notice)) out.notices.push({ role: o.agent, model: res.model, text: res.notice });
   };
   const composite = Array.isArray(input.tasks) || Array.isArray(input.chain);
   if (!composite) {
     set(input, input.model);
-    return overrides;
+    return out;
   }
   const top = input.model;
   const visit = (list: unknown): void => {
@@ -88,5 +135,54 @@ export function applyLaunchModels(input: Json, roles: Record<string, Json>, maxT
   visit(input.tasks);
   visit(input.chain);
   delete input.model;
-  return overrides;
+  return out;
+}
+
+const posInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0;
+
+/** `roles.<id>.timeoutMinutes` of the merged config in ms, or undefined when unset. */
+export function roleTimeoutMs(configRoles: unknown, role: string): number | undefined {
+  const r = isObj(configRoles) ? configRoles[role] : undefined;
+  return isObj(r) && posInt(r.timeoutMinutes) ? r.timeoutMinutes * 60_000 : undefined;
+}
+
+/**
+ * Write the run-time limit into a `subagent` launch in place (D7): top-level `timeoutMs` = the
+ * role's `timeoutMinutes`; a foreman `timeoutMs` (or its alias `maxRuntimeMs`, which is dropped)
+ * stays only when it is lower. pi-subagents 0.75.0 honours the top-level value as the run
+ * deadline of a detached single launch, and for tasks/chain as the parent deadline of the whole
+ * run; it reads no per-entry `timeoutMs`, so none is written. A composite therefore gets the
+ * deadline its slowest allowed run needs: `tasks` = the highest entry limit, `chain` = the sum
+ * of its steps (a parallel step counts its highest entry). When an entry has no limit, a foreman
+ * value is capped at the largest configured role limit; with no foreman value nothing is written.
+ */
+export function applyLaunchTimeouts(input: Json, configRoles: unknown): void {
+  if (!isObj(input) || isActionCall(input)) return;
+  const limitOf = (o: unknown): number | undefined => (isObj(o) && typeof o.agent === "string" ? roleTimeoutMs(configRoles, o.agent) : undefined);
+  const maxOf = (list: unknown[]): number | undefined => {
+    const ms = list.map(limitOf);
+    return ms.length > 0 && ms.every(posInt) ? Math.max(...(ms as number[])) : undefined;
+  };
+  let limit: number | undefined;
+  if (Array.isArray(input.tasks)) limit = maxOf(input.tasks);
+  else if (Array.isArray(input.chain)) {
+    let sum: number | undefined = 0;
+    for (const step of input.chain) {
+      const ms = isObj(step) && Array.isArray(step.parallel) ? maxOf(step.parallel) : limitOf(step);
+      sum = sum !== undefined && posInt(ms) ? sum + ms : undefined;
+    }
+    limit = sum || undefined;
+  } else limit = limitOf(input);
+  const passed = input.timeoutMs ?? input.maxRuntimeMs;
+  if (limit === undefined) {
+    // MINOR-9: an entry without a role limit (no agent, empty parallel, a role without
+    // timeoutMinutes) leaves no deadline of its own; a foreman value is still capped at the
+    // largest configured role limit.
+    if (passed === undefined) return;
+    const all = isObj(configRoles) ? Object.keys(configRoles).map((r) => roleTimeoutMs(configRoles, r)).filter(posInt) : [];
+    if (all.length === 0) return;
+    limit = Math.max(...all);
+  }
+  delete input.maxRuntimeMs;
+  input.timeoutMs = posInt(passed) && passed < limit ? passed : limit;
 }

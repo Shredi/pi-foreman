@@ -1,0 +1,87 @@
+{
+ "session": [
+  {
+   "event": "session_start",
+   "role": "foreman",
+   "model": "foreman-fake/foreman",
+   "tier": "standard"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "tier",
+   "tier": "trivial"
+  },
+  {
+   "event": "triage",
+   "decision": "recorded",
+   "tier": "trivial"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Write",
+   "guard": "ledger_guard_write",
+   "decision": "none"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Write",
+   "guard": "ledger_bind",
+   "decision": "none"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Write",
+   "guard": "ledger_guard_write",
+   "decision": "none"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Write",
+   "guard": "ledger_bind",
+   "decision": "none"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "safe_op",
+   "toolFamily": "move",
+   "decision": "ran"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "safe_op",
+   "toolFamily": "move",
+   "decision": "precondition_failed",
+   "precondition": "dst_exists"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "turn"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  }
+ ]
+}

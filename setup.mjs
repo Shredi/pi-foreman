@@ -239,8 +239,8 @@ function resolvePython(agentDir) {
   throw new Fatal(`No Python >= 3.9 found (tried: ${rejected.join("; ") || "nothing"}).\n${how}\nOr set python.path in foreman.json / PI_FOREMAN_PYTHON, then re-run.`);
 }
 
-function runConfigCli(py, args, cwd) {
-  const r = spawnSync(py.executable, ["-E", "-s", path.join(ROOT, "scripts", "foreman_config.py"), ...args], { encoding: "utf8", timeout: 30_000, cwd, windowsHide: true });
+function runConfigCli(py, args, cwd, script = "foreman_config.py") {
+  const r = spawnSync(py.executable, ["-E", "-s", path.join(ROOT, "scripts", script), ...args], { encoding: "utf8", timeout: 30_000, cwd, windowsHide: true });
   if (r.error) throw new Fatal(`Could not run foreman_config.py: ${r.error.message}`);
   let data = null;
   try {
@@ -282,6 +282,30 @@ function isRecorded(settings, spec, baseDir) {
   return false;
 }
 
+const isBridgeEntry = (e) => /(^|[/:@])pi-claude-bridge(@|$|\/)/.test(entrySource(e) ?? "");
+const isForemanEntry = (e, baseDir) => {
+  const src = entrySource(e);
+  if (!src) return false;
+  if (/^npm:pi-foreman(@|$)/.test(src)) return true;
+  return isRecorded({ packages: [e] }, ROOT, baseDir);
+};
+
+/**
+ * `packages` with the pi-foreman entry moved right before the first pi-claude-bridge entry, or
+ * null when no move is needed. Pi runs session_before_compact / session_before_tree handlers in
+ * load order (= this list order) and stops at the first cancel; the bridge's own handler starts
+ * Claude Code, so pi-foreman's config-drift check has to come first.
+ */
+function foremanBeforeBridge(list, baseDir) {
+  if (!Array.isArray(list)) return null;
+  const bridge = list.findIndex(isBridgeEntry);
+  const foreman = list.findIndex((e) => isForemanEntry(e, baseDir));
+  if (bridge < 0 || foreman < 0 || foreman < bridge) return null;
+  const out = list.filter((_, i) => i !== foreman);
+  out.splice(bridge, 0, list[foreman]);
+  return out;
+}
+
 // ---------------------------------------------------------------- main
 
 function main(argv) {
@@ -294,6 +318,7 @@ function main(argv) {
   const baseDir = path.dirname(settingsFile);
   const managedFile = path.join(agentDir, "pi-foreman", "managed.json");
   const foremanFile = path.join(agentDir, "foreman.json");
+  const permFile = path.join(agentDir, "extensions", "pi-permission-system", "config.json");
   const dry = opts.dryRun;
 
   say(`pi-foreman installer${dry ? " (dry run: nothing will be written)" : ""}${opts.remove ? " [remove]" : ""}`);
@@ -352,8 +377,16 @@ function main(argv) {
       say("subagents block: unchanged since written, removing");
       say(unifiedDiff(path.basename(settingsFile), settingsText, toJson(next)));
     } else say("subagents block: not ours or edited by hand, kept");
+    const permText = readText(permFile);
+    const permRecorded = isObj(managed.files) ? managed.files[permFile] : undefined;
+    let dropPerm = false;
+    if (permText === null) say("permission-system config: none present");
+    else if (permRecorded && permRecorded === (() => { try { return sha(parseJsonObject(permText, permFile)); } catch { return null; } })()) {
+      dropPerm = true;
+      say(`permission-system config: unchanged since written, removing ${permFile}`);
+    } else say("permission-system config: not ours or edited by hand, kept");
     for (const c of cmds) say(`${dry ? "would run" : "will run"}: pi ${c.join(" ")}`);
-    if (!cmds.length && !next) {
+    if (!cmds.length && !next && !dropPerm) {
       say("pi-foreman: up to date, nothing to remove.");
       return;
     }
@@ -367,6 +400,13 @@ function main(argv) {
       writeFile(settingsFile, toJson(fresh));
     }
     delete managed.entries[settingsFile];
+    if (dropPerm) {
+      const file = `${permFile}.bak-${timestamp()}`;
+      fs.copyFileSync(permFile, file);
+      say(`  backup: ${file}`);
+      fs.unlinkSync(permFile);
+      delete managed.files[permFile];
+    }
     if (managedText !== null) writeFile(managedFile, toJson(managed));
     say("pi-foreman: removed managed entries.");
   }
@@ -398,6 +438,14 @@ function main(argv) {
     for (const w of want) say(`  package ${w.label}: ${todo.includes(w) ? "to install" : "already recorded"}`);
     const installArgs = todo.map((w) => ["install", w.spec, ...(opts.project ? ["-l"] : [])]);
     if (installArgs.length) anyChange = true;
+    // load order: pi-foreman before pi-claude-bridge (after `pi install` appended what was missing)
+    const plannedPackages = [...(Array.isArray(settings.packages) ? settings.packages : []), ...todo.map((w) => (w.spec === ROOT ? path.relative(baseDir, ROOT) : w.spec))];
+    const reordered = foremanBeforeBridge(plannedPackages, baseDir);
+    if (reordered) {
+      anyChange = true;
+      say(`packages: ${dry ? "would move" : "moving"} pi-foreman before pi-claude-bridge, so its config-drift check runs before the bridge's compaction and branch summaries`);
+      say(unifiedDiff(path.basename(settingsFile), toJson({ ...settings, packages: plannedPackages }), toJson({ ...settings, packages: reordered })));
+    }
     if (opts.project) say("  note: project packages load only after the project is trusted; headless runs need `pi --approve` (or `-a`).");
 
     // settings merge
@@ -429,23 +477,62 @@ function main(argv) {
 
     for (const e of errors) say(`  generate-subagents: ${e}`);
     for (const w of warnings) say(`  warning: ${w}`);
-    say("permission rules: Phase 3, skipped");
+    // permission-system config, generated from the baseline plus safety.permissions (L1 -> L3 -> L2)
+    const pg = runConfigCli(py, ["render", "--agent-dir", agentDir], projectDir, "permissions_gen.py");
+    if (!pg.data || !isObj(pg.data.config)) throw new Fatal(`permissions_gen.py failed (exit ${pg.code}): ${pg.stderr || "no JSON output"}`);
+    const permWanted = pg.data.config;
+    const permText = readText(permFile);
+    let permCur = null;
+    let permBroken = false;
+    try {
+      permCur = parseJsonObject(permText, permFile);
+    } catch {
+      permBroken = true;
+    }
+    const permRecorded = isObj(managed.files) ? managed.files[permFile] : undefined;
+    const permSame = !permBroken && permCur !== null && canonical(permCur) === canonical(permWanted);
+    const permHash = sha(permWanted);
+    if (permSame) say("permission-system config: in sync");
+    else {
+      anyChange = true;
+      if (permText === null) say(`permission-system config: absent, ${dry ? "would write" : "writing"} ${permFile}`);
+      else {
+        const edited = permBroken || !permRecorded || permRecorded !== sha(permCur);
+        say(`permission-system config: ${edited ? "edited by hand or not recorded as ours" : "out of date"}; backing it up and overwriting. The installer owns this file: put your own rules in foreman.json (safety.permissions).`);
+      }
+      say(unifiedDiff("extensions/pi-permission-system/config.json", permText, toJson(permWanted)));
+    }
+    const permNeedRecord = !isObj(managed.files) || managed.files[permFile] !== permHash;
+    if (permNeedRecord) anyChange = true;
+    for (const w of pg.data.warnings || []) say(`  warning: ${w}`);
 
     if (dry) {
       for (const a of installArgs) say(`would run: pi ${a.join(" ")}`);
-      if (needRecord) say(`would record the managed hash in ${managedFile}`);
+      if (needRecord || permNeedRecord) say(`would record the managed hash in ${managedFile}`);
     } else if (anyChange) {
-      if (installArgs.length || !same) backup();
+      if (installArgs.length || !same || reordered) backup();
       for (const a of installArgs) runOrDie(a);
       let finalBlock = pick(next.subagents);
-      if (!same) {
+      if (!same || reordered) {
         // pi edits `packages` in the same file, so merge into what is on disk now
         const fresh = parseJsonObject(readText(settingsFile), settingsFile) ?? {};
-        applyWanted(fresh);
+        if (!same) applyWanted(fresh);
+        const order = foremanBeforeBridge(fresh.packages, baseDir);
+        if (order) fresh.packages = order;
         writeFile(settingsFile, toJson(fresh));
-        finalBlock = pick(fresh.subagents);
+        if (!same) finalBlock = pick(fresh.subagents);
       }
       managed.entries[settingsFile] = { subagentsHash: sha(finalBlock) };
+      if (!permSame) {
+        if (permText !== null) {
+          const file = `${permFile}.bak-${timestamp()}`;
+          fs.copyFileSync(permFile, file);
+          say(`  backup: ${file}`);
+        }
+        writeFile(permFile, toJson(permWanted));
+      }
+      if (!isObj(managed.files)) managed.files = {};
+      managed.files[permFile] = permHash;
       writeFile(managedFile, toJson(managed));
     }
 

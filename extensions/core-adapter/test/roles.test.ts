@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "../roles.ts";
 import type { RoleResolution } from "../roles.ts";
+import { subagentActionCheck } from "../actions.ts";
+import type { RunRegistry } from "../actions.ts";
 
 const ROLES = { foreman: {}, explorer: {}, builder: {}, reviewer: {}, "senior-reviewer": {}, finalizer: {} };
 const allowed = childRoleIds(ROLES);
@@ -78,4 +80,13 @@ test("model check: management calls pass, tasks and chain entries are checked", 
   assert.equal(roleModelBlock({ tasks: [{ agent: "explorer", task: "a" }, { agent: "builder", task: "b" }] }, RESOLVED), NO_BUILDER);
   assert.equal(roleModelBlock({ chain: [{ agent: "explorer" }, { parallel: [{ agent: "finalizer", task: "x" }] }] }, RESOLVED), undefined);
   assert.equal(roleModelBlock({ chain: [{ agent: "explorer" }, { parallel: [{ agent: "builder", task: "x" }] }] }, RESOLVED), NO_BUILDER);
+});
+
+test("model check: a strength keyword passes and a run on the mapped strong model may resume", () => {
+  const strong: RoleResolution = { ...RESOLVED, roles: { ...RESOLVED.roles, explorer: { model: "fake/explorer", strong: { model: "fake/big" } } } };
+  assert.equal(roleModelBlock({ agent: "explorer", task: "t", model: "strong" }, strong), undefined);
+  const runs: RunRegistry = new Map([["r1", { role: "explorer", model: "fake/big" }]]);
+  const c = { allowWorkflow: false, runs, allowed: ["explorer"], resolution: strong, maxThinking: "high" };
+  assert.deepEqual(subagentActionCheck({ action: "resume", id: "r1", message: "m" }, c), {});
+  assert.match(subagentActionCheck({ action: "resume", id: "r1", message: "m" }, { ...c, resolution: RESOLVED }).block ?? "", /ran on fake\/big/);
 });
