@@ -84,6 +84,16 @@ class BuildWorldTest(unittest.TestCase):
                                 "--agent-dir", tmp, "--project-dir", tmp], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(r.returncode, 0, r.stdout.decode() + r.stderr.decode())
 
+    def test_project_commands_reach_the_permission_config(self):
+        cfg = ws.foreman_config(row(project_commands=["cargo test *"]))
+        self.assertEqual(cfg["safety"]["permissions"]["projectCommands"], ["cargo test *"])
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "foreman.json").write_text(json.dumps(cfg))
+            r = subprocess.run([sys.executable, str(ROOT / "scripts" / "permissions_gen.py"), "--agent-dir", tmp, "render"],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(r.returncode, 0, r.stderr.decode())
+            self.assertIn('"cargo test *"', r.stdout.decode())
+
 
 if __name__ == "__main__":
     unittest.main()

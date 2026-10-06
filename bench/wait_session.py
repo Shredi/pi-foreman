@@ -109,7 +109,8 @@ def ask_role(rec):
 def foreman_config(row):
     """The user-layer foreman.json for a foreman row: the row's roles (incl. builder.strong),
     the review model (the row's review_model, else the reviewer role's model; the fake provider's
-    non-allowing review model for fake rows), trace on. ceremony.requireTriage stays at its default."""
+    non-allowing review model for fake rows), trace on, and the row's `project_commands` as
+    safety.permissions.projectCommands. ceremony.requireTriage stays at its default."""
     provider = row["provider"]
     roles = row["roles"]
     review = row.get("review_model")
@@ -124,6 +125,8 @@ def foreman_config(row):
     l2 = {"version": 1, "providers": {provider: block}, "trace": {"enabled": True}}
     if row.get("_required_child_extensions"):
         l2["safety"] = {"requiredChildExtensions": row["_required_child_extensions"]}
+    if row.get("project_commands"):  # the repo's test/build commands, as an owner would set them
+        l2.setdefault("safety", {})["permissions"] = {"projectCommands": list(row["project_commands"])}
     return l2
 
 
@@ -201,8 +204,8 @@ def build_world(args, row):
             cfg = agent / "extensions" / "pi-permission-system" / "config.json"
             cfg.parent.mkdir(parents=True, exist_ok=True)
             rendered = json.loads(pg.stdout.decode("utf-8"))["config"]
-            # Opt-in rig-side extras (row key `permission_tools_allow`); the baseline has no
-            # entry for foreman_triage, so without it every triage call becomes a human ask.
+            # Opt-in rig-side extras (row key `permission_tools_allow`), e.g. bash for the scripted
+            # fake rows. foreman_triage is in the baseline since 17a3412.
             for tool in row.get("permission_tools_allow") or []:
                 rendered.setdefault("permission", {})[tool] = "allow"
             write_json(cfg, rendered)
