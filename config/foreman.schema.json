@@ -117,6 +117,82 @@
         "requireTriage": { "type": "boolean", "description": "The foreman records a tier before it edits workspace files itself. A project or session can only set true." }
       }
     },
+    "sync": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repos": {
+          "type": "array",
+          "description": "Repositories the sync routine pulls. User or overlay config only.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "branch", "paths"],
+            "properties": {
+              "path": { "type": "string" },
+              "branch": { "type": "string" },
+              "paths": { "type": "array", "items": { "type": "string" }, "description": "Glob patterns of the paths to sync." }
+            }
+          }
+        },
+        "runRetro": { "type": "boolean", "description": "Run the retro step during sync." }
+      }
+    },
+    "retro": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "proposalMinReviews": { "type": "integer", "minimum": 1, "description": "Reviews needed before a retro proposal. User or overlay config only." } }
+    },
+    "intercom": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowRemote": { "type": "boolean", "description": "Allow remote intercom. A project or session can only set false." },
+        "allowOpenPane": { "type": "boolean", "description": "Allow opening a pane. A project or session can only set false." }
+      }
+    },
+    "close": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "from": { "type": "array", "items": { "type": "string", "enum": ["herdr", "intercom-parent"] }, "description": "Sources a close request is accepted from. A project or session can only narrow it." } }
+    },
+    "footer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "usage": { "type": "boolean", "description": "Show usage in the footer." } }
+    },
+    "compaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "priceTiers": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "USD per MTok input upper bounds; above standard is premium. User or overlay config only.",
+          "properties": { "cheap": { "type": "number", "minimum": 0 }, "standard": { "type": "number", "minimum": 0 } }
+        },
+        "threshold": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Context fraction that triggers compaction, per price tier. A project or session can only lower each value.",
+          "properties": {
+            "cheap": { "type": "number", "minimum": 0.3, "maximum": 0.95 },
+            "standard": { "type": "number", "minimum": 0.3, "maximum": 0.95 },
+            "premium": { "type": "number", "minimum": 0.3, "maximum": 0.95 }
+          }
+        }
+      }
+    },
+    "wait": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "batchWindowSeconds": { "type": "integer", "minimum": 0, "maximum": 3600 },
+        "maxSeconds": { "type": "integer", "minimum": 1, "description": "A project or session can only lower it." },
+        "maxActive": { "type": "integer", "minimum": 1, "description": "A project or session can only lower it." },
+        "ci": { "type": "boolean", "description": "A project or session can only set false." }
+      }
+    },
     "safety": {
       "type": "object",
       "description": "Safety policy. An invalid value in a layer is dropped from that layer with a warning; the other layers still apply. The project layer can only tighten it.",

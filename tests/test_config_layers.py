@@ -199,6 +199,27 @@ class LayerRulesTest(unittest.TestCase):
         res = self.load(l2={"ceremony": {"requireTriage": False}}, proj={}, session={})
         self.assertIs(res["config"]["ceremony"]["requireTriage"], False)
 
+    def test_phase4_keys_follow_their_layer_rules(self):
+        res = self.load(proj={"wait": {"maxActive": 20, "maxSeconds": 100, "ci": True, "batchWindowSeconds": 10},
+                              "compaction": {"priceTiers": {"cheap": 9}, "threshold": {"cheap": 0.9, "standard": 0.1, "premium": 0.5}},
+                              "sync": {"repos": [], "runRetro": False}, "retro": {"proposalMinReviews": 1},
+                              "intercom": {"allowRemote": True}, "close": {"from": ["herdr", "other"]}},
+                        session={"intercom": {"allowOpenPane": True}})
+        cfg, joined = res["config"], "\n".join(res["warnings"])
+        self.assertEqual((cfg["wait"]["maxActive"], cfg["wait"]["maxSeconds"], cfg["wait"]["batchWindowSeconds"]), (8, 100, 10))
+        self.assertEqual(cfg["compaction"]["threshold"], {"cheap": 0.85, "standard": 0.75, "premium": 0.5})
+        self.assertEqual(cfg["compaction"]["priceTiers"], {"cheap": 1, "standard": 5})
+        self.assertEqual((cfg["retro"]["proposalMinReviews"], cfg["sync"]["runRetro"]), (5, False))
+        self.assertIs(cfg["intercom"]["allowRemote"], False)
+        self.assertIs(cfg["intercom"]["allowOpenPane"], False)
+        self.assertEqual(cfg["close"]["from"], ["herdr"])
+        self.assertIn("project wait.maxActive ignored: it would loosen", joined)
+        self.assertIn("project compaction.threshold.standard ignored: below the minimum 0.3", joined)
+        self.assertIn("project compaction.priceTiers ignored: the project may not set this key", joined)
+        self.assertIn("project retro.proposalMinReviews ignored", joined)
+        self.assertIn("project intercom.allowRemote ignored", joined)
+        self.assertIn("project close.from: entries not extended: other", joined)
+
     def test_ceremony_escalation_keys_tighten_only(self):
         # MINOR-7: signals union only, file count lower only (>= 1), default raise only, wrong types dropped.
         res = self.load(proj={"ceremony": {"heavySignals": ["schema"], "heavyFileCount": 50, "default": "trivial"}},

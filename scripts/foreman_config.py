@@ -53,6 +53,11 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.heavySignals            union only (a project can add signals, not remove one)
     ceremony.heavyFileCount          lower only, minimum 1 (a higher count escalates later)
     ceremony.default                 raise only, trivial < standard < heavy
+    sync.repos, retro.proposalMinReviews, compaction.priceTiers   ignored (L1/L3/L2 only)
+    intercom.allowRemote, intercom.allowOpenPane, wait.ci         only false is accepted
+    close.from                       intersect (a project can only narrow the allowed sources)
+    compaction.threshold.<tier>      lower only, minimum 0.3 (a higher threshold compacts later)
+    wait.maxSeconds, wait.maxActive  lower only, minimum 1
     roles.*.timeoutMinutes           lower only (a higher limit lets a child run longer)
     python.path                      ignored (it chooses the executable that runs every guard)
     python.*                         ignored
@@ -135,6 +140,9 @@ IGNORED_KEYS = [
     (("roles", "*", "launch"), "the launch mode comes from the user or overlay config"),
     (("roles", "*", "file"), "a role file replaces the prompt: user or overlay config only"),
     (("providers", "*", "roles", "*", "strong"), "the strong model is picked in the user or overlay config"),
+    (("sync", "repos"), "the repository list comes from the user or overlay config"),
+    (("retro", "proposalMinReviews"), "the proposal threshold comes from the user or overlay config"),
+    (("compaction", "priceTiers"), "the price tiers come from the user or overlay config"),
 ]
 # Keys outside safety that the project and session layers may only tighten (module docstring),
 # compared with the value after the earlier layers. Same rule names as TIGHTEN; a lower_only
@@ -146,8 +154,16 @@ LAYER_TIGHTEN = [
     (("ceremony", "requireTriage"), "true_only"),
     (("ceremony", "heavyFileCount"), "lower_only"),
     (("roles", "*", "timeoutMinutes"), "lower_only"),
+    (("intercom", "allowRemote"), "false_only"),
+    (("intercom", "allowOpenPane"), "false_only"),
+    (("wait", "ci"), "false_only"),
+    (("close", "from"), "intersect"),
+    (("compaction", "threshold", "*"), "lower_only_number"),
+    (("wait", "maxSeconds"), "lower_only"),
+    (("wait", "maxActive"), "lower_only"),
 ]
-LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1}
+LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
+                 "threshold": 0.3, "maxSeconds": 1, "maxActive": 1}
 TIERS = ["trivial", "standard", "heavy"]
 # codemode adds a tool, so the project and session layers may only switch it off.
 CODEMODE_FALSE_ONLY = True
@@ -194,12 +210,24 @@ def _tighten_pattern(node, base, keys, rule, done, who, warnings, minimum=0):
                 why = "it would loosen the policy"
             else:
                 continue
-        else:  # lower_only
-            if not isinstance(val, int) or isinstance(val, bool):
-                why = "not an integer"
+        elif rule == "intersect":
+            if not isinstance(val, list) or not isinstance(have, list):
+                del node[name]
+                warnings.append("%s ignored: the %s can only narrow it" % (label, who))
+                return
+            dropped = [x for x in val if x not in have]
+            if dropped:
+                warnings.append("%s: entries not extended: %s" % (label, ", ".join(map(str, dropped))))
+            node[name] = [x for x in have if x in val]
+            continue
+        else:  # lower_only, lower_only_number
+            num = rule == "lower_only_number"
+            isnum = lambda v: isinstance(v, (int, float) if num else int) and not isinstance(v, bool)  # noqa: E731
+            if not isnum(val):
+                why = "not a number" if num else "not an integer"
             elif val < minimum:
-                why = "below the minimum %d" % minimum
-            elif isinstance(have, int) and not isinstance(have, bool) and val > have:
+                why = "below the minimum %g" % minimum
+            elif isnum(have) and val > have:
                 why = "it would loosen the policy"
             else:
                 continue
