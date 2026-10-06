@@ -14,6 +14,9 @@
 // a fixed verdict, for the model-review link: allow, deny-high, deny-low, defer, garbage, empty,
 // error (the provider throws) and hang (never answers until aborted).
 //
+// Usage is fixed per answer: input 10, output 5, cacheRead 4, cacheWrite 2 (cost 0), so replay can
+// assert the four token kinds.
+//
 // FOREMAN_FAKE_CALLS=<file> appends "<provider>/<model> <tag>" per provider call (tests assert a
 // request never reached the provider).
 import * as fs from "node:fs";
@@ -98,7 +101,7 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
     api: model.api,
     provider: model.provider,
     model: model.id,
-    usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    usage: { input: 10, output: 5, cacheRead: 4, cacheWrite: 2, totalTokens: 21, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
     stopReason: "stop",
     timestamp: Date.now(),
   } as AssistantMessage;
