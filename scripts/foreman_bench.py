@@ -9,6 +9,7 @@
 Preset (JSON):
     {"bench": {"tasks_dir": "<dir, relative to the preset file>", "repeats": 3, "jobs_dir": "<optional>",
                "tasks": ["<task>", ...], "token_cap": 1000000,
+               "cap_seconds_by_task": {"<task>": <seconds>},   (per-task wall cap; overrides the row's cap_seconds)
                "first": {"row": "<row id>", "task": "<task>", "tasks_dir": "<optional dir>"}},
      "rows": [{"id": "R2", "agent": "foreman"|"plain", "provider": "...", "model": "provider/model",
                "roles": {"<role>": {"model": "...", "thinking": "..."}}, "thinking": "...",
@@ -156,12 +157,14 @@ def row_model(row):
     return row.get("model") or "%s/foreman" % provider
 
 
-def harbor_command(row, task_path, preset_path, jdir, job_name, harbor="harbor"):
+def harbor_command(row, task_path, preset_path, jdir, job_name, harbor="harbor", cap_by_task=None):
     kind = row.get("agent", "foreman")
     if kind not in AGENT_CLASSES:
         raise ValueError("row %s: agent must be one of %s" % (row.get("id"), sorted(AGENT_CLASSES)))
+    cap = (cap_by_task or {}).get(Path(task_path).name)
     return [harbor, "run", "-p", str(task_path), "-a", AGENT_CLASSES[kind], "-m", row_model(row),
-            "--ak", "preset=%s" % preset_path, "--ak", "row=%s" % row["id"],
+            "--ak", "preset=%s" % preset_path, "--ak", "row=%s" % row["id"]] + (
+        ["--ak", "cap_seconds=%s" % cap] if cap else []) + [
             "-o", str(jdir), "--job-name", job_name, "-n", "1", "--max-retries", "0", "-q"]
 
 
@@ -223,8 +226,12 @@ def read_trial(job_dir):
         rewards = (r.get("verifier_result") or {}).get("rewards") or {}
         reward = rewards.get("reward")
         infra = None
+        flagged = bench.get("infra") if isinstance(bench.get("infra"), dict) else None
+        detail = (flagged or {}).get("detail") or str((r.get("exception_info") or {}).get("exception_message") or "")
         if exc == USAGE_LIMIT_EXC or bench.get("infra_error") == "usage_limit":
             infra = "usage_limit"
+        elif flagged and flagged.get("flag"):
+            infra = flagged.get("reason") or "unknown"
         elif exc in INFRA_EXC or bench.get("infra_error"):
             infra = exc or bench.get("infra_error")
         elif reward is None:
@@ -232,7 +239,7 @@ def read_trial(job_dir):
         counters = bench.get("counters") or {}
         if not infra and (Path(job_dir) / INTERRUPTED_MARK).is_file():
             infra = "interrupted"
-        if not infra:
+        if not infra and flagged is None:  # 2a job dirs: no flag recorded, classify from the logs
             infra = agent_infra(f.parent / "agent" / "rpc.jsonl", (counters.get("tokens") or {}).get("total"))
         by_tier, usage = {}, {}
         for model, t in (counters.get("tokens_by_model") or {}).items():
@@ -242,7 +249,9 @@ def read_trial(job_dir):
                 u[k] += int((t or {}).get(k) or 0)
         return {
             "job": Path(job_dir).name, "reward": reward, "success": reward is not None and float(reward) >= 1.0,
-            "infra": infra, "exception": exc,
+            "infra": infra, "infra_detail": detail if infra else "", "exception": exc,
+            "usage_by_role_model": counters.get("usage_by_role_model"), "usage_log_delta": counters.get("usage_log_delta"),
+            "triage": _triage(counters, bench),
             "tokens": (counters.get("tokens") or {}).get("total"),
             "tokens_by_tier": by_tier, "usage_by_model": usage, "tokens_by_role": counters.get("tokens_by_role"),
             "wall_seconds": _seconds(r.get("agent_execution")),
@@ -253,6 +262,15 @@ def read_trial(job_dir):
                          thinking_seen=counters.get("thinking_by_role")),
         }
     return None
+
+
+def _triage(counters, bench):
+    """Triage evidence of a cell (tier, launches, revisions, gate_blocks, asks_denied, asks_reviewed), or None
+    when the cell has no trace (2a job dirs, plain rows)."""
+    t = counters.get("triage")
+    if not t:
+        return None
+    return dict(t, asks_denied=len(bench.get("asks_denied") or []))
 
 
 TOKEN_KINDS = ("input", "cacheRead", "cacheWrite", "output")
@@ -275,7 +293,16 @@ def cost_of(rec, prices):
         return None
     known = prices.get("models") or {}
     out = {"usd": 0.0, "usd_1h": 0.0, "by_tier": {}, "read_tokens": 0, "write_tokens": 0, "read_usd": 0.0,
-           "write_usd": 0.0, "unpriced": []}
+           "write_usd": 0.0, "unpriced": [], "by_role": {}}
+    for role, models in (rec.get("usage_by_role_model") or {}).items():
+        for model, u in models.items():
+            p = known.get(model)
+            if not p:
+                out["unpriced"].append(model)
+                continue
+            out["by_role"][role] = out["by_role"].get(role, 0.0) + (
+                u["input"] * p["input"] + u["output"] * p["output"] + u["cacheRead"] * p["cache_read"]
+                + u["cacheWrite"] * p["cache_write_5m"]) / 1e6
     for model, u in usage.items():
         p = known.get(model)
         if not p:
@@ -307,6 +334,8 @@ def cost_stats(done, prices):
     if not cs:
         return None
     tiers = sorted({t for c in cs for t in c["by_tier"]})
+    with_log = [c for c in cs if c["by_role"]]
+    roles = sorted({r for c in with_log for r in c["by_role"]})
     shares = lambda a, b: [x for x in (_share(c[a], c[b]) for c in cs) if x is not None]  # noqa: E731
     return {"usd": _stat([c["usd"] for c in cs]), "usd_1h": _stat([c["usd_1h"] for c in cs]),
             "by_tier": {t: _stat([c["by_tier"].get(t, 0.0) for c in cs]) for t in tiers},
@@ -314,7 +343,8 @@ def cost_stats(done, prices):
             "read_usd": _stat([c["read_usd"] for c in cs]), "write_usd": _stat([c["write_usd"] for c in cs]),
             "warm_share_tokens": _stat(shares("read_tokens", "write_tokens")),
             "warm_share_usd": _stat(shares("read_usd", "write_usd")),
-            "unpriced": sorted({m for c in cs for m in c["unpriced"]})}
+            "unpriced": sorted({m for c in cs for m in c["unpriced"]}),
+            **({"by_role": {r: _stat([c["by_role"].get(r, 0.0) for c in with_log]) for r in roles}} if with_log else {})}
 
 
 def tier(model):
@@ -424,7 +454,8 @@ def setup_only(args, todo, preset, jdir, runner, now):
         return 2
     row, task, k, path = todo[0]
     job = "setup__%s__%s" % (cell_id(row["id"], task, k), time.strftime("%Y%m%d-%H%M%S", time.gmtime(now())))
-    cmd = harbor_command(row, path, preset["_path"], jdir, job, harbor=args.harbor) + ["--ak", "setup_only=1"]
+    cmd = harbor_command(row, path, preset["_path"], jdir, job, harbor=args.harbor,
+                          cap_by_task=(preset.get("bench") or {}).get("cap_seconds_by_task")) + ["--ak", "setup_only=1"]
     print("bench: %s" % " ".join(cmd), flush=True)
     if args.dry_run:
         return 0
@@ -478,7 +509,8 @@ def _run(args, runner, now):
                       "%d cell(s) run in this invocation." % (used, cap, cid, ran), flush=True)
                 return EXIT_TOKEN_CAP
         job = "%s__%s" % (cid, time.strftime("%Y%m%d-%H%M%S", time.gmtime(now())))
-        cmd = harbor_command(row, path, preset["_path"], jdir, job, harbor=args.harbor)
+        cmd = harbor_command(row, path, preset["_path"], jdir, job, harbor=args.harbor,
+                          cap_by_task=(preset.get("bench") or {}).get("cap_seconds_by_task"))
         print("bench: [%d/%d] %s" % (i, len(todo), " ".join(cmd)), flush=True)
         if args.dry_run:
             continue
@@ -522,6 +554,33 @@ def _stat(values):
     return {"median": statistics.median(vals), "min": min(vals), "max": max(vals)}
 
 
+def _triage_stats(done):
+    ts = [r["triage"] for r in done if r.get("triage")]
+    tiers = [t["tier"] for t in ts]
+    return {"tier": max(sorted(set(tiers)), key=tiers.count) if tiers else None,
+            "launches": _stat([sum((t.get("launches") or {}).values()) for t in ts]),
+            "revisions": _stat([t.get("revisions") for t in ts]), "asks_denied": _stat([t.get("asks_denied") for t in ts]),
+            "gate_blocks": _stat([t.get("gate_blocks") for t in ts])}
+
+
+def infra_cells(preset, tdir, jdir):
+    """Every infrastructure-error attempt of the matrix: cell, reason, detail, job dir name."""
+    out = []
+    for row, task, k, _ in cells(preset, tdir):
+        cid = cell_id(row["id"], task, k)
+        out += [{"cell": cid, "reason": r["infra"], "detail": r.get("infra_detail") or "", "job": r["job"]}
+                for r in cell_results(jdir, cid) if r["infra"]]
+    return out
+
+
+def format_infra(items):
+    if not items:
+        return ""
+    lines = [[i["cell"], i["reason"], (i["detail"] or "").replace("\n", " ")[:80], i["job"]] for i in items]
+    return "Infra cells (excluded from the medians; a later `run` reruns them):\n" + "\n".join(
+        _columns(["cell", "reason", "detail", "job dir"], lines))
+
+
 def table(preset, tdir, jdir, prices=None):
     """Rows of the result table: one per (row, task), counters only."""
     out = []
@@ -538,6 +597,7 @@ def table(preset, tdir, jdir, prices=None):
             "tokens": _stat([r["tokens"] for r in done]), "wall_seconds": _stat([r["wall_seconds"] for r in done]),
             "tool_calls": _stat([r["tool_calls"] for r in done]), "approvals": _stat([r["approvals"] for r in done]),
             "guard_blocks": _stat([r["guard_blocks"] for r in done]),
+            **_triage_stats(done),
             "meta": done[-1]["meta"] if done else None,
             **({"cost": cost_stats(done, prices)} if prices else {}),
         })
@@ -651,6 +711,13 @@ def format_cost(summary, rows, prices):
                 _usd(c["usd_1h"]), _fmt(c["read_tokens"]), _fmt(c["write_tokens"]), _pct(c["warm_share_tokens"]),
                 _usd(c["read_usd"]), _usd(c["write_usd"]), _pct(c["warm_share_usd"])])
         out += ["", title + ":"] + _columns(head, lines)
+    for title, items, keys in (("Per row, cost per role (usage log)", summary, ["row"]),
+                               ("Per row and task, cost per role (usage log)", rows, ["row", "task"])):
+        roles = sorted({x for r in items if r.get("cost") for x in r["cost"].get("by_role") or {}})
+        if roles:
+            out += ["", title + ", median USD per cell (role 'child' = tasks/chain children, whose real role the log does not record):"]
+            out += _columns(keys + roles, [[r[k] for k in keys] + [_usd(((r.get("cost") or {}).get("by_role") or {}).get(x))
+                                                                  for x in roles] for r in items])
     unpriced = sorted({m for r in summary + rows if r.get("cost") for m in r["cost"]["unpriced"]})
     if unpriced:
         out.append("Not priced (left out of the totals): %s" % ", ".join(unpriced))
@@ -658,12 +725,14 @@ def format_cost(summary, rows, prices):
 
 
 def format_table(rows):
-    head = ["row", "task", "success", "tokens", "wall s", "tool calls", "approvals", "guard blocks"]
+    head = ["row", "task", "success", "tokens", "wall s", "tool calls", "approvals", "guard blocks",
+            "tier", "launches", "revisions", "asks_denied", "gate_blocks"]
     lines = []
     for r in rows:
         lines.append([r["row"], r["task"], "%d/%d%s" % (r["success"], r["counted"], " (+%d infra)" % r["infra_errors"] if r["infra_errors"] else ""),
                       _fmt(r["tokens"]), _fmt(r["wall_seconds"], 1), _fmt(r["tool_calls"]), _fmt(r["approvals"]),
-                      _fmt(r["guard_blocks"])])
+                      _fmt(r["guard_blocks"]), r.get("tier") or "-", _fmt(r.get("launches")), _fmt(r.get("revisions")),
+                      _fmt(r.get("asks_denied")), _fmt(r.get("gate_blocks"))])
     text = _columns(head, lines)
     metas = {}
     for r in rows:
@@ -709,9 +778,10 @@ def main(argv=None):
     rows, summary = table(preset, tdir, jdir, prices), row_summary(preset, tdir, jdir, prices)
     first = first_summary(preset, tdir, jdir)
     if args.json:
-        print(json.dumps({"rows": summary, "first": first, "cells": rows}, indent=1))
+        print(json.dumps({"rows": summary, "first": first, "cells": rows, "infra_cells": infra_cells(preset, tdir, jdir)}, indent=1))
     else:
         text = format_summary(summary, first) + "\n\nPer row and task:\n" + format_table(rows)
+        text += ("\n\n" + format_infra(infra_cells(preset, tdir, jdir))).rstrip()
         print(text + ("\n\n" + format_cost(summary, rows, prices) if prices else ""))
     return 0
 
