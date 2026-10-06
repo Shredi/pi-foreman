@@ -23,8 +23,14 @@ the loader the extension uses; the list comes from L1-L3 only):
   remote, else origin). Never forced, never anything that discards work.
 
 Git runs with the hardened environment and `-c` options of scripts/safe_ops.py: no system config,
-core.fsmonitor off, ext:: transport off, and core.hooksPath set to an empty directory, so
-repository hooks (pre-commit, commit-msg, pre-push) do NOT run. That is deliberate: a hook is
+core.fsmonitor off, ext:: transport off, commit.gpgSign off, and core.hooksPath set to an empty
+directory, so repository hooks (pre-commit, commit-msg, pre-push) do NOT run. A repo whose local or
+worktree config (includes followed) sets a key that runs code or redirects fetch/push (filters,
+textconv, ssh/proxy/askpass/credential helpers, gpg programs, url rewrites, push urls, pack programs,
+proxies, protocol allows, a branch remote that is not a configured remote, an include outside the
+git dir) is refused before any pull, add, commit or push; only the rule names are reported.
+Candidates are scanned whole as bytes (larger than 20 MiB: refused); symlinks and hard links are
+refused. Git output shown in a report is redacted (`scheme://user:pass@` and token-like strings). That is deliberate: a hook is
 code from the repository, and sync runs with the owner's credentials.
 
 When `sync.runRetro` is on, scripts/foreman_retro.py runs for this session and its summary is
@@ -40,6 +46,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 
@@ -50,17 +57,36 @@ import safe_ops  # noqa: E402
 
 MAX_LINES = 40
 CHUNK = 100
-SCAN_BYTES = 1024 * 1024
+SCAN_CHUNK = 1024 * 1024
+SCAN_OVERLAP = 4096
+SCAN_MAX = 20 * 1024 * 1024
 GIT_TIMEOUT = 120
 CREATED_FILE = "created-branches.json"
 OK_STATUSES = ("clean", "committed", "pushed", "dry-run")
 
-SECRET_NAMES = [".env*", "*.pem", "*.key", "*.p12", "id_rsa*", "id_ed25519*", "*credential*", "*secret*", "*token*"]
+SECRET_NAMES = [".env*", "*.pem", "*.key", "*.p12", "id_rsa*", "id_ed25519*", "*credential*", "*secret*", "*token*",
+                ".npmrc", ".netrc", ".pypirc", ".git-credentials", "*.kdbx"]
+TOKEN_RX = r"(?<![A-Za-z0-9_])(?:ghp_|gho_|ghs_|ghu_|github_pat_|npm_|glpat-|sk-ant-|xox[bap]-|xoxe[.-])[A-Za-z0-9_\-]{16,}"
 SECRET_CONTENT = [
-    ("private key header", re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
-    ("token prefix", re.compile(rb"(?<![A-Za-z0-9_])(?:ghp_|gho_|github_pat_|sk-ant-|xox[bap]-)[A-Za-z0-9_\-]{16,}")),
+    ("private key header", re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----")),
+    ("token prefix", re.compile(TOKEN_RX.encode("ascii"))),
     ("AWS access key id", re.compile(rb"(?<![A-Z0-9])AKIA[0-9A-Z]{16}(?![A-Z0-9])")),
 ]
+REDACT = [(re.compile(r"(\w[\w+.\-]*://)[^/@\s]+@"), r"\1***@"), (re.compile(TOKEN_RX), "***"),
+          (re.compile(r"(?<![A-Z0-9])AKIA[0-9A-Z]{16}(?![A-Z0-9])"), "***")]
+# Repo-local config keys that run code or redirect fetch/push (security review S2). A repo that sets
+# one is refused; only the rule name is reported (a url.<base> subsection can carry credentials).
+RISKY_KEYS = [(label, re.compile(rx), nonfalse) for label, rx, nonfalse in (
+    ("filter.*", r"filter\..+", False), ("diff.*.textconv", r"diff\..+\.textconv", False),
+    ("core.fsmonitor", r"core\.fsmonitor", True), ("core.hooksPath", r"core\.hookspath", False),
+    ("core.sshCommand", r"core\.sshcommand", False), ("core.gitProxy", r"core\.gitproxy", False),
+    ("core.askPass", r"core\.askpass", False), ("credential.*helper", r"credential\.(?:.+\.)?helper", False),
+    ("gpg.program", r"gpg\.program", False), ("gpg.*.program", r"gpg\..+\.program", False),
+    ("commit.gpgSign", r"commit\.gpgsign", True), ("tag.gpgSign", r"tag\.gpgsign", True),
+    ("url.*.insteadOf", r"url\..+\.insteadof", False), ("url.*.pushInsteadOf", r"url\..+\.pushinsteadof", False),
+    ("remote.*.pushurl", r"remote\..+\.pushurl", False), ("remote.*.uploadpack", r"remote\..+\.uploadpack", False),
+    ("remote.*.receivepack", r"remote\..+\.receivepack", False), ("remote.*.proxy", r"remote\..+\.proxy", False),
+    ("http.*proxy", r"http\.(?:.+\.)?proxy", False), ("protocol.*.allow", r"protocol\.(?:.+\.)?allow", False))]
 
 
 class UsageError(Exception):
@@ -75,16 +101,22 @@ def git(args, cwd, stdin=None):
     if not exe:
         return 127, "", "git is not on PATH"
     try:
-        r = subprocess.run([exe] + safe_ops.git_hardening() + list(args), cwd=cwd, env=safe_ops._git_env(),
+        r = subprocess.run([exe, "-c", "commit.gpgSign=false"] + safe_ops.git_hardening() + list(args), cwd=cwd, env=safe_ops._git_env(),
                            input=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=GIT_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as exc:
         return 1, "", str(exc)
     return r.returncode, r.stdout.decode("utf-8", "surrogateescape"), r.stderr.decode("utf-8", "replace")
 
 
+def redact(text):
+    for rx, sub in REDACT:
+        text = rx.sub(sub, text)
+    return text
+
+
 def first_line(text):
     lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
-    return lines[0][:160] if lines else "no detail"
+    return redact(lines[0])[:160] if lines else "no detail"
 
 
 def same_path(a, b):
@@ -154,26 +186,92 @@ def matches(path, globs):
     return any(fnmatch.fnmatchcase(path, g.replace("\\", "/")) for g in globs if isinstance(g, str) and g)
 
 
+def parse_config_z(out):
+    """[(key, value)] from `git config --list -z` (value None for a bare boolean key)."""
+    pairs = []
+    for rec in out.split("\0"):
+        if rec:
+            key, sep, val = rec.partition("\n")
+            pairs.append((key, val if sep else None))
+    return pairs
+
+
+def _is_false(val):
+    return val is not None and val.strip().lower() in ("false", "no", "off", "0", "")
+
+
+def risky_config(root):
+    """(rule names, error) for repo-local and worktree config (includes followed) that runs code or
+    redirects fetch/push. Rule names only: key subsections and values are never reported."""
+    dirs = {}
+    for flag in ("--git-dir", "--git-common-dir"):
+        code, out, err = git(["rev-parse", flag], root)
+        if code != 0 or not out.strip():
+            return [], "git rev-parse %s failed (%s)" % (flag, first_line(err))
+        dirs[flag] = os.path.join(root, out.strip())
+    code, out, err = git(["config", "--local", "--includes", "--list", "-z"], root)
+    if code != 0:
+        return [], "unreadable git config (%s)" % first_line(err)
+    sets = [(parse_config_z(out), dirs["--git-common-dir"])]
+    if any(k.lower() == "extensions.worktreeconfig" and not _is_false(v) for k, v in sets[0][0]):
+        code, out, err = git(["config", "--worktree", "--includes", "--list", "-z"], root)
+        if code != 0:
+            return [], "unreadable git worktree config (%s)" % first_line(err)
+        sets.append((parse_config_z(out), dirs["--git-dir"]))
+    hits = []
+    remotes = {k[7:-4] for pairs, _ in sets for k, _v in pairs if k.lower().startswith("remote.") and k.lower().endswith(".url")}
+    for pairs, base in sets:
+        for key, val in pairs:
+            low = key.lower()
+            for label, rx, nonfalse in RISKY_KEYS:
+                if rx.fullmatch(low) and not (nonfalse and _is_false(val)):
+                    hits.append(label)
+            if low.startswith("branch.") and low.endswith(".remote") and (val or "") not in remotes:
+                hits.append("branch.*.remote (not a configured remote)")
+            if low == "include.path" or (low.startswith("includeif.") and low.endswith(".path")):
+                target = os.path.expanduser(val or "")
+                if not target or not safe_ops.is_inside(os.path.realpath(dirs["--git-common-dir"]),
+                                                        os.path.realpath(os.path.join(base, target))):
+                    hits.append("include.path/includeIf.*.path (outside the git dir)")
+    return sorted(set(hits)), None
+
+
 def secret_hit(root, rel):
-    """Rule name when the file's name or (text) content looks like a secret, else None."""
+    """Rule name when the file's name or content looks like a secret, it is a link, or it is too
+    large to scan; else None. The whole file is scanned as bytes, in overlapping chunks."""
     base = rel.rsplit("/", 1)[-1].lower()
     for pat in SECRET_NAMES:
         if fnmatch.fnmatchcase(base, pat):
             return "name matches %s" % pat
     full = os.path.join(root, *rel.split("/"))
     try:
-        if not os.path.isfile(full) or os.path.islink(full):
-            return None
-        with open(full, "rb") as fh:
-            head = fh.read(SCAN_BYTES)
+        st = os.lstat(full)
     except OSError:
         return None
-    if b"\0" in head:
+    if stat.S_ISLNK(st.st_mode):
+        return "symlink (not committed)"
+    if not stat.S_ISREG(st.st_mode):
         return None
-    for name, rx in SECRET_CONTENT:
-        if rx.search(head):
-            return "content: %s" % name
-    return None
+    if st.st_nlink > 1:
+        return "hard link (not committed)"
+    if st.st_size > SCAN_MAX:
+        return "too large to scan (> %d MiB)" % (SCAN_MAX // (1024 * 1024))
+    try:
+        with open(full, "rb") as fh:
+            tail = b""
+            while True:
+                chunk = fh.read(SCAN_CHUNK)
+                if not chunk:
+                    return None
+                buf = tail + chunk
+                for name, rx in SECRET_CONTENT:
+                    if rx.search(buf):
+                        return "content: %s" % name
+                tail = buf[-SCAN_OVERLAP:]
+                if fh.tell() > SCAN_MAX:
+                    return "too large to scan (> %d MiB)" % (SCAN_MAX // (1024 * 1024))
+    except OSError:
+        return None
 
 
 def commit_paths(root, files, message):
@@ -208,9 +306,9 @@ def sync_repo(entry, ctx):
         rep["detail"] = "not a git work tree root"
         return rep
     root = path
-    code, _, err = git(["config", "--local", "--list"], root)
-    if code != 0:
-        rep["detail"] = "unreadable git config (%s)" % first_line(err)
+    risky, err = risky_config(root)
+    if err or risky:
+        rep["detail"] = err or "repo config sets code-running or redirecting keys: %s" % ", ".join(risky)
         return rep
     code, out, _ = git(["symbolic-ref", "-q", "--short", "HEAD"], root)
     branch = out.strip()

@@ -134,6 +134,73 @@ class SyncTest(unittest.TestCase):
         self.assertNotIn("KEYBODY", json.dumps(rep))
         self.assertNotIn("A1b2C3", json.dumps(rep))
 
+    def test_risky_repo_config_refused(self):
+        outside = self.tmp / "outside.cfg"
+        outside.write_text("[user]\n\tname = X\n")
+        cases = [("filter.x.clean", "touch pwned", "filter.*"), ("diff.x.textconv", "cat", "diff.*.textconv"),
+                 ("core.sshCommand", "ssh -o X=y", "core.sshCommand"), ("core.hooksPath", "hooks", "core.hooksPath"),
+                 ("credential.helper", "store", "credential.*helper"), ("gpg.ssh.program", "x", "gpg.*.program"),
+                 ("commit.gpgSign", "true", "commit.gpgSign"),
+                 ("url.https://user:pw@example.invalid/.insteadOf", str(self.bare), "url.*.insteadOf"),
+                 ("remote.origin.pushurl", str(self.tmp / "evil.git"), "remote.*.pushurl"),
+                 ("remote.origin.uploadpack", "x", "remote.*.uploadpack"), ("http.proxy", "x", "http.*proxy"),
+                 ("protocol.file.allow", "always", "protocol.*.allow"),
+                 ("branch.main.remote", str(self.tmp / "evil.git"), "branch.*.remote (not a configured remote)"),
+                 ("include.path", str(outside), "include.path/includeIf.*.path (outside the git dir)")]
+        self.write("notes/a.md", "note\n")
+        before = self.remote_head()
+        for key, val, label in cases:
+            with self.subTest(key=key):
+                g(self.work, "config", key, val)
+                code, rep = self.run_sync()
+                g(self.work, "config", "--unset", key)
+                self.assertEqual((code, rep["status"]), (1, "refused"), rep)
+                self.assertIn(label, rep["detail"])
+                self.assertNotIn("pw@", json.dumps(rep))
+                self.assertEqual(rep["files"], [])
+        self.assertEqual(self.remote_head(), before)
+        g(self.work, "config", "commit.gpgSign", "false")
+        self.assertEqual(self.run_sync()[1]["status"], "pushed")
+
+    def test_risky_worktree_config_refused(self):
+        g(self.work, "config", "extensions.worktreeConfig", "true")
+        g(self.work, "config", "--worktree", "core.askPass", "x")
+        code, rep = self.run_sync()
+        self.assertEqual((code, rep["status"]), (1, "refused"))
+        self.assertIn("core.askPass", rep["detail"])
+
+    def test_secret_scan_whole_file_bytes_and_names(self):
+        pad = b"\0" * (3 * 1024 * 1024 - 10)
+        (self.work / "notes").mkdir()
+        (self.work / "notes" / "a.bin").write_bytes(pad + b"-----BEGIN PGP PRIVATE KEY BLOCK-----\nX\n")
+        (self.work / "notes" / "b.md").write_bytes(b"x npm_" + b"A1b2C3d4E5f6G7h8I9j0" + b"\n")
+        (self.work / "notes" / ".npmrc").write_text("x\n")
+        code, rep = self.run_sync()
+        self.assertEqual((code, rep["status"]), (1, "refused"))
+        self.assertEqual({s["file"]: s["rule"] for s in rep["secrets"]},
+                         {"notes/a.bin": "content: private key header", "notes/b.md": "content: token prefix",
+                          "notes/.npmrc": "name matches .npmrc"})
+
+    def test_too_large_and_links_refused(self):
+        (self.work / "notes").mkdir()
+        with open(self.work / "notes" / "big.bin", "wb") as fh:
+            fh.truncate(fs.SCAN_MAX + 1)
+        self.write("outside.txt", "x\n")
+        os.link(self.work / "outside.txt", self.work / "notes" / "hard.md")
+        rules = {"notes/big.bin": "too large to scan (> 20 MiB)", "notes/hard.md": "hard link (not committed)"}
+        try:
+            os.symlink(str(self.tmp), str(self.work / "notes" / "sym"))
+            rules["notes/sym"] = "symlink (not committed)"
+        except (OSError, NotImplementedError):
+            pass
+        code, rep = self.run_sync()
+        self.assertEqual((code, rep["status"]), (1, "refused"))
+        self.assertEqual({s["file"]: s["rule"] for s in rep["secrets"]}, rules)
+
+    def test_output_redacted(self):
+        line = fs.first_line("fatal: unable to access 'https://user:pw@example.invalid/r.git/' glpat-" + "A1b2C3d4E5f6G7h8I9j0")
+        self.assertEqual(line, "fatal: unable to access 'https://***@example.invalid/r.git/' ***")
+
     def test_unlisted_branch_not_pushed_session_branch_pushed(self):
         g(self.work, "switch", "-q", "-c", "feature")
         self.write("notes/a.md", "note\n")
