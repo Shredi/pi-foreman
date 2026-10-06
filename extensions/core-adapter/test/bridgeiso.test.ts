@@ -46,10 +46,10 @@ test("doctor fails on host config entries and reports login presence without val
   const lines = isolationDoctor({ dir, env: {}, platform: "linux" });
   assert.match(lines[0], /^OK/);
   assert.match(lines[1], /^WARN bridge login not found/);
-  fs.writeFileSync(path.join(dir, "settings.json"), "{}");
-  fs.mkdirSync(path.join(dir, "plugins"));
+  fs.writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ hooks: {} }));
+  fs.mkdirSync(path.join(dir, "plugins", "cache", "x"), { recursive: true });
   const bad = isolationDoctor({ dir, env: { CLAUDE_CODE_OAUTH_TOKEN: "sekrit-token" }, platform: "linux" });
-  assert.match(bad[0], /^FAIL .*settings\.json, plugins/);
+  assert.match(bad[0], /^FAIL .*settings\.json: hooks, plugins\//);
   assert.match(bad[1], /CLAUDE_CODE_OAUTH_TOKEN set/);
   assert.equal(bad.join("\n").includes("sekrit-token"), false);
   fs.writeFileSync(path.join(dir, ".credentials.json"), "{}");
@@ -73,4 +73,26 @@ test("M2: every command-running settings key is a project finding", () => {
   fs.writeFileSync(path.join(p, ".claude", "settings.json"), JSON.stringify({ awsAuthRefresh: "x", awsCredentialExport: "x", otelHeadersHelper: "x", gcpAuthRefresh: "x", proxyAuthHelper: "x", statusLine: {}, env: {}, enabledPlugins: {}, extraKnownMarketplaces: {}, model: "m" }));
   assert.deepEqual(projectClaudeRisks(p), [".claude/settings.json (awsAuthRefresh, awsCredentialExport, gcpAuthRefresh, otelHeadersHelper, proxyAuthHelper, statusLine, env, enabledPlugins, extraKnownMarketplaces)"]);
   fs.rmSync(p, { recursive: true, force: true });
+});
+
+test("doctor judges settings and plugins by content, not existence", () => {
+  const fails = (dir: string) => isolationDoctor({ dir, env: {}, platform: "linux" })[0].startsWith("FAIL");
+  const d = tmp();
+  fs.writeFileSync(path.join(d, "settings.json"), JSON.stringify({ theme: "dark" }));
+  assert.equal(fails(d), false);
+  assert.ok(isolationDoctor({ dir: d, env: {}, platform: "linux" }).some((l) => l.startsWith("INFO") && l.includes("theme")));
+  fs.writeFileSync(path.join(d, "settings.json"), JSON.stringify({ theme: "dark", hooks: {} }));
+  assert.equal(fails(d), true);
+  fs.writeFileSync(path.join(d, "settings.json"), "{ nope");
+  assert.equal(fails(d), true);
+  const m = tmp();
+  fs.mkdirSync(path.join(m, "plugins", "marketplaces"), { recursive: true });
+  fs.writeFileSync(path.join(m, "plugins", "known_marketplaces.json"), "{}");
+  fs.writeFileSync(path.join(m, "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins: {} }));
+  assert.equal(fails(m), false);
+  fs.writeFileSync(path.join(m, "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "x@y": [{ scope: "user" }] } }));
+  assert.equal(fails(m), true);
+  const u = tmp();
+  fs.mkdirSync(path.join(u, "plugins", "data"), { recursive: true });
+  assert.match(isolationDoctor({ dir: u, env: {}, platform: "linux" })[0], /^FAIL .*plugins\/ unknown entries \(data\)/);
 });

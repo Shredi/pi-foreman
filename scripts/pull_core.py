@@ -164,6 +164,11 @@ def pinned_sha() -> str:
     raise SystemExit("core/VERSION has no sha line")
 
 
+def failed_names(lines) -> list:
+    """Node ids from pytest `-rf` lines ("FAILED <id> - message"); names only."""
+    return [l[len("FAILED "):].split(" - ", 1)[0].strip() for l in lines if l.startswith("FAILED ")]
+
+
 def conformance() -> int:
     if check() != 0:
         return 1
@@ -178,11 +183,13 @@ def conformance() -> int:
             return 1
         shutil.copyfile(str(CORE / rel), str(up))  # run against the vendored bytes
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests", "-q", "-rN", "--tb=no",
+        [sys.executable, "-m", "pytest", "tests", "-q", "-rf", "--tb=no",
          "-p", "no:cacheprovider"],
         cwd=str(work), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
     lines = [l for l in proc.stdout.decode("utf-8", "replace").splitlines() if l.strip()]
+    for name in failed_names(lines):
+        print("FAILED " + name)
     print("core conformance @ %s: %s" % (sha[:7], lines[-1] if lines else "no output"))
     if proc.returncode != 0:
         print("failed; run it locally for details (output is reduced on purpose)")
