@@ -184,12 +184,40 @@ def _seconds(timing):
         return None
 
 
+REFUSAL = re.compile(r"safeguards flagged|flagged this message", re.I)
+
+
+def logs_refusal(agent_dir):
+    """True when an assistant message with stopReason error in the session or rpc files of a cell's agent
+    logs dir carries a provider refusal text (same rule as bench/harbor_agent.classify_infra)."""
+    agent_dir = Path(agent_dir)
+    files = sorted((agent_dir / "sessions").rglob("*.jsonl")) if (agent_dir / "sessions").is_dir() else []
+    files += [agent_dir / "rpc.jsonl"] if (agent_dir / "rpc.jsonl").is_file() else []
+    for f in files:
+        if "subagent-artifacts" in f.parts:
+            continue
+        for line in f.read_text("utf-8", "replace").splitlines():
+            if "error" not in line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            msg = rec.get("message") if isinstance(rec, dict) else None
+            if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("stopReason") == "error" and \
+                    REFUSAL.search("%s %s" % (msg.get("errorMessage") or "", json.dumps(msg.get("content") or ""))):
+                return True
+    return False
+
+
 def agent_infra(rpc_log, tokens_total):
     """Infrastructure error of an agent run that never really worked on the task, else None:
     the main Pi session never reached a model turn (no assistant message in rpc.jsonl), its
     first assistant message failed (stopReason "error": provider, bridge or auth failure), or
     the run used zero model tokens. The rpc.jsonl checks apply only when the file exists."""
     rpc_log = Path(rpc_log)
+    if logs_refusal(rpc_log.parent):
+        return "provider_refusal"
     if rpc_log.is_file():
         first = None
         for line in rpc_log.read_text("utf-8", "replace").splitlines():
@@ -627,6 +655,7 @@ def row_summary(preset, tdir, jdir, prices=None):
             "tokens": _stat([r["tokens"] for r in done]), "tokens_by_tier": _tier_stats(done),
             "wall_seconds": _stat([r["wall_seconds"] for r in done]), "tool_calls": _stat([r["tool_calls"] for r in done]),
             "approvals": _stat([r["approvals"] for r in done]), "guard_blocks": _stat([r["guard_blocks"] for r in done]),
+            **_triage_stats(done),
             **({"cost": cost_stats(done, prices)} if prices else {}),
         })
     return out
@@ -660,11 +689,13 @@ def _columns(head, lines):
 
 def format_summary(summary, first=None):
     tiers = sorted({t for r in summary for t in r["tokens_by_tier"]})
-    head = ["row", "success"] + ["tokens %s" % t for t in tiers] + ["tokens all", "wall s", "tool calls", "approvals", "guard blocks"]
+    head = ["row", "success"] + ["tokens %s" % t for t in tiers] + ["tokens all", "wall s", "tool calls", "approvals", "guard blocks",
+                                                                "tier", "launches", "revisions", "asks_denied", "gate_blocks"]
     lines = [[r["row"], "%d/%d (%d cells)" % (r["success"], r["counted"], r["cells"])] +
              [_fmt(r["tokens_by_tier"].get(t)) for t in tiers] +
-             [_fmt(r["tokens"]), _fmt(r["wall_seconds"], 1), _fmt(r["tool_calls"]), _fmt(r["approvals"]), _fmt(r["guard_blocks"])]
-             for r in summary]
+             [_fmt(r["tokens"]), _fmt(r["wall_seconds"], 1), _fmt(r["tool_calls"]), _fmt(r["approvals"]), _fmt(r["guard_blocks"]),
+              r.get("tier") or "-", _fmt(r.get("launches")), _fmt(r.get("revisions")), _fmt(r.get("asks_denied")),
+              _fmt(r.get("gate_blocks"))] for r in summary]
     text = ["Per row (median [min-max] over counted cells; first cell excluded):"] + _columns(head, lines)
     if first:
         text.append("First cell %s: %s" % (first["cell"], "not finished" if not first["finished"] else

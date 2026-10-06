@@ -453,5 +453,28 @@ class BenchTest(unittest.TestCase):
         self.assertNotIn("Infra cells", out.getvalue())
 
 
+    def test_old_job_dir_with_refusal_in_logs_is_infra(self):
+        d = self.jobs / "R1__alpha__r1__a"
+        self.job("R1__alpha__r1__a", trial())
+        agent = d / "trial-1" / "agent"
+        agent.mkdir()
+        (agent / "rpc.jsonl").write_text("\n".join(json.dumps(x) for x in (
+            {"type": "message_end", "message": {"role": "assistant", "stopReason": "stop", "content": []}},
+            {"type": "message_end", "message": {"role": "assistant", "stopReason": "error",
+                                                "errorMessage": "Safeguards flagged this message"}})) + "\n")
+        self.assertEqual(fb.cell_results(self.jobs, "R1__alpha__r1")[0]["infra"], "provider_refusal")
+
+    def test_per_row_summary_has_triage_columns(self):
+        rec = trial()
+        rec["agent_result"]["metadata"]["bench"]["counters"]["triage"] = {
+            "tier": "deep", "launches": {"builder": 2}, "revisions": 1, "gate_blocks": 0, "asks_reviewed": {}}
+        self.job("R2__beta__r1__a", rec)
+        preset = fb.load_preset(self.preset)
+        summ = fb.row_summary(preset, fb.tasks_dir(preset), self.jobs)
+        text = fb.format_summary(summ)
+        self.assertIn("guard blocks  tier  launches  revisions  asks_denied  gate_blocks", text)
+        self.assertEqual([r for r in summ if r["row"] == "R2"][0]["tier"], "deep")
+
+
 if __name__ == "__main__":
     unittest.main()
