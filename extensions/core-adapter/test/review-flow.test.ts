@@ -129,6 +129,20 @@ test("triage gate: workspace paths only, .workflow open, symlinks and move/copy 
   }
 });
 
+test("triage gate: a foreman in a subdirectory may write its cwd-relative .workflow", (t) => {
+  const ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-sub-")));
+  t.after(() => fs.rmSync(ws, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(ws, ".git"));
+  fs.mkdirSync(path.join(ws, "pkg", "sub"), { recursive: true });
+  const opts = { cwd: path.join(ws, "pkg", "sub"), home: os.tmpdir(), platform: process.platform };
+  const standard = userOverride(initialCeremony("standard"), "standard");
+  assert.equal(triageGateBlock("write", { path: ".workflow/LEDGER-x.md" }, standard, opts), undefined);
+  assert.equal(triageGateBlock("write", { path: "../.workflow/n.md" }, standard, opts), undefined);
+  assert.equal(triageGateBlock("write", { path: path.join(ws, ".workflow", "n.md") }, standard, opts), undefined);
+  assert.ok(triageGateBlock("write", { path: "a.ts" }, standard, opts));
+  assert.ok(triageGateBlock("write", { path: path.join(ws, "other", ".workflow", "n.md") }, standard, opts), "only .workflow folders on the cwd's own path");
+});
+
 test("MINOR-4: names starting with '..' at the workspace root are inside", (t) => {
   const ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-dots-")));
   t.after(() => fs.rmSync(ws, { recursive: true, force: true }));

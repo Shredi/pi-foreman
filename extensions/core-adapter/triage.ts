@@ -88,17 +88,34 @@ export function changedPaths(toolName: string, input: Record<string, unknown>): 
   return [input.path, input.file_path, input.filePath].filter((v) => v !== undefined);
 }
 
-/** The first changed path inside the workspace and outside `.workflow/`, or null. */
+/**
+ * The real `.workflow` folders that stay writable: the root's, plus the one of each directory
+ * from the (real) cwd up to the root, so a foreman started in a subdirectory can write the
+ * cwd-relative ledger the core points it to.
+ */
+export function workflowDirs(realCwd: string, realRoot: string, platform: string): string[] {
+  const dirs = [path.join(realRoot, ".workflow")];
+  if (!under(realRoot, realCwd, platform)) return dirs;
+  for (let cur = realCwd, n = 0; n < 128 && cur !== realRoot && under(realRoot, cur, platform); n++) {
+    dirs.push(path.join(cur, ".workflow"));
+    const parent = path.dirname(cur);
+    if (parent === cur) break;
+    cur = parent;
+  }
+  return dirs;
+}
+
+/** The first changed path inside the workspace and outside the writable `.workflow/` folders, or null. */
 export function workspaceTarget(toolName: string, input: Record<string, unknown>, cwd: string, home: string, platform: string): string | null {
   const root = workspaceOf(cwd).root;
   const roots = [path.resolve(root), realDeep(path.resolve(root))];
-  const workflow = path.join(roots[1], ".workflow");
+  const workflows = workflowDirs(realDeep(path.resolve(cwd)), roots[1], platform);
   for (const raw of changedPaths(toolName, input)) {
     const abs = resolveToolPath(raw, cwd, home);
     if (!abs) continue;
     const real = realDeep(abs);
     if (!roots.some((r) => under(r, abs, platform) || under(r, real, platform))) continue;
-    if (under(workflow, real, platform) && real !== workflow) continue;
+    if (workflows.some((w) => under(w, real, platform) && real !== w)) continue;
     return String(raw);
   }
   return null;
