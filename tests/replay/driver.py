@@ -255,8 +255,10 @@ class PiRpc:
         self.stderr = []
         self.seen = []
         self._n = 0
-        threading.Thread(target=self._read_out, daemon=True).start()
-        threading.Thread(target=self._read_err, daemon=True).start()
+        self._threads = [threading.Thread(target=self._read_out, daemon=True),
+                         threading.Thread(target=self._read_err, daemon=True)]
+        for t in self._threads:
+            t.start()
 
     def _read_out(self):
         buf = b""
@@ -378,17 +380,24 @@ class PiRpc:
             self._answer(rec, answers)
 
     def close(self, timeout=15.0):
-        if self.proc.poll() is not None:
-            return
-        try:
-            self.proc.stdin.close()
-        except OSError:
-            pass
-        try:
-            self.proc.wait(timeout)
-        except subprocess.TimeoutExpired:
-            self.proc.kill()
-            self.proc.wait(5)
+        if self.proc.poll() is None:
+            try:
+                self.proc.stdin.close()
+            except OSError:
+                pass
+            try:
+                self.proc.wait(timeout)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait(5)
+        # Reader threads end at EOF; then release the pipes (ResourceWarning otherwise).
+        for t in self._threads:
+            t.join(5)
+        for f in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
+            try:
+                f.close()
+            except (OSError, ValueError):
+                pass
 
 
 # ------------------------------------------------------------------ helpers
