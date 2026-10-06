@@ -100,6 +100,28 @@ jobs:
           assert b["claude_config_dir"]["empty"], b["claude_config_dir"]
           print("bench smoke ok: child finished %d ms before the verifier; tokens %s" % (v - max(x["lastUpdate"] for x in runs), b["counters"]["tokens"]["total"]))
           EOF
+      - name: revision probe (triage, builder, denied ask, failing review, revision) on the fake provider
+        run: |
+          python scripts/foreman_bench.py run --preset bench/presets/smoke.json --rows foreman-fake-revision --task revision-probe --jobs-dir "$RUNNER_TEMP/bench-jobs"
+          python - <<'EOF'
+          import glob, json, os
+          base = os.path.join(os.environ["RUNNER_TEMP"], "bench-jobs", "foreman-fake-revision__revision-probe__r1__*")
+          logs = glob.glob(os.path.join(base, "*", "agent"))
+          assert logs, base
+          logs = logs[-1]
+          r = json.load(open(glob.glob(os.path.join(os.path.dirname(logs), "result.json"))[-1]))
+          b = r["agent_result"]["metadata"]["bench"]
+          assert b["status"] == "done" and not b["infra_error"], b
+          run = json.load(open(os.path.join(logs, "bench-run.json")))
+          assert "@gotgenes/pi-permission-system" in run["versions"], run["versions"]
+          cfg = json.load(open(os.path.join(logs, "agent-foreman.json")))
+          assert cfg["providers"]["foreman-fake"]["review"]["model"], cfg
+          assert glob.glob(os.path.join(logs, "state", "usage", "*.jsonl")), os.listdir(os.path.join(logs, "state"))
+          assert len(run["asks_denied"]) >= 1, run
+          events = [json.loads(l) for f in glob.glob(os.path.join(logs, "trace", "trace-*.jsonl")) for l in open(f)]
+          assert any(e.get("event") == "triage" and e.get("decision") == "recorded" for e in events), "no triage event"
+          print("revision probe ok: asks_denied %s, %d trace events" % (run["asks_denied"], len(events)))
+          EOF
       - name: M1 re-check hidden check on the fake provider (scripted good run 1, no-reviewer run 0)
         run: |
           python scripts/foreman_bench.py run --preset bench/presets/smoke.json --rows m1-fake-good m1-fake-bad --task m1-recheck --jobs-dir "$RUNNER_TEMP/bench-jobs"

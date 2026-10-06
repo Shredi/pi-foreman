@@ -19,7 +19,10 @@ checks that CLAUDE_CONFIG_DIR is a fresh empty dir and stats the token file (mod
 size; never read), then deletes the token file. Results go to bench-run.json `setup_check`.
 
 A provider answer "usage limit reached" ends the session at once and is recorded as an
-infrastructure error, not as a task result.
+infrastructure error, not as a task result. A provider refusal ("safeguards flagged this
+message") is recorded as infra_error "provider_refusal" and does not stop the session.
+Human dialogs (select, confirm, input, editor) are denied explicitly, never confirmed, and
+listed in bench-run.json `asks_denied`; the whole pi-foreman state dir is copied to state/.
 
 Outputs under --out (the trial's /logs/agent): bench-run.json (status, timings, child runs,
 versions, config checks), rpc.jsonl (RPC records without message_update), sessions/ (Pi
@@ -47,17 +50,81 @@ ACTIVE_STATES = ("queued", "running")
 DIALOGS = ("select", "confirm", "input", "editor")
 USAGE_LIMIT = re.compile(r"usage limit|limit reached|hit your (?:usage |session |weekly )?limit|quota exceeded", re.I)
 
+# A provider refusal (safety classifier) is an infrastructure error too, but it does not stop the run.
+PROVIDER_REFUSAL = re.compile(r"safeguards flagged|flagged this message", re.I)
+
+
+def _error_text(record, pattern):
+    msg = record.get("message") if isinstance(record.get("message"), dict) else None
+    if not msg or msg.get("role") != "assistant" or msg.get("stopReason") != "error":
+        return None
+    text = str(msg.get("errorMessage") or "")
+    return text if pattern.search(text) else None
+
 
 def usage_limit_error(record):
     """The provider's error text when this RPC record / session entry is an assistant message
     that failed with a usage-limit answer, else None."""
-    msg = record.get("message") if isinstance(record.get("message"), dict) else None
-    if not msg or msg.get("role") != "assistant":
-        return None
-    if msg.get("stopReason") != "error":
-        return None
-    text = str(msg.get("errorMessage") or "")
-    return text if USAGE_LIMIT.search(text) else None
+    return _error_text(record, USAGE_LIMIT)
+
+
+def provider_refusal_error(record):
+    """Like usage_limit_error, for a provider refusal ("safeguards flagged this message")."""
+    return _error_text(record, PROVIDER_REFUSAL)
+
+
+def deny_response(rec):
+    """The extension_ui_response that denies one dialog request; never confirms."""
+    base = {"type": "extension_ui_response", "id": rec.get("id")}
+    method = rec.get("method")
+    if method == "select":
+        options = [o if isinstance(o, str) else str((o or {}).get("label") or (o or {}).get("value") or "")
+                   for o in rec.get("options") or []]
+        for o in options:
+            if o.strip().lower() == "no":
+                return dict(base, value=o)
+        return dict(base, cancelled=True)
+    if method == "confirm":
+        return dict(base, confirmed=False)
+    return dict(base, cancelled=True)
+
+
+def note_refusal(status, text):
+    """First refusal wins; a usage limit already recorded is not overwritten."""
+    if not status.get("infra_error"):
+        status.update({"status": "infra_error", "infra_error": "provider_refusal", "error": text[:200]})
+
+
+ROLE_IDS = ("senior-reviewer", "finalizer", "explorer", "builder", "reviewer", "foreman")
+FAKE_REVIEW_MODEL = "review-defer"  # never auto-allows: the ask reaches the dialog
+
+
+def ask_role(rec):
+    """Best effort: the role id named in a dialog request (a forwarded child ask names its agent), else None."""
+    text = "%s %s" % (rec.get("title") or "", rec.get("message") or "")
+    hit = re.search(r"(?:sub-?agent|child|agent)\W+(%s)\b" % "|".join(ROLE_IDS), text, re.I)
+    return hit.group(1).lower() if hit else None
+
+
+def foreman_config(row):
+    """The user-layer foreman.json for a foreman row: the row's roles (incl. builder.strong),
+    the review model (the row's review_model, else the reviewer role's model; the fake provider's
+    non-allowing review model for fake rows), trace on. ceremony.requireTriage stays at its default."""
+    provider = row["provider"]
+    roles = row["roles"]
+    review = row.get("review_model")
+    if not review:
+        if row.get("_fake"):
+            review = "%s/%s" % (provider, FAKE_REVIEW_MODEL)
+        else:
+            review = (roles.get("reviewer") or {}).get("model")
+    block = {"roles": roles}
+    if review:
+        block["review"] = {"model": review}
+    l2 = {"version": 1, "providers": {provider: block}, "trace": {"enabled": True}}
+    if row.get("_required_child_extensions"):
+        l2["safety"] = {"requiredChildExtensions": row["_required_child_extensions"]}
+    return l2
 
 
 def async_runs(temp_root):
@@ -114,21 +181,31 @@ def build_world(args, row):
     """Agent dir with foreman.json + settings.json (foreman rows) or settings.json only (plain)."""
     root = Path(args.work)
     agent = root / "agent"
-    for d in (agent, root / "sessions", root / "tmp", root / "subagents"):
+    for d in (agent, agent / "pi-foreman" / "state", root / "sessions", root / "tmp", root / "subagents"):
         d.mkdir(parents=True, exist_ok=True)
     packages = list(row.get("_packages") or [])
     settings = {"packages": packages}
     if row.get("agent") == "foreman":
-        l2 = {"version": 1, "providers": {row["provider"]: {"roles": row["roles"]}}, "trace": {"enabled": True}}
-        if row.get("_required_child_extensions"):
-            l2["safety"] = {"requiredChildExtensions": row["_required_child_extensions"]}
-        write_json(agent / "foreman.json", l2)
+        write_json(agent / "foreman.json", foreman_config(row))
         gen = subprocess.run([sys.executable, str(REPO / "scripts" / "foreman_config.py"), "generate-subagents", "--json",
                               "--agent-dir", str(agent), "--project-dir", args.cwd],
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
         if gen.returncode != 0:
             raise RuntimeError("generate-subagents failed: %s" % gen.stderr.decode("utf-8", "replace")[-800:])
         settings["subagents"] = json.loads(gen.stdout.decode("utf-8"))["subagents"]
+        if row.get("_permission_system"):  # same render the installer runs (setup.mjs)
+            pg = subprocess.run([sys.executable, str(REPO / "scripts" / "permissions_gen.py"), "render", "--agent-dir", str(agent)],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+            if pg.returncode != 0:
+                raise RuntimeError("permissions_gen failed: %s" % pg.stderr.decode("utf-8", "replace")[-800:])
+            cfg = agent / "extensions" / "pi-permission-system" / "config.json"
+            cfg.parent.mkdir(parents=True, exist_ok=True)
+            rendered = json.loads(pg.stdout.decode("utf-8"))["config"]
+            # Opt-in rig-side extras (row key `permission_tools_allow`); the baseline has no
+            # entry for foreman_triage, so without it every triage call becomes a human ask.
+            for tool in row.get("permission_tools_allow") or []:
+                rendered.setdefault("permission", {})[tool] = "allow"
+            write_json(cfg, rendered)
     write_json(agent / "settings.json", settings)
     return agent
 
@@ -172,6 +249,7 @@ def drive_rpc(args, row, env, status):
     settled = False
     seen_mtimes = {}
     status["asks"] = 0
+    status["asks_denied"] = []
     try:
         pi.send({"id": "bench-prompt", "type": "prompt", "message": Path(args.instruction_file).read_text("utf-8")})
         while True:
@@ -191,8 +269,10 @@ def drive_rpc(args, row, env, status):
                 if rec.get("type") != "message_update":
                     rpc_log.write(json.dumps(rec) + "\n")
                 if rec.get("type") == "extension_ui_request" and rec.get("method") in DIALOGS:
-                    status["asks"] += 1  # guard asks are denied: the benchmark has no human
-                    pi.send({"type": "extension_ui_response", "id": rec["id"], "cancelled": True})
+                    status["asks"] += 1  # the benchmark has no human: deny explicitly, keep the session running
+                    status.setdefault("asks_denied", []).append(
+                        {"method": rec.get("method"), "title": str(rec.get("title") or "")[:200], "role": ask_role(rec)})
+                    pi.send(deny_response(rec))
                 if rec.get("type") == "response" and rec.get("id") == "bench-prompt" and not rec.get("success"):
                     status["status"] = "prompt_rejected"
                     status["error"] = str(rec.get("error"))[:500]
@@ -201,6 +281,10 @@ def drive_rpc(args, row, env, status):
                     settled = False
                 elif rec.get("type") == "agent_settled":
                     settled = True
+                if rec.get("type") == "message_end":
+                    refusal = provider_refusal_error(rec)
+                    if refusal:
+                        note_refusal(status, refusal)
                 limit = usage_limit_error(rec) if rec.get("type") == "message_end" else None
                 if limit:
                     status["status"] = "infra_error"
@@ -248,9 +332,12 @@ def drive_print(args, row, env, status):
                 continue
             fh.write(line + "\n")
             try:
-                limit = usage_limit_error(json.loads(line))
+                rec = json.loads(line)
             except ValueError:
-                limit = None
+                continue
+            if provider_refusal_error(rec):
+                note_refusal(status, provider_refusal_error(rec))
+            limit = usage_limit_error(rec)
             if limit:
                 status.update({"status": "infra_error", "infra_error": "usage_limit", "error": limit[:500]})
     status["pi_seconds"] = round(time.time() - t0, 3)
@@ -265,8 +352,13 @@ def collect(args, agent, status):
     for src in (Path(args.work) / "sessions", agent / "sessions"):
         if src.is_dir():
             shutil.copytree(str(src), str(sessions / src.parent.name), dirs_exist_ok=True)
+    for name in ("foreman.json", "settings.json"):  # the generated config, for the record
+        if (agent / name).is_file():
+            shutil.copy2(str(agent / name), str(out / ("agent-" + name)))
     state = agent / "pi-foreman" / "state"
     if state.is_dir():
+        # The whole state dir (usage log, traces, drift baselines, session markers) for the rig.
+        shutil.copytree(str(state), str(out / "state"), dirs_exist_ok=True)
         (out / "trace").mkdir(exist_ok=True)
         for f in state.glob("trace-*.jsonl"):
             shutil.copy2(str(f), str(out / "trace" / f.name))
@@ -280,19 +372,22 @@ def collect(args, agent, status):
         for d in runs.iterdir():
             if (d / "status.json").is_file():
                 shutil.copy2(str(d / "status.json"), str(out / "async-runs" / ("%s.json" % d.name)))
-    if status.get("infra_error"):
+    if status.get("infra_error") == "usage_limit":
         return
     for f in sessions.rglob("*.jsonl"):
         if "subagent-artifacts" in f.parts:
             continue
         for line in f.read_text("utf-8", "replace").splitlines():
             try:
-                limit = usage_limit_error(json.loads(line))
+                rec = json.loads(line)
             except ValueError:
                 continue
+            limit = usage_limit_error(rec)
             if limit:
                 status.update({"status": "infra_error", "infra_error": "usage_limit", "error": limit[:500]})
                 return
+            if provider_refusal_error(rec):
+                note_refusal(status, provider_refusal_error(rec))
 
 
 def versions(row):
@@ -316,6 +411,8 @@ def setup_check(args, row, env):
     import glob
     import stat as stat_mod
     res = {"claude_config_dir_before": empty_dir_check(env["CLAUDE_CONFIG_DIR"])}
+    res["python"] = {"version": "%d.%d.%d" % sys.version_info[:3], "ok": sys.version_info >= (3, 9)}
+    res["permission_system_config"] = (Path(env["PI_CODING_AGENT_DIR"]) / "extensions" / "pi-permission-system" / "config.json").is_file()
 
     def run(cmd):
         try:

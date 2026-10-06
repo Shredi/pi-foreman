@@ -3,6 +3,7 @@
  "rows": [
   {"id": "foreman-fake", "agent": "foreman", "provider": "foreman-fake", "cap_seconds": 300},
   {"id": "foreman-fake-print", "agent": "foreman", "provider": "foreman-fake", "driver": "print", "cap_seconds": 300},
+  {"id": "foreman-fake-revision", "agent": "foreman", "provider": "foreman-fake", "replay_tag": "revision_probe", "permission_tools_allow": ["foreman_triage"], "cap_seconds": 300},
   {"id": "m1-fake-good", "agent": "foreman", "provider": "foreman-fake", "replay_tag": "m1_good", "cap_seconds": 300},
   {"id": "m1-fake-bad", "agent": "foreman", "provider": "foreman-fake", "replay_tag": "m1_bad", "cap_seconds": 300}
  ]
