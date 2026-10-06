@@ -1,0 +1,16 @@
+#!/bin/sh
+# pi-foreman: `foreman update-check|retro [args]` -> scripts/foreman_<name>.py (sync: not available yet).
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+sub="${1:-}"
+case "$sub" in
+    update-check) script="$here/../scripts/foreman_update_check.py" ;;
+    retro) script="$here/../scripts/foreman_retro.py" ;;
+    sync) echo "foreman sync: not available yet" >&2; exit 2 ;;
+    *) echo "usage: foreman update-check|retro [args]" >&2; exit 2 ;;
+esac
+shift
+py="${PI_FOREMAN_PYTHON:-}"
+if [ -z "$py" ]; then
+    if command -v python3 >/dev/null 2>&1; then py=python3; else py=python; fi
+fi
+exec "$py" -E -s "$script" "$@"

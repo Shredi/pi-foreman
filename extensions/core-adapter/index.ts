@@ -835,8 +835,35 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     },
   });
 
+  /** Run one scripts/*.py of the package with the resolved interpreter; the text to show. */
+  async function runScript(s: Session, script: string, args: string[]): Promise<{ text: string; ok: boolean }> {
+    const py = pyPath(s);
+    if (!py) return { text: `${script}: no usable Python (run /foreman doctor).`, ok: false };
+    const r = await spawner(py, ["-E", "-s", path.join(PKG_ROOT, "scripts", script), ...args], { timeoutMs: 60_000, cwd: s.cwd });
+    const text = (r.stdout.trim() || r.stderr.trim() || `${script} produced no output.`);
+    return { text, ok: !r.error && !r.timedOut && r.code === 0 };
+  }
+
+  pi.registerCommand("retro", {
+    description: "Friction metrics of this session and permission-allow proposals (foreman only)",
+    handler: async (_args, ctx) => {
+      const s = await ensureSession(ctx);
+      if (s.isChild) {
+        ctx.ui.notify("/retro is for the foreman only.", "warning");
+        return;
+      }
+      const day = new Date().toISOString().slice(0, 10);
+      const args = ["--agent-dir", s.agentDir, "--review-log", path.join(s.agentDir, "extensions", "pi-permission-system", "logs", "pi-permission-system-permission-review.jsonl"), "--usage", s.usage.file, "--proposals-out", path.join(s.agentDir, "pi-foreman", "state", "retro", `permission-proposals-${day}.json`)];
+      const sessionFile = ctx.sessionManager.getSessionFile();
+      if (sessionFile) args.push("--session", sessionFile);
+      if (s.trace) args.push("--trace", s.trace.file);
+      const r = await runScript(s, "foreman_retro.py", args);
+      ctx.ui.notify(r.text, r.ok ? "info" : "error");
+    },
+  });
+
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor | /foreman cost [workspace]",
+    description: "pi-foreman commands: /foreman doctor | /foreman cost [workspace] | /foreman update-check",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
       if (sub === "cost") {
@@ -848,8 +875,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         ctx.ui.notify(formatSummary(aggregate(lines), title), "info");
         return;
       }
+      if (sub === "update-check") {
+        const r = await runScript(await ensureSession(ctx), "foreman_update_check.py", []);
+        ctx.ui.notify(r.text, r.ok ? "info" : "error");
+        return;
+      }
       if (sub !== "doctor") {
-        ctx.ui.notify("Usage: /foreman doctor | /foreman cost [workspace]", "warning");
+        ctx.ui.notify("Usage: /foreman doctor | /foreman cost [workspace] | /foreman update-check", "warning");
         return;
       }
       const s = await ensureSession(ctx);
