@@ -172,6 +172,24 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(fc.resolve_role(cfg, "explorer", "p1")["model"], "p2/e")
         self.assertEqual(fc.resolve_role(cfg, "builder", "p1")["model"], "p1/b")
 
+    def test_strong_resolves_capped_and_via_fallback(self):
+        self.l2({"maxThinking": "high", "providers": {
+            "p1": {"roles": {"builder": {"model": "p1/b", "strong": {"model": "p1/big", "thinking": "max"}}},
+                   "fallback": {"provider": "p2"}},
+            "p2": {"roles": {"explorer": {"model": "p2/e", "strong": {"model": "p2/E"}},
+                             "reviewer": {"model": "p2/r"}}}}})
+        cfg = self.load()["config"]
+        self.assertEqual(fc.resolve_role(cfg, "builder", "p1")["strong"], {"model": "p1/big", "thinking": "high"})
+        self.assertEqual(fc.resolve_role(cfg, "explorer", "p1")["strong"], {"model": "p2/E", "thinking": None})
+        self.assertNotIn("strong", fc.resolve_role(cfg, "reviewer", "p1"))
+
+    def test_resolve_all_includes_overlay_roles(self):
+        self.l2({"roles": {"auditor": {"tools": ["read"]}},
+                 "providers": {"p1": {"roles": {"auditor": {"model": "p1/a"}}}}})
+        roles = fc.resolve_all(self.load()["config"], "p1")
+        self.assertEqual(roles["auditor"]["model"], "p1/a")
+        self.assertEqual(list(roles), ["foreman"] + fc.CHILD_ROLES + ["auditor"])
+
     def test_max_thinking_caps(self):
         self.l2({"maxThinking": "medium", "providers": {"p1": {"roles": {
             "builder": {"model": "p1/b", "thinking": "xhigh"},

@@ -21,11 +21,11 @@
   },
   "roles": {
     "foreman": { "tools": [], "codemode": true },
-    "explorer": { "tools": ["read", "ls", "grep", "find", "bash"], "codemode": true, "launch": "detached" },
-    "builder": { "tools": ["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_move", "foreman_copy"], "codemode": false, "launch": "detached" },
-    "reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "codemode": false, "launch": "detached" },
-    "senior-reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "codemode": false, "launch": "detached" },
-    "finalizer": { "tools": ["read", "ls", "grep", "find", "bash", "edit"], "codemode": false, "launch": "detached" }
+    "explorer": { "tools": ["read", "ls", "grep", "find", "bash"], "codemode": true, "launch": "detached", "timeoutMinutes": 20 },
+    "builder": { "tools": ["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_move", "foreman_copy"], "codemode": false, "launch": "detached", "timeoutMinutes": 60 },
+    "reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "codemode": false, "launch": "detached", "timeoutMinutes": 30 },
+    "senior-reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "codemode": false, "launch": "detached", "timeoutMinutes": 45 },
+    "finalizer": { "tools": ["read", "ls", "grep", "find", "bash", "edit"], "codemode": false, "launch": "detached", "timeoutMinutes": 30 }
   },
   "providers": {},
   "fanout": { "max": 3 },
@@ -34,7 +34,9 @@
     "default": "standard",
     "heavySignals": ["delete", "migration", "safety", "auth", "ci", "release", "public-api"],
     "heavyFileCount": 8,
-    "overrides": {}
+    "overrides": {},
+    "revisionRounds": { "standard": 1, "heavy": 2 },
+    "requireTriage": true
   },
   "safety": {
     "permissions": { "allow": [], "ask": [], "deny": [], "paths": { "deny": [], "ask": [] }, "projectCommands": [] },
