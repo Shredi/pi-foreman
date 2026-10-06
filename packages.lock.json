@@ -4,11 +4,12 @@
     "name": "@earendil-works/pi-coding-agent",
     "version": "1.0.0",
     "range": "1.0.x",
-    "mode": "checked"
+    "mode": "checked",
+    "notes": "https://github.com/earendil-works/pi/releases/tag/v{version}"
   },
   "packages": [
-    { "name": "pi-subagents", "version": "0.75.0", "mode": "install" },
-    { "name": "@gotgenes/pi-permission-system", "version": "39.0.2", "mode": "install" },
+    { "name": "pi-subagents", "version": "0.75.0", "mode": "install", "notes": "https://github.com/nicobailon/pi-subagents/releases/tag/v{version}" },
+    { "name": "@gotgenes/pi-permission-system", "version": "39.0.2", "mode": "install", "notes": "https://github.com/gotgenes/pi-packages/releases/tag/pi-permission-system-v{version}" },
     { "name": "pi-foreman", "mode": "local" }
   ]
 }
