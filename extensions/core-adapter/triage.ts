@@ -4,8 +4,8 @@
 // (destination) on paths inside the workspace while the tier is untriaged (config default or
 // only escalated by a signal) or standard/heavy. `.workflow/**` (ledger, notes) stays writable.
 //
-// Paths: as given (resolveToolPath) and with symlinks resolved (deepest existing ancestor plus
-// the missing tail), each checked against the workspace root as given and resolved. Either one
+// Paths: as given (resolveToolPath) and with symlinks resolved (fs.realpathSync.native, so Windows
+// short names and `\\?\` forms compare too; deepest existing ancestor plus the missing tail), each checked against the workspace root as given and resolved. Either one
 // inside counts, so a symlink cannot carry a write into the workspace. The `.workflow` exemption
 // holds only when the resolved target is below the resolved root's real `.workflow` folder, so a
 // link inside `.workflow` cannot carry a write out of it.
@@ -42,12 +42,27 @@ export function triageAdvice(tier: Tier): string {
     : `Write the ledger .workflow/LEDGER-<topic>.md with the line \`Tier: ${tier}\` first, then delegate workspace edits to a builder; you do not edit workspace files yourself at this tier.`;
 }
 
-function realDeep(abs: string): string {
+/** `\\?\C:\x` -> `C:\x` (Win32 verbatim prefix); `\\?\UNC\...` is left as is. */
+export function stripVerbatim(p: string): string {
+  return /^\\\\\?\\(?!UNC\\)/i.test(p) ? p.slice(4) : p;
+}
+
+/** The OS's own resolution (expands Windows 8.3 short names), else the JS one. */
+function realpath(p: string): string {
+  try {
+    return stripVerbatim(fs.realpathSync.native(p));
+  } catch {
+    return stripVerbatim(fs.realpathSync(p));
+  }
+}
+
+/** Symlinks and short names resolved; a missing tail is kept below its nearest existing ancestor. */
+export function realDeep(abs: string): string {
   const tail: string[] = [];
-  let cur = abs;
+  let cur = stripVerbatim(abs);
   for (let n = 0; n < 128; n++) {
     try {
-      const real = fs.realpathSync(cur);
+      const real = realpath(cur);
       return tail.length ? path.join(real, ...tail.reverse()) : real;
     } catch {
       const parent = path.dirname(cur);
@@ -62,7 +77,8 @@ function realDeep(abs: string): string {
 function under(root: string, p: string, platform: string): boolean {
   const fold = platform === "win32" || platform === "darwin" ? (s: string) => s.toLowerCase() : (s: string) => s;
   const rel = path.relative(fold(root), fold(p));
-  return rel === "" || (!!rel && !rel.startsWith("..") && !path.isAbsolute(rel));
+  const outside = rel === ".." || rel.startsWith("../") || rel.startsWith("..\\") || path.isAbsolute(rel);
+  return rel === "" || !outside;
 }
 
 /** The paths a gated tool changes. */

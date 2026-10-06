@@ -9,6 +9,7 @@
 // action are blocked. pi-subagents trims the action before dispatch; so does `actionOf`.
 import { launchModel, splitLevel } from "./launchmodel.ts";
 import type { RoleResolution } from "./roles.ts";
+import { launchSteps } from "./rounds.ts";
 
 type Json = Record<string, unknown>;
 
@@ -135,6 +136,19 @@ export function recordLaunch(runs: RunRegistry, input: unknown, details: unknown
   if (typeof input.agent !== "string" || input.agent === "") return;
   const model = typeof input.model === "string" && input.model ? splitLevel(input.model).base : null;
   runs.set(id, { role: input.agent, model });
+}
+
+/**
+ * The steps a `subagent` call runs, for the revision rounds (rounds.ts): a launch's own steps,
+ * a resume as one step of the resumed run's role (a resumed builder works on the reviewed
+ * change again), nothing for any other action.
+ */
+export function roundSteps(input: Json, runs: RunRegistry): string[][] {
+  if (!isObj(input)) return [];
+  const action = actionOf(input);
+  if (action === null) return launchSteps(input);
+  const role = action === "resume" ? runs.get(resumeTarget(input) ?? "")?.role : undefined;
+  return role ? [[role]] : [];
 }
 
 function resumeTarget(input: Json): string | null {

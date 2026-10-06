@@ -114,6 +114,14 @@ export function singleLaunchRole(input: Json): string | null {
   return str(input.agent);
 }
 
+/** Drop a foreman-supplied pi-foreman binding from any `subagent` call; only the adapter writes it. */
+export function stripBinding(input: Json): void {
+  if (!isObj(input) || !isObj(input.extensionBindings) || !(BINDING_NS in input.extensionBindings)) return;
+  const { [BINDING_NS]: _dropped, ...rest } = input.extensionBindings;
+  if (Object.keys(rest).length > 0) input.extensionBindings = rest;
+  else delete input.extensionBindings;
+}
+
 /** Write the binding into the launch input's `extensionBindings` (other namespaces are kept). */
 export function bindLaunch(input: Json, b: LaunchBinding): void {
   const prev = isObj(input.extensionBindings) ? input.extensionBindings : {};

@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { afterSpawn, beforeSpawn, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, promptSignals, tierLine, userOverride } from "./ceremony.ts";
+import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, promptSignals, tierLine, userOverride } from "./ceremony.ts";
 import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint } from "./config.ts";
 import type { MergedConfig } from "./config.ts";
@@ -15,7 +15,7 @@ import { permFileState, PS_CHILD_ID, PS_PACKAGE, psProjectConfigPath, renderPerm
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
-import { isActionCall, recordLaunch, subagentActionCheck } from "./actions.ts";
+import { actionOf, recordLaunch, roundSteps, subagentActionCheck } from "./actions.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
@@ -43,11 +43,11 @@ import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
 import { openTrace } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
-import { appendUsage, aggregate, bindLaunch, causeOfCustom, causeOfInput, formatSummary, PARENT_SESSION_ENV, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
+import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, causeOfInput, formatSummary, PARENT_SESSION_ENV, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
-import { afterBuilderLaunch, checkBuilderLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, REVIEW_ROLES, verdictOf } from "./rounds.ts";
-import type { RoundState } from "./rounds.ts";
+import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
+import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { foremanTriage, GATED_TOOLS, triageAdvice, triageGateBlock, TRIAGE_TOOL } from "./triage.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
 import type { RegistryLike } from "./modelcheck.ts";
@@ -101,7 +101,7 @@ interface Session {
   launches: Map<string, LaunchBinding>;
   /** Foreman only: last trigger of the current run and its cache tokens, for the `turn` trace event. */
   turn: { cause: TurnCause; cacheRead: number; cacheWrite: number };
-  /** Foreman only: builder revision rounds since the last user prompt or tier change (rounds.ts). */
+  /** Foreman only: builder revision rounds since the last user prompt or /ceremony tier change (rounds.ts). */
   rounds: RoundState;
 }
 
@@ -226,13 +226,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return s;
   }
 
-  /** Every tier change goes through here so the trace sees it. */
+  /** Every tier change goes through here so the trace sees it. Only a change by the user (/ceremony) resets the revision rounds. */
   function setCeremony(s: Session, next: CeremonyState): void {
     const before = s.ceremony.tier;
     s.ceremony = next;
     if (next.tier !== before) {
       s.trace?.emit({ event: "tier", tier: next.tier });
-      s.rounds = initialRounds();
+      s.rounds = onTierChange(s.rounds, next.source);
     }
   }
 
@@ -527,10 +527,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const blocked = childLaunchBlock(s, event.toolName);
       if (blocked) return { block: true, reason: blocked };
       let notices: string[] = [];
-      let builderLaunch = false;
-      let revision = false;
+      let rounds: LaunchRounds | undefined;
       let kind: LaunchKind | undefined;
       if (event.toolName === "subagent") {
+        // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
+        stripBinding(input);
         const resolution = await currentRoles(s, ctx);
         const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
         const act = subagentActionCheck(input, { allowWorkflow, runs: s.runs, allowed: childRoleIds(get(s.config.config, "roles")), resolution, maxThinking: get(s.config.config, "maxThinking") });
@@ -548,19 +549,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const resolution = await currentRoles(s, ctx);
         const noModel = roleModelBlock(input, resolution);
         if (noModel) return { block: true, reason: noModel };
-        // D3/D4: a builder launch after a review of built work is a revision round. Checked here,
-        // on the guarded path; a refused launch counts and records nothing.
-        builderLaunch = !s.isChild && !isActionCall(input) && subagentAgents(input).includes("builder");
+        // D3/D4: builder runs after a review of built work are revision rounds: every step of a
+        // tasks/chain call, and a resume of a builder run (its model stays, so never a strong
+        // relaunch). Checked here, on the guarded path; a refused launch counts and records nothing.
+        const resumed = actionOf(input) === "resume";
+        const steps = s.isChild ? [] : roundSteps(input, s.runs);
         let preferStrong = false;
-        if (builderLaunch) {
-          const rc = checkBuilderLaunch(s.rounds, s.ceremony.tier, get(s.config.config, "ceremony.revisionRounds"));
-          if (rc.block) {
+        if (steps.length > 0) {
+          rounds = checkLaunch(s.rounds, steps, s.ceremony.tier, get(s.config.config, "ceremony.revisionRounds"));
+          if (rounds.block) {
             s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: "blocked" });
-            return { block: true, reason: rc.block };
+            return { block: true, reason: rounds.block };
           }
-          revision = rc.revision;
+          const revision = rounds.revisions > 0;
           const keyword = typeof input.model === "string" && (STRENGTHS as readonly string[]).includes(splitLevel(input.model.trim()).base);
-          preferStrong = revision && !keyword && get(s.config.config, `providers.${resolution.provider}.strongOnRevision`) === true;
+          preferStrong = revision && !resumed && !keyword && get(s.config.config, `providers.${resolution.provider}.strongOnRevision`) === true;
           kind = revision ? (preferStrong ? "strong-relaunch" : "revision") : undefined;
         }
         const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong });
@@ -616,9 +619,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       // Kept for the tool result only once the launch passed every check.
       if (notices.length > 0) s.launchNotices.set(event.toolCallId, notices);
-      if (builderLaunch) {
-        s.rounds = afterBuilderLaunch(s.rounds, revision);
-        if (kind) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: kind });
+      if (rounds) {
+        s.rounds = rounds.next;
+        for (let i = 0; i < rounds.revisions; i++) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: kind });
       }
       if (event.toolName === "subagent") recordLaunchUsage(s, ctx, input, kind);
       return undefined;
@@ -717,7 +720,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
     }
     const mapping = mapTool(event.toolName);
-    if (mapping.post.length === 0 || event.isError) return undefined;
+    const changed = event.isError ? undefined : changedFileOf(event.toolName, event.input as Record<string, unknown>);
+    if ((mapping.post.length === 0 && changed === undefined) || event.isError) return undefined;
     try {
       const s = await ensureSession(ctx);
       const input = event.input as Record<string, unknown>;
@@ -725,7 +729,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const outcome = await run(s, ctx, guard, postToolPayload(event.toolName, input, payloadCtx(s, ctx), event.isError), mapping.coreName);
         if (outcome.kind === "failure") notifyOnce(s, ctx, `open:${guard}`, outcome.message);
       }
-      const file = resolveToolPath(input.path, ctx.cwd, os.homedir());
+      const file = resolveToolPath(changed, ctx.cwd, os.homedir());
       if (file) {
         const heavy = Number(get(s.config.config, "ceremony.heavyFileCount"));
         setCeremony(s, onFileChanged(s.ceremony, file, Number.isFinite(heavy) ? heavy : 0));

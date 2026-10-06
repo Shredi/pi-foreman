@@ -70,11 +70,14 @@ export const macKeychainProbe: KeychainProbe = (service) => {
 
 /** Settings keys that load or run code, beyond COMMAND_SETTINGS_KEYS (defined below): MCP servers spawn processes. */
 const EXTRA_CODE_KEYS = ["mcpServers"];
+/** Settings keys known to change only display/UI (allow list); any other key fails the doctor. */
+export const INERT_SETTINGS_KEYS = ["$schema", "theme", "verbose", "preferredNotifChannel", "spinnerTipsEnabled", "editorMode"];
 
 /**
- * Judges the isolation folder by what can load code, not by existence: a settings file fails only
- * when unparseable (as a JSON object) or when it has a code-loading key; installed plugins fail,
- * a marketplace catalog alone does not. Other forbidden entries fail on existence.
+ * Judges the isolation folder by what can load code, not by existence: a settings file passes
+ * only when it parses as a JSON object holding known-inert keys (INERT_SETTINGS_KEYS); a
+ * code-loading key or any other key (e.g. permissions, enableAllProjectMcpServers) fails, named.
+ * Installed plugins fail, a marketplace catalog alone does not. Other forbidden entries fail on existence.
  */
 export function hostConfigFindings(dir: string): { fail: string[]; info: string[] } {
   const fail: string[] = [];
@@ -88,8 +91,10 @@ export function hostConfigFindings(dir: string): { fail: string[]; info: string[
       if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("not an object");
       const keys = Object.keys(data);
       const bad = keys.filter((k) => codeKeys.includes(k));
+      const unknown = keys.filter((k) => !codeKeys.includes(k) && !INERT_SETTINGS_KEYS.includes(k));
       if (bad.length) fail.push(`${n}: ${bad.join(", ")}`);
-      else info.push(`holds ${n} with harmless keys only (${keys.join(", ") || "none"})`);
+      if (unknown.length) fail.push(`${n}: keys not known to be inert (${unknown.join(", ")})`);
+      if (!bad.length && !unknown.length) info.push(`holds ${n} with harmless keys only (${keys.join(", ") || "none"})`);
     } catch {
       fail.push(`${n}: unreadable or not a JSON object`);
     }

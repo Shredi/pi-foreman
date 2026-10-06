@@ -153,8 +153,8 @@ export function roleTimeoutMs(configRoles: unknown, role: string): number | unde
  * deadline of a detached single launch, and for tasks/chain as the parent deadline of the whole
  * run; it reads no per-entry `timeoutMs`, so none is written. A composite therefore gets the
  * deadline its slowest allowed run needs: `tasks` = the highest entry limit, `chain` = the sum
- * of its steps (a parallel step counts its highest entry). An entry without a limit leaves the
- * call unchanged.
+ * of its steps (a parallel step counts its highest entry). When an entry has no limit, a foreman
+ * value is capped at the largest configured role limit; with no foreman value nothing is written.
  */
 export function applyLaunchTimeouts(input: Json, configRoles: unknown): void {
   if (!isObj(input) || isActionCall(input)) return;
@@ -173,8 +173,16 @@ export function applyLaunchTimeouts(input: Json, configRoles: unknown): void {
     }
     limit = sum || undefined;
   } else limit = limitOf(input);
-  if (limit === undefined) return;
   const passed = input.timeoutMs ?? input.maxRuntimeMs;
+  if (limit === undefined) {
+    // MINOR-9: an entry without a role limit (no agent, empty parallel, a role without
+    // timeoutMinutes) leaves no deadline of its own; a foreman value is still capped at the
+    // largest configured role limit.
+    if (passed === undefined) return;
+    const all = isObj(configRoles) ? Object.keys(configRoles).map((r) => roleTimeoutMs(configRoles, r)).filter(posInt) : [];
+    if (all.length === 0) return;
+    limit = Math.max(...all);
+  }
   delete input.maxRuntimeMs;
   input.timeoutMs = posInt(passed) && passed < limit ? passed : limit;
 }
