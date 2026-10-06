@@ -6,8 +6,8 @@
 Reads packages.lock.json, asks the npm registry (10 s timeout) for each package and prints the
 pinned version, the latest version, up to five newer versions with publish dates and the release
 notes URL of the latest. Offline or an HTTP error gives one line per package and exit 0; exit 2
-only when the lock is unreadable. Packages that are not pinned in the lock (the Claude bridge and
-intercom) are listed as "not pinned" with their latest version.
+only when the lock is unreadable. Packages that are not pinned in the lock (the Claude bridge) are
+listed as "not pinned" with their latest version.
 """
 from __future__ import annotations
 
@@ -27,7 +27,6 @@ FOOTER = "Nothing was changed. To update, re-run the installer (setup.mjs) after
 # Packages the harness works with but does not pin in the lock.
 UNPINNED = [
     {"name": "pi-claude-bridge", "notes": "https://github.com/elidickinson/pi-claude-bridge/tree/v{version}"},
-    {"name": "pi-intercom", "notes": "https://github.com/nicobailon/pi-intercom/releases/tag/v{version}"},
 ]
 
 
@@ -112,7 +111,9 @@ def main(argv=None, fetcher=fetch):
     except (OSError, ValueError) as exc:
         print("cannot read %s: %s" % (args.lock, getattr(exc, "strerror", None) or exc), file=sys.stderr)
         return 2
-    rows = [check(e, fetcher) for e in entries(lock)] + [check(e, fetcher) for e in UNPINNED]
+    pinned = entries(lock)
+    names = {e.get("name") for e in pinned}
+    rows = [check(e, fetcher) for e in pinned] + [check(e, fetcher) for e in UNPINNED if e["name"] not in names]
     if args.json:
         print(json.dumps({"packages": rows, "note": FOOTER}, indent=2))
     else:
