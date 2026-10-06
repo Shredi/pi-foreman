@@ -48,6 +48,11 @@ import type { LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.
 import { workspaceOf } from "./python.ts";
 import { CompactionGate } from "./compaction.ts";
 import { UsageFooter } from "./footer.ts";
+import { blockedConfirm, bridgePermissionBlocked } from "./herdr.ts";
+import type { EventBus } from "./herdr.ts";
+
+/** pi.events of the loaded extension, for the Herdr blocked signal (set in the factory). */
+let herdrEvents: EventBus | undefined;
 import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait } from "./wait.ts";
@@ -127,6 +132,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const review = new ForemanReview();
   const usageFooter = new UsageFooter();
   const compactionGate = new CompactionGate();
+  herdrEvents = pi.events as EventBus | undefined;
+  bridgePermissionBlocked(herdrEvents);
   pi.events?.on("permissions:ready", (payload: unknown) => review.onReady(payload));
   let isoSetting: unknown = "auto";
   const baseline = readBaseline(PKG_ROOT);
@@ -517,7 +524,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   async function overlayBlock(s: Session, ctx: ExtensionContext, toolName: string, input: Record<string, unknown>) {
     if (!s.overlay) return { block: true as const, reason: OVERLAY_UNAVAILABLE };
     const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main" });
-    const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: (title, msg) => ctx.ui.confirm(title, msg) });
+    const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) });
     if (d) s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: r ? (d.kind === "deny" ? "deny" : "ask-denied") : "ask-approved" });
     return r;
   }
@@ -629,7 +636,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           outcome,
           piTool: event.toolName,
           input,
-          ask: { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: (title, msg) => ctx.ui.confirm(title, msg) },
+          ask: { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) },
           ledgerTarget: target ? isLedgerTarget(target) : false,
         });
         if (t.openFailure) notifyOnce(s, ctx, `open:${guard}`, t.openFailure);
@@ -1078,7 +1085,7 @@ function askOutcome(isChild: boolean, reason: string | undefined): string {
 }
 
 function driftAsk(ctx: ExtensionContext) {
-  return { mode: ctx.mode, hasUI: ctx.hasUI, confirm: (title: string, msg: string) => ctx.ui.confirm(title, msg) };
+  return { mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) };
 }
 
 function safeTrusted(ctx: ExtensionContext): boolean {
