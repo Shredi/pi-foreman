@@ -567,7 +567,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           kind = revision ? (preferStrong ? "strong-relaunch" : "revision") : undefined;
         }
         const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong });
-        for (const o of launched.overrides) s.trace?.emit({ event: "model_override", role: o.role, model: o.model });
+        for (const o of launched.overrides) s.trace?.emit({ event: "model_override", role: o.role, model: o.model, requested: o.requested });
         for (const n of launched.notices) s.trace?.emit({ event: "strong_unmapped", role: n.role, model: n.model, tier: s.ceremony.tier });
         notices = launched.notices.map((n) => n.text);
         applyLaunchTimeouts(input, get(s.config.config, "roles"));

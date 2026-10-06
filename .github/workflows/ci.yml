@@ -34,6 +34,11 @@ jobs:
         run: node --test "tests/installer/*.test.mjs"
       - name: install Pi (pinned)
         run: npm install -g @earendil-works/pi-coding-agent@1.0.0
+      - name: typescript type check (extensions, Pi 1.0.0 types)
+        if: runner.os == 'Linux'
+        run: |
+          npm install --no-package-lock
+          npx tsc --noEmit -p tsconfig.json
       - uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/pi-foreman-replay-cache

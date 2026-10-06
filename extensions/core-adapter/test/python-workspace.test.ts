@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { resolvePython } from "../python.ts";
+import { insideWorkspace, resolvePython } from "../python.ts";
 import type { SpawnResult, Spawner } from "../spawn.ts";
 
 function tempDir(t: { after(fn: () => void): void }, repo: boolean): string {
@@ -83,4 +83,12 @@ test("win32: a bare name found on PATH inside the workspace is not probed", asyn
   const r = await resolvePython({ platform: "win32", spawner, cwd: repo, env: { PATH: bin } });
   assert.ok(!r.ok);
   assert.deepEqual(calls, ["py"]);
+});
+
+test("a child named ..foo is inside the workspace, ../x is outside", (t) => {
+  const repo = tempDir(t, true);
+  const ws = { root: repo, venvOnly: false };
+  const inside = path.join(repo, "..foo", "python");
+  assert.equal(insideWorkspace([inside], ws, "linux"), inside);
+  assert.equal(insideWorkspace([path.join(repo, "..", "x", "python")], ws, "linux"), null);
 });

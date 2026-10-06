@@ -28,7 +28,7 @@ test("foreman level above maxThinking is clamped", () => {
 
 test("a differing foreman model is replaced and reported", () => {
   const input: Record<string, unknown> = { agent: "builder", task: "t", model: "p2/other:low" };
-  assert.deepEqual(applyLaunchModels(input, ROLES, "high").overrides, [{ role: "builder", model: "p1/mid" }]);
+  assert.deepEqual(applyLaunchModels(input, ROLES, "high").overrides, [{ role: "builder", model: "p1/mid", requested: "p2/other" }]);
   assert.equal(input.model, "p1/mid:low");
 });
 
@@ -39,7 +39,7 @@ test("tasks and chain entries each get their role's model; top-level model is dr
   };
   const flagged = applyLaunchModels(input, ROLES, "high").overrides;
   assert.deepEqual(input, { tasks: [{ agent: "explorer", task: "a", model: "p1/small:low" }, { agent: "builder", task: "b", model: "p1/mid:medium" }] });
-  assert.deepEqual(flagged, [{ role: "explorer", model: "p1/small" }, { role: "builder", model: "p1/mid" }]);
+  assert.deepEqual(flagged, [{ role: "explorer", model: "p1/small", requested: "p2/x" }, { role: "builder", model: "p1/mid", requested: "p2/x" }]);
 
   const chain: Record<string, unknown> = { chain: [{ agent: "explorer" }, { parallel: [{ agent: "reviewer", task: "x" }, { agent: "builder", task: "y" }] }] };
   assert.deepEqual(applyLaunchModels(chain, ROLES, "high").overrides, []);
@@ -77,7 +77,7 @@ test("strong without a mapped strong model: default model plus a notice naming i
 
 test("a raw model id on a heavy tier is replaced by the builder's strong model and reported", () => {
   const input: Record<string, unknown> = { agent: "builder", task: "t", model: "p2/other" };
-  assert.deepEqual(applyLaunchModels(input, STRONG, "high", { tier: "heavy" }).overrides, [{ role: "builder", model: "p1/big" }]);
+  assert.deepEqual(applyLaunchModels(input, STRONG, "high", { tier: "heavy" }).overrides, [{ role: "builder", model: "p1/big", requested: "p2/other" }]);
   assert.equal(input.model, "p1/big:high");
 });
 
