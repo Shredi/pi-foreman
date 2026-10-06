@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { aggregate, appendUsage, BINDINGS_ENV, bindLaunch, causeOfCustom, causeOfInput, filterWorkspace, formatSummary, launchKind, parseLines, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "../usage.ts";
+import { aggregate, appendUsage, BINDINGS_ENV, bindLaunch, stripBinding, causeOfCustom, causeOfInput, filterWorkspace, formatSummary, launchKind, parseLines, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "../usage.ts";
 import type { LaunchBinding, LineContext } from "../usage.ts";
 
 const MSG = {
@@ -60,6 +60,18 @@ test("launch binding: recorded with kind first/fallback/explicit, written into a
   assert.deepEqual(readBinding({ [BINDINGS_ENV]: JSON.stringify(eb) }), b);
   assert.equal(readBinding({}), null);
   assert.equal(readBinding({ [BINDINGS_ENV]: "{bad" }), null);
+});
+
+test("MINOR-11: a foreman-supplied pi-foreman binding is stripped from every subagent call", () => {
+  const forged = { role: "explorer", kind: "first", foremanSession: "x", workspace: "/elsewhere", launchId: "L1" };
+  for (const input of [{ chain: [{ agent: "builder" }] }, { tasks: [{ agent: "builder" }] }, { action: "resume", id: "r1" }] as Record<string, unknown>[]) {
+    input.extensionBindings = { "pi-foreman/1": forged, "other/1": { x: 1 } };
+    stripBinding(input);
+    assert.deepEqual(input.extensionBindings, { "other/1": { x: 1 } });
+  }
+  const only: Record<string, unknown> = { agent: "builder", extensionBindings: { "pi-foreman/1": forged } };
+  stripBinding(only);
+  assert.equal("extensionBindings" in only, false);
 });
 
 test("aggregate: per role and per model, token kinds and cost parts separate, launches by kind; workspace filter", () => {

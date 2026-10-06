@@ -75,6 +75,13 @@ export function afterSpawn(s: CeremonyState): CeremonyState {
   return { ...s, spawns: s.spawns + 1 };
 }
 
+/** The file a successful tool call changed, counted toward `heavyFileCount`: write/edit `path`, foreman_copy/foreman_move `dst`. */
+export function changedFileOf(toolName: string, input: Record<string, unknown>): unknown {
+  if (toolName === "write" || toolName === "edit") return input.path;
+  if (toolName === "foreman_copy" || toolName === "foreman_move") return input.dst;
+  return undefined;
+}
+
 /** Count distinct files written/edited outside .workflow/; more than heavyFileCount -> heavy. */
 export function onFileChanged(s: CeremonyState, file: string, heavyFileCount: number): CeremonyState {
   if (/[\\/]\.workflow[\\/]/i.test(file) || s.files.includes(file)) return s;

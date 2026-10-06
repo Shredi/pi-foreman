@@ -48,6 +48,11 @@ Keys outside safety that the project and session layers cannot loosen either
     providers.*.strongOnRevision     only false is accepted (true relaunches on the strong model)
     ceremony.revisionRounds.<tier>   lower only (a higher limit loosens the review loop)
     ceremony.requireTriage           only true is accepted (false lets the foreman edit untriaged)
+    ceremony                         not an object: ignored (null would drop every escalation)
+    ceremony.revisionRounds          not an object: ignored
+    ceremony.heavySignals            union only (a project can add signals, not remove one)
+    ceremony.heavyFileCount          lower only, minimum 1 (a higher count escalates later)
+    ceremony.default                 raise only, trivial < standard < heavy
     roles.*.timeoutMinutes           lower only (a higher limit lets a child run longer)
     python.path                      ignored (it chooses the executable that runs every guard)
     python.*                         ignored
@@ -139,9 +144,11 @@ LAYER_TIGHTEN = [
     (("providers", "*", "strongOnRevision"), "false_only"),
     (("ceremony", "revisionRounds", "*"), "lower_only"),
     (("ceremony", "requireTriage"), "true_only"),
+    (("ceremony", "heavyFileCount"), "lower_only"),
     (("roles", "*", "timeoutMinutes"), "lower_only"),
 ]
-LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0}
+LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1}
+TIERS = ["trivial", "standard", "heavy"]
 # codemode adds a tool, so the project and session layers may only switch it off.
 CODEMODE_FALSE_ONLY = True
 # roles.<id> in the project and session layers: "intersect" = narrow only. NEW_ROLE_IDS
@@ -209,8 +216,46 @@ def workspace_root(project_dir):
     return start
 
 
+def _restrict_ceremony(base, proj, who, warnings):
+    """ceremony from the project or session layer: objects only, signals union, default raise only."""
+    if "ceremony" not in proj:
+        return
+    cer = proj["ceremony"]
+    if not isinstance(cer, dict):
+        del proj["ceremony"]
+        warnings.append("%s ceremony ignored: not an object" % who)
+        return
+    have = base.get("ceremony") if isinstance(base.get("ceremony"), dict) else {}
+    if "revisionRounds" in cer and not isinstance(cer["revisionRounds"], dict):
+        del cer["revisionRounds"]
+        warnings.append("%s ceremony.revisionRounds ignored: not an object" % who)
+    if "heavySignals" in cer:
+        want, kept = cer["heavySignals"], have.get("heavySignals")
+        kept = [x for x in kept if isinstance(x, str)] if isinstance(kept, list) else []
+        if not isinstance(want, list) or not all(isinstance(x, str) for x in want):
+            del cer["heavySignals"]
+            warnings.append("%s ceremony.heavySignals ignored: not a list of strings" % who)
+        else:
+            removed = [x for x in kept if x not in want]
+            if removed:
+                warnings.append("%s ceremony.heavySignals: entries not removed: %s" % (who, ", ".join(removed)))
+            cer["heavySignals"] = kept + [x for x in want if x not in kept]
+    if "default" in cer:
+        val, prev = cer["default"], have.get("default")
+        if val not in TIERS:
+            why = "not a tier"
+        elif prev in TIERS and TIERS.index(val) < TIERS.index(prev):
+            why = "it would lower the tier"
+        else:
+            why = None
+        if why:
+            del cer["default"]
+            warnings.append("%s ceremony.default ignored: %s" % (who, why))
+
+
 def restrict_layer(base, proj, who, warnings, project_dir):
     """Drop or narrow, in place, the non-safety keys the project or session layer may not loosen."""
+    _restrict_ceremony(base, proj, who, warnings)
     for keys, why in IGNORED_KEYS:
         _drop_pattern(proj, keys, (), who, why, warnings)
     for keys, rule in LAYER_TIGHTEN:
@@ -594,25 +639,28 @@ def cap_thinking(level, ceiling):
 def resolve_role(cfg, role, provider):
     """Return {model, thinking, codemode, tools[, strong]}; raise ConfigError if unresolvable.
 
-    `strong` ({model, thinking}) is the role's strong model: the provider's own, else the
-    fallback provider's (like `model`); absent when neither maps one.
+    `strong` ({model, thinking}) is the role's strong model, from the same provider `model`
+    came from: the provider's own, or the fallback provider's only when `model` is the
+    fallback's too; absent when that provider maps none.
     """
     providers = cfg.get("providers") or {}
     entry = (providers.get(provider) or {}).get("roles", {}).get(role) or {}
     fb = ((providers.get(provider) or {}).get("fallback") or {}).get("provider")
     fentry = ((providers.get(fb) or {}).get("roles", {}).get(role) if fb else None) or {}
     model, thinking = entry.get("model"), entry.get("thinking")
+    source = entry
     if not model:
         if not fb or not fentry.get("model"):
             raise ConfigError("role %s has no model for provider %s and no fallback" % (role, provider))
         model, thinking = fentry["model"], fentry.get("thinking")
+        source = fentry
     codemode = effective_codemode(cfg, provider, role)
     tools = list((cfg.get("roles") or {}).get(role, {}).get("tools", []))
     if codemode and "codemode" not in tools:
         tools.append("codemode")
     out = {"model": model, "thinking": cap_thinking(thinking, cfg.get("maxThinking")),
            "codemode": codemode, "tools": tools}
-    strong = entry.get("strong") if isinstance(entry.get("strong"), dict) else fentry.get("strong")
+    strong = source.get("strong")
     if isinstance(strong, dict) and isinstance(strong.get("model"), str) and strong["model"]:
         out["strong"] = {"model": strong["model"], "thinking": cap_thinking(strong.get("thinking"), cfg.get("maxThinking"))}
     return out

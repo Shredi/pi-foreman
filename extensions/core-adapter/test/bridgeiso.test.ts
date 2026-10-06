@@ -85,6 +85,9 @@ test("doctor judges settings and plugins by content, not existence", () => {
   assert.equal(fails(d), true);
   fs.writeFileSync(path.join(d, "settings.json"), "{ nope");
   assert.equal(fails(d), true);
+  // allow list: any key not known to be inert fails, named
+  fs.writeFileSync(path.join(d, "settings.json"), JSON.stringify({ theme: "dark", permissions: {}, enableAllProjectMcpServers: true, enabledMcpjsonServers: [] }));
+  assert.match(isolationDoctor({ dir: d, env: {}, platform: "linux" })[0], /^FAIL .*settings\.json: keys not known to be inert \(permissions, enableAllProjectMcpServers, enabledMcpjsonServers\)/);
   const m = tmp();
   fs.mkdirSync(path.join(m, "plugins", "marketplaces"), { recursive: true });
   fs.writeFileSync(path.join(m, "plugins", "known_marketplaces.json"), "{}");

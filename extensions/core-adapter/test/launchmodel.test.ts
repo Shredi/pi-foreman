@@ -102,3 +102,19 @@ test("timeouts: the role limit is written, a lower foreman value kept, a higher 
   applyLaunchTimeouts(mgmt, cfg);
   assert.equal(mgmt.timeoutMs, undefined);
 });
+
+test("timeouts: a foreman value on a call without a role limit is clamped to the largest role limit", () => {
+  const cfg = { explorer: { timeoutMinutes: 20 }, builder: { timeoutMinutes: 60 }, overlay: {} };
+  const noAgent: Record<string, unknown> = { chain: [{ agent: "builder", task: "x" }, { task: "y" }], timeoutMs: 999_999_999 };
+  applyLaunchTimeouts(noAgent, cfg);
+  assert.equal(noAgent.timeoutMs, 3_600_000);
+  const emptyParallel: Record<string, unknown> = { chain: [{ agent: "explorer" }, { parallel: [] }], maxRuntimeMs: 999_999_999 };
+  applyLaunchTimeouts(emptyParallel, cfg);
+  assert.deepEqual(emptyParallel, { chain: [{ agent: "explorer" }, { parallel: [] }], timeoutMs: 3_600_000 });
+  const lower: Record<string, unknown> = { tasks: [{ agent: "overlay", task: "a" }], timeoutMs: 60_000 };
+  applyLaunchTimeouts(lower, cfg);
+  assert.equal(lower.timeoutMs, 60_000);
+  const none: Record<string, unknown> = { agent: "overlay", task: "t" };
+  applyLaunchTimeouts(none, cfg);
+  assert.equal(none.timeoutMs, undefined);
+});

@@ -40,7 +40,7 @@ You are the foreman, the main session. You plan, keep the ledger, delegate to ch
 ### Review and revision rounds
 - After a builder, a `reviewer` checks the work. If the reviewer reports FAIL, you may relaunch the builder with the findings: that is a revision round.
 - Revision rounds per user prompt: standard 1, heavy 2 (`ceremony.revisionRounds`), trivial none. Over the limit the builder launch is refused. Then stop: report the open findings to the owner and ask how to go on; the owner can raise the tier with `/ceremony`.
-- The count starts again with each user prompt and on a tier change. A builder launch after a review with no visible PASS verdict counts as a revision, even for a new task, until the next user prompt.
+- The count starts again with each user prompt and when the user changes the tier with `/ceremony`; your own `foreman_triage`, a ledger `Tier:` line or an automatic escalation does not reset it. A builder launch after a review with no visible PASS verdict counts as a revision, even for a new task, until the next user prompt. So does a builder launched while a review is still running, each builder step after a review step in a `chain`, and a `resume` of a builder run.
 
 ### Approvals
 - If a guard asks for approval, follow its instruction.

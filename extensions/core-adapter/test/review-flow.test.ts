@@ -6,9 +6,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { escalate, initialCeremony, userOverride } from "../ceremony.ts";
-import { afterBuilderLaunch, checkBuilderLaunch, completedAgents, initialRounds, onReviewDone, revisionLimit, verdictOf } from "../rounds.ts";
-import { foremanTriage, isTriaged, triageGateBlock } from "../triage.ts";
+import { changedFileOf, escalate, initialCeremony, onFileChanged, userOverride } from "../ceremony.ts";
+import { roundSteps } from "../actions.ts";
+import { checkLaunch, completedAgents, initialRounds, launchSteps, onReviewDone, onTierChange, revisionLimit, verdictOf } from "../rounds.ts";
+import type { RoundState } from "../rounds.ts";
+import { foremanTriage, isTriaged, stripVerbatim, triageGateBlock, workspaceTarget } from "../triage.ts";
 import { familyWarnings, modelFamily, modelGaps } from "../modelcheck.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -26,19 +28,58 @@ test("completion notices: completed agents and the review verdict", () => {
   assert.equal(verdictOf("1. PASS everything"), null);
 });
 
+const B = [["builder"]];
+const R = [["reviewer"]];
+const launch = (r: RoundState, steps: string[][]): RoundState => checkLaunch(r, steps, "standard", undefined).next;
+
 test("revision rounds: limits per tier, PASS opens none, a review before any build opens none", () => {
   assert.deepEqual([revisionLimit(undefined, "trivial"), revisionLimit(undefined, "standard"), revisionLimit({ heavy: 5 }, "heavy"), revisionLimit({ standard: -1 }, "standard")], [0, 1, 5, 1]);
-  let r = onReviewDone(initialRounds(), "fail");
-  assert.equal(checkBuilderLaunch(r, "standard", undefined).revision, false, "plan review before the first build");
-  r = afterBuilderLaunch(r, false);
-  assert.equal(checkBuilderLaunch(onReviewDone(r, "pass"), "standard", undefined).revision, false);
-  r = onReviewDone(r, null);
-  assert.deepEqual(checkBuilderLaunch(r, "standard", undefined), { revision: true });
-  r = onReviewDone(afterBuilderLaunch(r, true), "fail");
-  const second = checkBuilderLaunch(r, "standard", undefined);
+  let r = onReviewDone(launch(initialRounds(), R), "fail");
+  assert.equal(checkLaunch(r, B, "standard", undefined).revisions, 0, "plan review before the first build");
+  r = launch(r, B);
+  assert.equal(checkLaunch(onReviewDone(launch(r, R), "pass"), B, "standard", undefined).revisions, 0);
+  r = onReviewDone(launch(r, R), null);
+  assert.equal(checkLaunch(r, B, "standard", undefined).revisions, 1);
+  assert.equal(checkLaunch(r, B, "standard", undefined).block, undefined);
+  r = onReviewDone(launch(launch(r, B), R), "fail");
+  const second = checkLaunch(r, B, "standard", undefined);
   assert.match(second.block ?? "", /revision limit for standard reached \(1\).*Report the open findings to the owner.*\/ceremony/s);
-  assert.deepEqual(checkBuilderLaunch(r, "heavy", { heavy: 2 }), { revision: true });
-  assert.ok(checkBuilderLaunch(onReviewDone(afterBuilderLaunch(initialRounds(), false), "fail"), "trivial", undefined).block);
+  assert.equal(checkLaunch(r, B, "heavy", { heavy: 2 }).block, undefined);
+  assert.ok(checkLaunch(onReviewDone(launch(launch(initialRounds(), B), R), "fail"), B, "trivial", undefined).block);
+});
+
+test("MAJOR-1: every builder entry after a review step in a chain is a round; the whole call is refused over the limit", () => {
+  const chain = { chain: [{ agent: "builder", task: "a" }, { agent: "reviewer" }, { agent: "builder", task: "fix {previous}" }, { parallel: [{ agent: "reviewer" }, { agent: "senior-reviewer" }] }, { agent: "builder" }] };
+  const steps = launchSteps(chain);
+  assert.deepEqual(steps, [["builder"], ["reviewer"], ["builder"], ["reviewer", "senior-reviewer"], ["builder"]]);
+  const heavy = checkLaunch(initialRounds(), steps, "heavy", undefined);
+  assert.deepEqual([heavy.revisions, heavy.block, heavy.next.used], [2, undefined, 2]);
+  assert.match(checkLaunch(initialRounds(), steps, "standard", undefined).block ?? "", /revision limit for standard reached \(1\).*rounds to 2/);
+  // tasks run side by side: each builder entry counts while a review is open
+  const open = onReviewDone(launch(launch(initialRounds(), B), R), "fail");
+  assert.equal(checkLaunch(open, launchSteps({ tasks: [{ agent: "builder" }, { agent: "builder" }] }), "heavy", undefined).revisions, 2);
+  // a builder launched while a review of built work is still running is a round
+  const running = launch(launch(initialRounds(), B), R);
+  assert.equal(checkLaunch(running, B, "standard", undefined).revisions, 1);
+  assert.equal(checkLaunch(onReviewDone(running, "pass"), B, "standard", undefined).revisions, 0);
+});
+
+test("MINOR-2: only a tier change by the user resets the rounds", () => {
+  const used = launch(onReviewDone(launch(launch(initialRounds(), B), R), "fail"), B);
+  assert.equal(used.used, 1);
+  for (const source of ["foreman", "ledger", "auto"]) assert.equal(onTierChange(used, source), used);
+  assert.deepEqual(onTierChange(used, "user"), initialRounds());
+});
+
+test("MAJOR-2: a resume of a builder run counts like a builder launch", () => {
+  const runs = new Map([["r1", { role: "builder", model: "p/m" }], ["r2", { role: "reviewer", model: "p/m" }]]);
+  assert.deepEqual(roundSteps({ action: "resume", id: "r1", message: "fix the findings" }, runs), [["builder"]]);
+  assert.deepEqual(roundSteps({ action: "status", id: "r1" }, runs), []);
+  assert.deepEqual(roundSteps({ action: "resume", id: "nope" }, runs), []);
+  const used = onReviewDone(launch(launch(onReviewDone(launch(launch(initialRounds(), B), R), "fail"), B), R), "fail");
+  const resume = roundSteps({ action: "resume", runId: "r1" }, runs);
+  assert.match(checkLaunch(used, resume, "standard", undefined).block ?? "", /revision limit for standard reached/);
+  assert.equal(checkLaunch(onReviewDone(launch(launch(initialRounds(), B), R), "fail"), resume, "standard", undefined).revisions, 1);
 });
 
 test("foreman_triage records a tier and never lowers a recorded or escalated one", () => {
@@ -86,6 +127,41 @@ test("triage gate: workspace paths only, .workflow open, symlinks and move/copy 
     fs.symlinkSync(path.join(ws, "src"), path.join(outside, "link"));
     assert.ok(triageGateBlock("write", { path: path.join(outside, "link", "a.ts") }, standard, opts), "a link outside cannot carry a write into the workspace");
   }
+});
+
+test("MINOR-4: names starting with '..' at the workspace root are inside", (t) => {
+  const ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-dots-")));
+  t.after(() => fs.rmSync(ws, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(ws, ".git"));
+  const opts = { cwd: ws, home: os.tmpdir(), platform: process.platform };
+  const standard = userOverride(initialCeremony("standard"), "standard");
+  assert.ok(triageGateBlock("write", { path: "..foo.ts" }, standard, opts));
+  assert.ok(triageGateBlock("write", { path: "..src/x.ts" }, standard, opts));
+  assert.equal(triageGateBlock("write", { path: "../x.ts" }, standard, opts), undefined);
+});
+
+test("MINOR-5: the gate compares OS-resolved paths (short names, verbatim prefix)", (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-native-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const ws = path.join(root, "workspace");
+  fs.mkdirSync(path.join(ws, ".git"), { recursive: true });
+  // Simulate a Windows 8.3 alias: the OS resolver maps WORKSP~1 to the long name.
+  const alias = path.join(root, "WORKSP~1");
+  const real = fs.realpathSync.native;
+  t.mock.method(fs.realpathSync, "native", (p: string) => (p === alias || p.startsWith(alias + path.sep) ? ws + p.slice(alias.length) : real(p)));
+  assert.equal(workspaceTarget("write", { path: path.join(alias, "src", "a.ts") }, ws, root, process.platform), path.join(alias, "src", "a.ts"));
+  assert.equal(stripVerbatim("\\\\?\\C:\\ws\\a.ts"), "C:\\ws\\a.ts");
+  assert.equal(stripVerbatim("\\\\?\\UNC\\host\\share"), "\\\\?\\UNC\\host\\share");
+});
+
+test("MINOR-6: foreman_copy/foreman_move destinations count toward heavyFileCount", () => {
+  assert.equal(changedFileOf("foreman_copy", { src: "a", dst: "b" }), "b");
+  assert.equal(changedFileOf("foreman_move", { src: "a", dst: "c" }), "c");
+  assert.equal(changedFileOf("write", { path: "d" }), "d");
+  assert.equal(changedFileOf("read", { path: "d" }), undefined);
+  let c = userOverride(initialCeremony("standard"), "trivial");
+  for (const f of ["/w/a", "/w/b"]) c = onFileChanged(c, f, 1);
+  assert.equal(c.tier, "heavy");
 });
 
 test("model map checks: registry gaps, auth gaps and the reviewer family warning", () => {
