@@ -23,7 +23,13 @@
   "scripts": {
     "test": "python -m unittest discover -s tests -v",
     "test:node": "node --test \"extensions/core-adapter/test/*.test.ts\"",
-    "test:installer": "node --test \"tests/installer/*.test.mjs\""
+    "test:installer": "node --test \"tests/installer/*.test.mjs\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0"
+  }
 }

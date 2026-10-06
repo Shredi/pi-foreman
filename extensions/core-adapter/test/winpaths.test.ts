@@ -73,7 +73,7 @@ test("win32 host: real trailing-dot and short-name spellings reach the protected
     // segment. Node's fs keeps it, so cmd writes the probe; if the runner's shell refuses the
     // spelling, the matcher assertions above still stand and the probe is reported, not failed.
     try {
-      execFileSync("cmd", ["/d", "/s", "/c", `"echo x> "${path.join(cwd, ".claude", "probe.txt.")}""`], { windowsVerbatimArguments: true, stdio: "pipe" });
+      execFileSync("cmd", ["/d", "/s", "/c", `"echo x> "${path.join(cwd, ".claude", "probe.txt.")}""`], { windowsVerbatimArguments: true, stdio: "pipe" } as object);
       t.diagnostic(`trailing-dot probe landed in .claude: ${fs.existsSync(path.join(cwd, ".claude", "probe.txt"))}`);
     } catch (err) {
       t.diagnostic(`trailing-dot probe refused by cmd: ${String((err as Error).message).split("\n")[0]}`);
