@@ -13,12 +13,18 @@ export interface FooterTotals {
   cost: number;
   costCacheRead: number;
   costCold: number;
+  /** Some tokens had neither Pi cost nor a registry price (shown as n/a). */
+  unpriced: boolean;
 }
 
-export const zeroTotals = (): FooterTotals => ({ input: 0, cacheRead: 0, cacheWrite: 0, output: 0, cost: 0, costCacheRead: 0, costCold: 0 });
+export interface PriceRegistry {
+  find(provider: string, modelId: string): { cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } } | undefined;
+}
+
+export const zeroTotals = (): FooterTotals => ({ input: 0, cacheRead: 0, cacheWrite: 0, output: 0, cost: 0, costCacheRead: 0, costCold: 0, unpriced: false });
 
 /** Add one assistant message's usage to the totals. */
-export function addMessage(t: FooterTotals, message: unknown): void {
+export function addMessage(t: FooterTotals, message: unknown, registry?: PriceRegistry): void {
   const m = (message && typeof message === "object" ? message : {}) as Json;
   const u = (m.usage && typeof m.usage === "object" ? m.usage : {}) as Json;
   const c = (u.cost && typeof u.cost === "object" ? u.cost : {}) as Json;
@@ -26,6 +32,27 @@ export function addMessage(t: FooterTotals, message: unknown): void {
   t.cacheRead += num(u.cacheRead);
   t.cacheWrite += num(u.cacheWrite);
   t.output += num(u.output);
+  if (num(c.total) === 0 && num(u.input) + num(u.output) + num(u.cacheRead) + num(u.cacheWrite) !== 0) {
+    // claude-bridge (and any provider that reports no cost): list price from the registry, anthropic rates for the bridge.
+    const provider = m.provider === "claude-bridge" ? "anthropic" : String(m.provider ?? "");
+    let rate: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } | undefined;
+    try {
+      rate = registry?.find(provider, String(m.model ?? ""))?.cost;
+    } catch {
+      rate = undefined;
+    }
+    if (!rate || (num(rate.input) === 0 && num(rate.output) === 0)) {
+      t.unpriced = true;
+      return;
+    }
+    const mtok = (n: unknown, r: unknown): number => (num(n) * num(r)) / 1e6;
+    const warm = mtok(u.cacheRead, rate.cacheRead);
+    const cold = mtok(u.input, rate.input) + mtok(u.cacheWrite, rate.cacheWrite);
+    t.cost += warm + cold + mtok(u.output, rate.output);
+    t.costCacheRead += warm;
+    t.costCold += cold;
+    return;
+  }
   t.cost += num(c.total);
   t.costCacheRead += num(c.cacheRead);
   t.costCold += num(c.input) + num(c.cacheWrite);
@@ -39,16 +66,19 @@ export function abbrev(n: number): string {
 }
 
 const usd = (v: number): string => `$${v.toFixed(2)}`;
+/** `n/a` when nothing is priced, `$x + n/a` when only part is. */
+const money = (v: number, unpriced: boolean): string => (!unpriced ? usd(v) : v !== 0 ? `${usd(v)} + n/a` : "n/a");
 
 /** `↑in ↓out tok · $total list (warm $x / cold $y)` plus ` · children n` when `children` is a number. */
 export function footerText(t: FooterTotals, children: number | null): string {
   const up = t.input + t.cacheRead + t.cacheWrite;
-  const base = `↑${abbrev(up)} ↓${abbrev(t.output)} tok · ${usd(t.cost)} list (warm ${usd(t.costCacheRead)} / cold ${usd(t.costCold)})`;
+  const base = `↑${abbrev(up)} ↓${abbrev(t.output)} tok · ${money(t.cost, t.unpriced)} list (warm ${money(t.costCacheRead, t.unpriced)} / cold ${money(t.costCold, t.unpriced)})`;
   return children === null ? base : `${base} · children ${children}`;
 }
 
 export interface FooterCtx {
   mode?: string;
+  modelRegistry?: PriceRegistry;
   ui: { setStatus(key: string, text: string | undefined): void };
 }
 
@@ -60,7 +90,7 @@ export class UsageFooter {
     try {
       const t = this.totals.get(sessionId) ?? zeroTotals();
       this.totals.set(sessionId, t);
-      addMessage(t, message);
+      addMessage(t, message, ctx.modelRegistry);
       if (opts.enabled !== true || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return;
       ctx.ui.setStatus(FOOTER_KEY, footerText(t, opts.isChild ? null : opts.children));
     } catch {
