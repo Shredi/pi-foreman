@@ -57,6 +57,7 @@ BRIDGE = "pi-claude-bridge@0.9.1"
 # the platform package (claude-agent-sdk-linux-<arch>) from the SDK's optional dependencies.
 AGENT_SDK = "@anthropic-ai/claude-agent-sdk@0.3.288"
 FAKE_PROVIDERS = ("foreman-fake", "foreman-fake-b")
+PERMISSION_SYSTEM = "@gotgenes/pi-permission-system"
 ROLES = ["foreman", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
 
 R_REPO = "/opt/pi-foreman"
@@ -98,6 +99,15 @@ def load_row(preset, row_id):
         if row.get("id") == row_id:
             return dict(row)
     raise ValueError("row %r not found in preset %s" % (row_id, preset))
+
+
+def locked_version(name):
+    """Version of a package from packages.lock.json (the single pin list, shared with setup.mjs)."""
+    lock = json.loads((REPO / "packages.lock.json").read_text("utf-8"))
+    for pkg in lock.get("packages") or []:
+        if pkg.get("name") == name and pkg.get("version"):
+            return pkg["version"]
+    raise ValueError("%s has no version in packages.lock.json" % name)
 
 
 def repo_state():
@@ -204,12 +214,16 @@ def summarize_logs(logs_dir, main_role="main"):
 class _BenchPi(BaseInstalledAgent):
     KIND = "foreman"
 
-    def __init__(self, *args, preset=None, row=None, driver=None, setup_only=None, **kwargs):
+    def __init__(self, *args, preset=None, row=None, driver=None, setup_only=None, cap_seconds=None, **kwargs):
         super().__init__(*args, **kwargs)
         if not preset or not row:
             raise ValueError("bench agents need --ak preset=<file> --ak row=<id>")
         self.row = load_row(str(preset), str(row))
         self.row["agent"] = self.KIND
+        if cap_seconds not in (None, ""):
+            cap = int(float(cap_seconds))
+            if cap > 0:
+                self.row["cap_seconds"] = cap
         self.driver = str(driver or self.row.get("driver") or "rpc")
         if self.driver not in ("rpc", "print"):
             raise ValueError("driver must be rpc or print")
@@ -230,7 +244,7 @@ class _BenchPi(BaseInstalledAgent):
     def packages(self):
         pkgs = []
         if self.KIND == "foreman":
-            pkgs += [R_NPM + "/node_modules/pi-subagents", R_REPO]
+            pkgs += [R_NPM + "/node_modules/pi-subagents", R_REPO, R_NPM + "/node_modules/" + PERMISSION_SYSTEM]
         if not self.fake:
             pkgs.append(R_NPM + "/node_modules/pi-claude-bridge")
         return pkgs
@@ -239,7 +253,9 @@ class _BenchPi(BaseInstalledAgent):
         await self.ensure_system_dependencies(environment, ("curl", "git", "python3", "ca_certificates"))
         await self.exec_as_root(environment, command="set -e; " + NODE_INSTALL + "; " + NVM +
                                 "npm install -g --no-audit --no-fund --ignore-scripts %s@%s && pi --version" % (PI_PACKAGE, PI_VERSION))
-        npm = ([SUBAGENTS] if self.KIND == "foreman" else []) + ([] if self.fake else [BRIDGE, AGENT_SDK])
+        # Python 3.9+ runs the core, the guards and the waiter; fail the install, not the cell.
+        await self.exec_as_root(environment, command="python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)'")
+        npm = ([SUBAGENTS, "%s@%s" % (PERMISSION_SYSTEM, locked_version(PERMISSION_SYSTEM))] if self.KIND == "foreman" else []) + ([] if self.fake else [BRIDGE, AGENT_SDK])
         if npm:
             await self.exec_as_root(environment, command=NVM + "mkdir -p %s && npm install --no-audit --no-fund --prefix %s %s"
                                     % (R_NPM, R_NPM, " ".join(npm)))
@@ -270,6 +286,8 @@ class _BenchPi(BaseInstalledAgent):
     async def run(self, instruction: str, environment: BaseEnvironment, context: AgentContext) -> None:
         row = dict(self.row)
         row["_packages"] = self.packages()
+        row["_fake"] = self.fake
+        row["_permission_system"] = self.KIND == "foreman"
         if not self.fake:
             row["_version_packages"] = [R_NPM + "/node_modules/@anthropic-ai/claude-agent-sdk"]
             row["_claude_bin_glob"] = CLAUDE_BIN_GLOB
