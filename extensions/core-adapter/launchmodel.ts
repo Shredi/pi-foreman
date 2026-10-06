@@ -40,6 +40,8 @@ export interface ModelOverride {
   role: string;
   /** The mapped model that replaced the foreman's (base id, no level). */
   model: string;
+  /** The base model the launch asked for, which was replaced. */
+  requested: string;
 }
 
 export type Tier = "trivial" | "standard" | "heavy";
@@ -87,7 +89,7 @@ export function launchModel(role: string, roles: Record<string, Json>, passed: u
   const level = foreman.level ? clampLevel(foreman.level, maxThinking) : isLevel(pick.thinking) ? pick.thinking : mapped.level;
   const model = level ? `${mapped.base}:${level}` : mapped.base;
   const out: LaunchResult = { model };
-  if (keyword === null && foreman.base !== "" && foreman.base !== mapped.base) out.override = { role, model: mapped.base };
+  if (keyword === null && foreman.base !== "" && foreman.base !== mapped.base) out.override = { role, model: mapped.base, requested: foreman.base };
   if (asked && !strong) out.notice = `pi-foreman: no strong model mapped for ${role} on ${opts.provider ?? "the active provider"}; launched on ${model}`;
   return out;
 }
