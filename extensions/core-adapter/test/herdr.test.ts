@@ -35,7 +35,7 @@ test("blockedConfirm passes title/message and the answer through", async () => {
 
 test("permission-system prompt/decision map to blocked, balanced per requestId", () => {
   const b = bus();
-  const off = bridgePermissionBlocked(b);
+  const { off } = bridgePermissionBlocked(b);
   b.emit("permissions:decision", { requestId: "nope" });
   b.emit("permissions:ui_prompt", { requestId: "r1", surface: "bash" });
   b.emit("permissions:ui_prompt", { requestId: "r1", surface: "bash" });
@@ -46,4 +46,16 @@ test("permission-system prompt/decision map to blocked, balanced per requestId",
   off();
   b.emit("permissions:ui_prompt", { requestId: "r2" });
   assert.equal(b.sent.length, 2);
+});
+
+test("clear releases prompts that never got a decision", () => {
+  const b = bus();
+  const { clear } = bridgePermissionBlocked(b);
+  b.emit("permissions:ui_prompt", { requestId: "a" });
+  b.emit("permissions:ui_prompt", { requestId: "b" });
+  clear();
+  clear();
+  assert.deepEqual(b.sent.map((s) => s.active), [true, true, false, false]);
+  b.emit("permissions:decision", { requestId: "a" });
+  assert.equal(b.sent.length, 4);
 });

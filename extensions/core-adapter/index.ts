@@ -133,7 +133,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const usageFooter = new UsageFooter();
   const compactionGate = new CompactionGate();
   herdrEvents = pi.events as EventBus | undefined;
-  bridgePermissionBlocked(herdrEvents);
+  const permBlocked = bridgePermissionBlocked(herdrEvents);
+  pi.on("agent_end", async () => permBlocked.clear());
+  pi.on("session_shutdown", async () => permBlocked.clear());
   pi.events?.on("permissions:ready", (payload: unknown) => review.onReady(payload));
   let isoSetting: unknown = "auto";
   const baseline = readBaseline(PKG_ROOT);

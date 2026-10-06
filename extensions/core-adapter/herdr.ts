@@ -39,8 +39,8 @@ export function blockedConfirm(events: EventBus | undefined, confirm: (title: st
  * dialog and `permissions:decision` {requestId, ...} after every gate resolution. Only requestIds seen in a
  * ui_prompt close a block, so active:true / active:false stay balanced. Returns an unsubscribe.
  */
-export function bridgePermissionBlocked(events: EventBus | undefined): () => void {
-  if (!events) return () => {};
+export function bridgePermissionBlocked(events: EventBus | undefined): { off: () => void; clear: () => void } {
+  if (!events) return { off: () => {}, clear: () => {} };
   const open = new Set<string>();
   const off1 = events.on(PERMISSIONS_UI_PROMPT, (data) => {
     const d = (data ?? {}) as { requestId?: unknown; surface?: unknown };
@@ -53,8 +53,14 @@ export function bridgePermissionBlocked(events: EventBus | undefined): () => voi
     if (typeof id !== "string" || !open.delete(id)) return;
     signal(events, false, "permission");
   });
-  return () => {
+  // A prompt that was released without a decision event must not leave Herdr blocked: one active:false per open prompt.
+  const clear = (): void => {
+    for (const _ of open) signal(events, false, "permission");
+    open.clear();
+  };
+  const off = (): void => {
     if (typeof off1 === "function") off1();
     if (typeof off2 === "function") off2();
   };
+  return { off, clear };
 }
