@@ -60,6 +60,19 @@ claude setup-token                                                 # then export
 `/foreman doctor` fails if the folder holds host config and reports whether a login is present
 (never its value).
 
+## Commands
+
+In a Pi session (the foreman, not children):
+
+- `/sync` pulls, commits (explicit paths only) and pushes the repositories listed in `sync.repos` of your user config, then runs the retro. It never forces a push and runs no repository hooks.
+- `/retro` prints friction metrics of the session and writes permission-allow proposals to `<agent dir>/pi-foreman/state/retro/`; nothing is applied for you.
+- `/foreman close [result-path]` ends the session cleanly: result file, sync, exit. It is refused while a long wait is pending. A parent can send the same request with `herdr agent prompt` or, from its own session id, as an intercom message `foreman:close`.
+- `/foreman update-check` lists newer versions of the pinned packages with release-note links. It changes nothing.
+
+The usage footer (tokens, list-price cost, child launches) is on by default (`footer.usage`). Outside Pi,
+`bin/foreman update-check|retro|sync [args]` (`.cmd` and `.ps1` on Windows) runs the same scripts. Keys and
+their layer rules are in `design/architecture.md` §7.
+
 ## License
 
 MIT, see `LICENSE`. Upstream attributions are in `NOTICE`.
