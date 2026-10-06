@@ -25,7 +25,7 @@ DOCS = {
 def fetcher(name):
     if name in DOCS:
         return DOCS[name]
-    raise urllib.error.HTTPError("u", 404, "nf", None, None)
+    raise urllib.error.HTTPError("u", 404, "nf", {}, io.BytesIO(b""))
 
 
 class UpdateCheckTest(unittest.TestCase):

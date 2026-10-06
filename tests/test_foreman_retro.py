@@ -56,7 +56,7 @@ class RetroTest(unittest.TestCase):
         rep = fr.build(None, None, None, recs, 5, str(self.tmp))
         r = rep["review"]
         self.assertEqual((r["human_approved"], r["human_denied"], r["review_allow"]), (2, 1, 1))
-        self.assertEqual(r["denials_overridden"], 0)  # no session id => all asks counted, see below
+        self.assertEqual(r["denials_overridden"], 1)  # no session id: every ask counts
         sess = [{"type": "session", "id": "s1"}]
         r = fr.build(sess, None, None, recs, 5, str(self.tmp))["review"]
         self.assertEqual((r["human_approved"], r["review_allow"], r["denials_overridden"]), (1, 1, 1))
