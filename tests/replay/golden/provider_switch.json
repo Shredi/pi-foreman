@@ -30,6 +30,9 @@
    "model": "foreman-fake/foreman"
   },
   {
+   "event": "turn"
+  },
+  {
    "event": "guard",
    "toolFamily": "Stop",
    "guard": "ledger_guard_stop",
@@ -38,6 +41,9 @@
   {
    "event": "llm",
    "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "turn"
   },
   {
    "event": "guard",
@@ -77,6 +83,9 @@
    "model": "foreman-fake-b/foreman"
   },
   {
+   "event": "turn"
+  },
+  {
    "event": "guard",
    "toolFamily": "Stop",
    "guard": "ledger_guard_stop",
@@ -85,6 +94,9 @@
   {
    "event": "llm",
    "model": "foreman-fake-b/foreman"
+  },
+  {
+   "event": "turn"
   },
   {
    "event": "guard",

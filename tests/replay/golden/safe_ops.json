@@ -62,6 +62,9 @@
    "model": "foreman-fake/foreman"
   },
   {
+   "event": "turn"
+  },
+  {
    "event": "guard",
    "toolFamily": "Stop",
    "guard": "ledger_guard_stop",
