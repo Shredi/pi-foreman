@@ -15,7 +15,7 @@ import { permFileState, PS_CHILD_ID, PS_PACKAGE, psProjectConfigPath, renderPerm
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
-import { actionOf, endActive, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck } from "./actions.ts";
+import { actionOf, endActive, launchId, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck } from "./actions.ts";
 import { addChange, boundRefusal, emptySteps, emptyTally, finishRefusal, missingSteps, overBound, pendingChange, readBound, requiredSteps, stepsOfRunEnd } from "./bound.ts";
 import type { Change, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
@@ -44,7 +44,7 @@ import type { Spawner } from "./spawn.ts";
 import { mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
-import { appendReview, headOf, isPrToolName, passHeads, prToolRefusal, reviewsOfRunEnd } from "./reviews.ts";
+import { appendReview, capSet, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prToolRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
 import { openTrace } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
@@ -140,6 +140,10 @@ interface Session {
   reviews: ReviewRecord[];
   /** Pending HEAD reads of `reviews`; the PR gate waits for it. */
   reviewSync: Promise<void>;
+  /** Foreman only: HEAD per directory at launch, by tool call id until the launch result names the run. */
+  launchHeadsByCall: Map<string, Map<string, string | null>>;
+  /** Foreman only: HEAD per directory at launch, by run id until the run ends (reviews.ts reviewedHead). */
+  launchHeads: Map<string, Map<string, string | null>>;
 }
 
 export interface AdapterDeps {
@@ -243,6 +247,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       finishRefusals: 0,
       reviews: [],
       reviewSync: Promise.resolve(),
+      launchHeadsByCall: new Map(),
+      launchHeads: new Map(),
     };
     sessions.set(id, s);
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
@@ -582,10 +588,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
         if (typeof runId === "string" && s.launchedRoles.has(runId)) for (const step of stepsOfRunEnd(data)) s.steps[step]++;
         if (!s.isChild && typeof runId === "string" && s.launchedRoles.has(runId)) {
-          // PR gate: the verdict is recorded with HEAD of the run's cwd (reviews.ts).
+          // PR gate: the verdict is recorded with HEAD of the run's cwd if unchanged since launch (reviews.ts).
+          const start = s.launchHeads.get(runId);
+          s.launchHeads.delete(runId);
           for (const r of reviewsOfRunEnd(data)) {
             s.reviewSync = s.reviewSync.then(async () => {
-              appendReview(s.reviews, { role: r.role, verdict: r.verdict, head: await headOf(r.cwd ?? s.cwd) });
+              const cwd = r.cwd ?? s.cwd;
+              appendReview(s.reviews, { role: r.role, verdict: r.verdict, head: reviewedHead(start, cwd, await headOf(cwd)) });
             });
           }
         }
@@ -649,7 +658,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (s.isChild) refusal = { reason: "child", message: `pi-foreman: ${event.toolName} refused [pr_refused:child]: children may not create pull requests. Report back and let the foreman do it after a review.` };
         else if (get(s.config.config, "ceremony.reviewBeforePr") !== false) {
           await s.reviewSync;
-          refusal = await prToolRefusal(ctx.cwd, passHeads(s.reviews));
+          refusal = await prToolRefusal(ctx.cwd, passHeads(s.reviews), event.input as Record<string, unknown>);
         }
         if (refusal) {
           s.trace?.emit({ event: "pr_refused", reason: refusal.reason, toolFamily: event.toolName });
@@ -748,7 +757,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (t.openFailure) notifyOnce(s, ctx, `open:${guard}`, t.openFailure);
         if (outcome.kind === "decision" && outcome.d.decision === "ask") s.trace?.emit({ event: "ask", guard, toolFamily: mapping.coreName, decision: askOutcome(s.isChild, t.result?.reason) });
         const prReason = guard === "git_guard" && t.result && "block" in t.result ? /pr_refused:(\w+)/.exec(String(t.result.reason ?? ""))?.[1] : undefined;
-        if (prReason) s.trace?.emit({ event: "pr_refused", reason: prReason });
+        if (prReason && (PR_REFUSALS as readonly string[]).includes(prReason)) s.trace?.emit({ event: "pr_refused", reason: prReason });
         if (t.result) return t.result;
         if (guard === "ledger_guard_spawn" && agents.length > 0) {
           setCeremony(s, afterSpawn(s.ceremony));
@@ -760,6 +769,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this child launch", driftAsk(ctx), (r) => s.trace?.emit(r));
         if (drift) return drift;
         s.gitDrift.snapshot(ctx.cwd, os.homedir());
+        // PR gate (B-M4): HEAD at a reviewer's launch; the verdict keeps a head only if it is unchanged at run end.
+        const action = actionOf(input);
+        if (action === "resume" || (action === null && subagentAgents(input).some((r) => REVIEW_ROLES.includes(r)))) {
+          capSet(s.launchHeadsByCall, event.toolCallId, await headsAt(launchCwds(input, ctx.cwd)));
+        }
       }
       // Kept for the tool result only once the launch passed every check.
       if (notices.length > 0) s.launchNotices.set(event.toolCallId, notices);
@@ -950,6 +964,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (s) {
         recordLaunch(s.runs, event.input, event.details, event.isError);
         recordLaunchRoles(s.launchedRoles, event.input, event.details, event.isError);
+        const heads = s.launchHeadsByCall.get(event.toolCallId);
+        s.launchHeadsByCall.delete(event.toolCallId);
+        const runId = launchId(event.input, event.details, event.isError);
+        if (heads && runId) capSet(s.launchHeads, runId, heads);
         trackActive(s.activeRuns, event.input, event.details, event.isError);
       }
       for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_result", role, exit: event.isError ? 1 : 0, pollBash: s.pollBash || undefined });

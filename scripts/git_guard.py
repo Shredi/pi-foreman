@@ -665,6 +665,9 @@ class Ctx(object):
         self.root = None    # (text, flavor) of the whole command
         self._stray = None
         self.pr_gate = None  # {enabled, reviewed_heads} from the adapter payload
+        self.pr_segs = set()     # segments that carry a PR form
+        self.state_segs = set()  # segments that change the directory, HEAD or a ref
+        self.cfg_env = False     # the command sets GIT_CONFIG_* (export, $env:) before a later segment
 
 
 def stray_git(text, flavor, depth=0):
@@ -764,6 +767,9 @@ def analyze_text(text, flavor, ctx, depth):
         d = worst(d, analyze_text(sub, flavor, ctx, depth + 1))
     for seg in lx.segs:
         d = worst(d, analyze_segment(seg, flavor, ctx, depth))
+    if depth == 0 and ctx.mode == "main" and ctx.pr_segs and ctx.state_segs - ctx.pr_segs and pr_gate_on(ctx):
+        # B-M1/B-M2: the head is resolved before any segment runs; another segment may move it.
+        return pr_refuse("pr_compound", "pull request in a compound command")
     return d
 
 
@@ -787,6 +793,8 @@ def analyze_segment(seg, flavor, ctx, depth):
             continue
         break
     rest = words[i:]
+    if not rest and any(PR_CONFIG_ENV.match(k) for k in envs):
+        ctx.cfg_env = True
     if flavor == "powershell" and rest:
         rest, d = ps_assignment(rest, ctx)
         if d is not None:
@@ -816,6 +824,8 @@ def ps_assignment(words, ctx):
         return words, None
     if ctx.mode == "child" and re.match(r"(?i)^env:GIT_CONFIG", target):
         return rest, deny("children may not set git configuration through the environment ($%s)." % target)
+    if re.match(r"(?i)^env:", target) and PR_CONFIG_ENV.match(target[4:]):
+        ctx.cfg_env = True
     return rest, None
 
 
@@ -859,8 +869,11 @@ def run_command(words, seg, flavor, ctx, depth, envs, xargs_repl=None, via_xargs
             args = [Word(name[4:])] + args
         return git_args(args, seg, flavor, ctx, depth, envs, via_xargs, xargs_repl)
 
+    if name in CD_NAMES:
+        ctx.state_segs.add(seg)
+
     if name in ("gh", "glab", "hub", "tea"):
-        return pr_cli(name, args, ctx)
+        return pr_cli(name, args, ctx, seg)
 
     if re.match(r"^([A-Za-z]:[\\/]|\\\\)", cmd.text):
         # `C:\Program Files\Git\cmd\git.exe push` split at the space.
@@ -869,10 +882,13 @@ def run_command(words, seg, flavor, ctx, depth, envs, xargs_repl=None, via_xargs
                 d = worst(d, git_args(args[k + 1:], seg, flavor, ctx, depth, envs, via_xargs, xargs_repl))
                 break
 
-    if name in ("export", "declare", "typeset", "local", "readonly", "set", "setx") and ctx.mode == "child":
+    if name in ("export", "declare", "typeset", "local", "readonly", "set", "setx"):
         for w in args:
             if GIT_CONFIG_ENV.match(w.text.lstrip("-")) or (name in ("set", "setx") and GIT_CONFIG_ENV.match(w.text)):
-                return deny("children may not set git configuration through the environment (%s)." % w.text)
+                if ctx.mode == "child":
+                    return deny("children may not set git configuration through the environment (%s)." % w.text)
+                if PR_CONFIG_ENV.match(w.text.lstrip("-").split("=", 1)[0]):
+                    ctx.cfg_env = True
 
     if name == "busybox" and args:
         return run_command(args, seg, flavor, ctx, depth, envs, xargs_repl, via_xargs)
@@ -1198,6 +1214,7 @@ class GitCall(object):
         self.cwd = ctx.cwd
         self.passthrough = []      # global options re-used for read-only lookups
         self.cfg_aliases = {}      # -c alias.x=... (value None = unknown)
+        self.pr_config = False     # --config-env push.pushOption=... (value unknown)
 
 
 def git_args(args, seg, flavor, ctx, depth, envs, via_xargs=False, xargs_repl=None, guessing=False, call=None, hops=0):
@@ -1252,6 +1269,8 @@ def git_args(args, seg, flavor, ctx, depth, envs, via_xargs=False, xargs_repl=No
                         return deny("children may not set %s through --config-env." % ck)
                     if ck.startswith("alias."):
                         call.cfg_aliases[ck[6:]] = None
+                if ck == "push.pushoption":
+                    call.pr_config = True
                 if ctx.mode == "main" and PUSH_CONFIG.match(ck):
                     return ask("push configuration %s comes from the environment (--config-env); "
                                "the guard cannot check the push target." % ck)
@@ -1281,8 +1300,8 @@ def git_config_override(kv, call, ctx, depth):
         return OK
     if ctx.mode == "child" and re.match(r"^include(if\..+)?\.path$", k):
         return deny("children may not include other git config files (-c %s)." % key)
-    if PUSH_CONFIG.match(k):
-        call.passthrough.extend(["-c", kv])  # the push lint reads it back with `git config`
+    if PUSH_CONFIG.match(k) or k == "push.pushoption":
+        call.passthrough.extend(["-c", kv])  # the push lint and the PR gate read it back with `git config`
     if EXEC_KEY.match(k):
         if k == "core.hookspath":
             if ctx.mode == "child":
@@ -1433,13 +1452,19 @@ def git_sub(sub, rest, seg, flavor, ctx, depth, envs, via_xargs, xargs_repl, cal
                 d = Decision(d.level, d.reason + " (through git alias %s = %s)" % (sub, value[:120]))
             return d
         return OK
+    if sub.lower() in GIT_STATE or (sub.lower() == "branch" and branch_changes(rest)):
+        ctx.state_segs.add(seg)
+    if sub.lower() == "config":
+        d = pr_config_write(rest, ctx)
+        if d.level > ALLOW:
+            return d
     if s in ("submodule", "rebase", "bisect", "difftool"):
         d = nested_commands(s, rest, seg, flavor, ctx, depth, envs)
         if d.level > ALLOW:
             return d
     if ctx.mode == "child":
         if s == "push":
-            d = pr_push(rest, ctx, call, envs)
+            d = pr_push(rest, ctx, call, envs, seg)
             if d.level > ALLOW:
                 return d
         return child_rules(s, rest, ctx, call)
@@ -1448,7 +1473,7 @@ def git_sub(sub, rest, seg, flavor, ctx, depth, envs, via_xargs, xargs_repl, cal
     if sub == "commit":
         return commit_lint(rest, ctx, call, envs)
     if sub == "push":
-        d = pr_push(rest, ctx, call, envs)
+        d = pr_push(rest, ctx, call, envs, seg)
         return d if d.level > ALLOW else push_lint(rest, ctx, call, envs)
     return OK
 
@@ -2003,12 +2028,29 @@ def push_matching(call, ctx, envs):
 
 # A pull/merge request is created only for a head a reviewer has passed (payload `pr_gate`).
 # Children never create one. The refusal text carries `[pr_refused:<reason>]` for the adapter's trace.
-PR_PUSH_KEY = re.compile(r"^(merge_request\.|pull_request|topic|pr($|[._-]))", re.I)
+PR_PUSH_KEY = re.compile(r"^(merge_request\.|mr\.|pull_request|topic|pr($|[._-]))", re.I)
+# Environment that injects git config (push.pushOption among it) into a push.
+PR_CONFIG_ENV = re.compile(r"^GIT_CONFIG_(COUNT|KEY_\d+|PARAMETERS)$", re.I)
+# gh's built-in top-level commands, help topics and its default alias `co`. Any other top-level
+# word is a user alias or an extension the guard cannot read.
+GH_BUILTINS = frozenset("""
+accessibility actions agent-task alias api at attestation auth browse cache co codespace completion config
+copilot cs discussion environment exit-codes ext extension extensions formatting gist gpg-key help issue label
+licenses mintty org pr preview project reference release repo ruleset run search secret skill ssh-key status
+telemetry variable version workflow
+""".split())
+# Commands that change the directory, HEAD or a ref: a PR form next to one in a compound is refused.
+CD_NAMES = frozenset(("cd", "pushd", "popd", "chdir", "set-location", "sl", "push-location", "pop-location"))
+GIT_STATE = frozenset(("commit", "reset", "checkout", "switch", "merge", "rebase", "cherry-pick", "revert", "am",
+                       "pull", "push", "fetch", "stash", "tag", "update-ref", "symbolic-ref", "worktree"))
+GH_STATE = (("co",), ("pr", "checkout"), ("repo", "sync"))
+BRANCH_CHANGE = ("f", "force", "m", "M", "move", "c", "C", "copy", "d", "D", "delete", "u", "set-upstream-to",
+                 "unset-upstream", "track", "edit-description")
 PR_API_PULLS = re.compile(r"(^|/)pulls(/\d+)?/?(\?.*)?$")
 PR_LONG = ("head", "source-branch", "repo", "hostname", "base", "title", "body", "assignee", "label", "reviewer")
 # (program, subcommand words, short options that take a value, head options, label)
 PR_FORMS = (
-    [("gh", ("pr", "create"), "aBbFHlmprRTt", ("H", "head"), "gh pr create")] +
+    [("gh", ("pr", b), "aBbFHlmprRTt", ("H", "head"), "gh pr create") for b in ("create", "new")] +
     [("glab", (a, b), "abdlmrRst", ("s", "source-branch"), "glab mr create")
      for a in ("mr", "merge-request") for b in ("create", "new")] +
     [("hub", ("pull-request",), "mFbhaMlri", ("h", "head"), "hub pull-request")] +
@@ -2020,9 +2062,56 @@ PR_ADVICE = {
                  "checkout the pull request comes from, then retry.",
     "stale_review": "the recorded reviewer PASS is for another commit than this head (%s). Run a reviewer on "
                     "this head, then retry.",
-    "head_unknown": "the head commit could not be resolved (no git repository here, or the head ref does not "
-                    "exist). Name an existing local branch and run a reviewer on it, then retry.",
+    "head_unknown": "the head commit could not be resolved (no git repository here, the head ref does not "
+                    "exist or is computed). Name an existing local branch and run a reviewer on it, then retry.",
+    "pr_alias": "this is a gh alias or extension (or defines one); the guard cannot tell whether it creates a "
+                "pull request. Write the gh command out, e.g. gh pr create.",
+    "pr_compound": "another segment of this command changes the directory, HEAD or a ref, so the head checked "
+                   "now need not be the head the pull request opens from; run the PR step on its own.",
+    "pr_config": "this stores a push option that opens a pull/merge request on every later push. Pass it to "
+                 "one reviewed push with -o instead.",
 }
+
+
+def pr_gate_on(ctx):
+    return ctx.mode == "child" or (isinstance(ctx.pr_gate, dict) and bool(ctx.pr_gate.get("enabled")))
+
+
+def pr_block(ctx, reason, what):
+    """Refuse a PR form that is not checked against a head: `child` for a child, `reason` when the gate is on."""
+    if ctx.mode == "child":
+        return pr_refuse("child", what)
+    return pr_refuse(reason, what) if pr_gate_on(ctx) else OK
+
+
+def branch_changes(rest):
+    """`git branch` that creates, moves, copies, deletes or re-targets a branch (not a listing)."""
+    opts, pos, dd, _ = parse_opts(rest, short_arg="u", long_arg=(
+        "contains", "no-contains", "merged", "no-merged", "points-at", "sort", "format", "set-upstream-to"))
+    return bool(pos or dd) or has(opts, *BRANCH_CHANGE)
+
+
+def pr_config_write(rest, ctx):
+    """`git config [set] push.pushOption <PR key>`: every later push would carry it."""
+    if not pr_gate_on(ctx):
+        return OK
+    words = list(rest)
+    if words and not words[0].dynamic and words[0].text in ("get", "list", "unset", "rename-section",
+                                                           "remove-section", "edit", "get-color", "get-colorbool"):
+        return OK
+    if words and not words[0].dynamic and words[0].text == "set":
+        words = words[1:]
+    opts, pos, dd, _ = parse_opts(words, short_arg="f", long_arg=("file", "blob", "type", "default", "comment",
+                                                                  "value", "url"))
+    if has(opts, "get", "get-all", "get-regexp", "get-urlmatch", "get-color", "get-colorbool", "list", "l",
+           "unset", "unset-all", "remove-section", "rename-section", "edit", "e"):
+        return OK
+    pos = list(pos) + list(dd)
+    if len(pos) < 2 or not (pos[0].dynamic or pos[0].text.lower() == "push.pushoption"):
+        return OK
+    if pos[1].dynamic or PR_PUSH_KEY.match(pos[1].text.split("=", 1)[0].strip()):
+        return pr_block(ctx, "pr_config", "git config push.pushOption")
+    return OK
 
 
 def pr_refuse(reason, what, sha=None):
@@ -2035,8 +2124,10 @@ def pr_refuse(reason, what, sha=None):
     return deny("%s refused [pr_refused:%s]: %s" % (what, reason, text))
 
 
-def pr_gate_check(ctx, call, refs, what, envs=None):
-    """`refs`: head refs of the pull request (None = HEAD, "" = unreadable)."""
+def pr_gate_check(ctx, call, refs, what, envs=None, upstream=False):
+    """`refs`: head refs of the pull request (None = HEAD, "" = unreadable). `upstream`: the
+    head's upstream branch, when it has one, must be a reviewed head too (gh opens the PR from
+    the remote branch, B-M3)."""
     if ctx.mode == "child":
         return pr_refuse("child", what)
     gate = ctx.pr_gate
@@ -2047,13 +2138,19 @@ def pr_gate_check(ctx, call, refs, what, envs=None):
     for ref in refs or [None]:
         ref = "HEAD" if ref is None else ref
         out = None
-        if ref and not ref.startswith("-"):
+        if ref and not ref.startswith("-") and "\0" not in ref:
             out = run_git(call, ctx, ["rev-parse", "--verify", "--quiet", ref + "^{commit}"], envs)
         sha = out.strip().lower() if out else ""
         if not re.match(r"^[0-9a-f]{40,64}$", sha):
             return pr_refuse("head_unknown", what)
         if sha not in reviewed:
             return pr_refuse("stale_review" if reviewed else "no_review", what, sha)
+        if upstream:
+            up = run_git(call, ctx, ["rev-parse", "--verify", "--quiet",
+                                     ("" if ref == "HEAD" else ref) + "@{upstream}^{commit}"], envs)
+            up = up.strip().lower() if up else ""
+            if up and up not in reviewed:
+                return pr_refuse("stale_review", what, up)
     return OK
 
 
@@ -2062,41 +2159,60 @@ def pr_head_ref(w):
     return "" if w is None or w.dynamic else w.text.rsplit(":", 1)[-1]
 
 
-def pr_cli(name, args, ctx):
+def pr_cli(name, args, ctx, seg=None):
     """gh / glab / hub / tea commands that create or change a pull request."""
     if any(not w.dynamic and w.text == "--help" for w in args):
         return OK
     _, pos, dd, _ = parse_opts(args, short_arg="R" if name == "gh" else "", long_arg=("repo", "hostname"))
     words = [w.text.lower() for w in list(pos) + list(dd)]
     call = GitCall(ctx)
+    if name == "gh" and words:
+        if tuple(words[:1]) in GH_STATE or tuple(words[:2]) in GH_STATE:
+            ctx.state_segs.add(seg)
+        if words[0] == "alias" and words[1:2] in (["set"], ["import"]):
+            return pr_block(ctx, "pr_alias", "gh alias %s" % words[1])
+        if words[0] not in GH_BUILTINS:
+            # B-B1: a user alias (`gh alias set mk 'pr create'`) or an extension.
+            return pr_block(ctx, "pr_alias", "gh %s" % ("<computed>" if "\0" in words[0] else words[0][:40]))
     if name == "gh" and words[:1] == ["api"]:
         opts, pos, dd, _ = parse_opts(args, short_arg="XHfFqtp", long_arg=(
             "method", "header", "field", "raw-field", "input", "jq", "template", "preview", "hostname", "cache"))
         pos = list(pos) + list(dd)
         endpoint = pos[1].text if len(pos) > 1 else ""
         method = [v.text.upper() for v in values(opts, "X", "method") if v is not None]
-        fields = [v.text for v in values(opts, "f", "F", "field", "raw-field") if v is not None]
+        fws = [v for v in values(opts, "f", "F", "field", "raw-field") if v is not None]
+        fields = [v.text for v in fws]
         write = (method[-1] in ("POST", "PATCH")) if method else bool(fields or has(opts, "input"))
-        graphql = endpoint.lower() == "graphql" and any("createpullrequest" in f.lower() for f in fields)
+        # B-M5: a body the guard cannot read (`-F query=@file`, `--input`, a computed field) may create one.
+        graphql = endpoint.lower() == "graphql" and (
+            any("createpullrequest" in f.lower() for f in fields) or has(opts, "input") or
+            any(v.dynamic or v.text.partition("=")[2].startswith("@") for v in fws))
         if not write or not (PR_API_PULLS.search(endpoint) or graphql):
             return OK
+        ctx.pr_segs.add(seg)
         heads = [pr_head_ref(Word(f[5:])) for f in fields if f.startswith("head=")]
         return pr_gate_check(ctx, call, heads, "gh api %s" % endpoint)
     for prog, sub, shorts, head_opts, label in PR_FORMS:
         if prog == name and tuple(words[:len(sub)]) == sub:
+            ctx.pr_segs.add(seg)
             opts, _, _, _ = parse_opts(args, short_arg=shorts, long_arg=PR_LONG)
             heads = [pr_head_ref(v) for v in values(opts, *head_opts)]
-            return pr_gate_check(ctx, call, heads, label)
+            return pr_gate_check(ctx, call, heads, label, upstream=(prog == "gh"))
     return OK
 
 
-def pr_push(rest, ctx, call, envs):
-    """`git push` forms that open a pull request: PR push options, Gerrit refs/for/*."""
+def pr_push(rest, ctx, call, envs, seg=None):
+    """`git push` forms that open a pull request: PR push options (`-o`, `-c push.pushOption`,
+    GIT_CONFIG_* in the environment, push.pushOption in the repository config), Gerrit refs/for/*."""
+    if not pr_gate_on(ctx):
+        return OK
     opts, pos, dd, _ = parse_opts(rest, short_arg="o", known=PUSH_KNOWN, long_arg=PUSH_ARG)
     if has(opts, "n", "dry-run"):
         return OK
     pos = list(pos) + list(dd)
-    keyed = False
+    keyed = call.pr_config or ctx.cfg_env or any(PR_CONFIG_ENV.match(k) for k in envs)
+    if not keyed:
+        keyed = any(PR_PUSH_KEY.match(v.split("=", 1)[0].strip()) for v in config_values(call, ctx, envs, "push.pushOption"))
     for v in values(opts, "o", "push-option"):
         if v is None:
             continue
@@ -2107,14 +2223,18 @@ def pr_push(rest, ctx, call, envs):
             continue
         if PR_PUSH_KEY.match(v.text.split("=", 1)[0].strip()):
             keyed = True
-    specs = [w.text[1:] if w.text.startswith("+") else w.text for w in (pos if has(opts, "repo") else pos[1:])]
+    spec_words = pos if has(opts, "repo") else pos[1:]
     pairs = []
-    for s in specs:
+    for w in spec_words:
+        s = w.text[1:] if w.text.startswith("+") else w.text
         src, _, dst = s.partition(":")
         pairs.append((src, dst if ":" in s and dst else src))
     gerrit = [src for src, dst in pairs if dst.startswith("refs/for/")]
     if not keyed and not gerrit:
         return OK
+    ctx.pr_segs.add(seg)
+    if any(w.dynamic for w in spec_words):
+        return pr_block(ctx, "head_unknown", "git push (pull request)")
     heads = [src for src, _ in pairs if src] if keyed else gerrit
     return pr_gate_check(ctx, call, heads or [None], "git push (pull request)", envs)
 

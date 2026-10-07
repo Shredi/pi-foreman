@@ -36,6 +36,7 @@ FORMS = [
     "git push -omerge_request.create origin main",
     "git push -o topic=x origin main",
     "git push -o pull_request origin main",
+    "git push -o mr.create origin main",
     "git push origin HEAD:refs/for/main",
 ]
 UNGATED = [
@@ -126,7 +127,88 @@ class PrGateTest(unittest.TestCase):
     def test_powershell_and_wrappers(self):
         self.assertIn("no_review", self.decide("gh pr create --fill", [], flavor="powershell").reason)
         self.assertIn("no_review", self.decide("& gh pr create --fill", [], flavor="powershell").reason)
-        self.assertIn("no_review", self.decide("cd . && sudo gh pr create --fill", []).reason)
+        self.assertIn("no_review", self.decide("echo x && sudo gh pr create --fill", []).reason)
+
+    def assertRefused(self, cmd, reason, heads=None, **kw):
+        d = self.decide(cmd, [self.newer] if heads is None else heads, **kw)
+        self.assertEqual(d.level, gg.DENY, cmd)
+        self.assertIn("pr_refused:%s" % reason, d.reason, cmd)
+        return d
+
+    def test_gh_pr_new_and_aliases(self):
+        # B-B1: `pr new` is gh's alias of `pr create`; user aliases and extensions cannot be read.
+        self.assertRefused("gh pr new --fill", "no_review", [])
+        self.assertEqual(self.decide("gh pr new --fill", [self.newer]).level, gg.ALLOW)
+        for cmd in ("gh alias set mk 'pr create --fill'", "gh alias import a.yml", "gh mk", "gh my-ext run"):
+            self.assertRefused(cmd, "pr_alias")
+            self.assertRefused(cmd, "child", mode="child")
+            self.assertEqual(self.decide(cmd, [], enabled=False).level, gg.ALLOW, cmd)
+        for cmd in ("gh alias list", "gh co 3", "gh repo view", "gh --version"):
+            self.assertEqual(self.decide(cmd, []).level, gg.ALLOW, cmd)
+
+    def test_push_options_from_config(self):
+        # B-B2: -c, GIT_CONFIG_* in the environment, `git config` writes, the repository config.
+        for cmd in ("git -c push.pushOption=merge_request.create push origin main",
+                    "git -c PUSH.PUSHOPTION=mr.create push origin main",
+                    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.pushOption GIT_CONFIG_VALUE_0=x git push origin main",
+                    "export GIT_CONFIG_PARAMETERS=\"'core.x'='y'\"; git push origin main",
+                    "env GIT_CONFIG_PARAMETERS=\"'core.x'='y'\" git push origin main"):
+            self.assertRefused(cmd, "no_review", [])
+        self.assertEqual(self.decide("git -c push.pushOption=ci.skip push origin HEAD:main", []).level, gg.ALLOW)
+        for cmd in ("git config push.pushOption merge_request.create", "git config --add push.pushoption topic=x",
+                    "git config set --global push.pushOption mr.create"):
+            self.assertRefused(cmd, "pr_config")
+            self.assertRefused(cmd, "child", mode="child")
+        for cmd in ("git config push.pushOption ci.skip", "git config --get-all push.pushOption"):
+            self.assertEqual(self.decide(cmd, []).level, gg.ALLOW, cmd)
+        git(self.repo, "config", "push.pushOption", "merge_request.create")
+        try:
+            self.assertRefused("git push origin HEAD:main", "no_review", [])
+            self.assertEqual(self.decide("git push origin HEAD:main", [self.newer]).level, gg.ALLOW)
+        finally:
+            git(self.repo, "config", "--unset-all", "push.pushOption")
+
+    def test_compound(self):
+        # B-M1/B-M2: the head is resolved before any segment runs.
+        for cmd in ("git commit --allow-empty -m 'fix: x' && gh pr create --fill", "git reset --soft HEAD~1 && gh pr create",
+                    "git switch feat; gh pr create --fill", "cd ../other && gh pr create",
+                    "cd ../wt && git push -o merge_request.create origin main", "git branch -f main feat && gh pr create",
+                    "git push origin main && git push -o mr.create origin main"):
+            d = self.assertRefused(cmd, "pr_compound")
+            self.assertIn("run the PR step on its own", d.reason)
+        self.assertRefused("Set-Location ..\\x; gh pr create", "pr_compound", flavor="powershell")
+        self.assertEqual(self.decide("git status && gh pr create --fill", [self.newer]).level, gg.ALLOW)
+        self.assertEqual(self.decide("cd . && git commit --allow-empty -m 'fix: x'", []).level, gg.ALLOW)
+
+    def test_upstream_must_be_reviewed(self):
+        # B-M3: gh opens the PR from the remote branch.
+        git(self.repo, "update-ref", "refs/remotes/origin/main", self.head)
+        git(self.repo, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+        git(self.repo, "config", "branch.main.remote", "origin")
+        git(self.repo, "config", "branch.main.merge", "refs/heads/main")
+        try:
+            d = self.assertRefused("gh pr create --fill", "stale_review")
+            self.assertIn(self.head[:12], d.reason)
+            self.assertEqual(self.decide("gh pr create --fill", [self.newer, self.head]).level, gg.ALLOW)
+        finally:
+            git(self.repo, "config", "--remove-section", "branch.main")
+            git(self.repo, "config", "--remove-section", "remote.origin")
+            git(self.repo, "update-ref", "-d", "refs/remotes/origin/main")
+
+    def test_graphql_unreadable_body(self):
+        # B-M5
+        for cmd in ("gh api graphql -F query=@q.graphql", "gh api graphql --input q.json",
+                    "gh api graphql -f query=@q.graphql", "gh api graphql -f query=\"$Q\""):
+            self.assertRefused(cmd, "no_review", [])
+            self.assertRefused(cmd, "child", mode="child")
+        self.assertEqual(self.decide("gh api graphql -f query='{ viewer { login } }'", []).level, gg.ALLOW)
+
+    def test_dynamic_refspec(self):
+        # A computed refspec on a PR push is refused (it used to crash the guard).
+        for cmd in ("git push -o merge_request.create origin $(git rev-parse feat):main",
+                    "git push origin \"$X\":refs/for/main"):
+            self.assertRefused(cmd, "head_unknown")
+        self.assertNotIn("pr_refused", self.decide("git push origin $X", []).reason)
 
     def test_payload_entry_point(self):
         payload = {"tool_name": "powershell", "tool_input": {"command": "gh pr create --fill"}, "cwd": self.repo,
