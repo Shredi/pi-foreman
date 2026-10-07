@@ -59,7 +59,7 @@ BRIDGE = "pi-claude-bridge@0.9.1"
 AGENT_SDK = "@anthropic-ai/claude-agent-sdk@0.3.288"
 FAKE_PROVIDERS = ("foreman-fake", "foreman-fake-b")
 PERMISSION_SYSTEM = "@gotgenes/pi-permission-system"
-ROLES = ["foreman", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
+ROLES = ["foreman", "planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
 
 R_REPO = "/opt/pi-foreman"
 R_NPM = "/opt/pf-npm"
