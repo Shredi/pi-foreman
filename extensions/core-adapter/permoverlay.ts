@@ -885,6 +885,8 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
     if (target === undefined || target === "" || /^[-+]\d*$/.test(target) || /[$`*?[\]{}]/.test(target) || /^[-~]/.test(target)) return deny();
     let t = norm(target);
     if (win) t = t.replace(/^\/([A-Za-z])(?=$|\/)/, "$1:");
+    // drive-relative (`C:x`, `D:`; an unquoted `C:\x` loses its backslashes in bash): cwd unknown
+    if (win && /^[A-Za-z]:(?![\\/])/.test(t)) return deny();
     const push = verb === "pushd" || verb === "push-location";
     if (loop && (push || !p.isAbsolute(t))) return deny();
     const next = new Set<string>();

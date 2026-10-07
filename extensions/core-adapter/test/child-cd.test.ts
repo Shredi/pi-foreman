@@ -40,7 +40,7 @@ test("child cd: a `~` inside a word is literal (Windows short names), a leading 
   const ctx = { cwd: ws, home: "C:\\Users\\RUNNER~1", platform: "win32" as const, role: "child" as const, realpath: (x: string) => x, exists: isDir, isDir, list: () => [] };
   const v = (command: string): string => checkToolCall(rules, "bash", { command }, ctx)?.kind ?? "pass";
   for (const c of [`cd "${ws}\\sub" && ls`, `cd '${ws}\\sub' && ls`, `cd ${ws.replace(/\\/g, "/")}/sub && ls`, "cd sub && ls"]) assert.equal(v(c), "pass", c);
-  for (const c of ["cd ~ && ls", "cd ~/x", 'cd "~"', "cd C:/Users/RUNNER~1 && ls", `cd "${ws}\\..\\elsewhere"`]) assert.equal(v(c), "deny", c);
+  for (const c of ["cd ~ && ls", "cd ~/x", 'cd "~"', "cd C:/Users/RUNNER~1 && ls", `cd "${ws}\\..\\elsewhere"`, `cd ${ws}\\sub && ls`, "cd D: && ls", "cd C:x"]) assert.equal(v(c), "deny", c);
   fs.mkdirSync(path.join(cwd, "a~1"), { recursive: true });
   assert.equal(verdict("cd a~1 && ls"), "pass");
 });
