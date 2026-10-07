@@ -22,6 +22,8 @@
 // FOREMAN_FAKE_SECTIONS=<file> appends "<tag> <step> <section names>" per foreman-model call: the
 // system-prompt sections the request carries, folded over its system messages (null deletes).
 // Compaction summary requests (Pi's summarization system prompt) answer a fixed summary text.
+// FOREMAN_FAKE_REQUESTS=<file> appends the request messages of each `<provider>/foreman` call as one
+// JSON line (cache-prefix tests compare earlier requests with later ones byte for byte).
 import * as fs from "node:fs";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Model, SimpleStreamOptions, TranscriptContext } from "@earendil-works/pi-ai";
@@ -105,6 +107,14 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
     const where = locate(context.messages as { role: string; content: unknown }[]);
     try {
       fs.appendFileSync(secLog, `${where?.[0] ?? "-"} ${where?.[1] ?? "-"} ${[...names].sort().join(",")}\n`);
+    } catch {
+      // the log is a test aid only
+    }
+  }
+  const reqLog = process.env.FOREMAN_FAKE_REQUESTS;
+  if (reqLog && model.id === "foreman") {
+    try {
+      fs.appendFileSync(reqLog, `${JSON.stringify(context.messages)}\n`);
     } catch {
       // the log is a test aid only
     }

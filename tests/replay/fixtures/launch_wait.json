@@ -1,0 +1,49 @@
+{
+ "foreman": {
+  "one": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:x-done]] map the repo"}}]},
+   {"text": "Explorer reported."}
+  ],
+  "again": [{"text": "Still fine."}],
+  "sup": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:x-ask]] map the repo"}}]},
+   {"text": "fake: waiting for the request"}
+  ],
+  "lsup": [
+   {"tools": [{"name": "subagent_supervisor", "arguments": {"action": "reply", "message": "Go on."}}]},
+   {"text": "Answered."}
+  ],
+  "slow": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-slow]] build item 1"}}]},
+   {"text": "Builder still running."}
+  ],
+  "two": [
+   {"tools": [
+    {"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:x-done]] map part a"}},
+    {"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-done]] build part b"}}
+   ]},
+   {"text": "Both reported."}
+  ],
+  "code": [
+   {"tools": [{"name": "codemode", "arguments": {"code": "const r = await tools.read({ path: \"a.txt\" });\ntext(\"read \" + JSON.stringify(r).includes(\"alpha\"));"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:x-code]] map with a script"}}]},
+   {"text": "Explorer scripted."}
+  ]
+ },
+ "*": {
+  "x-done": [{"text": "explorer child result\nsecond line of the report"}],
+  "b-done": [{"text": "builder child result"}],
+  "x-ask": [
+   {"tools": [{"name": "contact_supervisor", "arguments": {"reason": "need_decision", "message": "[[replay:lsup]] may I go on?"}}]},
+   {"text": "explorer went on"}
+  ],
+  "b-slow": [
+   {"tools": [{"name": "bash", "arguments": {"command": "node -e \"setTimeout(() => {}, 6000)\""}}]},
+   {"text": "builder done after a while"}
+  ],
+  "x-code": [
+   {"tools": [{"name": "codemode", "arguments": {"code": "const r = await tools.bash({ command: \"echo codemode-ok\" });\nArray.prototype.toJSON = () => \"patched\";\ntext(r.output.trim() + \" \" + JSON.stringify([1]));"}}]},
+   {"text": "explorer script done"}
+  ]
+ }
+}

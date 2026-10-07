@@ -63,7 +63,8 @@ import type { EventBus } from "./herdr.ts";
 let herdrEvents: EventBus | undefined;
 import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
-import { registerWait } from "./wait.ts";
+import { registerWait, waitLimits } from "./wait.ts";
+import { dedupeNotices, dedupeOn, dropReturnControl, LaunchBatch, launchWaitMode, launchWaitText, LaunchWaits, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { registerClose, syncCommand } from "./close.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
 import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_TOOL, workspaceTargets } from "./triage.ts";
@@ -127,7 +128,11 @@ interface Session {
   /** Launches this session recorded (launch id -> binding), for later kinds (revision, strong-relaunch). */
   launches: Map<string, LaunchBinding>;
   /** Foreman only: last trigger of the current run and its cache tokens, for the `turn` trace event. */
-  turn: { cause: TurnCause; cacheRead: number; cacheWrite: number; wakeKinds?: string; intercomFrom?: string };
+  turn: { cause: TurnCause; cacheRead: number; cacheWrite: number; wakeKinds?: string; intercomFrom?: string; codemode?: boolean };
+  /** Foreman only: launch calls of the current assistant message (launchwait.ts, knob 3). */
+  launchBatch: LaunchBatch;
+  /** Foreman only: run ids whose completion notice was deduplicated and traced (knob 5a; trace once per run). */
+  dedupeTraced: Set<string>;
   /** Foreman only: builder revision rounds since the last user prompt or /ceremony tier change (rounds.ts). */
   rounds: RoundState;
   /** Foreman only, ceremony gate (bound.ts): own project-file changes at trivial, reset by /ceremony. */
@@ -268,6 +273,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       budget: new ReadBudget(),
       readNotices: new Map(),
       childFiles: new Set(),
+      launchBatch: new LaunchBatch(),
+      dedupeTraced: new Set(),
     };
     sessions.set(id, s);
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
@@ -622,9 +629,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const used = s.budget.resetPost();
     if (used !== null) s.trace?.emit({ event: "recheck_budget", count: used, action: `reset_${why}` });
   }
+  // Knob 3 launch-wait (launchwait.ts): held launch results, released by run end, supervisor request, abort or timeout.
+  const launchWaits = new LaunchWaits();
+  pi.events?.on(SUPERVISOR_SURFACED_EVENT, (data: unknown) => launchWaits.onSupervisorRequest(data));
+  pi.on("session_shutdown", async () => launchWaits.abortAll());
 
   for (const channel of RUN_END_EVENTS) {
     pi.events?.on(channel, (data) => {
+      launchWaits.onRunEnd(data);
       for (const s of sessions.values()) {
         s.supervisor.onRunEnd(data);
         endActive(s.activeRuns, data);
@@ -659,6 +671,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName === "subagent") sessionFor(ctx)?.launchBatch.onToolCall(event.toolCallId);
     if (event.toolName === "bash") {
       const ps = sessionFor(ctx);
       if (ps && !ps.isChild && ps.activeRuns.size > 0) ps.pollBash++;
@@ -869,8 +882,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (m.role !== "assistant") return undefined;
     const s = sessionFor(ctx);
-    s?.trace?.emit({ event: "llm", model: m.provider && m.model ? `${m.provider}/${m.model}` : null, tokensIn: m.usage?.input, tokensOut: m.usage?.output, cacheRead: m.usage?.cacheRead, cacheWrite: m.usage?.cacheWrite, cost: m.usage?.cost?.total });
+    const content = (event.message as { content?: unknown }).content;
+    // Knob 4: the message used the codemode tool (one script, possibly many nested calls).
+    const codemode = Array.isArray(content) && content.some((c) => c && typeof c === "object" && (c as { type?: unknown }).type === "toolCall" && (c as { name?: unknown }).name === "codemode");
+    s?.trace?.emit({ event: "llm", model: m.provider && m.model ? `${m.provider}/${m.model}` : null, tokensIn: m.usage?.input, tokensOut: m.usage?.output, cacheRead: m.usage?.cacheRead, cacheWrite: m.usage?.cacheWrite, cost: m.usage?.cost?.total, codemode: codemode || undefined });
     if (!s) return undefined;
+    if (!s.isChild) {
+      s.launchBatch.onAssistant(content, isLaunchArgs);
+      if (codemode) s.turn.codemode = true;
+    }
     if (!appendUsage(s.usage.file, usageLine(s.usage.line, event.message))) notifyOnce(s, ctx, "usage", `pi-foreman: could not append to the usage log ${s.usage.file}; /foreman cost will be incomplete.`);
     if (!s.isChild) {
       s.turn.cacheRead += Number(m.usage?.cacheRead) || 0;
@@ -908,7 +928,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("agent_end", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild) return;
-    s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite, wakeKinds: s.turn.cause === "wake" ? s.turn.wakeKinds : undefined, pollBash: s.pollBash || undefined });
+    s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite, wakeKinds: s.turn.cause === "wake" ? s.turn.wakeKinds : undefined, pollBash: s.pollBash || undefined, codemode: s.turn.codemode || undefined });
     s.pollBash = 0;
     s.turn = { cause: "other", cacheRead: 0, cacheWrite: 0 };
   });
@@ -1107,11 +1127,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_result", role, exit: event.isError ? 1 : 0, pollBash: s.pollBash || undefined });
       if (s) s.pollBash = 0;
       const notices = s?.launchNotices.get(event.toolCallId);
-      if (s && notices) {
-        s.launchNotices.delete(event.toolCallId);
-        // subagent has no post guards (toolmap.ts), so the amended result can be returned here.
-        return { content: [...notices.map((text) => ({ type: "text" as const, text })), ...event.content] };
-      }
+      if (s && notices) s.launchNotices.delete(event.toolCallId);
+      const held = s ? await holdLaunch(s, ctx, event.toolCallId, event.input, event.details, event.isError) : null;
+      if (s && held) recordFiles(s.childFiles, pathsIn(held), normFile);
+      // subagent has no post guards (toolmap.ts), so the amended result can be returned here.
+      if (notices || held) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(held ? dropReturnControl(event.content) : event.content), ...(held ? [{ type: "text" as const, text: held }] : [])] };
     }
     const mapping = mapTool(event.toolName);
     const changed = event.isError ? undefined : changedFileOf(event.toolName, event.input as Record<string, unknown>);
@@ -1133,6 +1153,40 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // side effects only
     }
     return withNote();
+  });
+
+  /**
+   * Knob 3 (launchwait.ts): hold a foreman's single-child launch result until the run ends, the
+   * child asks the supervisor, the turn is aborted or wait.maxSeconds passes; the text to append,
+   * or null when the launch is not held (detach mode, child session, error, multi-run launch, or
+   * a later launch of the same message has not started yet).
+   */
+  async function holdLaunch(s: Session, ctx: ExtensionContext, callId: string, input: unknown, details: unknown, isError: boolean): Promise<string | null> {
+    if (s.isChild || launchWaitMode(get(s.config.config, "ceremony.launchWait")) !== "block") return null;
+    const runId = launchId(input, details, isError);
+    const run = runId ? s.runs.get(runId) : undefined;
+    if (!runId || !run || !s.launchBatch.mayHold(callId)) return null;
+    const maxSeconds = waitLimits((k) => get(s.config.config, `wait.${k}`)).maxSeconds;
+    const started = Date.now();
+    const r = await launchWaits.wait(runId, maxSeconds * 1000, ctx.signal);
+    const ms = Date.now() - started;
+    s.trace?.emit({ event: "launch_wait", role: run.role, runId, outcome: r.outcome, ms });
+    const asyncDir = details && typeof details === "object" ? (details as { asyncDir?: unknown }).asyncDir : undefined;
+    return launchWaitText({ outcome: r.outcome, runId, role: run.role, ms, maxSeconds, end: r.end, asyncDir: typeof asyncDir === "string" ? asyncDir : null });
+  }
+
+  // Knob 5a (launchwait.ts): a completion notice whose result an earlier message delivered becomes a stub.
+  pi.on("context", async (event, ctx) => {
+    const s = sessionFor(ctx);
+    if (!s || s.isChild || !dedupeOn(get(s.config.config, "ceremony.dedupeNotify"))) return undefined;
+    const r = dedupeNotices(event.messages);
+    if (!r) return undefined;
+    for (const runId of r.deduped) {
+      if (s.dedupeTraced.has(runId)) continue;
+      s.dedupeTraced.add(runId);
+      s.trace?.emit({ event: "notify_deduped", runId });
+    }
+    return { messages: r.messages };
   });
 
   pi.on("agent_before_settle", async (event, ctx) => {
@@ -1541,6 +1595,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 }
 
 /** Trace label for a core-guard ask, from the translated block reason (undefined = approved). */
+/** A `subagent` call that starts a run: a launch (no action) or a resume. */
+function isLaunchArgs(args: unknown): boolean {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return false;
+  const a = actionOf(args as Record<string, unknown>);
+  return a === null || a === "resume";
+}
+
 function askOutcome(isChild: boolean, reason: string | undefined): string {
   if (reason === undefined) return "approved";
   if (isChild) return "child";

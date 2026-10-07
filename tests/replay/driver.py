@@ -157,6 +157,8 @@ class Rig:
             "providers": provider_map(providers, unmapped) if l2_providers else {},
             "trace": {"enabled": True},
             "safety": {"requiredChildExtensions": [str(FAKE_PROVIDER)]},
+            # Scenarios written for detached launches keep them; launch-wait scenarios set "block".
+            "ceremony": {"launchWait": "detach"},
         }
         if config:
             l2 = deep_merge(l2, config)
