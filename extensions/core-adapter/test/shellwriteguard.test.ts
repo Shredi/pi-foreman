@@ -22,6 +22,9 @@ test("payload carries the command, cwd and workspace root; runner spawns <pkg>/s
   assert.equal(p.tool_name, "Bash");
   assert.deepEqual(p.tool_input, { command: "echo x > f" });
   assert.equal(p.workspace, "/ws");
+  assert.equal(p.shell, "bash");
+  const ps = shellWriteGuardPayload({ command: "Set-Content f x" }, pc, "/ws", "powershell");
+  assert.deepEqual([ps.tool_name, ps.shell, (ps.tool_input as { command: string }).command], ["Bash", "powershell", "Set-Content f x"]);
   const calls: string[][] = [];
   const spawner: Spawner = async (cmd, args) => (calls.push([cmd, ...args]), { code: 0, stdout: "", stderr: "", timedOut: false });
   await runShellWriteGuard({ python: "py", pkgRoot: "/pkg", payload: p, env: {}, cwd: "/", spawner });
@@ -57,13 +60,17 @@ test("real script: project write refused, .workflow write allowed", { skip: !py.
   try {
     fs.mkdirSync(path.join(ws, ".workflow"));
     const python = py.ok ? py.info.executable : null;
-    const verdict = async (command: string) =>
-      shellWriteVerdict(await runShellWriteGuard({ python, pkgRoot: repo, payload: shellWriteGuardPayload({ command }, { ...pc, cwd: ws }, ws), env: { ...process.env } as Record<string, string>, cwd: ws, spawner: defaultSpawner }), python);
+    const verdict = async (command: string, tool: "bash" | "powershell" = "bash") =>
+      shellWriteVerdict(await runShellWriteGuard({ python, pkgRoot: repo, payload: shellWriteGuardPayload({ command }, { ...pc, cwd: ws }, ws, tool), env: { ...process.env } as Record<string, string>, cwd: ws, spawner: defaultSpawner }), python);
     const refused = await verdict("cat > src/a_test.go <<'EOF'\npackage a\nEOF");
     assert.equal(refused.decision, "refuse");
     assert.equal((refused as { kind: string }).kind, "redirect");
     assert.ok((refused as { reason: string }).reason.includes(SHELL_WRITE_REFUSAL));
     assert.deepEqual(await verdict("echo note >> .workflow/notes.md"), { decision: "allow" });
+    // the foreman's powershell tool: cmdlet writes refused, `.workflow/` still writable
+    const ps = await verdict("Set-Content -Path src/a.go -Value 'package a'", "powershell");
+    assert.deepEqual([ps.decision, (ps as { kind: string }).kind], ["refuse", "set-content"]);
+    assert.deepEqual(await verdict("'note' | Out-File .workflow/notes.md", "powershell"), { decision: "allow" });
   } finally {
     fs.rmSync(ws, { recursive: true, force: true });
   }

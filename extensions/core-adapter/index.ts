@@ -614,8 +614,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const triage = await triageBlock(ctx, event.toolName, event.input as Record<string, unknown>, event.toolCallId);
       if (triage) return triage;
     }
-    if (event.toolName === "bash") {
-      const shellWrite = await shellWriteBlock(ctx, event.input as Record<string, unknown>);
+    if (event.toolName === "bash" || event.toolName === "powershell") {
+      const shellWrite = await shellWriteBlock(ctx, event.toolName, event.input as Record<string, unknown>);
       if (shellWrite) return shellWrite;
     }
     const mapping = mapTool(event.toolName);
@@ -822,13 +822,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { block: true, reason: boundRefusal(toolName, targets[0].raw, next, bound) };
   }
 
-  /** Plan D3: the foreman's bash may not write project files, at any tier (children are not checked). */
-  async function shellWriteBlock(ctx: ExtensionContext, input: Record<string, unknown>): Promise<{ block: true; reason: string } | undefined> {
+  /** Plan D3: the foreman's bash/powershell may not write project files, at any tier (children are not checked). */
+  async function shellWriteBlock(ctx: ExtensionContext, toolName: "bash" | "powershell", input: Record<string, unknown>): Promise<{ block: true; reason: string } | undefined> {
     try {
       const s = await ensureSession(ctx);
       if (s.isChild) return undefined;
       const env = buildGuardEnv({ base: process.env, coreDir: CORE_DIR, sessionId: s.id, guard: "shell_write_guard", markerDir: s.markerDir });
-      const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root);
+      const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root, toolName);
       const v = shellWriteVerdict(await runShellWriteGuard({ python: pyPath(s), pkgRoot: PKG_ROOT, payload, env, cwd: ctx.cwd, spawner }), pyPath(s));
       if (v.decision === "allow") return undefined;
       if (v.decision === "refuse") s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind });
