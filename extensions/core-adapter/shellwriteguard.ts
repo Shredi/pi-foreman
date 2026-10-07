@@ -11,10 +11,11 @@ import { evaluateRun } from "./translate.ts";
 
 export const SHELL_WRITE_REFUSAL = "shell write into project files refused: use the edit/write tools (measured by the trivial bound) or delegate to a builder";
 
-/** Core-shaped payload plus the workspace root the targets are checked against and the shell
- *  flavour (`powershell` for the foreman's opt-in powershell tool, else `bash`). */
-export function shellWriteGuardPayload(input: Record<string, unknown>, pc: PayloadContext, workspace: string, piTool: "bash" | "powershell" = "bash"): Record<string, unknown> {
-  return { ...preToolPayload(piTool, input, pc), workspace, shell: piTool };
+/** Core-shaped payload plus the workspace root the targets are checked against, the shell
+ *  flavour (`powershell` for the foreman's opt-in powershell tool, else `bash`) and the
+ *  workspace-relative dirs that stay writable (edit mode; the script defaults to `.workflow`). */
+export function shellWriteGuardPayload(input: Record<string, unknown>, pc: PayloadContext, workspace: string, piTool: "bash" | "powershell" = "bash", allowedDirs: string[] = [".workflow"]): Record<string, unknown> {
+  return { ...preToolPayload(piTool, input, pc), workspace, shell: piTool, allowed_dirs: allowedDirs };
 }
 
 export interface ShellWriteRunInput {

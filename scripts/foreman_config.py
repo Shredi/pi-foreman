@@ -53,6 +53,10 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.heavySignals            union only (a project can add signals, not remove one)
     ceremony.heavyFileCount          lower only, minimum 1 (a higher count escalates later)
     ceremony.default                 raise only, trivial < standard < heavy
+    ceremony.foremanEdits            tighten only, readonly < scratchpad < bounded
+    ceremony.scratchDir              narrow only (a subfolder of the earlier value); every layer:
+                                     workspace-relative, no '..', not the root, resolves inside
+    ceremony.reviewBeforePr          only true is accepted (false lets a PR open unreviewed)
     ceremony.trivialBound.<field>    lower only, minimum 0 (a higher bound lets the foreman edit more)
     ceremony.trivialBound            not an object: ignored
     ceremony.required.<tier>         union only (a project can add required steps, not remove one)
@@ -159,6 +163,8 @@ LAYER_TIGHTEN = [
     (("providers", "*", "strongOnRevision"), "false_only"),
     (("ceremony", "revisionRounds", "*"), "lower_only"),
     (("ceremony", "requireTriage"), "true_only"),
+    (("ceremony", "reviewBeforePr"), "true_only"),
+    (("ceremony", "foremanEdits"), ("ordered", ("readonly", "scratchpad", "bounded"))),
     (("ceremony", "heavyFileCount"), "lower_only"),
     (("ceremony", "trivialBound", "*"), "lower_only"),
     (("ceremony", "required", "*"), "union"),
@@ -213,7 +219,16 @@ def _tighten_pattern(node, base, keys, rule, done, who, warnings, minimum=0):
             _tighten_pattern(node[name], have, keys[1:], rule, path, who, warnings, minimum)
             continue
         val, label = node[name], who + " " + ".".join(path)
-        if rule in ("false_only", "true_only"):
+        if isinstance(rule, tuple) and rule[0] == "ordered":
+            # ordered enum, tightest first: only a value at or before the earlier layers' one
+            order = rule[1]
+            if val not in order:
+                why = "not one of %s" % ", ".join(order)
+            elif have in order and order.index(val) > order.index(have):
+                why = "it would loosen the policy"
+            else:
+                continue
+        elif rule in ("false_only", "true_only"):
             want = rule == "true_only"
             if not isinstance(val, bool):
                 why = "not a boolean"
@@ -265,6 +280,32 @@ def workspace_root(project_dir):
     return start
 
 
+def scratch_dir_parts(val):
+    """ceremony.scratchDir -> its path parts, or a string naming why it is invalid."""
+    if not isinstance(val, str) or not val.strip():
+        return "not a non-empty string"
+    if val.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", val) or os.path.isabs(val):
+        return "absolute paths are not allowed"
+    parts = [p for p in re.split(r"[\\/]+", val) if p not in ("", ".")]
+    if ".." in parts:
+        return "'..' is not allowed"
+    if not parts:
+        return "it must not be the workspace root"
+    return parts
+
+
+def scratch_dir_escape(val, project_dir):
+    """Why ceremony.scratchDir resolves outside the workspace (symlinks), or None."""
+    parts = scratch_dir_parts(val)
+    if isinstance(parts, str):
+        return parts
+    root = workspace_root(project_dir)
+    target = Path(os.path.realpath(os.path.join(str(root), *parts)))
+    if target == root or root not in target.parents:
+        return "it must resolve inside the workspace and not to its root"
+    return None
+
+
 def _restrict_ceremony(base, proj, who, warnings):
     """ceremony from the project or session layer: objects only, signals union, default raise only."""
     if "ceremony" not in proj:
@@ -311,6 +352,18 @@ def _restrict_ceremony(base, proj, who, warnings):
         if why:
             del cer["default"]
             warnings.append("%s ceremony.default ignored: %s" % (who, why))
+    if "scratchDir" in cer:
+        # narrow only: the same folder or a subfolder of the earlier layers' value
+        val, prev = scratch_dir_parts(cer["scratchDir"]), scratch_dir_parts(have.get("scratchDir"))
+        if isinstance(val, str):
+            why = val
+        elif not isinstance(prev, str) and val[:len(prev)] != prev:
+            why = "it may only narrow the folder to a subfolder of %s" % have.get("scratchDir")
+        else:
+            why = None
+        if why:
+            del cer["scratchDir"]
+            warnings.append("%s ceremony.scratchDir ignored: %s" % (who, why))
 
 
 def restrict_layer(base, proj, who, warnings, project_dir):
@@ -671,6 +724,13 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
             warnings.append("invalid safety value: " + msg)
         else:
             errors.append(msg)
+    cer = cfg.get("ceremony")
+    if isinstance(cer, dict) and "scratchDir" in cer:
+        why = scratch_dir_escape(cer["scratchDir"], project_dir or os.getcwd())
+        if why:
+            fixed = (l1.get("ceremony") or {}).get("scratchDir")
+            errors.append("ceremony.scratchDir %r invalid: %s; using %s" % (cer["scratchDir"], why, fixed))
+            cer["scratchDir"] = fixed
     if fallback:
         cfg["safety"] = copy.deepcopy(l1["safety"])
         base_permissions = copy.deepcopy(l1["safety"].get("permissions"))

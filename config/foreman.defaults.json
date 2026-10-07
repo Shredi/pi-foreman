@@ -38,7 +38,10 @@
     "revisionRounds": { "standard": 1, "heavy": 2 },
     "requireTriage": true,
     "trivialBound": { "files": 2, "lines": 40, "newFiles": 0 },
-    "required": { "standard": ["builder", "reviewer"], "heavy": ["builder", "reviewer", "finalizer"] }
+    "required": { "standard": ["builder", "reviewer"], "heavy": ["builder", "reviewer", "finalizer"] },
+    "foremanEdits": "scratchpad",
+    "scratchDir": ".workflow/scratch",
+    "reviewBeforePr": true
   },
   "sync": { "repos": [], "runRetro": true },
   "retro": { "proposalMinReviews": 5 },

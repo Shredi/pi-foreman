@@ -16,21 +16,24 @@ test("trace: non-allowlisted keys and non-primitive values are dropped", () => {
     path: "/some/where",
     output: "tool output",
     input: { command: "x" },
-    reason: "DESTRUCTIVE GUARD: ...",
+    permissionDecisionReason: "DESTRUCTIVE GUARD: ...",
     model: { id: "nested" },
     cost: Number.NaN,
   });
   assert.deepEqual(out, { event: "guard", guard: "destructive_guard", decision: "deny", latencyMs: 41 });
-  assert.deepEqual([...TRACE_FIELDS], ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind"]);
+  assert.deepEqual([...TRACE_FIELDS], ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason"]);
 });
 
 test("trace: ask and overlay events carry no command text", () => {
   for (const event of ["ask", "overlay"]) {
-    const out = sanitizeTrace({ event, toolFamily: "bash", decision: "deny", command: "curl http://x/secret", title: "t", message: "m", reason: "r", input: { command: "x" } });
+    const out = sanitizeTrace({ event, toolFamily: "bash", decision: "deny", command: "curl http://x/secret", title: "t", message: "m", permissionDecisionReason: "r", input: { command: "x" } });
     assert.deepEqual(out, { event, toolFamily: "bash", decision: "deny" });
   }
   // shell write refusals carry the write form only, never the command
   assert.deepEqual(sanitizeTrace({ event: "shell_write_refused", kind: "redirect", command: "echo x > src/a.go" }), { event: "shell_write_refused", kind: "redirect" });
+  // edit-mode refusals and escalations carry slugs only
+  assert.deepEqual(sanitizeTrace({ event: "foreman_edit_refused", mode: "scratchpad", kind: "edit", path: "src/a.go" }), { event: "foreman_edit_refused", mode: "scratchpad", kind: "edit" });
+  assert.deepEqual(sanitizeTrace({ event: "triage_escalated", from: "trivial", to: "standard", reason: "edit_mode" }), { event: "triage_escalated", from: "trivial", to: "standard", reason: "edit_mode" });
 });
 
 test("trace: disabled writes nothing; enabled writes one sanitized JSONL line per event", () => {

@@ -43,7 +43,7 @@ def gate_messages(records):
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestTrivialBound(ReplayCase):
     def test_small_edit_crossing_write_and_new_file(self):
-        rig = self.rig("cg-bound", script())
+        rig = self.rig("cg-bound", script(), config={"ceremony": {"foremanEdits": "bounded"}})
         a_txt = rig.project / "a.txt"
         a_txt.write_text("alpha\n", "utf-8")
 

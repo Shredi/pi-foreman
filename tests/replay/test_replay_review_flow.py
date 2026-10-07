@@ -57,7 +57,7 @@ def events(rig, sid, name):
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestTriageGate(ReplayCase):
     def test_untriaged_trivial_standard_heavy(self):
-        rig = self.rig("triage", load_fixture("review_flow"), config=STRONG)
+        rig = self.rig("triage", load_fixture("review_flow"), config=dict(STRONG, ceremony={"foremanEdits": "bounded"}))
         a_txt = rig.project / "a.txt"
         a_txt.write_text("alpha\n", "utf-8")
 

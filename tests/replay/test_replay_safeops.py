@@ -22,7 +22,7 @@ KEYS = ("event", "role", "toolFamily", "guard", "decision", "model", "tier", "ex
 class TestSafeOps(ReplayCase):
     def test_move_runs_then_refuses_existing_destination(self):
         # Two new scratch files at trivial: above the default bound (newFiles 0), so it is raised here.
-        rig = self.rig("safeops", load_fixture("safe_ops"), config={"ceremony": {"trivialBound": {"files": 3, "newFiles": 2}}})
+        rig = self.rig("safeops", load_fixture("safe_ops"), config={"ceremony": {"trivialBound": {"files": 3, "newFiles": 2}, "foremanEdits": "bounded"}})
         pi = rig.start()
         sid = pi.session_id()
         recs = pi.prompt("[[replay:s1]] start", timeout=60)

@@ -23,6 +23,8 @@ export interface CeremonyState {
   reasons: string[];
   /** The foreman, the user or a ledger header recorded a tier (a later escalation keeps it). */
   triaged?: boolean;
+  /** The edit mode refused a foreman change (editmode.ts): the task needs a builder, so a trivial triage counts as standard. */
+  needsChange?: boolean;
 }
 
 export function isTier(v: unknown): v is Tier {

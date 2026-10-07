@@ -219,6 +219,25 @@ class ShellWriteGuardTest(unittest.TestCase):
                 self.assertIsNotNone(swg.decide(cmd, self.ws, self.ws))
         self.assertIsNone(swg.decide("cd .workflow/l/.. && echo x > a.py", self.ws, self.ws))   # logical cd
 
+    def test_allowed_dirs(self):
+        # scratchpad mode: the adapter adds the scratch dir; default (missing) is .workflow only
+        os.mkdir(os.path.join(self.ws, "notes"))
+        dirs = [".workflow", "notes"]
+        self.assertIsNone(swg.decide("echo x > notes/n.md", self.ws, self.ws, "bash", dirs))
+        self.assertIsNone(swg.decide("echo x > .workflow/n.md", self.ws, self.ws, "bash", dirs))
+        self.assertEqual(swg.decide("echo x > notes/n.md", self.ws, self.ws)[0], "redirect")
+        self.assertEqual(swg.decide("echo x > notes", self.ws, self.ws, "bash", dirs)[0], "redirect")   # the dir itself
+        self.assertEqual(swg.decide("echo x > src/f", self.ws, self.ws, "bash", dirs)[0], "redirect")
+        # absolute, `..` and root entries are ignored
+        for bad in (["/"], [".."], ["."], ["notes/../src"], [self.ws]):
+            with self.subTest(dirs=bad):
+                self.assertEqual(swg.decide("echo x > src/f", self.ws, self.ws, "bash", bad)[0], "redirect")
+        try:
+            os.symlink(os.path.join("..", "src"), os.path.join(self.ws, "notes", "l"))
+        except (OSError, NotImplementedError):
+            return
+        self.assertEqual(swg.decide("echo x > notes/l/f", self.ws, self.ws, "bash", dirs)[0], "redirect")
+
     def test_windows_path_flavour(self):
         # Windows (CI item 29) emulated with ntpath on any host: bash strips the backslashes of an
         # unquoted `C:\a\b`, leaving the drive-relative `C:ab`, whose directory is unknown -> refused
@@ -272,6 +291,10 @@ class ShellWriteGuardTest(unittest.TestCase):
         self.assertIn(swg.REFUSAL, out["hookSpecificOutput"]["permissionDecisionReason"])
         allow = call(json.dumps({"tool_name": "Bash", "tool_input": {"command": "echo x > .workflow/n.md"}, "cwd": self.ws, "workspace": self.ws}))
         self.assertEqual((allow.returncode, allow.stdout), (0, b""))
+        scratch = {"tool_name": "Bash", "tool_input": {"command": "echo x > notes/n.md"}, "cwd": self.ws, "workspace": self.ws}
+        self.assertEqual(json.loads(call(json.dumps(scratch)).stdout.decode())["kind"], "redirect")
+        scratch["allowed_dirs"] = [".workflow", "notes"]
+        self.assertEqual(call(json.dumps(scratch)).stdout, b"")
         broken = call("[1, 2]")
         self.assertEqual((broken.returncode, broken.stdout), (2, b""))
         self.assertIn(b"internal error", broken.stderr)

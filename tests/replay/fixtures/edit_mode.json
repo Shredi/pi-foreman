@@ -1,0 +1,41 @@
+{
+ "foreman": {
+  "matrix": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "trivial", "reason": "one word"}}]},
+   {"tools": [{"name": "edit", "arguments": {"path": "src/a.txt", "edits": [{"oldText": "alpha", "newText": "beta"}]}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/n.md", "content": "note\n"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": "{{SCRATCH}}/s.md", "content": "scratch\n"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "echo x > src/f"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "echo x > {{SCRATCH}}/n.md"}}]},
+   {"text": "Done."}
+  ],
+  "late": [
+   {"tools": [{"name": "edit", "arguments": {"path": "src/a.txt", "edits": [{"oldText": "alpha", "newText": "beta"}]}}]},
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "trivial", "reason": "one word"}}]},
+   {"text": "Done."}
+  ],
+  "chain": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "trivial", "reason": "one word"}}]},
+   {"tools": [{"name": "edit", "arguments": {"path": "src/a.txt", "edits": [{"oldText": "alpha", "newText": "beta"}]}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-em.md", "content": "# Requirements Ledger: em\n\n- [x] 1. synthetic item\n"}}]},
+   {"text": "Done."},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-built]] build item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "review": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-pass]] review item 1"}}]},
+   {"text": "Reviewer launched."}
+  ],
+  "after": [{"text": "Built and reviewed; done."}],
+  "scratchonly": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "trivial", "reason": "draft a commit message"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/commit-msg.txt", "content": "fix: a thing\n"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "echo note > .workflow/scratch/n.md"}}]},
+   {"text": "Done."}
+  ]
+ },
+ "*": {
+  "b-built": [{"text": "[[replay:review]] built"}],
+  "r-pass": [{"text": "[[replay:after]] no findings\nOverall verdict: PASS"}]
+ }
+}
