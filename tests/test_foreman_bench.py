@@ -293,7 +293,7 @@ class BenchTest(unittest.TestCase):
         self.job("R2__beta__r2__a", rec({"cacheWrite": 10**6}, {}, {"b/mystery-1": {"input": 5}}))
         tdir = fb.tasks_dir(preset)
         prices = fb.load_prices()
-        self.assertEqual(prices["retrieved"], "2026-10-04")
+        self.assertEqual(prices["retrieved"], "2026-10-07")
         c = fb.cost_of(fb.counted(fb.cell_results(self.jobs, "R2__beta__r1")), prices)
         self.assertAlmostEqual(c["usd"], 29.65)
         self.assertAlmostEqual(c["usd_1h"], 32.65)
