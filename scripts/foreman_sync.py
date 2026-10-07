@@ -456,7 +456,7 @@ def sync_repo(entry, ctx):
         return rep
     if not recheck(root, rep, "%sbefore push: " % ("committed, " if committed else "")):
         return rep
-    code, _, err = git(["push", remote, "%s:refs/heads/%s" % (branch, branch)], root)
+    code, _, err = git(["push", remote, "refs/heads/%s:refs/heads/%s" % (branch, branch)], root)
     if code != 0:
         rep["status"] = "skipped"
         rep["detail"] = "%spush to %s failed: %s" % ("committed, " if committed else "", remote, first_line(err))

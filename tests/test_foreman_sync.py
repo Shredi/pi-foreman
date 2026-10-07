@@ -408,6 +408,8 @@ class SyncTest(unittest.TestCase):
         for bad in ("clean", "stash", "checkout", "-f", "-a", "-A", "-u", ".", "--all"):
             self.assertNotIn(bad, argv)
         self.assertFalse([a for a in argv if a.startswith("+")])
+        # The push source is a full ref, so a branch named `+x` cannot form a forced refspec.
+        self.assertIn('"refs/heads/%s:refs/heads/%s" % (branch, branch)', src)
 
 
 if __name__ == "__main__":
