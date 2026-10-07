@@ -285,7 +285,7 @@ class TestRoleAllowlist(ReplayCase):
         sid = pi.session_id()
         [(_, err, text)] = tool_results(pi.prompt("[[replay:r1]] start", timeout=60), "subagent")
         self.assertTrue(err)
-        self.assertIn("pi-foreman: agent 'worker' is not a pi-foreman role; launch one of: explorer, builder, reviewer, senior-reviewer, finalizer", text)
+        self.assertIn("pi-foreman: agent 'worker' is not a pi-foreman role; launch one of: planner, explorer, builder, reviewer, senior-reviewer, finalizer", text)
         [(_, err, text)] = tool_results(pi.prompt("[[replay:r2]] start", timeout=60), "subagent")
         self.assertFalse(err, text)
         self.assertNotIn("builder child result", text)  # detached: the result arrives as a notice

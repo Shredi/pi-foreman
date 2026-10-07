@@ -1,0 +1,25 @@
+{
+ "foreman": {
+  "p1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "planner", "task": "[[replay:plan]] short task"}}]},
+   {"text": "Launched."},
+   {"text": "Planner reported."}
+  ],
+  "p2": [
+   {"tools": [
+    {"name": "subagent", "arguments": {"tasks": [{"agent": "planner", "task": "[[replay:plan]] a"}, {"agent": "explorer", "task": "b"}]}},
+    {"name": "subagent", "arguments": {"chain": [{"agent": "explorer", "task": "a"}, {"agent": "planner", "task": "b"}]}}
+   ]},
+   {"text": "Refused."}
+  ]
+ },
+ "planner": {
+  "plan": [
+   {"tools": [
+    {"name": "write", "arguments": {"path": ".workflow/scratch/plan-x.md", "content": "# Plan\n"}},
+    {"name": "write", "arguments": {"path": "src/a.txt", "content": "nope\n"}}
+   ]},
+   {"text": "planner child finished"}
+  ]
+ }
+}

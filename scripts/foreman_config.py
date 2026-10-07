@@ -117,7 +117,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULTS_PATH = ROOT / "config" / "foreman.defaults.json"
 SCHEMA_PATH = ROOT / "config" / "foreman.schema.json"
-CHILD_ROLES = ["explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
+CHILD_ROLES = ["planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
 # Tools a child never gets, whatever roles.<id>.tools says: children reach the foreman through
 # contact_supervisor, never through pi-intercom (the adapter also refuses the tool in children).
 CHILD_DENIED_TOOLS = ("intercom",)
@@ -184,7 +184,7 @@ LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
                  "threshold": 0.3, "maxSeconds": 1, "maxActive": 1}
 TIERS = ["trivial", "standard", "heavy"]
 # Steps ceremony.required.<tier> may name (the adapter counts each per session).
-REQUIRED_STEPS = ["builder", "reviewer", "finalizer"]
+REQUIRED_STEPS = ["planner", "builder", "reviewer", "finalizer"]
 # codemode adds a tool, so the project and session layers may only switch it off.
 CODEMODE_FALSE_ONLY = True
 # roles.<id> in the project and session layers: "intersect" = narrow only. NEW_ROLE_IDS
@@ -834,7 +834,7 @@ def resolve_all(cfg, provider):
 
 
 def generate_subagents(cfg):
-    """pi-subagents settings block for the five child roles.
+    """pi-subagents settings block for the child roles.
 
     pi-subagents parses agentOverridesByProvider entries with the same parser as
     agentOverrides, so `tools` is accepted per provider. A per-provider `tools`

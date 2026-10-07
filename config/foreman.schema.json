@@ -19,7 +19,7 @@
     },
     "roles": {
       "type": "object",
-      "description": "Per-role settings keyed by neutral role id (explorer, builder, reviewer, senior-reviewer, finalizer, foreman, or an overlay role).",
+      "description": "Per-role settings keyed by neutral role id (planner, explorer, builder, reviewer, senior-reviewer, finalizer, foreman, or an overlay role).",
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
@@ -128,10 +128,10 @@
         "required": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Steps a session at this tier completes before the foreman may finish: builder (a builder run that completed), reviewer (a reviewer or senior-reviewer verdict PASS or FAIL), finalizer (a finalizer run that completed). A project or session can only add steps.",
+          "description": "Steps a session at this tier completes before the foreman may finish: planner (a planner run that completed), builder (a builder run that completed), reviewer (a reviewer or senior-reviewer verdict PASS or FAIL), finalizer (a finalizer run that completed). A project or session can only add steps.",
           "properties": {
-            "standard": { "type": "array", "items": { "type": "string", "enum": ["builder", "reviewer", "finalizer"] } },
-            "heavy": { "type": "array", "items": { "type": "string", "enum": ["builder", "reviewer", "finalizer"] } }
+            "standard": { "type": "array", "items": { "type": "string", "enum": ["planner", "builder", "reviewer", "finalizer"] } },
+            "heavy": { "type": "array", "items": { "type": "string", "enum": ["planner", "builder", "reviewer", "finalizer"] } }
           }
         },
         "foremanEdits": { "type": "string", "enum": ["readonly", "scratchpad", "bounded"], "description": "What the foreman may change itself: readonly = only .workflow/; scratchpad = .workflow/ and ceremony.scratchDir; bounded = workspace files at tier trivial within ceremony.trivialBound. A refused edit raises a trivial tier to standard. A project or session can only tighten it (readonly < scratchpad < bounded)." },
