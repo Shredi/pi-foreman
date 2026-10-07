@@ -21,6 +21,7 @@
 // request never reached the provider).
 // FOREMAN_FAKE_SECTIONS=<file> appends "<tag> <step> <section names>" per foreman-model call: the
 // system-prompt sections the request carries, folded over its system messages (null deletes).
+// Compaction summary requests (Pi's summarization system prompt) answer a fixed summary text.
 import * as fs from "node:fs";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Model, SimpleStreamOptions, TranscriptContext } from "@earendil-works/pi-ai";
@@ -110,7 +111,9 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
   }
   if (model.id === "review-error") throw new Error("fake: scripted provider failure");
   const stream = createAssistantMessageEventStream();
-  const step: Step = model.id.startsWith("review-") ? { text: REVIEW_REPLIES[model.id] } : pickStep(loadScript(), model.id, context.messages as { role: string; content: unknown }[]);
+  const summary = [context.systemPrompt, ...(context.messages as { role: string; content: unknown }[]).filter((m) => m.role === "system").map((m) => textOf(m.content))]
+    .some((t) => typeof t === "string" && t.startsWith("You are a context summarization assistant"));
+  const step: Step = model.id.startsWith("review-") ? { text: REVIEW_REPLIES[model.id] } : summary ? { text: "fake: summary" } : pickStep(loadScript(), model.id, context.messages as { role: string; content: unknown }[]);
   const output: AssistantMessage = {
     role: "assistant",
     content: [],

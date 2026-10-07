@@ -194,12 +194,17 @@ export class CloseFlow {
     this.refuse(`the close turn did not start within ${CLOSE_START_DEADLINE_MS / 1000} s (a check or another handler stopped it); nothing was synced. Send the close again`, req.source, req.replyTo);
   }
 
+  /** `agent_start` after the close prompt passed `input`: the close run began, the start deadline is met (N3). */
+  onAgentStart(): void {
+    if (this.phase !== "result-turn" || !this.promptSeen) return;
+    this.clearDeadline?.();
+    this.clearDeadline = null;
+  }
+
   /** An assistant reply ended: the close turn has started when it follows the close prompt. */
   onModelReply(stopReason: unknown): void {
     if (this.phase !== "result-turn" || !this.promptSeen || this.started || stopReason === "aborted") return;
     this.started = true;
-    this.clearDeadline?.();
-    this.clearDeadline = null;
   }
 
   /**
@@ -226,9 +231,14 @@ export class CloseFlow {
     if (!ctx.isIdle()) return;
     if (this.phase === "idle-wait") return this.closeTurn();
     if (this.phase !== "result-turn") return;
-    // Not started: a run that settles before the close turn reached the model is not the close
-    // turn (S5); the start deadline disarms the flow.
-    if (!this.started) return;
+    // Not started: the close prompt was sent, but the run that settles never produced a close
+    // reply (aborted by a check, or the prompt was swallowed). Disarm now (S5, N3): a later,
+    // unrelated run must never sync or shut down.
+    if (!this.started) {
+      const req = this.req;
+      this.reset();
+      return this.refuse("the close turn was stopped before it produced a reply (a check or another handler stopped it); nothing was synced. Send the close again", req.source, req.replyTo);
+    }
     this.phase = "finishing";
     const req = this.req;
     if (this.waitsBlock(req.source, req.replyTo)) return this.reset();
@@ -355,6 +365,9 @@ export function registerClose(
       if (s && !s.isChild && fromIntercom(s, ctx, hit!.details, false)) return { action: "handled" as const };
     }
     return { action: "continue" as const };
+  });
+  pi.on("agent_start", async (_event, ctx) => {
+    flows.get(sid(ctx))?.flow.onAgentStart();
   });
   pi.on("agent_settled", async (_event, ctx) => {
     const slot = flows.get(sid(ctx));

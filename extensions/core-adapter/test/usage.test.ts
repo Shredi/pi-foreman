@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { aggregate, appendUsage, BINDINGS_ENV, bindLaunch, stripBinding, causeOfCustom, causeOfInput, filterWorkspace, formatSummary, launchKind, parseLines, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "../usage.ts";
+import { aggregate, appendUsage, BINDINGS_ENV, bindLaunch, stripBinding, causeOfCustom, causeOfInput, filterWorkspace, formatSummary, keepSection, launchKind, parseLines, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "../usage.ts";
 import type { LaunchBinding, LineContext } from "../usage.ts";
 
 const MSG = {
@@ -115,4 +115,17 @@ test("turn cause: pi-intercom's inbound message and its idle wake prompt are int
   assert.equal(causeOfInput("extension", "New intercom message above."), "intercom");
   assert.equal(causeOfInput("interactive", "New intercom message above."), "user");
   assert.equal(causeOfInput("extension", "something else"), "other");
+});
+
+test("keepSection puts the cached section back when a compacted head lacks it (review N2)", () => {
+  const user = { role: "user", content: "hi" };
+  const head = { role: "system", content: "", sections: { rules: "r" } };
+  const out = keepSection([head, user], "pi-foreman", "F") as Record<string, unknown>[];
+  assert.deepEqual(out[0].sections, { rules: "r", "pi-foreman": "F" });
+  assert.equal(out[1], user);
+  assert.equal(keepSection([{ role: "system", content: "", sections: { "pi-foreman": "old" } }, user], "pi-foreman", "F"), null, "present: unchanged");
+  const nulled = keepSection([head, { role: "system", content: "", sections: { "pi-foreman": null } }], "pi-foreman", "F") as Record<string, unknown>[];
+  assert.deepEqual(nulled[0].sections, { rules: "r", "pi-foreman": "F" });
+  assert.deepEqual(nulled[1].sections, {});
+  assert.equal(keepSection([head, user], "pi-foreman"), null, "no cached text: unchanged");
 });
