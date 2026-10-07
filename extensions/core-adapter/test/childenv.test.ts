@@ -38,7 +38,7 @@ test("child env drops the intercom identity (review S6), also without the git pa
   const env: Env = { PATH: "/usr/bin", PI_FOREMAN_PARENT_INTERCOM: "parent-x", pi_intercom_stable_id: "fixed" };
   stripChildIntercomEnv(env);
   assert.deepEqual(env, { PATH: "/usr/bin" });
-  const env2: Env = { PI_FOREMAN_PARENT_INTERCOM: "parent-x", PI_INTERCOM_STABLE_ID: "fixed" };
+  const env2: Env = { PI_FOREMAN_PARENT_INTERCOM: "parent-x", PI_INTERCOM_STABLE_ID: "fixed", PI_INTERCOM_SESSION_ID: "s-1" };
   patchChildGitEnv(env2);
-  assert.ok(!("PI_FOREMAN_PARENT_INTERCOM" in env2) && !("PI_INTERCOM_STABLE_ID" in env2));
+  assert.ok(!("PI_FOREMAN_PARENT_INTERCOM" in env2) && !("PI_INTERCOM_STABLE_ID" in env2) && !("PI_INTERCOM_SESSION_ID" in env2));
 });

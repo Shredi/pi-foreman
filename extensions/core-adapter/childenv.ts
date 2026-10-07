@@ -20,7 +20,7 @@ import type { Env } from "./env.ts";
  * Intercom identity (security review S6): with the foreman's parent id or a fixed intercom id a
  * child could register as the foreman's parent and send foreman:close.
  */
-export const CHILD_INTERCOM_UNSET = ["PI_FOREMAN_PARENT_INTERCOM", "PI_INTERCOM_STABLE_ID"];
+export const CHILD_INTERCOM_UNSET = ["PI_FOREMAN_PARENT_INTERCOM", "PI_INTERCOM_STABLE_ID", "PI_INTERCOM_SESSION_ID"];
 
 /** Remove the intercom identity variables (children, always; also when safety.children.mayPush). */
 export function stripChildIntercomEnv(env: Env): void {
