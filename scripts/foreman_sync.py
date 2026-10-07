@@ -24,11 +24,13 @@ the loader the extension uses; the list comes from L1-L3 only):
 
 Git runs with the hardened environment and `-c` options of scripts/safe_ops.py: no system config,
 core.fsmonitor off, ext:: transport off, commit.gpgSign and submodule.recurse off, and core.hooksPath set to an empty
-directory, so repository hooks (pre-commit, commit-msg, pre-push) do NOT run. A repo whose local or
-worktree config (includes followed) sets a key that runs code or redirects fetch/push (filters,
-textconv/diff commands, attributes files, submodules, remote vcs helpers, ssh/proxy/askpass/credential helpers, gpg programs, url rewrites, push urls, pack programs,
-proxies, protocol allows, a branch remote that is not a configured remote, an include outside the
-git dir) is refused before any pull, add, commit or push; only the rule names are reported.
+directory, so repository hooks (pre-commit, commit-msg, pre-push) do NOT run; core.alternateRefsCommand
+and core.alternateRefsPrefixes are emptied. A repo whose local or worktree config (includes followed)
+sets any key outside a small allowlist of harmless keys (ALLOWED_KEYS: core layout/line-ending keys,
+user.name/email, remote.*.url/fetch, branch tracking, pull/push/fetch defaults, display keys; some only
+with a false value, branch remotes only naming a configured remote, remote urls without ext::/fd::),
+includes a file outside the git dir, or has objects/info/alternates, is refused before any pull, add,
+commit or push; only key classes and rule names are reported.
 Candidates are scanned whole as bytes (larger than 20 MiB: refused); symlinks and hard links are
 refused. Git output shown in a report is redacted (`scheme://user:pass@` and token-like strings). That is deliberate: a hook is
 code from the repository, and sync runs with the owner's credentials.
@@ -74,21 +76,26 @@ SECRET_CONTENT = [
 ]
 REDACT = [(re.compile(r"(\w[\w+.\-]*://)[^/@\s]+@"), r"\1***@"), (re.compile(TOKEN_RX), "***"),
           (re.compile(r"(?<![A-Z0-9])AKIA[0-9A-Z]{16}(?![A-Z0-9])"), "***")]
-# Repo-local config keys that run code or redirect fetch/push (security review S2). A repo that sets
-# one is refused; only the rule name is reported (a url.<base> subsection can carry credentials).
-RISKY_KEYS = [(label, re.compile(rx), nonfalse) for label, rx, nonfalse in (
-    ("filter.*", r"filter\..+", False), ("diff.*.textconv", r"diff\..+\.textconv", False),
-    ("diff.*.command", r"diff\..+\.command", False), ("core.attributesFile", r"core\.attributesfile", False),
-    ("submodule.*", r"submodule\..+", False), ("remote.*.vcs", r"remote\..+\.vcs", False),
-    ("core.fsmonitor", r"core\.fsmonitor", True), ("core.hooksPath", r"core\.hookspath", False),
-    ("core.sshCommand", r"core\.sshcommand", False), ("core.gitProxy", r"core\.gitproxy", False),
-    ("core.askPass", r"core\.askpass", False), ("credential.*helper", r"credential\.(?:.+\.)?helper", False),
-    ("gpg.program", r"gpg\.program", False), ("gpg.*.program", r"gpg\..+\.program", False),
-    ("commit.gpgSign", r"commit\.gpgsign", True), ("tag.gpgSign", r"tag\.gpgsign", True),
-    ("url.*.insteadOf", r"url\..+\.insteadof", False), ("url.*.pushInsteadOf", r"url\..+\.pushinsteadof", False),
-    ("remote.*.pushurl", r"remote\..+\.pushurl", False), ("remote.*.uploadpack", r"remote\..+\.uploadpack", False),
-    ("remote.*.receivepack", r"remote\..+\.receivepack", False), ("remote.*.proxy", r"remote\..+\.proxy", False),
-    ("http.*proxy", r"http\.(?:.+\.)?proxy", False), ("protocol.*.allow", r"protocol\.(?:.+\.)?allow", False))]
+# Repo-local, worktree and included config keys sync accepts (security re-review N1: a deny list
+# missed keys twice). Any other key refuses the repo; only its key class (`section.<x>.name`, the
+# subsection masked) or a rule label is reported, never a value. `<x>` = any subsection name.
+# Value rules: "false" = only a false value; "remote" = must name a configured remote;
+# "url" = no ext::/fd:: transport.
+ALLOWED_KEYS = [(re.compile(rx), rule) for rx, rule in (
+    (r"core\.(?:repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks"
+     r"|autocrlf|eol|safecrlf|quotepath|untrackedcache|splitindex|checkstat|trustctime|commitgraph"
+     r"|multipackindex|abbrev)", None),
+    (r"core\.fsmonitor", "false"),
+    (r"extensions\.(?:worktreeconfig|objectformat|refstorage)", None), (r"init\.defaultbranch", None),
+    (r"user\.(?:name|email)", None),
+    (r"remote\..+\.url", "url"), (r"remote\..+\.(?:fetch|tagopt|prune)", None),
+    (r"branch\..+\.(?:remote|pushremote)", "remote"), (r"branch\..+\.(?:merge|rebase)", None),
+    (r"pull\.(?:ff|rebase)", None), (r"push\.(?:default|autosetupremote)", None), (r"fetch\.prune", None),
+    (r"gc\.(?:auto|autodetach)", None), (r"(?:commit|tag)\.gpgsign", "false"),
+    (r"(?:color|i18n|log|status|advice)\..+", None), (r"diff\.(?:renames|algorithm)", None),
+    (r"merge\.conflictstyle", None), (r"rerere\.enabled", None), (r"index\.version", None),
+    (r"feature\.manyfiles", None), (r"include\.path|includeif\..+\.path", "include"))]
+BAD_TRANSPORT = re.compile(r"\s*(?:ext|fd)::", re.I)
 
 
 class UsageError(Exception):
@@ -103,7 +110,8 @@ def git(args, cwd, stdin=None):
     if not exe:
         return 127, "", "git is not on PATH"
     try:
-        r = subprocess.run([exe, "-c", "commit.gpgSign=false", "-c", "submodule.recurse=false"] + safe_ops.git_hardening() + list(args), cwd=cwd, env=safe_ops._git_env(),
+        r = subprocess.run([exe, "-c", "commit.gpgSign=false", "-c", "submodule.recurse=false",
+                            "-c", "core.alternateRefsCommand=", "-c", "core.alternateRefsPrefixes="] + safe_ops.git_hardening() + list(args), cwd=cwd, env=safe_ops._git_env(),
                            input=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=GIT_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as exc:
         return 1, "", str(exc)
@@ -202,9 +210,16 @@ def _is_false(val):
     return val is not None and val.strip().lower() in ("false", "no", "off", "0", "")
 
 
+def key_class(low):
+    """`section.<x>.name` for a three-part key (the subsection may carry a url or credentials)."""
+    parts = low.split(".")
+    return low if len(parts) < 3 else "%s.<x>.%s" % (parts[0], parts[-1])
+
+
 def risky_config(root):
-    """(rule names, error) for repo-local and worktree config (includes followed) that runs code or
-    redirects fetch/push. Rule names only: key subsections and values are never reported."""
+    """(rule names, error) for repo-local and worktree config (includes followed) outside ALLOWED_KEYS
+    or failing its value rule, and for an alternates file. Key classes and rule names only: key
+    subsections and values are never reported."""
     dirs = {}
     for flag in ("--git-dir", "--git-common-dir"):
         code, out, err = git(["rev-parse", flag], root)
@@ -225,16 +240,22 @@ def risky_config(root):
     for pairs, base in sets:
         for key, val in pairs:
             low = key.lower()
-            for label, rx, nonfalse in RISKY_KEYS:
-                if rx.fullmatch(low) and not (nonfalse and _is_false(val)):
-                    hits.append(label)
-            if low.startswith("branch.") and low.endswith(".remote") and (val or "") not in remotes:
-                hits.append("branch.*.remote (not a configured remote)")
-            if low == "include.path" or (low.startswith("includeif.") and low.endswith(".path")):
+            rule = next((r for rx, r in ALLOWED_KEYS if rx.fullmatch(low)), False)
+            if rule is False:
+                hits.append("not allowlisted: %s" % key_class(low))
+            elif rule == "false" and not _is_false(val):
+                hits.append("%s (not false)" % low)
+            elif rule == "remote" and (val or "") not in remotes:
+                hits.append("%s (not a configured remote)" % key_class(low))
+            elif rule == "url" and BAD_TRANSPORT.match(val or ""):
+                hits.append("remote.<x>.url (ext::/fd:: transport)")
+            elif rule == "include":
                 target = os.path.expanduser(val or "")
                 if not target or not safe_ops.is_inside(os.path.realpath(dirs["--git-common-dir"]),
                                                         os.path.realpath(os.path.join(base, target))):
                     hits.append("include.path/includeIf.*.path (outside the git dir)")
+    if os.path.lexists(os.path.join(dirs["--git-common-dir"], "objects", "info", "alternates")):
+        hits.append("objects/info/alternates present")
     return sorted(set(hits)), None
 
 

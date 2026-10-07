@@ -137,17 +137,20 @@ class SyncTest(unittest.TestCase):
     def test_risky_repo_config_refused(self):
         outside = self.tmp / "outside.cfg"
         outside.write_text("[user]\n\tname = X\n")
-        cases = [("filter.x.clean", "touch pwned", "filter.*"), ("diff.x.textconv", "cat", "diff.*.textconv"),
-                 ("diff.x.command", "x", "diff.*.command"), ("core.attributesFile", "x", "core.attributesFile"),
-                 ("submodule.recurse", "true", "submodule.*"), ("remote.origin.vcs", "x", "remote.*.vcs"),
-                 ("core.sshCommand", "ssh -o X=y", "core.sshCommand"), ("core.hooksPath", "hooks", "core.hooksPath"),
-                 ("credential.helper", "store", "credential.*helper"), ("gpg.ssh.program", "x", "gpg.*.program"),
-                 ("commit.gpgSign", "true", "commit.gpgSign"),
-                 ("url.https://user:pw@example.invalid/.insteadOf", str(self.bare), "url.*.insteadOf"),
-                 ("remote.origin.pushurl", str(self.tmp / "evil.git"), "remote.*.pushurl"),
-                 ("remote.origin.uploadpack", "x", "remote.*.uploadpack"), ("http.proxy", "x", "http.*proxy"),
-                 ("protocol.file.allow", "always", "protocol.*.allow"),
-                 ("branch.main.remote", str(self.tmp / "evil.git"), "branch.*.remote (not a configured remote)"),
+        na = "not allowlisted: "
+        cases = [("filter.x.clean", "touch pwned", na + "filter.<x>.clean"), ("diff.x.textconv", "cat", na + "diff.<x>.textconv"),
+                 ("diff.x.command", "x", na + "diff.<x>.command"), ("core.attributesFile", "x", na + "core.attributesfile"),
+                 ("submodule.recurse", "true", na + "submodule.recurse"), ("remote.origin.vcs", "x", na + "remote.<x>.vcs"),
+                 ("core.sshCommand", "ssh -o X=y", na + "core.sshcommand"), ("core.hooksPath", "hooks", na + "core.hookspath"),
+                 ("credential.helper", "store", na + "credential.helper"), ("gpg.ssh.program", "x", na + "gpg.<x>.program"),
+                 ("commit.gpgSign", "true", "commit.gpgsign (not false)"), ("core.fsmonitor", "x", "core.fsmonitor (not false)"),
+                 ("url.https://user:pw@example.invalid/.insteadOf", str(self.bare), na + "url.<x>.insteadof"),
+                 ("remote.origin.pushurl", str(self.tmp / "evil.git"), na + "remote.<x>.pushurl"),
+                 ("remote.origin.uploadpack", "x", na + "remote.<x>.uploadpack"), ("http.proxy", "x", na + "http.proxy"),
+                 ("http.sslVerify", "false", na + "http.sslverify"), ("maintenance.auto", "true", na + "maintenance.auto"),
+                 ("protocol.file.allow", "always", na + "protocol.<x>.allow"),
+                 ("remote.evil.url", "ext::sh -c touch% pwned", "remote.<x>.url (ext::/fd:: transport)"),
+                 ("branch.main.remote", str(self.tmp / "evil.git"), "branch.<x>.remote (not a configured remote)"),
                  ("include.path", str(outside), "include.path/includeIf.*.path (outside the git dir)")]
         self.write("notes/a.md", "note\n")
         before = self.remote_head()
@@ -164,12 +167,59 @@ class SyncTest(unittest.TestCase):
         g(self.work, "config", "commit.gpgSign", "false")
         self.assertEqual(self.run_sync()[1]["status"], "pushed")
 
+    def spy_git(self):
+        calls, real = [], fs.git
+        def spy(args, cwd, stdin=None):
+            calls.append(args[0])
+            return real(args, cwd, stdin)
+        patch = mock.patch.object(fs, "git", spy)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return calls
+
+    def test_rereview_vectors_refused_before_git_writes(self):
+        self.write("notes/a.md", "note\n")
+        head, before = g(self.work, "rev-parse", "HEAD"), self.remote_head()
+        hook_marker, alt_marker = self.tmp / "HOOKMARK", self.tmp / "MARKER"
+        g(self.work, "config", "hook.x.event", "pre-commit")
+        g(self.work, "config", "hook.x.command", "touch '%s'" % hook_marker)
+        calls = self.spy_git()
+        code, rep = self.run_sync()
+        self.assertEqual((code, rep["status"]), (1, "refused"), rep)
+        self.assertIn("not allowlisted: hook.<x>.command", rep["detail"])
+        self.assertNotIn(str(hook_marker), json.dumps(rep))
+        g(self.work, "config", "--remove-section", "hook.x")
+        alternates = self.work / ".git" / "objects" / "info" / "alternates"
+        alternates.parent.mkdir(parents=True, exist_ok=True)
+        alternates.write_text(str(self.bare / "objects") + "\n")
+        g(self.work, "config", "core.alternateRefsCommand", "touch '%s'" % alt_marker)
+        code, rep = self.run_sync()
+        self.assertEqual((code, rep["status"]), (1, "refused"), rep)
+        self.assertIn("not allowlisted: core.alternaterefscommand", rep["detail"])
+        self.assertIn("objects/info/alternates present", rep["detail"])
+        g(self.work, "config", "--unset", "core.alternateRefsCommand")
+        code, rep = self.run_sync()
+        self.assertEqual(rep["detail"], "repo config sets code-running or redirecting keys: objects/info/alternates present")
+        self.assertFalse(set(calls) & {"pull", "fetch", "add", "commit", "push"}, calls)
+        self.assertFalse(hook_marker.exists() or alt_marker.exists())
+        self.assertEqual((g(self.work, "rev-parse", "HEAD"), self.remote_head()), (head, before))
+
+    def test_allowlisted_repo_syncs(self):
+        for key, val in (("core.autocrlf", "false"), ("pull.rebase", "true"), ("push.default", "simple"),
+                         ("color.ui", "auto"), ("branch.main.pushRemote", "origin"), ("core.fsmonitor", "false")):
+            g(self.work, "config", key, val)
+        self.assertEqual(g(self.work, "config", "branch.main.remote"), "origin")
+        self.write("notes/a.md", "note\n")
+        code, rep = self.run_sync()
+        self.assertEqual((code, rep["status"]), (0, "pushed"), rep)
+        self.assertEqual(self.remote_head(), g(self.work, "rev-parse", "HEAD"))
+
     def test_risky_worktree_config_refused(self):
         g(self.work, "config", "extensions.worktreeConfig", "true")
         g(self.work, "config", "--worktree", "core.askPass", "x")
         code, rep = self.run_sync()
         self.assertEqual((code, rep["status"]), (1, "refused"))
-        self.assertIn("core.askPass", rep["detail"])
+        self.assertIn("not allowlisted: core.askpass", rep["detail"])
 
     def test_secret_scan_whole_file_bytes_and_names(self):
         pad = b"\0" * (3 * 1024 * 1024 - 10)
