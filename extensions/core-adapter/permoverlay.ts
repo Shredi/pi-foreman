@@ -782,10 +782,18 @@ const CD_VERBS = new Set(["cd", "chdir", "set-location", "sl", "pushd", "push-lo
 const POP_VERBS = new Set(["popd", "pop-location"]);
 const CD_DENY = "pi-foreman: denied by the permission policy (children may cd only inside the workspace). Use a path below the workspace root, or work with relative paths from it.";
 
+// Reserved words and grouping in front of a command word (security review D-B1); `time`, `exec`,
+// `command` and `builtin` are also stripped by `variants` as wrappers.
+const CD_KEYWORDS = new Set(["{", "}", "!", "if", "then", "else", "elif", "do", "while", "until", "time", "fi", "done", "esac"]);
+const LOOP_START = new Set(["while", "until", "for", "select"]);
+
 /**
  * Child-only: every cd/pushd/popd target, resolved cumulatively over the whole command from the
  * session cwd, must be provably inside the workspace (symlinks resolved). Anything not literal
- * (`$VAR`, `$()`, globs, `~`, `-`, bare cd) denies. Deny-only: it never allows.
+ * (`$VAR`, `$()`, globs, `~`, `-`, bare cd) denies, so does any mention of CDPATH (D-B2). A cd to a
+ * directory that does not exist yet may fail at run time, so the tracked cwd is a set of
+ * candidates and every later target must stay inside from each of them (D-B3). Inside a loop a
+ * relative cd, pushd and popd deny (they repeat). Deny-only: it never allows.
  */
 function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
   const win = ctx.platform === "win32";
@@ -799,27 +807,55 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
     return rel === "" || (rel !== ".." && !rel.startsWith(".." + p.sep) && !p.isAbsolute(rel));
   });
   const deny = (): Decision => ({ kind: "deny", reason: CD_DENY });
-  let cur = p.resolve(norm(ctx.cwd));
-  const stack: string[] = [];
+  const cdpath = (x: string): boolean => /cdpath/i.test(x);
+  if (cdpath(command)) return deny();
+  let cur = new Set([p.resolve(norm(ctx.cwd))]);
+  const stack: Array<{ set: Set<string>; sure: boolean }> = [];
   const units: string[][] = [];
+  let blocked = false;
   const gather = (src: string, shell: "posix" | "powershell", depth: number): void => {
+    if (cdpath(src)) blocked = true;
     const parsed = parseShell(src, shell);
     for (const sub of parsed.subs) if (depth < MAX_DEPTH) gather(sub, shell, depth + 1);
     for (const pipe of parsed.pipelines) for (const u of pipe) {
-      const core = variants(u).core;
+      if (u.some(cdpath)) blocked = true;
+      // keywords, env assignments and wrappers in any order: `! FOO=1 command cd x`
+      let core = u;
+      for (let n = 0; n < 8; n++) {
+        const lead: string[] = [];
+        let k = 0;
+        while (k < core.length && CD_KEYWORDS.has(core[k])) lead.push(core[k++]);
+        if (lead.length) units.push(lead);
+        const next = variants(core.slice(k)).core;
+        const done = next.length === core.length;
+        core = next;
+        if (done) break;
+      }
       units.push(core);
       const inner = innerScript(core);
       if (inner && depth < MAX_DEPTH) gather(inner.script, inner.shell, depth + 1);
     }
   };
   gather(command, ctx.shell ?? "posix", 0);
+  if (blocked) return deny();
+  let loop = 0;
   for (const core of units) {
     if (!core.length) continue;
+    if (CD_KEYWORDS.has(core[0])) {
+      for (const k of core) {
+        if (LOOP_START.has(k)) loop++;
+        else if (k === "done") loop = Math.max(0, loop - 1);
+      }
+      continue;
+    }
     const verb = baseName(core[0]);
+    if (LOOP_START.has(verb)) loop++; // `for x in ...` / `select x in ...`
     if (POP_VERBS.has(verb)) {
       const prev = stack.pop();
-      if (prev === undefined) return deny();
-      cur = prev;
+      if (prev === undefined || loop) return deny();
+      // after a pushd that may have failed, the popped entry may belong to another pushd
+      const unsure = !prev.sure || stack.some((e) => !e.sure);
+      cur = unsure ? new Set([...prev.set, ...stack.flatMap((e) => [...e.set]), ...cur]) : prev.set;
       continue;
     }
     if (!CD_VERBS.has(verb)) continue;
@@ -828,13 +864,25 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
     while (i < args.length && ["-L", "-P", "-e", "-@", "--"].includes(args[i])) i++;
     const target = args[i];
     if (target === undefined || target === "" || /^[-+]\d*$/.test(target) || /[$`*?[\]{}~]/.test(target) || target.startsWith("-")) return deny();
-    if (verb === "pushd" || verb === "push-location") stack.push(cur);
     let t = norm(target);
     if (win) t = t.replace(/^\/([A-Za-z])(?=$|\/)/, "$1:");
-    const abs = p.resolve(cur, t);
-    const real = realDeep(abs, p, fsx) ?? abs;
-    if (!inside(abs) || !inside(real)) return deny();
-    cur = real;
+    const push = verb === "pushd" || verb === "push-location";
+    if (loop && (push || !p.isAbsolute(t))) return deny();
+    const next = new Set<string>();
+    let sure = true;
+    for (const c of cur) {
+      const abs = p.resolve(c, t);
+      const real = realDeep(abs, p, fsx) ?? abs;
+      if (!inside(abs) || !inside(real)) return deny();
+      next.add(real);
+      // a missing directory (`mkdir -p build && cd build`) may exist by then, or the cd fails
+      if (!fsx.isDir(real)) {
+        next.add(c);
+        sure = false;
+      }
+    }
+    if (push) stack.push({ set: cur, sure });
+    cur = next;
   }
   return null;
 }

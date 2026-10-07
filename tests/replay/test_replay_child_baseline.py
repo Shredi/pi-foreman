@@ -40,7 +40,7 @@ class TestChildBaseline(ReplayCase):
         self.assertEqual(len(dialogs), 1, dialogs)
         self.assertIn("curl", dialogs[0])
         events = [r for recs_ in rig.traces().values() for r in recs_ if r.get("event") == "overlay"]
-        self.assertEqual(sum(1 for r in events if r.get("toolFamily") == "bash" and r.get("decision") == "deny"), 3, events)
+        self.assertEqual(sum(1 for r in events if r.get("toolFamily") == "bash" and r.get("decision") == "deny"), 5, events)
         sup = [r["decision"] for r in rig.traces()["trace-" + sid] if r.get("event") == "supervisor_request"]
         self.assertEqual(sup, ["open", "replied"])
 

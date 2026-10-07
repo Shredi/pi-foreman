@@ -29,6 +29,19 @@ export function stripChildIntercomEnv(env: Env): void {
   }
 }
 
+/**
+ * CDPATH (zsh: cdpath) redirects a relative `cd` outside the workspace (security review D-B2); the
+ * overlay denies commands that mention it, an inherited value is removed from a child's env.
+ */
+export const CHILD_CD_UNSET = ["CDPATH"];
+
+/** Remove the cd search path (children, always). */
+export function stripChildCdEnv(env: Env): void {
+  for (const name of CHILD_CD_UNSET) {
+    for (const k of Object.keys(env)) if (k.toUpperCase() === name) delete env[k];
+  }
+}
+
 /** Variables that carry or reach push credentials (and intercom identity); removed from a child's env. */
 export const CHILD_UNSET = [
   "SSH_AUTH_SOCK", "SSH_AGENT_PID", "GIT_ASKPASS", "SSH_ASKPASS",
