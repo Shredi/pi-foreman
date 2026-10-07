@@ -31,6 +31,13 @@ class DenyTest(unittest.TestCase):
         out = ws.deny_response({"id": "2", "method": "select", "options": ["Allow", "Block"]})
         self.assertEqual(out, {"type": "extension_ui_response", "id": "2", "cancelled": True})
 
+    def test_checkpoint_select_is_approved_and_other_selects_are_not(self):
+        title = "pi-foreman checkpoint: plan-x.md (0123abcd)"
+        rec = {"id": "5", "method": "select", "title": title, "options": ["approve", "revise", "reject"]}
+        self.assertEqual(ws.deny_response(rec), {"type": "extension_ui_response", "id": "5", "value": "approve"})
+        self.assertNotIn("value", ws.deny_response(dict(rec, title="Permission Required")))
+        self.assertEqual(ws.deny_response(dict(rec, method="confirm"))["confirmed"], False)
+
     def test_confirm_is_never_confirmed(self):
         self.assertEqual(ws.deny_response({"id": "3", "method": "confirm"})["confirmed"], False)
 

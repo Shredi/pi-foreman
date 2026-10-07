@@ -469,6 +469,14 @@ class BenchTest(unittest.TestCase):
         self.assertEqual(ws.foreman_config(row)["ceremony"], {"foremanEdits": "scratchpad"})
         self.assertNotIn("ceremony", ws.foreman_config(dict(row, foreman_edits=None)))
 
+    def test_checkpoint_auto_counts_only_rig_approvals(self):
+        d = self.logs(**{"state__trace-s1.jsonl": [
+            {"event": "checkpoint", "decision": "approve", "by": "rig", "tier": "heavy"},
+            {"event": "checkpoint", "decision": "approve", "by": "user", "tier": "heavy"},
+            {"event": "checkpoint", "decision": "pending", "by": "rig", "tier": "heavy"},
+            {"event": "checkpoint", "decision": "reject", "by": "rig", "tier": "heavy"}]})
+        self.assertEqual(ha.summarize_logs(d)["triage"]["checkpoint_auto"], 1)
+
     def test_settled_cost_sums_usage_log_else_prices_tokens(self):
         line = lambda c: {"role": "foreman", "model": "p/claude-opus-5-5", "input": 1000000, "cacheRead": 0, "cacheWrite": 0, "output": 0, "cost": {"total": c}}  # noqa: E731
         d = self.logs(**{"state__usage__s1.jsonl": [line(0.5), line(0.25)]})

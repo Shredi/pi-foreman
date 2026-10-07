@@ -21,7 +21,8 @@ size; never read), then deletes the token file. Results go to bench-run.json `se
 A provider answer "usage limit reached" ends the session at once and is recorded as an
 infrastructure error, not as a task result. A provider refusal ("safeguards flagged this
 message") is recorded as infra_error "provider_refusal" and does not stop the session.
-Human dialogs (select, confirm, input, editor) are denied explicitly, never confirmed, and
+Human dialogs (select, confirm, input, editor) are denied explicitly, never confirmed (except the
+plan checkpoint select, answered `approve`), and
 listed in bench-run.json `asks_denied`; the whole pi-foreman state dir is copied to state/.
 
 Outputs under --out (the trial's /logs/agent): bench-run.json (status, timings, child runs,
@@ -73,10 +74,17 @@ def provider_refusal_error(record):
     return _error_text(record, PROVIDER_REFUSAL)
 
 
+CHECKPOINT_PREFIX = "pi-foreman checkpoint:"
+
+
 def deny_response(rec):
-    """The extension_ui_response that denies one dialog request; never confirms."""
+    """The extension_ui_response that denies one dialog request; never confirms. One exception: the plan
+    checkpoint `select` (title starts with `pi-foreman checkpoint:`) is answered `approve`, so a heavy
+    bench run can proceed; the harness records it as by "rig" (`checkpoint_auto`)."""
     base = {"type": "extension_ui_response", "id": rec.get("id")}
     method = rec.get("method")
+    if method == "select" and str(rec.get("title") or "").startswith(CHECKPOINT_PREFIX):
+        return dict(base, value="approve")
     if method == "select":
         options = [o if isinstance(o, str) else str((o or {}).get("label") or (o or {}).get("value") or "")
                    for o in rec.get("options") or []]
