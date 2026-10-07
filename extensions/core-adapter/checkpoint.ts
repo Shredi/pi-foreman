@@ -18,7 +18,8 @@ import { realDeep, under } from "./triage.ts";
 export const CHECKPOINT_TOOL = "foreman_checkpoint";
 export const PLAN_MAX_BYTES = 256 * 1024;
 export const PLAN_NAME = /^plan-([A-Za-z0-9._-]{1,64})\.md$/;
-export const CHECKPOINT_CHOICES = ["approve", "revise", "reject"] as const;
+// approve last: never the preselected option, so a stray Enter does not approve.
+export const CHECKPOINT_CHOICES = ["revise", "reject", "approve"] as const;
 
 export type PlanStatus = "pending" | "approved" | "revise" | "rejected";
 export type LaunchRefusal = "plan_required" | "checkpoint_pending" | "plan_changed";
@@ -71,8 +72,10 @@ export function readPlan(raw: unknown, o: PlanOpts): { plan: PlanFile } | { erro
   const realRoot = realDeep(lexRoot);
   const root = [realRoot, lexRoot].find((r) => under(r, abs, o.platform));
   if (!root) return refused("the path is outside the workspace", o.scratchDir);
-  // The same path below the real root: any symlink component makes its real path differ.
-  const candidate = path.join(realRoot, path.relative(f(root), f(abs)));
+  // The same path below the real root: any symlink component makes its real path differ. The
+  // components come from the case-preserved path; case folding only decided containment above.
+  const depth = path.relative(f(root), f(abs)).split(path.sep).filter(Boolean).length;
+  const candidate = path.join(realRoot, ...(depth ? path.resolve(abs).split(path.sep).slice(-depth) : []));
   const real = realDeep(candidate);
   if (f(real) !== f(candidate)) return refused("the path passes through a symlink", o.scratchDir);
   const scratch = scratchRoot(realRoot, o.scratchDir, o.platform);

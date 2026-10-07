@@ -238,6 +238,17 @@ class ShellWriteGuardTest(unittest.TestCase):
             return
         self.assertEqual(swg.decide("echo x > notes/l/f", self.ws, self.ws, "bash", dirs)[0], "redirect")
 
+    def test_confine_refuses_writes_outside_the_workspace(self):
+        # planner child: outside the workspace counts too (absolute, `..`, `~`); allowed dirs and /dev/null stay open
+        out = tempfile.mkdtemp(prefix="pf-swg-out-")
+        self.addCleanup(shutil.rmtree, out, True)
+        for cmd, kind in (("echo x > %s/f" % out, "redirect"), ("echo x > ../f", "redirect"), ("echo x | tee ~/f", "tee")):
+            with self.subTest(command=cmd):
+                self.assertIsNone(swg.decide(cmd, self.ws, self.ws))
+                hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], True)
+                self.assertEqual(hit[0] if hit else None, kind, hit)
+        self.assertIsNone(swg.decide("echo x > .workflow/n.md; echo y > /dev/null", self.ws, self.ws, "bash", [".workflow"], True))
+
     def test_symlinked_allowed_dir_is_not_writable(self):
         # `.workflow/scratch` -> `../src`: the allowed dir is lexical, the target real, so nothing lands in it
         os.makedirs(os.path.join(self.ws, ".workflow"), exist_ok=True)

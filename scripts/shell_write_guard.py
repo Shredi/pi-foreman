@@ -21,7 +21,8 @@ the adapter treats as a block.
 
 Input fields: tool_input.command, cwd, workspace (the workspace root; defaults to cwd),
 shell ("bash" | "powershell"; the foreman's opt-in powershell tool sends "powershell"),
-allowed_dirs (workspace-relative list; missing = [".workflow"]; absolute or `..` entries are ignored).
+allowed_dirs (workspace-relative list; missing = [".workflow"]; absolute or `..` entries are ignored),
+confine (true: a write outside the workspace counts too; the adapter sets it for a planner child).
 
 What counts as a write (target resolved against the cwd tracked through `cd`/`pushd`,
 subshell-scoped; `cd` inside a pipeline or a background job does not carry over):
@@ -514,7 +515,8 @@ def _allowed_rel(d):
 
 
 class Scope(object):
-    def __init__(self, workspace, allowed_dirs=None):
+    def __init__(self, workspace, allowed_dirs=None, confine=False):
+        self.confine = confine
         self.ws = os.path.normpath(os.path.abspath(workspace))
         self.ws_real = os.path.realpath(self.ws)
         dirs = DEFAULT_ALLOWED_DIRS if allowed_dirs is None else allowed_dirs
@@ -525,8 +527,10 @@ class Scope(object):
         if abs_path is None:
             return True
         if _drive_path(abs_path) and os.name != "nt":
-            return False
+            return self.confine
         real = os.path.realpath(abs_path)
+        if self.confine and not ((_inside(self.ws, abs_path) or _inside(self.ws_real, abs_path)) and _inside(self.ws_real, real)):
+            return True
         if not (_inside(self.ws, abs_path) or _inside(self.ws_real, real)):
             return False
         for allowed in self.allowed:
@@ -550,7 +554,7 @@ class Scope(object):
 
     def dir_in_ws(self, cwd):
         """A tool that writes below its working directory (git, patch): any place in the workspace."""
-        if cwd is None:
+        if cwd is None or self.confine:
             return True
         real = os.path.realpath(cwd)
         return _inside(self.ws, cwd) or _inside(self.ws_real, real)
@@ -1804,10 +1808,11 @@ def _ps_split(word):
 
 # --------------------------------------------------------------------------- entry
 
-def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None):
+def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, confine=False):
     """None (no project write) or (kind, target). `shell`: "bash" or "powershell".
-    `allowed_dirs`: workspace-relative dirs that stay writable (None = [".workflow"])."""
-    scope = Scope(workspace or cwd, allowed_dirs)
+    `allowed_dirs`: workspace-relative dirs that stay writable (None = [".workflow"]).
+    `confine`: a write outside the workspace counts as well."""
+    scope = Scope(workspace or cwd, allowed_dirs, confine)
     try:
         a = Analyzer(scope)
         (a.ps_text if shell == "powershell" else a.text)(command, os.path.normpath(os.path.abspath(cwd)), 0)
@@ -1832,7 +1837,8 @@ def main(argv=None):
     allowed = payload.get("allowed_dirs")
     if not isinstance(allowed, list):
         allowed = None
-    hit = decide(command, cwd, ws, "powershell" if payload.get("shell") == "powershell" else "bash", allowed)
+    hit = decide(command, cwd, ws, "powershell" if payload.get("shell") == "powershell" else "bash", allowed,
+                 payload.get("confine") is True)
     if hit is None:
         return 0
     kind, target = hit

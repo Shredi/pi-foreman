@@ -68,7 +68,7 @@ class TestCheckpoint(ReplayCase):
         # the checkpoint is the only dialog: the permission baseline allows the tool without an ask
         ds = dialogs(recs)
         self.assertEqual([(d["method"], d["title"].startswith(TITLE)) for d in ds], [("select", True)], ds)
-        self.assertEqual(ds[0]["options"], ["approve", "revise", "reject"])
+        self.assertEqual(ds[0]["options"], ["revise", "reject", "approve"], "approve is never the preselected first option")
         self.assertNotIn("timeout", ds[0])
         self.assertTrue(any("Plan: Widget" in n and "Goal: Ship the widget." in n for n in notifications(recs)), notifications(recs))
         blocked = [json.loads(line) for line in herdr.read_text("utf-8").splitlines()]

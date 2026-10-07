@@ -15,7 +15,7 @@ import { permFileState, PS_CHILD_ID, PS_PACKAGE, psProjectConfigPath, renderPerm
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
-import { actionOf, endActive, launchId, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck } from "./actions.ts";
+import { actionOf, endActive, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { addChange, boundRefusal, emptySteps, emptyTally, finishRefusal, missingSteps, overBound, pendingChange, readBound, requiredSteps, stepsOfRunEnd } from "./bound.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
@@ -698,6 +698,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
         const act = subagentActionCheck(input, { allowWorkflow, runs: s.runs, allowed: childRoleIds(get(s.config.config, "roles")), resolution, maxThinking: get(s.config.config, "maxThinking") });
         if (act.block) return { block: true, reason: act.block };
+        const outPath = outputPathBlock(input);
+        if (outPath) {
+          s.trace?.emit({ event: "launch_refused", reason: "output_path", tier: s.ceremony.tier });
+          return { block: true, reason: outPath };
+        }
+        const heavyUnchecked = uncheckedHeavyBlock(act.unchecked, s.ceremony.tier);
+        if (heavyUnchecked) {
+          s.trace?.emit({ event: "launch_refused", reason: "unchecked_heavy", tier: s.ceremony.tier });
+          return { block: true, reason: heavyUnchecked };
+        }
         if (act.unchecked) notifyOnce(s, ctx, `workflow:${act.unchecked}`, `pi-foreman: safety.subagents.allowWorkflow is on; '${act.unchecked}' launches are not checked against the role allowlist or the role map.`);
       }
       if (event.toolName === "subagent" && forceUserScope(input)) notifyOnce(s, ctx, "agentScope", "pi-foreman: child launches use agentScope \"user\" (project agents cannot redefine a role); the requested scope was overridden");
@@ -976,6 +986,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const { mode: foremanMode, scratchDir } = editModeOfSession(s);
       const mode: EditMode = planner ? "scratchpad" : foremanMode;
       const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root, toolName, allowedShellDirs(mode, scratchDir, ctx.cwd, platform));
+      // A planner writes nowhere outside the allowed dirs, outside the workspace included.
+      if (planner) payload.confine = true;
       const v = shellWriteVerdict(await runShellWriteGuard({ python: pyPath(s), pkgRoot: PKG_ROOT, payload, env, cwd: ctx.cwd, spawner }), pyPath(s));
       if (v.decision === "allow") return undefined;
       if (v.decision !== "refuse") return { block: true, reason: v.reason };
@@ -1176,6 +1188,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     pi.registerTool({
       name: CHECKPOINT_TOOL,
       label: "Plan checkpoint",
+      // Never in parallel with other tool calls of the same message: no write lands while the owner reviews.
+      executionMode: "sequential",
       description: "Ask the owner to approve a plan file (.workflow/scratch/plan-<topic>.md) before builders start. At tier heavy no builder launches until the owner approved the current version of the plan. The owner answers approve, revise (with a note) or reject; without an answer the checkpoint stays pending.",
       parameters: { type: "object", properties: { path: { type: "string", minLength: 1, description: "Path of the plan file, plan-<topic>.md in the scratch dir." } }, required: ["path"], additionalProperties: false } as never,
       async execute(_id: string, params: Record<string, unknown>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
@@ -1186,6 +1200,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           return { content: [{ type: "text" as const, text }], details: { decision, by }, ...(isError ? { isError: true } : {}) };
         };
         if (s.isChild) return done("refused", null, `${CHECKPOINT_TOOL} is for the foreman only.`, true);
+        // A planner run still in flight could rewrite the plan while the owner reviews it.
+        if ([...s.activeRuns].some((id) => s.launchedRoles.get(id)?.includes("planner"))) {
+          return done("refused", null, `pi-foreman: ${CHECKPOINT_TOOL} refused: a planner run of this session is still active and may change the plan. Wait for its completion notice, then call ${CHECKPOINT_TOOL} again.`, true);
+        }
         const r = readPlan(params.path, planOpts(s, ctx));
         if ("error" in r) return done("refused", null, r.error, true);
         const plan = r.plan;
@@ -1210,6 +1228,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // A newer checkpoint replaced this one while the dialog was open: this answer is not applied.
         if (s.plan !== rec || answer === undefined || !(CHECKPOINT_CHOICES as readonly string[]).includes(answer)) return done("pending", null, pendingText);
         if (answer === "approve") {
+          // The owner approved what was on disk during the dialog: approve only if those are still the bytes hashed above.
+          if (currentPlanHash(rec, planOpts(s, ctx)) !== rec.hash) {
+            return done("pending", null, `${name} changed while the owner was reviewing it, so the approval is not applied: the checkpoint stays pending. Call ${CHECKPOINT_TOOL} again so the owner approves the current version.`);
+          }
           rec.status = "approved";
           rec.approvedAt = new Date().toISOString();
           rec.by = ctx.mode === "tui" ? "user" : "rig";

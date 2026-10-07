@@ -11,13 +11,27 @@
     {"name": "subagent", "arguments": {"chain": [{"agent": "explorer", "task": "a"}, {"agent": "planner", "task": "b"}]}}
    ]},
    {"text": "Refused."}
+  ],
+  "p3": [
+   {"tools": [
+    {"name": "subagent", "arguments": {"agent": "planner", "task": "[[replay:plan]] a", "output": "src/auth.ts"}},
+    {"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:plan]] b", "output": "../x.md", "outputMode": "file-only"}}
+   ]},
+   {"text": "Refused."}
+  ],
+  "p4": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a large change"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"action": "schedule.list"}}]},
+   {"text": "Refused."}
   ]
  },
  "planner": {
   "plan": [
    {"tools": [
     {"name": "write", "arguments": {"path": ".workflow/scratch/plan-x.md", "content": "# Plan\n"}},
-    {"name": "write", "arguments": {"path": "src/a.txt", "content": "nope\n"}}
+    {"name": "write", "arguments": {"path": "src/a.txt", "content": "nope\n"}},
+    {"name": "write", "arguments": {"path": "../dotdot-out.txt", "content": "nope\n"}},
+    {"name": "write", "arguments": {"path": "{{ABS_OUT}}", "content": "nope\n"}}
    ]},
    {"text": "planner child finished"}
   ]

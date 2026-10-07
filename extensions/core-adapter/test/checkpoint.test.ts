@@ -122,3 +122,52 @@ test("checkpoint: plan paths and snapshots for plan_written", (t) => {
   assert.deepEqual(changedPlans(before, planSnapshot(opts)).sort(), ["plan-new.md", "plan-widget.md"]);
   assert.deepEqual(changedPlans(planSnapshot(opts), planSnapshot(opts)), []);
 });
+
+test("checkpoint tool: sequential; a plan changed during the dialog is not approved; refused while a planner run is active", async (t) => {
+  const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD"];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  t.after(() => {
+    for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  });
+  const { root, ws, scratch } = workspace(t);
+  process.env.PI_CODING_AGENT_DIR = path.join(root, "agent");
+  delete process.env.PI_SUBAGENT_CHILD;
+  type Fn = (...a: unknown[]) => Promise<unknown>;
+  const handlers = new Map<string, Fn>();
+  const channels = new Map<string, (d: unknown) => void>();
+  const tools = new Map<string, { executionMode?: string; execute: Fn }>();
+  const events = { on: (n: string, h: (d: unknown) => void) => void channels.set(n, h), emit: () => undefined };
+  const pi = { on: (n: string, h: Fn) => void handlers.set(n, h), events, registerCommand: () => undefined, registerTool: (d: { name: string; executionMode?: string; execute: Fn }) => void tools.set(d.name, d), getActiveTools: () => [] as string[], setActiveTools: () => undefined, setModel: async () => true, setThinkingLevel: () => undefined };
+  const { default: coreAdapter } = await import("../index.ts");
+  coreAdapter(pi as never);
+  let onSelect: () => void = () => undefined;
+  const ctx = {
+    sessionManager: { getSessionId: () => "ck-tool-1", getSessionFile: () => undefined },
+    cwd: ws,
+    model: undefined,
+    mode: "tui",
+    hasUI: true,
+    isProjectTrusted: () => false,
+    modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }) },
+    ui: { notify: () => undefined, confirm: async () => false, select: async () => (onSelect(), "approve"), setStatus: () => undefined, setWidget: () => undefined },
+  };
+  await handlers.get("session_start")!({ reason: "startup" }, ctx);
+  const tool = tools.get("foreman_checkpoint")!;
+  assert.equal(tool.executionMode, "sequential");
+  const call = async () => ((await tool.execute("c", { path: ".workflow/scratch/plan-widget.md" }, undefined, undefined, ctx)) as { details: { decision: string }; content: { text: string }[] });
+  // a write lands while the owner reviews: the answer approves bytes that are no longer there
+  onSelect = () => fs.appendFileSync(path.join(scratch, "plan-widget.md"), "changed during the dialog\n");
+  const changed = await call();
+  assert.equal(changed.details.decision, "pending");
+  assert.match(changed.content[0].text, /changed while the owner was reviewing it/);
+  onSelect = () => undefined;
+  assert.equal((await call()).details.decision, "approve");
+  // a planner run of this session still in flight: refused, the record stays as it was
+  await handlers.get("tool_result")!({ toolName: "subagent", toolCallId: "l1", input: { agent: "planner", task: "t" }, details: { runId: "run-p" }, content: [], isError: false }, ctx);
+  const busy = await call();
+  assert.equal(busy.details.decision, "refused");
+  assert.match(busy.content[0].text, /a planner run of this session is still active/);
+  channels.get("subagent:async-complete")!({ runId: "run-p", agent: "planner", success: true });
+  assert.equal((await call()).details.decision, "approve", "still approved: the refusal changed no record");
+  await handlers.get("session_shutdown")!({}, ctx);
+});

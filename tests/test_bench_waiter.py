@@ -33,8 +33,11 @@ class DenyTest(unittest.TestCase):
 
     def test_checkpoint_select_is_approved_and_other_selects_are_not(self):
         title = "pi-foreman checkpoint: plan-x.md (0123abcd)"
-        rec = {"id": "5", "method": "select", "title": title, "options": ["approve", "revise", "reject"]}
+        rec = {"id": "5", "method": "select", "title": title, "options": ["revise", "reject", "approve"]}
         self.assertEqual(ws.deny_response(rec), {"type": "extension_ui_response", "id": "5", "value": "approve"})
+        # the title alone is not enough: the options must be exactly the three answers
+        for opts in (["approve", "No"], ["approve", "revise", "reject", "other"], ["approve", "approve", "revise"], None):
+            self.assertNotEqual(ws.deny_response(dict(rec, options=opts)).get("value"), "approve", opts)
         self.assertNotIn("value", ws.deny_response(dict(rec, title="Permission Required")))
         self.assertEqual(ws.deny_response(dict(rec, method="confirm"))["confirmed"], False)
 

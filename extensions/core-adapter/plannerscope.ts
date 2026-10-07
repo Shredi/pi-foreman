@@ -5,8 +5,11 @@
 // so `planner` is launched alone: not inside tasks/chain, never resumed.
 import { actionOf, roundSteps } from "./actions.ts";
 import type { RunRegistry } from "./actions.ts";
+import * as path from "node:path";
 import { editModeBlock } from "./editmode.ts";
-import { subagentAgents } from "./payload.ts";
+import { resolveToolPath, subagentAgents } from "./payload.ts";
+import { workspaceOf } from "./python.ts";
+import { changedPaths, GATED_TOOLS, realDeep, under } from "./triage.ts";
 import { singleLaunchRole } from "./usage.ts";
 
 export const PLANNER_ROLE = "planner";
@@ -20,6 +23,18 @@ export function isPlannerChild(isChild: boolean, role: string | undefined): bool
 
 /** Refusal for a planner's file-tool call outside `.workflow/` and the scratch dir; undefined when it may go on. */
 export function plannerWriteBlock(toolName: string, input: Json, scratchDir: string, opts: { cwd: string; home: string; platform: string }): string | undefined {
+  // Outside the workspace (absolute, `~`, `..`), lexically or by real path: refused here; the edit
+  // mode's rule below lets such paths through (it only governs workspace files).
+  if (GATED_TOOLS.has(toolName)) {
+    const lexRoot = path.resolve(workspaceOf(opts.cwd).root);
+    const realRoot = realDeep(lexRoot);
+    for (const raw of changedPaths(toolName, input)) {
+      const abs = resolveToolPath(raw, opts.cwd, opts.home);
+      if (!abs) continue;
+      const inside = [lexRoot, realRoot].some((r) => under(r, abs, opts.platform)) && under(realRoot, realDeep(abs), opts.platform);
+      if (!inside) return `pi-foreman: ${toolName} on '${String(raw)}' refused: outside the workspace. ${PLANNER_SCOPE_NOTE(scratchDir)}`;
+    }
+  }
   const r = editModeBlock(toolName, input, "scratchpad", scratchDir, opts);
   if (!r) return undefined;
   const why = r.match(/\(([^()]*(?:disabled|hard-linked)[^()]*)\)\.$/)?.[1];

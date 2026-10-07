@@ -235,6 +235,35 @@ export function subagentActionCheck(input: Json, c: ActionContext): ActionDecisi
   return resumeCheck(input, c);
 }
 
+/**
+ * `output` (a path) and `outputMode` make the pi-subagents runner write the child's final reply to
+ * a file itself, outside every tool hook and edit check. Refused unless `output` is absent or
+ * false and `outputMode` is absent, at the top level and in every tasks/chain/parallel step.
+ */
+export function outputPathBlock(input: Json): string | undefined {
+  if (!isObj(input)) return undefined;
+  const bad = (o: Json): boolean => (o.output !== undefined && o.output !== false) || o.outputMode !== undefined;
+  let hit = bad(input);
+  const visit = (list: unknown): void => {
+    if (!Array.isArray(list)) return;
+    for (const step of list) {
+      if (!isObj(step)) continue;
+      if (bad(step)) hit = true;
+      visit(step.parallel);
+    }
+  };
+  visit(input.tasks);
+  visit(input.chain);
+  if (!hit) return undefined;
+  return "pi-foreman: subagent launch refused [launch_refused:output_path]: `output` and `outputMode` make the runner write the child's reply to a file with no write check. Omit both (or set output:false); a child that must write a file uses its own tools.";
+}
+
+/** With allowWorkflow on, an unchecked workflow/schedule launch at tier heavy (neither the builder gate nor the planner rule sees inside it). */
+export function uncheckedHeavyBlock(unchecked: string | undefined, tier: string): string | undefined {
+  if (!unchecked || tier !== "heavy") return undefined;
+  return `pi-foreman: subagent launch refused [launch_refused:unchecked_heavy]: '${unchecked}' launches are not checked against the plan checkpoint or the planner rule, so they are refused at tier heavy. Launch roles directly with subagent({agent, task}).`;
+}
+
 function resumeCheck(input: Json, c: ActionContext): ActionDecision {
   const target = resumeTarget(input);
   const known = target ? c.runs.get(target) : undefined;
