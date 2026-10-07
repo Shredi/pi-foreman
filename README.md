@@ -77,18 +77,17 @@ their layer rules are in `design/architecture.md` §7.
 
 The foreman records a tier (trivial, standard, heavy) before it changes files itself, and the adapter checks the claim instead of trusting it:
 
-- At trivial the foreman may change at most `ceremony.trivialBound` itself (default 2 files, 40 changed lines, no new file). The call that would cross it is refused, the tier rises to standard and a builder does the rest. A project or session can only lower the bound.
+- In `bounded` mode, at trivial the foreman may change at most `ceremony.trivialBound` itself (default 2 files, 40 changed lines, no new file). The call that would cross it is refused, the tier rises to standard and a builder does the rest. A project or session can only lower the bound.
 - Shell writes into project files (redirects, `tee`, `sed -i`, writing scripts) are refused for the foreman at every tier; `.workflow/` (and the scratch dir in `scratchpad` mode) stays open. The scanner works on the command string and is not a sandbox; known blind spots are listed in `design/architecture.md` §5.
 - Standard needs a completed builder run and a reviewer verdict before the foreman may finish, heavy also a finalizer (`ceremony.required`, a project can only add steps). A refused finish names what is missing; after two refusals per prompt it passes with a visible warning.
 - The foreman's own edits follow `ceremony.foremanEdits`; a PR needs a reviewer PASS on the current head (`ceremony.reviewBeforePr`). In `readonly` and `scratchpad` mode the foreman never changes project files itself, so a refused edit makes the task standard and a builder does the work. The scratch dir is for notes, drafts, commit messages and review pages. `.workflow/` stays writable in every mode, because the harness keeps the ledger and state there. A PR (`gh pr create`, `glab mr create`, `hub pull-request`, `tea pr create`, a push with merge-request options or to `refs/for/*`) is refused unless a reviewer PASS was recorded for the current head, which is the checkout the reviewer ran in. A later commit, a finalizer's included, makes the review stale, so for heavy tasks the order is builder, finalizer, reviewer, PR, or review twice. Outside a repository the head is unknown and no PR goes through. Children never open PRs.
+- While a child runs the foreman waits with `foreman_wait` or `bg_wait`; the trace and the bench table count polling bash calls (`pollBash`).
 
 | Key | Default | Direction |
 |---|---|---|
 | `ceremony.foremanEdits` | `scratchpad` (`readonly`, `scratchpad`, `bounded`) | project/session can only move toward `readonly` |
 | `ceremony.scratchDir` | `.workflow/scratch` | project/session can only narrow it to a subpath |
 | `ceremony.reviewBeforePr` | `true` | project/session cannot turn it off |
-
-- While a child runs the foreman waits with `foreman_wait` or `bg_wait`; the trace and the bench table count polling bash calls (`pollBash`).
 
 ## Benchmark (`foreman bench`)
 
