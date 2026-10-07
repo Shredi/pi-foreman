@@ -23,6 +23,8 @@
     {"name": "bash", "arguments": {"command": "cd /usr && cargo test"}},
     {"name": "bash", "arguments": {"command": "cd ../.. && ls"}},
     {"name": "bash", "arguments": {"command": "cd sub && cd ../.. && ls"}},
+    {"name": "bash", "arguments": {"command": "{ cd \"$D\"; ls; }"}},
+    {"name": "bash", "arguments": {"command": "cd nonexist/deeper; cd ../.. && ls"}},
     {"name": "bash", "arguments": {"command": "cd sub && curl x"}}
    ]},
    {"text": "builder child finished"}

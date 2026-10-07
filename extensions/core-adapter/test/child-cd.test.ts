@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { stripChildCdEnv } from "../childenv.ts";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -43,4 +44,21 @@ test("child cd: a symlink that leaves the workspace denies", (t) => {
   }
   assert.equal(verdict("cd link && ls"), "deny");
   assert.equal(verdict("cd link/new && ls"), "deny");
+});
+
+test("child cd: keywords and grouping in front of cd do not hide it (review D-B1)", () => {
+  for (const c of ['{ cd "$D"; ls; }', "! cd; git log", 'if true; then cd "$D"; fi; ls', 'while read d; do cd "$d"; git log; done < .workflow/dirs', "time cd ..", "! FOO=1 command cd ..", "while true; do cd sub/deep; cd ..; done"]) assert.equal(verdict(c), "deny", c);
+  assert.equal(verdict("if true; then cd sub; fi; ls"), "pass");
+});
+
+test("child cd: CDPATH denies and is removed from the child env (review D-B2)", () => {
+  for (const c of ["CDPATH=/ cd etc && cat passwd", "export CDPATH=/; cd tmp", "echo $CDPATH", "bash -c 'CDPATH=/ cd etc'"]) assert.equal(verdict(c), "deny", c);
+  const env: Record<string, string> = { PATH: "/usr/bin", CDPATH: "/" };
+  stripChildCdEnv(env);
+  assert.deepEqual(env, { PATH: "/usr/bin" });
+});
+
+test("child cd: a cd that may fail keeps the old cwd as a candidate (review D-B3)", () => {
+  for (const c of ["cd nonexist/deeper; cd ../.. && ls", "cd nonexist/deeper || true; cd ../.. && git log", "pushd nonexist && pushd sub && popd && cd ..", "mkdir -p build && cd build && ls; cd .."]) assert.equal(verdict(c), "deny", c);
+  for (const c of ["mkdir -p build && cd build && cargo test", "cd nonexist/deeper; cd sub && ls", "mkdir -p build && cd build && cd .. && ls"]) assert.equal(verdict(c), "pass", c);
 });

@@ -29,7 +29,7 @@ import { applyLaunchModels, applyLaunchTimeouts, splitLevel, STRENGTHS } from ".
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
-import { patchChildGitEnv, stripChildIntercomEnv } from "./childenv.ts";
+import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
 import { GitDriftWatch, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
@@ -143,7 +143,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const spawner = deps.spawner ?? defaultSpawner;
   const platform = deps.platform ?? process.platform;
   // Before any session_start (pi-intercom reads PI_INTERCOM_STABLE_ID when it connects): review S6.
-  if (process.env.PI_SUBAGENT_CHILD === "1") stripChildIntercomEnv(process.env);
+  if (process.env.PI_SUBAGENT_CHILD === "1") {
+    stripChildIntercomEnv(process.env);
+    stripChildCdEnv(process.env); // review D-B2
+  }
   const pythonCache = new PythonCache();
   const sessions = new Map<string, Session>();
   let userPickedModel = false;
