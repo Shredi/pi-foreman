@@ -16,12 +16,26 @@
 //   S1/S7, other safety-wave items) are the layers that keep a child from using or planting one.
 import type { Env } from "./env.ts";
 
-/** Variables that carry or reach push credentials; removed from a child's env. */
+/**
+ * Intercom identity (security review S6): with the foreman's parent id or a fixed intercom id a
+ * child could register as the foreman's parent and send foreman:close.
+ */
+export const CHILD_INTERCOM_UNSET = ["PI_FOREMAN_PARENT_INTERCOM", "PI_INTERCOM_STABLE_ID"];
+
+/** Remove the intercom identity variables (children, always; also when safety.children.mayPush). */
+export function stripChildIntercomEnv(env: Env): void {
+  for (const name of CHILD_INTERCOM_UNSET) {
+    for (const k of Object.keys(env)) if (k.toUpperCase() === name) delete env[k];
+  }
+}
+
+/** Variables that carry or reach push credentials (and intercom identity); removed from a child's env. */
 export const CHILD_UNSET = [
   "SSH_AUTH_SOCK", "SSH_AGENT_PID", "GIT_ASKPASS", "SSH_ASKPASS",
   "GH_TOKEN", "GITHUB_TOKEN", "GIT_TOKEN",
   // GIT_SSH_COMMAND outranks core.sshCommand; GIT_SSH is the older form of it.
   "GIT_SSH_COMMAND", "GIT_SSH",
+  ...CHILD_INTERCOM_UNSET,
 ];
 
 export const CHILD_SET: Record<string, string> = {

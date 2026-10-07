@@ -350,3 +350,19 @@ export function causeOfCustom(customType: unknown): TurnCause | null {
   if (customType === WAKE_MESSAGE_TYPE) return "wake";
   return null;
 }
+
+/**
+ * Request messages with every `<name>: null` system-prompt section patch removed, or null when
+ * there is none (security review S3). The section then keeps the value it had before the patch.
+ */
+export function keepSection<M>(messages: readonly M[], name: string): M[] | null {
+  let hit = false;
+  const out = messages.map((m) => {
+    const sec = (m as { role?: unknown; sections?: Record<string, unknown> }).sections;
+    if ((m as { role?: unknown }).role !== "system" || !sec || typeof sec !== "object" || sec[name] !== null) return m;
+    hit = true;
+    const { [name]: _drop, ...rest } = sec;
+    return { ...m, sections: rest };
+  });
+  return hit ? out : null;
+}

@@ -59,6 +59,35 @@ class TestLongWait(ReplayCase):
         turns = [(r["cause"], r.get("wakeKinds")) for r in trace if r.get("event") == "turn"]
         self.assertEqual(turns, [("user", None), ("wake", "timer")])
 
+    def test_wake_turn_keeps_the_section_and_gets_its_own_stop_hold(self):
+        """Review S3 (pi-foreman section on every model call of a wake run) and S12 (stop gate)."""
+        ledger = "# Requirements Ledger: replay\n\n- [ ] 1. first synthetic item\n"
+        script = {"foreman": {
+            "s1": [{"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-replay.md", "content": ledger}}]},
+                   {"tools": [{"name": "foreman_wait", "arguments": {"action": "start", "kind": "timer", "seconds": 1, "note": "[[replay:s2]] t"}}]},
+                   {"text": "Waiting."}, {"text": "Still open."}],
+            # A second ledger: the core holds once per ledger, so only a stale stop_hook_active
+            # (the previous run's continue) could keep the wake run from being held.
+            "s2": [{"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-second.md", "content": ledger}}]},
+                   {"tools": [{"name": "foreman_wait", "arguments": {"action": "list"}}]},
+                   {"text": "Woken."}, {"text": "Still open after the wake."}]}}
+        rig = self.rig("wakesec", script, config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")
+        sec = rig.root / "sections.log"
+        pi = rig.start(env={"FOREMAN_FAKE_SECTIONS": str(sec)})
+        recs = list(pi.prompt("[[replay:s1]] go", timeout=60))
+        deadline = time.time() + 30
+        while not any(r.get("type") == "message_end" and "after the wake" in str((r.get("message") or {}).get("content")) for r in recs):
+            recs.append(pi._next(deadline))
+        pi.close()
+        calls = [line.split(" ") for line in sec.read_text("utf-8").splitlines()]
+        wake = [c for c in calls if c[0] == "s2"]
+        self.assertEqual(len(wake), 4, calls)
+        for tag, step, names in wake:
+            self.assertIn("pi-foreman", names.split(","), (tag, step))
+        holds = [r for r in recs if r.get("type") == "entry_appended" and (r.get("entry") or {}).get("customType") == "pi-foreman-stop-gate"]
+        self.assertEqual(len(holds), 2, "one stop hold per run, the wake run included")
+        self.assertIn("LEDGER-second.md", holds[1]["entry"]["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

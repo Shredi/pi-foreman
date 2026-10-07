@@ -19,6 +19,8 @@
 //
 // FOREMAN_FAKE_CALLS=<file> appends "<provider>/<model> <tag>" per provider call (tests assert a
 // request never reached the provider).
+// FOREMAN_FAKE_SECTIONS=<file> appends "<tag> <step> <section names>" per foreman-model call: the
+// system-prompt sections the request carries, folded over its system messages (null deletes).
 import * as fs from "node:fs";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Model, SimpleStreamOptions, TranscriptContext } from "@earendil-works/pi-ai";
@@ -88,6 +90,20 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
   if (log) {
     try {
       fs.appendFileSync(log, `${model.provider}/${model.id} ${locate(context.messages as { role: string; content: unknown }[])?.[0] ?? "-"}\n`);
+    } catch {
+      // the log is a test aid only
+    }
+  }
+  const secLog = process.env.FOREMAN_FAKE_SECTIONS;
+  if (secLog && !model.id.startsWith("review-")) {
+    const names = new Set<string>();
+    for (const m of context.messages as { role: string; sections?: Record<string, unknown> }[]) {
+      if (m.role !== "system") continue;
+      for (const [k, v] of Object.entries(m.sections ?? {})) v === null ? names.delete(k) : names.add(k);
+    }
+    const where = locate(context.messages as { role: string; content: unknown }[]);
+    try {
+      fs.appendFileSync(secLog, `${where?.[0] ?? "-"} ${where?.[1] ?? "-"} ${[...names].sort().join(",")}\n`);
     } catch {
       // the log is a test aid only
     }

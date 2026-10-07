@@ -26,7 +26,7 @@ import { applyLaunchModels, applyLaunchTimeouts, splitLevel, STRENGTHS } from ".
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
-import { patchChildGitEnv } from "./childenv.ts";
+import { patchChildGitEnv, stripChildIntercomEnv } from "./childenv.ts";
 import { GitDriftWatch, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
@@ -43,7 +43,7 @@ import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
 import { openTrace } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
-import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, causeOfInput, formatSummary, PARENT_SESSION_ENV, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
+import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { CompactionGate } from "./compaction.ts";
@@ -123,6 +123,8 @@ export interface AdapterDeps {
 export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): void {
   const spawner = deps.spawner ?? defaultSpawner;
   const platform = deps.platform ?? process.platform;
+  // Before any session_start (pi-intercom reads PI_INTERCOM_STABLE_ID when it connects): review S6.
+  if (process.env.PI_SUBAGENT_CHILD === "1") stripChildIntercomEnv(process.env);
   const pythonCache = new PythonCache();
   const sessions = new Map<string, Session>();
   let userPickedModel = false;
@@ -505,6 +507,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (instructionsCache === null) notifyOnce(s, ctx, "instructions", "pi-foreman: instructions/foreman.md is missing; the foreman runs without its rules.");
     const text = [instructionsCache ?? "", tierLine(s.ceremony)].filter(Boolean).join("\n\n");
     event.systemPromptOptions.sections["pi-foreman"] = text;
+  });
+  // Review S3: a run a custom message starts (wake, child notice) skips before_agent_start, and
+  // its later model calls rebuild the prompt from Pi's base options, which lack the section (Pi
+  // records a `pi-foreman: null` patch). Event contexts cannot reach the base options, so the
+  // request keeps the section: the null patch is dropped from what the provider gets.
+  pi.on("context_with_system", async (event, ctx) => {
+    const s = sessionFor(ctx);
+    if (!s || s.isChild) return undefined;
+    const messages = keepSection(event.messages, "pi-foreman");
+    return messages ? { messages } : undefined;
+  });
+  // Review S12: each run (a wake or child-notice run too) gets its own single stop-gate continue.
+  pi.on("agent_settled", async (_event, ctx) => {
+    const s = sessionFor(ctx);
+    if (s) s.stopContinued = false;
   });
 
   /** Layer 6: while a child's supervisor request is open, only that role's tools (supervisor.ts). */

@@ -59,3 +59,12 @@ test("doctor: install state, trusted overrides in the intercom config, Herdr hin
   fs.writeFileSync(path.join(agent, "extensions", "herdr-agent-state.ts"), "");
   assert.ok(!intercomDoctor(agent, [], { HERDR_ENV: "1" }).some((l) => l.includes("Herdr")));
 });
+
+test("doctor warns on a shared stableId in the intercom config (review S6)", () => {
+  const agent = fs.mkdtempSync(path.join(os.tmpdir(), "pf-intercom-"));
+  fs.mkdirSync(path.join(agent, "intercom"));
+  fs.writeFileSync(path.join(agent, "intercom", "config.json"), JSON.stringify({ stableId: "me" }));
+  const warns = intercomDoctor(agent, [], {}).filter((l) => l.startsWith("WARN"));
+  assert.equal(warns.length, 1, warns.join("\n"));
+  assert.match(warns[0], /sets stableId: .*child sessions/);
+});

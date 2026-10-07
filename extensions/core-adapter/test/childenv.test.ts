@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CHILD_UNSET, patchChildGitEnv } from "../childenv.ts";
+import { CHILD_UNSET, patchChildGitEnv, stripChildIntercomEnv } from "../childenv.ts";
 import type { Env } from "../env.ts";
 
 test("child env drops push credentials and injects the git config", () => {
@@ -32,4 +32,13 @@ test("a bogus GIT_CONFIG_COUNT is replaced", () => {
   patchChildGitEnv(env);
   assert.equal(env.GIT_CONFIG_COUNT, "3");
   assert.equal(env.GIT_CONFIG_KEY_0, "credential.helper");
+});
+
+test("child env drops the intercom identity (review S6), also without the git patch", () => {
+  const env: Env = { PATH: "/usr/bin", PI_FOREMAN_PARENT_INTERCOM: "parent-x", pi_intercom_stable_id: "fixed" };
+  stripChildIntercomEnv(env);
+  assert.deepEqual(env, { PATH: "/usr/bin" });
+  const env2: Env = { PI_FOREMAN_PARENT_INTERCOM: "parent-x", PI_INTERCOM_STABLE_ID: "fixed" };
+  patchChildGitEnv(env2);
+  assert.ok(!("PI_FOREMAN_PARENT_INTERCOM" in env2) && !("PI_INTERCOM_STABLE_ID" in env2));
 });
