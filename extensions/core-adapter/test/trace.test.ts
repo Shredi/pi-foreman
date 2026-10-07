@@ -16,17 +16,17 @@ test("trace: non-allowlisted keys and non-primitive values are dropped", () => {
     path: "/some/where",
     output: "tool output",
     input: { command: "x" },
-    reason: "DESTRUCTIVE GUARD: ...",
+    detail: "DESTRUCTIVE GUARD: ...",
     model: { id: "nested" },
     cost: Number.NaN,
   });
   assert.deepEqual(out, { event: "guard", guard: "destructive_guard", decision: "deny", latencyMs: 41 });
-  assert.deepEqual([...TRACE_FIELDS], ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind"]);
+  assert.deepEqual([...TRACE_FIELDS], ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "reason"]);
 });
 
 test("trace: ask and overlay events carry no command text", () => {
   for (const event of ["ask", "overlay"]) {
-    const out = sanitizeTrace({ event, toolFamily: "bash", decision: "deny", command: "curl http://x/secret", title: "t", message: "m", reason: "r", input: { command: "x" } });
+    const out = sanitizeTrace({ event, toolFamily: "bash", decision: "deny", command: "curl http://x/secret", title: "t", message: "m", detail: "r", input: { command: "x" } });
     assert.deepEqual(out, { event, toolFamily: "bash", decision: "deny" });
   }
   // shell write refusals carry the write form only, never the command

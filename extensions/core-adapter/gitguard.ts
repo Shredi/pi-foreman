@@ -10,18 +10,19 @@ import type { Spawner } from "./spawn.ts";
 export type GitGuardMode = "main" | "child";
 
 /**
- * Main-mode fast path: the lint only looks at git commands, so a command that never names
- * git skips the Python spawn. Child mode always runs: obfuscated forms (g"i"t, `$a$b push`)
- * need the full parse there.
+ * Main-mode fast path: the lint only looks at git commands and PR clis (gh, glab, hub, tea),
+ * so a command that names none of them skips the Python spawn. Child mode always runs:
+ * obfuscated forms (g"i"t, `$a$b push`) need the full parse there.
  */
 export function mainNeedsGitGuard(command: unknown): boolean {
-  return typeof command === "string" && /git/i.test(command);
+  return typeof command === "string" && (/git/i.test(command) || /\b(gh|glab|hub|tea)\b/i.test(command));
 }
 
-/** Core-shaped payload plus the shell flavour and the merged `safety.git` config. */
-export function gitGuardPayload(piTool: string, input: Record<string, unknown>, pc: PayloadContext, gitConfig?: unknown): Record<string, unknown> {
+/** Core-shaped payload plus the shell flavour, the merged `safety.git` config and the PR gate state. */
+export function gitGuardPayload(piTool: string, input: Record<string, unknown>, pc: PayloadContext, gitConfig?: unknown, prGate?: { enabled: boolean; reviewed_heads: string[] }): Record<string, unknown> {
   const payload: Record<string, unknown> = { ...preToolPayload(piTool, input, pc), shell: piTool === "powershell" ? "powershell" : "bash" };
   if (gitConfig && typeof gitConfig === "object" && !Array.isArray(gitConfig)) payload.foreman_git = gitConfig;
+  if (prGate) payload.pr_gate = prGate;
   return payload;
 }
 

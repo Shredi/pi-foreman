@@ -176,6 +176,19 @@ export default function fakeProvider(pi: ExtensionAPI): void {
       pi.sendMessage({ customType: "replay-trigger", content: `[[replay:${args.trim() || "t"}]] child finished`, display: true }, { triggerTurn: true });
     },
   });
+  // FOREMAN_FAKE_PR_TOOL=<name> registers a package-style tool that "creates a pull request", for the PR gate replay.
+  const prTool = process.env.FOREMAN_FAKE_PR_TOOL;
+  if (prTool) {
+    pi.registerTool({
+      name: prTool,
+      label: "Create a pull request",
+      description: "replay only: pretend to create a pull request",
+      parameters: { type: "object", properties: { title: { type: "string" } }, additionalProperties: true } as never,
+      async execute() {
+        return { content: [{ type: "text" as const, text: "fake: pull request created" }], details: {} };
+      },
+    } as never);
+  }
   // FOREMAN_FAKE_BRIDGE=1 also registers the fake under the claude-bridge provider name, so the
   // adapter treats the session as a claude-bridge session (the real bridge is never loaded).
   for (const name of process.env.FOREMAN_FAKE_BRIDGE === "1" ? [...PROVIDERS, "claude-bridge"] : PROVIDERS) {

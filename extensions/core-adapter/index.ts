@@ -44,6 +44,8 @@ import type { Spawner } from "./spawn.ts";
 import { mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
+import { appendReview, headOf, isPrToolName, passHeads, prToolRefusal, reviewsOfRunEnd } from "./reviews.ts";
+import type { ReviewRecord } from "./reviews.ts";
 import { openTrace } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
 import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
@@ -132,6 +134,10 @@ interface Session {
   steps: StepCounts;
   /** Finish refusals since the last user prompt (at most 2, then a forced pass). */
   finishRefusals: number;
+  /** Foreman only: reviewer verdicts with the HEAD they covered, newest last, at most 50 (reviews.ts; the PR gate reads it). */
+  reviews: ReviewRecord[];
+  /** Pending HEAD reads of `reviews`; the PR gate waits for it. */
+  reviewSync: Promise<void>;
 }
 
 export interface AdapterDeps {
@@ -233,6 +239,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchedRoles: new Map(),
       steps: emptySteps(),
       finishRefusals: 0,
+      reviews: [],
+      reviewSync: Promise.resolve(),
     };
     sessions.set(id, s);
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
@@ -571,6 +579,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         endActive(s.activeRuns, data);
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
         if (typeof runId === "string" && s.launchedRoles.has(runId)) for (const step of stepsOfRunEnd(data)) s.steps[step]++;
+        if (!s.isChild && typeof runId === "string" && s.launchedRoles.has(runId)) {
+          // PR gate: the verdict is recorded with HEAD of the run's cwd (reviews.ts).
+          for (const r of reviewsOfRunEnd(data)) {
+            s.reviewSync = s.reviewSync.then(async () => {
+              appendReview(s.reviews, { role: r.role, verdict: r.verdict, head: await headOf(r.cwd ?? s.cwd) });
+            });
+          }
+        }
       }
     });
   }
@@ -617,6 +633,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (event.toolName === "bash" || event.toolName === "powershell") {
       const shellWrite = await shellWriteBlock(ctx, event.toolName, event.input as Record<string, unknown>);
       if (shellWrite) return shellWrite;
+    }
+    if (isPrToolName(event.toolName) && mapTool(event.toolName).pre.length === 0) {
+      // A package tool that creates a pull request: the same review test as the git guard, against workspace HEAD.
+      try {
+        const s = await ensureSession(ctx);
+        let refusal: { reason: string; message: string } | null = null;
+        if (s.isChild) refusal = { reason: "child", message: `pi-foreman: ${event.toolName} refused [pr_refused:child]: children may not create pull requests. Report back and let the foreman do it after a review.` };
+        else if (get(s.config.config, "ceremony.reviewBeforePr") !== false) {
+          await s.reviewSync;
+          refusal = await prToolRefusal(ctx.cwd, passHeads(s.reviews));
+        }
+        if (refusal) {
+          s.trace?.emit({ event: "pr_refused", reason: refusal.reason, toolFamily: event.toolName });
+          return { block: true, reason: refusal.message };
+        }
+      } catch (err) {
+        return { block: true, reason: `pi-foreman: adapter error in the PR gate (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
+      }
     }
     const mapping = mapTool(event.toolName);
     if (mapping.pre.length === 0) return undefined;
@@ -688,7 +722,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this git command", driftAsk(ctx), (r) => s.trace?.emit(r), event.toolCallId);
           if (drift) return drift;
         }
-        const payload = guard === "git_guard" ? gitGuardPayload(event.toolName, input, pc, get(s.config.config, "safety.git")) : preToolPayload(event.toolName, input, pc);
+        if (guard === "git_guard") await s.reviewSync;
+        const prGate = { enabled: get(s.config.config, "ceremony.reviewBeforePr") !== false, reviewed_heads: passHeads(s.reviews) };
+        const payload = guard === "git_guard" ? gitGuardPayload(event.toolName, input, pc, get(s.config.config, "safety.git"), prGate) : preToolPayload(event.toolName, input, pc);
         const outcome = await run(s, ctx, guard, payload, mapping.coreName);
         if (guard === "destructive_guard" && outcome.kind === "decision" && dropDeadPathRewrite(outcome.d, input.command, os.homedir())) {
           s.trace?.emit({ event: "guard_rewrite_dropped", guard, toolFamily: mapping.coreName });
@@ -704,6 +740,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         });
         if (t.openFailure) notifyOnce(s, ctx, `open:${guard}`, t.openFailure);
         if (outcome.kind === "decision" && outcome.d.decision === "ask") s.trace?.emit({ event: "ask", guard, toolFamily: mapping.coreName, decision: askOutcome(s.isChild, t.result?.reason) });
+        const prReason = guard === "git_guard" && t.result && "block" in t.result ? /pr_refused:(\w+)/.exec(String(t.result.reason ?? ""))?.[1] : undefined;
+        if (prReason) s.trace?.emit({ event: "pr_refused", reason: prReason });
         if (t.result) return t.result;
         if (guard === "ledger_guard_spawn" && agents.length > 0) {
           setCeremony(s, afterSpawn(s.ceremony));

@@ -1,0 +1,21 @@
+{
+ "foreman": {
+  "pr-gh": [{"tools": [{"name": "bash", "arguments": {"command": "gh pr create --title t --body b"}}]}, {"text": "PR attempt done."}],
+  "pr-review": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-pass]] review the branch"}}]}, {"text": "Reviewer launched."}],
+  "pr-after": [{"text": "Review noted."}],
+  "pr-mr": [{"tools": [{"name": "bash", "arguments": {"command": "git push -o merge_request.create origin main"}}]}, {"text": "push attempt done."}],
+  "pr-ci": [{"tools": [{"name": "bash", "arguments": {"command": "git push -o ci.skip origin main"}}]}, {"text": "push attempt done."}],
+  "pr-tool": [{"tools": [{"name": "github_create_pr", "arguments": {"title": "t"}}]}, {"text": "tool attempt done."}],
+  "pr-child": [{"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-pr]] open the pull request"}}]}, {"text": "Builder launched."}, {"text": "Builder reported."}]
+ },
+ "reviewer": {
+  "r-pass": [{"text": "[[replay:pr-after]] no findings\nOverall verdict: PASS"}]
+ },
+ "builder": {
+  "b-pr": [
+   {"tools": [{"name": "bash", "arguments": {"command": "echo ok > control.txt"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "gh pr create --title t --body b"}}]},
+   {"text": "child: pr attempt finished"}
+  ]
+ }
+}
