@@ -62,6 +62,7 @@ import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone,
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait } from "./wait.ts";
 import { registerClose, syncCommand } from "./close.ts";
+import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
 import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_TOOL, workspaceTargets } from "./triage.ts";
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, scratchDirOf } from "./editmode.ts";
 import type { EditMode } from "./editmode.ts";
@@ -695,6 +696,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === "subagent") {
         const refused = roleLaunchBlock(input, childRoleIds(get(s.config.config, "roles")));
         if (refused) return { block: true, reason: refused };
+        const notSingle = plannerLaunchBlock(input, s.runs);
+        if (notSingle) {
+          s.trace?.emit({ event: "launch_refused", reason: "planner_single", tier: s.ceremony.tier });
+          return { block: true, reason: notSingle };
+        }
         const resolution = await currentRoles(s, ctx);
         const noModel = roleModelBlock(input, resolution);
         if (noModel) return { block: true, reason: noModel };
@@ -860,7 +866,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   async function editModeGate(ctx: ExtensionContext, toolName: string, input: Record<string, unknown>): Promise<{ block: true; reason: string } | undefined | null> {
     try {
       const s = await ensureSession(ctx);
-      if (s.isChild) return null;
+      if (s.isChild) {
+        // A planner child writes only .workflow/ and the scratch dir (plannerscope.ts); other children: the triage gate as before.
+        if (!isPlannerChild(true, s.usage.line.role)) return null;
+        const refused = plannerWriteBlock(toolName, input, editModeOfSession(s).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform });
+        if (!refused) return undefined;
+        s.trace?.emit({ event: "planner_write_refused", kind: toolName });
+        return { block: true, reason: refused };
+      }
       const { mode, scratchDir } = editModeOfSession(s);
       const reason = editModeBlock(toolName, input, mode, scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform });
       if (reason === null) return null;
@@ -922,13 +935,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   async function shellWriteBlock(ctx: ExtensionContext, toolName: "bash" | "powershell", input: Record<string, unknown>): Promise<{ block: true; reason: string } | undefined> {
     try {
       const s = await ensureSession(ctx);
-      if (s.isChild) return undefined;
+      const planner = isPlannerChild(s.isChild, s.usage.line.role);
+      if (s.isChild && !planner) return undefined;
       const env = buildGuardEnv({ base: process.env, coreDir: CORE_DIR, sessionId: s.id, guard: "shell_write_guard", markerDir: s.markerDir });
-      const { mode, scratchDir } = editModeOfSession(s);
+      const { mode: foremanMode, scratchDir } = editModeOfSession(s);
+      const mode: EditMode = planner ? "scratchpad" : foremanMode;
       const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root, toolName, allowedShellDirs(mode, scratchDir, ctx.cwd, platform));
       const v = shellWriteVerdict(await runShellWriteGuard({ python: pyPath(s), pkgRoot: PKG_ROOT, payload, env, cwd: ctx.cwd, spawner }), pyPath(s));
       if (v.decision === "allow") return undefined;
       if (v.decision !== "refuse") return { block: true, reason: v.reason };
+      if (planner) {
+        s.trace?.emit({ event: "planner_write_refused", kind: "shell" });
+        return { block: true, reason: `${v.reason} ${PLANNER_SCOPE_NOTE(scratchDir)}` };
+      }
       s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode });
       const more = onEditRefused(s, mode, "shell");
       return { block: true, reason: mode === "bounded" ? v.reason : `${v.reason} pi-foreman: ${editModeAdvice(mode, scratchDir)}.${more}` };
