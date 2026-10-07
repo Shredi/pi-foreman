@@ -5,6 +5,9 @@
 // is exactly `foreman:close` or `foreman:close <path>` (when "intercom-parent" is in close.from and
 // the sender's session id equals PI_FOREMAN_PARENT_INTERCOM, the parent recorded at spawn). A
 // refused request is traced and otherwise stays plain data.
+// An idle foreman gets the message without an extension `message_end` (pi-intercom appends it,
+// then wakes the session with INTERCOM_WAKE_TEXT): the `input` hook reads the newest intercom
+// entry from the branch then (review S1). Children swallow that wake (review S6).
 //
 // Sequence: refuse while any foreman_wait is active (never cancels one); wait until the agent is
 // idle (agent_settled + ctx.isIdle(); an open dialog just keeps the session busy, nothing answers
@@ -17,7 +20,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { get } from "./config.ts";
 import { workspaceOf } from "./python.ts";
 import { realDeep, under } from "./triage.ts";
-import { INTERCOM_MESSAGE_TYPE as INTERCOM_INBOUND_TYPE } from "./intercomguard.ts";
+import { INTERCOM_MESSAGE_TYPE as INTERCOM_INBOUND_TYPE, lastIntercomDetails } from "./intercomguard.ts";
 import { INTERCOM_WAKE_TEXT } from "./usage.ts";
 
 export const CLOSE_TEXT = "foreman:close";
@@ -29,6 +32,13 @@ export const INTERCOM_OUTBOX_EVENT = "intercom:outbox-request";
 export const CLOSE_SOURCES = ["herdr", "intercom-parent"] as const;
 export type CloseSource = (typeof CLOSE_SOURCES)[number];
 
+/** Result path text (security review S4): a fixed charset and a `.md` suffix, both sources. */
+export const RESULT_PATH_RE = /^[A-Za-z0-9._/-]{1,200}$/;
+export const validResultPathText = (t: string): boolean => RESULT_PATH_RE.test(t) && t.endsWith(".md");
+/** A close turn that has not reached the model by then is given up (security review S5). */
+export const CLOSE_START_DEADLINE_MS = 60_000;
+
+/** The close turn's prompt; `file` is the validated path shown to the model (relative to cwd). */
 export function closePrompt(file: string): string {
   return `pi-foreman close: write your result file now at ${file} (summary, commits, open items). Do not start new work.`;
 }
@@ -70,14 +80,21 @@ function stamp(now: Date): string {
   return `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}`;
 }
 
-/** The result file: default `<ws>/.workflow/result-<stamp>-<id8>.md`; a given one must resolve inside `<ws>/.workflow/`. */
-export function resultPath(raw: string | undefined, o: { cwd: string; sessionId: string; now: Date; platform: string }): { path: string } | { error: string } {
+/**
+ * The result file: default `<ws>/.workflow/result-<stamp>-<id8>.md`; a given one must match
+ * RESULT_PATH_RE, end in `.md` and resolve inside `<ws>/.workflow/`. `shown` is the resolved file
+ * relative to cwd (also checked against the charset): the only path text the close prompt carries.
+ */
+export function resultPath(raw: string | undefined, o: { cwd: string; sessionId: string; now: Date; platform: string }): { path: string; shown: string } | { error: string } {
+  if (raw !== undefined && !validResultPathText(raw)) return { error: "the result path may use only A-Z a-z 0-9 . _ / - (at most 200 characters) and must end in .md" };
   const root = workspaceOf(o.cwd).root;
   const wf = path.join(realDeep(path.resolve(root)), ".workflow");
   const abs = raw ? path.resolve(o.cwd, raw) : path.join(root, ".workflow", `result-${stamp(o.now)}-${o.sessionId.slice(0, 8)}.md`);
   const real = realDeep(abs);
   if (!under(wf, real, o.platform) || real === wf) return { error: `the result path must be inside ${wf}` };
-  return { path: real };
+  const shown = path.relative(realDeep(path.resolve(o.cwd)), real).split(path.sep).join("/");
+  if (!validResultPathText(shown)) return { error: "the resolved result path has characters outside A-Z a-z 0-9 . _ / -" };
+  return { path: real, shown };
 }
 
 export interface CloseDeps {
@@ -93,11 +110,15 @@ export interface CloseDeps {
   markCause: () => void;
   writeStub: (file: string, text: string) => void;
   exists: (file: string) => boolean;
+  /** Timer for the start deadline (default: an unref'd setTimeout). */
+  setTimer?: (fn: () => void, ms: number) => () => void;
 }
 
 export interface CloseRequest {
   source: CloseSource;
   file: string;
+  /** The validated path text for the prompt (default: file). */
+  shown?: string;
   /** Intercom sender to answer a refusal to. */
   replyTo?: string;
 }
@@ -110,6 +131,10 @@ export class CloseFlow {
   private req: CloseRequest | null = null;
   private wakePending = false;
   private promptPending = false;
+  /** The close prompt passed the `input` handlers / reached the model (security review S5). */
+  private promptSeen = false;
+  private started = false;
+  private clearDeadline: (() => void) | null = null;
   private readonly d: CloseDeps;
 
   constructor(d: CloseDeps) {
@@ -152,7 +177,29 @@ export class CloseFlow {
     this.phase = "result-turn";
     this.promptPending = true;
     this.d.trace({ event: "close", cause: this.req.source, decision: "turn" });
-    this.d.sendUserMessage(closePrompt(this.req.file));
+    const timer = this.d.setTimer ?? ((fn, ms) => { const h = setTimeout(fn, ms); h.unref?.(); return () => clearTimeout(h); });
+    this.clearDeadline = timer(() => this.expire(), CLOSE_START_DEADLINE_MS);
+    this.d.sendUserMessage(this.prompt());
+  }
+
+  private prompt(): string {
+    return closePrompt(this.req?.shown ?? this.req?.file ?? "");
+  }
+
+  /** Start deadline: the close turn never reached the model (an `input` handler or check swallowed it). */
+  private expire(): void {
+    if (this.phase !== "result-turn" || this.started || !this.req) return;
+    const req = this.req;
+    this.reset();
+    this.refuse(`the close turn did not start within ${CLOSE_START_DEADLINE_MS / 1000} s (a check or another handler stopped it); nothing was synced. Send the close again`, req.source, req.replyTo);
+  }
+
+  /** An assistant reply ended: the close turn has started when it follows the close prompt. */
+  onModelReply(stopReason: unknown): void {
+    if (this.phase !== "result-turn" || !this.promptSeen || this.started || stopReason === "aborted") return;
+    this.started = true;
+    this.clearDeadline?.();
+    this.clearDeadline = null;
   }
 
   /**
@@ -165,8 +212,9 @@ export class CloseFlow {
       this.wakePending = false;
       return true;
     }
-    if (this.promptPending && this.req && text === closePrompt(this.req.file)) {
+    if (this.promptPending && this.req && text === this.prompt()) {
       this.promptPending = false;
+      this.promptSeen = true;
       this.d.markCause();
     }
     return false;
@@ -178,6 +226,9 @@ export class CloseFlow {
     if (!ctx.isIdle()) return;
     if (this.phase === "idle-wait") return this.closeTurn();
     if (this.phase !== "result-turn") return;
+    // Not started: a run that settles before the close turn reached the model is not the close
+    // turn (S5); the start deadline disarms the flow.
+    if (!this.started) return;
     this.phase = "finishing";
     const req = this.req;
     if (this.waitsBlock(req.source, req.replyTo)) return this.reset();
@@ -204,6 +255,10 @@ export class CloseFlow {
     this.req = null;
     this.wakePending = false;
     this.promptPending = false;
+    this.promptSeen = false;
+    this.started = false;
+    this.clearDeadline?.();
+    this.clearDeadline = null;
   }
 }
 
@@ -266,22 +321,39 @@ export function registerClose(
   pi.on("session_shutdown", async (_event, ctx) => {
     flows.delete(sid(ctx));
   });
+  /** An inbound intercom message's details: start a close (true), refuse, or ignore (false). */
+  const fromIntercom = (s: CloseSession, ctx: ExtensionContext, details: unknown, viaWake: boolean): boolean => {
+    const r = intercomClose(details, process.env[PARENT_INTERCOM_ENV] || undefined, closeFrom(s.config()));
+    if (!r) return false;
+    const flow = flowFor(s, ctx);
+    if (r.kind === "refused") return void flow.refuse(r.reason, "intercom-parent", r.sender), false;
+    const file = resultPath(r.path, { cwd: s.cwd, sessionId: s.id, now: new Date(), platform: deps.platform });
+    if ("error" in file) return void flow.refuse(file.error, "intercom-parent", r.sender), false;
+    flow.request({ source: "intercom-parent", file: file.path, shown: file.shown, replyTo: r.sender }, ctx, viaWake);
+    return true;
+  };
+  // Busy session: pi-intercom steers the message in and the extension message_end fires.
   pi.on("message_end", async (event, ctx) => {
-    const m = event.message as { role?: string; customType?: string; details?: unknown };
+    const m = event.message as { role?: string; customType?: string; details?: unknown; stopReason?: unknown };
+    if (m.role === "assistant") return void flows.get(sid(ctx))?.flow.onModelReply(m.stopReason);
     if (m.role !== "custom" || m.customType !== INTERCOM_INBOUND_TYPE || process.env.PI_SUBAGENT_CHILD === "1") return;
     const s = await deps.session(ctx);
     if (s.isChild) return;
-    const r = intercomClose(m.details, process.env[PARENT_INTERCOM_ENV] || undefined, closeFrom(s.config()));
-    if (!r) return;
-    const flow = flowFor(s, ctx);
-    if (r.kind === "refused") return flow.refuse(r.reason, "intercom-parent", r.sender);
-    const file = resultPath(r.path, { cwd: s.cwd, sessionId: s.id, now: new Date(), platform: deps.platform });
-    if ("error" in file) return flow.refuse(file.error, "intercom-parent", r.sender);
-    flow.request({ source: "intercom-parent", file: file.path, replyTo: r.sender }, ctx, true);
+    fromIntercom(s, ctx, m.details, true);
   });
   pi.on("input", async (event, ctx) => {
+    const wake = event.source === "extension" && event.text === INTERCOM_WAKE_TEXT;
+    // Review S6: children take no turns from inbound intercom (pi-intercom's idle wake prompt).
+    if (wake && process.env.PI_SUBAGENT_CHILD === "1") return { action: "handled" as const };
     const slot = flows.get(sid(ctx));
     if (slot?.flow.active && slot.flow.onInput(event.text, event.source)) return { action: "handled" as const };
+    // Review S1: an idle session got the message without an extension message_end; read the
+    // newest intercom entry since the last user message. The close turn replaces the wake turn.
+    if (wake && !slot?.flow.active) {
+      const hit = lastIntercomDetails(ctx.sessionManager.getBranch());
+      const s = hit ? await deps.session(ctx) : null;
+      if (s && !s.isChild && fromIntercom(s, ctx, hit!.details, false)) return { action: "handled" as const };
+    }
     return { action: "continue" as const };
   });
   pi.on("agent_settled", async (_event, ctx) => {
@@ -303,7 +375,7 @@ export function registerClose(
       const raw = args.trim();
       const file = resultPath(raw || undefined, { cwd: s.cwd, sessionId: s.id, now: new Date(), platform: deps.platform });
       if ("error" in file) return flow.refuse(file.error, "herdr");
-      flow.request({ source: "herdr", file: file.path }, ctx);
+      flow.request({ source: "herdr", file: file.path, shown: file.shown }, ctx);
     },
   };
 }

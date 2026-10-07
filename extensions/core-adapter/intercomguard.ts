@@ -56,7 +56,7 @@ export function intercomConfigRisks(agentDir: string): string[] {
     return [];
   }
   if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) return [];
-  return ["brokerCommand", "brokerArgs", "crossMachine"].filter((k) => Object.prototype.hasOwnProperty.call(cfg, k));
+  return ["brokerCommand", "brokerArgs", "crossMachine", "stableId"].filter((k) => Object.prototype.hasOwnProperty.call(cfg, k));
 }
 
 const isIntercomEntry = (e: unknown): boolean => {
@@ -69,7 +69,10 @@ export function intercomDoctor(agentDir: string, packageLists: unknown[], env: N
   const out: string[] = [];
   const installed = packageLists.some((l) => Array.isArray(l) && l.some(isIntercomEntry));
   out.push(installed ? `OK   ${INTERCOM_PACKAGE} listed in settings.json packages` : `INFO ${INTERCOM_PACKAGE} not installed (the installer adds it unless --no-intercom)`);
-  const risks = intercomConfigRisks(agentDir);
+  const all = intercomConfigRisks(agentDir);
+  const risks = all.filter((k) => k !== "stableId");
+  // Security review S6: a shared stableId makes every session (children too) register under one id.
+  if (all.includes("stableId")) out.push(`WARN ${intercomConfigPath(agentDir)} sets stableId: every Pi session of this agent dir, child sessions included, registers under that one intercom id, so a child can pose as the foreman's parent (foreman:close). Remove it and set PI_INTERCOM_STABLE_ID per session if you need a fixed id.`);
   if (risks.length) out.push(`WARN ${intercomConfigPath(agentDir)} sets ${risks.join(", ")}: brokerCommand/brokerArgs choose the program pi-intercom starts as its broker, crossMachine enables sends over SSH. Fine if you set them on purpose.`);
   if (env.HERDR_ENV === "1" && !fs.existsSync(path.join(agentDir, "extensions", "herdr-agent-state.ts"))) {
     out.push("INFO Herdr detected; run `herdr integration install pi` for pane state");
@@ -78,16 +81,22 @@ export function intercomDoctor(agentDir: string, packageLists: unknown[], env: N
 }
 
 /**
- * Sender of the newest pi-intercom message since the last user message in a session branch
- * (entries oldest first), or null. Used for the wake prompt, whose message reached the session
- * without an extension `message_end`.
+ * Details of the newest pi-intercom message since the last user message in a session branch
+ * (entries oldest first), or null. An idle session gets the message without an extension
+ * `message_end`, then pi-intercom's wake prompt; this finds the message for that prompt.
  */
-export function lastIntercomSender(entries: readonly unknown[]): string | null {
+export function lastIntercomDetails(entries: readonly unknown[]): { details: unknown } | null {
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i] as { type?: unknown; customType?: unknown; details?: unknown; message?: { role?: unknown } } | null;
     if (!e || typeof e !== "object") continue;
-    if (e.type === "custom_message" && e.customType === INTERCOM_MESSAGE_TYPE) return intercomSender(e.details);
+    if (e.type === "custom_message" && e.customType === INTERCOM_MESSAGE_TYPE) return { details: e.details };
     if (e.type === "message" && e.message?.role === "user") return null;
   }
   return null;
+}
+
+/** Sender label of the newest pi-intercom message since the last user message, or null. */
+export function lastIntercomSender(entries: readonly unknown[]): string | null {
+  const hit = lastIntercomDetails(entries);
+  return hit ? intercomSender(hit.details) : null;
 }
