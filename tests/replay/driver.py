@@ -38,7 +38,7 @@ PERMISSION_SYSTEM_VERSION = "39.0.2"
 PI_INTERCOM_VERSION = "0.16.1"
 PROVIDER_A = "foreman-fake"
 PROVIDER_B = "foreman-fake-b"
-ROLES = ["foreman", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
+ROLES = ["foreman", "planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
 DIALOGS = ("select", "confirm", "input", "editor")
 
 _npm_root = None

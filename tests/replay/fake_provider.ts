@@ -28,7 +28,7 @@ import type { Api, AssistantMessage, AssistantMessageEventStream, Model, SimpleS
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export const PROVIDERS = ["foreman-fake", "foreman-fake-b"];
-export const ROLE_MODELS = ["foreman", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"];
+export const ROLE_MODELS = ["foreman", "planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"];
 export const REVIEW_MODELS = ["allow", "deny-high", "deny-low", "defer", "garbage", "empty", "error", "hang"].map((k) => `review-${k}`);
 const REVIEW_REPLIES: Record<string, string> = {
   "review-allow": '{"verdict":"allow"}',

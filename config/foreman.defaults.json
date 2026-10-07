@@ -4,6 +4,7 @@
   "displayPresets": {
     "classic": {
       "foreman": "Picard",
+      "planner": "Hannibal",
       "explorer": "Dora",
       "builder": "Bob",
       "reviewer": "Watson",
@@ -12,6 +13,7 @@
     },
     "plain": {
       "foreman": "foreman",
+      "planner": "planner",
       "explorer": "explorer",
       "builder": "builder",
       "reviewer": "reviewer",
@@ -21,6 +23,7 @@
   },
   "roles": {
     "foreman": { "tools": [], "codemode": true },
+    "planner": { "tools": ["read", "ls", "grep", "find", "write", "edit"], "codemode": false, "launch": "detached", "timeoutMinutes": 20 },
     "explorer": { "tools": ["read", "ls", "grep", "find", "bash"], "codemode": true, "launch": "detached", "timeoutMinutes": 20 },
     "builder": { "tools": ["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_move", "foreman_copy"], "codemode": false, "launch": "detached", "timeoutMinutes": 60 },
     "reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "codemode": false, "launch": "detached", "timeoutMinutes": 30 },
@@ -38,7 +41,7 @@
     "revisionRounds": { "standard": 1, "heavy": 2 },
     "requireTriage": true,
     "trivialBound": { "files": 2, "lines": 40, "newFiles": 0 },
-    "required": { "standard": ["builder", "reviewer"], "heavy": ["builder", "reviewer", "finalizer"] },
+    "required": { "standard": ["builder", "reviewer"], "heavy": ["planner", "builder", "reviewer", "finalizer"] },
     "foremanEdits": "scratchpad",
     "scratchDir": ".workflow/scratch",
     "reviewBeforePr": true

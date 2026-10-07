@@ -328,7 +328,7 @@ class LayerRulesTest(unittest.TestCase):
         self.assertEqual(res["errors"], [])
         req = res["config"]["ceremony"]["required"]
         self.assertEqual(req["standard"], ["builder", "reviewer", "finalizer"])
-        self.assertEqual(req["heavy"], ["builder", "reviewer", "finalizer"])
+        self.assertEqual(req["heavy"], ["planner", "builder", "reviewer", "finalizer"])
         joined = "\n".join(res["warnings"])
         self.assertIn("project ceremony.required.standard: entries not removed: builder", joined)
         self.assertIn("project ceremony.required.heavy: unknown steps dropped: deployer", joined)

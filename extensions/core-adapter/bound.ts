@@ -11,7 +11,8 @@
 // tool result. Only `/ceremony` by the user resets it.
 //
 // D2 required steps (`ceremony.required.<tier>`): counted per session from the run-end events
-// of runs this session launched (single, chain and tasks launches): builder = a builder run that
+// of runs this session launched (single, chain and tasks launches): planner = a planner run that
+// completed; builder = a builder run that
 // completed (not failed, timed out or stopped); reviewer = a reviewer or senior-reviewer run
 // whose output has a verdict (PASS/FAIL, APPROVE/BLOCK); finalizer = a finalizer run that
 // completed.
@@ -179,18 +180,18 @@ export function boundRefusal(toolName: string, target: string, t: Tally, b: Triv
 
 // ------------------------------------------------------------------ D2 required steps
 
-export type Step = "builder" | "reviewer" | "finalizer";
+export type Step = "planner" | "builder" | "reviewer" | "finalizer";
 export type StepCounts = Record<Step, number>;
 
 export function emptySteps(): StepCounts {
-  return { builder: 0, reviewer: 0, finalizer: 0 };
+  return { planner: 0, builder: 0, reviewer: 0, finalizer: 0 };
 }
 
 /** `ceremony.required.<tier>` as a list of known steps (trivial: none). */
 export function requiredSteps(configured: unknown, tier: string): Step[] {
   const v = configured && typeof configured === "object" ? (configured as Record<string, unknown>)[tier] : undefined;
   if (!Array.isArray(v)) return [];
-  return [...new Set(v.filter((x): x is Step => x === "builder" || x === "reviewer" || x === "finalizer"))];
+  return [...new Set(v.filter((x): x is Step => x === "planner" || x === "builder" || x === "reviewer" || x === "finalizer"))];
 }
 
 export function missingSteps(counts: StepCounts, required: Step[]): Step[] {
@@ -214,7 +215,8 @@ export function stepsOfRunEnd(data: unknown): Step[] {
     const agent = typeof c.agent === "string" ? c.agent : typeof data.agent === "string" ? data.agent : "";
     const completed = (c.status === undefined ? c.success === true : c.status === "completed") && c.success !== false && c.timedOut !== true && c.stopped !== true && !c.error;
     if (!completed) continue;
-    if (agent === "builder") out.push("builder");
+    if (agent === "planner") out.push("planner");
+    else if (agent === "builder") out.push("builder");
     else if (agent === "finalizer") out.push("finalizer");
     else if (REVIEW_ROLES.includes(agent)) {
       const text = [c.output, c.summary].filter((t): t is string => typeof t === "string").join("\n");
