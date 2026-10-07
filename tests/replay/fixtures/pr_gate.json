@@ -1,6 +1,7 @@
 {
  "foreman": {
   "pr-gh": [{"tools": [{"name": "bash", "arguments": {"command": "gh pr create --title t --body b"}}]}, {"text": "PR attempt done."}],
+  "pr-compound": [{"tools": [{"name": "bash", "arguments": {"command": "git commit --allow-empty -q -m 'fix: x' && gh pr create --title t --body b"}}]}, {"text": "PR attempt done."}],
   "pr-review": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-pass]] review the branch"}}]}, {"text": "Reviewer launched."}],
   "pr-after": [{"text": "Review noted."}],
   "pr-mr": [{"tools": [{"name": "bash", "arguments": {"command": "git push -o merge_request.create origin main"}}]}, {"text": "push attempt done."}],

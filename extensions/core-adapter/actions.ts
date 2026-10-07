@@ -117,7 +117,7 @@ export type RunRegistry = Map<string, LaunchedRun>;
 const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
 
 /** Run id of a launch or resume result (`details.runId`, else `asyncId`), or null. */
-function launchId(input: unknown, details: unknown, isError: boolean): string | null {
+export function launchId(input: unknown, details: unknown, isError: boolean): string | null {
   if (isError || !isObj(input) || !isObj(details)) return null;
   const a = actionOf(input);
   if (a !== null && a !== "resume") return null;
