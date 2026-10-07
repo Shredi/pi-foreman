@@ -73,6 +73,15 @@ The usage footer (tokens, list-price cost, child launches) is on by default (`fo
 `bin/foreman update-check|retro|sync [args]` (`.cmd` and `.ps1` on Windows) runs the same scripts. Keys and
 their layer rules are in `design/architecture.md` §7.
 
+## Triage and delegation
+
+The foreman records a tier (trivial, standard, heavy) before it changes files itself, and the adapter checks the claim instead of trusting it:
+
+- At trivial the foreman may change at most `ceremony.trivialBound` itself (default 2 files, 40 changed lines, no new file). The call that would cross it is refused, the tier rises to standard and a builder does the rest. A project or session can only lower the bound.
+- Shell writes into project files (redirects, `tee`, `sed -i`, writing scripts) are refused for the foreman at every tier; `.workflow/` stays open. The scanner works on the command string and is not a sandbox; known blind spots are listed in `design/architecture.md` §5.
+- Standard needs a completed builder run and a reviewer verdict before the foreman may finish, heavy also a finalizer (`ceremony.required`, a project can only add steps). A refused finish names what is missing; after two refusals per prompt it passes with a visible warning.
+- While a child runs the foreman waits with `foreman_wait` or `bg_wait`; the trace and the bench table count polling bash calls (`pollBash`).
+
 ## Benchmark (`foreman bench`)
 
 `python scripts/foreman_bench.py run --preset bench/presets/smoke.json` runs the preset's rows over a

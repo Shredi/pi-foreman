@@ -10,8 +10,8 @@
 // holds only when the resolved target is below the resolved root's real `.workflow` folder, so a
 // link inside `.workflow` cannot carry a write out of it.
 //
-// LIMIT (documented, design/architecture.md): shell writes (redirects, `sed -i`, scripts) are not
-// gated here; the OS boundary planned for Phase 4 covers them.
+// LIMIT (documented, design/architecture.md): shell writes are not gated here but by
+// scripts/shell_write_guard.py (string scan, blind spots listed there); the OS boundary covers the rest.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { CeremonyState, Tier } from "./ceremony.ts";
