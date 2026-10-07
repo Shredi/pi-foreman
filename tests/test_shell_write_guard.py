@@ -242,6 +242,7 @@ class ShellWriteGuardTest(unittest.TestCase):
         # planner child: outside the workspace counts too (absolute, `..`, `~`); allowed dirs and /dev/null stay open
         out = tempfile.mkdtemp(prefix="pf-swg-out-")
         self.addCleanup(shutil.rmtree, out, True)
+        out = out.replace("\\", "/")  # a Windows temp path goes unquoted into the bash command below
         for cmd, kind in (("echo x > %s/f" % out, "redirect"), ("echo x > ../f", "redirect"), ("echo x | tee ~/f", "tee")):
             with self.subTest(command=cmd):
                 self.assertIsNone(swg.decide(cmd, self.ws, self.ws))

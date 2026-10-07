@@ -1210,7 +1210,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const name = `plan-${plan.topic}.md`;
         const hash8 = plan.hash.slice(0, 8);
         if (s.plan && s.plan.status === "approved" && s.plan.hash === plan.hash && s.plan.path === plan.path) {
-          return done("approve", s.plan.by, `${name} (${hash8}) is already approved by the owner (${s.plan.by}, ${s.plan.approvedAt}); builders may launch while it stays unchanged.`);
+          // No dialog ran: the trace carries by: null so a re-check never counts as another approval.
+          return done("approve", null, `${name} (${hash8}) is already approved by the owner (${s.plan.by}, ${s.plan.approvedAt}); builders may launch while it stays unchanged.`);
         }
         // Pending first: a crash, an abort or no answer leaves it pending, never approved.
         const rec: PlanRecord = { topic: plan.topic, path: plan.path, hash: plan.hash, status: "pending", approvedAt: null, by: null };
