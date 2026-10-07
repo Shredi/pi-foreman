@@ -797,7 +797,7 @@ const LOOP_START = new Set(["while", "until", "for", "select"]);
 /**
  * Child-only: every cd/pushd/popd target, resolved cumulatively over the whole command from the
  * session cwd, must be provably inside the workspace (symlinks resolved). Anything not literal
- * (`$VAR`, `$()`, globs, `~`, `-`, bare cd) denies, so does any mention of CDPATH (D-B2). A cd to a
+ * (`$VAR`, `$()`, globs, a leading `~`, `-`, bare cd) denies, so does any mention of CDPATH (D-B2). A cd to a
  * directory that does not exist yet may fail at run time, so the tracked cwd is a set of
  * candidates and every later target must stay inside from each of them (D-B3); after `cd T &&`
  * the old cwd revives only where the and-list ends (`;`, `||`, `&`, newline, grouping). Inside a loop a
@@ -881,7 +881,8 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
     let i = 0;
     while (i < args.length && ["-L", "-P", "-e", "-@", "--"].includes(args[i])) i++;
     const target = args[i];
-    if (target === undefined || target === "" || /^[-+]\d*$/.test(target) || /[$`*?[\]{}~]/.test(target) || target.startsWith("-")) return deny();
+    // `~` expands only at the start of a word; inside one it is literal (Windows short names: RUNNER~1)
+    if (target === undefined || target === "" || /^[-+]\d*$/.test(target) || /[$`*?[\]{}]/.test(target) || /^[-~]/.test(target)) return deny();
     let t = norm(target);
     if (win) t = t.replace(/^\/([A-Za-z])(?=$|\/)/, "$1:");
     const push = verb === "pushd" || verb === "push-location";

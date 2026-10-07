@@ -19,7 +19,7 @@ const verdict = (command: string, role: "main" | "child" = "child"): string =>
   checkToolCall(rules, "bash", { command }, { cwd, home: path.join(root, "home"), platform: process.platform, role })?.kind ?? "pass";
 
 test("child cd: inside the workspace passes, also cumulatively and with pushd/popd", () => {
-  for (const c of ["cd sub && cargo test", `cd ${path.join(cwd, "sub")} && ls`, "cd sub/deep && cd .. && ls", "cd . && ls", "pushd sub && popd && ls", "ls"]) assert.equal(verdict(c), "pass", c);
+  for (const c of ["cd sub && cargo test", `cd "${path.join(cwd, "sub")}" && ls`, "cd sub/deep && cd .. && ls", "cd . && ls", "pushd sub && popd && ls", "ls"]) assert.equal(verdict(c), "pass", c);
 });
 
 test("child cd: outside, escapes and non-literal targets deny", () => {
@@ -29,6 +29,20 @@ test("child cd: outside, escapes and non-literal targets deny", () => {
     assert.equal(d?.kind, "deny", c);
     assert.match(d!.reason, /children may cd only inside the workspace/, c);
   }
+});
+
+test("child cd: a `~` inside a word is literal (Windows short names), a leading `~` denies", () => {
+  // emulated win32 workspace below an 8.3 short name, as on the Windows CI runner
+  const w = path.win32;
+  const ws = "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\pf-cd-x\\ws";
+  const dirs = new Set([ws, `${ws}\\sub`].map((d) => d.toLowerCase()));
+  const isDir = (x: string): boolean => dirs.has(w.normalize(x).toLowerCase());
+  const ctx = { cwd: ws, home: "C:\\Users\\RUNNER~1", platform: "win32" as const, role: "child" as const, realpath: (x: string) => x, exists: isDir, isDir, list: () => [] };
+  const v = (command: string): string => checkToolCall(rules, "bash", { command }, ctx)?.kind ?? "pass";
+  for (const c of [`cd "${ws}\\sub" && ls`, `cd '${ws}\\sub' && ls`, `cd ${ws.replace(/\\/g, "/")}/sub && ls`, "cd sub && ls"]) assert.equal(v(c), "pass", c);
+  for (const c of ["cd ~ && ls", "cd ~/x", 'cd "~"', "cd C:/Users/RUNNER~1 && ls", `cd "${ws}\\..\\elsewhere"`]) assert.equal(v(c), "deny", c);
+  fs.mkdirSync(path.join(cwd, "a~1"), { recursive: true });
+  assert.equal(verdict("cd a~1 && ls"), "pass");
 });
 
 test("child cd: the foreman is not confined by the overlay", () => {
