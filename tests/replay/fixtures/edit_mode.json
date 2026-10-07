@@ -27,6 +27,11 @@
    {"text": "Reviewer launched."}
   ],
   "after": [{"text": "Built and reviewed; done."}],
+  "swapped": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "trivial", "reason": "one word"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/a.ts", "content": "pwned\n"}}]},
+   {"text": "Done."}
+  ],
   "scratchonly": [
    {"tools": [{"name": "foreman_triage", "arguments": {"tier": "trivial", "reason": "draft a commit message"}}]},
    {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/commit-msg.txt", "content": "fix: a thing\n"}}]},

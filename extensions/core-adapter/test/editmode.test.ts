@@ -51,3 +51,29 @@ test("edit mode: a scratch dir that resolves outside the workspace or to a proje
   assert.deepEqual(allowedShellDirs("scratchpad", "escape", ws, process.platform), [".workflow"]);
   assert.ok(editModeBlock("write", { path: "notes/into-src/a.ts" }, "scratchpad", "notes", opts), "a link inside scratch cannot carry a write out of it");
 });
+
+test("edit mode: a scratch dir with a symlink component is disabled, even when it points inside the workspace", (t) => {
+  if (process.platform === "win32") return t.skip("symlinks need rights on Windows");
+  const { ws, opts } = workspace(t);
+  fs.rmSync(path.join(ws, ".workflow", "scratch"), { recursive: true });
+  fs.symlinkSync(path.join("..", "src"), path.join(ws, ".workflow", "scratch"));
+  assert.equal(scratchRoot(fs.realpathSync(ws), ".workflow/scratch", process.platform), null);
+  assert.match(editModeBlock("write", { path: ".workflow/scratch/a.ts" }, "scratchpad", ".workflow/scratch", opts) ?? "", /scratch dir \.workflow\/scratch is disabled: it passes through a symlink/);
+  assert.ok(editModeBlock("write", { path: "src/a.ts" }, "scratchpad", ".workflow/scratch", opts));
+  assert.deepEqual(allowedShellDirs("scratchpad", ".workflow/scratch", ws, process.platform), [".workflow"]);
+});
+
+test("edit mode: a hard-linked existing target is refused in readonly and scratchpad", (t) => {
+  const { ws, opts } = workspace(t);
+  fs.writeFileSync(path.join(ws, "src", "a.ts"), "x");
+  fs.linkSync(path.join(ws, "src", "a.ts"), path.join(ws, ".workflow", "h"));
+  fs.linkSync(path.join(ws, "src", "a.ts"), path.join(ws, "notes", "h"));
+  for (const mode of ["readonly", "scratchpad"] as const) {
+    assert.match(editModeBlock("edit", { path: ".workflow/h" }, mode, "notes", opts) ?? "", /'\.workflow\/h' refused: hard-linked file: delegate to a builder/);
+  }
+  assert.ok(editModeBlock("write", { path: "notes/h" }, "scratchpad", "notes", opts));
+  assert.ok(editModeBlock("foreman_move", { src: "notes/h", dst: "notes/m" }, "scratchpad", "notes", opts));
+  assert.ok(editModeBlock("foreman_copy", { src: "notes/x", dst: "notes/h" }, "scratchpad", "notes", opts));
+  assert.equal(editModeBlock("write", { path: "notes/new.md" }, "scratchpad", "notes", opts), "");
+  assert.equal(editModeBlock("edit", { path: ".workflow/h" }, "bounded", "notes", opts), null);
+});

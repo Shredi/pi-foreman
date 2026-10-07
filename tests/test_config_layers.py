@@ -263,8 +263,19 @@ class LayerRulesTest(unittest.TestCase):
         self.assertEqual(res["config"]["ceremony"]["foremanEdits"], "readonly")
         self.assertIn("session ceremony.foremanEdits ignored: it would loosen", "\n".join(res["warnings"]))
         res = self.load(l2={"ceremony": {"foremanEdits": "bounded"}}, proj={"ceremony": {"foremanEdits": "free"}}, session={})
-        self.assertEqual(res["config"]["ceremony"]["foremanEdits"], "bounded")
-        self.assertIn("project ceremony.foremanEdits ignored: not one of readonly, scratchpad, bounded", "\n".join(res["warnings"]))
+        self.assertEqual(res["config"]["ceremony"]["foremanEdits"], "scratchpad")
+        self.assertIn("project ceremony.foremanEdits 'free' invalid: not one of readonly, scratchpad, bounded", "\n".join(res["errors"]))
+
+    def test_malformed_user_layer_cannot_let_project_loosen(self):
+        for value in ["free", "READONLY", 5]:
+            res = self.load(l2={"ceremony": {"foremanEdits": value, "scratchDir": 5}},
+                            proj={"ceremony": {"foremanEdits": "bounded", "scratchDir": "src"}},
+                            session={"ceremony": {"foremanEdits": "bounded"}})
+            self.assertEqual(res["config"]["ceremony"]["foremanEdits"], "scratchpad", value)
+            self.assertEqual(res["config"]["ceremony"]["scratchDir"], ".workflow/scratch", value)
+            errors = "\n".join(res["errors"])
+            self.assertIn("L2 ceremony.foremanEdits", errors)
+            self.assertIn("L2 ceremony.scratchDir 5 invalid", errors)
 
     def test_review_before_pr_true_only(self):
         res = self.load(proj={"ceremony": {"reviewBeforePr": False}}, session={"ceremony": {"reviewBeforePr": False}})
@@ -278,10 +289,13 @@ class LayerRulesTest(unittest.TestCase):
         self.assertEqual(res["errors"], [])
         self.assertEqual(res["config"]["ceremony"]["scratchDir"], ".workflow/scratch/notes")
         self.assertIn("session ceremony.scratchDir ignored: it may only narrow", "\n".join(res["warnings"]))
-        for value in ["src", "../x", "/tmp/x", ".", 5]:
+        res = self.load(proj={"ceremony": {"scratchDir": "src"}}, session={})
+        self.assertEqual(res["config"]["ceremony"]["scratchDir"], ".workflow/scratch")
+        self.assertIn("project ceremony.scratchDir ignored", "\n".join(res["warnings"]))
+        for value in ["../x", "/tmp/x", ".", 5]:
             res = self.load(proj={"ceremony": {"scratchDir": value}}, session={})
             self.assertEqual(res["config"]["ceremony"]["scratchDir"], ".workflow/scratch", value)
-            self.assertIn("project ceremony.scratchDir ignored", "\n".join(res["warnings"]))
+            self.assertIn("project ceremony.scratchDir", "\n".join(res["errors"]))
         res = self.load(l2={"ceremony": {"scratchDir": "notes"}}, proj={}, session={})
         self.assertEqual(res["config"]["ceremony"]["scratchDir"], "notes")
 
@@ -296,6 +310,17 @@ class LayerRulesTest(unittest.TestCase):
             res = self.load(l2={"ceremony": {"scratchDir": value}}, proj={}, session={})
             self.assertEqual(res["config"]["ceremony"]["scratchDir"], ".workflow/scratch", value)
             self.assertIn("ceremony.scratchDir", "\n".join(res["errors"]), value)
+
+    def test_scratch_dir_through_symlink_is_config_error(self):
+        (self.project / "src").mkdir()
+        (self.project / ".workflow").mkdir()
+        try:
+            os.symlink(os.path.join("..", "src"), str(self.project / ".workflow" / "scratch"), target_is_directory=True)
+        except OSError:  # Windows without symlink rights
+            self.skipTest("no symlink rights")
+        res = self.load(l2={"ceremony": {"scratchDir": ".workflow/scratch/x"}}, proj={}, session={})
+        self.assertEqual(res["config"]["ceremony"]["scratchDir"], ".workflow/scratch")
+        self.assertIn("must not pass through a symlink", "\n".join(res["errors"]))
 
     def test_required_steps_add_only(self):
         res = self.load(proj={"ceremony": {"required": {"standard": ["reviewer", "finalizer"], "heavy": ["deployer"]}}},
