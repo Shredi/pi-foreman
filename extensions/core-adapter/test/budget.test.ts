@@ -78,6 +78,16 @@ test("recheck: N reads after a PASS, then refused; reset leaves the state", () =
   assert.equal(b.check("read", "e", L, 3, false).kind, "allow");
 });
 
+test("budget: a new user prompt restarts at phase before with a fresh count", () => {
+  const b = new ReadBudget();
+  kinds(b, ["a", "b", "c", "d"]);
+  b.onLaunch(["explorer"]);
+  assert.equal(b.phase, "after");
+  assert.equal(b.resetAll(), 0);
+  assert.equal(b.phase, "before");
+  assert.deepEqual(kinds(b, ["e", "f", "g", "h"]), ["allow", "warn", "warn", "deny"]);
+});
+
 test("budget: paths in child output and the finish line", () => {
   assert.deepEqual(pathsIn("Output: /tmp/x/result-1.md and C:\\w\\out.txt, see also a/b.md"), ["/tmp/x/result-1.md", "C:\\w\\out.txt"]);
   assert.equal(finishLine({ standard: ["builder", "reviewer"] }, "standard"), "Before you finish: a builder run must complete, a reviewer must pass.");

@@ -131,6 +131,16 @@ export class ReadBudget {
     return r;
   }
 
+  /** A new user prompt: back to phase before with a fresh count (the post-PASS state is left separately). */
+  resetAll(): number {
+    const n = this.ids.size;
+    this.phase = "before";
+    this.ids = new Set();
+    this.denied = false;
+    this.liftUsed = { before: false, after: false };
+    return n;
+  }
+
   /** Reviewer PASS: enter the post-PASS state (knob 2). */
   enterPost(): void {
     this.post = { ids: new Set() };

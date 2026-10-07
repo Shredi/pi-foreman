@@ -48,15 +48,11 @@ class TestReadBudget(ReplayCase):
 
         res = tool_results(pi.prompt("[[replay:deny]] go", timeout=90))
         names = [(n, e) for n, e, _ in res]
-        self.assertEqual(names, [("read", False), ("read", True), ("subagent", True), ("read", True), ("subagent", False), ("read", False), ("read", False), ("read", True)], res)
-        self.assertIn("[read_budget_exceeded]", res[1][2])
-        self.assertIn("a started explorer run lifts the limit", res[1][2])
-        self.assertIn("[read_budget_exceeded]", res[3][2], "a refused explorer launch does not lift")
-        self.assertIn("[read_budget_exceeded]", res[7][2], "phase after: deny 2")
-
-        res = tool_results(pi.prompt("[[replay:deny2]] go", timeout=90))
-        self.assertEqual([(n, e) for n, e, _ in res], [("subagent", False), ("read", False), ("read", False), ("read", True)], res)
-        self.assertIn("ask the owner to run /foreman budget lift", res[3][2])
+        self.assertEqual(names, [("read", False)] * 3 + [("read", True), ("subagent", True), ("read", True), ("subagent", False)] + [("read", False)] * 2 + [("read", True), ("subagent", False)] + [("read", False)] * 1 + [("read", False), ("read", True)], res)
+        self.assertIn("[read_budget_exceeded]", res[3][2])
+        self.assertIn("a started explorer run lifts the limit", res[3][2])
+        self.assertIn("[read_budget_exceeded]", res[5][2], "a refused explorer launch does not lift")
+        self.assertIn("ask the owner to run /foreman budget lift", res[-1][2], "second deny in the phase")
 
         notes = notifications(pi.prompt("/foreman budget lift", timeout=30))
         self.assertTrue(any("read budget lifted" in n for n in notes), notes)
@@ -64,10 +60,9 @@ class TestReadBudget(ReplayCase):
         self.assertEqual([e for _, e, _ in res], [False], res)
         pi.close()
         got = short(events(rig, "read_budget"))
-        self.assertEqual(got[:3], [("before", 2, "warn", None), ("before", 3, "warn", None), ("before", 3, "deny", None)])
-        self.assertIn(("before", 3, "lift", "explorer"), got)
-        self.assertEqual([g for g in got if g[2] == "lift"][-1][3], "user")
-        self.assertEqual(sum(1 for g in got if g[2] == "lift" and g[3] == "explorer"), 2)
+        self.assertEqual(got[0], ("before", 2, "warn", None))
+        self.assertEqual([g for g in got if g[2] == "lift"], [("before", 3, "lift", "explorer"), ("after", 2, "lift", "explorer"), ("after", 2, "lift", "user")])
+        self.assertIn(("before", 3, "deny", None), got)
 
     def test_codemode_script_counts_once(self):
         rig, pi = self.start("rb-script", budget(before=(3, 4)))
@@ -123,6 +118,33 @@ class TestRecheckBudget(ReplayCase):
         pi.close()
         got = [(r["action"], r["count"]) for r in events(rig, "recheck_budget")]
         self.assertEqual(got, [("start", 0), ("deny", 2), ("reset_fail", 1)])
+
+    def test_edit_after_pass_resets_the_recheck_budget(self):
+        rig = self.rig("rb-edit", load_fixture("read_budget"), config=budget(after=(8, 9), recheck=1))
+        (rig.project / "a.txt").write_text("alpha\n", "utf-8")
+        pi = rig.start()
+        pi.prompt("[[replay:ed1]] build it", timeout=60)
+        pi.wait_child_notify(timeout=180)
+        _, passed = pi.wait_child_notify(timeout=180)
+        res = tool_results(passed)
+        pi.close()
+        self.assertEqual([(n, e) for n, e, _ in res], [("read", False), ("write", False), ("read", False)], res)
+        got = [a for a, _ in [(r["action"], r["count"]) for r in events(rig, "recheck_budget")]]
+        self.assertEqual(got, ["start", "reset_edit"])
+
+
+@unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
+class TestUserPromptReset(ReplayCase):
+    def test_new_prompt_restarts_the_before_budget(self):
+        rig = self.rig("rb-user", load_fixture("read_budget"), config=budget(before=(1, 2)))
+        (rig.project / "a.txt").write_text("alpha\n", "utf-8")
+        pi = rig.start()
+        res = tool_results(pi.prompt("[[replay:usr]] go", timeout=60))
+        self.assertEqual([e for _, e, _ in res], [False, False, True], res)
+        res = tool_results(pi.prompt("[[replay:usr]] again", timeout=60))
+        self.assertEqual([e for _, e, _ in res], [False, False, True], res)
+        pi.close()
+        self.assertEqual([r["action"] for r in events(rig, "read_budget") if r["action"] == "reset_user"], ["reset_user"])
 
 
 if __name__ == "__main__":

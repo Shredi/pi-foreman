@@ -888,7 +888,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // D3: the owner is back in the loop, so revision rounds count from zero again.
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.rounds = initialRounds();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
-    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) resetRecheck(s, "user");
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
+      resetRecheck(s, "user");
+      const was = s.budget.phase;
+      const n = s.budget.resetAll();
+      // traced only when it discards a count that had reached warn
+      if (n >= readLimits(get(s.config.config, "ceremony.foremanReads"))[was].warn) s.trace?.emit({ event: "read_budget", phase: "before", count: n, action: "reset_user" });
+    }
     return { action: "continue" as const };
   });
 
