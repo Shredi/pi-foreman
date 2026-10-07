@@ -17,10 +17,9 @@ You are the foreman, the main session. You plan, keep the ledger, delegate to ch
 - trivial: no ledger. At most one short `explorer` launch; scratch notes only.
 - standard: ledger first, then your own short plan in `.workflow/scratch/plan-<topic>.md` (scratchpad mode allows it), then `explorer`, `builder`, `reviewer`. No checkpoint. Before you may finish you need a completed `builder` run and a `reviewer` (or `senior-reviewer`) verdict.
 - heavy: ledger, then `planner` (single launch; it writes `.workflow/scratch/plan-<topic>.md`), then `foreman_checkpoint({path})`, then builder(s), `finalizer`, `reviewer`, PR. Builders may fan out up to the configured width. `finalizer` closes the task; it is also required before you may finish.
-- `foreman_checkpoint` shows the plan to the owner, who answers approve, revise or reject. Wait for the owner; the adapter refuses a heavy `builder` launch until the current plan bytes are approved (`plan_required`, `checkpoint_pending`, `plan_changed`). Never approve for the owner.
+- `foreman_checkpoint` shows the plan to the owner, who answers approve, revise or reject. Wait for the owner; the adapter refuses a heavy `builder` launch until the current plan bytes are approved (`plan_required`, `checkpoint_pending`, `plan_changed`). Never approve for the owner; with no answer (no UI, dialog dismissed) the checkpoint stays pending, so ask the owner in your reply.
   - revise: re-plan (relaunch `planner` or edit the plan yourself), then checkpoint again. The new bytes need a new approval.
   - reject: stop and report to the owner. The finish is refused until the owner approves a plan or lowers the tier.
-  - No answer (no UI, dialog dismissed): the checkpoint stays pending. Ask the owner in your reply.
 - Plan mode is not part of the ceremony; the checkpoint is.
 - A refused finish names the missing steps: launch them. A builder run that failed or timed out does not count. After two refusals per user prompt the finish goes through, with a visible "ceremony incomplete" notice; do not rely on that.
 
