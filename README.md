@@ -64,9 +64,9 @@ claude setup-token                                                 # then export
 
 In a Pi session (the foreman, not children):
 
-- `/sync` pulls, commits (explicit paths only) and pushes the repositories listed in `sync.repos` of your user config, then runs the retro. It never forces a push and runs no repository hooks.
-- `/retro` prints friction metrics of the session and writes permission-allow proposals to `<agent dir>/pi-foreman/state/retro/`; nothing is applied for you.
-- `/foreman close [result-path]` ends the session cleanly: result file, sync, exit. It is refused while a long wait is pending. A parent can send the same request with `herdr agent prompt` or, from its own session id, as an intercom message `foreman:close`.
+- `/sync` pulls, commits (explicit paths only) and pushes the repositories listed in `sync.repos` of your user config, then runs the retro. It never forces a push, runs no repository hooks and refuses a repo whose local config sets code-running or redirecting keys (filters, hooks, ssh/credential helpers, url rewrites, submodules and similar), or that holds a secret or a linked file.
+- `/retro` prints friction metrics of the session and writes permission-allow proposals (never for interpreter, eval, exec, env, sudo, ssh, npx or git config commands) to `<agent dir>/pi-foreman/state/retro/`; nothing is applied for you.
+- `/foreman close [result-path]` ends the session cleanly: result file, sync, exit. It is refused while a long wait is pending. A parent can send the same request with `herdr agent prompt` or, from its own session id, as an intercom message `foreman:close` (also to an idle session).
 - `/foreman update-check` lists newer versions of the pinned packages with release-note links. It changes nothing.
 
 The usage footer (tokens, list-price cost, child launches) is on by default (`footer.usage`). Outside Pi,
