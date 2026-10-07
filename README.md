@@ -73,6 +73,17 @@ The usage footer (tokens, list-price cost, child launches) is on by default (`fo
 `bin/foreman update-check|retro|sync [args]` (`.cmd` and `.ps1` on Windows) runs the same scripts. Keys and
 their layer rules are in `design/architecture.md` §7.
 
+## Benchmark (`foreman bench`)
+
+`python scripts/foreman_bench.py run --preset bench/presets/smoke.json` runs the preset's rows over a
+[Harbor](https://github.com/harbor-framework/harbor) task dir (`--tasks DIR` or `bench.tasks_dir`) in local
+Docker; a second `run` resumes, `table` prints the counters (success, tokens, wall time, tool calls,
+approvals, guard blocks). Needs `uv tool install harbor`; Harbor telemetry is always switched off. The
+Harbor agents live in `bench/harbor_agent.py` and are not part of the installed package.
+`--dry-run` prints the cell order, `--token-cap N` stops cleanly (exit 4) once finished cells used N
+tokens (two consecutive infrastructure-error cells stop it with exit 5), `--setup-only` installs one cell's agent and runs zero-model checks without a prompt.
+`bench/tasks/m1-recheck` re-checks the M1 standard task (ledger, explorer, builder, reviewer).
+
 ## License
 
 MIT, see `LICENSE`. Upstream attributions are in `NOTICE`.

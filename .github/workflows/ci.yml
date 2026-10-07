@@ -69,3 +69,66 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Output "ledger.ps1 without Bypass: blocked (exit $LASTEXITCODE); ledger.cmd is the fallback" } else { Write-Output "ledger.ps1 without Bypass: runs under the runner's default policy" }
           Remove-Item Env:PI_FOREMAN_PYTHON
           $out = cmd /c "bin\ledger.cmd -f `"$led`" status"; Check 'ledger.cmd (py launcher fallback)' $out $LASTEXITCODE
+  bench-smoke:
+    # Harbor needs Linux Docker, so the real rig run is Linux only (macOS and Windows run the
+    # foreman bench unit tests in the test job). Fake provider only; no secrets; telemetry off.
+    runs-on: ubuntu-latest
+    env:
+      HARBOR_TELEMETRY: "off"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: install Harbor (uv tool, Python 3.12)
+        run: |
+          python -m pip install -q uv
+          uv tool install --python 3.12 "harbor==0.23.0"
+          echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+          "$(uv tool dir --bin)/harbor" --version
+      - name: foreman bench smoke (ForemanPi, fake provider, detach probe)
+        run: python scripts/foreman_bench.py run --preset bench/presets/smoke.json --rows foreman-fake --task detach-probe --jobs-dir "$RUNNER_TEMP/bench-jobs"
+      - name: assert reward 1 and the detached child finished before the verifier
+        run: |
+          python scripts/foreman_bench.py table --preset bench/presets/smoke.json --jobs-dir "$RUNNER_TEMP/bench-jobs"
+          python - <<'EOF'
+          import glob, json, os
+          from datetime import datetime
+          files = [f for f in glob.glob(os.path.join(os.environ["RUNNER_TEMP"], "bench-jobs", "foreman-fake__detach-probe__r1__*", "*", "result.json"))]
+          r = [json.load(open(f)) for f in files if "trial_name" in json.load(open(f))][-1]
+          assert r["verifier_result"]["rewards"]["reward"] == 1.0, r.get("exception_info")
+          b = r["agent_result"]["metadata"]["bench"]
+          runs = b["async_runs_at_end"]
+          assert runs and all(x["state"] == "complete" for x in runs), runs
+          v = datetime.fromisoformat(r["verifier"]["started_at"].replace("Z", "+00:00")).timestamp() * 1000
+          assert all(x["lastUpdate"] < v for x in runs), (runs, v)
+          assert b["claude_config_dir"]["empty"], b["claude_config_dir"]
+          print("bench smoke ok: child finished %d ms before the verifier; tokens %s" % (v - max(x["lastUpdate"] for x in runs), b["counters"]["tokens"]["total"]))
+          EOF
+      - name: revision probe (triage, builder, denied ask, failing review, revision) on the fake provider
+        run: |
+          python scripts/foreman_bench.py run --preset bench/presets/smoke.json --rows foreman-fake-revision --task revision-probe --jobs-dir "$RUNNER_TEMP/bench-jobs"
+          python - <<'EOF'
+          import glob, json, os
+          base = os.path.join(os.environ["RUNNER_TEMP"], "bench-jobs", "foreman-fake-revision__revision-probe__r1__*")
+          logs = glob.glob(os.path.join(base, "*", "agent"))
+          assert logs, base
+          logs = logs[-1]
+          r = json.load(open(glob.glob(os.path.join(os.path.dirname(logs), "result.json"))[-1]))
+          b = r["agent_result"]["metadata"]["bench"]
+          assert b["status"] == "done" and not b["infra_error"], b
+          run = json.load(open(os.path.join(logs, "bench-run.json")))
+          assert "@gotgenes/pi-permission-system" in run["versions"], run["versions"]
+          cfg = json.load(open(os.path.join(logs, "agent-foreman.json")))
+          assert cfg["providers"]["foreman-fake"]["review"]["model"], cfg
+          assert glob.glob(os.path.join(logs, "state", "usage", "*.jsonl")), os.listdir(os.path.join(logs, "state"))
+          assert len(run["asks_denied"]) >= 1, run
+          events = [json.loads(l) for f in glob.glob(os.path.join(logs, "trace", "trace-*.jsonl")) for l in open(f)]
+          assert any(e.get("event") == "triage" and e.get("decision") == "recorded" for e in events), "no triage event"
+          print("revision probe ok: asks_denied %s, %d trace events" % (run["asks_denied"], len(events)))
+          EOF
+      - name: M1 re-check hidden check on the fake provider (scripted good run 1, no-reviewer run 0)
+        run: |
+          python scripts/foreman_bench.py run --preset bench/presets/smoke.json --rows m1-fake-good m1-fake-bad --task m1-recheck --jobs-dir "$RUNNER_TEMP/bench-jobs"
+          python scripts/foreman_bench.py table --preset bench/presets/smoke.json --jobs-dir "$RUNNER_TEMP/bench-jobs" --json > "$RUNNER_TEMP/m1.json"
+          python -c "import json,sys; c={(r['row'],r['task']):r for r in json.load(open(sys.argv[1]))['cells']}; g=c[('m1-fake-good','m1-recheck')]; b=c[('m1-fake-bad','m1-recheck')]; assert (g['counted'],g['success'],b['counted'],b['success'])==(1,1,1,0), (g,b); print('m1 re-check check ok: good 1, bad 0')" "$RUNNER_TEMP/m1.json"
