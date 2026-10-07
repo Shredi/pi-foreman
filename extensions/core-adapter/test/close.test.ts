@@ -41,12 +41,13 @@ test("close: result path default and bound to the workspace .workflow/", () => {
   for (const bad of ["README.md", ".workflow", ".workflow/r.txt", "../outside/r.md", ".workflow/link/r.md", path.join(outside, "r.md")]) assert.ok("error" in resultPath(bad, opts), bad);
 });
 
-function rig(waits: { id: string; kind: string; note: string }[] = []) {
+function rig(waits: { id: string; kind: string; note: string }[] = [], runs = 0) {
   const log: string[] = [];
   const timers: (() => void)[] = [];
   const files = new Map<string, string>();
   const deps: CloseDeps = {
     activeWaits: () => waits,
+    activeRuns: () => runs,
     sendUserMessage: (t) => void log.push(`prompt:${t}`),
     runSync: async () => (log.push("sync"), { text: "pi-foreman sync\nrepo: pushed", ok: true }),
     retro: async () => (log.push("retro"), "approvals: 3"),
@@ -70,6 +71,15 @@ test("close: refused while a foreman_wait is active; waits are not cancelled; in
   assert.ok(r.log.includes("trace:refused"));
   assert.ok(r.log.some((l) => l.startsWith("reply:parent-1:") && l.includes("w1 timer")));
   assert.ok(!r.log.some((l) => l.startsWith("prompt:") || l === "shutdown"));
+});
+
+test("close: refused while child runs are active; never cancelled; intercom gets a reply", () => {
+  const r = rig([], 2);
+  r.flow.request({ source: "intercom-parent", file: "/x/r.md", replyTo: "parent-1" }, r.ctx, true);
+  assert.equal(r.flow.active, false);
+  assert.ok(r.log.includes("trace:refused"));
+  assert.ok(r.log.some((l) => l.startsWith("reply:parent-1:") && l.includes("2 child run(s) still active")));
+  assert.ok(!r.log.some((l) => l.startsWith("prompt:") || l === "shutdown" || l === "sync"));
 });
 
 test("close: sequence waits for idle, one close turn, then sync, stub, shutdown", async () => {
@@ -170,7 +180,7 @@ test("close: the start deadline is cleared at the close run's agent_start, so a 
 test("close: a child session swallows pi-intercom's wake prompt (no child turn from intercom, review S6)", async () => {
   const handlers = new Map<string, (e: unknown, c: unknown) => Promise<unknown>>();
   const pi = { on: (n: string, h: (e: unknown, c: unknown) => Promise<unknown>) => void handlers.set(n, h) };
-  registerClose(pi as never, { platform: process.platform, activeWaits: () => [], session: async () => { throw new Error("not reached"); } });
+  registerClose(pi as never, { platform: process.platform, activeWaits: () => [], activeRuns: () => 0, session: async () => { throw new Error("not reached"); } });
   const ctx = { sessionManager: { getSessionId: () => "child-1", getBranch: () => [] } };
   const before = process.env.PI_SUBAGENT_CHILD;
   process.env.PI_SUBAGENT_CHILD = "1";

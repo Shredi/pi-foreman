@@ -15,7 +15,7 @@ import { permFileState, PS_CHILD_ID, PS_PACKAGE, psProjectConfigPath, renderPerm
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
-import { actionOf, recordLaunch, roundSteps, subagentActionCheck } from "./actions.ts";
+import { actionOf, endActive, recordLaunch, trackActive, roundSteps, subagentActionCheck } from "./actions.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
@@ -56,7 +56,7 @@ let herdrEvents: EventBus | undefined;
 import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait } from "./wait.ts";
-import { registerClose } from "./close.ts";
+import { registerClose, syncCommand } from "./close.ts";
 import { foremanTriage, GATED_TOOLS, triageAdvice, triageGateBlock, TRIAGE_TOOL } from "./triage.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
 import type { RegistryLike } from "./modelcheck.ts";
@@ -99,6 +99,8 @@ interface Session {
   trace: TraceWriter | null;
   /** Runs this session launched (resume provenance, actions.ts). */
   runs: RunRegistry;
+  /** Child runs launched by this session that have not ended (actions.ts trackActive; /sync and close refuse while any). */
+  activeRuns: Set<string>;
   /** Launch notices (strong model asked for but unmapped) by tool call id, added to the subagent result. */
   launchNotices: Map<string, string[]>;
   /** Open child supervisor requests (supervisor.ts). */
@@ -197,6 +199,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       stopContinued: false,
       notified: new Set(),
       runs: new Map(),
+      activeRuns: new Set(),
       launchNotices: new Map(),
       supervisor: new SupervisorWindow(),
       gitDrift: new GitDriftWatch(),
@@ -539,7 +542,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   for (const channel of RUN_END_EVENTS) {
     pi.events?.on(channel, (data) => {
-      for (const s of sessions.values()) s.supervisor.onRunEnd(data);
+      for (const s of sessions.values()) {
+        s.supervisor.onRunEnd(data);
+        endActive(s.activeRuns, data);
+      }
     });
   }
 
@@ -780,7 +786,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (event.toolName === "subagent") {
       const s = sessionFor(ctx);
-      if (s) recordLaunch(s.runs, event.input, event.details, event.isError);
+      if (s) {
+        recordLaunch(s.runs, event.input, event.details, event.isError);
+        trackActive(s.activeRuns, event.input, event.details, event.isError);
+      }
       for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_result", role, exit: event.isError ? 1 : 0 });
       const notices = s?.launchNotices.get(event.toolCallId);
       if (s && notices) {
@@ -857,6 +866,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const close = registerClose(pi, {
     platform,
     activeWaits: (id) => waits.active(id),
+    activeRuns: (id) => sessions.get(id)?.activeRuns.size ?? 0,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
       return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), runSync: (c) => runSync(s, c), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text };
@@ -956,8 +966,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         ctx.ui.notify("/sync is for the foreman only.", "warning");
         return;
       }
-      const r = await runSync(s, ctx);
-      ctx.ui.notify(r.text, r.ok ? "info" : "error");
+      await syncCommand({ activeRuns: s.activeRuns.size, run: () => runSync(s, ctx), notify: (t, l) => ctx.ui.notify(t, l) });
     },
   });
 

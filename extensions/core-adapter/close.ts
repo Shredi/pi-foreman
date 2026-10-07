@@ -99,6 +99,8 @@ export function resultPath(raw: string | undefined, o: { cwd: string; sessionId:
 
 export interface CloseDeps {
   activeWaits: () => { id: string; kind: string; note: string }[];
+  /** Detached child runs of this foreman that have not ended. */
+  activeRuns: () => number;
   sendUserMessage: (text: string) => void;
   runSync: () => Promise<{ text: string; ok: boolean }>;
   /** Retro numbers for a stub ("" when the sync output already carries them). */
@@ -153,6 +155,11 @@ export class CloseFlow {
   }
 
   private waitsBlock(source: CloseSource, replyTo?: string): boolean {
+    const runs = this.d.activeRuns();
+    if (runs > 0) {
+      this.refuse(`${runs} child run(s) still active; let them finish (a close never cancels them), then close again`, source, replyTo);
+      return true;
+    }
     const waits = this.d.activeWaits();
     if (waits.length === 0) return false;
     this.refuse(`${waits.length} foreman_wait pending (${waits.map((w) => `${w.id} ${w.kind}${w.note ? ` "${w.note}"` : ""}`).join(", ")}); cancel or let them finish, then close again`, source, replyTo);
@@ -294,7 +301,7 @@ export interface CloseSession {
 /** Wire the intercom trigger and the sequence events; returns the `/foreman close` handler. */
 export function registerClose(
   pi: ExtensionAPI,
-  deps: { session: (ctx: ExtensionContext) => Promise<CloseSession>; activeWaits: (sessionId: string) => { id: string; kind: string; note: string }[]; platform: string },
+  deps: { session: (ctx: ExtensionContext) => Promise<CloseSession>; activeWaits: (sessionId: string) => { id: string; kind: string; note: string }[]; activeRuns: (sessionId: string) => number; platform: string },
 ): { command: (args: string, ctx: ExtensionContext) => Promise<void> } {
   const flows = new Map<string, { flow: CloseFlow; ctx: ExtensionContext }>();
   const flowFor = (s: CloseSession, ctx: ExtensionContext): CloseFlow => {
@@ -306,6 +313,7 @@ export function registerClose(
     const holder = { ctx } as { flow: CloseFlow; ctx: ExtensionContext };
     holder.flow = new CloseFlow({
       activeWaits: () => deps.activeWaits(s.id),
+      activeRuns: () => deps.activeRuns(s.id),
       sendUserMessage: (text) => pi.sendUserMessage(text),
       runSync: () => s.runSync(holder.ctx),
       retro: () => (get(s.config(), "sync.runRetro") === false ? s.retro(holder.ctx) : Promise.resolve("")),
@@ -391,4 +399,11 @@ export function registerClose(
       flow.request({ source: "herdr", file: file.path, shown: file.shown }, ctx);
     },
   };
+}
+
+/** `/sync` body: refuses while child runs are active (the sync would race their commits), else runs the script. */
+export async function syncCommand(d: { activeRuns: number; run: () => Promise<{ text: string; ok: boolean }>; notify: (text: string, level: "info" | "warning" | "error") => void }): Promise<void> {
+  if (d.activeRuns > 0) return d.notify(`sync refused: ${d.activeRuns} child run(s) still active`, "warning");
+  const r = await d.run();
+  d.notify(r.text, r.ok ? "info" : "error");
 }

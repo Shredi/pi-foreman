@@ -116,6 +116,23 @@ export type RunRegistry = Map<string, LaunchedRun>;
 
 const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
 
+/** Run id of a launch or resume result (`details.runId`, else `asyncId`), or null. */
+function launchId(input: unknown, details: unknown, isError: boolean): string | null {
+  if (isError || !isObj(input) || !isObj(details)) return null;
+  const a = actionOf(input);
+  if (a !== null && a !== "resume") return null;
+  return typeof details.runId === "string" && details.runId ? details.runId : typeof details.asyncId === "string" && details.asyncId ? details.asyncId : null;
+}
+
+/** Detached runs of this session that have not ended: a launch adds its id, a run-end event removes it. */
+export function trackActive(active: Set<string>, input: unknown, details: unknown, isError: boolean): void {
+  const id = launchId(input, details, isError);
+  if (id) active.add(id);
+}
+export function endActive(active: Set<string>, data: unknown): void {
+  if (isObj(data) && typeof data.runId === "string") active.delete(data.runId);
+}
+
 /**
  * Record a run id from a `subagent` tool_result. pi-subagents returns `details.runId`
  * (also `asyncId`) for a launch and for a resume. Only single-agent launches are recorded
