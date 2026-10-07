@@ -4,8 +4,8 @@
   "pr-compound": [{"tools": [{"name": "bash", "arguments": {"command": "git commit --allow-empty -q -m 'fix: x' && gh pr create --title t --body b"}}]}, {"text": "PR attempt done."}],
   "pr-review": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-pass]] review the branch"}}]}, {"text": "Reviewer launched."}],
   "pr-after": [{"text": "Review noted."}],
-  "pr-mr": [{"tools": [{"name": "bash", "arguments": {"command": "git push -o merge_request.create origin main"}}]}, {"text": "push attempt done."}],
-  "pr-ci": [{"tools": [{"name": "bash", "arguments": {"command": "git push -o ci.skip origin main"}}]}, {"text": "push attempt done."}],
+  "pr-mr": [{"tools": [{"name": "bash", "arguments": {"command": "git push -o merge_request.create origin HEAD"}}]}, {"text": "push attempt done."}],
+  "pr-ci": [{"tools": [{"name": "bash", "arguments": {"command": "git push -o ci.skip origin HEAD"}}]}, {"text": "push attempt done."}],
   "pr-tool": [{"tools": [{"name": "github_create_pr", "arguments": {"title": "t"}}]}, {"text": "tool attempt done."}],
   "pr-child": [{"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-pr]] open the pull request"}}]}, {"text": "Builder launched."}, {"text": "Builder reported."}]
  },
