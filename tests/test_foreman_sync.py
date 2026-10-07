@@ -242,6 +242,27 @@ class SyncTest(unittest.TestCase):
         self.assertIn("remote origin has no configured url, not pushed", rep["detail"])
         self.assertFalse(marker.exists())
 
+    def test_path_remote_name_and_file_transport_refused_b1(self):
+        evil, marker = self.tmp / "evil.git", self.tmp / "PUSHMARK"
+        self.hooked_bare(evil, marker)
+        self.write("notes/a.md", "note\n")
+        branch = g(self.work, "rev-parse", "--abbrev-ref", "HEAD")
+        g(self.work, "config", "remote.%s.url" % evil, "https://example.invalid/r.git")
+        g(self.work, "config", "branch.%s.remote" % branch, str(evil))
+        code, rep = self.run_sync()
+        self.assertEqual((code, rep["status"]), (1, "refused"), rep)
+        self.assertFalse(marker.exists())
+        for name in (str(evil), "a/b", "a\\b", ".", "..", "-x"):
+            self.assertFalse(fs.name_ok(name), name)
+        g(self.work, "config", "branch.%s.remote" % branch, "origin")
+        g(self.work, "config", "--remove-section", "remote.%s" % evil)
+        # A raced or missed url check: git itself refuses the local transport outside the test seam.
+        g(self.work, "config", "remote.origin.url", str(evil))
+        with mock.patch.object(fs, "TEST_LOCAL_REMOTES", ()), mock.patch.object(fs, "url_ok", lambda v: True):
+            code, rep = self.run_sync()
+        self.assertEqual(code, 1, rep)
+        self.assertFalse(marker.exists())
+
     def test_gitlink_refused_and_status_ignores_submodules_b2(self):
         sub, marker = self.work / "sub", self.tmp / "SUBMARK"
         g(self.tmp, "init", "-q", str(sub))

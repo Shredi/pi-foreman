@@ -37,7 +37,9 @@ be writing config); only key classes and rule names are reported. Every git call
 `-c diff.ignoreSubmodules=all` (and status `--ignore-submodules=all`), so no nested repository's own
 config (filters) is honoured. The push remote must be a configured remote with an url.
 
-Test seam: TEST_LOCAL_REMOTES (module attribute, empty) lists exact local paths the url rule accepts.
+Test seam: TEST_LOCAL_REMOTES (module attribute, empty) lists exact local paths the url rule accepts; only while it is
+set under unittest is git's file transport allowed (`-c protocol.file.allow`, `never` otherwise, so a remote that
+resolves to a local path is refused by git itself even when a check is raced or a remote name is read as a path).
 It is honoured only while `unittest` is imported, it is never read from foreman.json, flags or the
 environment, so only an in-process test can set it (the suite pushes to a local bare repo).
 Candidates are scanned whole as bytes (larger than 20 MiB: refused); symlinks and hard links are
@@ -112,12 +114,21 @@ URL_OK = re.compile(r"(?:https|ssh|git)://(?:[A-Za-z0-9][^/@\s]*@)?(?:[A-Za-z0-9
 TEST_LOCAL_REMOTES = ()  # test seam, see the module docstring
 
 
+def name_ok(name):
+    """A remote name git will not read as a path: no `/` or `\\`, not `.`/`..`, no leading `-` (B1 bypass)."""
+    return bool(name) and "/" not in name and "\\" not in name and name not in (".", "..") and not name.startswith("-")
+
+
+def file_transport_allowed():
+    """Local (file) transport is off except under the test seam (see the module docstring)."""
+    return bool(TEST_LOCAL_REMOTES) and "unittest" in sys.modules
+
+
 def url_ok(val):
     """True for a remote url sync may pull from and push to (B1: no local repo with its own hooks)."""
     if URL_OK.fullmatch(val or ""):
         return True
-    return bool(TEST_LOCAL_REMOTES) and "unittest" in sys.modules and \
-        any(same_path(val, p) for p in TEST_LOCAL_REMOTES if os.path.isabs(val or ""))
+    return file_transport_allowed() and any(same_path(val, p) for p in TEST_LOCAL_REMOTES if os.path.isabs(val or ""))
 
 
 class UsageError(Exception):
@@ -133,7 +144,8 @@ def git(args, cwd, stdin=None):
         return 127, "", "git is not on PATH"
     try:
         r = subprocess.run([exe, "-c", "commit.gpgSign=false", "-c", "submodule.recurse=false", "-c", "diff.ignoreSubmodules=all",
-                            "-c", "core.alternateRefsCommand=", "-c", "core.alternateRefsPrefixes="] + safe_ops.git_hardening() + list(args), cwd=cwd, env=safe_ops._git_env(),
+                            "-c", "core.alternateRefsCommand=", "-c", "core.alternateRefsPrefixes=",
+                            "-c", "protocol.file.allow=%s" % ("always" if file_transport_allowed() else "never")] + safe_ops.git_hardening() + list(args), cwd=cwd, env=safe_ops._git_env(),
                            input=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=GIT_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as exc:
         return 1, "", str(exc)
@@ -267,7 +279,7 @@ def risky_config(root):
                 hits.append("not allowlisted: %s" % key_class(low))
             elif rule == "false" and not _is_false(val):
                 hits.append("%s (not false)" % low)
-            elif rule == "remote" and (val or "") not in remotes:
+            elif rule == "remote" and ((val or "") not in remotes or not name_ok(val)):
                 hits.append("%s (not a configured remote)" % key_class(low))
             elif rule == "url" and not url_ok(val):
                 hits.append("remote.<x>.url (not https/ssh/git or scp-like)")
@@ -425,6 +437,10 @@ def sync_repo(entry, ctx):
     if code == 0 and out.strip() and not out.strip().startswith("-"):
         remote = out.strip()
     remote = remote or "origin"
+    if not name_ok(remote):
+        rep["status"] = "refused"
+        rep["detail"] = "%sremote name is not a plain name, not pushed" % ("committed, " if committed else "")
+        return rep
     code, out, _ = git(["config", "--get", "remote.%s.url" % remote], root)
     if code != 0 or not out.strip():
         rep["status"] = "skipped"
