@@ -127,7 +127,8 @@ def foreman_config(row):
     """The user-layer foreman.json for a foreman row: the row's roles (incl. builder.strong),
     the review model (the row's review_model, else the reviewer role's model; the fake provider's
     non-allowing review model for fake rows), trace on, and the row's `project_commands` as
-    safety.permissions.projectCommands. ceremony.requireTriage stays at its default."""
+    safety.permissions.projectCommands. The row's `foreman_edits` becomes ceremony.foremanEdits; ceremony.requireTriage
+    stays at its default."""
     provider = row["provider"]
     roles = row["roles"]
     review = row.get("review_model")
@@ -142,6 +143,8 @@ def foreman_config(row):
     l2 = {"version": 1, "providers": {provider: block}, "trace": {"enabled": True}}
     if row.get("_required_child_extensions"):
         l2["safety"] = {"requiredChildExtensions": row["_required_child_extensions"]}
+    if row.get("foreman_edits"):
+        l2["ceremony"] = {"foremanEdits": row["foreman_edits"]}
     if row.get("project_commands"):  # the repo's test/build commands, as an owner would set them
         l2.setdefault("safety", {})["permissions"] = {"projectCommands": list(row["project_commands"])}
     return l2

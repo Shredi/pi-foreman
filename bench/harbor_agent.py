@@ -40,6 +40,7 @@ import os
 import re
 import shlex
 import shutil
+import sys
 import subprocess
 import tempfile
 from pathlib import Path
@@ -189,6 +190,7 @@ def summarize_logs(logs_dir, main_role="main"):
         if models:
             thinking_by_role.setdefault(role, set()).update(levels)
     approvals = guard_blocks = gate_blocks = revisions = poll_bash = ceremony_incomplete = 0
+    foreman_edit_refused = pr_refused = 0
     roles = {}
     reviewed = {}
     tiers = {"recorded": None, "tier": None}
@@ -206,6 +208,10 @@ def summarize_logs(logs_dir, main_role="main"):
                 poll_bash += rec["pollBash"]
             if ev == "ceremony_incomplete":
                 ceremony_incomplete += 1
+            elif ev == "foreman_edit_refused":
+                foreman_edit_refused += 1
+            elif ev == "pr_refused":
+                pr_refused += 1
             if ev == "ask":
                 approvals += 1
             elif ev == "guard" and rec.get("decision") == "deny":
@@ -237,7 +243,8 @@ def summarize_logs(logs_dir, main_role="main"):
     if traces:
         out["triage"] = {"tier": tiers["recorded"] or tiers["tier"] or "untriaged", "launches": roles,
                          "revisions": revisions, "gate_blocks": gate_blocks, "asks_reviewed": reviewed,
-                         "pollBash": poll_bash, "ceremony_incomplete": ceremony_incomplete}
+                         "pollBash": poll_bash, "ceremony_incomplete": ceremony_incomplete,
+                         "foreman_edit_refused": foreman_edit_refused, "pr_refused": pr_refused}
     return out
 
 
@@ -270,6 +277,40 @@ def usage_by_role_model(logs):
                 u[k] += int(rec.get(k) or 0)
             u["n"] += 1
     return out
+
+
+def usage_log_cost(logs):
+    """Sum of cost.total over state/usage/*.jsonl (0.0 for subscription runs, which report no cost)."""
+    total = 0.0
+    d = Path(logs) / "state" / "usage"
+    for f in sorted(d.glob("*.jsonl")) if d.is_dir() else []:
+        for line in f.read_text("utf-8", "replace").splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict) and isinstance(rec.get("cost"), dict):
+                total += float(rec["cost"].get("total") or 0)
+    return total
+
+
+def settled_cost(logs, counters):
+    """cost_usd for result.json: the usage log's cost.total sum (else the session files' sum); when that is 0 and
+    tokens exist, the tokens priced with bench/prices.json through foreman_bench.cost_of (the formatter's lookup)."""
+    cost = usage_log_cost(logs) or counters.get("cost_usd") or 0.0
+    if cost or not (counters.get("tokens") or {}).get("total"):
+        return cost
+    sys.path.insert(0, str(REPO / "scripts"))
+    try:
+        import foreman_bench
+        usage = {}
+        for model, t in (counters.get("tokens_by_model") or {}).items():
+            u = usage.setdefault(str(model).rsplit("/", 1)[-1], {k: 0 for k in foreman_bench.TOKEN_KINDS})
+            for k in u:
+                u[k] += int(t.get(k) or 0)
+        return foreman_bench.cost_of({"usage_by_model": usage}, foreman_bench.load_prices())["usd"] if usage else 0.0
+    finally:
+        sys.path.remove(str(REPO / "scripts"))
 
 
 REFUSAL = re.compile(r"safeguards flagged|flagged this message", re.I)
@@ -445,7 +486,7 @@ class _BenchPi(BaseInstalledAgent):
         context.n_input_tokens = t["input"] + t["cacheRead"] + t["cacheWrite"]
         context.n_cache_tokens = t["cacheRead"]
         context.n_output_tokens = t["output"]
-        context.cost_usd = c["cost_usd"] or None
+        context.cost_usd = settled_cost(self.logs_dir, c) or None
         # Configured levels; None = unset, i.e. the shipped role default (no level, so Pi's
         # default applies). The levels the sessions actually ran with are in counters.
         thinking = {"main": self.row.get("thinking")}

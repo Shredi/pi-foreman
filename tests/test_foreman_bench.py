@@ -459,6 +459,24 @@ class BenchTest(unittest.TestCase):
         t = ha.summarize_logs(d)["triage"]
         self.assertEqual((t["pollBash"], t["ceremony_incomplete"]), (5, 2))
 
+    def test_edit_and_pr_refusals_counted_and_foreman_edits_config(self):
+        d = self.logs(**{"state__trace-s1.jsonl": [
+            {"event": "foreman_edit_refused", "mode": "scratchpad", "kind": "write"},
+            {"event": "foreman_edit_refused", "mode": "scratchpad", "kind": "shell"}, {"event": "pr_refused", "reason": "no_review"}]})
+        t = ha.summarize_logs(d)["triage"]
+        self.assertEqual((t["foreman_edit_refused"], t["pr_refused"]), (2, 1))
+        row = {"provider": "p", "roles": {}, "foreman_edits": "scratchpad"}
+        self.assertEqual(ws.foreman_config(row)["ceremony"], {"foremanEdits": "scratchpad"})
+        self.assertNotIn("ceremony", ws.foreman_config(dict(row, foreman_edits=None)))
+
+    def test_settled_cost_sums_usage_log_else_prices_tokens(self):
+        line = lambda c: {"role": "foreman", "model": "p/claude-opus-5-5", "input": 1000000, "cacheRead": 0, "cacheWrite": 0, "output": 0, "cost": {"total": c}}  # noqa: E731
+        d = self.logs(**{"state__usage__s1.jsonl": [line(0.5), line(0.25)]})
+        self.assertAlmostEqual(ha.settled_cost(d, ha.summarize_logs(d)), 0.75)
+        d = self.logs(**{"state__usage__s1.jsonl": [line(0)]})
+        c = dict(ha.summarize_logs(d), tokens={"total": 1000000}, tokens_by_model={"p/claude-opus-5-5": {"input": 1000000}})
+        self.assertAlmostEqual(ha.settled_cost(d, c), 4.0)  # 1 MTok input at the opus list price
+
     def test_2a_style_job_without_new_files_still_tabulates(self):
         self.job("R2__beta__r1__a", trial())
         out = io.StringIO()
