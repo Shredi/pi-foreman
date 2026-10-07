@@ -17,7 +17,7 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, launchId, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck } from "./actions.ts";
 import { addChange, boundRefusal, emptySteps, emptyTally, finishRefusal, missingSteps, overBound, pendingChange, readBound, requiredSteps, stepsOfRunEnd } from "./bound.ts";
-import type { Change, StepCounts, Tally } from "./bound.ts";
+import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
@@ -53,7 +53,9 @@ import type { LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.
 import { workspaceOf } from "./python.ts";
 import { CompactionGate } from "./compaction.ts";
 import { UsageFooter } from "./footer.ts";
-import { blockedConfirm, bridgePermissionBlocked } from "./herdr.ts";
+import { blockedConfirm, bridgePermissionBlocked, withBlocked } from "./herdr.ts";
+import { builderLaunchRefusal, changedPlans, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, planSnapshot, planSummary, readPlan } from "./checkpoint.ts";
+import type { PlanRecord } from "./checkpoint.ts";
 import type { EventBus } from "./herdr.ts";
 
 /** pi.events of the loaded extension, for the Herdr blocked signal (set in the factory). */
@@ -145,6 +147,10 @@ interface Session {
   launchHeadsByCall: Map<string, Map<string, string | null>>;
   /** Foreman only: HEAD per directory at launch, by run id until the run ends (reviews.ts reviewedHead). */
   launchHeads: Map<string, Map<string, string | null>>;
+  /** Foreman only: the latest plan checkpoint (checkpoint.ts; in memory, a restart checkpoints again). */
+  plan: PlanRecord | null;
+  /** Foreman only: plan-*.md snapshots at a planner launch, by tool call id, then by run id until its run end. */
+  planSnaps: { byCall: Map<string, Map<string, string>>; byRun: Map<string, Map<string, string>> };
 }
 
 export interface AdapterDeps {
@@ -250,6 +256,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewSync: Promise.resolve(),
       launchHeadsByCall: new Map(),
       launchHeads: new Map(),
+      plan: null,
+      planSnaps: { byCall: new Map(), byRun: new Map() },
     };
     sessions.set(id, s);
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
@@ -589,6 +597,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
         if (typeof runId === "string" && s.launchedRoles.has(runId)) for (const step of stepsOfRunEnd(data)) s.steps[step]++;
         if (!s.isChild && typeof runId === "string" && s.launchedRoles.has(runId)) {
+          // plan_written: plan-*.md files a planner run added or changed (snapshot taken at its launch).
+          const snap = s.planSnaps.byRun.get(runId);
+          s.planSnaps.byRun.delete(runId);
+          if (snap) for (const _ of changedPlans(snap, planSnapshot({ cwd: s.cwd, platform, scratchDir: editModeOfSession(s).scratchDir }))) s.trace?.emit({ event: "plan_written", tier: s.ceremony.tier, by: "planner" });
           // PR gate: the verdict is recorded with HEAD of the run's cwd if unchanged since launch (reviews.ts).
           const start = s.launchHeads.get(runId);
           s.launchHeads.delete(runId);
@@ -704,6 +716,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const resolution = await currentRoles(s, ctx);
         const noModel = roleModelBlock(input, resolution);
         if (noModel) return { block: true, reason: noModel };
+        const noPlan = s.isChild ? undefined : builderPlanBlock(s, ctx, input);
+        if (noPlan) return { block: true, reason: noPlan };
         // D3/D4: builder runs after a review of built work are revision rounds: every step of a
         // tasks/chain call, and a resume of a builder run (its model stays, so never a strong
         // relaunch). Checked here, on the guarded path; a refused launch counts and records nothing.
@@ -788,6 +802,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         for (let i = 0; i < rounds.revisions; i++) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: kind });
       }
       if (event.toolName === "subagent") recordLaunchUsage(s, ctx, input, kind);
+      if (event.toolName === "subagent" && !s.isChild && launchRoles(s, input).includes("planner")) capSet(s.planSnaps.byCall, event.toolCallId, planSnapshot(planOpts(s, ctx)));
       return undefined;
     } catch (err) {
       return { block: true, reason: `pi-foreman: adapter error before ${event.toolName} (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
@@ -857,6 +872,26 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   function editModeOfSession(s: Session): { mode: EditMode; scratchDir: string } {
     return { mode: editModeOf(get(s.config.config, "ceremony.foremanEdits")), scratchDir: scratchDirOf(get(s.config.config, "ceremony.scratchDir")) };
+  }
+
+  function planOpts(s: Session, ctx: ExtensionContext) {
+    return { cwd: ctx.cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir };
+  }
+
+  /** Roles a `subagent` call runs: top-level, tasks, chain (and parallel steps), or the role of a resumed run. */
+  function launchRoles(s: Session, input: Record<string, unknown>): string[] {
+    return [...subagentAgents(input), ...roundSteps(input, s.runs).flat()];
+  }
+
+  /** Heavy tier: a builder launch needs the owner's approval of the current plan (checkpoint.ts). A refusal records nothing. */
+  function builderPlanBlock(s: Session, ctx: ExtensionContext, input: Record<string, unknown>): string | undefined {
+    const tier = s.ceremony.tier;
+    if (tier !== "heavy" || !launchRoles(s, input).includes("builder")) return undefined;
+    const o = planOpts(s, ctx);
+    const reason = builderLaunchRefusal(s.plan, tier, s.plan ? currentPlanHash(s.plan, o) : null);
+    if (!reason) return undefined;
+    s.trace?.emit({ event: "launch_refused", reason, tier });
+    return launchRefusalText(reason, s.plan, o.scratchDir);
   }
 
   /**
@@ -969,6 +1004,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     sessionFor(ctx)?.gitDrift.after(ctx.cwd, os.homedir(), event.toolCallId);
     const owner = sessionFor(ctx);
     const pending = owner?.pendingChanges.get(event.toolCallId);
+    if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit") && isPlanPath((event.input as Record<string, unknown>).path, planOpts(owner, ctx))) {
+      owner.trace?.emit({ event: "plan_written", tier: owner.ceremony.tier, by: "foreman" });
+    }
     if (owner && pending) {
       owner.pendingChanges.delete(event.toolCallId);
       if (!event.isError) owner.tally = addChange(owner.tally, pending);
@@ -987,6 +1025,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.launchHeadsByCall.delete(event.toolCallId);
         const runId = launchId(event.input, event.details, event.isError);
         if (heads && runId) capSet(s.launchHeads, runId, heads);
+        const snap = s.planSnaps.byCall.get(event.toolCallId);
+        s.planSnaps.byCall.delete(event.toolCallId);
+        if (snap && runId) capSet(s.planSnaps.byRun, runId, snap);
         trackActive(s.activeRuns, event.input, event.details, event.isError);
       }
       for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_result", role, exit: event.isError ? 1 : 0, pollBash: s.pollBash || undefined });
@@ -1042,7 +1083,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    */
   function ceremonyFinishGate<E>(s: Session, ctx: ExtensionContext, entries: E[]) {
     if (s.isChild || !isTriaged(s.ceremony) || s.activeRuns.size > 0) return undefined;
-    const missing = missingSteps(s.steps, requiredSteps(get(s.config.config, "ceremony.required"), s.ceremony.tier));
+    const missing: string[] = missingSteps(s.steps, requiredSteps(get(s.config.config, "ceremony.required"), s.ceremony.tier));
+    // A rejected plan blocks the heavy finish until a new approval or the user lowers the tier (/ceremony).
+    const rejected = s.ceremony.tier === "heavy" && s.plan?.status === "rejected";
+    if (rejected) missing.push("plan");
     if (missing.length === 0) return undefined;
     if (s.finishRefusals >= 2) {
       s.trace?.emit({ event: "ceremony_incomplete", tier: s.ceremony.tier, missing: missing.join(",") });
@@ -1052,7 +1096,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.finishRefusals++;
     s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(",") });
     return {
-      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing), display: true }],
+      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[]) + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
       continue: true,
     };
   }
@@ -1123,6 +1167,68 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const em = editModeOfSession(s);
         const advice = tier === "trivial" && em.mode !== "bounded" ? `No builder is required, but ${editModeAdvice(em.mode, em.scratchDir)} for any project change (that makes the task standard).` : triageAdvice(tier);
         return { content: [{ type: "text" as const, text: `${note}${tierLine(s.ceremony)} ${advice}` }], details: { decision: "recorded", tier } };
+      },
+    } as never);
+  }
+
+  // Plan checkpoint (checkpoint.ts): the owner approves the plan file; foreman only. Never approves on its own.
+  if (process.env.PI_SUBAGENT_CHILD !== "1") {
+    pi.registerTool({
+      name: CHECKPOINT_TOOL,
+      label: "Plan checkpoint",
+      description: "Ask the owner to approve a plan file (.workflow/scratch/plan-<topic>.md) before builders start. At tier heavy no builder launches until the owner approved the current version of the plan. The owner answers approve, revise (with a note) or reject; without an answer the checkpoint stays pending.",
+      parameters: { type: "object", properties: { path: { type: "string", minLength: 1, description: "Path of the plan file, plan-<topic>.md in the scratch dir." } }, required: ["path"], additionalProperties: false } as never,
+      async execute(_id: string, params: Record<string, unknown>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+        const s = await ensureSession(ctx);
+        const tier = s.ceremony.tier;
+        const done = (decision: string, by: string | null, text: string, isError = false) => {
+          s.trace?.emit({ event: "checkpoint", decision, by, tier });
+          return { content: [{ type: "text" as const, text }], details: { decision, by }, ...(isError ? { isError: true } : {}) };
+        };
+        if (s.isChild) return done("refused", null, `${CHECKPOINT_TOOL} is for the foreman only.`, true);
+        const r = readPlan(params.path, planOpts(s, ctx));
+        if ("error" in r) return done("refused", null, r.error, true);
+        const plan = r.plan;
+        const name = `plan-${plan.topic}.md`;
+        const hash8 = plan.hash.slice(0, 8);
+        if (s.plan && s.plan.status === "approved" && s.plan.hash === plan.hash && s.plan.path === plan.path) {
+          return done("approve", s.plan.by, `${name} (${hash8}) is already approved by the owner (${s.plan.by}, ${s.plan.approvedAt}); builders may launch while it stays unchanged.`);
+        }
+        // Pending first: a crash, an abort or no answer leaves it pending, never approved.
+        const rec: PlanRecord = { topic: plan.topic, path: plan.path, hash: plan.hash, status: "pending", approvedAt: null, by: null };
+        s.plan = rec;
+        const pendingText = `No answer from the owner; the checkpoint of ${name} (${hash8}) stays pending — ask the owner in your reply. Builders stay refused at tier heavy until the owner approves (call ${CHECKPOINT_TOOL} again).`;
+        if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return done("pending", null, pendingText);
+        const title = `pi-foreman checkpoint: ${name} (${hash8})`;
+        let answer: string | undefined;
+        try {
+          ctx.ui.notify(planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash), "info");
+          answer = await withBlocked(herdrEvents, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
+        } catch {
+          answer = undefined;
+        }
+        // A newer checkpoint replaced this one while the dialog was open: this answer is not applied.
+        if (s.plan !== rec || answer === undefined || !(CHECKPOINT_CHOICES as readonly string[]).includes(answer)) return done("pending", null, pendingText);
+        if (answer === "approve") {
+          rec.status = "approved";
+          rec.approvedAt = new Date().toISOString();
+          rec.by = ctx.mode === "tui" ? "user" : "rig";
+          return done("approve", rec.by, `The owner approved ${name} (${hash8}). Builders may launch at tier heavy while the file stays unchanged; any edit needs a new ${CHECKPOINT_TOOL}.`);
+        }
+        if (answer === "revise") {
+          let note: string | undefined;
+          try {
+            note = await withBlocked(herdrEvents, "What should change?", () => ctx.ui.input("What should change?", undefined, { signal }));
+          } catch {
+            note = undefined;
+          }
+          rec.status = "revise";
+          if (note && note.trim()) rec.note = note.trim();
+          return done("revise", null, `The owner asked for a revision of ${name}. The owner's words:\n${rec.note ?? "(no note given)"}\nChange the plan (edit it or relaunch the planner), then call ${CHECKPOINT_TOOL} again. Builders stay refused at tier heavy until the owner approves.`);
+        }
+        rec.status = "rejected";
+        ctx.ui.notify(`pi-foreman: ${name} was rejected; the heavy path is stopped (no builder launches until a new plan is approved).`, "warning");
+        return done("reject", null, `The owner rejected ${name}. The heavy path is stopped: launch no builder; report to the owner and ask how to go on. A new plan needs a new ${CHECKPOINT_TOOL} approval.`);
       },
     } as never);
   }

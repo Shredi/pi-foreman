@@ -14,6 +14,7 @@
     "foreman_move": "allow",
     "foreman_copy": "allow",
     "foreman_triage": "allow",
+    "foreman_checkpoint": "allow",
     "foreman_wait": "allow",
     "bg_wait": "allow",
     "contact_supervisor": "allow",

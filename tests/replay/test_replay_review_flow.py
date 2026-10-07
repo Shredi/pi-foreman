@@ -1,7 +1,8 @@
 """Replay: review flow (plan D3, D4, D5, D10) on the fake provider.
 
 Triage gate: untriaged (edit refused, .workflow write ok), trivial (foreman_triage, then edit ok),
-standard (edit refused, builder launch ok), heavy (edit refused, builder on the strong model).
+standard (edit refused, builder launch ok), heavy (edit refused, plan checkpoint approved, builder on
+the strong model).
 Revision rounds: a builder -> reviewer (FAIL) -> builder chain driven by the children's
 completion notices (a child's output carries the foreman's next replay tag); standard refuses
 the 2nd revision, heavy the 3rd; a user prompt starts the count again. strongOnRevision on puts
@@ -81,8 +82,9 @@ class TestTriageGate(ReplayCase):
         for tag, tier in (("t2", "standard"), ("t3", "heavy")):
             pi = rig.start()
             sid = pi.session_id()
-            res = tool_results(pi.prompt("[[replay:%s]] build it" % tag, timeout=60))
-            self.assertEqual([(n, e) for n, e, _ in res], [("foreman_triage", False), ("edit", True), ("write", False), ("subagent", False)], res)
+            res = tool_results(pi.prompt("[[replay:%s]] build it" % tag, answers=[{"value": "approve"}], timeout=60))
+            plan = [("write", False), ("foreman_checkpoint", False)] if tier == "heavy" else []
+            self.assertEqual([(n, e) for n, e, _ in res], [("foreman_triage", False), ("edit", True), ("write", False)] + plan + [("subagent", False)], res)
             self.assertIn("the tier is %s" % tier, res[1][2])
             self.assertIn("Launch a builder", res[1][2])
             self.assertEqual(a_txt.read_text("utf-8"), "alpha\n")
@@ -102,7 +104,7 @@ class TestRevisionRounds(ReplayCase):
         (rig.project / "a.txt").write_text("alpha\n", "utf-8")
         pi = rig.start()
         sid = pi.session_id()
-        pi.prompt("[[replay:%s]] build it" % start, timeout=60)
+        pi.prompt("[[replay:%s]] build it" % start, answers=[{"value": "approve"}], timeout=60)
         recs = blocked_launch(pi)
         refused = [t for n, e, t in tool_results(recs, "subagent") if e]
         self.assertEqual(len(refused), 1, tool_results(recs))

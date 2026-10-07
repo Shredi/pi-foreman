@@ -21,6 +21,8 @@
    {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a migration"}}]},
    {"tools": [{"name": "edit", "arguments": {"path": "a.txt", "edits": [{"oldText": "alpha", "newText": "beta"}]}}]},
    {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-heavy.md", "content": "# Requirements Ledger: heavy\n\n- [ ] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/plan-hv.md", "content": "# Plan\n\n## Goal\nItem 1.\n"}}]},
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-hv.md"}}]},
    {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] item 1"}}]},
    {"text": "Builder launched."}
   ],
@@ -40,6 +42,8 @@
   "h1": [
    {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a migration"}}]},
    {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-hv.md", "content": "# Requirements Ledger: hv\n\n- [ ] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/plan-hv.md", "content": "# Plan\n\n## Goal\nItem 1.\n"}}]},
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-hv.md"}}]},
    {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-h2]] build item 1"}}]},
    {"text": "Builder launched."}
   ],
