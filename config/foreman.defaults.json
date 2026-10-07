@@ -44,7 +44,11 @@
     "required": { "standard": ["builder", "reviewer"], "heavy": ["planner", "builder", "reviewer", "finalizer"] },
     "foremanEdits": "scratchpad",
     "scratchDir": ".workflow/scratch",
-    "reviewBeforePr": true
+    "reviewBeforePr": true,
+    "foremanReads": { "before": { "warn": 6, "deny": 12 }, "after": { "warn": 4, "deny": 8 } },
+    "recheckBudget": 3,
+    "launchWait": "block",
+    "dedupeNotify": true
   },
   "sync": { "repos": [], "runRetro": true },
   "retro": { "proposalMinReviews": 5 },

@@ -255,6 +255,23 @@ class LayerRulesTest(unittest.TestCase):
         self.assertEqual(res["config"]["ceremony"]["trivialBound"]["files"], 9)
         self.assertIn("project ceremony.trivialBound ignored: not an object", "\n".join(res["warnings"]))
 
+    def test_frugality_keys_tighten_only(self):
+        res = self.load(proj={"ceremony": {"foremanReads": {"before": {"warn": 9, "deny": 5}}, "recheckBudget": 9,
+                                            "launchWait": "detach", "dedupeNotify": False}},
+                        session={"ceremony": {"foremanReads": {"after": {"warn": 0}}, "recheckBudget": 0}})
+        c = res["config"]["ceremony"]
+        self.assertEqual(res["errors"], [])
+        self.assertEqual(c["foremanReads"], {"before": {"warn": 6, "deny": 5}, "after": {"warn": 4, "deny": 8}})
+        self.assertEqual((c["recheckBudget"], c["launchWait"], c["dedupeNotify"]), (0, "block", True))
+        joined = "\n".join(res["warnings"])
+        self.assertIn("project ceremony.foremanReads.before.warn ignored: it would loosen", joined)
+        self.assertIn("session ceremony.foremanReads.after.warn ignored: below the minimum 1", joined)
+        self.assertIn("project ceremony.recheckBudget ignored: it would loosen", joined)
+        self.assertIn("project ceremony.launchWait ignored: it would loosen", joined)
+        self.assertIn("project ceremony.dedupeNotify ignored: it would loosen", joined)
+        res = self.load(l2={"ceremony": {"launchWait": "detach"}}, proj={"ceremony": {"launchWait": "block"}}, session={})
+        self.assertEqual(res["config"]["ceremony"]["launchWait"], "block")
+
     def test_foreman_edits_ordered_tighten_only(self):
         res = self.load(proj={"ceremony": {"foremanEdits": "bounded"}}, session={})
         self.assertEqual(res["config"]["ceremony"]["foremanEdits"], "scratchpad")

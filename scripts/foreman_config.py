@@ -59,6 +59,10 @@ Keys outside safety that the project and session layers cannot loosen either
                                      no symlink below the root. Both keys: a malformed value in
                                      any layer is a config error, replaced by the L1 default
     ceremony.reviewBeforePr          only true is accepted (false lets a PR open unreviewed)
+    ceremony.foremanReads.<phase>.<warn|deny>   lower only, minimum 1 (a higher budget lets the foreman read more)
+    ceremony.recheckBudget           lower only, minimum 0
+    ceremony.launchWait              tighten only, detach < block (may only move to block)
+    ceremony.dedupeNotify            only true is accepted
     ceremony.trivialBound.<field>    lower only, minimum 0 (a higher bound lets the foreman edit more)
     ceremony.trivialBound            not an object: ignored
     ceremony.required.<tier>         union only (a project can add required steps, not remove one)
@@ -170,6 +174,10 @@ LAYER_TIGHTEN = [
     (("ceremony", "foremanEdits"), ("ordered", FOREMAN_EDITS)),
     (("ceremony", "heavyFileCount"), "lower_only"),
     (("ceremony", "trivialBound", "*"), "lower_only"),
+    (("ceremony", "foremanReads", "*", "*"), "lower_only"),
+    (("ceremony", "recheckBudget"), "lower_only"),
+    (("ceremony", "launchWait"), ("ordered", ("block", "detach"))),
+    (("ceremony", "dedupeNotify"), "true_only"),
     (("ceremony", "required", "*"), "union"),
     (("roles", "*", "timeoutMinutes"), "lower_only"),
     (("intercom", "allowRemote"), "false_only"),
@@ -181,7 +189,7 @@ LAYER_TIGHTEN = [
     (("wait", "maxActive"), "lower_only"),
 ]
 LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
-                 "threshold": 0.3, "maxSeconds": 1, "maxActive": 1}
+                 "threshold": 0.3, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0}
 TIERS = ["trivial", "standard", "heavy"]
 # Steps ceremony.required.<tier> may name (the adapter counts each per session).
 REQUIRED_STEPS = ["planner", "builder", "reviewer", "finalizer"]
