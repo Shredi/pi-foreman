@@ -176,6 +176,17 @@ export default function fakeProvider(pi: ExtensionAPI): void {
       pi.sendMessage({ customType: "replay-trigger", content: `[[replay:${args.trim() || "t"}]] child finished`, display: true }, { triggerTurn: true });
     },
   });
+  // FOREMAN_FAKE_HERDR=<file> appends each `herdr:blocked` event (JSON per line), as Herdr would see it.
+  const herdrLog = process.env.FOREMAN_FAKE_HERDR;
+  if (herdrLog && process.env.PI_SUBAGENT_CHILD !== "1") {
+    pi.events?.on("herdr:blocked", (data: unknown) => {
+      try {
+        fs.appendFileSync(herdrLog, `${JSON.stringify(data)}\n`);
+      } catch {
+        // the log is a test aid only
+      }
+    });
+  }
   // FOREMAN_FAKE_PR_TOOL=<name> registers a package-style tool that "creates a pull request", for the PR gate replay.
   const prTool = process.env.FOREMAN_FAKE_PR_TOOL;
   if (prTool) {

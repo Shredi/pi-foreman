@@ -1,0 +1,83 @@
+{
+ "foreman": {
+  "approve": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a large change"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-ck.md", "content": "{{LEDGER}}"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] build item 1"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/plan-ck.md", "content": "{{PLAN}}"}}]},
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-ck.md"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] build item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "revise": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a large change"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-ck.md", "content": "{{LEDGER}}"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/plan-ck.md", "content": "{{PLAN}}"}}]},
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-ck.md"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] build item 1"}}]},
+   {"tools": [{"name": "edit", "arguments": {"path": ".workflow/scratch/plan-ck.md", "edits": [{"oldText": "Ship the widget.", "newText": "Ship the widget in two steps."}]}}]},
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-ck.md"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] build item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "reject": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a large change"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-ck.md", "content": "{{LEDGER}}"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/plan-ck.md", "content": "{{PLAN}}"}}]},
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-ck.md"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] build item 1"}}]},
+   {"text": "The owner rejected the plan; stopping."}
+  ],
+  "changed": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a large change"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-ck.md", "content": "{{LEDGER}}"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/plan-ck.md", "content": "{{PLAN}}"}}]},
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-ck.md"}}]},
+   {"tools": [{"name": "edit", "arguments": {"path": ".workflow/scratch/plan-ck.md", "edits": [{"oldText": "Ship the widget.", "newText": "Ship two widgets."}]}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] build item 1"}}]},
+   {"text": "Refused."}
+  ],
+  "cancel": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a large change"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-ck.md", "content": "{{LEDGER}}"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/plan-ck.md", "content": "{{PLAN}}"}}]},
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-ck.md"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] build item 1"}}]},
+   {"text": "Waiting for the owner."}
+  ],
+  "forms": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a large change"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-ck.md", "content": "{{LEDGER}}"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"tasks": [{"agent": "explorer", "task": "[[replay:quiet]] look"}, {"agent": "builder", "task": "[[replay:quiet]] build"}]}}]},
+   {"tools": [{"name": "subagent", "arguments": {"chain": [{"agent": "explorer", "task": "[[replay:quiet]] look"}, {"agent": "builder", "task": "[[replay:quiet]] build {previous}"}]}}]},
+   {"tools": [{"name": "subagent", "arguments": {"chain": [{"agent": "explorer", "task": "[[replay:quiet]] look"}, {"parallel": [{"agent": "builder", "task": "[[replay:quiet]] build"}]}]}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:quiet]] look"}}]},
+   {"text": "Done."}
+  ],
+  "std": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-ck.md", "content": "{{LEDGER_STD}}"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] build item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "res": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "bigger than thought"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"action": "resume", "id": "{{RUN}}", "message": "go on"}}]},
+   {"text": "Refused."}
+  ],
+  "noui": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a large change"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/plan-ck.md", "content": "{{PLAN}}"}}]},
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-ck.md"}}]},
+   {"text": "Waiting for the owner."}
+  ],
+  "perm": [
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/plan-ck.md", "content": "{{PLAN}}"}}]},
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-ck.md"}}]},
+   {"text": "Done."}
+  ]
+ },
+ "*": {
+  "quiet": [{"text": "child: nothing to report"}]
+ }
+}
