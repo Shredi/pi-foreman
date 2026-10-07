@@ -2,7 +2,7 @@
   "schema": 1,
   "pi": {
     "name": "@earendil-works/pi-coding-agent",
-    "version": "1.0.0",
+    "version": "1.0.4",
     "range": "1.0.x",
     "mode": "checked",
     "notes": "https://github.com/earendil-works/pi/releases/tag/v{version}"
