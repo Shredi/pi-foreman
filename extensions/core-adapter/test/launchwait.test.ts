@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dedupeNotices, dedupeOn, holdCap, LaunchBatch, launchWaitMode, launchWaitText, LaunchWaits, noticeRuns, runEndOf } from "../launchwait.ts";
+import { dedupeNotices, dedupeOn, holdCap, LaunchBatch, openRequestLine, launchWaitMode, launchWaitText, LaunchWaits, noticeRuns, runEndOf } from "../launchwait.ts";
 
 const DIR = "/tmp/pi-subagents-uid-1/async-subagent-runs/run-a";
 const notice = (role: string, dir: string) => `Background task completed: **${role}**\n\n${role}:\nlong child report\n\nRetention-managed async directory: ${dir}\n\nSession file: /x/session.jsonl`;
@@ -57,6 +57,12 @@ test("launchwait: a supervisor request of any run releases every held launch", a
   assert.equal(w.holding, 0);
   const text = launchWaitText({ outcome: "released", by: "e1", runId: "b1", role: "builder", ms: 1000, maxSeconds: 900 });
   assert.match(text, /run b1 \(builder\) is still running; the wait ended because run e1 asks you something .* continue with bg_wait b1\./);
+});
+
+test("launchwait: no hold while a child's supervisor request is open", () => {
+  assert.equal(openRequestLine(0, "r1"), null);
+  assert.equal(openRequestLine(1, "r1"), "pi-foreman launch-wait: a child's question is open: answer it, then bg_wait r1.");
+  assert.doesNotMatch(openRequestLine(2, "r1") ?? "", /ended/, "never a done marker");
 });
 
 test("launchwait: a held launch is capped at the child role's timeout plus 60s", () => {

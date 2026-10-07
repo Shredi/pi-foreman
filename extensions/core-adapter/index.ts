@@ -64,7 +64,7 @@ let herdrEvents: EventBus | undefined;
 import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait, waitLimits } from "./wait.ts";
-import { dedupeNotices, dedupeOn, dropReturnControl, holdCap, LaunchBatch, launchWaitMode, launchWaitText, LaunchWaits, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
+import { dedupeNotices, dedupeOn, dropReturnControl, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { registerClose, syncCommand } from "./close.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
 import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_TOOL, workspaceTargets } from "./triage.ts";
@@ -1137,7 +1137,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (s && held?.path) recordChild(s, [held.path]);
       // subagent has no post guards (toolmap.ts), so the amended result can be returned here.
       // The held text stays the last block: deliveredRuns accepts the "done" marker only there.
-      if (notices || held) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(held ? dropReturnControl(event.content) : event.content), ...(held ? [{ type: "text" as const, text: held.text }] : [])] };
+      if (notices || held) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(held && !held.plain ? dropReturnControl(event.content) : event.content), ...(held ? [{ type: "text" as const, text: held.text }] : [])] };
     }
     const mapping = mapTool(event.toolName);
     const changed = event.isError ? undefined : changedFileOf(event.toolName, event.input as Record<string, unknown>);
@@ -1167,11 +1167,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * or null when the launch is not held (detach mode, child session, error, multi-run launch, or
    * a later launch of the same message has not started yet).
    */
-  async function holdLaunch(s: Session, ctx: ExtensionContext, callId: string, input: unknown, details: unknown, isError: boolean): Promise<{ text: string; path: string | null } | null> {
+  async function holdLaunch(s: Session, ctx: ExtensionContext, callId: string, input: unknown, details: unknown, isError: boolean): Promise<{ text: string; path: string | null; plain?: boolean } | null> {
     if (s.isChild || launchWaitMode(get(s.config.config, "ceremony.launchWait")) !== "block") return null;
     const runId = launchId(input, details, isError);
     const run = runId ? s.runs.get(runId) : undefined;
     if (!runId || !run || !s.launchBatch.mayHold(callId)) return null;
+    const open = openRequestLine(s.supervisor.open.size, runId);
+    if (open) return { text: open, path: null, plain: true };
     const cap = holdCap(waitLimits((k) => get(s.config.config, `wait.${k}`)).maxSeconds, roleTimeoutMs(get(s.config.config, "roles"), run.role));
     const started = Date.now();
     const r = await launchWaits.wait(runId, cap.seconds * 1000, ctx.signal);

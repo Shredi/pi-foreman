@@ -200,6 +200,14 @@ export function holdCap(maxSeconds: number, roleTimeoutMs: number | undefined): 
   return role < maxSeconds ? { seconds: role, by: "the role's timeoutMinutes plus 60s" } : { seconds: maxSeconds, by: "wait.maxSeconds" };
 }
 
+/**
+ * A launch is not held while a child's supervisor request is open (the foreman must answer it
+ * first): the line appended to the plain launch result, or null when no request is open.
+ */
+export function openRequestLine(openRequests: number, runId: string): string | null {
+  return openRequests > 0 ? `pi-foreman launch-wait: a child's question is open: answer it, then bg_wait ${runId}.` : null;
+}
+
 const fmtSeconds = (ms: number): string => `${Math.max(0, Math.round(ms / 1000))}s`;
 // pi-foreman's own "done" marker: the start of the separate text block the adapter appends last.
 const DONE_PREFIX = "pi-foreman launch-wait: run ";
