@@ -127,6 +127,13 @@ class BenchTest(unittest.TestCase):
         self.preset.write_text(json.dumps(data))
         return fb.load_preset(self.preset)
 
+    def test_repeats_by_task_overrides_the_global_value(self):
+        preset = self.write_preset(tasks=["alpha", "beta"], repeats=2, repeats_by_task={"beta": 3})
+        ids = [(t, k) for _, t, k, _ in fb.cells(preset, fb.tasks_dir(preset))]
+        self.assertEqual(sorted({k for t, k in ids if t == "alpha"}), [1, 2])
+        self.assertEqual(sorted({k for t, k in ids if t == "beta"}), [1, 2, 3])
+        self.assertEqual({k for t, k in [(t, k) for _, t, k, _ in fb.cells(preset, fb.tasks_dir(preset), repeats=1)]}, {1})
+
     def test_order_first_then_repeat_task_row(self):
         preset = self.write_preset(tasks=["beta", "alpha"], first={"row": "R2", "task": "alpha"})
         order = [fb.cell_id(r["id"], t, k) for r, t, k, _ in fb.cells(preset, fb.tasks_dir(preset))]
@@ -444,6 +451,13 @@ class BenchTest(unittest.TestCase):
         self.job("R2__beta__r1__a", rec)
         row = [r for r in fb.table(fb.load_preset(self.preset), self.root / "tasks", self.jobs) if r["row"] == "R2" and r["task"] == "beta"][0]
         self.assertEqual((row["tier"], row["launches"]["median"], row["asks_denied"]["median"]), ("deep", 3, 1))
+
+    def test_poll_bash_and_ceremony_incomplete_from_trace(self):
+        d = self.logs(**{"state__trace-s1.jsonl": [
+            {"event": "role_result", "role": "builder", "pollBash": 2}, {"event": "turn", "pollBash": 3},
+            {"event": "ceremony_incomplete", "missing": "review"}, {"event": "ceremony_incomplete", "missing": "tests"}]})
+        t = ha.summarize_logs(d)["triage"]
+        self.assertEqual((t["pollBash"], t["ceremony_incomplete"]), (5, 2))
 
     def test_2a_style_job_without_new_files_still_tabulates(self):
         self.job("R2__beta__r1__a", trial())

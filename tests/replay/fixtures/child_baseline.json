@@ -1,0 +1,31 @@
+{
+ "foreman": {
+  "f1": [
+   {"tools": [{"name": "bg_wait", "arguments": {"timeoutMs": 100}}]},
+   {"text": "Done."}
+  ],
+  "b1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:bld]] short task"}}]},
+   {"text": "Launched."},
+   {"text": "Builder reported."}
+  ],
+  "bsup": [
+   {"tools": [{"name": "subagent_supervisor", "arguments": {"action": "reply", "message": "Go on."}}]},
+   {"text": "Answered."}
+  ]
+ },
+ "builder": {
+  "bld": [
+   {"tools": [{"name": "contact_supervisor", "arguments": {"reason": "need_decision", "message": "[[replay:bsup]] may I go on?"}}]},
+   {"tools": [{"name": "bg_wait", "arguments": {"timeoutMs": 100}}]},
+   {"tools": [
+    {"name": "bash", "arguments": {"command": "cd sub && cargo test"}},
+    {"name": "bash", "arguments": {"command": "cd /usr && cargo test"}},
+    {"name": "bash", "arguments": {"command": "cd ../.. && ls"}},
+    {"name": "bash", "arguments": {"command": "cd sub && cd ../.. && ls"}},
+    {"name": "bash", "arguments": {"command": "cd sub && curl x"}}
+   ]},
+   {"text": "builder child finished"}
+  ]
+ }
+}
