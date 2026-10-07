@@ -65,6 +65,7 @@ class TestLaunchWait(ReplayCase):
         run_id, role, path = hit.groups()
         self.assertEqual(role, "explorer")
         self.assertIn("explorer child result\nsecond line of the report", res[0][2])
+        self.assertNotIn("Return control to the user now", res[0][2], "a held launch drops the contradicting line")
         [lw] = events(rig, sid, "launch_wait")
         self.assertEqual((lw["runId"], lw["outcome"], lw["role"]), (run_id, "done", "explorer"))
         # The notice still reaches the session, but the model gets a one-line stub for it.

@@ -88,9 +88,9 @@ test("launchwait: dedupe stubs a notice only after its result was delivered, det
   assert.equal(r.messages[0], user, "earlier messages are the same objects");
   assert.deepEqual(dedupeNotices(msgs), r, "same history, same output");
   assert.equal(msgs[2], n, "input not mutated");
-  // bg_wait result lines count as delivery too
+  // a bg_wait result names only an archive path: the notice after it stays intact
   const bg = { role: "toolResult", toolName: "bg_wait", content: [{ type: "text", text: `Waited 1s for run "run-a"; done.\nResult [run-a]: /r/run-a.json\n` }] };
-  assert.ok(dedupeNotices([user, bg, n]));
+  assert.equal(dedupeNotices([user, bg, n]), null);
   // a supervisor or timeout launch-wait result is no delivery
   const sup = { ...launchResult, content: [{ type: "text", text: "pi-foreman launch-wait: run run-a (builder) is still running and the child asks you something" }] };
   assert.equal(dedupeNotices([user, sup, n]), null);

@@ -18,9 +18,9 @@
 // Dedupe: pi-subagents delivers every completion as a `subagent-notify` custom message (content
 // only, no details; notify.js formatSingleCompletion), which repeats a result the foreman already
 // got. The `context` handler swaps such a notice for a stub when every run it reports was
-// delivered by an earlier message: a launch-wait "ended" result or a bg_wait `Result [<id>]:`
-// line. The run id is the last segment of the notice's "Retention-managed async directory:"
-// line (asyncDir = <async root>/<run id>). Pure function of the history: the same history gives
+// delivered by an earlier launch-wait "ended" result (a bg_wait result carries only an archive
+// path, so a notice after it stays intact). The run id is the last segment of the notice's
+// "Retention-managed async directory:" line (asyncDir = <async root>/<run id>). Pure function of the history: the same history gives
 // the same request, so the provider cache prefix stays stable from the first call that sees it.
 
 import { NOTIFY_TYPE } from "./rounds.ts";
@@ -225,16 +225,19 @@ export function noticeRuns(text: string): { ids: string[]; lines: string[] } | n
   return ids.length ? { ids, lines } : null;
 }
 
-/** Run ids whose result this message delivered: a launch-wait "ended" result, or bg_wait `Result [<id>]:` lines. */
+/**
+ * Run ids whose result this message delivered: a launch-wait "ended" result only. A bg_wait result
+ * names just an archive path, not the report, so a notice after it stays intact.
+ */
 export function deliveredRuns(m: unknown): string[] {
-  if (!isObj(m) || m.role !== "toolResult") return [];
-  const text = textOf(m.content);
-  if (m.toolName === "subagent") {
-    const hit = DONE_RE.exec(text);
-    return hit ? [hit[1]] : [];
-  }
-  if (m.toolName === "bg_wait") return [...text.matchAll(/^Result \[([^\]\s]+)\]: /gm)].map((x) => x[1]);
-  return [];
+  if (!isObj(m) || m.role !== "toolResult" || m.toolName !== "subagent") return [];
+  const hit = DONE_RE.exec(textOf(m.content));
+  return hit ? [hit[1]] : [];
+}
+
+/** A held launch's own result without pi-subagents' "Return control to the user now ..." line (it contradicts the hold). */
+export function dropReturnControl<C>(content: readonly C[]): C[] {
+  return content.map((c) => (isObj(c) && c.type === "text" && typeof c.text === "string" ? ({ ...c, text: c.text.split("\n").filter((l) => !l.includes("Return control to the user now")).join("\n") } as C) : c));
 }
 
 /** One-line stub: the notice's first line (status and role), the run ids and its directory lines, verbatim. */
