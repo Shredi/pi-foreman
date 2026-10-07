@@ -226,6 +226,14 @@ export function stepsOfRunEnd(data: unknown): Step[] {
   return out;
 }
 
+const STEP_TEXT: Record<Step, string> = { planner: "a planner run must complete", builder: "a builder run must complete", reviewer: "a reviewer must pass", finalizer: "a finalizer run must complete" };
+
+/** The finish steps `ceremony.required[tier]` asks for, stated up front ("" at a tier without any). */
+export function finishLine(configured: unknown, tier: string): string {
+  const steps = requiredSteps(configured, tier);
+  return steps.length ? `Before you finish: ${steps.map((s) => STEP_TEXT[s]).join(", ")}.` : "";
+}
+
 export function finishRefusal(tier: string, missing: Step[]): string {
   return `pi-foreman: finish refused: tier ${tier} requires ${missing.join(", ")}; launch them or ask the owner to lower the tier with /ceremony.`;
 }

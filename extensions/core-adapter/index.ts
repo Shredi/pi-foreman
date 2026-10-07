@@ -16,10 +16,11 @@ import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
-import { addChange, boundRefusal, emptySteps, emptyTally, finishRefusal, missingSteps, overBound, pendingChange, readBound, requiredSteps, stepsOfRunEnd } from "./bound.ts";
+import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, missingSteps, overBound, pendingChange, readBound, requiredSteps, stepsOfRunEnd } from "./bound.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
+import { ReadBudget, READ_CLASS, pathsIn, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
 import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
@@ -151,6 +152,12 @@ interface Session {
   plan: PlanRecord | null;
   /** Foreman only: plan-*.md snapshots at a planner launch, by tool call id, then by run id until its run end. */
   planSnaps: { byCall: Map<string, Map<string, string>>; byRun: Map<string, Map<string, string>> };
+  /** Foreman only: read and recheck budgets (budget.ts), in memory only. */
+  budget: ReadBudget;
+  /** Read-budget warn notices by tool call id, added to the result. */
+  readNotices: Map<string, string>;
+  /** Absolute paths named by child results and notices; a `read` of one is exempt from the budget. */
+  childFiles: Set<string>;
 }
 
 export interface AdapterDeps {
@@ -258,6 +265,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchHeads: new Map(),
       plan: null,
       planSnaps: { byCall: new Map(), byRun: new Map() },
+      budget: new ReadBudget(),
+      readNotices: new Map(),
+      childFiles: new Set(),
     };
     sessions.set(id, s);
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
@@ -559,7 +569,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
     }
     if (instructionsCache === null) notifyOnce(s, ctx, "instructions", "pi-foreman: instructions/foreman.md is missing; the foreman runs without its rules.");
-    const text = [instructionsCache ?? "", tierLine(s.ceremony)].filter(Boolean).join("\n\n");
+    const text = [instructionsCache ?? "", tierLine(s.ceremony), finishLine(get(s.config.config, "ceremony.required"), s.ceremony.tier)].filter(Boolean).join("\n\n");
     event.systemPromptOptions.sections["pi-foreman"] = text;
     s.foremanSection = text;
   });
@@ -587,6 +597,30 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!hit) return undefined;
     s.trace?.emit({ event: "supervisor_request", role: hit.role, decision: "blocked_tool", toolFamily: toolName });
     return { block: true, reason: hit.reason };
+  }
+
+  const normFile = (p: string): string => (platform === "win32" ? p.replace(/\\/g, "/").toLowerCase() : p);
+
+  /** Read budget (budget.ts): foreman only; undefined = let the call go on. */
+  function readBudgetCheck(s: Session | undefined, ctx: ExtensionContext, toolName: string, callId: string, input: unknown) {
+    if (!s || s.isChild || !READ_CLASS.has(toolName)) return undefined;
+    const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+    const file = toolName === "read" ? resolveToolPath(inp.path, ctx.cwd, os.homedir()) : null;
+    const exempt = s.supervisor.open.size > 0 || (file !== null && s.childFiles.has(normFile(file)));
+    const d = s.budget.check(toolName, callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt);
+    if (d.kind === "warn") {
+      s.readNotices.set(callId, d.text);
+      s.trace?.emit({ event: "read_budget", phase: d.phase, count: d.count, action: "warn" });
+    } else if (d.kind === "deny") {
+      s.trace?.emit(d.event === "read_budget" ? { event: "read_budget", phase: d.phase, count: d.count, action: "deny" } : { event: "recheck_budget", count: d.count, action: "deny" });
+      return { block: true as const, reason: d.reason };
+    }
+    return undefined;
+  }
+
+  function resetRecheck(s: Session, why: string): void {
+    const used = s.budget.resetPost();
+    if (used !== null) s.trace?.emit({ event: "recheck_budget", count: used, action: `reset_${why}` });
   }
 
   for (const channel of RUN_END_EVENTS) {
@@ -640,6 +674,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const sup = supervisorBlock(sessionFor(ctx), event.toolName, event.input);
     if (sup) return sup;
+    const rb = readBudgetCheck(sessionFor(ctx), ctx, event.toolName, event.toolCallId, event.input);
+    if (rb) return rb;
     if (event.toolName === INTERCOM_TOOL) {
       try {
         const s = await ensureSession(ctx);
@@ -852,6 +888,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // D3: the owner is back in the loop, so revision rounds count from zero again.
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.rounds = initialRounds();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
+      resetRecheck(s, "user");
+      const was = s.budget.phase;
+      const n = s.budget.resetAll();
+      // traced only when it discards a count that had reached warn
+      if (n >= readLimits(get(s.config.config, "ceremony.foremanReads"))[was].warn) s.trace?.emit({ event: "read_budget", phase: "before", count: n, action: "reset_user" });
+    }
     return { action: "continue" as const };
   });
 
@@ -873,11 +916,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** D3: a detached child's completion notice; a finished review of built work may open a round. */
   function onCompletionNotice(s: Session, content: unknown): void {
     const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((c) => (c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string" ? (c as { text: string }).text : "")).join("\n") : "";
+    recordFiles(s.childFiles, pathsIn(text), normFile);
     const reviews = completedAgents(text).filter((a) => REVIEW_ROLES.includes(a));
     if (reviews.length === 0) return;
     const verdict = verdictOf(text);
     s.rounds = onReviewDone(s.rounds, verdict);
     for (const role of reviews) s.trace?.emit({ event: "review_done", role, decision: verdict ?? "no-verdict" });
+    if (verdict === "pass") {
+      s.budget.enterPost();
+      s.trace?.emit({ event: "recheck_budget", count: 0, action: "start" });
+    } else if (verdict === "fail") resetRecheck(s, "fail");
   }
 
   function editModeOfSession(s: Session): { mode: EditMode; scratchDir: string } {
@@ -1019,6 +1067,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit") && isPlanPath((event.input as Record<string, unknown>).path, planOpts(owner, ctx))) {
       owner.trace?.emit({ event: "plan_written", tier: owner.ceremony.tier, by: "foreman" });
     }
+    const readNote = owner?.readNotices.get(event.toolCallId);
+    owner?.readNotices.delete(event.toolCallId);
+    const withNote = () => (readNote ? { content: [{ type: "text" as const, text: readNote }, ...event.content] } : undefined);
+    if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit")) resetRecheck(owner, "edit");
     if (owner && pending) {
       owner.pendingChanges.delete(event.toolCallId);
       if (!event.isError) owner.tally = addChange(owner.tally, pending);
@@ -1041,6 +1093,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.planSnaps.byCall.delete(event.toolCallId);
         if (snap && runId) capSet(s.planSnaps.byRun, runId, snap);
         trackActive(s.activeRuns, event.input, event.details, event.isError);
+        if (!s.isChild) {
+          recordFiles(s.childFiles, pathsIn(event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n")), normFile);
+          // Budgets restart only for a launch that started (a run id came back), not a refused one.
+          if (runId) {
+            const roles = s.launchedRoles.get(runId) ?? subagentAgents(event.input as Record<string, unknown>);
+            const eff = s.budget.onLaunch(roles);
+            if (eff.lift) s.trace?.emit({ event: "read_budget", phase: eff.lift.phase, count: eff.lift.count, action: "lift", by: "explorer" });
+            if (roles.includes("builder")) resetRecheck(s, "builder");
+          }
+        }
       }
       for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_result", role, exit: event.isError ? 1 : 0, pollBash: s.pollBash || undefined });
       if (s) s.pollBash = 0;
@@ -1053,7 +1115,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const mapping = mapTool(event.toolName);
     const changed = event.isError ? undefined : changedFileOf(event.toolName, event.input as Record<string, unknown>);
-    if ((mapping.post.length === 0 && changed === undefined) || event.isError) return undefined;
+    if ((mapping.post.length === 0 && changed === undefined) || event.isError) return withNote();
     try {
       const s = await ensureSession(ctx);
       const input = event.input as Record<string, unknown>;
@@ -1070,7 +1132,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     } catch {
       // side effects only
     }
-    return undefined;
+    return withNote();
   });
 
   pi.on("agent_before_settle", async (event, ctx) => {
@@ -1178,7 +1240,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const note = raised ? "Recorded as standard, not trivial: the edit mode already refused a change of yours, so a builder makes it. " : "";
         const em = editModeOfSession(s);
         const advice = tier === "trivial" && em.mode !== "bounded" ? `No builder is required, but ${editModeAdvice(em.mode, em.scratchDir)} for any project change (that makes the task standard).` : triageAdvice(tier);
-        return { content: [{ type: "text" as const, text: `${note}${tierLine(s.ceremony)} ${advice}` }], details: { decision: "recorded", tier } };
+        return { content: [{ type: "text" as const, text: [`${note}${tierLine(s.ceremony)} ${advice}`, finishLine(get(s.config.config, "ceremony.required"), tier)].filter(Boolean).join(" ") }], details: { decision: "recorded", tier } };
       },
     } as never);
   }
@@ -1330,10 +1392,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor | /foreman cost [workspace] | /foreman update-check | /foreman close [result-path]",
+    description: "pi-foreman commands: /foreman doctor | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman close [result-path]",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
       if (sub === "close") return close.command(args.trim().slice(sub.length), ctx);
+      if (sub === "budget") {
+        const s = await ensureSession(ctx);
+        if (rest[0] !== "lift" || s.isChild) {
+          ctx.ui.notify("Usage: /foreman budget lift (foreman session only)", "warning");
+          return;
+        }
+        const r = s.budget.userLift();
+        s.trace?.emit({ event: "read_budget", phase: r.phase, count: r.count, action: "lift", by: "user" });
+        ctx.ui.notify(`pi-foreman: read budget lifted (phase ${r.phase}); the count starts again.`, "info");
+        return;
+      }
       if (sub === "cost") {
         const s = await ensureSession(ctx);
         const ws = rest.join(" ").trim();
@@ -1349,7 +1422,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       if (sub !== "doctor") {
-        ctx.ui.notify("Usage: /foreman doctor | /foreman cost [workspace] | /foreman update-check | /foreman close [result-path]", "warning");
+        ctx.ui.notify("Usage: /foreman doctor | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman close [result-path]", "warning");
         return;
       }
       const s = await ensureSession(ctx);

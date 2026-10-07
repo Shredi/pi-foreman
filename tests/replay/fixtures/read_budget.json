@@ -1,0 +1,667 @@
+{
+ "foreman": {
+  "warn": [
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Warned."
+   }
+  ],
+  "deny": [
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "explorer",
+       "task": "[[replay:quiet]] look",
+       "output": "x.md"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "explorer",
+       "task": "[[replay:quiet]] look"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "explorer",
+       "task": "[[replay:quiet]] look"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Denied."
+   }
+  ],
+  "after": [
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Lifted."
+   }
+  ],
+  "script": [
+   {
+    "tools": [
+     {
+      "name": "codemode",
+      "arguments": {
+       "code": "const a = await tools.read({ path: \"a.txt\" });\nconst b = await tools.read({ path: \"a.txt\" });\nconst c = await tools.read({ path: \"a.txt\" });\ntext(\"three reads\");"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Script counted once."
+   }
+  ],
+  "nested": [
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "codemode",
+      "arguments": {
+       "code": "const a = await tools.read({ path: \"a.txt\" });\ntext(\"nested read ok\");"
+      }
+     },
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Nested refused."
+   }
+  ],
+  "sup1": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "explorer",
+       "task": "[[replay:ask]] look"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Launched."
+   }
+  ],
+  "sup": [
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent_supervisor",
+      "arguments": {
+       "action": "reply",
+       "message": "Go on."
+      }
+     }
+    ]
+   },
+   {
+    "text": "Answered."
+   }
+  ],
+  "rc1": [
+   {
+    "tools": [
+     {
+      "name": "foreman_triage",
+      "arguments": {
+       "tier": "standard",
+       "reason": "a feature"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-rb.md",
+       "content": "# Requirements Ledger: rb\n\n- [x] 1. synthetic item\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:b-built]] build item 1"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Builder launched."
+   }
+  ],
+  "rc2": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-pass]] review item 1"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Reviewer launched."
+   }
+  ],
+  "rc3": [
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-fail]] review again"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Second reviewer launched."
+   }
+  ],
+  "rc4": [
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Done."
+   }
+  ],
+  "tri": [
+   {
+    "tools": [
+     {
+      "name": "foreman_triage",
+      "arguments": {
+       "tier": "standard",
+       "reason": "a feature"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Triaged."
+   }
+  ],
+  "ed1": [
+   {
+    "tools": [
+     {
+      "name": "foreman_triage",
+      "arguments": {
+       "tier": "standard",
+       "reason": "a feature"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-rb.md",
+       "content": "# Requirements Ledger: rb\n\n- [x] 1. synthetic item\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:b-built2]] build item 1"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Builder launched."
+   }
+  ],
+  "ed2": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-pass2]] review item 1"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Reviewer launched."
+   }
+  ],
+  "ed3": [
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/n.md",
+       "content": "x\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Done."
+   }
+  ],
+  "usr": [
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Read."
+   }
+  ]
+ },
+ "*": {
+  "quiet": [
+   {
+    "text": "child: nothing to report"
+   }
+  ],
+  "b-built": [
+   {
+    "text": "[[replay:rc2]] built"
+   }
+  ],
+  "r-pass": [
+   {
+    "text": "[[replay:rc3]] no findings\nOverall verdict: PASS"
+   }
+  ],
+  "r-fail": [
+   {
+    "text": "[[replay:rc4]] one finding\nOverall verdict: FAIL"
+   }
+  ],
+  "b-built2": [
+   {
+    "text": "[[replay:ed2]] built"
+   }
+  ],
+  "r-pass2": [
+   {
+    "text": "[[replay:ed3]] no findings\nOverall verdict: PASS"
+   }
+  ]
+ },
+ "explorer": {
+  "ask": [
+   {
+    "tools": [
+     {
+      "name": "contact_supervisor",
+      "arguments": {
+       "reason": "need_decision",
+       "message": "[[replay:sup]] may I go on?"
+      }
+     }
+    ]
+   },
+   {
+    "text": "explorer child result"
+   }
+  ]
+ }
+}
