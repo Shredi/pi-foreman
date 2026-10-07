@@ -59,6 +59,6 @@ test("child cd: CDPATH denies and is removed from the child env (review D-B2)", 
 });
 
 test("child cd: a cd that may fail keeps the old cwd as a candidate (review D-B3)", () => {
-  for (const c of ["cd nonexist/deeper; cd ../.. && ls", "cd nonexist/deeper || true; cd ../.. && git log", "pushd nonexist && pushd sub && popd && cd .."]) assert.equal(verdict(c), "deny", c);
-  for (const c of ["mkdir -p build && cd build && cargo test", "cd nonexist/deeper; cd sub && ls"]) assert.equal(verdict(c), "pass", c);
+  for (const c of ["cd nonexist/deeper; cd ../.. && ls", "cd nonexist/deeper || true; cd ../.. && git log", "pushd nonexist && pushd sub && popd && cd ..", "mkdir -p build && cd build && ls; cd .."]) assert.equal(verdict(c), "deny", c);
+  for (const c of ["mkdir -p build && cd build && cargo test", "cd nonexist/deeper; cd sub && ls", "mkdir -p build && cd build && cd .. && ls"]) assert.equal(verdict(c), "pass", c);
 });

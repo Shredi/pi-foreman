@@ -272,6 +272,8 @@ function shortNameVariants(cands: string[], patterns: string[]): string[] {
 
 interface Parsed {
   pipelines: string[][][];
+  /** The operator that ended each pipeline: `&&`, `||`, `&`, `;` (also newline), `(`/`)`, `` ` ``, `{`/`}`, or `end`. */
+  seps: string[];
   subs: string[];
 }
 
@@ -450,6 +452,7 @@ export function codeLiterals(code: string): string[] {
 /** pipelines -> units -> words (quotes removed). */
 export function parseShell(src: string, shell: "posix" | "powershell" = "posix"): Parsed {
   const pipelines: string[][][] = [];
+  const seps: string[] = [];
   let units: string[][] = [];
   let words: string[] = [];
   let cur: string | null = null;
@@ -462,9 +465,12 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
     if (words.length) units.push(words);
     words = [];
   };
-  const endPipe = (): void => {
+  const endPipe = (sep: string): void => {
     endUnit();
-    if (units.length) pipelines.push(units);
+    if (units.length) {
+      pipelines.push(units);
+      seps.push(sep);
+    }
     units = [];
   };
   const add = (s: string): void => {
@@ -499,19 +505,20 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
       i = j;
       cur = cur ?? "";
     } else if (c === " " || c === "\t" || c === "\r") flush();
-    else if (c === "\n" || c === ";") endPipe();
+    else if (c === "\n" || c === ";") endPipe(";");
     else if (c === "&") {
-      if (src[i + 1] === "&") i++;
-      endPipe();
+      const and = src[i + 1] === "&";
+      if (and) i++;
+      endPipe(and ? "&&" : "&");
     } else if (c === "|") {
       if (src[i + 1] === "|") {
         i++;
-        endPipe();
+        endPipe("||");
       } else {
         if (src[i + 1] === "&") i++;
         endUnit();
       }
-    } else if (c === "(" || c === ")" || (posix && c === "`") || (!posix && (c === "{" || c === "}"))) endPipe();
+    } else if (c === "(" || c === ")" || (posix && c === "`") || (!posix && (c === "{" || c === "}"))) endPipe(c);
     else if (c === "<" || c === ">") {
       if (cur !== null && /^\d+$/.test(cur)) cur = null; // 2>file: the fd number is not a word
       flush();
@@ -522,8 +529,8 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
       i--;
     } else add(c);
   }
-  endPipe();
-  return { pipelines, subs: substitutions(src, shell) };
+  endPipe("end");
+  return { pipelines, seps, subs: substitutions(src, shell) };
 }
 
 // -------------------------------------------------------------- command units
@@ -792,7 +799,8 @@ const LOOP_START = new Set(["while", "until", "for", "select"]);
  * session cwd, must be provably inside the workspace (symlinks resolved). Anything not literal
  * (`$VAR`, `$()`, globs, `~`, `-`, bare cd) denies, so does any mention of CDPATH (D-B2). A cd to a
  * directory that does not exist yet may fail at run time, so the tracked cwd is a set of
- * candidates and every later target must stay inside from each of them (D-B3). Inside a loop a
+ * candidates and every later target must stay inside from each of them (D-B3); after `cd T &&`
+ * the old cwd revives only where the and-list ends (`;`, `||`, `&`, newline, grouping). Inside a loop a
  * relative cd, pushd and popd deny (they repeat). Deny-only: it never allows.
  */
 function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
@@ -811,13 +819,15 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
   if (cdpath(command)) return deny();
   let cur = new Set([p.resolve(norm(ctx.cwd))]);
   const stack: Array<{ set: Set<string>; sure: boolean }> = [];
-  const units: string[][] = [];
+  // sep: the operator after the unit (`|` inside a pipeline, "" for a keyword-only unit)
+  const units: Array<{ core: string[]; sep: string }> = [];
   let blocked = false;
   const gather = (src: string, shell: "posix" | "powershell", depth: number): void => {
     if (cdpath(src)) blocked = true;
     const parsed = parseShell(src, shell);
     for (const sub of parsed.subs) if (depth < MAX_DEPTH) gather(sub, shell, depth + 1);
-    for (const pipe of parsed.pipelines) for (const u of pipe) {
+    parsed.pipelines.forEach((pipe, pi) => pipe.forEach((u, ui) => {
+      const sep = ui < pipe.length - 1 ? "|" : parsed.seps[pi];
       if (u.some(cdpath)) blocked = true;
       // keywords, env assignments and wrappers in any order: `! FOO=1 command cd x`
       let core = u;
@@ -825,21 +835,29 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
         const lead: string[] = [];
         let k = 0;
         while (k < core.length && CD_KEYWORDS.has(core[k])) lead.push(core[k++]);
-        if (lead.length) units.push(lead);
+        if (lead.length) units.push({ core: lead, sep: "" });
         const next = variants(core.slice(k)).core;
         const done = next.length === core.length;
         core = next;
         if (done) break;
       }
-      units.push(core);
+      units.push({ core, sep });
       const inner = innerScript(core);
       if (inner && depth < MAX_DEPTH) gather(inner.script, inner.shell, depth + 1);
-    }
+    }));
   };
   gather(command, ctx.shell ?? "posix", 0);
   if (blocked) return deny();
   let loop = 0;
-  for (const core of units) {
+  // `cd T && rest`: if the cd fails, the and-list stops, so the old cwd revives only after it ends
+  let revive = new Set<string>();
+  let prevSep = "";
+  for (const { core, sep } of units) {
+    if (revive.size && !["&&", "|", ""].includes(prevSep)) {
+      cur = new Set([...cur, ...revive]);
+      revive = new Set();
+    }
+    prevSep = sep;
     if (!core.length) continue;
     if (CD_KEYWORDS.has(core[0])) {
       for (const k of core) {
@@ -877,7 +895,8 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
       next.add(real);
       // a missing directory (`mkdir -p build && cd build`) may exist by then, or the cd fails
       if (!fsx.isDir(real)) {
-        next.add(c);
+        if (sep === "&&") revive.add(c);
+        else next.add(c);
         sure = false;
       }
     }
