@@ -11,7 +11,9 @@ guard names are printed: never prompts, command text, file bodies or tool output
 
 Proposals look at the whole review log: a bash command family approved (by the user or the review
 model) at least --min-reviews times in at least two sessions and never denied becomes the candidate
-`"<family> *"`, unless the baseline or merged config deny/ask rules already match it. The script
+`"<family> *"`, unless the baseline or merged config deny/ask rules already match it, the family runs
+code (interpreters, wrappers, runners, git config/remote/submodule) or an argv word names a baseline
+write-protected path. The script
 writes a JSON file for the user to read; it never edits any config.
 """
 from __future__ import annotations
@@ -156,7 +158,12 @@ def wildcard_match(pattern, text):
 
 
 RUNS_CODE_HEADS = {"node", "deno", "bun", "ruby", "perl", "php", "bash", "sh", "zsh", "pwsh", "powershell", "cmd",
-                   "osascript", "eval", "exec", "xargs", "env", "sudo", "ssh", "npx"}
+                   "osascript", "eval", "exec", "xargs", "env", "sudo", "ssh", "npx",
+                   # wrappers that run their argument, and more interpreters (S9 re-review)
+                   "nohup", "nice", "time", "timeout", "command", "stdbuf", "busybox", "uvx", "bunx",
+                   "awk", "gawk", "mawk", "lua", "luajit", "rscript", "tclsh", "dash", "ksh", "fish", "csh", "tcsh"}
+RUNS_CODE_SUBS = {"npm": ("exec", "x"), "uv": ("run",), "pipx": ("run",), "poetry": ("run",), "pnpm": ("dlx", "exec"),
+                  "yarn": ("dlx", "exec"), "go": ("run",), "cargo": ("run",), "git": ("config", "remote", "submodule")}
 
 
 def runs_code(family):
@@ -168,15 +175,49 @@ def runs_code(family):
     if "=" in head or head in RUNS_CODE_HEADS or re.match(r"^python[\d.]*$", head) or re.match(r"^py(thon)?w?$", head):
         return True
     rest = toks[1:]
-    if head == "npm" and rest[:1] in (["exec"], ["x"]):
-        return True
-    if head == "git" and rest and (rest[0] == "config" or rest[0].startswith("-c")):
+    if rest and (rest[0] in RUNS_CODE_SUBS.get(head, ()) or (head == "git" and rest[0].startswith("-c"))):
         return True
     return any(t in ("-exec", "-execdir", "-ok", "-okdir", "-delete") for t in rest)
 
 
-def propose(asks, min_reviews, rules):
-    """Families approved >= min_reviews times in >= 2 sessions with no deny, minus rule-covered ones."""
+def load_protect_patterns(agent_dir):
+    """The baseline write-protection patterns (all lists), placeholders filled for matching argv words:
+    {cwd} -> any prefix, agent dir, its parent, package root, $XDG_CONFIG_HOME (dropped when unset), ~."""
+    try:
+        prot = pg.load_baseline().get("protect") or {}
+    except Exception:
+        return []
+    ad = Path(agent_dir).expanduser().as_posix()
+    xdg = os.environ.get("XDG_CONFIG_HOME", "")
+    subs = {"{cwd}": "*", "{agentDirParent}": ad.rsplit("/", 1)[0] or "/", "{agentDir}": ad,
+            "{pkgRoot}": Path(pg.fc.ROOT).as_posix(), "{xdgConfigHome}": Path(xdg).as_posix() if os.path.isabs(xdg) else None}
+    out = []
+    for key in ("deny", "ask", "childDeny", "removeAsk", "writeAsk"):
+        for pat in pg.strings(prot.get(key)):
+            if any(val is None and ph in pat for ph, val in subs.items()):
+                continue
+            for ph, val in subs.items():
+                pat = pat.replace(ph, val or "")
+            out.append(Path(os.path.expanduser(pat)).as_posix() if pat.startswith("~") else pat)
+    return out
+
+
+def touches_protected(family, patterns):
+    """True when an argv word of the family (after the command) names a protected path."""
+    for tok in family.split()[1:]:
+        t = tok.strip("'\"").replace("\\", "/").rstrip("/")
+        if not t or t.startswith("-"):
+            continue
+        t = os.path.expanduser(t) if t.startswith("~") else t
+        cands = [t] if t.startswith("/") or re.match(r"^[A-Za-z]:/", t) else [t, "/x/" + re.sub(r"^(\./)+", "", t)]
+        if any(wildcard_match(p, c) for p in patterns for c in cands):
+            return True
+    return False
+
+
+def propose(asks, min_reviews, rules, protect=()):
+    """Families approved >= min_reviews times in >= 2 sessions with no deny, minus rule-covered ones and
+    ones whose argv touches a write-protected path."""
     fam = {}
     for a in asks:
         if not a["family"] or not a["outcome"]:
@@ -191,7 +232,7 @@ def propose(asks, min_reviews, rules):
     for name, f in sorted(fam.items()):
         if f["denies"] or f["approvals"] < min_reviews or len(f["sessions"]) < 2:
             continue
-        if name in ("(empty)",) or "N" in name.split() or "HASH" in name.split() or runs_code(name):
+        if name in ("(empty)",) or "N" in name.split() or "HASH" in name.split() or runs_code(name) or touches_protected(name, protect):
             continue
         if any(wildcard_match(r, name) or wildcard_match(r, name + " x") for r in rules):
             continue
@@ -293,7 +334,7 @@ def build(session, trace, usage, review, min_reviews, agent_dir):
         "trace": trace_metrics(trace) if trace is not None else None,
         "usage": usage_metrics(usage, sid) if usage is not None else None,
         "session_tools": session_metrics(session) if session is not None else None,
-        "proposals": propose(asks, min_reviews, rules) if asks is not None else None,
+        "proposals": propose(asks, min_reviews, rules, load_protect_patterns(agent_dir)) if asks is not None else None,
     }
 
 

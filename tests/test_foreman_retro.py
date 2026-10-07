@@ -132,13 +132,25 @@ class RetroTest(unittest.TestCase):
     def test_code_running_families_are_never_proposed(self):
         bad = ["python3 -c", "python3.12 script.py", "node -e", "/usr/bin/bash -c", "sh -c", "pwsh -Command", "cmd /c", "osascript -e",
                "eval echo", "xargs rm", "env FOO=1", "sudo make", "ssh host", "git config", "git -c", "npx tool", "npm exec", "find -exec",
-               "FOO=1 make"]
+               "FOO=1 make", "nohup make", "nice make", "time make", "timeout 5", "command make", "stdbuf -oL", "busybox sh",
+               "uv run", "uvx tool", "pipx run", "poetry run", "pnpm dlx", "pnpm exec", "yarn dlx", "yarn exec", "bunx tool",
+               "go run", "cargo run", "awk {print}", "gawk -f", "mawk -f", "lua x.lua", "Rscript x.R", "tclsh x", "dash -c",
+               "ksh -c", "fish -c", "git remote", "git submodule"]
         for fam in bad:
             self.assertTrue(fr.runs_code(fam), fam)
-        for fam in ["npm ci", "git status", "make test", "find ."]:
+        for fam in ["npm ci", "git status", "make test", "find .", "uv sync", "go build", "cargo build"]:
             self.assertFalse(fr.runs_code(fam), fam)
         asks = [{"family": f, "outcome": "approved", "session": sess} for f in bad + ["npm ci"] for sess in ("a", "b", "c")]
         self.assertEqual([p["pattern"] for p in fr.propose(asks, 3, [])], ["npm ci *"])
+
+    def test_protected_path_families_are_never_proposed(self):
+        prot = fr.load_protect_patterns(str(self.tmp / "agent"))
+        bad = ["cat .git/config", "cp ./.pi/settings.json", "vim ~/.gitconfig", "cat %s" % (self.tmp / "agent" / "foreman.json").as_posix()]
+        for fam in bad:
+            self.assertTrue(fr.touches_protected(fam, prot), fam)
+        self.assertFalse(fr.touches_protected("cat src/a.py", prot))
+        asks = [{"family": f, "outcome": "approved", "session": sess} for f in bad + ["cat src/a.py"] for sess in ("a", "b", "c")]
+        self.assertEqual([p["pattern"] for p in fr.propose(asks, 3, [], prot)], ["cat src/a.py *"])
 
     def test_selftest(self):
         out = io.StringIO()
