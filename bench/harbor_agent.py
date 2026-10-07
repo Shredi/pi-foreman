@@ -190,7 +190,7 @@ def summarize_logs(logs_dir, main_role="main"):
         if models:
             thinking_by_role.setdefault(role, set()).update(levels)
     approvals = guard_blocks = gate_blocks = revisions = poll_bash = ceremony_incomplete = 0
-    foreman_edit_refused = pr_refused = 0
+    foreman_edit_refused = pr_refused = checkpoint_auto = 0
     roles = {}
     reviewed = {}
     tiers = {"recorded": None, "tier": None}
@@ -212,6 +212,8 @@ def summarize_logs(logs_dir, main_role="main"):
                 foreman_edit_refused += 1
             elif ev == "pr_refused":
                 pr_refused += 1
+            elif ev == "checkpoint" and rec.get("by") == "rig" and rec.get("decision") == "approve":
+                checkpoint_auto += 1
             if ev == "ask":
                 approvals += 1
             elif ev == "guard" and rec.get("decision") == "deny":
@@ -244,7 +246,8 @@ def summarize_logs(logs_dir, main_role="main"):
         out["triage"] = {"tier": tiers["recorded"] or tiers["tier"] or "untriaged", "launches": roles,
                          "revisions": revisions, "gate_blocks": gate_blocks, "asks_reviewed": reviewed,
                          "pollBash": poll_bash, "ceremony_incomplete": ceremony_incomplete,
-                         "foreman_edit_refused": foreman_edit_refused, "pr_refused": pr_refused}
+                         "foreman_edit_refused": foreman_edit_refused, "pr_refused": pr_refused,
+                         "checkpoint_auto": checkpoint_auto}
     return out
 
 

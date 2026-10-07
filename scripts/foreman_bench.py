@@ -597,7 +597,8 @@ def _triage_stats(done):
             "gate_blocks": _stat([t.get("gate_blocks") for t in ts]),
             "pollBash": _stat([t.get("pollBash") for t in ts]), "ceremony_incomplete": _stat([t.get("ceremony_incomplete") for t in ts]),
             "foreman_edit_refused": _stat([t.get("foreman_edit_refused") for t in ts]),
-            "pr_refused": _stat([t.get("pr_refused") for t in ts])}
+            "pr_refused": _stat([t.get("pr_refused") for t in ts]),
+            "checkpoint_auto": _stat([t.get("checkpoint_auto") for t in ts])}
 
 
 def infra_cells(preset, tdir, jdir):
@@ -700,13 +701,13 @@ def format_summary(summary, first=None):
     tiers = sorted({t for r in summary for t in r["tokens_by_tier"]})
     head = ["row", "success"] + ["tokens %s" % t for t in tiers] + ["tokens all", "wall s", "tool calls", "approvals", "guard blocks",
                                                                 "tier", "launches", "revisions", "asks_denied", "gate_blocks", "pollBash", "ceremony_incomplete",
-            "foreman_edit_refused", "pr_refused"]
+            "foreman_edit_refused", "pr_refused", "checkpoint_auto"]
     lines = [[r["row"], "%d/%d (%d cells)" % (r["success"], r["counted"], r["cells"])] +
              [_fmt(r["tokens_by_tier"].get(t)) for t in tiers] +
              [_fmt(r["tokens"]), _fmt(r["wall_seconds"], 1), _fmt(r["tool_calls"]), _fmt(r["approvals"]), _fmt(r["guard_blocks"]),
               r.get("tier") or "-", _fmt(r.get("launches")), _fmt(r.get("revisions")), _fmt(r.get("asks_denied")),
               _fmt(r.get("gate_blocks")), _fmt(r.get("pollBash")), _fmt(r.get("ceremony_incomplete")),
-              _fmt(r.get("foreman_edit_refused")), _fmt(r.get("pr_refused"))] for r in summary]
+              _fmt(r.get("foreman_edit_refused")), _fmt(r.get("pr_refused")), _fmt(r.get("checkpoint_auto"))] for r in summary]
     text = ["Per row (median [min-max] over counted cells; first cell excluded):"] + _columns(head, lines)
     if first:
         text.append("First cell %s: %s" % (first["cell"], "not finished" if not first["finished"] else
@@ -769,14 +770,14 @@ def format_cost(summary, rows, prices):
 def format_table(rows):
     head = ["row", "task", "success", "tokens", "wall s", "tool calls", "approvals", "guard blocks",
             "tier", "launches", "revisions", "asks_denied", "gate_blocks", "pollBash", "ceremony_incomplete",
-            "foreman_edit_refused", "pr_refused"]
+            "foreman_edit_refused", "pr_refused", "checkpoint_auto"]
     lines = []
     for r in rows:
         lines.append([r["row"], r["task"], "%d/%d%s" % (r["success"], r["counted"], " (+%d infra)" % r["infra_errors"] if r["infra_errors"] else ""),
                       _fmt(r["tokens"]), _fmt(r["wall_seconds"], 1), _fmt(r["tool_calls"]), _fmt(r["approvals"]),
                       _fmt(r["guard_blocks"]), r.get("tier") or "-", _fmt(r.get("launches")), _fmt(r.get("revisions")),
                       _fmt(r.get("asks_denied")), _fmt(r.get("gate_blocks")), _fmt(r.get("pollBash")), _fmt(r.get("ceremony_incomplete")),
-              _fmt(r.get("foreman_edit_refused")), _fmt(r.get("pr_refused"))])
+              _fmt(r.get("foreman_edit_refused")), _fmt(r.get("pr_refused")), _fmt(r.get("checkpoint_auto"))])
     text = _columns(head, lines)
     metas = {}
     for r in rows:
