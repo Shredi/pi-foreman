@@ -52,6 +52,44 @@
    "toolFamily": "Stop",
    "guard": "ledger_guard_stop",
    "decision": "none"
+  },
+  {
+   "event": "finish_refused",
+   "tier": "standard"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "turn"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  },
+  {
+   "event": "finish_refused",
+   "tier": "standard"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "turn"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  },
+  {
+   "event": "ceremony_incomplete",
+   "tier": "standard"
   }
  ],
  "sessionB": [

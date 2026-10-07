@@ -15,7 +15,9 @@ import { permFileState, PS_CHILD_ID, PS_PACKAGE, psProjectConfigPath, renderPerm
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
-import { actionOf, endActive, recordLaunch, trackActive, roundSteps, subagentActionCheck } from "./actions.ts";
+import { actionOf, endActive, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck } from "./actions.ts";
+import { addChange, boundRefusal, emptySteps, emptyTally, finishRefusal, missingSteps, overBound, pendingChange, readBound, requiredSteps, stepsOfRunEnd } from "./bound.ts";
+import type { Change, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
@@ -57,7 +59,7 @@ import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone,
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait } from "./wait.ts";
 import { registerClose, syncCommand } from "./close.ts";
-import { foremanTriage, GATED_TOOLS, triageAdvice, triageGateBlock, TRIAGE_TOOL } from "./triage.ts";
+import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_TOOL, workspaceTargets } from "./triage.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
@@ -119,6 +121,16 @@ interface Session {
   turn: { cause: TurnCause; cacheRead: number; cacheWrite: number; wakeKinds?: string; intercomFrom?: string };
   /** Foreman only: builder revision rounds since the last user prompt or /ceremony tier change (rounds.ts). */
   rounds: RoundState;
+  /** Foreman only, ceremony gate (bound.ts): own project-file changes at trivial, reset by /ceremony. */
+  tally: Tally;
+  /** Changes of gated calls that passed the bound check, by tool call id, counted at their result. */
+  pendingChanges: Map<string, Change>;
+  /** Every launch this session made (run id -> roles), single, chain and tasks. */
+  launchedRoles: Map<string, string[]>;
+  /** Required steps completed in this session (ceremony.required). */
+  steps: StepCounts;
+  /** Finish refusals since the last user prompt (at most 2, then a forced pass). */
+  finishRefusals: number;
 }
 
 export interface AdapterDeps {
@@ -212,6 +224,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launches: new Map(),
       turn: { cause: "other", cacheRead: 0, cacheWrite: 0 },
       rounds: initialRounds(),
+      tally: emptyTally(),
+      pendingChanges: new Map(),
+      launchedRoles: new Map(),
+      steps: emptySteps(),
+      finishRefusals: 0,
     };
     sessions.set(id, s);
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
@@ -548,6 +565,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const s of sessions.values()) {
         s.supervisor.onRunEnd(data);
         endActive(s.activeRuns, data);
+        const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
+        if (typeof runId === "string" && s.launchedRoles.has(runId)) for (const step of stepsOfRunEnd(data)) s.steps[step]++;
       }
     });
   }
@@ -588,7 +607,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
     }
     if (GATED_TOOLS.has(event.toolName)) {
-      const triage = await triageBlock(ctx, event.toolName, event.input as Record<string, unknown>);
+      const triage = await triageBlock(ctx, event.toolName, event.input as Record<string, unknown>, event.toolCallId);
       if (triage) return triage;
     }
     const mapping = mapTool(event.toolName);
@@ -734,6 +753,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s && !s.isChild && s.turn.cause === "intercom") s.turn.intercomFrom = lastIntercomSender(ctx.sessionManager.getBranch()) ?? s.turn.intercomFrom;
     // D3: the owner is back in the loop, so revision rounds count from zero again.
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.rounds = initialRounds();
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
     return { action: "continue" as const };
   });
 
@@ -763,17 +783,35 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** D10: the foreman's own file changes inside the workspace need a trivial triage. */
-  async function triageBlock(ctx: ExtensionContext, toolName: string, input: Record<string, unknown>): Promise<{ block: true; reason: string } | undefined> {
+  async function triageBlock(ctx: ExtensionContext, toolName: string, input: Record<string, unknown>, toolCallId: string): Promise<{ block: true; reason: string } | undefined> {
     try {
       const s = await ensureSession(ctx);
       if (s.isChild || get(s.config.config, "ceremony.requireTriage") === false) return undefined;
       const reason = triageGateBlock(toolName, input, s.ceremony, { cwd: ctx.cwd, home: os.homedir(), platform });
-      if (!reason) return undefined;
+      if (!reason) return trivialBoundBlock(s, ctx, toolName, input, toolCallId);
       s.trace?.emit({ event: "triage_gate", toolFamily: toolName, tier: s.ceremony.tier, decision: "blocked" });
       return { block: true, reason };
     } catch (err) {
       return { block: true, reason: `pi-foreman: adapter error in the triage gate (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
     }
+  }
+
+  /** D1: at tier trivial, a call that would bring the foreman's own changes over ceremony.trivialBound is refused and the tier escalates. */
+  function trivialBoundBlock(s: Session, ctx: ExtensionContext, toolName: string, input: Record<string, unknown>, toolCallId: string): { block: true; reason: string } | undefined {
+    if (s.ceremony.tier !== "trivial") return undefined;
+    const targets = workspaceTargets(toolName, input, ctx.cwd, os.homedir(), platform);
+    if (targets.length === 0) return undefined;
+    const change = pendingChange(toolName, input, new Set(targets.map((t) => t.abs)), (raw) => resolveToolPath(raw, ctx.cwd, os.homedir()));
+    // Calls of the same turn that passed but have no result yet count too.
+    const next = addChange([...s.pendingChanges.values()].reduce(addChange, s.tally), change);
+    const bound = readBound(get(s.config.config, "ceremony.trivialBound"));
+    if (!overBound(next, bound)) {
+      s.pendingChanges.set(toolCallId, change);
+      return undefined;
+    }
+    setCeremony(s, escalate(s.ceremony, "standard", "auto", "trivial bound crossed"));
+    s.trace?.emit({ event: "triage_escalated", from: "trivial", to: s.ceremony.tier, files: next.files.length, lines: next.lines, newFiles: next.newFiles });
+    return { block: true, reason: boundRefusal(toolName, targets[0].raw, next, bound) };
   }
 
   /** D8: give a single-child launch its usage binding (role, launch id, kind) through extensionBindings. */
@@ -787,6 +825,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   pi.on("tool_result", async (event, ctx) => {
     sessionFor(ctx)?.gitDrift.after(ctx.cwd, os.homedir(), event.toolCallId);
+    const owner = sessionFor(ctx);
+    const pending = owner?.pendingChanges.get(event.toolCallId);
+    if (owner && pending) {
+      owner.pendingChanges.delete(event.toolCallId);
+      if (!event.isError) owner.tally = addChange(owner.tally, pending);
+    }
     if (event.toolName === SUPERVISOR_TOOL) {
       const s = sessionFor(ctx);
       const closed = s?.supervisor.onSupervisorResult(event.details, event.isError);
@@ -796,6 +840,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const s = sessionFor(ctx);
       if (s) {
         recordLaunch(s.runs, event.input, event.details, event.isError);
+        recordLaunchRoles(s.launchedRoles, event.input, event.details, event.isError);
         trackActive(s.activeRuns, event.input, event.details, event.isError);
       }
       for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_result", role, exit: event.isError ? 1 : 0, pollBash: s.pollBash || undefined });
@@ -835,7 +880,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const outcome = await run(s, ctx, "ledger_guard_stop", stopPayload(payloadCtx(s, ctx), s.stopContinued), "Stop");
     const r = translateStop(outcome);
     if (r.openFailure) notifyOnce(s, ctx, "open:ledger_guard_stop", r.openFailure);
-    if (!r.hold) return undefined;
+    if (!r.hold) return ceremonyFinishGate(s, ctx, event.entries);
     s.stopContinued = true;
     s.trace?.emit({ event: "stop_hold", guard: "ledger_guard_stop", decision: "continue" });
     return {
@@ -843,6 +888,28 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       continue: true,
     };
   });
+
+  /**
+   * D2: a triaged standard/heavy session finishes only after its required steps
+   * (ceremony.required). Not while a child of this session still runs (its completion starts the
+   * next turn). At most 2 refusals per user prompt; then the settle passes, visibly.
+   */
+  function ceremonyFinishGate<E>(s: Session, ctx: ExtensionContext, entries: E[]) {
+    if (s.isChild || !isTriaged(s.ceremony) || s.activeRuns.size > 0) return undefined;
+    const missing = missingSteps(s.steps, requiredSteps(get(s.config.config, "ceremony.required"), s.ceremony.tier));
+    if (missing.length === 0) return undefined;
+    if (s.finishRefusals >= 2) {
+      s.trace?.emit({ event: "ceremony_incomplete", tier: s.ceremony.tier, missing: missing.join(",") });
+      ctx.ui.notify(`pi-foreman: finished with ceremony incomplete: missing ${missing.join(", ")}`, "warning");
+      return undefined;
+    }
+    s.finishRefusals++;
+    s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(",") });
+    return {
+      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing), display: true }],
+      continue: true,
+    };
+  }
 
   // ------------------------------------------------------------------- tools
 
@@ -923,6 +990,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       setCeremony(s, userOverride(s.ceremony, want));
+      s.tally = emptyTally();
       ctx.ui.notify(tierLine(s.ceremony), "info");
     },
   });

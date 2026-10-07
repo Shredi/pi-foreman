@@ -242,6 +242,34 @@ class LayerRulesTest(unittest.TestCase):
         self.assertEqual((res["config"]["ceremony"]["heavyFileCount"], res["config"]["ceremony"]["default"]), (3, "heavy"))
         self.assertIn("project ceremony ignored: not an object", "\n".join(res["warnings"]))
 
+    def test_trivial_bound_lower_only(self):
+        res = self.load(proj={"ceremony": {"trivialBound": {"files": 5, "lines": 10}}},
+                        session={"ceremony": {"trivialBound": {"newFiles": 1, "files": -1}}})
+        self.assertEqual(res["errors"], [])
+        self.assertEqual(res["config"]["ceremony"]["trivialBound"], {"files": 2, "lines": 10, "newFiles": 0})
+        joined = "\n".join(res["warnings"])
+        self.assertIn("project ceremony.trivialBound.files ignored: it would loosen", joined)
+        self.assertIn("session ceremony.trivialBound.newFiles ignored: it would loosen", joined)
+        self.assertIn("session ceremony.trivialBound.files ignored: below the minimum 0", joined)
+        res = self.load(l2={"ceremony": {"trivialBound": {"files": 9}}}, proj={"ceremony": {"trivialBound": 3}}, session={})
+        self.assertEqual(res["config"]["ceremony"]["trivialBound"]["files"], 9)
+        self.assertIn("project ceremony.trivialBound ignored: not an object", "\n".join(res["warnings"]))
+
+    def test_required_steps_add_only(self):
+        res = self.load(proj={"ceremony": {"required": {"standard": ["reviewer", "finalizer"], "heavy": ["deployer"]}}},
+                        session={"ceremony": {"required": {"standard": []}}})
+        self.assertEqual(res["errors"], [])
+        req = res["config"]["ceremony"]["required"]
+        self.assertEqual(req["standard"], ["builder", "reviewer", "finalizer"])
+        self.assertEqual(req["heavy"], ["builder", "reviewer", "finalizer"])
+        joined = "\n".join(res["warnings"])
+        self.assertIn("project ceremony.required.standard: entries not removed: builder", joined)
+        self.assertIn("project ceremony.required.heavy: unknown steps dropped: deployer", joined)
+        self.assertIn("session ceremony.required.standard: entries not removed: builder, reviewer, finalizer", joined)
+        res = self.load(l2={"ceremony": {"required": {"standard": []}}}, proj={"ceremony": {"required": None}}, session={})
+        self.assertEqual(res["config"]["ceremony"]["required"]["standard"], [])
+        self.assertIn("project ceremony.required ignored: not an object", "\n".join(res["warnings"]))
+
     def test_pin_role_model_settable_review_ignored(self):
         res = self.load(session={"providers": {"p1": {"roles": {"builder": {"model": "p1/s"}},
                                                       "review": {"model": "p1/r"}}}})

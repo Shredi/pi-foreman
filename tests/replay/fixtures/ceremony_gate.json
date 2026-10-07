@@ -1,0 +1,45 @@
+{
+ "foreman": {
+  "small": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "trivial", "reason": "one word in one file"}}]},
+   {"tools": [{"name": "edit", "arguments": {"path": "a.txt", "edits": [{"oldText": "alpha", "newText": "beta"}]}}]},
+   {"text": "Done."}
+  ],
+  "cross": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "trivial", "reason": "a small fix"}}]},
+   {"tools": [{"name": "edit", "arguments": {"path": "a.txt", "edits": [{"oldText": "alpha", "newText": "beta"}]}}]},
+   {"tools": [{"name": "write", "arguments": {"path": "a.txt", "content": "{{LINES}}"}}]},
+   {"tools": [{"name": "edit", "arguments": {"path": "a.txt", "edits": [{"oldText": "beta", "newText": "gamma"}]}}]},
+   {"text": "Delegating the rest."}
+  ],
+  "newfile": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "trivial", "reason": "add a note"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": "new.txt", "content": "hello\n"}}]},
+   {"text": "Refused."}
+  ],
+  "nobuild": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"text": "Done."}
+  ],
+  "full": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-cg.md", "content": "# Requirements Ledger: cg\n\n- [x] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-built]] build item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "review": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-pass]] review item 1"}}]}, {"text": "Reviewer launched."}],
+  "after": [{"text": "Built and reviewed; done."}],
+  "failed": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-cf.md", "content": "# Requirements Ledger: cf\n\n- [x] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] build item 1"}}]},
+   {"text": "Builder launched."},
+   {"text": "The builder failed; done."}
+  ]
+ },
+ "*": {
+  "quiet": [{"text": "child: nothing to report"}],
+  "b-built": [{"text": "[[replay:review]] built"}],
+  "r-pass": [{"text": "[[replay:after]] no findings\nOverall verdict: PASS"}]
+ }
+}

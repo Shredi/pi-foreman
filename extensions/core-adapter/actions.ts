@@ -156,6 +156,23 @@ export function recordLaunch(runs: RunRegistry, input: unknown, details: unknown
 }
 
 /**
+ * Record the run id of any launch this session made (single, chain or tasks; a resume keeps the
+ * roles of the run it resumed), for the ceremony gate (bound.ts): only run-end events of runs
+ * listed here count toward `ceremony.required`.
+ */
+export function recordLaunchRoles(launched: Map<string, string[]>, input: unknown, details: unknown, isError: boolean): void {
+  const id = launchId(input, details, isError);
+  if (!id || !isObj(input)) return;
+  if (actionOf(input) === "resume") {
+    const prev = launched.get(resumeTarget(input) ?? "");
+    if (prev) launched.set(id, [...prev]);
+    return;
+  }
+  const roles = launchSteps(input).flat();
+  if (roles.length > 0) launched.set(id, roles);
+}
+
+/**
  * The steps a `subagent` call runs, for the revision rounds (rounds.ts): a launch's own steps,
  * a resume as one step of the resumed run's role (a resumed builder works on the reviewed
  * change again), nothing for any other action.

@@ -53,6 +53,10 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.heavySignals            union only (a project can add signals, not remove one)
     ceremony.heavyFileCount          lower only, minimum 1 (a higher count escalates later)
     ceremony.default                 raise only, trivial < standard < heavy
+    ceremony.trivialBound.<field>    lower only, minimum 0 (a higher bound lets the foreman edit more)
+    ceremony.trivialBound            not an object: ignored
+    ceremony.required.<tier>         union only (a project can add required steps, not remove one)
+    ceremony.required                not an object: ignored; unknown steps dropped
     sync.repos, retro.proposalMinReviews, compaction.priceTiers   ignored (L1/L3/L2 only)
     intercom.allowRemote, intercom.allowOpenPane, wait.ci         only false is accepted
     close.from                       intersect (a project can only narrow the allowed sources)
@@ -156,6 +160,8 @@ LAYER_TIGHTEN = [
     (("ceremony", "revisionRounds", "*"), "lower_only"),
     (("ceremony", "requireTriage"), "true_only"),
     (("ceremony", "heavyFileCount"), "lower_only"),
+    (("ceremony", "trivialBound", "*"), "lower_only"),
+    (("ceremony", "required", "*"), "union"),
     (("roles", "*", "timeoutMinutes"), "lower_only"),
     (("intercom", "allowRemote"), "false_only"),
     (("intercom", "allowOpenPane"), "false_only"),
@@ -168,6 +174,8 @@ LAYER_TIGHTEN = [
 LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
                  "threshold": 0.3, "maxSeconds": 1, "maxActive": 1}
 TIERS = ["trivial", "standard", "heavy"]
+# Steps ceremony.required.<tier> may name (the adapter counts each per session).
+REQUIRED_STEPS = ["builder", "reviewer", "finalizer"]
 # codemode adds a tool, so the project and session layers may only switch it off.
 CODEMODE_FALSE_ONLY = True
 # roles.<id> in the project and session layers: "intersect" = narrow only. NEW_ROLE_IDS
@@ -213,6 +221,16 @@ def _tighten_pattern(node, base, keys, rule, done, who, warnings, minimum=0):
                 why = "it would loosen the policy"
             else:
                 continue
+        elif rule == "union":
+            if not isinstance(val, list) or not isinstance(have, list):
+                del node[name]
+                warnings.append("%s ignored: the %s can only add entries" % (label, who))
+                return
+            removed = [x for x in have if x not in val]
+            if removed:
+                warnings.append("%s: entries not removed: %s" % (label, ", ".join(map(str, removed))))
+            node[name] = have + [x for x in val if x not in have]
+            continue
         elif rule == "intersect":
             if not isinstance(val, list) or not isinstance(have, list):
                 del node[name]
@@ -260,6 +278,17 @@ def _restrict_ceremony(base, proj, who, warnings):
     if "revisionRounds" in cer and not isinstance(cer["revisionRounds"], dict):
         del cer["revisionRounds"]
         warnings.append("%s ceremony.revisionRounds ignored: not an object" % who)
+    for key in ("trivialBound", "required"):
+        if key in cer and not isinstance(cer[key], dict):
+            del cer[key]
+            warnings.append("%s ceremony.%s ignored: not an object" % (who, key))
+    for tier, steps in list((cer.get("required") or {}).items()):
+        if not isinstance(steps, list):
+            continue
+        bad = [x for x in steps if x not in REQUIRED_STEPS]
+        if bad:
+            warnings.append("%s ceremony.required.%s: unknown steps dropped: %s" % (who, tier, ", ".join(map(str, bad))))
+            cer["required"][tier] = [x for x in steps if x in REQUIRED_STEPS]
     if "heavySignals" in cer:
         want, kept = cer["heavySignals"], have.get("heavySignals")
         kept = [x for x in kept if isinstance(x, str)] if isinstance(kept, list) else []
