@@ -21,7 +21,7 @@ test("trace: non-allowlisted keys and non-primitive values are dropped", () => {
     cost: Number.NaN,
   });
   assert.deepEqual(out, { event: "guard", guard: "destructive_guard", decision: "deny", latencyMs: 41 });
-  assert.deepEqual([...TRACE_FIELDS], ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing"]);
+  assert.deepEqual([...TRACE_FIELDS], ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind"]);
 });
 
 test("trace: ask and overlay events carry no command text", () => {
@@ -29,6 +29,8 @@ test("trace: ask and overlay events carry no command text", () => {
     const out = sanitizeTrace({ event, toolFamily: "bash", decision: "deny", command: "curl http://x/secret", title: "t", message: "m", reason: "r", input: { command: "x" } });
     assert.deepEqual(out, { event, toolFamily: "bash", decision: "deny" });
   }
+  // shell write refusals carry the write form only, never the command
+  assert.deepEqual(sanitizeTrace({ event: "shell_write_refused", kind: "redirect", command: "echo x > src/a.go" }), { event: "shell_write_refused", kind: "redirect" });
 });
 
 test("trace: disabled writes nothing; enabled writes one sanitized JSONL line per event", () => {

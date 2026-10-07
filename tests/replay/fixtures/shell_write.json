@@ -1,0 +1,26 @@
+{
+ "foreman": {
+  "trivial": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "trivial", "reason": "one test file"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "cat > cors_test.go <<'EOF'\npackage api\nEOF"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "mkdir -p .workflow && cat > .workflow/notes.md <<'EOF'\nnote\nEOF"}}]},
+   {"text": "trivial: done"}
+  ],
+  "standard": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "cd \"$PWD\" && python3 - <<'EOF'\np='router.go'\nopen(p,'w').write('package api')\nEOF"}}]},
+   {"text": "standard: done"}
+  ],
+  "child": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:bwrite]] write the file"}}]},
+   {"text": "Launched."},
+   {"text": "Builder reported."}
+  ]
+ },
+ "builder": {
+  "bwrite": [
+   {"tools": [{"name": "bash", "arguments": {"command": "cat > built.txt <<'EOF'\nbuilt\nEOF"}}]},
+   {"text": "child: write finished"}
+  ]
+ }
+}

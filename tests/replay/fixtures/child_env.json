@@ -1,7 +1,7 @@
 {
  "foreman": {
   "e1": [
-   {"tools": [{"name": "bash", "arguments": {"command": "printenv | cut -d= -f1 | grep -E '^(SSH_AUTH_SOCK|GH_TOKEN|GIT_TERMINAL_PROMPT|GCM_INTERACTIVE|GIT_CONFIG_COUNT)$' | sort > main-env.txt"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "mkdir -p .workflow && printenv | cut -d= -f1 | grep -E '^(SSH_AUTH_SOCK|GH_TOKEN|GIT_TERMINAL_PROMPT|GCM_INTERACTIVE|GIT_CONFIG_COUNT)$' | sort > .workflow/main-env.txt"}}]},
    {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:envcheck]] list env names"}}]},
    {"text": "Launched."},
    {"text": "Builder reported."}

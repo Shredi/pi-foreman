@@ -22,6 +22,7 @@ import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
+import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, splitLevel, STRENGTHS } from "./launchmodel.ts";
@@ -610,6 +611,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const triage = await triageBlock(ctx, event.toolName, event.input as Record<string, unknown>, event.toolCallId);
       if (triage) return triage;
     }
+    if (event.toolName === "bash") {
+      const shellWrite = await shellWriteBlock(ctx, event.input as Record<string, unknown>);
+      if (shellWrite) return shellWrite;
+    }
     const mapping = mapTool(event.toolName);
     if (mapping.pre.length === 0) return undefined;
     try {
@@ -812,6 +817,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     setCeremony(s, escalate(s.ceremony, "standard", "auto", "trivial bound crossed"));
     s.trace?.emit({ event: "triage_escalated", from: "trivial", to: s.ceremony.tier, files: next.files.length, lines: next.lines, newFiles: next.newFiles });
     return { block: true, reason: boundRefusal(toolName, targets[0].raw, next, bound) };
+  }
+
+  /** Plan D3: the foreman's bash may not write project files, at any tier (children are not checked). */
+  async function shellWriteBlock(ctx: ExtensionContext, input: Record<string, unknown>): Promise<{ block: true; reason: string } | undefined> {
+    try {
+      const s = await ensureSession(ctx);
+      if (s.isChild) return undefined;
+      const env = buildGuardEnv({ base: process.env, coreDir: CORE_DIR, sessionId: s.id, guard: "shell_write_guard", markerDir: s.markerDir });
+      const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root);
+      const v = shellWriteVerdict(await runShellWriteGuard({ python: pyPath(s), pkgRoot: PKG_ROOT, payload, env, cwd: ctx.cwd, spawner }), pyPath(s));
+      if (v.decision === "allow") return undefined;
+      if (v.decision === "refuse") s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind });
+      return { block: true, reason: v.reason };
+    } catch (err) {
+      return { block: true, reason: `pi-foreman: adapter error in the shell write guard (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
+    }
   }
 
   /** D8: give a single-child launch its usage binding (role, launch id, kind) through extensionBindings. */

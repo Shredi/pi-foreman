@@ -6,7 +6,8 @@ export type GuardName =
   | "ledger_guard_spawn"
   | "ledger_bind"
   | "ledger_guard_stop"
-  | "git_guard";
+  | "git_guard"
+  | "shell_write_guard";
 
 export interface ToolMapping {
   /** Tool name the core scripts expect, or null when the core has no equivalent. */
