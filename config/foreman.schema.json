@@ -133,7 +133,10 @@
             "standard": { "type": "array", "items": { "type": "string", "enum": ["builder", "reviewer", "finalizer"] } },
             "heavy": { "type": "array", "items": { "type": "string", "enum": ["builder", "reviewer", "finalizer"] } }
           }
-        }
+        },
+        "foremanEdits": { "type": "string", "enum": ["readonly", "scratchpad", "bounded"], "description": "What the foreman may change itself: readonly = only .workflow/; scratchpad = .workflow/ and ceremony.scratchDir; bounded = workspace files at tier trivial within ceremony.trivialBound. A refused edit raises a trivial tier to standard. A project or session can only tighten it (readonly < scratchpad < bounded)." },
+        "scratchDir": { "type": "string", "description": "Workspace-relative folder the foreman may write in scratchpad mode (notes, drafts, commit messages). Not absolute, no '..', not the workspace root, must resolve inside the workspace. A project or session can only narrow it to a subfolder." },
+        "reviewBeforePr": { "type": "boolean", "description": "A pull/merge request needs a reviewer PASS on the current HEAD. A project or session can only set true." }
       }
     },
     "sync": {

@@ -61,6 +61,8 @@ import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait } from "./wait.ts";
 import { registerClose, syncCommand } from "./close.ts";
 import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_TOOL, workspaceTargets } from "./triage.ts";
+import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, scratchDirOf } from "./editmode.ts";
+import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
@@ -611,8 +613,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
     }
     if (GATED_TOOLS.has(event.toolName)) {
-      const triage = await triageBlock(ctx, event.toolName, event.input as Record<string, unknown>, event.toolCallId);
-      if (triage) return triage;
+      // Edit mode first, independent of requireTriage; readonly/scratchpad decide alone, bounded falls through.
+      const edit = await editModeGate(ctx, event.toolName, event.input as Record<string, unknown>);
+      if (edit) return edit;
+      if (edit === null) {
+        const triage = await triageBlock(ctx, event.toolName, event.input as Record<string, unknown>, event.toolCallId);
+        if (triage) return triage;
+      }
     }
     if (event.toolName === "bash" || event.toolName === "powershell") {
       const shellWrite = await shellWriteBlock(ctx, event.toolName, event.input as Record<string, unknown>);
@@ -790,6 +797,43 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const role of reviews) s.trace?.emit({ event: "review_done", role, decision: verdict ?? "no-verdict" });
   }
 
+  function editModeOfSession(s: Session): { mode: EditMode; scratchDir: string } {
+    return { mode: editModeOf(get(s.config.config, "ceremony.foremanEdits")), scratchDir: scratchDirOf(get(s.config.config, "ceremony.scratchDir")) };
+  }
+
+  /**
+   * ceremony.foremanEdits: a block, undefined (allowed; the triage gate and the bound do not apply),
+   * or null (bounded mode or a child: the triage gate decides as before).
+   */
+  async function editModeGate(ctx: ExtensionContext, toolName: string, input: Record<string, unknown>): Promise<{ block: true; reason: string } | undefined | null> {
+    try {
+      const s = await ensureSession(ctx);
+      if (s.isChild) return null;
+      const { mode, scratchDir } = editModeOfSession(s);
+      const reason = editModeBlock(toolName, input, mode, scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform });
+      if (reason === null) return null;
+      if (reason === "") return undefined;
+      return { block: true, reason: reason + onEditRefused(s, mode, toolName) };
+    } catch (err) {
+      return { block: true, reason: `pi-foreman: adapter error in the edit-mode gate (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
+    }
+  }
+
+  /**
+   * Item 13: a change the edit mode refused needs a builder. Trace it; outside bounded mode mark the
+   * ceremony and raise a trivial tier to standard at once (an untriaged session's later trivial
+   * triage is recorded as standard). The text added to the refusal.
+   */
+  function onEditRefused(s: Session, mode: EditMode, kind: string): string {
+    s.trace?.emit({ event: "foreman_edit_refused", mode, kind });
+    if (mode === "bounded") return "";
+    s.ceremony = { ...s.ceremony, needsChange: true };
+    if (s.ceremony.tier !== "trivial") return isTriaged(s.ceremony) ? "" : ` Record the tier with ${TRIAGE_TOOL}: this task needs a builder, so trivial counts as standard.`;
+    setCeremony(s, escalate(s.ceremony, "standard", "auto", "edit mode refused a change"));
+    s.trace?.emit({ event: "triage_escalated", from: "trivial", to: s.ceremony.tier, reason: "edit_mode" });
+    return " The tier is now standard: write the ledger .workflow/LEDGER-<topic>.md and launch a builder, then a reviewer.";
+  }
+
   /** D10: the foreman's own file changes inside the workspace need a trivial triage. */
   async function triageBlock(ctx: ExtensionContext, toolName: string, input: Record<string, unknown>, toolCallId: string): Promise<{ block: true; reason: string } | undefined> {
     try {
@@ -828,11 +872,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const s = await ensureSession(ctx);
       if (s.isChild) return undefined;
       const env = buildGuardEnv({ base: process.env, coreDir: CORE_DIR, sessionId: s.id, guard: "shell_write_guard", markerDir: s.markerDir });
-      const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root, toolName);
+      const { mode, scratchDir } = editModeOfSession(s);
+      const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root, toolName, allowedShellDirs(mode, scratchDir, ctx.cwd, platform));
       const v = shellWriteVerdict(await runShellWriteGuard({ python: pyPath(s), pkgRoot: PKG_ROOT, payload, env, cwd: ctx.cwd, spawner }), pyPath(s));
       if (v.decision === "allow") return undefined;
-      if (v.decision === "refuse") s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind });
-      return { block: true, reason: v.reason };
+      if (v.decision !== "refuse") return { block: true, reason: v.reason };
+      s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode });
+      const more = onEditRefused(s, mode, "shell");
+      return { block: true, reason: mode === "bounded" ? v.reason : `${v.reason} pi-foreman: ${editModeAdvice(mode, scratchDir)}.${more}` };
     } catch (err) {
       return { block: true, reason: `pi-foreman: adapter error in the shell write guard (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
     }
@@ -984,8 +1031,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const s = await ensureSession(ctx);
         const refuse = (text: string) => ({ content: [{ type: "text" as const, text }], details: { decision: "refused" }, isError: true });
         if (s.isChild) return refuse(`${TRIAGE_TOOL} is for the foreman only.`);
-        const tier = params.tier;
-        if (!isTier(tier)) return refuse(`${TRIAGE_TOOL}: tier must be trivial, standard or heavy.`);
+        const want = params.tier;
+        if (!isTier(want)) return refuse(`${TRIAGE_TOOL}: tier must be trivial, standard or heavy.`);
+        // Item 13: the edit mode already refused a change, so the task needs a builder.
+        const raised = want === "trivial" && s.ceremony.needsChange === true;
+        const tier = raised ? "standard" : want;
         const r = foremanTriage(s.ceremony, tier, typeof params.reason === "string" ? params.reason.slice(0, 200) : "");
         if ("error" in r) {
           s.trace?.emit({ event: "triage", tier, decision: "refused" });
@@ -993,7 +1043,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         setCeremony(s, r.state);
         s.trace?.emit({ event: "triage", tier, decision: "recorded" });
-        return { content: [{ type: "text" as const, text: `${tierLine(s.ceremony)} ${triageAdvice(tier)}` }], details: { decision: "recorded", tier } };
+        if (raised) s.trace?.emit({ event: "triage_escalated", from: "trivial", to: tier, reason: "edit_mode" });
+        const note = raised ? "Recorded as standard, not trivial: the edit mode already refused a change of yours, so a builder makes it. " : "";
+        const em = editModeOfSession(s);
+        const advice = tier === "trivial" && em.mode !== "bounded" ? `No builder is required, but ${editModeAdvice(em.mode, em.scratchDir)} for any project change (that makes the task standard).` : triageAdvice(tier);
+        return { content: [{ type: "text" as const, text: `${note}${tierLine(s.ceremony)} ${advice}` }], details: { decision: "recorded", tier } };
       },
     } as never);
   }

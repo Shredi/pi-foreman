@@ -4,7 +4,8 @@
 The foreman changes project files only through its edit/write tools, which the trivial
 bound measures, or through a builder. This guard closes the shell path: it reads the
 foreman's bash command STRING and refuses it when it would write a file inside the
-workspace and outside `<workspace>/.workflow/` (ledger and notes stay writable). It runs
+workspace and outside the allowed dirs (`allowed_dirs`, default `<workspace>/.workflow/`:
+ledger and notes stay writable; the adapter adds the scratch dir in scratchpad mode). It runs
 at every tier, trivial included.
 
 Reads a Claude-hook-shaped payload on stdin and prints the core guards' decision JSON:
@@ -19,7 +20,8 @@ text). Exit 0 for every decision; exit 2 (stderr, no stdout) on an internal erro
 the adapter treats as a block.
 
 Input fields: tool_input.command, cwd, workspace (the workspace root; defaults to cwd),
-shell ("bash" | "powershell"; the foreman's opt-in powershell tool sends "powershell").
+shell ("bash" | "powershell"; the foreman's opt-in powershell tool sends "powershell"),
+allowed_dirs (workspace-relative list; missing = [".workflow"]; absolute or `..` entries are ignored).
 
 What counts as a write (target resolved against the cwd tracked through `cd`/`pushd`,
 subshell-scoped; `cd` inside a pipeline or a background job does not carry over):
@@ -498,11 +500,26 @@ def absolute(text, cwd, lexical=True):
     return norm(os.path.join(cwd, text))
 
 
+DEFAULT_ALLOWED_DIRS = [".workflow"]
+
+
+def _allowed_rel(d):
+    """A workspace-relative allowed dir, or None (absolute, `..`, the root itself, not a string)."""
+    if not isinstance(d, str) or not d.strip() or _drive_path(d) or d.startswith(("/", "\\")):
+        return None
+    parts = [p for p in re.split(r"[\\/]+", d) if p not in ("", ".")]
+    if not parts or ".." in parts:
+        return None
+    return parts
+
+
 class Scope(object):
-    def __init__(self, workspace):
+    def __init__(self, workspace, allowed_dirs=None):
         self.ws = os.path.normpath(os.path.abspath(workspace))
         self.ws_real = os.path.realpath(self.ws)
-        self.workflow = os.path.join(self.ws_real, ".workflow")
+        dirs = DEFAULT_ALLOWED_DIRS if allowed_dirs is None else allowed_dirs
+        self.allowed = [os.path.normpath(os.path.join(self.ws_real, *parts))
+                        for parts in map(_allowed_rel, dirs) if parts]
 
     def project_path(self, abs_path):
         if abs_path is None:
@@ -512,8 +529,9 @@ class Scope(object):
         real = os.path.realpath(abs_path)
         if not (_inside(self.ws, abs_path) or _inside(self.ws_real, real)):
             return False
-        if _inside(self.workflow, real) and _fold(os.path.normpath(real)) != _fold(self.workflow):
-            return False
+        for allowed in self.allowed:
+            if _inside(allowed, real) and _fold(os.path.normpath(real)) != _fold(allowed):
+                return False
         return True
 
     def target(self, word, cwd):
@@ -1786,9 +1804,10 @@ def _ps_split(word):
 
 # --------------------------------------------------------------------------- entry
 
-def decide(command, cwd, workspace=None, shell="bash"):
-    """None (no project write) or (kind, target). `shell`: "bash" or "powershell"."""
-    scope = Scope(workspace or cwd)
+def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None):
+    """None (no project write) or (kind, target). `shell`: "bash" or "powershell".
+    `allowed_dirs`: workspace-relative dirs that stay writable (None = [".workflow"])."""
+    scope = Scope(workspace or cwd, allowed_dirs)
     try:
         a = Analyzer(scope)
         (a.ps_text if shell == "powershell" else a.text)(command, os.path.normpath(os.path.abspath(cwd)), 0)
@@ -1810,7 +1829,10 @@ def main(argv=None):
         return 0
     cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload.get("cwd") else os.getcwd()
     ws = payload.get("workspace") if isinstance(payload.get("workspace"), str) and payload.get("workspace") else cwd
-    hit = decide(command, cwd, ws, "powershell" if payload.get("shell") == "powershell" else "bash")
+    allowed = payload.get("allowed_dirs")
+    if not isinstance(allowed, list):
+        allowed = None
+    hit = decide(command, cwd, ws, "powershell" if payload.get("shell") == "powershell" else "bash", allowed)
     if hit is None:
         return 0
     kind, target = hit

@@ -21,7 +21,7 @@ export interface MergedConfig {
 const CONFIG_TIMEOUT_MS = 10_000;
 
 const BUILTIN_DEFAULTS: Json = {
-  ceremony: { default: "standard", heavySignals: [], heavyFileCount: 8 },
+  ceremony: { default: "standard", heavySignals: [], heavyFileCount: 8, foremanEdits: "scratchpad", scratchDir: ".workflow/scratch", reviewBeforePr: true },
   safety: { requiredChildExtensions: [] },
   python: { path: null },
 };

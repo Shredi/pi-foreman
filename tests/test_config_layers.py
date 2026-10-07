@@ -255,6 +255,48 @@ class LayerRulesTest(unittest.TestCase):
         self.assertEqual(res["config"]["ceremony"]["trivialBound"]["files"], 9)
         self.assertIn("project ceremony.trivialBound ignored: not an object", "\n".join(res["warnings"]))
 
+    def test_foreman_edits_ordered_tighten_only(self):
+        res = self.load(proj={"ceremony": {"foremanEdits": "bounded"}}, session={})
+        self.assertEqual(res["config"]["ceremony"]["foremanEdits"], "scratchpad")
+        self.assertIn("project ceremony.foremanEdits ignored: it would loosen", "\n".join(res["warnings"]))
+        res = self.load(proj={"ceremony": {"foremanEdits": "readonly"}}, session={"ceremony": {"foremanEdits": "scratchpad"}})
+        self.assertEqual(res["config"]["ceremony"]["foremanEdits"], "readonly")
+        self.assertIn("session ceremony.foremanEdits ignored: it would loosen", "\n".join(res["warnings"]))
+        res = self.load(l2={"ceremony": {"foremanEdits": "bounded"}}, proj={"ceremony": {"foremanEdits": "free"}}, session={})
+        self.assertEqual(res["config"]["ceremony"]["foremanEdits"], "bounded")
+        self.assertIn("project ceremony.foremanEdits ignored: not one of readonly, scratchpad, bounded", "\n".join(res["warnings"]))
+
+    def test_review_before_pr_true_only(self):
+        res = self.load(proj={"ceremony": {"reviewBeforePr": False}}, session={"ceremony": {"reviewBeforePr": False}})
+        self.assertIs(res["config"]["ceremony"]["reviewBeforePr"], True)
+        self.assertIn("session ceremony.reviewBeforePr ignored", "\n".join(res["warnings"]))
+        res = self.load(l2={"ceremony": {"reviewBeforePr": False}}, proj={}, session={})
+        self.assertIs(res["config"]["ceremony"]["reviewBeforePr"], False)
+
+    def test_scratch_dir_narrow_only(self):
+        res = self.load(proj={"ceremony": {"scratchDir": ".workflow/scratch/notes"}}, session={"ceremony": {"scratchDir": ".workflow"}})
+        self.assertEqual(res["errors"], [])
+        self.assertEqual(res["config"]["ceremony"]["scratchDir"], ".workflow/scratch/notes")
+        self.assertIn("session ceremony.scratchDir ignored: it may only narrow", "\n".join(res["warnings"]))
+        for value in ["src", "../x", "/tmp/x", ".", 5]:
+            res = self.load(proj={"ceremony": {"scratchDir": value}}, session={})
+            self.assertEqual(res["config"]["ceremony"]["scratchDir"], ".workflow/scratch", value)
+            self.assertIn("project ceremony.scratchDir ignored", "\n".join(res["warnings"]))
+        res = self.load(l2={"ceremony": {"scratchDir": "notes"}}, proj={}, session={})
+        self.assertEqual(res["config"]["ceremony"]["scratchDir"], "notes")
+
+    def test_scratch_dir_must_stay_in_workspace(self):
+        values = ["../outside", str(self.outside), "./", "a/../.."]
+        try:
+            os.symlink(str(self.outside), str(self.project / "escape"), target_is_directory=True)
+            values.append("escape/x")
+        except OSError:  # Windows without symlink rights
+            pass
+        for value in values:
+            res = self.load(l2={"ceremony": {"scratchDir": value}}, proj={}, session={})
+            self.assertEqual(res["config"]["ceremony"]["scratchDir"], ".workflow/scratch", value)
+            self.assertIn("ceremony.scratchDir", "\n".join(res["errors"]), value)
+
     def test_required_steps_add_only(self):
         res = self.load(proj={"ceremony": {"required": {"standard": ["reviewer", "finalizer"], "heavy": ["deployer"]}}},
                         session={"ceremony": {"required": {"standard": []}}})
