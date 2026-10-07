@@ -20,13 +20,13 @@ import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefu
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
-import { ReadBudget, READ_CLASS, pathsIn, readLimits, recheckLimit, recordFiles } from "./budget.ts";
+import { bgWaitLocations, detailLocations, inRecorded, noticeLocations, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
 import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
-import { applyLaunchModels, applyLaunchTimeouts, splitLevel, STRENGTHS } from "./launchmodel.ts";
+import { applyLaunchModels, applyLaunchTimeouts, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
@@ -64,11 +64,11 @@ let herdrEvents: EventBus | undefined;
 import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait, waitLimits } from "./wait.ts";
-import { dedupeNotices, dedupeOn, dropReturnControl, LaunchBatch, launchWaitMode, launchWaitText, LaunchWaits, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
+import { dedupeNotices, dedupeOn, dropReturnControl, holdCap, LaunchBatch, launchWaitMode, launchWaitText, LaunchWaits, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { registerClose, syncCommand } from "./close.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
 import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_TOOL, workspaceTargets } from "./triage.ts";
-import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, scratchDirOf } from "./editmode.ts";
+import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
 import type { RegistryLike } from "./modelcheck.ts";
@@ -161,7 +161,7 @@ interface Session {
   budget: ReadBudget;
   /** Read-budget warn notices by tool call id, added to the result. */
   readNotices: Map<string, string>;
-  /** Absolute paths named by child results and notices; a `read` of one is exempt from the budget. */
+  /** Child result locations from structured places only (budget.ts); a `read` of one or below one is exempt from the budget. */
   childFiles: Set<string>;
 }
 
@@ -607,13 +607,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   const normFile = (p: string): string => (platform === "win32" ? p.replace(/\\/g, "/").toLowerCase() : p);
+  /** Record child result locations (resolved, so no `..` survives); a location containing the cwd is skipped. */
+  const recordChild = (s: Session, paths: string[]): void => recordFiles(s.childFiles, paths, (p) => normFile(path.resolve(p)), s.cwd);
+  const knownRun = (s: Session) => (runId: string): boolean => s.launchedRoles.has(runId) || s.runs.has(runId);
 
   /** Read budget (budget.ts): foreman only; undefined = let the call go on. */
   function readBudgetCheck(s: Session | undefined, ctx: ExtensionContext, toolName: string, callId: string, input: unknown) {
     if (!s || s.isChild || !READ_CLASS.has(toolName)) return undefined;
     const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
     const file = toolName === "read" ? resolveToolPath(inp.path, ctx.cwd, os.homedir()) : null;
-    const exempt = s.supervisor.open.size > 0 || (file !== null && s.childFiles.has(normFile(file)));
+    const exempt = s.supervisor.open.size > 0 || (file !== null && inRecorded(s.childFiles, normFile(file)));
     const d = s.budget.check(toolName, callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt);
     if (d.kind === "warn") {
       s.readNotices.set(callId, d.text);
@@ -936,7 +939,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** D3: a detached child's completion notice; a finished review of built work may open a round. */
   function onCompletionNotice(s: Session, content: unknown): void {
     const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((c) => (c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string" ? (c as { text: string }).text : "")).join("\n") : "";
-    recordFiles(s.childFiles, pathsIn(text), normFile);
+    recordChild(s, noticeLocations(text, knownRun(s)));
     const reviews = completedAgents(text).filter((a) => REVIEW_ROLES.includes(a));
     if (reviews.length === 0) return;
     const verdict = verdictOf(text);
@@ -1090,7 +1093,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const readNote = owner?.readNotices.get(event.toolCallId);
     owner?.readNotices.delete(event.toolCallId);
     const withNote = () => (readNote ? { content: [{ type: "text" as const, text: readNote }, ...event.content] } : undefined);
-    if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit")) resetRecheck(owner, "edit");
+    // Only a project-file change invalidates a PASS; ledger, notes and scratch writes do not.
+    if (owner && !owner.isChild && !event.isError && owner.budget.postPass && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) resetRecheck(owner, "edit");
+    if (owner && !owner.isChild && !event.isError && event.toolName === "bg_wait") recordChild(owner, bgWaitLocations(event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n"), knownRun(owner)));
     if (owner && pending) {
       owner.pendingChanges.delete(event.toolCallId);
       if (!event.isError) owner.tally = addChange(owner.tally, pending);
@@ -1114,11 +1119,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (snap && runId) capSet(s.planSnaps.byRun, runId, snap);
         trackActive(s.activeRuns, event.input, event.details, event.isError);
         if (!s.isChild) {
-          recordFiles(s.childFiles, pathsIn(event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n")), normFile);
           // Budgets restart only for a launch that started (a run id came back), not a refused one.
           if (runId) {
+            recordChild(s, detailLocations(event.details));
             const roles = s.launchedRoles.get(runId) ?? subagentAgents(event.input as Record<string, unknown>);
-            const eff = s.budget.onLaunch(roles);
+            const eff = s.budget.onLaunch(roles, actionOf(event.input as Record<string, unknown>) === null);
             if (eff.lift) s.trace?.emit({ event: "read_budget", phase: eff.lift.phase, count: eff.lift.count, action: "lift", by: "explorer" });
             if (roles.includes("builder")) resetRecheck(s, "builder");
           }
@@ -1129,9 +1134,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const notices = s?.launchNotices.get(event.toolCallId);
       if (s && notices) s.launchNotices.delete(event.toolCallId);
       const held = s ? await holdLaunch(s, ctx, event.toolCallId, event.input, event.details, event.isError) : null;
-      if (s && held) recordFiles(s.childFiles, pathsIn(held), normFile);
+      if (s && held?.path) recordChild(s, [held.path]);
       // subagent has no post guards (toolmap.ts), so the amended result can be returned here.
-      if (notices || held) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(held ? dropReturnControl(event.content) : event.content), ...(held ? [{ type: "text" as const, text: held }] : [])] };
+      // The held text stays the last block: deliveredRuns accepts the "done" marker only there.
+      if (notices || held) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(held ? dropReturnControl(event.content) : event.content), ...(held ? [{ type: "text" as const, text: held.text }] : [])] };
     }
     const mapping = mapTool(event.toolName);
     const changed = event.isError ? undefined : changedFileOf(event.toolName, event.input as Record<string, unknown>);
@@ -1161,18 +1167,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * or null when the launch is not held (detach mode, child session, error, multi-run launch, or
    * a later launch of the same message has not started yet).
    */
-  async function holdLaunch(s: Session, ctx: ExtensionContext, callId: string, input: unknown, details: unknown, isError: boolean): Promise<string | null> {
+  async function holdLaunch(s: Session, ctx: ExtensionContext, callId: string, input: unknown, details: unknown, isError: boolean): Promise<{ text: string; path: string | null } | null> {
     if (s.isChild || launchWaitMode(get(s.config.config, "ceremony.launchWait")) !== "block") return null;
     const runId = launchId(input, details, isError);
     const run = runId ? s.runs.get(runId) : undefined;
     if (!runId || !run || !s.launchBatch.mayHold(callId)) return null;
-    const maxSeconds = waitLimits((k) => get(s.config.config, `wait.${k}`)).maxSeconds;
+    const cap = holdCap(waitLimits((k) => get(s.config.config, `wait.${k}`)).maxSeconds, roleTimeoutMs(get(s.config.config, "roles"), run.role));
     const started = Date.now();
-    const r = await launchWaits.wait(runId, maxSeconds * 1000, ctx.signal);
+    const r = await launchWaits.wait(runId, cap.seconds * 1000, ctx.signal);
     const ms = Date.now() - started;
     s.trace?.emit({ event: "launch_wait", role: run.role, runId, outcome: r.outcome, ms });
-    const asyncDir = details && typeof details === "object" ? (details as { asyncDir?: unknown }).asyncDir : undefined;
-    return launchWaitText({ outcome: r.outcome, runId, role: run.role, ms, maxSeconds, end: r.end, asyncDir: typeof asyncDir === "string" ? asyncDir : null });
+    const raw = details && typeof details === "object" ? (details as { asyncDir?: unknown }).asyncDir : undefined;
+    const asyncDir = typeof raw === "string" ? raw : null;
+    const text = launchWaitText({ outcome: r.outcome, runId, role: run.role, ms, maxSeconds: cap.seconds, capBy: cap.by, by: r.by, end: r.end, asyncDir });
+    return { text, path: r.end?.resultPath ?? asyncDir };
   }
 
   // Knob 5a (launchwait.ts): a completion notice whose result an earlier message delivered becomes a stub.

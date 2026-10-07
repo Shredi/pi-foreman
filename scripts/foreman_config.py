@@ -65,6 +65,7 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.dedupeNotify            only true is accepted
     ceremony.trivialBound.<field>    lower only, minimum 0 (a higher bound lets the foreman edit more)
     ceremony.trivialBound            not an object: ignored
+    ceremony.foremanReads[.<phase>]  not an object: ignored
     ceremony.required.<tier>         union only (a project can add required steps, not remove one)
     ceremony.required                not an object: ignored; unknown steps dropped
     sync.repos, retro.proposalMinReviews, compaction.priceTiers   ignored (L1/L3/L2 only)
@@ -354,10 +355,14 @@ def _restrict_ceremony(base, proj, who, warnings):
     if "revisionRounds" in cer and not isinstance(cer["revisionRounds"], dict):
         del cer["revisionRounds"]
         warnings.append("%s ceremony.revisionRounds ignored: not an object" % who)
-    for key in ("trivialBound", "required"):
+    for key in ("trivialBound", "required", "foremanReads"):
         if key in cer and not isinstance(cer[key], dict):
             del cer[key]
             warnings.append("%s ceremony.%s ignored: not an object" % (who, key))
+    for phase, val in list((cer.get("foremanReads") or {}).items()):
+        if not isinstance(val, dict):
+            del cer["foremanReads"][phase]
+            warnings.append("%s ceremony.foremanReads.%s ignored: not an object" % (who, phase))
     for tier, steps in list((cer.get("required") or {}).items()):
         if not isinstance(steps, list):
             continue

@@ -5,7 +5,7 @@
 // call id: a nested codemode call `<outer>/<n>` maps to `<outer>`, so a script is one unit.
 // Phase `before` lasts until the first child launch that started, `after` from the latest one;
 // the count restarts at each started launch. At `warn` the result carries a notice; above `deny`
-// the call is refused. After a deny, only an explorer run that started lifts it, once per phase;
+// the call is refused. After a deny, only a fresh explorer launch that started (not a resume) lifts it, once per phase;
 // then only the user's `/foreman budget lift`. Knob 2: after a reviewer PASS the foreman gets
 // `recheckBudget` read-class calls, then is told to finish (the read budget does not apply).
 
@@ -107,14 +107,14 @@ export class ReadBudget {
     return { kind: "deny", event: "read_budget", phase: this.phase, count, reason: `pi-foreman: [read_budget_exceeded] ${count} read calls ${since} (limit ${lim.deny}). ${how}` };
   }
 
-  /** A child launch recorded as started. */
-  onLaunch(roles: readonly string[]): LaunchEffect {
+  /** A child launch recorded as started; `fresh` false for a resume (it never lifts a deny). */
+  onLaunch(roles: readonly string[], fresh = true): LaunchEffect {
     const was = this.phase;
     const effect: LaunchEffect = {};
     this.phase = "after";
     if (this.denied) {
-      // only an explorer run lifts a deny, once per phase; any other launch leaves it standing
-      if (!roles.includes("explorer") || this.liftUsed[was]) return effect;
+      // only a fresh explorer launch lifts a deny, once per phase; any other launch leaves it standing
+      if (!fresh || !roles.includes("explorer") || this.liftUsed[was]) return effect;
       this.liftUsed[was] = true;
       effect.lift = { phase: was, count: this.ids.size };
     }
@@ -155,18 +155,61 @@ export class ReadBudget {
   }
 }
 
-/** Absolute file paths named in a child result or notice text (the files the adapter records). */
-export function pathsIn(text: string): string[] {
-  const out = new Set<string>();
-  for (const m of text.matchAll(/(?<![\w.\-/\\])(?:[A-Za-z]:[\\/]|\/)[^\s"'`<>|*?()[\]]+\.[A-Za-z0-9]{1,6}\b/g)) out.add(m[0]);
-  return [...out];
+// Child result locations: taken only from structured places, never from free text (a child's
+// output, a file:line reference, an error message). A location is a result file or a run's async
+// directory; a read of it or of a file under it (the run's output and status files) is exempt.
+const isAbs = (p: unknown): p is string => typeof p === "string" && /^(?:[A-Za-z]:[\\/]|\/)/.test(p) && !p.includes("\n");
+const lastSegment = (p: string): string | undefined => p.split(/[\\/]/).filter(Boolean).pop();
+
+/** `details.asyncDir` and `details.resultPath` of a started launch's result. */
+export function detailLocations(details: unknown): string[] {
+  if (!details || typeof details !== "object") return [];
+  const d = details as Record<string, unknown>;
+  return [d.asyncDir, d.resultPath].filter(isAbs);
 }
 
-/** Remember paths, newest kept, at most MAX_FILES. */
-export function recordFiles(files: Set<string>, paths: string[], normalise: (p: string) => string): void {
-  for (const p of paths) {
-    files.delete(normalise(p));
-    files.add(normalise(p));
+/** A completion notice's "Retention-managed async directory:" lines whose last segment is a run id `known` accepts. */
+export function noticeLocations(text: string, known: (runId: string) => boolean): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/^Retention-managed async directory: (.+)$/gm)) {
+    const dir = m[1].trim();
+    const id = lastSegment(dir);
+    if (isAbs(dir) && id && known(id)) out.push(dir);
+  }
+  return out;
+}
+
+/** A bg_wait result's "Result [<id>]: <path>" lines for run ids `known` accepts. */
+export function bgWaitLocations(text: string, known: (runId: string) => boolean): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/^Result \[([^\]\s]+)\]: (.+)$/gm)) {
+    const p = m[2].trim();
+    if (known(m[1]) && isAbs(p)) out.push(p);
+  }
+  return out;
+}
+
+/** True when `file` is a recorded location or lies below one (both normalised the same way). */
+export function inRecorded(files: ReadonlySet<string>, file: string): boolean {
+  if (files.has(file)) return true;
+  for (const loc of files) {
+    const base = loc.replace(/[\\/]+$/, "");
+    if (file.startsWith(`${base}/`) || file.startsWith(`${base}\\`)) return true;
+  }
+  return false;
+}
+
+/**
+ * Remember locations, newest kept, at most MAX_FILES. A location that is `cwd` or contains it is
+ * skipped (it would exempt every project file).
+ */
+export function recordFiles(files: Set<string>, paths: string[], normalise: (p: string) => string, cwd?: string): void {
+  const home = cwd ? normalise(cwd) : undefined;
+  for (const raw of paths) {
+    const p = normalise(raw);
+    if (home && inRecorded(new Set([p]), home)) continue;
+    files.delete(p);
+    files.add(p);
     if (files.size > MAX_FILES) files.delete(files.values().next().value as string);
   }
 }

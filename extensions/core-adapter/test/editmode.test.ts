@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { allowedShellDirs, editModeBlock, editModeOf, scratchDirOf, scratchRoot } from "../editmode.ts";
+import { allowedShellDirs, editModeBlock, editModeOf, projectChange, scratchDirOf, scratchRoot } from "../editmode.ts";
 
 function workspace(t: { after: (fn: () => void) => void }) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-edit-")));
@@ -39,6 +39,15 @@ test("edit mode: readonly allows .workflow only, scratchpad adds the scratch dir
   assert.deepEqual(allowedShellDirs("scratchpad", "notes", ws, process.platform), [".workflow", "notes"]);
   assert.deepEqual(allowedShellDirs("readonly", "notes", ws, process.platform), [".workflow"]);
   assert.deepEqual(allowedShellDirs("bounded", "notes", ws, process.platform), [".workflow"]);
+});
+
+test("edit mode: only a project-file change counts as one (recheck reset), not ledger or scratch writes", (t) => {
+  const { opts } = workspace(t);
+  assert.equal(projectChange("write", { path: "src/a.ts" }, "notes", opts), true);
+  assert.equal(projectChange("edit", { path: ".workflow/LEDGER-x.md" }, "notes", opts), false);
+  assert.equal(projectChange("write", { path: "notes/n.md" }, "notes", opts), false);
+  assert.equal(projectChange("write", { path: ".workflow/scratch/n.md" }, ".workflow/scratch", opts), false);
+  assert.equal(projectChange("read", { path: "src/a.ts" }, "notes", opts), false);
 });
 
 test("edit mode: a scratch dir that resolves outside the workspace or to a project folder is not a way out", (t) => {

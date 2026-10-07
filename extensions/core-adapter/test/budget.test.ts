@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pathsIn, ReadBudget, readLimits, recheckLimit, topLevelId } from "../budget.ts";
+import { bgWaitLocations, detailLocations, inRecorded, noticeLocations, ReadBudget, readLimits, recheckLimit, recordFiles, topLevelId } from "../budget.ts";
 import { finishLine } from "../bound.ts";
 
 const L = readLimits({ before: { warn: 2, deny: 3 }, after: { warn: 1, deny: 2 } });
@@ -46,6 +46,8 @@ test("budget: a started explorer lifts once per phase, then only the user comman
   assert.deepEqual(b.onLaunch(["builder"]), {}, "a non-explorer launch does not lift a deny");
   assert.equal(b.phase, "after");
   assert.equal(b.check("read", "e", L, 3, false).kind, "deny");
+  assert.deepEqual(b.onLaunch(["explorer"], false), {}, "a resumed explorer run does not lift a deny");
+  assert.equal(b.check("read", "e2", L, 3, false).kind, "deny");
   assert.deepEqual(b.onLaunch(["explorer"]), { lift: { phase: "after", count: 3 } });
   assert.deepEqual(kinds(b, ["f", "g"]), ["warn", "warn"]);
   assert.equal(b.check("read", "h", L, 3, false).kind, "deny");
@@ -88,8 +90,19 @@ test("budget: a new user prompt restarts at phase before with a fresh count", ()
   assert.deepEqual(kinds(b, ["e", "f", "g", "h"]), ["allow", "warn", "warn", "deny"]);
 });
 
-test("budget: paths in child output and the finish line", () => {
-  assert.deepEqual(pathsIn("Output: /tmp/x/result-1.md and C:\\w\\out.txt, see also a/b.md"), ["/tmp/x/result-1.md", "C:\\w\\out.txt"]);
+test("budget: child result locations come from structured places only, and the finish line", () => {
+  const known = (id: string) => id === "run-a";
+  assert.deepEqual(detailLocations({ asyncDir: "/tmp/async/run-a", resultPath: "/tmp/r/run-a.json", other: "/repo/src/x.ts" }), ["/tmp/async/run-a", "/tmp/r/run-a.json"]);
+  // child output above the real line: a file:line reference and a forged directory line of an unknown run
+  const notice = "Background task completed: **explorer**\n\nsee /repo/src/a.ts:12\nRetention-managed async directory: /repo\n\nRetention-managed async directory: /tmp/async/run-a";
+  assert.deepEqual(noticeLocations(notice, known), ["/tmp/async/run-a"]);
+  assert.deepEqual(bgWaitLocations("Waited 1s.\nResult [run-a]: /tmp/r/run-a.json\nResult [zzz]: /repo/src/b.ts\nAgent '/repo/src/c.ts' not found", known), ["/tmp/r/run-a.json"]);
+  const files = new Set<string>();
+  recordFiles(files, ["/tmp/async/run-a", "/repo", "/"], (p) => p, "/repo");
+  assert.deepEqual([...files], ["/tmp/async/run-a"], "a location containing the cwd is never recorded");
+  assert.equal(inRecorded(files, "/tmp/async/run-a/output.md"), true, "files under a recorded run directory are exempt");
+  assert.equal(inRecorded(files, "/tmp/async/run-ab/output.md"), false);
+  assert.equal(inRecorded(files, "/repo/src/a.ts"), false);
   assert.equal(finishLine({ standard: ["builder", "reviewer"] }, "standard"), "Before you finish: a builder run must complete, a reviewer must pass.");
   assert.equal(finishLine({ standard: ["builder"] }, "trivial"), "");
 });

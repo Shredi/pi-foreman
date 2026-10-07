@@ -3,10 +3,11 @@
 // Launch-wait: a foreman's single-child `subagent` launch (or resume) normally returns at once,
 // and the foreman then spends one whole turn on `bg_wait`. With `launchWait: "block"` the
 // adapter's tool_result handler holds that launch's result until the run ends (pi.events
-// RUN_END_EVENTS), a supervisor request of that run arrives (pi-subagents 0.75.0 emits
+// RUN_END_EVENTS), a supervisor request of any run arrives (pi-subagents 0.75.0 emits
 // "pi-intercom:detach-request" {requestId, runId} when it surfaces a request that expects a
-// reply), the turn is aborted (Esc, session end: ctx.signal / session_shutdown) or
-// `wait.maxSeconds` passes, whichever comes first; the outcome is appended to the result.
+// reply; it releases every held launch), the turn is aborted (Esc, session end: ctx.signal /
+// session_shutdown) or the hold cap passes (holdCap: wait.maxSeconds, or the child role's
+// timeoutMinutes plus 60 s when shorter), whichever comes first; the outcome is appended to the result.
 //
 // Pi 1.0.4 runs the tool calls of one assistant message in parallel (pi-agent-core
 // executeToolCallsParallel: every tool_call hook first, then execute + tool_result per call
@@ -26,7 +27,13 @@
 import { NOTIFY_TYPE } from "./rounds.ts";
 
 export type LaunchWaitMode = "block" | "detach";
-export type WaitOutcome = "done" | "supervisor" | "timeout" | "abort";
+export type WaitOutcome = "done" | "supervisor" | "released" | "timeout" | "abort";
+export interface WaitResult {
+  outcome: WaitOutcome;
+  end?: RunEnd;
+  /** "released": the run whose supervisor request ended this wait. */
+  by?: string;
+}
 export const SUPERVISOR_SURFACED_EVENT = "pi-intercom:detach-request";
 const CAP = 64;
 const SUMMARY_MAX = 20_000;
@@ -66,7 +73,7 @@ export function runEndOf(data: unknown): RunEnd | null {
 }
 
 interface Waiter {
-  resolve(r: { outcome: WaitOutcome; end?: RunEnd }): void;
+  resolve(r: WaitResult): void;
 }
 
 /** Run ends and supervisor requests by run id, and the launches waiting on them. */
@@ -83,6 +90,10 @@ export class LaunchWaits {
     this.settle(end.runId, { outcome: "done", end });
   }
 
+  /**
+   * A supervisor request of any run releases every held launch: the request reaches the foreman
+   * only after all tool calls of the message have returned (Pi holds the batch under Promise.all).
+   */
   onSupervisorRequest(data: unknown): void {
     const runId = isObj(data) ? str(data.runId) : undefined;
     if (!runId) return;
@@ -90,6 +101,7 @@ export class LaunchWaits {
       this.asked.add(runId);
       if (this.asked.size > CAP) this.asked.delete(this.asked.values().next().value as string);
     }
+    for (const id of [...this.waiters.keys()]) this.settle(id, { outcome: "released", by: runId });
   }
 
   /** Session end: every held launch returns as aborted. */
@@ -104,7 +116,7 @@ export class LaunchWaits {
   }
 
   /** Wait for the first of: run end, supervisor request, abort, `maxMs`. */
-  wait(runId: string, maxMs: number, signal?: AbortSignal): Promise<{ outcome: WaitOutcome; end?: RunEnd }> {
+  wait(runId: string, maxMs: number, signal?: AbortSignal): Promise<WaitResult> {
     const end = this.ended.get(runId);
     if (end) return Promise.resolve({ outcome: "done", end });
     if (this.asked.delete(runId)) return Promise.resolve({ outcome: "supervisor" });
@@ -127,7 +139,7 @@ export class LaunchWaits {
     });
   }
 
-  private settle(runId: string, r: { outcome: WaitOutcome; end?: RunEnd }): boolean {
+  private settle(runId: string, r: WaitResult): boolean {
     const set = this.waiters.get(runId);
     if (!set || set.size === 0) return false;
     this.waiters.delete(runId);
@@ -135,7 +147,7 @@ export class LaunchWaits {
     return true;
   }
 
-  private settleOne(runId: string, w: Waiter, r: { outcome: WaitOutcome; end?: RunEnd }): void {
+  private settleOne(runId: string, w: Waiter, r: WaitResult): void {
     const set = this.waiters.get(runId);
     if (!set?.delete(w)) return;
     if (set.size === 0) this.waiters.delete(runId);
@@ -179,11 +191,22 @@ export class LaunchBatch {
   }
 }
 
-const fmtSeconds = (ms: number): string => `${Math.max(0, Math.round(ms / 1000))}s`;
-const DONE_RE = /^pi-foreman launch-wait: run (\S+) \(([^)]*)\) ended /m;
+/**
+ * How long a launch is held, in seconds: wait.maxSeconds, or the child role's timeoutMinutes plus
+ * 60 s when that is shorter (a lost run-end event must not stall the foreman for wait.maxSeconds).
+ */
+export function holdCap(maxSeconds: number, roleTimeoutMs: number | undefined): { seconds: number; by: string } {
+  const role = roleTimeoutMs === undefined ? Infinity : Math.ceil(roleTimeoutMs / 1000) + 60;
+  return role < maxSeconds ? { seconds: role, by: "the role's timeoutMinutes plus 60s" } : { seconds: maxSeconds, by: "wait.maxSeconds" };
+}
 
-/** The text appended to a held launch result. */
-export function launchWaitText(o: { outcome: WaitOutcome; runId: string; role: string; ms: number; maxSeconds: number; end?: RunEnd; asyncDir?: string | null }): string {
+const fmtSeconds = (ms: number): string => `${Math.max(0, Math.round(ms / 1000))}s`;
+// pi-foreman's own "done" marker: the start of the separate text block the adapter appends last.
+const DONE_PREFIX = "pi-foreman launch-wait: run ";
+const DONE_RE = /^pi-foreman launch-wait: run (\S+) \(([^)\n]*)\) ended /;
+
+/** The text appended to a held launch result. `capBy` names the hold limit of a timeout (default wait.maxSeconds). */
+export function launchWaitText(o: { outcome: WaitOutcome; runId: string; role: string; ms: number; maxSeconds: number; capBy?: string; by?: string; end?: RunEnd; asyncDir?: string | null }): string {
   const path = o.end?.resultPath ?? o.asyncDir ?? null;
   const where = path ? ` Result path: ${path}.` : "";
   switch (o.outcome) {
@@ -194,8 +217,10 @@ export function launchWaitText(o: { outcome: WaitOutcome; runId: string; role: s
     }
     case "supervisor":
       return `pi-foreman launch-wait: run ${o.runId} (${o.role}) is still running and the child asks you something (the supervisor request follows). Answer it with subagent_supervisor, then bg_wait ${o.runId}.${where}`;
+    case "released":
+      return `pi-foreman launch-wait: run ${o.runId} (${o.role}) is still running; the wait ended because run ${o.by ?? "?"} asks you something (the supervisor request follows). Answer it with subagent_supervisor, then continue with bg_wait ${o.runId}.${where}`;
     case "timeout":
-      return `pi-foreman launch-wait: run ${o.runId} (${o.role}) is still running after ${o.maxSeconds}s (wait.maxSeconds); this is not a failure. Continue with bg_wait ${o.runId}.${where}`;
+      return `pi-foreman launch-wait: run ${o.runId} (${o.role}) is still running after ${o.maxSeconds}s (${o.capBy ?? "wait.maxSeconds"}); this is not a failure. Continue with bg_wait ${o.runId}.${where}`;
     case "abort":
       return `pi-foreman launch-wait: the wait was cancelled; run ${o.runId} (${o.role}) keeps running detached and its completion notice will follow.${where}`;
   }
@@ -227,12 +252,17 @@ export function noticeRuns(text: string): { ids: string[]; lines: string[] } | n
 
 /**
  * Run ids whose result this message delivered: a launch-wait "ended" result only. A bg_wait result
- * names just an archive path, not the report, so a notice after it stays intact.
+ * names just an archive path, not the report, so a notice after it stays intact. Only pi-foreman's
+ * own marker counts: the last text block of a non-error `subagent` result starts with it, and the
+ * result's details name that run; text inside a block (a child's output in a status result) never does.
  */
 export function deliveredRuns(m: unknown): string[] {
-  if (!isObj(m) || m.role !== "toolResult" || m.toolName !== "subagent") return [];
-  const hit = DONE_RE.exec(textOf(m.content));
-  return hit ? [hit[1]] : [];
+  if (!isObj(m) || m.role !== "toolResult" || m.toolName !== "subagent" || m.isError === true || !Array.isArray(m.content)) return [];
+  const last = m.content[m.content.length - 1];
+  if (!isObj(last) || last.type !== "text" || typeof last.text !== "string" || !last.text.startsWith(DONE_PREFIX)) return [];
+  const hit = DONE_RE.exec(last.text);
+  const d = isObj(m.details) ? m.details : {};
+  return hit && (d.runId === hit[1] || d.asyncId === hit[1]) ? [hit[1]] : [];
 }
 
 /** A held launch's own result without pi-subagents' "Return control to the user now ..." line (it contradicts the hold). */

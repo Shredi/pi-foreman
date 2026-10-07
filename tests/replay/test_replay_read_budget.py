@@ -5,7 +5,8 @@ Warn notice in the result; deny, a refused explorer launch does not lift it, a s
 lifts it once per phase, the second deny needs `/foreman budget lift`; a codemode script with
 several nested reads counts once; a nested call is refused once the window is over deny; a
 supervisor reply window is exempt; after a reviewer PASS the foreman gets recheckBudget reads
-and is told to finish, a reviewer FAIL resets; the triage result names the finish steps.
+and is told to finish, a reviewer FAIL resets, a .workflow/ write does not; the triage result
+names the finish steps.
 Same prerequisites and skips as test_replay.py.
 """
 from __future__ import annotations
@@ -119,7 +120,8 @@ class TestRecheckBudget(ReplayCase):
         got = [(r["action"], r["count"]) for r in events(rig, "recheck_budget")]
         self.assertEqual(got, [("start", 0), ("deny", 2), ("reset_fail", 1)])
 
-    def test_edit_after_pass_resets_the_recheck_budget(self):
+    def test_ledger_write_after_pass_keeps_the_recheck_budget(self):
+        # a .workflow/ note is no project-file change: the PASS stands, the next read is refused
         rig = self.rig("rb-edit", load_fixture("read_budget"), config=budget(after=(8, 9), recheck=1))
         (rig.project / "a.txt").write_text("alpha\n", "utf-8")
         pi = rig.start()
@@ -128,9 +130,10 @@ class TestRecheckBudget(ReplayCase):
         _, passed = pi.wait_child_notify(timeout=180)
         res = tool_results(passed)
         pi.close()
-        self.assertEqual([(n, e) for n, e, _ in res], [("read", False), ("write", False), ("read", False)], res)
+        self.assertEqual([(n, e) for n, e, _ in res], [("read", False), ("write", False), ("read", True)], res)
+        self.assertIn("[recheck_budget_exceeded]", res[2][2])
         got = [a for a, _ in [(r["action"], r["count"]) for r in events(rig, "recheck_budget")]]
-        self.assertEqual(got, ["start", "reset_edit"])
+        self.assertEqual(got, ["start", "deny"])
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)

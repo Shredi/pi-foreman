@@ -272,6 +272,15 @@ class LayerRulesTest(unittest.TestCase):
         res = self.load(l2={"ceremony": {"launchWait": "detach"}}, proj={"ceremony": {"launchWait": "block"}}, session={})
         self.assertEqual(res["config"]["ceremony"]["launchWait"], "block")
 
+    def test_non_object_foreman_reads_dropped(self):
+        strict = {"before": {"warn": 2, "deny": 3}, "after": {"warn": 4, "deny": 8}}
+        for proj in ["x", None, {"before": "x"}, {"before": None}]:
+            res = self.load(l2={"ceremony": {"foremanReads": {"before": {"warn": 2, "deny": 3}}}},
+                            proj={"ceremony": {"foremanReads": proj}}, session={})
+            self.assertEqual(res["config"]["ceremony"]["foremanReads"], strict, proj)
+            self.assertEqual(res["errors"], [], proj)
+            self.assertIn("ignored: not an object", "\n".join(res["warnings"]), proj)
+
     def test_foreman_edits_ordered_tighten_only(self):
         res = self.load(proj={"ceremony": {"foremanEdits": "bounded"}}, session={})
         self.assertEqual(res["config"]["ceremony"]["foremanEdits"], "scratchpad")
