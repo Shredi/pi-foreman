@@ -166,6 +166,10 @@ RUNS_CODE_SUBS = {"npm": ("exec", "x"), "uv": ("run",), "pipx": ("run",), "poetr
                   "yarn": ("dlx", "exec"), "go": ("run",), "cargo": ("run",), "git": ("config", "remote", "submodule")}
 
 
+# A git global option as the second word: `git -C *` etc. would cover every git subcommand.
+GIT_GLOBAL_OPT = re.compile(r"^(?:-C|-c.*|-p|--paginate|--(?:git-dir|work-tree|exec-path|config-env|namespace)(?:=.*)?)$")
+
+
 def runs_code(family):
     """True for a family whose command runs arbitrary code or rewrites config (never proposed, S9)."""
     toks = family.split()
@@ -175,7 +179,7 @@ def runs_code(family):
     if "=" in head or head in RUNS_CODE_HEADS or re.match(r"^python[\d.]*$", head) or re.match(r"^py(thon)?w?$", head):
         return True
     rest = toks[1:]
-    if rest and (rest[0] in RUNS_CODE_SUBS.get(head, ()) or (head == "git" and rest[0].startswith("-c"))):
+    if rest and (rest[0] in RUNS_CODE_SUBS.get(head, ()) or (head == "git" and GIT_GLOBAL_OPT.match(rest[0]))):
         return True
     return any(t in ("-exec", "-execdir", "-ok", "-okdir", "-delete") for t in rest)
 

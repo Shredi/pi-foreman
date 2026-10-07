@@ -135,7 +135,8 @@ class RetroTest(unittest.TestCase):
                "FOO=1 make", "nohup make", "nice make", "time make", "timeout 5", "command make", "stdbuf -oL", "busybox sh",
                "uv run", "uvx tool", "pipx run", "poetry run", "pnpm dlx", "pnpm exec", "yarn dlx", "yarn exec", "bunx tool",
                "go run", "cargo run", "awk {print}", "gawk -f", "mawk -f", "lua x.lua", "Rscript x.R", "tclsh x", "dash -c",
-               "ksh -c", "fish -c", "git remote", "git submodule"]
+               "ksh -c", "fish -c", "git remote", "git submodule", "git -C", "git -cx=y", "git --git-dir=x", "git --work-tree",
+               "git --exec-path=x", "git --config-env=a=B", "git --namespace", "git -p", "git --paginate"]
         for fam in bad:
             self.assertTrue(fr.runs_code(fam), fam)
         for fam in ["npm ci", "git status", "make test", "find .", "uv sync", "go build", "cargo build"]:
