@@ -776,8 +776,75 @@ function pathAskHit(patterns: string[], word: string, ctx: MatchCtx): string | n
 
 const clip = (s: string): string => (s.length > 120 ? `${s.slice(0, 117)}...` : s);
 
+// ----------------------------------------------------------- child cd confinement
+
+const CD_VERBS = new Set(["cd", "chdir", "set-location", "sl", "pushd", "push-location"]);
+const POP_VERBS = new Set(["popd", "pop-location"]);
+const CD_DENY = "pi-foreman: denied by the permission policy (children may cd only inside the workspace). Use a path below the workspace root, or work with relative paths from it.";
+
+/**
+ * Child-only: every cd/pushd/popd target, resolved cumulatively over the whole command from the
+ * session cwd, must be provably inside the workspace (symlinks resolved). Anything not literal
+ * (`$VAR`, `$()`, globs, `~`, `-`, bare cd) denies. Deny-only: it never allows.
+ */
+function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
+  const win = ctx.platform === "win32";
+  const p = win ? path.win32 : path.posix;
+  const fsx = defaults(ctx);
+  const fold = (x: string): string => (win || ctx.platform === "darwin" ? x.toLowerCase() : x);
+  const norm = (x: string): string => (win ? x.replace(/\\/g, "/") : x);
+  const ws = [ctx.cwd, fsx.realpath(ctx.cwd) ?? ctx.cwd].map((x) => fold(p.resolve(norm(x))));
+  const inside = (abs: string): boolean => ws.some((w) => {
+    const rel = p.relative(w, fold(abs));
+    return rel === "" || (rel !== ".." && !rel.startsWith(".." + p.sep) && !p.isAbsolute(rel));
+  });
+  const deny = (): Decision => ({ kind: "deny", reason: CD_DENY });
+  let cur = p.resolve(norm(ctx.cwd));
+  const stack: string[] = [];
+  const units: string[][] = [];
+  const gather = (src: string, shell: "posix" | "powershell", depth: number): void => {
+    const parsed = parseShell(src, shell);
+    for (const sub of parsed.subs) if (depth < MAX_DEPTH) gather(sub, shell, depth + 1);
+    for (const pipe of parsed.pipelines) for (const u of pipe) {
+      const core = variants(u).core;
+      units.push(core);
+      const inner = innerScript(core);
+      if (inner && depth < MAX_DEPTH) gather(inner.script, inner.shell, depth + 1);
+    }
+  };
+  gather(command, ctx.shell ?? "posix", 0);
+  for (const core of units) {
+    if (!core.length) continue;
+    const verb = baseName(core[0]);
+    if (POP_VERBS.has(verb)) {
+      const prev = stack.pop();
+      if (prev === undefined) return deny();
+      cur = prev;
+      continue;
+    }
+    if (!CD_VERBS.has(verb)) continue;
+    const args = core.slice(1);
+    let i = 0;
+    while (i < args.length && ["-L", "-P", "-e", "-@", "--"].includes(args[i])) i++;
+    const target = args[i];
+    if (target === undefined || target === "" || /^[-+]\d*$/.test(target) || /[$`*?[\]{}~]/.test(target) || target.startsWith("-")) return deny();
+    if (verb === "pushd" || verb === "push-location") stack.push(cur);
+    let t = norm(target);
+    if (win) t = t.replace(/^\/([A-Za-z])(?=$|\/)/, "$1:");
+    const abs = p.resolve(cur, t);
+    const real = realDeep(abs, p, fsx) ?? abs;
+    if (!inside(abs) || !inside(real)) return deny();
+    cur = real;
+  }
+  return null;
+}
+
 export function checkShell(rules: OverlayRules, command: string, ctx: MatchCtx): Decision | null {
   const shell = ctx.shell ?? "posix";
+  if (ctx.role === "child") {
+    const cd = childCdDeny(command, ctx);
+    if (cd) return cd;
+  }
   const c: Collected = { unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [] };
   collect(command, shell, 0, c);
   if (ctx.platform === "win32" && shell === "posix") {

@@ -188,7 +188,7 @@ def summarize_logs(logs_dir, main_role="main"):
             thinking_by_model.setdefault(model, set()).update(levels)
         if models:
             thinking_by_role.setdefault(role, set()).update(levels)
-    approvals = guard_blocks = gate_blocks = revisions = 0
+    approvals = guard_blocks = gate_blocks = revisions = poll_bash = ceremony_incomplete = 0
     roles = {}
     reviewed = {}
     tiers = {"recorded": None, "tier": None}
@@ -202,6 +202,10 @@ def summarize_logs(logs_dir, main_role="main"):
             if not isinstance(rec, dict):
                 continue
             ev = rec.get("event")
+            if isinstance(rec.get("pollBash"), int):
+                poll_bash += rec["pollBash"]
+            if ev == "ceremony_incomplete":
+                ceremony_incomplete += 1
             if ev == "ask":
                 approvals += 1
             elif ev == "guard" and rec.get("decision") == "deny":
@@ -232,7 +236,8 @@ def summarize_logs(logs_dir, main_role="main"):
         out["usage_log_delta"] = log_total - sum(tok.values())  # usage log total minus session-jsonl total
     if traces:
         out["triage"] = {"tier": tiers["recorded"] or tiers["tier"] or "untriaged", "launches": roles,
-                         "revisions": revisions, "gate_blocks": gate_blocks, "asks_reviewed": reviewed}
+                         "revisions": revisions, "gate_blocks": gate_blocks, "asks_reviewed": reviewed,
+                         "pollBash": poll_bash, "ceremony_incomplete": ceremony_incomplete}
     return out
 
 

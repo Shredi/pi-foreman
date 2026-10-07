@@ -15,6 +15,8 @@
     "foreman_copy": "allow",
     "foreman_triage": "allow",
     "foreman_wait": "allow",
+    "bg_wait": "allow",
+    "contact_supervisor": "allow",
     "intercom": "allow"
   },
   "externalDirectory": "ask",
@@ -25,6 +27,7 @@
   },
   "bash": {
     "allow": [
+      "cd *",
       "git status *",
       "git diff *",
       "git log *",

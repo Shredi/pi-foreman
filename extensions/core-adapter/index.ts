@@ -101,6 +101,8 @@ interface Session {
   runs: RunRegistry;
   /** Child runs launched by this session that have not ended (actions.ts trackActive; /sync and close refuse while any). */
   activeRuns: Set<string>;
+  /** Foreman bash calls made while a child run was active, since the last trace emit (D5; delta, reset on emit). */
+  pollBash: number;
   /** Launch notices (strong model asked for but unmapped) by tool call id, added to the subagent result. */
   launchNotices: Map<string, string[]>;
   /** Open child supervisor requests (supervisor.ts). */
@@ -200,6 +202,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       notified: new Set(),
       runs: new Map(),
       activeRuns: new Set(),
+      pollBash: 0,
       launchNotices: new Map(),
       supervisor: new SupervisorWindow(),
       gitDrift: new GitDriftWatch(),
@@ -559,6 +562,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName === "bash") {
+      const ps = sessionFor(ctx);
+      if (ps && !ps.isChild && ps.activeRuns.size > 0) ps.pollBash++;
+    }
     // First of all, before the permission system and the core guards: the overlay's deny/ask rules.
     if (isOverlayTool(event.toolName)) {
       try {
@@ -740,7 +747,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("agent_end", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild) return;
-    s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite, wakeKinds: s.turn.cause === "wake" ? s.turn.wakeKinds : undefined });
+    s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite, wakeKinds: s.turn.cause === "wake" ? s.turn.wakeKinds : undefined, pollBash: s.pollBash || undefined });
+    s.pollBash = 0;
     s.turn = { cause: "other", cacheRead: 0, cacheWrite: 0 };
   });
 
@@ -790,7 +798,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         recordLaunch(s.runs, event.input, event.details, event.isError);
         trackActive(s.activeRuns, event.input, event.details, event.isError);
       }
-      for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_result", role, exit: event.isError ? 1 : 0 });
+      for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_result", role, exit: event.isError ? 1 : 0, pollBash: s.pollBash || undefined });
+      if (s) s.pollBash = 0;
       const notices = s?.launchNotices.get(event.toolCallId);
       if (s && notices) {
         s.launchNotices.delete(event.toolCallId);

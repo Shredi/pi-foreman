@@ -43,6 +43,14 @@ class DenyTest(unittest.TestCase):
         self.assertIsNone(ws.ask_role({"title": "pi-foreman: approval needed", "message": "x"}))
 
 
+class AskTitleTest(unittest.TestCase):
+    def test_command_lines_and_what_follows_are_dropped(self):
+        title = "Permission Required\ntool : bash\nsubagent : builder\nrule : bash curl *\ncommand : curl http://x/secret\nrule : late\nfull command : a && curl x\ninput : {}"
+        self.assertEqual(ws.ask_title(title), "Permission Required\ntool : bash\nsubagent : builder\nrule : bash curl *")
+        self.assertEqual(ws.ask_title("one line"), "one line")
+        self.assertEqual(ws.ask_title("T\nnote\nfull command : x"), "T")
+
+
 class RefusalTest(unittest.TestCase):
     def test_refusal_is_classified_and_is_not_a_usage_limit(self):
         rec = error_msg("Your request: our safeguards flagged this message as a possible violation")

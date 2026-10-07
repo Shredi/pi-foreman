@@ -99,6 +99,23 @@ ROLE_IDS = ("senior-reviewer", "finalizer", "explorer", "builder", "reviewer", "
 FAKE_REVIEW_MODEL = "review-defer"  # never auto-allows: the ask reaches the dialog
 
 
+KEEP_ASK_LINES = re.compile(r"^\s*(tool|subagent|rule)\s*:", re.I)
+DROP_ASK_LINES = re.compile(r"^\s*(command|full command|input)\s*:", re.I)
+
+
+def ask_title(title):
+    """The title's first line plus its `tool :` / `subagent :` / `rule :` lines. A `command :`,
+    `full command :` or `input :` line, and everything after it, is dropped (no command text in the record)."""
+    lines = str(title or "").splitlines()
+    out = lines[:1]
+    for line in lines[1:]:
+        if DROP_ASK_LINES.match(line):
+            break
+        if KEEP_ASK_LINES.match(line):
+            out.append(line)
+    return "\n".join(out)[:200]
+
+
 def ask_role(rec):
     """Best effort: the role id named in a dialog request (a forwarded child ask names its agent), else None."""
     text = "%s %s" % (rec.get("title") or "", rec.get("message") or "")
@@ -274,7 +291,7 @@ def drive_rpc(args, row, env, status):
                 if rec.get("type") == "extension_ui_request" and rec.get("method") in DIALOGS:
                     status["asks"] += 1  # the benchmark has no human: deny explicitly, keep the session running
                     status.setdefault("asks_denied", []).append(
-                        {"method": rec.get("method"), "title": str(rec.get("title") or "")[:200], "role": ask_role(rec)})
+                        {"method": rec.get("method"), "title": ask_title(rec.get("title")), "role": ask_role(rec)})
                     pi.send(deny_response(rec))
                 if rec.get("type") == "response" and rec.get("id") == "bench-prompt" and not rec.get("success"):
                     status["status"] = "prompt_rejected"

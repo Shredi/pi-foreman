@@ -9,6 +9,7 @@
 Preset (JSON):
     {"bench": {"tasks_dir": "<dir, relative to the preset file>", "repeats": 3, "jobs_dir": "<optional>",
                "tasks": ["<task>", ...], "token_cap": 1000000,
+               "repeats_by_task": {"<task>": <n>},   (per-task repeats; overrides `repeats`)
                "cap_seconds_by_task": {"<task>": <seconds>},   (per-task wall cap; overrides the row's cap_seconds)
                "first": {"row": "<row id>", "task": "<task>", "tasks_dir": "<optional dir>"}},
      "rows": [{"id": "R2", "agent": "foreman"|"plain", "provider": "...", "model": "provider/model",
@@ -138,15 +139,20 @@ def first_cell(preset, tdir):
 def cells(preset, tdir, rows=None, task_names=None, repeats=None):
     """[(row, task, repeat, task path)] in run order: the `first` cell, then repeat outermost,
     task, row innermost."""
-    reps = int(repeats or (preset.get("bench") or {}).get("repeats") or 1)
+    cfg = preset.get("bench") or {}
+    reps = int(repeats or cfg.get("repeats") or 1)
+    by_task = cfg.get("repeats_by_task") or {}  # task -> repeats; overrides the global value (not an explicit --repeats)
     row_list = [r for r in preset.get("rows") or [] if not rows or r["id"] in rows]
     tasks = [t for t in ordered_tasks(preset, tdir) if not task_names or t in task_names]
     out = []
     first = first_cell(preset, tdir)
     if first and (not rows or first[0]["id"] in rows) and (not task_names or first[1] in task_names):
         out.append(first)
-    for k in range(1, reps + 1):
+    task_reps = {t: reps if repeats else int(by_task.get(t) or reps) for t in tasks}
+    for k in range(1, max(task_reps.values(), default=0) + 1):
         for task in tasks:
+            if k > task_reps[task]:
+                continue
             for row in row_list:
                 out.append((row, task, k, Path(tdir) / task))
     return out
@@ -588,7 +594,8 @@ def _triage_stats(done):
     return {"tier": max(sorted(set(tiers)), key=tiers.count) if tiers else None,
             "launches": _stat([sum((t.get("launches") or {}).values()) for t in ts]),
             "revisions": _stat([t.get("revisions") for t in ts]), "asks_denied": _stat([t.get("asks_denied") for t in ts]),
-            "gate_blocks": _stat([t.get("gate_blocks") for t in ts])}
+            "gate_blocks": _stat([t.get("gate_blocks") for t in ts]),
+            "pollBash": _stat([t.get("pollBash") for t in ts]), "ceremony_incomplete": _stat([t.get("ceremony_incomplete") for t in ts])}
 
 
 def infra_cells(preset, tdir, jdir):
@@ -690,12 +697,12 @@ def _columns(head, lines):
 def format_summary(summary, first=None):
     tiers = sorted({t for r in summary for t in r["tokens_by_tier"]})
     head = ["row", "success"] + ["tokens %s" % t for t in tiers] + ["tokens all", "wall s", "tool calls", "approvals", "guard blocks",
-                                                                "tier", "launches", "revisions", "asks_denied", "gate_blocks"]
+                                                                "tier", "launches", "revisions", "asks_denied", "gate_blocks", "pollBash", "ceremony_incomplete"]
     lines = [[r["row"], "%d/%d (%d cells)" % (r["success"], r["counted"], r["cells"])] +
              [_fmt(r["tokens_by_tier"].get(t)) for t in tiers] +
              [_fmt(r["tokens"]), _fmt(r["wall_seconds"], 1), _fmt(r["tool_calls"]), _fmt(r["approvals"]), _fmt(r["guard_blocks"]),
               r.get("tier") or "-", _fmt(r.get("launches")), _fmt(r.get("revisions")), _fmt(r.get("asks_denied")),
-              _fmt(r.get("gate_blocks"))] for r in summary]
+              _fmt(r.get("gate_blocks")), _fmt(r.get("pollBash")), _fmt(r.get("ceremony_incomplete"))] for r in summary]
     text = ["Per row (median [min-max] over counted cells; first cell excluded):"] + _columns(head, lines)
     if first:
         text.append("First cell %s: %s" % (first["cell"], "not finished" if not first["finished"] else
@@ -757,13 +764,13 @@ def format_cost(summary, rows, prices):
 
 def format_table(rows):
     head = ["row", "task", "success", "tokens", "wall s", "tool calls", "approvals", "guard blocks",
-            "tier", "launches", "revisions", "asks_denied", "gate_blocks"]
+            "tier", "launches", "revisions", "asks_denied", "gate_blocks", "pollBash", "ceremony_incomplete"]
     lines = []
     for r in rows:
         lines.append([r["row"], r["task"], "%d/%d%s" % (r["success"], r["counted"], " (+%d infra)" % r["infra_errors"] if r["infra_errors"] else ""),
                       _fmt(r["tokens"]), _fmt(r["wall_seconds"], 1), _fmt(r["tool_calls"]), _fmt(r["approvals"]),
                       _fmt(r["guard_blocks"]), r.get("tier") or "-", _fmt(r.get("launches")), _fmt(r.get("revisions")),
-                      _fmt(r.get("asks_denied")), _fmt(r.get("gate_blocks"))])
+                      _fmt(r.get("asks_denied")), _fmt(r.get("gate_blocks")), _fmt(r.get("pollBash")), _fmt(r.get("ceremony_incomplete"))])
     text = _columns(head, lines)
     metas = {}
     for r in rows:
