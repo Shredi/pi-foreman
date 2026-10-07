@@ -121,24 +121,50 @@ test("close: a close turn that never starts is disarmed at the deadline; later r
   const r = rig();
   const file = "/x/.workflow/r.md";
   r.flow.request({ source: "intercom-parent", file, replyTo: "parent-1" }, r.ctx);
-  // The close prompt is swallowed by another input handler: onInput never sees it, no reply comes.
-  await r.flow.onSettled(r.ctx); // an unrelated run settles
-  r.flow.onModelReply("stop");
-  await r.flow.onSettled(r.ctx);
-  assert.ok(!r.log.includes("sync") && !r.log.includes("shutdown"));
-  assert.equal(r.timers.length, 1);
+  // The close prompt is swallowed by another input handler: onInput never sees it, no run starts.
+  r.flow.onAgentStart();
+  assert.equal(r.timers.length, 1, "agent_start without the close prompt keeps the deadline");
   r.timers[0]();
   assert.equal(r.flow.active, false);
   assert.ok(r.log.some((l) => l.startsWith("reply:parent-1:") && l.includes("did not start")));
+  r.flow.onModelReply("stop");
   await r.flow.onSettled(r.ctx);
   assert.ok(!r.log.includes("sync") && !r.log.includes("shutdown"));
-  // An aborted reply (drift check stopped the run) does not count as started either.
-  const a = rig();
-  a.flow.request({ source: "herdr", file }, a.ctx);
-  a.flow.onInput(closePrompt(file), "extension");
-  a.flow.onModelReply("aborted");
-  await a.flow.onSettled(a.ctx);
-  assert.ok(!a.log.includes("sync"));
+});
+
+test("close: a close run that settles without a reply is refused at once; a later run never syncs (review N3a)", async () => {
+  for (const seen of [true, false]) {
+    const r = rig();
+    const file = "/x/.workflow/r.md";
+    r.flow.request({ source: "intercom-parent", file, replyTo: "parent-1" }, r.ctx);
+    if (seen) {
+      r.flow.onInput(closePrompt(file), "extension");
+      r.flow.onAgentStart();
+      r.flow.onModelReply("aborted"); // the drift check stopped the close run
+    }
+    await r.flow.onSettled(r.ctx);
+    assert.equal(r.flow.active, false, `seen=${seen}`);
+    assert.ok(r.log.some((l) => l.startsWith("reply:parent-1:") && l.includes("stopped before it produced a reply")));
+    assert.ok(r.log.some((l) => l.startsWith("notify:") && l.includes("close refused")));
+    assert.equal(r.timers.length, 0, "deadline cleared");
+    // An unrelated run (say, one whose drift ask the owner approved) replies and settles.
+    r.flow.onModelReply("stop");
+    await r.flow.onSettled(r.ctx);
+    assert.ok(!r.log.includes("sync") && !r.log.includes("shutdown"), `seen=${seen}`);
+  }
+});
+
+test("close: the start deadline is cleared at the close run's agent_start, so a slow first reply still closes (review N3b)", async () => {
+  const r = rig();
+  const file = "/x/.workflow/r.md";
+  r.flow.request({ source: "herdr", file }, r.ctx);
+  r.flow.onInput(closePrompt(file), "extension");
+  r.flow.onAgentStart();
+  assert.equal(r.timers.length, 0, "deadline cleared at agent_start");
+  r.flow.onModelReply("stop"); // first reply after more than 60 s
+  await r.flow.onSettled(r.ctx);
+  assert.ok(r.log.includes("sync"));
+  assert.equal(r.log.at(-1), "shutdown");
 });
 
 test("close: a child session swallows pi-intercom's wake prompt (no child turn from intercom, review S6)", async () => {
