@@ -93,6 +93,8 @@ interface Session {
   registrationVia?: string;
   childExtensions: { id: string; path: string }[];
   stopContinued: boolean;
+  /** The pi-foreman section text the last before_agent_start set (review N2: put back after a compaction). */
+  foremanSection?: string;
   notified: Set<string>;
   trace: TraceWriter | null;
   /** Runs this session launched (resume provenance, actions.ts). */
@@ -507,15 +509,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (instructionsCache === null) notifyOnce(s, ctx, "instructions", "pi-foreman: instructions/foreman.md is missing; the foreman runs without its rules.");
     const text = [instructionsCache ?? "", tierLine(s.ceremony)].filter(Boolean).join("\n\n");
     event.systemPromptOptions.sections["pi-foreman"] = text;
+    s.foremanSection = text;
   });
   // Review S3: a run a custom message starts (wake, child notice) skips before_agent_start, and
   // its later model calls rebuild the prompt from Pi's base options, which lack the section (Pi
   // records a `pi-foreman: null` patch). Event contexts cannot reach the base options, so the
-  // request keeps the section: the null patch is dropped from what the provider gets.
+  // request keeps the section: the null patch is dropped from what the provider gets. After a
+  // compaction (its stored head lacks the section, review N2) the cached text is put back.
   pi.on("context_with_system", async (event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild) return undefined;
-    const messages = keepSection(event.messages, "pi-foreman");
+    const messages = keepSection(event.messages, "pi-foreman", s.foremanSection);
     return messages ? { messages } : undefined;
   });
   // Review S12: each run (a wake or child-notice run too) gets its own single stop-gate continue.

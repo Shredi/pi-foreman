@@ -89,5 +89,38 @@ class TestLongWait(ReplayCase):
         self.assertIn("LEDGER-second.md", holds[1]["entry"]["content"])
 
 
+    def test_section_survives_a_compaction_between_wakes(self):
+        """Review N2: a compaction after a wake run's `pi-foreman: null` patch must not drop the section."""
+        script = {"foreman": {
+            "c1": [{"tools": [{"name": "foreman_wait", "arguments": {"action": "start", "kind": "timer", "seconds": 1, "note": "[[replay:c2]] t"}}]},
+                   {"text": "Waiting."}],
+            "c2": [{"tools": [{"name": "foreman_wait", "arguments": {"action": "start", "kind": "timer", "seconds": 4, "note": "[[replay:c3]] t"}}]},
+                   {"text": "Woken once."}],
+            "c3": [{"tools": [{"name": "foreman_wait", "arguments": {"action": "list"}}]}, {"text": "Woken twice."}]}}
+        rig = self.rig("wakecompact", script, config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline",
+                       settings={"compaction": {"keepRecentTokens": 1}})
+        sec = rig.root / "sections.log"
+        pi = rig.start(env={"FOREMAN_FAKE_SECTIONS": str(sec)})
+        recs = list(pi.prompt("[[replay:c1]] go", timeout=60))
+        deadline = time.time() + 30
+        while not any(r.get("type") == "message_end" and "Woken once" in str((r.get("message") or {}).get("content")) for r in recs):
+            recs.append(pi._next(deadline))
+        while recs[-1].get("type") != "agent_settled":
+            recs.append(pi._next(deadline))
+        rid = pi.next_id()
+        pi.send({"id": rid, "type": "compact"})
+        while not (recs[-1].get("type") == "response" and recs[-1].get("id") == rid):
+            recs.append(pi._next(deadline))
+        self.assertTrue(recs[-1].get("success"), recs[-1])
+        while not any(r.get("type") == "message_end" and "Woken twice" in str((r.get("message") or {}).get("content")) for r in recs):
+            recs.append(pi._next(deadline))
+        pi.close()
+        calls = [line.split(" ") for line in sec.read_text("utf-8").splitlines()]
+        after = [c for c in calls if c[0] == "c3"]
+        self.assertEqual(len(after), 2, calls)
+        for tag, step, names in after:
+            self.assertIn("pi-foreman", names.split(","), (tag, step, calls))
+
+
 if __name__ == "__main__":
     unittest.main()

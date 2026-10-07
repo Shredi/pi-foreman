@@ -353,16 +353,29 @@ export function causeOfCustom(customType: unknown): TurnCause | null {
 
 /**
  * Request messages with every `<name>: null` system-prompt section patch removed, or null when
- * there is none (security review S3). The section then keeps the value it had before the patch.
+ * nothing changed (security review S3). The section then keeps the value it had before the patch.
+ * When no system message carries the section any more (a compaction stored a head without it,
+ * review N2), `fallback` is put back on the first system message (or a new leading one).
  */
-export function keepSection<M>(messages: readonly M[], name: string): M[] | null {
+export function keepSection<M>(messages: readonly M[], name: string, fallback?: string): M[] | null {
+  type Sys = { role?: unknown; sections?: Record<string, unknown> };
   let hit = false;
+  let present = false;
   const out = messages.map((m) => {
-    const sec = (m as { role?: unknown; sections?: Record<string, unknown> }).sections;
-    if ((m as { role?: unknown }).role !== "system" || !sec || typeof sec !== "object" || sec[name] !== null) return m;
+    const sec = (m as Sys).sections;
+    if ((m as Sys).role !== "system" || !sec || typeof sec !== "object" || !(name in sec)) return m;
+    if (sec[name] !== null) {
+      present = true;
+      return m;
+    }
     hit = true;
     const { [name]: _drop, ...rest } = sec;
     return { ...m, sections: rest };
   });
-  return hit ? out : null;
+  if (present || !fallback) return hit ? out : null;
+  const i = out.findIndex((m) => (m as Sys).role === "system");
+  if (i < 0) return [{ role: "system", content: "", sections: { [name]: fallback }, timestamp: Date.now() } as M, ...out];
+  const head = out[i] as Sys;
+  out[i] = { ...head, sections: { ...(head.sections ?? {}), [name]: fallback } } as M;
+  return out;
 }
