@@ -118,6 +118,69 @@ TABLE = [
     ("env -C src touch x", "touch"),
     ("env -C /tmp touch x", None),
     ("echo $(echo x > f)", "redirect"),
+    # method-call open: the mode is the first argument (security review A-M1)
+    ("python3 - <<'EOF'\nfrom pathlib import Path\np = Path('src/a.py')\nwith p.open('w') as f:\n    f.write('x')\nEOF", "python"),
+    ("python3 -c \"from pathlib import Path; Path('src/a.py').open(mode='w')\"", "python"),
+    ("python3 -c \"open(mode='w', file='src/a.py')\"", "python"),
+    ("python3 -c \"from pathlib import Path; print(Path('src/a.py').open().read())\"", None),
+    # git checkout/switch: anything but creating a branch at HEAD rewrites the work tree (A-M2)
+    ("git checkout src/a.py", "git"),
+    ("git checkout .", "git"),
+    ("git checkout HEAD src/a.py", "git"),
+    ("git checkout main", "git"),
+    ("git switch main", "git"),
+    ("git switch -c feat", None),
+    # deletes and renames (A-M3)
+    ("rm -rf src", "delete"),
+    ("unlink src/a.py", "delete"),
+    ("git rm src/a.py", "delete"),
+    ("git mv src/a.py src/c.py", "rename"),
+    ("rm -f .workflow/tmp.md", None),
+    ("rm /tmp/x", None),
+    # project runners are looked through (A-M4)
+    ("uv run python - <<'X'\nopen('src/a.py','w')\nX", "python"),
+    ("npx tsx -e \"require('fs').writeFileSync('src/a.py','x')\"", "node"),
+    ("pnpm exec node -e \"require('fs').writeFileSync('src/a.py','x')\"", "node"),
+    ("poetry run sed -i s/a/b/ src/a.py", "sed-i"),
+    ("deno eval \"Deno.writeTextFileSync('src/a.py','x')\"", "node"),
+    ("uv run pytest -q", None),
+    # minors: shell option clusters, simple destination forms
+    ("bash -euo pipefail -c 'echo x > src/a.py'", "redirect"),
+    ("bash -euo pipefail -c 'echo x > /tmp/a'", None),
+    ("sort -o src/a.txt src/a.txt", "sort"),
+    ("curl -sSLO https://example.invalid/a.py", "curl"),
+    ("curl -o /tmp/a https://example.invalid/a", None),
+    ("wget -P src https://example.invalid/a", "wget"),
+    ("wget -qO- https://example.invalid/a", None),
+    ("tar -xf /tmp/a.tar -C src", "tar"),
+    ("tar tzf /tmp/a.tgz", None),
+    ("unzip /tmp/a.zip", "unzip"),
+    ("unzip -l /tmp/a.zip", None),
+    ("awk -i inplace '{print}' src/a.py", "awk-i"),
+    ("awk '{print $1}' src/a.py", None),
+]
+
+# PowerShell (the foreman's opt-in powershell tool, security review B-M1)
+PS_TABLE = [
+    ("Set-Content -Path src/a.py -Value x", "set-content"),
+    ("'x' | Out-File src/a.py", "out-file"),
+    ("Add-Content src/a.py x", "add-content"),
+    ("ni -ItemType File -Path src -Name b.py", "new-item"),
+    ("Copy-Item /tmp/x src/a.py", "copy-item"),
+    ("mv /tmp/x src/a.py", "move-item"),
+    ("del src/a.py", "remove-item"),
+    ("Get-ChildItem src | Remove-Item", "remove-item"),
+    ("ren src/a.py b.py", "rename-item"),
+    ("Clear-Content src/a.py", "clear-content"),
+    ("echo x > src/a.py", "redirect"),
+    ("[IO.File]::WriteAllText('src/a.py', 'x')", "io-file"),
+    ("git checkout src/a.py", "git"),
+    ("Set-Content $f x", "set-content"),
+    ("Set-Content .workflow/n.md 'hello'", None),
+    ("Copy-Item src/a.py /tmp/x", None),
+    ("echo x > $null; git status 2>&1", None),
+    ("[IO.File]::ReadAllText('src/a.py')", None),
+    ("Get-Content src/a.py | Select-String foo", None),
 ]
 
 
@@ -136,6 +199,48 @@ class ShellWriteGuardTest(unittest.TestCase):
             with self.subTest(command=command):
                 hit = swg.decide(cmd, self.ws, self.ws)
                 self.assertEqual(hit[0] if hit else None, kind, hit)
+
+    def test_powershell_table(self):
+        for command, kind in PS_TABLE:
+            with self.subTest(command=command):
+                hit = swg.decide(command, self.ws, self.ws, "powershell")
+                self.assertEqual(hit[0] if hit else None, kind, hit)
+
+    @unittest.skipIf(os.name == "nt", "Win32 folds `..` before it resolves links (so does ntpath.realpath)")
+    def test_workflow_symlink_dotdot(self):
+        # `.workflow/l/..` is the project root when `l` points into the project: the kernel
+        # resolves the link before the `..`
+        try:
+            os.symlink(os.path.join("..", "src"), os.path.join(self.ws, ".workflow", "l"))
+        except (OSError, NotImplementedError):
+            self.skipTest("no symlinks")
+        for cmd in ("echo x > .workflow/l/../a.py", "cd -P .workflow/l/.. && echo x > a.py"):
+            with self.subTest(command=cmd):
+                self.assertIsNotNone(swg.decide(cmd, self.ws, self.ws))
+        self.assertIsNone(swg.decide("cd .workflow/l/.. && echo x > a.py", self.ws, self.ws))   # logical cd
+
+    def test_windows_path_flavour(self):
+        # Windows (CI item 29) emulated with ntpath on any host: bash strips the backslashes of an
+        # unquoted `C:\a\b`, leaving the drive-relative `C:ab`, whose directory is unknown -> refused
+        import ntpath
+        import types
+        fake = types.SimpleNamespace(**{k: getattr(os, k) for k in dir(os) if not k.startswith("__")})
+        fake.name, fake.path, fake.sep, fake.altsep = "nt", ntpath, "\\", "/"
+        real_os, real_sys = swg.os, swg.sys
+        swg.os, swg.sys = fake, types.SimpleNamespace(platform="win32")
+        try:
+            ws = "C:\\Users\\u\\AppData\\Local\\Temp\\pf-swg-x"
+            for cmd, kind in (("cd /tmp; cd %s/src; echo x > f" % ws, "redirect"),
+                              ("cd /tmp; cd '%s/src'; echo x > f" % ws, "redirect"),
+                              ("cd /tmp; cd %s/src; echo x > f" % ws.replace("\\", "/"), "redirect"),
+                              ("cd D: && echo x > f", "redirect"),
+                              ("cd C:/other && echo x > f", None),
+                              ("echo x > %s/.workflow/n.md" % ws.replace("\\", "/"), None)):
+                with self.subTest(command=cmd):
+                    hit = swg.decide(cmd, ws, ws)
+                    self.assertEqual(hit[0] if hit else None, kind, hit)
+        finally:
+            swg.os, swg.sys = real_os, real_sys
 
     def test_cwd_outside_workspace(self):
         other = os.path.realpath(tempfile.mkdtemp(prefix="pf-swg-out-"))

@@ -1,5 +1,5 @@
 // pi-foreman shell write guard (`scripts/shell_write_guard.py`, plan D3): the foreman's bash
-// may not write project files at any tier. Its edit/write tools (measured by the trivial bound)
+// (and its opt-in powershell tool) may not write project files at any tier. Its edit/write tools (measured by the trivial bound)
 // or a builder are the only paths; `.workflow/` stays writable. Children are not affected.
 // The script lives in the package's `scripts/`, not in `core/`. Fail-closed like the git guard.
 import { preToolPayload } from "./payload.ts";
@@ -11,9 +11,10 @@ import { evaluateRun } from "./translate.ts";
 
 export const SHELL_WRITE_REFUSAL = "shell write into project files refused: use the edit/write tools (measured by the trivial bound) or delegate to a builder";
 
-/** Core-shaped bash payload plus the workspace root the targets are checked against. */
-export function shellWriteGuardPayload(input: Record<string, unknown>, pc: PayloadContext, workspace: string): Record<string, unknown> {
-  return { ...preToolPayload("bash", input, pc), workspace };
+/** Core-shaped payload plus the workspace root the targets are checked against and the shell
+ *  flavour (`powershell` for the foreman's opt-in powershell tool, else `bash`). */
+export function shellWriteGuardPayload(input: Record<string, unknown>, pc: PayloadContext, workspace: string, piTool: "bash" | "powershell" = "bash"): Record<string, unknown> {
+  return { ...preToolPayload(piTool, input, pc), workspace, shell: piTool };
 }
 
 export interface ShellWriteRunInput {

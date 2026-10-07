@@ -11,6 +11,10 @@
    {"tools": [{"name": "bash", "arguments": {"command": "cd \"$PWD\" && python3 - <<'EOF'\np='router.go'\nopen(p,'w').write('package api')\nEOF"}}]},
    {"text": "standard: done"}
   ],
+  "pwsh": [
+   {"tools": [{"name": "powershell", "arguments": {"command": "Set-Content -Path router.go -Value 'package api'"}}]},
+   {"text": "pwsh: done"}
+  ],
   "child": [
    {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:bwrite]] write the file"}}]},
    {"text": "Launched."},

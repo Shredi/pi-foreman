@@ -10,6 +10,7 @@ Run: python -m unittest discover -s tests/replay -v (same prerequisites as test_
 from __future__ import annotations
 
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -39,6 +40,18 @@ class TestShellWriteGuard(ReplayCase):
         refused = [r for r in foreman if r.get("event") == "shell_write_refused"]
         self.assertEqual([r.get("kind") for r in refused], ["redirect", "python"])
         self.assertNotIn("cors_test", json.dumps(foreman))
+
+    @unittest.skipUnless(os.name == "nt", "Pi offers the powershell tool only as a native Windows process")
+    def test_foreman_powershell_write_refused(self):
+        rig = self.rig("shellwritepwsh", load_fixture("shell_write"), settings={"defaultTools": ["+powershell"]})
+        pi = rig.start()
+        res = tool_results(pi.prompt("[[replay:pwsh]] change the router", timeout=60))
+        pi.close()
+        self.assertEqual([(n, e) for n, e, _ in res], [("powershell", True)])
+        self.assertIn(REFUSAL, res[0][2])
+        self.assertFalse((rig.project / "router.go").exists(), "the powershell write reached the shell")
+        refused = [r for r in trace_of(rig.traces(), "foreman") if r.get("event") == "shell_write_refused"]
+        self.assertEqual([r.get("kind") for r in refused], ["set-content"])
 
     def test_child_builder_bash_write_not_affected(self):
         rig = self.rig("shellwritechild", load_fixture("shell_write"))
