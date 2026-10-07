@@ -59,8 +59,13 @@ Keys outside safety that the project and session layers cannot loosen either
                                      no symlink below the root. Both keys: a malformed value in
                                      any layer is a config error, replaced by the L1 default
     ceremony.reviewBeforePr          only true is accepted (false lets a PR open unreviewed)
+    ceremony.foremanReads.<phase>.<warn|deny>   lower only, minimum 1 (a higher budget lets the foreman read more)
+    ceremony.recheckBudget           lower only, minimum 0
+    ceremony.launchWait              tighten only, detach < block (may only move to block)
+    ceremony.dedupeNotify            only true is accepted
     ceremony.trivialBound.<field>    lower only, minimum 0 (a higher bound lets the foreman edit more)
     ceremony.trivialBound            not an object: ignored
+    ceremony.foremanReads[.<phase>]  not an object: ignored
     ceremony.required.<tier>         union only (a project can add required steps, not remove one)
     ceremony.required                not an object: ignored; unknown steps dropped
     sync.repos, retro.proposalMinReviews, compaction.priceTiers   ignored (L1/L3/L2 only)
@@ -170,6 +175,10 @@ LAYER_TIGHTEN = [
     (("ceremony", "foremanEdits"), ("ordered", FOREMAN_EDITS)),
     (("ceremony", "heavyFileCount"), "lower_only"),
     (("ceremony", "trivialBound", "*"), "lower_only"),
+    (("ceremony", "foremanReads", "*", "*"), "lower_only"),
+    (("ceremony", "recheckBudget"), "lower_only"),
+    (("ceremony", "launchWait"), ("ordered", ("block", "detach"))),
+    (("ceremony", "dedupeNotify"), "true_only"),
     (("ceremony", "required", "*"), "union"),
     (("roles", "*", "timeoutMinutes"), "lower_only"),
     (("intercom", "allowRemote"), "false_only"),
@@ -181,7 +190,7 @@ LAYER_TIGHTEN = [
     (("wait", "maxActive"), "lower_only"),
 ]
 LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
-                 "threshold": 0.3, "maxSeconds": 1, "maxActive": 1}
+                 "threshold": 0.3, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0}
 TIERS = ["trivial", "standard", "heavy"]
 # Steps ceremony.required.<tier> may name (the adapter counts each per session).
 REQUIRED_STEPS = ["planner", "builder", "reviewer", "finalizer"]
@@ -346,10 +355,14 @@ def _restrict_ceremony(base, proj, who, warnings):
     if "revisionRounds" in cer and not isinstance(cer["revisionRounds"], dict):
         del cer["revisionRounds"]
         warnings.append("%s ceremony.revisionRounds ignored: not an object" % who)
-    for key in ("trivialBound", "required"):
+    for key in ("trivialBound", "required", "foremanReads"):
         if key in cer and not isinstance(cer[key], dict):
             del cer[key]
             warnings.append("%s ceremony.%s ignored: not an object" % (who, key))
+    for phase, val in list((cer.get("foremanReads") or {}).items()):
+        if not isinstance(val, dict):
+            del cer["foremanReads"][phase]
+            warnings.append("%s ceremony.foremanReads.%s ignored: not an object" % (who, phase))
     for tier, steps in list((cer.get("required") or {}).items()):
         if not isinstance(steps, list):
             continue

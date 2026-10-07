@@ -16,16 +16,17 @@ import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
-import { addChange, boundRefusal, emptySteps, emptyTally, finishRefusal, missingSteps, overBound, pendingChange, readBound, requiredSteps, stepsOfRunEnd } from "./bound.ts";
+import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, missingSteps, overBound, pendingChange, readBound, requiredSteps, stepsOfRunEnd } from "./bound.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
+import { bgWaitLocations, detailLocations, inRecorded, noticeLocations, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
 import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
-import { applyLaunchModels, applyLaunchTimeouts, splitLevel, STRENGTHS } from "./launchmodel.ts";
+import { applyLaunchModels, applyLaunchTimeouts, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
@@ -62,11 +63,12 @@ import type { EventBus } from "./herdr.ts";
 let herdrEvents: EventBus | undefined;
 import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
-import { registerWait } from "./wait.ts";
+import { registerWait, waitLimits } from "./wait.ts";
+import { dedupeNotices, dedupeOn, dropReturnControl, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { registerClose, syncCommand } from "./close.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
 import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_TOOL, workspaceTargets } from "./triage.ts";
-import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, scratchDirOf } from "./editmode.ts";
+import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
 import type { RegistryLike } from "./modelcheck.ts";
@@ -126,7 +128,11 @@ interface Session {
   /** Launches this session recorded (launch id -> binding), for later kinds (revision, strong-relaunch). */
   launches: Map<string, LaunchBinding>;
   /** Foreman only: last trigger of the current run and its cache tokens, for the `turn` trace event. */
-  turn: { cause: TurnCause; cacheRead: number; cacheWrite: number; wakeKinds?: string; intercomFrom?: string };
+  turn: { cause: TurnCause; cacheRead: number; cacheWrite: number; wakeKinds?: string; intercomFrom?: string; codemode?: boolean };
+  /** Foreman only: launch calls of the current assistant message (launchwait.ts, knob 3). */
+  launchBatch: LaunchBatch;
+  /** Foreman only: run ids whose completion notice was deduplicated and traced (knob 5a; trace once per run). */
+  dedupeTraced: Set<string>;
   /** Foreman only: builder revision rounds since the last user prompt or /ceremony tier change (rounds.ts). */
   rounds: RoundState;
   /** Foreman only, ceremony gate (bound.ts): own project-file changes at trivial, reset by /ceremony. */
@@ -151,6 +157,12 @@ interface Session {
   plan: PlanRecord | null;
   /** Foreman only: plan-*.md snapshots at a planner launch, by tool call id, then by run id until its run end. */
   planSnaps: { byCall: Map<string, Map<string, string>>; byRun: Map<string, Map<string, string>> };
+  /** Foreman only: read and recheck budgets (budget.ts), in memory only. */
+  budget: ReadBudget;
+  /** Read-budget warn notices by tool call id, added to the result. */
+  readNotices: Map<string, string>;
+  /** Child result locations from structured places only (budget.ts); a `read` of one or below one is exempt from the budget. */
+  childFiles: Set<string>;
 }
 
 export interface AdapterDeps {
@@ -258,6 +270,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchHeads: new Map(),
       plan: null,
       planSnaps: { byCall: new Map(), byRun: new Map() },
+      budget: new ReadBudget(),
+      readNotices: new Map(),
+      childFiles: new Set(),
+      launchBatch: new LaunchBatch(),
+      dedupeTraced: new Set(),
     };
     sessions.set(id, s);
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
@@ -559,7 +576,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
     }
     if (instructionsCache === null) notifyOnce(s, ctx, "instructions", "pi-foreman: instructions/foreman.md is missing; the foreman runs without its rules.");
-    const text = [instructionsCache ?? "", tierLine(s.ceremony)].filter(Boolean).join("\n\n");
+    const text = [instructionsCache ?? "", tierLine(s.ceremony), finishLine(get(s.config.config, "ceremony.required"), s.ceremony.tier)].filter(Boolean).join("\n\n");
     event.systemPromptOptions.sections["pi-foreman"] = text;
     s.foremanSection = text;
   });
@@ -589,8 +606,40 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { block: true, reason: hit.reason };
   }
 
+  const normFile = (p: string): string => (platform === "win32" ? p.replace(/\\/g, "/").toLowerCase() : p);
+  /** Record child result locations (resolved, so no `..` survives); a location containing the cwd is skipped. */
+  const recordChild = (s: Session, paths: string[]): void => recordFiles(s.childFiles, paths, (p) => normFile(path.resolve(p)), s.cwd);
+  const knownRun = (s: Session) => (runId: string): boolean => s.launchedRoles.has(runId) || s.runs.has(runId);
+
+  /** Read budget (budget.ts): foreman only; undefined = let the call go on. */
+  function readBudgetCheck(s: Session | undefined, ctx: ExtensionContext, toolName: string, callId: string, input: unknown) {
+    if (!s || s.isChild || !READ_CLASS.has(toolName)) return undefined;
+    const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+    const file = toolName === "read" ? resolveToolPath(inp.path, ctx.cwd, os.homedir()) : null;
+    const exempt = s.supervisor.open.size > 0 || (file !== null && inRecorded(s.childFiles, normFile(file)));
+    const d = s.budget.check(toolName, callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt);
+    if (d.kind === "warn") {
+      s.readNotices.set(callId, d.text);
+      s.trace?.emit({ event: "read_budget", phase: d.phase, count: d.count, action: "warn" });
+    } else if (d.kind === "deny") {
+      s.trace?.emit(d.event === "read_budget" ? { event: "read_budget", phase: d.phase, count: d.count, action: "deny" } : { event: "recheck_budget", count: d.count, action: "deny" });
+      return { block: true as const, reason: d.reason };
+    }
+    return undefined;
+  }
+
+  function resetRecheck(s: Session, why: string): void {
+    const used = s.budget.resetPost();
+    if (used !== null) s.trace?.emit({ event: "recheck_budget", count: used, action: `reset_${why}` });
+  }
+  // Knob 3 launch-wait (launchwait.ts): held launch results, released by run end, supervisor request, abort or timeout.
+  const launchWaits = new LaunchWaits();
+  pi.events?.on(SUPERVISOR_SURFACED_EVENT, (data: unknown) => launchWaits.onSupervisorRequest(data));
+  pi.on("session_shutdown", async () => launchWaits.abortAll());
+
   for (const channel of RUN_END_EVENTS) {
     pi.events?.on(channel, (data) => {
+      launchWaits.onRunEnd(data);
       for (const s of sessions.values()) {
         s.supervisor.onRunEnd(data);
         endActive(s.activeRuns, data);
@@ -625,6 +674,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName === "subagent") sessionFor(ctx)?.launchBatch.onToolCall(event.toolCallId);
     if (event.toolName === "bash") {
       const ps = sessionFor(ctx);
       if (ps && !ps.isChild && ps.activeRuns.size > 0) ps.pollBash++;
@@ -640,6 +690,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const sup = supervisorBlock(sessionFor(ctx), event.toolName, event.input);
     if (sup) return sup;
+    const rb = readBudgetCheck(sessionFor(ctx), ctx, event.toolName, event.toolCallId, event.input);
+    if (rb) return rb;
     if (event.toolName === INTERCOM_TOOL) {
       try {
         const s = await ensureSession(ctx);
@@ -833,8 +885,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (m.role !== "assistant") return undefined;
     const s = sessionFor(ctx);
-    s?.trace?.emit({ event: "llm", model: m.provider && m.model ? `${m.provider}/${m.model}` : null, tokensIn: m.usage?.input, tokensOut: m.usage?.output, cacheRead: m.usage?.cacheRead, cacheWrite: m.usage?.cacheWrite, cost: m.usage?.cost?.total });
+    const content = (event.message as { content?: unknown }).content;
+    // Knob 4: the message used the codemode tool (one script, possibly many nested calls).
+    const codemode = Array.isArray(content) && content.some((c) => c && typeof c === "object" && (c as { type?: unknown }).type === "toolCall" && (c as { name?: unknown }).name === "codemode");
+    s?.trace?.emit({ event: "llm", model: m.provider && m.model ? `${m.provider}/${m.model}` : null, tokensIn: m.usage?.input, tokensOut: m.usage?.output, cacheRead: m.usage?.cacheRead, cacheWrite: m.usage?.cacheWrite, cost: m.usage?.cost?.total, codemode: codemode || undefined });
     if (!s) return undefined;
+    if (!s.isChild) {
+      s.launchBatch.onAssistant(content, isLaunchArgs);
+      if (codemode) s.turn.codemode = true;
+    }
     if (!appendUsage(s.usage.file, usageLine(s.usage.line, event.message))) notifyOnce(s, ctx, "usage", `pi-foreman: could not append to the usage log ${s.usage.file}; /foreman cost will be incomplete.`);
     if (!s.isChild) {
       s.turn.cacheRead += Number(m.usage?.cacheRead) || 0;
@@ -852,6 +911,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // D3: the owner is back in the loop, so revision rounds count from zero again.
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.rounds = initialRounds();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
+      resetRecheck(s, "user");
+      const was = s.budget.phase;
+      const n = s.budget.resetAll();
+      // traced only when it discards a count that had reached warn
+      if (n >= readLimits(get(s.config.config, "ceremony.foremanReads"))[was].warn) s.trace?.emit({ event: "read_budget", phase: "before", count: n, action: "reset_user" });
+    }
     return { action: "continue" as const };
   });
 
@@ -865,7 +931,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("agent_end", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild) return;
-    s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite, wakeKinds: s.turn.cause === "wake" ? s.turn.wakeKinds : undefined, pollBash: s.pollBash || undefined });
+    s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite, wakeKinds: s.turn.cause === "wake" ? s.turn.wakeKinds : undefined, pollBash: s.pollBash || undefined, codemode: s.turn.codemode || undefined });
     s.pollBash = 0;
     s.turn = { cause: "other", cacheRead: 0, cacheWrite: 0 };
   });
@@ -873,11 +939,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** D3: a detached child's completion notice; a finished review of built work may open a round. */
   function onCompletionNotice(s: Session, content: unknown): void {
     const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((c) => (c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string" ? (c as { text: string }).text : "")).join("\n") : "";
+    recordChild(s, noticeLocations(text, knownRun(s)));
     const reviews = completedAgents(text).filter((a) => REVIEW_ROLES.includes(a));
     if (reviews.length === 0) return;
     const verdict = verdictOf(text);
     s.rounds = onReviewDone(s.rounds, verdict);
     for (const role of reviews) s.trace?.emit({ event: "review_done", role, decision: verdict ?? "no-verdict" });
+    if (verdict === "pass") {
+      s.budget.enterPost();
+      s.trace?.emit({ event: "recheck_budget", count: 0, action: "start" });
+    } else if (verdict === "fail") resetRecheck(s, "fail");
   }
 
   function editModeOfSession(s: Session): { mode: EditMode; scratchDir: string } {
@@ -1019,6 +1090,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit") && isPlanPath((event.input as Record<string, unknown>).path, planOpts(owner, ctx))) {
       owner.trace?.emit({ event: "plan_written", tier: owner.ceremony.tier, by: "foreman" });
     }
+    const readNote = owner?.readNotices.get(event.toolCallId);
+    owner?.readNotices.delete(event.toolCallId);
+    const withNote = () => (readNote ? { content: [{ type: "text" as const, text: readNote }, ...event.content] } : undefined);
+    // Only a project-file change invalidates a PASS; ledger, notes and scratch writes do not.
+    if (owner && !owner.isChild && !event.isError && owner.budget.postPass && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) resetRecheck(owner, "edit");
+    if (owner && !owner.isChild && !event.isError && event.toolName === "bg_wait") recordChild(owner, bgWaitLocations(event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n"), knownRun(owner)));
     if (owner && pending) {
       owner.pendingChanges.delete(event.toolCallId);
       if (!event.isError) owner.tally = addChange(owner.tally, pending);
@@ -1041,19 +1118,30 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.planSnaps.byCall.delete(event.toolCallId);
         if (snap && runId) capSet(s.planSnaps.byRun, runId, snap);
         trackActive(s.activeRuns, event.input, event.details, event.isError);
+        if (!s.isChild) {
+          // Budgets restart only for a launch that started (a run id came back), not a refused one.
+          if (runId) {
+            recordChild(s, detailLocations(event.details));
+            const roles = s.launchedRoles.get(runId) ?? subagentAgents(event.input as Record<string, unknown>);
+            const eff = s.budget.onLaunch(roles, actionOf(event.input as Record<string, unknown>) === null);
+            if (eff.lift) s.trace?.emit({ event: "read_budget", phase: eff.lift.phase, count: eff.lift.count, action: "lift", by: "explorer" });
+            if (roles.includes("builder")) resetRecheck(s, "builder");
+          }
+        }
       }
       for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_result", role, exit: event.isError ? 1 : 0, pollBash: s.pollBash || undefined });
       if (s) s.pollBash = 0;
       const notices = s?.launchNotices.get(event.toolCallId);
-      if (s && notices) {
-        s.launchNotices.delete(event.toolCallId);
-        // subagent has no post guards (toolmap.ts), so the amended result can be returned here.
-        return { content: [...notices.map((text) => ({ type: "text" as const, text })), ...event.content] };
-      }
+      if (s && notices) s.launchNotices.delete(event.toolCallId);
+      const held = s ? await holdLaunch(s, ctx, event.toolCallId, event.input, event.details, event.isError) : null;
+      if (s && held?.path) recordChild(s, [held.path]);
+      // subagent has no post guards (toolmap.ts), so the amended result can be returned here.
+      // The held text stays the last block: deliveredRuns accepts the "done" marker only there.
+      if (notices || held) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(held && !held.plain ? dropReturnControl(event.content) : event.content), ...(held ? [{ type: "text" as const, text: held.text }] : [])] };
     }
     const mapping = mapTool(event.toolName);
     const changed = event.isError ? undefined : changedFileOf(event.toolName, event.input as Record<string, unknown>);
-    if ((mapping.post.length === 0 && changed === undefined) || event.isError) return undefined;
+    if ((mapping.post.length === 0 && changed === undefined) || event.isError) return withNote();
     try {
       const s = await ensureSession(ctx);
       const input = event.input as Record<string, unknown>;
@@ -1070,7 +1158,45 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     } catch {
       // side effects only
     }
-    return undefined;
+    return withNote();
+  });
+
+  /**
+   * Knob 3 (launchwait.ts): hold a foreman's single-child launch result until the run ends, the
+   * child asks the supervisor, the turn is aborted or wait.maxSeconds passes; the text to append,
+   * or null when the launch is not held (detach mode, child session, error, multi-run launch, or
+   * a later launch of the same message has not started yet).
+   */
+  async function holdLaunch(s: Session, ctx: ExtensionContext, callId: string, input: unknown, details: unknown, isError: boolean): Promise<{ text: string; path: string | null; plain?: boolean } | null> {
+    if (s.isChild || launchWaitMode(get(s.config.config, "ceremony.launchWait")) !== "block") return null;
+    const runId = launchId(input, details, isError);
+    const run = runId ? s.runs.get(runId) : undefined;
+    if (!runId || !run || !s.launchBatch.mayHold(callId)) return null;
+    const open = openRequestLine(s.supervisor.open.size, runId);
+    if (open) return { text: open, path: null, plain: true };
+    const cap = holdCap(waitLimits((k) => get(s.config.config, `wait.${k}`)).maxSeconds, roleTimeoutMs(get(s.config.config, "roles"), run.role));
+    const started = Date.now();
+    const r = await launchWaits.wait(runId, cap.seconds * 1000, ctx.signal);
+    const ms = Date.now() - started;
+    s.trace?.emit({ event: "launch_wait", role: run.role, runId, outcome: r.outcome, ms });
+    const raw = details && typeof details === "object" ? (details as { asyncDir?: unknown }).asyncDir : undefined;
+    const asyncDir = typeof raw === "string" ? raw : null;
+    const text = launchWaitText({ outcome: r.outcome, runId, role: run.role, ms, maxSeconds: cap.seconds, capBy: cap.by, by: r.by, end: r.end, asyncDir });
+    return { text, path: r.end?.resultPath ?? asyncDir };
+  }
+
+  // Knob 5a (launchwait.ts): a completion notice whose result an earlier message delivered becomes a stub.
+  pi.on("context", async (event, ctx) => {
+    const s = sessionFor(ctx);
+    if (!s || s.isChild || !dedupeOn(get(s.config.config, "ceremony.dedupeNotify"))) return undefined;
+    const r = dedupeNotices(event.messages);
+    if (!r) return undefined;
+    for (const runId of r.deduped) {
+      if (s.dedupeTraced.has(runId)) continue;
+      s.dedupeTraced.add(runId);
+      s.trace?.emit({ event: "notify_deduped", runId });
+    }
+    return { messages: r.messages };
   });
 
   pi.on("agent_before_settle", async (event, ctx) => {
@@ -1178,7 +1304,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const note = raised ? "Recorded as standard, not trivial: the edit mode already refused a change of yours, so a builder makes it. " : "";
         const em = editModeOfSession(s);
         const advice = tier === "trivial" && em.mode !== "bounded" ? `No builder is required, but ${editModeAdvice(em.mode, em.scratchDir)} for any project change (that makes the task standard).` : triageAdvice(tier);
-        return { content: [{ type: "text" as const, text: `${note}${tierLine(s.ceremony)} ${advice}` }], details: { decision: "recorded", tier } };
+        return { content: [{ type: "text" as const, text: [`${note}${tierLine(s.ceremony)} ${advice}`, finishLine(get(s.config.config, "ceremony.required"), tier)].filter(Boolean).join(" ") }], details: { decision: "recorded", tier } };
       },
     } as never);
   }
@@ -1330,10 +1456,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor | /foreman cost [workspace] | /foreman update-check | /foreman close [result-path]",
+    description: "pi-foreman commands: /foreman doctor | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman close [result-path]",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
       if (sub === "close") return close.command(args.trim().slice(sub.length), ctx);
+      if (sub === "budget") {
+        const s = await ensureSession(ctx);
+        if (rest[0] !== "lift" || s.isChild) {
+          ctx.ui.notify("Usage: /foreman budget lift (foreman session only)", "warning");
+          return;
+        }
+        const r = s.budget.userLift();
+        s.trace?.emit({ event: "read_budget", phase: r.phase, count: r.count, action: "lift", by: "user" });
+        ctx.ui.notify(`pi-foreman: read budget lifted (phase ${r.phase}); the count starts again.`, "info");
+        return;
+      }
       if (sub === "cost") {
         const s = await ensureSession(ctx);
         const ws = rest.join(" ").trim();
@@ -1349,7 +1486,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       if (sub !== "doctor") {
-        ctx.ui.notify("Usage: /foreman doctor | /foreman cost [workspace] | /foreman update-check | /foreman close [result-path]", "warning");
+        ctx.ui.notify("Usage: /foreman doctor | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman close [result-path]", "warning");
         return;
       }
       const s = await ensureSession(ctx);
@@ -1468,6 +1605,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 }
 
 /** Trace label for a core-guard ask, from the translated block reason (undefined = approved). */
+/** A `subagent` call that starts a run: a launch (no action) or a resume. */
+function isLaunchArgs(args: unknown): boolean {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return false;
+  const a = actionOf(args as Record<string, unknown>);
+  return a === null || a === "resume";
+}
+
 function askOutcome(isChild: boolean, reason: string | undefined): string {
   if (reason === undefined) return "approved";
   if (isChild) return "child";

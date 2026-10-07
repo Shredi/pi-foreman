@@ -136,7 +136,19 @@
         },
         "foremanEdits": { "type": "string", "enum": ["readonly", "scratchpad", "bounded"], "description": "What the foreman may change itself: readonly = only .workflow/; scratchpad = .workflow/ and ceremony.scratchDir; bounded = workspace files at tier trivial within ceremony.trivialBound. A refused edit raises a trivial tier to standard. A project or session can only tighten it (readonly < scratchpad < bounded)." },
         "scratchDir": { "type": "string", "description": "Workspace-relative folder the foreman may write in scratchpad mode (notes, drafts, commit messages). Not absolute, no '..', not the workspace root, must resolve inside the workspace. A project or session can only narrow it to a subfolder." },
-        "reviewBeforePr": { "type": "boolean", "description": "A pull/merge request needs a reviewer PASS on the current HEAD. A project or session can only set true." }
+        "reviewBeforePr": { "type": "boolean", "description": "A pull/merge request needs a reviewer PASS on the current HEAD. A project or session can only set true." },
+        "foremanReads": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Read budget of the foreman's own read-class calls (bash, read, grep, find, ls, codemode; a codemode script counts once) per phase: before = until the first child launch, after = since the latest launch. At warn the result tells the foreman to launch the explorer; above deny the call is refused. A project or session can only lower each value.",
+          "properties": {
+            "before": { "type": "object", "additionalProperties": false, "properties": { "warn": { "type": "integer", "minimum": 1 }, "deny": { "type": "integer", "minimum": 1 } } },
+            "after": { "type": "object", "additionalProperties": false, "properties": { "warn": { "type": "integer", "minimum": 1 }, "deny": { "type": "integer", "minimum": 1 } } }
+          }
+        },
+        "recheckBudget": { "type": "integer", "minimum": 0, "description": "Read-class calls the foreman may make after a reviewer PASS before it is told to finish. A project or session can only lower it." },
+        "launchWait": { "type": "string", "enum": ["detach", "block"], "description": "block = a launch's tool result waits for the child to end; detach = it returns at once. A project or session can only move to block." },
+        "dedupeNotify": { "type": "boolean", "description": "Replace a subagent-notify message whose result was already delivered with a one-line stub. A project or session can only set true." }
       }
     },
     "sync": {

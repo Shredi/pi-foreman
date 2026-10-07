@@ -21,7 +21,7 @@ test("trace: non-allowlisted keys and non-primitive values are dropped", () => {
     cost: Number.NaN,
   });
   assert.deepEqual(out, { event: "guard", guard: "destructive_guard", decision: "deny", latencyMs: 41 });
-  assert.deepEqual([...TRACE_FIELDS], ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by"]);
+  assert.deepEqual([...TRACE_FIELDS], ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by", "phase", "count", "action", "runId", "outcome", "ms", "codemode"]);
 });
 
 test("trace: ask and overlay events carry no command text", () => {
@@ -34,6 +34,8 @@ test("trace: ask and overlay events carry no command text", () => {
   // edit-mode refusals and escalations carry slugs only
   assert.deepEqual(sanitizeTrace({ event: "foreman_edit_refused", mode: "scratchpad", kind: "edit", path: "src/a.go" }), { event: "foreman_edit_refused", mode: "scratchpad", kind: "edit" });
   assert.deepEqual(sanitizeTrace({ event: "triage_escalated", from: "trivial", to: "standard", reason: "edit_mode" }), { event: "triage_escalated", from: "trivial", to: "standard", reason: "edit_mode" });
+  // read budget events carry phase, count and action only
+  assert.deepEqual(sanitizeTrace({ event: "read_budget", phase: "before", count: 6, action: "warn", command: "cat x" }), { event: "read_budget", phase: "before", count: 6, action: "warn" });
   // plan checkpoint events keep `by`, never plan or note text
   assert.deepEqual(sanitizeTrace({ event: "checkpoint", decision: "approve", by: "rig", tier: "heavy", note: "owner words", path: "p" }), { event: "checkpoint", decision: "approve", by: "rig", tier: "heavy" });
   assert.deepEqual(sanitizeTrace({ event: "plan_written", tier: "heavy", by: "planner", file: "plan-x.md" }), { event: "plan_written", tier: "heavy", by: "planner" });

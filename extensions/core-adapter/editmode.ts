@@ -55,6 +55,20 @@ export function scratchRoot(realRoot: string, scratchDir: string, platform: stri
   return scratchProblem(realRoot, scratchDir, platform) ? null : path.join(realRoot, ...(scratchParts(scratchDir) as string[]));
 }
 
+/**
+ * True when a foreman file-tool call changes a project file: a workspace target (workspaceTargets,
+ * which also feeds the trivial tally) that is not under `.workflow/` nor the real scratch dir.
+ */
+export function projectChange(toolName: string, input: Record<string, unknown>, scratchDir: string, opts: { cwd: string; home: string; platform: string }): boolean {
+  if (!GATED_TOOLS.has(toolName)) return false;
+  const realRoot = realDeep(path.resolve(workspaceOf(opts.cwd).root));
+  const scratch = scratchRoot(realRoot, scratchDir, opts.platform);
+  return workspaceTargets(toolName, input, opts.cwd, opts.home, opts.platform).some((t) => {
+    const real = realDeep(t.abs);
+    return !(scratch && under(scratch, real, opts.platform) && real !== scratch);
+  });
+}
+
 /** Changed paths of a gated tool that exist as a file with more than one hard link (a write would land in the other names too). */
 function hardLinked(toolName: string, input: Record<string, unknown>, cwd: string, home: string): string[] {
   const out: string[] = [];
