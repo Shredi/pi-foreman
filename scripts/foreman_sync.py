@@ -28,9 +28,18 @@ directory, so repository hooks (pre-commit, commit-msg, pre-push) do NOT run; co
 and core.alternateRefsPrefixes are emptied. A repo whose local or worktree config (includes followed)
 sets any key outside a small allowlist of harmless keys (ALLOWED_KEYS: core layout/line-ending keys,
 user.name/email, remote.*.url/fetch, branch tracking, pull/push/fetch defaults, display keys; some only
-with a false value, branch remotes only naming a configured remote, remote urls without ext::/fd::),
-includes a file outside the git dir, or has objects/info/alternates, is refused before any pull, add,
-commit or push; only key classes and rule names are reported.
+with a false value, branch remotes only naming a configured remote, remote urls only https://, ssh://,
+git:// or scp-like `[user@]host:path`, never a local path, file:// or a `<helper>::` transport, whose
+receive-pack hooks would run in this env), includes a file outside the git dir, has objects/info/alternates,
+or holds a gitlink (submodule entry) in its index, is refused before any pull, add, commit or push, and
+the check runs again right before the commit and right before the push (a detached child may still
+be writing config); only key classes and rule names are reported. Every git call also passes
+`-c diff.ignoreSubmodules=all` (and status `--ignore-submodules=all`), so no nested repository's own
+config (filters) is honoured. The push remote must be a configured remote with an url.
+
+Test seam: TEST_LOCAL_REMOTES (module attribute, empty) lists exact local paths the url rule accepts.
+It is honoured only while `unittest` is imported, it is never read from foreman.json, flags or the
+environment, so only an in-process test can set it (the suite pushes to a local bare repo).
 Candidates are scanned whole as bytes (larger than 20 MiB: refused); symlinks and hard links are
 refused. Git output shown in a report is redacted (`scheme://user:pass@` and token-like strings). That is deliberate: a hook is
 code from the repository, and sync runs with the owner's credentials.
@@ -80,7 +89,7 @@ REDACT = [(re.compile(r"(\w[\w+.\-]*://)[^/@\s]+@"), r"\1***@"), (re.compile(TOK
 # missed keys twice). Any other key refuses the repo; only its key class (`section.<x>.name`, the
 # subsection masked) or a rule label is reported, never a value. `<x>` = any subsection name.
 # Value rules: "false" = only a false value; "remote" = must name a configured remote;
-# "url" = no ext::/fd:: transport.
+# "url" = URL_OK (network transports only).
 ALLOWED_KEYS = [(re.compile(rx), rule) for rx, rule in (
     (r"core\.(?:repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks"
      r"|autocrlf|eol|safecrlf|quotepath|untrackedcache|splitindex|checkstat|trustctime|commitgraph"
@@ -95,7 +104,20 @@ ALLOWED_KEYS = [(re.compile(rx), rule) for rx, rule in (
     (r"(?:color|i18n|log|status|advice)\..+", None), (r"diff\.(?:renames|algorithm)", None),
     (r"merge\.conflictstyle", None), (r"rerere\.enabled", None), (r"index\.version", None),
     (r"feature\.manyfiles", None), (r"include\.path|includeif\..+\.path", "include"))]
-BAD_TRANSPORT = re.compile(r"\s*(?:ext|fd)::", re.I)
+# git's own scp-like rule: a colon before any slash, no `::` (a transport helper), no `://` (a url). The host must be
+# at least two characters (a drive letter `C:` is a local path) and no user/host part may start with `-`.
+URL_OK = re.compile(r"(?:https|ssh|git)://(?:[A-Za-z0-9][^/@\s]*@)?(?:[A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9A-Fa-f:.]+\])"
+                    r"(?::[0-9]*)?(?:/\S*)?"
+                    r"|(?:[A-Za-z0-9][A-Za-z0-9._~+-]*@)?[A-Za-z0-9][A-Za-z0-9.-]+:(?!:|//)\S*")
+TEST_LOCAL_REMOTES = ()  # test seam, see the module docstring
+
+
+def url_ok(val):
+    """True for a remote url sync may pull from and push to (B1: no local repo with its own hooks)."""
+    if URL_OK.fullmatch(val or ""):
+        return True
+    return bool(TEST_LOCAL_REMOTES) and "unittest" in sys.modules and \
+        any(same_path(val, p) for p in TEST_LOCAL_REMOTES if os.path.isabs(val or ""))
 
 
 class UsageError(Exception):
@@ -110,7 +132,7 @@ def git(args, cwd, stdin=None):
     if not exe:
         return 127, "", "git is not on PATH"
     try:
-        r = subprocess.run([exe, "-c", "commit.gpgSign=false", "-c", "submodule.recurse=false",
+        r = subprocess.run([exe, "-c", "commit.gpgSign=false", "-c", "submodule.recurse=false", "-c", "diff.ignoreSubmodules=all",
                             "-c", "core.alternateRefsCommand=", "-c", "core.alternateRefsPrefixes="] + safe_ops.git_hardening() + list(args), cwd=cwd, env=safe_ops._git_env(),
                            input=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=GIT_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -167,7 +189,7 @@ def in_progress(root):
 
 def status_paths(root):
     """Repo-relative `/` paths of changed or untracked files (both sides of a rename)."""
-    code, out, err = git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], root)
+    code, out, err = git(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=all"], root)
     if code != 0:
         raise RuntimeError("git status failed: %s" % first_line(err))
     parts = out.split("\0")
@@ -247,8 +269,8 @@ def risky_config(root):
                 hits.append("%s (not false)" % low)
             elif rule == "remote" and (val or "") not in remotes:
                 hits.append("%s (not a configured remote)" % key_class(low))
-            elif rule == "url" and BAD_TRANSPORT.match(val or ""):
-                hits.append("remote.<x>.url (ext::/fd:: transport)")
+            elif rule == "url" and not url_ok(val):
+                hits.append("remote.<x>.url (not https/ssh/git or scp-like)")
             elif rule == "include":
                 target = os.path.expanduser(val or "")
                 if not target or not safe_ops.is_inside(os.path.realpath(dirs["--git-common-dir"]),
@@ -256,6 +278,11 @@ def risky_config(root):
                     hits.append("include.path/includeIf.*.path (outside the git dir)")
     if os.path.lexists(os.path.join(dirs["--git-common-dir"], "objects", "info", "alternates")):
         hits.append("objects/info/alternates present")
+    code, out, err = git(["ls-files", "--stage", "-z"], root)
+    if code != 0:
+        return [], "git ls-files failed (%s)" % first_line(err)
+    if any(rec.startswith("160000 ") for rec in out.split("\0")):
+        hits.append("gitlink (submodule) in the index")
     return sorted(set(hits)), None
 
 
@@ -312,6 +339,16 @@ def commit_paths(root, files, message):
 
 # ------------------------------------------------------------------ one repo
 
+def recheck(root, rep, prefix):
+    """Run the full repo check (config, alternates, gitlinks); on a hit set rep refused and return False."""
+    risky, err = risky_config(root)
+    if err or risky:
+        rep["status"] = "refused"
+        rep["detail"] = prefix + (err or "repo config sets code-running or redirecting keys: %s" % ", ".join(risky))
+        return False
+    return True
+
+
 def sync_repo(entry, ctx):
     raw = entry.get("path") if isinstance(entry, dict) else None
     rep = {"path": raw, "status": "refused", "detail": "", "files": [], "secrets": []}
@@ -329,9 +366,7 @@ def sync_repo(entry, ctx):
         rep["detail"] = "not a git work tree root"
         return rep
     root = path
-    risky, err = risky_config(root)
-    if err or risky:
-        rep["detail"] = err or "repo config sets code-running or redirecting keys: %s" % ", ".join(risky)
+    if not recheck(root, rep, ""):
         return rep
     code, out, _ = git(["symbolic-ref", "-q", "--short", "HEAD"], root)
     branch = out.strip()
@@ -377,6 +412,8 @@ def sync_repo(entry, ctx):
         return rep
     committed = False
     if files:
+        if not recheck(root, rep, "before commit: "):
+            return rep
         err = commit_paths(root, files, "chore(sync): %s %s" % (ctx["date"], ctx["session"][:8]))
         if err:
             rep["status"] = "skipped"
@@ -388,6 +425,11 @@ def sync_repo(entry, ctx):
     if code == 0 and out.strip() and not out.strip().startswith("-"):
         remote = out.strip()
     remote = remote or "origin"
+    code, out, _ = git(["config", "--get", "remote.%s.url" % remote], root)
+    if code != 0 or not out.strip():
+        rep["status"] = "skipped"
+        rep["detail"] = "%sremote %s has no configured url, not pushed" % ("committed, " if committed else "", remote)
+        return rep
     ahead = True
     if has_upstream:
         code, out, _ = git(["rev-list", "--count", "@{u}..HEAD"], root)
@@ -395,6 +437,8 @@ def sync_repo(entry, ctx):
     if not ahead:
         rep["status"] = "committed" if committed else "clean"
         rep["detail"] = "; ".join(notes + ["nothing to push"])
+        return rep
+    if not recheck(root, rep, "%sbefore push: " % ("committed, " if committed else "")):
         return rep
     code, _, err = git(["push", remote, "%s:refs/heads/%s" % (branch, branch)], root)
     if code != 0:

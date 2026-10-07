@@ -161,9 +161,15 @@ RUNS_CODE_HEADS = {"node", "deno", "bun", "ruby", "perl", "php", "bash", "sh", "
                    "osascript", "eval", "exec", "xargs", "env", "sudo", "ssh", "npx",
                    # wrappers that run their argument, and more interpreters (S9 re-review)
                    "nohup", "nice", "time", "timeout", "command", "stdbuf", "busybox", "uvx", "bunx",
-                   "awk", "gawk", "mawk", "lua", "luajit", "rscript", "tclsh", "dash", "ksh", "fish", "csh", "tcsh"}
+                   "awk", "gawk", "mawk", "lua", "luajit", "rscript", "tclsh", "dash", "ksh", "fish", "csh", "tcsh",
+                   # S9 residual (re-review 2)
+                   "doas", "setsid", "watch", "parallel", "flock", "script", "strace", "ltrace", "chroot", "runuser",
+                   "su", "wsl"}
 RUNS_CODE_SUBS = {"npm": ("exec", "x"), "uv": ("run",), "pipx": ("run",), "poetry": ("run",), "pnpm": ("dlx", "exec"),
-                  "yarn": ("dlx", "exec"), "go": ("run",), "cargo": ("run",), "git": ("config", "remote", "submodule")}
+                  "yarn": ("dlx", "exec"), "go": ("run",), "cargo": ("run",), "git": ("config", "remote", "submodule",
+                  # a family has two words: `git hook *` covers `hook run`, `git bisect *` covers `bisect run`,
+                  # `git rebase *` covers `--exec`; filter-branch runs its filters
+                  "hook", "bisect", "rebase", "filter-branch")}
 
 
 # A git global option as the second word: `git -C *` etc. would cover every git subcommand.
@@ -202,17 +208,23 @@ def load_protect_patterns(agent_dir):
                 continue
             for ph, val in subs.items():
                 pat = pat.replace(ph, val or "")
-            out.append(Path(os.path.expanduser(pat)).as_posix() if pat.startswith("~") else pat)
+            out.append(norm_word(pat))
     return out
+
+
+def norm_word(text):
+    """One form for a pattern and an argv word on every OS: `~` expanded, `/` separators, casefolded
+    (Windows expanduser yields backslashes, and Windows paths are case-insensitive)."""
+    text = os.path.expanduser(text) if text.startswith("~") else text
+    return text.replace("\\", "/").casefold()
 
 
 def touches_protected(family, patterns):
     """True when an argv word of the family (after the command) names a protected path."""
     for tok in family.split()[1:]:
-        t = tok.strip("'\"").replace("\\", "/").rstrip("/")
+        t = norm_word(tok.strip("'\"")).rstrip("/")
         if not t or t.startswith("-"):
             continue
-        t = os.path.expanduser(t) if t.startswith("~") else t
         cands = [t] if t.startswith("/") or re.match(r"^[A-Za-z]:/", t) else [t, "/x/" + re.sub(r"^(\./)+", "", t)]
         if any(wildcard_match(p, c) for p in patterns for c in cands):
             return True

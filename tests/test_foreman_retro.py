@@ -8,6 +8,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
@@ -136,7 +137,10 @@ class RetroTest(unittest.TestCase):
                "uv run", "uvx tool", "pipx run", "poetry run", "pnpm dlx", "pnpm exec", "yarn dlx", "yarn exec", "bunx tool",
                "go run", "cargo run", "awk {print}", "gawk -f", "mawk -f", "lua x.lua", "Rscript x.R", "tclsh x", "dash -c",
                "ksh -c", "fish -c", "git remote", "git submodule", "git -C", "git -cx=y", "git --git-dir=x", "git --work-tree",
-               "git --exec-path=x", "git --config-env=a=B", "git --namespace", "git -p", "git --paginate"]
+               "git --exec-path=x", "git --config-env=a=B", "git --namespace", "git -p", "git --paginate",
+               "doas make", "setsid make", "watch make", "parallel echo", "flock /tmp/l", "script -c", "strace make",
+               "ltrace make", "chroot /x", "runuser -u", "su -c", "wsl make", "wsl.exe make", "git hook", "git bisect",
+               "git rebase", "git filter-branch"]
         for fam in bad:
             self.assertTrue(fr.runs_code(fam), fam)
         for fam in ["npm ci", "git status", "make test", "find .", "uv sync", "go build", "cargo build"]:
@@ -152,6 +156,14 @@ class RetroTest(unittest.TestCase):
         self.assertFalse(fr.touches_protected("cat src/a.py", prot))
         asks = [{"family": f, "outcome": "approved", "session": sess} for f in bad + ["cat src/a.py"] for sess in ("a", "b", "c")]
         self.assertEqual([p["pattern"] for p in fr.propose(asks, 3, [], prot)], ["cat src/a.py *"])
+        # Windows: expanduser yields backslashes and a drive; both sides must normalise the same way.
+        win = lambda p: "C:\\Users\\T" + p[1:].replace("/", "\\") if p.startswith("~") else p
+        with mock.patch.object(fr.os.path, "expanduser", win):
+            wprot = fr.load_protect_patterns(str(self.tmp / "agent"))
+            self.assertEqual(fr.norm_word("~\\.GitConfig"), "c:/users/t/.gitconfig")
+            self.assertFalse([p for p in wprot if "\\" in p], wprot)
+            for fam in ("vim ~/.gitconfig", "vim ~\\.gitconfig", "vim C:\\Users\\T\\.gitconfig"):
+                self.assertTrue(fr.touches_protected(fam, wprot), fam)
 
     def test_selftest(self):
         out = io.StringIO()

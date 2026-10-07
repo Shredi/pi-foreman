@@ -39,6 +39,10 @@ class SyncTest(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         self.bare = self.tmp / "remote.git"
+        # Test seam (module attribute, honoured only under unittest): the suite's local bare remote.
+        seam = mock.patch.object(fs, "TEST_LOCAL_REMOTES", (str(self.bare),))
+        seam.start()
+        self.addCleanup(seam.stop)
         g(self.tmp, "init", "-q", "--bare", "-b", "main", str(self.bare))
         seed = self.tmp / "seed"
         g(self.tmp, "clone", "-q", str(self.bare), str(seed))
@@ -149,7 +153,7 @@ class SyncTest(unittest.TestCase):
                  ("remote.origin.uploadpack", "x", na + "remote.<x>.uploadpack"), ("http.proxy", "x", na + "http.proxy"),
                  ("http.sslVerify", "false", na + "http.sslverify"), ("maintenance.auto", "true", na + "maintenance.auto"),
                  ("protocol.file.allow", "always", na + "protocol.<x>.allow"),
-                 ("remote.evil.url", "ext::sh -c touch% pwned", "remote.<x>.url (ext::/fd:: transport)"),
+                 ("remote.evil.url", "ext::sh -c touch% pwned", "remote.<x>.url (not https/ssh/git or scp-like)"),
                  ("branch.main.remote", str(self.tmp / "evil.git"), "branch.<x>.remote (not a configured remote)"),
                  ("include.path", str(outside), "include.path/includeIf.*.path (outside the git dir)")]
         self.write("notes/a.md", "note\n")
@@ -203,6 +207,89 @@ class SyncTest(unittest.TestCase):
         self.assertFalse(set(calls) & {"pull", "fetch", "add", "commit", "push"}, calls)
         self.assertFalse(hook_marker.exists() or alt_marker.exists())
         self.assertEqual((g(self.work, "rev-parse", "HEAD"), self.remote_head()), (head, before))
+
+    def hooked_bare(self, path, marker):
+        g(self.tmp, "init", "-q", "--bare", str(path))
+        hook = path / "hooks" / "pre-receive"
+        hook.write_text("#!/bin/sh\ntouch '%s'\n" % marker)
+        hook.chmod(0o755)
+
+    def test_local_remote_url_refused_b1(self):
+        evil, marker = self.tmp / "evil.git", self.tmp / "PUSHMARK"
+        self.hooked_bare(evil, marker)
+        self.write("notes/a.md", "note\n")
+        head, before = g(self.work, "rev-parse", "HEAD"), self.remote_head()
+        calls = self.spy_git()
+        for url in (str(evil), "file://" + str(evil), "../evil.git", "ext::sh -c x", "fd::3", "git-remote-x::" + str(evil)):
+            with self.subTest(url=url):
+                g(self.work, "config", "remote.origin.url", url)
+                code, rep = self.run_sync()
+                self.assertEqual((code, rep["status"]), (1, "refused"), rep)
+                self.assertIn("remote.<x>.url (not https/ssh/git or scp-like)", rep["detail"])
+        g(self.work, "config", "remote.origin.url", str(self.bare))
+        with mock.patch.object(fs, "TEST_LOCAL_REMOTES", ()):
+            self.assertIn("remote.<x>.url (not", self.run_sync()[1]["detail"])
+        self.assertFalse(set(calls) & {"pull", "fetch", "add", "commit", "push"}, calls)
+        self.assertFalse(marker.exists())
+        self.assertEqual((g(self.work, "rev-parse", "HEAD"), self.remote_head()), (head, before))
+        for url in ("https://example.invalid/o/r.git", "ssh://git@example.invalid/o/r", "ssh://example.invalid:22/r",
+                    "git://example.invalid/r", "git@example.invalid:o/r.git", "example.invalid:o/r"):
+            self.assertTrue(fs.url_ok(url), url)
+        g(self.work, "remote", "remove", "origin")
+        self.hooked_bare(self.work / "origin", marker)
+        code, rep = self.run_sync()
+        self.assertEqual((code, rep["status"]), (1, "skipped"), rep)
+        self.assertIn("remote origin has no configured url, not pushed", rep["detail"])
+        self.assertFalse(marker.exists())
+
+    def test_gitlink_refused_and_status_ignores_submodules_b2(self):
+        sub, marker = self.work / "sub", self.tmp / "SUBMARK"
+        g(self.tmp, "init", "-q", str(sub))
+        ident(sub)
+        (sub / "f.txt").write_text("x\n")
+        g(sub, "add", "f.txt")
+        g(sub, "commit", "-q", "-m", "s")
+        g(sub, "config", "filter.ev.clean", "sh -c 'touch \"%s\"; cat'" % marker)
+        (sub / ".git" / "info").mkdir(exist_ok=True)
+        (sub / ".git" / "info" / "attributes").write_text("* filter=ev\n")
+        os.utime(sub / "f.txt", (946684800, 946684800))
+        g(self.work, "add", "sub")
+        self.write("notes/a.md", "note\n")
+        head = g(self.work, "rev-parse", "HEAD")
+        for extra in (("--dry-run",), ()):
+            with self.subTest(extra=extra):
+                code, rep = self.run_sync(*extra)
+                self.assertEqual((code, rep["status"]), (1, "refused"), rep)
+                self.assertIn("gitlink (submodule) in the index", rep["detail"])
+        self.assertIn("notes/a.md", fs.status_paths(str(self.work)))
+        self.assertFalse(marker.exists())
+        self.assertEqual(g(self.work, "rev-parse", "HEAD"), head)
+
+    def test_config_rechecked_before_commit_and_push_m1(self):
+        marker, real = self.tmp / "HOOKMARK", fs.git
+        self.write("notes/a.md", "note\n")
+        head, before = g(self.work, "rev-parse", "HEAD"), self.remote_head()
+        for after, label in (("pull", "before commit: "), ("commit", "committed, before push: ")):
+            calls = []
+            def planting(args, cwd, stdin=None, after=after):
+                calls.append(args[0])
+                res = real(args, cwd, stdin)
+                if args[0] == after:
+                    g(self.work, "config", "hook.x.event", "pre-commit")
+                    g(self.work, "config", "hook.x.command", "touch '%s'" % marker)
+                return res
+            with self.subTest(after=after), mock.patch.object(fs, "git", planting):
+                code, rep = self.run_sync()
+                self.assertEqual((code, rep["status"]), (1, "refused"), rep)
+                self.assertTrue(rep["detail"].startswith(label + "repo config sets"), rep["detail"])
+                self.assertIn(after, calls)
+                self.assertNotIn("push", calls)
+            g(self.work, "config", "--remove-section", "hook.x")
+            if after == "pull":
+                self.assertNotIn("commit", calls)
+                self.assertEqual(g(self.work, "rev-parse", "HEAD"), head)
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.remote_head(), before)
 
     def test_allowlisted_repo_syncs(self):
         for key, val in (("core.autocrlf", "false"), ("pull.rebase", "true"), ("push.default", "simple"),
