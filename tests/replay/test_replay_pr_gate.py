@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import unittest
@@ -140,7 +139,8 @@ class TestPrGate(ReplayCase):
 
     def test_non_repository_head_unknown(self):
         rig, env, marker = self.pr_rig("prnogit")
-        shutil.rmtree(str(rig.project / ".git"))
+        # rename, not delete: git objects are read-only on Windows and rmtree fails there
+        os.rename(str(rig.project / ".git"), str(rig.project / "git-off"))
         pi = rig.start(env=env)
         res = last(self.attempt(pi, "pr-gh"))
         pi.close()
