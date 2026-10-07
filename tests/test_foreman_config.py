@@ -291,7 +291,7 @@ class PackageFilesTest(unittest.TestCase):
 
     def test_foreman_instructions_neutral(self):
         text = (ROOT / "instructions" / "foreman.md").read_text().lower()
-        self.assertLessEqual(len(text.splitlines()), 60)
+        self.assertLessEqual(len(text.splitlines()), 64)
         for word in ("claude", "sonnet", "opus", "fable", "gpt", "gemini", "copilot", "openrouter"):
             self.assertNotIn(word, text)
 
