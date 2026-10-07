@@ -107,6 +107,12 @@ export function workflowDirs(realCwd: string, realRoot: string, platform: string
 
 /** The first changed path inside the workspace and outside the writable `.workflow/` folders, or null. */
 export function workspaceTarget(toolName: string, input: Record<string, unknown>, cwd: string, home: string, platform: string): string | null {
+  return workspaceTargets(toolName, input, cwd, home, platform)[0]?.raw ?? null;
+}
+
+/** Every changed path inside the workspace and outside the writable `.workflow/` folders: as given and resolved. */
+export function workspaceTargets(toolName: string, input: Record<string, unknown>, cwd: string, home: string, platform: string): { raw: string; abs: string }[] {
+  const out: { raw: string; abs: string }[] = [];
   const root = workspaceOf(cwd).root;
   const roots = [path.resolve(root), realDeep(path.resolve(root))];
   const workflows = workflowDirs(realDeep(path.resolve(cwd)), roots[1], platform);
@@ -116,9 +122,9 @@ export function workspaceTarget(toolName: string, input: Record<string, unknown>
     const real = realDeep(abs);
     if (!roots.some((r) => under(r, abs, platform) || under(r, real, platform))) continue;
     if (workflows.some((w) => under(w, real, platform) && real !== w)) continue;
-    return String(raw);
+    out.push({ raw: String(raw), abs });
   }
-  return null;
+  return out;
 }
 
 /** Block reason for a foreman file-tool call, or undefined. */

@@ -114,7 +114,26 @@
             "heavy": { "type": "integer", "minimum": 0 }
           }
         },
-        "requireTriage": { "type": "boolean", "description": "The foreman records a tier before it edits workspace files itself. A project or session can only set true." }
+        "requireTriage": { "type": "boolean", "description": "The foreman records a tier before it edits workspace files itself. A project or session can only set true." },
+        "trivialBound": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "How much the foreman may change itself at tier trivial (project files outside .workflow/, counted per session): distinct files, changed lines (added + removed) and new files. A call that would exceed any of them is refused and the tier escalates to standard. A project or session can only lower each value.",
+          "properties": {
+            "files": { "type": "integer", "minimum": 0 },
+            "lines": { "type": "integer", "minimum": 0 },
+            "newFiles": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "required": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Steps a session at this tier completes before the foreman may finish: builder (a builder run that completed), reviewer (a reviewer or senior-reviewer verdict PASS or FAIL), finalizer (a finalizer run that completed). A project or session can only add steps.",
+          "properties": {
+            "standard": { "type": "array", "items": { "type": "string", "enum": ["builder", "reviewer", "finalizer"] } },
+            "heavy": { "type": "array", "items": { "type": "string", "enum": ["builder", "reviewer", "finalizer"] } }
+          }
+        }
       }
     },
     "sync": {

@@ -36,7 +36,9 @@
     "heavyFileCount": 8,
     "overrides": {},
     "revisionRounds": { "standard": 1, "heavy": 2 },
-    "requireTriage": true
+    "requireTriage": true,
+    "trivialBound": { "files": 2, "lines": 40, "newFiles": 0 },
+    "required": { "standard": ["builder", "reviewer"], "heavy": ["builder", "reviewer", "finalizer"] }
   },
   "sync": { "repos": [], "runRetro": true },
   "retro": { "proposalMinReviews": 5 },
