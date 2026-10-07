@@ -97,6 +97,25 @@ class TestEditMode(ReplayCase):
         self.assertTrue(any("ceremony.scratchDir" in n for n in notifications(recs)), notifications(recs))
         self.assertEqual(list((rig.root / "outside").iterdir()), [])
 
+    def test_scratch_dir_swapped_for_a_symlink_after_start(self):
+        # A-B1: `ln -s ../src .workflow/scratch` once the session runs; a write through it is refused
+        rig = self.rig("edit-swapped", script())
+        (rig.project / "src").mkdir()
+        pi = rig.start()
+        scratch = rig.project / ".workflow" / "scratch"
+        scratch.mkdir(parents=True, exist_ok=True)
+        scratch.rename(rig.project / ".workflow" / "old")
+        try:
+            os.symlink(os.path.join("..", "src"), str(scratch), target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pi.close()
+            self.skipTest("no symlinks")
+        res = tool_results(pi.prompt("[[replay:swapped]] go", timeout=90))
+        pi.close()
+        self.assertEqual([(n, e) for n, e, _ in res], [("foreman_triage", False), ("write", True)])
+        self.assertIn("scratch dir .workflow/scratch is disabled: it passes through a symlink", res[1][2])
+        self.assertFalse((rig.project / "src" / "a.ts").exists())
+
     def test_untriaged_refusal_makes_a_later_trivial_triage_standard(self):
         rig = self.rig("edit-late", script())
         (rig.project / "src").mkdir()

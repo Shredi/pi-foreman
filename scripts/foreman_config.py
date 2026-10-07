@@ -55,7 +55,9 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.default                 raise only, trivial < standard < heavy
     ceremony.foremanEdits            tighten only, readonly < scratchpad < bounded
     ceremony.scratchDir              narrow only (a subfolder of the earlier value); every layer:
-                                     workspace-relative, no '..', not the root, resolves inside
+                                     workspace-relative, no '..', not the root, resolves inside,
+                                     no symlink below the root. Both keys: a malformed value in
+                                     any layer is a config error, replaced by the L1 default
     ceremony.reviewBeforePr          only true is accepted (false lets a PR open unreviewed)
     ceremony.trivialBound.<field>    lower only, minimum 0 (a higher bound lets the foreman edit more)
     ceremony.trivialBound            not an object: ignored
@@ -159,12 +161,13 @@ IGNORED_KEYS = [
 # compared with the value after the earlier layers. Same rule names as TIGHTEN; a lower_only
 # value below LAYER_MINIMUM (the schema minimum) is dropped with a warning too, so a too-low
 # project value does not turn into a whole-config schema error.
+FOREMAN_EDITS = ("readonly", "scratchpad", "bounded")
 LAYER_TIGHTEN = [
     (("providers", "*", "strongOnRevision"), "false_only"),
     (("ceremony", "revisionRounds", "*"), "lower_only"),
     (("ceremony", "requireTriage"), "true_only"),
     (("ceremony", "reviewBeforePr"), "true_only"),
-    (("ceremony", "foremanEdits"), ("ordered", ("readonly", "scratchpad", "bounded"))),
+    (("ceremony", "foremanEdits"), ("ordered", FOREMAN_EDITS)),
     (("ceremony", "heavyFileCount"), "lower_only"),
     (("ceremony", "trivialBound", "*"), "lower_only"),
     (("ceremony", "required", "*"), "union"),
@@ -303,7 +306,31 @@ def scratch_dir_escape(val, project_dir):
     target = Path(os.path.realpath(os.path.join(str(root), *parts)))
     if target == root or root not in target.parents:
         return "it must resolve inside the workspace and not to its root"
+    # no symlink in any component below the workspace root: the real path is the lexical one
+    fold = (lambda s: s.lower()) if sys.platform in ("darwin", "win32") else (lambda s: s)
+    if fold(str(target)) != fold(str(root.joinpath(*parts))):
+        return "it must not pass through a symlink"
     return None
+
+
+def fix_malformed_ceremony(name, data, l1, errors):
+    """A malformed ceremony.foremanEdits / scratchDir in one layer -> config error, L1 default (in place).
+
+    Runs before the layer is merged, so the tighten comparison of later layers sees a valid value."""
+    cer = data.get("ceremony")
+    if not isinstance(cer, dict):
+        return
+    defaults = l1.get("ceremony") or {}
+    if "foremanEdits" in cer and cer["foremanEdits"] not in FOREMAN_EDITS:
+        errors.append("%s ceremony.foremanEdits %r invalid: not one of %s; using %s"
+                      % (name, cer["foremanEdits"], ", ".join(FOREMAN_EDITS), defaults.get("foremanEdits")))
+        cer["foremanEdits"] = defaults.get("foremanEdits")
+    if "scratchDir" in cer:
+        why = scratch_dir_parts(cer["scratchDir"])
+        if isinstance(why, str):
+            errors.append("%s ceremony.scratchDir %r invalid: %s; using %s"
+                          % (name, cer["scratchDir"], why, defaults.get("scratchDir")))
+            cer["scratchDir"] = defaults.get("scratchDir")
 
 
 def _restrict_ceremony(base, proj, who, warnings):
@@ -675,6 +702,7 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
             errors.append("%s config is not a JSON object (%s)" % (name, path))
             return None
         drop_invalid_safety(name, data, schema, warnings)
+        fix_malformed_ceremony(name, data, l1, errors)
         return data
 
     l3 = list(discover_l3(agent)) + [(Path(p).name, Path(p)) for p in l3_paths]
@@ -703,6 +731,7 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
             if not isinstance(data, dict):
                 raise ValueError("not an object")
             drop_invalid_safety("session", data, schema, warnings)
+            fix_malformed_ceremony("session", data, l1, errors)
             drop_loosening(data, "session", warnings)
             cfg = project_apply(cfg, data, warnings, "session", project_dir or os.getcwd())
             layers.append("session")

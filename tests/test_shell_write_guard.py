@@ -238,6 +238,16 @@ class ShellWriteGuardTest(unittest.TestCase):
             return
         self.assertEqual(swg.decide("echo x > notes/l/f", self.ws, self.ws, "bash", dirs)[0], "redirect")
 
+    def test_symlinked_allowed_dir_is_not_writable(self):
+        # `.workflow/scratch` -> `../src`: the allowed dir is lexical, the target real, so nothing lands in it
+        os.makedirs(os.path.join(self.ws, ".workflow"), exist_ok=True)
+        try:
+            os.symlink(os.path.join("..", "src"), os.path.join(self.ws, ".workflow", "scratch"), target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("no symlinks")
+        hit = swg.decide("echo x > .workflow/scratch/a.ts", self.ws, self.ws, "bash", [".workflow", ".workflow/scratch"])
+        self.assertEqual(hit[0] if hit else None, "redirect")
+
     def test_windows_path_flavour(self):
         # Windows (CI item 29) emulated with ntpath on any host: bash strips the backslashes of an
         # unquoted `C:\a\b`, leaving the drive-relative `C:ab`, whose directory is unknown -> refused
