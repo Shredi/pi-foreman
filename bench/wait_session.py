@@ -158,6 +158,10 @@ def foreman_config(row):
         l2["safety"] = {"requiredChildExtensions": row["_required_child_extensions"]}
     if row.get("foreman_edits"):
         l2["ceremony"] = {"foremanEdits": row["foreman_edits"]}
+    for key, name in (("foreman_reads", "foremanReads"), ("recheck_budget", "recheckBudget"),
+                      ("launch_wait", "launchWait"), ("dedupe_notify", "dedupeNotify")):
+        if key in row:  # ceremony knobs of the frugality work, forwarded as given
+            l2.setdefault("ceremony", {})[name] = row[key]
     if row.get("project_commands"):  # the repo's test/build commands, as an owner would set them
         l2.setdefault("safety", {})["permissions"] = {"projectCommands": list(row["project_commands"])}
     return l2

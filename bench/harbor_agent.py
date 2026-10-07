@@ -153,6 +153,7 @@ def summarize_logs(logs_dir, main_role="main"):
     by_role = {}
     thinking_by_model = {}
     thinking_by_role = {}
+    wait_turns = text_only_turns = codemode_turns = 0
     for f in sorted((logs / "sessions").rglob("*.jsonl")) if (logs / "sessions").is_dir() else []:
         if "subagent-artifacts" in f.parts:
             continue  # transcripts duplicate the child session file
@@ -184,13 +185,23 @@ def summarize_logs(logs_dir, main_role="main"):
                 m[k] += v
                 r[k] += v
             cost += float((usage.get("cost") or {}).get("total") or 0)
-            tool_calls += sum(1 for c in msg.get("content") or [] if isinstance(c, dict) and c.get("type") == "toolCall")
+            calls = [c for c in msg.get("content") or [] if isinstance(c, dict) and c.get("type") == "toolCall"]
+            tool_calls += len(calls)
+            if role == main_role and msg.get("usage"):  # one foreman turn = one assistant message with usage
+                names = [str(c.get("name")) + (":" + str((c.get("arguments") or {}).get("action")) if c.get("name") == "subagent" else "") for c in calls]
+                if not calls:
+                    text_only_turns += 1
+                elif all(n in ("bg_wait", "subagent:list", "subagent:status") for n in names):
+                    wait_turns += 1
+                if any(c.get("name") == "codemode" for c in calls):
+                    codemode_turns += 1
         for model in models:
             thinking_by_model.setdefault(model, set()).update(levels)
         if models:
             thinking_by_role.setdefault(role, set()).update(levels)
     approvals = guard_blocks = gate_blocks = revisions = poll_bash = ceremony_incomplete = 0
     foreman_edit_refused = pr_refused = checkpoint_auto = 0
+    read_blocks = recheck_blocks = finish_refused = launch_waits = 0
     roles = {}
     reviewed = {}
     tiers = {"recorded": None, "tier": None}
@@ -212,6 +223,14 @@ def summarize_logs(logs_dir, main_role="main"):
                 foreman_edit_refused += 1
             elif ev == "pr_refused":
                 pr_refused += 1
+            elif ev == "read_budget" and rec.get("action") == "deny":
+                read_blocks += 1
+            elif ev == "recheck_budget" and rec.get("action") == "deny":
+                recheck_blocks += 1
+            elif ev == "finish_refused":
+                finish_refused += 1
+            elif ev == "launch_wait":
+                launch_waits += 1
             elif ev == "checkpoint" and rec.get("by") == "rig" and rec.get("decision") == "approve":
                 checkpoint_auto += 1
             if ev == "ask":
@@ -247,7 +266,10 @@ def summarize_logs(logs_dir, main_role="main"):
                          "revisions": revisions, "gate_blocks": gate_blocks, "asks_reviewed": reviewed,
                          "pollBash": poll_bash, "ceremony_incomplete": ceremony_incomplete,
                          "foreman_edit_refused": foreman_edit_refused, "pr_refused": pr_refused,
-                         "checkpoint_auto": checkpoint_auto}
+                         "checkpoint_auto": checkpoint_auto,
+                         "read_blocks": read_blocks, "recheck_blocks": recheck_blocks, "finish_refused": finish_refused,
+                         "launch_waits": launch_waits, "wait_turns": wait_turns, "text_only_turns": text_only_turns,
+                         "codemode_turns": codemode_turns}
     return out
 
 

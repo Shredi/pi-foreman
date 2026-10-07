@@ -477,6 +477,32 @@ class BenchTest(unittest.TestCase):
             {"event": "checkpoint", "decision": "reject", "by": "rig", "tier": "heavy"}]})
         self.assertEqual(ha.summarize_logs(d)["triage"]["checkpoint_auto"], 1)
 
+    def test_frugality_counters_from_trace_and_foreman_session(self):
+        msg = lambda calls, usage=True: {"type": "message", "message": dict(  # noqa: E731
+            {"role": "assistant", "content": [{"type": "toolCall", "name": n, "arguments": a} for n, a in calls]},
+            **({"usage": {"input": 1}} if usage else {}))}
+        foreman = [msg([]), msg([("bg_wait", {})]), msg([("subagent", {"action": "status"}), ("bg_wait", {})]),
+                   msg([("subagent", {"action": "launch"})]), msg([("bash", {}), ("codemode", {})]), msg([], usage=False)]
+        child = [{"type": "session_info", "name": "subagent-builder-%s-0001-x" % ("a" * 8)}, msg([]), msg([("bg_wait", {})])]
+        d = self.logs(**{"sessions__w__f.jsonl": foreman, "sessions__w__c.jsonl": child, "state__trace-s1.jsonl": [
+            {"event": "read_budget", "phase": "pre", "count": 4, "action": "deny"}, {"event": "read_budget", "action": "warn"},
+            {"event": "recheck_budget", "count": 2, "action": "deny"}, {"event": "finish_refused"},
+            {"event": "launch_wait", "runId": "r", "outcome": "done", "ms": 5}, {"event": "launch_wait", "outcome": "timeout"}]})
+        t = ha.summarize_logs(d)["triage"]
+        self.assertEqual((t["wait_turns"], t["text_only_turns"], t["codemode_turns"]), (2, 1, 1))
+        self.assertEqual((t["read_blocks"], t["recheck_blocks"], t["finish_refused"], t["launch_waits"]), (1, 1, 1, 2))
+        rec = trial()
+        rec["agent_result"]["metadata"]["bench"]["counters"] = dict(ha.summarize_logs(d), tokens={"total": 1})
+        self.job("R2__beta__r1__a", rec)
+        row = [r for r in fb.table(fb.load_preset(self.preset), self.root / "tasks", self.jobs) if r["row"] == "R2" and r["task"] == "beta"][0]
+        self.assertEqual((row["read_blocks"]["median"], row["wait_turns"]["median"]), (1, 2))
+        self.assertIn("read_blocks", fb.format_table([row]))
+
+    def test_frugality_row_keys_forwarded_to_ceremony(self):
+        row = {"provider": "p", "roles": {}, "foreman_reads": {"a": 1}, "recheck_budget": 2, "launch_wait": {"b": 3}, "dedupe_notify": True}
+        self.assertEqual(ws.foreman_config(row)["ceremony"],
+                         {"foremanReads": {"a": 1}, "recheckBudget": 2, "launchWait": {"b": 3}, "dedupeNotify": True})
+
     def test_settled_cost_sums_usage_log_else_prices_tokens(self):
         line = lambda c: {"role": "foreman", "model": "p/claude-opus-5-5", "input": 1000000, "cacheRead": 0, "cacheWrite": 0, "output": 0, "cost": {"total": c}}  # noqa: E731
         d = self.logs(**{"state__usage__s1.jsonl": [line(0.5), line(0.25)]})
