@@ -90,13 +90,19 @@ The foreman records a tier (trivial, standard, heavy) before it changes files it
 | `ceremony.foremanEdits` | `scratchpad` (`readonly`, `scratchpad`, `bounded`) | project/session can only move toward `readonly` |
 | `ceremony.scratchDir` | `.workflow/scratch` | project/session can only narrow it to a subpath |
 | `ceremony.reviewBeforePr` | `true` | project/session cannot turn it off |
-| `ceremony.foremanReads.<before\|after>.<warn\|deny>` | before 6/12, after 4/8 | project/session can only lower (minimum 1) |
+| `ceremony.foremanReads.<before\|after>.<warn\|deny>` | before 4/8, after 4/8 | project/session can only lower (minimum 1) |
+| `ceremony.reviewGate` | `pass` (`pass`, `verdict`) | project/session can only move to `pass` |
+| `ceremony.orientation` | `{enabled: true, maxLines: 120}` | free per layer |
 | `ceremony.recheckBudget` | `3` | project/session can only lower (minimum 0) |
 | `ceremony.launchWait` | `block` (`block`, `detach`) | project/session can only move to `block` |
 | `ceremony.dedupeNotify` | `true` | project/session cannot turn it off |
 | `roles.foreman.codemode` | `true` | project/session can only switch it off |
 | `ceremony.required.heavy` | `[planner, builder, reviewer, finalizer]` | steps are added, never removed, by project/session |
 | `roles.planner` | tools `read, ls, grep, find, write, edit`; `timeoutMinutes` 20; display "Hannibal" (classic) | project/session can only narrow `tools` |
+
+`reviewGate: pass` means the required reviewer step needs a current PASS (a FAIL, or a revision after the last
+PASS, re-opens it); `verdict` accepts any verdict. The orientation packet is a short git status/log summary
+(at most `maxLines` lines) handed to the foreman once per session.
 
 ## Benchmark (`foreman bench`)
 
@@ -105,6 +111,9 @@ The foreman records a tier (trivial, standard, heavy) before it changes files it
 Docker; a second `run` resumes, `table` prints the counters (success, tokens, wall time, tool calls,
 approvals, guard blocks). Needs `uv tool install harbor`; Harbor telemetry is always switched off. The
 Harbor agents live in `bench/harbor_agent.py` and are not part of the installed package.
+Trace-derived columns include `ceremony_incomplete`, `read_blocks`, `recheck_blocks`, `finish_refused`,
+`launch_waits`, `rereviews` (reviewer launches while the review step was re-opened) and `orient_lines`
+(lines in the orientation packet, 0 if none).
 `--dry-run` prints the cell order, `--token-cap N` stops cleanly (exit 4) once finished cells used N
 tokens (two consecutive infrastructure-error cells stop it with exit 5), `--setup-only` installs one cell's agent and runs zero-model checks without a prompt.
 `bench/tasks/m1-recheck` re-checks the M1 standard task (ledger, explorer, builder, reviewer).
