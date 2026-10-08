@@ -261,7 +261,7 @@ class LayerRulesTest(unittest.TestCase):
                         session={"ceremony": {"foremanReads": {"after": {"warn": 0}}, "recheckBudget": 0}})
         c = res["config"]["ceremony"]
         self.assertEqual(res["errors"], [])
-        self.assertEqual(c["foremanReads"], {"before": {"warn": 6, "deny": 5}, "after": {"warn": 4, "deny": 8}})
+        self.assertEqual(c["foremanReads"], {"before": {"warn": 4, "deny": 5}, "after": {"warn": 4, "deny": 8}})
         self.assertEqual((c["recheckBudget"], c["launchWait"], c["dedupeNotify"]), (0, "block", True))
         joined = "\n".join(res["warnings"])
         self.assertIn("project ceremony.foremanReads.before.warn ignored: it would loosen", joined)

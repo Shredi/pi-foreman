@@ -7,6 +7,9 @@
    "tier": "standard"
   },
   {
+   "event": "orientation"
+  },
+  {
    "event": "llm",
    "model": "foreman-fake/foreman"
   },

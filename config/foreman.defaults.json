@@ -45,10 +45,11 @@
     "foremanEdits": "scratchpad",
     "scratchDir": ".workflow/scratch",
     "reviewBeforePr": true,
-    "foremanReads": { "before": { "warn": 6, "deny": 12 }, "after": { "warn": 4, "deny": 8 } },
+    "foremanReads": { "before": { "warn": 4, "deny": 8 }, "after": { "warn": 4, "deny": 8 } },
     "recheckBudget": 3,
     "launchWait": "block",
-    "dedupeNotify": true
+    "dedupeNotify": true,
+    "orientation": { "enabled": true, "maxLines": 120 }
   },
   "sync": { "repos": [], "runRetro": true },
   "retro": { "proposalMinReviews": 5 },

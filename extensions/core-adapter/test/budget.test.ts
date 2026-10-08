@@ -7,8 +7,8 @@ const L = readLimits({ before: { warn: 2, deny: 3 }, after: { warn: 1, deny: 2 }
 const kinds = (b: ReadBudget, ids: string[], tool = "read") => ids.map((id) => b.check(tool, id, L, 3, false).kind);
 
 test("budget: limits fall back to the defaults on malformed config", () => {
-  assert.deepEqual(readLimits(undefined), { before: { warn: 6, deny: 12 }, after: { warn: 4, deny: 8 } });
-  assert.deepEqual(readLimits({ before: { warn: "x", deny: 0 } }).before, { warn: 6, deny: 12 });
+  assert.deepEqual(readLimits(undefined), { before: { warn: 4, deny: 8 }, after: { warn: 4, deny: 8 } });
+  assert.deepEqual(readLimits({ before: { warn: "x", deny: 0 } }).before, { warn: 4, deny: 8 });
   assert.equal(recheckLimit(0), 0);
   assert.equal(recheckLimit(-1), 3);
   assert.equal(topLevelId("call_1/4"), "call_1");
@@ -20,6 +20,7 @@ test("budget: warn at warn, deny above deny, non-read tools never counted", () =
   assert.equal(b.check("edit", "e", L, 3, false).kind, "allow");
   const d = b.check("grep", "f", L, 3, false);
   assert.ok(d.kind === "deny" && d.reason.includes("[read_budget_exceeded]") && d.count === 3);
+  assert.ok(d.kind === "deny" && d.reason.includes("explorer") && d.reason.includes("/foreman budget lift"));
 });
 
 test("budget: a codemode script counts once, nested calls of it are free", () => {

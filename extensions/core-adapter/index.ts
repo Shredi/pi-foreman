@@ -20,7 +20,8 @@ import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefu
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
-import { bgWaitLocations, detailLocations, inRecorded, noticeLocations, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
+import { collectOrientation } from "./orient.ts";
+import { bgWaitLocations,detailLocations, inRecorded, noticeLocations, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
 import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
@@ -107,6 +108,8 @@ interface Session {
   stopContinued: boolean;
   /** The pi-foreman section text the last before_agent_start set (review N2: put back after a compaction). */
   foremanSection?: string;
+  /** Orientation packet, built on the first foreman prompt ("" = none). */
+  orientation?: string;
   notified: Set<string>;
   trace: TraceWriter | null;
   /** Runs this session launched (resume provenance, actions.ts). */
@@ -576,7 +579,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
     }
     if (instructionsCache === null) notifyOnce(s, ctx, "instructions", "pi-foreman: instructions/foreman.md is missing; the foreman runs without its rules.");
-    const text = [instructionsCache ?? "", tierLine(s.ceremony), finishLine(get(s.config.config, "ceremony.required"), s.ceremony.tier)].filter(Boolean).join("\n\n");
+    if (s.orientation === undefined) {
+      // Once per session, so every later turn (and a compaction re-put) carries identical bytes.
+      s.orientation = get(s.config.config, "ceremony.orientation.enabled") === false ? "" : await collectOrientation(ctx.cwd, { reads: readLimits(get(s.config.config, "ceremony.foremanReads")).before, maxLines: Math.max(1, Number(get(s.config.config, "ceremony.orientation.maxLines")) || 120) });
+      s.trace?.emit({ event: "orientation", lines: s.orientation ? s.orientation.split("\n").length : 0 });
+    }
+    const text = [instructionsCache ?? "", tierLine(s.ceremony), finishLine(get(s.config.config, "ceremony.required"), s.ceremony.tier)].concat(s.orientation).filter(Boolean).join("\n\n");
     event.systemPromptOptions.sections["pi-foreman"] = text;
     s.foremanSection = text;
   });
