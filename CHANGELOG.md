@@ -10,7 +10,7 @@
 - `ceremony.reviewPerRevision` (default true): a second reviewer launch after a PASS on unchanged work is
   refused; `[second-opinion]` in the task text allows one.
 - `ceremony.heavyThreshold` (`strict` default, `eee843d`): keyword signals become a hint (`triage_hint`).
-- Trace events `ledger_call`, `review_dup_refused`, `review_second_opinion`, `stop_hold`; bench columns
+- Trace events `ledger_call`, `review_dup_refused`, `review_second_opinion`, `triage_hint`; bench columns
   `ledger_denies`, `ledger_calls`, `dup_reviews`, `second_opinions`, `stop_hold`.
 - Orientation packet: tracked-file tree to depth 2, head of AGENTS.md or README.md, detected build/test
   commands and an explorer hint, added to the foreman's system prompt once per session
