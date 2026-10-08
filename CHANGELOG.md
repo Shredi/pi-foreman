@@ -3,7 +3,8 @@
 ## [Unreleased]
 
 ### Added
-- Orientation packet: a short git status/log summary given to the foreman once per session
+- Orientation packet: tracked-file tree to depth 2, head of AGENTS.md or README.md, detected build/test
+  commands and an explorer hint, added to the foreman's system prompt once per session
   (`ceremony.orientation {enabled, maxLines}`, trace event `orientation`).
 - Trace event `rereview` and bench columns `rereviews` and `orient_lines`.
 - Knob `ceremony.reviewGate` (`pass` default, `verdict`; tighten-only toward `pass`).

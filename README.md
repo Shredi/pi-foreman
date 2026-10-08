@@ -101,8 +101,9 @@ The foreman records a tier (trivial, standard, heavy) before it changes files it
 | `roles.planner` | tools `read, ls, grep, find, write, edit`; `timeoutMinutes` 20; display "Hannibal" (classic) | project/session can only narrow `tools` |
 
 `reviewGate: pass` means the required reviewer step needs a current PASS (a FAIL, or a revision after the last
-PASS, re-opens it); `verdict` accepts any verdict. The orientation packet is a short git status/log summary
-(at most `maxLines` lines) handed to the foreman once per session.
+PASS, re-opens it); `verdict` accepts any verdict. The orientation packet (tracked-file tree to depth 2,
+head of AGENTS.md or README.md, detected build/test commands, explorer hint; at most `maxLines` lines) is added
+to the foreman's system prompt once per session and does not count against the read budget.
 
 ## Benchmark (`foreman bench`)
 
