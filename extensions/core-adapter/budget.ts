@@ -17,7 +17,7 @@ export interface PhaseLimits {
 export type ReadLimits = Record<Phase, PhaseLimits>;
 
 export const READ_CLASS: ReadonlySet<string> = new Set(["bash", "read", "grep", "find", "ls", "codemode"]);
-export const DEFAULT_READ_LIMITS: ReadLimits = { before: { warn: 6, deny: 12 }, after: { warn: 4, deny: 8 } };
+export const DEFAULT_READ_LIMITS: ReadLimits = { before: { warn: 4, deny: 8 }, after: { warn: 4, deny: 8 } };
 export const DEFAULT_RECHECK = 3;
 const MAX_FILES = 200;
 
@@ -103,7 +103,7 @@ export class ReadBudget {
     this.denied = true;
     const lim = limits[this.phase];
     const since = this.phase === "before" ? "before the first launch" : "since the last launch";
-    const how = this.liftUsed[this.phase] ? "The explorer already lifted this once in this phase; ask the owner to run /foreman budget lift." : "Launch the explorer: a started explorer run lifts the limit.";
+    const how = this.liftUsed[this.phase] ? "The explorer already lifted this once in this phase; ask the owner to run /foreman budget lift." : "Launch the explorer: a started explorer run lifts the limit (or ask the owner to run /foreman budget lift).";
     return { kind: "deny", event: "read_budget", phase: this.phase, count, reason: `pi-foreman: [read_budget_exceeded] ${count} read calls ${since} (limit ${lim.deny}). ${how}` };
   }
 

@@ -1,0 +1,175 @@
+{
+ "foreman": {
+  "nine": [
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "explorer",
+       "task": "[[replay:quiet]] look"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Lifted."
+   }
+  ],
+  "ori": [
+   {
+    "text": "Oriented."
+   }
+  ]
+ },
+ "*": {
+  "quiet": [
+   {
+    "text": "child: nothing to report"
+   }
+  ],
+  "b-built": [
+   {
+    "text": "[[replay:rc2]] built"
+   }
+  ],
+  "r-pass": [
+   {
+    "text": "[[replay:rc3]] no findings\nOverall verdict: PASS"
+   }
+  ],
+  "r-fail": [
+   {
+    "text": "[[replay:rc4]] one finding\nOverall verdict: FAIL"
+   }
+  ],
+  "b-built2": [
+   {
+    "text": "[[replay:ed2]] built"
+   }
+  ],
+  "r-pass2": [
+   {
+    "text": "[[replay:ed3]] no findings\nOverall verdict: PASS"
+   }
+  ]
+ },
+ "explorer": {
+  "ask": [
+   {
+    "tools": [
+     {
+      "name": "contact_supervisor",
+      "arguments": {
+       "reason": "need_decision",
+       "message": "[[replay:sup]] may I go on?"
+      }
+     }
+    ]
+   },
+   {
+    "text": "explorer child result"
+   }
+  ]
+ }
+}

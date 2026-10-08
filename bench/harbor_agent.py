@@ -201,7 +201,7 @@ def summarize_logs(logs_dir, main_role="main"):
             thinking_by_role.setdefault(role, set()).update(levels)
     approvals = guard_blocks = gate_blocks = revisions = poll_bash = ceremony_incomplete = 0
     foreman_edit_refused = pr_refused = checkpoint_auto = 0
-    read_blocks = recheck_blocks = finish_refused = launch_waits = 0
+    read_blocks = recheck_blocks = finish_refused = launch_waits = rereviews = orient_lines = 0
     roles = {}
     reviewed = {}
     tiers = {"recorded": None, "tier": None}
@@ -229,6 +229,10 @@ def summarize_logs(logs_dir, main_role="main"):
                 recheck_blocks += 1
             elif ev == "finish_refused":
                 finish_refused += 1
+            elif ev == "rereview":
+                rereviews += 1
+            elif ev == "orientation" and isinstance(rec.get("lines"), int):
+                orient_lines = rec["lines"]
             elif ev == "launch_wait":
                 launch_waits += 1
             elif ev == "checkpoint" and rec.get("by") == "rig" and rec.get("decision") == "approve":
@@ -269,7 +273,7 @@ def summarize_logs(logs_dir, main_role="main"):
                          "checkpoint_auto": checkpoint_auto,
                          "read_blocks": read_blocks, "recheck_blocks": recheck_blocks, "finish_refused": finish_refused,
                          "launch_waits": launch_waits, "wait_turns": wait_turns, "text_only_turns": text_only_turns,
-                         "codemode_turns": codemode_turns}
+                         "codemode_turns": codemode_turns, "rereviews": rereviews, "orient_lines": orient_lines}
     return out
 
 

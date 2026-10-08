@@ -15,13 +15,13 @@ You are the foreman, the main session. You plan, keep the ledger, delegate to ch
 
 ### What each tier requires
 - trivial: no ledger. At most one short `explorer` launch; scratch notes only.
-- standard: ledger first, then your own short plan in `.workflow/scratch/plan-<topic>.md` (scratchpad mode allows it), then `explorer`, `builder`, `reviewer`. No checkpoint. Before you may finish you need a completed `builder` run and a `reviewer` (or `senior-reviewer`) verdict.
+- standard: ledger first, then your own short plan in `.workflow/scratch/plan-<topic>.md` (scratchpad mode allows it), then `explorer`, `builder`, `reviewer`. No checkpoint. Before you may finish you need a completed `builder` run and a `reviewer` (or `senior-reviewer`) PASS.
 - heavy: ledger, then `planner` (single launch; it writes `.workflow/scratch/plan-<topic>.md`), then `foreman_checkpoint({path})`, then builder(s), `finalizer`, `reviewer`, PR. Builders may fan out up to the configured width. `finalizer` closes the task; it is also required before you may finish.
 - `foreman_checkpoint` shows the plan to the owner, who answers revise, reject or approve. Call it only after the planner's completion notice (refused while a planner runs) and change nothing during the dialog: a plan changed before the answer stays pending. Wait for the owner; the adapter refuses a heavy `builder` launch until the current plan bytes are approved (`plan_required`, `checkpoint_pending`, `plan_changed`). Never approve for the owner; with no answer (no UI, dialog dismissed) the checkpoint stays pending, so ask the owner in your reply.
   - revise: re-plan (relaunch `planner` or edit the plan yourself), then checkpoint again. The new bytes need a new approval.
   - reject: stop and report to the owner. The finish is refused until the owner approves a plan or lowers the tier.
 - Plan mode is not part of the ceremony; the checkpoint is.
-- At standard and heavy tier a reviewer must pass before you finish; launch it before you summarise.
+- At standard and heavy tier a reviewer must pass before you finish; launch it before you summarise. A FAIL, or a builder launch or project edit after the review, leaves the reviewer step open until a re-review passes.
 - After a reviewer PASS, run at most `ceremony.recheckBudget` own checks, then finish.
 - A refused finish names the missing steps: launch them. A builder run that failed or timed out does not count. After two refusals per user prompt the finish goes through, with a visible "ceremony incomplete" notice; do not rely on that.
 

@@ -18,7 +18,7 @@
 // completed.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { verdictOf, REVIEW_ROLES } from "./rounds.ts";
+import { verdictOf, REVIEW_ROLES, type Verdict } from "./rounds.ts";
 
 export interface TrivialBound {
   files: number;
@@ -208,22 +208,88 @@ const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.
  * stop or error.
  */
 export function stepsOfRunEnd(data: unknown): Step[] {
+  const out: Step[] = [];
+  for (const { agent, verdict } of completedChildren(data)) {
+    if (agent === "planner") out.push("planner");
+    else if (agent === "builder") out.push("builder");
+    else if (agent === "finalizer") out.push("finalizer");
+    else if (REVIEW_ROLES.includes(agent) && verdict !== null) out.push("reviewer");
+  }
+  return out;
+}
+
+/** Verdicts (null = none parseable) of the completed reviewer / senior-reviewer children of a run-end event, in order. */
+export function reviewVerdictsOfRunEnd(data: unknown): (Verdict | null)[] {
+  return completedChildren(data).filter((c) => REVIEW_ROLES.includes(c.agent)).map((c) => c.verdict);
+}
+
+function completedChildren(data: unknown): { agent: string; verdict: Verdict | null }[] {
   if (!isObj(data)) return [];
   const children = Array.isArray(data.results) && data.results.length > 0 ? data.results.filter(isObj) : [data];
-  const out: Step[] = [];
+  const out: { agent: string; verdict: Verdict | null }[] = [];
   for (const c of children) {
     const agent = typeof c.agent === "string" ? c.agent : typeof data.agent === "string" ? data.agent : "";
     const completed = (c.status === undefined ? c.success === true : c.status === "completed") && c.success !== false && c.timedOut !== true && c.stopped !== true && !c.error;
     if (!completed) continue;
-    if (agent === "planner") out.push("planner");
-    else if (agent === "builder") out.push("builder");
-    else if (agent === "finalizer") out.push("finalizer");
-    else if (REVIEW_ROLES.includes(agent)) {
-      const text = [c.output, c.summary].filter((t): t is string => typeof t === "string").join("\n");
-      if (verdictOf(text) !== null) out.push("reviewer");
-    }
+    const verdict = REVIEW_ROLES.includes(agent) ? verdictOf([c.output, c.summary].filter((t): t is string => typeof t === "string").join("\n")) : null;
+    out.push({ agent, verdict });
   }
   return out;
+}
+
+// ------------------------------------------------------------------ reviewer step (ceremony.reviewGate)
+//
+// "pass" (default): the reviewer step holds only while the latest reviewer / senior-reviewer
+// verdict is PASS (APPROVE) and nothing was revised since. A FAIL/BLOCK or a review without a
+// parseable verdict clears it; a revision after any verdict (a builder launch or a foreman
+// project-file edit; not a finalizer, explorer or scratchpad write) re-opens it.
+// "verdict": any verdict counts, as before (the step counter in StepCounts).
+
+export type ReviewGateMode = "pass" | "verdict";
+export interface ReviewGate {
+  /** The latest verdict ("none" = a review ended without one), null before any review. */
+  last: Verdict | "none" | null;
+  /** A revision happened after `last`. */
+  revised: boolean;
+}
+
+export function reviewGateMode(v: unknown): ReviewGateMode {
+  return v === "verdict" ? "verdict" : "pass";
+}
+
+export function initialReviewGate(): ReviewGate {
+  return { last: null, revised: false };
+}
+
+/** Reviews ended: a single non-pass among them wins (like verdictOf). */
+export function onReviewVerdicts(g: ReviewGate, verdicts: (Verdict | null)[]): ReviewGate {
+  if (verdicts.length === 0) return g;
+  const last = verdicts.includes("fail") ? "fail" : verdicts.includes(null) ? "none" : "pass";
+  return { last, revised: false };
+}
+
+export function onRevision(g: ReviewGate): ReviewGate {
+  return g.last === null || g.revised ? g : { ...g, revised: true };
+}
+
+/** Why a new review is a re-review: the latest verdict was FAIL, or work was revised after it. */
+export function reopened(g: ReviewGate): "fail" | "revision" | null {
+  if (g.last === "fail") return "fail";
+  return g.last !== null && g.revised ? "revision" : null;
+}
+
+/** Required steps still open; in "pass" mode the reviewer step reads the gate, not the counter. */
+export function openSteps(counts: StepCounts, required: Step[], mode: ReviewGateMode, g: ReviewGate): Step[] {
+  if (mode === "verdict") return missingSteps(counts, required);
+  return required.filter((s) => (s === "reviewer" ? !(g.last === "pass" && !g.revised) : counts[s] < 1));
+}
+
+/** Refusal hint for a re-opened reviewer step ("" otherwise). */
+export function reviewHint(g: ReviewGate): string {
+  const why = reopened(g);
+  if (why === "fail") return "(re-review needed: last verdict FAIL)";
+  if (why === "revision") return g.last === "pass" ? "(re-review needed: revised after the last PASS)" : "(re-review needed: revised after the last review)";
+  return "";
 }
 
 const STEP_TEXT: Record<Step, string> = { planner: "a planner run must complete", builder: "a builder run must complete", reviewer: "a reviewer must pass", finalizer: "a finalizer run must complete" };
@@ -234,6 +300,6 @@ export function finishLine(configured: unknown, tier: string): string {
   return steps.length ? `Before you finish: ${steps.map((s) => STEP_TEXT[s]).join(", ")}.` : "";
 }
 
-export function finishRefusal(tier: string, missing: Step[]): string {
-  return `pi-foreman: finish refused: tier ${tier} requires ${missing.join(", ")}; launch them or ask the owner to lower the tier with /ceremony.`;
+export function finishRefusal(tier: string, missing: Step[], hint = ""): string {
+  return `pi-foreman: finish refused: tier ${tier} requires ${missing.join(", ")}${hint ? ` ${hint}` : ""}; launch them or ask the owner to lower the tier with /ceremony.`;
 }
