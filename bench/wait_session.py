@@ -141,7 +141,7 @@ def foreman_config(row):
     the review model (the row's review_model, else the reviewer role's model; the fake provider's
     non-allowing review model for fake rows), trace on, and the row's `project_commands` as
     safety.permissions.projectCommands. The row's `foreman_edits` becomes ceremony.foremanEdits; ceremony.requireTriage
-    stays at its default."""
+    stays at its default. The row's `user_config` object is deep-merged in last, so a preset can set any knob."""
     provider = row["provider"]
     roles = row["roles"]
     review = row.get("review_model")
@@ -164,7 +164,18 @@ def foreman_config(row):
             l2.setdefault("ceremony", {})[name] = row[key]
     if row.get("project_commands"):  # the repo's test/build commands, as an owner would set them
         l2.setdefault("safety", {})["permissions"] = {"projectCommands": list(row["project_commands"])}
+    if isinstance(row.get("user_config"), dict):
+        _deep_merge(l2, row["user_config"])
     return l2
+
+
+def _deep_merge(base, extra):
+    """Merge `extra` into `base` in place: objects merge key by key, anything else replaces."""
+    for key, value in extra.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
 
 
 def async_runs(temp_root):

@@ -540,6 +540,12 @@ class BenchTest(unittest.TestCase):
         self.assertEqual(ws.foreman_config(row)["ceremony"],
                          {"foremanReads": {"a": 1}, "recheckBudget": 2, "launchWait": {"b": 3}, "dedupeNotify": True})
 
+    def test_user_config_deep_merged_with_row_keys(self):
+        row = {"provider": "p", "roles": {}, "foreman_reads": {"a": 1},
+               "user_config": {"ceremony": {"ledgerHelper": "off", "reviewPerRevision": False, "heavyThreshold": "eee843d"}}}
+        self.assertEqual(ws.foreman_config(row)["ceremony"],
+                         {"foremanReads": {"a": 1}, "ledgerHelper": "off", "reviewPerRevision": False, "heavyThreshold": "eee843d"})
+
     def test_settled_cost_sums_usage_log_else_prices_tokens(self):
         line = lambda c: {"role": "foreman", "model": "p/claude-opus-5-5", "input": 1000000, "cacheRead": 0, "cacheWrite": 0, "output": 0, "cost": {"total": c}}  # noqa: E731
         d = self.logs(**{"state__usage__s1.jsonl": [line(0.5), line(0.25)]})
