@@ -205,16 +205,30 @@ def summarize_logs(logs_dir, main_role="main"):
     roles = {}
     reviewed = {}
     tiers = {"recorded": None, "tier": None}
+    ledger_calls = ledger_denies = dup_reviews = second_opinions = stop_hold = 0
     traces = trace_files(logs)
     for f in traces:
+        recs = []
         for line in f.read_text("utf-8", "replace").splitlines():
             try:
                 rec = json.loads(line)
             except ValueError:
                 continue
-            if not isinstance(rec, dict):
-                continue
+            if isinstance(rec, dict):
+                recs.append(rec)
+        # A trace file is one session (trace-<sessionId>.jsonl); its session_start carries role "foreman" or "child".
+        child_file = any(r.get("event") == "session_start" and r.get("role") == "child" for r in recs)
+        for rec in recs:
             ev = rec.get("event")
+            if ev == "ledger_call" and not child_file:
+                ledger_calls += 1
+                ledger_denies += rec.get("allowed") is False
+            elif ev == "review_dup_refused":
+                dup_reviews += 1
+            elif ev == "review_second_opinion":
+                second_opinions += 1
+            elif ev == "stop_hold":
+                stop_hold += 1
             if isinstance(rec.get("pollBash"), int):
                 poll_bash += rec["pollBash"]
             if ev == "ceremony_incomplete":
@@ -243,6 +257,8 @@ def summarize_logs(logs_dir, main_role="main"):
                 guard_blocks += 1
             elif ev == "role_launch":
                 roles[rec.get("role")] = roles.get(rec.get("role"), 0) + 1
+            elif child_file and ev in ("triage", "tier"):
+                pass  # tier comes from the foreman's own trace only
             elif ev == "triage" and rec.get("decision") == "recorded" and rec.get("tier"):
                 tiers["recorded"] = str(rec["tier"])
             elif ev == "tier" and rec.get("tier"):
@@ -273,7 +289,9 @@ def summarize_logs(logs_dir, main_role="main"):
                          "checkpoint_auto": checkpoint_auto,
                          "read_blocks": read_blocks, "recheck_blocks": recheck_blocks, "finish_refused": finish_refused,
                          "launch_waits": launch_waits, "wait_turns": wait_turns, "text_only_turns": text_only_turns,
-                         "codemode_turns": codemode_turns, "rereviews": rereviews, "orient_lines": orient_lines}
+                         "codemode_turns": codemode_turns, "rereviews": rereviews, "orient_lines": orient_lines,
+                         "ledger_denies": ledger_denies, "ledger_calls": ledger_calls, "dup_reviews": dup_reviews,
+                         "second_opinions": second_opinions, "stop_hold": stop_hold}
     return out
 
 

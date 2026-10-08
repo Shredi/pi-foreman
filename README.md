@@ -109,6 +109,9 @@ The foreman records a tier (trivial, standard, heavy) before it changes files it
 | `ceremony.recheckBudget` | `3` | project/session can only lower (minimum 0) |
 | `ceremony.launchWait` | `block` (`block`, `detach`) | project/session can only move to `block` |
 | `ceremony.dedupeNotify` | `true` | project/session cannot turn it off |
+| `ceremony.ledgerHelper` | `tool` (`tool`, `bash`, `off`) | project/session can only move toward `off`; `off` is the eee843d-equivalent |
+| `ceremony.reviewPerRevision` | `true` | project/session cannot turn it off; `false` (the eee843d-equivalent) only from the user or package layer |
+| `ceremony.heavyThreshold` | `strict` (`strict`, `eee843d`) | project/session can only move to `eee843d` (keyword signals escalate to heavy, as before) |
 | `roles.foreman.codemode` | `true` | project/session can only switch it off |
 | `ceremony.required.heavy` | `[planner, builder, reviewer, finalizer]` | steps are added, never removed, by project/session |
 | `roles.planner` | tools `read, ls, grep, find, write, edit`; `timeoutMinutes` 20; display "Hannibal" (classic) | project/session can only narrow `tools` |
@@ -117,6 +120,8 @@ The foreman records a tier (trivial, standard, heavy) before it changes files it
 PASS, re-opens it); `verdict` accepts any verdict. The orientation packet (tracked-file tree to depth 2,
 head of AGENTS.md or README.md, detected build/test commands, explorer hint; at most `maxLines` lines) is added
 to the foreman's system prompt once per session and does not count against the read budget.
+
+Ledger and review rules: with `ceremony.ledgerHelper: tool` the foreman manages its ledger with the tool `foreman_ledger({action, items?, text?})` instead of the shell `ledger` command (the permission system splits compound shell commands, so forms like `ledger -f F mark V` were denied). The foreman may mark V itself once a reviewer PASS stands with no builder launch or project edit since; a reviewer child can use the tool to mark V only. With `ceremony.reviewPerRevision` a second reviewer launch after a PASS on unchanged work is refused; add `[second-opinion]` to the task text for auth or safety changes, a heavy tier, or when the first reviewer could not run the tests. With `ceremony.heavyThreshold: strict`, heavy-signal keywords are only a hint and heavy is for multi-component or risky changes. To reproduce the pre-change behaviour, set `ledgerHelper: off`, `reviewPerRevision: false` and `heavyThreshold: eee843d` in the user layer (`<agent dir>/foreman.json`); `reviewPerRevision: false` is ignored from project and session layers.
 
 ## Benchmark (`foreman bench`)
 
@@ -127,7 +132,7 @@ approvals, guard blocks). Needs `uv tool install harbor`; Harbor telemetry is al
 Harbor agents live in `bench/harbor_agent.py` and are not part of the installed package.
 Trace-derived columns include `ceremony_incomplete`, `read_blocks`, `recheck_blocks`, `finish_refused`,
 `launch_waits`, `rereviews` (reviewer launches while the review step was re-opened) and `orient_lines`
-(lines in the orientation packet, 0 if none).
+(lines in the orientation packet, 0 if none), `ledger_calls` and `ledger_denies` (the foreman's own `foreman_ledger` and shell `ledger` calls, and those refused; child denies stay in `asks_denied`), `dup_reviews` (reviewer launches refused as duplicates), `second_opinions` and `stop_hold`. `tier` is read from the foreman's own trace only (its `triage` event, else its last `tier` event); a trace file whose `session_start` has role `child` is ignored for it. The preset rows have no config field, so a row runs on the shipped defaults unless the agent dir holds a `foreman.json`.
 `--dry-run` prints the cell order, `--token-cap N` stops cleanly (exit 4) once finished cells used N
 tokens (two consecutive infrastructure-error cells stop it with exit 5), `--setup-only` installs one cell's agent and runs zero-model checks without a prompt.
 `bench/tasks/m1-recheck` re-checks the M1 standard task (ledger, explorer, builder, reviewer).

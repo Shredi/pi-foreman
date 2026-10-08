@@ -468,6 +468,34 @@ class BenchTest(unittest.TestCase):
         t = ha.summarize_logs(self.logs(**{"state__trace-s1.jsonl": [{"event": "turn"}]}))["triage"]
         self.assertEqual((t["rereviews"], t["orient_lines"]), (0, 0))
 
+    def test_ledger_calls_denies_counted_foreman_only(self):
+        d = self.logs(**{"state__trace-f1.jsonl": [
+            {"event": "session_start", "role": "foreman", "tier": "standard"},
+            {"event": "ledger_call", "kind": "bash", "allowed": True}, {"event": "ledger_call", "kind": "bash", "allowed": False},
+            {"event": "ask", "decision": "deny"}],
+            "state__trace-c1.jsonl": [{"event": "session_start", "role": "child"}, {"event": "ledger_call", "kind": "bash", "allowed": False}]})
+        t = ha.summarize_logs(d)["triage"]
+        self.assertEqual((t["ledger_calls"], t["ledger_denies"]), (2, 1))
+
+    def test_dup_reviews_second_opinions_stop_hold_counted(self):
+        d = self.logs(**{"state__trace-s1.jsonl": [
+            {"event": "review_dup_refused", "agent": "reviewer"}, {"event": "review_dup_refused", "agent": "reviewer"},
+            {"event": "review_second_opinion", "agent": "senior-reviewer"}, {"event": "stop_hold", "decision": "continue"}]})
+        t = ha.summarize_logs(d)["triage"]
+        self.assertEqual((t["dup_reviews"], t["second_opinions"], t["stop_hold"]), (2, 1, 1))
+
+    def test_tier_from_foreman_trace_only(self):
+        d = self.logs(**{"state__trace-f1.jsonl": [{"event": "session_start", "role": "foreman"}, {"event": "tier", "tier": "heavy"}],
+                         "state__trace-g1.jsonl": [{"event": "session_start", "role": "child"}, {"event": "tier", "tier": "trivial"},
+                                                   {"event": "triage", "decision": "recorded", "tier": "trivial"}]})
+        self.assertEqual(ha.summarize_logs(d)["triage"]["tier"], "heavy")
+        d = self.logs(**{"state__trace-g1.jsonl": [{"event": "session_start", "role": "child"}, {"event": "tier", "tier": "trivial"}]})
+        self.assertEqual(ha.summarize_logs(d)["triage"]["tier"], "untriaged")
+
+    def test_new_columns_aggregated(self):
+        for name in ("ledger_denies", "ledger_calls", "dup_reviews", "second_opinions", "stop_hold"):
+            self.assertEqual(fb._triage_stats([{"triage": {"tier": "x", name: 3}}])[name]["median"], 3)
+
     def test_edit_and_pr_refusals_counted_and_foreman_edits_config(self):
         d = self.logs(**{"state__trace-s1.jsonl": [
             {"event": "foreman_edit_refused", "mode": "scratchpad", "kind": "write"},
