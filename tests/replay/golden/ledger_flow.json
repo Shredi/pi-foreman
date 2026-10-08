@@ -59,6 +59,9 @@
    "decision": "none"
   },
   {
+   "event": "ledger_call"
+  },
+  {
    "event": "llm",
    "model": "foreman-fake/foreman"
   },
@@ -189,6 +192,9 @@
    "toolFamily": "Bash",
    "guard": "destructive_guard",
    "decision": "none"
+  },
+  {
+   "event": "ledger_call"
   },
   {
    "event": "llm",

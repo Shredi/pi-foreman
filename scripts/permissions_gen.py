@@ -81,8 +81,24 @@ def pattern_map(rules, deny_reason, first=None):
     return m
 
 
-def render(perms, agent_dir):
+# Baseline entries that exist only for ceremony.ledgerHelper tool/bash; "off" renders without them.
+LEDGER_HELPER_TOOLS = ("foreman_ledger",)
+LEDGER_HELPER_BASH = ("ledger defer *",)
+
+
+def without_ledger_helper(baseline):
+    out = dict(baseline)
+    out["tools"] = {k: v for k, v in (baseline.get("tools") or {}).items() if k not in LEDGER_HELPER_TOOLS}
+    bash = dict(baseline.get("bash") or {})
+    bash["allow"] = [p for p in strings(bash.get("allow")) if p not in LEDGER_HELPER_BASH]
+    out["bash"] = bash
+    return out
+
+
+def render(perms, agent_dir, ledger_helper="tool"):
     baseline = load_baseline()
+    if ledger_helper == "off":
+        baseline = without_ledger_helper(baseline)
     permission = {"*": "ask"}
     permission.update(baseline.get("tools") or {})
     permission["bash"] = pattern_map(bash_rules(baseline, perms), DENY_BASH_REASON, ("*", "ask"))
@@ -109,7 +125,8 @@ def main(argv=None):
         return 2
     perms = (res["config"].get("safety") or {}).get("permissions") or {}
     agent = fc.resolve_agent_dir(args.agent_dir)
-    print(json.dumps({"config": render(perms, agent), "warnings": res["warnings"], "errors": res["errors"]}, indent=2))
+    helper = (res["config"].get("ceremony") or {}).get("ledgerHelper", "tool")
+    print(json.dumps({"config": render(perms, agent, helper), "warnings": res["warnings"], "errors": res["errors"]}, indent=2))
     return 0
 
 

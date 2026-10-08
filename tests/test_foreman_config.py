@@ -234,6 +234,18 @@ class ConfigTest(unittest.TestCase):
         self.assertNotIn("intercom", fc.resolve_role(cfg, "builder", "p1")["tools"])
         self.assertIn("intercom", fc.resolve_role(cfg, "foreman", "p1")["tools"])
 
+    def test_ledger_helper_reviewer_tool_only_in_tool_mode(self):
+        self.l2({"providers": PROV})
+        cfg = self.load()["config"]
+        self.assertEqual(cfg["ceremony"]["ledgerHelper"], "tool")
+        sub = fc.generate_subagents(cfg)["subagents"]["agentOverrides"]
+        for role in fc.CHILD_ROLES:
+            self.assertEqual("foreman_ledger" in sub[role]["tools"], role in ("reviewer", "senior-reviewer"), role)
+        self.assertIn("foreman_ledger", fc.resolve_role(cfg, "reviewer", "p1")["tools"])
+        cfg["ceremony"]["ledgerHelper"] = "off"
+        self.assertEqual(fc.generate_subagents(cfg)["subagents"]["agentOverrides"]["reviewer"]["tools"],
+                         ["read", "ls", "grep", "find", "bash"])
+
     def test_provider_codemode_override_writes_provider_tools(self):
         prov = json.loads(json.dumps(PROV))
         prov["p1"]["roles"]["builder"]["codemode"] = True
@@ -272,6 +284,19 @@ class ConfigTest(unittest.TestCase):
         self.assertTrue(self.load()["errors"])
 
 
+def render_prompt(text, values):
+    """Mirror of ledgercall.ts applyVariants (keys compared case-insensitively)."""
+    vals = {k.lower(): v for k, v in values.items()}
+    out = []
+    for ln in text.splitlines(keepends=True):
+        m = re.match(r"<!--([A-Za-z][A-Za-z0-9]*)=([A-Za-z0-9|_-]+)-->", ln)
+        if not m:
+            out.append(ln)
+        elif vals.get(m.group(1).lower()) in m.group(2).lower().split("|"):
+            out.append(ln[m.end():])
+    return "".join(out)
+
+
 class PackageFilesTest(unittest.TestCase):
     def test_package_json_private(self):
         pkg = json.loads((ROOT / "package.json").read_text())
@@ -291,9 +316,22 @@ class PackageFilesTest(unittest.TestCase):
 
     def test_foreman_instructions_neutral(self):
         text = (ROOT / "instructions" / "foreman.md").read_text().lower()
-        self.assertLessEqual(len(text.splitlines()), 64)
+        # tagged variant lines (<!--key=a|b-->, ledgercall.ts applyVariants): each rendering counts
+        for mode in ("tool", "bash", "off"):
+            for heavy in ("strict", "eee843d"):
+                for review in ("on", "off"):
+                    kept = render_prompt(text, {"ledgerhelper": mode, "heavythreshold": heavy, "reviewperrevision": review})
+                    self.assertLessEqual(len(kept.splitlines()), 64, (mode, heavy, review))
         for word in ("claude", "sonnet", "opus", "fable", "gpt", "gemini", "copilot", "openrouter"):
             self.assertNotIn(word, text)
+
+    def test_foreman_instructions_eee843d_byte_identical(self):
+        old = subprocess.run(["git", "show", "eee843d:instructions/foreman.md"], cwd=str(ROOT), capture_output=True)
+        if old.returncode != 0:
+            self.skipTest("commit eee843d not available")
+        text = (ROOT / "instructions" / "foreman.md").read_text()
+        knobs = {"ledgerHelper": "off", "heavyThreshold": "eee843d", "reviewPerRevision": "off"}
+        self.assertEqual(render_prompt(text, knobs), old.stdout.decode("utf-8"))
 
     def test_defaults_validate(self):
         res = fc.load_config(agent_dir=tempfile.gettempdir() + os.sep + "pf-no-such-agent-dir")

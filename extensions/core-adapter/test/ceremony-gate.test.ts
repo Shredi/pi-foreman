@@ -126,3 +126,17 @@ test("reviewGate verdict: any verdict counts (4bbe2c3)", () => {
   assert.deepEqual(openSteps(counts, ["reviewer"], "verdict", fail), missingSteps(counts, ["reviewer"]));
   assert.match(finishRefusal("standard", ["reviewer"], reviewHint(fail)), /requires reviewer \(re-review needed: last verdict FAIL\); launch them/);
 });
+
+test("dupReview: refuses a reviewer after an unrevised PASS unless it asks for a second opinion", async () => {
+  const { dupReview } = await import("../bound.ts");
+  const pass = { last: "pass" as const, revised: false };
+  assert.equal(dupReview(pass, ["reviewer"], { agent: "reviewer", task: "x" }), "refuse");
+  assert.equal(dupReview(pass, ["senior-reviewer"], { agent: "senior-reviewer", task: "x" }), "refuse");
+  assert.equal(dupReview(pass, ["reviewer"], { agent: "reviewer", reason: "second-opinion" }), "second-opinion");
+  assert.equal(dupReview(pass, ["reviewer"], { agent: "reviewer", task: "[second-opinion] auth change" }), "second-opinion");
+  assert.equal(dupReview({ last: "pass", revised: true }, ["reviewer"], {}), null);
+  assert.equal(dupReview({ last: "fail", revised: false }, ["reviewer"], {}), null);
+  assert.equal(dupReview({ last: null, revised: false }, ["reviewer"], {}), null);
+  assert.equal(dupReview(pass, ["builder", "reviewer"], {}), null);
+  assert.equal(dupReview(pass, ["explorer"], {}), null);
+});

@@ -16,7 +16,7 @@ import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
-import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
+import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -35,6 +35,7 @@ import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./chil
 import { GitDriftWatch, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
+import { applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_ACTIONS, LEDGER_TOOL, ledgerHelperMode, mentionsLedger, planLedgerCall, rewriteItemText } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents } from "./payload.ts";
 import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
@@ -148,6 +149,8 @@ interface Session {
   steps: StepCounts;
   /** The reviewer step under ceremony.reviewGate "pass": latest verdict and a revision since (bound.ts). */
   reviewGate: ReviewGate;
+  /** ceremony.heavyThreshold strict: heavySignals hit in the latest request, shown to the foreman ("" = none). */
+  triageHint: string;
   /** Finish refusals since the last user prompt (at most 2, then a forced pass). */
   finishRefusals: number;
   /** Foreman only: reviewer verdicts with the HEAD they covered, newest last, at most 50 (reviews.ts; the PR gate reads it). */
@@ -168,6 +171,8 @@ interface Session {
   readNotices: Map<string, string>;
   /** Child result locations from structured places only (budget.ts); a `read` of one or below one is exempt from the budget. */
   childFiles: Set<string>;
+  /** Foreman only: bash calls that run `ledger`, by tool call id until tool_execution_end (trace ledger_call). */
+  ledgerBash: Set<string>;
 }
 
 export interface AdapterDeps {
@@ -188,6 +193,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   let userPickedModel = false;
   let applyingModel = false;
   let instructionsCache: string | null | undefined;
+  let reviewerInstructionsCache: string | null | undefined;
   const bridgeIso = new BridgeIsolation();
   const review = new ForemanReview();
   const usageFooter = new UsageFooter();
@@ -269,6 +275,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchedRoles: new Map(),
       steps: emptySteps(),
       reviewGate: initialReviewGate(),
+      triageHint: "",
       finishRefusals: 0,
       reviews: [],
       reviewSync: Promise.resolve(),
@@ -279,6 +286,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       budget: new ReadBudget(),
       readNotices: new Map(),
       childFiles: new Set(),
+      ledgerBash: new Set(),
       launchBatch: new LaunchBatch(),
       dedupeTraced: new Set(),
     };
@@ -304,6 +312,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     patchShellEnv({ env: process.env, binDir: BIN_DIR, python: pyPath(s), markerDir });
     if (s.isChild && get(config.config, "safety.children.mayPush") !== true) patchChildGitEnv(process.env);
     if (!s.isChild) patchForemanGitEnv(process.env);
+    if (!s.isChild && ledgerHelperMode(get(config.config, "ceremony.ledgerHelper")) !== "off") {
+      const active = pi.getActiveTools();
+      if (!active.includes(LEDGER_TOOL)) pi.setActiveTools([...active, LEDGER_TOOL]);
+    }
     if (!s.isChild) {
       const gitLines = s.gitDrift.bind(markerDir, cwd, home);
       if (gitLines.length) ctx.ui.notify(`pi-foreman: the repository's git config or hooks changed since the last session; the next foreman git run or child launch asks.\n${gitLines.join("\n")}`, "warning");
@@ -326,7 +338,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const before = s.ceremony.tier;
     s.ceremony = next;
     if (next.tier !== before) {
-      s.trace?.emit({ event: "tier", tier: next.tier });
+      if (!s.isChild) s.trace?.emit({ event: "tier", tier: next.tier }); // D7: a tier event is the foreman's triage
       s.rounds = onTierChange(s.rounds, next.source);
     }
   }
@@ -571,9 +583,30 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const s = await ensureSession(ctx);
     s.stopContinued = false;
     review.setIntent(s.id, event.prompt ?? "");
-    const signals = promptSignals(event.prompt ?? "", get(s.config.config, "ceremony.heavySignals"));
-    if (signals.length) setCeremony(s, escalate(s.ceremony, "heavy", "auto", `heavy signal in the request: ${signals.join(", ")}`));
-    if (s.isChild) return;
+    // D7: a child never triages; only the foreman's request can escalate on a signal.
+    const signals = s.isChild ? [] : promptSignals(event.prompt ?? "", get(s.config.config, "ceremony.heavySignals"));
+    s.triageHint = "";
+    if (signals.length) {
+      if (heavyStrict(s)) {
+        // D6 strict: keyword hits are a hint for the foreman's own triage, not an escalation.
+        s.triageHint = `Signals seen: ${signals.join(", ")} — heavy only if the heavy criteria apply.`;
+        s.trace?.emit({ event: "triage_hint", signals: signals.join(", ") });
+      } else setCeremony(s, escalate(s.ceremony, "heavy", "auto", `heavy signal in the request: ${signals.join(", ")}`));
+    }
+    if (s.isChild) {
+      // ceremony.ledgerHelper "tool": reviewer roles learn to close V with foreman_ledger (instructions/reviewer.md).
+      if (!REVIEW_ROLES.includes(s.usage.line.role)) return;
+      if (reviewerInstructionsCache === undefined) {
+        try {
+          reviewerInstructionsCache = fs.readFileSync(path.join(PKG_ROOT, "instructions", "reviewer.md"), "utf8");
+        } catch {
+          reviewerInstructionsCache = null;
+        }
+      }
+      const extra = applyVariants(reviewerInstructionsCache ?? "", promptVariants(s)).trim();
+      if (extra) event.systemPromptOptions.sections["pi-foreman"] = extra;
+      return;
+    }
     if (instructionsCache === undefined) {
       try {
         instructionsCache = fs.readFileSync(path.join(PKG_ROOT, "instructions", "foreman.md"), "utf8");
@@ -587,10 +620,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.orientation = get(s.config.config, "ceremony.orientation.enabled") === false ? "" : await collectOrientation(ctx.cwd, { reads: readLimits(get(s.config.config, "ceremony.foremanReads")).before, maxLines: Math.max(1, Number(get(s.config.config, "ceremony.orientation.maxLines")) || 120) });
       s.trace?.emit({ event: "orientation", lines: s.orientation ? s.orientation.split("\n").length : 0 });
     }
-    const text = [instructionsCache ?? "", tierLine(s.ceremony), finishLine(get(s.config.config, "ceremony.required"), s.ceremony.tier)].concat(s.orientation).filter(Boolean).join("\n\n");
+    const text = [applyVariants(instructionsCache ?? "", promptVariants(s)), tierLine(s.ceremony), s.triageHint, finishLine(get(s.config.config, "ceremony.required"), s.ceremony.tier)].concat(s.orientation).filter(Boolean).join("\n\n");
     event.systemPromptOptions.sections["pi-foreman"] = text;
     s.foremanSection = text;
   });
+  /** Values for the tagged variant lines of the prompt files (ledgercall.ts applyVariants). */
+  function promptVariants(s: Session): Record<string, string> {
+    return {
+      ledgerHelper: ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper")),
+      heavyThreshold: heavyStrict(s) ? "strict" : "eee843d",
+      reviewPerRevision: get(s.config.config, "ceremony.reviewPerRevision") === false ? "off" : "on",
+    };
+  }
+  /** ceremony.heavyThreshold: anything but "eee843d" is the default strict. */
+  function heavyStrict(s: Session): boolean {
+    return get(s.config.config, "ceremony.heavyThreshold") !== "eee843d";
+  }
   // Review S3: a run a custom message starts (wake, child notice) skips before_agent_start, and
   // its later model calls rebuild the prompt from Pi's base options, which lack the section (Pi
   // records a `pi-foreman: null` patch). Event contexts cannot reach the base options, so the
@@ -627,7 +672,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s || s.isChild || !READ_CLASS.has(toolName)) return undefined;
     const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
     const file = toolName === "read" ? resolveToolPath(inp.path, ctx.cwd, os.homedir()) : null;
-    const exempt = s.supervisor.open.size > 0 || (file !== null && inRecorded(s.childFiles, normFile(file)));
+    // ceremony.ledgerHelper tool/bash: a pure-ledger shell command is not a re-check (ledgercall.ts).
+    const ledgerOnly = toolName === "bash" && ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper")) !== "off" && isLedgerOnlyCommand(inp.command);
+    const exempt = ledgerOnly || s.supervisor.open.size > 0 || (file !== null && inRecorded(s.childFiles, normFile(file)));
     const d = s.budget.check(toolName, callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt);
     if (d.kind === "warn") {
       s.readNotices.set(callId, d.text);
@@ -692,6 +739,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (event.toolName === "bash") {
       const ps = sessionFor(ctx);
       if (ps && !ps.isChild && ps.activeRuns.size > 0) ps.pollBash++;
+      if (ps && !ps.isChild && mentionsLedger((event.input as { command?: unknown }).command)) ps.ledgerBash.add(event.toolCallId);
     }
     // First of all, before the permission system and the core guards: the overlay's deny/ask rules.
     if (isOverlayTool(event.toolName)) {
@@ -794,6 +842,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (noModel) return { block: true, reason: noModel };
         const noPlan = s.isChild ? undefined : builderPlanBlock(s, ctx, input);
         if (noPlan) return { block: true, reason: noPlan };
+        // ceremony.reviewPerRevision (D5): a second review of unchanged, already passed work is refused.
+        const dup = !s.isChild && get(s.config.config, "ceremony.reviewPerRevision") !== false ? dupReview(s.reviewGate, launchRoles(s, input), input) : null;
+        if (dup) {
+          const agent = [...new Set(launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)))].join(",");
+          if (dup === "second-opinion") s.trace?.emit({ event: "review_second_opinion", agent });
+          else {
+            s.trace?.emit({ event: "review_dup_refused", agent });
+            return { block: true, reason: `pi-foreman: the last review passed and nothing changed — finish, or revise first. Ask for a second review only when warranted: put "[${SECOND_OPINION}]" in the reviewer task text.` };
+          }
+        }
         // D3/D4: builder runs after a review of built work are revision rounds: every step of a
         // tasks/chain call, and a resume of a builder run (its model stays, so never a strong
         // relaunch). Checked here, on the guarded path; a refused launch counts and records nothing.
@@ -906,6 +964,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s) return undefined;
     if (!s.isChild) {
       s.launchBatch.onAssistant(content, isLaunchArgs);
+      if (Array.isArray(content)) {
+        for (const c of content as { type?: unknown; name?: unknown; id?: unknown; arguments?: { command?: unknown } }[]) {
+          if (c && c.type === "toolCall" && c.name === "bash" && typeof c.id === "string" && mentionsLedger(c.arguments?.command)) s.ledgerBash.add(c.id);
+        }
+      }
       if (codemode) s.turn.codemode = true;
     }
     if (!appendUsage(s.usage.file, usageLine(s.usage.line, event.message))) notifyOnce(s, ctx, "usage", `pi-foreman: could not append to the usage log ${s.usage.file}; /foreman cost will be incomplete.`);
@@ -1097,6 +1160,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     bindLaunch(input, b);
   }
 
+  // ledger_call for the foreman's shell `ledger` calls. A call blocked by a permission rule never
+  // reaches tool_result, so the outcome is read here: allowed false = a permission refusal.
+  pi.on("tool_execution_end", async (event, ctx) => {
+    const s = sessionFor(ctx);
+    if (!s || s.isChild || !s.ledgerBash.delete(event.toolCallId)) return;
+    const res = event.result as { content?: { type?: string; text?: string }[] } | undefined;
+    const text = (res?.content ?? []).map((c) => (c && c.type === "text" ? c.text ?? "" : "")).join("\n");
+    s.trace?.emit({ event: "ledger_call", kind: "bash", allowed: !isPermissionDeny(event.isError, text) });
+  });
+
   pi.on("tool_result", async (event, ctx) => {
     sessionFor(ctx)?.gitDrift.after(ctx.cwd, os.homedir(), event.toolCallId);
     const owner = sessionFor(ctx);
@@ -1173,7 +1246,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (outcome.kind === "failure") notifyOnce(s, ctx, `open:${guard}`, outcome.message);
       }
       const file = resolveToolPath(changed, ctx.cwd, os.homedir());
-      if (file) {
+      if (file && !s.isChild) {
         const heavy = Number(get(s.config.config, "ceremony.heavyFileCount"));
         setCeremony(s, onFileChanged(s.ceremony, file, Number.isFinite(heavy) ? heavy : 0));
       }
@@ -1331,6 +1404,136 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return { content: [{ type: "text" as const, text: [`${note}${tierLine(s.ceremony)} ${advice}`, finishLine(get(s.config.config, "ceremony.required"), tier)].filter(Boolean).join(" ") }], details: { decision: "recorded", tier } };
       },
     } as never);
+  }
+
+  // Ledger helper (ledgercall.ts, ceremony.ledgerHelper): registered inactive; the foreman activates
+  // it at session start unless the knob is off, reviewer children get it through their tool list.
+  pi.registerTool({
+    name: LEDGER_TOOL,
+    label: "Ledger",
+    defaultActive: false,
+    executionMode: "sequential",
+    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op), note or defer (one item, text). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
+    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert: the item to rewrite; omit to append a new item." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
+    async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+      const s = await ensureSession(ctx);
+      const mode = ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper"));
+      const refuse = (text: string) => ({ content: [{ type: "text" as const, text }], details: { decision: "refused" }, isError: true });
+      const kind = typeof params.action === "string" ? params.action : "unknown";
+      if (s.isChild) {
+        // Item 14: a reviewer child closes V on the foreman's ledger; not traced as ledger_call (foreman-only).
+        if (mode !== "tool" || !REVIEW_ROLES.includes(s.usage.line.role)) return refuse(`${LEDGER_TOOL} is not available to this role.`);
+        const plan = planLedgerCall(params, { child: true, gate: s.reviewGate });
+        if ("error" in plan) return refuse(plan.error);
+        const file = childLedgerFile(s, params.path);
+        if ("error" in file) return refuse(file.error);
+        const r = await runLedger(s, plan.calls[0], file.path);
+        const st = await runLedger(s, ["status"], file.path);
+        return { content: [{ type: "text" as const, text: [r.text, st.text].filter(Boolean).join("\n") }], details: { decision: r.ok ? "done" : "failed" }, ...(r.ok ? {} : { isError: true }) };
+      }
+      if (mode === "off") return refuse(`${LEDGER_TOOL} is off (ceremony.ledgerHelper); use the shell command ledger.`);
+      const plan = planLedgerCall(params, { child: false, gate: s.reviewGate });
+      if ("error" in plan) {
+        s.trace?.emit({ event: "ledger_call", kind, allowed: false, items: Array.isArray(params.items) ? params.items.map(String).join(",").slice(0, 60) : undefined });
+        return refuse(plan.error);
+      }
+      const out: string[] = [];
+      let ok = true;
+      let traceItems = plan.items;
+      if (plan.upsert) {
+        const u = plan.upsert;
+        const file = boundLedger(s.markerDir, s.id);
+        let content: string | null = null;
+        try {
+          content = file ? fs.readFileSync(file, "utf8") : null;
+        } catch {
+          // unreadable: the core script reports it below
+        }
+        if (u.item !== null) {
+          if (!file || content === null) out.push(`${LEDGER_TOOL}: this session has no ledger of its own.`), (ok = false);
+          else {
+            const r = rewriteItemText(content, u.item, u.text);
+            if ("error" in r) out.push(r.error), (ok = false);
+            else if (!r.changed) out.push(`upsert ${u.item}: unchanged (no-op)`);
+            else {
+              const tmp = path.join(path.dirname(file), `.ledger-${process.pid}-${Date.now()}.tmp`);
+              try {
+                fs.writeFileSync(tmp, r.file, "utf8");
+                try {
+                  fs.chmodSync(tmp, fs.statSync(file).mode & 0o7777);
+                } catch {
+                  // keep the default mode
+                }
+                fs.renameSync(tmp, file);
+                out.push(`upserted ${u.item}`);
+              } catch (err) {
+                try {
+                  fs.rmSync(tmp, { force: true });
+                } catch {
+                  // best effort
+                }
+                out.push(`ledger: ${(err as Error).message}`);
+                ok = false;
+              }
+            }
+          }
+        } else {
+          const dup = content === null ? null : findItemByText(content, u.text);
+          if (dup) {
+            out.push(`upsert: item ${dup} already has this text (no-op)`);
+            traceItems = dup;
+          } else {
+            const r = await runLedger(s, ["add", u.text], null);
+            if (r.text) out.push(r.text);
+            ok = ok && r.ok;
+            const n = /^added (\d+):/.exec(r.text);
+            if (n) traceItems = n[1];
+          }
+        }
+      }
+      for (const c of plan.calls) {
+        const r = await runLedger(s, c, null);
+        if (r.text) out.push(r.text);
+        ok = ok && r.ok;
+      }
+      const st = await runLedger(s, ["status"], null);
+      if (st.text) out.push(st.text);
+      ok = ok && st.ok;
+      s.trace?.emit({ event: "ledger_call", kind, allowed: true, items: traceItems || undefined, attested: plan.attested || undefined });
+      return { content: [{ type: "text" as const, text: out.join("\n") }], details: { decision: ok ? "done" : "failed" }, ...(ok ? {} : { isError: true }) };
+    },
+  } as never);
+
+  /** One core ledger.py run, bound like the bin/ledger shim (session id + marker dir); `file` adds -f. */
+  async function runLedger(s: Session, args: string[], file: string | null): Promise<{ ok: boolean; text: string }> {
+    const py = pyPath(s);
+    if (!py) return { ok: false, text: "ledger: no usable Python (run /foreman doctor)." };
+    const env = Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string"));
+    env.CLAUDE_CODE_SESSION_ID = s.id;
+    env.TMPDIR = s.markerDir;
+    const r = await spawner(py, ["-E", "-s", path.join(PKG_ROOT, "core", "scripts", "ledger.py"), ...(file ? ["-f", file] : []), ...args], { cwd: s.cwd, env, timeoutMs: 30_000 });
+    const text = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? `ledger: ${r.error.message}` : r.timedOut ? "ledger: timed out" : "");
+    return { ok: !r.error && !r.timedOut && r.code === 0, text };
+  }
+
+  /** A reviewer child's ledger: the foreman's bound ledger, else `path` inside <workspace>/.workflow/LEDGER-*.md. */
+  function childLedgerFile(s: Session, p: unknown): { path: string } | { error: string } {
+    const bound = boundLedger(s.markerDir, s.usage.line.foremanSession);
+    if (bound) return { path: bound };
+    const how = `${LEDGER_TOOL}: the foreman's ledger is not known here; pass path: ".workflow/LEDGER-<topic>.md".`;
+    if (typeof p !== "string" || !p.trim()) return { error: how };
+    const ws = s.usage.line.workspace || s.cwd;
+    let abs: string;
+    let dir: string;
+    try {
+      abs = fs.realpathSync.native(path.resolve(ws, p));
+      dir = fs.realpathSync.native(path.join(ws, ".workflow"));
+    } catch {
+      return { error: how };
+    }
+    const same = (a: string, b: string) => (platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
+    if (!same(path.dirname(abs), dir) || !/^LEDGER-.+\.md$/i.test(path.basename(abs))) return { error: how };
+    return { path: abs };
   }
 
   // Plan checkpoint (checkpoint.ts): the owner approves the plan file; foreman only. Never approves on its own.

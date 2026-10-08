@@ -281,6 +281,32 @@ class LayerRulesTest(unittest.TestCase):
         res = self.load(l2={"ceremony": {"reviewGate": "verdict"}}, proj={"ceremony": {"reviewGate": "pass"}}, session={})
         self.assertEqual(res["config"]["ceremony"]["reviewGate"], "pass")
 
+    def test_ledger_helper_moves_only_toward_off(self):
+        res = self.load(l2={"ceremony": {"ledgerHelper": "bash"}}, proj={"ceremony": {"ledgerHelper": "tool"}}, session={})
+        self.assertEqual(res["config"]["ceremony"]["ledgerHelper"], "bash")
+        self.assertIn("project ceremony.ledgerHelper ignored: it would loosen", "\n".join(res["warnings"]))
+        res = self.load(proj={"ceremony": {"ledgerHelper": "off"}}, session={})
+        self.assertEqual(res["config"]["ceremony"]["ledgerHelper"], "off")
+
+    def test_review_per_revision_true_only_and_heavy_threshold_toward_eee843d(self):
+        res = self.load(proj={"ceremony": {"reviewPerRevision": False, "heavyThreshold": "strict"}}, session={})
+        self.assertIs(res["config"]["ceremony"]["reviewPerRevision"], True)
+        self.assertIn("project ceremony.reviewPerRevision ignored: it would loosen", "\n".join(res["warnings"]))
+        res = self.load(l2={"ceremony": {"heavyThreshold": "eee843d"}}, proj={"ceremony": {"heavyThreshold": "strict"}}, session={})
+        self.assertEqual(res["config"]["ceremony"]["heavyThreshold"], "eee843d")
+        res = self.load(proj={"ceremony": {"heavyThreshold": "eee843d"}}, session={})
+        self.assertEqual(res["config"]["ceremony"]["heavyThreshold"], "eee843d")
+
+    def test_user_layer_reaches_the_eee843d_row(self):
+        row = {"ledgerHelper": "off", "reviewPerRevision": False, "heavyThreshold": "eee843d"}
+        res = self.load(l2={"ceremony": dict(row)}, proj={}, session={})
+        for key, value in row.items():
+            self.assertEqual(res["config"]["ceremony"][key], value)
+        res = self.load(l2={"ceremony": {"reviewPerRevision": False}}, proj={"ceremony": {"reviewPerRevision": True}}, session={})
+        self.assertIs(res["config"]["ceremony"]["reviewPerRevision"], True)
+        res = self.load(l2={"ceremony": {"reviewPerRevision": True}}, proj={}, session={"ceremony": {"reviewPerRevision": False}})
+        self.assertIs(res["config"]["ceremony"]["reviewPerRevision"], True)
+
     def test_non_object_foreman_reads_dropped(self):
         strict = {"before": {"warn": 2, "deny": 3}, "after": {"warn": 4, "deny": 8}}
         for proj in ["x", None, {"before": "x"}, {"before": None}]:

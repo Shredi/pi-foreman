@@ -65,6 +65,9 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.dedupeNotify            only true is accepted
     ceremony.reviewGate              tighten only, verdict < pass (may only move to pass)
     ceremony.orientation.<enabled|maxLines>   free per layer (no tighten rule)
+    ceremony.ledgerHelper            tighten only, off < bash < tool (may only move toward off)
+    ceremony.reviewPerRevision       only true is accepted (false lifts the one-review-per-revision refusal)
+    ceremony.heavyThreshold          tighten only, eee843d < strict (may only move toward eee843d, which escalates more)
     ceremony.trivialBound.<field>    lower only, minimum 0 (a higher bound lets the foreman edit more)
     ceremony.trivialBound            not an object: ignored
     ceremony.foremanReads[.<phase>]  not an object: ignored
@@ -182,6 +185,9 @@ LAYER_TIGHTEN = [
     (("ceremony", "launchWait"), ("ordered", ("block", "detach"))),
     (("ceremony", "dedupeNotify"), "true_only"),
     (("ceremony", "reviewGate"), ("ordered", ("pass", "verdict"))),
+    (("ceremony", "ledgerHelper"), ("ordered", ("off", "bash", "tool"))),
+    (("ceremony", "reviewPerRevision"), "true_only"),
+    (("ceremony", "heavyThreshold"), ("ordered", ("eee843d", "strict"))),
     (("ceremony", "required", "*"), "union"),
     (("roles", "*", "timeoutMinutes"), "lower_only"),
     (("intercom", "allowRemote"), "false_only"),
@@ -801,6 +807,18 @@ def cap_thinking(level, ceiling):
     return level if THINKING.index(level) <= THINKING.index(ceiling) else ceiling
 
 
+# ceremony.ledgerHelper "tool": reviewer roles get foreman_ledger, which lets them only mark V.
+LEDGER_TOOL = "foreman_ledger"
+LEDGER_TOOL_ROLES = ("reviewer", "senior-reviewer")
+
+
+def with_ledger_tool(cfg, role, tools):
+    helper = (cfg.get("ceremony") or {}).get("ledgerHelper", "tool")
+    if role in LEDGER_TOOL_ROLES and helper not in ("bash", "off") and LEDGER_TOOL not in tools:
+        tools.append(LEDGER_TOOL)
+    return tools
+
+
 def resolve_role(cfg, role, provider):
     """Return {model, thinking, codemode, tools[, strong]}; raise ConfigError if unresolvable.
 
@@ -822,7 +840,7 @@ def resolve_role(cfg, role, provider):
     codemode = effective_codemode(cfg, provider, role)
     tools = list((cfg.get("roles") or {}).get(role, {}).get("tools", []))
     if role != "foreman":
-        tools = [t for t in tools if t not in CHILD_DENIED_TOOLS]
+        tools = with_ledger_tool(cfg, role, [t for t in tools if t not in CHILD_DENIED_TOOLS])
     if codemode and "codemode" not in tools:
         tools.append("codemode")
     out = {"model": model, "thinking": cap_thinking(thinking, cfg.get("maxThinking")),
@@ -860,7 +878,7 @@ def generate_subagents(cfg):
     """
     by_provider, overrides, errors = {}, {}, []
     for role in CHILD_ROLES:
-        tools = [t for t in (cfg.get("roles") or {}).get(role, {}).get("tools", []) if t not in CHILD_DENIED_TOOLS]
+        tools = with_ledger_tool(cfg, role, [t for t in (cfg.get("roles") or {}).get(role, {}).get("tools", []) if t not in CHILD_DENIED_TOOLS])
         if cfg.get("roles", {}).get(role, {}).get("codemode") and "codemode" not in tools:
             tools.append("codemode")
         overrides[role] = {"tools": tools}
