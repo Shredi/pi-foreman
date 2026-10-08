@@ -101,7 +101,9 @@ class TestReadBudget(ReplayCase):
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestRecheckBudget(ReplayCase):
     def test_refused_after_pass_reset_by_fail_and_triage_names_the_reviewer(self):
-        rig = self.rig("rb-recheck", load_fixture("read_budget"), config=budget(after=(8, 9), recheck=1))
+        cfg = budget(after=(8, 9), recheck=1)
+        cfg["ceremony"]["reviewPerRevision"] = False  # the flow needs a second reviewer after the PASS
+        rig = self.rig("rb-recheck", load_fixture("read_budget"), config=cfg)
         (rig.project / "a.txt").write_text("alpha\n", "utf-8")
         pi = rig.start()
         recs = pi.prompt("[[replay:rc1]] build it", timeout=60)

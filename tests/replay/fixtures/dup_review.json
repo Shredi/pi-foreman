@@ -1,0 +1,435 @@
+{
+ "foreman": {
+  "d1": [
+   {
+    "tools": [
+     {
+      "name": "foreman_triage",
+      "arguments": {
+       "tier": "standard",
+       "reason": "a feature"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-dd.md",
+       "content": "# Requirements Ledger: dd\n\n- [x] 1. synthetic item\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:b-d2]] build item 1"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Builder launched."
+   }
+  ],
+  "d2": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-d3]] review item 1"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Reviewer launched."
+   }
+  ],
+  "d3": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-d4]] review again"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Reviewer launched."
+   }
+  ],
+  "s1": [
+   {
+    "tools": [
+     {
+      "name": "foreman_triage",
+      "arguments": {
+       "tier": "standard",
+       "reason": "a feature"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-ds.md",
+       "content": "# Requirements Ledger: ds\n\n- [x] 1. synthetic item\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:b-s2]] build item 1"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Builder launched."
+   }
+  ],
+  "s2": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-s3]] review item 1"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Reviewer launched."
+   }
+  ],
+  "s3": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-s4]] [second-opinion] auth change"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Reviewer launched."
+   }
+  ],
+  "s4": [
+   {
+    "text": "Done."
+   }
+  ],
+  "r1": [
+   {
+    "tools": [
+     {
+      "name": "foreman_triage",
+      "arguments": {
+       "tier": "standard",
+       "reason": "a feature"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-dr.md",
+       "content": "# Requirements Ledger: dr\n\n- [x] 1. synthetic item\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:b-r2]] build item 1"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Builder launched."
+   }
+  ],
+  "r2": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-r3]] review item 1"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Reviewer launched."
+   }
+  ],
+  "r3": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:b-r4]] revise"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Revision launched."
+   }
+  ],
+  "r4": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-r5]] review the revision"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Reviewer launched."
+   }
+  ],
+  "r5": [
+   {
+    "text": "Done."
+   }
+  ],
+  "x1": [
+   {
+    "tools": [
+     {
+      "name": "foreman_triage",
+      "arguments": {
+       "tier": "standard",
+       "reason": "a feature"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-dx.md",
+       "content": "# Requirements Ledger: dx\n\n- [x] 1. synthetic item\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:b-x2]] build item 1"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Builder launched."
+   }
+  ],
+  "x2": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-x3]] review item 1"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Reviewer launched."
+   }
+  ],
+  "x3": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-x4]] review again"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Reviewer launched."
+   }
+  ],
+  "x4": [
+   {
+    "text": "Done."
+   }
+  ],
+  "h1": [
+   {
+    "text": "Looking."
+   }
+  ],
+  "c1": [
+   {
+    "tools": [
+     {
+      "name": "foreman_triage",
+      "arguments": {
+       "tier": "standard",
+       "reason": "a feature"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-dc.md",
+       "content": "# Requirements Ledger: dc\n\n- [x] 1. synthetic item\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:b-c2]] delete the old file"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Builder launched."
+   }
+  ],
+  "c2": [
+   {
+    "text": "Done."
+   }
+  ]
+ },
+ "*": {
+  "b-d2": [
+   {
+    "text": "[[replay:d2]] built"
+   }
+  ],
+  "r-d3": [
+   {
+    "text": "[[replay:d3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+   }
+  ],
+  "r-d4": [
+   {
+    "text": "[[replay:d4]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+   }
+  ],
+  "b-s2": [
+   {
+    "text": "[[replay:s2]] built"
+   }
+  ],
+  "r-s3": [
+   {
+    "text": "[[replay:s3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+   }
+  ],
+  "r-s4": [
+   {
+    "text": "[[replay:s4]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+   }
+  ],
+  "b-r2": [
+   {
+    "text": "[[replay:r2]] built"
+   }
+  ],
+  "r-r3": [
+   {
+    "text": "[[replay:r3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+   }
+  ],
+  "b-r4": [
+   {
+    "text": "[[replay:r4]] built"
+   }
+  ],
+  "r-r5": [
+   {
+    "text": "[[replay:r5]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+   }
+  ],
+  "b-x2": [
+   {
+    "text": "[[replay:x2]] built"
+   }
+  ],
+  "r-x3": [
+   {
+    "text": "[[replay:x3]] VERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL"
+   }
+  ],
+  "r-x4": [
+   {
+    "text": "[[replay:x4]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+   }
+  ],
+  "b-c2": [
+   {
+    "text": "[[replay:c2]] built"
+   }
+  ]
+ }
+}

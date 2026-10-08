@@ -16,7 +16,7 @@ import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
-import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
+import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -149,6 +149,8 @@ interface Session {
   steps: StepCounts;
   /** The reviewer step under ceremony.reviewGate "pass": latest verdict and a revision since (bound.ts). */
   reviewGate: ReviewGate;
+  /** ceremony.heavyThreshold strict: heavySignals hit in the latest request, shown to the foreman ("" = none). */
+  triageHint: string;
   /** Finish refusals since the last user prompt (at most 2, then a forced pass). */
   finishRefusals: number;
   /** Foreman only: reviewer verdicts with the HEAD they covered, newest last, at most 50 (reviews.ts; the PR gate reads it). */
@@ -273,6 +275,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchedRoles: new Map(),
       steps: emptySteps(),
       reviewGate: initialReviewGate(),
+      triageHint: "",
       finishRefusals: 0,
       reviews: [],
       reviewSync: Promise.resolve(),
@@ -335,7 +338,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const before = s.ceremony.tier;
     s.ceremony = next;
     if (next.tier !== before) {
-      s.trace?.emit({ event: "tier", tier: next.tier });
+      if (!s.isChild) s.trace?.emit({ event: "tier", tier: next.tier }); // D7: a tier event is the foreman's triage
       s.rounds = onTierChange(s.rounds, next.source);
     }
   }
@@ -580,8 +583,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const s = await ensureSession(ctx);
     s.stopContinued = false;
     review.setIntent(s.id, event.prompt ?? "");
-    const signals = promptSignals(event.prompt ?? "", get(s.config.config, "ceremony.heavySignals"));
-    if (signals.length) setCeremony(s, escalate(s.ceremony, "heavy", "auto", `heavy signal in the request: ${signals.join(", ")}`));
+    // D7: a child never triages; only the foreman's request can escalate on a signal.
+    const signals = s.isChild ? [] : promptSignals(event.prompt ?? "", get(s.config.config, "ceremony.heavySignals"));
+    s.triageHint = "";
+    if (signals.length) {
+      if (heavyStrict(s)) {
+        // D6 strict: keyword hits are a hint for the foreman's own triage, not an escalation.
+        s.triageHint = `Signals seen: ${signals.join(", ")} — heavy only if the heavy criteria apply.`;
+        s.trace?.emit({ event: "triage_hint", signals: signals.join(", ") });
+      } else setCeremony(s, escalate(s.ceremony, "heavy", "auto", `heavy signal in the request: ${signals.join(", ")}`));
+    }
     if (s.isChild) {
       // ceremony.ledgerHelper "tool": reviewer roles learn to close V with foreman_ledger (instructions/reviewer.md).
       if (!REVIEW_ROLES.includes(s.usage.line.role)) return;
@@ -609,13 +620,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.orientation = get(s.config.config, "ceremony.orientation.enabled") === false ? "" : await collectOrientation(ctx.cwd, { reads: readLimits(get(s.config.config, "ceremony.foremanReads")).before, maxLines: Math.max(1, Number(get(s.config.config, "ceremony.orientation.maxLines")) || 120) });
       s.trace?.emit({ event: "orientation", lines: s.orientation ? s.orientation.split("\n").length : 0 });
     }
-    const text = [applyVariants(instructionsCache ?? "", promptVariants(s)), tierLine(s.ceremony), finishLine(get(s.config.config, "ceremony.required"), s.ceremony.tier)].concat(s.orientation).filter(Boolean).join("\n\n");
+    const text = [applyVariants(instructionsCache ?? "", promptVariants(s)), tierLine(s.ceremony), s.triageHint, finishLine(get(s.config.config, "ceremony.required"), s.ceremony.tier)].concat(s.orientation).filter(Boolean).join("\n\n");
     event.systemPromptOptions.sections["pi-foreman"] = text;
     s.foremanSection = text;
   });
   /** Values for the tagged variant lines of the prompt files (ledgercall.ts applyVariants). */
   function promptVariants(s: Session): Record<string, string> {
-    return { ledgerHelper: ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper")) };
+    return {
+      ledgerHelper: ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper")),
+      heavyThreshold: heavyStrict(s) ? "strict" : "eee843d",
+      reviewPerRevision: get(s.config.config, "ceremony.reviewPerRevision") === false ? "off" : "on",
+    };
+  }
+  /** ceremony.heavyThreshold: anything but "eee843d" is the default strict. */
+  function heavyStrict(s: Session): boolean {
+    return get(s.config.config, "ceremony.heavyThreshold") !== "eee843d";
   }
   // Review S3: a run a custom message starts (wake, child notice) skips before_agent_start, and
   // its later model calls rebuild the prompt from Pi's base options, which lack the section (Pi
@@ -823,6 +842,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (noModel) return { block: true, reason: noModel };
         const noPlan = s.isChild ? undefined : builderPlanBlock(s, ctx, input);
         if (noPlan) return { block: true, reason: noPlan };
+        // ceremony.reviewPerRevision (D5): a second review of unchanged, already passed work is refused.
+        const dup = !s.isChild && get(s.config.config, "ceremony.reviewPerRevision") !== false ? dupReview(s.reviewGate, launchRoles(s, input), input) : null;
+        if (dup) {
+          const agent = [...new Set(launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)))].join(",");
+          if (dup === "second-opinion") s.trace?.emit({ event: "review_second_opinion", agent });
+          else {
+            s.trace?.emit({ event: "review_dup_refused", agent });
+            return { block: true, reason: `pi-foreman: the last review passed and nothing changed — finish, or revise first. Ask for a second review only when warranted: put "[${SECOND_OPINION}]" in the reviewer task text.` };
+          }
+        }
         // D3/D4: builder runs after a review of built work are revision rounds: every step of a
         // tasks/chain call, and a resume of a builder run (its model stays, so never a strong
         // relaunch). Checked here, on the guarded path; a refused launch counts and records nothing.
@@ -1217,7 +1246,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (outcome.kind === "failure") notifyOnce(s, ctx, `open:${guard}`, outcome.message);
       }
       const file = resolveToolPath(changed, ctx.cwd, os.homedir());
-      if (file) {
+      if (file && !s.isChild) {
         const heavy = Number(get(s.config.config, "ceremony.heavyFileCount"));
         setCeremony(s, onFileChanged(s.ceremony, file, Number.isFinite(heavy) ? heavy : 0));
       }

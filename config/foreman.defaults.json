@@ -51,7 +51,9 @@
     "dedupeNotify": true,
     "reviewGate": "pass",
     "orientation": { "enabled": true, "maxLines": 120 },
-    "ledgerHelper": "tool"
+    "ledgerHelper": "tool",
+    "reviewPerRevision": true,
+    "heavyThreshold": "strict"
   },
   "sync": { "repos": [], "runRetro": true },
   "retro": { "proposalMinReviews": 5 },

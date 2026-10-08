@@ -303,3 +303,18 @@ export function finishLine(configured: unknown, tier: string): string {
 export function finishRefusal(tier: string, missing: Step[], hint = ""): string {
   return `pi-foreman: finish refused: tier ${tier} requires ${missing.join(", ")}${hint ? ` ${hint}` : ""}; launch them or ask the owner to lower the tier with /ceremony.`;
 }
+
+// ------------------------------------------------------------------ one review per revision (ceremony.reviewPerRevision)
+
+/** Marker in the task text that asks for a second review of unchanged work (pi-subagents has no `reason` parameter). */
+export const SECOND_OPINION = "second-opinion";
+
+/**
+ * A reviewer launch while the last review passed and nothing was revised since: "refuse", or
+ * "second-opinion" when the launch asks for one (`reason: "second-opinion"` or the marker
+ * `[second-opinion]` in its text). null = no duplicate (no reviewer, FAIL, revised, no review yet).
+ */
+export function dupReview(g: ReviewGate, roles: string[], input: Record<string, unknown>): "refuse" | "second-opinion" | null {
+  if (!(g.last === "pass" && !g.revised) || !roles.some((r) => REVIEW_ROLES.includes(r)) || roles.includes("builder")) return null; // a builder in the same launch is a revision
+  return input.reason === SECOND_OPINION || JSON.stringify(input).includes(`[${SECOND_OPINION}]`) ? "second-opinion" : "refuse";
+}
