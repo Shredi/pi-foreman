@@ -67,7 +67,7 @@ def pi_cli():
     env = os.environ.get("FOREMAN_PI_CLI")
     cli = Path(env) if env else Path(npm_root_global()) / "@earendil-works" / "pi-coding-agent" / "dist" / "bundle" / "cli.js"
     if not cli.is_file():
-        raise RuntimeError("Pi CLI not found at %s (npm install -g @earendil-works/pi-coding-agent@1.0.4 or set FOREMAN_PI_CLI)" % cli)
+        raise RuntimeError("Pi CLI not found at %s (npm install -g @earendil-works/pi-coding-agent@1.1.0 or set FOREMAN_PI_CLI)" % cli)
     return cli
 
 
