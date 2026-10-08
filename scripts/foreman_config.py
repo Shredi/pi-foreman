@@ -64,6 +64,7 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.launchWait              tighten only, detach < block (may only move to block)
     ceremony.dedupeNotify            only true is accepted
     ceremony.reviewGate              tighten only, verdict < pass (may only move to pass)
+    ceremony.orientation.<enabled|maxLines>   free per layer (no tighten rule)
     ceremony.trivialBound.<field>    lower only, minimum 0 (a higher bound lets the foreman edit more)
     ceremony.trivialBound            not an object: ignored
     ceremony.foremanReads[.<phase>]  not an object: ignored

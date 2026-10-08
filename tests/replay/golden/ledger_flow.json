@@ -7,6 +7,9 @@
    "tier": "standard"
   },
   {
+   "event": "orientation"
+  },
+  {
    "event": "llm",
    "model": "foreman-fake/foreman"
   },
@@ -163,6 +166,9 @@
    "role": "foreman",
    "model": "foreman-fake/foreman",
    "tier": "standard"
+  },
+  {
+   "event": "orientation"
   },
   {
    "event": "llm",
