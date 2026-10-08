@@ -234,6 +234,18 @@ class ConfigTest(unittest.TestCase):
         self.assertNotIn("intercom", fc.resolve_role(cfg, "builder", "p1")["tools"])
         self.assertIn("intercom", fc.resolve_role(cfg, "foreman", "p1")["tools"])
 
+    def test_ledger_helper_reviewer_tool_only_in_tool_mode(self):
+        self.l2({"providers": PROV})
+        cfg = self.load()["config"]
+        self.assertEqual(cfg["ceremony"]["ledgerHelper"], "tool")
+        sub = fc.generate_subagents(cfg)["subagents"]["agentOverrides"]
+        for role in fc.CHILD_ROLES:
+            self.assertEqual("foreman_ledger" in sub[role]["tools"], role in ("reviewer", "senior-reviewer"), role)
+        self.assertIn("foreman_ledger", fc.resolve_role(cfg, "reviewer", "p1")["tools"])
+        cfg["ceremony"]["ledgerHelper"] = "off"
+        self.assertEqual(fc.generate_subagents(cfg)["subagents"]["agentOverrides"]["reviewer"]["tools"],
+                         ["read", "ls", "grep", "find", "bash"])
+
     def test_provider_codemode_override_writes_provider_tools(self):
         prov = json.loads(json.dumps(PROV))
         prov["p1"]["roles"]["builder"]["codemode"] = True
@@ -291,7 +303,11 @@ class PackageFilesTest(unittest.TestCase):
 
     def test_foreman_instructions_neutral(self):
         text = (ROOT / "instructions" / "foreman.md").read_text().lower()
-        self.assertLessEqual(len(text.splitlines()), 64)
+        # tagged variant lines (<!--key=a|b-->, ledgercall.ts applyVariants): each rendering counts
+        for mode in ("tool", "bash", "off"):
+            kept = [ln for ln in text.splitlines()
+                    if not (m := re.match(r"<!--ledgerhelper=([a-z|]+)-->", ln)) or mode in m.group(1).split("|")]
+            self.assertLessEqual(len(kept), 64, mode)
         for word in ("claude", "sonnet", "opus", "fable", "gpt", "gemini", "copilot", "openrouter"):
             self.assertNotIn(word, text)
 

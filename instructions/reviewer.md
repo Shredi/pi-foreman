@@ -1,0 +1,1 @@
+<!--ledgerHelper=tool-->- Ledger item V: when your own check passes and the foreman asked you to close V, call `foreman_ledger({action: "mark", items: ["V"]})`. It marks V on the foreman's ledger as the fresh verifier; it can do nothing else. If it says the ledger is not known, pass `path: ".workflow/LEDGER-<topic>.md"`.

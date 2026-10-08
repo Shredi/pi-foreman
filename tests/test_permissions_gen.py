@@ -40,6 +40,15 @@ class GeneratorTest(unittest.TestCase):
         self.assertEqual(p["bash"]["Remove-Item * -R*"], "ask")
         self.assertEqual(p["bash"]["rd /s*"], "ask")
 
+    def test_ledger_helper_entries_only_unless_off(self):
+        p = self.render()["permission"]
+        self.assertEqual(p["foreman_ledger"], "allow")
+        self.assertEqual(p["bash"]["ledger defer *"], "allow")
+        off = pg.render({}, self.agent, "off")["permission"]
+        self.assertNotIn("foreman_ledger", off)
+        self.assertNotIn("ledger defer *", off["bash"])
+        self.assertEqual(off["bash"]["ledger note *"], "allow")
+
     def test_order_is_catchall_allow_ask_deny(self):
         keys = list(self.render({"allow": ["make *"], "ask": ["make deploy*"], "deny": ["make nuke*"]})["permission"]["bash"])
         self.assertEqual(keys[0], "*")

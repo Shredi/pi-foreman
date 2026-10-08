@@ -281,6 +281,13 @@ class LayerRulesTest(unittest.TestCase):
         res = self.load(l2={"ceremony": {"reviewGate": "verdict"}}, proj={"ceremony": {"reviewGate": "pass"}}, session={})
         self.assertEqual(res["config"]["ceremony"]["reviewGate"], "pass")
 
+    def test_ledger_helper_moves_only_toward_off(self):
+        res = self.load(l2={"ceremony": {"ledgerHelper": "bash"}}, proj={"ceremony": {"ledgerHelper": "tool"}}, session={})
+        self.assertEqual(res["config"]["ceremony"]["ledgerHelper"], "bash")
+        self.assertIn("project ceremony.ledgerHelper ignored: it would loosen", "\n".join(res["warnings"]))
+        res = self.load(proj={"ceremony": {"ledgerHelper": "off"}}, session={})
+        self.assertEqual(res["config"]["ceremony"]["ledgerHelper"], "off")
+
     def test_non_object_foreman_reads_dropped(self):
         strict = {"before": {"warn": 2, "deny": 3}, "after": {"warn": 4, "deny": 8}}
         for proj in ["x", None, {"before": "x"}, {"before": None}]:

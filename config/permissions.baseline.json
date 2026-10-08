@@ -15,6 +15,7 @@
     "foreman_copy": "allow",
     "foreman_triage": "allow",
     "foreman_checkpoint": "allow",
+    "foreman_ledger": "allow",
     "foreman_wait": "allow",
     "bg_wait": "allow",
     "contact_supervisor": "allow",
@@ -70,7 +71,8 @@
       "ledger status *",
       "ledger mark *",
       "ledger add *",
-      "ledger note *"
+      "ledger note *",
+      "ledger defer *"
     ],
     "ask": [
       "find * -exec*",

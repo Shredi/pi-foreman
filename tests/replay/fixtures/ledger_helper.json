@@ -1,0 +1,688 @@
+{
+ "foreman": {
+  "a1": [
+   {
+    "tools": [
+     {
+      "name": "foreman_triage",
+      "arguments": {
+       "tier": "standard",
+       "reason": "a feature"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-la.md",
+       "content": "# Requirements Ledger: la\n\n- [ ] 1. a\n- [ ] 2. b\n- [ ] 3. c\n- [ ] 4. d\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:b-a2]] build"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Builder launched."
+   },
+   {
+    "text": "Waiting."
+   }
+  ],
+  "a2": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-a3]] review"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Reviewer launched."
+   },
+   {
+    "text": "Waiting."
+   }
+  ],
+  "a3": [
+   {
+    "tools": [
+     {
+      "name": "foreman_ledger",
+      "arguments": {
+       "action": "mark",
+       "items": [
+        1
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "foreman_ledger",
+      "arguments": {
+       "action": "mark",
+       "items": [
+        2
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "foreman_ledger",
+      "arguments": {
+       "action": "mark",
+       "items": [
+        3
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "foreman_ledger",
+      "arguments": {
+       "action": "mark",
+       "items": [
+        4
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Done."
+   }
+  ],
+  "b1": [
+   {
+    "tools": [
+     {
+      "name": "foreman_triage",
+      "arguments": {
+       "tier": "standard",
+       "reason": "a feature"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-lb.md",
+       "content": "# Requirements Ledger: lb\n\n- [ ] 1. a\n- [ ] 2. b\n- [ ] 3. c\n- [ ] 4. d\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:b-b2]] build"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Builder launched."
+   },
+   {
+    "text": "Waiting."
+   }
+  ],
+  "b2": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-b3]] review"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Reviewer launched."
+   },
+   {
+    "text": "Waiting."
+   }
+  ],
+  "b3": [
+   {
+    "tools": [
+     {
+      "name": "bash",
+      "arguments": {
+       "command": "cd . && for i in 1 2 3; do ledger mark $i; done; ledger status"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "bash",
+      "arguments": {
+       "command": "ledger mark 4"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "read",
+      "arguments": {
+       "path": "a.txt"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Done."
+   }
+  ],
+  "c1": [
+   {
+    "tools": [
+     {
+      "name": "foreman_triage",
+      "arguments": {
+       "tier": "standard",
+       "reason": "a feature"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-lc.md",
+       "content": "# Requirements Ledger: lc\n\n- [x] 1. a\n- [ ] V. fresh-eyes verification passed\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:b-c2]] build"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Builder launched."
+   },
+   {
+    "text": "Waiting."
+   }
+  ],
+  "c2": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-c3]] review"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Reviewer launched."
+   },
+   {
+    "text": "Waiting."
+   }
+  ],
+  "c3": [
+   {
+    "tools": [
+     {
+      "name": "foreman_ledger",
+      "arguments": {
+       "action": "mark",
+       "items": [
+        "V"
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "text": "Done."
+   }
+  ],
+  "d1": [
+   {
+    "tools": [
+     {
+      "name": "foreman_triage",
+      "arguments": {
+       "tier": "standard",
+       "reason": "a feature"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-ld.md",
+       "content": "# Requirements Ledger: ld\n\n- [x] 1. a\n- [ ] V. fresh-eyes verification passed\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "foreman_ledger",
+      "arguments": {
+       "action": "mark",
+       "items": [
+        "V"
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:b-d2]] build"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Builder launched."
+   },
+   {
+    "text": "Waiting."
+   }
+  ],
+  "d2": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-d3]] review"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Reviewer launched."
+   },
+   {
+    "text": "Waiting."
+   }
+  ],
+  "d3": [
+   {
+    "tools": [
+     {
+      "name": "foreman_ledger",
+      "arguments": {
+       "action": "mark",
+       "items": [
+        "V"
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "text": "Done."
+   },
+   {
+    "text": "Still done."
+   },
+   {
+    "text": "Done again."
+   },
+   {
+    "text": "Really done."
+   }
+  ],
+  "f1": [
+   {
+    "tools": [
+     {
+      "name": "foreman_triage",
+      "arguments": {
+       "tier": "standard",
+       "reason": "a feature"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-lf.md",
+       "content": "# Requirements Ledger: lf\n\n- [ ] 1. a\n- [ ] 2. b\n- [ ] 3. c\n- [ ] 4. d\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:b-f2]] build"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Builder launched."
+   },
+   {
+    "text": "Waiting."
+   }
+  ],
+  "f2": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-f3]] review"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Reviewer launched."
+   },
+   {
+    "text": "Waiting."
+   }
+  ],
+  "f3": [
+   {
+    "tools": [
+     {
+      "name": "foreman_ledger",
+      "arguments": {
+       "action": "status"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "bash",
+      "arguments": {
+       "command": "ledger mark 1"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "bash",
+      "arguments": {
+       "command": "ledger mark 2"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Done."
+   }
+  ],
+  "g1": [
+   {
+    "tools": [
+     {
+      "name": "foreman_triage",
+      "arguments": {
+       "tier": "standard",
+       "reason": "a feature"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-lg.md",
+       "content": "# Requirements Ledger: lg\n\n- [ ] 1. a\n- [ ] V. fresh-eyes verification passed\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "builder",
+       "task": "[[replay:b-g2]] build"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Builder launched."
+   },
+   {
+    "text": "Waiting."
+   }
+  ],
+  "g2": [
+   {
+    "tools": [
+     {
+      "name": "subagent",
+      "arguments": {
+       "agent": "reviewer",
+       "task": "[[replay:r-g3]] review"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Reviewer launched."
+   },
+   {
+    "text": "Waiting."
+   }
+  ],
+  "g3": [
+   {
+    "text": "Done."
+   }
+  ],
+  "h1": [
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-lh.md",
+       "content": "# Requirements Ledger: lh\n\n- [ ] 1. a\n- [ ] 2. b\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "bash",
+      "arguments": {
+       "command": "cd . && ledger -f .workflow/LEDGER-lh.md mark 1"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "bash",
+      "arguments": {
+       "command": "ledger mark 2"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Done."
+   }
+  ]
+ },
+ "*": {
+  "b-a2": [
+   {
+    "text": "[[replay:a2]] built"
+   }
+  ],
+  "b-b2": [
+   {
+    "text": "[[replay:b2]] built"
+   }
+  ],
+  "b-c2": [
+   {
+    "text": "[[replay:c2]] built"
+   }
+  ],
+  "b-d2": [
+   {
+    "text": "[[replay:d2]] built"
+   }
+  ],
+  "b-f2": [
+   {
+    "text": "[[replay:f2]] built"
+   }
+  ],
+  "b-g2": [
+   {
+    "text": "[[replay:g2]] built"
+   }
+  ],
+  "r-a3": [
+   {
+    "text": "[[replay:a3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+   }
+  ],
+  "r-b3": [
+   {
+    "text": "[[replay:b3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+   }
+  ],
+  "r-c3": [
+   {
+    "text": "[[replay:c3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+   }
+  ],
+  "r-f3": [
+   {
+    "text": "[[replay:f3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+   }
+  ],
+  "r-d3": [
+   {
+    "text": "[[replay:d3]] VERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL"
+   }
+  ],
+  "r-g3": [
+   {
+    "tools": [
+     {
+      "name": "foreman_ledger",
+      "arguments": {
+       "action": "mark",
+       "items": [
+        1
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "foreman_ledger",
+      "arguments": {
+       "action": "mark",
+       "items": [
+        "V"
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "text": "[[replay:g3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+   }
+  ]
+ }
+}

@@ -21,7 +21,7 @@ export interface MergedConfig {
 const CONFIG_TIMEOUT_MS = 10_000;
 
 const BUILTIN_DEFAULTS: Json = {
-  ceremony: { default: "standard", heavySignals: [], heavyFileCount: 8, foremanEdits: "scratchpad", scratchDir: ".workflow/scratch", reviewBeforePr: true, foremanReads: { before: { warn: 4, deny: 8 }, after: { warn: 4, deny: 8 } }, recheckBudget: 3, launchWait: "block", dedupeNotify: true, reviewGate: "pass", orientation: { enabled: true, maxLines: 120 } },
+  ceremony: { default: "standard", heavySignals: [], heavyFileCount: 8, foremanEdits: "scratchpad", scratchDir: ".workflow/scratch", reviewBeforePr: true, foremanReads: { before: { warn: 4, deny: 8 }, after: { warn: 4, deny: 8 } }, recheckBudget: 3, launchWait: "block", dedupeNotify: true, reviewGate: "pass", orientation: { enabled: true, maxLines: 120 }, ledgerHelper: "tool" },
   safety: { requiredChildExtensions: [] },
   python: { path: null },
 };
