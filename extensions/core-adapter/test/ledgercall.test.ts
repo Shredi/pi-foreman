@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyVariants, isLedgerOnlyCommand, isPermissionDeny, ledgerHelperMode, planLedgerCall, V_ATTESTED_NOTE } from "../ledgercall.ts";
+import { applyVariants, findItemByText, rewriteItemText, isLedgerOnlyCommand, isPermissionDeny, ledgerHelperMode, planLedgerCall, V_ATTESTED_NOTE } from "../ledgercall.ts";
 
 const ACCEPT = [
   "ledger status",
@@ -97,4 +97,19 @@ test("prompt variants: tagged lines filtered by value, untagged text unchanged",
   assert.equal(applyVariants(text, { ledgerHelper: "tool" }), "a\nnew\nb\n");
   assert.equal(applyVariants(text, {}), "a\nb\n");
   assert.equal(applyVariants("plain\r\ntext", { ledgerHelper: "tool" }), "plain\r\ntext");
+});
+
+test("ledgercall: upsert plan and line rewrite keep state, EOL and skip fences", () => {
+  const gate = { last: null, revised: false };
+  assert.deepEqual(planLedgerCall({ action: "upsert", item: "v", text: "t" }, { child: false, gate }), { calls: [], items: "V", attested: false, upsert: { item: "V", text: "t" } });
+  assert.deepEqual(planLedgerCall({ action: "upsert", text: "t" }, { child: false, gate }), { calls: [], items: "", attested: false, upsert: { item: null, text: "t" } });
+  assert.ok("error" in planLedgerCall({ action: "upsert", item: 1 }, { child: false, gate }));
+  assert.ok("error" in planLedgerCall({ action: "upsert", text: "t" }, { child: true, gate }));
+  const f = "# T\r\n- [x] 1. a — done\r\n- [~] deferred: r — 2. b\r\n```\r\n- [ ] 3. fenced\r\n```\r\n- [ ] V. check\r\n";
+  assert.deepEqual(rewriteItemText(f, "1", "a2"), { file: f.replace("a — done", "a2"), changed: true });
+  assert.deepEqual(rewriteItemText(f, "2", "b2"), { file: f.replace("— 2. b", "— 2. b2"), changed: true });
+  assert.deepEqual(rewriteItemText(f, "V", "check"), { file: f, changed: false });
+  assert.ok("error" in rewriteItemText(f, "3", "x"));
+  assert.equal(findItemByText(f, "b"), "2");
+  assert.equal(findItemByText(f, "fenced"), null);
 });

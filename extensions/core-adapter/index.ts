@@ -35,7 +35,7 @@ import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./chil
 import { GitDriftWatch, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
-import { applyVariants, isLedgerOnlyCommand, isPermissionDeny, LEDGER_ACTIONS, LEDGER_TOOL, ledgerHelperMode, mentionsLedger, planLedgerCall } from "./ledgercall.ts";
+import { applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_ACTIONS, LEDGER_TOOL, ledgerHelperMode, mentionsLedger, planLedgerCall, rewriteItemText } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents } from "./payload.ts";
 import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
@@ -1413,8 +1413,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     label: "Ledger",
     defaultActive: false,
     executionMode: "sequential",
-    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text), note or defer (one item, text). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
-    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, text: { type: "string", description: "add: the item text; note: the note; defer: the reason; mark: an optional note." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
+    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op), note or defer (one item, text). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
+    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert: the item to rewrite; omit to append a new item." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);
       const mode = ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper"));
@@ -1439,6 +1439,58 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       const out: string[] = [];
       let ok = true;
+      let traceItems = plan.items;
+      if (plan.upsert) {
+        const u = plan.upsert;
+        const file = boundLedger(s.markerDir, s.id);
+        let content: string | null = null;
+        try {
+          content = file ? fs.readFileSync(file, "utf8") : null;
+        } catch {
+          // unreadable: the core script reports it below
+        }
+        if (u.item !== null) {
+          if (!file || content === null) out.push(`${LEDGER_TOOL}: this session has no ledger of its own.`), (ok = false);
+          else {
+            const r = rewriteItemText(content, u.item, u.text);
+            if ("error" in r) out.push(r.error), (ok = false);
+            else if (!r.changed) out.push(`upsert ${u.item}: unchanged (no-op)`);
+            else {
+              const tmp = path.join(path.dirname(file), `.ledger-${process.pid}-${Date.now()}.tmp`);
+              try {
+                fs.writeFileSync(tmp, r.file, "utf8");
+                try {
+                  fs.chmodSync(tmp, fs.statSync(file).mode & 0o7777);
+                } catch {
+                  // keep the default mode
+                }
+                fs.renameSync(tmp, file);
+                out.push(`upserted ${u.item}`);
+              } catch (err) {
+                try {
+                  fs.rmSync(tmp, { force: true });
+                } catch {
+                  // best effort
+                }
+                out.push(`ledger: ${(err as Error).message}`);
+                ok = false;
+              }
+            }
+          }
+        } else {
+          const dup = content === null ? null : findItemByText(content, u.text);
+          if (dup) {
+            out.push(`upsert: item ${dup} already has this text (no-op)`);
+            traceItems = dup;
+          } else {
+            const r = await runLedger(s, ["add", u.text], null);
+            if (r.text) out.push(r.text);
+            ok = ok && r.ok;
+            const n = /^added (\d+):/.exec(r.text);
+            if (n) traceItems = n[1];
+          }
+        }
+      }
       for (const c of plan.calls) {
         const r = await runLedger(s, c, null);
         if (r.text) out.push(r.text);
@@ -1447,7 +1499,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const st = await runLedger(s, ["status"], null);
       if (st.text) out.push(st.text);
       ok = ok && st.ok;
-      s.trace?.emit({ event: "ledger_call", kind, allowed: true, items: plan.items || undefined, attested: plan.attested || undefined });
+      s.trace?.emit({ event: "ledger_call", kind, allowed: true, items: traceItems || undefined, attested: plan.attested || undefined });
       return { content: [{ type: "text" as const, text: out.join("\n") }], details: { decision: ok ? "done" : "failed" }, ...(ok ? {} : { isError: true }) };
     },
   } as never);

@@ -103,6 +103,22 @@ class TestLedgerHelper(ReplayCase):
         self.assertIn("- [x] V. fresh-eyes verification passed\n", text)
         self.assertEqual(events(rig, sid, "ledger_call"), [], "child calls are not foreman ledger calls")
 
+    def test_upsert_appends_rewrites_keeps_state_and_is_idempotent(self):
+        rig = self.rig("lh-i", load_fixture("ledger_helper"))
+        pi = rig.start()
+        sid = pi.session_id()
+        res = tool_results(pi.prompt("[[replay:i1]] go", timeout=60), "foreman_ledger")
+        pi.close()
+        self.assertEqual([e for _, e, _ in res], [False, False, False, False, False, True], res)
+        self.assertIn("added 2: - [ ] 2. b", res[0][2])
+        self.assertIn("- [ ] 2. b2", res[1][2])
+        self.assertIn("(no-op)", res[4][2])
+        self.assertIn("item 9 not found", res[5][2])
+        text = self.ledger(rig, "li")
+        self.assertIn("- [x] 2. b3\n- [ ] V.", text)
+        self.assertNotIn("b2", text)
+        self.assertEqual([(r["kind"], r["allowed"], r.get("items")) for r in events(rig, sid, "ledger_call")][:3], [("upsert", True, "2"), ("upsert", True, "2"), ("mark", True, "2")])
+
 
 if __name__ == "__main__":
     unittest.main()

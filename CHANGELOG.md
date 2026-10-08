@@ -5,6 +5,8 @@
 ### Added
 - `ceremony.ledgerHelper` (`tool` default, `bash`, `off`) and the foreman's `foreman_ledger` tool; the foreman
   closes V itself after a reviewer PASS with no revision since (harness-attested), reviewer children mark V only.
+- `foreman_ledger` action `upsert` (`item?`, `text`): replaces an item's text keeping its state, or appends a new item;
+  identical text is a no-op.
 - `ceremony.reviewPerRevision` (default true): a second reviewer launch after a PASS on unchanged work is
   refused; `[second-opinion]` in the task text allows one.
 - `ceremony.heavyThreshold` (`strict` default, `eee843d`): keyword signals become a hint (`triage_hint`).

@@ -11,7 +11,7 @@
 
 export const LEDGER_TOOL = "foreman_ledger";
 export type LedgerHelper = "tool" | "bash" | "off";
-export const LEDGER_ACTIONS = ["status", "mark", "add", "note", "defer"] as const;
+export const LEDGER_ACTIONS = ["status", "mark", "add", "note", "defer", "upsert"] as const;
 export type LedgerAction = (typeof LEDGER_ACTIONS)[number];
 export const V_REFUSAL = "V closes after a reviewer PASS with no revision since";
 export const V_ATTESTED_NOTE = "closed by the foreman after a reviewer PASS with no revision since (harness-attested)";
@@ -135,7 +135,7 @@ export interface GateView {
   revised: boolean;
 }
 
-export type LedgerPlan = { error: string } | { calls: string[][]; items: string; attested: boolean };
+export type LedgerPlan = { error: string } | { calls: string[][]; items: string; attested: boolean; upsert?: { item: string | null; text: string } };
 
 function itemId(v: unknown): string | null {
   if (typeof v === "number" && Number.isInteger(v) && v > 0) return String(v);
@@ -171,6 +171,13 @@ export function planLedgerCall(params: Record<string, unknown>, opts: { child: b
     case "add":
       if (!text) return { error: `${LEDGER_TOOL}: add needs text.` };
       return { calls: [["add", text]], items: "", attested: false };
+    case "upsert": {
+      if (!text) return { error: `${LEDGER_TOOL}: upsert needs text.` };
+      if (params.item === undefined || params.item === null) return { calls: [], items: "", attested: false, upsert: { item: null, text } };
+      const id = itemId(params.item);
+      if (!id) return { error: `${LEDGER_TOOL}: item is an item number or "V".` };
+      return { calls: [], items: id, attested: false, upsert: { item: id, text } };
+    }
     case "note":
     case "defer": {
       const id = one();
@@ -189,6 +196,48 @@ export function planLedgerCall(params: Record<string, unknown>, opts: { child: b
     }
   }
   return { error: `${LEDGER_TOOL}: unknown action.` };
+}
+
+// ------------------------------------------------------------------ upsert (line rewrite)
+//
+// Same line format and fence handling as core/scripts/ledger.py (ITEM_RE, _fence_mask); the file's
+// line endings are kept because lines are split with their EOL.
+
+const ITEM_LINE = /^(\s*[-*] \[.\]\s+(?:deferred:.*? — )?(\d+|V)\.)(?:\s+|$)(.*)$/;
+
+function itemLines(file: string): { lines: string[]; hits: { i: number; m: RegExpExecArray }[] } {
+  const lines = file.split(/(?<=\n)/);
+  const hits: { i: number; m: RegExpExecArray }[] = [];
+  let fenced = false;
+  lines.forEach((line, i) => {
+    if (line.trimStart().startsWith("```")) {
+      fenced = !fenced;
+      return;
+    }
+    if (fenced) return;
+    const m = ITEM_LINE.exec(line.replace(/\r?\n$/, ""));
+    if (m) hits.push({ i, m });
+  });
+  return { lines, hits };
+}
+
+/** The number of a non-V item whose text is exactly `text`, else null. */
+export function findItemByText(file: string, text: string): string | null {
+  const h = itemLines(file).hits.find(({ m }) => m[2] !== "V" && m[3].trimEnd() === text);
+  return h ? h.m[2] : null;
+}
+
+/** Replace the text after `N. ` of item `id` ("V" or digits), keeping the state marker. */
+export function rewriteItemText(file: string, id: string, text: string): { error: string } | { file: string; changed: boolean } {
+  const { lines, hits } = itemLines(file);
+  const mine = hits.filter(({ m }) => m[2] === id);
+  if (mine.length === 0) return { error: `${LEDGER_TOOL}: item ${id} not found in the ledger.` };
+  if (mine.length > 1) return { error: `${LEDGER_TOOL}: item ${id} is ambiguous in the ledger.` };
+  const { i, m } = mine[0];
+  if (m[3].trimEnd() === text) return { file, changed: false };
+  const eol = /\r?\n$/.exec(lines[i])?.[0] ?? "";
+  lines[i] = `${m[1]} ${text}${eol}`;
+  return { file: lines.join(""), changed: true };
 }
 
 // ------------------------------------------------------------------ prompt variants

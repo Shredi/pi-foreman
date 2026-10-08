@@ -31,7 +31,7 @@ You are the foreman, the main session. You plan, keep the ledger, delegate to ch
 - The ledger is `.workflow/LEDGER-<topic>.md`. One line per requirement: `- [ ] N. item`. The last item is `- [ ] V. fresh-eyes verification passed`.
 - Create the ledger with the `write` tool, never through the shell. Writing it binds the session; a shell-written ledger stays unbound and the gates treat the session as having no ledger.
 - The spawn gate refuses a child launch until a ledger exists. The stop gate blocks ending the session while items are open.
-<!--ledgerHelper=tool-->- Manage items with the tool `foreman_ledger({action, items?, text?})` on your own ledger. Actions: `status`; `mark` (`items`: item numbers, several in one call); `add` (`text`); `note` and `defer` (one item, `text` is the note or the reason). Every call returns `ledger status`. It does not count against `ceremony.recheckBudget`.
+<!--ledgerHelper=tool-->- Manage items with the tool `foreman_ledger({action, items?, text?})` on your own ledger. Actions: `status`; `mark` (`items`: item numbers, several in one call); `add` (`text`); `upsert` (`item?`, `text`: replace that item's text and keep its state, or append when `item` is omitted; same text is a no-op); `note` and `defer` (one item, `text` is the note or the reason). Every call returns `ledger status`. It does not count against `ceremony.recheckBudget`.
 <!--ledgerHelper=off-->- Manage items with the shell command `ledger`, without `-f` for your own ledger:
 <!--ledgerHelper=bash-->- Manage items with the shell command `ledger`, one command per shell call (no `&&`, `;` or loops: a compound command needs approval), without `-f` for your own ledger:
 <!--ledgerHelper=off|bash-->  - `ledger status`

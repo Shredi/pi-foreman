@@ -595,6 +595,94 @@
    {
     "text": "Done."
    }
+  ],
+  "i1": [
+   {
+    "tools": [
+     {
+      "name": "write",
+      "arguments": {
+       "path": ".workflow/LEDGER-li.md",
+       "content": "# Requirements Ledger: li\n\n- [ ] 1. a\n- [ ] V. fresh-eyes verification passed\n"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "foreman_ledger",
+      "arguments": {
+       "action": "upsert",
+       "text": "b"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "foreman_ledger",
+      "arguments": {
+       "action": "upsert",
+       "item": 2,
+       "text": "b2"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "foreman_ledger",
+      "arguments": {
+       "action": "mark",
+       "items": [
+        2
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "foreman_ledger",
+      "arguments": {
+       "action": "upsert",
+       "item": 2,
+       "text": "b3"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "foreman_ledger",
+      "arguments": {
+       "action": "upsert",
+       "item": 2,
+       "text": "b3"
+      }
+     }
+    ]
+   },
+   {
+    "tools": [
+     {
+      "name": "foreman_ledger",
+      "arguments": {
+       "action": "upsert",
+       "item": 9,
+       "text": "x"
+      }
+     }
+    ]
+   },
+   {
+    "text": "Done."
+   }
   ]
  },
  "*": {
