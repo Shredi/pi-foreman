@@ -459,6 +459,15 @@ class BenchTest(unittest.TestCase):
         t = ha.summarize_logs(d)["triage"]
         self.assertEqual((t["pollBash"], t["ceremony_incomplete"]), (5, 2))
 
+    def test_rereviews_and_orient_lines_from_trace(self):
+        d = self.logs(**{"state__trace-s1.jsonl": [
+            {"event": "rereview", "role": "reviewer", "after": "fail"}, {"event": "rereview", "role": "senior-reviewer", "after": "revision"},
+            {"event": "orientation", "lines": 42}]})
+        t = ha.summarize_logs(d)["triage"]
+        self.assertEqual((t["rereviews"], t["orient_lines"]), (2, 42))
+        t = ha.summarize_logs(self.logs(**{"state__trace-s1.jsonl": [{"event": "turn"}]}))["triage"]
+        self.assertEqual((t["rereviews"], t["orient_lines"]), (0, 0))
+
     def test_edit_and_pr_refusals_counted_and_foreman_edits_config(self):
         d = self.logs(**{"state__trace-s1.jsonl": [
             {"event": "foreman_edit_refused", "mode": "scratchpad", "kind": "write"},
