@@ -272,6 +272,15 @@ class LayerRulesTest(unittest.TestCase):
         res = self.load(l2={"ceremony": {"launchWait": "detach"}}, proj={"ceremony": {"launchWait": "block"}}, session={})
         self.assertEqual(res["config"]["ceremony"]["launchWait"], "block")
 
+    def test_review_gate_tighten_only(self):
+        res = self.load(proj={"ceremony": {"reviewGate": "verdict"}}, session={})
+        self.assertEqual(res["config"]["ceremony"]["reviewGate"], "pass")
+        self.assertIn("project ceremony.reviewGate ignored: it would loosen", "\n".join(res["warnings"]))
+        res = self.load(l2={"ceremony": {"reviewGate": "verdict"}}, proj={}, session={})
+        self.assertEqual(res["config"]["ceremony"]["reviewGate"], "verdict")
+        res = self.load(l2={"ceremony": {"reviewGate": "verdict"}}, proj={"ceremony": {"reviewGate": "pass"}}, session={})
+        self.assertEqual(res["config"]["ceremony"]["reviewGate"], "pass")
+
     def test_non_object_foreman_reads_dropped(self):
         strict = {"before": {"warn": 2, "deny": 3}, "after": {"warn": 4, "deny": 8}}
         for proj in ["x", None, {"before": "x"}, {"before": None}]:

@@ -16,7 +16,7 @@ import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
-import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, missingSteps, overBound, pendingChange, readBound, requiredSteps, stepsOfRunEnd } from "./bound.ts";
+import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -143,6 +143,8 @@ interface Session {
   launchedRoles: Map<string, string[]>;
   /** Required steps completed in this session (ceremony.required). */
   steps: StepCounts;
+  /** The reviewer step under ceremony.reviewGate "pass": latest verdict and a revision since (bound.ts). */
+  reviewGate: ReviewGate;
   /** Finish refusals since the last user prompt (at most 2, then a forced pass). */
   finishRefusals: number;
   /** Foreman only: reviewer verdicts with the HEAD they covered, newest last, at most 50 (reviews.ts; the PR gate reads it). */
@@ -263,6 +265,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       pendingChanges: new Map(),
       launchedRoles: new Map(),
       steps: emptySteps(),
+      reviewGate: initialReviewGate(),
       finishRefusals: 0,
       reviews: [],
       reviewSync: Promise.resolve(),
@@ -644,7 +647,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.supervisor.onRunEnd(data);
         endActive(s.activeRuns, data);
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
-        if (typeof runId === "string" && s.launchedRoles.has(runId)) for (const step of stepsOfRunEnd(data)) s.steps[step]++;
+        if (typeof runId === "string" && s.launchedRoles.has(runId)) {
+          for (const step of stepsOfRunEnd(data)) s.steps[step]++;
+          s.reviewGate = onReviewVerdicts(s.reviewGate, reviewVerdictsOfRunEnd(data));
+        }
         if (!s.isChild && typeof runId === "string" && s.launchedRoles.has(runId)) {
           // plan_written: plan-*.md files a planner run added or changed (snapshot taken at its launch).
           const snap = s.planSnaps.byRun.get(runId);
@@ -1094,7 +1100,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     owner?.readNotices.delete(event.toolCallId);
     const withNote = () => (readNote ? { content: [{ type: "text" as const, text: readNote }, ...event.content] } : undefined);
     // Only a project-file change invalidates a PASS; ledger, notes and scratch writes do not.
-    if (owner && !owner.isChild && !event.isError && owner.budget.postPass && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) resetRecheck(owner, "edit");
+    // It is also a revision that re-opens the reviewer step (ceremony.reviewGate).
+    if (owner && !owner.isChild && !event.isError && (owner.budget.postPass || (owner.reviewGate.last !== null && !owner.reviewGate.revised)) && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
+      if (owner.budget.postPass) resetRecheck(owner, "edit");
+      owner.reviewGate = onRevision(owner.reviewGate);
+    }
     if (owner && !owner.isChild && !event.isError && event.toolName === "bg_wait") recordChild(owner, bgWaitLocations(event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n"), knownRun(owner)));
     if (owner && pending) {
       owner.pendingChanges.delete(event.toolCallId);
@@ -1125,7 +1135,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const roles = s.launchedRoles.get(runId) ?? subagentAgents(event.input as Record<string, unknown>);
             const eff = s.budget.onLaunch(roles, actionOf(event.input as Record<string, unknown>) === null);
             if (eff.lift) s.trace?.emit({ event: "read_budget", phase: eff.lift.phase, count: eff.lift.count, action: "lift", by: "explorer" });
-            if (roles.includes("builder")) resetRecheck(s, "builder");
+            if (roles.includes("builder")) {
+              resetRecheck(s, "builder");
+              s.reviewGate = onRevision(s.reviewGate);
+            }
+            const after = reopened(s.reviewGate);
+            if (after) for (const role of roles.filter((r) => REVIEW_ROLES.includes(r))) s.trace?.emit({ event: "rereview", role, after });
           }
         }
       }
@@ -1221,7 +1236,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    */
   function ceremonyFinishGate<E>(s: Session, ctx: ExtensionContext, entries: E[]) {
     if (s.isChild || !isTriaged(s.ceremony) || s.activeRuns.size > 0) return undefined;
-    const missing: string[] = missingSteps(s.steps, requiredSteps(get(s.config.config, "ceremony.required"), s.ceremony.tier));
+    const gateMode = reviewGateMode(get(s.config.config, "ceremony.reviewGate"));
+    const missing: string[] = openSteps(s.steps, requiredSteps(get(s.config.config, "ceremony.required"), s.ceremony.tier), gateMode, s.reviewGate);
     // A rejected plan blocks the heavy finish until a new approval or the user lowers the tier (/ceremony).
     const rejected = s.ceremony.tier === "heavy" && s.plan?.status === "rejected";
     if (rejected) missing.push("plan");
@@ -1234,7 +1250,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.finishRefusals++;
     s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(",") });
     return {
-      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[]) + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
+      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? reviewHint(s.reviewGate) : "") + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
       continue: true,
     };
   }

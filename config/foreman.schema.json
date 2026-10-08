@@ -128,7 +128,7 @@
         "required": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Steps a session at this tier completes before the foreman may finish: planner (a planner run that completed), builder (a builder run that completed), reviewer (a reviewer or senior-reviewer verdict PASS or FAIL), finalizer (a finalizer run that completed). A project or session can only add steps.",
+          "description": "Steps a session at this tier completes before the foreman may finish: planner (a planner run that completed), builder (a builder run that completed), reviewer (see reviewGate), finalizer (a finalizer run that completed). A project or session can only add steps.",
           "properties": {
             "standard": { "type": "array", "items": { "type": "string", "enum": ["planner", "builder", "reviewer", "finalizer"] } },
             "heavy": { "type": "array", "items": { "type": "string", "enum": ["planner", "builder", "reviewer", "finalizer"] } }
@@ -148,7 +148,8 @@
         },
         "recheckBudget": { "type": "integer", "minimum": 0, "description": "Read-class calls the foreman may make after a reviewer PASS before it is told to finish. A project or session can only lower it." },
         "launchWait": { "type": "string", "enum": ["detach", "block"], "description": "block = a launch's tool result waits for the child to end; detach = it returns at once. A project or session can only move to block." },
-        "dedupeNotify": { "type": "boolean", "description": "Replace a subagent-notify message whose result was already delivered with a one-line stub. A project or session can only set true." }
+        "dedupeNotify": { "type": "boolean", "description": "Replace a subagent-notify message whose result was already delivered with a one-line stub. A project or session can only set true." },
+        "reviewGate": { "type": "string", "enum": ["pass", "verdict"], "description": "When the required reviewer step holds. pass = the latest reviewer or senior-reviewer verdict is PASS (APPROVE) and no builder launch or foreman project-file edit came after it; a FAIL (BLOCK), a review without a verdict or such a revision re-opens it. verdict = any verdict, PASS or FAIL. A project or session can only move to pass." }
       }
     },
     "sync": {
