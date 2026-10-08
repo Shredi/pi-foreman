@@ -48,7 +48,8 @@
     "foremanReads": { "before": { "warn": 6, "deny": 12 }, "after": { "warn": 4, "deny": 8 } },
     "recheckBudget": 3,
     "launchWait": "block",
-    "dedupeNotify": true
+    "dedupeNotify": true,
+    "reviewGate": "pass"
   },
   "sync": { "repos": [], "runRetro": true },
   "retro": { "proposalMinReviews": 5 },

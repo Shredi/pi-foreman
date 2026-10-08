@@ -1,0 +1,67 @@
+{
+ "foreman": {
+  "a1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-ga.md", "content": "# Requirements Ledger: ga\n\n- [x] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-a2]] build item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "a2": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-a3]] review item 1"}}]}, {"text": "Reviewer launched."}],
+  "a3": [
+   {"text": "Done."},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-a4]] review again"}}]},
+   {"text": "Re-review launched."}
+  ],
+  "a4": [{"text": "Reviewed; done."}],
+
+  "f1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-gf.md", "content": "# Requirements Ledger: gf\n\n- [x] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-f2]] build item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "f2": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-f3]] review item 1"}}]}, {"text": "Reviewer launched."}],
+  "f3": [{"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-f4]] fix the findings"}}]}, {"text": "Revision launched."}],
+  "f4": [
+   {"text": "Done."},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-f5]] review the revision"}}]},
+   {"text": "Re-review launched."}
+  ],
+  "f5": [{"text": "Reviewed; done."}],
+
+  "p1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-gp.md", "content": "# Requirements Ledger: gp\n\n- [x] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-p2]] build item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "p2": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-p3]] review item 1"}}]}, {"text": "Reviewer launched."}],
+  "p3": [
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/notes.md", "content": "reviewed\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "finalizer", "task": "[[replay:z-p4]] close item 1"}}]},
+   {"text": "Finalizer launched."}
+  ],
+  "p4": [{"text": "Finalized; done."}],
+  "p5": [{"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-p6]] one more change"}}]}, {"text": "Builder launched."}],
+  "p6": [
+   {"text": "Done."},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-p7]] review the change"}}]},
+   {"text": "Re-review launched."}
+  ],
+  "p7": [{"text": "Done."}, {"text": "Still done."}]
+ },
+ "*": {
+  "b-a2": [{"text": "[[replay:a2]] built"}],
+  "r-a3": [{"text": "[[replay:a3]] VERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL"}],
+  "r-a4": [{"text": "[[replay:a4]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"}],
+  "b-f2": [{"text": "[[replay:f2]] built"}],
+  "r-f3": [{"text": "[[replay:f3]] VERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL"}],
+  "b-f4": [{"text": "[[replay:f4]] fixed"}],
+  "r-f5": [{"text": "[[replay:f5]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"}],
+  "b-p2": [{"text": "[[replay:p2]] built"}],
+  "r-p3": [{"text": "[[replay:p3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"}],
+  "z-p4": [{"text": "[[replay:p4]] finalized"}],
+  "b-p6": [{"text": "[[replay:p6]] changed"}],
+  "r-p7": [{"text": "[[replay:p7]] VERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL"}]
+ }
+}
