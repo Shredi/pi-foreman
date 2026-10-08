@@ -8,6 +8,7 @@
 | Evidence date | 2026-10-03, Pi `@earendil-works/pi-coding-agent` 1.0.0, Node 22, hands-on runs in throwaway directories |
 | Evidence format | "hands-on 2026-10-03, Pi 1.0.0, `<package>@<version>`: result". Tests that did not run are marked "not tested". |
 | Pin update | 2026-10-07: pin bumped to Pi 1.0.4; unit, installer and replay suites re-run. pi-subagents stays 0.75.0 because 0.76.1 breaks four replay scenarios (idle-parent completion notice, tracked separately). Pi 1.0.4 keeps MCP tools when a tool allowlist names no `mcp__` entry: they are not declared to the model but codemode scripts and tool_search can reach them, so an explorer child with codemode can call MCP tools; PS `"*": "ask"` remains the only gate (a child's ask defers to the parent; headless → denied). Known gap, tracked separately. |
+| Pin update | 2026-10-08: pin bumped to Pi 1.1.0 (range 1.1.x); typecheck, unit, installer and replay suites re-run on 1.1.0 (replay 92 run, 0 fail), no fixture changed. pi-subagents 0.75.0, pi-permission-system 39.0.2 and pi-intercom 0.16.1 held; their peer ranges accept 1.1.0. Bench pin pi-claude-bridge 0.9.2 (forwards Pi's custom prompt sections, which carry the foreman rules; 0.9.1 dropped them). Pi 1.1 OSC 7501 program status: Herdr 0.9.3 does not answer the query and pi-permission-system's prompt (`ui.custom`) is not reported as blocked, so the Herdr state feed below stays as is. |
 | Latency run | https://github.com/Shredi/pi-foreman/actions/runs/37120750064 |
 | Upstream core | Python core from `Shredi/fable5-opus5-orchestrator` (MIT), a fork of `Rylaa/fable5-opus5-orchestrator` (now `Rylaa/fable5-opus5.5-orchestrator`), credited in `NOTICE` |
 
@@ -27,7 +28,7 @@
 
 | Layer | Form | Pins | Owns |
 |---|---|---|---|
-| L1 pi-foreman (public) | npm Pi package `pi-foreman`: `extensions/`, `agents/`, `skills/`, `core/` (vendored), `scripts/` (own Python), `config/` (defaults + schema), `setup.mjs` | Pi 1.0.x, its third-party packages (§13), core tag | Mechanisms, neutral roles, default policy |
+| L1 pi-foreman (public) | npm Pi package `pi-foreman`: `extensions/`, `agents/`, `skills/`, `core/` (vendored), `scripts/` (own Python), `config/` (defaults + schema), `setup.mjs` | Pi 1.1.x, its third-party packages (§13), core tag | Mechanisms, neutral roles, default policy |
 | L2 private overlay | A user's own Pi package plus `foreman.json` in the Pi agent dir | `pi-foreman@x.y.z` exactly | Model maps, extra roles, MCP servers, repository list, personal preferences |
 | L3 organisation overlay | Organisation-owned Pi package declaring `pi.foreman.config` in its `package.json` | `pi-foreman@x.y.z` exactly | Provider gateways (via `registerProvider`), internal tools and skills, default policy for its users |
 
@@ -489,7 +490,7 @@ Results return through pi-subagents' async notifications. The foreman waits, bou
 
 | Step | Behaviour |
 |---|---|
-| 1. Check | Node and Pi versions. Pi must match the pinned range (1.0.x). |
+| 1. Check | Node and Pi versions. Pi must match the pinned range (1.1.x). |
 | 2. Python | Same resolution as §7. If no Python ≥ 3.9 is found, the installer stops with OS-specific instructions. |
 | 3. Packages | `pi install npm:<pkg>@<exact>` for pi-foreman and each pinned package from `packages.lock.json`. Pi and pi-permission-system are pinned in lockstep, because a PS major tracks Pi majors. `--project` uses `-l` and notes that project packages load only after trust; headless runs need `--approve`. |
 | 4. Settings merge | User `settings.json`: add or update only the entries pi-foreman manages, and write the generated `subagents` block (§3). Never remove or reorder user keys. Back up to `settings.json.bak-<timestamp>` before the first change. |
@@ -516,7 +517,7 @@ Results return through pi-subagents' async notifications. The foreman waits, bou
 
 | Capability | Choice | Version tested | Evidence summary |
 |---|---|---|---|
-| Runtime | adopt Pi | `@earendil-works/pi-coding-agent` 1.0.4 | All runs; signatures read from installed types |
+| Runtime | adopt Pi | `@earendil-works/pi-coding-agent` 1.1.0 | All runs; signatures read from installed types |
 | Subagents | **adopt** `pi-subagents`, every role detached | 0.75.0 | Hands-on: package roles discovered and launched; provider switch changes child model; full-id thinking override; codemode in child; required child extension blocks; strict tool allowlist. FAIL: foreground ask forwarding. |
 | Subagents (fallback) | fallback `@gotgenes/pi-subagents`, used only if the primary blocks | 22.0.0 | Hands-on: forwards foreground asks. Role and provider features not tested. |
 | Permission map | **adopt** `@gotgenes/pi-permission-system` | 39.0.2 | Hands-on: ask rules, detached-child forwarding, authorizer chain resolves |
@@ -524,10 +525,10 @@ Results return through pi-subagents' async notifications. The foreman waits, bou
 | Model review (rejected) | `@mzwing/pi-permission-auto-review` / `pi-verdict` | 0.7.0 / 0.14.0 | Auto-review needs Node ≥ 24 and PS 33–36. pi-verdict runs its own gate beside PS (double prompts). Load test only. |
 | Destructive/secret guard | **own** (vendored core) | core 0.23.0 @ fork SHA `8376da1` (latency run: `1be4960`) | CI latency run on three OSes |
 | Ledger, gates, git guards, permission overlay, bridge isolation, precondition ops, ceremony, `/retro`, trace, installer | **own** | n/a | Design |
-| Claude provider (private) | adopt `pi-claude-bridge` in L2 | 0.9.1 | Hands-on: child turns, thinking level reached |
-| Copilot, Codex subscription | Pi built-in providers | Pi 1.0.4 | Source read: Copilot device-flow `/login github-copilot` or `COPILOT_GITHUB_TOKEN`. Not run. |
+| Claude provider (private) | adopt `pi-claude-bridge` in L2 | 0.9.2 (hands-on on 0.9.1) | Hands-on: child turns, thinking level reached |
+| Copilot, Codex subscription | Pi built-in providers | Pi 1.0.4, pin 1.1.0 | Source read: Copilot device-flow `/login github-copilot` or `COPILOT_GITHUB_TOKEN`. Not run. |
 | MCP | **adopt Pi built-in (pending hands-on in Phase 2)**; `pi-mcp-adapter` 5.0.0 opt-in overlay only | Pi 1.0.4 (docs, types) | The adapter replaces the built-in, rewrites user settings, and hides per-tool gating behind one proxy tool. Not run. |
-| Codemode | adopt Pi built-in | Pi 1.0.4 | Hands-on in child |
+| Codemode | adopt Pi built-in | Pi 1.0.4, pin 1.1.0 | Hands-on in child |
 | Background tasks | **none**; `pi-background-tasks` avoided | 2.6.9 (source read) | 2.6.9 impersonates the Claude Code client on the `anthropic` provider, and its Pi peer range is `^0.81–0.84` |
 | Claude Code child runner | **not used**, not even in an overlay | pi-subagents 0.75.0 (docs) | Async only, no Pi guards inside. The Claude bridge is the only Claude path. |
 | Intercom | **adopt `pi-intercom` 0.16.1** behind the guard in §5 layer 7 | 0.16.1 (source read) | Inbound messages are data; open-pane and cross-machine sends are off by default |

@@ -217,13 +217,13 @@ test("--remove keeps a hand-edited block", () => {
   assert.deepEqual(readSettings(env).subagents.agentOverrides.builder.tools, ["read"]);
 });
 
-test("Pi outside 1.0.x is refused and nothing is written", () => {
+test("Pi outside 1.1.x is refused and nothing is written", () => {
   const env = fresh();
   seed(env);
   const before = snapshot(env.base);
-  const r = run(env, [], { FAKE_PI_VERSION: "1.1.0" });
+  const r = run(env, [], { FAKE_PI_VERSION: "1.0.4" });
   assert.notEqual(r.code, 0);
-  assert.match(r.out, /outside the supported range 1\.0\.x/);
+  assert.match(r.out, /outside the supported range 1\.1\.x/);
   assert.deepEqual(snapshot(env.base), before);
   assert.deepEqual(installs(env), []);
 });

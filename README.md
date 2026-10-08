@@ -6,7 +6,7 @@ A generic orchestration harness for the [pi coding agent](https://pi.dev). It is
 
 ## Install
 
-Needs Node 22+, Pi 1.0.x on `PATH` and Python 3.9+. From a checkout of this repo:
+Needs Node 22+, Pi 1.1.x on `PATH` and Python 3.9+. From a checkout of this repo:
 
 ```sh
 node setup.mjs --dry-run   # show the planned diff and `pi install` commands, write nothing
@@ -43,6 +43,19 @@ absent; an existing file that sets `brokerCommand`, `brokerArgs` or `crossMachin
 
 Then re-run `node setup.mjs` to regenerate the block, and run `/foreman doctor` in Pi. Tests:
 `node --test "tests/installer/*.test.mjs"`.
+
+### Updating Pi
+
+The pinned Pi version lives in `packages.lock.json` (currently 1.1.0, range 1.1.x); `setup.mjs` refuses a Pi
+outside the range. After pulling a pin change, update the global Pi and re-run the installer:
+
+```sh
+npm i -g @earendil-works/pi-coding-agent@1.1.0
+node setup.mjs --dry-run && node setup.mjs
+```
+
+If you use the Claude bridge, also install pi-claude-bridge 0.9.2 or later (`pi install npm:pi-claude-bridge@0.9.2`):
+earlier versions drop Pi's custom prompt sections, which carry the foreman's rules.
 
 ### Claude bridge: log in once
 

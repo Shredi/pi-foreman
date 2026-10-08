@@ -51,12 +51,12 @@ from harbor.models.agent.context import AgentContext
 
 REPO = Path(__file__).resolve().parents[1]
 PI_PACKAGE = "@earendil-works/pi-coding-agent"
-PI_VERSION = "1.0.4"
+PI_VERSION = "1.1.0"
 SUBAGENTS = "pi-subagents@0.75.0"
-BRIDGE = "pi-claude-bridge@0.9.1"
-# The bridge asks for ^0.3.284; pinned to the version the stage-1 model check used. npm picks
+BRIDGE = "pi-claude-bridge@0.9.2"
+# Bridge 0.9.2 asks for ^0.3.293 (0.9.1 and the stage-1 model check used 0.3.288). npm picks
 # the platform package (claude-agent-sdk-linux-<arch>) from the SDK's optional dependencies.
-AGENT_SDK = "@anthropic-ai/claude-agent-sdk@0.3.288"
+AGENT_SDK = "@anthropic-ai/claude-agent-sdk@0.3.293"
 FAKE_PROVIDERS = ("foreman-fake", "foreman-fake-b")
 PERMISSION_SYSTEM = "@gotgenes/pi-permission-system"
 ROLES = ["foreman", "planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]

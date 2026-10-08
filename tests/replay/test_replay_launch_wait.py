@@ -5,7 +5,7 @@ A held launch returns the child's outcome in the launch turn (no bg_wait turn); 
 request, wait.maxSeconds and an abort end the hold with their own text; two launches of one
 message run at the same time; the notice that repeats a delivered result reaches the model as a
 stub, and every earlier request is a byte-identical prefix of the later ones; launchWait
-"detach" keeps the old behaviour; an explorer codemode script still runs on Pi 1.0.4 (frozen
+"detach" keeps the old behaviour; an explorer codemode script still runs on Pi 1.1.0 (frozen
 built-ins). Same prerequisites and skips as test_replay.py.
 """
 from __future__ import annotations

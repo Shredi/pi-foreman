@@ -1,7 +1,7 @@
 """Golden replay scenarios on the fake provider (design section 10, ledger items 43, 60, 69).
 
 Run:  python -m unittest discover -s tests/replay -v
-Needs node, Pi 1.0.4 (global npm install) and pi-subagents 0.75.0 (installed on first use
+Needs node, Pi 1.1.0 (global npm install) and pi-subagents 0.75.0 (installed on first use
 into FOREMAN_REPLAY_CACHE, or FOREMAN_PI_SUBAGENTS). Without Pi the tests skip, unless
 FOREMAN_REPLAY_REQUIRED=1 (CI), where a missing Pi is a failure.
 FOREMAN_REPLAY_UPDATE_GOLDEN=1 rewrites the golden files from the current run.
