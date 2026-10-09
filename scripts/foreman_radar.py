@@ -203,7 +203,8 @@ def build(data, now):
         sid = d["sessionId"]
         key = d.get("intercomId") if isinstance(d.get("intercomId"), str) and d.get("intercomId") else "sid:" + sid
         n = nodes.get(key) or new_node("session", key, "")
-        n["name"] = (d.get("label") if isinstance(d.get("label"), str) and d.get("label") else "") or n["name"] or sid[:8]
+        cwd_name = base_name(d["cwd"]) + " " if isinstance(d.get("cwd"), str) and d.get("cwd") else ""
+        n["name"] = (d.get("label") if isinstance(d.get("label"), str) and d.get("label") else "") or n["name"] or cwd_name + sid[:8]
         n["glyph"], n["state"] = live_glyph(d, now)
         times = [parse_ts(d.get("lastEventAt")), data["trace"].get(sid)]
         times = [t for t in times if t is not None]
