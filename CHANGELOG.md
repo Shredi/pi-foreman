@@ -122,7 +122,8 @@
 - Deterministic auto-review allows (sed-read, timeout-wrapper, tmp-scratch) checked only the forwarded unit, so a
   chained command (`... && rm -rf src`) passed without a model; the full command must now pass as well.
 - Child test restore refuses git global options (`-C`, `--git-dir`, `--work-tree`, `-c`, ...), `GIT_*` variables,
-  wrappers and other repositories; the no-rulings rule in foreman.md renders with the ladder off too (`factRulings`).
+  wrappers and other repositories, and is allowed only as one plain `git restore`/`git checkout --` command
+  (decided on structure: no chain, nesting, assignment, expansion or redirect); the no-rulings rule in foreman.md renders with the ladder off too (`factRulings`).
 - The model review of an ask forwarded from a child saw an empty value: PS 39.0.2 puts the child's command in `value`,
   not `command`. That is why most child bash asks were deferred (and then denied headless).
 - Child sessions mislabelled the tier (they emitted `tier` events with their own default); only the foreman does now.
