@@ -33,6 +33,16 @@ The installer generates the permission-system config from `config/permissions.ba
 file: a hand edit is backed up and overwritten, so put your rules into `foreman.json`. The baseline has no `sed`
 rule (no glob separates a print from `1wout` or `1etouch x`, so every sed asks).
 
+The write protection (`protect`: `.git`, agent and harness configuration) checks the path arguments of a shell
+command, reads included: operands, option values and redirect targets. It skips the pattern and script operands of
+read commands (the grep/egrep/fgrep/rg pattern and `-e` values, a sed script without `w`/`r`/`e`/`a`/`i`/`c`
+commands, an awk program without redirection, pipe, `getline` or `system`, find's `-name`/`-iname`/`-path`/`-regex`
+values when there is no `-exec`/`-delete`, echo/printf text), but only when every command of the line is a read or
+filter command (grep, rg, sed, awk, find, echo, printf, cat, head, tail, wc, sort, uniq, cut, tr, ls, cd, ...) and
+there is no `$(...)`, backtick or process substitution: `echo .git/HEAD | xargs touch` is still refused. A `*` skips
+dot entries as in bash (unless the command mentions `dotglob` or `GLOBIGNORE`) and `\` is no path separator outside
+Windows. The secret path denies still check every word.
+
 Asks go through a model review link (`foreman-review`) using `providers.<p>.review.model` (see
 [roles](roles.md) for the automatic pick). Child asks are forwarded to it:
 

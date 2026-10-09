@@ -56,6 +56,8 @@
 //     also checked by their path part. Checked on write/edit, the paths of
 //     foreman_move/foreman_copy and, as for deny paths, every shell word — so in a shell
 //     command these also block reads (`cat .git/config`); `git status` names no such path.
+//     Shell words are path arguments only: the pattern/script operands of a line made of pure
+//     read commands are skipped, `*` skips dot entries and `\` is no separator off win32 (checkShell).
 //     grep's `glob` and find's `pattern` are checked joined to the tool's `path`.
 //     removeAsk (`<agentDir>`, its parent (`~/.pi` by default) and `<agentDir>/pi-foreman`, the
 //     ancestors of the state folder):
@@ -112,6 +114,9 @@ export interface MatchCtx {
   isDir?: (p: string) => boolean;
   realpath?: (p: string) => string | null;
   list?: (dir: string) => string[];
+  /** Write protection of bash words: `\` is no separator off win32, and `*` skips dot entries unless `dotGlob`. */
+  bashWords?: boolean;
+  dotGlob?: boolean;
 }
 
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : []);
@@ -449,6 +454,9 @@ export function codeLiterals(code: string): string[] {
   return out.filter(Boolean);
 }
 
+/** Word indices of a parsed unit that are redirect targets (`> f`, `2>> f`, `< f`). */
+const REDIRECTS = new WeakMap<string[], Set<number>>();
+
 /** pipelines -> units -> words (quotes removed). */
 export function parseShell(src: string, shell: "posix" | "powershell" = "posix"): Parsed {
   const pipelines: string[][][] = [];
@@ -456,14 +464,25 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
   let units: string[][] = [];
   let words: string[] = [];
   let cur: string | null = null;
+  let redir = new Set<number>();
+  let redirNext = false;
   const flush = (): void => {
-    if (cur !== null) words.push(cur);
+    if (cur !== null) {
+      if (redirNext) redir.add(words.length);
+      redirNext = false;
+      words.push(cur);
+    }
     cur = null;
   };
   const endUnit = (): void => {
     flush();
-    if (words.length) units.push(words);
+    if (words.length) {
+      units.push(words);
+      if (redir.size) REDIRECTS.set(words, redir);
+    }
     words = [];
+    redir = new Set();
+    redirNext = false;
   };
   const endPipe = (sep: string): void => {
     endUnit();
@@ -522,6 +541,7 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
     else if (c === "<" || c === ">") {
       if (cur !== null && /^\d+$/.test(cur)) cur = null; // 2>file: the fd number is not a word
       flush();
+      redirNext = true;
       while (src[i + 1] === c) i++;
       if (c === ">" && src[i + 1] === "&") i++;
     } else if (c === "#" && cur === null && (i === 0 || /\s|[;&|()]/.test(src[i - 1]))) {
@@ -591,6 +611,109 @@ interface Collected {
   words: string[];
   /** Operands of a remove/rename command and inline-code literals (removeAsk). */
   removeWords?: string[];
+  /** `words` without the pattern/script operands of read commands (write protection). */
+  protWords?: string[];
+  /** Every unit's command is a read/filter command (PURE_VERBS) that cannot turn text into a path. */
+  pure?: boolean;
+}
+
+/**
+ * Commands that never take a path from their input or from another command's text (no stdin-to-argv,
+ * no exec). Only when EVERY unit of a command is one of these are pattern and script operands
+ * skipped by the write protection; otherwise a pattern could become a path (`echo .git | xargs rm`).
+ */
+const PURE_VERBS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk", "mawk", "nawk", "find", "echo", "printf", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "ls", "cd", "pwd", "nl", "column", "diff", "true", "false"]);
+
+/** Short options that take a value, and long ones that take the next word, per read command. */
+const VALUE_OPTS: Record<string, { short: string; long: string[]; pattern: string; patternLong: string[]; file: string; fileLong: string[] }> = {
+  grep: { short: "ABCDdefm", long: ["--regexp", "--file", "--after-context", "--before-context", "--context", "--max-count", "--devices", "--directories", "--label", "--binary-files", "--include", "--exclude", "--exclude-dir", "--exclude-from", "--color", "--colour"], pattern: "e", patternLong: ["--regexp"], file: "f", fileLong: ["--file"] },
+  rg: { short: "ABCEMTdefgjmrt", long: ["--regexp", "--file", "--after-context", "--before-context", "--context", "--max-count", "--max-depth", "--max-columns", "--glob", "--iglob", "--type", "--type-not", "--type-add", "--type-clear", "--replace", "--pre", "--pre-glob", "--encoding", "--threads", "--sort", "--sortr", "--max-filesize", "--colors", "--color", "--path-separator", "--engine", "--ignore-file", "--context-separator", "--field-match-separator", "--field-context-separator", "--dfa-size-limit", "--regex-size-limit", "--hyperlink-format", "--hostname-bin"], pattern: "e", patternLong: ["--regexp"], file: "f", fileLong: ["--file"] },
+  sed: { short: "efl", long: ["--expression", "--file", "--line-length"], pattern: "e", patternLong: ["--expression"], file: "f", fileLong: ["--file"] },
+  awk: { short: "Fvfeil", long: ["--field-separator", "--assign", "--file", "--source", "--include", "--load"], pattern: "e", patternLong: ["--source"], file: "f", fileLong: ["--file"] },
+};
+for (const k of ["egrep", "fgrep"]) VALUE_OPTS[k] = VALUE_OPTS.grep;
+for (const k of ["gawk", "mawk", "nawk"]) VALUE_OPTS[k] = VALUE_OPTS.awk;
+
+/** A sed script that writes, reads or runs nothing (`w`/`W`/`r`/`R`/`e` commands, the `s///w|e` flags, `a`/`i`/`c` text). */
+function sedReadOnly(script: string): boolean {
+  let s = script.replace(/\\\n/g, " ");
+  s = s.replace(/s(.)((?:\\.|(?!\1).)*)\1((?:\\.|(?!\1).)*)\1([A-Za-z0-9]*)/gs, (_m, _d, _a, _b, flags: string) => (/[we]/.test(flags) ? " w " : ";"));
+  s = s.replace(/y(.)((?:\\.|(?!\1).)*)\1((?:\\.|(?!\1).)*)\1/gs, ";");
+  s = s.replace(/\/(?:\\.|[^/\\])*\//g, " ").replace(/\\(.)(?:\\.|(?!\1).)*\1/gs, " ");
+  return !/[wWrReFaic]/.test(s.replace(/[^A-Za-z]/g, ""));
+}
+
+/** An awk program without redirection, pipes, getline or system(). */
+function awkReadOnly(prog: string): boolean {
+  return !/[<>|]|system|getline|close|fflush/.test(prog);
+}
+
+/**
+ * Indices (into `core`) of the pattern or script operands of a read command: the grep/rg pattern
+ * and `-e` values, the sed script, the awk program, find's -name/-iname/-path/-regex values,
+ * every echo/printf argument. `skip` = redirect targets. Files named by `-f` stay paths.
+ */
+function nonPathArgs(core: string[], skip: Set<number>): number[] {
+  if (!core.length) return [];
+  const verb = baseName(core[0]);
+  const out: number[] = [];
+  const ok = (i: number): boolean => !skip.has(i);
+  if (verb === "echo" || verb === "printf") return core.map((_, i) => i).filter((i) => i > 0 && ok(i));
+  if (verb === "find") {
+    if (core.some((x) => /^-(exec|execdir|ok|okdir|delete)$/.test(x))) return [];
+    core.forEach((x, i) => {
+      if (/^-(name|iname|path|ipath|regex|iregex|wholename|iwholename)$/.test(x) && i + 1 < core.length && ok(i + 1)) out.push(i + 1);
+    });
+    return out;
+  }
+  const spec = VALUE_OPTS[verb];
+  if (!spec) return [];
+  const isRg = verb === "rg";
+  if (isRg && core.some((x) => x === "--files" || x === "--type-list")) return [];
+  const scripts: number[] = [];
+  let given = false;
+  let positional = -1;
+  let ended = false;
+  for (let i = 1; i < core.length; i++) {
+    if (!ok(i)) continue;
+    const x = core[i];
+    if (!ended && x === "--") {
+      ended = true;
+      continue;
+    }
+    if (!ended && /^--[^=]/.test(x)) {
+      const eq = x.indexOf("=");
+      const name = eq > 0 ? x.slice(0, eq) : x;
+      const isPat = spec.patternLong.includes(name);
+      if (isPat || spec.fileLong.includes(name)) given = true;
+      if (eq < 0 && spec.long.includes(name)) {
+        if (isPat && i + 1 < core.length && ok(i + 1)) scripts.push(i + 1);
+        i++;
+      } else if (eq > 0 && isPat) scripts.push(i);
+      continue;
+    }
+    if (!ended && /^-[^-]/.test(x) && !(verb.endsWith("awk") && /^-[0-9]/.test(x))) {
+      for (let k = 1; k < x.length; k++) {
+        const c = x[k];
+        if (!spec.short.includes(c)) continue;
+        if (c === spec.pattern || c === spec.file) given = true;
+        if (k + 1 < x.length) {
+          if (c === spec.pattern) scripts.push(i);
+        } else if (i + 1 < core.length) {
+          if (c === spec.pattern && ok(i + 1)) scripts.push(i + 1);
+          i++;
+        }
+        break;
+      }
+      continue;
+    }
+    if (positional < 0) positional = i;
+    // awk stops at its program; grep, rg and GNU sed take options after operands too (`grep x f -e y`)
+    if (verb.endsWith("awk")) break;
+  }
+  if (!given && positional > 0) scripts.push(positional);
+  const readOnly = (s: string): boolean => (verb === "sed" ? sedReadOnly(s) : verb.endsWith("awk") ? awkReadOnly(s) : true);
+  return scripts.filter((i) => readOnly(core[i]));
 }
 
 /** Commands that remove or rename their operands (POSIX, Windows, PowerShell names and aliases). */
@@ -605,10 +728,20 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
     out.words.push(...unitWords);
     const v = variants(unitWords);
     out.unitTexts.push(...v.texts);
+    if (out.protWords) {
+      const off = unitWords.length - v.core.length;
+      const redir = REDIRECTS.get(unitWords) ?? new Set<number>();
+      const skip = new Set([...redir].filter((i) => i >= off).map((i) => i - off));
+      const raw = unitWords.find((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
+      if (!raw || !PURE_VERBS.has(baseName(raw)) || !v.core.length || !PURE_VERBS.has(baseName(v.core[0]))) out.pure = false;
+      const np = new Set(nonPathArgs(v.core, skip).map((i) => i + off));
+      out.protWords.push(...unitWords.filter((_, i) => !np.has(i)));
+    }
     const inner = innerScript(v.core);
     if (inner && depth < MAX_DEPTH) collect(inner.script, inner.shell, depth + 1, out);
     const code = inlineCode(v.core);
     if (code) out.words.push(...codeLiterals(code));
+    if (code && out.protWords) out.protWords.push(...codeLiterals(code));
     if (out.removeWords) {
       if (code) out.removeWords.push(...codeLiterals(code));
       const verb = v.core.length ? baseName(v.core[0]) : "";
@@ -682,9 +815,11 @@ function globRegExp(segment: string): RegExp {
 const MAX_GLOB = 200;
 
 /** Every existing path a glob (in any segment, `~/.s*\/id_x`, `.ss[h]/x`) expands to, at most MAX_GLOB. */
-function expandGlob(abs: string, p: path.PlatformPath, fsx: ReturnType<typeof defaults>): string[] {
+function expandGlob(abs: string, p: path.PlatformPath, fsx: ReturnType<typeof defaults>, ctx: MatchCtx): string[] {
   const root = p.parse(abs).root;
-  const segs = abs.slice(root.length).split(/[\\/]+/).filter(Boolean);
+  // bash words (write protection): `\` separates only on win32, `*`/`?`/`[` skip dot entries (no dotglob)
+  const bash = ctx.bashWords === true;
+  const segs = abs.slice(root.length).split(bash && ctx.platform !== "win32" ? /\/+/ : /[\\/]+/).filter(Boolean);
   let cur = [root];
   for (const seg of segs) {
     if (!GLOB.test(seg)) {
@@ -694,7 +829,10 @@ function expandGlob(abs: string, p: path.PlatformPath, fsx: ReturnType<typeof de
     const re = globRegExp(seg);
     const next: string[] = [];
     for (const d of cur) {
-      for (const name of fsx.list(d)) if (re.test(name) && (name.startsWith(".") || !seg.startsWith("."))) next.push(p.join(d, name));
+      for (const name of fsx.list(d)) {
+        const dotOk = bash && !ctx.dotGlob ? !name.startsWith(".") || seg.startsWith(".") : name.startsWith(".") || !seg.startsWith(".");
+        if (re.test(name) && dotOk) next.push(p.join(d, name));
+      }
       if (next.length >= MAX_GLOB) break;
     }
     cur = next.slice(0, MAX_GLOB);
@@ -742,7 +880,7 @@ function tokenCandidates(word: string, ctx: MatchCtx, depth: number): string[] {
   if (colon >= 0 && depth < 2 && !/^[A-Za-z]:([\\/]|$)/.test(s)) out.push(...tokenCandidates(s.slice(colon + 1), ctx, 2));
   if (!s) return out;
   const abs = p.resolve(ctx.cwd, s);
-  const pathShaped = /^[.~]|[\\/]/.test(s) || (ctx.platform === "win32" && SHORT_NAME.test(s));
+  const pathShaped = (ctx.bashWords && ctx.platform !== "win32" ? /^[.~]|\// : /^[.~]|[\\/]/).test(s) || (ctx.platform === "win32" && SHORT_NAME.test(s));
   if (!pathShaped && !fsx.exists(abs)) return out;
   const add = (x: string): void => {
     out.push(x);
@@ -754,7 +892,7 @@ function tokenCandidates(word: string, ctx: MatchCtx, depth: number): string[] {
   const real = realDeep(abs, p, fsx);
   if (real && real !== abs) add(real);
   if (GLOB.test(s)) {
-    for (const x of expandGlob(abs, p, fsx)) {
+    for (const x of expandGlob(abs, p, fsx, ctx)) {
       add(x);
       const r = fsx.realpath(x);
       if (r && r !== x) add(r);
@@ -915,16 +1053,24 @@ export function checkShell(rules: OverlayRules, command: string, ctx: MatchCtx):
     const cd = childCdDeny(command, ctx);
     if (cd) return cd;
   }
-  const c: Collected = { unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [] };
+  const c: Collected = { unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true };
   collect(command, shell, 0, c);
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
-    const raw: Collected = { unitTexts: [], pipeTexts: [], words: [], removeWords: [] };
+    const raw: Collected = { unitTexts: [], pipeTexts: [], words: [], removeWords: [], protWords: [], pure: true };
     collect(command, "powershell", 0, raw);
     c.words.push(...raw.words);
     c.removeWords!.push(...raw.removeWords!);
+    c.protWords!.push(...raw.protWords!);
+    c.pure = c.pure && raw.pure;
   }
   const words = [...new Set(c.words.flatMap((w) => [w, ...expandBraces(w)]))];
+  // Write protection sees path arguments only: pattern/script operands drop out when no unit can turn
+  // text into a path (no substitution, process substitution or non-pure command), and bash words
+  // follow bash globbing (item 4: `grep "x\|register\b" *.go` named /app/.git/... before).
+  const pure = c.pure === true && !/\$\(|`|[<>]\(/.test(command);
+  const pwords = pure ? [...new Set(c.protWords!.flatMap((w) => [w, ...expandBraces(w)]))] : words;
+  const pctx: MatchCtx = shell === "posix" ? { ...ctx, bashWords: true, dotGlob: /dotglob|globignore|glob_?dots/i.test(command) } : ctx;
   const removed = new Set(c.removeWords!.flatMap((w) => [w, ...expandBraces(w)]));
   const texts = [...c.unitTexts, ...c.pipeTexts];
   for (const pat of rules.bashDeny) {
@@ -934,7 +1080,7 @@ export function checkShell(rules: OverlayRules, command: string, ctx: MatchCtx):
     const hit = pathDeny(rules.pathRules, w, ctx);
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(w)}'). Secret and policy paths are off limits to the agent, also through shell commands.` };
   }
-  const prot = words.map((w) => ({ w, hit: protectHit(rules.protect, w, ctx, true, removed.has(w)) })).filter((x) => x.hit);
+  const prot = pwords.map((w) => ({ w, hit: protectHit(rules.protect, w, pctx, true, removed.has(w)) })).filter((x) => x.hit);
   const pd = prot.find((x) => x.hit!.kind === "deny");
   if (pd) return protectDecision(pd.hit!, pd.w, "shell command");
   for (const pat of rules.bashAsk) {
