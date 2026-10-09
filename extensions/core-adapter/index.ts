@@ -1857,21 +1857,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** scripts/foreman_sync.py for this session (/sync and remote close). */
-  function runSync(s: Session, ctx: ExtensionContext): Promise<{ text: string; ok: boolean }> {
-    const args = ["--cwd", s.cwd, "--state", path.join(s.agentDir, "pi-foreman", "state"), "--session", s.id, ...retroInputs(s, ctx, "--session-file")];
+  function runSync(s: Session, ctx: ExtensionContext, extra: string[] = []): Promise<{ text: string; ok: boolean }> {
+    const args = ["--cwd", s.cwd, "--state", path.join(s.agentDir, "pi-foreman", "state"), "--session", s.id, ...retroInputs(s, ctx, "--session-file"), ...extra];
     if (safeTrusted(ctx)) args.push("--trusted-project");
     return runScript(s, "foreman_sync.py", args, 600_000);
   }
 
   pi.registerCommand("sync", {
     description: "Pull, commit (explicit paths) and push the configured sync.repos, then the retro (foreman only)",
-    handler: async (_args, ctx) => {
+    handler: async (args, ctx) => {
       const s = await ensureSession(ctx);
       if (s.isChild) {
         ctx.ui.notify("/sync is for the foreman only.", "warning");
         return;
       }
-      await syncCommand({ activeRuns: s.activeRuns.size, run: () => runSync(s, ctx), notify: (t, l) => ctx.ui.notify(t, l) });
+      const words = args.trim().split(/\s+/).filter(Boolean);
+      const extra = words.filter((w) => w === "--dry-run");
+      if (extra.length < words.length) ctx.ui.notify(`pi-foreman: /sync ignores ${words.filter((w) => w !== "--dry-run").join(" ")} (only --dry-run is accepted).`, "warning");
+      await syncCommand({ activeRuns: s.activeRuns.size, run: () => runSync(s, ctx, extra.slice(0, 1)), notify: (t, l) => ctx.ui.notify(t, l) });
     },
   });
 
