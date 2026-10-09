@@ -135,6 +135,42 @@ def tracked_copy(dest):
         shutil.copy2(str(src), str(dst))
 
 
+POST_MARKER = "bench-post-marker.json"  # state/: {"ms": epoch ms} written by the waiter before the post steps (retro, sync)
+
+
+def post_marker_ms(logs):
+    """Epoch ms from which usage belongs to the post steps (retro, sync), else None."""
+    try:
+        v = json.loads((Path(logs) / "state" / POST_MARKER).read_text("utf-8")).get("ms")
+        return float(v) if v is not None else None
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+
+
+def _ms(value):
+    """Epoch ms from a number (ms) or an ISO timestamp, else None."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and value:
+        try:
+            from datetime import datetime
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000
+        except ValueError:
+            return None
+    return None
+
+
+def after_marker(marker, *stamps):
+    """True when the first parseable stamp is at or after the marker (no marker or no stamp: False)."""
+    if marker is None:
+        return False
+    for st in stamps:
+        t = _ms(st)
+        if t is not None:
+            return t >= marker
+    return False
+
+
 CHILD_SESSION = re.compile(r"^subagent-(.+?)-[0-9a-f]{8}-[0-9a-f]{4}-")
 
 
@@ -154,6 +190,8 @@ def summarize_logs(logs_dir, main_role="main"):
     thinking_by_model = {}
     thinking_by_role = {}
     wait_turns = text_only_turns = codemode_turns = 0
+    marker = post_marker_ms(logs)
+    retro_session = {"input": 0, "cacheRead": 0, "cacheWrite": 0, "output": 0}
     for f in sorted((logs / "sessions").rglob("*.jsonl")) if (logs / "sessions").is_dir() else []:
         if "subagent-artifacts" in f.parts:
             continue  # transcripts duplicate the child session file
@@ -175,6 +213,10 @@ def summarize_logs(logs_dir, main_role="main"):
             if not isinstance(msg, dict) or msg.get("role") != "assistant":
                 continue
             usage = msg.get("usage") or {}
+            if after_marker(marker, rec.get("timestamp"), msg.get("timestamp")):  # post steps: not the task's cost
+                for k in retro_session:
+                    retro_session[k] += int(usage.get(k) or 0)
+                continue
             model = "%s/%s" % (msg.get("provider"), msg.get("model"))
             models.add(model)
             m = by_model.setdefault(model, {"input": 0, "cacheRead": 0, "cacheWrite": 0, "output": 0})
@@ -206,6 +248,7 @@ def summarize_logs(logs_dir, main_role="main"):
     reviewed = {}
     tiers = {"recorded": None, "tier": None}
     ledger_calls = ledger_denies = dup_reviews = second_opinions = stop_hold = 0
+    rung_up = child_read_warn = child_read_deny = review_defer_headless = child_turn_cap = launch_refused = 0
     traces = trace_files(logs)
     for f in traces:
         recs = []
@@ -229,6 +272,18 @@ def summarize_logs(logs_dir, main_role="main"):
                 second_opinions += 1
             elif ev == "stop_hold":
                 stop_hold += 1
+            elif ev == "rung_up":
+                rung_up += 1
+            elif ev == "child_read_budget" and rec.get("action") == "warn":
+                child_read_warn += 1
+            elif ev == "child_read_budget" and rec.get("action") == "deny":
+                child_read_deny += 1
+            elif ev == "review_defer_headless":
+                review_defer_headless += 1
+            elif ev == "child_turn_cap":
+                child_turn_cap += 1
+            elif ev == "launch_refused":
+                launch_refused += 1
             if isinstance(rec.get("pollBash"), int):
                 poll_bash += rec["pollBash"]
             if ev == "ceremony_incomplete":
@@ -271,6 +326,7 @@ def summarize_logs(logs_dir, main_role="main"):
                 d = str(rec.get("decision"))
                 reviewed[d] = reviewed.get(d, 0) + 1
     by_rm = usage_by_role_model(logs)
+    requests, retro_requests, launch_writes = usage_requests(logs)
     log_total = sum(u[k] for m in by_rm.values() for u in m.values() for k in tok)
     out = {"tokens": dict(tok, total=sum(tok.values())), "tokens_by_model": by_model,
            "tokens_by_role": {k: dict(v, total=sum(v.values())) for k, v in by_role.items()},
@@ -281,6 +337,12 @@ def summarize_logs(logs_dir, main_role="main"):
     if by_rm:
         out["usage_by_role_model"] = by_rm
         out["usage_log_delta"] = log_total - sum(tok.values())  # usage log total minus session-jsonl total
+    if requests:  # per-request usage (post steps excluded) for the long-context tier in foreman_bench.cost_of
+        out["usage_requests"] = requests
+        out["cache_write_per_launch"] = sorted(launch_writes.values())[len(launch_writes) // 2] if launch_writes else None
+    if retro_requests or any(retro_session.values()):
+        out["retro"] = {"tokens": sum(sum(r[2:]) for r in retro_requests) or sum(retro_session.values()),
+                        "requests": retro_requests}
     if traces:
         out["triage"] = {"tier": tiers["recorded"] or tiers["tier"] or "untriaged", "launches": roles,
                          "revisions": revisions, "gate_blocks": gate_blocks, "asks_reviewed": reviewed,
@@ -291,7 +353,10 @@ def summarize_logs(logs_dir, main_role="main"):
                          "launch_waits": launch_waits, "wait_turns": wait_turns, "text_only_turns": text_only_turns,
                          "codemode_turns": codemode_turns, "rereviews": rereviews, "orient_lines": orient_lines,
                          "ledger_denies": ledger_denies, "ledger_calls": ledger_calls, "dup_reviews": dup_reviews,
-                         "second_opinions": second_opinions, "stop_hold": stop_hold}
+                         "second_opinions": second_opinions, "stop_hold": stop_hold,
+                         "rung_up": rung_up, "child_read_warn": child_read_warn, "child_read_deny": child_read_deny,
+                         "review_defer_headless": review_defer_headless,
+                         "child_turn_cap": child_turn_cap, "launch_refused": launch_refused}
     return out
 
 
@@ -309,6 +374,18 @@ def usage_by_role_model(logs):
     """state/usage/*.jsonl (one line per assistant message_end, foreman and children) as
     {role: {model: {input, cacheRead, cacheWrite, output, n}}}. Role "child" stays its own bucket."""
     out = {}
+    for rec in _usage_lines(logs, post=False):
+        u = out.setdefault(str(rec.get("role") or "unknown"), {}).setdefault(
+            str(rec.get("model") or "unknown"), {"input": 0, "cacheRead": 0, "cacheWrite": 0, "output": 0, "n": 0})
+        for k in ("input", "cacheRead", "cacheWrite", "output"):
+            u[k] += int(rec.get(k) or 0)
+        u["n"] += 1
+    return out
+
+
+def _usage_lines(logs, post):
+    """Records of state/usage/*.jsonl before (post False) or from (post True) the post-step marker."""
+    marker = post_marker_ms(logs)
     d = Path(logs) / "state" / "usage"
     for f in sorted(d.glob("*.jsonl")) if d.is_dir() else []:
         for line in f.read_text("utf-8", "replace").splitlines():
@@ -316,28 +393,31 @@ def usage_by_role_model(logs):
                 rec = json.loads(line)
             except ValueError:
                 continue
-            if not isinstance(rec, dict):
-                continue
-            u = out.setdefault(str(rec.get("role") or "unknown"), {}).setdefault(
-                str(rec.get("model") or "unknown"), {"input": 0, "cacheRead": 0, "cacheWrite": 0, "output": 0, "n": 0})
-            for k in ("input", "cacheRead", "cacheWrite", "output"):
-                u[k] += int(rec.get(k) or 0)
-            u["n"] += 1
-    return out
+            if isinstance(rec, dict) and after_marker(marker, rec.get("ts")) == post:
+                yield rec
+
+
+def usage_requests(logs):
+    """([role, bare model, input, cacheRead, cacheWrite, output] per request before the post steps, the same for
+    requests from the post steps on, {launch: cacheWrite tokens}). Per-request rows let foreman_bench.cost_of apply
+    the prompt-length price tier of each request."""
+    def row(rec):
+        return [str(rec.get("role") or "unknown"), str(rec.get("model") or "unknown").rsplit("/", 1)[-1]] + [
+            int(rec.get(k) or 0) for k in ("input", "cacheRead", "cacheWrite", "output")]
+    launches = {}
+    main = list(_usage_lines(logs, post=False))
+    for r in main:
+        key = "s:%s" % r.get("foremanSession") if r.get("kind") == "foreman" else str(r.get("launchId") or "none:%s" % r.get("role"))
+        launches[key] = launches.get(key, 0) + int(r.get("cacheWrite") or 0)
+    return [row(r) for r in main], [row(r) for r in _usage_lines(logs, post=True)], launches
 
 
 def usage_log_cost(logs):
     """Sum of cost.total over state/usage/*.jsonl (0.0 for subscription runs, which report no cost)."""
     total = 0.0
-    d = Path(logs) / "state" / "usage"
-    for f in sorted(d.glob("*.jsonl")) if d.is_dir() else []:
-        for line in f.read_text("utf-8", "replace").splitlines():
-            try:
-                rec = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(rec, dict) and isinstance(rec.get("cost"), dict):
-                total += float(rec["cost"].get("total") or 0)
+    for rec in _usage_lines(logs, post=False):
+        if isinstance(rec.get("cost"), dict):
+            total += float(rec["cost"].get("total") or 0)
     return total
 
 
@@ -355,7 +435,8 @@ def settled_cost(logs, counters):
             u = usage.setdefault(str(model).rsplit("/", 1)[-1], {k: 0 for k in foreman_bench.TOKEN_KINDS})
             for k in u:
                 u[k] += int(t.get(k) or 0)
-        return foreman_bench.cost_of({"usage_by_model": usage}, foreman_bench.load_prices())["usd"] if usage else 0.0
+        rec = {"usage_by_model": usage, "usage_requests": counters.get("usage_requests")}  # per-request tiers when logged
+        return foreman_bench.cost_of(rec, foreman_bench.load_prices())["usd"] if usage else 0.0
     finally:
         sys.path.remove(str(REPO / "scripts"))
 

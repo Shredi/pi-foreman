@@ -132,6 +132,8 @@ export interface ReviewSession {
   trace?: (rec: Record<string, unknown>) => void;
   /** Unapproved project Claude Code / claude-bridge config drift (claudedrift.ts); non-empty = never call claude-bridge. */
   bridgeDrift?: () => string[];
+  /** Appends the review call's reply to the usage log (role "autoreview"); the call is not a session turn, so no message_end counts it. */
+  recordUsage?: (message: unknown) => void;
 }
 
 interface PermissionsServiceLike {
@@ -281,6 +283,11 @@ export class ForemanReview {
       const r = await Promise.race([call, timeout]);
       if (r === "timeout") return defer("timeout");
       if (!r) return defer("error", "provider_error:no reply");
+      try {
+        s.recordUsage?.(r);
+      } catch {
+        // usage logging is best effort
+      }
       if ("thrown" in r) return defer("error", errorKind(r.thrown, value));
       if (r.stopReason === "error" || r.stopReason === "aborted") return defer("error", errorKind(r.errorMessage ?? r.stopReason, value));
       return parseVerdict(replyText(r.content));

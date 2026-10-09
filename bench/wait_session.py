@@ -178,6 +178,115 @@ def _deep_merge(base, extra):
             base[key] = value
 
 
+POST_STEP_COMMANDS = {"retro": "/retro", "sync": "/sync --dry-run"}
+POST_MARKER = "bench-post-marker.json"  # in the agent state dir: {"ms", "ts"}; usage from then on is the post steps'
+POST_STEP_CAP = 300.0  # seconds per step
+HASH_FULL_BYTES = 8 * 1024 * 1024  # larger files are hashed by size only
+
+
+def post_steps_of(row):
+    """The row's `bench.post_steps` (default none): names of POST_STEP_COMMANDS run after the task is done."""
+    steps = (row.get("bench") or {}).get("post_steps") if isinstance(row.get("bench"), dict) else None
+    return [str(x) for x in steps] if isinstance(steps, list) else []
+
+
+def workspace_hash(root):
+    """sha256 over the file tree below root (relative path + content), .git excluded; files above
+    HASH_FULL_BYTES count by size. Symlinks are hashed by target. A missing root hashes as empty."""
+    import hashlib
+    h = hashlib.sha256()
+    base = Path(root)
+    for dirpath, dirs, files in os.walk(str(base)):
+        dirs[:] = sorted(d for d in dirs if d != ".git")
+        for name in sorted(files):
+            f = Path(dirpath) / name
+            h.update(f.relative_to(base).as_posix().encode("utf-8", "replace") + b"\0")
+            try:
+                if f.is_symlink():
+                    h.update(b"L" + os.readlink(str(f)).encode("utf-8", "replace"))
+                elif f.stat().st_size > HASH_FULL_BYTES:
+                    h.update(b"S%d" % f.stat().st_size)
+                else:
+                    h.update(f.read_bytes())
+            except OSError:
+                h.update(b"?")
+    return h.hexdigest()
+
+
+def run_post_step(pi, index, command, quiet_seconds, cap_seconds, clock=time.time, rpc_log=None):
+    """Send one slash command to the idle foreman session and wait until it is idle again; returns the captured
+    text (notify messages, assistant text) and an error string or None. Dialogs are denied like in the main drive."""
+    rid = "bench-post-%d" % index
+    pi.send({"id": rid, "type": "prompt", "message": command})
+    started = last = clock()
+    got, texts, err, settled = False, [], None, False
+    while clock() - started < cap_seconds:
+        try:
+            rec = pi._next(1.0)
+        except TimeoutError:
+            rec = None
+        except EOFError:
+            return "\n".join(texts), "pi_exited"
+        if rec is None:
+            if got and (settled or clock() - last >= quiet_seconds):
+                st = pi.request({"type": "get_state"})
+                if not st.get("isStreaming") and not st.get("pendingMessageCount"):
+                    return "\n".join(texts), err
+                settled = False
+            continue
+        last = clock()
+        if rpc_log is not None and rec.get("type") != "message_update":
+            rpc_log.write(json.dumps(rec) + "\n")
+        kind = rec.get("type")
+        if kind == "extension_ui_request":
+            if rec.get("method") in DIALOGS:
+                pi.send(deny_response(rec))
+            elif rec.get("message"):
+                texts.append(str(rec["message"]))
+        elif kind == "response" and rec.get("id") == rid:
+            got = True
+            if not rec.get("success"):
+                err = str(rec.get("error") or "rejected")[:300]
+        elif kind == "agent_start":
+            settled = False
+        elif kind == "agent_settled":
+            settled = True
+        elif kind == "message_end":
+            msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
+            if msg.get("role") == "assistant":
+                texts += [str(c.get("text")) for c in msg.get("content") or [] if isinstance(c, dict) and c.get("type") == "text"]
+    return "\n".join(texts), err or "step_cap_reached"
+
+
+def run_post_steps(pi, row, cwd, state_dir, status, quiet_seconds, cap_seconds=POST_STEP_CAP, clock=time.time, rpc_log=None):
+    """After the task is done: hash the workspace, write the usage marker, run the row's post steps in the foreman
+    session, hash again. Outputs go to <state_dir>/post-steps/<step>.txt, never the workspace. A changed workspace
+    marks the cell infra `post_step_changed_workspace` (an earlier infra error is kept). Records status["post_steps"]."""
+    steps = post_steps_of(row)
+    if not steps:
+        return
+    state = Path(state_dir)
+    state.mkdir(parents=True, exist_ok=True)
+    before = workspace_hash(cwd)
+    now = clock()
+    write_json(state / POST_MARKER, {"ms": int(now * 1000), "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))})
+    results = []
+    for i, step in enumerate(steps):
+        command = POST_STEP_COMMANDS.get(step)
+        if command is None:
+            results.append({"step": step, "error": "unknown_step"})
+            continue
+        text, err = run_post_step(pi, i, command, quiet_seconds, cap_seconds, clock, rpc_log)
+        out = state / "post-steps"
+        out.mkdir(parents=True, exist_ok=True)
+        (out / ("%s.txt" % step)).write_text(text + "\n", "utf-8")
+        results.append({"step": step, "chars": len(text), **({"error": err} if err else {})})
+    changed = workspace_hash(cwd) != before
+    status["post_steps"] = {"steps": results, "workspace_changed": changed}
+    if changed and not status.get("infra_error"):
+        status["infra_error"] = "post_step_changed_workspace"
+
+
 def async_runs(temp_root):
     """[{runId, state, startedAt, lastUpdate, mtime}] for every pi-subagents async run dir."""
     base = Path(temp_root) / "async-subagent-runs"
@@ -355,6 +464,9 @@ def drive_rpc(args, row, env, status):
                 st = pi.request({"type": "get_state"})
                 if not st.get("isStreaming") and not st.get("pendingMessageCount"):
                     status["status"] = "done"
+                    if post_steps_of(row):
+                        run_post_steps(pi, row, args.cwd, Path(env["PI_CODING_AGENT_DIR"]) / "pi-foreman" / "state", status,
+                                       args.quiet_seconds, rpc_log=rpc_log)
                     break
                 settled = False
     finally:

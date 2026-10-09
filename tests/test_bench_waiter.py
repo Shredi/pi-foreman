@@ -113,5 +113,70 @@ class BuildWorldTest(unittest.TestCase):
             self.assertIn('"cargo test *"', r.stdout.decode())
 
 
+class FakePi:
+    """Stands in for PiRpc: each prompt is answered with a response, an optional notify and an optional file write."""
+
+    def __init__(self, on_prompt=None):
+        self.sent, self.queue, self.on_prompt = [], [], on_prompt
+
+    def send(self, msg):
+        self.sent.append(msg)
+        if msg.get("type") == "prompt":
+            self.queue.append({"type": "response", "id": msg["id"], "success": True})
+            self.queue.append({"type": "extension_ui_request", "method": "notify", "message": "out of %s" % msg["message"]})
+            if self.on_prompt:
+                self.on_prompt(msg["message"])
+
+    def _next(self, timeout):
+        if self.queue:
+            return self.queue.pop(0)
+        raise TimeoutError
+
+    def request(self, msg):
+        return {"isStreaming": False, "pendingMessageCount": 0}
+
+
+class PostStepsTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.work, self.state = Path(tmp.name) / "app", Path(tmp.name) / "state"
+        (self.work / ".git").mkdir(parents=True)
+        (self.work / "a.txt").write_text("one")
+
+    def run_steps(self, steps, pi):
+        status = {}
+        ws.run_post_steps(pi, {"bench": {"post_steps": steps}}, str(self.work), self.state, status, quiet_seconds=0, cap_seconds=5)
+        return status
+
+    def test_steps_default_to_none_and_map_to_slash_commands(self):
+        self.assertEqual(ws.post_steps_of(row()), [])
+        pi = FakePi()
+        self.assertEqual(self.run_steps([], pi), {})
+        self.assertEqual(pi.sent, [])
+        status = self.run_steps(["retro", "sync", "bogus"], pi)
+        self.assertEqual([m["message"] for m in pi.sent], ["/retro", "/sync --dry-run"])
+        self.assertEqual([r.get("error") for r in status["post_steps"]["steps"]], [None, None, "unknown_step"])
+
+    def test_output_goes_to_state_marker_is_written_and_unchanged_workspace_is_not_infra(self):
+        status = self.run_steps(["retro"], FakePi())
+        self.assertEqual((self.state / "post-steps" / "retro.txt").read_text("utf-8").strip(), "out of /retro")
+        self.assertGreater(json.loads((self.state / ws.POST_MARKER).read_text("utf-8"))["ms"], 0)
+        self.assertFalse(status["post_steps"]["workspace_changed"])
+        self.assertNotIn("infra_error", status)
+        self.assertEqual(sorted(p.name for p in self.work.iterdir()), [".git", "a.txt"])
+
+    def test_workspace_change_marks_the_cell_infra_but_git_dir_changes_do_not(self):
+        (self.work / ".git" / "HEAD").write_text("x")
+        self.assertEqual(self.run_steps(["retro"], FakePi(lambda _: (self.work / ".git" / "index").write_text("y")))
+                         .get("infra_error"), None)
+        status = self.run_steps(["retro"], FakePi(lambda _: (self.work / "a.txt").write_text("two")))
+        self.assertEqual(status["infra_error"], "post_step_changed_workspace")
+        status = {"infra_error": "usage_limit"}
+        ws.run_post_steps(FakePi(lambda _: (self.work / "b.txt").write_text("n")), {"bench": {"post_steps": ["sync"]}},
+                          str(self.work), self.state, status, quiet_seconds=0, cap_seconds=5)
+        self.assertEqual(status["infra_error"], "usage_limit")  # an earlier infra reason is kept
+
+
 if __name__ == "__main__":
     unittest.main()
