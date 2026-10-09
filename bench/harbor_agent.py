@@ -248,7 +248,7 @@ def summarize_logs(logs_dir, main_role="main"):
     reviewed = {}
     tiers = {"recorded": None, "tier": None}
     ledger_calls = ledger_denies = dup_reviews = second_opinions = stop_hold = 0
-    rung_up = child_read_warn = child_read_deny = review_defer_headless = 0
+    rung_up = child_read_warn = child_read_deny = review_defer_headless = child_turn_cap = launch_refused = 0
     traces = trace_files(logs)
     for f in traces:
         recs = []
@@ -280,6 +280,10 @@ def summarize_logs(logs_dir, main_role="main"):
                 child_read_deny += 1
             elif ev == "review_defer_headless":
                 review_defer_headless += 1
+            elif ev == "child_turn_cap":
+                child_turn_cap += 1
+            elif ev == "launch_refused":
+                launch_refused += 1
             if isinstance(rec.get("pollBash"), int):
                 poll_bash += rec["pollBash"]
             if ev == "ceremony_incomplete":
@@ -351,7 +355,8 @@ def summarize_logs(logs_dir, main_role="main"):
                          "ledger_denies": ledger_denies, "ledger_calls": ledger_calls, "dup_reviews": dup_reviews,
                          "second_opinions": second_opinions, "stop_hold": stop_hold,
                          "rung_up": rung_up, "child_read_warn": child_read_warn, "child_read_deny": child_read_deny,
-                         "review_defer_headless": review_defer_headless}
+                         "review_defer_headless": review_defer_headless,
+                         "child_turn_cap": child_turn_cap, "launch_refused": launch_refused}
     return out
 
 

@@ -625,7 +625,8 @@ class BenchTest(unittest.TestCase):
                                      "autoreview": {"claude-haiku-5-5": {"input": 20, "cacheRead": 0, "cacheWrite": 0, "output": 4, "n": 3}}},
              "retro": {"tokens": 99, "requests": []}, "cache_write_per_launch": 5000,
              "triage": {"tier": "standard", "launches": {}, "asks_reviewed": {"allow": 2, "defer": 1, "error": 1}, "rung_up": 2,
-                        "child_read_warn": 1, "child_read_deny": 3, "review_defer_headless": 4}}
+                        "child_read_warn": 1, "child_read_deny": 3, "review_defer_headless": 4, "child_turn_cap": 2, "launch_refused": 1},
+             "thinking_by_role": {"builder": ["low"]}}
         rec = trial()
         rec["agent_result"]["metadata"]["bench"]["counters"] = c
         self.job("R2__alpha__r1__x", rec)
@@ -635,8 +636,10 @@ class BenchTest(unittest.TestCase):
         self.assertEqual((row["autoreview_defer_share"]["median"], row["retro_tokens"]["median"]), (0.5, 99))
         self.assertEqual((row["rung_up"]["median"], row["child_read_deny"]["median"], row["review_defer_headless"]["median"]), (2, 3, 4))
         self.assertEqual((row["tier_dist"], row["cache_write_per_launch"]["median"]), ({"standard": 1}, 5000))
+        self.assertEqual((row["child_turn_cap"]["median"], row["launch_refused"]["median"], row["thinking_by_role"]), (2, 1, {"builder": ["low"]}))
         text = fb.format_table([row])
-        for col in ("autoreview_tokens", "autoreview_defer_share", "retro_tokens", "rung_up", "child_read_deny", "tier_dist"):
+        self.assertIn("builder:low", text)
+        for col in ("child_turn_cap", "autoreview_tokens", "autoreview_defer_share", "retro_tokens", "rung_up", "child_read_deny", "tier_dist"):
             self.assertIn(col, text)
 
     def test_retro_findings_aggregated_per_cell_and_bounded(self):

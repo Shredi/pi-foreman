@@ -23,7 +23,7 @@
 - Bench: Haiku 5.5 long-context price tier applied per request (`tier_approx` flag without a per-request log);
   row key `bench.post_steps` (`retro`, `sync`) with usage split out as `retro_tokens`/`retro_usd` and
   `retro-findings.md`; columns `autoreview_*`, `rung_up`, `child_read_warn`/`child_read_deny`,
-  `review_defer_headless`, `tier_dist`, `cache_write_per_launch`.
+  `review_defer_headless`, `child_turn_cap`, `launch_refused`, `thinking_by_role`, `tier_dist`, `cache_write_per_launch`.
 
 ### Changed
 - Foreman tier in the bench is taken from the foreman's own trace only.

@@ -661,6 +661,8 @@ def _triage_stats(done):
             "rung_up": _stat([t.get("rung_up") for t in ts]), "child_read_warn": _stat([t.get("child_read_warn") for t in ts]),
             "child_read_deny": _stat([t.get("child_read_deny") for t in ts]),
             "review_defer_headless": _stat([t.get("review_defer_headless") for t in ts]),
+            "child_turn_cap": _stat([t.get("child_turn_cap") for t in ts]), "launch_refused": _stat([t.get("launch_refused") for t in ts]),
+            "thinking_by_role": (done[-1].get("meta") or {}).get("thinking_seen") if done else None,
             "autoreview_tokens": _stat([_role_totals(r, "autoreview")[0] for r in done if r.get("usage_by_role_model")]),
             "autoreview_calls": _stat([_role_totals(r, "autoreview")[1] for r in done if r.get("usage_by_role_model")]),
             "autoreview_defer_share": _stat([_defer_share(t) for t in ts]),
@@ -796,6 +798,10 @@ def first_summary(preset, tdir, jdir):
             "tokens_by_role": rec and rec.get("tokens_by_role"), "tokens_by_tier": rec and rec.get("tokens_by_tier")}
 
 
+def _think(d):
+    return " ".join("%s:%s" % (k, "/".join(v) if isinstance(v, list) else v) for k, v in sorted((d or {}).items())) or "-"
+
+
 def _dist(d):
     return " ".join("%s:%d" % kv for kv in sorted((d or {}).items())) or "-"
 
@@ -819,13 +825,13 @@ def format_summary(summary, first=None):
     tiers = sorted({t for r in summary for t in r["tokens_by_tier"]})
     head = ["row", "success"] + ["tokens %s" % t for t in tiers] + ["tokens all", "wall s", "tool calls", "approvals", "guard blocks",
                                                                 "tier", "launches", "revisions", "asks_denied", "gate_blocks", "pollBash", "ceremony_incomplete",
-            "foreman_edit_refused", "pr_refused", "checkpoint_auto", "read_blocks", "recheck_blocks", "finish_refused", "launch_waits", "wait_turns", "text_only_turns", "codemode_turns", "rereviews", "orient_lines", "ledger_denies", "ledger_calls", "dup_reviews", "second_opinions", "stop_hold", "tier_dist", "rung_up", "child_read_warn", "child_read_deny", "review_defer_headless", "autoreview_tokens", "autoreview_calls", "autoreview_defer_share", "retro_tokens", "cache_write_per_launch"]
+            "foreman_edit_refused", "pr_refused", "checkpoint_auto", "read_blocks", "recheck_blocks", "finish_refused", "launch_waits", "wait_turns", "text_only_turns", "codemode_turns", "rereviews", "orient_lines", "ledger_denies", "ledger_calls", "dup_reviews", "second_opinions", "stop_hold", "tier_dist", "rung_up", "child_read_warn", "child_read_deny", "review_defer_headless", "child_turn_cap", "launch_refused", "thinking_by_role", "autoreview_tokens", "autoreview_calls", "autoreview_defer_share", "retro_tokens", "cache_write_per_launch"]
     lines = [[r["row"], "%d/%d (%d cells)" % (r["success"], r["counted"], r["cells"])] +
              [_fmt(r["tokens_by_tier"].get(t)) for t in tiers] +
              [_fmt(r["tokens"]), _fmt(r["wall_seconds"], 1), _fmt(r["tool_calls"]), _fmt(r["approvals"]), _fmt(r["guard_blocks"]),
               r.get("tier") or "-", _fmt(r.get("launches")), _fmt(r.get("revisions")), _fmt(r.get("asks_denied")),
               _fmt(r.get("gate_blocks")), _fmt(r.get("pollBash")), _fmt(r.get("ceremony_incomplete")),
-              _fmt(r.get("foreman_edit_refused")), _fmt(r.get("pr_refused")), _fmt(r.get("checkpoint_auto")), _fmt(r.get("read_blocks")), _fmt(r.get("recheck_blocks")), _fmt(r.get("finish_refused")), _fmt(r.get("launch_waits")), _fmt(r.get("wait_turns")), _fmt(r.get("text_only_turns")), _fmt(r.get("codemode_turns")), _fmt(r.get("rereviews")), _fmt(r.get("orient_lines")), _fmt(r.get("ledger_denies")), _fmt(r.get("ledger_calls")), _fmt(r.get("dup_reviews")), _fmt(r.get("second_opinions")), _fmt(r.get("stop_hold")), _dist(r.get("tier_dist")), _fmt(r.get("rung_up")), _fmt(r.get("child_read_warn")), _fmt(r.get("child_read_deny")), _fmt(r.get("review_defer_headless")), _fmt(r.get("autoreview_tokens")), _fmt(r.get("autoreview_calls")), _pct(r.get("autoreview_defer_share")), _fmt(r.get("retro_tokens")), _fmt(r.get("cache_write_per_launch"))] for r in summary]
+              _fmt(r.get("foreman_edit_refused")), _fmt(r.get("pr_refused")), _fmt(r.get("checkpoint_auto")), _fmt(r.get("read_blocks")), _fmt(r.get("recheck_blocks")), _fmt(r.get("finish_refused")), _fmt(r.get("launch_waits")), _fmt(r.get("wait_turns")), _fmt(r.get("text_only_turns")), _fmt(r.get("codemode_turns")), _fmt(r.get("rereviews")), _fmt(r.get("orient_lines")), _fmt(r.get("ledger_denies")), _fmt(r.get("ledger_calls")), _fmt(r.get("dup_reviews")), _fmt(r.get("second_opinions")), _fmt(r.get("stop_hold")), _dist(r.get("tier_dist")), _fmt(r.get("rung_up")), _fmt(r.get("child_read_warn")), _fmt(r.get("child_read_deny")), _fmt(r.get("review_defer_headless")), _fmt(r.get("child_turn_cap")), _fmt(r.get("launch_refused")), _think(r.get("thinking_by_role")), _fmt(r.get("autoreview_tokens")), _fmt(r.get("autoreview_calls")), _pct(r.get("autoreview_defer_share")), _fmt(r.get("retro_tokens")), _fmt(r.get("cache_write_per_launch"))] for r in summary]
     text = ["Per row (median [min-max] over counted cells; first cell excluded):"] + _columns(head, lines)
     if first:
         text.append("First cell %s: %s" % (first["cell"], "not finished" if not first["finished"] else
@@ -893,14 +899,14 @@ def format_cost(summary, rows, prices):
 def format_table(rows):
     head = ["row", "task", "success", "tokens", "wall s", "tool calls", "approvals", "guard blocks",
             "tier", "launches", "revisions", "asks_denied", "gate_blocks", "pollBash", "ceremony_incomplete",
-            "foreman_edit_refused", "pr_refused", "checkpoint_auto", "read_blocks", "recheck_blocks", "finish_refused", "launch_waits", "wait_turns", "text_only_turns", "codemode_turns", "rereviews", "orient_lines", "ledger_denies", "ledger_calls", "dup_reviews", "second_opinions", "stop_hold", "tier_dist", "rung_up", "child_read_warn", "child_read_deny", "review_defer_headless", "autoreview_tokens", "autoreview_calls", "autoreview_defer_share", "retro_tokens", "cache_write_per_launch"]
+            "foreman_edit_refused", "pr_refused", "checkpoint_auto", "read_blocks", "recheck_blocks", "finish_refused", "launch_waits", "wait_turns", "text_only_turns", "codemode_turns", "rereviews", "orient_lines", "ledger_denies", "ledger_calls", "dup_reviews", "second_opinions", "stop_hold", "tier_dist", "rung_up", "child_read_warn", "child_read_deny", "review_defer_headless", "child_turn_cap", "launch_refused", "thinking_by_role", "autoreview_tokens", "autoreview_calls", "autoreview_defer_share", "retro_tokens", "cache_write_per_launch"]
     lines = []
     for r in rows:
         lines.append([r["row"], r["task"], "%d/%d%s" % (r["success"], r["counted"], " (+%d infra)" % r["infra_errors"] if r["infra_errors"] else ""),
                       _fmt(r["tokens"]), _fmt(r["wall_seconds"], 1), _fmt(r["tool_calls"]), _fmt(r["approvals"]),
                       _fmt(r["guard_blocks"]), r.get("tier") or "-", _fmt(r.get("launches")), _fmt(r.get("revisions")),
                       _fmt(r.get("asks_denied")), _fmt(r.get("gate_blocks")), _fmt(r.get("pollBash")), _fmt(r.get("ceremony_incomplete")),
-              _fmt(r.get("foreman_edit_refused")), _fmt(r.get("pr_refused")), _fmt(r.get("checkpoint_auto")), _fmt(r.get("read_blocks")), _fmt(r.get("recheck_blocks")), _fmt(r.get("finish_refused")), _fmt(r.get("launch_waits")), _fmt(r.get("wait_turns")), _fmt(r.get("text_only_turns")), _fmt(r.get("codemode_turns")), _fmt(r.get("rereviews")), _fmt(r.get("orient_lines")), _fmt(r.get("ledger_denies")), _fmt(r.get("ledger_calls")), _fmt(r.get("dup_reviews")), _fmt(r.get("second_opinions")), _fmt(r.get("stop_hold")), _dist(r.get("tier_dist")), _fmt(r.get("rung_up")), _fmt(r.get("child_read_warn")), _fmt(r.get("child_read_deny")), _fmt(r.get("review_defer_headless")), _fmt(r.get("autoreview_tokens")), _fmt(r.get("autoreview_calls")), _pct(r.get("autoreview_defer_share")), _fmt(r.get("retro_tokens")), _fmt(r.get("cache_write_per_launch"))])
+              _fmt(r.get("foreman_edit_refused")), _fmt(r.get("pr_refused")), _fmt(r.get("checkpoint_auto")), _fmt(r.get("read_blocks")), _fmt(r.get("recheck_blocks")), _fmt(r.get("finish_refused")), _fmt(r.get("launch_waits")), _fmt(r.get("wait_turns")), _fmt(r.get("text_only_turns")), _fmt(r.get("codemode_turns")), _fmt(r.get("rereviews")), _fmt(r.get("orient_lines")), _fmt(r.get("ledger_denies")), _fmt(r.get("ledger_calls")), _fmt(r.get("dup_reviews")), _fmt(r.get("second_opinions")), _fmt(r.get("stop_hold")), _dist(r.get("tier_dist")), _fmt(r.get("rung_up")), _fmt(r.get("child_read_warn")), _fmt(r.get("child_read_deny")), _fmt(r.get("review_defer_headless")), _fmt(r.get("child_turn_cap")), _fmt(r.get("launch_refused")), _think(r.get("thinking_by_role")), _fmt(r.get("autoreview_tokens")), _fmt(r.get("autoreview_calls")), _pct(r.get("autoreview_defer_share")), _fmt(r.get("retro_tokens")), _fmt(r.get("cache_write_per_launch"))])
     text = _columns(head, lines)
     metas = {}
     for r in rows:
