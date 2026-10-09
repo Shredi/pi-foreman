@@ -12,6 +12,11 @@
 - Replay fake provider `FOREMAN_FAKE_USAGE=size`, `FOREMAN_FAKE_SIZES`, `FOREMAN_FAKE_SYSTEM`: usage and per-request
   prompt size for every model; child system prompt measured at 1.1k to 1.3k tokens, nothing trimmed
   (design/architecture.md, builder frugality).
+- Trivial builder path (`ceremony.required.trivial: ["builder"]`, default): a trivial change keeps a `Tier: trivial`
+  ledger and runs one bottom-rung builder, no explorer, planner, reviewer or finalizer; at finish a diffscan check
+  (one source file within `trivialBound`, no exported signature/schema change, no test file touched, a test present)
+  escalates to standard otherwise (trace `triage_escalated {reason}`), so a reviewer must pass. `[]` restores the old trivial.
+- foreman.md tells the foreman about the ladder: `reason` on a strong launch, `RUNG_UP:` / `STATUS: stuck` relaunch.
 - Role ladder: `ladder.strongAbove` (100000) and `ladder.childMaxTurns` (60), per provider and per role; a
   bottom-rung child past either is steered to hand off (`RUNG_UP: context|turns`), `STATUS: stuck` / "own checks
   failed" also make the run climb-eligible; the foreman's strong relaunch gets the handoff prepended (trace `rung_up`,

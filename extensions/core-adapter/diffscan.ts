@@ -198,7 +198,8 @@ export function factsBlock(facts: readonly DiffFact[], base = "HEAD"): string {
 const GIT_TIMEOUT_MS = 8000;
 const MAX_DIFF = 12 * 1024 * 1024;
 
-function git(cwd: string, args: string[]): Promise<string | null> {
+/** `git <args>` in `cwd`: stdout, or null on any error. */
+export function git(cwd: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
     execFile("git", ["-c", "core.quotepath=off", ...args], { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_DIFF, windowsHide: true, encoding: "utf8" }, (err, stdout) => resolve(err ? null : String(stdout)));
   });
@@ -206,9 +207,15 @@ function git(cwd: string, args: string[]): Promise<string | null> {
 
 /** Facts for `cwd` against `base` (a commit; default HEAD): working tree and index changes included. */
 export async function collectFacts(cwd: string, base: string | null): Promise<{ block: string; base: string }> {
+  const r = await diffWithFacts(cwd, base);
+  return { block: factsBlock(r.facts, r.base), base: r.base };
+}
+
+/** The work diff of `cwd` against `base` (null when git fails) and its facts; the trivial check (trivial.ts) reads both. */
+export async function diffWithFacts(cwd: string, base: string | null): Promise<{ diff: string | null; facts: DiffFact[]; base: string }> {
   const ref = base && /^[0-9a-f]{7,64}$/.test(base) ? base : "HEAD";
   const diff = await git(cwd, ["diff", "--no-color", "--no-ext-diff", "--unified=0", "-M", ref, "--"]);
-  if (!diff || !diff.trim()) return { block: "", base: ref };
+  if (diff === null || !diff.trim()) return { diff, facts: [], base: ref };
   // Non-exported functions count only when a test file mentions them: one `git grep` per candidate.
   const cache = new Map<string, string | null>();
   const names = new Set<string>();
@@ -221,7 +228,7 @@ export async function collectFacts(cwd: string, base: string | null): Promise<{ 
       cache.set(n, out?.split("\n").find((f) => f && isTestPath(f)) ?? null);
     }),
   );
-  return { block: factsBlock(scanDiff(diff, (name, lang) => cache.get(`${lang}\u0000${name}`) ?? null), ref), base: ref };
+  return { diff, facts: scanDiff(diff, (name, lang) => cache.get(`${lang}\u0000${name}`) ?? null), base: ref };
 }
 
 type Json = Record<string, unknown>;
@@ -259,6 +266,11 @@ export class ReviewFacts {
   private cwdOf(step: Json, input: Json, fallback: string): string {
     const c = typeof step.cwd === "string" && step.cwd ? step.cwd : typeof input.cwd === "string" && input.cwd ? input.cwd : fallback;
     return path.resolve(fallback, c);
+  }
+
+  /** Directories with a recorded builder base, and the base (the trivial check reads them at finish). */
+  recorded(): [string, string][] {
+    return [...this.bases];
   }
 
   /** Call before a launch: records the base for each builder step. */

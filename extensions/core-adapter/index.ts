@@ -4,7 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, promptSignals, tierLine, userOverride } from "./ceremony.ts";
+import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, userOverride } from "./ceremony.ts";
+import { checkTrivial, effectiveRequired, escalationNote, trivialBuilderPath } from "./trivial.ts";
 import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
@@ -73,7 +74,7 @@ import { registerWait, waitLimits } from "./wait.ts";
 import { dedupeNotices, dedupeOn, dropReturnControl, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { registerClose, syncCommand } from "./close.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
-import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_TOOL, workspaceTargets } from "./triage.ts";
+import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_TOOL, trivialPathAdvice, workspaceTargets } from "./triage.ts";
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
@@ -637,7 +638,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.orientation = get(s.config.config, "ceremony.orientation.enabled") === false ? "" : await collectOrientation(ctx.cwd, { reads: readLimits(get(s.config.config, "ceremony.foremanReads")).before, maxLines: Math.max(1, Number(get(s.config.config, "ceremony.orientation.maxLines")) || 120) });
       s.trace?.emit({ event: "orientation", lines: s.orientation ? s.orientation.split("\n").length : 0 });
     }
-    const text = [applyVariants(instructionsCache ?? "", promptVariants(s)), tierLine(s.ceremony), s.triageHint, finishLine(get(s.config.config, "ceremony.required"), s.ceremony.tier)].concat(s.orientation).filter(Boolean).join("\n\n");
+    const text = [applyVariants(instructionsCache ?? "", promptVariants(s)), tierLine(s.ceremony), s.triageHint, finishLine({ [s.ceremony.tier]: requiredOf(s, s.ceremony.tier) }, s.ceremony.tier)].concat(s.orientation).filter(Boolean).join("\n\n");
     event.systemPromptOptions.sections["pi-foreman"] = text;
     s.foremanSection = text;
   });
@@ -647,6 +648,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ledgerHelper: ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper")),
       heavyThreshold: heavyStrict(s) ? "strict" : "eee843d",
       reviewPerRevision: get(s.config.config, "ceremony.reviewPerRevision") === false ? "off" : "on",
+      trivialPath: trivialBuilderPath(get(s.config.config, "ceremony.required")) ? "builder" : "off",
+      ladder: "on",
     };
   }
   /** ceremony.heavyThreshold: anything but "eee843d" is the default strict. */
@@ -941,7 +944,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         if (guard === "ledger_guard_spawn") {
           agents = subagentAgents(input);
-          setCeremony(s, beforeSpawn(s.ceremony, agents));
+          setCeremony(s, beforeSpawn(s.ceremony, agents, trivialBuilderPath(get(s.config.config, "ceremony.required"))));
         }
         // Children get the git guard in child mode from extensions/git-guard; main mode is the foreman lint.
         if (guard === "git_guard" && (s.isChild || !mainNeedsGitGuard(input.command))) continue;
@@ -1002,6 +1005,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const ledger = (() => { try { return ledgerFile ? fs.readFileSync(ledgerFile, "utf8") : null; } catch { return null; } })();
         if (climbs.some((c) => c.handoff) && !kind) kind = "strong-relaunch";
         for (const r of s.ladder.apply(climbs, (task) => ledgerLines(ledger, task))) s.trace?.emit(r);
+        const was = s.ceremony.tier;
+        setCeremony(s, onStrongLaunch(s.ceremony, climbs.map((c) => c.reason)));
+        if (s.ceremony.tier !== was) s.trace?.emit({ event: "triage_escalated", from: was, to: s.ceremony.tier, reason: "strong" });
       }
       let limits: LadderLimits | undefined;
       const single = event.toolName === "subagent" && !s.isChild ? singleLaunchRole(input) : null;
@@ -1386,7 +1392,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const outcome = await run(s, ctx, "ledger_guard_stop", stopPayload(payloadCtx(s, ctx), s.stopContinued), "Stop");
     const r = translateStop(outcome);
     if (r.openFailure) notifyOnce(s, ctx, "open:ledger_guard_stop", r.openFailure);
-    if (!r.hold) return ceremonyFinishGate(s, ctx, event.entries);
+    if (!r.hold) return await ceremonyFinishGate(s, ctx, event.entries);
     s.stopContinued = true;
     s.trace?.emit({ event: "stop_hold", guard: "ledger_guard_stop", decision: "continue" });
     return {
@@ -1400,10 +1406,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * (ceremony.required). Not while a child of this session still runs (its completion starts the
    * next turn). At most 2 refusals per user prompt; then the settle passes, visibly.
    */
-  function ceremonyFinishGate<E>(s: Session, ctx: ExtensionContext, entries: E[]) {
+  async function ceremonyFinishGate<E>(s: Session, ctx: ExtensionContext, entries: E[]) {
     if (s.isChild || !isTriaged(s.ceremony) || s.activeRuns.size > 0) return undefined;
+    const escalated = await trivialFinishCheck(s, ctx);
     const gateMode = reviewGateMode(get(s.config.config, "ceremony.reviewGate"));
-    const missing: string[] = openSteps(s.steps, requiredSteps(get(s.config.config, "ceremony.required"), s.ceremony.tier), gateMode, s.reviewGate);
+    const missing: string[] = openSteps(s.steps, requiredOf(s, s.ceremony.tier), gateMode, s.reviewGate);
     // A rejected plan blocks the heavy finish until a new approval or the user lowers the tier (/ceremony).
     const rejected = s.ceremony.tier === "heavy" && s.plan?.status === "rejected";
     if (rejected) missing.push("plan");
@@ -1416,9 +1423,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.finishRefusals++;
     s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(",") });
     return {
-      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? reviewHint(s.reviewGate) : "") + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
+      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? reviewHint(s.reviewGate) : "") + escalated + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
       continue: true,
     };
+  }
+
+  /** ceremony.required.<tier> as it applies to this session (trivial.ts effectiveRequired). */
+  function requiredOf(s: Session, tier: string): Step[] {
+    return effectiveRequired(requiredSteps(get(s.config.config, "ceremony.required"), tier), tier, { bounded: editModeOfSession(s).mode === "bounded", ledger: boundLedger(s.markerDir, s.id) !== null });
+  }
+
+  /** Trivial builder path (trivial.ts): at finish the builder's diff decides; a failed check escalates to standard. The refusal note, or "". */
+  async function trivialFinishCheck(s: Session, ctx: ExtensionContext): Promise<string> {
+    if (s.ceremony.tier !== "trivial" || !s.ceremony.trivialBuilder || !trivialBuilderPath(get(s.config.config, "ceremony.required"))) return "";
+    const v = await checkTrivial(reviewFacts.recorded(), ctx.cwd, readBound(get(s.config.config, "ceremony.trivialBound")), editModeOfSession(s).scratchDir);
+    if (!v) return "";
+    setCeremony(s, escalate(s.ceremony, "standard", "auto", `trivial check: ${v.reason}`));
+    s.trace?.emit({ event: "triage_escalated", from: "trivial", to: s.ceremony.tier, reason: v.reason });
+    return escalationNote(v);
   }
 
   // ------------------------------------------------------------------- tools
@@ -1485,8 +1507,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (raised) s.trace?.emit({ event: "triage_escalated", from: "trivial", to: tier, reason: "edit_mode" });
         const note = raised ? "Recorded as standard, not trivial: the edit mode already refused a change of yours, so a builder makes it. " : "";
         const em = editModeOfSession(s);
-        const advice = tier === "trivial" && em.mode !== "bounded" ? `No builder is required, but ${editModeAdvice(em.mode, em.scratchDir)} for any project change (that makes the task standard).` : triageAdvice(tier);
-        return { content: [{ type: "text" as const, text: [`${note}${tierLine(s.ceremony)} ${advice}`, finishLine(get(s.config.config, "ceremony.required"), tier)].filter(Boolean).join(" ") }], details: { decision: "recorded", tier } };
+        const advice = tier === "trivial" && trivialBuilderPath(get(s.config.config, "ceremony.required")) ? trivialPathAdvice(em.mode === "bounded") : tier === "trivial" && em.mode !== "bounded" ? `No builder is required, but ${editModeAdvice(em.mode, em.scratchDir)} for any project change (that makes the task standard).` : triageAdvice(tier);
+        return { content: [{ type: "text" as const, text: [`${note}${tierLine(s.ceremony)} ${advice}`, finishLine({ [tier]: requiredOf(s, tier) }, tier)].filter(Boolean).join(" ") }], details: { decision: "recorded", tier } };
       },
     } as never);
   }

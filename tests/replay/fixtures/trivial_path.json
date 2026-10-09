@@ -1,0 +1,41 @@
+{
+ "foreman": {
+  "t1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "trivial", "reason": "one-line fix in calc.py"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-calc.md", "content": "# Requirements Ledger: calc\nTier: trivial\n\n- [ ] 1. add() adds\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-t1]] fix add() in calc.py (item 1)"}}]},
+   {"text": "Builder launched."}
+  ],
+  "t2": [
+   {"tools": [{"name": "foreman_ledger", "arguments": {"action": "mark", "items": [1]}}]},
+   {"text": "Done."}
+  ],
+  "t3": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "trivial", "reason": "one-line fix in calc.py"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-calc.md", "content": "# Requirements Ledger: calc\nTier: trivial\n\n- [ ] 1. add() adds\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-t3]] fix add() in calc.py (item 1)"}}]},
+   {"text": "Builder launched."}
+  ],
+  "t4": [
+   {"tools": [{"name": "foreman_ledger", "arguments": {"action": "mark", "items": [1]}}]},
+   {"text": "Done."},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-t5]] review item 1"}}]},
+   {"text": "Reviewer launched."}
+  ],
+  "t5": [{"text": "Reviewed; done."}]
+ },
+ "*": {
+  "b-t1": [
+   {"tools": [{"name": "edit", "arguments": {"path": "calc.py", "edits": [{"oldText": "return a - b", "newText": "return a + b"}]}}]},
+   {"text": "[[replay:t2]] built"}
+  ],
+  "b-t3": [
+   {"tools": [
+    {"name": "edit", "arguments": {"path": "calc.py", "edits": [{"oldText": "return a - b", "newText": "return a + b"}]}},
+    {"name": "edit", "arguments": {"path": "test_calc.py", "edits": [{"oldText": "assert add(1, 2) == 3", "newText": "assert add(1, 2) > 0"}]}}
+   ]},
+   {"text": "[[replay:t4]] built"}
+  ],
+  "r-t5": [{"text": "[[replay:t5]] VERDICT: PASS\n1. PASS calc.py:2\nOverall verdict: PASS"}]
+ }
+}
