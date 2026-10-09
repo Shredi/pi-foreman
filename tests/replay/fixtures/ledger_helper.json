@@ -718,22 +718,22 @@
   ],
   "r-a3": [
    {
-    "text": "[[replay:a3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+    "text": "[[replay:a3]] VERDICT: PASS\nevidence a.txt:1\nOverall verdict: PASS"
    }
   ],
   "r-b3": [
    {
-    "text": "[[replay:b3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+    "text": "[[replay:b3]] VERDICT: PASS\nevidence a.txt:1\nOverall verdict: PASS"
    }
   ],
   "r-c3": [
    {
-    "text": "[[replay:c3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+    "text": "[[replay:c3]] VERDICT: PASS\nevidence a.txt:1\nOverall verdict: PASS"
    }
   ],
   "r-f3": [
    {
-    "text": "[[replay:f3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+    "text": "[[replay:f3]] VERDICT: PASS\nevidence a.txt:1\nOverall verdict: PASS"
    }
   ],
   "r-d3": [
@@ -769,7 +769,7 @@
     ]
    },
    {
-    "text": "[[replay:g3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+    "text": "[[replay:g3]] VERDICT: PASS\nevidence a.txt:1\nOverall verdict: PASS"
    }
   ]
  }

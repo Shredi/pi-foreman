@@ -1,0 +1,27 @@
+{
+ "foreman": {
+  "p1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-mp.md", "content": "# Requirements Ledger: mp\n\n- [ ] 1. first\n- [ ] 2. second\n- [ ] 3. third\n- [ ] V. fresh-eyes verification passed\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-p2]] build items 1, 2 and 3"}}]},
+   {"text": "Builder launched."}
+  ],
+  "p2": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-p3]] review items 1, 2 and 3"}}]}, {"text": "Reviewer launched."}],
+  "p3": [{"text": "Reviewed."}, {"text": "Still reviewed."}, {"text": "Done."}],
+
+  "f1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-mf.md", "content": "# Requirements Ledger: mf\n\n- [ ] 1. first\n- [ ] 2. second\n- [ ] V. fresh-eyes verification passed\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-f2]] build items 1 and 2"}}]},
+   {"text": "Builder launched."}
+  ],
+  "f2": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-f3]] review items 1 and 2"}}]}, {"text": "Reviewer launched."}],
+  "f3": [{"text": "Reviewed."}, {"text": "Still reviewed."}, {"text": "Done."}]
+ },
+ "*": {
+  "b-p2": [{"text": "[[replay:p2]] built"}],
+  "r-p3": [{"text": "[[replay:p3]] VERDICT: PASS\n1. PASS a.txt:1\n2. PASS a.txt:2\n3. FAIL a.txt:3 not covered\nOverall verdict: PASS"}],
+  "b-f2": [{"text": "[[replay:f2]] built"}],
+  "r-f3": [{"text": "[[replay:f3]] VERDICT: FAIL\n1. PASS a.txt:1\n2. FAIL a.txt:2\nOverall verdict: FAIL"}]
+ }
+}

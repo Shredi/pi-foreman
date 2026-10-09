@@ -54,6 +54,8 @@ import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
 import { appendReview, capSet, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prToolRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
+import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
+import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts";
 import { openTrace } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
 import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
@@ -175,6 +177,12 @@ interface Session {
   reviews: ReviewRecord[];
   /** Pending HEAD reads of `reviews`; the PR gate waits for it. */
   reviewSync: Promise<void>;
+  /** Foreman only: review runs whose `N. PASS` items were marked (reviewmarks.ts), so each run marks once. */
+  reviewMarked: Set<string>;
+  /** Foreman only: the working tree at the latest review PASS (commentonly.ts); null without one. */
+  passSnap: TreeSnap | null;
+  /** Foreman only: builder runs launched after a PASS; a comment-only result withdraws their revision. */
+  touchUps: Set<string>;
   /** Foreman only: HEAD per directory at launch, by tool call id until the launch result names the run. */
   launchHeadsByCall: Map<string, Map<string, string | null>>;
   /** Foreman only: HEAD per directory at launch, by run id until the run ends (reviews.ts reviewedHead). */
@@ -312,6 +320,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       lastBuilderModel: null,
       reviews: [],
       reviewSync: Promise.resolve(),
+      reviewMarked: new Set(),
+      passSnap: null,
+      touchUps: new Set(),
       launchHeadsByCall: new Map(),
       launchHeads: new Map(),
       plan: null,
@@ -710,6 +721,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       factRulings: "on",
       // Launch skeletons and tier rules (retro-harvest; "off" only renders the eee843d baseline).
       launchBriefs: "on",
+      // A reviewer PASS marks its items (reviewmarks.ts; "off" only renders the eee843d baseline).
+      reviewMarks: "on",
     };
   }
   /** ceremony.heavyThreshold: anything but "eee843d" is the default strict. */
@@ -803,6 +816,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           for (const step of stepsOfRunEnd(data)) s.steps[step]++;
           const verdicts = reviewVerdictsOfRunEnd(data);
           s.reviewGate = onReviewVerdicts(s.reviewGate, verdicts);
+          if (!s.isChild) onRunEndReview(s, runId, data, verdicts.length > 0);
           const cited = s.retro.launchItems.get(runId) ?? [];
           s.retro.launchItems.delete(runId);
           if (!s.isChild && verdicts.length) writeHint(boundLedger(s.markerDir, s.id), cited, `review ${verdicts.map((v) => (v ?? "no verdict").toUpperCase()).join(", ")} (run ${runId.slice(0, 8)})`, s.retro.hints);
@@ -1184,12 +1198,48 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const reviews = completedAgents(text).filter((a) => REVIEW_ROLES.includes(a));
     if (reviews.length === 0) return;
     const verdict = verdictOf(text);
+    const passed = reviewerPassOfNotice(text);
+    if (passed) markByReview(s, passed.runId, passed.text);
     s.rounds = onReviewDone(s.rounds, verdict);
     for (const role of reviews) s.trace?.emit({ event: "review_done", role, decision: verdict ?? "no-verdict" });
     if (verdict === "pass") {
       s.budget.enterPost();
       s.trace?.emit({ event: "recheck_budget", count: 0, action: "start" });
     } else if (verdict === "fail") resetRecheck(s, "fail");
+  }
+
+  /** Retro-harvest 1/6 at a run end: a reviewer PASS marks its items; a verdict sets or clears the PASS snapshot; a touch-up builder is checked. */
+  function onRunEndReview(s: Session, runId: string, data: unknown, verdict: boolean): void {
+    const pass = reviewerPassOfRunEnd(data);
+    if (pass) markByReview(s, runId, pass);
+    if (verdict) {
+      const passed = s.reviewGate.last === "pass";
+      const cwd = reviewsOfRunEnd(data)[0]?.cwd ?? s.cwd;
+      s.passSnap = null;
+      if (passed) s.reviewSync = s.reviewSync.then(async () => { const tree = await worktreeTree(cwd); if (s.reviewGate.last === "pass") s.passSnap = tree ? { cwd, tree } : null; });
+    }
+    if (s.touchUps.delete(runId)) s.reviewSync = s.reviewSync.then(async () => {
+      if (s.reviewGate.last === "pass" && s.reviewGate.revised && (await commentOnlyNow(s))) s.reviewGate = { ...s.reviewGate, revised: false };
+    });
+  }
+
+  /** Mark the `N. PASS` items of a reviewer PASS in the bound ledger, once per review run (reviewmarks.ts). */
+  function markByReview(s: Session, runId: string, text: string): void {
+    if (s.reviewMarked.has(runId)) return;
+    s.reviewMarked.add(runId);
+    const file = boundLedger(s.markerDir, s.id);
+    if (!file) return;
+    s.reviewSync = s.reviewSync.then(async () => {
+      const r = await markPassItems(text, file, async (n) => (await runLedger(s, ["mark", n, MARK_NOTE], file)).ok);
+      if (r) s.trace?.emit({ event: "ledger_mark_by_review", items: r.items.join(","), skipped: r.skipped.join(",") });
+    });
+  }
+
+  /** The working tree differs from the PASS snapshot only in comments or docs (commentonly.ts); traced revision_comment_only. */
+  async function commentOnlyNow(s: Session): Promise<boolean> {
+    const files = s.passSnap ? await commentOnlySince(s.passSnap) : null;
+    if (files) s.trace?.emit({ event: "revision_comment_only", files: files.length });
+    return files !== null;
   }
 
   function editModeOfSession(s: Session): { mode: EditMode; scratchDir: string } {
@@ -1348,7 +1398,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // It is also a revision that re-opens the reviewer step (ceremony.reviewGate).
     if (owner && !owner.isChild && !event.isError && (owner.budget.postPass || (owner.reviewGate.last !== null && !owner.reviewGate.revised)) && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
       if (owner.budget.postPass) resetRecheck(owner, "edit");
-      owner.reviewGate = onRevision(owner.reviewGate);
+      const touchUp = owner.reviewGate.last === "pass" && !owner.reviewGate.revised && (await owner.reviewSync, await commentOnlyNow(owner));
+      if (!touchUp) owner.reviewGate = onRevision(owner.reviewGate);
     }
     if (owner && !owner.isChild && !event.isError && event.toolName === "bg_wait") recordChild(owner, bgWaitLocations(event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n"), knownRun(owner)));
     if (owner && pending) {
@@ -1386,6 +1437,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             if (eff.lift) s.trace?.emit({ event: "read_budget", phase: eff.lift.phase, count: eff.lift.count, action: "lift", by: "explorer" });
             if (roles.includes("builder")) {
               resetRecheck(s, "builder");
+              if (s.reviewGate.last === "pass" && !s.reviewGate.revised && !roles.some((r) => REVIEW_ROLES.includes(r))) s.touchUps.add(runId);
               s.reviewGate = onRevision(s.reviewGate);
             }
             const after = reopened(s.reviewGate);
@@ -1469,6 +1521,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("agent_before_settle", async (event, ctx) => {
     if (event.outcome !== "completed") return undefined;
     const s = await ensureSession(ctx);
+    await s.reviewSync; // PASS marks and the comment-only check land before the stop guard reads the ledger
     const outcome = await run(s, ctx, "ledger_guard_stop", stopPayload(payloadCtx(s, ctx), s.stopContinued), "Stop");
     const r = translateStop(outcome);
     if (r.openFailure) notifyOnce(s, ctx, "open:ledger_guard_stop", r.openFailure);
