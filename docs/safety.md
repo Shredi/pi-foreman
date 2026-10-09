@@ -66,6 +66,24 @@ Asks go through a model review link (`foreman-review`) using `providers.<p>.revi
   defer `reason`.
 - Review model calls are logged to the usage log with role `autoreview`.
 
+## Child scratch
+
+Each single-child launch gets a scratch dir under the OS temp dir (`$FOREMAN_SCRATCH`, see
+[ceremony](ceremony.md)). Writes and removes are allowed inside that dir only, never the dir itself or anything
+outside it:
+
+- Overlay: a child may `cd` into its own scratch dir (literal or `$FOREMAN_SCRATCH`); every other rule applies there too.
+- Shell-write guard: a planner child, which may write nowhere outside its allowed dirs, may also write inside its own
+  scratch dir.
+- Review link (label `child-scratch`): a forwarded child ask is allowed without the model when every unit of the
+  command is `cp [-rRapf] <src>... <dest>`, `mkdir [-p] <dir>...`, `rm [-rRf] <path>...` or `cd <dir>` with every
+  destination or operand inside a live scratch dir of the asking role, or a unit the rules allow, joined only by
+  `&&` or `;`; and an outside-directory ask for a write or edit path inside such a dir. POSIX shell forms only. The
+  link knows the asking child's role, not its launch, so two concurrent launches of one role share the allowance.
+- The destructive guard still refuses `rm -r` with a variable operand: use the literal path.
+- The harness removes the dir at run end only after a realpath check that it is a real directory below the
+  `pi-foreman-scratch` root and neither inside nor around the repository.
+
 ## Child environment and extensions
 
 Subagent children get a stripped environment: `childenv.ts` removes the intercom identity variables, so a child
