@@ -25,6 +25,15 @@ overlays never patch the harness, and nothing from an overlay is ever copied bac
   Code does not load skills from `.agents/skills/` (headless probe, skill not listed).
 - Role ids are neutral: `explorer`, `builder`, `reviewer`, `senior-reviewer`, `finalizer`,
   `foreman`. Display names are a config preset, never hard-coded.
+- Generic only. pi-foreman is a harness anyone can use. Nothing specific to the owner's own
+  setup goes in here: no particular hosts, machines, operating-system quirks of one
+  installation, remote-spawn paths to a named server, homelab tooling, private task suites or
+  model-map details. Retro findings or feature ideas that only serve one person's environment
+  belong in that person's overlay repo (a separate repo that pins a pi-foreman release and adds
+  its own extensions, config and docs), never in this repo. When a change needs a hook for such
+  an overlay, add the generic hook here and keep the specific use in the overlay. Before
+  proposing or implementing anything, ask: would a stranger's installation need this? If not,
+  it is overlay material.
 
 ## Public-repo rule
 
