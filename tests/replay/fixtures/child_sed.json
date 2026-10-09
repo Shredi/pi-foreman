@@ -1,0 +1,20 @@
+{
+ "foreman": {
+  "b1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:bld]] short task"}}]},
+   {"text": "Launched."},
+   {"text": "Builder reported."}
+  ]
+ },
+ "builder": {
+  "bld": [
+   {"tools": [
+    {"name": "bash", "arguments": {"command": "cd sub; sed -n 1,20p f.go; sed -n 5,9p g.go"}}
+   ]},
+   {"tools": [
+    {"name": "bash", "arguments": {"command": "touch made.txt"}}
+   ]},
+   {"text": "sed child finished"}
+  ]
+ }
+}

@@ -29,6 +29,7 @@ import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
+import { reviewExtras } from "./timeoutallow.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
@@ -470,7 +471,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   pi.on("session_start", async (event, ctx) => {
     const s = await startSession(ctx);
-    review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [] });
+    review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [], ...reviewExtras(baseline, () => sessions.get(s.id)?.config.config, ctx) });
     if (!s.isChild && (event.reason === "startup" || event.reason === "new")) await applyForemanModel(s, ctx);
     await registerChildExtensions(s, ctx);
     const orderNotice = s.isChild ? null : loadOrderNotice(s.cwd, s.agentDir, PKG_ROOT);
