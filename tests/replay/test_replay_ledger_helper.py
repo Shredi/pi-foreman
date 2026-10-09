@@ -4,7 +4,7 @@ After a reviewer PASS four ledger marks through the tool, or a pure-ledger bash 
 use the recheck budget and the finish goes through. The tool closes V only after a PASS with no
 revision since (traced attested, no stop_hold after it); before a review and after a FAIL it
 refuses, and the escape-hatch finish leaves V open. A reviewer child closes V on the foreman's
-ledger through the tool and may do nothing else with it. "off" keeps the old behaviour: no tool,
+ledger through the tool and may do nothing else with it. The reviewer replies carry no `N. PASS` lines, so the harness marks nothing itself. "off" keeps the old behaviour: no tool,
 every ledger shell call counts. A foreman ledger shell call refused by a permission rule is traced ledger_call allowed false.
 Same prerequisites and skips as test_replay.py.
 """
