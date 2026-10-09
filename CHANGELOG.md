@@ -3,6 +3,17 @@
 ## [Unreleased]
 
 ### Added
+- Ladder: a builder revision after a reviewer FAIL climbs to its strong rung (`ladder.strongOnRevision`, default true,
+  trace `rung_up` reason `review_fail`); the finish gate refuses, uncounted, while that climb is open
+  (`finish_refused {climb_available}`); on the top rung the two-refusal valve is unchanged.
+- Review: the reviewer task carries the owner's task text verbatim (3000 characters) next to the diff facts; a foreman
+  ruling never puts a fact in scope, reviewers quote the owner text or FAIL (BLOCK for the senior reviewer).
+- Opt-in preset `config/presets/claude-bridge-sonnet-reviewer.json` (reviewer on Sonnet 5.5, no strong rung).
+- Children may `git restore` / `git checkout --` test files their own diff modified (vs HEAD), one plain path each;
+  every refusal names the allowed form; each restore leaves a `test_restore` trace line.
+- Auto-review allows a child's `cp`/`mkdir` into `/tmp/` without a model call (label `tmp-scratch`); `rm` stays reviewed.
+- Autoreview usage is estimated (chars/4, `estimated: true`) when the provider reports zero tokens.
+- Bench table: `wall task s` / `wall post s` (waiter start to the post-step marker, marker to waiter end) beside `wall s`.
 - `docs/` split (install, roles, ceremony, safety, sessions, bench, overlays, development) with a lean README, a
   generated `banner.svg` (`scripts/make_banner.py`, `--check` runs in CI through the docs test) and `tests/test_docs.py` (config keys, commands,
   links and page headers must stay documented).
@@ -13,7 +24,7 @@
   intercom close replies `foreman:closed <path>` before the session exits.
 - Write protection for the handoff `parent` and `child` files (`protect.writeAsk`): children are denied, the
   foreman's write/edit asks, `result.md` and `plan.md` stay writable, so a child can no longer pose as the parent.
-- Explorer brief: the latest completed explorer report (4000 characters, cut with a marker, plus its result path) is
+- Explorer brief: the latest completed explorer report (8000 characters since the ladder fixes, cut with a marker, plus its result path) is
   prepended once to the next fresh builder launch (after any rung-up handoff); trace `explorer_brief {role, chars}`.
 - `ceremony.childReads.<role>.{warn,deny}` (builder 20/40, reviewer 15/30, explorer none): a child's read, grep, find,
   ls and read-only bash calls get a notice at warn and are refused above deny with a "return your report / STATUS:
@@ -95,6 +106,24 @@
   models) with claude-agent-sdk 0.3.293.
 
 ### Fixed
+- Bench post-step waiter passed `1.0` (an epoch) to `PiRpc._next` instead of an absolute deadline, so it never read a
+  record and ran every post step to the 300 s cap; it now warns on stderr when the cap is hit.
+- `/sync --dry-run` ignored its arguments and ran a real sync; the flag now reaches `foreman_sync.py` (other arguments warn).
+- Bench `autoreview_defer_share` counts model defers over model calls only (deterministic labels excluded);
+  the `autoreview_usd~est` column is marked as an estimate (the bridge reports no usage for review calls).
+- `/retro` cost: bridge usage lines log cost 0; the handler passes the Pi registry rates (`--rates` file) and
+  `foreman_retro.py` prices those lines from tokens (also in `/foreman close` and `/sync`).
+- diffscan attributed a changed unexported symbol to the first test file containing the word anywhere in the repo;
+  it now needs a call-shaped match, same package for unexported Go symbols, nearest path first.
+  `review_facts.count` is the number of facts (was the number of reviewer steps).
+- Forwarded child asks reached auto-review as the offending unit only (a bare `python3`); the model and the
+  `review_defer_headless` trace now get the full command.
+- Explorer brief cap 4000 -> 8000 characters (7 of 8 bench briefs were cut); `explorer_brief` records `cut`.
+- Deterministic auto-review allows (sed-read, timeout-wrapper, tmp-scratch) checked only the forwarded unit, so a
+  chained command (`... && rm -rf src`) passed without a model; the full command must now pass as well.
+- Child test restore refuses git global options (`-C`, `--git-dir`, `--work-tree`, `-c`, ...), `GIT_*` variables,
+  wrappers and other repositories, and is allowed only as one plain `git restore`/`git checkout --` command
+  (decided on structure: no chain, nesting, assignment, expansion or redirect); the no-rulings rule in foreman.md renders with the ladder off too (`factRulings`).
 - The model review of an ask forwarded from a child saw an empty value: PS 39.0.2 puts the child's command in `value`,
   not `command`. That is why most child bash asks were deferred (and then denied headless).
 - Child sessions mislabelled the tier (they emitted `tier` events with their own default); only the foreman does now.

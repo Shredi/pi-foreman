@@ -668,6 +668,7 @@ class Ctx(object):
         self.pr_segs = set()     # segments that carry a PR form
         self.state_segs = set()  # segments that change the directory, HEAD or a ref
         self.cfg_env = False     # the command sets GIT_CONFIG_* (export, $env:) before a later segment
+        self.events = []         # child trace events of an allowed command ({"event": "test_restore", ...})
 
 
 def stray_git(text, flavor, depth=0):
@@ -1215,6 +1216,7 @@ class GitCall(object):
         self.passthrough = []      # global options re-used for read-only lookups
         self.cfg_aliases = {}      # -c alias.x=... (value None = unknown)
         self.pr_config = False     # --config-env push.pushOption=... (value unknown)
+        self.globals = []          # global options seen before the subcommand (alias expansions included)
 
 
 def git_args(args, seg, flavor, ctx, depth, envs, via_xargs=False, xargs_repl=None, guessing=False, call=None, hops=0):
@@ -1243,6 +1245,7 @@ def git_args(args, seg, flavor, ctx, depth, envs, via_xargs=False, xargs_repl=No
         if t in GIT_INFO:
             return OK
         key, eq, val = t.partition("=")
+        call.globals.append(key)
         if key in GIT_ARGFUL and (eq or key in ("-C", "-c") or key not in ("--exec-path", "--super-prefix")):
             if not eq:
                 if i + 1 >= len(args):
@@ -1467,7 +1470,7 @@ def git_sub(sub, rest, seg, flavor, ctx, depth, envs, via_xargs, xargs_repl, cal
             d = pr_push(rest, ctx, call, envs, seg)
             if d.level > ALLOW:
                 return d
-        return child_rules(s, rest, ctx, call)
+        return child_rules(s, rest, ctx, call, seg, via_xargs or bool(xargs_repl))
     if via_xargs and sub in ("commit", "push"):
         return ask("git %s gets arguments from xargs input; the guard cannot check them." % sub)
     if sub == "commit":
@@ -1521,14 +1524,150 @@ def nested_commands(s, rest, seg, flavor, ctx, depth, envs):
 
 # ------------------------------------------------------------------ child rules
 
-def child_rules(s, rest, ctx, call):
+def is_test_path(f):
+    """A test file by name or directory. Keep in sync with isTestPath in
+    extensions/core-adapter/diffscan.ts (same patterns, same order)."""
+    p = f.replace("\\", "/")
+    base = p[p.rfind("/") + 1:]
+    return bool(
+        re.search(r"_test\.go\Z", base)
+        or re.search(r"(^|[._-])(test|spec)s?\.[a-z]+\Z", base, re.I | re.A)
+        or re.match(r"test_.*\.py\Z", base)
+        or re.search(r"_tests?\.(py|rs)\Z", base)
+        or base == "conftest.py"
+        or re.search(r"(^|/)(tests?|__tests__|spec)/", p)
+    )
+
+
+RESTORE_ALLOWED = ("git restore/checkout -- is allowed for a child only on test files your diff modified "
+                   "(vs HEAD), one plain path each: `git restore [--worktree|-W] [--staged|-S] [--] <test file>...` "
+                   "or `git checkout -- <test file>...`")
+RESTORE_SHORT = frozenset("WS")
+RESTORE_HARMLESS_GLOBALS = frozenset(("-P", "--no-pager", "--no-optional-locks", "--no-advice"))
+
+
+def restore_path_problem(p, ctx, call):
+    """Why the path word `p` may not be restored by a child, or (None, repo-relative name)."""
+    t = p.text
+    if p.dynamic:
+        return "computed", None
+    if not t or t in (".", "..") or t.startswith(("-", ":", "~")) or "\0" in t:
+        return "not a plain file path", None
+    if any(c in t for c in "*?[]") or p.glob:
+        return "a glob", None
+    if "\\" in t and os.name != "nt":
+        return "not a plain file path (backslash)", None
+    if re.match(r"^[A-Za-z]:(?![\\/])", t):
+        return "a drive-relative path", None
+    if ".." in re.split(r"[\\/]", t):
+        return "a path with `..`", None
+    if not os.path.isdir(call.cwd):
+        return "in an unknown directory", None
+    full = os.path.join(call.cwd, t)
+    if os.path.isdir(full) or t.endswith(("/", "\\")):
+        return "a directory", None
+    top = run_git(call, ctx, ["rev-parse", "--show-toplevel"])
+    if not top or not top.strip():
+        return "not inside a git work tree", None
+    root = os.path.normcase(os.path.realpath(top.strip()))
+    own = run_git(GitCall(ctx), ctx, ["rev-parse", "--show-toplevel"])
+    if not own or os.path.normcase(os.path.realpath(own.strip())) != root:
+        return "in another repository than the working directory's", None
+    real = os.path.normcase(os.path.realpath(full))
+    if real != root and not real.startswith(root.rstrip(os.sep) + os.sep):
+        return "outside the repository", None
+    if run_git(call, ctx, ["ls-files", "--error-unmatch", "--", t]) is None:
+        return "not tracked (untracked files are not restored)", None
+    changed = [n for n in (run_git(call, ctx, ["diff", "--name-only", "HEAD", "--", t]) or "").splitlines() if n]
+    if not changed:
+        return "not modified against HEAD", None
+    if len(changed) != 1:
+        return "not a single file", None
+    if not is_test_path(changed[0]):
+        return "not a test file (source changes are the foreman's call)", None
+    return None, changed[0]
+
+
+RESTORE_SHELL_BAN = re.compile(r"[$`;&|<>(){}%\n\r]")
+
+
+def restore_alone(ctx, seg):
+    """The WHOLE command is this one simple git call: one segment, written `git` literally, no shell
+    syntax that could set or expand anything (quoted or computed assignments, eval, read, printf -v,
+    BASH_ENV, substitutions, redirects, chains, nesting). Decided on structure, not on variable names."""
+    if not ctx.root or seg is None:
+        return False
+    text, flavor = ctx.root
+    if flavor not in ("bash", "powershell") or RESTORE_SHELL_BAN.search(text):
+        return False
+    try:
+        lx = lex(text, flavor)
+    except LexError:
+        return False
+    if len(lx.segs) != 1 or lx.subs:
+        return False
+    only = lx.segs[0]
+    if only.heredocs or only.herestrings or not only.words or only.words[0].dynamic or only.words[0].raw != "git":
+        return False
+    return only.raw() == seg.raw()
+
+
+def child_restore(s, rest, ctx, call, seg, via_xargs):
+    """A child's `git restore` / `git checkout -- <paths>`: allowed only on modified, tracked test files.
+    Children run from the task base; a child that committed moves HEAD, so "vs HEAD" is then its own
+    uncommitted diff since that commit."""
+    def no(why):
+        return deny("%s; %s. Anything else: report back and let the foreman do it." % (RESTORE_ALLOWED, why))
+
+    if via_xargs:
+        return no("the paths come from xargs input")
+    if ctx.state_segs - {seg}:
+        return no("an earlier part of the command changes the directory or HEAD; run the restore on its own")
+    # Only the cwd's own repository: no global option (-C, --git-dir, --work-tree, -c, --namespace, ...),
+    # no GIT_* variable anywhere in the command (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_CONFIG*),
+    # no wrapper (env, command, sudo, ...) in front of git.
+    extra = [g for g in call.globals if g not in RESTORE_HARMLESS_GLOBALS]
+    if extra:
+        return no("the global option %s is not allowed (it can point git at another repository)" % extra[0])
+    if ctx.root and re.search(r"GIT_", ctx.root[0], re.I):
+        return no("the command sets a GIT_* variable (it can point git at another repository)")
+    if not restore_alone(ctx, seg):
+        return no("the restore must be a command of its own: exactly one plain `git ...` call, nothing chained, "
+                  "nested or redirected, no variable, assignment, wrapper or substitution")
+    if s == "restore":
+        opts, pos, dd, _ = parse_opts(rest, short_arg="s", known=(
+            "source", "patch", "worktree", "staged", "quiet", "progress", "ours", "theirs", "merge", "conflict",
+            "ignore-unmerged", "ignore-skip-worktree-bits", "recurse-submodules", "overlay", "no-overlay",
+            "pathspec-from-file", "pathspec-file-nul"), long_arg=("source", "pathspec-from-file", "conflict"))
+        for name, _ in opts:
+            if name not in ("worktree", "staged") and name not in RESTORE_SHORT:
+                return no("-%s%s is not allowed" % ("-" if len(name) > 1 else "", name))
+        paths = list(pos) + list(dd)
+    else:
+        opts, pos, dd, _ = parse_opts(rest)
+        if opts or pos:
+            return no("options or a tree-ish before `--` are not allowed")
+        paths = list(dd)
+    if not paths:
+        return no("no path given")
+    names = []
+    for p in paths:
+        why, name = restore_path_problem(p, ctx, call)
+        if why:
+            return no("%s is %s" % (p.text.replace("\0", "?") or "''", why))
+        names.append(name)
+    ctx.events.extend({"event": "test_restore", "path": n} for n in names)
+    return OK
+
+
+def child_rules(s, rest, ctx, call, seg=None, via_xargs=False):
     def no(what):
         return deny("children may not run `git %s` (%s). Report back and let the foreman do it." % (what, CHILD_WHY.get(s, "it can destroy work")))
 
     if s in ("push", "send-pack", "http-push"):
         return no(s)
     if s == "restore":
-        return no("restore")
+        return child_restore(s, rest, ctx, call, seg, via_xargs)
     dynamic = any(w.dynamic for w in rest)
     if dynamic and s in RISKY_DYNAMIC:
         return deny("children may not run `git %s` with computed arguments; write them out." % s)
@@ -1546,10 +1685,10 @@ def child_rules(s, rest, ctx, call):
             "merge", "conflict", "patch", "orphan", "detach", "ignore-skip-worktree-bits", "pathspec-from-file",
             "overlay", "no-overlay", "recurse-submodules", "ignore-other-worktrees"),
             long_arg=("orphan", "pathspec-from-file"))
+        if dd:
+            return child_restore(s, rest, ctx, call, seg, via_xargs)
         if has(opts, "f", "force"):
             return no("checkout --force")
-        if dd:
-            return no("checkout -- <path>")
         if has(opts, "pathspec-from-file"):
             return no("checkout --pathspec-from-file")
         for v in values(opts, "B"):
@@ -1563,7 +1702,8 @@ def child_rules(s, rest, ctx, call):
         if len(pos) >= 2 and not creating:
             return no("checkout <tree-ish> <path>")
         if len(pos) == 1 and not creating and os.path.lexists(os.path.join(call.cwd, pos[0].text)):
-            return no("checkout %s (a path: this discards its changes)" % pos[0].text)
+            return deny("children may not run `git checkout %s` (a path: this discards its changes). %s."
+                        % (pos[0].text, RESTORE_ALLOWED))
         return OK
     if s == "switch":
         opts, _, _, _ = parse_opts(rest, short_arg="cC", known=(
@@ -2311,6 +2451,9 @@ def main(argv=None):
     ctx.pr_gate = payload.get("pr_gate")
     d = analyze_text(command, flavor_of(payload), ctx, 0)
     if d.level == ALLOW:
+        if ctx.events:
+            # No hook decision: the git-guard extension forwards these to the child's trace.
+            sys.stdout.write(json.dumps({"foremanEvents": ctx.events}) + "\n")
         return 0
     out = {"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                   "permissionDecision": "deny" if d.level == DENY else "ask",

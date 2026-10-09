@@ -471,7 +471,7 @@ def sync_repo(entry, ctx):
 def run_retro(args, agent_dir):
     cmd = [sys.executable, "-E", "-s", os.path.join(HERE, "foreman_retro.py"), "--agent-dir", agent_dir]
     for flag, val in (("--session", args.session_file), ("--trace", args.trace), ("--usage", args.usage),
-                      ("--review-log", args.review_log)):
+                      ("--review-log", args.review_log), ("--rates", args.rates)):
         if val:
             cmd += [flag, val]
     try:
@@ -511,6 +511,7 @@ def build_parser():
     p.add_argument("--trace")
     p.add_argument("--usage")
     p.add_argument("--review-log")
+    p.add_argument("--rates")
     return p
 
 

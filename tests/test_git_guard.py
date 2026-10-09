@@ -268,6 +268,105 @@ class RepoTest(unittest.TestCase):
         self.assertEqual(decide("git checkout a.txt", "child", cwd=self.repo)[0], D)
         self.assertEqual(decide("git checkout some-branch", "child", cwd=self.repo)[0], A)
 
+    def restore_repo(self):
+        for rel in ("tests/test_a.py", "tests/test_same.py", "src/a.py"):
+            Path(self.repo, rel).parent.mkdir(exist_ok=True)
+            Path(self.repo, rel).write_text("x = 1\n")
+        git(self.repo, "add", "tests", "src")
+        git(self.repo, "commit", "-q", "-m", "chore: files")
+        for rel in ("tests/test_a.py", "src/a.py"):
+            Path(self.repo, rel).write_text("x = 2\n")
+        Path(self.repo, "tests", "test_new.py").write_text("x = 3\n")
+
+    def test_child_may_restore_a_modified_test_file(self):
+        self.restore_repo()
+        for c in ("git restore tests/test_a.py", "git restore -- tests/test_a.py", "git checkout -- tests/test_a.py",
+                  "git restore --worktree --staged -- tests/test_a.py", "git restore -WS tests/test_a.py"):
+            self.assertEqual(decide(c, "child", cwd=self.repo), (A, ""), c)
+        self.assertEqual(decide("git restore test_a.py", "child", cwd=str(Path(self.repo, "tests")))[0], A)
+
+    def test_child_restore_refusals_name_the_allowed_form(self):
+        self.restore_repo()
+        for c, why in (("git restore src/a.py", "not a test file"),
+                       ("git restore tests/test_new.py", "not tracked"),
+                       ("git restore tests/test_same.py", "not modified"),
+                       ("git restore --source HEAD~1 tests/test_a.py", "-source"),
+                       ("git restore -s HEAD tests/test_a.py", "-s"),
+                       ("git restore -p tests/test_a.py", "-p"),
+                       ("git checkout HEAD -- tests/test_a.py", "tree-ish"),
+                       ("git checkout -f -- tests/test_a.py", "tree-ish"),
+                       ("git restore 'tests/test_*.py'", "a glob"),
+                       ("git restore tests", "a directory"),
+                       ("git restore .", "not a plain file path"),
+                       ("git restore -- ../x/tests/test_a.py", ".."),
+                       ("git restore tests/test_a.py src/a.py", "not a test file"),
+                       ("cd src && git restore ../tests/test_a.py", "changes the directory")):
+            got, reason = decide(c, "child", cwd=self.repo)
+            self.assertEqual(got, D, c)
+            self.assertIn("test files your diff modified", reason, c)
+            self.assertIn(why, reason, c)
+
+    def test_child_restore_stays_in_the_cwd_repository(self):
+        self.restore_repo()
+        other = tempfile.mkdtemp(prefix="pf-gg-other-")
+        self.addCleanup(shutil.rmtree, other, True)
+        git(other, "init", "-q")
+        Path(other, "pkg").mkdir()
+        Path(other, "pkg", "foo_test.go").write_text("a\n")
+        git(other, "add", "pkg")
+        git(other, "-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "-m", "init")
+        Path(other, "pkg", "foo_test.go").write_text("b\n")
+        o = other.replace("\\", "/")
+        for c, why in (("git -C '%s' restore pkg/foo_test.go" % o, "-C"),
+                       ("git --git-dir='%s/.git' --work-tree='%s' restore tests/test_a.py" % (o, o), "--git-dir"),
+                       ("git -c core.worktree='%s' restore tests/test_a.py" % o, "-c"),
+                       ("git --namespace=x restore tests/test_a.py", "--namespace"),
+                       ("GIT_WORK_TREE='%s' GIT_DIR='%s/.git' git restore pkg/foo_test.go" % (o, o), "GIT_"),
+                       ("GIT_INDEX_FILE=/tmp/i git restore tests/test_a.py", "GIT_"),
+                       ("export GIT_DIR='%s/.git'; git restore tests/test_a.py" % o, "GIT_"),
+                       ("env git restore tests/test_a.py", "wrapper"),
+                       ("command git restore tests/test_a.py", "wrapper"),
+                       ("git -C '%s' checkout -- pkg/foo_test.go" % o, "-C")):
+            got, reason = decide(c, "child", cwd=self.repo)
+            self.assertEqual(got, D, c)
+            self.assertIn("test files your diff modified", reason, c)
+            self.assertIn(why, reason, c)
+        self.assertEqual(decide("git --no-pager restore tests/test_a.py", "child", cwd=self.repo)[0], A)
+
+    def test_child_restore_must_be_a_command_of_its_own(self):
+        self.restore_repo()
+        for c in ("export GI\"T_DIR\"=../B/.git GI\"T_WORK_TREE\"=../B; git restore tests/test_a.py",
+                  "G=GIT; export ${G}_DIR=../B/.git; git restore tests/test_a.py",
+                  "eval 'git restore tests/test_a.py'",
+                  "read D <<< x; git restore tests/test_a.py",
+                  "printf -v D x; git restore tests/test_a.py",
+                  "BASH_ENV=/tmp/e bash -c 'git restore tests/test_a.py'",
+                  "ENV=/tmp/e sh -c 'git restore tests/test_a.py'",
+                  "bash -c 'git restore tests/test_a.py'",
+                  "git restore tests/test_a.py > /dev/null",
+                  "git restore tests/test_a.py &",
+                  "git restore tests/test_a.py || true",
+                  "\"git\" restore tests/test_a.py",
+                  "git restore tests/test_a.py\ngit status"):
+            got, reason = decide(c, "child", cwd=self.repo)
+            self.assertEqual(got, D, c)
+            self.assertIn("test files your diff modified", reason, c)
+        got, reason = decide("eval 'git restore tests/test_a.py'", "child", cwd=self.repo)
+        self.assertIn("command of its own", reason)
+
+    def test_child_restore_event_reaches_stdout(self):
+        self.restore_repo()
+        p = {"tool_name": "Bash", "tool_input": {"command": "git restore tests/test_a.py"}, "cwd": self.repo}
+        r = subprocess.run([sys.executable, "-E", "-s", str(ROOT / "scripts" / "git_guard.py"), "--mode", "child"],
+                           input=json.dumps(p).encode(), stdout=subprocess.PIPE, timeout=30)
+        self.assertEqual(json.loads(r.stdout.decode()), {"foremanEvents": [{"event": "test_restore", "path": "tests/test_a.py"}]})
+
+    def test_is_test_path_matches_diffscan(self):
+        for f in ("src/a.test.ts", "tests/x.rs", "a_test.go", "test_x.py", "pkg/conftest.py", "a\\__tests__\\b.js"):
+            self.assertTrue(gg.is_test_path(f), f)
+        for f in ("src/contest.go", "src/a.py", "testdata.txt"):
+            self.assertFalse(gg.is_test_path(f), f)
+
     def test_implicit_force_push_target_is_the_current_branch(self):
         self.assertEqual(decide("git push --force", "main", cwd=self.repo)[0], D)
         git(self.repo, "checkout", "-q", "-b", "feature")

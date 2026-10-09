@@ -21,6 +21,15 @@ export interface PriceRegistry {
   find(provider: string, modelId: string): { cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } } | undefined;
 }
 
+/** Registry rates (USD per million tokens) of a message's model; the claude-bridge provider is priced at anthropic rates. */
+export function lookupRate(registry: PriceRegistry | undefined, provider: unknown, model: unknown): { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } | undefined {
+  try {
+    return registry?.find(provider === "claude-bridge" ? "anthropic" : String(provider ?? ""), String(model ?? ""))?.cost;
+  } catch {
+    return undefined;
+  }
+}
+
 export const zeroTotals = (): FooterTotals => ({ input: 0, cacheRead: 0, cacheWrite: 0, output: 0, cost: 0, costCacheRead: 0, costCold: 0, unpriced: false });
 
 /** Add one assistant message's usage to the totals. */
@@ -34,13 +43,7 @@ export function addMessage(t: FooterTotals, message: unknown, registry?: PriceRe
   t.output += num(u.output);
   if (num(c.total) === 0 && num(u.input) + num(u.output) + num(u.cacheRead) + num(u.cacheWrite) !== 0) {
     // claude-bridge (and any provider that reports no cost): list price from the registry, anthropic rates for the bridge.
-    const provider = m.provider === "claude-bridge" ? "anthropic" : String(m.provider ?? "");
-    let rate: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } | undefined;
-    try {
-      rate = registry?.find(provider, String(m.model ?? ""))?.cost;
-    } catch {
-      rate = undefined;
-    }
+    const rate = lookupRate(registry, m.provider, m.model);
     if (!rate || (num(rate.input) === 0 && num(rate.output) === 0)) {
       t.unpriced = true;
       return;

@@ -46,8 +46,9 @@ Keys outside safety that the project and session layers cannot loosen either
     providers.*.review               ignored (a review model approves asks)
     providers.*.roles.*.strong       ignored (picks a stronger, costlier model; L1/L3/L2 only)
     providers.*.strongOnRevision     only false is accepted (true relaunches on the strong model)
+    ladder.strongOnRevision, roles.*.strongOnRevision   only false is accepted (true climbs after a FAIL)
     childMaxThinking                 lower only (off < ... < max)
-    ladder.*, providers.*.ranks      ignored (the ladder and the child rank policy: L1/L3/L2 only)
+    ladder.* (but strongOnRevision), providers.*.ranks   ignored (the ladder and the child rank policy: L1/L3/L2 only)
     providers.*.strongAbove / childMaxTurns, roles.*.strongAbove / childMaxTurns   ignored (ladder)
     ceremony.revisionRounds.<tier>   lower only (a higher limit loosens the review loop)
     ceremony.requireTriage           only true is accepted (false lets the foreman edit untriaged)
@@ -169,7 +170,9 @@ IGNORED_KEYS = [
     (("sync", "repos"), "the repository list comes from the user or overlay config"),
     (("retro", "proposalMinReviews"), "the proposal threshold comes from the user or overlay config"),
     (("compaction", "priceTiers"), "the price tiers come from the user or overlay config"),
-    (("ladder", "*"), "the ladder and the child rank policy come from the user or overlay config"),
+    (("ladder", "strongAbove"), "the ladder and the child rank policy come from the user or overlay config"),
+    (("ladder", "childMaxTurns"), "the ladder and the child rank policy come from the user or overlay config"),
+    (("ladder", "childPolicy"), "the ladder and the child rank policy come from the user or overlay config"),
     (("providers", "*", "ranks"), "model ranks decide which children may launch: user or overlay config only"),
     (("providers", "*", "strongAbove"), "the ladder comes from the user or overlay config"),
     (("providers", "*", "childMaxTurns"), "the ladder comes from the user or overlay config"),
@@ -183,6 +186,8 @@ IGNORED_KEYS = [
 FOREMAN_EDITS = ("readonly", "scratchpad", "bounded")
 LAYER_TIGHTEN = [
     (("providers", "*", "strongOnRevision"), "false_only"),
+    (("ladder", "strongOnRevision"), "false_only"),
+    (("roles", "*", "strongOnRevision"), "false_only"),
     (("ceremony", "revisionRounds", "*"), "lower_only"),
     (("ceremony", "requireTriage"), "true_only"),
     (("ceremony", "reviewBeforePr"), "true_only"),

@@ -71,6 +71,8 @@ export interface UsageLine {
   cacheWrite: number;
   output: number;
   cost: UsageCost;
+  /** Set only when the token counts are a character-based estimate (the provider reported zero usage). */
+  estimated?: true;
 }
 
 export function usageDir(agentDir: string): string {
@@ -190,6 +192,7 @@ export function usageLine(ctx: LineContext, message: unknown, now: Date = new Da
     cacheWrite: num(u.cacheWrite),
     output: num(u.output),
     cost: { input: num(c.input), output: num(c.output), cacheRead: num(c.cacheRead), cacheWrite: num(c.cacheWrite), total: num(c.total) },
+    ...(m.estimated === true ? { estimated: true as const } : {}),
   };
 }
 

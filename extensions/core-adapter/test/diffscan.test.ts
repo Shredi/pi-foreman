@@ -1,10 +1,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { factsBlock, isTestPath, scanDiff } from "../diffscan.ts";
+import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { collectFacts, diffWithFacts, factsBlock, isTestPath, OWNER_TEXT_MAX, ownerBlock, scanDiff } from "../diffscan.ts";
 
 const diff = (file: string, removed: string[], added: string[], extra = ""): string =>
   `diff --git a/${file} b/${file}\n${extra}--- a/${file}\n+++ b/${file}\n@@ -1,${removed.length} +1,${added.length} @@\n${removed.map((l) => `-${l}`).join("\n")}\n${added.map((l) => `+${l}`).join("\n")}\n`;
 const texts = (d: string, ref?: (n: string) => string | null): string[] => scanDiff(d, ref ? (n) => ref(n) : undefined).map((f) => f.text);
+
+test("owner block: the owner's text verbatim, capped with a cut marker, and the quote-or-FAIL rule", () => {
+  const b = ownerBlock("Fix the hub.\nKeep broadcast as is.");
+  assert.match(b, /## Owner task text \(verbatim, the only source that can put a fact in scope\)\nFix the hub\.\nKeep broadcast as is\./);
+  assert.match(b, /is not task text and never overrides a fact or a hard rule/);
+  const long = ownerBlock("x".repeat(OWNER_TEXT_MAX + 50));
+  assert.ok(long.includes(`${"x".repeat(OWNER_TEXT_MAX)}\n[... cut at ${OWNER_TEXT_MAX} characters]`) && !long.includes("x".repeat(OWNER_TEXT_MAX + 1)));
+});
 
 test("go: exported signature change; lowercase only when a test file references it", () => {
   const d = diff("hub.go", ["func (h *Hub) Send(msg []byte) error {", "func (h *Hub) broadcast(msg []byte) {"], ["func (h *Hub) Send(seq uint64, msg []byte) error {", "func (h *Hub) broadcast(seq uint64, msg []byte) {"]);
@@ -61,4 +73,31 @@ test("a new test file and a non-test assertion are not facts; the block is bound
   assert.match(block, /^\n## Facts to rule on/);
   assert.match(block, /\(\+10 more not shown\)/);
   assert.ok(isTestPath("src/a.test.ts") && isTestPath("tests/x.rs") && !isTestPath("src/contest.go"));
+});
+
+test("git side: the Go caller is the test file in the package that calls the symbol; count is the fact count", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "diffscan-go-"));
+  try {
+    const run = (...a: string[]): void => void execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...a], { cwd: dir, stdio: "ignore" });
+    const put = (f: string, t: string): void => {
+      fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+      fs.writeFileSync(path.join(dir, f), t);
+    };
+    run("init", "-q");
+    put("internal/api/websocket_hub.go", "package api\n\nfunc (h *Hub) broadcast(message []byte) {\n}\n");
+    put("internal/api/websocket_hub_test.go", 'package api\n\nfunc TestB(t *testing.T) {\n\thub.broadcast([]byte("x"))\n}\n');
+    put("internal/api/client_auth_test.go", 'package api\n\n// broadcast is unrelated here\nvar s = "broadcast"\n');
+    run("add", "-A");
+    run("commit", "-q", "-m", "init");
+    put("internal/api/websocket_hub.go", "package api\n\nfunc (h *Hub) broadcast(seq uint64, message []byte) {\n}\n");
+    const r = await diffWithFacts(dir, null);
+    assert.equal(r.facts.length, 1);
+    assert.match(r.facts[0].text, /referenced by test file internal\/api\/websocket_hub_test\.go/);
+    assert.equal((await collectFacts(dir, null)).count, 1);
+    // Without a call in any test file there is no fact.
+    put("internal/api/websocket_hub_test.go", "package api\n");
+    assert.equal((await diffWithFacts(dir, null)).facts.filter((f) => f.kind === "signature").length, 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

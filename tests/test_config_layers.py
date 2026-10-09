@@ -159,6 +159,14 @@ class LayerRulesTest(unittest.TestCase):
         self.assertNotIn("strongOnRevision", res["config"]["providers"]["p1"])
         self.assertIn("session providers.p1.strongOnRevision ignored", "\n".join(res["warnings"]))
 
+    def test_ladder_strong_on_revision_false_only(self):
+        res = self.load(proj={"ladder": {"strongOnRevision": False}, "roles": {"builder": {"strongOnRevision": True}}})
+        self.assertIs(res["config"]["ladder"]["strongOnRevision"], False)
+        self.assertIn("project roles.builder.strongOnRevision ignored: it would loosen", "\n".join(res["warnings"]))
+        res = self.load(l2={"ladder": {"strongOnRevision": False}}, proj={}, session={"ladder": {"strongOnRevision": True}})
+        self.assertIs(res["config"]["ladder"]["strongOnRevision"], False)
+        self.assertIn("session ladder.strongOnRevision ignored", "\n".join(res["warnings"]))
+
     def test_revision_rounds_lower_only(self):
         res = self.load(proj={"ceremony": {"revisionRounds": {"standard": 3, "heavy": 1}}},
                         session={"ceremony": {"revisionRounds": {"heavy": 4}}})

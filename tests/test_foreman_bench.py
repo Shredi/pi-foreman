@@ -619,12 +619,25 @@ class BenchTest(unittest.TestCase):
         self.assertAlmostEqual(cost["retro_usd"], 40 * 0.10 / 1e6 + 7 * 0.125 / 1e6)
         self.assertAlmostEqual(cost["usd"], 100 * 0.10 / 1e6 + 7 * 0.125 / 1e6)
 
+    def test_wall_split_comes_from_the_waiter_times_and_the_post_marker(self):
+        rec = trial()
+        rec["agent_result"]["metadata"]["bench"].update({"waiter_start_ms": 1_000_000, "waiter_end_ms": 1_090_000})
+        self.job("R2__alpha__r1__x", rec)
+        marker = self.jobs / "R2__alpha__r1__x" / "trial-1" / "agent" / "state"
+        marker.mkdir(parents=True)
+        (marker / "bench-post-marker.json").write_text(json.dumps({"ms": 1_060_000}))
+        self.job("R2__alpha__r2__x", trial())  # no marker: no split
+        preset = fb.load_preset(self.preset)
+        row = [r for r in fb.table(preset, fb.tasks_dir(preset), self.jobs) if r["row"] == "R2" and r["task"] == "alpha"][0]
+        self.assertEqual((row["wall_task_s"]["median"], row["wall_post_s"]["median"]), (60.0, 30.0))
+        self.assertIn("wall post s", fb.format_table([row]))
+
     def test_autoreview_and_frugal_counters_reach_the_table(self):
         c = {"tokens": {"total": 10}, "tokens_by_model": {}, "tool_calls": 1,
              "usage_by_role_model": {"foreman": {"claude-haiku-5-5": {"input": 5, "cacheRead": 0, "cacheWrite": 0, "output": 0, "n": 1}},
                                      "autoreview": {"claude-haiku-5-5": {"input": 20, "cacheRead": 0, "cacheWrite": 0, "output": 4, "n": 3}}},
              "retro": {"tokens": 99, "requests": []}, "cache_write_per_launch": 5000,
-             "triage": {"tier": "standard", "launches": {}, "asks_reviewed": {"allow": 2, "defer": 1, "error": 1}, "rung_up": 2,
+             "triage": {"tier": "standard", "launches": {}, "asks_reviewed": {"allow": 2, "defer": 1, "error": 1, "sed-read": 5, "child": 3}, "rung_up": 2,
                         "child_read_warn": 1, "child_read_deny": 3, "review_defer_headless": 4, "child_turn_cap": 2, "launch_refused": 1},
              "thinking_by_role": {"builder": ["low"]}}
         rec = trial()
@@ -633,7 +646,7 @@ class BenchTest(unittest.TestCase):
         preset = fb.load_preset(self.preset)
         row = [r for r in fb.table(preset, fb.tasks_dir(preset), self.jobs) if r["row"] == "R2" and r["task"] == "alpha"][0]
         self.assertEqual((row["autoreview_tokens"]["median"], row["autoreview_calls"]["median"]), (24, 3))
-        self.assertEqual((row["autoreview_defer_share"]["median"], row["retro_tokens"]["median"]), (0.5, 99))
+        self.assertEqual((row["autoreview_defer_share"]["median"], row["retro_tokens"]["median"]), (0.25, 99))  # deterministic labels excluded
         self.assertEqual((row["rung_up"]["median"], row["child_read_deny"]["median"], row["review_defer_headless"]["median"]), (2, 3, 4))
         self.assertEqual((row["tier_dist"], row["cache_write_per_launch"]["median"]), ({"standard": 1}, 5000))
         self.assertEqual((row["child_turn_cap"]["median"], row["launch_refused"]["median"], row["thinking_by_role"]), (2, 1, {"builder": ["low"]}))

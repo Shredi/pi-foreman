@@ -150,7 +150,7 @@ interface AskDetails {
   path?: string;
   toolInputPreview?: string;
   forwarding?: unknown;
-  payload?: { request?: { surface?: string; toolName?: string | null; value?: string | null } };
+  payload?: { request?: { surface?: string; toolName?: string | null; value?: string | null }; evidence?: { label?: string; text?: string }[] };
 }
 
 interface ReviewLog {
@@ -185,7 +185,7 @@ export interface ReviewSession {
 
 /** Deny text for a forwarded child ask that deferred with no human to ask: names what runs without approval. */
 export const HEADLESS_DENY =
-  "pi-foreman: not approved - the model review deferred and no human is available to confirm. Runs without approval: read-only git (status, diff, log, show), ls, cat, head, tail, wc, rg, grep, find, print-only `sed -n '<addr>p' <file>` (no s, w, e, r commands, no -i or -f), `cd <dir inside the workspace> && <allowed command>`, the project's test and build commands, and `timeout N <allowed command>`. Not allowed: sed -i, sed s/w/e/r scripts, writes outside the workspace, network. Use the read, grep, find and ls tools for inspection.";
+  "pi-foreman: not approved - the model review deferred and no human is available to confirm. Runs without approval: read-only git (status, diff, log, show), ls, cat, head, tail, wc, rg, grep, find, print-only `sed -n '<addr>p' <file>` (no s, w, e, r commands, no -i or -f), `cd <dir inside the workspace> && <allowed command>`, the project's test and build commands, `timeout N <allowed command>`, `cp [-r] <src> /tmp/<dir>` and `mkdir -p /tmp/<dir>` (one command, no chaining or redirection). Not allowed: sed -i, sed s/w/e/r scripts, writes outside the workspace, network. Use the read, grep, find and ls tools for inspection.";
 
 interface PermissionsServiceLike {
   registerAuthorizer(name: string, authorize: (details: AskDetails, query: unknown, log: ReviewLog) => Promise<Verdict>): () => void;
@@ -203,12 +203,31 @@ function replyText(content: unknown): string {
 }
 
 /**
+ * The bridge reports zero usage for `cacheRetention: "none"` calls. When every token field is 0, return
+ * the reply with a chars/4 estimate of what was sent and received and `estimated: true`.
+ */
+export function withEstimatedUsage<T extends object>(reply: T, promptText: string): T {
+  const u = (reply as { usage?: Record<string, unknown> }).usage;
+  const tok = (k: string): number => (typeof u?.[k] === "number" ? (u[k] as number) : 0);
+  if (["input", "output", "cacheRead", "cacheWrite"].some((k) => tok(k) > 0)) return reply;
+  const out = replyText((reply as { content?: unknown }).content);
+  return { ...reply, usage: { ...u, input: Math.ceil((SYSTEM_PROMPT.length + promptText.length) / 4), output: Math.ceil(out.length / 4) }, estimated: true };
+}
+
+/**
  * The reviewed value of an ask (the command, target, skill, path or tool input preview). An ask
  * forwarded from a subagent carries the child's original in `value` (PS 39.0.2 sets no `command` on
  * it); without reading it the reviewer saw an empty value for every child ask.
  */
 export function reviewValue(d: AskDetails): string {
-  const v = d.command ?? d.value ?? d.payload?.request?.value ?? d.target ?? d.skillName ?? d.path ?? d.toolInputPreview ?? "";
+  // A forwarded ask's `value` is only the offending unit (e.g. `python3`); the whole command is evidence.
+  const full = Array.isArray(d.payload?.evidence) ? d.payload.evidence.find((e) => e?.label === "full command" && typeof e.text === "string" && e.text) : undefined;
+  return full?.text ?? unitValue(d);
+}
+
+/** The offending unit of an ask (what the deterministic allow checks look at). */
+function unitValue(d: AskDetails): string {
+  const v =d.command ?? d.value ?? d.payload?.request?.value ?? d.target ?? d.skillName ?? d.path ?? d.toolInputPreview ?? "";
   return typeof v === "string" ? v : String(v);
 }
 
@@ -314,7 +333,12 @@ export class ForemanReview {
   private fixedAllow(s: ReviewSession, d: AskDetails): string | null {
     try {
       const rules = s.bashRules?.();
-      return rules ? deterministicAllow(rules, reviewValue(d)) : null;
+      if (!rules) return null;
+      // PS forwards only the first most-restrictive unit; the allow must also hold for the full command.
+      const unit = unitValue(d);
+      const full = reviewValue(d);
+      const label = deterministicAllow(rules, unit);
+      return label && full !== unit ? deterministicAllow(rules, full) : label;
     } catch {
       return null;
     }
@@ -365,7 +389,7 @@ export class ForemanReview {
       if (r === "timeout") return defer("timeout");
       if (!r) return defer("error", "provider_error:no reply");
       try {
-        s.recordUsage?.(r);
+        s.recordUsage?.("thrown" in r ? r : withEstimatedUsage(r, text));
       } catch {
         // usage logging is best effort
       }
