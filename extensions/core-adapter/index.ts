@@ -74,7 +74,7 @@ let herdrEvents: EventBus | undefined;
 import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait, waitLimits } from "./wait.ts";
-import { dedupeNotices, dedupeOn, dropReturnControl, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
+import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { registerClose, syncCommand } from "./close.ts";
 import { registerSession } from "./session.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
@@ -148,6 +148,8 @@ interface Session {
   launchBatch: LaunchBatch;
   /** Foreman only: run ids whose completion notice was deduplicated and traced (knob 5a; trace once per run). */
   dedupeTraced: Set<string>;
+  /** Async-started guidance lines trimmed from a held launch result, by run id (trace notify_deduped). */
+  trimmedLines: Map<string, number>;
   /** Foreman only: builder revision rounds since the last user prompt or /ceremony tier change (rounds.ts). */
   rounds: RoundState;
   /** Foreman only, ceremony gate (bound.ts): own project-file changes at trivial, reset by /ceremony. */
@@ -319,6 +321,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ledgerBash: new Set(),
       launchBatch: new LaunchBatch(),
       dedupeTraced: new Set(),
+      trimmedLines: new Map(),
       ladder: new LadderState(),
       retro: new RetroState(),
       childLadder: new ChildLadder(isChild ? b?.ladder : undefined),
@@ -1390,7 +1393,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (s && held?.path) recordChild(s, [held.path]);
       // subagent has no post guards (toolmap.ts), so the amended result can be returned here.
       // The held text stays the last block: deliveredRuns accepts the "done" marker only there.
-      if (notices || held) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(held && !held.plain ? dropReturnControl(event.content) : event.content), ...(held ? [{ type: "text" as const, text: held.text }] : [])] };
+      const trim = held && !held.plain ? dropAsyncGuidance(event.content) : null;
+      if (s && trim && trim.trimmed > 0) s.trimmedLines.set(launchId(event.input, event.details, event.isError) ?? "", trim.trimmed);
+      if (notices || held) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(trim ? trim.content : event.content), ...(held ? [{ type: "text" as const, text: held.text }] : [])] };
     }
     const mapping = mapTool(event.toolName);
     const changed = event.isError ? undefined : changedFileOf(event.toolName, event.input as Record<string, unknown>);
@@ -1439,7 +1444,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { text: climb && climb.runId === runId ? `${text}\n${climbHint(climb)}` : text, path: r.end?.resultPath ?? asyncDir };
   }
 
-  // Knob 5a (launchwait.ts): a completion notice whose result an earlier message delivered becomes a stub.
+  // Knob 5a (launchwait.ts): a completion notice whose result an earlier message delivered is dropped from the model context.
   pi.on("context", async (event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild || !dedupeOn(get(s.config.config, "ceremony.dedupeNotify"))) return undefined;
@@ -1448,7 +1453,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const runId of r.deduped) {
       if (s.dedupeTraced.has(runId)) continue;
       s.dedupeTraced.add(runId);
-      s.trace?.emit({ event: "notify_deduped", runId });
+      s.trace?.emit({ event: "notify_deduped", runId, mode: r.mode, trimmed_lines: s.trimmedLines.get(runId) ?? 0 });
     }
     return { messages: r.messages };
   });

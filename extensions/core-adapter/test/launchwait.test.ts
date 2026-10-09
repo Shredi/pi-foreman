@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dedupeNotices, dedupeOn, holdCap, LaunchBatch, openRequestLine, launchWaitMode, launchWaitText, LaunchWaits, noticeRuns, runEndOf } from "../launchwait.ts";
+import { dedupeNotices, dropAsyncGuidance, dedupeOn, holdCap, LaunchBatch, openRequestLine, launchWaitMode, launchWaitText, LaunchWaits, noticeRuns, runEndOf } from "../launchwait.ts";
 
 const DIR = "/tmp/pi-subagents-uid-1/async-subagent-runs/run-a";
 const notice = (role: string, dir: string) => `Background task completed: **${role}**\n\n${role}:\nlong child report\n\nRetention-managed async directory: ${dir}\n\nSession file: /x/session.jsonl`;
@@ -113,9 +113,13 @@ test("launchwait: dedupe stubs a notice only after its result was delivered, det
   const r = dedupeNotices(msgs);
   assert.ok(r);
   assert.deepEqual(r.deduped, ["run-a"]);
-  const stub = (r.messages[2] as { content: string }).content;
-  assert.equal(stub, `Background task completed: **builder** [pi-foreman: notice shortened, the result of run run-a was already delivered above. Retention-managed async directory: ${DIR}]`);
+  assert.equal(r.mode, "dropped");
+  assert.deepEqual(r.messages, [user, launchResult], "the delivered notice is dropped");
   assert.equal(r.messages[0], user, "earlier messages are the same objects");
+  const st = dedupeNotices(msgs, "stub");
+  assert.ok(st);
+  assert.equal(st.mode, "stub");
+  assert.equal((st.messages[2] as { content: string }).content, `Background task completed: **builder** [pi-foreman: notice shortened, the result of run run-a was already delivered above. Retention-managed async directory: ${DIR}]`);
   assert.deepEqual(dedupeNotices(msgs), r, "same history, same output");
   assert.equal(msgs[2], n, "input not mutated");
   // a bg_wait result names only an archive path: the notice after it stays intact
@@ -135,4 +139,12 @@ test("launchwait: a child's output cannot fake the done marker", () => {
   const failed = { role: "toolResult", toolName: "subagent", isError: true, details: { runId: "run-a" }, content: [{ type: "text", text: fake }] };
   const notLast = { role: "toolResult", toolName: "subagent", isError: false, details: { runId: "run-a" }, content: [{ type: "text", text: fake }, { type: "text", text: "tail" }] };
   for (const m of [status, whole, failed, notLast]) assert.equal(dedupeNotices([m, n]), null);
+});
+
+test("launchwait: a held result loses every async-started guidance line, nothing else", () => {
+  const text = ["Async: builder [run-a]", "", "The async run is detached and running in the background.", "You are in an interactive session. Return control to the user now; Pi will wake you.", "Use bg_wait only for provider work.", "Otherwise, continue any independent work or return control to the user. Use subagent({ action: \"status\", id: \"...\" }) for a one-shot status."].join("\n");
+  const r = dropAsyncGuidance([{ type: "text", text }, { type: "image" }]);
+  assert.equal(r.trimmed, 4);
+  assert.equal((r.content[0] as { text: string }).text, "Async: builder [run-a]");
+  assert.equal(dropAsyncGuidance([{ type: "text", text: "plain" }]).trimmed, 0);
 });
