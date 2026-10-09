@@ -1,6 +1,8 @@
 import contextlib
 import io
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -670,6 +672,44 @@ class BenchTest(unittest.TestCase):
         self.assertIn("## R2__beta__r1\n(cell not finished)", text)
         self.assertIn("cut at 50", fb.retro_output(self.jobs / "R2__alpha__r1__x", limit=50))
         self.assertIsNone(fb.write_retro_findings(dict(PRESET), self.root / "tasks", self.jobs))  # no post steps: no file
+
+
+@unittest.skipIf(sys.platform == "win32", "POSIX sh loop")
+class RetryAndPrebakedTests(unittest.TestCase):
+    def run_retry(self, fail_times, prefix=""):
+        d = tempfile.mkdtemp()
+        try:
+            counter = Path(d, "n")
+            fake = ('n=$(cat "%s" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "%s"; [ $n -gt %d ]'
+                    % (counter.as_posix(), counter.as_posix(), fail_times))
+            code = subprocess.run(["sh", "-c", prefix + ha.retry_sh(fake, pause=0)]).returncode
+            return code, int(counter.read_text())
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_retry_sh_succeeds_after_two_failures(self):
+        self.assertEqual(self.run_retry(2), (0, 3))
+        self.assertEqual(self.run_retry(2, "set -e; "), (0, 3))
+
+    def test_retry_sh_gives_up_after_three_attempts(self):
+        code, n = self.run_retry(99)
+        self.assertEqual((code != 0, n), (True, 3))
+        code, n = self.run_retry(99, "set -e; ")
+        self.assertEqual((code != 0, n), (True, 3))
+
+    def test_pi_lock_matches_version_and_prebaked_is_opt_in(self):
+        pkg = json.loads((ROOT / "bench" / "pi-lock" / "package.json").read_text("utf-8"))
+        lock = json.loads((ROOT / "bench" / "pi-lock" / "package-lock.json").read_text("utf-8"))
+        self.assertEqual(pkg["dependencies"], {ha.PI_PACKAGE: ha.PI_VERSION})
+        self.assertEqual(lock["packages"]["node_modules/" + ha.PI_PACKAGE]["version"], ha.PI_VERSION)
+        self.assertFalse(ha.pi_prebaked({"bench": {}}) or ha.pi_prebaked({}))
+        self.assertTrue(ha.pi_prebaked({"bench": {"pi_prebaked": True}}))
+        live, baked = ha.pi_install_command(False), ha.pi_install_command(True)
+        self.assertIn("npm install -g", live)
+        self.assertNotIn("npm ci", live)
+        self.assertIn("npm ci", baked)
+        self.assertNotIn("npm install -g", baked)
+        self.assertTrue(live.endswith("pi --version") and baked.endswith("pi --version"))
 
 
 if __name__ == "__main__":

@@ -71,6 +71,8 @@ CLAUDE_BIN_GLOB = R_NPM + "/node_modules/@anthropic-ai/claude-agent-sdk-linux-*/
 AGENT_USER = "pfbench"
 AGENT_HOME = "/home/" + AGENT_USER
 R_NVM = "/opt/pf-nvm"
+R_PI = "/opt/pf-pi"  # prebaked pi install (bench.pi_prebaked): npm ci from bench/pi-lock
+PI_LOCK_DIR = Path(__file__).resolve().parent / "pi-lock"
 NVM = 'export NVM_DIR=%s; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; ' % R_NVM
 NODE_INSTALL = (
     "command -v node >/dev/null 2>&1 || { mkdir -p %s && curl -fsSL -o /tmp/nvm-install.sh "
@@ -484,6 +486,28 @@ def classify_infra(logs, status, tokens_total):
     return {"flag": False, "reason": None, "detail": ""}
 
 
+def retry_sh(cmd, tries=3, pause=20):
+    """A POSIX sh loop running `cmd` up to `tries` times with `pause` seconds between; exits 1 after the last failure (safe under `set -e`)."""
+    return ("for i in %s; do { %s; } && break; [ \"$i\" = %d ] && exit 1; sleep %d; done"
+            % (" ".join(str(n) for n in range(1, tries + 1)), cmd, tries, pause))
+
+
+def pi_prebaked(row):
+    """Row-level `bench.pi_prebaked` (default off): install pi from the committed bench/pi-lock lockfile."""
+    bench = row.get("bench") if isinstance(row.get("bench"), dict) else {}
+    return bool(bench.get("pi_prebaked"))
+
+
+def pi_install_command(prebaked=False):
+    """The root shell command that installs Node and pi (retrying the npm step) and ends with `pi --version`."""
+    head = "set -e; " + NODE_INSTALL + "; " + NVM
+    if prebaked:
+        npm = "npm ci --ignore-scripts --no-audit --no-fund --prefix %s" % R_PI
+        return head + retry_sh(npm) + "; ln -sf %s/node_modules/.bin/pi /usr/local/bin/pi; pi --version" % R_PI
+    npm = "npm install -g --no-audit --no-fund --ignore-scripts %s@%s" % (PI_PACKAGE, PI_VERSION)
+    return head + retry_sh(npm) + "; pi --version"
+
+
 class _BenchPi(BaseInstalledAgent):
     KIND = "foreman"
 
@@ -524,14 +548,18 @@ class _BenchPi(BaseInstalledAgent):
 
     async def install(self, environment: BaseEnvironment) -> None:
         await self.ensure_system_dependencies(environment, ("curl", "git", "python3", "ca_certificates"))
-        await self.exec_as_root(environment, command="set -e; " + NODE_INSTALL + "; " + NVM +
-                                "npm install -g --no-audit --no-fund --ignore-scripts %s@%s && pi --version" % (PI_PACKAGE, PI_VERSION))
+        prebaked = pi_prebaked(self.row)
+        if prebaked:
+            await self.exec_as_root(environment, command="mkdir -p " + R_PI)
+            for name in ("package.json", "package-lock.json"):
+                await environment.upload_file(PI_LOCK_DIR / name, R_PI + "/" + name)
+        await self.exec_as_root(environment, command=pi_install_command(prebaked))
         # Python 3.9+ runs the core, the guards and the waiter; fail the install, not the cell.
         await self.exec_as_root(environment, command="python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)'")
         npm = ([SUBAGENTS, "%s@%s" % (PERMISSION_SYSTEM, locked_version(PERMISSION_SYSTEM))] if self.KIND == "foreman" else []) + ([] if self.fake else [BRIDGE, AGENT_SDK])
         if npm:
-            await self.exec_as_root(environment, command=NVM + "mkdir -p %s && npm install --no-audit --no-fund --prefix %s %s"
-                                    % (R_NPM, R_NPM, " ".join(npm)))
+            await self.exec_as_root(environment, command="set -e; " + NVM + "mkdir -p %s; " % R_NPM + retry_sh(
+                "npm install --no-audit --no-fund --prefix %s %s" % (R_NPM, " ".join(npm))))
         if not self.fake:  # fail the install, not the cell, when the native binary is missing
             await self.exec_as_root(environment, command="set -e; b=$(ls %s 2>/dev/null | head -n 1); test -x \"$b\"; "
                                     "\"$b\" --version" % CLAUDE_BIN_GLOB)
