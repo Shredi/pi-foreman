@@ -219,7 +219,7 @@ def run_post_step(pi, index, command, quiet_seconds, cap_seconds, clock=time.tim
     got, texts, err, settled = False, [], None, False
     while clock() - started < cap_seconds:
         try:
-            rec = pi._next(1.0)
+            rec = pi._next(min(started + cap_seconds, clock() + 1.0))
         except TimeoutError:
             rec = None
         except EOFError:
@@ -252,6 +252,7 @@ def run_post_step(pi, index, command, quiet_seconds, cap_seconds, clock=time.tim
             msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
             if msg.get("role") == "assistant":
                 texts += [str(c.get("text")) for c in msg.get("content") or [] if isinstance(c, dict) and c.get("type") == "text"]
+    print("WARNING post step %d (%s) hit the %g s cap" % (index, command, cap_seconds), file=sys.stderr, flush=True)
     return "\n".join(texts), err or "step_cap_reached"
 
 
