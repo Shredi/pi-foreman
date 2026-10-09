@@ -5,6 +5,7 @@
 // not follow multi-line signatures, and it is a floor, not a proof. Languages: Go, Rust, TypeScript
 // and JavaScript, Python.
 import { execFile } from "node:child_process";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { headOf } from "./reviews.ts";
 import { REVIEW_ROLES } from "./rounds.ts";
@@ -96,7 +97,7 @@ interface Hunk {
  * path of a test file that mentions the function, or null; it decides whether a changed non-exported
  * function counts (a Go `broadcast` called from the package's test file).
  */
-export function scanDiff(diff: string, referencedByTest: (name: string, lang: Lang) => string | null = () => null): DiffFact[] {
+export function scanDiff(diff: string, referencedByTest: (name: string, lang: Lang, file: string) => string | null = () => null): DiffFact[] {
   const facts: DiffFact[] = [];
   const hunks: Hunk[] = [];
   let file = "";
@@ -153,7 +154,7 @@ export function scanDiff(diff: string, referencedByTest: (name: string, lang: La
   for (const [k, r] of removed) {
     const a = added.get(k);
     if (a && a.sig === r.sig) continue;
-    const testFile = r.exported ? null : named < MAX_NAMES ? referencedByTest(r.name, r.lang) : null;
+    const testFile = r.exported ? null : named < MAX_NAMES ? referencedByTest(r.name, r.lang, r.file) : null;
     if (!r.exported && !testFile) continue;
     named++;
     const what = r.exported ? "exported" : `not exported, but referenced by test file ${testFile}`;
@@ -206,9 +207,42 @@ export function git(cwd: string, args: string[]): Promise<string | null> {
 }
 
 /** Facts for `cwd` against `base` (a commit; default HEAD): working tree and index changes included. */
-export async function collectFacts(cwd: string, base: string | null): Promise<{ block: string; base: string }> {
+export async function collectFacts(cwd: string, base: string | null): Promise<{ block: string; base: string; count: number }> {
   const r = await diffWithFacts(cwd, base);
-  return { block: factsBlock(r.facts, r.base), base: r.base };
+  const count = Math.min(new Set(r.facts.map((f) => f.text)).size, MAX_FACTS);
+  return { block: factsBlock(r.facts, r.base), base: r.base, count };
+}
+
+const dirOf = (f: string): string => {
+  const p = f.replace(/\\/g, "/");
+  return p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
+};
+const sharedDirDepth = (a: string, b: string): number => {
+  const x = dirOf(a).split("/").filter(Boolean);
+  const y = dirOf(b).split("/").filter(Boolean);
+  let i = 0;
+  while (i < x.length && i < y.length && x[i] === y[i]) i++;
+  return i;
+};
+
+/**
+ * The test file that calls `name` (call-shaped `name(`, also `.name(`), nearest to `changed` first. An
+ * unexported Go symbol is only reachable from its own package, so only test files in the same directory count.
+ */
+async function callerTest(cwd: string, hits: string[], name: string, goPackageOnly: boolean, changed: string): Promise<string | null> {
+  const call = new RegExp(`\\b${name}\\s*\\(`);
+  const ok: string[] = [];
+  for (const f of hits) {
+    if (goPackageOnly && dirOf(f) !== dirOf(changed)) continue;
+    try {
+      if (call.test(await fs.promises.readFile(path.join(cwd, f), "utf8"))) ok.push(f);
+    } catch {
+      /* unreadable: no call evidence */
+    }
+  }
+  const rank = (f: string): number => (dirOf(f) === dirOf(changed) ? 1000 : 0) + sharedDirDepth(f, changed);
+  ok.sort((a, b) => rank(b) - rank(a));
+  return ok[0] ?? null;
 }
 
 /** The work diff of `cwd` against `base` (null when git fails) and its facts; the trivial check (trivial.ts) reads both. */
@@ -219,16 +253,17 @@ export async function diffWithFacts(cwd: string, base: string | null): Promise<{
   // Non-exported functions count only when a test file mentions them: one `git grep` per candidate.
   const cache = new Map<string, string | null>();
   const names = new Set<string>();
-  scanDiff(diff, (name, lang) => (names.add(`${lang}\u0000${name}`), null));
+  scanDiff(diff, (name, lang, file) => (names.add(`${lang}\u0000${name}\u0000${file}`), null));
   await Promise.all(
     [...names].slice(0, MAX_NAMES * 2).map(async (n) => {
-      const [, name] = n.split("\u0000");
+      const [lang, name, file] = n.split("\u0000");
       if (!/^\w+$/.test(name)) return;
       const out = await git(cwd, ["grep", "--untracked", "-l", "-w", "-F", "-e", name]);
-      cache.set(n, out?.split("\n").find((f) => f && isTestPath(f)) ?? null);
+      const hits = (out?.split("\n") ?? []).filter((f) => f && isTestPath(f));
+      cache.set(n, await callerTest(cwd, hits, name, lang === "go" && /^[a-z_]/.test(name), file));
     }),
   );
-  return { diff, facts: scanDiff(diff, (name, lang) => cache.get(`${lang}\u0000${name}`) ?? null), base: ref };
+  return { diff, facts: scanDiff(diff, (name, lang, file) => cache.get(`${lang}\u0000${name}\u0000${file}`) ?? null), base: ref };
 }
 
 type Json = Record<string, unknown>;
@@ -284,16 +319,16 @@ export class ReviewFacts {
     }
   }
 
-  /** Call before a launch: appends the facts block to each reviewer step's task; returns the number of steps changed. */
+  /** Call before a launch: appends the facts block to each reviewer step's task; returns the number of facts added (summed over the steps changed). */
   async augment(input: Json, cwd: string): Promise<number> {
     let n = 0;
     for (const s of steps(input)) {
       if (typeof s.agent !== "string" || !REVIEW_ROLES.includes(s.agent) || typeof s.task !== "string") continue;
       const dir = this.cwdOf(s, input, cwd);
-      const { block } = await collectFacts(dir, this.bases.get(dir) ?? null);
+      const { block, count } = await collectFacts(dir, this.bases.get(dir) ?? null);
       if (!block) continue;
       s.task = `${s.task}\n${block}`;
-      n++;
+      n += count;
     }
     return n;
   }
