@@ -291,6 +291,7 @@ def read_trial(job_dir):
             "tokens": (counters.get("tokens") or {}).get("total"),
             "tokens_by_tier": by_tier, "usage_by_model": usage, "tokens_by_role": counters.get("tokens_by_role"),
             "wall_seconds": _seconds(r.get("agent_execution")),
+            **_wall_split(bench, f.parent / "agent"),
             "tool_calls": counters.get("tool_calls"), "approvals": counters.get("approvals"),
             "guard_blocks": counters.get("guard_blocks"),
             "meta": dict({k: bench.get(k) for k in ("pi_foreman_commit", "pi_foreman_dirty", "versions", "model_main",
@@ -298,6 +299,17 @@ def read_trial(job_dir):
                          thinking_seen=counters.get("thinking_by_role")),
         }
     return None
+
+
+def _wall_split(bench, logs):
+    """wall_task_s (waiter start to the post-step marker) and wall_post_s (marker to waiter end) in seconds; None
+    when the waiter times or the marker (cells without post steps) are missing."""
+    try:
+        mark = float(json.loads((Path(logs) / "state" / "bench-post-marker.json").read_text("utf-8")).get("ms"))
+        a, b = float(bench.get("waiter_start_ms")), float(bench.get("waiter_end_ms"))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {"wall_task_s": None, "wall_post_s": None}
+    return {"wall_task_s": (mark - a) / 1000.0, "wall_post_s": (b - mark) / 1000.0}
 
 
 def _triage(counters, bench):
@@ -646,11 +658,15 @@ def _role_totals(rec, role):
     return tok, n
 
 
+MODEL_DECISIONS = ("allow", "defer", "soft-deny", "deny", "garbage", "empty", "timeout", "error")
+
+
 def _defer_share(t):
-    """Share of permission auto-review decisions that were neither allow nor deny (trace `review` decisions)."""
+    """Model defers / model calls among the trace `review` decisions. Deterministic labels (sed-read,
+    timeout-wrapper, tmp-scratch, surface, no-model, truncated, child, ...) are in neither count."""
     rev = t.get("asks_reviewed") or {}
-    total = sum(rev.values())
-    return (total - rev.get("allow", 0) - rev.get("deny", 0)) / total if total else None
+    total = sum(n for k, n in rev.items() if k in MODEL_DECISIONS)
+    return rev.get("defer", 0) / total if total else None
 
 
 def _triage_stats(done):
@@ -749,6 +765,7 @@ def table(preset, tdir, jdir, prices=None):
             "row": rid, "task": task, "repeats": len(cids), "counted": len(done), "infra_errors": infra_only,
             "success": sum(1 for r in done if r["success"]),
             "tokens": _stat([r["tokens"] for r in done]), "wall_seconds": _stat([r["wall_seconds"] for r in done]),
+            "wall_task_s": _stat([r.get("wall_task_s") for r in done]), "wall_post_s": _stat([r.get("wall_post_s") for r in done]),
             "tool_calls": _stat([r["tool_calls"] for r in done]), "approvals": _stat([r["approvals"] for r in done]),
             "guard_blocks": _stat([r["guard_blocks"] for r in done]),
             **_triage_stats(done),
@@ -779,7 +796,8 @@ def row_summary(preset, tdir, jdir, prices=None):
         out.append({
             "row": rid, "cells": len(cids), "counted": len(done), "success": sum(1 for r in done if r["success"]),
             "tokens": _stat([r["tokens"] for r in done]), "tokens_by_tier": _tier_stats(done),
-            "wall_seconds": _stat([r["wall_seconds"] for r in done]), "tool_calls": _stat([r["tool_calls"] for r in done]),
+            "wall_seconds": _stat([r["wall_seconds"] for r in done]),
+            "wall_task_s": _stat([r.get("wall_task_s") for r in done]), "wall_post_s": _stat([r.get("wall_post_s") for r in done]), "tool_calls": _stat([r["tool_calls"] for r in done]),
             "approvals": _stat([r["approvals"] for r in done]), "guard_blocks": _stat([r["guard_blocks"] for r in done]),
             **_triage_stats(done),
             **({"cost": cost_stats(done, prices)} if prices else {}),
@@ -823,12 +841,12 @@ def _columns(head, lines):
 
 def format_summary(summary, first=None):
     tiers = sorted({t for r in summary for t in r["tokens_by_tier"]})
-    head = ["row", "success"] + ["tokens %s" % t for t in tiers] + ["tokens all", "wall s", "tool calls", "approvals", "guard blocks",
+    head = ["row", "success"] + ["tokens %s" % t for t in tiers] + ["tokens all", "wall s", "wall task s", "wall post s", "tool calls", "approvals", "guard blocks",
                                                                 "tier", "launches", "revisions", "asks_denied", "gate_blocks", "pollBash", "ceremony_incomplete",
             "foreman_edit_refused", "pr_refused", "checkpoint_auto", "read_blocks", "recheck_blocks", "finish_refused", "launch_waits", "wait_turns", "text_only_turns", "codemode_turns", "rereviews", "orient_lines", "ledger_denies", "ledger_calls", "dup_reviews", "second_opinions", "stop_hold", "tier_dist", "rung_up", "child_read_warn", "child_read_deny", "review_defer_headless", "child_turn_cap", "launch_refused", "thinking_by_role", "autoreview_tokens", "autoreview_calls", "autoreview_defer_share", "retro_tokens", "cache_write_per_launch"]
     lines = [[r["row"], "%d/%d (%d cells)" % (r["success"], r["counted"], r["cells"])] +
              [_fmt(r["tokens_by_tier"].get(t)) for t in tiers] +
-             [_fmt(r["tokens"]), _fmt(r["wall_seconds"], 1), _fmt(r["tool_calls"]), _fmt(r["approvals"]), _fmt(r["guard_blocks"]),
+             [_fmt(r["tokens"]), _fmt(r["wall_seconds"], 1), _fmt(r.get("wall_task_s"), 1), _fmt(r.get("wall_post_s"), 1), _fmt(r["tool_calls"]), _fmt(r["approvals"]), _fmt(r["guard_blocks"]),
               r.get("tier") or "-", _fmt(r.get("launches")), _fmt(r.get("revisions")), _fmt(r.get("asks_denied")),
               _fmt(r.get("gate_blocks")), _fmt(r.get("pollBash")), _fmt(r.get("ceremony_incomplete")),
               _fmt(r.get("foreman_edit_refused")), _fmt(r.get("pr_refused")), _fmt(r.get("checkpoint_auto")), _fmt(r.get("read_blocks")), _fmt(r.get("recheck_blocks")), _fmt(r.get("finish_refused")), _fmt(r.get("launch_waits")), _fmt(r.get("wait_turns")), _fmt(r.get("text_only_turns")), _fmt(r.get("codemode_turns")), _fmt(r.get("rereviews")), _fmt(r.get("orient_lines")), _fmt(r.get("ledger_denies")), _fmt(r.get("ledger_calls")), _fmt(r.get("dup_reviews")), _fmt(r.get("second_opinions")), _fmt(r.get("stop_hold")), _dist(r.get("tier_dist")), _fmt(r.get("rung_up")), _fmt(r.get("child_read_warn")), _fmt(r.get("child_read_deny")), _fmt(r.get("review_defer_headless")), _fmt(r.get("child_turn_cap")), _fmt(r.get("launch_refused")), _think(r.get("thinking_by_role")), _fmt(r.get("autoreview_tokens")), _fmt(r.get("autoreview_calls")), _pct(r.get("autoreview_defer_share")), _fmt(r.get("retro_tokens")), _fmt(r.get("cache_write_per_launch"))] for r in summary]
@@ -867,7 +885,7 @@ def format_cost(summary, rows, prices):
     for title, items, keys in (("Per row", summary, ["row"]), ("Per row and task", rows, ["row", "task"])):
         tiers = sorted({t for r in items if r.get("cost") for t in r["cost"]["by_tier"]})
         head = keys + ["usd (5m writes)"] + ["usd %s" % t for t in tiers] + [
-            "usd 1h", "cache read tok", "cache write tok", "warm tok", "read usd", "write usd", "warm usd", "autoreview_usd", "retro_usd"]
+            "usd 1h", "cache read tok", "cache write tok", "warm tok", "read usd", "write usd", "warm usd", "autoreview_usd~est", "retro_usd"]
         lines = []
         for r in items:
             c = r.get("cost")
@@ -897,13 +915,13 @@ def format_cost(summary, rows, prices):
 
 
 def format_table(rows):
-    head = ["row", "task", "success", "tokens", "wall s", "tool calls", "approvals", "guard blocks",
+    head = ["row", "task", "success", "tokens", "wall s", "wall task s", "wall post s", "tool calls", "approvals", "guard blocks",
             "tier", "launches", "revisions", "asks_denied", "gate_blocks", "pollBash", "ceremony_incomplete",
             "foreman_edit_refused", "pr_refused", "checkpoint_auto", "read_blocks", "recheck_blocks", "finish_refused", "launch_waits", "wait_turns", "text_only_turns", "codemode_turns", "rereviews", "orient_lines", "ledger_denies", "ledger_calls", "dup_reviews", "second_opinions", "stop_hold", "tier_dist", "rung_up", "child_read_warn", "child_read_deny", "review_defer_headless", "child_turn_cap", "launch_refused", "thinking_by_role", "autoreview_tokens", "autoreview_calls", "autoreview_defer_share", "retro_tokens", "cache_write_per_launch"]
     lines = []
     for r in rows:
         lines.append([r["row"], r["task"], "%d/%d%s" % (r["success"], r["counted"], " (+%d infra)" % r["infra_errors"] if r["infra_errors"] else ""),
-                      _fmt(r["tokens"]), _fmt(r["wall_seconds"], 1), _fmt(r["tool_calls"]), _fmt(r["approvals"]),
+                      _fmt(r["tokens"]), _fmt(r["wall_seconds"], 1), _fmt(r.get("wall_task_s"), 1), _fmt(r.get("wall_post_s"), 1), _fmt(r["tool_calls"]), _fmt(r["approvals"]),
                       _fmt(r["guard_blocks"]), r.get("tier") or "-", _fmt(r.get("launches")), _fmt(r.get("revisions")),
                       _fmt(r.get("asks_denied")), _fmt(r.get("gate_blocks")), _fmt(r.get("pollBash")), _fmt(r.get("ceremony_incomplete")),
               _fmt(r.get("foreman_edit_refused")), _fmt(r.get("pr_refused")), _fmt(r.get("checkpoint_auto")), _fmt(r.get("read_blocks")), _fmt(r.get("recheck_blocks")), _fmt(r.get("finish_refused")), _fmt(r.get("launch_waits")), _fmt(r.get("wait_turns")), _fmt(r.get("text_only_turns")), _fmt(r.get("codemode_turns")), _fmt(r.get("rereviews")), _fmt(r.get("orient_lines")), _fmt(r.get("ledger_denies")), _fmt(r.get("ledger_calls")), _fmt(r.get("dup_reviews")), _fmt(r.get("second_opinions")), _fmt(r.get("stop_hold")), _dist(r.get("tier_dist")), _fmt(r.get("rung_up")), _fmt(r.get("child_read_warn")), _fmt(r.get("child_read_deny")), _fmt(r.get("review_defer_headless")), _fmt(r.get("child_turn_cap")), _fmt(r.get("launch_refused")), _think(r.get("thinking_by_role")), _fmt(r.get("autoreview_tokens")), _fmt(r.get("autoreview_calls")), _pct(r.get("autoreview_defer_share")), _fmt(r.get("retro_tokens")), _fmt(r.get("cache_write_per_launch"))])
