@@ -27,8 +27,10 @@
   auto-review), `openai.json`, `google.json`; never merged by default.
 - `childMaxThinking` (no default): caps every child launch's thinking level, ladder rungs included.
 - Permission auto-review without `review.model` picks the cheapest role-map model with auth (trace `by: "auto"`).
-- Permission baseline allows read-only `sed -n *` (asks for `-i`, `w`, `W`, `e` forms); `timeout N <allowed command>` in a
-  child's bash ask is allowed by the foreman's review link when every unit of the command is allowed (PS floors wrappers).
+- The baseline has no `sed` rule (no glob separates a print from `1wout` or `1etouch x`, so every sed asks); the
+  foreman's review link allows a child's forwarded ask without a model call when it holds a print-only sed
+  (`sed -n '<addr>p' <file>`: no s/w/e/r commands, no -i/-f; trace label `sed-read`) or `timeout N <allowed command>`
+  and every other unit is allowed (PS floors wrappers).
 - Review prompt for child asks: read-only inspection (also chained) is allowed; defer only for writes outside the
   workspace, network or destructive steps. Headless defer (no UI, or `review.headless: true`): a forwarded child ask is
   denied with a text naming the allowed forms, trace `review_defer_headless {role, cmd}`; the `review` trace carries the

@@ -14,6 +14,9 @@
    {"tools": [
     {"name": "bash", "arguments": {"command": "touch made.txt"}}
    ]},
+   {"tools": [
+    {"name": "bash", "arguments": {"command": "sed -n '1wwritten' sub/f.go"}}
+   ]},
    {"text": "sed child finished"}
   ]
  }

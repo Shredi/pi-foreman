@@ -8,6 +8,7 @@
 // the coded defaults apply only when `ceremony.childReads` is absent from the config altogether.
 import { get, type Json } from "./config.ts";
 import { topLevelId } from "./budget.ts";
+import { isReadOnlySed } from "./sedread.ts";
 
 export interface ChildLimits {
   warn: number;
@@ -49,7 +50,7 @@ export function isReadOnlyBash(command: unknown): boolean {
       return sub !== undefined && GIT_READ.has(sub) && !(sub === "branch" && w.some((x) => /^-(d|D|m|M|c|C)$|^--(delete|move|copy)$/.test(x)));
     }
     if (first === "find") return !w.some((x) => /^-(exec|execdir|delete|ok|okdir|fprint\w*)$/.test(x));
-    if (first === "sed") return w.includes("-n") && !w.some((x) => /^-\w*i/.test(x) || x === "--in-place");
+    if (first === "sed") return isReadOnlySed(p);
     if (first === "awk") return !/system\s*\(|print\s*>|\|\s*"/.test(p);
     return READ_WORDS.has(first);
   });

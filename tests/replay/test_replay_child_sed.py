@@ -1,8 +1,10 @@
 """Child bash asks under the baseline plus a deferring review model (frugal-roles D4).
 
-A read-only `cd sub; sed -n ..; sed -n ..` chain runs without any ask; a write command hits
-`*: ask`, is forwarded to the foreman, the review model defers, and with no human (`review.headless`)
-the child gets a deny that names the allowed forms and the foreman traces `review_defer_headless`.
+The baseline has no sed rule, so every sed unit asks and is forwarded to the foreman. A print-only
+`cd sub; sed -n ..; sed -n ..` chain is allowed there without a model call (label `sed-read`); a write
+command (`touch`, and `sed -n '1wwritten'`) is forwarded, the review model defers, and with no human
+(`review.headless`) the child gets a deny that names the allowed forms and the foreman traces
+`review_defer_headless`; the sed write never runs.
 Same prerequisites and skips as test_replay.py."""
 from __future__ import annotations
 
@@ -34,15 +36,19 @@ class TestChildSed(ReplayCase):
         self.assertEqual(dialogs, [], dialogs)
         events = [r for recs_ in rig.traces().values() for r in recs_]
         reviews = [r for r in events if r.get("event") == "review"]
-        # only the write command was reviewed; the sed chain never asked
-        self.assertEqual([r.get("decision") for r in reviews], ["defer"], reviews)
+        # the sed chain is allowed by the link with no model call; both writes reach the model and defer
+        self.assertEqual([r.get("decision") for r in reviews], ["sed-read", "defer", "defer"], reviews)
+        self.assertIsNone(reviews[0].get("model"), reviews[0])
         headless = [r for r in events if r.get("event") == "review_defer_headless"]
-        self.assertEqual(len(headless), 1, headless)
-        self.assertEqual(headless[0].get("role"), "builder")
+        self.assertEqual([h.get("role") for h in headless], ["builder", "builder"], headless)
         self.assertIn("touch made.txt", headless[0].get("cmd", ""))
+        self.assertIn("1wwritten", headless[1].get("cmd", ""))
         self.assertFalse((rig.project / "made.txt").exists())
+        self.assertFalse((rig.project / "written").exists())
+        self.assertFalse((sub / "written").exists())
         text = "\n".join(p.read_text("utf-8", "replace") for p in rig.agent.rglob("*.jsonl"))
         self.assertIn("no human is available", text)
+        self.assertIn("package g", text)  # the sed chain ran
         self.assertIn("sed -n", text)
 
 
