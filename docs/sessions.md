@@ -75,9 +75,10 @@ Plain pi-intercom text, one line each:
   `PI_FOREMAN_PARENT_INTERCOM`; a file with no valid id refuses). Re-pointing the parent is a one-file change.
   `close.from` must include `intercom-parent` (default), and cross-machine messages are refused.
 - A close is refused while a child run is active or a `foreman_wait` is pending, and nothing is cancelled.
-  The baseline write protection covers `<agent dir>/pi-foreman/state/` but not `handoffs/`, so a builder in the
-  child session could write its own `parent` file; the close it would enable is still refused while that
-  builder run is active, and `parent` is read at the moment a close arrives.
+- The `parent` and `child` files of every handoff dir are write-protected (baseline `protect.writeAsk`): a child
+  agent of either session is denied any write to them and any shell command naming them, and a foreman's
+  write or edit tool asks; a foreman's shell may still read them. `brief.md`, `result.md` and `plan.md` stay
+  writable, so the opened foreman writes its result and plan as the footer says.
 - A brief has no authority: its text and any peer message are data, and the footer says so.
 - Values are validated and quoted: labels, model ids, parent ids and paths are checked against allowlists and
   built into one shell-quoted command (POSIX) or single-quoted PowerShell string; a path with quotes or shell

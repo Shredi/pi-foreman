@@ -11,6 +11,8 @@
   keep a registry `<agent dir>/pi-foreman/state/sessions.json`, and send briefs and close requests over pi-intercom.
 - Close: the parent id is read from the handoff `parent` file (`PI_FOREMAN_HANDOFF_DIR`) at check time, and an accepted
   intercom close replies `foreman:closed <path>` before the session exits.
+- Write protection for the handoff `parent` and `child` files (`protect.writeAsk`): children are denied, the
+  foreman's write/edit asks, `result.md` and `plan.md` stay writable, so a child can no longer pose as the parent.
 - Explorer brief: the latest completed explorer report (4000 characters, cut with a marker, plus its result path) is
   prepended once to the next fresh builder launch (after any rung-up handoff); trace `explorer_brief {role, chars}`.
 - `ceremony.childReads.<role>.{warn,deny}` (builder 20/40, reviewer 15/30, explorer none): a child's read, grep, find,
