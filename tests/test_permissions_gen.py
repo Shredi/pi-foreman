@@ -40,6 +40,14 @@ class GeneratorTest(unittest.TestCase):
         self.assertEqual(p["bash"]["Remove-Item * -R*"], "ask")
         self.assertEqual(p["bash"]["rd /s*"], "ask")
 
+    def test_sed_read_only_allowed_and_writers_ask_after_it(self):
+        bash = self.render()["permission"]["bash"]
+        keys = list(bash)
+        self.assertEqual(bash["sed -n *"], "allow")
+        for writer in ("sed * -*i*", "sed *w *", "sed *w/*", "sed *W *", "sed *e *"):
+            self.assertEqual(bash[writer], "ask")
+            self.assertLess(keys.index("sed -n *"), keys.index(writer))
+
     def test_ledger_helper_entries_only_unless_off(self):
         p = self.render()["permission"]
         self.assertEqual(p["foreman_ledger"], "allow")
