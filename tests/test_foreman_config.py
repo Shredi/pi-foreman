@@ -350,8 +350,10 @@ class PackageFilesTest(unittest.TestCase):
         for mode in ("tool", "bash", "off"):
             for heavy in ("strict", "eee843d"):
                 for review in ("on", "off"):
-                    kept = render_prompt(text, {"ledgerhelper": mode, "heavythreshold": heavy, "reviewperrevision": review})
-                    self.assertLessEqual(len(kept.splitlines()), 64, (mode, heavy, review))
+                    for trivial in ("builder", "off"):
+                        kept = render_prompt(text, {"ledgerhelper": mode, "heavythreshold": heavy, "reviewperrevision": review,
+                                                    "trivialpath": trivial, "ladder": "on"})
+                        self.assertLessEqual(len(kept.splitlines()), 64, (mode, heavy, review, trivial))
         for word in ("claude", "sonnet", "opus", "fable", "gpt", "gemini", "copilot", "openrouter"):
             self.assertNotIn(word, text)
 
@@ -360,7 +362,9 @@ class PackageFilesTest(unittest.TestCase):
         if old.returncode != 0:
             self.skipTest("commit eee843d not available")
         text = (ROOT / "instructions" / "foreman.md").read_text()
-        knobs = {"ledgerHelper": "off", "heavyThreshold": "eee843d", "reviewPerRevision": "off"}
+        # trivialPath "off" = ceremony.required.trivial without builder; ladder "off" = the pre-ladder model line
+        # (the adapter always renders ladder "on").
+        knobs = {"ledgerHelper": "off", "heavyThreshold": "eee843d", "reviewPerRevision": "off", "trivialPath": "off", "ladder": "off"}
         self.assertEqual(render_prompt(text, knobs), old.stdout.decode("utf-8"))
 
     def test_defaults_validate(self):

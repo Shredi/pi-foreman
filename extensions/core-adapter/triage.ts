@@ -42,7 +42,12 @@ export function triageAdvice(tier: Tier): string {
     : `Write the ledger .workflow/LEDGER-<topic>.md with the line \`Tier: ${tier}\` first, then delegate workspace edits to a builder; you do not edit workspace files yourself at this tier.`;
 }
 
-/** `\\?\C:\x` -> `C:\x` (Win32 verbatim prefix); `\\?\UNC\...` is left as is. */
+/** The answer at trivial on the builder path (trivial.ts). */
+export function trivialPathAdvice(bounded: boolean): string {
+  return `Write the ledger with the line \`Tier: trivial\` (no V item), then ${bounded ? "make the change yourself within ceremony.trivialBound, or " : ""}launch one builder on its default model; no explorer, planner, reviewer or finalizer. At finish the harness checks the diff: one source file within ceremony.trivialBound, no exported signature or schema change, no test file touched, a test present. Otherwise the tier becomes standard and a reviewer must pass.`;
+}
+
+/** `\\?\C:\x` ->`C:\x` (Win32 verbatim prefix); `\\?\UNC\...` is left as is. */
 export function stripVerbatim(p: string): string {
   return /^\\\\\?\\(?!UNC\\)/i.test(p) ? p.slice(4) : p;
 }

@@ -158,6 +158,7 @@
           "additionalProperties": false,
           "description": "Steps a session at this tier completes before the foreman may finish: planner (a planner run that completed), builder (a builder run that completed), reviewer (see reviewGate), finalizer (a finalizer run that completed). A project or session can only add steps.",
           "properties": {
+            "trivial": { "type": "array", "items": { "type": "string", "enum": ["planner", "builder", "reviewer", "finalizer"] }, "description": "Naming builder turns on the trivial builder path: a trivial task keeps its ledger and one builder on the default model makes the change; at finish a diff check (one source file within trivialBound, no exported signature or schema change, no test file touched, a test present) escalates to standard otherwise. Applies once a ledger is bound; builder is dropped in bounded mode. [] restores the earlier trivial tier (no builder)." },
             "standard": { "type": "array", "items": { "type": "string", "enum": ["planner", "builder", "reviewer", "finalizer"] } },
             "heavy": { "type": "array", "items": { "type": "string", "enum": ["planner", "builder", "reviewer", "finalizer"] } }
           }

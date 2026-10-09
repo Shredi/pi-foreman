@@ -7,7 +7,8 @@
 //   standard / heavy                 -> threshold 0 (a bound ledger without a Tier: line
 //                                       counts as standard): any launch with task text needs this
 //                                       session's own ledger first
-// A second launch, or a non-explorer launch, while trivial escalates to standard first.
+// A second launch, or a non-explorer launch, while trivial escalates to standard first. On the
+// trivial builder path (trivial.ts) builder launches stay trivial; the finish checks their diff.
 
 export type Tier = "trivial" | "standard" | "heavy";
 export type TierSource = "default" | "ledger" | "user" | "auto" | "foreman";
@@ -25,6 +26,8 @@ export interface CeremonyState {
   triaged?: boolean;
   /** The edit mode refused a foreman change (editmode.ts): the task needs a builder, so a trivial triage counts as standard. */
   needsChange?: boolean;
+  /** A builder ran at trivial on the builder path: the finish scans its diff (trivial.ts). */
+  trivialBuilder?: boolean;
 }
 
 export function isTier(v: unknown): v is Tier {
@@ -66,11 +69,18 @@ export function ledgerTier(text: string): { tier: Tier; reason: string } {
 }
 
 /** Before a subagent launch reaches the gate. */
-export function beforeSpawn(s: CeremonyState, agents: string[]): CeremonyState {
+export function beforeSpawn(s: CeremonyState, agents: string[], builderPath = false): CeremonyState {
   if (s.tier !== "trivial") return s;
+  if (builderPath && agents.length > 0 && agents.every((a) => a === "builder")) return { ...s, trivialBuilder: true };
   if (s.spawns >= 1) return escalate(s, "standard", "auto", "second child launch");
   if (agents.some((a) => a !== "explorer")) return escalate(s, "standard", "auto", `non-explorer launch (${agents.join(", ")})`);
   return s;
+}
+
+/** Trivial builder path: a `strong` launch the foreman asked for without a ladder trigger (ladder reason "foreman") leaves trivial. */
+export function onStrongLaunch(s: CeremonyState, reasons: string[]): CeremonyState {
+  if (s.tier !== "trivial" || !reasons.includes("foreman")) return s;
+  return escalate(s, "standard", "auto", "strong launch without a ladder trigger");
 }
 
 export function afterSpawn(s: CeremonyState): CeremonyState {
