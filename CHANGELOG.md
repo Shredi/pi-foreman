@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Bench table: `wall task s` / `wall post s` (waiter start to the post-step marker, marker to waiter end) beside `wall s`.
 - `docs/` split (install, roles, ceremony, safety, sessions, bench, overlays, development) with a lean README, a
   generated `banner.svg` (`scripts/make_banner.py`, `--check` runs in CI through the docs test) and `tests/test_docs.py` (config keys, commands,
   links and page headers must stay documented).
@@ -95,6 +96,13 @@
   models) with claude-agent-sdk 0.3.293.
 
 ### Fixed
+- Bench post-step waiter passed `1.0` (an epoch) to `PiRpc._next` instead of an absolute deadline, so it never read a
+  record and ran every post step to the 300 s cap; it now warns on stderr when the cap is hit.
+- `/sync --dry-run` ignored its arguments and ran a real sync; the flag now reaches `foreman_sync.py` (other arguments warn).
+- Bench `autoreview_defer_share` counts model defers over model calls only (deterministic labels excluded);
+  the `autoreview_usd~est` column is marked as an estimate (the bridge reports no usage for review calls).
+- `/retro` cost: bridge usage lines log cost 0; the handler passes the Pi registry rates (`--rates` file) and
+  `foreman_retro.py` prices those lines from tokens.
 - The model review of an ask forwarded from a child saw an empty value: PS 39.0.2 puts the child's command in `value`,
   not `command`. That is why most child bash asks were deferred (and then denied headless).
 - Child sessions mislabelled the tier (they emitted `tier` events with their own default); only the foreman does now.

@@ -306,7 +306,9 @@ def num(v):
     return v if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
 
 
-def usage_metrics(records, sid):
+def usage_metrics(records, sid, rates=None):
+    """rates: {"provider/model": {input, output, cacheRead, cacheWrite}} in USD per million tokens; used for a
+    record whose logged cost total is 0 (the Claude bridge reports none)."""
     roles = {}
     for r in records:
         if sid and r.get("foremanSession") not in (None, sid):
@@ -320,7 +322,11 @@ def usage_metrics(records, sid):
         row["out"] += num(r.get("output"))
         row["cacheRead"] += num(r.get("cacheRead"))
         row["cacheWrite"] += num(r.get("cacheWrite"))
-        row["cost"] += num((r.get("cost") or {}).get("total")) if isinstance(r.get("cost"), dict) else 0
+        logged = num((r.get("cost") or {}).get("total")) if isinstance(r.get("cost"), dict) else 0
+        rate = (rates or {}).get("%s/%s" % (r.get("provider"), r.get("model")))
+        if not logged and isinstance(rate, dict):
+            logged = sum(num(r.get(k)) * num(rate.get(k)) for k in ("input", "output", "cacheRead", "cacheWrite")) / 1e6
+        row["cost"] += logged
     return {k: {"children": len(v["children"]), "launches": dict(v["launches"]), "tokensIn": v["in"],
                 "tokensOut": v["out"], "cacheRead": v["cacheRead"], "cacheWrite": v["cacheWrite"],
                 "cost": round(v["cost"], 4)} for k, v in sorted(roles.items())}
@@ -353,7 +359,7 @@ def session_id_of(records):
 
 # ------------------------------------------------------------------ report
 
-def build(session, trace, usage, review, min_reviews, agent_dir):
+def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
     sid = session_id_of(session)
     asks = collect_asks(review) if review is not None else None
     rules = load_deny_ask_rules(agent_dir) if asks is not None else []
@@ -361,7 +367,7 @@ def build(session, trace, usage, review, min_reviews, agent_dir):
         "session": sid,
         "review": review_metrics(asks, sid) if asks is not None else None,
         "trace": trace_metrics(trace) if trace is not None else None,
-        "usage": usage_metrics(usage, sid) if usage is not None else None,
+        "usage": usage_metrics(usage, sid, rates) if usage is not None else None,
         "session_tools": session_metrics(session) if session is not None else None,
         "proposals": propose(asks, min_reviews, rules, load_protect_patterns(agent_dir)) if asks is not None else None,
     }
@@ -441,8 +447,15 @@ def run(args):
                 min_reviews = v
         except Exception:
             pass
+    rates = None
+    if args.rates:
+        try:
+            with open(args.rates, "r", encoding="utf-8") as fh:
+                rates = json.load(fh)
+        except (OSError, ValueError):
+            pass
     rep = build(read_jsonl(args.session), read_jsonl(args.trace), read_jsonl(args.usage),
-                read_jsonl(args.review_log), min_reviews, args.agent_dir)
+                read_jsonl(args.review_log), min_reviews, args.agent_dir, rates)
     note = None
     if args.proposals_out and rep["proposals"] is not None:
         try:
@@ -491,6 +504,7 @@ def main(argv=None):
     p.add_argument("--trace")
     p.add_argument("--usage")
     p.add_argument("--review-log")
+    p.add_argument("--rates", help="JSON file: {provider/model: {input, output, cacheRead, cacheWrite}} USD per million tokens")
     p.add_argument("--proposals-out")
     p.add_argument("--min-reviews", type=int)
     p.add_argument("--agent-dir")

@@ -1,7 +1,10 @@
+import contextlib
+import io
 import json
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -127,7 +130,9 @@ class FakePi:
             if self.on_prompt:
                 self.on_prompt(msg["message"])
 
-    def _next(self, timeout):
+    def _next(self, deadline):  # absolute epoch deadline, like PiRpc._next
+        if time.time() >= deadline:
+            raise TimeoutError
         if self.queue:
             return self.queue.pop(0)
         raise TimeoutError
@@ -176,6 +181,20 @@ class PostStepsTest(unittest.TestCase):
         ws.run_post_steps(FakePi(lambda _: (self.work / "b.txt").write_text("n")), {"bench": {"post_steps": ["sync"]}},
                           str(self.work), self.state, status, quiet_seconds=0, cap_seconds=5)
         self.assertEqual(status["infra_error"], "usage_limit")  # an earlier infra reason is kept
+
+    def test_post_step_finishes_on_agent_settled_and_warns_at_the_cap(self):
+        pi = FakePi()
+        pi.send = lambda msg: pi.queue.extend([{"type": "response", "id": msg["id"], "success": True},
+                                              {"type": "agent_start"}, {"type": "agent_end"}, {"type": "agent_settled"}])
+        t0 = time.time()
+        text, err = ws.run_post_step(pi, 0, "/retro", quiet_seconds=60, cap_seconds=30)
+        self.assertIsNone(err)
+        self.assertLess(time.time() - t0, 5)
+        err_out = io.StringIO()
+        with contextlib.redirect_stderr(err_out):
+            text, err = ws.run_post_step(FakePi(), 0, "/retro", quiet_seconds=60, cap_seconds=0.05)
+        self.assertEqual(err, "step_cap_reached")
+        self.assertIn("WARNING post step 0", err_out.getvalue())
 
 
 if __name__ == "__main__":

@@ -92,6 +92,16 @@ class RetroTest(unittest.TestCase):
         self.assertEqual(rep["session_tools"]["top_tools"], {"bash": 3})
         self.assertEqual(rep["session_tools"]["repeated_bash_families"], {"git status": 3})
 
+    def test_zero_logged_cost_is_priced_from_rates(self):
+        rec = {"foremanSession": "s1", "role": "builder", "provider": "claude-bridge", "model": "m1", "input": 1000000,
+               "output": 100000, "cacheRead": 2000000, "cacheWrite": 0, "cost": {"total": 0}}
+        paid = dict(rec, model="m2", cost={"total": 0.5})
+        rates = {"claude-bridge/m1": {"input": 1, "output": 5, "cacheRead": 0.1, "cacheWrite": 1.25},
+                 "claude-bridge/m2": {"input": 100, "output": 100}}
+        self.assertAlmostEqual(fr.usage_metrics([rec], "s1", rates)["builder"]["cost"], 1 + 0.5 + 0.2)
+        self.assertEqual(fr.usage_metrics([rec], "s1")["builder"]["cost"], 0)
+        self.assertEqual(fr.usage_metrics([paid], "s1", rates)["builder"]["cost"], 0.5)
+
     def test_friction_counters(self):
         trace = [
             {"event": "rereview", "role": "reviewer"},

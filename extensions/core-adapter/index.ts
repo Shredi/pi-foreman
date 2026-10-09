@@ -63,7 +63,7 @@ import { CompactionGate } from "./compaction.ts";
 import { citedItems, ledgerHint, writeHint } from "./hints.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, withDigest } from "./retro.ts";
 import { extractRetro, lastAssistantText, MODEL_RETRO_PROMPT, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
-import { UsageFooter } from "./footer.ts";
+import { UsageFooter, lookupRate } from "./footer.ts";
 import { blockedConfirm, bridgePermissionBlocked, withBlocked } from "./herdr.ts";
 import { builderLaunchRefusal, changedPlans, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, planSnapshot, planSummary, readPlan } from "./checkpoint.ts";
 import type { PlanRecord } from "./checkpoint.ts";
@@ -1818,6 +1818,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       const day = new Date().toISOString().slice(0, 10);
       const argv = [...retroInputs(s, ctx, "--session"), "--proposals-out", path.join(s.agentDir, "pi-foreman", "state", "retro", `permission-proposals-${day}.json`)];
+      // The bridge logs cost 0: pass registry rates of the logged models (a file, not the command line).
+      try {
+        const rates: Record<string, unknown> = {};
+        for (const l of readUsage(s.agentDir, { session: s.id })) {
+          const rate = lookupRate(ctx.modelRegistry as never, l.provider, l.model);
+          if (rate) rates[`${l.provider}/${l.model}`] = rate;
+        }
+        if (Object.keys(rates).length) {
+          const ratesFile = path.join(s.agentDir, "pi-foreman", "state", "retro", "rates.json");
+          fs.mkdirSync(path.dirname(ratesFile), { recursive: true });
+          fs.writeFileSync(ratesFile, JSON.stringify(rates));
+          argv.push("--rates", ratesFile);
+        }
+      } catch {
+        // no rates: the logged cost is kept
+      }
       const r = await runScript(s, "foreman_retro.py", argv);
       ctx.ui.notify(r.text, r.ok ? "info" : "error");
       let file: string | null = null;
@@ -1857,21 +1873,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** scripts/foreman_sync.py for this session (/sync and remote close). */
-  function runSync(s: Session, ctx: ExtensionContext): Promise<{ text: string; ok: boolean }> {
-    const args = ["--cwd", s.cwd, "--state", path.join(s.agentDir, "pi-foreman", "state"), "--session", s.id, ...retroInputs(s, ctx, "--session-file")];
+  function runSync(s: Session, ctx: ExtensionContext, extra: string[] = []): Promise<{ text: string; ok: boolean }> {
+    const args = ["--cwd", s.cwd, "--state", path.join(s.agentDir, "pi-foreman", "state"), "--session", s.id, ...retroInputs(s, ctx, "--session-file"), ...extra];
     if (safeTrusted(ctx)) args.push("--trusted-project");
     return runScript(s, "foreman_sync.py", args, 600_000);
   }
 
   pi.registerCommand("sync", {
     description: "Pull, commit (explicit paths) and push the configured sync.repos, then the retro (foreman only)",
-    handler: async (_args, ctx) => {
+    handler: async (args, ctx) => {
       const s = await ensureSession(ctx);
       if (s.isChild) {
         ctx.ui.notify("/sync is for the foreman only.", "warning");
         return;
       }
-      await syncCommand({ activeRuns: s.activeRuns.size, run: () => runSync(s, ctx), notify: (t, l) => ctx.ui.notify(t, l) });
+      const words = args.trim().split(/\s+/).filter(Boolean);
+      const extra = words.filter((w) => w === "--dry-run");
+      if (extra.length < words.length) ctx.ui.notify(`pi-foreman: /sync ignores ${words.filter((w) => w !== "--dry-run").join(" ")} (only --dry-run is accepted).`, "warning");
+      await syncCommand({ activeRuns: s.activeRuns.size, run: () => runSync(s, ctx, extra.slice(0, 1)), notify: (t, l) => ctx.ui.notify(t, l) });
     },
   });
 
