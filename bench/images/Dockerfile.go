@@ -1,6 +1,6 @@
 # Generic Go task image for the bench rig. Build context: a task's environment/ dir with
 #   src.tar.gz         the module snapshot
-#   known-limits.md    optional rig facts for `/retro --known-limits` (see docs/bench.md)
+#   known-limits.md    rig facts (required by COPY; may be empty) for `/retro --known-limits` (see docs/bench.md)
 # gofmt and go vet ship with the toolchain and work for the non-root agent user (checked);
 # staticcheck and golangci-lint are not installed.
 FROM golang:1.27

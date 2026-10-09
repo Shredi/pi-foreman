@@ -1,6 +1,6 @@
 # Generic Rust task image for the bench rig. Build context: a task's environment/ dir with
 #   src.tar.gz         the repository snapshot (workspace manifests, Cargo.lock, the crate)
-#   known-limits.md    optional rig facts for `/retro --known-limits` (see docs/bench.md)
+#   known-limits.md    rig facts (required by COPY; may be empty) for `/retro --known-limits` (see docs/bench.md)
 # docker build --build-arg PREBUILD_PKG=<crate> <context>
 FROM rust:1-slim-bookworm
 ARG PREBUILD_PKG

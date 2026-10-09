@@ -262,6 +262,8 @@ export function expandScratchVar(command: string, dir: string): string | null {
 export function insideScratch(p: string, dirs: string[], platform: string = process.platform): boolean {
   const px = platform === "win32" ? path.win32 : path.posix;
   if (!px.isAbsolute(p) || p.split(/[\\/]/).includes("..")) return false;
+  // Glob characters never name a scratch path: bash could expand them (e.g. `.?` to `..`).
+  if (/[*?[\]{}]/.test(p)) return false;
   const norm = px.normalize(p);
   for (const d of dirs) {
     if (!strictlyInside(d, norm, platform)) continue;

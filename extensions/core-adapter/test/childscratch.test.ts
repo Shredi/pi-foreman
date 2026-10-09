@@ -116,6 +116,7 @@ test("guards: cd, cp, mkdir and rm inside a live scratch dir only", { skip: !pos
   assert.equal(ok(`rm -rf '$FOREMAN_SCRATCH'/x`), null, "single quotes keep the name literal");
   fs.symlinkSync(other, path.join(dir, "esc"));
   assert.equal(insideScratch(path.join(dir, "esc", "f"), [dir]), false, "a symlink inside cannot lead out");
+  assert.equal(insideScratch(path.join(dir, ".?", ".?", "f"), [dir]), false, "a glob that bash could expand to .. is refused");
   assert.equal(scratchCommandAllowed(`rm -r ${dir}/esc/f`, [dir], () => false), false);
   assert.equal(expandScratchVar(`echo "\${FOREMAN_SCRATCH}/x" '$FOREMAN_SCRATCH'`, "/s"), `echo "/s/x" '$FOREMAN_SCRATCH'`);
   // overlay: a child may cd into its own scratch dir, not elsewhere outside the workspace
