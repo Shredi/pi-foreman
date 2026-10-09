@@ -112,6 +112,10 @@
    "decision": "none"
   },
   {
+   "event": "child_scratch",
+   "role": "explorer"
+  },
+  {
    "event": "llm",
    "model": "foreman-fake/foreman"
   },
