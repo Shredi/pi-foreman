@@ -1,0 +1,8 @@
+{
+ "foreman": {
+  "cm1": [
+   {"tools": [{"name": "codemode", "arguments": {"code": "const out = [];\nfor (const [name, args] of [[\"read\", { path: \"notes.txt\" }], [\"bash\", { command: \"cat .git/config\" }], [\"bash\", { command: \"uname -s\" }], [\"bash\", { command: \"head -n1 .env\" }]]) {\n  try { await tools[name](args); out.push(name + \" ok\"); } catch (e) { out.push(name + \" err \" + String(e.message).slice(0, 80)); }\n}\ntext(out.join(\"\\n\"));"}}]},
+   {"text": "Done."}
+  ]
+ }
+}

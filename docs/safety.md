@@ -43,6 +43,9 @@ there is no `$(...)`, backtick or process substitution: `echo .git/HEAD | xargs 
 dot entries as in bash (unless the command mentions `dotglob` or `GLOBIGNORE`) and `\` is no path separator outside
 Windows. The secret path denies still check every word.
 
+`codemode` is allowlisted: each call its script makes (`tools.read`, `tools.bash`, ...) passes the overlay, the
+guards and the permission system on its own, as a direct call would (`tests/replay/test_replay_codemode.py`).
+
 Asks go through a model review link (`foreman-review`) using `providers.<p>.review.model` (see
 [roles](roles.md) for the automatic pick). Child asks are forwarded to it:
 
