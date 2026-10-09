@@ -121,7 +121,10 @@ In a Pi session (the foreman, not children):
 - `/foreman cost [workspace]` prints the usage summary (tokens, list-price cost, child launches) of this session, or of all sessions in the given workspace.
 - `/foreman update-check` lists newer versions of the pinned packages with release-note links. It changes nothing.
 
-The usage footer (tokens, list-price cost, child launches) is on by default (`footer.usage`). Outside Pi,
+The usage footer (tokens, list-price cost, child launches) is on by default (`footer.usage`). Below the editor, the children
+widget (`widget.children`, on by default, TUI only) lists this session's subagent runs as `role · rung · state · ↑in ↓out · $cost`
+(state `working`, `ask` while a forwarded permission ask of that role waits, `done` for 10 minutes) and its opened sessions as
+`label · status · age`; it costs no model tokens. Outside Pi,
 the `foreman` launcher in `bin/` (`.cmd` and `.ps1` on Windows) runs the same scripts: `foreman update-check`, `foreman retro [args]`, `foreman sync [args]`, `foreman session` (below) and `foreman radar` ([Radar](#radar)). The keys
 and their layer rules are in the tables of [ceremony](ceremony.md) and [safety](safety.md) and in the schema
 `config/foreman.schema.json`.
