@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Added
+- `foreman radar` (`scripts/foreman_radar.py`, `bin/foreman radar`): a read-only ANSI tree of running sessions, the sessions they
+  opened and their subagent runs (glyph, state, last-event age, subtree tokens and cost), from presence files
+  `state/live/<sessionId>.json`, the session registry, handoff dirs and usage files; `--once`, `--since`, `--interval`,
+  `--no-color`; works without Herdr and on Windows (no curses).
 - Ladder: a builder revision after a reviewer FAIL climbs to its strong rung (`ladder.strongOnRevision`, default true,
   trace `rung_up` reason `review_fail`); the finish gate refuses, uncounted, while that climb is open
   (`finish_refused {climb_available}`); on the top rung the two-refusal valve is unchanged.
