@@ -36,6 +36,10 @@ Asks go through a model review link (`foreman-review`) using `providers.<p>.revi
 - The review link allows a forwarded child ask without a model call when it holds a print-only sed
   (`sed -n '<addr>p' <file>`: no s/w/e/r commands, no -i/-f; trace label `sed-read`) or `timeout N <allowed
   command>` and every other unit is allowed (PS floors wrappers).
+- Scratch copies under `/tmp` (trace label `tmp-scratch`): one simple command, nothing chained, piped or
+  redirected, that is `cp [-r|-R|-a|-p] <src>... <dest>` or `mkdir [-p] <dest>...` with every destination under
+  `/tmp/` (no `..`, not `/tmp` itself, no symlink leading out). No `rm` in any form: `rm -rf /tmp/...` stays
+  reviewed. POSIX only; on Windows it never matches. A user `ask`/`deny` pattern that catches the command wins.
 - Headless defer: with no UI, or `review.headless: true` (default false), a forwarded child ask is denied with a
   text naming the allowed forms, trace `review_defer_headless {role, cmd}`. The `review` trace carries the model's
   defer `reason`.

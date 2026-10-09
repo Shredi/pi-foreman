@@ -12,6 +12,8 @@ import { get } from "./config.ts";
 import type { Baseline } from "./permoverlay.ts";
 import { wildcardRegExp } from "./permoverlay.ts";
 import { isReadOnlySed } from "./sedread.ts";
+import { isTmpScratch } from "./tmpscratch.ts";
+import type { TmpScratchDeps } from "./tmpscratch.ts";
 
 export interface BashRules {
   allow: string[];
@@ -76,8 +78,11 @@ export function unwrapTimeout(unit: string): string | null {
  * The link's deterministic allow for a forwarded ask: "timeout-wrapper" when `command` holds a
  * `timeout N <allowed>` unit, else "sed-read" when it holds a read-only sed unit, provided every
  * other unit is allowed by the rules; null otherwise. Units are separated by `&&` or `;`.
+ * "tmp-scratch" when the whole command is one `cp`/`mkdir` writing only under /tmp/ (tmpscratch.ts)
+ * that no ask or deny pattern catches.
  */
-export function deterministicAllow(rules: BashRules, command: string): "timeout-wrapper" | "sed-read" | null {
+export function deterministicAllow(rules: BashRules, command: string, scratch: TmpScratchDeps = {}): "timeout-wrapper" | "sed-read" | "tmp-scratch" | null {
+  if (isTmpScratch(command, scratch) && !hits(rules.ask, command.trim(), "") && !hits(rules.deny, command.trim(), "")) return "tmp-scratch";
   if (UNSAFE.test(command.replace(/&&/g, ";"))) return null;
   const units = command.split(/&&|;/).map((u) => u.trim());
   if (units.some((u) => !u)) return null;
