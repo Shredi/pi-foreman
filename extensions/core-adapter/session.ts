@@ -68,10 +68,14 @@ export function parseSessionArgs(args: string): SessionCommand {
 }
 
 /**
- * The opener's intercom id, pi-intercom 0.16.1's own rule (index.ts:556): PI_INTERCOM_STABLE_ID,
- * else `stableId` in <agent dir>/intercom/config.json, else the Pi session id.
+ * The opener's intercom id: PI_INTERCOM_SESSION_ID first (pi-intercom 0.16.1 publishes its resolved id
+ * there, index.ts ~1030, which also covers ids claimed via intercom:session-identity), else its own
+ * rule (index.ts:556): PI_INTERCOM_STABLE_ID, else `stableId` in <agent dir>/intercom/config.json,
+ * else the Pi session id.
  */
 export function openerIntercomId(env: Record<string, string | undefined>, agentDir: string, piSessionId: string): string {
+  const published = env.PI_INTERCOM_SESSION_ID?.trim();
+  if (published) return published;
   const fromEnv = env.PI_INTERCOM_STABLE_ID?.trim();
   if (fromEnv) return fromEnv;
   try {

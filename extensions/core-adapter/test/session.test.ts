@@ -47,6 +47,12 @@ test("session: opener id follows pi-intercom (env, config stableId, Pi session i
   assert.equal(openerIntercomId({ PI_INTERCOM_STABLE_ID: "env-id" }, agent, "sess-1"), "env-id");
 });
 
+test("session: opener id prefers the id pi-intercom publishes in PI_INTERCOM_SESSION_ID", () => {
+  const agent = path.join(root, "agent-id2");
+  assert.equal(openerIntercomId({ PI_INTERCOM_SESSION_ID: " claimed-id ", PI_INTERCOM_STABLE_ID: "env-id" }, agent, "sess-1"), "claimed-id");
+  assert.equal(openerIntercomId({ PI_INTERCOM_SESSION_ID: "  ", PI_INTERCOM_STABLE_ID: "env-id" }, agent, "sess-1"), "env-id");
+});
+
 test("session: subagent children refuse every subcommand", async () => {
   const agent = path.join(root, "agent-child");
   for (const args of ["open demo b.md", "brief demo hi", "close demo", "list"]) {
