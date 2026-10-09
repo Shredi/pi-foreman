@@ -82,7 +82,7 @@ import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, T
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
-import { ChildLadder, childMaxTurns, climbHint, LadderState, ledgerLines, onBottomRung, strongAbove, type Climb } from "./ladder.ts";
+import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { launchedModels, rankRefusal } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
@@ -164,6 +164,10 @@ interface Session {
   triageHint: string;
   /** Finish refusals since the last user prompt (at most 2, then a forced pass). */
   finishRefusals: number;
+  /** Uncounted finish refusals that ask for the builder's review_fail climb, since the last user prompt (at most 2). */
+  climbRefusals: number;
+  /** Foreman only: the model of the latest single builder launch (null after a tasks/chain one), for the climb refusal. */
+  lastBuilderModel: string | null;
   /** Foreman only: reviewer verdicts with the HEAD they covered, newest last, at most 50 (reviews.ts; the PR gate reads it). */
   reviews: ReviewRecord[];
   /** Pending HEAD reads of `reviews`; the PR gate waits for it. */
@@ -301,6 +305,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewGate: initialReviewGate(),
       triageHint: "",
       finishRefusals: 0,
+      climbRefusals: 0,
+      lastBuilderModel: null,
       reviews: [],
       reviewSync: Promise.resolve(),
       launchHeadsByCall: new Map(),
@@ -949,6 +955,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const resumed = actionOf(input) === "resume";
         const steps = s.isChild ? [] : roundSteps(input, s.runs);
         let preferStrong = false;
+        let revClimb: "revision" | "review_fail" | null = null;
         if (steps.length > 0) {
           rounds = checkLaunch(s.rounds, steps, s.ceremony.tier, get(s.config.config, "ceremony.revisionRounds"));
           if (rounds.block) {
@@ -957,12 +964,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           }
           const revision = rounds.revisions > 0;
           const keyword = typeof input.model === "string" && (STRENGTHS as readonly string[]).includes(splitLevel(input.model.trim()).base);
-          preferStrong = revision && !resumed && !keyword && get(s.config.config, `providers.${resolution.provider}.strongOnRevision`) === true;
+          // ladder.ts revisionClimb: after a reviewer FAIL (review_fail), else only with providers.<p>.strongOnRevision true.
+          revClimb = revision && !resumed ? revisionClimb(s.config.config, resolution.provider, s.reviewGate.last === "fail") : null;
+          if (revClimb === "review_fail" && !hasStrongRung(resolution.roles, "builder")) revClimb = null; // no strong rung: no-op
+          preferStrong = revClimb !== null && !keyword;
           kind = revision ? (preferStrong ? "strong-relaunch" : "revision") : undefined;
         }
         // Ladder (ladder.ts): a strong launch needs a reason or a trigger; rank policy (ranks.ts) after the models are written.
         if (!s.isChild && actionOf(input) === null) {
-          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong });
+          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined });
           if (lp.block) {
             s.trace?.emit({ event: "launch_refused", reason: "strong_no_reason", tier: s.ceremony.tier });
             return { block: true, reason: lp.block };
@@ -1063,10 +1073,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const single = event.toolName === "subagent" && !s.isChild ? singleLaunchRole(input) : null;
       if (single && ladderRoles) {
         const bottom = onBottomRung(ladderRoles, single, input.model);
+        if (single === "builder") s.lastBuilderModel = typeof input.model === "string" ? input.model : null;
         const p = s.configProvider ?? ctx.model?.provider;
         s.ladder.onLaunch(event.toolCallId, single, bottom);
         limits = { bottom, maxTurns: childMaxTurns(s.config.config, p, single), ...(bottom ? { strongAbove: strongAbove(s.config.config, p, single) } : {}) };
-      }
+      } else if (ladderRoles && !single && launchRoles(s, input).includes("builder")) s.lastBuilderModel = null;
       if (event.toolName === "subagent") recordLaunchUsage(s, ctx, input, kind, limits);
       if (event.toolName === "subagent" && !s.isChild && launchRoles(s, input).includes("planner")) capSet(s.planSnaps.byCall, event.toolCallId, planSnapshot(planOpts(s, ctx)));
       return undefined;
@@ -1126,7 +1137,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // D3: the owner is back in the loop, so revision rounds count from zero again.
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.rounds = initialRounds();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
-    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset();
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.climbRefusals = 0;
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset(typeof event.text === "string" ? event.text : ""); // the owner's task text for the reviewer (diffscan.ts ownerBlock)
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
       resetRecheck(s, "user");
       const was = s.budget.phase;
@@ -1468,6 +1480,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const rejected = s.ceremony.tier === "heavy" && s.plan?.status === "rejected";
     if (rejected) missing.push("plan");
     if (missing.length === 0) return undefined;
+    // Ladder (e): after a FAIL with the builder still on its bottom rung, the revision climbs; this
+    // refusal does not count toward the two-refusal valve (at most 2 per user prompt).
+    if (missing.includes("reviewer") && s.reviewGate.last === "fail" && s.climbRefusals < 2 && (await builderClimbOpen(s, ctx))) {
+      s.climbRefusals++;
+      s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(","), climb_available: true });
+      return {
+        entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], reviewHint(s.reviewGate)) + " Relaunch the builder for the revision; it climbs to its strong rung.", display: true }],
+        continue: true,
+      };
+    }
     if (s.finishRefusals >= 2) {
       s.trace?.emit({ event: "ceremony_incomplete", tier: s.ceremony.tier, missing: missing.join(",") });
       ctx.ui.notify(`pi-foreman: finished with ceremony incomplete: missing ${missing.join(", ")}`, "warning");
@@ -1479,6 +1501,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? reviewHint(s.reviewGate) : "") + escalated + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
       continue: true,
     };
+  }
+
+  /** The builder's review_fail climb is on and its latest single launch ran on its bottom rung. */
+  async function builderClimbOpen(s: Session, ctx: ExtensionContext): Promise<boolean> {
+    if (!s.lastBuilderModel) return false;
+    const r = await currentRoles(s, ctx);
+    return strongOnRevision(s.config.config, r.provider, "builder") && onBottomRung(r.roles, "builder", s.lastBuilderModel);
   }
 
   /** ceremony.required.<tier> as it applies to this session (trivial.ts effectiveRequired). */

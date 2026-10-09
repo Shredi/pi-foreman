@@ -26,12 +26,19 @@ which relaunches it with `model: "strong"`:
 - **Stuck**: a report with `STATUS: stuck` or "own checks failed".
 - **Foreman**: `model: "strong"` plus a `reason` on the launch. A strong launch with no reason and no trigger is
   refused (`strong_no_reason`); a heavy-tier builder and `strongOnRevision` count as triggers.
+- **Review FAIL**: a builder revision launched while the latest reviewer verdict is FAIL goes to the builder's
+  strong rung without a keyword or reason (`rung_up` reason `review_fail`) when `strongOnRevision` resolves true:
+  `roles.<id>.strongOnRevision`, else `providers.<p>.strongOnRevision`, else `ladder.strongOnRevision` (default
+  true). A revision without a FAIL climbs only with `providers.<p>.strongOnRevision: true` (reason `revision`);
+  `false` there switches the FAIL climb off for that provider. No strong rung: no climb. While the climb is open
+  the finish gate refuses once more without counting the refusal (see [ceremony](ceremony.md)).
 
 After a context, turns or stuck report the launch result says the run is climb-eligible; the next strong launch
 of that role gets the prior report (at most 8000 characters), its result path and the ledger items prepended to
 its task, and the trace records `rung_up {role, from, to, reason}`. Knobs: `ladder.strongAbove`,
 `ladder.childMaxTurns`, per provider `providers.<p>.strongAbove|childMaxTurns`, per role
-`roles.<id>.strongAbove|childMaxTurns` (the most specific wins; user or overlay config only). A rung's own
+`roles.<id>.strongAbove|childMaxTurns` (the most specific wins; user or overlay config only), and
+`strongOnRevision` with the same lookup (a project or session can only set it false). A rung's own
 `thinking` wins over the foreman's level: the ladder climbs by model, never by thinking. `childMaxThinking`
 (unset by default) caps every child launch's level, rungs included, on top of `maxThinking`.
 
@@ -47,6 +54,8 @@ into `<agent dir>/foreman.json`:
 - `claude-bridge.json`: ranks fable > opus > sonnet > haiku; foreman Opus 5.5 (high); explorer, builder and
   reviewer Haiku 5.5 (medium) with a strong Sonnet 5.5 rung; planner, finalizer and senior-reviewer (high) on
   Sonnet 5.5; auto-review on Haiku 5.5; `childPolicy: below`, so no child runs on Opus; `childMaxThinking: high`.
+- `claude-bridge-sonnet-reviewer.json`: the same with the reviewer on Sonnet 5.5 (medium) and no strong rung;
+  explorer, builder and auto-review unchanged. Opt-in, not the default: the bench rows decide whether it pays.
 - `openai.json` (astra > sol > luna: `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-luna`) and `google.json`
   (`gemini-*-pro*` > `gemini-*-flash*`; `at-or-below`, because the strong rung is the foreman's own pro model). Ids
   are from Pi's model registry; tiers follow capability class so cross-provider comparisons hold.
@@ -76,6 +85,8 @@ Design record for the ladder: `design/architecture.md`
 | `providers.<p>.roles.<role>.model`, `providers.<p>.roles.<role>.thinking`, `providers.<p>.roles.<role>.codemode` | The provider's model for the role as `<provider>/<model>`, its thinking level (capped by `maxThinking`) and a per-provider codemode override. |
 | `providers.<p>.roles.<role>.strong.model`, `providers.<p>.roles.<role>.strong.thinking` | Stronger model for the role, picked by the strength keyword `strong` (the builder also on a heavy tier). User or overlay config only. |
 | `providers.<p>.childMaxTurns` | `childMaxTurns` for every role of this provider. User or overlay config only. |
-| `providers.<p>.strongOnRevision` | Relaunch the builder on its strong model for a revision round (default false); project/session can only set false. |
+| `ladder.strongOnRevision` | A builder revision after a reviewer FAIL launches on the strong rung (`rung_up` reason `review_fail`; default true); project/session can only set false. |
+| `roles.<role>.strongOnRevision` | Per-role override of `ladder.strongOnRevision`, wins over the provider key; project/session can only set false. |
+| `providers.<p>.strongOnRevision` | `true`: every revision round relaunches the builder on its strong model (reason `revision`); `false`: no climb, also not after a FAIL; unset: `ladder.strongOnRevision` decides. Project/session can only set false. |
 | `providers.<p>.review.timeoutMs` | Timeout of the model review of permission asks (default 15000 ms); a timeout defers to the human. |
 | `providers.<p>.fallback.provider`, `providers.<p>.fallback.confirm` | One explicit fallback provider for roles this provider does not map (auth failure or unavailability only), and whether to ask once per session first. |
