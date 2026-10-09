@@ -41,7 +41,11 @@ export function tmpDest(dest: string, deps: TmpScratchDeps = {}): boolean {
   let p = norm;
   while (p !== "/tmp" && !exists(p)) p = path.posix.dirname(p);
   const r = real(p);
-  return r !== null && (r === tmp || r.startsWith(tmp.replace(/\/+$/, "") + "/"));
+  if (r === null || !(r === tmp || r.startsWith(tmp.replace(/\/+$/, "") + "/"))) return false;
+  if (p !== norm) return true;
+  // The destination itself exists: it must not be a symlink (its realpath is its parent's plus its name).
+  const parent = real(path.posix.dirname(norm));
+  return parent !== null && r === `${parent.replace(/\/+$/, "")}/${path.posix.basename(norm)}`;
 }
 
 /** True when the whole `command` is one `cp`/`mkdir` call that writes only under /tmp/ (see the header). */

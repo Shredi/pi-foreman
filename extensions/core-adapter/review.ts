@@ -333,7 +333,12 @@ export class ForemanReview {
   private fixedAllow(s: ReviewSession, d: AskDetails): string | null {
     try {
       const rules = s.bashRules?.();
-      return rules ? deterministicAllow(rules, unitValue(d)) : null;
+      if (!rules) return null;
+      // PS forwards only the first most-restrictive unit; the allow must also hold for the full command.
+      const unit = unitValue(d);
+      const full = reviewValue(d);
+      const label = deterministicAllow(rules, unit);
+      return label && full !== unit ? deterministicAllow(rules, full) : label;
     } catch {
       return null;
     }
