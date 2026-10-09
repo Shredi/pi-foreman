@@ -21,6 +21,8 @@ import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { collectOrientation } from "./orient.ts";
+import { ExplorerBrief } from "./builderbrief.ts";
+import { ChildReads, childReadLimits } from "./childreads.ts";
 import { bgWaitLocations,detailLocations, inRecorded, noticeLocations, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
@@ -180,6 +182,9 @@ interface Session {
   /** Foreman: rung per launch and climb-eligible runs (ladder.ts). Child: the once-only context steer. */
   ladder: LadderState;
   childLadder: ChildLadder;
+  /** Foreman: latest explorer report for the next builder launch (builderbrief.ts). Child: its read-class call count (childreads.ts). */
+  brief: ExplorerBrief;
+  childReads: ChildReads;
 }
 
 export interface AdapterDeps {
@@ -299,6 +304,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       dedupeTraced: new Set(),
       ladder: new LadderState(),
       childLadder: new ChildLadder(isChild ? b?.ladder : undefined),
+      brief: new ExplorerBrief(),
+      childReads: new ChildReads(),
     };
     sessions.set(id, s);
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
@@ -696,6 +703,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return undefined;
   }
 
+  /** Child read budget (childreads.ts): children only; undefined = let the call go on. */
+  function childReadCheck(s: Session | undefined, toolName: string, callId: string, input: unknown) {
+    if (!s || !s.isChild) return undefined;
+    const role = s.usage.line.role;
+    const d = s.childReads.check(toolName, callId, input, childReadLimits(s.config.config, role));
+    if (d.kind === "warn") {
+      s.readNotices.set(callId, d.text);
+      s.trace?.emit({ event: "child_read_budget", role, count: d.count, action: "warn" });
+    } else if (d.kind === "deny") {
+      s.trace?.emit({ event: "child_read_budget", role, count: d.count, action: "deny" });
+      return { block: true as const, reason: d.reason };
+    }
+    return undefined;
+  }
+
   function resetRecheck(s: Session, why: string): void {
     const used = s.budget.resetPost();
     if (used !== null) s.trace?.emit({ event: "recheck_budget", count: used, action: `reset_${why}` });
@@ -714,6 +736,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
           s.ladder.onRunEnd(runEndOf(data));
+          if (!s.isChild) s.brief.onRunEnd(runEndOf(data), s.launchedRoles.get(runId));
           for (const step of stepsOfRunEnd(data)) s.steps[step]++;
           s.reviewGate = onReviewVerdicts(s.reviewGate, reviewVerdictsOfRunEnd(data));
         }
@@ -765,6 +788,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (sup) return sup;
     const rb = readBudgetCheck(sessionFor(ctx), ctx, event.toolName, event.toolCallId, event.input);
     if (rb) return rb;
+    const crb = childReadCheck(sessionFor(ctx), event.toolName, event.toolCallId, event.input);
+    if (crb) return crb;
     if (event.toolName === INTERCOM_TOOL) {
       try {
         const s = await ensureSession(ctx);
@@ -971,6 +996,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.rounds = rounds.next;
         for (let i = 0; i < rounds.revisions; i++) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: kind });
       }
+      if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input)) s.trace?.emit(r);
       if (event.toolName === "subagent" && climbs.length > 0) {
         const ledgerFile = boundLedger(s.markerDir, s.id);
         const ledger = (() => { try { return ledgerFile ? fs.readFileSync(ledgerFile, "utf8") : null; } catch { return null; } })();
