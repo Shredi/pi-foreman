@@ -76,6 +76,7 @@ import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { dedupeNotices, dedupeOn, dropReturnControl, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { registerClose, syncCommand } from "./close.ts";
+import { registerSession } from "./session.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
 import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_TOOL, trivialPathAdvice, workspaceTargets } from "./triage.ts";
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
@@ -1529,6 +1530,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     },
   });
 
+  // `/foreman session open|brief|close|list` (session.ts): user commands, foreman sessions only.
+  const sessionCmd = registerSession(pi, {
+    spawner,
+    pkgRoot: PKG_ROOT,
+    session: async (ctx) => {
+      const s = await ensureSession(ctx);
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s) };
+    },
+  });
+
   // D10: the foreman records its triage; children never get the tool.
   if (process.env.PI_SUBAGENT_CHILD !== "1") {
     pi.registerTool({
@@ -1865,10 +1876,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman close [result-path]",
+    description: "pi-foreman commands: /foreman doctor | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman close [result-path] | /foreman session open|brief|close|list",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
       if (sub === "close") return close.command(args.trim().slice(sub.length), ctx);
+      if (sub === "session") return sessionCmd.command(args.trim().slice(sub.length), ctx);
       if (sub === "budget") {
         const s = await ensureSession(ctx);
         if (rest[0] !== "lift" || s.isChild) {
@@ -1895,7 +1907,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       if (sub !== "doctor") {
-        ctx.ui.notify("Usage: /foreman doctor | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman close [result-path]", "warning");
+        ctx.ui.notify("Usage: /foreman doctor | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman close [result-path] | /foreman session open|brief|close|list", "warning");
         return;
       }
       const s = await ensureSession(ctx);

@@ -3,8 +3,11 @@
 // Triggers: `/foreman close [result-path]` (when "herdr" is in close.from: the typed command is the
 // pane keyboard, which `herdr agent prompt` drives), and an inbound pi-intercom message whose text
 // is exactly `foreman:close` or `foreman:close <path>` (when "intercom-parent" is in close.from and
-// the sender's session id equals PI_FOREMAN_PARENT_INTERCOM, the parent recorded at spawn). A
-// refused request is traced and otherwise stays plain data.
+// the sender's session id equals the parent: the contents of `$PI_FOREMAN_HANDOFF_DIR/parent` when
+// that file exists (read at every check, so re-pointing the parent is a one-file change), else
+// PI_FOREMAN_PARENT_INTERCOM, the parent recorded at spawn). A refused request is traced and
+// otherwise stays plain data. An accepted intercom close replies `foreman:closed <result path>`
+// to the sender before the shutdown.
 // An idle foreman gets the message without an extension `message_end` (pi-intercom appends it,
 // then wakes the session with INTERCOM_WAKE_TEXT): the `input` hook reads the newest intercom
 // entry from the branch then (review S1). Children swallow that wake (review S6).
@@ -24,7 +27,37 @@ import { INTERCOM_MESSAGE_TYPE as INTERCOM_INBOUND_TYPE, lastIntercomDetails } f
 import { INTERCOM_WAKE_TEXT } from "./usage.ts";
 
 export const CLOSE_TEXT = "foreman:close";
+export const CLOSED_TEXT = "foreman:closed";
 export const PARENT_INTERCOM_ENV = "PI_FOREMAN_PARENT_INTERCOM";
+/** Handoff dir of a session opened by `/foreman session open`; its `parent` file names the parent. */
+export const HANDOFF_DIR_ENV = "PI_FOREMAN_HANDOFF_DIR";
+const PARENT_ID_RE = /^[A-Za-z0-9._:/@-]{1,200}$/;
+
+/**
+ * The parent's intercom id for the close check: `$PI_FOREMAN_HANDOFF_DIR/parent` (first line,
+ * trimmed) when that env and file exist, else PI_FOREMAN_PARENT_INTERCOM. A parent file that
+ * exists but holds no valid id yields undefined (refused), never the env fallback.
+ */
+export function parentIntercomId(env: Record<string, string | undefined>): string | undefined {
+  const dir = env[HANDOFF_DIR_ENV];
+  if (dir) {
+    let raw: string | null = null;
+    try {
+      raw = fs.readFileSync(path.join(dir, "parent"), "utf8");
+    } catch {
+      raw = null;
+    }
+    if (raw !== null) {
+      const id = raw.split(/\r?\n/)[0].trim();
+      return PARENT_ID_RE.test(id) ? id : undefined;
+    }
+  }
+  return env[PARENT_INTERCOM_ENV] || undefined;
+}
+/** pi-intercom 0.16.1 extension-api.ts: the outbox result event. */
+export const INTERCOM_OUTBOX_RESULT_EVENT = "intercom:outbox-result";
+/** How long an outbox send (the closed ack) waits for its result before going ahead. */
+export const OUTBOX_WAIT_MS = 5_000;
 export { INTERCOM_MESSAGE_TYPE as INTERCOM_INBOUND_TYPE } from "./intercomguard.ts";
 export { INTERCOM_WAKE_TEXT } from "./usage.ts";
 /** pi-intercom 0.16.1 extension-api.ts: outbox request event (reply to the sender). */
@@ -105,7 +138,8 @@ export interface CloseDeps {
   runSync: () => Promise<{ text: string; ok: boolean }>;
   /** Retro numbers for a stub ("" when the sync output already carries them). */
   retro: () => Promise<string>;
-  reply: (to: string, text: string) => void;
+  /** Send `text` to `to` over intercom; a returned promise settles when the send is done (or given up). */
+  reply: (to: string, text: string) => void | Promise<unknown>;
   notify: (text: string, level: "info" | "warning" | "error") => void;
   trace: (rec: Record<string, unknown>) => void;
   /** Mark the current run's turn cause as `close`. */
@@ -121,7 +155,7 @@ export interface CloseRequest {
   file: string;
   /** The validated path text for the prompt (default: file). */
   shown?: string;
-  /** Intercom sender to answer a refusal to. */
+  /** Intercom sender to answer a refusal (and the `foreman:closed` ack) to. */
   replyTo?: string;
 }
 
@@ -262,6 +296,13 @@ export class CloseFlow {
       }
     }
     this.d.notify(`pi-foreman: close: ${sync.text.split("\n").slice(0, 3).join(" | ")}`, sync.ok ? "info" : "warning");
+    if (req.replyTo) {
+      try {
+        await this.d.reply(req.replyTo, `${CLOSED_TEXT} ${req.file}`);
+      } catch {
+        // the ack is best effort; the close itself is done
+      }
+    }
     this.d.trace({ event: "close", cause: req.source, decision: "shutdown" });
     this.reset();
     ctx.shutdown();
@@ -298,6 +339,37 @@ export interface CloseSession {
   retro: (ctx: ExtensionContext) => Promise<string>;
 }
 
+type Bus = { emit(channel: string, data: unknown): void; on?(channel: string, handler: (data: unknown) => void): (() => void) | void } | undefined;
+let outboxSeq = 0;
+
+/**
+ * Emit one pi-intercom outbox request; resolves with the outbox result's status, or "timeout"
+ * after `waitMs` (also when no result event arrives). Never rejects.
+ */
+export function outboxSend(events: Bus, to: string, message: string, kind: string, waitMs = OUTBOX_WAIT_MS): Promise<string> {
+  if (!events) return Promise.resolve("no-events");
+  const requestId = `pi-foreman-${kind}-${Date.now()}-${++outboxSeq}`;
+  return new Promise((resolve) => {
+    let off: (() => void) | void;
+    const done = (status: string): void => {
+      clearTimeout(timer);
+      if (typeof off === "function") off();
+      resolve(status);
+    };
+    const timer = setTimeout(() => done("timeout"), waitMs);
+    timer.unref?.();
+    try {
+      off = events.on?.(INTERCOM_OUTBOX_RESULT_EVENT, (data) => {
+        const d = data as { requestId?: unknown; status?: unknown } | null;
+        if (d && d.requestId === requestId) done(typeof d.status === "string" ? d.status : "unknown");
+      });
+      events.emit(INTERCOM_OUTBOX_EVENT, { version: 1, requestId, extensionId: "pi-foreman", extensionName: "pi-foreman", to, message });
+    } catch {
+      done("failed");
+    }
+  });
+}
+
 /** Wire the intercom trigger and the sequence events; returns the `/foreman close` handler. */
 export function registerClose(
   pi: ExtensionAPI,
@@ -317,7 +389,7 @@ export function registerClose(
       sendUserMessage: (text) => pi.sendUserMessage(text),
       runSync: () => s.runSync(holder.ctx),
       retro: () => (get(s.config(), "sync.runRetro") === false ? s.retro(holder.ctx) : Promise.resolve("")),
-      reply: (to, text) => pi.events?.emit(INTERCOM_OUTBOX_EVENT, { version: 1, requestId: `pi-foreman-close-${Date.now()}`, extensionId: "pi-foreman", extensionName: "pi-foreman", to, message: text }),
+      reply: (to, text) => outboxSend(pi.events, to, text, "close"),
       notify: (text, level) => {
         try {
           holder.ctx.ui.notify(text, level);
@@ -341,7 +413,7 @@ export function registerClose(
   });
   /** An inbound intercom message's details: start a close (true), refuse, or ignore (false). */
   const fromIntercom = (s: CloseSession, ctx: ExtensionContext, details: unknown, viaWake: boolean): boolean => {
-    const r = intercomClose(details, process.env[PARENT_INTERCOM_ENV] || undefined, closeFrom(s.config()));
+    const r = intercomClose(details, parentIntercomId(process.env), closeFrom(s.config()));
     if (!r) return false;
     const flow = flowFor(s, ctx);
     if (r.kind === "refused") return void flow.refuse(r.reason, "intercom-parent", r.sender), false;
