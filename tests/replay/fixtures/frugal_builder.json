@@ -6,6 +6,12 @@
    {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:rv]] review item 1"}}]},
    {"text": "Done."}
   ],
+  "szl": [
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-szl.md", "content": "# Requirements Ledger: szl\n\n- [ ] 1. The parser accepts a trailing comma in list literals and reports the line and column of the first malformed token; existing error messages stay byte-identical.\n- [ ] 2. Add a regression test for the trailing comma and one for the malformed token position, next to the existing parser tests.\n- [ ] 3. Update the user guide section on list literals.\n- [ ] V. fresh-eyes verification passed\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:ex]] where is alpha?"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:bd]] implement items 1 and 2"}}]},
+   {"text": "Done."}
+  ],
   "reads": [
    {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:many]] implement item 1"}}]},
    {"text": "Done."}

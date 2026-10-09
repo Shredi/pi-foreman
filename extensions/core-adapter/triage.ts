@@ -35,6 +35,9 @@ export function foremanTriage(c: CeremonyState, tier: Tier, reason: string): { s
   return { state: { ...c, tier, source: "foreman", reasons: [...c.reasons, `foreman triage ${tier}: ${reason}`], triaged: true } };
 }
 
+/** Tier rules appended to every `foreman_triage` answer (instructions/foreman.md Triage states the same). */
+export const TRIAGE_RULES = "Tier rules: a version or hash bump is trivial; security hardening inside one component is standard, not heavy; at standard you may skip the explorer when your builder brief lists the files and symbols itself.";
+
 /** What the foreman may do next at this tier (the tool's answer). */
 export function triageAdvice(tier: Tier): string {
   return tier === "trivial"

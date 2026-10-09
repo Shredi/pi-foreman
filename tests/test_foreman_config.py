@@ -352,8 +352,8 @@ class PackageFilesTest(unittest.TestCase):
                 for review in ("on", "off"):
                     for trivial in ("builder", "off"):
                         kept = render_prompt(text, {"ledgerhelper": mode, "heavythreshold": heavy, "reviewperrevision": review,
-                                                    "trivialpath": trivial, "ladder": "on", "factrulings": "on"})
-                        self.assertLessEqual(len(kept.splitlines()), 64, (mode, heavy, review, trivial))
+                                                    "trivialpath": trivial, "ladder": "on", "factrulings": "on", "launchbriefs": "on"})
+                        self.assertLessEqual(len(kept.splitlines()), 70, (mode, heavy, review, trivial))
         for word in ("claude", "sonnet", "opus", "fable", "gpt", "gemini", "copilot", "openrouter"):
             self.assertNotIn(word, text)
 
@@ -364,7 +364,7 @@ class PackageFilesTest(unittest.TestCase):
         text = (ROOT / "instructions" / "foreman.md").read_text()
         # trivialPath "off" = ceremony.required.trivial without builder; ladder "off" = the pre-ladder model line
         # (the adapter always renders ladder "on"); factRulings "off" = no rule on foreman rulings (always "on" too).
-        knobs = {"ledgerHelper": "off", "heavyThreshold": "eee843d", "reviewPerRevision": "off", "trivialPath": "off", "ladder": "off", "factRulings": "off"}
+        knobs = {"ledgerHelper": "off", "heavyThreshold": "eee843d", "reviewPerRevision": "off", "trivialPath": "off", "ladder": "off", "factRulings": "off", "launchBriefs": "off"}
         self.assertEqual(render_prompt(text, knobs), old.stdout.decode("utf-8"))
 
     def test_defaults_validate(self):
