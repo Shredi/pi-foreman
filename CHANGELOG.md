@@ -13,6 +13,16 @@
 - Triage rules (`instructions/foreman.md`, every `foreman_triage` answer): a version or hash bump is trivial, security
   hardening inside one component is standard not heavy, the explorer may be skipped when the builder brief lists the
   files and symbols (the standard finish gate needs only builder and reviewer).
+- Review marks: a reviewer PASS marks its per-item "N. PASS" ledger items through the harness, never V (trace
+  `ledger_mark_by_review`); a builder or foreman touch-up after a PASS that only changes comments or docs needs no
+  re-review and uses no revision round (trace `revision_comment_only`).
+- Child scratch: each single-child launch gets `$FOREMAN_SCRATCH` (`<tmp>/pi-foreman-scratch/<session>/<launch>`, 0700);
+  writes and `rm` inside it are allowed (overlay cd, planner write guard, review label `child-scratch`); the harness
+  traces `child_scratch {bytes, files}`, removes it at run end and sweeps at shutdown; `ceremony.childScratch.keep` keeps it.
+- `codemode` is allowlisted; each inner call is still decided on its own (replay `test_replay_codemode.py`).
+- Bench: `/retro --model --known-limits <file>` tells the foreman which environment limits are rig facts, not harness
+  gaps (row `bench.known_limits`, default `/opt/known-limits.md`, capped at 2000 characters); generic Rust and Go task
+  images in `bench/images/` with rustfmt, clippy and a readable vendor dir.
 - Ladder: a builder revision after a reviewer FAIL climbs to its strong rung (`ladder.strongOnRevision`, default true,
   trace `rung_up` reason `review_fail`); the finish gate refuses, uncounted, while that climb is open
   (`finish_refused {climb_available}`); on the top rung the two-refusal valve is unchanged.
@@ -116,6 +126,9 @@
   models) with claude-agent-sdk 0.3.293.
 
 ### Fixed
+- Write protection matched grep patterns and other string operands (`register\b` expanded to `.git/...`): it now
+  checks shell path arguments only; grep/rg patterns, sed/awk scripts, find `-name` values and echo/printf text are
+  skipped on read and filter lines, bash `*` skips dot entries and `\` is no separator outside Windows.
 - Bench post-step waiter passed `1.0` (an epoch) to `PiRpc._next` instead of an absolute deadline, so it never read a
   record and ran every post step to the 300 s cap; it now warns on stderr when the cap is hit.
 - `/sync --dry-run` ignored its arguments and ran a real sync; the flag now reaches `foreman_sync.py` (other arguments warn).
