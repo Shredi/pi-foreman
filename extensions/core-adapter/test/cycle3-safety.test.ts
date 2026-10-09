@@ -106,6 +106,19 @@ test("T11: children may not name the package root in a shell; the foreman may", 
   ]);
 });
 
+test("handoff parent/child id files: children denied, foreman asked; result.md and plan.md stay writable", () => {
+  const hd = at(agentDir, "pi-foreman", "handoffs", "20261009-120000-x");
+  const fwd = (p: string): string => p.split(path.sep).join("/");
+  run([
+    [w(at(hd, "parent")), "ask", "deny"],
+    [w(at(hd, "child")), "ask", "deny"],
+    [sh(`echo fake > ${fwd(at(hd, "parent"))}`), "pass", "deny"],
+    [w(at(hd, "result.md")), "pass", "pass"],
+    [w(at(hd, "plan.md")), "pass", "pass"],
+    [sh(`echo done > ${fwd(at(hd, "result.md"))}`), "pass", "pass"],
+  ]);
+});
+
 test("T14: <rev>:<path> words are checked by their path part", () => {
   run([
     [sh("git show HEAD:.env"), "deny", "deny"],

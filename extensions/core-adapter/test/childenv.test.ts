@@ -35,7 +35,7 @@ test("a bogus GIT_CONFIG_COUNT is replaced", () => {
 });
 
 test("child env drops the intercom identity (review S6), also without the git patch", () => {
-  const env: Env = { PATH: "/usr/bin", PI_FOREMAN_PARENT_INTERCOM: "parent-x", pi_intercom_stable_id: "fixed" };
+  const env: Env = { PATH: "/usr/bin", PI_FOREMAN_PARENT_INTERCOM: "parent-x", PI_FOREMAN_HANDOFF_DIR: "/h", pi_intercom_stable_id: "fixed" };
   stripChildIntercomEnv(env);
   assert.deepEqual(env, { PATH: "/usr/bin" });
   const env2: Env = { PI_FOREMAN_PARENT_INTERCOM: "parent-x", PI_INTERCOM_STABLE_ID: "fixed", PI_INTERCOM_SESSION_ID: "s-1" };

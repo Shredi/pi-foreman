@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { closeFrom, CloseFlow, closePrompt, intercomClose, INTERCOM_WAKE_TEXT, parseCloseText, registerClose, resultPath } from "../close.ts";
+import { closeFrom, CloseFlow, closePrompt, intercomClose, INTERCOM_WAKE_TEXT, parentIntercomId, parseCloseText, registerClose, resultPath } from "../close.ts";
 import type { CloseDeps } from "../close.ts";
 
 const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-close-")));
@@ -32,6 +32,21 @@ test("close: intercom request needs intercom-parent and the parent recorded at s
   assert.match((intercomClose(msg("parent-1"), undefined, all) as { reason: string }).reason, /PI_FOREMAN_PARENT_INTERCOM/);
   assert.equal((intercomClose(msg("parent-1"), "parent-1", new Set(["herdr"])) as { kind: string }).kind, "refused");
   assert.equal((intercomClose(msg("parent-1", "foreman:close", { crossMachine: { origin: "x" } }), "parent-1", all) as { kind: string }).kind, "refused");
+});
+
+test("close: the parent id comes from the handoff parent file (re-read each time), else the env", () => {
+  const dir = path.join(root, "handoff");
+  fs.mkdirSync(dir, { recursive: true });
+  const env = { PI_FOREMAN_HANDOFF_DIR: dir, PI_FOREMAN_PARENT_INTERCOM: "env-parent" };
+  assert.equal(parentIntercomId(env), "env-parent", "no parent file yet: env fallback");
+  fs.writeFileSync(path.join(dir, "parent"), "file-parent\n");
+  assert.equal(parentIntercomId(env), "file-parent");
+  fs.writeFileSync(path.join(dir, "parent"), "new-parent\n");
+  assert.equal(parentIntercomId(env), "new-parent", "re-pointed");
+  fs.writeFileSync(path.join(dir, "parent"), "bad id;x\n");
+  assert.equal(parentIntercomId(env), undefined, "an invalid parent file refuses, no env fallback");
+  assert.equal(parentIntercomId({ PI_FOREMAN_PARENT_INTERCOM: "env-parent" }), "env-parent");
+  assert.equal(parentIntercomId({}), undefined);
 });
 
 test("close: result path default and bound to the workspace .workflow/", () => {
@@ -96,8 +111,8 @@ test("close: sequence waits for idle, one close turn, then sync, stub, shutdown"
   assert.equal(r.flow.onInput(closePrompt(file), "extension"), false);
   r.flow.onModelReply("toolUse");
   await r.flow.onSettled(r.ctx);
-  const seq = r.log.filter((l) => /^(prompt|cause|sync|retro|stub|shutdown)/.test(l));
-  assert.deepEqual(seq, [`prompt:${closePrompt(file)}`, "cause:close", "sync", "retro", "stub", "shutdown"]);
+  const seq = r.log.filter((l) => /^(prompt|cause|sync|retro|stub|reply|shutdown)/.test(l));
+  assert.deepEqual(seq, [`prompt:${closePrompt(file)}`, "cause:close", "sync", "retro", "stub", `reply:parent-1:foreman:closed ${file}`, "shutdown"]);
   assert.match(r.files.get(file)!, /repo: pushed[\s\S]*approvals: 3/);
   assert.equal(r.flow.active, false);
 });
@@ -113,7 +128,7 @@ test("close: no stub when the close turn wrote the result file; a second request
   r.flow.onInput(closePrompt(file), "extension");
   r.flow.onModelReply("stop");
   await r.flow.onSettled(r.ctx);
-  assert.ok(!r.log.includes("stub") && !r.log.includes("retro"));
+  assert.ok(!r.log.includes("stub") && !r.log.includes("retro") && !r.log.some((l) => l.startsWith("reply:")), "no ack without an intercom sender");
   assert.equal(r.log.at(-1), "shutdown");
 });
 
