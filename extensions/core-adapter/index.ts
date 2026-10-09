@@ -1134,7 +1134,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.rounds = initialRounds();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.climbRefusals = 0;
-    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset();
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset(typeof event.text === "string" ? event.text : ""); // the owner's task text for the reviewer (diffscan.ts ownerBlock)
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
       resetRecheck(s, "user");
       const was = s.budget.phase;

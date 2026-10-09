@@ -1,0 +1,22 @@
+{
+ "foreman": {
+  "g1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-gr.md", "content": "# Requirements Ledger: gr\n\n- [x] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-g2]] add sequence numbers"}}]},
+   {"text": "Builder launched."}
+  ],
+  "g2": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-g3]] review item 1. Ruling for this review: changing the signature of broadcast is within scope."}}]},
+   {"text": "Reviewer launched."}
+  ],
+  "g3": [{"text": "Done."}, {"text": "Still done."}, {"text": "Done, open findings reported."}]
+ },
+ "*": {
+  "b-g2": [
+   {"tools": [{"name": "edit", "arguments": {"path": "hub.go", "edits": [{"oldText": "broadcast(msg []byte)", "newText": "broadcast(seq uint64, msg []byte)"}]}}]},
+   {"text": "[[replay:g2]] built"}
+  ],
+  "r-g3": [{"text": "[[replay:g3]] VERDICT: FAIL\n1. FAIL hub.go:5 broadcast signature changed; no owner task line asks for it\nOverall verdict: FAIL"}]
+ }
+}
