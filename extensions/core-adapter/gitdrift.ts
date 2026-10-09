@@ -18,7 +18,8 @@
 //   after the gate). A change is an ask (never values, only which keys / hook files), denied
 //   without a UI. Only file reads here; no git process is started.
 //   Covered: common dir config/config.worktree, in-repo includes, every linked worktree's
-//   config.worktree/commondir/gitdir/.git file, info/attributes (common dir and per worktree),
+//   config.worktree/gitdir/.git file (and whether commondir and .git file lead back to this repo;
+//   git worktree add/remove bookkeeping is not reported), info/attributes (common dir and per worktree),
 //   the hooks dir, and absorbed submodule git dirs (`modules/**`: config, info/attributes,
 //   hooks/*), since `git status` runs submodule clean filters.
 // - the snapshot is persisted per workspace (key: realpath of the git common dir) in the
@@ -140,6 +141,19 @@ function inside(root: string, p: string): boolean {
   return rel === "" || (!!rel && !rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
+/** Same file or directory after resolving links (case-insensitive on Windows only; a mismatch reports, never hides). */
+function samePath(a: string, b: string): boolean {
+  const real = (p: string): string => {
+    try {
+      return fs.realpathSync.native(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  const [ra, rb] = [real(a), real(b)];
+  return process.platform === "win32" ? ra.toLowerCase() === rb.toLowerCase() : ra === rb;
+}
+
 /** Take a snapshot of the repo of `cwd`; null outside a repo. */
 export function takeGitSnapshot(cwd: string, home: string): GitSnapshot | null {
   const repo = locateRepo(cwd);
@@ -229,13 +243,20 @@ export function takeGitSnapshot(cwd: string, home: string): GitSnapshot | null {
     const wd = path.join(repo.commonDir, "worktrees", n);
     addConfig(path.join(wd, "config.worktree"), 0);
     addRaw(path.join(wd, "info", "attributes"));
-    addRaw(path.join(wd, "commondir"));
+    // `commondir` is not stored and `gitdir` / the .git file only for content changes (git worktree
+    // add/remove write and delete them, see diffGitSnapshots). A commondir that does not lead back to
+    // this common dir, or a .git file that does not lead back to `wd`, would make git read config
+    // from elsewhere: that is the derived `worktree-link:<n>` label, reported whenever it appears.
     addRaw(path.join(wd, "gitdir"));
+    const common = readText(path.join(wd, "commondir"));
     const dotGit = (readText(path.join(wd, "gitdir")) ?? "").trim();
-    if (dotGit) {
-      const text = readText(dotGit);
-      if (text !== null) files.set(`worktree-git-file:${n}`, { hash: sha(text), keys: null });
-    }
+    const gitFile = dotGit ? path.resolve(wd, dotGit) : "";
+    const text = gitFile ? readText(gitFile) : null;
+    if (text !== null) files.set(`worktree-git-file:${n}`, { hash: sha(text), keys: null });
+    const back = text === null ? null : /^gitdir:\s*(.+?)\s*$/m.exec(text);
+    const commonOk = !!common && !!common.trim() && samePath(path.resolve(wd, common.trim()), repo.commonDir);
+    const fileOk = text === null || (!!back && samePath(path.resolve(path.dirname(gitFile), back[1]), wd));
+    if (!commonOk || !fileOk) files.set(`worktree-link:${n}`, { hash: sha(`${common ?? ""}\0${text ?? ""}`), keys: null });
   }
   const hp = hooksPath as string | null;
   const hooksDir = hp
@@ -372,31 +393,57 @@ function listed(word: string, items: string[]): string | null {
   return `${word} ${shown}${items.length > MAX_ITEMS ? ` (+${items.length - MAX_ITEMS} more)` : ""}`;
 }
 
+/**
+ * Per-worktree labels (`git:worktrees/<n>/...`, `worktree-git-file:<n>`, `worktree-link:<n>`) -> worktree
+ * name and what. `quiet` = the states git worktree add/remove produce and that cannot make git run
+ * anything: new/removed of commondir (older snapshots), gitdir and the .git file (a new one that leads
+ * elsewhere shows as `worktree-link`), and a removed `worktree-link` (worktree gone or leads back again).
+ */
+function worktreeLabel(lbl: string): { n: string; what: string; quiet: string[] } | null {
+  const m = /^git:worktrees\/([^/]+)\/(.+)$/.exec(lbl);
+  if (m) return { n: m[1], what: m[2], quiet: m[2] === "commondir" || m[2] === "gitdir" ? ["new", "removed"] : [] };
+  const f = /^worktree-(git-file|link):(.+)$/.exec(lbl);
+  if (!f) return null;
+  return f[1] === "git-file" ? { n: f[2], what: ".git file", quiet: ["new", "removed"] } : { n: f[2], what: "link", quiet: ["removed"] };
+}
+
 /** What changed between two snapshots, as short lines naming files, keys and hooks (never values). Empty = no drift. */
 export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot | null): string[] {
   if (!before) return [];
   if (!after) return ["the repository can no longer be found"];
   const out: string[] = [];
+  // Per-worktree changes collapse into one line (a repo with many worktrees would flood the ask).
+  const wt = new Map<string, string[]>();
   const labels = [...new Set([...before.files.keys(), ...after.files.keys()])].sort();
   for (const lbl of labels) {
     const a = before.files.get(lbl);
     const b = after.files.get(lbl);
     if (a && b && a.hash === b.hash) continue;
-    if (!a && b) {
-      out.push(`${clean(lbl)}: new file${b.keys && b.keys.size ? ` (${listed("keys", [...b.keys.keys()])})` : ""}`);
+    const kind = !a ? "new" : !b ? "removed" : "changed";
+    let state: string;
+    if (kind === "new") state = `new file${b!.keys && b!.keys.size ? ` (${listed("keys", [...b!.keys.keys()])})` : ""}`;
+    else if (kind === "removed") state = "removed";
+    else {
+      const ka = a!.keys ?? new Map<string, string>();
+      const kb = b!.keys ?? new Map<string, string>();
+      const added = [...kb.keys()].filter((k) => !ka.has(k));
+      const removed = [...ka.keys()].filter((k) => !kb.has(k));
+      const changed = [...kb.keys()].filter((k) => ka.has(k) && ka.get(k) !== kb.get(k));
+      const parts = [listed("added", added), listed("changed", changed), listed("removed", removed)].filter(Boolean);
+      state = parts.length ? parts.join("; ") : "content changed";
+    }
+    const w = worktreeLabel(lbl);
+    if (!w) {
+      out.push(`${clean(lbl)}: ${state}`);
       continue;
     }
-    if (a && !b) {
-      out.push(`${clean(lbl)}: removed`);
-      continue;
-    }
-    const ka = a!.keys ?? new Map<string, string>();
-    const kb = b!.keys ?? new Map<string, string>();
-    const added = [...kb.keys()].filter((k) => !ka.has(k));
-    const removed = [...ka.keys()].filter((k) => !kb.has(k));
-    const changed = [...kb.keys()].filter((k) => ka.has(k) && ka.get(k) !== kb.get(k));
-    const parts = [listed("added", added), listed("changed", changed), listed("removed", removed)].filter(Boolean);
-    out.push(`${clean(lbl)}: ${parts.length ? parts.join("; ") : "content changed"}`);
+    if (w.quiet.includes(kind)) continue;
+    const item = w.what === "link" ? "commondir or .git file points outside this repository" : `${clean(w.what)} ${state}`;
+    wt.set(w.n, [...(wt.get(w.n) ?? []), item]);
+  }
+  if (wt.size) {
+    const items = [...wt].slice(0, MAX_ITEMS).map(([n, xs]) => `${clean(n)}: ${xs.join(", ")}`);
+    out.push(`worktrees: ${wt.size} changed (${items.join("; ")}${wt.size > MAX_ITEMS ? `; +${wt.size - MAX_ITEMS} more` : ""})`);
   }
   if (before.hooksDirId !== after.hooksDirId) out.push("hooks directory changed (core.hooksPath)");
   const hooks = [...new Set([...before.hooks.keys(), ...after.hooks.keys()])].sort();

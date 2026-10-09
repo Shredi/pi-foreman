@@ -92,7 +92,7 @@ test("HIGH-2: submodule git dir config and hooks, info/attributes (common and pe
   fs.mkdirSync(path.join(sup, ".git", "worktrees", "wt", "info"), { recursive: true });
   fs.writeFileSync(path.join(sup, ".git", "worktrees", "wt", "info", "attributes"), "*.md filter=pf\n");
   const lines = diffGitSnapshots(before, takeGitSnapshot(sup, HOME));
-  for (const want of ["git:info/attributes: new file", "git:modules/sub/config: added filter.pf.clean", "git:modules/sub/hooks/post-checkout: new file", "git:worktrees/wt/info/attributes: new file"]) {
+  for (const want of ["git:info/attributes: new file", "git:modules/sub/config: added filter.pf.clean", "git:modules/sub/hooks/post-checkout: new file", "worktrees: 1 changed (wt: info/attributes new file)"]) {
     assert.ok(lines.includes(want), `${want} missing from ${JSON.stringify(lines)}`);
   }
   assert.doesNotMatch(lines.join("\n"), /ran-sub-clean/);

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { GitDriftWatch, diffGitSnapshots, locateRepo, parseGitConfig, patchForemanGitEnv, takeGitSnapshot } from "../gitdrift.ts";
+import { GitDriftWatch, deserializeGitSnapshot, diffGitSnapshots, locateRepo, serializeGitSnapshot, parseGitConfig, patchForemanGitEnv, takeGitSnapshot } from "../gitdrift.ts";
 
 function tempRepo(t: { after(fn: () => void): void }): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-drift-")));
@@ -65,9 +65,50 @@ test("in-repo include files, linked worktree config and its .git file are snapsh
   fs.writeFileSync(path.join(wt, ".git"), "gitdir: /elsewhere\n");
   assert.deepEqual(diffGitSnapshots(before, takeGitSnapshot(dir, HOME)), [
     "git:extra.cfg: added diff.external",
-    "git:worktrees/w1/config.worktree: new file (keys core.pager)",
-    "worktree-git-file:w1: content changed",
+    "worktrees: 1 changed (w1: config.worktree new file (keys core.pager), .git file content changed, commondir or .git file points outside this repository)",
   ]);
+});
+
+/** What `git worktree add` writes: <common>/worktrees/<n>/{gitdir,commondir} and <wt>/.git. */
+function addWorktree(dir: string, n: string, commondir = "../.."): void {
+  const wd = path.join(dir, ".git", "worktrees", n);
+  const wt = path.join(dir, "wts", n);
+  fs.mkdirSync(wd, { recursive: true });
+  fs.mkdirSync(wt, { recursive: true });
+  fs.writeFileSync(path.join(wt, ".git"), `gitdir: ${wd}\n`);
+  fs.writeFileSync(path.join(wd, "gitdir"), path.join(wt, ".git") + "\n");
+  fs.writeFileSync(path.join(wd, "commondir"), commondir + "\n");
+}
+
+test("worktree add/remove bookkeeping is not drift; a new worktree whose commondir leads elsewhere is", (t) => {
+  const dir = tempRepo(t);
+  const before = takeGitSnapshot(dir, HOME);
+  for (let i = 0; i < 20; i++) addWorktree(dir, `w${i}`);
+  const mid = takeGitSnapshot(dir, HOME);
+  assert.deepEqual(diffGitSnapshots(before, mid), []);
+  fs.renameSync(path.join(dir, ".git", "worktrees"), path.join(dir, "gone"));
+  assert.deepEqual(diffGitSnapshots(mid, takeGitSnapshot(dir, HOME)), [], "worktree remove");
+  addWorktree(dir, "evil", "../../../elsewhere");
+  assert.deepEqual(diffGitSnapshots(before, takeGitSnapshot(dir, HOME)), ["worktrees: 1 changed (evil: commondir or .git file points outside this repository)"]);
+});
+
+test("20 worktrees gaining config.worktree keys -> exactly one capped line", (t) => {
+  const dir = tempRepo(t);
+  for (let i = 0; i < 20; i++) addWorktree(dir, `w${String(i).padStart(2, "0")}`);
+  const before = takeGitSnapshot(dir, HOME);
+  for (let i = 0; i < 20; i++) fs.writeFileSync(path.join(dir, ".git", "worktrees", `w${String(i).padStart(2, "0")}`, "config.worktree"), "[core]\n\tpager = z\n\tfsmonitor = y\n");
+  const lines = diffGitSnapshots(before, takeGitSnapshot(dir, HOME));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^worktrees: 20 changed \(w00: config\.worktree new file \(keys core\.pager, core\.fsmonitor\); w01: .*; w11: [^;]*; \+8 more\)$/);
+});
+
+test("a snapshot stored by the previous version (commondir labels) gives no removed lines", (t) => {
+  const dir = tempRepo(t);
+  addWorktree(dir, "w1");
+  const now = takeGitSnapshot(dir, HOME)!;
+  const old = deserializeGitSnapshot(serializeGitSnapshot(now))!;
+  old.files.set("git:worktrees/w1/commondir", { hash: "0123456789abcdef", keys: null });
+  assert.deepEqual(diffGitSnapshots(old, now), []);
 });
 
 test("gate: no snapshot -> no check; drift asks in rpc, denies without UI, re-snapshots on approve", async (t) => {
