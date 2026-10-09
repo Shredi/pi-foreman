@@ -37,6 +37,7 @@ import { ReviewFacts } from "./diffscan.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
+import { boundLaunchId, ChildScratch, finishScratch, launchScratch, SCRATCH_ENV, sweepScratch } from "./childscratch.ts";
 import { GitDriftWatch, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
@@ -196,6 +197,8 @@ interface Session {
   /** Foreman: latest explorer report for the next builder launch (builderbrief.ts). Child: its read-class call count (childreads.ts). */
   brief: ExplorerBrief;
   childReads: ChildReads;
+  /** Child scratch dirs of this session's launches (childscratch.ts). */
+  scratch: ChildScratch;
 }
 
 export interface AdapterDeps {
@@ -235,6 +238,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const baseline = readBaseline(PKG_ROOT);
   // A child's launch binding is in the env while its extensions load (usage.ts); read it now.
   const launchBinding = readBinding(process.env);
+  if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.scratch) process.env[SCRATCH_ENV] = launchBinding.scratch;
 
   const pyPath = (s: Session): string | null => (s.python.ok ? s.python.info.executable : null);
 
@@ -324,6 +328,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       childLadder: new ChildLadder(isChild ? b?.ladder : undefined),
       brief: new ExplorerBrief(),
       childReads: new ChildReads(),
+      scratch: new ChildScratch(),
     };
     sessions.set(id, s);
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
@@ -505,7 +510,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   pi.on("session_start", async (event, ctx) => {
     const s = await startSession(ctx);
-    review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [], recordUsage: (m) => { const x = sessions.get(s.id); if (x) appendUsage(x.usage.file, usageLine({ ...x.usage.line, role: "autoreview", launchId: null, kind: "foreman" }, m)); }, ...reviewExtras(baseline, () => sessions.get(s.id)?.config.config, ctx) });
+    review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [], recordUsage: (m) => { const x = sessions.get(s.id); if (x) appendUsage(x.usage.file, usageLine({ ...x.usage.line, role: "autoreview", launchId: null, kind: "foreman" }, m)); }, scratchDirs: (role) => sessions.get(s.id)?.scratch.live(role) ?? [], ...reviewExtras(baseline, () => sessions.get(s.id)?.config.config, ctx) });
     if (!s.isChild && (event.reason === "startup" || event.reason === "new")) await applyForemanModel(s, ctx);
     await registerChildExtensions(s, ctx);
     const orderNotice = s.isChild ? null : loadOrderNotice(s.cwd, s.agentDir, PKG_ROOT);
@@ -530,6 +535,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // already gone
     }
     s.registration = undefined;
+    sweepScratch(s);
     review.drop(s.id);
     usageFooter.drop(s.id);
     compactionGate.reset(s.id);
@@ -791,6 +797,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.supervisor.onRunEnd(data);
         endActive(s.activeRuns, data);
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
+        if (typeof runId === "string") finishScratch(s, s.scratch.onRunEnd(runId));
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
           s.ladder.onRunEnd(runEndOf(data));
           if (!s.isChild) s.brief.onRunEnd(runEndOf(data), s.launchedRoles.get(runId));
@@ -823,7 +830,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Overlay check (see permoverlay.ts); undefined = let the call go on. */
   async function overlayBlock(s: Session, ctx: ExtensionContext, toolName: string, input: Record<string, unknown>) {
     if (!s.overlay) return { block: true as const, reason: OVERLAY_UNAVAILABLE };
-    const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main" });
+    const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined });
     const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) });
     if (d) s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: r ? (d.kind === "deny" ? "deny" : "ask-denied") : "ask-approved" });
     return r;
@@ -1289,6 +1296,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root, toolName, allowedShellDirs(mode, scratchDir, ctx.cwd, platform));
       // A planner writes nowhere outside the allowed dirs, outside the workspace included.
       if (planner) payload.confine = true;
+      if (planner && launchBinding?.scratch) payload.scratch_dir = launchBinding.scratch;
       const v = shellWriteVerdict(await runShellWriteGuard({ python: pyPath(s), pkgRoot: PKG_ROOT, payload, env, cwd: ctx.cwd, spawner }), pyPath(s));
       if (v.decision === "allow") return undefined;
       if (v.decision !== "refuse") return { block: true, reason: v.reason };
@@ -1310,6 +1318,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!role) return;
     const model = typeof input.model === "string" && input.model ? input.model : null;
     const b = recordUsageLaunch(s.launches, { foremanSession: s.usage.line.foremanSession, workspace: s.usage.line.workspace, role, model, kind, activeProvider: ctx.model?.provider, ladder });
+    launchScratch(s, input, b);
     bindLaunch(input, b);
   }
 
@@ -1357,6 +1366,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const heads = s.launchHeadsByCall.get(event.toolCallId);
         s.launchHeadsByCall.delete(event.toolCallId);
         const runId = launchId(event.input, event.details, event.isError);
+        finishScratch(s, s.scratch.onLaunched(boundLaunchId(event.input), runId));
         s.ladder.onLaunched(event.toolCallId, runId);
         if (heads && runId) capSet(s.launchHeads, runId, heads);
         const snap = s.planSnaps.byCall.get(event.toolCallId);

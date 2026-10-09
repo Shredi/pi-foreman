@@ -117,6 +117,8 @@ export interface MatchCtx {
   /** Write protection of bash words: `\` is no separator off win32, and `*` skips dot entries unless `dotGlob`. */
   bashWords?: boolean;
   dotGlob?: boolean;
+  /** Child only: its scratch dir (childscratch.ts); `$FOREMAN_SCRATCH` expands to it and cd may enter it. */
+  scratch?: string;
 }
 
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : []);
@@ -778,6 +780,7 @@ function expandWord(w: string, ctx: MatchCtx): string {
   if (s === "~") s = ctx.home;
   else if (s.startsWith("~/") || s.startsWith("~\\")) s = ctx.home + s.slice(1);
   s = s.replace(/^\$\{?HOME\}?(?=$|[\\/])/, ctx.home);
+  if (ctx.scratch) s = s.replace(/^\$(\{FOREMAN_SCRATCH\}|FOREMAN_SCRATCH(?![A-Za-z0-9_]))/, ctx.scratch);
   // Git Bash / MSYS drive paths: /c/dir/x -> c:/dir/x
   if (ctx.platform === "win32") s = s.replace(/^\/([A-Za-z])(?=$|\/)/, "$1:");
   return s.replace(/^\$env:(USERPROFILE|HOME)(?=$|[\\/])/i, ctx.home);
@@ -947,7 +950,8 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
   const fsx = defaults(ctx);
   const fold = (x: string): string => (win || ctx.platform === "darwin" ? x.toLowerCase() : x);
   const norm = (x: string): string => (win ? x.replace(/\\/g, "/") : x);
-  const ws = [ctx.cwd, fsx.realpath(ctx.cwd) ?? ctx.cwd].map((x) => fold(p.resolve(norm(x))));
+  const roots = ctx.scratch && p.isAbsolute(ctx.scratch) ? [ctx.cwd, ctx.scratch] : [ctx.cwd];
+  const ws = roots.flatMap((r) => [r, fsx.realpath(r) ?? r]).map((x) => fold(p.resolve(norm(x))));
   const inside = (abs: string): boolean => ws.some((w) => {
     const rel = p.relative(w, fold(abs));
     return rel === "" || (rel !== ".." && !rel.startsWith(".." + p.sep) && !p.isAbsolute(rel));
@@ -1018,7 +1022,9 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
     const args = core.slice(1);
     let i = 0;
     while (i < args.length && ["-L", "-P", "-e", "-@", "--"].includes(args[i])) i++;
-    const target = args[i];
+    const raw = args[i];
+    // the child's own scratch dir (childscratch.ts) by its env name
+    const target = raw !== undefined && ctx.scratch ? raw.replace(/^\$(\{FOREMAN_SCRATCH\}|FOREMAN_SCRATCH(?![A-Za-z0-9_]))/, ctx.scratch) : raw;
     // `~` expands only at the start of a word; inside one it is literal (Windows short names: RUNNER~1)
     if (target === undefined || target === "" || /^[-+]\d*$/.test(target) || /[$`*?[\]{}]/.test(target) || /^[-~]/.test(target)) return deny();
     let t = norm(target);

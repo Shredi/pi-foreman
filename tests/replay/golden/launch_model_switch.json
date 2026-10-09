@@ -42,6 +42,10 @@
    "decision": "none"
   },
   {
+   "event": "child_scratch",
+   "role": "explorer"
+  },
+  {
    "event": "llm",
    "model": "foreman-fake/foreman"
   },
@@ -90,6 +94,10 @@
    "toolFamily": "Stop",
    "guard": "ledger_guard_stop",
    "decision": "none"
+  },
+  {
+   "event": "child_scratch",
+   "role": "explorer"
   },
   {
    "event": "llm",

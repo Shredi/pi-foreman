@@ -22,7 +22,9 @@ the adapter treats as a block.
 Input fields: tool_input.command, cwd, workspace (the workspace root; defaults to cwd),
 shell ("bash" | "powershell"; the foreman's opt-in powershell tool sends "powershell"),
 allowed_dirs (workspace-relative list; missing = [".workflow"]; absolute or `..` entries are ignored),
-confine (true: a write outside the workspace counts too; the adapter sets it for a planner child).
+confine (true: a write outside the workspace counts too; the adapter sets it for a planner child),
+scratch_dir (absolute: the child's scratch dir, childscratch.ts; a write strictly inside it never
+counts, and `$FOREMAN_SCRATCH` / `${FOREMAN_SCRATCH}` outside single quotes are read as it).
 
 What counts as a write (target resolved against the cwd tracked through `cd`/`pushd`,
 subshell-scoped; `cd` inside a pipeline or a background job does not carry over):
@@ -515,8 +517,9 @@ def _allowed_rel(d):
 
 
 class Scope(object):
-    def __init__(self, workspace, allowed_dirs=None, confine=False):
+    def __init__(self, workspace, allowed_dirs=None, confine=False, scratch_dir=None):
         self.confine = confine
+        self.scratch = os.path.realpath(scratch_dir) if scratch_dir else None
         self.ws = os.path.normpath(os.path.abspath(workspace))
         self.ws_real = os.path.realpath(self.ws)
         dirs = DEFAULT_ALLOWED_DIRS if allowed_dirs is None else allowed_dirs
@@ -529,6 +532,8 @@ class Scope(object):
         if _drive_path(abs_path) and os.name != "nt":
             return self.confine
         real = os.path.realpath(abs_path)
+        if self.scratch and _inside(self.scratch, real) and _fold(os.path.normpath(real)) != _fold(self.scratch):
+            return False
         if self.confine and not ((_inside(self.ws, abs_path) or _inside(self.ws_real, abs_path)) and _inside(self.ws_real, real)):
             return True
         if not (_inside(self.ws, abs_path) or _inside(self.ws_real, real)):
@@ -1808,11 +1813,46 @@ def _ps_split(word):
 
 # --------------------------------------------------------------------------- entry
 
-def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, confine=False):
+SCRATCH_VAR = re.compile(r"\$(?:\{FOREMAN_SCRATCH\}|FOREMAN_SCRATCH(?![A-Za-z0-9_]))")
+SCRATCH_UNSAFE = re.compile(r"[\s'\"\\$`*?\[\]{}()<>|;&!#~]")
+
+
+def expand_scratch(command, scratch_dir):
+    """`$FOREMAN_SCRATCH` outside single quotes -> the scratch dir (bash only; a dir holding shell
+    characters is not substituted, so the word stays unresolvable and counts)."""
+    if not scratch_dir or SCRATCH_UNSAFE.search(scratch_dir):
+        return command
+    out, i, single, double = [], 0, False, False
+    while i < len(command):
+        c = command[i]
+        if c == "\\" and not single:
+            out.append(command[i:i + 2])
+            i += 2
+            continue
+        if c == "'" and not double:
+            single = not single
+        elif c == '"' and not single:
+            double = not double
+        m = SCRATCH_VAR.match(command, i) if c == "$" and not single else None
+        if m:
+            out.append(scratch_dir)
+            i = m.end()
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, confine=False, scratch_dir=None):
     """None (no project write) or (kind, target). `shell`: "bash" or "powershell".
     `allowed_dirs`: workspace-relative dirs that stay writable (None = [".workflow"]).
-    `confine`: a write outside the workspace counts as well."""
-    scope = Scope(workspace or cwd, allowed_dirs, confine)
+    `confine`: a write outside the workspace counts as well.
+    `scratch_dir`: absolute child scratch dir; writes strictly inside it never count."""
+    if scratch_dir is not None and not (isinstance(scratch_dir, str) and os.path.isabs(scratch_dir)):
+        scratch_dir = None
+    if scratch_dir and shell != "powershell":
+        command = expand_scratch(command, scratch_dir)
+    scope = Scope(workspace or cwd, allowed_dirs, confine, scratch_dir)
     try:
         a = Analyzer(scope)
         (a.ps_text if shell == "powershell" else a.text)(command, os.path.normpath(os.path.abspath(cwd)), 0)
@@ -1838,7 +1878,7 @@ def main(argv=None):
     if not isinstance(allowed, list):
         allowed = None
     hit = decide(command, cwd, ws, "powershell" if payload.get("shell") == "powershell" else "bash", allowed,
-                 payload.get("confine") is True)
+                 payload.get("confine") is True, payload.get("scratch_dir"))
     if hit is None:
         return 0
     kind, target = hit
