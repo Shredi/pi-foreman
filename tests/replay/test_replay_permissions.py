@@ -6,6 +6,7 @@ into the replay cache next to pi-subagents. The rigs here use the baseline the i
 """
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -45,6 +46,17 @@ class TestPermissionLayers(ReplayCase):
         self.assertNotIn("not-a-real-secret", notice)
         events = [r for recs in rig.traces().values() for r in recs if r.get("event") == "overlay"]
         self.assertTrue(any(r.get("toolFamily") == "bash" and r.get("decision") == "deny" for r in events), events)
+
+    def test_permission_ask_raises_one_herdr_block(self):
+        rig = self.baseline_rig("perm-herdr")
+        herdr = rig.root / "herdr.jsonl"
+        pi = rig.start(env={"FOREMAN_FAKE_HERDR": str(herdr), "HERDR_ENV": "1"})
+        recs = pi.prompt("[[replay:a1]] go", answers=[{"value": "Yes"}], timeout=60)
+        pi.close()
+        dialogs = [r for r in recs if r.get("type") == "extension_ui_request" and r.get("method") in ("select", "confirm")]
+        self.assertEqual(len(dialogs), 1, dialogs)
+        blocked = [json.loads(line) for line in herdr.read_text("utf-8").splitlines()]
+        self.assertEqual(blocked, [{"active": True, "label": "bash uname"}, {"active": False}])
 
     def test_child_ask_is_forwarded_to_the_parent(self):
         rig = self.baseline_rig("perm-ask")

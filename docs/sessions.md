@@ -136,9 +136,53 @@ it as plain text `foreman:close`, accepted only from the recorded parent session
 ## Herdr
 
 Herdr's Pi integration (`herdr integration install pi`, installed by you, never by the installer) shows a session
-as working, idle or blocked. pi-foreman emits `herdr:blocked` on `pi.events` while one of its own prompts or a
-permission prompt is open, so the pane reads blocked instead of working. Design record: `design/architecture.md`
+as working, idle or blocked. pi-foreman emits `herdr:blocked` on `pi.events` while any dialog waits for you, so
+the pane reads blocked ("?") instead of working. Design record: `design/architecture.md`
 [session features](../design/architecture.md#session-features-phase-4).
+
+### Blocked shim
+
+One tracker per Pi process counts what is waiting for you:
+
+- any Pi dialog, from every extension (Pi's `ui_prompt_start` .. `ui_prompt_end`);
+- each permission ask (`permissions:ui_prompt` .. `permissions:decision`, by request id), including a child's ask
+  forwarded to this session;
+- pi-foreman's own asks (checkpoint, guard confirms).
+
+It emits `herdr:blocked {active:true,label}` when the first one opens and `{active:false}` when the last one closes,
+so Herdr's counter stays balanced however they overlap. The end of a turn releases permission and own asks that never
+got their decision (an open Pi dialog stays until Pi closes it); shutdown releases everything.
+
+Label: for a permission ask `<agent> · <tool> <first word>` (the requesting child's agent when forwarded; a path is
+cut to its basename; never the full command), else the dialog title, else pi-foreman's ask title, else the dialog
+kind; at most 80 characters, control characters removed. A later ask keeps the first label (Herdr shows that one).
+
+The shim is off when `HERDR_ENV` is not `1`, when `herdr.blockedShim` is false (default `true`), or when the
+installed Herdr Pi integration (`<agent dir>/extensions/herdr-agent-state.ts`, header `HERDR_INTEGRATION_VERSION`) is
+version 10 or newer: that version maps dialogs and permission events itself, and the shim steps aside. Not covered:
+Pi's trust dialog before the session starts.
+
+### Group tag
+
+Display-only pane metadata (source `user:pi-foreman`, `herdr pane report-metadata`), shown in Herdr's agent cell:
+
+- an opened child pane shows `<parent-slug> › <child-slug>`. `foreman session open` sets it right after the pane
+  starts. The child's Pi keeps it fresh: it gets `PI_FOREMAN_PARENT_LABEL` in its environment;
+- a parent with pending, open or closing children (from `sessions.json`) shows `<slug> · <n> children` plus the
+  token `children=<n>`; at 0 the tag is cleared.
+
+A slug is the session's own label when it is an opened child, else the name of its git top level (else its folder).
+Tags carry a 180 s TTL. They are refreshed every 60 s, and right away at session start. They are cleared at shutdown.
+Only in the TUI with `HERDR_ENV=1` and `HERDR_PANE_ID` set; `herdr.groupTag` false turns it off (default `true`;
+`foreman session open` reads it from the defaults, overlay and user config, not the project).
+
+### Feature request to Herdr: true nesting
+
+The tag is text only. Real grouping needs Herdr itself:
+
+- a parent/child pane relation in the socket API;
+- collapsible groups in the agents view;
+- a child's blocked state rolling up to its parent's row.
 
 ## Further session keys
 
@@ -151,3 +195,5 @@ permission prompt is open, so the pane reads blocked instead of working. Design 
 | `wait.batchWindowSeconds` | Window in which wait notices are batched (default 300). |
 | `wait.maxActive` | Concurrent waits allowed (default 8); a project or session can only lower it. |
 | `wait.ci` | CI waits on or off (default `true`); a project or session can only set false. |
+| `herdr.blockedShim` | Show any open dialog or permission ask as blocked in Herdr (default `true`); any layer may set it. |
+| `herdr.groupTag` | Herdr group tag on opened child and parent panes (default `true`); any layer may set it. |

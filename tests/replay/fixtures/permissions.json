@@ -9,6 +9,10 @@
    ]},
    {"text": "Done."}
   ],
+  "a1": [
+   {"tools": [{"name": "bash", "arguments": {"command": "uname -s"}}]},
+   {"text": "Asked."}
+  ],
   "c1": [
    {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:secret]] short task"}}]},
    {"text": "Launched."},
