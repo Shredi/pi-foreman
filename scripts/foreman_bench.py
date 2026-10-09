@@ -285,6 +285,8 @@ def read_trial(job_dir):
             "job": Path(job_dir).name, "reward": reward, "success": reward is not None and float(reward) >= 1.0,
             "infra": infra, "infra_detail": detail if infra else "", "exception": exc,
             "usage_by_role_model": counters.get("usage_by_role_model"), "usage_log_delta": counters.get("usage_log_delta"),
+            "usage_requests": counters.get("usage_requests"), "retro": counters.get("retro"),
+            "cache_write_per_launch": counters.get("cache_write_per_launch"),
             "triage": _triage(counters, bench),
             "tokens": (counters.get("tokens") or {}).get("total"),
             "tokens_by_tier": by_tier, "usage_by_model": usage, "tokens_by_role": counters.get("tokens_by_role"),
@@ -318,42 +320,83 @@ def load_prices(path=None):
     return json.loads(Path(path or PRICES_FILE).read_text("utf-8"))
 
 
+def price_tier(p, prompt_tokens):
+    """The price row for one request: the model's `long_context` row when the prompt (input + cache read + cache
+    write of that request) is above its `above`, else the base row."""
+    lc = p.get("long_context")
+    return lc if lc and prompt_tokens > lc.get("above", 0) else p
+
+
+def _acc(out, model, u, p, role=None):
+    """Add one usage bucket (a model's total, or one request) priced with row p to `out`."""
+    base = (u["input"] * p["input"] + u["output"] * p["output"]) / 1e6
+    rd = u["cacheRead"] * p["cache_read"] / 1e6
+    w5 = u["cacheWrite"] * p["cache_write_5m"] / 1e6
+    w1 = u["cacheWrite"] * p["cache_write_1h"] / 1e6
+    t = tier(model)
+    out["by_tier"][t] = out["by_tier"].get(t, 0.0) + base + rd + w5
+    out["usd"] += base + rd + w5
+    out["usd_1h"] += base + rd + w1
+    out["read_tokens"] += u["cacheRead"]
+    out["write_tokens"] += u["cacheWrite"]
+    out["read_usd"] += rd
+    out["write_usd"] += w5
+    if role is not None:
+        out["by_role"][role] = out["by_role"].get(role, 0.0) + base + rd + w5
+
+
+def _req_usage(r):
+    return dict(zip(TOKEN_KINDS, (int(x or 0) for x in r[2:6])))
+
+
 def cost_of(rec, prices):
     """List-price cost of one finished record from its recorded tokens. Cache writes are priced at the 5-minute
     rate (the records do not tell 5m from 1h); `usd_1h` is the same total with every write at the 1-hour rate.
-    None when the record has no usage; models without a price are listed in `unpriced` and left out."""
+    None when the record has no usage; models without a price are listed in `unpriced` and left out.
+    Prompt-length tiers (a model's `long_context` row): applied per request when the record carries the usage log's
+    per-request rows (`usage_requests`: [role, model, input, cacheRead, cacheWrite, output]); otherwise the base
+    row is used flat and `tier_approx` is true when a used model has such a tier. `retro_usd` prices the post
+    steps' requests (`retro.requests`), which are never part of `usd`."""
     usage = rec.get("usage_by_model") or {}
-    if not usage:
+    reqs = rec.get("usage_requests")
+    if not usage and not reqs:
         return None
     known = prices.get("models") or {}
     out = {"usd": 0.0, "usd_1h": 0.0, "by_tier": {}, "read_tokens": 0, "write_tokens": 0, "read_usd": 0.0,
-           "write_usd": 0.0, "unpriced": [], "by_role": {}}
-    for role, models in (rec.get("usage_by_role_model") or {}).items():
-        for model, u in models.items():
+           "write_usd": 0.0, "unpriced": [], "by_role": {}, "tier_approx": False, "retro_usd": 0.0}
+    if reqs:
+        for r in reqs:
+            p = known.get(r[1])
+            if not p:
+                out["unpriced"].append(r[1])
+                continue
+            u = _req_usage(r)
+            _acc(out, r[1], u, price_tier(p, u["input"] + u["cacheRead"] + u["cacheWrite"]), role=r[0])
+    else:
+        for role, models in (rec.get("usage_by_role_model") or {}).items():
+            for model, u in models.items():
+                p = known.get(model)
+                if not p:
+                    out["unpriced"].append(model)
+                    continue
+                out["by_role"][role] = out["by_role"].get(role, 0.0) + (
+                    u["input"] * p["input"] + u["output"] * p["output"] + u["cacheRead"] * p["cache_read"]
+                    + u["cacheWrite"] * p["cache_write_5m"]) / 1e6
+        for model, u in usage.items():
             p = known.get(model)
             if not p:
                 out["unpriced"].append(model)
                 continue
-            out["by_role"][role] = out["by_role"].get(role, 0.0) + (
-                u["input"] * p["input"] + u["output"] * p["output"] + u["cacheRead"] * p["cache_read"]
-                + u["cacheWrite"] * p["cache_write_5m"]) / 1e6
-    for model, u in usage.items():
-        p = known.get(model)
-        if not p:
-            out["unpriced"].append(model)
-            continue
-        base = (u["input"] * p["input"] + u["output"] * p["output"]) / 1e6
-        rd = u["cacheRead"] * p["cache_read"] / 1e6
-        w5 = u["cacheWrite"] * p["cache_write_5m"] / 1e6
-        w1 = u["cacheWrite"] * p["cache_write_1h"] / 1e6
-        t = tier(model)
-        out["by_tier"][t] = out["by_tier"].get(t, 0.0) + base + rd + w5
-        out["usd"] += base + rd + w5
-        out["usd_1h"] += base + rd + w1
-        out["read_tokens"] += u["cacheRead"]
-        out["write_tokens"] += u["cacheWrite"]
-        out["read_usd"] += rd
-        out["write_usd"] += w5
+            out["tier_approx"] = out["tier_approx"] or "long_context" in p
+            _acc(out, model, u, p)
+    scratch = {"usd": 0.0, "usd_1h": 0.0, "by_tier": {}, "read_tokens": 0, "write_tokens": 0, "read_usd": 0.0, "write_usd": 0.0}
+    for r in (rec.get("retro") or {}).get("requests") or []:
+        p = known.get(r[1])
+        if p:
+            u = _req_usage(r)
+            _acc(scratch, r[1], u, price_tier(p, u["input"] + u["cacheRead"] + u["cacheWrite"]))
+    out["retro_usd"] = scratch["usd"]
+    out["unpriced"] = sorted(set(out["unpriced"]))
     return out
 
 
@@ -378,6 +421,8 @@ def cost_stats(done, prices):
             "warm_share_tokens": _stat(shares("read_tokens", "write_tokens")),
             "warm_share_usd": _stat(shares("read_usd", "write_usd")),
             "unpriced": sorted({m for c in cs for m in c["unpriced"]}),
+            "tier_approx": any(c["tier_approx"] for c in cs), "retro_usd": _stat([c["retro_usd"] for c in cs]),
+            "autoreview_usd": _stat([c["by_role"].get("autoreview", 0.0) for c in with_log]) if with_log else None,
             **({"by_role": {r: _stat([c["by_role"].get(r, 0.0) for c in with_log]) for r in roles}} if with_log else {})}
 
 
@@ -578,6 +623,10 @@ def _run(args, runner, now):
                   flush=True)
             return EXIT_INFRA_STREAK
     print("bench: %d cell(s) run, %d already finished" % (ran, skipped), flush=True)
+    if not args.dry_run and jdir.is_dir():
+        found = write_retro_findings(preset, tdir, jdir)
+        if found:
+            print("bench: retro findings in %s" % found, flush=True)
     return 0
 
 
@@ -588,10 +637,35 @@ def _stat(values):
     return {"median": statistics.median(vals), "min": min(vals), "max": max(vals)}
 
 
+def _role_totals(rec, role):
+    """(tokens, calls) of one role in the usage log's per-role buckets, (0, 0) when absent."""
+    tok = n = 0
+    for u in ((rec.get("usage_by_role_model") or {}).get(role) or {}).values():
+        tok += sum(int(u.get(k) or 0) for k in TOKEN_KINDS)
+        n += int(u.get("n") or 0)
+    return tok, n
+
+
+def _defer_share(t):
+    """Share of permission auto-review decisions that were neither allow nor deny (trace `review` decisions)."""
+    rev = t.get("asks_reviewed") or {}
+    total = sum(rev.values())
+    return (total - rev.get("allow", 0) - rev.get("deny", 0)) / total if total else None
+
+
 def _triage_stats(done):
     ts = [r["triage"] for r in done if r.get("triage")]
     tiers = [t["tier"] for t in ts]
     return {"tier": max(sorted(set(tiers)), key=tiers.count) if tiers else None,
+            "tier_dist": {t: tiers.count(t) for t in sorted(set(tiers))},
+            "rung_up": _stat([t.get("rung_up") for t in ts]), "child_read_warn": _stat([t.get("child_read_warn") for t in ts]),
+            "child_read_deny": _stat([t.get("child_read_deny") for t in ts]),
+            "review_defer_headless": _stat([t.get("review_defer_headless") for t in ts]),
+            "autoreview_tokens": _stat([_role_totals(r, "autoreview")[0] for r in done if r.get("usage_by_role_model")]),
+            "autoreview_calls": _stat([_role_totals(r, "autoreview")[1] for r in done if r.get("usage_by_role_model")]),
+            "autoreview_defer_share": _stat([_defer_share(t) for t in ts]),
+            "retro_tokens": _stat([(r.get("retro") or {}).get("tokens") or 0 for r in done]),
+            "cache_write_per_launch": _stat([r.get("cache_write_per_launch") for r in done]),
             "launches": _stat([sum((t.get("launches") or {}).values()) for t in ts]),
             "revisions": _stat([t.get("revisions") for t in ts]), "asks_denied": _stat([t.get("asks_denied") for t in ts]),
             "gate_blocks": _stat([t.get("gate_blocks") for t in ts]),
@@ -605,6 +679,40 @@ def _triage_stats(done):
             "dup_reviews": _stat([t.get("dup_reviews") for t in ts]),
             "second_opinions": _stat([t.get("second_opinions") for t in ts]),
             "stop_hold": _stat([t.get("stop_hold") for t in ts])}
+
+
+RETRO_FINDINGS = "retro-findings.md"
+RETRO_CELL_LIMIT = 6000  # characters of retro output kept per cell
+
+
+def retro_output(job_dir, limit=RETRO_CELL_LIMIT):
+    """The retro output of one cell's trial, bounded: the files of state/retro/ and state/post-steps/ (what the
+    waiter captured from /retro and /sync --dry-run), oldest name first. Empty when there is none."""
+    parts = []
+    for sub in ("retro", "post-steps"):
+        for f in sorted(Path(job_dir).glob("*/agent/state/%s/*" % sub)):
+            if f.is_file():
+                parts.append("### %s/%s\n%s" % (sub, f.name, f.read_text("utf-8", "replace").strip()))
+    text = "\n\n".join(parts)
+    return text if len(text) <= limit else text[:limit].rstrip() + "\n[... cut at %d characters]" % limit
+
+
+def write_retro_findings(preset, tdir, jdir):
+    """<jobs dir>/retro-findings.md: one section per counted cell of a preset whose rows ask for post steps (the
+    jobs dir is the step's dir). Returns the path, or None when no row has post steps. Never part of cell cost."""
+    if not any(((r.get("bench") or {}).get("post_steps")) for r in preset.get("rows") or []):
+        return None
+    out = ["# Retro findings (post steps of each counted cell; never counted in cell tokens or cost)"]
+    for row, task, k, _ in cells(preset, tdir):
+        if not (row.get("bench") or {}).get("post_steps"):
+            continue
+        cid = cell_id(row["id"], task, k)
+        rec = counted(cell_results(jdir, cid))
+        text = retro_output(Path(jdir) / rec["job"]) if rec else ""
+        out += ["", "## %s" % cid, text or ("(no retro output)" if rec else "(cell not finished)")]
+    path = Path(jdir) / RETRO_FINDINGS
+    path.write_text("\n".join(out) + "\n", "utf-8")
+    return path
 
 
 def infra_cells(preset, tdir, jdir):
@@ -688,6 +796,10 @@ def first_summary(preset, tdir, jdir):
             "tokens_by_role": rec and rec.get("tokens_by_role"), "tokens_by_tier": rec and rec.get("tokens_by_tier")}
 
 
+def _dist(d):
+    return " ".join("%s:%d" % kv for kv in sorted((d or {}).items())) or "-"
+
+
 def _fmt(s, nd=0):
     if not s:
         return "-"
@@ -707,13 +819,13 @@ def format_summary(summary, first=None):
     tiers = sorted({t for r in summary for t in r["tokens_by_tier"]})
     head = ["row", "success"] + ["tokens %s" % t for t in tiers] + ["tokens all", "wall s", "tool calls", "approvals", "guard blocks",
                                                                 "tier", "launches", "revisions", "asks_denied", "gate_blocks", "pollBash", "ceremony_incomplete",
-            "foreman_edit_refused", "pr_refused", "checkpoint_auto", "read_blocks", "recheck_blocks", "finish_refused", "launch_waits", "wait_turns", "text_only_turns", "codemode_turns", "rereviews", "orient_lines", "ledger_denies", "ledger_calls", "dup_reviews", "second_opinions", "stop_hold"]
+            "foreman_edit_refused", "pr_refused", "checkpoint_auto", "read_blocks", "recheck_blocks", "finish_refused", "launch_waits", "wait_turns", "text_only_turns", "codemode_turns", "rereviews", "orient_lines", "ledger_denies", "ledger_calls", "dup_reviews", "second_opinions", "stop_hold", "tier_dist", "rung_up", "child_read_warn", "child_read_deny", "review_defer_headless", "autoreview_tokens", "autoreview_calls", "autoreview_defer_share", "retro_tokens", "cache_write_per_launch"]
     lines = [[r["row"], "%d/%d (%d cells)" % (r["success"], r["counted"], r["cells"])] +
              [_fmt(r["tokens_by_tier"].get(t)) for t in tiers] +
              [_fmt(r["tokens"]), _fmt(r["wall_seconds"], 1), _fmt(r["tool_calls"]), _fmt(r["approvals"]), _fmt(r["guard_blocks"]),
               r.get("tier") or "-", _fmt(r.get("launches")), _fmt(r.get("revisions")), _fmt(r.get("asks_denied")),
               _fmt(r.get("gate_blocks")), _fmt(r.get("pollBash")), _fmt(r.get("ceremony_incomplete")),
-              _fmt(r.get("foreman_edit_refused")), _fmt(r.get("pr_refused")), _fmt(r.get("checkpoint_auto")), _fmt(r.get("read_blocks")), _fmt(r.get("recheck_blocks")), _fmt(r.get("finish_refused")), _fmt(r.get("launch_waits")), _fmt(r.get("wait_turns")), _fmt(r.get("text_only_turns")), _fmt(r.get("codemode_turns")), _fmt(r.get("rereviews")), _fmt(r.get("orient_lines")), _fmt(r.get("ledger_denies")), _fmt(r.get("ledger_calls")), _fmt(r.get("dup_reviews")), _fmt(r.get("second_opinions")), _fmt(r.get("stop_hold"))] for r in summary]
+              _fmt(r.get("foreman_edit_refused")), _fmt(r.get("pr_refused")), _fmt(r.get("checkpoint_auto")), _fmt(r.get("read_blocks")), _fmt(r.get("recheck_blocks")), _fmt(r.get("finish_refused")), _fmt(r.get("launch_waits")), _fmt(r.get("wait_turns")), _fmt(r.get("text_only_turns")), _fmt(r.get("codemode_turns")), _fmt(r.get("rereviews")), _fmt(r.get("orient_lines")), _fmt(r.get("ledger_denies")), _fmt(r.get("ledger_calls")), _fmt(r.get("dup_reviews")), _fmt(r.get("second_opinions")), _fmt(r.get("stop_hold")), _dist(r.get("tier_dist")), _fmt(r.get("rung_up")), _fmt(r.get("child_read_warn")), _fmt(r.get("child_read_deny")), _fmt(r.get("review_defer_headless")), _fmt(r.get("autoreview_tokens")), _fmt(r.get("autoreview_calls")), _pct(r.get("autoreview_defer_share")), _fmt(r.get("retro_tokens")), _fmt(r.get("cache_write_per_launch"))] for r in summary]
     text = ["Per row (median [min-max] over counted cells; first cell excluded):"] + _columns(head, lines)
     if first:
         text.append("First cell %s: %s" % (first["cell"], "not finished" if not first["finished"] else
@@ -749,7 +861,7 @@ def format_cost(summary, rows, prices):
     for title, items, keys in (("Per row", summary, ["row"]), ("Per row and task", rows, ["row", "task"])):
         tiers = sorted({t for r in items if r.get("cost") for t in r["cost"]["by_tier"]})
         head = keys + ["usd (5m writes)"] + ["usd %s" % t for t in tiers] + [
-            "usd 1h", "cache read tok", "cache write tok", "warm tok", "read usd", "write usd", "warm usd"]
+            "usd 1h", "cache read tok", "cache write tok", "warm tok", "read usd", "write usd", "warm usd", "autoreview_usd", "retro_usd"]
         lines = []
         for r in items:
             c = r.get("cost")
@@ -758,7 +870,8 @@ def format_cost(summary, rows, prices):
                 continue
             lines.append([r[k] for k in keys] + [_usd(c["usd"])] + [_usd(c["by_tier"].get(t)) for t in tiers] + [
                 _usd(c["usd_1h"]), _fmt(c["read_tokens"]), _fmt(c["write_tokens"]), _pct(c["warm_share_tokens"]),
-                _usd(c["read_usd"]), _usd(c["write_usd"]), _pct(c["warm_share_usd"])])
+                _usd(c["read_usd"]), _usd(c["write_usd"]), _pct(c["warm_share_usd"]), _usd(c.get("autoreview_usd")),
+                _usd(c.get("retro_usd"))])
         out += ["", title + ":"] + _columns(head, lines)
     for title, items, keys in (("Per row, cost per role (usage log)", summary, ["row"]),
                                ("Per row and task, cost per role (usage log)", rows, ["row", "task"])):
@@ -767,6 +880,10 @@ def format_cost(summary, rows, prices):
             out += ["", title + ", median USD per cell (role 'child' = tasks/chain children, whose real role the log does not record):"]
             out += _columns(keys + roles, [[r[k] for k in keys] + [_usd(((r.get("cost") or {}).get("by_role") or {}).get(x))
                                                                   for x in roles] for r in items])
+    approx = sorted({r["row"] for r in summary if r.get("cost") and r["cost"].get("tier_approx")})
+    if approx:
+        out.append("tier_approx: rows %s have no per-request usage log; a model with a long-context price tier is priced "
+                   "flat at its base tier (an underestimate for prompts above the tier threshold)." % ", ".join(approx))
     unpriced = sorted({m for r in summary + rows if r.get("cost") for m in r["cost"]["unpriced"]})
     if unpriced:
         out.append("Not priced (left out of the totals): %s" % ", ".join(unpriced))
@@ -776,14 +893,14 @@ def format_cost(summary, rows, prices):
 def format_table(rows):
     head = ["row", "task", "success", "tokens", "wall s", "tool calls", "approvals", "guard blocks",
             "tier", "launches", "revisions", "asks_denied", "gate_blocks", "pollBash", "ceremony_incomplete",
-            "foreman_edit_refused", "pr_refused", "checkpoint_auto", "read_blocks", "recheck_blocks", "finish_refused", "launch_waits", "wait_turns", "text_only_turns", "codemode_turns", "rereviews", "orient_lines", "ledger_denies", "ledger_calls", "dup_reviews", "second_opinions", "stop_hold"]
+            "foreman_edit_refused", "pr_refused", "checkpoint_auto", "read_blocks", "recheck_blocks", "finish_refused", "launch_waits", "wait_turns", "text_only_turns", "codemode_turns", "rereviews", "orient_lines", "ledger_denies", "ledger_calls", "dup_reviews", "second_opinions", "stop_hold", "tier_dist", "rung_up", "child_read_warn", "child_read_deny", "review_defer_headless", "autoreview_tokens", "autoreview_calls", "autoreview_defer_share", "retro_tokens", "cache_write_per_launch"]
     lines = []
     for r in rows:
         lines.append([r["row"], r["task"], "%d/%d%s" % (r["success"], r["counted"], " (+%d infra)" % r["infra_errors"] if r["infra_errors"] else ""),
                       _fmt(r["tokens"]), _fmt(r["wall_seconds"], 1), _fmt(r["tool_calls"]), _fmt(r["approvals"]),
                       _fmt(r["guard_blocks"]), r.get("tier") or "-", _fmt(r.get("launches")), _fmt(r.get("revisions")),
                       _fmt(r.get("asks_denied")), _fmt(r.get("gate_blocks")), _fmt(r.get("pollBash")), _fmt(r.get("ceremony_incomplete")),
-              _fmt(r.get("foreman_edit_refused")), _fmt(r.get("pr_refused")), _fmt(r.get("checkpoint_auto")), _fmt(r.get("read_blocks")), _fmt(r.get("recheck_blocks")), _fmt(r.get("finish_refused")), _fmt(r.get("launch_waits")), _fmt(r.get("wait_turns")), _fmt(r.get("text_only_turns")), _fmt(r.get("codemode_turns")), _fmt(r.get("rereviews")), _fmt(r.get("orient_lines")), _fmt(r.get("ledger_denies")), _fmt(r.get("ledger_calls")), _fmt(r.get("dup_reviews")), _fmt(r.get("second_opinions")), _fmt(r.get("stop_hold"))])
+              _fmt(r.get("foreman_edit_refused")), _fmt(r.get("pr_refused")), _fmt(r.get("checkpoint_auto")), _fmt(r.get("read_blocks")), _fmt(r.get("recheck_blocks")), _fmt(r.get("finish_refused")), _fmt(r.get("launch_waits")), _fmt(r.get("wait_turns")), _fmt(r.get("text_only_turns")), _fmt(r.get("codemode_turns")), _fmt(r.get("rereviews")), _fmt(r.get("orient_lines")), _fmt(r.get("ledger_denies")), _fmt(r.get("ledger_calls")), _fmt(r.get("dup_reviews")), _fmt(r.get("second_opinions")), _fmt(r.get("stop_hold")), _dist(r.get("tier_dist")), _fmt(r.get("rung_up")), _fmt(r.get("child_read_warn")), _fmt(r.get("child_read_deny")), _fmt(r.get("review_defer_headless")), _fmt(r.get("autoreview_tokens")), _fmt(r.get("autoreview_calls")), _pct(r.get("autoreview_defer_share")), _fmt(r.get("retro_tokens")), _fmt(r.get("cache_write_per_launch"))])
     text = _columns(head, lines)
     metas = {}
     for r in rows:

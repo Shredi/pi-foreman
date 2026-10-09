@@ -293,7 +293,7 @@ class BenchTest(unittest.TestCase):
         self.job("R2__beta__r2__a", rec({"cacheWrite": 10**6}, {}, {"b/mystery-1": {"input": 5}}))
         tdir = fb.tasks_dir(preset)
         prices = fb.load_prices()
-        self.assertEqual(prices["retrieved"], "2026-10-07")
+        self.assertEqual(prices["retrieved"], "2026-10-09")
         c = fb.cost_of(fb.counted(fb.cell_results(self.jobs, "R2__beta__r1")), prices)
         self.assertAlmostEqual(c["usd"], 29.65)
         self.assertAlmostEqual(c["usd_1h"], 32.65)
@@ -583,6 +583,77 @@ class BenchTest(unittest.TestCase):
         text = fb.format_summary(summ)
         self.assertIn("guard blocks  tier  launches  revisions  asks_denied  gate_blocks", text)
         self.assertEqual([r for r in summ if r["row"] == "R2"][0]["tier"], "deep")
+
+
+    # ---- frugal-roles bench: long-context tier, post steps, autoreview, retro findings ----
+    def test_long_context_tier_is_applied_per_request_else_flat_with_tier_approx(self):
+        prices = fb.load_prices()
+        hk = "claude-haiku-5-5"
+        small, big = ["main", hk, 50000, 0, 0, 1000000], ["main", hk, 90000, 20000, 0, 0]  # big: 110k prompt
+        rec = {"usage_by_model": {hk: {"input": 140000, "cacheRead": 20000, "cacheWrite": 0, "output": 1000000}},
+               "usage_requests": [small, big]}
+        c = fb.cost_of(rec, prices)
+        # small: 50k*0.10 + 1M*0.50 = 0.505; big (long tier): 90k*0.50 + 20k*0.05 = 0.046
+        self.assertAlmostEqual(c["usd"], 0.505 + 0.046)
+        self.assertFalse(c["tier_approx"])
+        flat = fb.cost_of({"usage_by_model": rec["usage_by_model"]}, prices)
+        self.assertTrue(flat["tier_approx"])
+        self.assertAlmostEqual(flat["usd"], 140000 * 0.10 / 1e6 + 20000 * 0.01 / 1e6 + 0.5)
+        self.assertFalse(fb.cost_of({"usage_by_model": {"claude-sonnet-5-5": {"input": 1, "cacheRead": 0, "cacheWrite": 0, "output": 0}}},
+                                    prices)["tier_approx"])  # no long-context tier on Sonnet 5.5
+
+    def test_post_steps_usage_is_excluded_from_tokens_and_summed_as_retro(self):
+        line = lambda ts, n: {"ts": ts, "role": "foreman", "model": "claude-haiku-5-5", "kind": "foreman", "foremanSession": "s",  # noqa: E731
+                              "input": n, "cacheRead": 0, "cacheWrite": 7, "output": 0, "cost": {"total": 1.0}}
+        d = self.logs(**{"state__usage__s.jsonl": [line("2026-10-09T09:59:00.000Z", 100), line("2026-10-09T10:05:00.000Z", 40)],
+                         "state__bench-post-marker.json": [{"ms": 1791540000000}]})
+        self.assertEqual(ha.post_marker_ms(d), 1791540000000.0)  # 2026-10-09T10:00:00Z
+        c = ha.summarize_logs(d)
+        self.assertEqual(c["usage_by_role_model"]["foreman"]["claude-haiku-5-5"]["input"], 100)
+        self.assertEqual(c["retro"]["tokens"], 47)
+        self.assertAlmostEqual(ha.usage_log_cost(d), 1.0)
+        self.assertEqual(c["cache_write_per_launch"], 7)
+        rec = {"usage_by_model": {"claude-haiku-5-5": {"input": 100, "cacheRead": 0, "cacheWrite": 7, "output": 0}},
+               "usage_requests": c["usage_requests"], "retro": c["retro"]}
+        cost = fb.cost_of(rec, fb.load_prices())
+        self.assertAlmostEqual(cost["retro_usd"], 40 * 0.10 / 1e6 + 7 * 0.125 / 1e6)
+        self.assertAlmostEqual(cost["usd"], 100 * 0.10 / 1e6 + 7 * 0.125 / 1e6)
+
+    def test_autoreview_and_frugal_counters_reach_the_table(self):
+        c = {"tokens": {"total": 10}, "tokens_by_model": {}, "tool_calls": 1,
+             "usage_by_role_model": {"foreman": {"claude-haiku-5-5": {"input": 5, "cacheRead": 0, "cacheWrite": 0, "output": 0, "n": 1}},
+                                     "autoreview": {"claude-haiku-5-5": {"input": 20, "cacheRead": 0, "cacheWrite": 0, "output": 4, "n": 3}}},
+             "retro": {"tokens": 99, "requests": []}, "cache_write_per_launch": 5000,
+             "triage": {"tier": "standard", "launches": {}, "asks_reviewed": {"allow": 2, "defer": 1, "error": 1}, "rung_up": 2,
+                        "child_read_warn": 1, "child_read_deny": 3, "review_defer_headless": 4}}
+        rec = trial()
+        rec["agent_result"]["metadata"]["bench"]["counters"] = c
+        self.job("R2__alpha__r1__x", rec)
+        preset = fb.load_preset(self.preset)
+        row = [r for r in fb.table(preset, fb.tasks_dir(preset), self.jobs) if r["row"] == "R2" and r["task"] == "alpha"][0]
+        self.assertEqual((row["autoreview_tokens"]["median"], row["autoreview_calls"]["median"]), (24, 3))
+        self.assertEqual((row["autoreview_defer_share"]["median"], row["retro_tokens"]["median"]), (0.5, 99))
+        self.assertEqual((row["rung_up"]["median"], row["child_read_deny"]["median"], row["review_defer_headless"]["median"]), (2, 3, 4))
+        self.assertEqual((row["tier_dist"], row["cache_write_per_launch"]["median"]), ({"standard": 1}, 5000))
+        text = fb.format_table([row])
+        for col in ("autoreview_tokens", "autoreview_defer_share", "retro_tokens", "rung_up", "child_read_deny", "tier_dist"):
+            self.assertIn(col, text)
+
+    def test_retro_findings_aggregated_per_cell_and_bounded(self):
+        preset = dict(PRESET, rows=[dict(PRESET["rows"][1], bench={"post_steps": ["retro"]})], bench={"tasks_dir": "tasks", "repeats": 1})
+        self.preset.write_text(json.dumps(preset))
+        self.job("R2__alpha__r1__x", trial())
+        out = self.jobs / "R2__alpha__r1__x" / "trial-1" / "agent" / "state" / "post-steps"
+        out.mkdir(parents=True)
+        (out / "retro.txt").write_text("A" * 100)
+        found = fb.write_retro_findings(fb.load_preset(self.preset), self.root / "tasks", self.jobs)
+        text = found.read_text("utf-8")
+        self.assertEqual(found, self.jobs / "retro-findings.md")
+        self.assertIn("## R2__alpha__r1", text)
+        self.assertIn("A" * 100, text)
+        self.assertIn("## R2__beta__r1\n(cell not finished)", text)
+        self.assertIn("cut at 50", fb.retro_output(self.jobs / "R2__alpha__r1__x", limit=50))
+        self.assertIsNone(fb.write_retro_findings(dict(PRESET), self.root / "tasks", self.jobs))  # no post steps: no file
 
 
 if __name__ == "__main__":
