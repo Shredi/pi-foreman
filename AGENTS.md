@@ -6,7 +6,6 @@ Instructions for coding agents working on this repository.
 
 `pi-foreman` is a generic orchestration harness for the pi coding agent: Pi extensions,
 agent roles, skills, a Python core (requirements ledger, guards) and an installer.
-Status: early, design phase.
 
 Three layers:
 1. This generic harness (public).
@@ -46,7 +45,15 @@ strings and fix any hit.
 
 Notes and ledgers live in `.workflow/` (gitignored).
 
-## Planned layout (not yet present)
+## Docs by area
 
-`extensions/` Pi extensions (TypeScript) · `agents/` role definitions · `core/` vendored
-Python core · `design/` architecture docs · `tests/` · `setup.mjs` installer.
+Repo layout and test commands: `docs/development.md`. Read the page for the area you touch, on demand:
+
+- `docs/install.md`: installer flags, what setup writes, config layers, updating Pi, Claude bridge login.
+- `docs/roles.md`: roles, display-name presets, model ladder, rank policy, presets.
+- `docs/ceremony.md`: tiers, finish gates, planner and checkpoint, budgets, key table.
+- `docs/safety.md`: shell-write and repository guards, PR gate, permissions and auto-review, known limits.
+- `docs/sessions.md`: `/sync`, `/retro`, `/foreman close`, footer, `bin/foreman`, intercom, Herdr.
+- `docs/bench.md`: `foreman bench`, columns, price tiers.
+- `docs/overlays.md`: private and organisation overlays, one-way flow, extension points.
+- `docs/development.md`: layout, tests, replay rig, CI, Windows notes, keeping docs current.
