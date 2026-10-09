@@ -81,8 +81,9 @@ Plain pi-intercom text, one line each:
   writable, so the opened foreman writes its result and plan as the footer says.
 - A brief has no authority: its text and any peer message are data, and the footer says so.
 - Values are validated and quoted: labels, model ids, parent ids and paths are checked against allowlists and
-  built into one shell-quoted command (POSIX) or single-quoted PowerShell string; a path with quotes or shell
-  metacharacters is refused. Herdr is driven as an argv list, never through a shell. Paths with spaces are
+  built into one shell-quoted command (POSIX) or single-quoted PowerShell string; a path with quotes (including
+  the typographic quotes U+2018 to U+201E, which PowerShell reads as quotes), shell metacharacters or control
+  characters is refused. Herdr is driven as an argv list, never through a shell. Paths with spaces are
   only accepted through the CLI.
 
 ### Herdr or a printed command

@@ -139,6 +139,10 @@ class SessionTest(unittest.TestCase):
         quoted = self.tmp / "it's"
         quoted.mkdir()
         self.assertEqual(self.run_main("open", "demo", str(self.brief), "--cwd", str(quoted), "--parent-id", "p")[0], 1)
+        for q in "\u2018\u2019\u201a\u201b\u201c\u201d\u201e":  # PowerShell treats these as quotes
+            typo = self.tmp / ("a" + q + "b")
+            typo.mkdir()
+            self.assertEqual(self.run_main("open", "demo", str(self.brief), "--cwd", str(typo), "--parent-id", "p")[0], 1)
         self.assertEqual(self.calls(), [])
         self.assertFalse((self.agent / "pi-foreman").exists())
 

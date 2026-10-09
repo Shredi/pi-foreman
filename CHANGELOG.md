@@ -4,7 +4,7 @@
 
 ### Added
 - `docs/` split (install, roles, ceremony, safety, sessions, bench, overlays, development) with a lean README, a
-  generated `banner.svg` (`scripts/make_banner.py`, `--check` in CI) and `tests/test_docs.py` (config keys, commands,
+  generated `banner.svg` (`scripts/make_banner.py`, `--check` runs in CI through the docs test) and `tests/test_docs.py` (config keys, commands,
   links and page headers must stay documented).
 - `/foreman session open|brief|close|list` and `bin/foreman session open|list` (`scripts/foreman_session.py`): open
   a handoff dir (`brief.md` with a report-back footer, `parent`, `child`) in a new Herdr tab or print the command,
