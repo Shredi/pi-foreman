@@ -44,6 +44,17 @@ absent; an existing file that sets `brokerCommand`, `brokerArgs` or `crossMachin
 }
 ```
 
+Or apply a shipped preset: `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` merges
+`config/presets/<name>.json` into that file (preset values win, every other key is kept), validates the result
+before writing, backs the old file up as `foreman.json.bak-YYYYMMDD` (`-HHMMSS` appended when that name exists)
+and prints the merged JSON with `--dry-run` instead of writing. `--foreman` sets the foreman's model for the
+preset's providers. An unknown name lists the presets and exits 2. `foreman config validate` checks the result.
+
+While no `providers.<p>.roles.<id>.model` and no `providers.<p>.review.model` is set, children run on Pi's
+default model, and each interactive top-level session start shows one notice naming the presets and this
+command. It never appears in rpc, print or child sessions. The top-level key `quiet` (boolean, default `false`)
+set to `true` hides it.
+
 Then re-run `node setup.mjs` to regenerate the block, and run `/foreman doctor` in Pi. Tests:
 `node --test "tests/installer/*.test.mjs"`.
 

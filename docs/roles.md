@@ -48,8 +48,9 @@ tier), `at-or-below`, or `any`. Tiers are compared across providers, so a forema
 rank-compatible children on another. Once any ranks exist, a model in no list is allowed only under `any`. With
 no ranks anywhere the policy does nothing. A refused launch is traced `launch_refused {policy, foreman, requested}`.
 
-**Presets** under `config/presets/` are opt-in overlay files, never merged by default. Copy the parts you want
-into `<agent dir>/foreman.json`:
+**Presets** under `config/presets/` are opt-in overlay files, never merged by default. Apply one with
+`foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` (merges into `<agent dir>/foreman.json`,
+keeps your other keys, backs up the old file; see [install](install.md)), or copy the parts you want by hand:
 
 - `claude-bridge.json`: ranks fable > opus > sonnet > haiku; foreman Opus 5.5 (high); explorer, builder and
   reviewer Haiku 5.5 (medium) with a strong Sonnet 5.5 rung; planner, finalizer and senior-reviewer (high) on
