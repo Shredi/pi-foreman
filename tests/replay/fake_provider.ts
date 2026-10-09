@@ -15,13 +15,18 @@
 // error (the provider throws) and hang (never answers until aborted).
 //
 // Usage is fixed per answer: input 10, output 5, cacheRead 4, cacheWrite 2 (cost 0), so replay can
-// assert the four token kinds.
+// assert the four token kinds. A step's own "usage" object overrides single numbers (ladder replay).
 //
 // FOREMAN_FAKE_CALLS=<file> appends "<provider>/<model> <tag>" per provider call (tests assert a
 // request never reached the provider).
 // FOREMAN_FAKE_SECTIONS=<file> appends "<tag> <step> <section names>" per foreman-model call: the
 // system-prompt sections the request carries, folded over its system messages (null deletes).
 // Compaction summary requests (Pi's summarization system prompt) answer a fixed summary text.
+// FOREMAN_FAKE_USAGE=size makes usage follow request size (explicit step usage wins): input 10,
+// cacheWrite = ceil(new prompt chars / 4), cacheRead = chars already seen by this process for the
+// same model / 4 (one process = one session). FOREMAN_FAKE_SIZES=<file> appends one JSON line per
+// request of any model: pid, model, tag, step, systemChars, toolsChars, messagesChars, tool names.
+// FOREMAN_FAKE_SYSTEM=<dir> writes the system text of each model's first request to <dir>/<model>-<pid>.txt.
 // FOREMAN_FAKE_REQUESTS=<file> appends the request messages of each `<provider>/foreman` call as one
 // JSON line (cache-prefix tests compare earlier requests with later ones byte for byte).
 import * as fs from "node:fs";
@@ -44,6 +49,7 @@ const TAG = /\[\[replay:([A-Za-z0-9_.-]+)\]\]/;
 
 interface Step {
   text?: string;
+  usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
   tools?: { name: string; arguments: Record<string, unknown> }[];
 }
 type Script = Record<string, Record<string, Step[]>>;
@@ -87,6 +93,23 @@ export function pickStep(script: Script, modelId: string, messages: { role: stri
 }
 
 let counter = 0;
+const seen = new Map<string, number>();
+
+/** Characters of the system prompt (base text, system messages and their sections), tool schemas and the other messages. */
+function requestSizes(context: TranscriptContext): { system: number; tools: number; messages: number; total: number; toolNames: string } {
+  const c = context as unknown as { systemPrompt?: string; tools?: { name?: string }[]; messages: { role: string; content: unknown; sections?: Record<string, unknown> }[] };
+  let system = typeof c.systemPrompt === "string" ? c.systemPrompt.length : 0;
+  let messages = 0;
+  for (const m of c.messages) {
+    if (m.role === "system") {
+      system += textOf(m.content).length;
+      for (const v of Object.values(m.sections ?? {})) if (typeof v === "string") system += v.length;
+    } else messages += JSON.stringify(m.content ?? "").length;
+  }
+  const tools = c.tools ? JSON.stringify(c.tools).length : 0;
+  return { system, tools, messages, total: system + tools + messages, toolNames: (c.tools ?? []).map((x) => x.name).join(",") };
+}
+
 
 function streamFake(model: Model<Api>, context: TranscriptContext, options?: SimpleStreamOptions): AssistantMessageEventStream {
   const log = process.env.FOREMAN_FAKE_CALLS;
@@ -119,6 +142,29 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
       // the log is a test aid only
     }
   }
+  const sizes = requestSizes(context);
+  const seenChars = seen.get(model.id) ?? 0;
+  seen.set(model.id, sizes.total);
+  const sysDir = process.env.FOREMAN_FAKE_SYSTEM;
+  if (sysDir && !model.id.startsWith("review-") && seenChars === 0) {
+    const c = context as unknown as { systemPrompt?: string; messages: { role: string; content: unknown; sections?: Record<string, unknown> }[] };
+    const text = [c.systemPrompt ?? "", ...c.messages.filter((m) => m.role === "system").map((m) => `${textOf(m.content)}${JSON.stringify(m.sections ?? {})}`)].join("\n=====\n");
+    try {
+      fs.mkdirSync(sysDir, { recursive: true });
+      fs.writeFileSync(`${sysDir}/${model.id}-${process.pid}.txt`, `keys: ${Object.keys(context).join(",")}\n${text}`);
+    } catch {
+      // the dump is a test aid only
+    }
+  }
+  const sizeLog = process.env.FOREMAN_FAKE_SIZES;
+  if (sizeLog && !model.id.startsWith("review-")) {
+    const where = locate(context.messages as { role: string; content: unknown }[]);
+    try {
+      fs.appendFileSync(sizeLog, `${JSON.stringify({ pid: process.pid, model: model.id, tag: where?.[0] ?? null, step: where?.[1] ?? null, systemChars: sizes.system, toolsChars: sizes.tools, messagesChars: sizes.messages, tools: sizes.toolNames })}\n`);
+    } catch {
+      // the log is a test aid only
+    }
+  }
   if (model.id === "review-error") throw new Error("fake: scripted provider failure");
   const stream = createAssistantMessageEventStream();
   const summary = [context.systemPrompt, ...(context.messages as { role: string; content: unknown }[]).filter((m) => m.role === "system").map((m) => textOf(m.content))]
@@ -134,6 +180,13 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
     stopReason: "stop",
     timestamp: Date.now(),
   } as AssistantMessage;
+  if (process.env.FOREMAN_FAKE_USAGE === "size") {
+    const kept = Math.min(seenChars, sizes.total);
+    Object.assign(output.usage, { input: 10, cacheRead: Math.ceil(kept / 4), cacheWrite: Math.ceil((sizes.total - kept) / 4) });
+  }
+  if (step.usage) Object.assign(output.usage, step.usage);
+  // D8 retro replay: a summary request that asks for a Retro section (pi-foreman's compaction) ends with one.
+  if (summary && JSON.stringify(context.messages).includes("## Retro")) step.text += "\n\n## Retro\n- fake: missing an allow rule\n- fake: enhance the brief";
   if (model.id === "review-hang") {
     const abort = (): void => {
       output.stopReason = "aborted";

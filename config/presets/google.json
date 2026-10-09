@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "ladder": { "childPolicy": "at-or-below" },
+  "providers": {
+    "google": {
+      "ranks": [
+        { "match": "gemini-*-pro*", "tier": 2 },
+        { "match": "gemini-*-flash*", "tier": 3 }
+      ],
+      "roles": {
+        "foreman": { "model": "google/gemini-3.1-pro-preview", "thinking": "high" },
+        "planner": { "model": "google/gemini-3.1-pro-preview", "thinking": "medium" },
+        "explorer": { "model": "google/gemini-3.8-flash", "thinking": "medium", "strong": { "model": "google/gemini-3.1-pro-preview", "thinking": "medium" } },
+        "builder": { "model": "google/gemini-3.8-flash", "thinking": "medium", "strong": { "model": "google/gemini-3.1-pro-preview", "thinking": "medium" } },
+        "reviewer": { "model": "google/gemini-3.8-flash", "thinking": "medium", "strong": { "model": "google/gemini-3.1-pro-preview", "thinking": "medium" } },
+        "senior-reviewer": { "model": "google/gemini-3.1-pro-preview", "thinking": "high" },
+        "finalizer": { "model": "google/gemini-3.8-flash", "thinking": "low" }
+      }
+    }
+  }
+}

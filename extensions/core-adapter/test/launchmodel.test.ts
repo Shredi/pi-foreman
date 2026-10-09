@@ -14,22 +14,31 @@ test("no foreman model: the mapped model and thinking are set", () => {
   assert.equal(input.model, "p1/small:low");
 });
 
-test("foreman level is kept, provider and model come from the map", () => {
+test("a rung's configured thinking wins over the foreman's level (no thinking escalation)", () => {
   const input: Record<string, unknown> = { agent: "explorer", task: "t", model: ":medium" };
   assert.deepEqual(applyLaunchModels(input, ROLES, "high").overrides, []);
-  assert.equal(input.model, "p1/small:medium");
-  assert.equal(launchModel("explorer", ROLES, "p1/small:high", "high")?.model, "p1/small:high");
+  assert.equal(input.model, "p1/small:low");
+  assert.equal(launchModel("explorer", ROLES, "p1/small:high", "high")?.model, "p1/small:low");
+  assert.equal(launchModel("reviewer", ROLES, ":medium", "high")?.model, "p1/big:medium");
 });
 
-test("foreman level above maxThinking is clamped", () => {
-  assert.equal(launchModel("builder", ROLES, ":max", "high")?.model, "p1/mid:high");
-  assert.equal(launchModel("builder", ROLES, ":xhigh", undefined)?.model, "p1/mid:xhigh");
+test("childMaxThinking caps every child level, strong rungs included; unset caps nothing", () => {
+  const roles = { builder: { model: "p1/mid", thinking: "max", strong: { model: "p1/big", thinking: "xhigh" } }, reviewer: { model: "p1/big" } };
+  assert.equal(launchModel("builder", roles, undefined, "max", { childMaxThinking: "high" })?.model, "p1/mid:high");
+  assert.equal(launchModel("builder", roles, "strong", "max", { childMaxThinking: "high" })?.model, "p1/big:high");
+  assert.equal(launchModel("reviewer", roles, ":max", "max", { childMaxThinking: "medium" })?.model, "p1/big:medium");
+  assert.equal(launchModel("builder", roles, undefined, "max")?.model, "p1/mid:max");
+});
+
+test("foreman level above maxThinking is clamped on a rung without thinking", () => {
+  assert.equal(launchModel("reviewer", ROLES, ":max", "high")?.model, "p1/big:high");
+  assert.equal(launchModel("reviewer", ROLES, ":xhigh", undefined)?.model, "p1/big:xhigh");
 });
 
 test("a differing foreman model is replaced and reported", () => {
   const input: Record<string, unknown> = { agent: "builder", task: "t", model: "p2/other:low" };
   assert.deepEqual(applyLaunchModels(input, ROLES, "high").overrides, [{ role: "builder", model: "p1/mid", requested: "p2/other" }]);
-  assert.equal(input.model, "p1/mid:low");
+  assert.equal(input.model, "p1/mid:medium");
 });
 
 test("tasks and chain entries each get their role's model; top-level model is dropped", () => {
@@ -62,7 +71,7 @@ test("strength: no keyword gives the builder its strong model on a heavy tier or
   assert.equal(launchModel("builder", STRONG, undefined, "high", { tier: "heavy" })?.model, "p1/big:high");
   assert.equal(launchModel("builder", STRONG, undefined, "high", { tier: "trivial", preferStrong: true })?.model, "p1/big:high");
   assert.equal(launchModel("builder", STRONG, "default", "high", { tier: "heavy" })?.model, "p1/mid:medium");
-  assert.equal(launchModel("builder", STRONG, "strong:low", "high", { tier: "standard" })?.model, "p1/big:low");
+  assert.equal(launchModel("builder", STRONG, "strong:low", "high", { tier: "standard" })?.model, "p1/big:high");
   assert.equal(launchModel("explorer", STRONG, undefined, "high", { tier: "heavy" })?.model, "p1/small:low");
 });
 

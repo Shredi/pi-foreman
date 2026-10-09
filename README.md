@@ -44,6 +44,48 @@ absent; an existing file that sets `brokerCommand`, `brokerArgs` or `crossMachin
 Then re-run `node setup.mjs` to regenerate the block, and run `/foreman doctor` in Pi. Tests:
 `node --test "tests/installer/*.test.mjs"`.
 
+### Role ladder, rank policy and presets
+
+Each role has two rungs: `model` (bottom) and an optional `strong`. A child climbs only through the foreman,
+which relaunches it with `model: "strong"`:
+
+- **Context**: a bottom-rung child whose last call's context (input + cacheRead + cacheWrite) passes
+  `strongAbove` (default 100000) is steered once to stop and return a handoff report starting `RUNG_UP: context`.
+- **Turns**: past `childMaxTurns` assistant turns (default 60) a bottom-rung child hands off (`RUNG_UP: turns`);
+  a top-rung child is told to stop and report (`child_turn_cap` trace event).
+- **Stuck**: a report with `STATUS: stuck` or "own checks failed".
+- **Foreman**: `model: "strong"` plus a `reason` on the launch. A strong launch with no reason and no trigger is
+  refused (`strong_no_reason`); a heavy-tier builder and `strongOnRevision` count as triggers.
+
+After a context, turns or stuck report the launch result says the run is climb-eligible; the next strong launch
+of that role gets the prior report (at most 4000 characters), its result path and the ledger items prepended to
+its task, and the trace records `rung_up {role, from, to, reason}`. Knobs: `ladder.strongAbove`,
+`ladder.childMaxTurns`, per provider `providers.<p>.strongAbove|childMaxTurns`, per role
+`roles.<id>.strongAbove|childMaxTurns` (the most specific wins; user or overlay config only). A rung's own
+`thinking` wins over the foreman's level: the ladder climbs by model, never by thinking. `childMaxThinking`
+(unset by default) caps every child launch's level, rungs included, on top of `maxThinking`.
+
+**Rank policy.** `providers.<p>.ranks` lists `{match: <model-id glob>, tier: <0 = top>}` entries, highest first.
+`ladder.childPolicy` (one value for all providers) is `below` (default: children strictly below the foreman's
+tier), `at-or-below`, or `any`. Tiers are compared across providers, so a foreman on one provider may launch
+rank-compatible children on another. Once any ranks exist, a model in no list is allowed only under `any`. With
+no ranks anywhere the policy does nothing. A refused launch is traced `launch_refused {policy, foreman, requested}`.
+
+**Presets** under `config/presets/` are opt-in overlay files, never merged by default. Copy the parts you want
+into `<agent dir>/foreman.json`:
+
+- `claude-bridge.json`: ranks fable > opus > sonnet > haiku; foreman Opus 5.5 (high); explorer, builder and
+  reviewer Haiku 5.5 (medium) with a strong Sonnet 5.5 rung; planner, finalizer and senior-reviewer (high) on
+  Sonnet 5.5; auto-review on Haiku 5.5; `childPolicy: below`, so no child runs on Opus; `childMaxThinking: high`.
+- `openai.json` (astra > sol > luna: `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-luna`) and `google.json`
+  (`gemini-*-pro*` > `gemini-*-flash*`; `at-or-below`, because the strong rung is the foreman's own pro model). Ids
+  are from Pi's model registry; tiers follow capability class so cross-provider comparisons hold.
+
+To keep Opus for children (for example `strong` or `senior-reviewer` under a Fable foreman), name it in that
+role and either set `ladder.childPolicy: "any"` (every model available) or rank the foreman above it. The
+permission auto-review uses `providers.<p>.review.model`; when unset it picks the cheapest role-map model (by
+registry input price, with auth) and traces it as `by: "auto"`; with none, asks go to you.
+
 ### Updating Pi
 
 The pinned Pi version lives in `packages.lock.json` (currently 1.1.0, range 1.1.x); `setup.mjs` refuses a Pi
@@ -133,6 +175,7 @@ Harbor agents live in `bench/harbor_agent.py` and are not part of the installed 
 Trace-derived columns include `ceremony_incomplete`, `read_blocks`, `recheck_blocks`, `finish_refused`,
 `launch_waits`, `rereviews` (reviewer launches while the review step was re-opened) and `orient_lines`
 (lines in the orientation packet, 0 if none), `ledger_calls` and `ledger_denies` (the foreman's own `foreman_ledger` and shell `ledger` calls, and those refused; child denies stay in `asks_denied`), `dup_reviews` (reviewer launches refused as duplicates), `second_opinions` and `stop_hold`. `tier` is read from the foreman's own trace only (its `triage` event, else its last `tier` event); a trace file whose `session_start` has role `child` is ignored for it. A foreman row's user-layer `foreman.json` is generated from the row: `foreman_edits`, `foreman_reads`, `recheck_budget`, `launch_wait` and `dedupe_notify` map to their ceremony knobs, and a `user_config` object is deep-merged in last, so a row can set any knob (the eee843d-equivalent row: `"user_config": {"ceremony": {"ledgerHelper": "off", "reviewPerRevision": false, "heavyThreshold": "eee843d"}}`).
+Cost uses `bench/prices.json`; Haiku 5.5's long-context tier (prompts above 100k tokens) is applied per request from the usage log (rows without it are priced flat and flagged `tier_approx`). Permission auto-review calls are logged with role `autoreview` (columns `autoreview_tokens`, `autoreview_calls`, `autoreview_usd`, `autoreview_defer_share`). A row's `"bench": {"post_steps": ["retro", "sync"]}` (RPC driver) runs `/retro` and `/sync --dry-run` in the foreman session after the task is done; their output stays in the agent state dir, their usage after a marker is left out of tokens and cost and shown as `retro_tokens`/`retro_usd`, a changed workspace marks the cell infra `post_step_changed_workspace`, and `run` writes the cells' retro output to `<jobs dir>/retro-findings.md`. Other counters: `rung_up`, `child_read_warn`/`child_read_deny` (trace `child_read_budget`), `review_defer_headless`, `child_turn_cap`, `launch_refused`, `thinking_by_role` (levels the sessions ran with), `tier_dist`, `cache_write_per_launch` (median cache-write tokens per launch).
 `--dry-run` prints the cell order, `--token-cap N` stops cleanly (exit 4) once finished cells used N
 tokens (two consecutive infrastructure-error cells stop it with exit 5), `--setup-only` installs one cell's agent and runs zero-model checks without a prompt.
 `bench/tasks/m1-recheck` re-checks the M1 standard task (ledger, explorer, builder, reviewer).

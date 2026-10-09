@@ -20,3 +20,4 @@ Return exactly:
 2. Proposed commit message, in the repository's convention.
 3. Staged paths: one per line, or "none staged".
 4. Open issues: anything the foreman must decide. Write "none" if there is none.
+5. Missing: <file | allow rule | brief detail | none> — what you lacked for this task, one line.

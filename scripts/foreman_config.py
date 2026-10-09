@@ -46,6 +46,9 @@ Keys outside safety that the project and session layers cannot loosen either
     providers.*.review               ignored (a review model approves asks)
     providers.*.roles.*.strong       ignored (picks a stronger, costlier model; L1/L3/L2 only)
     providers.*.strongOnRevision     only false is accepted (true relaunches on the strong model)
+    childMaxThinking                 lower only (off < ... < max)
+    ladder.*, providers.*.ranks      ignored (the ladder and the child rank policy: L1/L3/L2 only)
+    providers.*.strongAbove / childMaxTurns, roles.*.strongAbove / childMaxTurns   ignored (ladder)
     ceremony.revisionRounds.<tier>   lower only (a higher limit loosens the review loop)
     ceremony.requireTriage           only true is accepted (false lets the foreman edit untriaged)
     ceremony                         not an object: ignored (null would drop every escalation)
@@ -166,6 +169,12 @@ IGNORED_KEYS = [
     (("sync", "repos"), "the repository list comes from the user or overlay config"),
     (("retro", "proposalMinReviews"), "the proposal threshold comes from the user or overlay config"),
     (("compaction", "priceTiers"), "the price tiers come from the user or overlay config"),
+    (("ladder", "*"), "the ladder and the child rank policy come from the user or overlay config"),
+    (("providers", "*", "ranks"), "model ranks decide which children may launch: user or overlay config only"),
+    (("providers", "*", "strongAbove"), "the ladder comes from the user or overlay config"),
+    (("providers", "*", "childMaxTurns"), "the ladder comes from the user or overlay config"),
+    (("roles", "*", "strongAbove"), "the ladder comes from the user or overlay config"),
+    (("roles", "*", "childMaxTurns"), "the ladder comes from the user or overlay config"),
 ]
 # Keys outside safety that the project and session layers may only tighten (module docstring),
 # compared with the value after the earlier layers. Same rule names as TIGHTEN; a lower_only
@@ -181,6 +190,7 @@ LAYER_TIGHTEN = [
     (("ceremony", "heavyFileCount"), "lower_only"),
     (("ceremony", "trivialBound", "*"), "lower_only"),
     (("ceremony", "foremanReads", "*", "*"), "lower_only"),
+    (("ceremony", "childReads", "*", "*"), "lower_only"),
     (("ceremony", "recheckBudget"), "lower_only"),
     (("ceremony", "launchWait"), ("ordered", ("block", "detach"))),
     (("ceremony", "dedupeNotify"), "true_only"),
@@ -197,6 +207,7 @@ LAYER_TIGHTEN = [
     (("compaction", "threshold", "*"), "lower_only_number"),
     (("wait", "maxSeconds"), "lower_only"),
     (("wait", "maxActive"), "lower_only"),
+    (("childMaxThinking",), ("ordered", tuple(THINKING))),
 ]
 LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
                  "threshold": 0.3, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0}

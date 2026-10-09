@@ -1,0 +1,31 @@
+{
+ "foreman": {
+  "d1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-df.md", "content": "# Requirements Ledger: df\n\n- [x] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-d2]] change broadcast"}}]},
+   {"text": "Builder launched."}
+  ],
+  "d2": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-d3]] review item 1"}}]},
+   {"text": "Reviewer launched."}
+  ],
+  "d3": [
+   {"text": "Done."},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-d4]] review again"}}]},
+   {"text": "Re-review launched."}
+  ],
+  "d4": [{"text": "Reviewed; done."}]
+ },
+ "*": {
+  "b-d2": [
+   {"tools": [
+    {"name": "edit", "arguments": {"path": "hub.go", "edits": [{"oldText": "broadcast(msg []byte)", "newText": "broadcast(seq uint64, msg []byte)"}]}},
+    {"name": "edit", "arguments": {"path": "hub_test.go", "edits": [{"oldText": "require.Equal(t, 200, received)", "newText": "require.Greater(t, received, 0)"}]}}
+   ]},
+   {"text": "[[replay:d2]] built"}
+  ],
+  "r-d3": [{"text": "[[replay:d3]] VERDICT: FAIL\n1. FAIL hub.go:3\nOverall verdict: FAIL"}],
+  "r-d4": [{"text": "[[replay:d4]] VERDICT: PASS\n1. PASS hub.go:3\nOverall verdict: PASS"}]
+ }
+}

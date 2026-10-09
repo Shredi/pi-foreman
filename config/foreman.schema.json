@@ -29,7 +29,9 @@
           "tools": { "type": "array", "items": { "type": "string" }, "description": "Strict tool allowlist. Written as a JSON array into the generated settings. For the foreman it is informational. A project or session can only narrow it (intersection), and cannot add role ids." },
           "codemode": { "type": "boolean", "description": "Add the codemode tool to this role. Overridden per provider by providers.<p>.roles.<id>.codemode." },
           "launch": { "type": "string", "enum": ["detached"], "description": "How the role is launched. Only detached is supported: detached children forward permission asks to the parent. A project or session cannot set it." },
-          "timeoutMinutes": { "type": "integer", "minimum": 1, "description": "Run-time limit of one launch of this role; the adapter writes it into each launch as timeoutMs and clamps a longer foreman value down to it. A project or session can only lower it." }
+          "timeoutMinutes": { "type": "integer", "minimum": 1, "description": "Run-time limit of one launch of this role; the adapter writes it into each launch as timeoutMs and clamps a longer foreman value down to it. A project or session can only lower it." },
+          "strongAbove": { "type": "integer", "minimum": 1, "description": "Ladder: context tokens (input + cacheRead + cacheWrite of one call) above which a child of this role on its bottom rung is steered to stop and hand off for a strong relaunch. Wins over providers.<p>.strongAbove and ladder.strongAbove. User or overlay config only." },
+          "childMaxTurns": { "type": "integer", "minimum": 1, "description": "Ladder: assistant turns after which a child of this role is steered once to stop: on its bottom rung with a RUNG_UP: turns handoff (climb-eligible), on its top rung to report. Wins over providers.<p>.childMaxTurns and ladder.childMaxTurns. User or overlay config only." }
         }
       }
     },
@@ -64,6 +66,21 @@
               }
             }
           },
+          "strongAbove": { "type": "integer", "minimum": 1, "description": "Ladder: strongAbove for every role on this provider (see roles.<id>.strongAbove). User or overlay config only." },
+          "childMaxTurns": { "type": "integer", "minimum": 1, "description": "Ladder: childMaxTurns for every role on this provider (see roles.<id>.childMaxTurns). User or overlay config only." },
+          "ranks": {
+            "type": "array",
+            "description": "Model ranks for ladder.childPolicy, highest first: {match: model-id glob (* and ?; with a slash it matches <provider>/<id>), tier: 0 = top}. Tiers are compared across providers; a model in no provider's list is unranked. User or overlay config only.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["match", "tier"],
+              "properties": {
+                "match": { "type": "string", "minLength": 1 },
+                "tier": { "type": "integer", "minimum": 0 }
+              }
+            }
+          },
           "strongOnRevision": { "type": "boolean", "description": "Relaunch the builder on its strong model for a revision round (default false). A project or session can only set false." },
           "review": {
             "type": "object",
@@ -92,6 +109,17 @@
       "additionalProperties": false,
       "properties": { "max": { "type": "integer", "minimum": 1, "maximum": 16, "description": "Maximum concurrent children." } }
     },
+    "ladder": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Role ladder (model -> strong) and the rank policy for child models. User or overlay config only.",
+      "properties": {
+        "strongAbove": { "type": "integer", "minimum": 1, "description": "Default context limit of a bottom-rung child (L1: 100000)." },
+        "childMaxTurns": { "type": "integer", "minimum": 1, "description": "Default assistant-turn cap of a child (L1: 60)." },
+        "childPolicy": { "type": "string", "enum": ["below", "at-or-below", "any"], "description": "Which child models a foreman may launch by providers.<p>.ranks: below = strictly lower tier than the foreman's model (default), at-or-below = the same tier too, any = no check. Inert while no provider has ranks." }
+      }
+    },
+    "childMaxThinking": { "type": "string", "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"], "description": "Ceiling for every child launch's thinking level (ladder rungs included), applied on top of maxThinking. Unset = no extra cap." },
     "maxThinking": { "type": "string", "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"], "description": "Ceiling for every role's thinking level." },
     "ceremony": {
       "type": "object",
@@ -130,6 +158,7 @@
           "additionalProperties": false,
           "description": "Steps a session at this tier completes before the foreman may finish: planner (a planner run that completed), builder (a builder run that completed), reviewer (see reviewGate), finalizer (a finalizer run that completed). A project or session can only add steps.",
           "properties": {
+            "trivial": { "type": "array", "items": { "type": "string", "enum": ["planner", "builder", "reviewer", "finalizer"] }, "description": "Naming builder turns on the trivial builder path: a trivial task keeps its ledger and one builder on the default model makes the change; at finish a diff check (one source file within trivialBound, no exported signature or schema change, no test file touched, a test present) escalates to standard otherwise. Applies once a ledger is bound; builder is dropped in bounded mode. [] restores the earlier trivial tier (no builder)." },
             "standard": { "type": "array", "items": { "type": "string", "enum": ["planner", "builder", "reviewer", "finalizer"] } },
             "heavy": { "type": "array", "items": { "type": "string", "enum": ["planner", "builder", "reviewer", "finalizer"] } }
           }
@@ -146,6 +175,11 @@
             "after": { "type": "object", "additionalProperties": false, "properties": { "warn": { "type": "integer", "minimum": 1 }, "deny": { "type": "integer", "minimum": 1 } } }
           }
         },
+        "childReads": {
+          "type": "object",
+          "description": "Read budget per child role (read, grep, find, ls and read-only bash calls of one child run; a role without an entry has no budget). At warn the result tells the child to wrap up; above deny the call is refused and the child returns its report with what it has (STATUS: stuck if it cannot finish). Defaults: builder 20/40, reviewer 15/30, explorer exempt.",
+          "additionalProperties": { "type": "object", "additionalProperties": false, "properties": { "warn": { "type": "integer", "minimum": 1 }, "deny": { "type": "integer", "minimum": 1 } } }
+        },
         "recheckBudget": { "type": "integer", "minimum": 0, "description": "Read-class calls the foreman may make after a reviewer PASS before it is told to finish. A project or session can only lower it." },
         "launchWait": { "type": "string", "enum": ["detach", "block"], "description": "block = a launch's tool result waits for the child to end; detach = it returns at once. A project or session can only move to block." },
         "dedupeNotify": { "type": "boolean", "description": "Replace a subagent-notify message whose result was already delivered with a one-line stub. A project or session can only set true." },
@@ -155,6 +189,11 @@
         "reviewPerRevision": { "type": "boolean", "description": "true = a reviewer or senior-reviewer launch is refused while the last review passed and nothing was revised since, unless the task carries [second-opinion]; false = no refusal (as before). A project or session can only set true." },
         "heavyThreshold": { "type": "string", "enum": ["strict", "eee843d"], "description": "strict = heavy is for multi-component or risky changes (prompt criteria); heavySignals keyword hits in a request are only a hint to the foreman; heavyFileCount still escalates. eee843d = the old prompt line and keyword auto-escalation. A project or session can only move toward eee843d." }
       }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "headless": { "type": "boolean", "description": "true = a deferred forwarded child permission ask is denied with the allowed forms instead of waiting for a human (headless and bench runs). User or overlay config only." } }
     },
     "sync": {
       "type": "object",

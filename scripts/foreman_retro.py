@@ -262,7 +262,8 @@ def propose(asks, min_reviews, rules, protect=()):
 def trace_metrics(records):
     guards = collections.Counter()
     m = {"guard_blocks": {}, "overlay_blocks": 0, "triage_gate_blocks": 0, "revisions": 0,
-         "safe_op_ran": 0, "safe_op_precondition_failed": 0, "supervisor_requests": 0, "turn_causes": {}}
+         "safe_op_ran": 0, "safe_op_precondition_failed": 0, "supervisor_requests": 0, "turn_causes": {},
+         "rereviews": 0, "budget_hits": 0, "rung_up": 0, "child_read_budget": 0, "review_defer_headless": 0, "turns": 0}
     causes = collections.Counter()
     for r in records:
         ev, dec = r.get("event"), r.get("decision")
@@ -280,8 +281,20 @@ def trace_metrics(records):
             m["safe_op_precondition_failed"] += 1
         elif ev == "supervisor_request":
             m["supervisor_requests"] += 1
-        elif ev == "turn" and r.get("cause"):
-            causes[str(r["cause"])] += 1
+        elif ev == "rereview":
+            m["rereviews"] += 1
+        elif ev in ("read_budget", "recheck_budget") and r.get("action") == "deny":
+            m["budget_hits"] += 1
+        elif ev == "rung_up":
+            m["rung_up"] += 1
+        elif ev == "child_read_budget" and r.get("action") in ("warn", "deny"):
+            m["child_read_budget"] += 1
+        elif ev == "review_defer_headless":
+            m["review_defer_headless"] += 1
+        if ev == "turn":
+            m["turns"] += 1
+            if r.get("cause"):
+                causes[str(r["cause"])] += 1
     m["guard_blocks"] = dict(guards)
     m["turn_causes"] = dict(causes)
     ran, bad = m["safe_op_ran"], m["safe_op_precondition_failed"]
@@ -380,6 +393,9 @@ def render_text(rep, proposals_path=None):
                  % (t["revisions"], t["safe_op_ran"], t["safe_op_precondition_failed"], "n/a" if rate is None else rate,
                     t["supervisor_requests"]))
         L.append("turn causes: " + kv(t["turn_causes"]))
+        L.append("friction: rereviews=%d budget_hits=%d rung_up=%d child_read_budget=%d review_defer_headless=%d turns=%d"
+                 % (t["rereviews"], t["budget_hits"], t["rung_up"], t["child_read_budget"], t["review_defer_headless"],
+                    t["turns"]))
     u = rep["usage"]
     if u is None:
         L.append("spawn cost: no data")

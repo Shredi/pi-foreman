@@ -1,0 +1,25 @@
+{
+ "foreman": {
+  "rt1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-rt.md", "content": "# Requirements Ledger: rt\n\n- [ ] 1. a\n- [ ] 2. b\n- [ ] V. fresh-eyes verification passed\n"}}]},
+   {"tools": [{"name": "foreman_ledger", "arguments": {"action": "mark", "items": [1]}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-rt2]] review items 2"}}]},
+   {"text": "Reviewer launched."},
+   {"text": "Waiting."}
+  ],
+  "rt2": [
+   {"text": "Reviewed.", "usage": {"totalTokens": 175000}}
+  ],
+  "rt3": [
+   {"text": "ok"},
+   {"text": "- fake model retro: missing a test fixture"},
+   {"text": "- fake model retro: missing a test fixture"},
+   {"text": "- fake model retro: missing a test fixture"},
+   {"text": "- fake model retro: missing a test fixture"}
+  ]
+ },
+ "*": {
+  "r-rt2": [{"text": "[[replay:rt2]] VERDICT: PASS\n2. PASS a.txt:1\nOverall verdict: PASS"}]
+ }
+}

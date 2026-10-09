@@ -93,7 +93,7 @@ export interface OverlayRules {
 }
 
 export interface Baseline {
-  bash: { deny: string[]; ask: string[] };
+  bash: { deny: string[]; ask: string[]; allow?: string[] };
   paths: { deny: string[]; except: string[] };
   protect: { deny: string[]; ask: string[]; childDeny: string[]; writeAsk: string[]; removeAsk?: string[] };
 }
@@ -124,7 +124,7 @@ export function readBaseline(pkgRoot: string): Baseline | null {
     const paths = obj(raw.paths);
     const pr = obj(raw.protect);
     return {
-      bash: { deny: strs(bash.deny), ask: strs(bash.ask) },
+      bash: { deny: strs(bash.deny), ask: strs(bash.ask), allow: strs(bash.allow) },
       paths: { deny: strs(paths.deny), except: strs(paths.except) },
       protect: { deny: strs(pr.deny), ask: strs(pr.ask), childDeny: strs(pr.childDeny), writeAsk: strs(pr.writeAsk), removeAsk: strs(pr.removeAsk) },
     };

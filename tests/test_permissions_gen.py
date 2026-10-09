@@ -40,6 +40,11 @@ class GeneratorTest(unittest.TestCase):
         self.assertEqual(p["bash"]["Remove-Item * -R*"], "ask")
         self.assertEqual(p["bash"]["rd /s*"], "ask")
 
+    def test_no_sed_glob_so_every_sed_asks(self):
+        # sed takes w, e, r with no blank before the file or command: no glob can allow only prints
+        bash = self.render()["permission"]["bash"]
+        self.assertEqual([k for k in bash if k.startswith("sed")], [])
+
     def test_ledger_helper_entries_only_unless_off(self):
         p = self.render()["permission"]
         self.assertEqual(p["foreman_ledger"], "allow")
