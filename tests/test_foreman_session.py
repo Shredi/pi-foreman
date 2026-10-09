@@ -61,7 +61,7 @@ class SessionTest(unittest.TestCase):
         self.log = self.tmp / "herdr.log"
         self.env = {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""), "FAKE_HERDR_LOG": str(self.log),
                     "HERDR_PANE_ID": "w1:p1", "PI_CODING_AGENT_DIR": str(self.agent)}
-        for k in ("HERDR_BIN", "PI_INTERCOM_STABLE_ID", "FAKE_HERDR_FAIL", "FAKE_HERDR_WORKSPACES"):
+        for k in ("HERDR_BIN", "PI_INTERCOM_STABLE_ID", "PI_FOREMAN_HANDOFF_DIR", "FAKE_HERDR_FAIL", "FAKE_HERDR_WORKSPACES"):
             self.env[k] = ""
 
     def run_main(self, *argv, **env):
@@ -87,13 +87,19 @@ class SessionTest(unittest.TestCase):
 
     def test_workspace_match_opens_a_tab_and_runs_a_quoted_command(self):
         ws = json.dumps([{"workspace_id": "w3", "label": "other"}, {"workspace_id": "w2", "label": "proj"}])
-        code, out, err = self.run_main(*self.open_args("--model", "prov/model-1"), FAKE_HERDR_WORKSPACES=ws)
+        opener = self.tmp / "opener"  # the opener's own cwd names the parent, not the child's --cwd
+        opener.mkdir()
+        with mock.patch.object(fsn.Path, "cwd", return_value=opener):
+            code, out, err = self.run_main(*self.open_args("--model", "prov/model-1"), FAKE_HERDR_WORKSPACES=ws)
         self.assertEqual(code, 0, err)
         calls = self.calls()
         self.assertEqual(calls[0], ["workspace", "list"])
         self.assertEqual(calls[1], ["tab", "create", "--workspace", "w2", "--cwd", str(self.proj / "sub"), "--label", "demo", "--no-focus"])
         self.assertEqual(calls[2][:3], ["pane", "run", "w2:p7"])
-        self.assertEqual(len(calls), 3)
+        # the group tag: pane id first, display-only, parent slug = the opener's repo (or cwd) name
+        self.assertEqual(calls[3], ["pane", "report-metadata", "w2:p7", "--source", "user:pi-foreman",
+                                    "--display-agent", "opener › demo", "--ttl-ms", "180000"])
+        self.assertEqual(len(calls), 4)
         entry = self.registry()[0]
         handoff = Path(entry["handoff"])
         self.assertEqual((entry["status"], entry["pane"], entry["label"]), ("open", "w2:p7", "demo"))
@@ -103,8 +109,23 @@ class SessionTest(unittest.TestCase):
         self.assertTrue(handoff.parent == self.agent / "pi-foreman" / "handoffs")
         words = shlex.split(calls[2][3])
         self.assertEqual(words, ["env", "PI_FOREMAN_HANDOFF_DIR=%s" % handoff, "PI_FOREMAN_PARENT_INTERCOM=parent-1",
-                                 "PI_INTERCOM_STABLE_ID=%s" % entry["child"], "pi", "--model", "prov/model-1",
+                                 "PI_INTERCOM_STABLE_ID=%s" % entry["child"], "PI_FOREMAN_PARENT_LABEL=opener", "pi", "--model", "prov/model-1",
                                  "Read the handoff brief at %s and proceed." % (handoff / "brief.md").as_posix()])
+
+    def test_group_tag_parent_slug_from_an_opened_child_and_off_switch(self):
+        opener = {"PI_FOREMAN_HANDOFF_DIR": str(self.tmp / "20261009-101010-top-abc123"), "PI_INTERCOM_STABLE_ID": "fm-top-abc123"}
+        code, _, err = self.run_main(*self.open_args(), **opener)
+        self.assertEqual(code, 0, err)
+        tags = [c for c in self.calls() if c[:2] == ["pane", "report-metadata"]]
+        self.assertEqual([c[2] for c in tags], ["w9:p1"])
+        self.assertEqual(tags[0][tags[0].index("--display-agent") + 1], "top › demo")
+        self.agent.mkdir(parents=True, exist_ok=True)
+        (self.agent / "foreman.json").write_text(json.dumps({"herdr": {"groupTag": False}}), "utf-8")
+        self.log.unlink()
+        code, _, err = self.run_main(*self.open_args())
+        self.assertEqual(code, 0, err)
+        self.assertTrue(self.calls())
+        self.assertFalse([c for c in self.calls() if c[:2] == ["pane", "report-metadata"]])
 
     def test_workspace_create_renames_the_first_tab_and_focuses(self):
         code, _, err = self.run_main(*self.open_args("--focus"))

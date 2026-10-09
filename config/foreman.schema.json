@@ -247,6 +247,19 @@
       "additionalProperties": false,
       "properties": { "usage": { "type": "boolean", "description": "Show usage in the footer." } }
     },
+    "widget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "children": { "type": "boolean", "description": "Show the children widget (subagent runs and opened sessions) below the editor in the tui." } }
+    },
+    "herdr": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "blockedShim": { "type": "boolean", "description": "Show any open Pi dialog or permission ask as blocked in Herdr (steps aside once Herdr's Pi integration does it natively)." },
+        "groupTag": { "type": "boolean", "description": "Tag opened sessions' Herdr panes with their parent and the parent's pane with its child count." }
+      }
+    },
     "compaction": {
       "type": "object",
       "additionalProperties": false,
