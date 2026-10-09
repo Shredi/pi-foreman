@@ -149,7 +149,7 @@ pi-foreman radar  14:00:00  agent  ● 4  ◐ 2  ◌ 1  ○ 1  × 0
 └─ ◌ tests             starting   40s
 ```
 
-Each row: glyph, name (label, else role, else short session id), state, age of the last event, and the tokens
+Each row: glyph, name (label, else role, else the cwd's name and the short session id), state, age of the last event, and the tokens
 (`↑` in incl. cache, `↓` out) and cost of the whole subtree (a run shows its own). The header has the time, the
 agent dir's basename and a count per glyph. Active rows sort first, then by start time.
 
