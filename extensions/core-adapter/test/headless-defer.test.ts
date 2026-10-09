@@ -5,16 +5,19 @@ import { fileURLToPath } from "node:url";
 import { ForemanReview, HEADLESS_DENY, reviewValue } from "../review.ts";
 import type { RegistryLike, ReviewSession } from "../review.ts";
 import { readBaseline } from "../permoverlay.ts";
-import { bashRules, timeoutCommandAllowed, unitAllowed, unwrapTimeout } from "../timeoutallow.ts";
+import { bashRules, deterministicAllow, timeoutCommandAllowed, unitAllowed, unwrapTimeout } from "../timeoutallow.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(pkgRoot)!;
 const rules = bashRules(baseline, { safety: { permissions: { projectCommands: ["cargo test*", "go test*"] } } });
 
-test("baseline: sed -n is allowed, sed -i / w / e forms are not", () => {
-  assert.ok(unitAllowed(rules, "sed -n 1,20p f.go"));
-  assert.ok(unitAllowed(rules, "sed -n '5,9p' g.go"));
-  for (const c of ["sed -i s/a/b/ f", "sed -n -i p f", "sed --in-place s/a/b/ f", "sed -n 'w out.txt' f", "sed -n 1w/tmp/x f", "sed -n '1e touch x' f", "sed s/a/b/ f"]) assert.ok(!unitAllowed(rules, c), c);
+test("baseline: no sed glob allows anything; the link allows print-only sed itself", () => {
+  for (const c of ["sed -n 1,20p f.go", "sed -i s/a/b/ f", "sed -n -i p f", "sed --in-place s/a/b/ f", "sed -n 'w out.txt' f", "sed -n 1w/tmp/x f", "sed -n '1e touch x' f", "sed s/a/b/ f"]) assert.ok(!unitAllowed(rules, c), c);
+  assert.equal(deterministicAllow(rules, "cd sub; sed -n 1,20p f.go; sed -n 5,9p g.go"), "sed-read");
+  assert.equal(deterministicAllow(rules, "timeout 5 sed -n 1p f"), "timeout-wrapper");
+  for (const c of ["sed -n '1wout' f", "sed -n '1etouch x' f", "cd sub; sed -n s/a/b/wout f", "sed -n -f s.sed f", "timeout 5 sed -n 1wout f"]) assert.equal(deterministicAllow(rules, c), null, c);
+  const askSed = bashRules(baseline, { safety: { permissions: { ask: ["sed *"] } } });
+  assert.equal(deterministicAllow(askSed, "sed -n 1p f"), null);
 });
 
 test("timeout: only when the wrapped command is itself allowed", () => {

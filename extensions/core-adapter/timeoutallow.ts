@@ -5,11 +5,13 @@
 // carries: the wrapped command must match an allow pattern and no later ask or deny pattern
 // (last matching rule wins, as in the generated file). Anything with shell syntax beyond `&&` and
 // `;` (pipes, redirects, substitutions, quotes holding such characters) is not handled here and
-// goes on to the model review.
+// goes on to the model review. A read-only sed unit (sedread.ts) is allowed the same way: the
+// baseline has no sed rule because no glob can separate a print from `1wout` or `1etouch x`.
 import type { Json } from "./config.ts";
 import { get } from "./config.ts";
 import type { Baseline } from "./permoverlay.ts";
 import { wildcardRegExp } from "./permoverlay.ts";
+import { isReadOnlySed } from "./sedread.ts";
 
 export interface BashRules {
   allow: string[];
@@ -32,8 +34,16 @@ export function bashRules(baseline: Baseline, merged: Json | undefined): BashRul
 
 /** True when `unit` is allowed outright: it matches an allow pattern and no ask or deny pattern. */
 export function unitAllowed(rules: BashRules, unit: string, home = ""): boolean {
-  const hit = (list: string[]): boolean => list.some((pat) => wildcardRegExp(pat, { home, ignoreCase: false, foldSeparators: false }).test(unit));
-  return hit(rules.allow) && !hit(rules.ask) && !hit(rules.deny);
+  return hits(rules.allow, unit, home) && !hits(rules.ask, unit, home) && !hits(rules.deny, unit, home);
+}
+
+/** True when `unit` is a read-only sed call that no ask or deny pattern (a user's own included) catches. */
+export function sedUnitAllowed(rules: BashRules, unit: string, home = ""): boolean {
+  return isReadOnlySed(unit) && !hits(rules.ask, unit, home) && !hits(rules.deny, unit, home);
+}
+
+function hits(list: string[], unit: string, home: string): boolean {
+  return list.some((pat) => wildcardRegExp(pat, { home, ignoreCase: false, foldSeparators: false }).test(unit));
 }
 
 const DURATION = /^\d+(?:\.\d+)?[smhd]?$/;
@@ -63,22 +73,33 @@ export function unwrapTimeout(unit: string): string | null {
 }
 
 /**
- * Does the ask `command` consist only of allowed units and at least one `timeout N <allowed>` unit?
- * Units are separated by `&&` or `;`.
+ * The link's deterministic allow for a forwarded ask: "timeout-wrapper" when `command` holds a
+ * `timeout N <allowed>` unit, else "sed-read" when it holds a read-only sed unit, provided every
+ * other unit is allowed by the rules; null otherwise. Units are separated by `&&` or `;`.
  */
-export function timeoutCommandAllowed(rules: BashRules, command: string): boolean {
-  if (UNSAFE.test(command.replace(/&&/g, ";"))) return false;
+export function deterministicAllow(rules: BashRules, command: string): "timeout-wrapper" | "sed-read" | null {
+  if (UNSAFE.test(command.replace(/&&/g, ";"))) return null;
   const units = command.split(/&&|;/).map((u) => u.trim());
-  if (units.some((u) => !u)) return false;
+  if (units.some((u) => !u)) return null;
   let wrapped = 0;
+  let sed = 0;
   for (const u of units) {
+    let unit = u;
     if (/^timeout(\s|$)/.test(u)) {
       const inner = unwrapTimeout(u);
-      if (!inner || /^timeout(\s|$)/.test(inner) || !unitAllowed(rules, inner)) return false;
+      if (!inner || /^timeout(\s|$)/.test(inner)) return null;
+      unit = inner;
       wrapped++;
-    } else if (!unitAllowed(rules, u)) return false;
+    }
+    if (sedUnitAllowed(rules, unit)) sed++;
+    else if (!unitAllowed(rules, unit)) return null;
   }
-  return wrapped > 0;
+  return wrapped > 0 ? "timeout-wrapper" : sed > 0 ? "sed-read" : null;
+}
+
+/** Does the ask `command` consist only of allowed units and at least one `timeout N <allowed>` or read-only sed unit? */
+export function timeoutCommandAllowed(rules: BashRules, command: string): boolean {
+  return deterministicAllow(rules, command) !== null;
 }
 
 /**
