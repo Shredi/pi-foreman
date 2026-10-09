@@ -34,6 +34,7 @@
   "fanout": { "max": 3 },
   "ladder": { "strongAbove": 100000, "childMaxTurns": 60, "strongOnRevision": true },
   "maxThinking": "high",
+  "quiet": false,
   "ceremony": {
     "default": "standard",
     "heavySignals": ["delete", "migration", "safety", "auth", "ci", "release", "public-api"],

@@ -122,6 +122,7 @@
       }
     },
     "childMaxThinking": { "type": "string", "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"], "description": "Ceiling for every child launch's thinking level (ladder rungs included), applied on top of maxThinking. Unset = no extra cap." },
+    "quiet": { "type": "boolean", "description": "Silence the interactive first-run notice that points at the model presets (default false). The notice appears only while no role or review model is configured." },
     "maxThinking": { "type": "string", "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"], "description": "Ceiling for every role's thinking level." },
     "ceremony": {
       "type": "object",
