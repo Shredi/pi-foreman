@@ -66,7 +66,8 @@ import { citedItems, ledgerHint, writeHint } from "./hints.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, withDigest } from "./retro.ts";
 import { extractRetro, lastAssistantText, MODEL_RETRO_PROMPT, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
 import { UsageFooter, lookupRate } from "./footer.ts";
-import { blockedConfirm, bridgePermissionBlocked, PERMISSIONS_DECISION, PERMISSIONS_UI_PROMPT, withBlocked } from "./herdr.ts";
+import { blockedConfirm, installBlockedShim, PERMISSIONS_DECISION, PERMISSIONS_UI_PROMPT, withBlocked } from "./herdr.ts";
+import { installHerdrMeta } from "./herdrmeta.ts";
 import { builderLaunchRefusal, changedPlans, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, planSnapshot, planSummary, readPlan } from "./checkpoint.ts";
 import type { PlanRecord } from "./checkpoint.ts";
 import type { EventBus } from "./herdr.ts";
@@ -229,9 +230,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const usageFooter = new UsageFooter();
   const compactionGate = new CompactionGate();
   herdrEvents = pi.events as EventBus | undefined;
-  const permBlocked = bridgePermissionBlocked(herdrEvents);
-  pi.on("agent_end", async () => permBlocked.clear());
-  pi.on("session_shutdown", async () => permBlocked.clear());
+  // Herdr blocked shim (herdr.ts); `blockedShim.onChange((active) => ...)` can feed other consumers.
+  const blockedShim = installBlockedShim(pi, { enabled: () => [...sessions.values()].every((x) => get(x.config.config, "herdr.blockedShim") !== false) });
+  const herdrMeta = installHerdrMeta(pi); // group tag (herdrmeta.ts), started at the end of session_start
   pi.events?.on("permissions:ready", (payload: unknown) => review.onReady(payload));
   // Radar: forwarded permission prompts put a child run in "ask" (childwidget.ts); blocked/working feed the presence file.
   const radarEvent = (fn: (s: Session) => void): void => {
@@ -550,6 +551,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (fs.existsSync(psProjectConfigPath(s.cwd))) {
       notifyOnce(s, ctx, "ps-project-file", `pi-foreman: ${psProjectConfigPath(s.cwd)} exists. A project permission file can loosen the permission system's rules (it applies once the project is trusted). pi-foreman still enforces its deny rules itself, but put your rules in foreman.json and remove this file. /foreman doctor fails while it exists.`);
     }
+    herdrMeta.start(ctx, get(s.config.config, "herdr.groupTag") !== false);
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {

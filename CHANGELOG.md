@@ -7,6 +7,11 @@
   opened and their subagent runs (glyph, state, last-event age, subtree tokens and cost), from presence files
   `state/live/<sessionId>.json`, the session registry, handoff dirs and usage files; `--once`, `--since`, `--interval`,
   `--no-color`; works without Herdr and on Windows (no curses).
+- Herdr: one blocked tracker per Pi process shows every open dialog (any extension's `ui_prompt_*`), permission ask
+  (forwarded child asks too) and own ask as blocked, balanced on empty/non-empty, labelled `<agent> · <tool> <head>`
+  (never the full command); off without `HERDR_ENV=1`, with `herdr.blockedShim` false or with Herdr's Pi integration
+  >= 10. Group tag (`herdr.groupTag`): an opened child pane shows `<parent> › <child>`, a parent `<slug> · <n> children`
+  (display-only `report-metadata`, source `user:pi-foreman`, 180 s TTL refreshed every 60 s).
 - Ladder: a builder revision after a reviewer FAIL climbs to its strong rung (`ladder.strongOnRevision`, default true,
   trace `rung_up` reason `review_fail`); the finish gate refuses, uncounted, while that climb is open
   (`finish_refused {climb_available}`); on the top rung the two-refusal valve is unchanged.

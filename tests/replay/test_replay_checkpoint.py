@@ -55,7 +55,7 @@ class TestCheckpoint(ReplayCase):
     def start(self, name, run=""):
         rig = self.rig(name, script(run), permissions="baseline")
         herdr = rig.root / "herdr.jsonl"
-        return rig, rig.start(env={"FOREMAN_FAKE_HERDR": str(herdr)}), herdr
+        return rig, rig.start(env={"FOREMAN_FAKE_HERDR": str(herdr), "HERDR_ENV": "1"}), herdr
 
     def test_approve_lets_the_builder_through(self):
         rig, pi, herdr = self.start("ck-approve")
@@ -72,7 +72,7 @@ class TestCheckpoint(ReplayCase):
         self.assertNotIn("timeout", ds[0])
         self.assertTrue(any("Plan: Widget" in n and "Goal: Ship the widget." in n for n in notifications(recs)), notifications(recs))
         blocked = [json.loads(line) for line in herdr.read_text("utf-8").splitlines()]
-        self.assertEqual([(b["active"], b["label"].startswith(TITLE)) for b in blocked], [(True, True), (False, True)], blocked)
+        self.assertEqual([(b["active"], b.get("label", TITLE).startswith(TITLE)) for b in blocked], [(True, True), (False, True)], blocked)
         pi.wait_child_notify(timeout=180)
         pi.close()
         self.assertEqual([(r["reason"], r["tier"]) for r in events(rig, "launch_refused")], [("plan_required", "heavy")])
