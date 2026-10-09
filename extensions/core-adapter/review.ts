@@ -150,7 +150,7 @@ interface AskDetails {
   path?: string;
   toolInputPreview?: string;
   forwarding?: unknown;
-  payload?: { request?: { surface?: string; toolName?: string | null; value?: string | null } };
+  payload?: { request?: { surface?: string; toolName?: string | null; value?: string | null }; evidence?: { label?: string; text?: string }[] };
 }
 
 interface ReviewLog {
@@ -203,12 +203,31 @@ function replyText(content: unknown): string {
 }
 
 /**
+ * The bridge reports zero usage for `cacheRetention: "none"` calls. When every token field is 0, return
+ * the reply with a chars/4 estimate of what was sent and received and `estimated: true`.
+ */
+export function withEstimatedUsage<T extends object>(reply: T, promptText: string): T {
+  const u = (reply as { usage?: Record<string, unknown> }).usage;
+  const tok = (k: string): number => (typeof u?.[k] === "number" ? (u[k] as number) : 0);
+  if (["input", "output", "cacheRead", "cacheWrite"].some((k) => tok(k) > 0)) return reply;
+  const out = replyText((reply as { content?: unknown }).content);
+  return { ...reply, usage: { ...u, input: Math.ceil((SYSTEM_PROMPT.length + promptText.length) / 4), output: Math.ceil(out.length / 4) }, estimated: true };
+}
+
+/**
  * The reviewed value of an ask (the command, target, skill, path or tool input preview). An ask
  * forwarded from a subagent carries the child's original in `value` (PS 39.0.2 sets no `command` on
  * it); without reading it the reviewer saw an empty value for every child ask.
  */
 export function reviewValue(d: AskDetails): string {
-  const v = d.command ?? d.value ?? d.payload?.request?.value ?? d.target ?? d.skillName ?? d.path ?? d.toolInputPreview ?? "";
+  // A forwarded ask's `value` is only the offending unit (e.g. `python3`); the whole command is evidence.
+  const full = Array.isArray(d.payload?.evidence) ? d.payload.evidence.find((e) => e?.label === "full command" && typeof e.text === "string" && e.text) : undefined;
+  return full?.text ?? unitValue(d);
+}
+
+/** The offending unit of an ask (what the deterministic allow checks look at). */
+function unitValue(d: AskDetails): string {
+  const v =d.command ?? d.value ?? d.payload?.request?.value ?? d.target ?? d.skillName ?? d.path ?? d.toolInputPreview ?? "";
   return typeof v === "string" ? v : String(v);
 }
 
@@ -314,7 +333,7 @@ export class ForemanReview {
   private fixedAllow(s: ReviewSession, d: AskDetails): string | null {
     try {
       const rules = s.bashRules?.();
-      return rules ? deterministicAllow(rules, reviewValue(d)) : null;
+      return rules ? deterministicAllow(rules, unitValue(d)) : null;
     } catch {
       return null;
     }
@@ -365,7 +384,7 @@ export class ForemanReview {
       if (r === "timeout") return defer("timeout");
       if (!r) return defer("error", "provider_error:no reply");
       try {
-        s.recordUsage?.(r);
+        s.recordUsage?.("thrown" in r ? r : withEstimatedUsage(r, text));
       } catch {
         // usage logging is best effort
       }

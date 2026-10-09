@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { ForemanReview, HEADLESS_DENY, reviewValue } from "../review.ts";
 import type { RegistryLike, ReviewSession } from "../review.ts";
 import { readBaseline } from "../permoverlay.ts";
+import { usageLine } from "../usage.ts";
 import { bashRules, deterministicAllow, timeoutCommandAllowed, unitAllowed, unwrapTimeout } from "../timeoutallow.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -69,4 +70,42 @@ test("timeout-wrapped child ask is allowed without calling the model", async () 
   // a forwarded child ask carries the command in `value`, not `command`: the reviewer must see it
   assert.equal(reviewValue({ value: "sed -n 1p f" }), "sed -n 1p f");
   assert.equal(reviewValue({ payload: { request: { value: "ls" } } }), "ls");
+});
+
+test("forwarded ask: the model prompt and traces carry the full command from evidence; fixed allow still checks the unit", async () => {
+  const full = "python3 - <<'EOF'\nprint(1)\nEOF";
+  const forwarded = { requestId: "r", surface: "bash", agentName: "builder", forwarding: { x: 1 }, value: "python3", payload: { evidence: [{ label: "full command", text: full }] } };
+  assert.equal(reviewValue(forwarded), full);
+  assert.equal(reviewValue({ value: "python3", payload: { evidence: [{ label: "other", text: "x" }] } }), "python3");
+  const traces: Record<string, unknown>[] = [];
+  const prompts: string[] = [];
+  const reg: RegistryLike = { find: () => ({}), complete: async (_m, ctx) => (prompts.push(JSON.stringify(ctx)), { content: [{ type: "text", text: '{"verdict":"defer","reason":"x"}' }], stopReason: "stop" }) };
+  const r = new ForemanReview();
+  r.upsert("s", session({ headless: () => true, registry: reg }, traces));
+  await r.authorize("s", forwarded);
+  assert.match(prompts[0], /print\(1\)/);
+  assert.match(String(traces.find((t) => t.event === "review_defer_headless")?.cmd), /print\(1\)/);
+  // the deterministic allow sees the unit, not the full command
+  const sedAsk = { ...forwarded, value: "sed -n 1p f", payload: { evidence: [{ label: "full command", text: "cd x; sed -n 1p f | sh" }] } };
+  const sr = new ForemanReview();
+  sr.upsert("s", session({ headless: () => true, bashRules: () => rules }, []));
+  assert.deepEqual(await sr.authorize("s", sedAsk), { kind: "allow" });
+});
+
+test("autoreview usage: zero-usage replies are recorded as a chars/4 estimate with estimated:true; real usage is untouched", async () => {
+  const rows: Record<string, unknown>[] = [];
+  const mk = (usage: Record<string, number>): RegistryLike => ({ find: () => ({}), complete: async () => ({ content: [{ type: "text", text: '{"verdict":"defer","reason":"x"}' }], stopReason: "stop", usage } as never) });
+  for (const [usage, estimated] of [[{ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, true], [{ input: 7, output: 3, cacheRead: 0, cacheWrite: 0 }, false]] as const) {
+    rows.length = 0;
+    const r = new ForemanReview();
+    r.upsert("s", session({ registry: mk(usage), recordUsage: (m) => rows.push(m as Record<string, unknown>) }, []));
+    await r.authorize("s", { requestId: "r", surface: "bash", command: "ls" });
+    const u = rows[0].usage as Record<string, number>;
+    assert.equal(rows[0].estimated === true, estimated);
+    if (estimated) {
+      assert.ok(u.input > 100 && u.output === Math.ceil('{"verdict":"defer","reason":"x"}'.length / 4));
+      assert.equal(usageLine({ workspace: "/w", foremanSession: "f", role: "autoreview", launchId: null, kind: "foreman" }, rows[0]).estimated, true);
+    } else assert.equal(u.input, 7);
+  }
+  assert.equal("estimated" in usageLine({ workspace: "/w", foremanSession: "f", role: "x", launchId: null, kind: "foreman" }, { usage: { input: 1 } }), false);
 });
