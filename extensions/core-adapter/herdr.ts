@@ -172,6 +172,11 @@ export function installBlockedShim(pi: Pick<ExtensionAPI, "on" | "events">, opts
     tracker.add("ui", title || e.kind, title ? "title" : "kind");
   });
   pi.on("ui_prompt_end", async () => tracker.remove("ui"));
+  // Pi 1.1 can orphan a dialog (a second one opened while the first is up replaces it without settling it), so its
+  // ui_prompt_end never comes. Typed input proves no dialog holds the editor: release a stale "ui" source then.
+  pi.on("input", async (e) => {
+    if ((e as { source?: unknown }).source === "interactive") tracker.remove("ui");
+  });
   events.on(PERMISSIONS_UI_PROMPT, (data) => {
     const id = (data as { requestId?: unknown } | undefined)?.requestId;
     if (typeof id === "string") tracker.add(`perm:${id}`, permissionLabel(data), "perm");

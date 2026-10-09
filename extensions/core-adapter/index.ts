@@ -256,6 +256,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
   pi.on("ui_prompt_start", async (_e, ctx) => sessionFor(ctx)?.live?.setBlocked(true));
   pi.on("ui_prompt_end", async (_e, ctx) => sessionFor(ctx)?.live?.setBlocked(false));
+  pi.on("input", async (e, ctx) => { if (e.source === "interactive") sessionFor(ctx)?.live?.setBlocked(false); }); // orphaned dialog, see herdr.ts
   pi.events?.on(CHILD_TRACE_EVENT, (data: unknown) => {
     const e = (data ?? {}) as Record<string, unknown>;
     if (e.event === "test_restore") sessions.get(String(e.sessionId))?.trace?.emit({ event: e.event, cmd: e.cmd });

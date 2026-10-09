@@ -224,7 +224,8 @@ One tracker per Pi process counts what is waiting for you:
 
 It emits `herdr:blocked {active:true,label}` when the first one opens and `{active:false}` when the last one closes,
 so Herdr's counter stays balanced however they overlap. The end of a turn releases permission and own asks that never
-got their decision (an open Pi dialog stays until Pi closes it); shutdown releases everything.
+got their decision (an open Pi dialog stays until Pi closes it); shutdown releases everything. Pi can orphan a
+dialog that a second dialog replaces (it never sends that dialog's end); typed input then releases the stale dialog.
 
 Label: for a permission ask `<agent> · <tool> <first word>` (the requesting child's agent when forwarded; a path is
 cut to its basename; never the full command), else the dialog title, else pi-foreman's ask title, else the dialog
