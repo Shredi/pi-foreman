@@ -3,6 +3,26 @@
 ## [Unreleased]
 
 ### Added
+- Launch briefs: `instructions/foreman.md` gets explorer, builder and foreman skeletons (invariants and callers, new tests
+  instead of edits, no narrowed fuzz strategies, visibility, shared symbols, edit tools only); matching rules in
+  `agents/explorer.md` and `agents/builder.md`. A builder launch that cites ledger items ("item 3", "#5") gets a
+  `[pi-foreman ledger items]` block with their text (trace `ledger_block`); none on a rung-up launch, whose handoff has it.
+- Notices: a completion notice whose result was delivered inline is dropped from the model context instead of stubbed,
+  and the held launch result loses every pi-subagents async-started guidance line; trace `notify_deduped {runId, mode,
+  trimmed_lines}`. The extra turn a notice can trigger is decided inside pi-subagents and is not suppressed here.
+- Triage rules (`instructions/foreman.md`, every `foreman_triage` answer): a version or hash bump is trivial, security
+  hardening inside one component is standard not heavy, the explorer may be skipped when the builder brief lists the
+  files and symbols (the standard finish gate needs only builder and reviewer).
+- Review marks: a reviewer PASS marks its per-item "N. PASS" ledger items through the harness, never V (trace
+  `ledger_mark_by_review`); a builder or foreman touch-up after a PASS that only changes comments or docs needs no
+  re-review and uses no revision round (trace `revision_comment_only`).
+- Child scratch: each single-child launch gets `$FOREMAN_SCRATCH` (`<tmp>/pi-foreman-scratch/<session>/<launch>`, 0700);
+  writes and `rm` inside it are allowed (overlay cd, planner write guard, review label `child-scratch`); the harness
+  traces `child_scratch {bytes, files}`, removes it at run end and sweeps at shutdown; `ceremony.childScratch.keep` keeps it.
+- `codemode` is allowlisted; each inner call is still decided on its own (replay `test_replay_codemode.py`).
+- Bench: `/retro --model --known-limits <file>` tells the foreman which environment limits are rig facts, not harness
+  gaps (row `bench.known_limits`, default `/opt/known-limits.md`, capped at 2000 characters); generic Rust and Go task
+  images in `bench/images/` with rustfmt, clippy and a readable vendor dir.
 - `foreman radar` (`scripts/foreman_radar.py`, `bin/foreman radar`): a read-only ANSI tree of running sessions, the sessions they
   opened and their subagent runs (glyph, state, last-event age, subtree tokens and cost), from presence files
   `state/live/<sessionId>.json`, the session registry, handoff dirs and usage files; `--once`, `--since`, `--interval`,
@@ -118,6 +138,9 @@
   models) with claude-agent-sdk 0.3.293.
 
 ### Fixed
+- Write protection matched grep patterns and other string operands (`register\b` expanded to `.git/...`): it now
+  checks shell path arguments only; grep/rg patterns, sed/awk scripts, find `-name` values and echo/printf text are
+  skipped on read and filter lines, bash `*` skips dot entries and `\` is no separator outside Windows.
 - Bench post-step waiter passed `1.0` (an epoch) to `PiRpc._next` instead of an absolute deadline, so it never read a
   record and ran every post step to the 300 s cap; it now warns on stderr when the cap is hit.
 - `/sync --dry-run` ignored its arguments and ran a real sync; the flag now reaches `foreman_sync.py` (other arguments warn).

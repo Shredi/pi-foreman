@@ -18,6 +18,7 @@ import type { Json } from "./config.ts";
 import { get } from "./config.ts";
 import { BRIDGE_PROVIDER } from "./bridgeiso.ts";
 import type { BashRules } from "./timeoutallow.ts";
+import { insideScratch } from "./childscratch.ts";
 import { deterministicAllow } from "./timeoutallow.ts";
 
 export const REVIEW_LINK = "foreman-review";
@@ -150,7 +151,7 @@ interface AskDetails {
   path?: string;
   toolInputPreview?: string;
   forwarding?: unknown;
-  payload?: { request?: { surface?: string; toolName?: string | null; value?: string | null }; evidence?: { label?: string; text?: string }[] };
+  payload?: { kind?: string; request?: { surface?: string; toolName?: string | null; value?: string | null }; evidence?: { label?: string; text?: string }[] };
 }
 
 interface ReviewLog {
@@ -181,11 +182,13 @@ export interface ReviewSession {
   headless?: () => boolean;
   /** Bash rules of the permission file (baseline + safety.permissions), for the `timeout N <allowed>` rule. */
   bashRules?: () => BashRules | null;
+  /** Live child scratch dirs of this session, of one role when given (childscratch.ts). */
+  scratchDirs?: (role: string | null) => string[];
 }
 
 /** Deny text for a forwarded child ask that deferred with no human to ask: names what runs without approval. */
 export const HEADLESS_DENY =
-  "pi-foreman: not approved - the model review deferred and no human is available to confirm. Runs without approval: read-only git (status, diff, log, show), ls, cat, head, tail, wc, rg, grep, find, print-only `sed -n '<addr>p' <file>` (no s, w, e, r commands, no -i or -f), `cd <dir inside the workspace> && <allowed command>`, the project's test and build commands, `timeout N <allowed command>`, `cp [-r] <src> /tmp/<dir>` and `mkdir -p /tmp/<dir>` (one command, no chaining or redirection). Not allowed: sed -i, sed s/w/e/r scripts, writes outside the workspace, network. Use the read, grep, find and ls tools for inspection.";
+  "pi-foreman: not approved - the model review deferred and no human is available to confirm. Runs without approval: read-only git (status, diff, log, show), ls, cat, head, tail, wc, rg, grep, find, print-only `sed -n '<addr>p' <file>` (no s, w, e, r commands, no -i or -f), `cd <dir inside the workspace> && <allowed command>`, the project's test and build commands, `timeout N <allowed command>`, `cp [-r] <src> /tmp/<dir>` and `mkdir -p /tmp/<dir>` (one command, no chaining or redirection), `cp`, `mkdir`, `rm -r` and `cd` inside your $FOREMAN_SCRATCH (literal path). Not allowed: sed -i, sed s/w/e/r scripts, writes outside the workspace, network. Use the read, grep, find and ls tools for inspection.";
 
 interface PermissionsServiceLike {
   registerAuthorizer(name: string, authorize: (details: AskDetails, query: unknown, log: ReviewLog) => Promise<Verdict>): () => void;
@@ -305,6 +308,7 @@ export class ForemanReview {
       auto = target?.auto === true;
       if (!s) out = { verdict: { kind: "defer" }, label: "no-session" };
       else if (s.isChild) out = { verdict: { kind: "defer" }, label: "child" };
+      else if (d.forwarding && surface.startsWith("external_directory") && (fixed = this.scratchPathAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (!REVIEW_SURFACES.includes(surface)) out = { verdict: { kind: "defer" }, label: "surface" };
       else if (surface === "bash" && d.forwarding && (fixed = this.fixedAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (!target) out ={ verdict: { kind: "defer" }, label: "no-model" };
@@ -337,8 +341,33 @@ export class ForemanReview {
       // PS forwards only the first most-restrictive unit; the allow must also hold for the full command.
       const unit = unitValue(d);
       const full = reviewValue(d);
-      const label = deterministicAllow(rules, unit);
-      return label && full !== unit ? deterministicAllow(rules, full) : label;
+      const scratch = { scratchDirs: this.scratchOf(s, d) };
+      const label = deterministicAllow(rules, unit, scratch);
+      return label && full !== unit ? deterministicAllow(rules, full, scratch) : label;
+    } catch {
+      return null;
+    }
+  }
+
+  private scratchOf(s: ReviewSession, d: AskDetails): string[] {
+    try {
+      return s.scratchDirs?.(d.agentName ?? null) ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** "child-scratch" when a forwarded external-directory ask only touches live scratch dirs of the asking role (childscratch.ts). */
+  private scratchPathAllow(s: ReviewSession, d: AskDetails): string | null {
+    try {
+      const dirs = this.scratchOf(s, d);
+      if (!dirs.length) return null;
+      const value = unitValue(d);
+      if (d.payload?.kind === "bash_external_directory" || d.toolName === "bash") {
+        const rules = s.bashRules?.();
+        return rules && deterministicAllow(rules, reviewValue(d), { scratchDirs: dirs }) === "child-scratch" ? "child-scratch" : null;
+      }
+      return insideScratch(value, dirs) ? "child-scratch" : null;
     } catch {
       return null;
     }

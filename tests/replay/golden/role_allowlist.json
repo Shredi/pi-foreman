@@ -59,6 +59,10 @@
    "decision": "none"
   },
   {
+   "event": "child_scratch",
+   "role": "builder"
+  },
+  {
    "event": "llm",
    "model": "foreman-fake/foreman"
   },

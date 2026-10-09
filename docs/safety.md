@@ -33,6 +33,19 @@ The installer generates the permission-system config from `config/permissions.ba
 file: a hand edit is backed up and overwritten, so put your rules into `foreman.json`. The baseline has no `sed`
 rule (no glob separates a print from `1wout` or `1etouch x`, so every sed asks).
 
+The write protection (`protect`: `.git`, agent and harness configuration) checks the path arguments of a shell
+command, reads included: operands, option values and redirect targets. It skips the pattern and script operands of
+read commands (the grep/egrep/fgrep/rg pattern and `-e` values, a sed script without `w`/`r`/`e`/`a`/`i`/`c`
+commands, an awk program without redirection, pipe, `getline` or `system`, find's `-name`/`-iname`/`-path`/`-regex`
+values when there is no `-exec`/`-delete`, echo/printf text), but only when every command of the line is a read or
+filter command (grep, rg, sed, awk, find, echo, printf, cat, head, tail, wc, sort, uniq, cut, tr, ls, cd, ...) and
+there is no `$(...)`, backtick or process substitution: `echo .git/HEAD | xargs touch` is still refused. A `*` skips
+dot entries as in bash (unless the command mentions `dotglob` or `GLOBIGNORE`) and `\` is no path separator outside
+Windows. The secret path denies still check every word.
+
+`codemode` is allowlisted: each call its script makes (`tools.read`, `tools.bash`, ...) passes the overlay, the
+guards and the permission system on its own, as a direct call would (`tests/replay/test_replay_codemode.py`).
+
 Asks go through a model review link (`foreman-review`) using `providers.<p>.review.model` (see
 [roles](roles.md) for the automatic pick). Child asks are forwarded to it:
 
@@ -52,6 +65,24 @@ Asks go through a model review link (`foreman-review`) using `providers.<p>.revi
   text naming the allowed forms, trace `review_defer_headless {role, cmd}`. The `review` trace carries the model's
   defer `reason`.
 - Review model calls are logged to the usage log with role `autoreview`.
+
+## Child scratch
+
+Each single-child launch gets a scratch dir under the OS temp dir (`$FOREMAN_SCRATCH`, see
+[ceremony](ceremony.md)). Writes and removes are allowed inside that dir only, never the dir itself or anything
+outside it:
+
+- Overlay: a child may `cd` into its own scratch dir (literal or `$FOREMAN_SCRATCH`); every other rule applies there too.
+- Shell-write guard: a planner child, which may write nowhere outside its allowed dirs, may also write inside its own
+  scratch dir.
+- Review link (label `child-scratch`): a forwarded child ask is allowed without the model when every unit of the
+  command is `cp [-rRapf] <src>... <dest>`, `mkdir [-p] <dir>...`, `rm [-rRf] <path>...` or `cd <dir>` with every
+  destination or operand inside a live scratch dir of the asking role, or a unit the rules allow, joined only by
+  `&&` or `;`; and an outside-directory ask for a write or edit path inside such a dir. POSIX shell forms only. The
+  link knows the asking child's role, not its launch, so two concurrent launches of one role share the allowance.
+- The destructive guard still refuses `rm -r` with a variable operand: use the literal path.
+- The harness removes the dir at run end only after a realpath check that it is a real directory below the
+  `pi-foreman-scratch` root and neither inside nor around the repository.
 
 ## Child environment and extensions
 

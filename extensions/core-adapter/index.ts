@@ -37,6 +37,7 @@ import { ReviewFacts } from "./diffscan.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
+import { boundLaunchId, ChildScratch, finishScratch, launchScratch, SCRATCH_ENV, sweepScratch } from "./childscratch.ts";
 import { GitDriftWatch, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
@@ -54,6 +55,8 @@ import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
 import { appendReview, capSet, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prToolRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
+import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
+import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts";
 import { openTrace } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
 import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
@@ -62,9 +65,10 @@ import { workspaceOf } from "./python.ts";
 import { ChildWidget, rungOf } from "./childwidget.ts";
 import { LiveState } from "./livestate.ts";
 import { CompactionGate } from "./compaction.ts";
+import { applyLedgerItems } from "./ledgerblock.ts";
 import { citedItems, ledgerHint, writeHint } from "./hints.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, withDigest } from "./retro.ts";
-import { extractRetro, lastAssistantText, MODEL_RETRO_PROMPT, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
+import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
 import { UsageFooter, lookupRate } from "./footer.ts";
 import { blockedConfirm, installBlockedShim, PERMISSIONS_DECISION, PERMISSIONS_UI_PROMPT, withBlocked } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
@@ -77,11 +81,11 @@ let herdrEvents: EventBus | undefined;
 import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait, waitLimits } from "./wait.ts";
-import { dedupeNotices, dedupeOn, dropReturnControl, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
+import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { registerClose, syncCommand } from "./close.ts";
 import { registerSession } from "./session.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
-import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_TOOL, trivialPathAdvice, workspaceTargets } from "./triage.ts";
+import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_RULES, TRIAGE_TOOL, trivialPathAdvice, workspaceTargets } from "./triage.ts";
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
@@ -151,6 +155,8 @@ interface Session {
   launchBatch: LaunchBatch;
   /** Foreman only: run ids whose completion notice was deduplicated and traced (knob 5a; trace once per run). */
   dedupeTraced: Set<string>;
+  /** Async-started guidance lines trimmed from a held launch result, by run id (trace notify_deduped). */
+  trimmedLines: Map<string, number>;
   /** Foreman only: builder revision rounds since the last user prompt or /ceremony tier change (rounds.ts). */
   rounds: RoundState;
   /** Foreman only, ceremony gate (bound.ts): own project-file changes at trivial, reset by /ceremony. */
@@ -175,6 +181,12 @@ interface Session {
   reviews: ReviewRecord[];
   /** Pending HEAD reads of `reviews`; the PR gate waits for it. */
   reviewSync: Promise<void>;
+  /** Foreman only: review runs whose `N. PASS` items were marked (reviewmarks.ts), so each run marks once. */
+  reviewMarked: Set<string>;
+  /** Foreman only: the working tree at the latest review PASS (commentonly.ts); null without one. */
+  passSnap: TreeSnap | null;
+  /** Foreman only: builder runs launched after a PASS; a comment-only result withdraws their revision. */
+  touchUps: Set<string>;
   /** Foreman only: HEAD per directory at launch, by tool call id until the launch result names the run. */
   launchHeadsByCall: Map<string, Map<string, string | null>>;
   /** Foreman only: HEAD per directory at launch, by run id until the run ends (reviews.ts reviewedHead). */
@@ -199,6 +211,8 @@ interface Session {
   /** Foreman: latest explorer report for the next builder launch (builderbrief.ts). Child: its read-class call count (childreads.ts). */
   brief: ExplorerBrief;
   childReads: ChildReads;
+  /** Child scratch dirs of this session's launches (childscratch.ts). */
+  scratch: ChildScratch;
   /** Children widget and its run view (childwidget.ts). */
   widget: ChildWidget;
   /** Presence file (livestate.ts); null for a subagent child or a print/json run. */
@@ -265,6 +279,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const baseline = readBaseline(PKG_ROOT);
   // A child's launch binding is in the env while its extensions load (usage.ts); read it now.
   const launchBinding = readBinding(process.env);
+  if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.scratch) process.env[SCRATCH_ENV] = launchBinding.scratch;
 
   const pyPath = (s: Session): string | null => (s.python.ok ? s.python.info.executable : null);
 
@@ -339,6 +354,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       lastBuilderModel: null,
       reviews: [],
       reviewSync: Promise.resolve(),
+      reviewMarked: new Set(),
+      passSnap: null,
+      touchUps: new Set(),
       launchHeadsByCall: new Map(),
       launchHeads: new Map(),
       plan: null,
@@ -349,11 +367,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ledgerBash: new Set(),
       launchBatch: new LaunchBatch(),
       dedupeTraced: new Set(),
+      trimmedLines: new Map(),
       ladder: new LadderState(),
       retro: new RetroState(),
       childLadder: new ChildLadder(isChild ? b?.ladder : undefined),
       brief: new ExplorerBrief(),
       childReads: new ChildReads(),
+      scratch: new ChildScratch(),
       widget: new ChildWidget(usageFile(agentDir, foremanSession)),
       live: null,
     };
@@ -538,7 +558,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   pi.on("session_start", async (event, ctx) => {
     const s = await startSession(ctx);
-    review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [], recordUsage: (m) => { const x = sessions.get(s.id); if (x) appendUsage(x.usage.file, usageLine({ ...x.usage.line, role: "autoreview", launchId: null, kind: "foreman" }, m)); }, ...reviewExtras(baseline, () => sessions.get(s.id)?.config.config, ctx) });
+    review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [], recordUsage: (m) => { const x = sessions.get(s.id); if (x) appendUsage(x.usage.file, usageLine({ ...x.usage.line, role: "autoreview", launchId: null, kind: "foreman" }, m)); }, scratchDirs: (role) => sessions.get(s.id)?.scratch.live(role) ?? [], ...reviewExtras(baseline, () => sessions.get(s.id)?.config.config, ctx) });
     if (!s.isChild && (event.reason === "startup" || event.reason === "new")) await applyForemanModel(s, ctx);
     await registerChildExtensions(s, ctx);
     const orderNotice = s.isChild ? null : loadOrderNotice(s.cwd, s.agentDir, PKG_ROOT);
@@ -564,6 +584,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // already gone
     }
     s.registration = undefined;
+    sweepScratch(s);
     review.drop(s.id);
     s.live?.stop();
     s.widget.dispose();
@@ -740,6 +761,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ladder: "on",
       // Foreman rulings never put a diff fact in scope (review rule; "off" only renders the eee843d baseline).
       factRulings: "on",
+      // Launch skeletons and tier rules (retro-harvest; "off" only renders the eee843d baseline).
+      launchBriefs: "on",
+      // A reviewer PASS marks its items (reviewmarks.ts; "off" only renders the eee843d baseline).
+      reviewMarks: "on",
     };
   }
   /** ceremony.heavyThreshold: anything but "eee843d" is the default strict. */
@@ -829,6 +854,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.supervisor.onRunEnd(data);
         endActive(s.activeRuns, data);
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
+        if (typeof runId === "string") finishScratch(s, s.scratch.onRunEnd(runId));
         if (typeof runId === "string" && !s.isChild) {
           s.widget.runs.onRunEnd(runId);
           s.live?.touch();
@@ -840,6 +866,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           for (const step of stepsOfRunEnd(data)) s.steps[step]++;
           const verdicts = reviewVerdictsOfRunEnd(data);
           s.reviewGate = onReviewVerdicts(s.reviewGate, verdicts);
+          if (!s.isChild) onRunEndReview(s, runId, data, verdicts.length > 0);
           const cited = s.retro.launchItems.get(runId) ?? [];
           s.retro.launchItems.delete(runId);
           if (!s.isChild && verdicts.length) writeHint(boundLedger(s.markerDir, s.id), cited, `review ${verdicts.map((v) => (v ?? "no verdict").toUpperCase()).join(", ")} (run ${runId.slice(0, 8)})`, s.retro.hints);
@@ -866,7 +893,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Overlay check (see permoverlay.ts); undefined = let the call go on. */
   async function overlayBlock(s: Session, ctx: ExtensionContext, toolName: string, input: Record<string, unknown>) {
     if (!s.overlay) return { block: true as const, reason: OVERLAY_UNAVAILABLE };
-    const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main" });
+    const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined });
     const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) });
     if (d) s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: r ? (d.kind === "deny" ? "deny" : "ask-denied") : "ask-approved" });
     return r;
@@ -1104,6 +1131,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.rounds = rounds.next;
         for (let i = 0; i < rounds.revisions; i++) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: kind });
       }
+      if (event.toolName === "subagent" && !s.isChild) {
+        const lf = boundLedger(s.markerDir, s.id);
+        const lg = (() => { try { return lf ? fs.readFileSync(lf, "utf8") : null; } catch { return null; } })();
+        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)))) s.trace?.emit(r);
+      }
       if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input)) s.trace?.emit(r);
       if (event.toolName === "subagent" && climbs.length > 0) {
         const ledgerFile = boundLedger(s.markerDir, s.id);
@@ -1220,12 +1252,48 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const reviews = completedAgents(text).filter((a) => REVIEW_ROLES.includes(a));
     if (reviews.length === 0) return;
     const verdict = verdictOf(text);
+    const passed = reviewerPassOfNotice(text);
+    if (passed) markByReview(s, passed.runId, passed.text);
     s.rounds = onReviewDone(s.rounds, verdict);
     for (const role of reviews) s.trace?.emit({ event: "review_done", role, decision: verdict ?? "no-verdict" });
     if (verdict === "pass") {
       s.budget.enterPost();
       s.trace?.emit({ event: "recheck_budget", count: 0, action: "start" });
     } else if (verdict === "fail") resetRecheck(s, "fail");
+  }
+
+  /** Retro-harvest 1/6 at a run end: a reviewer PASS marks its items; a verdict sets or clears the PASS snapshot; a touch-up builder is checked. */
+  function onRunEndReview(s: Session, runId: string, data: unknown, verdict: boolean): void {
+    const pass = reviewerPassOfRunEnd(data);
+    if (pass) markByReview(s, runId, pass);
+    if (verdict) {
+      const passed = s.reviewGate.last === "pass";
+      const cwd = reviewsOfRunEnd(data)[0]?.cwd ?? s.cwd;
+      s.passSnap = null;
+      if (passed) s.reviewSync = s.reviewSync.then(async () => { const tree = await worktreeTree(cwd); if (s.reviewGate.last === "pass") s.passSnap = tree ? { cwd, tree } : null; });
+    }
+    if (s.touchUps.delete(runId)) s.reviewSync = s.reviewSync.then(async () => {
+      if (s.reviewGate.last === "pass" && s.reviewGate.revised && (await commentOnlyNow(s))) s.reviewGate = { ...s.reviewGate, revised: false };
+    });
+  }
+
+  /** Mark the `N. PASS` items of a reviewer PASS in the bound ledger, once per review run (reviewmarks.ts). */
+  function markByReview(s: Session, runId: string, text: string): void {
+    if (s.reviewMarked.has(runId)) return;
+    s.reviewMarked.add(runId);
+    const file = boundLedger(s.markerDir, s.id);
+    if (!file) return;
+    s.reviewSync = s.reviewSync.then(async () => {
+      const r = await markPassItems(text, file, async (n) => (await runLedger(s, ["mark", n, MARK_NOTE], file)).ok);
+      if (r) s.trace?.emit({ event: "ledger_mark_by_review", items: r.items.join(","), skipped: r.skipped.join(",") });
+    });
+  }
+
+  /** The working tree differs from the PASS snapshot only in comments or docs (commentonly.ts); traced revision_comment_only. */
+  async function commentOnlyNow(s: Session): Promise<boolean> {
+    const files = s.passSnap ? await commentOnlySince(s.passSnap) : null;
+    if (files) s.trace?.emit({ event: "revision_comment_only", files: files.length });
+    return files !== null;
   }
 
   function editModeOfSession(s: Session): { mode: EditMode; scratchDir: string } {
@@ -1336,6 +1404,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root, toolName, allowedShellDirs(mode, scratchDir, ctx.cwd, platform));
       // A planner writes nowhere outside the allowed dirs, outside the workspace included.
       if (planner) payload.confine = true;
+      if (planner && launchBinding?.scratch) payload.scratch_dir = launchBinding.scratch;
       const v = shellWriteVerdict(await runShellWriteGuard({ python: pyPath(s), pkgRoot: PKG_ROOT, payload, env, cwd: ctx.cwd, spawner }), pyPath(s));
       if (v.decision === "allow") return undefined;
       if (v.decision !== "refuse") return { block: true, reason: v.reason };
@@ -1357,6 +1426,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!role) return null;
     const model = typeof input.model === "string" && input.model ? input.model : null;
     const b = recordUsageLaunch(s.launches, { foremanSession: s.usage.line.foremanSession, workspace: s.usage.line.workspace, role, model, kind, activeProvider: ctx.model?.provider, ladder });
+    launchScratch(s, input, b);
     bindLaunch(input, b);
     return b;
   }
@@ -1385,7 +1455,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // It is also a revision that re-opens the reviewer step (ceremony.reviewGate).
     if (owner && !owner.isChild && !event.isError && (owner.budget.postPass || (owner.reviewGate.last !== null && !owner.reviewGate.revised)) && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
       if (owner.budget.postPass) resetRecheck(owner, "edit");
-      owner.reviewGate = onRevision(owner.reviewGate);
+      const touchUp = owner.reviewGate.last === "pass" && !owner.reviewGate.revised && (await owner.reviewSync, await commentOnlyNow(owner));
+      if (!touchUp) owner.reviewGate = onRevision(owner.reviewGate);
     }
     if (owner && !owner.isChild && !event.isError && event.toolName === "bg_wait") recordChild(owner, bgWaitLocations(event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n"), knownRun(owner)));
     if (owner && pending) {
@@ -1405,6 +1476,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const heads = s.launchHeadsByCall.get(event.toolCallId);
         s.launchHeadsByCall.delete(event.toolCallId);
         const runId = launchId(event.input, event.details, event.isError);
+        finishScratch(s, s.scratch.onLaunched(boundLaunchId(event.input), runId));
         s.ladder.onLaunched(event.toolCallId, runId);
         if (runId && !s.isChild) {
           s.widget.runs.onLaunched(event.toolCallId, runId, s.launchedRoles.get(runId) ?? []);
@@ -1427,6 +1499,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             if (eff.lift) s.trace?.emit({ event: "read_budget", phase: eff.lift.phase, count: eff.lift.count, action: "lift", by: "explorer" });
             if (roles.includes("builder")) {
               resetRecheck(s, "builder");
+              if (s.reviewGate.last === "pass" && !s.reviewGate.revised && !roles.some((r) => REVIEW_ROLES.includes(r))) s.touchUps.add(runId);
               s.reviewGate = onRevision(s.reviewGate);
             }
             const after = reopened(s.reviewGate);
@@ -1442,7 +1515,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (s && held?.path) recordChild(s, [held.path]);
       // subagent has no post guards (toolmap.ts), so the amended result can be returned here.
       // The held text stays the last block: deliveredRuns accepts the "done" marker only there.
-      if (notices || held) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(held && !held.plain ? dropReturnControl(event.content) : event.content), ...(held ? [{ type: "text" as const, text: held.text }] : [])] };
+      const trim = held && !held.plain ? dropAsyncGuidance(event.content) : null;
+      if (s && trim && trim.trimmed > 0) s.trimmedLines.set(launchId(event.input, event.details, event.isError) ?? "", trim.trimmed);
+      if (notices || held) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(trim ? trim.content : event.content), ...(held ? [{ type: "text" as const, text: held.text }] : [])] };
     }
     const mapping = mapTool(event.toolName);
     const changed = event.isError ? undefined : changedFileOf(event.toolName, event.input as Record<string, unknown>);
@@ -1491,7 +1566,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { text: climb && climb.runId === runId ? `${text}\n${climbHint(climb)}` : text, path: r.end?.resultPath ?? asyncDir };
   }
 
-  // Knob 5a (launchwait.ts): a completion notice whose result an earlier message delivered becomes a stub.
+  // Knob 5a (launchwait.ts): a completion notice whose result an earlier message delivered is dropped from the model context.
   pi.on("context", async (event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild || !dedupeOn(get(s.config.config, "ceremony.dedupeNotify"))) return undefined;
@@ -1500,7 +1575,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const runId of r.deduped) {
       if (s.dedupeTraced.has(runId)) continue;
       s.dedupeTraced.add(runId);
-      s.trace?.emit({ event: "notify_deduped", runId });
+      s.trace?.emit({ event: "notify_deduped", runId, mode: r.mode, trimmed_lines: s.trimmedLines.get(runId) ?? 0 });
     }
     return { messages: r.messages };
   });
@@ -1508,6 +1583,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("agent_before_settle", async (event, ctx) => {
     if (event.outcome !== "completed") return undefined;
     const s = await ensureSession(ctx);
+    await s.reviewSync; // PASS marks and the comment-only check land before the stop guard reads the ledger
     const outcome = await run(s, ctx, "ledger_guard_stop", stopPayload(payloadCtx(s, ctx), s.stopContinued), "Stop");
     const r = translateStop(outcome);
     if (r.openFailure) notifyOnce(s, ctx, "open:ledger_guard_stop", r.openFailure);
@@ -1654,7 +1730,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const note = raised ? "Recorded as standard, not trivial: the edit mode already refused a change of yours, so a builder makes it. " : "";
         const em = editModeOfSession(s);
         const advice = tier === "trivial" && trivialBuilderPath(get(s.config.config, "ceremony.required")) ? trivialPathAdvice(em.mode === "bounded") : tier === "trivial" && em.mode !== "bounded" ? `No builder is required, but ${editModeAdvice(em.mode, em.scratchDir)} for any project change (that makes the task standard).` : triageAdvice(tier);
-        return { content: [{ type: "text" as const, text: [`${note}${tierLine(s.ceremony)} ${advice}`, finishLine({ [tier]: requiredOf(s, tier) }, tier)].filter(Boolean).join(" ") }], details: { decision: "recorded", tier } };
+        return { content: [{ type: "text" as const, text: [`${note}${tierLine(s.ceremony)} ${advice} ${TRIAGE_RULES}`, finishLine({ [tier]: requiredOf(s, tier) }, tier)].filter(Boolean).join(" ") }], details: { decision: "recorded", tier } };
       },
     } as never);
   }
@@ -1917,7 +1993,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (file && /(?:^|\s)--model(?:\s|$)/.test(args)) {
         if (!ctx.isIdle()) return ctx.ui.notify("pi-foreman: /retro --model runs only while the foreman is idle; the metrics were written.", "warning");
         s.retro.modelFile = file;
-        pi.sendUserMessage(MODEL_RETRO_PROMPT);
+        let limits: string | null = null;
+        const limitsPath = knownLimitsArg(args);
+        if (limitsPath) {
+          try {
+            limits = fs.readFileSync(limitsPath, "utf8");
+          } catch {
+            limits = null; // a missing file adds no block
+          }
+        }
+        pi.sendUserMessage(modelRetroPrompt(limits));
       }
     },
   });

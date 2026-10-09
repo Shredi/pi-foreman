@@ -182,6 +182,12 @@
           "description": "Read budget per child role (read, grep, find, ls and read-only bash calls of one child run; a role without an entry has no budget). At warn the result tells the child to wrap up; above deny the call is refused and the child returns its report with what it has (STATUS: stuck if it cannot finish). Defaults: builder 20/40, reviewer 15/30, explorer exempt.",
           "additionalProperties": { "type": "object", "additionalProperties": false, "properties": { "warn": { "type": "integer", "minimum": 1 }, "deny": { "type": "integer", "minimum": 1 } } }
         },
+        "childScratch": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Per-launch child scratch dir <os temp dir>/pi-foreman-scratch/<session>/<launch> (mode 0700), named in the task and as env FOREMAN_SCRATCH; the harness removes it when the run ends and sweeps the session's dirs at shutdown.",
+          "properties": { "keep": { "type": "boolean", "description": "true = keep the scratch dirs after the run and at shutdown (inspection). Any layer may set it: it only retains temporary data." } }
+        },
         "recheckBudget": { "type": "integer", "minimum": 0, "description": "Read-class calls the foreman may make after a reviewer PASS before it is told to finish. A project or session can only lower it." },
         "launchWait": { "type": "string", "enum": ["detach", "block"], "description": "block = a launch's tool result waits for the child to end; detach = it returns at once. A project or session can only move to block." },
         "dedupeNotify": { "type": "boolean", "description": "Replace a subagent-notify message whose result was already delivered with a one-line stub. A project or session can only set true." },

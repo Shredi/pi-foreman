@@ -250,6 +250,20 @@ class ShellWriteGuardTest(unittest.TestCase):
                 self.assertEqual(hit[0] if hit else None, kind, hit)
         self.assertIsNone(swg.decide("echo x > .workflow/n.md; echo y > /dev/null", self.ws, self.ws, "bash", [".workflow"], True))
 
+    def test_confine_allows_writes_inside_the_child_scratch_dir_only(self):
+        # planner child with a scratch dir (childscratch.ts): inside it, also via $FOREMAN_SCRATCH, writes pass
+        root = tempfile.mkdtemp(prefix="pf-swg-scratch-")
+        self.addCleanup(shutil.rmtree, root, True)
+        scratch = os.path.join(os.path.realpath(root), "L1")
+        os.mkdir(scratch)
+        sc = scratch.replace("\\", "/")
+        for cmd, kind in (("echo x > %s/f" % sc, None), ("cp -r . $FOREMAN_SCRATCH/copy && rm -rf ${FOREMAN_SCRATCH}/copy", None),
+                          ("echo x > '$FOREMAN_SCRATCH/f'", "redirect"), ("rm -rf %s" % sc, "delete"),
+                          ("echo x > %s/../f" % sc, "redirect"), ("echo x > src/f", "redirect")):
+            with self.subTest(command=cmd):
+                hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], True, scratch)
+                self.assertEqual(hit[0] if hit else None, kind, hit)
+
     def test_symlinked_allowed_dir_is_not_writable(self):
         # `.workflow/scratch` -> `../src`: the allowed dir is lexical, the target real, so nothing lands in it
         os.makedirs(os.path.join(self.ws, ".workflow"), exist_ok=True)

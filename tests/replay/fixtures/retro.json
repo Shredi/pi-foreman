@@ -20,6 +20,6 @@
   ]
  },
  "*": {
-  "r-rt2": [{"text": "[[replay:rt2]] VERDICT: PASS\n2. PASS a.txt:1\nOverall verdict: PASS"}]
+  "r-rt2": [{"text": "[[replay:rt2]] VERDICT: PASS\nevidence a.txt:1\nOverall verdict: PASS"}]
  }
 }

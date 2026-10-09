@@ -57,6 +57,40 @@ test("S1/S2: .git is write-protected in every session, git commands and .gitigno
   if (process.platform === "darwin" || process.platform === "win32") run([[["write", { path: ".GIT/config", content: "x" }], "deny", "deny"]]);
 });
 
+test("protect matches path arguments only: patterns, scripts and echo text are not paths (item 4)", () => {
+  for (const d of ["internal/api", "internal/db"]) fs.mkdirSync(at(cwd, d), { recursive: true });
+  fs.writeFileSync(at(cwd, "internal", "api", "hub.go"), "package api\n");
+  fs.writeFileSync(at(cwd, "internal", "db", "exchange_status.go"), "package db\n");
+  run([
+    // two real bench commands that were denied: `\` read as a separator, `*` listing .git
+    [sh(`cd ${cwd} && grep -rn "broadcastServerUpdate\\|func (h \\*\\|clientsMu\\|register\\b" internal/api/*.go | grep -v _test | head -50`), "pass", "pass"],
+    [sh(`grep -n "LogCleanup\\b\\|Transport \\*\\|ExchangeStatus struct" internal/db/exchange_status.go`), "pass", "pass"],
+    [sh("grep -rn '.git/config' internal"), "pass", "pass"],
+    [sh("rg -e .git/HEAD internal"), "pass", "pass"],
+    [sh("sed -n '/.git\\//p' internal/api/hub.go"), "pass", "pass"],
+    [sh("find . -name .git -prune -o -name '*.go' -print"), "pass", "pass"],
+    [sh("echo .git/hooks"), "pass", "pass"],
+    [sh("cat */hub.go"), "pass", "pass"],
+    // real .git paths stay denied, also as redirect targets and with dotglob
+    [sh("cat .git/config"), "deny", "deny"],
+    [sh("grep x .git/config"), "deny", "deny"],
+    [sh("grep -e x .git/config"), "deny", "deny"],
+    [sh("grep -f .git/config internal"), "deny", "deny"],
+    [sh("rg foo .git"), "deny", "deny"],
+    [sh("echo x > .git/HEAD"), "deny", "deny"],
+    [sh("printf x >> .git/config"), "deny", "deny"],
+    [sh("cp a .g*/hooks/"), "deny", "deny"],
+    [sh("shopt -s dotglob; cat */config"), "deny", "deny"],
+    // a pattern that can become a path, or a script that writes, is checked as before
+    [sh("echo .git/HEAD | xargs touch"), "deny", "deny"],
+    [sh("touch $(echo .git/HEAD)"), "deny", "deny"],
+    [sh("find . -path '*/.git/*' -delete"), "deny", "deny"],
+    [sh("sed -n 'w .git/HEAD' internal/api/hub.go"), "deny", "deny"],
+    [sh("sed 's/a/b/w .git/HEAD' internal/api/hub.go"), "deny", "deny"],
+    [sh("awk '{print > \".git/HEAD\"}' internal/api/hub.go"), "deny", "deny"],
+  ]);
+});
+
 test("S3/S6/S17/S27: agent and harness configuration is asked in the foreman, denied in children", () => {
   run([
     [["write", { path: ".pi/agents/builder.md", content: "x" }], "ask", "deny"],

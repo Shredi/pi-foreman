@@ -273,9 +273,31 @@ export function deliveredRuns(m: unknown): string[] {
   return hit && (d.runId === hit[1] || d.asyncId === hit[1]) ? [hit[1]] : [];
 }
 
-/** A held launch's own result without pi-subagents' "Return control to the user now ..." line (it contradicts the hold). */
-export function dropReturnControl<C>(content: readonly C[]): C[] {
-  return content.map((c) => (isObj(c) && c.type === "text" && typeof c.text === "string" ? ({ ...c, text: c.text.split("\n").filter((l) => !l.includes("Return control to the user now")).join("\n") } as C) : c));
+// pi-subagents' async-started guidance (async-execution.js formatAsyncStartedMessage), interactive and
+// non-interactive text. All of it contradicts a held launch, which returns the child's result itself.
+const ASYNC_GUIDANCE = [
+  /^The async run is detached/,
+  /^You are in an interactive session\./,
+  /^Use bg_wait only for/,
+  /^If the current turn must receive results from work without a native notification/,
+  /^Otherwise, continue any independent work/,
+  /^This is a non-interactive run: Pi auto-drains/,
+  /^Use subagent\(\{ action: "status"/,
+  /Return control to the user now/,
+];
+
+/** A held launch's own result without pi-subagents' async-started guidance lines (detached, bg_wait, "Return control ..."); `trimmed` counts the removed lines. */
+export function dropAsyncGuidance<C>(content: readonly C[]): { content: C[]; trimmed: number } {
+  let trimmed = 0;
+  const out = content.map((c) => {
+    if (!isObj(c) || c.type !== "text" || typeof c.text !== "string") return c;
+    const lines = c.text.split("\n");
+    const kept = lines.filter((l) => !ASYNC_GUIDANCE.some((re) => re.test(l)));
+    if (kept.length === lines.length) return c;
+    trimmed += lines.length - kept.length;
+    return { ...c, text: kept.join("\n").trimEnd() } as C;
+  });
+  return { content: out, trimmed };
 }
 
 /** One-line stub: the notice's first line (status and role), the run ids and its directory lines, verbatim. */
@@ -285,22 +307,26 @@ export function noticeStub(text: string, runs: { ids: string[]; lines: string[] 
 }
 
 /**
- * The context with every completion notice whose runs were all delivered earlier replaced by its
- * stub, or null when nothing changes. `deduped` lists the run ids of the stubbed notices.
+ * The context with every completion notice whose runs were all delivered earlier removed ("drop",
+ * default) or replaced by its stub ("stub"), or null when nothing changes. `deduped` lists the run
+ * ids of those notices.
  */
-export function dedupeNotices<M>(messages: readonly M[]): { messages: M[]; deduped: string[] } | null {
+export function dedupeNotices<M>(messages: readonly M[], mode: "drop" | "stub" = "drop"): { messages: M[]; deduped: string[]; mode: "dropped" | "stub" } | null {
   const delivered = new Set<string>();
-  let out: M[] | null = null;
+  const out: M[] = [];
+  let changed = false;
   const deduped: string[] = [];
-  messages.forEach((m, i) => {
+  for (const m of messages) {
     for (const id of deliveredRuns(m)) delivered.add(id);
-    if (!isObj(m) || m.role !== "custom" || m.customType !== NOTIFY_TYPE) return;
-    const text = textOf(m.content);
-    const runs = noticeRuns(text);
-    if (!runs || !runs.ids.every((id) => delivered.has(id))) return;
-    out ??= [...messages];
-    out[i] = { ...m, content: noticeStub(text, runs) } as M;
+    const text = isObj(m) && m.role === "custom" && m.customType === NOTIFY_TYPE ? textOf(m.content) : "";
+    const runs = text ? noticeRuns(text) : null;
+    if (!runs || !runs.ids.every((id) => delivered.has(id))) {
+      out.push(m);
+      continue;
+    }
+    changed = true;
     deduped.push(...runs.ids);
-  });
-  return out ? { messages: out, deduped } : null;
+    if (mode === "stub") out.push({ ...(m as object), content: noticeStub(text, runs) } as M);
+  }
+  return changed ? { messages: out, deduped, mode: mode === "drop" ? "dropped" : "stub" } : null;
 }

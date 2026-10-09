@@ -1,0 +1,16 @@
+{
+ "foreman": {
+  "s1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:scratch]] copy aside"}}]},
+   {"text": "Launched."},
+   {"text": "Builder reported."}
+  ]
+ },
+ "builder": {
+  "scratch": [
+   {"tools": [{"name": "bash", "arguments": {"command": "cp notes.txt $FOREMAN_SCRATCH/copy.txt"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "ls $FOREMAN_SCRATCH"}}]},
+   {"text": "child: scratch used"}
+  ]
+ }
+}

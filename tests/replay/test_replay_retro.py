@@ -1,7 +1,7 @@
 """Replay: ledger hints, compaction digest and retro files (D8) on the fake provider.
 
 The foreman writes a ledger, marks item 1 (hint), launches a reviewer citing item 2 (launch hint),
-whose PASS adds a verdict hint. The notice turn reports a context near the window, so the price-tier
+whose PASS (no per-item lines, so the harness marks nothing) adds a verdict hint. The notice turn reports a context near the window, so the price-tier
 compaction runs with the Retro instructions; the fake summary then ends with `## Retro`. After it:
 `.workflow/retro/<session>.md` holds the counters and that section, V has a `retro written` hint and
 the next request's pi-foreman section carries the digest naming the ledger. `/retro --model` sent as

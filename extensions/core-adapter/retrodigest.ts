@@ -102,6 +102,22 @@ export function retroEntry(opts: { when: Date; reason: string; counters: string;
 /** The prompt of `/retro --model`: one foreman turn of at most 10 lines. */
 export const MODEL_RETRO_PROMPT = "pi-foreman retro: in at most 10 lines and without any tool call, list what was missing in this session (files, allow rules, brief details) and what to enhance in the harness or the briefs. Reply with the lines only.";
 
+/** Cap of the known-limits file text added to the `/retro --model` prompt. */
+export const KNOWN_LIMITS_MAX_CHARS = 2000;
+
+/** The path after `--known-limits` in the /retro arguments (quotes stripped), else null. */
+export function knownLimitsArg(args: string): string | null {
+  const m = /(?:^|\s)--known-limits(?:\s+|=)(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(args);
+  return m ? (m[1] ?? m[2] ?? m[3] ?? null) : null;
+}
+
+/** MODEL_RETRO_PROMPT plus, when `limits` has text, the rig-facts block (capped); "" or null adds nothing. */
+export function modelRetroPrompt(limits: string | null): string {
+  const text = (limits ?? "").trim().slice(0, KNOWN_LIMITS_MAX_CHARS);
+  if (!text) return MODEL_RETRO_PROMPT;
+  return `${MODEL_RETRO_PROMPT}\n\nKnown environment limits (rig facts, not harness gaps; do not list them under Missing:):\n${text}`;
+}
+
 /** The text of the last assistant message in `messages` (agent_end), else "". */
 export function lastAssistantText(messages: readonly unknown[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {

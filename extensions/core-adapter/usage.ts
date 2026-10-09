@@ -38,6 +38,8 @@ export interface LaunchBinding {
   model: string | null;
   /** Ladder (ladder.ts): the child's limits and rung; absent = no check. */
   ladder?: LadderLimits;
+  /** Child scratch dir (childscratch.ts), set in the child as env FOREMAN_SCRATCH. */
+  scratch?: string;
 }
 
 export interface LadderLimits {
@@ -158,7 +160,8 @@ export function readBinding(env: Env): LaunchBinding | null {
     const pos = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : undefined);
     const l = isObj(b.ladder) ? b.ladder : null;
     const limit = l ? { ladder: { strongAbove: pos(l.strongAbove), maxTurns: pos(l.maxTurns), bottom: l.bottom === true } } : {};
-    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit };
+    const scratch = str(b.scratch);
+    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}) };
   } catch {
     return null;
   }

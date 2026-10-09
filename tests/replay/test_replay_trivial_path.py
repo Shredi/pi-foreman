@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture  # noqa: E402
+from driver import load_fixture, tool_results  # noqa: E402
 from test_replay import REASON, ReplayCase  # noqa: E402
 from test_replay_ceremony_gate import events, gate_messages  # noqa: E402
 from test_replay_diff_facts import git  # noqa: E402
@@ -65,6 +65,40 @@ class TestTrivialPath(ReplayCase):
         self.assertEqual([r["missing"] for r in events(rig, sid, "finish_refused")], ["reviewer"])
         self.assertEqual(events(rig, sid, "ceremony_incomplete"), [])
         self.assertEqual([r["role"] for r in events(rig, sid, "role_launch")], ["builder", "reviewer"])
+
+    def test_version_bump_triaged_trivial_goes_through_with_the_rules_in_the_advice(self):
+        rig = self.setup_project("trivial-ver")
+        (rig.project / "version.py").write_text('VERSION = "1.0.0"\n', "utf-8")
+        git(rig.project, "add", "version.py")
+        git(rig.project, "commit", "-q", "-m", "version")
+        pi = rig.start()
+        sid = pi.session_id()
+        recs = pi.prompt("[[replay:v1]] bump the version", timeout=60)
+        _, done = pi.wait_child_notify(timeout=180)
+        pi.close()
+        advice = [t for n, _, t in tool_results(recs) if n == "foreman_triage"]
+        self.assertEqual(len(advice), 1, advice)
+        for rule in ("a version or hash bump is trivial", "security hardening inside one component is standard, not heavy", "skip the explorer when your builder brief lists the files and symbols"):
+            self.assertIn(rule, advice[0])
+        self.assertIn("1.0.1", (rig.project / "version.py").read_text("utf-8"))
+        self.assertEqual(gate_messages(recs + done), [])
+        for name in ("triage_escalated", "finish_refused", "ceremony_incomplete"):
+            self.assertEqual(events(rig, sid, name), [], name)
+
+    def test_standard_without_explorer_passes_the_gate(self):
+        # The finish gate asks for builder and reviewer at standard (ceremony.required); an explorer is
+        # never required, so a builder brief that lists files and symbols needs no detection.
+        rig = self.setup_project("standard-noexp")
+        pi = rig.start()
+        sid = pi.session_id()
+        recs = pi.prompt("[[replay:s1]] harden add", timeout=60)
+        _, built = pi.wait_child_notify(timeout=180)
+        _, reviewed = pi.wait_child_notify(timeout=180)
+        pi.close()
+        self.assertEqual(gate_messages(recs + built + reviewed), [])
+        self.assertEqual([r["role"] for r in events(rig, sid, "role_launch")], ["builder", "reviewer"])
+        for name in ("finish_refused", "ceremony_incomplete"):
+            self.assertEqual(events(rig, sid, name), [], name)
 
 
 if __name__ == "__main__":

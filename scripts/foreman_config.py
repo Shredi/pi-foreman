@@ -196,6 +196,7 @@ LAYER_TIGHTEN = [
     (("ceremony", "trivialBound", "*"), "lower_only"),
     (("ceremony", "foremanReads", "*", "*"), "lower_only"),
     (("ceremony", "childReads", "*", "*"), "lower_only"),
+    # ceremony.childScratch.keep has no rule: any layer may set it, it only retains temp data.
     (("ceremony", "recheckBudget"), "lower_only"),
     (("ceremony", "launchWait"), ("ordered", ("block", "detach"))),
     (("ceremony", "dedupeNotify"), "true_only"),

@@ -1,0 +1,33 @@
+# Generic Rust task image for the bench rig. Build context: a task's environment/ dir with
+#   src.tar.gz         the repository snapshot (workspace manifests, Cargo.lock, the crate)
+#   known-limits.md    rig facts (required by COPY; may be empty) for `/retro --known-limits` (see docs/bench.md)
+# docker build --build-arg PREBUILD_PKG=<crate> <context>
+FROM rust:1-slim-bookworm
+ARG PREBUILD_PKG
+
+# bash is required by Harbor's docker environment; git so the agent can diff
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN git config --global user.name bench && git config --global user.email bench@example.invalid \
+    && git config --global init.defaultBranch main
+
+# rustfmt and clippy are tools the agent runs; install them now, the container is offline later.
+RUN rustup component add rustfmt clippy
+
+WORKDIR /app
+COPY src.tar.gz /tmp/src.tar.gz
+RUN tar xzf /tmp/src.tar.gz -C /app && rm /tmp/src.tar.gz
+COPY known-limits.md /opt/known-limits.md
+
+# Vendor all dependencies so the container needs no network afterwards. The vendor dir must be
+# readable by the non-root agent user (cargo check --all-targets and cargo bench --no-run read it).
+RUN cargo vendor /opt/vendor > /tmp/vendor.toml \
+    && chmod -R a+rX /opt/vendor \
+    && cp /tmp/vendor.toml /usr/local/cargo/config.toml \
+    && printf '\n[net]\noffline = true\n' >> /usr/local/cargo/config.toml
+
+# Prebuild dependencies and the test binary at the starting commit.
+RUN cargo test --no-run -p "${PREBUILD_PKG:?set --build-arg PREBUILD_PKG=<crate>}"
+
+# Fresh single-commit repo at the snapshot (no upstream history).
+RUN git init -q && git add -A && git commit -q -m "snapshot" --author="bench <bench@example.invalid>"
