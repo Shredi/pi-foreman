@@ -163,6 +163,14 @@ class PostStepsTest(unittest.TestCase):
         self.assertEqual([m["message"] for m in pi.sent], ["/retro --model", "/sync --dry-run"])
         self.assertEqual([r.get("error") for r in status["post_steps"]["steps"]], [None, None, "unknown_step"])
 
+    def test_retro_gets_known_limits_only_when_the_file_exists(self):
+        lim = self.work.parent / "limits.md"
+        r = {"bench": {"known_limits": str(lim)}}
+        self.assertEqual(ws.post_step_command(r, "retro"), "/retro --model")
+        lim.write_text("offline")
+        self.assertEqual(ws.post_step_command(r, "retro"), "/retro --model --known-limits " + str(lim))
+        self.assertEqual(ws.post_step_command(r, "sync"), "/sync --dry-run")
+
     def test_output_goes_to_state_marker_is_written_and_unchanged_workspace_is_not_infra(self):
         status = self.run_steps(["retro"], FakePi())
         self.assertEqual((self.state / "post-steps" / "retro.txt").read_text("utf-8").strip(), "out of /retro --model")
