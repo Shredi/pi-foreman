@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { addHints, citedItems, hintTargets, hintText, HINT_LEN, ledgerHint } from "../hints.ts";
-import { buildDigest, countersLine, extractRetro, lastAssistantText, retroEntry, DIGEST_MAX_LINES } from "../retrodigest.ts";
+import { buildDigest, countersLine, extractRetro, lastAssistantText, retroEntry, knownLimitsArg, modelRetroPrompt, MODEL_RETRO_PROMPT, KNOWN_LIMITS_MAX_CHARS, DIGEST_MAX_LINES } from "../retrodigest.ts";
 
 const LEDGER = "# L\n\n- [ ] 1. a\n- [x] 2. b\n```\n- [ ] 1. fenced\n```\n- [ ] V. verify\n";
 
@@ -51,4 +51,14 @@ test("retro: extract the section, counters line, entry, assistant text", () => {
   assert.equal(countersLine({ trace: { guard_blocks: { g: 2 }, overlay_blocks: 1, rereviews: 1, budget_hits: 2, rung_up: 1, child_read_budget: 0, review_defer_headless: 3, turns: 7 }, review: { human_denied: 1 } }), "counters: denies=4 rereviews=1 budget_hits=2 rung_up=1 child_read_budget=0 review_defer_headless=3 turns=7");
   assert.match(retroEntry({ when: new Date("2026-10-09T10:00:00.123Z"), reason: "threshold", counters: "counters: x", retro: null }), /^## 2026-10-09T10:00:00Z compaction \(threshold\)\n\ncounters: x\n\n\(the compaction summary has no Retro section\)/);
   assert.equal(lastAssistantText([{ role: "assistant", content: [{ type: "text", text: "a" }] }, { role: "user", content: "u" }]), "a");
+});
+
+test("known limits: the flag is parsed and the block is capped; empty adds nothing", () => {
+  assert.equal(knownLimitsArg("--model --known-limits /opt/k.md"), "/opt/k.md");
+  assert.equal(knownLimitsArg("--model"), null);
+  assert.equal(modelRetroPrompt(null), MODEL_RETRO_PROMPT);
+  assert.equal(modelRetroPrompt("  "), MODEL_RETRO_PROMPT);
+  const p = modelRetroPrompt("x".repeat(KNOWN_LIMITS_MAX_CHARS + 50));
+  assert.match(p, /rig facts, not harness gaps; do not list them under Missing:/);
+  assert.equal(p.split("x").length - 1, KNOWN_LIMITS_MAX_CHARS);
 });

@@ -176,6 +176,7 @@ def _deep_merge(base, extra):
 
 
 POST_STEP_COMMANDS = {"retro": "/retro --model", "sync": "/sync --dry-run"}
+KNOWN_LIMITS_DEFAULT = "/opt/known-limits.md"  # the task image's optional rig-facts file; row `bench.known_limits` overrides the path
 POST_MARKER = "bench-post-marker.json"  # in the agent state dir: {"ms", "ts"}; usage from then on is the post steps'
 POST_STEP_CAP = 300.0  # seconds per step
 HASH_FULL_BYTES = 8 * 1024 * 1024  # larger files are hashed by size only
@@ -185,6 +186,17 @@ def post_steps_of(row):
     """The row's `bench.post_steps` (default none): names of POST_STEP_COMMANDS run after the task is done."""
     steps = (row.get("bench") or {}).get("post_steps") if isinstance(row.get("bench"), dict) else None
     return [str(x) for x in steps] if isinstance(steps, list) else []
+
+
+def post_step_command(row, step):
+    """The slash command of a post step; /retro gets `--known-limits <path>` when the row's (or the default) file exists."""
+    command = POST_STEP_COMMANDS.get(step)
+    if command == "/retro --model":
+        bench = row.get("bench") if isinstance(row.get("bench"), dict) else {}
+        path = str(bench.get("known_limits") or KNOWN_LIMITS_DEFAULT)
+        if os.path.isfile(path):
+            command += " --known-limits " + path
+    return command
 
 
 def workspace_hash(root):
@@ -270,7 +282,7 @@ def run_post_steps(pi, row, cwd, state_dir, status, quiet_seconds, cap_seconds=P
     write_json(state / POST_MARKER, {"ms": int(now * 1000), "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))})
     results = []
     for i, step in enumerate(steps):
-        command = POST_STEP_COMMANDS.get(step)
+        command = post_step_command(row, step)
         if command is None:
             results.append({"step": step, "error": "unknown_step"})
             continue

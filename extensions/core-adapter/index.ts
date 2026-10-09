@@ -62,7 +62,7 @@ import { workspaceOf } from "./python.ts";
 import { CompactionGate } from "./compaction.ts";
 import { citedItems, ledgerHint, writeHint } from "./hints.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, withDigest } from "./retro.ts";
-import { extractRetro, lastAssistantText, MODEL_RETRO_PROMPT, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
+import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
 import { UsageFooter, lookupRate } from "./footer.ts";
 import { blockedConfirm, bridgePermissionBlocked, withBlocked } from "./herdr.ts";
 import { builderLaunchRefusal, changedPlans, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, planSnapshot, planSummary, readPlan } from "./checkpoint.ts";
@@ -1865,7 +1865,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (file && /(?:^|\s)--model(?:\s|$)/.test(args)) {
         if (!ctx.isIdle()) return ctx.ui.notify("pi-foreman: /retro --model runs only while the foreman is idle; the metrics were written.", "warning");
         s.retro.modelFile = file;
-        pi.sendUserMessage(MODEL_RETRO_PROMPT);
+        let limits: string | null = null;
+        const limitsPath = knownLimitsArg(args);
+        if (limitsPath) {
+          try {
+            limits = fs.readFileSync(limitsPath, "utf8");
+          } catch {
+            limits = null; // a missing file adds no block
+          }
+        }
+        pi.sendUserMessage(modelRetroPrompt(limits));
       }
     },
   });
