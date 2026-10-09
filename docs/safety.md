@@ -17,7 +17,9 @@ change to a test file: `git restore [--worktree|-W] [--staged|-S] [--] <paths>` 
 allowed only when every path is a plain file path (no glob, `.`, `..`, directory, `:(` magic or leading `-`) that
 matches the test-path rule (`isTestPath` in `diffscan.ts`, mirrored by `is_test_path` in the guard), lies inside the
 repository, is tracked and shows modified against HEAD. `--source`/`-s`, a tree-ish, `-p`, `--merge`,
-`--ours/--theirs`, `--pathspec-from-file`, `-f`, xargs input and a `cd` earlier in the command are refused; the
+`--ours/--theirs`, `--pathspec-from-file`, `-f`, xargs input, a `cd` earlier in the command, any git global option
+(`-C`, `--git-dir`, `--work-tree`, `-c`, `--namespace`, ...), any `GIT_*` variable in the command, a wrapper
+(`env`, `command`, ...) in front of git and a repository other than the working directory's are refused; the
 refusal names the allowed form. Each allowed path leaves a `test_restore` trace line (path in `cmd`) in the child's
 trace. Children are not stopped from committing; after a child commit "vs HEAD" means its changes since that commit.
 
@@ -36,10 +38,13 @@ Asks go through a model review link (`foreman-review`) using `providers.<p>.revi
 - The review link allows a forwarded child ask without a model call when it holds a print-only sed
   (`sed -n '<addr>p' <file>`: no s/w/e/r commands, no -i/-f; trace label `sed-read`) or `timeout N <allowed
   command>` and every other unit is allowed (PS floors wrappers).
-- Scratch copies under `/tmp` (trace label `tmp-scratch`): one simple command, nothing chained, piped or
-  redirected, that is `cp [-r|-R|-a|-p] <src>... <dest>` or `mkdir [-p] <dest>...` with every destination under
-  `/tmp/` (no `..`, not `/tmp` itself, no symlink leading out). No `rm` in any form: `rm -rf /tmp/...` stays
+- Scratch copies under `/tmp` (trace label `tmp-scratch`): the whole command is one simple command, nothing chained,
+  piped or redirected, that is `cp [-r|-R|-a|-p] <src>... <dest>` or `mkdir [-p] <dest>...` with every destination
+  under `/tmp/` (no `..`, not `/tmp` itself, not a symlink, no symlink leading out). No `rm` in any form: `rm -rf /tmp/...` stays
   reviewed. POSIX only; on Windows it never matches. A user `ask`/`deny` pattern that catches the command wins.
+- The permission system forwards only one unit of a chained command (the first most restrictive one), with the
+  whole command as `full command` evidence. Every deterministic allow (`sed-read`, `timeout-wrapper`, `tmp-scratch`)
+  must hold for both the unit and that full command; `cp -r . /tmp/x && rm -rf src` goes to the model review.
 - Headless defer: with no UI, or `review.headless: true` (default false), a forwarded child ask is denied with a
   text naming the allowed forms, trace `review_defer_headless {role, cmd}`. The `review` trace carries the model's
   defer `reason`.

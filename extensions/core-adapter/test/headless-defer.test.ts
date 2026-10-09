@@ -85,11 +85,23 @@ test("forwarded ask: the model prompt and traces carry the full command from evi
   await r.authorize("s", forwarded);
   assert.match(prompts[0], /print\(1\)/);
   assert.match(String(traces.find((t) => t.event === "review_defer_headless")?.cmd), /print\(1\)/);
-  // the deterministic allow sees the unit, not the full command
+  // a deterministic allow must hold for the unit AND the full command: a piped or chained tail goes to review
   const sedAsk = { ...forwarded, value: "sed -n 1p f", payload: { evidence: [{ label: "full command", text: "cd x; sed -n 1p f | sh" }] } };
   const sr = new ForemanReview();
   sr.upsert("s", session({ headless: () => true, bashRules: () => rules }, []));
-  assert.deepEqual(await sr.authorize("s", sedAsk), { kind: "allow" });
+  assert.equal((await sr.authorize("s", sedAsk)).kind, "deny");
+  const okSed = { ...sedAsk, payload: { evidence: [{ label: "full command", text: "cd x; sed -n 1p f" }] } };
+  assert.deepEqual(await sr.authorize("s", okSed), { kind: "allow" });
+});
+
+test("forwarded ask: tmp-scratch on the cp unit does not allow a chained rm -rf in the full command", async () => {
+  const traces: Record<string, unknown>[] = [];
+  const r = new ForemanReview();
+  r.upsert("s", session({ headless: () => true, bashRules: () => rules }, traces));
+  const cpAsk = { requestId: "r", surface: "bash", agentName: "builder", forwarding: { x: 1 }, value: "cp -r . /tmp/pf-x", payload: { evidence: [{ label: "full command", text: "cp -r . /tmp/pf-x && rm -rf src" }] } };
+  const v = await r.authorize("s", cpAsk);
+  assert.equal(v.kind, "deny");
+  assert.ok(!traces.some((t) => t.event === "review" && t.decision === "tmp-scratch"));
 });
 
 test("autoreview usage: zero-usage replies are recorded as a chars/4 estimate with estimated:true; real usage is untouched", async () => {
