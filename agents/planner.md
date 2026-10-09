@@ -19,3 +19,4 @@ Then return a brief of at most 40 lines:
 1. The plan path.
 2. The topic.
 3. Open questions for the owner, one per line (or `none`).
+4. Missing: <file | allow rule | brief detail | none> — what you lacked for this task, one line.

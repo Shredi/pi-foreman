@@ -136,6 +136,8 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
     timestamp: Date.now(),
   } as AssistantMessage;
   if (step.usage) Object.assign(output.usage, step.usage);
+  // D8 retro replay: a summary request that asks for a Retro section (pi-foreman's compaction) ends with one.
+  if (summary && JSON.stringify(context.messages).includes("## Retro")) step.text += "\n\n## Retro\n- fake: missing an allow rule\n- fake: enhance the brief";
   if (model.id === "review-hang") {
     const abort = (): void => {
       output.stopReason = "aborted";

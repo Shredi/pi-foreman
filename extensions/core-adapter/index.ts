@@ -38,7 +38,7 @@ import { GitDriftWatch, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdr
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
 import { applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_ACTIONS, LEDGER_TOOL, ledgerHelperMode, mentionsLedger, planLedgerCall, rewriteItemText } from "./ledgercall.ts";
-import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents } from "./payload.ts";
+import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents, subagentTaskText } from "./payload.ts";
 import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
@@ -57,6 +57,9 @@ import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, causeO
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { CompactionGate } from "./compaction.ts";
+import { citedItems, ledgerHint, writeHint } from "./hints.ts";
+import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, withDigest } from "./retro.ts";
+import { extractRetro, lastAssistantText, MODEL_RETRO_PROMPT, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
 import { UsageFooter } from "./footer.ts";
 import { blockedConfirm, bridgePermissionBlocked, withBlocked } from "./herdr.ts";
 import { builderLaunchRefusal, changedPlans, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, planSnapshot, planSummary, readPlan } from "./checkpoint.ts";
@@ -179,6 +182,8 @@ interface Session {
   ledgerBash: Set<string>;
   /** Foreman: rung per launch and climb-eligible runs (ladder.ts). Child: the once-only context steer. */
   ladder: LadderState;
+  /** Foreman: ledger hints, compaction digest, auto-retro and /retro --model state (retro.ts). */
+  retro: RetroState;
   childLadder: ChildLadder;
 }
 
@@ -298,6 +303,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchBatch: new LaunchBatch(),
       dedupeTraced: new Set(),
       ladder: new LadderState(),
+      retro: new RetroState(),
       childLadder: new ChildLadder(isChild ? b?.ladder : undefined),
     };
     sessions.set(id, s);
@@ -569,17 +575,51 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!ctx.hasUI) process.stderr.write(`${b.reason}\n`);
     return { cancel: true };
   }
-  pi.on("session_before_compact", async (_event, ctx) => bridgeSummaryGate(ctx, "claude-bridge compaction summary"));
+  pi.on("session_before_compact", async (_event, ctx) => {
+    const r = await bridgeSummaryGate(ctx, "claude-bridge compaction summary");
+    const s = sessionFor(ctx);
+    if (!r && s && !s.isChild) s.retro.prepare(boundLedger(s.markerDir, s.id));
+    return r;
+  });
   pi.on("turn_end", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (!s) return;
     const cls = compactionGate.decide(s.id, ctx.model, ctx.getContextUsage(), { tiers: get(s.config.config, "compaction.priceTiers"), thresholds: get(s.config.config, "compaction.threshold") });
     if (!cls) return;
     s.trace?.emit({ event: "compact_tier", tier: cls, model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null });
-    ctx.compact();
+    // D8 auto-retro: the foreman's summary ends with a Retro section (the same single summary call).
+    ctx.compact(s.isChild ? undefined : { customInstructions: RETRO_INSTRUCTIONS });
   });
-  pi.on("session_compact", async (_event, ctx) => { const s = sessionFor(ctx); if (s) compactionGate.reset(s.id); });
-  pi.on("session_compact_failed", async (_event, ctx) => { const s = sessionFor(ctx); if (s) compactionGate.reset(s.id); });
+  pi.on("session_compact", async (event, ctx) => {
+    const s = sessionFor(ctx);
+    if (!s) return;
+    compactionGate.reset(s.id);
+    if (!s.isChild) void onForemanCompact(s, ctx, event.compactionEntry.summary, event.reason);
+  });
+  pi.on("session_compact_failed", async (_event, ctx) => {
+    const s = sessionFor(ctx);
+    if (!s) return;
+    compactionGate.reset(s.id);
+    s.retro.drop();
+  });
+  /** D8: re-put the section with the digest; append the retro entry (counters + Retro section) and a V hint. */
+  async function onForemanCompact(s: Session, ctx: ExtensionContext, summary: string, reason: string): Promise<void> {
+    const section = s.retro.commit();
+    if (section) s.foremanSection = section;
+    const r = await runScript(s, "foreman_retro.py", [...retroInputs(s, ctx, "--session"), "--json"]);
+    let counters: unknown = null;
+    try {
+      counters = r.ok ? JSON.parse(r.text) : null;
+    } catch {
+      // counters: no data
+    }
+    try {
+      appendCompactionRetro(s.cwd, s.id, { reason, counters, retro: extractRetro(summary) });
+      writeHint(boundLedger(s.markerDir, s.id), ["V"], "retro written", s.retro.hints);
+    } catch (err) {
+      notifyOnce(s, ctx, "retro-file", `pi-foreman: could not write the compaction retro: ${(err as Error).message}`);
+    }
+  }
   pi.on("session_before_tree", async (_event, ctx) => bridgeSummaryGate(ctx, "claude-bridge branch summary"));
 
   // A cache-warming refresh re-sends the last request, which on claude-bridge starts Claude Code.
@@ -631,8 +671,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.trace?.emit({ event: "orientation", lines: s.orientation ? s.orientation.split("\n").length : 0 });
     }
     const text = [applyVariants(instructionsCache ?? "", promptVariants(s)), tierLine(s.ceremony), s.triageHint, finishLine(get(s.config.config, "ceremony.required"), s.ceremony.tier)].concat(s.orientation).filter(Boolean).join("\n\n");
-    event.systemPromptOptions.sections["pi-foreman"] = text;
-    s.foremanSection = text;
+    s.retro.base = text;
+    s.foremanSection = withDigest(text, s.retro.digest);
+    event.systemPromptOptions.sections["pi-foreman"] = s.foremanSection;
   });
   /** Values for the tagged variant lines of the prompt files (ledgercall.ts applyVariants). */
   function promptVariants(s: Session): Record<string, string> {
@@ -715,7 +756,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
           s.ladder.onRunEnd(runEndOf(data));
           for (const step of stepsOfRunEnd(data)) s.steps[step]++;
-          s.reviewGate = onReviewVerdicts(s.reviewGate, reviewVerdictsOfRunEnd(data));
+          const verdicts = reviewVerdictsOfRunEnd(data);
+          s.reviewGate = onReviewVerdicts(s.reviewGate, verdicts);
+          const cited = s.retro.launchItems.get(runId) ?? [];
+          s.retro.launchItems.delete(runId);
+          if (!s.isChild && verdicts.length) writeHint(boundLedger(s.markerDir, s.id), cited, `review ${verdicts.map((v) => (v ?? "no verdict").toUpperCase()).join(", ")} (run ${runId.slice(0, 8)})`, s.retro.hints);
         }
         if (!s.isChild && typeof runId === "string" && s.launchedRoles.has(runId)) {
           // plan_written: plan-*.md files a planner run added or changed (snapshot taken at its launch).
@@ -1272,6 +1317,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (runId) {
             recordChild(s, detailLocations(event.details));
             const roles = s.launchedRoles.get(runId) ?? subagentAgents(event.input as Record<string, unknown>);
+            const cited = citedItems(subagentTaskText(event.input as Record<string, unknown>));
+            s.retro.launchItems.set(runId, cited);
+            writeHint(boundLedger(s.markerDir, s.id), cited, `${roles.join("+") || "child"} launched (run ${runId.slice(0, 8)})`, s.retro.hints);
             const eff = s.budget.onLaunch(roles, actionOf(event.input as Record<string, unknown>) === null);
             if (eff.lift) s.trace?.emit({ event: "read_budget", phase: eff.lift.phase, count: eff.lift.count, action: "lift", by: "explorer" });
             if (roles.includes("builder")) {
@@ -1487,6 +1535,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const file = childLedgerFile(s, params.path);
         if ("error" in file) return refuse(file.error);
         const r = await runLedger(s, plan.calls[0], file.path);
+        if (r.ok) writeHint(file.path, ["V"], `ledger mark by ${s.usage.line.role}`);
         const st = await runLedger(s, ["status"], file.path);
         return { content: [{ type: "text" as const, text: [r.text, st.text].filter(Boolean).join("\n") }], details: { decision: r.ok ? "done" : "failed" }, ...(r.ok ? {} : { isError: true }) };
       }
@@ -1559,6 +1608,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (st.text) out.push(st.text);
       ok = ok && st.ok;
       s.trace?.emit({ event: "ledger_call", kind, allowed: true, items: traceItems || undefined, attested: plan.attested || undefined });
+      const hint = ok ? ledgerHint(kind, traceItems, out.join("\n"), params.text) : null;
+      if (hint) writeHint(boundLedger(s.markerDir, s.id), hint.ids, hint.text, s.retro.hints);
       return { content: [{ type: "text" as const, text: out.join("\n") }], details: { decision: ok ? "done" : "failed" }, ...(ok ? {} : { isError: true }) };
     },
   } as never);
@@ -1699,18 +1750,42 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   pi.registerCommand("retro", {
-    description: "Friction metrics of this session and permission-allow proposals (foreman only)",
-    handler: async (_args, ctx) => {
+    description: "Friction metrics of this session and permission-allow proposals (foreman only); --model adds a foreman-written section (one turn)",
+    handler: async (args, ctx) => {
       const s = await ensureSession(ctx);
       if (s.isChild) {
         ctx.ui.notify("/retro is for the foreman only.", "warning");
         return;
       }
       const day = new Date().toISOString().slice(0, 10);
-      const args = [...retroInputs(s, ctx, "--session"), "--proposals-out", path.join(s.agentDir, "pi-foreman", "state", "retro", `permission-proposals-${day}.json`)];
-      const r = await runScript(s, "foreman_retro.py", args);
+      const argv = [...retroInputs(s, ctx, "--session"), "--proposals-out", path.join(s.agentDir, "pi-foreman", "state", "retro", `permission-proposals-${day}.json`)];
+      const r = await runScript(s, "foreman_retro.py", argv);
       ctx.ui.notify(r.text, r.ok ? "info" : "error");
+      let file: string | null = null;
+      try {
+        file = appendStateRetro(path.join(s.agentDir, "pi-foreman", "state"), s.id, r.text);
+      } catch (err) {
+        ctx.ui.notify(`pi-foreman: could not write the retro file: ${(err as Error).message}`, "warning");
+      }
+      // D8 (12): --model asks the foreman for one reply of at most 10 lines; agent_end appends it.
+      if (file && /(?:^|\s)--model(?:\s|$)/.test(args)) {
+        if (!ctx.isIdle()) return ctx.ui.notify("pi-foreman: /retro --model runs only while the foreman is idle; the metrics were written.", "warning");
+        s.retro.modelFile = file;
+        pi.sendUserMessage(MODEL_RETRO_PROMPT);
+      }
     },
+  });
+  pi.on("agent_end", async (event, ctx) => {
+    const s = sessionFor(ctx);
+    if (!s || s.isChild || !s.retro.modelFile) return;
+    const file = s.retro.modelFile;
+    s.retro.modelFile = null;
+    try {
+      appendModelRetro(file, lastAssistantText(event.messages));
+      ctx.ui.notify(`pi-foreman: model retro appended to ${file}`, "info");
+    } catch (err) {
+      ctx.ui.notify(`pi-foreman: could not append the model retro: ${(err as Error).message}`, "warning");
+    }
   });
 
   /** Retro inputs of this session (agent dir, review log, usage, session file, trace). */

@@ -43,6 +43,16 @@
   row key `bench.post_steps` (`retro`, `sync`) with usage split out as `retro_tokens`/`retro_usd` and
   `retro-findings.md`; columns `autoreview_*`, `rung_up`, `child_read_warn`/`child_read_deny`,
   `review_defer_headless`, `child_turn_cap`, `launch_refused`, `thinking_by_role`, `tier_dist`, `cache_write_per_launch`.
+- Every role's output contract ends with `Missing: <file | allow rule | brief detail | none>`.
+- Ledger hints: each `foreman_ledger` action (not status), child launch and reviewer verdict adds `  > <date> <text>`
+  under the cited items (`items 1,2`, `#N`, `N.` lines; else V), at most 3 per item.
+- Compaction digest (foreman): open items, items closed since the last compaction and the last 8 hints are added to
+  the pi-foreman section after a compaction, naming the ledger as the source of truth.
+- Auto-retro: the price-tier compaction asks the summary to end with `## Retro`; each foreman compaction appends the
+  friction counters and that section to `.workflow/retro/<session>.md` and hints `retro written` on V.
+- `/retro` writes `<agent dir>/pi-foreman/state/retro/retro-<session>.md`; `/retro --model` adds one foreman reply of
+  at most 10 lines. The bench `retro` post-step sends `/retro --model`. `foreman_retro.py` counts rereviews, budget
+  hits, rung-ups, child read-budget hits, headless defers and turns.
 
 ### Changed
 - A rung's configured `thinking` (or model suffix) now wins over the foreman's passed level; only a rung without
