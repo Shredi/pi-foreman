@@ -241,6 +241,11 @@
       "additionalProperties": false,
       "properties": { "usage": { "type": "boolean", "description": "Show usage in the footer." } }
     },
+    "widget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "children": { "type": "boolean", "description": "Show the children widget (subagent runs and opened sessions) below the editor in the tui." } }
+    },
     "compaction": {
       "type": "object",
       "additionalProperties": false,
