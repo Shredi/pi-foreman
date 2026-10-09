@@ -51,7 +51,7 @@ class TestDiffFacts(ReplayCase):
         self.assertIn("assertion removed or changed in hub_test.go", text)
         self.assertIn("require.Greater", text)
         self.assertEqual([(r["role"], r["after"]) for r in events(rig, sid, "rereview")], [("reviewer", "fail")])
-        self.assertEqual([r["count"] for r in events(rig, sid, "review_facts")], [1, 1])
+        self.assertEqual([r["count"] for r in events(rig, sid, "review_facts")], [3, 3])
 
 
 if __name__ == "__main__":

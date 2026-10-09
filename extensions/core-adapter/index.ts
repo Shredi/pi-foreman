@@ -1031,8 +1031,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.gitDrift.snapshot(ctx.cwd, os.homedir());
         // Frugal-roles D5: base for the review diff at a builder launch, diff facts into a reviewer's task.
         await reviewFacts.noteBuilders(input, ctx.cwd);
-        const factSteps = await reviewFacts.augment(input, ctx.cwd);
-        if (factSteps > 0) s.trace?.emit({ event: "review_facts", count: factSteps });
+        const factCount = await reviewFacts.augment(input, ctx.cwd);
+        if (factCount > 0) s.trace?.emit({ event: "review_facts", count: factCount });
         // PR gate (B-M4): HEAD at a reviewer's launch; the verdict keeps a head only if it is unchanged at run end.
         const action = actionOf(input);
         if (action === "resume" || (action === null && subagentAgents(input).some((r) => REVIEW_ROLES.includes(r)))) {
