@@ -122,9 +122,79 @@ In a Pi session (the foreman, not children):
 - `/foreman update-check` lists newer versions of the pinned packages with release-note links. It changes nothing.
 
 The usage footer (tokens, list-price cost, child launches) is on by default (`footer.usage`). Outside Pi,
-the `foreman` launcher in `bin/` (`.cmd` and `.ps1` on Windows) runs the same scripts: `foreman update-check`, `foreman retro [args]`, `foreman sync [args]` and `foreman session` (below). The keys
+the `foreman` launcher in `bin/` (`.cmd` and `.ps1` on Windows) runs the same scripts: `foreman update-check`, `foreman retro [args]`, `foreman sync [args]`, `foreman session` (below) and `foreman radar` ([Radar](#radar)). The keys
 and their layer rules are in the tables of [ceremony](ceremony.md) and [safety](safety.md) and in the schema
 `config/foreman.schema.json`.
+
+## Radar
+
+`foreman radar` (`bin/foreman radar`, Python standard library, Linux, macOS and Windows) shows a live tree of the
+running sessions: top sessions, the sessions they opened with `/foreman session` (recursively, so top, child
+orchestrators and their children) and every session's subagent runs. It only displays; nothing in it controls a
+session, and it works without Herdr.
+
+```
+pi-foreman radar  14:00:00  agent  ● 4  ◐ 2  ◌ 1  ○ 1  × 0
+
+● top                  working    12s  ↑2.1k ↓175 $1.25
+├─ ● builder/strong    working    12s  ↑1.0k ↓100 $0.25
+├─ ◐ reviewer          ask        12s  ↑500 ↓50 $0.25
+├─ ○ explorer          done       12s
+├─ ● docs-fix          working    12s  ↑610 ↓25 $0.75
+│  ├─ ● builder        working    12s  ↑10 ↓5 $0.50
+│  └─ ◐ api            blocked    12s  ↑600 ↓20 $0.25
+└─ ◌ tests             starting   40s
+```
+
+Each row: glyph, name (label, else role, else short session id), state, age of the last event, and the tokens
+(`↑` in incl. cache, `↓` out) and cost of the whole subtree (a run shows its own). The header has the time, the
+agent dir's basename and a count per glyph. Active rows sort first, then by start time.
+
+| Glyph | Meaning |
+| --- | --- |
+| `●` | working |
+| `◐` | blocked: the session waits on a prompt, or a run waits on an ask |
+| `◌` | starting: registry entry `pending`, or `open` with no presence file yet and opened under 2 minutes ago |
+| `○` | idle or done (also a closed session, a finished run) |
+| `×` | lost: presence file not `done` and no heartbeat for 90 seconds; or registry `open` with no presence file after 2 minutes; or `failed` |
+
+Options: `--once` prints one plain snapshot (no ANSI) and exits 0; without it the screen is redrawn with ANSI codes
+every `--interval` seconds (default 3) until `q` or Ctrl-C (no curses, so Windows works; a stdout that is not a
+terminal behaves like `--once`). `--agent-dir` (default `PI_CODING_AGENT_DIR`, else `~/.pi/agent`). `--since HOURS`
+(default 24) hides finished or lost sessions whose last activity is older, unless a descendant is still shown.
+`--no-color` turns off colors.
+
+Sources, all under `<agent dir>/pi-foreman/` and all optional (a missing or corrupt file is skipped):
+`state/live/<sessionId>.json` (presence files, below), `state/sessions.json` (the registry above), `handoffs/*/`
+(`parent`, `child`), `state/usage/<sessionId>.jsonl` (tokens and cost, read incrementally) and the mtime of
+`state/trace-<sessionId>.jsonl` as an extra last-event signal. Sessions are joined by intercom id: a presence file's
+`intercomId` or the registry's `child`; the parent is the presence file's `parentIntercom`, else the registry or
+handoff `parent`. A session without a known parent is a root.
+
+### Presence files
+
+The extension writes `<agent dir>/pi-foreman/state/live/<sessionId>.json` atomically (temp file, then rename) on every
+state change and on a 30 second heartbeat, and a final `state: "done"` at shutdown:
+
+```json
+{"v":1,"sessionId":"...","intercomId":"fm-top-1a2b3c","parentIntercom":null,"handoff":null,"label":"top",
+ "cwd":"...","pid":1234,"mode":"tui","startedAt":"2026-10-09T10:00:00.000Z",
+ "heartbeatAt":"2026-10-09T12:00:00.000Z","lastEventAt":"2026-10-09T11:59:48.000Z","state":"working",
+ "runs":[{"launchId":"...","role":"builder","rung":"strong","state":"working","tokensIn":0,"tokensOut":0,"cost":0}]}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `v` | format version, `1` |
+| `sessionId`, `intercomId` | the Pi session id (also the usage file name) and the session's intercom id, or `null` |
+| `parentIntercom`, `handoff` | the opener's intercom id and the handoff dir, or `null` for a top session |
+| `label`, `cwd`, `pid` | display label (or `null`), working directory, process id |
+| `mode` | `tui`, `rpc`, `json` or `print` |
+| `startedAt`, `heartbeatAt`, `lastEventAt` | ISO timestamps: start, last write by the heartbeat, last session event |
+| `state` | `working`, `blocked`, `idle` or `done` |
+| `runs` | subagent runs: `launchId`, `role`, `rung` (`model`, `strong` or `null`), `state` (`working`, `ask`, `done`), `tokensIn`, `tokensOut`, `cost` (used when the usage file has no line for that `launchId`) |
+
+Rows of finished or lost sessions disappear from radar after `--since` hours; the files are not deleted.
 
 ## pi-intercom
 
