@@ -26,7 +26,7 @@ import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits } from "./childreads.ts";
 import { bgWaitLocations,detailLocations, inRecorded, noticeLocations, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
-import { gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
+import { CHILD_TRACE_EVENT, gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
 import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
@@ -223,6 +223,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("agent_end", async () => permBlocked.clear());
   pi.on("session_shutdown", async () => permBlocked.clear());
   pi.events?.on("permissions:ready", (payload: unknown) => review.onReady(payload));
+  pi.events?.on(CHILD_TRACE_EVENT, (data: unknown) => {
+    const e = (data ?? {}) as Record<string, unknown>;
+    if (e.event === "test_restore") sessions.get(String(e.sessionId))?.trace?.emit({ event: e.event, cmd: e.cmd });
+  });
   let isoSetting: unknown = "auto";
   const baseline = readBaseline(PKG_ROOT);
   // A child's launch binding is in the env while its extensions load (usage.ts); read it now.

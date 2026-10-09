@@ -9,6 +9,9 @@ import type { Spawner } from "./spawn.ts";
 
 export type GitGuardMode = "main" | "child";
 
+/** pi.events channel for trace events of the child git-guard extension (`test_restore`); the child's adapter writes them to its trace. */
+export const CHILD_TRACE_EVENT = "pi-foreman:child-trace";
+
 /**
  * Main-mode fast path: the lint only looks at git commands and PR clis (gh, glab, hub, tea),
  * so a command that names none of them skips the Python spawn. Child mode always runs:

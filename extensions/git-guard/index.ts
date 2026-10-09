@@ -10,7 +10,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { buildGuardEnv } from "../core-adapter/env.ts";
-import { gitGuardPayload, runGitGuard } from "../core-adapter/gitguard.ts";
+import { CHILD_TRACE_EVENT, gitGuardPayload, runGitGuard } from "../core-adapter/gitguard.ts";
 import { resolvePython } from "../core-adapter/python.ts";
 import type { PythonResolution } from "../core-adapter/python.ts";
 import { defaultSpawner } from "../core-adapter/spawn.ts";
@@ -19,6 +19,21 @@ import { isShellTool } from "../core-adapter/toolmap.ts";
 import { evaluateRun, translateToolCall } from "../core-adapter/translate.ts";
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/** An allowed call may carry `{"foremanEvents": [{event: "test_restore", path}]}`; hand each to the bus. */
+function forwardEvents(pi: ExtensionAPI, sessionId: string, stdout: string): void {
+  try {
+    const events = (JSON.parse(stdout.trim() || "{}") as { foremanEvents?: unknown }).foremanEvents;
+    if (!Array.isArray(events)) return;
+    for (const e of events) {
+      if (e && typeof e === "object" && (e as { event?: unknown }).event === "test_restore") {
+        pi.events?.emit(CHILD_TRACE_EVENT, { sessionId, event: "test_restore", cmd: String((e as { path?: unknown }).path ?? "") });
+      }
+    }
+  } catch {
+    // events are best effort
+  }
+}
 
 export interface GitGuardDeps {
   spawner?: Spawner;
@@ -50,6 +65,7 @@ export default function gitGuard(pi: ExtensionAPI, deps: GitGuardDeps = {}): voi
         input,
         ask: { isChild: true, mode: ctx.mode, hasUI: false },
       });
+      if (!t.result && run.status === "ran") forwardEvents(pi, sessionId, run.stdout);
       return t.result;
     } catch (err) {
       return { block: true, reason: `pi-foreman: git guard error before ${event.toolName} (${(err as Error).message}); the call is blocked.` };
