@@ -4,7 +4,7 @@
 // over once. Composes with ladder.ts: the rung-up handoff is prepended after this (handoff first).
 import type { RunEnd } from "./launchwait.ts";
 
-export const BRIEF_MAX = 4_000;
+export const BRIEF_MAX = 8_000;
 
 export interface Brief {
   runId: string;
@@ -41,7 +41,7 @@ export class ExplorerBrief {
       if (!isObj(e)) return;
       if (e.agent === "builder" && typeof e.task === "string") {
         e.task = block + e.task;
-        out.push({ event: "explorer_brief", role: "builder", chars: block.length });
+        out.push({ event: "explorer_brief", role: "builder", chars: block.length, cut: b.summary.length > BRIEF_MAX });
       }
       for (const k of ["tasks", "chain", "parallel"]) if (Array.isArray(e[k])) e[k].forEach(visit);
     };

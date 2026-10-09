@@ -47,7 +47,9 @@ test("ExplorerBrief: prepended once to fresh builder steps, bounded, handoff com
   assert.deepEqual([recs[0].event, recs[0].role], ["explorer_brief", "builder"]);
   const task = input.task as string;
   assert.match(task, /^\[pi-foreman explorer brief\]/);
-  assert.match(task, /cut at 4000 characters/);
+  assert.match(task, new RegExp(`cut at ${BRIEF_MAX} characters`));
+  assert.equal(BRIEF_MAX, 8000);
+  assert.equal(recs[0].cut, true);
   assert.match(task, /Full result: \/r\/e1/);
   assert.ok(task.endsWith("do it"));
   assert.deepEqual(b.apply({ agent: "builder", task: "again" }), [], "handed over once");

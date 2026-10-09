@@ -28,7 +28,7 @@ which relaunches it with `model: "strong"`:
   refused (`strong_no_reason`); a heavy-tier builder and `strongOnRevision` count as triggers.
 
 After a context, turns or stuck report the launch result says the run is climb-eligible; the next strong launch
-of that role gets the prior report (at most 4000 characters), its result path and the ledger items prepended to
+of that role gets the prior report (at most 8000 characters), its result path and the ledger items prepended to
 its task, and the trace records `rung_up {role, from, to, reason}`. Knobs: `ladder.strongAbove`,
 `ladder.childMaxTurns`, per provider `providers.<p>.strongAbove|childMaxTurns`, per role
 `roles.<id>.strongAbove|childMaxTurns` (the most specific wins; user or overlay config only). A rung's own
