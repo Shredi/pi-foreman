@@ -30,6 +30,7 @@ import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, isolationDir, isolat
 import { applyLaunchModels, applyLaunchTimeouts, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
+import { ReviewFacts } from "./diffscan.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
@@ -197,6 +198,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   let reviewerInstructionsCache: string | null | undefined;
   const bridgeIso = new BridgeIsolation();
   const review = new ForemanReview();
+  const reviewFacts = new ReviewFacts();
   const usageFooter = new UsageFooter();
   const compactionGate = new CompactionGate();
   herdrEvents = pi.events as EventBus | undefined;
@@ -924,6 +926,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this child launch", driftAsk(ctx), (r) => s.trace?.emit(r));
         if (drift) return drift;
         s.gitDrift.snapshot(ctx.cwd, os.homedir());
+        // Frugal-roles D5: base for the review diff at a builder launch, diff facts into a reviewer's task.
+        await reviewFacts.noteBuilders(input, ctx.cwd);
+        const factSteps = await reviewFacts.augment(input, ctx.cwd);
+        if (factSteps > 0) s.trace?.emit({ event: "review_facts", count: factSteps });
         // PR gate (B-M4): HEAD at a reviewer's launch; the verdict keeps a head only if it is unchanged at run end.
         const action = actionOf(input);
         if (action === "resume" || (action === null && subagentAgents(input).some((r) => REVIEW_ROLES.includes(r)))) {
@@ -989,6 +995,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // D3: the owner is back in the loop, so revision rounds count from zero again.
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.rounds = initialRounds();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
       resetRecheck(s, "user");
       const was = s.budget.phase;

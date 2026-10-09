@@ -3,6 +3,15 @@
 ## [Unreleased]
 
 ### Added
+- Permission baseline allows read-only `sed -n *` (asks for `-i`, `w`, `W`, `e` forms); `timeout N <allowed command>` in a
+  child's bash ask is allowed by the foreman's review link when every unit of the command is allowed (PS floors wrappers).
+- Review prompt for child asks: read-only inspection (also chained) is allowed; defer only for writes outside the
+  workspace, network or destructive steps. Headless defer (no UI, or `review.headless: true`): a forwarded child ask is
+  denied with a text naming the allowed forms, trace `review_defer_headless {role, cmd}`; the `review` trace carries the
+  model's defer `reason`.
+- Reviewer and senior-reviewer hard rules (changed exported signature, weakened/removed test or assertion, skipped test
+  are FAIL unless asked for; grep callers) and `diffscan.ts`: a "Facts to rule on" block from `git diff` (against the HEAD
+  at the first builder launch) is appended to a reviewer's launch task; trace `review_facts {count}`.
 - `ceremony.ledgerHelper` (`tool` default, `bash`, `off`) and the foreman's `foreman_ledger` tool; the foreman
   closes V itself after a reviewer PASS with no revision since (harness-attested), reviewer children mark V only.
 - `foreman_ledger` action `upsert` (`item?`, `text`): replaces an item's text keeping its state, or appends a new item;
@@ -31,6 +40,8 @@
   models) with claude-agent-sdk 0.3.293.
 
 ### Fixed
+- The model review of an ask forwarded from a child saw an empty value: PS 39.0.2 puts the child's command in `value`,
+  not `command`. That is why most child bash asks were deferred (and then denied headless).
 - Child sessions mislabelled the tier (they emitted `tier` events with their own default); only the foreman does now.
 - A reviewer FAIL no longer satisfies the required reviewer step, and a revision after a PASS
   re-opens it (strict revision rule). The two-refusal escape hatch still applies.
