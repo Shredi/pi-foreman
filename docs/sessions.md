@@ -67,6 +67,10 @@ Plain pi-intercom text, one line each:
   `N foreman_wait pending (…)`.
 - The child's brief footer tells it to re-read `parent` before each message (the parent can change).
 
+### Parallel rounds
+
+Every orchestrator session works in its own worktree (`git worktree add …`) and never switches the shared main checkout. Merges happen from the session's worktree, so two sessions running in parallel cannot move each other's branch or working tree.
+
 ### Safety
 
 - Only you start these: they are user commands, children refuse them, and no model tool exists in v1.
