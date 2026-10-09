@@ -185,7 +185,7 @@ export interface ReviewSession {
 
 /** Deny text for a forwarded child ask that deferred with no human to ask: names what runs without approval. */
 export const HEADLESS_DENY =
-  "pi-foreman: not approved - the model review deferred and no human is available to confirm. Runs without approval: read-only git (status, diff, log, show), ls, cat, head, tail, wc, rg, grep, find, print-only `sed -n '<addr>p' <file>` (no s, w, e, r commands, no -i or -f), `cd <dir inside the workspace> && <allowed command>`, the project's test and build commands, and `timeout N <allowed command>`. Not allowed: sed -i, sed s/w/e/r scripts, writes outside the workspace, network. Use the read, grep, find and ls tools for inspection.";
+  "pi-foreman: not approved - the model review deferred and no human is available to confirm. Runs without approval: read-only git (status, diff, log, show), ls, cat, head, tail, wc, rg, grep, find, print-only `sed -n '<addr>p' <file>` (no s, w, e, r commands, no -i or -f), `cd <dir inside the workspace> && <allowed command>`, the project's test and build commands, `timeout N <allowed command>`, `cp [-r] <src> /tmp/<dir>` and `mkdir -p /tmp/<dir>` (one command, no chaining or redirection). Not allowed: sed -i, sed s/w/e/r scripts, writes outside the workspace, network. Use the read, grep, find and ls tools for inspection.";
 
 interface PermissionsServiceLike {
   registerAuthorizer(name: string, authorize: (details: AskDetails, query: unknown, log: ReviewLog) => Promise<Verdict>): () => void;
