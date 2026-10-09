@@ -165,16 +165,99 @@ class TreeTests(Fixture):
         self.assertEqual(len(fr.rows(self.snap())), 2)
 
 
+ANSI = __import__("re").compile(r"\x1b\[[0-9;]*m")
+
+
 class RenderTests(Fixture):
-    def test_render_plain_and_color(self):
+    def lines(self, color=False, **kw):
+        return fr.render(self.snap(), NOW, 80, color, **kw)
+
+    def test_render_plain_rows(self):
         self.three_levels()
-        lines = fr.render(self.snap(), NOW, "agent")
-        text = "\n".join(lines)
+        text = "\n".join(self.lines())
         self.assertNotIn("\x1b", text)
-        self.assertIn("agent", lines[0])
         self.assertIn("\u25cf top", text)
         self.assertRegex(text, r"\u25d0 api +blocked +\d+s +\u2191600 \u219320 \$0\.25")
-        self.assertIn("\x1b[", "\n".join(fr.render(self.snap(), NOW, "agent", color=True)))
+
+    def test_header_plain(self):
+        self.three_levels()
+        l1, l2 = self.lines()[:2]
+        self.assertTrue(l1.startswith("pi-foreman radar"))
+        self.assertIn("\u25cf 4  \u25d0 2  \u25cc 0  \u25cb 1  \u00d7 0", l1)
+        self.assertTrue(l1.endswith(time.strftime("%H:%M:%S", time.localtime(NOW))))
+        self.assertEqual(len(l1), 80)
+        self.assertNotIn("agent", l1)
+        self.assertEqual(l2, "3 sessions \u00b7 1 tree \u00b7 \u21912.1k \u2193175 \u00b7 $1.25 \u00b7 oldest block 12s")
+
+    def test_header_without_blocked_omits_oldest_and_plural_trees(self):
+        self.put_live(live("a", "a", "fm-a"))
+        self.put_live(live("b", "b", "fm-b"))
+        l2 = self.lines()[1]
+        self.assertEqual(l2, "2 sessions \u00b7 2 trees \u00b7 \u21910 \u21930 \u00b7 $0.00")
+
+    def test_header_color_zero_counts_dim_nonzero_state_color(self):
+        self.three_levels()
+        l1, l2 = self.lines(color=True)[:2]
+        self.assertIn("\x1b[1mpi-foreman radar\x1b[0m", l1)
+        self.assertIn("\x1b[32m\u25cf 4\x1b[0m", l1)
+        self.assertIn("\x1b[33m\u25d0 2\x1b[0m", l1)
+        self.assertIn("\x1b[2m\u25cc 0\x1b[0m", l1)
+        self.assertIn("\x1b[2m\u00d7 0\x1b[0m", l1)
+        self.assertEqual(ANSI.sub("", l1), self.lines()[0])
+        self.assertIn("\x1b[34m$1.25\x1b[0m", l2)
+        self.assertIn("\x1b[33m12s\x1b[0m", l2)
+
+    def test_blocked_age_thresholds(self):
+        def age_code(state, secs):
+            self.setUp()
+            self.put_live(live("a", "a", "fm-a", state=state, last=secs, hb=5))
+            row = fr.render(self.snap(), NOW, 80, True)[3]
+            return [c for c in ("31", "33") if "\x1b[%sm%4s" % (c, fr.fmt_age(secs)) in row]
+        self.assertEqual(age_code("blocked", 240), [])
+        self.assertEqual(age_code("blocked", 360), ["33"])
+        self.assertEqual(age_code("blocked", 960), ["31"])
+        self.assertEqual(age_code("working", 960), [])
+
+    def test_cost_blue_in_rows_and_toggle_hides_it(self):
+        self.three_levels()
+        self.assertIn("\x1b[34m$0.25\x1b[0m", self.lines(color=True)[-1])
+        off = self.lines(show_cost=False)
+        self.assertNotIn("$", "\n".join(off))
+        self.assertIn("\u2191600 \u219320", "\n".join(off))
+
+    def test_lost_row_dim_with_red_glyph(self):
+        self.put_live(live("d", "stale", "fm-d", hb=200))
+        row = self.lines(color=True)[3]
+        self.assertIn("\x1b[31m\u00d7\x1b[0m", row)
+        self.assertIn("\x1b[2mstale\x1b[0m", row)
+        self.assertIn("\x1b[2mlost     \x1b[0m", row)
+
+    def test_selected_row_is_inverted_band(self):
+        self.three_levels()
+        lines = fr.render(self.snap(), NOW, 80, True, True, 1)
+        self.assertTrue(lines[4].startswith("\x1b[7m") and lines[4].endswith("\x1b[0m"))
+        self.assertEqual(len(ANSI.sub("", lines[4])), 80)
+        self.assertFalse(lines[3].startswith("\x1b[7m"))
+        self.assertNotIn("\x1b", "\n".join(fr.render(self.snap(), NOW, 80, False, True, 1)))
+
+    def test_footer_plain_and_colored(self):
+        want = "q quit \u00b7 r refresh \u00b7 c cost on/off \u00b7 \u2191\u2193 select \u00b7 enter show session path"
+        self.assertEqual(fr.render_footer(), want)
+        col = fr.render_footer(True)
+        self.assertEqual(ANSI.sub("", col), want)
+        self.assertIn("\x1b[1mq\x1b[0m\x1b[2m quit\x1b[0m\x1b[2m \u00b7 \x1b[0m", col)
+
+    def test_decode_key(self):
+        cases = {"q": "quit", "\x03": "quit", "r": "refresh", "c": "cost", "\x1b[A": "up", "\x1b[B": "down",
+                 "\r": "enter", "\n": "enter", "\xe0H": "up", "\x00P": "down", "\xe0P": "down", "H": None, "": None}
+        for seq, act in cases.items():
+            self.assertEqual(fr.decode_key(seq), act, repr(seq))
+
+    def test_node_path_prefers_cwd_and_falls_back(self):
+        self.put_live(live("a", "a", "fm-a", handoff="/h/x"))
+        (a,) = self.snap()
+        self.assertEqual((a["path"], fr.node_path(a)), ("/work/x", "/work/x"))
+        self.assertEqual(fr.node_path({"path": ""}), "no path")
 
     def test_age_and_tokens(self):
         self.assertEqual([fr.fmt_age(x) for x in (12, 240, 7300, 200000, None)], ["12s", "4m", "2h", "2d", "-"])
@@ -192,6 +275,8 @@ class RenderTests(Fixture):
         text = out.getvalue()
         self.assertNotIn("\x1b", text)
         self.assertIn("docs-fix", text)
+        self.assertIn("1 tree", text)
+        self.assertIn("q quit", text)
         self.assertNotIn(self.tmp, text)
 
     def test_main_without_tty_acts_like_once(self):

@@ -3,6 +3,13 @@
 ## [Unreleased]
 
 ### Added
+- `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]`: merges `config/presets/<name>.json` into
+  `<agent dir>/foreman.json` (preset wins), validates before writing, keeps `foreman.json.bak-<date>`. With no role or
+  review model configured, an interactive top-level session prints one notice naming the presets and this command;
+  new key `quiet` (default false) silences it.
+- Bench: row `bench.pi_prebaked` installs pi with `npm ci` from the committed lock in `bench/pi-lock/` (pins the
+  transitive tree); default stays the live install.
+- Docs: "Parallel rounds" in `docs/sessions.md` (one worktree per orchestrator session, never switch the main checkout).
 - Launch briefs: `instructions/foreman.md` gets explorer, builder and foreman skeletons (invariants and callers, new tests
   instead of edits, no narrowed fuzz strategies, visibility, shared symbols, edit tools only); matching rules in
   `agents/explorer.md` and `agents/builder.md`. A builder launch that cites ledger items ("item 3", "#5") gets a
@@ -124,6 +131,11 @@
   hits, rung-ups, child read-budget hits, headless defers and turns.
 
 ### Changed
+- `foreman radar`: header with colored non-zero counts and a right-aligned clock, a totals line (sessions, trees,
+  tokens, cost, oldest block), blocked ages amber over 5 min and red over 15 min, blue cost, dim ids, tokens and tree
+  lines; footer `q quit · r refresh · c cost on/off · ↑↓ select · enter show session path` with those keys live.
+  16-color ANSI only; `--no-color`, `NO_COLOR`, `--once` and non-TTY output stay plain.
+- Bench: both in-container npm installs retry up to 3 times, 20 s apart.
 - The README moved into `docs/`; the README is now an overview with a table of pages.
 - A rung's configured `thinking` (or model suffix) now wins over the foreman's passed level; only a rung without
   one takes the foreman's level.
@@ -138,6 +150,9 @@
   models) with claude-agent-sdk 0.3.293.
 
 ### Fixed
+- Git drift: git's own worktree bookkeeping (`commondir`, `gitdir` and worktree `.git` files appearing or vanishing
+  on `git worktree add/remove`) no longer reports; a worktree whose `commondir` or `.git` file points elsewhere does
+  (`worktree-link:<n>`), and all per-worktree changes collapse into one `worktrees: N changed (...)` line.
 - Write protection matched grep patterns and other string operands (`register\b` expanded to `.git/...`): it now
   checks shell path arguments only; grep/rg patterns, sed/awk scripts, find `-name` values and echo/printf text are
   skipped on read and filter lines, bash `*` skips dot entries and `\` is no separator outside Windows.

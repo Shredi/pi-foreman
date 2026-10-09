@@ -122,6 +122,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import datetime
 import json
 import os
 import re
@@ -948,6 +949,11 @@ def build_parser():
     sub.add_parser("generate-subagents", parents=[common])
     s = sub.add_parser("display-name", parents=[common])
     s.add_argument("--role", required=True)
+    s = sub.add_parser("apply-preset")
+    s.add_argument("name")
+    s.add_argument("--foreman", metavar="MODEL_ID")
+    s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--agent-dir")
     return p
 
 
@@ -958,8 +964,76 @@ def emit(args, obj, human):
         print(human)
 
 
+PRESETS_DIR = ROOT / "config" / "presets"
+
+
+def preset_names():
+    return sorted(p.stem for p in PRESETS_DIR.glob("*.json"))
+
+
+def backup_path(target, now):
+    bak = target.with_name("foreman.json.bak-" + now.strftime("%Y%m%d"))
+    if bak.exists():
+        bak = target.with_name(bak.name + now.strftime("-%H%M%S"))
+    base, n = bak, 1
+    while bak.exists():
+        n += 1
+        bak = target.with_name("%s.%d" % (base.name, n))
+    return bak
+
+
+def apply_preset(args):
+    """Merge config/presets/<name>.json into <agent dir>/foreman.json (preset wins)."""
+    name = args.name
+    path = PRESETS_DIR / (name + ".json")
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", name) or not path.is_file():
+        print("unknown preset %r; available: %s" % (name, ", ".join(preset_names())), file=sys.stderr)
+        return 2
+    target = resolve_agent_dir(args.agent_dir) / "foreman.json"
+    try:
+        preset = read_json(path)
+        existing = read_json(target) if target.is_file() else {}
+        if not isinstance(existing, dict):
+            raise ValueError("not a JSON object")
+    except (OSError, ValueError) as exc:
+        print("cannot read %s: %s" % (target, exc), file=sys.stderr)
+        return 1
+    merged = deep_merge(existing, preset)
+    if args.foreman:
+        for prov in (preset.get("providers") or {}):
+            merged["providers"][prov].setdefault("roles", {}).setdefault("foreman", {})["model"] = args.foreman
+    full = deep_merge(read_json(DEFAULTS_PATH), merged)
+    issues = []
+    validate_schema(full, read_json(SCHEMA_PATH), "", issues)
+    issues.extend(semantic_issues(full))
+    errs = [m for kind, _p, m in issues if kind == "error"]
+    if errs:
+        for m in errs:
+            print("error: " + m, file=sys.stderr)
+        print("nothing written", file=sys.stderr)
+        return 1
+    text = json.dumps(merged, indent=2) + "\n"
+    if args.dry_run:
+        sys.stdout.write(text)
+        return 0
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_file():
+        bak = backup_path(target, datetime.datetime.now())
+        bak.write_bytes(target.read_bytes())
+        print("backed up the old config to %s" % bak)
+    # Write beside the target and swap it in, so a failed write never leaves the config missing.
+    tmp = target.with_name(target.name + ".tmp")
+    with open(str(tmp), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+    tmp.replace(target)
+    print("applied preset %s to %s" % (name, target))
+    return 0
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    if args.cmd == "apply-preset":
+        return apply_preset(args)
     try:
         res = load_config(args.agent_dir, args.project_dir, args.trusted_project,
                           args.session_json, args.l3)

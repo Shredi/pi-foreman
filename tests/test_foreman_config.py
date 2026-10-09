@@ -313,6 +313,55 @@ class ConfigTest(unittest.TestCase):
         self.l2({"displayNames": "nonexistent"})
         self.assertTrue(self.load()["errors"])
 
+    def apply(self, *argv):
+        import contextlib
+        import io
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = fc.main(["apply-preset", *argv, "--agent-dir", str(self.agent)])
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_apply_preset_merges_and_backs_up(self):
+        self.l2({"quiet": True, "fanout": {"max": 2}, "ladder": {"childPolicy": "any"}})
+        rc, _o, _e = self.apply("google")
+        self.assertEqual(rc, 0)
+        text = (self.agent / "foreman.json").read_text()
+        self.assertTrue(text.endswith("}\n"))
+        got = json.loads(text)
+        self.assertEqual((got["quiet"], got["fanout"]["max"]), (True, 2))
+        self.assertEqual(got["ladder"]["childPolicy"], "at-or-below")  # preset wins
+        self.assertIn("google", got["providers"])
+        baks = sorted(p.name for p in self.agent.glob("foreman.json.bak-*"))
+        self.assertEqual(len(baks), 1)
+        self.assertTrue(re.fullmatch(r"foreman\.json\.bak-\d{8}", baks[0]))
+        self.assertEqual(json.loads((self.agent / baks[0]).read_text())["fanout"]["max"], 2)
+        self.assertEqual(self.load()["errors"], [])
+        self.apply("google")
+        baks = sorted(p.name for p in self.agent.glob("foreman.json.bak-*"))
+        self.assertEqual(len(baks), 2)
+        self.assertTrue(any(re.fullmatch(r"foreman\.json\.bak-\d{8}-\d{6}", b) for b in baks))
+
+    def test_apply_preset_dry_run_and_foreman_override(self):
+        rc, out, _e = self.apply("google", "--foreman", "google/other-model", "--dry-run")
+        self.assertEqual(rc, 0)
+        self.assertEqual(list(self.agent.iterdir()), [])
+        self.assertEqual(json.loads(out)["providers"]["google"]["roles"]["foreman"]["model"], "google/other-model")
+        self.assertEqual(self.apply("google", "--foreman", "google/other-model")[0], 0)
+        got = json.loads((self.agent / "foreman.json").read_text())
+        self.assertEqual(got["providers"]["google"]["roles"]["foreman"]["model"], "google/other-model")
+        self.assertEqual(list(self.agent.glob("foreman.json.bak-*")), [])  # no file before: no backup
+
+    def test_apply_preset_refuses_invalid_merge_and_unknown_name(self):
+        self.l2({"maxThinking": "bogus"})
+        before = (self.agent / "foreman.json").read_text()
+        rc, _o, err = self.apply("google")
+        self.assertEqual(rc, 1)
+        self.assertEqual((self.agent / "foreman.json").read_text(), before)
+        self.assertEqual(list(self.agent.glob("foreman.json.bak-*")), [])
+        rc, _o, err = self.apply("nope")
+        self.assertEqual(rc, 2)
+        self.assertIn("google", err)
+
 
 def render_prompt(text, values):
     """Mirror of ledgercall.ts applyVariants (keys compared case-insensitively)."""
