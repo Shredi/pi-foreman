@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "childMaxThinking": "high",
+  "ladder": { "childPolicy": "below", "strongAbove": 100000, "childMaxTurns": 60 },
+  "providers": {
+    "claude-bridge": {
+      "strongAbove": 100000,
+      "ranks": [
+        { "match": "claude-fable-*", "tier": 0 },
+        { "match": "claude-opus-*", "tier": 1 },
+        { "match": "claude-sonnet-*", "tier": 2 },
+        { "match": "claude-haiku-*", "tier": 3 }
+      ],
+      "roles": {
+        "foreman": { "model": "claude-bridge/claude-opus-5-5", "thinking": "high" },
+        "planner": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium" },
+        "explorer": { "model": "claude-bridge/claude-haiku-5-5", "thinking": "medium", "strong": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium" } },
+        "builder": { "model": "claude-bridge/claude-haiku-5-5", "thinking": "medium", "strong": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium" } },
+        "reviewer": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium" },
+        "senior-reviewer": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "high" },
+        "finalizer": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "low" }
+      },
+      "review": { "model": "claude-bridge/claude-haiku-5-5" }
+    }
+  }
+}

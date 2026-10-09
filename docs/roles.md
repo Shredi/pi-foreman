@@ -54,6 +54,8 @@ into `<agent dir>/foreman.json`:
 - `claude-bridge.json`: ranks fable > opus > sonnet > haiku; foreman Opus 5.5 (high); explorer, builder and
   reviewer Haiku 5.5 (medium) with a strong Sonnet 5.5 rung; planner, finalizer and senior-reviewer (high) on
   Sonnet 5.5; auto-review on Haiku 5.5; `childPolicy: below`, so no child runs on Opus; `childMaxThinking: high`.
+- `claude-bridge-sonnet-reviewer.json`: the same with the reviewer on Sonnet 5.5 (medium) and no strong rung;
+  explorer, builder and auto-review unchanged. Opt-in, not the default: the bench rows decide whether it pays.
 - `openai.json` (astra > sol > luna: `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-luna`) and `google.json`
   (`gemini-*-pro*` > `gemini-*-flash*`; `at-or-below`, because the strong rung is the foreman's own pro model). Ids
   are from Pi's model registry; tiers follow capability class so cross-provider comparisons hold.
