@@ -138,18 +138,15 @@ def ask_role(rec):
 
 def foreman_config(row):
     """The user-layer foreman.json for a foreman row: the row's roles (incl. builder.strong),
-    the review model (the row's review_model, else the reviewer role's model; the fake provider's
-    non-allowing review model for fake rows), trace on, and the row's `project_commands` as
+    the review model (the row's review_model; the fake provider's non-allowing review model for
+    fake rows; else none, so the harness picks the cheapest role-map model, review.ts), trace on, and the row's `project_commands` as
     safety.permissions.projectCommands. The row's `foreman_edits` becomes ceremony.foremanEdits; ceremony.requireTriage
     stays at its default. The row's `user_config` object is deep-merged in last, so a preset can set any knob."""
     provider = row["provider"]
     roles = row["roles"]
     review = row.get("review_model")
-    if not review:
-        if row.get("_fake"):
-            review = "%s/%s" % (provider, FAKE_REVIEW_MODEL)
-        else:
-            review = (roles.get("reviewer") or {}).get("model")
+    if not review and row.get("_fake"):
+        review = "%s/%s" % (provider, FAKE_REVIEW_MODEL)
     block = {"roles": roles}
     if review:
         block["review"] = {"model": review}

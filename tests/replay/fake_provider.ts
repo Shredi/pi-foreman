@@ -15,7 +15,7 @@
 // error (the provider throws) and hang (never answers until aborted).
 //
 // Usage is fixed per answer: input 10, output 5, cacheRead 4, cacheWrite 2 (cost 0), so replay can
-// assert the four token kinds.
+// assert the four token kinds. A step's own "usage" object overrides single numbers (ladder replay).
 //
 // FOREMAN_FAKE_CALLS=<file> appends "<provider>/<model> <tag>" per provider call (tests assert a
 // request never reached the provider).
@@ -44,6 +44,7 @@ const TAG = /\[\[replay:([A-Za-z0-9_.-]+)\]\]/;
 
 interface Step {
   text?: string;
+  usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
   tools?: { name: string; arguments: Record<string, unknown> }[];
 }
 type Script = Record<string, Record<string, Step[]>>;
@@ -134,6 +135,7 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
     stopReason: "stop",
     timestamp: Date.now(),
   } as AssistantMessage;
+  if (step.usage) Object.assign(output.usage, step.usage);
   if (model.id === "review-hang") {
     const abort = (): void => {
       output.stopReason = "aborted";

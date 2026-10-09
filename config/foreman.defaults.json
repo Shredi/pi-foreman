@@ -32,6 +32,7 @@
   },
   "providers": {},
   "fanout": { "max": 3 },
+  "ladder": { "strongAbove": 100000, "childMaxTurns": 60 },
   "maxThinking": "high",
   "ceremony": {
     "default": "standard",

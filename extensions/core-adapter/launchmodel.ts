@@ -56,6 +56,8 @@ export interface LaunchOptions {
   preferStrong?: boolean;
   /** Active provider, named in notices. */
   provider?: string;
+  /** childMaxThinking: caps every child launch's level, rungs included, on top of maxThinking. */
+  childMaxThinking?: unknown;
 }
 
 export interface LaunchResult {
@@ -72,9 +74,9 @@ export interface LaunchResult {
  * `strong` uses `roles[role].strong` ({model, thinking}); when none is mapped the default model
  * is used, and `notice` says so when strong was asked for (keyword or `preferStrong`; a heavy
  * tier without a strong model stays silent). A raw model id is no keyword: it is replaced by the
- * map at the strength above and reported as `override`. The level is the foreman's own when it
- * passed one (capped at `maxThinking`), else the chosen model's mapped thinking (already capped
- * by foreman_config); no suffix when neither is set.
+ * map at the strength above and reported as `override`. The level is the chosen rung's mapped
+ * thinking (already capped by foreman_config) or its model's suffix when configured; only a rung
+ * without one takes the foreman's level (capped at `maxThinking`); no suffix when neither is set.
  */
 export function launchModel(role: string, roles: Record<string, Json>, passed: unknown, maxThinking: unknown, opts: LaunchOptions = {}): LaunchResult | undefined {
   const r = roles[role];
@@ -86,7 +88,10 @@ export function launchModel(role: string, roles: Record<string, Json>, passed: u
   const strong = isObj(r.strong) && typeof r.strong.model === "string" && r.strong.model !== "" ? r.strong : null;
   const pick = wantStrong && strong ? strong : r;
   const mapped = splitLevel(pick.model as string);
-  const level = foreman.level ? clampLevel(foreman.level, maxThinking) : isLevel(pick.thinking) ? pick.thinking : mapped.level;
+  // The rung's own level wins (a bottom rung never escalates thinking; the ladder climbs by model).
+  const own = isLevel(pick.thinking) ? pick.thinking : mapped.level;
+  const raw = own ?? (foreman.level ? clampLevel(foreman.level, maxThinking) : null);
+  const level = raw ? clampLevel(raw, opts.childMaxThinking) : null;
   const model = level ? `${mapped.base}:${level}` : mapped.base;
   const out: LaunchResult = { model };
   if (keyword === null && foreman.base !== "" && foreman.base !== mapped.base) out.override = { role, model: mapped.base, requested: foreman.base };

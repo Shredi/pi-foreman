@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ForemanReview, parseVerdict, REVIEW_LINK, reviewTarget } from "../review.ts";
+import { autoReviewTarget, ForemanReview, parseVerdict, REVIEW_LINK, reviewTarget } from "../review.ts";
 import type { RegistryLike, ReviewSession } from "../review.ts";
 
 const config = { providers: { a: { review: { model: "a/small", timeoutMs: 50 } }, b: { roles: {} }, c: { review: { model: "tiny" } } } };
@@ -68,4 +68,17 @@ test("onReady registers the link once on that session's permission service", () 
   r.drop("s1");
   assert.equal(disposed, 1);
   delete (globalThis as Record<symbol, unknown>)[key];
+});
+
+test("no review.model: the cheapest role-map model with auth is auto-picked and traced; none defers", async () => {
+  const models: Record<string, { cost: { input: number }; auth: boolean }> = { "p/big": { cost: { input: 5 }, auth: true }, "p/mid": { cost: { input: 2 }, auth: true }, "p/tiny": { cost: { input: 0.1 }, auth: false } };
+  const registry: RegistryLike = { find: (p, id) => models[`${p}/${id}`], hasConfiguredAuth: (m) => (m as unknown as { auth: boolean }).auth, complete: async () => ({ content: [{ type: "text", text: '{"verdict":"allow"}' }], stopReason: "stop" }) };
+  const cfg = { providers: { p: { roles: { foreman: { model: "p/big:high" }, builder: { model: "p/tiny", strong: { model: "p/mid" } }, explorer: { model: "gone" } } } } };
+  assert.deepEqual(autoReviewTarget(cfg, "p", registry), { provider: "p", modelId: "mid", timeoutMs: 15000, auto: true });
+  assert.equal(autoReviewTarget({ providers: { p: { roles: { builder: { model: "p/tiny" } } } } }, "p", registry), null);
+  const traced: Record<string, unknown>[] = [];
+  const r = new ForemanReview();
+  r.upsert("s", { isChild: false, cwd: "/w", provider: "p", config: () => cfg, registry, intent: "", trace: (x) => void traced.push(x) });
+  assert.deepEqual(await r.authorize("s", bash), { kind: "allow" });
+  assert.deepEqual([traced[0].model, traced[0].by], ["p/mid", "auto"]);
 });
