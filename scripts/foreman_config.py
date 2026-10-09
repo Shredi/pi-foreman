@@ -190,6 +190,7 @@ LAYER_TIGHTEN = [
     (("ceremony", "heavyFileCount"), "lower_only"),
     (("ceremony", "trivialBound", "*"), "lower_only"),
     (("ceremony", "foremanReads", "*", "*"), "lower_only"),
+    (("ceremony", "childReads", "*", "*"), "lower_only"),
     (("ceremony", "recheckBudget"), "lower_only"),
     (("ceremony", "launchWait"), ("ordered", ("block", "detach"))),
     (("ceremony", "dedupeNotify"), "true_only"),
