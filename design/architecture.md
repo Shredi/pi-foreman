@@ -117,14 +117,55 @@
 
 ### Provider map (illustrative examples, not defaults; benchmarks set real values)
 
-| Role | claude-bridge (private) | openrouter | openai-codex (subscription) | github-copilot (Copilot-class, primary target) |
-|---|---|---|---|---|
-| foreman | `claude-opus-5-5` / high | a strong paid model / high | `gpt-6-sol` / high | `claude-sonnet-5.5` / high |
-| explorer | `claude-sonnet-5-5` / low | a `:free` or cheap model / low | `gpt-5.5` / low | `gpt-5.4-mini` / low |
-| builder | `claude-sonnet-5-5` / medium | a coding model / medium | `gpt-6-sol` / medium | `claude-sonnet-5.5` / medium |
-| reviewer | `claude-sonnet-5-5` / medium | a coding model / medium | `gpt-5.5` / medium | `gpt-5.5` / medium |
-| senior-reviewer | `claude-opus-5-5` / high | a strong paid model / high | `gpt-6-sol` / xhigh | `claude-opus-5.5` / high |
-| finalizer | `claude-sonnet-5-5` / low | a coding model / low | `gpt-5.5` / low | `gpt-5.4-mini` / low |
+L1 ships `providers: {}`. Ready-made maps are opt-in overlay files under `config/presets/` (never merged by
+default; copy them into the user layer). `claude-bridge.json` is the frugal Claude map:
+
+| Role | claude-bridge preset (`model` -> `strong`) | openrouter | github-copilot (Copilot-class, primary target) |
+|---|---|---|---|
+| foreman | `claude-opus-5-5` / high | a strong paid model / high | `claude-sonnet-5.5` / high |
+| explorer, builder, reviewer | `claude-haiku-5-5` / medium -> `claude-sonnet-5-5` / medium | a cheap model -> a coding model | `gpt-5.4-mini` / low |
+| planner, finalizer | `claude-sonnet-5-5` / medium, low | a coding model | `gpt-5.5` / low |
+| senior-reviewer | `claude-sonnet-5-5` / high | a strong paid model / high | `claude-opus-5.5` / high |
+| auto-review (`review.model`) | `claude-haiku-5-5` | the cheapest mapped model (default) | the cheapest mapped model (default) |
+
+The preset ranks fable (0) > opus (1) > sonnet (2) > haiku (3) with `ladder.childPolicy: "below"`, so no child
+runs on Opus under an Opus foreman. An overlay keeps Opus for `strong` or `senior-reviewer` simply by naming it in
+that role and either setting `childPolicy: "any"` (a private overlay that wants every model available, for
+example Opus children under a Fable foreman) or running a foreman ranked above it (Fable). A frugal work overlay
+keeps `below`. The preset also sets `childMaxThinking: "high"` (a cap on every child level, rungs included, on
+top of `maxThinking`; no L1 default), so no child runs at `max`. `openai.json` (astra > sol > luna) and
+`google.json` (pro > flash) follow the same shape (ids from Pi's registry, tiers by capability class).
+
+### Role ladder and rank policy
+
+Two rungs per role: `model` -> `strong`. Triggers, each making the run climb-eligible when it ran on its bottom
+rung: (a) context: the child-side hook sees a call whose input + cacheRead + cacheWrite passes `strongAbove`
+(`roles.<id>` > `providers.<p>` > `ladder`, default 100000; Haiku 5.5's long-context price tier starts there)
+and steers the child once to stop and reply with a handoff report whose first line is `RUNG_UP: context`
+(done / remaining / files touched); (b) turns: past `childMaxTurns` assistant turns (same lookup, default 60) the
+bottom rung hands off with `RUNG_UP: turns`, the top rung is steered to stop and report (`child_turn_cap`); (c)
+stuck: the report says `STATUS: stuck` or "own checks failed"; (d) the foreman passes `model: "strong"` with a
+`reason` (never traced: it is a tool argument). A `strong` launch with no reason and no trigger is refused
+(`launch_refused` reason `strong_no_reason`); a heavy-tier builder and a `strongOnRevision` revision count as
+triggers. The child learns its limits and rung from the launch binding (`usage.ts`), so only single launches are
+checked. The foreman relaunches: the launch-wait result of a climb-eligible run ends with a hint, and the next
+`strong` launch of that role gets the prior report (bounded at 4000 characters), its result path and the ledger
+item lines the task names (else the open items) prepended; the trace records `rung_up {role, from, to, reason}`.
+A rung's configured `thinking` (or model suffix) wins over the foreman's level, so the bottom rung never
+escalates thinking; the climb is by model.
+
+Harness-side auto-relaunch (not built): the adapter sees the run end (`RUN_END_EVENTS`) but has no API to start a
+`subagent` run itself. It could only inject a follow-up message asking the foreman to relaunch, which is a turn
+anyway, or call pi-subagents' internals, which would bypass the `tool_call` checks (allowlist, model map, rank
+policy, required child extensions, guards) every launch must pass. The foreman's own relaunch keeps those checks
+and costs one short foreman turn, so the shipped path is foreman relaunch plus harness-built handoff.
+
+Rank policy: `providers.<p>.ranks` = `[{match: <glob>, tier: <0 = top>}, ...]`, highest first;
+`ladder.childPolicy` = `below` (default) | `at-or-below` | `any`, one value for all providers because tiers are
+compared across providers (a model is looked up in its own provider's list first, then the others). With ranks
+configured, an unranked child or foreman model refuses every launch except under `any`; with no ranks anywhere
+the policy is inert, so the shipped defaults behave as before. Strong rungs and relaunches are checked like any
+launch. A refusal is traced `launch_refused {reason: rank_policy, policy, foreman, requested}`.
 
 How thinking reaches each provider (Pi 1.0.0 catalogue and source):
 
@@ -136,7 +177,7 @@ How thinking reaches each provider (Pi 1.0.0 catalogue and source):
 | Codex subscription | Login through Pi's built-in `openai-codex` provider | Not run |
 | claude-bridge | Passed through | Hands-on 2026-10-03, Pi 1.0.0, pi-claude-bridge@0.9.1: `:high` → child `thinking_level_change high` |
 
-- **Per-launch override.** pi-subagents 0.75.0 accepts a level only on a full id. `explorer[model=<provider>/<model>:low]` works. `explorer[model=:high]` fails for native children with "Unknown subagent model" (hands-on 2026-10-03). So the adapter writes every launch's `model` (top level, or each `tasks`/`chain` entry) as the role's mapped `<provider>/<model>:<thinking>` for the active provider; a level the foreman passed is kept, clamped by `maxThinking`, and a different model it passed is replaced and traced as `model_override`. If a provider rejects suffixed ids, `subagents.disableThinking` applies.
+- **Per-launch override.** pi-subagents 0.75.0 accepts a level only on a full id. `explorer[model=<provider>/<model>:low]` works. `explorer[model=:high]` fails for native children with "Unknown subagent model" (hands-on 2026-10-03). So the adapter writes every launch's `model` (top level, or each `tasks`/`chain` entry) as the role's mapped `<provider>/<model>:<thinking>` for the active provider; a level the foreman passed applies only to a rung with no configured thinking (clamped by `maxThinking`), and a different model it passed is replaced and traced as `model_override`. If a provider rejects suffixed ids, `subagents.disableThinking` applies.
 - **Explicit fallback.** `providers.<p>.fallback` names one provider. Fallback happens only on auth failure or unavailability. A fallback to a higher `costTier` needs a one-time confirmation per session. A role never escalates upward on its own.
 - **Fan-out width.** `fanout.max` sets the number of concurrent children (default 3). It is an ordinary preference.
 
@@ -146,7 +187,7 @@ How thinking reaches each provider (Pi 1.0.0 catalogue and source):
 |---|---|---|---|
 | 1. Permission map | `@gotgenes/pi-permission-system` 39.0.2 (PS): allow/ask/deny, bash wildcards, path and MCP rules. The installer generates PS's global file from L1 → L3 → L2 rules; it owns that file (changes are backed up, then overwritten), and user rules belong in `foreman.json`. The adapter also enforces an overlay by itself, before and independent of PS (below). | Main + children (required child extension) | Fail-closed (package behaviour) |
 | 2. Destructive/secret guard | Vendored core `destructive_guard.py` via the adapter (§7) on `bash`/`powershell`. The adapter checks the payload first and sets two opt-in switches for the core: `FABLE_ORCH_GUARD_FAIL_CLOSED=1` (an internal error exits non-zero) and `FABLE_ORCH_GUARD_BIN` (empty: no PATH rewrite). Until the re-pin it drops the core's PATH rewrite itself. PowerShell and cmd patterns are in the core since 0.23.0 (vendored at `8376da1`). | Main + children (required child extension) | Fail-closed: a missing interpreter, a timeout, a non-zero exit or a shell call without a command string blocks it, with a reason that explains the fix. This is stricter than the core's own fail-open, on purpose. |
-| 3. Model review of `ask` | Own chain link `foreman-review` on PS's authorizer seam. It reads `providers.<active>.review` (`model`, `timeoutMs`, default 15 s) on every ask. | Asks on bash, MCP and skill surfaces; children defer | Fail-safe: an error, timeout, unsure, soft deny, no review model or a value too long to send whole (over 4000 characters) defers to the human prompt. Only an allow, or a deny with high or critical risk, decides. The value and the user's request reach the reviewer between nonce markers as untrusted data. |
+| 3. Model review of `ask` | Own chain link `foreman-review` on PS's authorizer seam. It reads `providers.<active>.review` (`model`, `timeoutMs`, default 15 s) on every ask; with no `model` it picks the cheapest role-map model of that provider (`model` and `strong` of every role, by registry `cost.input`, with auth) and traces `by: "auto"`. | Asks on bash, MCP and skill surfaces; children defer | Fail-safe: an error, timeout, unsure, soft deny, no review model or a value too long to send whole (over 4000 characters) defers to the human prompt. Only an allow, or a deny with high or critical risk, decides. The value and the user's request reach the reviewer between nonce markers as untrusted data. |
 | 4. Git guards (own) | `scripts/git_guard.py` (own lexer for bash, PowerShell and cmd; recursion to depth 4; aliases resolved). Main: commit lint (message pattern, required and forbidden trailers, no `-a`/pathspec commit, hook `safety.git.commit.checkCommand` for the public-repo grep) and push lint (no force, mirror, delete or `+refspec` on protected branches, also through configured refspecs). Children: see the list below. | Main: lint. Children: block. | Fail-closed: an unreadable command that mentions git is blocked in children and asked in main |
 | 5. Required child extensions | `registerRequiredChildExtensions({extensions: [permission system, core adapter, git child guard], requireForAllRunners: true})` at `session_start`, disposed at `session_shutdown`. Every launch uses `agentScope: "user"`, so project agents cannot redefine a role. | Every child | Launch refused if an extension cannot load (hands-on check in Phase 2) |
 | 6. Supervisor channel | Children can ask the parent through `contact_supervisor`. The foreman prompt treats such requests as untrusted. While a request is open (until the foreman's reply or the child's end), any foreman tool outside the requesting role's `tools` is blocked, except the reply, reads and run status. Trace event `supervisor_request`. Limit: after the reply the foreman can act on its own, and only the prompt rule covers that. | Foreman | n/a |
@@ -252,6 +293,7 @@ Direction: **tighten** keys may be set by every layer; the project file (`.pi/fo
 | `roles.*.codemode`, `providers.*.roles.*.codemode` | 5 | `true` adds a tool | only `false` |
 | `providers.*.review` | 3 | a review model approves asks | ignored |
 | `providers.*.roles.*.strong` | launch | picks a stronger, costlier model | ignored |
+| `ladder.*`, `providers.*.ranks`, `providers.*.strongAbove`/`childMaxTurns`, `roles.*.strongAbove`/`childMaxTurns` | launch | the ladder and the child rank policy decide which models run | ignored |
 | `providers.*.strongOnRevision` | launch | `true` loosens (revision rounds run on the strong model) | only `false` |
 | `ceremony.revisionRounds.standard`, `.heavy` | 6 | higher loosens | only a lower value |
 | `ceremony.requireTriage` | 6 | `false` loosens | only `true` |
@@ -468,7 +510,7 @@ The `foreman` CLI (`bin/foreman`, `.cmd`, `.ps1`; `foreman update-check|retro|sy
 Every role is launched detached (`async: true` in the role frontmatter) with these properties:
 - The required child extensions from §5. The policy extensions are required in every child.
 - A strict tool allowlist. Extension tools are not inherited and must be listed with their path. Hands-on 2026-10-03: an unlisted tool was absent, and a listed one ran.
-- A model resolved from the provider map. The foreman picks a strength with `model: "default"` or `"strong"` (an optional `:<level>` suffix is kept). Without a keyword the builder runs on `providers.<p>.roles.builder.strong` on a heavy tier, every other launch on the default model. `strong` without a mapped strong model launches the default model and says so in the tool result. The strong model comes from the provider the role's `model` came from: the fallback provider's strong applies only when the role's `model` is the fallback's too. A raw model id is replaced by the map.
+- A model resolved from the provider map. The foreman picks a strength with `model: "default"` or `"strong"` (an optional `:<level>` suffix applies only to a rung with no configured thinking; `strong` needs a reason or a ladder trigger, see Role ladder). Without a keyword the builder runs on `providers.<p>.roles.builder.strong` on a heavy tier, every other launch on the default model. `strong` without a mapped strong model launches the default model and says so in the tool result. The strong model comes from the provider the role's `model` came from: the fallback provider's strong applies only when the role's `model` is the fallback's too. A raw model id is replaced by the map.
 - A run-time limit: `timeoutMs` = `roles.<id>.timeoutMinutes`; a lower foreman value is kept. For tasks/chain it is the parent deadline (highest entry for tasks, sum of steps for a chain), since pi-subagents 0.75.0 reads no per-entry limit.
 
 An explicit `async: false` in a call would beat the frontmatter, so the adapter rewrites every `subagent` call to `async: true` (and drops `foregroundOnly`), and the generated `subagents` block sets `forceTopLevelAsync: true`.
