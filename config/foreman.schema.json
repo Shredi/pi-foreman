@@ -31,7 +31,8 @@
           "launch": { "type": "string", "enum": ["detached"], "description": "How the role is launched. Only detached is supported: detached children forward permission asks to the parent. A project or session cannot set it." },
           "timeoutMinutes": { "type": "integer", "minimum": 1, "description": "Run-time limit of one launch of this role; the adapter writes it into each launch as timeoutMs and clamps a longer foreman value down to it. A project or session can only lower it." },
           "strongAbove": { "type": "integer", "minimum": 1, "description": "Ladder: context tokens (input + cacheRead + cacheWrite of one call) above which a child of this role on its bottom rung is steered to stop and hand off for a strong relaunch. Wins over providers.<p>.strongAbove and ladder.strongAbove. User or overlay config only." },
-          "childMaxTurns": { "type": "integer", "minimum": 1, "description": "Ladder: assistant turns after which a child of this role is steered once to stop: on its bottom rung with a RUNG_UP: turns handoff (climb-eligible), on its top rung to report. Wins over providers.<p>.childMaxTurns and ladder.childMaxTurns. User or overlay config only." }
+          "childMaxTurns": { "type": "integer", "minimum": 1, "description": "Ladder: assistant turns after which a child of this role is steered once to stop: on its bottom rung with a RUNG_UP: turns handoff (climb-eligible), on its top rung to report. Wins over providers.<p>.childMaxTurns and ladder.childMaxTurns. User or overlay config only." },
+          "strongOnRevision": { "type": "boolean", "description": "Ladder: climb this role to its strong rung on a revision after a reviewer FAIL (see ladder.strongOnRevision). Wins over providers.<p>.strongOnRevision and ladder.strongOnRevision. A project or session can only set false." }
         }
       }
     },
@@ -81,7 +82,7 @@
               }
             }
           },
-          "strongOnRevision": { "type": "boolean", "description": "Relaunch the builder on its strong model for a revision round (default false). A project or session can only set false." },
+          "strongOnRevision": { "type": "boolean", "description": "true: relaunch the builder on its strong model for every revision round (rung_up reason revision); false: no climb, also not after a reviewer FAIL. Unset: ladder.strongOnRevision decides. Wins over ladder.strongOnRevision. A project or session can only set false." },
           "review": {
             "type": "object",
             "additionalProperties": false,
@@ -112,10 +113,11 @@
     "ladder": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Role ladder (model -> strong) and the rank policy for child models. User or overlay config only.",
+      "description": "Role ladder (model -> strong) and the rank policy for child models. User or overlay config only, except strongOnRevision (a project or session can only set false).",
       "properties": {
         "strongAbove": { "type": "integer", "minimum": 1, "description": "Default context limit of a bottom-rung child (L1: 100000)." },
         "childMaxTurns": { "type": "integer", "minimum": 1, "description": "Default assistant-turn cap of a child (L1: 60)." },
+        "strongOnRevision": { "type": "boolean", "description": "A builder revision launched after a reviewer FAIL goes to the builder's strong rung (rung_up reason review_fail; L1: true). No-op without a strong rung. Overridden by providers.<p>.strongOnRevision and roles.<id>.strongOnRevision. A project or session can only set false." },
         "childPolicy": { "type": "string", "enum": ["below", "at-or-below", "any"], "description": "Which child models a foreman may launch by providers.<p>.ranks: below = strictly lower tier than the foreman's model (default), at-or-below = the same tier too, any = no check. Inert while no provider has ranks." }
       }
     },

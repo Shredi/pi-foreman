@@ -1,0 +1,25 @@
+{
+ "foreman": {
+  "c1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-fc.md", "content": "# Requirements Ledger: fc\n\n- [x] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-c2]] build item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "c2": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-c3]] review item 1"}}]}, {"text": "Reviewer launched."}],
+  "c3": [
+   {"text": "Done."},
+   {"text": "Still done."},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-c4]] fix the findings"}}]},
+   {"text": "Revision launched."}
+  ],
+  "c4": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-c5]] review the revision"}}]}, {"text": "Reviewer launched."}],
+  "c5": [{"text": "Done."}, {"text": "Still done."}, {"text": "Done, open findings reported."}]
+ },
+ "*": {
+  "b-c2": [{"text": "[[replay:c2]] built"}],
+  "r-c3": [{"text": "[[replay:c3]] VERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL"}],
+  "b-c4": [{"text": "[[replay:c4]] fixed on the strong rung"}],
+  "r-c5": [{"text": "[[replay:c5]] VERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL"}]
+ }
+}

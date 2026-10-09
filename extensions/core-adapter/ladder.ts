@@ -20,6 +20,11 @@
 //
 // strongAbove / childMaxTurns: roles.<role>.<key>, else providers.<p>.<key>, else ladder.<key>,
 // else 100000 / 60.
+//
+//   (e) review_fail: a builder revision launched while the latest review verdict is FAIL goes to
+//       the strong rung when strongOnRevision resolves true (same lookup; L1 ladder.strongOnRevision
+//       true). A revision without a FAIL climbs only with providers.<p>.strongOnRevision true
+//       (reason revision). The finish gate refuses once more, uncounted, while that climb is open.
 import { get, type Json } from "./config.ts";
 import { splitLevel, type Tier } from "./launchmodel.ts";
 import type { RunEnd } from "./launchwait.ts";
@@ -41,6 +46,24 @@ function knob(config: Json | undefined, provider: string | undefined, role: stri
     if (posInt(v)) return v;
   }
   return dflt;
+}
+
+/** strongOnRevision of `role` on `provider`: roles.<role>, else providers.<p>, else ladder; unset = false. */
+export function strongOnRevision(config: Json | undefined, provider: string | undefined, role: string): boolean {
+  for (const v of [get(config, `roles.${role}.strongOnRevision`), provider ? get(config, `providers.${provider}.strongOnRevision`) : undefined, get(config, `ladder.strongOnRevision`)]) {
+    if (typeof v === "boolean") return v;
+  }
+  return false;
+}
+
+/**
+ * The climb of a builder revision launch: "review_fail" after a reviewer FAIL with strongOnRevision
+ * on; "revision" without a FAIL only when providers.<p>.strongOnRevision is explicitly true; else null.
+ */
+export function revisionClimb(config: Json | undefined, provider: string | undefined, failed: boolean): "review_fail" | "revision" | null {
+  if (!strongOnRevision(config, provider, "builder")) return null;
+  if (failed) return "review_fail";
+  return provider && get(config, `providers.${provider}.strongOnRevision`) === true ? "revision" : null;
 }
 
 /** The strongAbove limit of `role` on `provider`. */
@@ -171,7 +194,7 @@ export interface Climb {
   role: string;
   from: string;
   to: string;
-  /** context | stuck | checks_failed | foreman | heavy | revision */
+  /** context | stuck | checks_failed | foreman | heavy | revision | review_fail */
   reason: string;
   handoff?: Handoff;
 }
@@ -180,6 +203,8 @@ export interface LadderOptions {
   tier?: Tier;
   /** strongOnRevision applies to this launch (a revision relaunch). */
   preferStrong?: boolean;
+  /** The rung_up reason of a preferStrong climb (default "revision"). */
+  revisionReason?: "revision" | "review_fail";
 }
 
 /** Foreman side: rung per launch, climb-eligible runs per role. */
@@ -245,11 +270,11 @@ export class LadderState {
       const from = splitLevel(r.model).base;
       const to = splitLevel(strong).base;
       if (keyword !== "strong") {
-        if (keyword === "" && role === "builder" && opts.preferStrong) climbs.push({ entry: e, role, from, to, reason: "revision" });
+        if (keyword === "" && role === "builder" && opts.preferStrong) climbs.push({ entry: e, role, from, to, reason: opts.revisionReason ?? "revision" });
         continue;
       }
       const h = this.eligible.get(role);
-      const why = h ? h.cause : typeof reason === "string" && reason.trim() ? "foreman" : role === "builder" && opts.tier === "heavy" ? "heavy" : role === "builder" && opts.preferStrong ? "revision" : null;
+      const why = h ? h.cause : typeof reason === "string" && reason.trim() ? "foreman" : role === "builder" && opts.tier === "heavy" ? "heavy" : role === "builder" && opts.preferStrong ? (opts.revisionReason ?? "revision") : null;
       if (!why) return { block: `pi-foreman: strong launch of ${role} refused [strong_no_reason]: pass a "reason" with model "strong" (why the bottom rung ${from} cannot do it), or launch on the default model; a climb-eligible run of ${role} (context, STATUS: stuck, own checks failed) also allows it.`, climbs: [] };
       climbs.push({ entry: e, role, from, to, reason: why, handoff: h });
     }
@@ -269,6 +294,12 @@ export class LadderState {
     }
     return out;
   }
+}
+
+/** Whether `role` has a strong rung in the role map. */
+export function hasStrongRung(roles: Record<string, Json>, role: string): boolean {
+  const r = roles[role];
+  return isObj(r) && isObj(r.strong) && typeof r.strong.model === "string" && r.strong.model !== "";
 }
 
 /** Single launches only: whether the resolved model is the role's bottom rung (it has a strong rung above). */

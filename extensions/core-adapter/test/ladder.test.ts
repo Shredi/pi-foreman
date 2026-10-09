@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ChildLadder, childMaxTurns, climbCause, LadderState, ledgerLines, onBottomRung, strongAbove } from "../ladder.ts";
+import { ChildLadder, childMaxTurns, climbCause, hasStrongRung, LadderState, ledgerLines, onBottomRung, revisionClimb, strongAbove, strongOnRevision } from "../ladder.ts";
 import { applyLaunchModels } from "../launchmodel.ts";
 
 const ROLES = {
@@ -62,6 +62,31 @@ test("a strong launch without reason or trigger is refused; reason, heavy tier a
   assert.equal(l.plan({ agent: "builder", task: "t" }, ROLES, { preferStrong: true }).climbs[0].reason, "revision");
   assert.deepEqual(l.plan({ agent: "explorer", task: "t", model: "strong" }, ROLES), { climbs: [] }); // no strong rung: notice path
   assert.deepEqual(l.plan({ agent: "builder", task: "t" }, ROLES), { climbs: [] });
+});
+
+test("strongOnRevision: role, then provider, then ladder; unset = false", () => {
+  const cfg = { roles: { builder: { strongOnRevision: false } }, providers: { p: { strongOnRevision: true } }, ladder: { strongOnRevision: false } };
+  assert.deepEqual([strongOnRevision(cfg, "p", "builder"), strongOnRevision(cfg, "p", "explorer"), strongOnRevision(cfg, "q", "explorer"), strongOnRevision({}, "p", "builder")], [false, true, false, false]);
+});
+
+test("revisionClimb: review_fail after a FAIL with the ladder key on; revision only with the provider key true", () => {
+  const on = { ladder: { strongOnRevision: true } };
+  assert.equal(revisionClimb(on, "p", true), "review_fail");
+  assert.equal(revisionClimb(on, "p", false), null);
+  assert.equal(revisionClimb({ ladder: { strongOnRevision: true }, providers: { p: { strongOnRevision: true } } }, "p", false), "revision");
+  assert.equal(revisionClimb({ ladder: { strongOnRevision: true }, providers: { p: { strongOnRevision: false } } }, "p", true), null);
+  assert.equal(revisionClimb({ ladder: { strongOnRevision: false } }, "p", true), null);
+});
+
+test("a review_fail revision climbs with that reason; a strong keyword on it is not refused", () => {
+  const l = new LadderState();
+  const opts = { preferStrong: true, revisionReason: "review_fail" as const };
+  assert.deepEqual(l.plan({ agent: "builder", task: "t" }, ROLES, opts).climbs.map((c) => [c.reason, c.from, c.to]), [["review_fail", "p/small", "p/big"]]);
+  const kw = l.plan({ agent: "builder", task: "t", model: "strong" }, ROLES, opts);
+  assert.deepEqual([kw.block, kw.climbs[0]?.reason], [undefined, "review_fail"]);
+  assert.deepEqual(l.plan({ agent: "builder", task: "t", model: "default" }, ROLES, opts), { climbs: [] });
+  assert.deepEqual(l.plan({ agent: "builder", task: "t" }, { builder: { model: "p/small" } }, opts), { climbs: [] }); // no strong rung: no-op
+  assert.deepEqual([hasStrongRung(ROLES, "builder"), hasStrongRung(ROLES, "explorer"), hasStrongRung(ROLES, "x")], [true, false, false]);
 });
 
 test("a climb-eligible bottom-rung run allows strong and its handoff is prepended once; rung_up is traced", () => {
