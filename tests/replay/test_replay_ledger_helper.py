@@ -115,7 +115,7 @@ class TestLedgerHelper(ReplayCase):
         self.assertIn("(no-op)", res[4][2])
         self.assertIn("item 9 not found", res[5][2])
         text = self.ledger(rig, "li")
-        self.assertIn("- [x] 2. b3\n- [ ] V.", text)
+        self.assertRegex(text, r"- \[x\] 2\. b3\n(?:  > \d{4}-\d{2}-\d{2} ledger [^\n]*\n){1,3}- \[ \] V\.")  # D8 hints sit under the item
         self.assertNotIn("b2", text)
         self.assertEqual([(r["kind"], r["allowed"], r.get("items")) for r in events(rig, sid, "ledger_call")][:3], [("upsert", True, "2"), ("upsert", True, "2"), ("mark", True, "2")])
 

@@ -19,3 +19,4 @@ Return exactly:
 2. Tests run: the commands and their result (pass or fail, counts).
 3. Ledger items addressed: item numbers, each marked done or partial.
 4. Open issues: anything unfinished, surprising or out of scope. Write "none" if there is none.
+5. Missing: <file | allow rule | brief detail | none> — what you lacked for this task, one line.

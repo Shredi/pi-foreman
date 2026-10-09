@@ -22,3 +22,4 @@ Return exactly:
 1. One line per ledger item: `N. PASS` or `N. FAIL`, then the evidence (`path:line` or command output).
 2. Defects outside the ledger items, each with `path:line`.
 3. Overall verdict: PASS only if every item passes and no blocking defect remains; otherwise FAIL.
+4. Missing: <file | allow rule | brief detail | none> — what you lacked for this task, one line.

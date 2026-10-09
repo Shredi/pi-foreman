@@ -185,6 +185,8 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
     Object.assign(output.usage, { input: 10, cacheRead: Math.ceil(kept / 4), cacheWrite: Math.ceil((sizes.total - kept) / 4) });
   }
   if (step.usage) Object.assign(output.usage, step.usage);
+  // D8 retro replay: a summary request that asks for a Retro section (pi-foreman's compaction) ends with one.
+  if (summary && JSON.stringify(context.messages).includes("## Retro")) step.text += "\n\n## Retro\n- fake: missing an allow rule\n- fake: enhance the brief";
   if (model.id === "review-hang") {
     const abort = (): void => {
       output.stopReason = "aborted";

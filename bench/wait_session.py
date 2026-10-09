@@ -175,7 +175,7 @@ def _deep_merge(base, extra):
             base[key] = value
 
 
-POST_STEP_COMMANDS = {"retro": "/retro", "sync": "/sync --dry-run"}
+POST_STEP_COMMANDS = {"retro": "/retro --model", "sync": "/sync --dry-run"}
 POST_MARKER = "bench-post-marker.json"  # in the agent state dir: {"ms", "ts"}; usage from then on is the post steps'
 POST_STEP_CAP = 300.0  # seconds per step
 HASH_FULL_BYTES = 8 * 1024 * 1024  # larger files are hashed by size only

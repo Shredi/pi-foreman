@@ -155,12 +155,12 @@ class PostStepsTest(unittest.TestCase):
         self.assertEqual(self.run_steps([], pi), {})
         self.assertEqual(pi.sent, [])
         status = self.run_steps(["retro", "sync", "bogus"], pi)
-        self.assertEqual([m["message"] for m in pi.sent], ["/retro", "/sync --dry-run"])
+        self.assertEqual([m["message"] for m in pi.sent], ["/retro --model", "/sync --dry-run"])
         self.assertEqual([r.get("error") for r in status["post_steps"]["steps"]], [None, None, "unknown_step"])
 
     def test_output_goes_to_state_marker_is_written_and_unchanged_workspace_is_not_infra(self):
         status = self.run_steps(["retro"], FakePi())
-        self.assertEqual((self.state / "post-steps" / "retro.txt").read_text("utf-8").strip(), "out of /retro")
+        self.assertEqual((self.state / "post-steps" / "retro.txt").read_text("utf-8").strip(), "out of /retro --model")
         self.assertGreater(json.loads((self.state / ws.POST_MARKER).read_text("utf-8"))["ms"], 0)
         self.assertFalse(status["post_steps"]["workspace_changed"])
         self.assertNotIn("infra_error", status)
