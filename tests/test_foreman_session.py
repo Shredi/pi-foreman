@@ -87,15 +87,18 @@ class SessionTest(unittest.TestCase):
 
     def test_workspace_match_opens_a_tab_and_runs_a_quoted_command(self):
         ws = json.dumps([{"workspace_id": "w3", "label": "other"}, {"workspace_id": "w2", "label": "proj"}])
-        code, out, err = self.run_main(*self.open_args("--model", "prov/model-1"), FAKE_HERDR_WORKSPACES=ws)
+        opener = self.tmp / "opener"  # the opener's own cwd names the parent, not the child's --cwd
+        opener.mkdir()
+        with mock.patch.object(fsn.Path, "cwd", return_value=opener):
+            code, out, err = self.run_main(*self.open_args("--model", "prov/model-1"), FAKE_HERDR_WORKSPACES=ws)
         self.assertEqual(code, 0, err)
         calls = self.calls()
         self.assertEqual(calls[0], ["workspace", "list"])
         self.assertEqual(calls[1], ["tab", "create", "--workspace", "w2", "--cwd", str(self.proj / "sub"), "--label", "demo", "--no-focus"])
         self.assertEqual(calls[2][:3], ["pane", "run", "w2:p7"])
-        # the group tag: pane id first, display-only, parent slug = the opener's repo
+        # the group tag: pane id first, display-only, parent slug = the opener's repo (or cwd) name
         self.assertEqual(calls[3], ["pane", "report-metadata", "w2:p7", "--source", "user:pi-foreman",
-                                    "--display-agent", "proj › demo", "--ttl-ms", "180000"])
+                                    "--display-agent", "opener › demo", "--ttl-ms", "180000"])
         self.assertEqual(len(calls), 4)
         entry = self.registry()[0]
         handoff = Path(entry["handoff"])
@@ -106,7 +109,7 @@ class SessionTest(unittest.TestCase):
         self.assertTrue(handoff.parent == self.agent / "pi-foreman" / "handoffs")
         words = shlex.split(calls[2][3])
         self.assertEqual(words, ["env", "PI_FOREMAN_HANDOFF_DIR=%s" % handoff, "PI_FOREMAN_PARENT_INTERCOM=parent-1",
-                                 "PI_INTERCOM_STABLE_ID=%s" % entry["child"], "PI_FOREMAN_PARENT_LABEL=proj", "pi", "--model", "prov/model-1",
+                                 "PI_INTERCOM_STABLE_ID=%s" % entry["child"], "PI_FOREMAN_PARENT_LABEL=opener", "pi", "--model", "prov/model-1",
                                  "Read the handoff brief at %s and proceed." % (handoff / "brief.md").as_posix()])
 
     def test_group_tag_parent_slug_from_an_opened_child_and_off_switch(self):

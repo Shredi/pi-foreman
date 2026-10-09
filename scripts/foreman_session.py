@@ -340,7 +340,8 @@ def cmd_open(a):
     (handoff / "child").write_text(child + "\n", "utf-8")
     top = git_top(cwd)
     ws_label = (top or cwd).name
-    parent_slug = opener_slug(cwd, top)
+    here = Path.cwd()  # the opener runs this command from its own cwd; the child may live elsewhere (--cwd)
+    parent_slug = opener_slug(here, git_top(here))
     env = child_env(handoff, parent, child, parent_slug)
     prompt = prompt_text(handoff)
     command = posix_command(env, a.model, prompt)
