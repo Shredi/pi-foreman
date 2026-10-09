@@ -1019,10 +1019,13 @@ def apply_preset(args):
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.is_file():
         bak = backup_path(target, datetime.datetime.now())
-        target.replace(bak)
+        bak.write_bytes(target.read_bytes())
         print("backed up the old config to %s" % bak)
-    with open(str(target), "w", encoding="utf-8", newline="\n") as fh:
+    # Write beside the target and swap it in, so a failed write never leaves the config missing.
+    tmp = target.with_name(target.name + ".tmp")
+    with open(str(tmp), "w", encoding="utf-8", newline="\n") as fh:
         fh.write(text)
+    tmp.replace(target)
     print("applied preset %s to %s" % (name, target))
     return 0
 
