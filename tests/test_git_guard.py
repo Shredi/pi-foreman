@@ -306,6 +306,33 @@ class RepoTest(unittest.TestCase):
             self.assertIn("test files your diff modified", reason, c)
             self.assertIn(why, reason, c)
 
+    def test_child_restore_stays_in_the_cwd_repository(self):
+        self.restore_repo()
+        other = tempfile.mkdtemp(prefix="pf-gg-other-")
+        self.addCleanup(shutil.rmtree, other, True)
+        git(other, "init", "-q")
+        Path(other, "pkg").mkdir()
+        Path(other, "pkg", "foo_test.go").write_text("a\n")
+        git(other, "add", "pkg")
+        git(other, "-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "-m", "init")
+        Path(other, "pkg", "foo_test.go").write_text("b\n")
+        o = other.replace("\\", "/")
+        for c, why in (("git -C '%s' restore pkg/foo_test.go" % o, "-C"),
+                       ("git --git-dir='%s/.git' --work-tree='%s' restore tests/test_a.py" % (o, o), "--git-dir"),
+                       ("git -c core.worktree='%s' restore tests/test_a.py" % o, "-c"),
+                       ("git --namespace=x restore tests/test_a.py", "--namespace"),
+                       ("GIT_WORK_TREE='%s' GIT_DIR='%s/.git' git restore pkg/foo_test.go" % (o, o), "GIT_"),
+                       ("GIT_INDEX_FILE=/tmp/i git restore tests/test_a.py", "GIT_"),
+                       ("export GIT_DIR='%s/.git'; git restore tests/test_a.py" % o, "GIT_"),
+                       ("env git restore tests/test_a.py", "wrapper"),
+                       ("command git restore tests/test_a.py", "wrapper"),
+                       ("git -C '%s' checkout -- pkg/foo_test.go" % o, "-C")):
+            got, reason = decide(c, "child", cwd=self.repo)
+            self.assertEqual(got, D, c)
+            self.assertIn("test files your diff modified", reason, c)
+            self.assertIn(why, reason, c)
+        self.assertEqual(decide("git --no-pager restore tests/test_a.py", "child", cwd=self.repo)[0], A)
+
     def test_child_restore_event_reaches_stdout(self):
         self.restore_repo()
         p = {"tool_name": "Bash", "tool_input": {"command": "git restore tests/test_a.py"}, "cwd": self.repo}

@@ -1216,6 +1216,7 @@ class GitCall(object):
         self.passthrough = []      # global options re-used for read-only lookups
         self.cfg_aliases = {}      # -c alias.x=... (value None = unknown)
         self.pr_config = False     # --config-env push.pushOption=... (value unknown)
+        self.globals = []          # global options seen before the subcommand (alias expansions included)
 
 
 def git_args(args, seg, flavor, ctx, depth, envs, via_xargs=False, xargs_repl=None, guessing=False, call=None, hops=0):
@@ -1244,6 +1245,7 @@ def git_args(args, seg, flavor, ctx, depth, envs, via_xargs=False, xargs_repl=No
         if t in GIT_INFO:
             return OK
         key, eq, val = t.partition("=")
+        call.globals.append(key)
         if key in GIT_ARGFUL and (eq or key in ("-C", "-c") or key not in ("--exec-path", "--super-prefix")):
             if not eq:
                 if i + 1 >= len(args):
@@ -1541,6 +1543,7 @@ RESTORE_ALLOWED = ("git restore/checkout -- is allowed for a child only on test 
                    "(vs HEAD), one plain path each: `git restore [--worktree|-W] [--staged|-S] [--] <test file>...` "
                    "or `git checkout -- <test file>...`")
 RESTORE_SHORT = frozenset("WS")
+RESTORE_HARMLESS_GLOBALS = frozenset(("-P", "--no-pager", "--no-optional-locks", "--no-advice"))
 
 
 def restore_path_problem(p, ctx, call):
@@ -1567,6 +1570,9 @@ def restore_path_problem(p, ctx, call):
     if not top or not top.strip():
         return "not inside a git work tree", None
     root = os.path.normcase(os.path.realpath(top.strip()))
+    own = run_git(GitCall(ctx), ctx, ["rev-parse", "--show-toplevel"])
+    if not own or os.path.normcase(os.path.realpath(own.strip())) != root:
+        return "in another repository than the working directory's", None
     real = os.path.normcase(os.path.realpath(full))
     if real != root and not real.startswith(root.rstrip(os.sep) + os.sep):
         return "outside the repository", None
@@ -1593,6 +1599,17 @@ def child_restore(s, rest, ctx, call, seg, via_xargs):
         return no("the paths come from xargs input")
     if ctx.state_segs - {seg}:
         return no("an earlier part of the command changes the directory or HEAD; run the restore on its own")
+    # Only the cwd's own repository: no global option (-C, --git-dir, --work-tree, -c, --namespace, ...),
+    # no GIT_* variable anywhere in the command (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_CONFIG*),
+    # no wrapper (env, command, sudo, ...) in front of git.
+    extra = [g for g in call.globals if g not in RESTORE_HARMLESS_GLOBALS]
+    if extra:
+        return no("the global option %s is not allowed (it can point git at another repository)" % extra[0])
+    if ctx.root and re.search(r"GIT_", ctx.root[0], re.I):
+        return no("the command sets a GIT_* variable (it can point git at another repository)")
+    first = seg.words[0] if seg is not None and seg.words else None
+    if first is None or first.dynamic or not is_git_name(prog_name(first.text)):
+        return no("git must be the command itself, without a wrapper or variable assignment in front")
     if s == "restore":
         opts, pos, dd, _ = parse_opts(rest, short_arg="s", known=(
             "source", "patch", "worktree", "staged", "quiet", "progress", "ours", "theirs", "merge", "conflict",
