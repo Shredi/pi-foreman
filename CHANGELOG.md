@@ -7,6 +7,9 @@
   opened and their subagent runs (glyph, state, last-event age, subtree tokens and cost), from presence files
   `state/live/<sessionId>.json`, the session registry, handoff dirs and usage files; `--once`, `--since`, `--interval`,
   `--no-color`; works without Herdr and on Windows (no curses).
+- Children widget (`widget.children`, default on, TUI only): below the editor, this session's subagent runs
+  (`role · rung · state · tokens · cost`, `ask` while a forwarded permission ask waits) and opened sessions; the extension
+  writes the presence file `state/live/<sessionId>.json` (tui and rpc) that radar reads.
 - Herdr: one blocked tracker per Pi process shows every open dialog (any extension's `ui_prompt_*`), permission ask
   (forwarded child asks too) and own ask as blocked, balanced on empty/non-empty, labelled `<agent> · <tool> <head>`
   (never the full command); off without `HERDR_ENV=1`, with `herdr.blockedShim` false or with Herdr's Pi integration

@@ -83,6 +83,13 @@ test("typed input releases an orphaned dialog (no ui_prompt_end) but not a permi
   assert.deepEqual(actives(sent), [true, false, true]);
 });
 
+test("permission label skips env assignments and never shows a value after =", () => {
+  assert.equal(permissionLabel({ agentName: "builder", request: { toolName: "bash" }, value: "GITHUB_TOKEN=ghp_FAKE gh pr create" }), "builder · bash gh");
+  assert.equal(permissionLabel({ request: { toolName: "bash" }, value: "env A=1 B=secret make deploy" }), "bash make");
+  assert.equal(permissionLabel({ request: { toolName: "bash" }, value: "--token=secret" }), "bash --token");
+  assert.equal(permissionLabel({ request: { toolName: "bash" }, value: "SECRET=only" }), "bash");
+});
+
 test("a decision without a prompt and an end without a start emit nothing", async () => {
   const { fire, events, sent } = install();
   events.emit("permissions:decision", { requestId: "nope" });

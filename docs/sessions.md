@@ -192,7 +192,7 @@ state change and on a 30 second heartbeat, and a final `state: "done"` at shutdo
 | `sessionId`, `intercomId` | the Pi session id (also the usage file name) and the id opened sessions record as their parent (the [opener intercom id](#opener-intercom-id) rule) |
 | `parentIntercom`, `handoff` | the opener's intercom id and the handoff dir, or `null` for a top session |
 | `label`, `cwd`, `pid` | display label (or `null`), working directory, process id |
-| `mode` | `tui`, `rpc`, `json` or `print` |
+| `mode` | `tui` or `rpc` (print and json runs write no presence file; bench runs in rpc and does) |
 | `startedAt`, `heartbeatAt`, `lastEventAt` | ISO timestamps: start, last write by the heartbeat, last session event |
 | `state` | `working`, `blocked`, `idle` or `done` |
 | `runs` | subagent runs: `launchId`, `role`, `rung` (`model`, `strong` or `null`), `state` (`working`, `ask`, `done`), `tokensIn`, `tokensOut`, `cost` (used when the usage file has no line for that `launchId`) |
@@ -228,7 +228,8 @@ got their decision (an open Pi dialog stays until Pi closes it); shutdown releas
 dialog that a second dialog replaces (it never sends that dialog's end); typed input then releases the stale dialog.
 
 Label: for a permission ask `<agent> · <tool> <first word>` (the requesting child's agent when forwarded; a path is
-cut to its basename; never the full command), else the dialog title, else pi-foreman's ask title, else the dialog
+cut to its basename; leading `env` and `NAME=value` assignments are skipped and nothing after an `=` is shown;
+never the full command), else the dialog title, else pi-foreman's ask title, else the dialog
 kind; at most 80 characters, control characters removed. A later ask keeps the first label (Herdr shows that one).
 
 The shim is off when `HERDR_ENV` is not `1`, when `herdr.blockedShim` is false (default `true`), or when the
@@ -271,3 +272,4 @@ The tag is text only. Real grouping needs Herdr itself:
 | `wait.ci` | CI waits on or off (default `true`); a project or session can only set false. |
 | `herdr.blockedShim` | Show any open dialog or permission ask as blocked in Herdr (default `true`); any layer may set it. |
 | `herdr.groupTag` | Herdr group tag on opened child and parent panes (default `true`); any layer may set it. |
+| `widget.children` | Children widget below the editor in the TUI (default `true`); any layer may set it. |

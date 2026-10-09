@@ -34,12 +34,16 @@ export function cleanLabel(s: string): string {
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
-/** Label of a permission ask: `<agent> · <tool> <head>`; head is the first word of the value (a path's basename), never the full value. */
+/** Label of a permission ask: `<agent> · <tool> <head>`; head is the first word of the value after `env` and `NAME=value` assignments (a path's basename), never the full value. */
 export function permissionLabel(data: unknown): string {
   const d = (data ?? {}) as { agentName?: unknown; surface?: unknown; value?: unknown; request?: { toolName?: unknown } | null; forwarding?: { requesterAgentName?: unknown } | null };
   const agent = str(d.forwarding?.requesterAgentName) || str(d.agentName);
   const tool = str(d.request?.toolName) || str(d.surface) || "permission";
-  let head = str(d.value).split(/\s+/)[0] ?? "";
+  // Skip `env` and leading `NAME=value` assignments (they can carry secrets); drop anything after an `=` in the head.
+  const words = str(d.value).split(/\s+/).filter(Boolean);
+  let i = words[0] === "env" ? 1 : 0;
+  while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) i++;
+  let head = (words[i] ?? "").split("=")[0];
   if (/[\\/]/.test(head)) head = head.split(/[\\/]+/).filter(Boolean).pop() ?? "";
   const ask = head ? `${tool} ${head}` : tool;
   return cleanLabel(agent ? `${agent} · ${ask}` : ask);
