@@ -63,7 +63,7 @@ import { CompactionGate } from "./compaction.ts";
 import { citedItems, ledgerHint, writeHint } from "./hints.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, withDigest } from "./retro.ts";
 import { extractRetro, lastAssistantText, MODEL_RETRO_PROMPT, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
-import { UsageFooter } from "./footer.ts";
+import { UsageFooter, lookupRate } from "./footer.ts";
 import { blockedConfirm, bridgePermissionBlocked, withBlocked } from "./herdr.ts";
 import { builderLaunchRefusal, changedPlans, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, planSnapshot, planSummary, readPlan } from "./checkpoint.ts";
 import type { PlanRecord } from "./checkpoint.ts";
@@ -1818,6 +1818,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       const day = new Date().toISOString().slice(0, 10);
       const argv = [...retroInputs(s, ctx, "--session"), "--proposals-out", path.join(s.agentDir, "pi-foreman", "state", "retro", `permission-proposals-${day}.json`)];
+      // The bridge logs cost 0: pass registry rates of the logged models (a file, not the command line).
+      try {
+        const rates: Record<string, unknown> = {};
+        for (const l of readUsage(s.agentDir, { session: s.id })) {
+          const rate = lookupRate(ctx.modelRegistry as never, l.provider, l.model);
+          if (rate) rates[`${l.provider}/${l.model}`] = rate;
+        }
+        if (Object.keys(rates).length) {
+          const ratesFile = path.join(s.agentDir, "pi-foreman", "state", "retro", "rates.json");
+          fs.mkdirSync(path.dirname(ratesFile), { recursive: true });
+          fs.writeFileSync(ratesFile, JSON.stringify(rates));
+          argv.push("--rates", ratesFile);
+        }
+      } catch {
+        // no rates: the logged cost is kept
+      }
       const r = await runScript(s, "foreman_retro.py", argv);
       ctx.ui.notify(r.text, r.ok ? "info" : "error");
       let file: string | null = null;
