@@ -137,7 +137,8 @@ orchestrators and their children) and every session's subagent runs. It only dis
 session, and it works without Herdr.
 
 ```
-pi-foreman radar  14:00:00  agent  ● 4  ◐ 2  ◌ 1  ○ 1  × 0
+pi-foreman radar                      ● 4  ◐ 2  ◌ 1  ○ 1  × 0           14:00:00
+6 sessions · 1 tree · ↑2.1k ↓175 · $1.25 · oldest block 12s
 
 ● top                  working    12s  ↑2.1k ↓175 $1.25
 ├─ ● builder/strong    working    12s  ↑1.0k ↓100 $0.25
@@ -147,11 +148,18 @@ pi-foreman radar  14:00:00  agent  ● 4  ◐ 2  ◌ 1  ○ 1  × 0
 │  ├─ ● builder        working    12s  ↑10 ↓5 $0.50
 │  └─ ◐ api            blocked    12s  ↑600 ↓20 $0.25
 └─ ◌ tests             starting   40s
+
+q quit · r refresh · c cost on/off · ↑↓ select · enter show session path
 ```
 
 Each row: glyph, name (label, else role, else the cwd's name and the short session id), state, age of the last event, and the tokens
-(`↑` in incl. cache, `↓` out) and cost of the whole subtree (a run shows its own). The header has the time, the
-agent dir's basename and a count per glyph. Active rows sort first, then by start time.
+(`↑` in incl. cache, `↓` out) and cost of the whole subtree (a run shows its own). Header line 1: title, a count per glyph
+(a zero count is dim) and the clock, right-aligned to the terminal width; line 2: sessions, trees, total tokens and cost,
+and the oldest blocked row's age (omitted when nothing is blocked). Active rows sort first, then by start time.
+Colors (16-color SGR): working green, blocked amber, starting teal, lost red glyph on a dim row, costs blue, ids, tokens and
+tree lines dim; the age of a blocked row turns amber after 5 minutes and red after 15. Keys: `q` quit, `r` refresh now,
+`c` cost on/off, `↑`/`↓` select a row (inverted band), `enter` shows the selected session's path (presence `cwd`, else the
+handoff dir) under the footer.
 
 | Glyph | Meaning |
 | --- | --- |
@@ -163,9 +171,9 @@ agent dir's basename and a count per glyph. Active rows sort first, then by star
 
 Options: `--once` prints one plain snapshot (no ANSI) and exits 0; without it the screen is redrawn with ANSI codes
 every `--interval` seconds (default 3) until `q` or Ctrl-C (no curses, so Windows works; a stdout that is not a
-terminal behaves like `--once`). `--agent-dir` (default `PI_CODING_AGENT_DIR`, else `~/.pi/agent`). `--since HOURS`
+terminal behaves like `--once`, which also prints the footer). `--agent-dir` (default `PI_CODING_AGENT_DIR`, else `~/.pi/agent`). `--since HOURS`
 (default 24) hides finished or lost sessions whose last activity is older, unless a descendant is still shown.
-`--no-color` turns off colors.
+`--no-color` or `NO_COLOR` turns off colors (and with them the selection band).
 
 Sources, all under `<agent dir>/pi-foreman/` and all optional (a missing or corrupt file is skipped):
 `state/live/<sessionId>.json` (presence files, below), `state/sessions.json` (the registry above), `handoffs/*/`

@@ -12,7 +12,7 @@ Sources (all under <agent dir>/pi-foreman/, all optional, missing or corrupt fil
   state/usage/<sessionId>.jsonl usage lines; state/trace-<sessionId>.jsonl mtime = extra last-event signal
 
 No curses (absent on Windows): the screen is redrawn with ANSI codes every --interval seconds.
-`q` or Ctrl-C quits. Without a TTY on stdout, or with --once, one plain snapshot is printed.
+`q` or Ctrl-C quits, r refreshes, c toggles cost, up/down select, enter shows the session path. Without a TTY on stdout, or with --once, one plain snapshot is printed.
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ import datetime
 import json
 import os
 import re
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -169,7 +170,7 @@ def load(adir, cache=None):
 
 def new_node(kind, key, name):
     return {"kind": kind, "key": key, "name": name, "glyph": "idle", "state": "", "last": None, "started": None,
-            "own": [0, 0, 0.0], "children": [], "tot": [0, 0, 0.0], "parent": None}
+            "own": [0, 0, 0.0], "children": [], "tot": [0, 0, 0.0], "parent": None, "path": ""}
 
 
 def live_glyph(d, now):
@@ -210,6 +211,7 @@ def build(data, now):
         times = [t for t in times if t is not None]
         n["last"] = max(times) if times else parse_ts(d.get("heartbeatAt"))
         n["started"] = parse_ts(d.get("startedAt"))
+        n["path"] = next((d[k] for k in ("sessionFile", "cwd", "handoff") if isinstance(d.get(k), str) and d[k]), "")
         n["parent"] = d.get("parentIntercom") if isinstance(d.get("parentIntercom"), str) and d.get("parentIntercom") else n["parent"]
         ho = handoff_by_leaf.get(leaf(d.get("handoff")))
         if ho and not n["parent"] and ho["parent"]:
@@ -225,7 +227,7 @@ def build(data, now):
             rn["glyph"] = "blocked" if rs == "ask" else "working" if rs == "working" else "idle"
             if rn["glyph"] != "idle" and n["glyph"] == "lost":
                 rn["glyph"] = "lost"
-            rn["last"] = n["last"]
+            rn["last"], rn["path"] = n["last"], n["path"]
             ru = (u or {}).get("runs", {}).get(str(r.get("launchId")))
             rn["own"] = list(ru) if ru else [num(r.get("tokensIn")), num(r.get("tokensOut")), num(r.get("cost"))]
             rn["tot"] = list(rn["own"])
@@ -248,6 +250,7 @@ def build(data, now):
             n["last"] = parse_ts(last.get("at")) if isinstance(last, dict) else None
             n["last"] = n["last"] or opened
             n["started"] = opened
+            n["path"] = e["handoff"] if isinstance(e.get("handoff"), str) else ""
             nodes[key] = n
         if isinstance(e.get("parent"), str) and e["parent"] and not n["parent"]:
             n["parent"] = e["parent"]
@@ -272,6 +275,7 @@ def build(data, now):
         opened = opened or ho["mtime"]
         n["glyph"], n["state"] = reg_glyph("open", opened, now)
         n["last"], n["started"], n["parent"] = opened, opened, ho["parent"] or None
+        n["path"] = str(base / "handoffs" / dn)
         nodes[key] = n
     roots, seen = [], set()
     for n in nodes.values():
@@ -363,51 +367,126 @@ def rows(roots):
     return out
 
 
-def render(roots, now, agent_name, color=False):
-    """Pure: tree -> list of text lines (no clock reads)."""
+FOOTER = (("q", "quit"), ("r", "refresh"), ("c", "cost on/off"), ("↑↓", "select"), ("enter", "show session path"))
+AMBER_AFTER, RED_AFTER = 300, 900
+
+
+def sgr(codes, text, color):
+    return "\x1b[%sm%s\x1b[0m" % (codes, text) if color and codes else text
+
+
+def render_footer(color=False):
+    """Pure: the key legend line. Keys bold, descriptions and separators dim."""
+    sep = sgr("2", " · ", color)
+    return sep.join(sgr("1", k, color) + sgr("2", " " + d, color) for k, d in FOOTER)
+
+
+def decode_key(seq):
+    """Pure: a raw key sequence (POSIX escape codes or Windows msvcrt prefix + code) -> action name or None."""
+    if not seq:
+        return None
+    if seq in ("q", "Q", "\x03"):
+        return "quit"
+    if seq in ("r", "R"):
+        return "refresh"
+    if seq in ("c", "C"):
+        return "cost"
+    if seq in ("\x1b[A", "\x1bOA", "\xe0H", "\x00H"):
+        return "up"
+    if seq in ("\x1b[B", "\x1bOB", "\xe0P", "\x00P"):
+        return "down"
+    if seq in ("\r", "\n", "\r\n"):
+        return "enter"
+    return None
+
+
+def node_path(n):
+    return n.get("path") or "no path"
+
+
+def render(roots, now, width=80, color=False, show_cost=True, selected=None):
+    """Pure: tree -> list of text lines (no clock reads). `selected` = row index shown as an inverted band."""
     table = rows(roots)
     counts = dict.fromkeys(GLYPHS, 0)
     for _, n in table:
         counts[n["glyph"]] += 1
-
-    def paint(glyph, text):
-        return "\x1b[%sm%s\x1b[0m" % (COLORS[glyph], text) if color else text
-
     stamp = time.strftime("%H:%M:%S", time.localtime(now))
-    head = "pi-foreman radar  %s  %s  " % (stamp, agent_name) + "  ".join(
-        paint(g, "%s %d" % (GLYPHS[g], counts[g])) for g in GLYPHS)
+    left_plain = "pi-foreman radar" + " " * 22 + "  ".join("%s %d" % (GLYPHS[g], counts[g]) for g in GLYPHS)
+    left = sgr("1", "pi-foreman radar", color) + " " * 22 + "  ".join(
+        sgr(COLORS[g] if counts[g] else "2", "%s %d" % (GLYPHS[g], counts[g]), color) for g in GLYPHS)
+    head = left + " " * max(2, width - len(left_plain) - len(stamp)) + sgr("2", stamp, color)
+    nsess = sum(1 for _, n in table if n["kind"] == "session")
+    tin = sum(r["tot"][0] for r in roots)
+    tout = sum(r["tot"][1] for r in roots)
+    tcost = sum(r["tot"][2] for r in roots)
+    d = lambda t: sgr("2", t, color)  # noqa: E731
+    parts = ["%d session%s" % (nsess, "" if nsess == 1 else "s"), "%d tree%s" % (len(roots), "" if len(roots) == 1 else "s"),
+             "↑%s ↓%s" % (fmt_tok(tin), fmt_tok(tout))]
+    line2 = d(" · ".join(parts))
+    if show_cost:
+        line2 += d(" · ") + sgr("34", "$%.2f" % tcost, color)
+    ages = [now - n["last"] for _, n in table if n["glyph"] == "blocked" and n["last"] is not None]
+    if ages:
+        line2 += d(" · oldest block ") + sgr("33", fmt_age(max(ages)), color)
     if not table:
-        return [head, "", "no sessions"]
-    width = max(len(p) + 2 + len(n["name"]) for p, n in table)
-    lines = [head, ""]
-    for prefix, n in table:
-        pad = " " * (width + 2 - len(prefix) - 2 - len(n["name"]))
-        glyph_left = prefix + paint(n["glyph"], GLYPHS[n["glyph"]]) + " " + n["name"]
+        return [head, line2, "", "no sessions"]
+    pw = max(len(p) + 2 + len(n["name"]) for p, n in table)
+    lines = [head, line2, ""]
+    for i, (prefix, n) in enumerate(table):
+        lost = n["glyph"] == "lost"
+        pad = " " * (pw - len(prefix) - 2 - len(n["name"]))
+        name = n["name"]
+        m = re.search(r"[0-9a-f]{8}$", name)
+        name_c = name if lost or not m or m.start() == 0 else name[:m.start()] + d(m.group(0))
+        if lost:
+            name_c = d(name)
+        glyph_c = sgr(COLORS[n["glyph"]], GLYPHS[n["glyph"]], color)
+        sc = COLORS[n["glyph"]] if n["glyph"] in ("working", "blocked") else "2"
+        state_c = sgr(sc, "%-9s" % n["state"], color)
+        if lost:
+            state_c = d("%-9s" % n["state"])
+        a = n["last"]
+        age = fmt_age(now - a) if a is not None else "-"
+        ac = "2"
+        if n["glyph"] == "blocked" and a is not None:
+            ac = "31" if now - a > RED_AFTER else "33" if now - a > AMBER_AFTER else "2"
+        age_c = sgr(ac, "%4s" % age, color)
+        if lost:
+            age_c = d("%4s" % age)
         tin, tout, cost = n["tot"]
-        usage = "↑%s ↓%s $%.2f" % (fmt_tok(tin), fmt_tok(tout), cost) if (tin or tout or cost) else ""
-        age = fmt_age(now - n["last"]) if n["last"] is not None else "-"
-        lines.append(("%s%s  %-9s %4s  %s" % (glyph_left, pad, n["state"], age, usage)).rstrip())
+        if tin or tout or cost:
+            tok = d("↑%s ↓%s" % (fmt_tok(tin), fmt_tok(tout)))
+            usage = tok + (" " + sgr("34", "$%.2f" % cost, color) if show_cost else "")
+        else:
+            usage = ""
+        row = "%s%s %s%s  %s %s" % (d(prefix), glyph_c, name_c, pad, state_c, age_c)
+        row = (row + "  " + usage) if usage else row
+        if not color:
+            row = row.rstrip()
+        if color and i == selected:
+            vis = len(prefix) + 1 + 1 + len(name) + len(pad) + 2 + 9 + 1 + 4 + (2 + len(re.sub(r"\x1b\[[0-9;]*m", "", usage)) if usage else 0)
+            row = "\x1b[7m" + row.replace("\x1b[0m", "\x1b[0m\x1b[7m") + " " * max(0, width - vis) + "\x1b[0m"
+        lines.append(row)
     return lines
 
 
-def wait_key(seconds, state):
-    """Wait up to `seconds`; True when q was pressed."""
+def read_key(seconds, state):
+    """Wait up to `seconds` for one key; return its raw sequence, or "" on timeout."""
     if sys.platform == "win32":
         import msvcrt
         end = time.time() + seconds
         while time.time() < end:
             if msvcrt.kbhit():
-                if msvcrt.getwch().lower() == "q":
-                    return True
-            else:
-                time.sleep(0.1)
-        return False
+                ch = msvcrt.getwch()
+                return ch + msvcrt.getwch() if ch in ("\xe0", "\x00") else ch
+            time.sleep(0.05)
+        return ""
     if not state.get("tty"):
         time.sleep(seconds)
-        return False
+        return ""
     import select
     ready, _, _ = select.select([sys.stdin], [], [], seconds)
-    return bool(ready) and sys.stdin.read(1).lower() == "q"
+    return os.read(sys.stdin.fileno(), 8).decode("utf-8", "replace") if ready else ""
 
 
 def loop(adir, interval, since_h, color):
@@ -423,15 +502,39 @@ def loop(adir, interval, since_h, color):
         tty.setcbreak(fd)
         state["tty"] = True
     cache = UsageCache()
-    name = base_name(adir)
+    ui = {"sel": 0, "cost": True, "status": "", "roots": [], "now": time.time()}
+
+    def draw():
+        table = rows(ui["roots"])
+        ui["sel"] = max(0, min(ui["sel"], len(table) - 1))
+        width = shutil.get_terminal_size((80, 24)).columns
+        lines = render(ui["roots"], ui["now"], width, color, ui["cost"], ui["sel"] if table else None)
+        out = "\n".join(lines) + "\n\n" + render_footer(color) + "\n" + ui["status"] + "\n"
+        sys.stdout.write("\x1b[H\x1b[2J" + out)
+        sys.stdout.flush()
+
     try:
         while True:
-            now = time.time()
-            lines = render(snapshot(adir, now, since_h, cache), now, name, color)
-            sys.stdout.write("\x1b[H\x1b[2J" + "\n".join(lines) + "\n\nq quits\n")
-            sys.stdout.flush()
-            if wait_key(interval, state):
-                break
+            ui["now"] = time.time()
+            ui["roots"] = snapshot(adir, ui["now"], since_h, cache)
+            draw()
+            end = time.time() + interval
+            while time.time() < end:
+                act = decode_key(read_key(max(0.0, end - time.time()), state))
+                if act == "quit":
+                    return 0
+                if act == "refresh":
+                    break
+                if act:
+                    table = rows(ui["roots"])
+                    ui["status"] = ""
+                    if act == "cost":
+                        ui["cost"] = not ui["cost"]
+                    elif act in ("up", "down"):
+                        ui["sel"] += -1 if act == "up" else 1
+                    elif act == "enter" and table:
+                        ui["status"] = node_path(table[max(0, min(ui["sel"], len(table) - 1))][1])
+                    draw()
     except KeyboardInterrupt:
         pass
     finally:
@@ -457,7 +560,8 @@ def main(argv=None):
     adir = agent_dir(a.agent_dir)
     if a.once or not sys.stdout.isatty():
         now = time.time()
-        print("\n".join(render(snapshot(adir, now, a.since), now, base_name(adir))))
+        width = shutil.get_terminal_size((80, 24)).columns
+        print("\n".join(render(snapshot(adir, now, a.since), now, width) + ["", render_footer()]))
         return 0
     color = not a.no_color and not os.environ.get("NO_COLOR")
     return loop(adir, max(0.5, a.interval), a.since, color)
