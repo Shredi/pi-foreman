@@ -18,8 +18,11 @@ allowed only when every path is a plain file path (no glob, `.`, `..`, directory
 matches the test-path rule (`isTestPath` in `diffscan.ts`, mirrored by `is_test_path` in the guard), lies inside the
 repository, is tracked and shows modified against HEAD. `--source`/`-s`, a tree-ish, `-p`, `--merge`,
 `--ours/--theirs`, `--pathspec-from-file`, `-f`, xargs input, a `cd` earlier in the command, any git global option
-(`-C`, `--git-dir`, `--work-tree`, `-c`, `--namespace`, ...), any `GIT_*` variable in the command, a wrapper
-(`env`, `command`, ...) in front of git and a repository other than the working directory's are refused; the
+(`-C`, `--git-dir`, `--work-tree`, `-c`, `--namespace`, ...), any `GIT_*` text in the command and a repository other
+than the working directory's are refused. The restore must be a command of its own: the whole command is one plain
+call whose first word is literally `git`, with no chain (`;`, `&&`, `||`, `|`, `&`, newline), nesting (`bash -c`,
+`eval`), assignment or wrapper in front, `$`, backtick, brace, `%` or redirect anywhere (bash or PowerShell, not
+cmd); otherwise it is refused and the
 refusal names the allowed form. Each allowed path leaves a `test_restore` trace line (path in `cmd`) in the child's
 trace. Children are not stopped from committing; after a child commit "vs HEAD" means its changes since that commit.
 
