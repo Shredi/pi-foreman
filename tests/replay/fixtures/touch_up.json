@@ -1,0 +1,31 @@
+{
+ "foreman": {
+  "c1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-tc.md", "content": "# Requirements Ledger: tc\n\n- [x] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-c2]] build item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "c2": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-c3]] review item 1"}}]}, {"text": "Reviewer launched."}],
+  "c3": [{"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-c4]] reword the comment"}}]}, {"text": "Touch-up launched."}],
+  "c4": [{"text": "Done."}, {"text": "Still done."}],
+
+  "d1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-td.md", "content": "# Requirements Ledger: td\n\n- [x] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-d2]] build item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "d2": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-d3]] review item 1"}}]}, {"text": "Reviewer launched."}],
+  "d3": [{"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-d4]] reword the comment and widen n"}}]}, {"text": "Revision launched."}],
+  "d4": [{"text": "Done."}, {"text": "Still done."}]
+ },
+ "*": {
+  "b-c2": [{"tools": [{"name": "edit", "arguments": {"path": "hub.go", "edits": [{"oldText": "type Hub struct{}", "newText": "type Hub struct{ n int }"}]}}]}, {"text": "[[replay:c2]] built"}],
+  "r-c3": [{"text": "[[replay:c3]] VERDICT: PASS\n1. PASS hub.go:4\nOverall verdict: PASS"}],
+  "b-c4": [{"tools": [{"name": "edit", "arguments": {"path": "hub.go", "edits": [{"oldText": "// Hub fans messages out.", "newText": "// Hub fans messages out to every client.\n// It counts them in n."}]}}]}, {"text": "[[replay:c4]] comment reworded"}],
+  "b-d2": [{"tools": [{"name": "edit", "arguments": {"path": "hub.go", "edits": [{"oldText": "type Hub struct{}", "newText": "type Hub struct{ n int }"}]}}]}, {"text": "[[replay:d2]] built"}],
+  "r-d3": [{"text": "[[replay:d3]] VERDICT: PASS\n1. PASS hub.go:4\nOverall verdict: PASS"}],
+  "b-d4": [{"tools": [{"name": "edit", "arguments": {"path": "hub.go", "edits": [{"oldText": "// Hub fans messages out.", "newText": "// Hub fans messages out to every client."}, {"oldText": "{ n int }", "newText": "{ n int64 }"}]}}]}, {"text": "[[replay:d4]] changed"}]
+ }
+}

@@ -94,7 +94,7 @@ const gitAvailable = (() => {
   }
 })();
 
-test("snapshot of a clean tree; a comment-only edit since lists the file, a code edit gives null", { skip: !gitAvailable }, async () => {
+test("snapshot of a clean tree; a comment-only edit since lists the file; no change or a code edit gives null", { skip: !gitAvailable }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-commentonly-"));
   try {
     const g = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", ...args], { cwd: dir, stdio: "ignore" });
@@ -105,7 +105,7 @@ test("snapshot of a clean tree; a comment-only edit since lists the file, a code
     const tree = await worktreeTree(dir);
     assert.match(tree ?? "", /^[0-9a-f]{40,64}$/);
     const snap = { cwd: dir, tree: tree! };
-    assert.deepEqual(await commentOnlySince(snap), []);
+    assert.equal(await commentOnlySince(snap), null, "nothing changed: no touch-up");
     fs.writeFileSync(path.join(dir, "hub.go"), GO.replace("// the sink", "// the real sink"));
     fs.mkdirSync(path.join(dir, ".workflow"));
     fs.writeFileSync(path.join(dir, ".workflow", "notes.txt"), "scratch\n");
