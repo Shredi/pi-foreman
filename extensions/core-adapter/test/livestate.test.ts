@@ -16,13 +16,14 @@ test("label is the slug of the handoff dir name", () => {
   assert.equal(labelOfHandoff(null), null);
 });
 
-test("intercom id: env first, then config.json stableId, else null", () => {
+test("intercom id: published id, env, config.json stableId, else the Pi session id", () => {
   const d = tmp();
-  assert.equal(intercomIdOf({}, d), null);
+  assert.equal(intercomIdOf({}, d, "sid"), "sid");
   fs.mkdirSync(path.join(d, "intercom"));
   fs.writeFileSync(path.join(d, "intercom", "config.json"), JSON.stringify({ stableId: "cfg-id" }));
-  assert.equal(intercomIdOf({}, d), "cfg-id");
-  assert.equal(intercomIdOf({ PI_INTERCOM_STABLE_ID: "env-id" }, d), "env-id");
+  assert.equal(intercomIdOf({}, d, "sid"), "cfg-id");
+  assert.equal(intercomIdOf({ PI_INTERCOM_STABLE_ID: "env-id" }, d, "sid"), "env-id");
+  assert.equal(intercomIdOf({ PI_INTERCOM_SESSION_ID: "pub", PI_INTERCOM_STABLE_ID: "env-id" }, d, "sid"), "pub");
 });
 
 test("file shape, atomic write (no temp left), state transitions and done on stop", () => {

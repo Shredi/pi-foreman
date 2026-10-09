@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Rung, RunState, RunView } from "./childwidget.ts";
+import { openerIntercomId } from "./session.ts";
 
 export const HEARTBEAT_MS = 30_000;
 const WRITE_GAP_MS = 1000;
@@ -49,16 +50,13 @@ export function labelOfHandoff(handoff: string | null | undefined): string | nul
   return m ? m[1] : null;
 }
 
-/** PI_INTERCOM_STABLE_ID, else `stableId` of <agent dir>/intercom/config.json, else null. */
-export function intercomIdOf(env: Record<string, string | undefined>, agentDir: string): string | null {
-  const e = (env.PI_INTERCOM_STABLE_ID ?? "").trim();
-  if (e) return e;
-  try {
-    const v = (JSON.parse(fs.readFileSync(path.join(agentDir, "intercom", "config.json"), "utf8")) as { stableId?: unknown }).stableId;
-    return typeof v === "string" && v.trim() ? v.trim() : null;
-  } catch {
-    return null;
-  }
+/**
+ * The id other sessions record as this session's parent: the same rule as `openerIntercomId` (session.ts) —
+ * PI_INTERCOM_SESSION_ID, PI_INTERCOM_STABLE_ID, `stableId` in <agent dir>/intercom/config.json, else the Pi
+ * session id — so radar can join an opened session to its opener.
+ */
+export function intercomIdOf(env: Record<string, string | undefined>, agentDir: string, sessionId: string): string {
+  return openerIntercomId(env, agentDir, sessionId);
 }
 
 const short = (s: string, n = 80): string => (s.length > n ? s.slice(0, n) : s);
@@ -74,7 +72,8 @@ export interface LiveInit {
 
 export class LiveState {
   private readonly file: string;
-  private readonly base: Omit<LiveFile, "heartbeatAt" | "lastEventAt" | "state" | "runs">;
+  private readonly base: Omit<LiveFile, "heartbeatAt" | "lastEventAt" | "state" | "runs" | "intercomId">;
+  private readonly idOf: () => string;
   private readonly startedMs = Date.now();
   private lastEventMs = this.startedMs;
   private working = false;
@@ -100,10 +99,11 @@ export class LiveState {
     this.runs = runs;
     this.file = path.join(liveDir(init.agentDir), `${init.sessionId}.json`);
     const handoff = (init.env.PI_FOREMAN_HANDOFF_DIR ?? "").trim() || null;
+    // Re-read on each write: pi-intercom publishes PI_INTERCOM_SESSION_ID after session_start.
+    this.idOf = () => intercomIdOf(init.env, init.agentDir, init.sessionId);
     this.base = {
       v: 1,
       sessionId: init.sessionId,
-      intercomId: intercomIdOf(init.env, init.agentDir),
       parentIntercom: (init.env.PI_FOREMAN_PARENT_INTERCOM ?? "").trim() || null,
       handoff,
       label: labelOfHandoff(handoff),
@@ -115,7 +115,7 @@ export class LiveState {
   }
 
   get intercomId(): string | null {
-    return this.base.intercomId;
+    return this.idOf();
   }
 
   /** Any event worth showing as activity; schedules a write. */
@@ -156,7 +156,7 @@ export class LiveState {
       // runs are best effort
     }
     const state: LiveStateName = this.done ? "done" : this.blocked ? "blocked" : this.working ? "working" : "idle";
-    return { ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs };
+    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs };
   }
 
   private schedule(): void {

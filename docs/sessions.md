@@ -189,7 +189,7 @@ state change and on a 30 second heartbeat, and a final `state: "done"` at shutdo
 | Field | Meaning |
 | --- | --- |
 | `v` | format version, `1` |
-| `sessionId`, `intercomId` | the Pi session id (also the usage file name) and the session's intercom id, or `null` |
+| `sessionId`, `intercomId` | the Pi session id (also the usage file name) and the id opened sessions record as their parent (the [opener intercom id](#opener-intercom-id) rule) |
 | `parentIntercom`, `handoff` | the opener's intercom id and the handoff dir, or `null` for a top session |
 | `label`, `cwd`, `pid` | display label (or `null`), working directory, process id |
 | `mode` | `tui`, `rpc`, `json` or `print` |
