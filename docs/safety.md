@@ -12,6 +12,15 @@ Shell writes into project files (redirects, `tee`, `sed -i`, writing scripts) ar
 
 `scripts/git_guard.py` lints commits and pushes (own lexer for bash, PowerShell and cmd): the foreman's commit lint, push lint (no force, mirror, delete or `+refspec` on protected branches) and the limits for children, who never open PRs and may not push unless `safety.children.mayPush` allows it. A PR (`gh pr create`, `glab mr create`, `hub pull-request`, `tea pr create`, a push with merge-request options or to `refs/for/*`) is refused unless a reviewer PASS was recorded for the current head, which is the checkout the reviewer ran in (`ceremony.reviewBeforePr`; a project or session cannot turn it off). A later commit, a finalizer's included, makes the review stale, so for heavy tasks the order is builder, finalizer, reviewer, PR, or review twice. Outside a repository the head is unknown and no PR goes through. Children never open PRs.
 
+Safety line for children: no recursive deletes, no discards outside the child's own diff. A child may undo its own
+change to a test file: `git restore [--worktree|-W] [--staged|-S] [--] <paths>` or `git checkout -- <paths>` is
+allowed only when every path is a plain file path (no glob, `.`, `..`, directory, `:(` magic or leading `-`) that
+matches the test-path rule (`isTestPath` in `diffscan.ts`, mirrored by `is_test_path` in the guard), lies inside the
+repository, is tracked and shows modified against HEAD. `--source`/`-s`, a tree-ish, `-p`, `--merge`,
+`--ours/--theirs`, `--pathspec-from-file`, `-f`, xargs input and a `cd` earlier in the command are refused; the
+refusal names the allowed form. Each allowed path leaves a `test_restore` trace line (path in `cmd`) in the child's
+trace. Children are not stopped from committing; after a child commit "vs HEAD" means its changes since that commit.
+
 ## Permission baseline and auto-review
 
 The installer generates the permission-system config from `config/permissions.baseline.json` plus

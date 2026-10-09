@@ -2,12 +2,13 @@
 // The real-script cases pass command STRINGS to scripts/git_guard.py; nothing is executed.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import gitGuard from "../../git-guard/index.ts";
-import { gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "../gitguard.ts";
+import { CHILD_TRACE_EVENT, gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "../gitguard.ts";
 import { resolvePython } from "../python.ts";
 import { defaultSpawner } from "../spawn.ts";
 import type { Spawner } from "../spawn.ts";
@@ -78,6 +79,27 @@ test("child extension with the real script blocks push shapes and passes plain g
     for (const command of ["git status", "git commit -m 'whatever'", "echo git push"]) {
       assert.equal(await h({ toolName: "bash", input: { command } }, ctx(cwd)), undefined, command);
     }
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("child extension forwards an allowed test restore to pi.events as test_restore", { skip: !py.ok ? "no Python >= 3.9" : false }, async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pf-gg-restore-"));
+  try {
+    const g = (...a: string[]) => execFileSync("git", ["-C", cwd, ...a], { stdio: "ignore" });
+    g("init", "-q");
+    fs.mkdirSync(path.join(cwd, "tests"));
+    fs.writeFileSync(path.join(cwd, "tests", "test_a.py"), "x = 1\n");
+    g("add", "tests");
+    g("-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "-m", "init");
+    fs.writeFileSync(path.join(cwd, "tests", "test_a.py"), "x = 2\n");
+    const seen: unknown[] = [];
+    let handler: Handler | undefined;
+    const pi = { on: (name: string, fn: Handler) => { if (name === "tool_call") handler = fn; }, events: { emit: (ch: string, d: unknown) => seen.push([ch, d]), on: () => undefined } };
+    gitGuard(pi as never, { env: { ...process.env, PI_FOREMAN_PYTHON: py.ok ? py.info.executable : "" } });
+    assert.equal(await handler!({ toolName: "bash", input: { command: "git restore tests/test_a.py" } }, ctx(cwd)), undefined);
+    assert.deepEqual(seen, [[CHILD_TRACE_EVENT, { sessionId: "child-1", event: "test_restore", cmd: "tests/test_a.py" }]]);
   } finally {
     fs.rmSync(cwd, { recursive: true, force: true });
   }
