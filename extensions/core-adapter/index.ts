@@ -702,6 +702,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewPerRevision: get(s.config.config, "ceremony.reviewPerRevision") === false ? "off" : "on",
       trivialPath: trivialBuilderPath(get(s.config.config, "ceremony.required")) ? "builder" : "off",
       ladder: "on",
+      // Foreman rulings never put a diff fact in scope (review rule; "off" only renders the eee843d baseline).
+      factRulings: "on",
     };
   }
   /** ceremony.heavyThreshold: anything but "eee843d" is the default strict. */
