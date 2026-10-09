@@ -333,6 +333,27 @@ class RepoTest(unittest.TestCase):
             self.assertIn(why, reason, c)
         self.assertEqual(decide("git --no-pager restore tests/test_a.py", "child", cwd=self.repo)[0], A)
 
+    def test_child_restore_must_be_a_command_of_its_own(self):
+        self.restore_repo()
+        for c in ("export GI\"T_DIR\"=../B/.git GI\"T_WORK_TREE\"=../B; git restore tests/test_a.py",
+                  "G=GIT; export ${G}_DIR=../B/.git; git restore tests/test_a.py",
+                  "eval 'git restore tests/test_a.py'",
+                  "read D <<< x; git restore tests/test_a.py",
+                  "printf -v D x; git restore tests/test_a.py",
+                  "BASH_ENV=/tmp/e bash -c 'git restore tests/test_a.py'",
+                  "ENV=/tmp/e sh -c 'git restore tests/test_a.py'",
+                  "bash -c 'git restore tests/test_a.py'",
+                  "git restore tests/test_a.py > /dev/null",
+                  "git restore tests/test_a.py &",
+                  "git restore tests/test_a.py || true",
+                  "\"git\" restore tests/test_a.py",
+                  "git restore tests/test_a.py\ngit status"):
+            got, reason = decide(c, "child", cwd=self.repo)
+            self.assertEqual(got, D, c)
+            self.assertIn("test files your diff modified", reason, c)
+        got, reason = decide("eval 'git restore tests/test_a.py'", "child", cwd=self.repo)
+        self.assertIn("command of its own", reason)
+
     def test_child_restore_event_reaches_stdout(self):
         self.restore_repo()
         p = {"tool_name": "Bash", "tool_input": {"command": "git restore tests/test_a.py"}, "cwd": self.repo}

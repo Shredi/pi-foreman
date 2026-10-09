@@ -1588,6 +1588,30 @@ def restore_path_problem(p, ctx, call):
     return None, changed[0]
 
 
+RESTORE_SHELL_BAN = re.compile(r"[$`;&|<>(){}%\n\r]")
+
+
+def restore_alone(ctx, seg):
+    """The WHOLE command is this one simple git call: one segment, written `git` literally, no shell
+    syntax that could set or expand anything (quoted or computed assignments, eval, read, printf -v,
+    BASH_ENV, substitutions, redirects, chains, nesting). Decided on structure, not on variable names."""
+    if not ctx.root or seg is None:
+        return False
+    text, flavor = ctx.root
+    if flavor not in ("bash", "powershell") or RESTORE_SHELL_BAN.search(text):
+        return False
+    try:
+        lx = lex(text, flavor)
+    except LexError:
+        return False
+    if len(lx.segs) != 1 or lx.subs:
+        return False
+    only = lx.segs[0]
+    if only.heredocs or only.herestrings or not only.words or only.words[0].dynamic or only.words[0].raw != "git":
+        return False
+    return only.raw() == seg.raw()
+
+
 def child_restore(s, rest, ctx, call, seg, via_xargs):
     """A child's `git restore` / `git checkout -- <paths>`: allowed only on modified, tracked test files.
     Children run from the task base; a child that committed moves HEAD, so "vs HEAD" is then its own
@@ -1607,9 +1631,9 @@ def child_restore(s, rest, ctx, call, seg, via_xargs):
         return no("the global option %s is not allowed (it can point git at another repository)" % extra[0])
     if ctx.root and re.search(r"GIT_", ctx.root[0], re.I):
         return no("the command sets a GIT_* variable (it can point git at another repository)")
-    first = seg.words[0] if seg is not None and seg.words else None
-    if first is None or first.dynamic or not is_git_name(prog_name(first.text)):
-        return no("git must be the command itself, without a wrapper or variable assignment in front")
+    if not restore_alone(ctx, seg):
+        return no("the restore must be a command of its own: exactly one plain `git ...` call, nothing chained, "
+                  "nested or redirected, no variable, assignment, wrapper or substitution")
     if s == "restore":
         opts, pos, dd, _ = parse_opts(rest, short_arg="s", known=(
             "source", "patch", "worktree", "staged", "quiet", "progress", "ours", "theirs", "merge", "conflict",
