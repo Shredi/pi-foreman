@@ -22,7 +22,24 @@
    {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-t5]] review item 1"}}]},
    {"text": "Reviewer launched."}
   ],
-  "t5": [{"text": "Reviewed; done."}]
+  "t5": [{"text": "Reviewed; done."}],
+  "v1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "trivial", "reason": "version bump"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-calc.md", "content": "# Requirements Ledger: calc\nTier: trivial\n\n- [ ] 1. bump VERSION to 1.0.1\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-v1]] bump VERSION in version.py (item 1)"}}]},
+   {"text": "Builder launched."}
+  ],
+  "s1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "security hardening inside one component"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-calc.md", "content": "# Requirements Ledger: calc\nTier: standard\n\n- [x] 1. harden add() against bad input\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-s1]] item 1: in calc.py, symbol add(a, b): reject non-numbers"}}]},
+   {"text": "Builder launched."}
+  ],
+  "s2": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-s3]] review item 1"}}]},
+   {"text": "Reviewer launched."}
+  ],
+  "s3": [{"text": "Built and reviewed; done."}]
  },
  "*": {
   "b-t1": [
@@ -36,6 +53,15 @@
    ]},
    {"text": "[[replay:t4]] built"}
   ],
+  "b-v1": [
+   {"tools": [{"name": "edit", "arguments": {"path": "version.py", "edits": [{"oldText": "1.0.0", "newText": "1.0.1"}]}}]},
+   {"text": "[[replay:t2]] built"}
+  ],
+  "b-s1": [
+   {"tools": [{"name": "edit", "arguments": {"path": "calc.py", "edits": [{"oldText": "return a - b", "newText": "return a + b if isinstance(a, (int, float)) else 0"}]}}]},
+   {"text": "[[replay:s2]] built"}
+  ],
+  "r-s3": [{"text": "[[replay:s3]] VERDICT: PASS\n1. PASS calc.py:2\nOverall verdict: PASS"}],
   "r-t5": [{"text": "[[replay:t5]] VERDICT: PASS\n1. PASS calc.py:2\nOverall verdict: PASS"}]
  }
 }

@@ -3,6 +3,16 @@
 ## [Unreleased]
 
 ### Added
+- Launch briefs: `instructions/foreman.md` gets explorer, builder and foreman skeletons (invariants and callers, new tests
+  instead of edits, no narrowed fuzz strategies, visibility, shared symbols, edit tools only); matching rules in
+  `agents/explorer.md` and `agents/builder.md`. A builder launch that cites ledger items ("item 3", "#5") gets a
+  `[pi-foreman ledger items]` block with their text (trace `ledger_block`); none on a rung-up launch, whose handoff has it.
+- Notices: a completion notice whose result was delivered inline is dropped from the model context instead of stubbed,
+  and the held launch result loses every pi-subagents async-started guidance line; trace `notify_deduped {runId, mode,
+  trimmed_lines}`. The extra turn a notice can trigger is decided inside pi-subagents and is not suppressed here.
+- Triage rules (`instructions/foreman.md`, every `foreman_triage` answer): a version or hash bump is trivial, security
+  hardening inside one component is standard not heavy, the explorer may be skipped when the builder brief lists the
+  files and symbols (the standard finish gate needs only builder and reviewer).
 - Ladder: a builder revision after a reviewer FAIL climbs to its strong rung (`ladder.strongOnRevision`, default true,
   trace `rung_up` reason `review_fail`); the finish gate refuses, uncounted, while that climb is open
   (`finish_refused {climb_available}`); on the top rung the two-refusal valve is unchanged.

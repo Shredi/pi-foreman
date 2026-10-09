@@ -65,27 +65,28 @@ class TestLaunchWait(ReplayCase):
         run_id, role, path = hit.groups()
         self.assertEqual(role, "explorer")
         self.assertIn("explorer child result\nsecond line of the report", res[0][2])
-        self.assertNotIn("Return control to the user now", res[0][2], "a held launch drops the contradicting line")
+        for line in ("Return control to the user now", "The async run is detached", "Use bg_wait only for", "Do not run sleep"):
+            self.assertNotIn(line, res[0][2], "a held launch drops the async-started guidance")
         [lw] = events(rig, sid, "launch_wait")
         self.assertEqual((lw["runId"], lw["outcome"], lw["role"]), (run_id, "done", "explorer"))
-        # The notice still reaches the session, but the model gets a one-line stub for it.
+        # The notice still reaches the session, but the model never gets it: its result was delivered inline.
         [full] = notices(recs)
         self.assertIn("second line of the report", full)
         pi.prompt("[[replay:again]] anything else?", timeout=60)
         pi.close()
         reqs = [json.loads(line) for line in log.read_text("utf-8").splitlines() if line.strip()]
         self.assertEqual(len(reqs), 3, "launch turn, the turn after the held result, the next prompt")
-        stub = "Background task completed: **explorer** [pi-foreman: notice shortened, the result of run %s was already delivered above. Retention-managed async directory: %s]" % (run_id, path)
         texts = [json.dumps(m) for m in reqs[1]]
-        self.assertTrue(any(json.dumps(stub)[1:-1] in t for t in texts), texts[-2:])
-        self.assertFalse(any("second line of the report" in t and "subagent-notify" in t for t in texts))
-        self.assertEqual(sum("notice shortened" in t for t in texts), 1)
+        self.assertFalse(any("subagent-notify" in t or "Retention-managed async directory" in t for t in texts), texts[-2:])
+        self.assertFalse(any("notice shortened" in t for t in texts))
         # Cache prefix: each earlier request is byte-identical (canonical JSON; Pi may reorder the
         # keys of its system message object) at the head of every later one.
         for i in range(len(reqs) - 1):
             n = len(reqs[i])
             self.assertEqual(json.dumps(reqs[i + 1][:n], sort_keys=True), json.dumps(reqs[i], sort_keys=True), "request %d changed under request %d" % (i, i + 1))
-        self.assertEqual([r["runId"] for r in events(rig, sid, "notify_deduped")], [run_id], "traced once per run")
+        [dd] = events(rig, sid, "notify_deduped")
+        self.assertEqual((dd["runId"], dd["mode"]), (run_id, "dropped"))
+        self.assertGreater(dd["trimmed_lines"], 0, "the guidance lines of the held result were counted")
 
     def test_supervisor_request_ends_the_wait(self):
         rig = self.rig("lw-sup", load_fixture("launch_wait"), config=BLOCK)

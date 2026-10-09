@@ -60,6 +60,7 @@ import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, causeO
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { CompactionGate } from "./compaction.ts";
+import { applyLedgerItems } from "./ledgerblock.ts";
 import { citedItems, ledgerHint, writeHint } from "./hints.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, withDigest } from "./retro.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
@@ -74,11 +75,11 @@ let herdrEvents: EventBus | undefined;
 import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait, waitLimits } from "./wait.ts";
-import { dedupeNotices, dedupeOn, dropReturnControl, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
+import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { registerClose, syncCommand } from "./close.ts";
 import { registerSession } from "./session.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
-import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_TOOL, trivialPathAdvice, workspaceTargets } from "./triage.ts";
+import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_RULES, TRIAGE_TOOL, trivialPathAdvice, workspaceTargets } from "./triage.ts";
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
@@ -148,6 +149,8 @@ interface Session {
   launchBatch: LaunchBatch;
   /** Foreman only: run ids whose completion notice was deduplicated and traced (knob 5a; trace once per run). */
   dedupeTraced: Set<string>;
+  /** Async-started guidance lines trimmed from a held launch result, by run id (trace notify_deduped). */
+  trimmedLines: Map<string, number>;
   /** Foreman only: builder revision rounds since the last user prompt or /ceremony tier change (rounds.ts). */
   rounds: RoundState;
   /** Foreman only, ceremony gate (bound.ts): own project-file changes at trivial, reset by /ceremony. */
@@ -319,6 +322,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ledgerBash: new Set(),
       launchBatch: new LaunchBatch(),
       dedupeTraced: new Set(),
+      trimmedLines: new Map(),
       ladder: new LadderState(),
       retro: new RetroState(),
       childLadder: new ChildLadder(isChild ? b?.ladder : undefined),
@@ -704,6 +708,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ladder: "on",
       // Foreman rulings never put a diff fact in scope (review rule; "off" only renders the eee843d baseline).
       factRulings: "on",
+      // Launch skeletons and tier rules (retro-harvest; "off" only renders the eee843d baseline).
+      launchBriefs: "on",
     };
   }
   /** ceremony.heavyThreshold: anything but "eee843d" is the default strict. */
@@ -1061,6 +1067,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.rounds = rounds.next;
         for (let i = 0; i < rounds.revisions; i++) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: kind });
       }
+      if (event.toolName === "subagent" && !s.isChild) {
+        const lf = boundLedger(s.markerDir, s.id);
+        const lg = (() => { try { return lf ? fs.readFileSync(lf, "utf8") : null; } catch { return null; } })();
+        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)))) s.trace?.emit(r);
+      }
       if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input)) s.trace?.emit(r);
       if (event.toolName === "subagent" && climbs.length > 0) {
         const ledgerFile = boundLedger(s.markerDir, s.id);
@@ -1390,7 +1401,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (s && held?.path) recordChild(s, [held.path]);
       // subagent has no post guards (toolmap.ts), so the amended result can be returned here.
       // The held text stays the last block: deliveredRuns accepts the "done" marker only there.
-      if (notices || held) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(held && !held.plain ? dropReturnControl(event.content) : event.content), ...(held ? [{ type: "text" as const, text: held.text }] : [])] };
+      const trim = held && !held.plain ? dropAsyncGuidance(event.content) : null;
+      if (s && trim && trim.trimmed > 0) s.trimmedLines.set(launchId(event.input, event.details, event.isError) ?? "", trim.trimmed);
+      if (notices || held) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(trim ? trim.content : event.content), ...(held ? [{ type: "text" as const, text: held.text }] : [])] };
     }
     const mapping = mapTool(event.toolName);
     const changed = event.isError ? undefined : changedFileOf(event.toolName, event.input as Record<string, unknown>);
@@ -1439,7 +1452,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { text: climb && climb.runId === runId ? `${text}\n${climbHint(climb)}` : text, path: r.end?.resultPath ?? asyncDir };
   }
 
-  // Knob 5a (launchwait.ts): a completion notice whose result an earlier message delivered becomes a stub.
+  // Knob 5a (launchwait.ts): a completion notice whose result an earlier message delivered is dropped from the model context.
   pi.on("context", async (event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild || !dedupeOn(get(s.config.config, "ceremony.dedupeNotify"))) return undefined;
@@ -1448,7 +1461,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const runId of r.deduped) {
       if (s.dedupeTraced.has(runId)) continue;
       s.dedupeTraced.add(runId);
-      s.trace?.emit({ event: "notify_deduped", runId });
+      s.trace?.emit({ event: "notify_deduped", runId, mode: r.mode, trimmed_lines: s.trimmedLines.get(runId) ?? 0 });
     }
     return { messages: r.messages };
   });
@@ -1602,7 +1615,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const note = raised ? "Recorded as standard, not trivial: the edit mode already refused a change of yours, so a builder makes it. " : "";
         const em = editModeOfSession(s);
         const advice = tier === "trivial" && trivialBuilderPath(get(s.config.config, "ceremony.required")) ? trivialPathAdvice(em.mode === "bounded") : tier === "trivial" && em.mode !== "bounded" ? `No builder is required, but ${editModeAdvice(em.mode, em.scratchDir)} for any project change (that makes the task standard).` : triageAdvice(tier);
-        return { content: [{ type: "text" as const, text: [`${note}${tierLine(s.ceremony)} ${advice}`, finishLine({ [tier]: requiredOf(s, tier) }, tier)].filter(Boolean).join(" ") }], details: { decision: "recorded", tier } };
+        return { content: [{ type: "text" as const, text: [`${note}${tierLine(s.ceremony)} ${advice} ${TRIAGE_RULES}`, finishLine({ [tier]: requiredOf(s, tier) }, tier)].filter(Boolean).join(" ") }], details: { decision: "recorded", tier } };
       },
     } as never);
   }

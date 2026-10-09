@@ -67,10 +67,19 @@ class TestFrugalBuilder(ReplayCase):
         if out:
             Path(out).write_text(json.dumps(measure(rig.sizes), indent=1), "utf-8")
 
+    def test_ledger_items_block_reaches_the_builder(self):
+        rig, res = self.run_flow("fb-ledger", "szl", CFG, sizes=True)
+        self.assertEqual([(n, e) for n, e, _ in res if n == "subagent"], [("subagent", False)] * 2, res)
+        self.assertTrue([t for t in session_text(rig) if "[pi-foreman ledger items]" in t and "trailing comma in list literals" in t and "regression test for the trailing comma" in t], "no builder session carries the cited items")
+        self.assertEqual([(r["role"], r["chars"] > 100) for r in all_records(rig) if r.get("event") == "ledger_block"], [("builder", True)])
+        out = os.environ.get("FOREMAN_MEASURE_OUT")
+        if out:
+            Path(out + ".ledger.json").write_text(json.dumps(measure(rig.sizes), indent=1), "utf-8")
+
     def test_no_explorer_no_brief(self):
         rig, res = self.run_flow("fb-nobrief", "nobrief", CFG)
         self.assertEqual([(n, e) for n, e, _ in res if n == "subagent"], [("subagent", False)], res)
-        self.assertEqual([r for r in all_records(rig) if r.get("event") == "explorer_brief"], [])
+        self.assertEqual([r for r in all_records(rig) if r.get("event") in ("explorer_brief", "ledger_block")], [], "no ledger bound, no block")
 
     def test_child_read_budget_warn_and_deny(self):
         cfg = {"ceremony": {"launchWait": "block", "childReads": {"builder": {"warn": 2, "deny": 3}}}}
