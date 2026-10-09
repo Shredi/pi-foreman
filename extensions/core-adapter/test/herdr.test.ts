@@ -88,6 +88,10 @@ test("permission label skips env assignments and never shows a value after =", (
   assert.equal(permissionLabel({ request: { toolName: "bash" }, value: "env A=1 B=secret make deploy" }), "bash make");
   assert.equal(permissionLabel({ request: { toolName: "bash" }, value: "--token=secret" }), "bash --token");
   assert.equal(permissionLabel({ request: { toolName: "bash" }, value: "SECRET=only" }), "bash");
+  assert.equal(permissionLabel({ request: { toolName: "bash" }, value: 'AUTH="Bearer abc def" curl -s x' }), "bash curl");
+  assert.equal(permissionLabel({ request: { toolName: "bash" }, value: "P='pass word' psql" }), "bash psql");
+  assert.equal(permissionLabel({ request: { toolName: "bash" }, value: "T=$(cat key file) deploy" }), "bash deploy");
+  assert.equal(permissionLabel({ request: { toolName: "bash" }, value: '"quoted secret" x' }), "bash");
 });
 
 test("a decision without a prompt and an end without a start emit nothing", async () => {

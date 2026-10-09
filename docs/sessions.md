@@ -228,7 +228,8 @@ got their decision (an open Pi dialog stays until Pi closes it); shutdown releas
 dialog that a second dialog replaces (it never sends that dialog's end); typed input then releases the stale dialog.
 
 Label: for a permission ask `<agent> · <tool> <first word>` (the requesting child's agent when forwarded; a path is
-cut to its basename; leading `env` and `NAME=value` assignments are skipped and nothing after an `=` is shown;
+cut to its basename; leading `env` and `NAME=value` assignments are skipped (a quoted or `$(…)` value up to its closing quote or paren),
+nothing after an `=` is shown, and a word that is not a plain command name is dropped;
 never the full command), else the dialog title, else pi-foreman's ask title, else the dialog
 kind; at most 80 characters, control characters removed. A later ask keeps the first label (Herdr shows that one).
 

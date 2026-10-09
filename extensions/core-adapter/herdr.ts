@@ -34,16 +34,29 @@ export function cleanLabel(s: string): string {
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
+/** Quotes and `$(`/`)` of a shell word group are balanced (a value that spans words is complete). */
+function balanced(w: string): boolean {
+  const n = (re: RegExp): number => (w.match(re) ?? []).length;
+  return n(/"/g) % 2 === 0 && n(/'/g) % 2 === 0 && n(/\(/g) <= n(/\)/g);
+}
+
 /** Label of a permission ask: `<agent> · <tool> <head>`; head is the first word of the value after `env` and `NAME=value` assignments (a path's basename), never the full value. */
 export function permissionLabel(data: unknown): string {
   const d = (data ?? {}) as { agentName?: unknown; surface?: unknown; value?: unknown; request?: { toolName?: unknown } | null; forwarding?: { requesterAgentName?: unknown } | null };
   const agent = str(d.forwarding?.requesterAgentName) || str(d.agentName);
   const tool = str(d.request?.toolName) || str(d.surface) || "permission";
   // Skip `env` and leading `NAME=value` assignments (they can carry secrets); drop anything after an `=` in the head.
+  // A quoted or `$(…)` assignment value can span words: skip until its quotes and parens balance. A head that is
+  // not a plain command word (quotes, `$`, parens left over) is dropped.
   const words = str(d.value).split(/\s+/).filter(Boolean);
   let i = words[0] === "env" ? 1 : 0;
-  while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) i++;
+  while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) {
+    let open = words[i];
+    while (!balanced(open) && i + 1 < words.length) open += ` ${words[++i]}`;
+    i++;
+  }
   let head = (words[i] ?? "").split("=")[0];
+  if (!/^[\w.@+\/\\:-]+$/.test(head)) head = "";
   if (/[\\/]/.test(head)) head = head.split(/[\\/]+/).filter(Boolean).pop() ?? "";
   const ask = head ? `${tool} ${head}` : tool;
   return cleanLabel(agent ? `${agent} · ${ask}` : ask);
