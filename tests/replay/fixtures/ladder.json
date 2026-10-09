@@ -1,0 +1,21 @@
+{
+ "foreman": {
+  "lad": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:small]] fix item 1", "model": "strong"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:small]] fix item 1"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:big]] continue item 1", "model": "strong"}}]},
+   {"text": "Done."}
+  ]
+ },
+ "builder": {
+  "small": [
+   {"text": "working", "tools": [{"name": "bash", "arguments": {"command": "echo hi"}}], "usage": {"input": 2000}},
+   {"text": "RUNG_UP: context\nDone: half the parser\nRemaining: the tests\nFiles touched: none"}
+  ]
+ },
+ "senior-reviewer": {
+  "big": [
+   {"text": "child: finished on the strong rung"}
+  ]
+ }
+}

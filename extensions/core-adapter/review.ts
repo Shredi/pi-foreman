@@ -47,6 +47,8 @@ export interface ReviewTarget {
   provider: string;
   modelId: string;
   timeoutMs: number;
+  /** Picked by autoReviewTarget (no review.model set). */
+  auto?: boolean;
 }
 
 /** `providers.<provider>.review` of the merged config, or null (review off for that provider). */
@@ -61,6 +63,42 @@ export function reviewTarget(config: Json | undefined, provider: string | undefi
     modelId: slash > 0 ? model.slice(slash + 1) : model,
     timeoutMs: typeof t === "number" && Number.isFinite(t) && t > 0 ? t : DEFAULT_REVIEW_TIMEOUT_MS,
   };
+}
+
+/**
+ * D3: with no `providers.<provider>.review.model`, the cheapest model by registry `cost.input`
+ * among the provider's role-map models (`model` and `strong` of every role, foreman included)
+ * that the registry finds and has auth for; null when none (every ask goes to the human).
+ */
+export function autoReviewTarget(config: Json | undefined, provider: string | undefined, registry: RegistryLike | undefined): ReviewTarget | null {
+  if (!provider || !registry) return null;
+  const roles = get(config, `providers.${provider}.roles`);
+  if (!roles || typeof roles !== "object") return null;
+  const ids = new Set<string>();
+  for (const r of Object.values(roles as Record<string, unknown>)) {
+    if (!r || typeof r !== "object") continue;
+    const e = r as { model?: unknown; strong?: { model?: unknown } };
+    for (const m of [e.model, e.strong?.model]) if (typeof m === "string" && m.trim()) ids.add(m.trim().replace(/:(off|minimal|low|medium|high|xhigh|max)$/, ""));
+  }
+  let best: { provider: string; modelId: string; cost: number } | null = null;
+  for (const id of ids) {
+    const slash = id.indexOf("/");
+    const p = slash > 0 ? id.slice(0, slash) : provider;
+    const modelId = slash > 0 ? id.slice(slash + 1) : id;
+    let model: unknown;
+    try {
+      model = registry.find(p, modelId);
+      if (!model || (registry.hasConfiguredAuth && !registry.hasConfiguredAuth(model as never))) continue;
+    } catch {
+      continue;
+    }
+    const raw = (model as { cost?: { input?: unknown } }).cost?.input;
+    const cost = typeof raw === "number" && Number.isFinite(raw) ? raw : Infinity;
+    if (!best || cost < best.cost) best = { provider: p, modelId, cost };
+  }
+  if (!best) return null;
+  const t = get(config, `providers.${provider}.review.timeoutMs`);
+  return { provider: best.provider, modelId: best.modelId, timeoutMs: typeof t === "number" && Number.isFinite(t) && t > 0 ? t : DEFAULT_REVIEW_TIMEOUT_MS, auto: true };
 }
 
 /** The reviewer's reply text -> verdict. Anything but a well-formed JSON verdict defers. */
@@ -119,6 +157,8 @@ interface ReviewLog {
 /** The slice of Pi's ModelRegistry the link uses. */
 export interface RegistryLike {
   find(provider: string, modelId: string): unknown;
+  /** Pi's ModelRegistry has it; a registry without it counts every found model as usable. */
+  hasConfiguredAuth?(model: never): boolean;
   complete(model: never, context: never, options?: never): Promise<{ content?: unknown; stopReason?: string; errorMessage?: string }>;
 }
 
@@ -222,10 +262,12 @@ export class ForemanReview {
     const started = Date.now();
     let out: Outcome = { verdict: { kind: "defer" }, label: "error" };
     let model: string | null = null;
+    let auto = false;
     try {
       const s = this.sessions.get(id);
       const surface = String(d.surface ?? d.payload?.request?.surface ?? "");
-      const target = s && !s.isChild ? reviewTarget(s.config(), s.provider) : null;
+      const target = s && !s.isChild ? reviewTarget(s.config(), s.provider) ?? autoReviewTarget(s.config(), s.provider, s.registry) : null;
+      auto = target?.auto === true;
       if (!s) out = { verdict: { kind: "defer" }, label: "no-session" };
       else if (s.isChild) out = { verdict: { kind: "defer" }, label: "child" };
       else if (!REVIEW_SURFACES.includes(surface)) out = { verdict: { kind: "defer" }, label: "surface" };
@@ -235,12 +277,12 @@ export class ForemanReview {
         model = `${target.provider}/${target.modelId}`;
         out = await this.callModel(s, target, requestText(d, surface, s), reviewValue(d));
       }
-      s?.trace?.({ event: "review", decision: out.label, model, latencyMs: Date.now() - started, errorKind: out.errorKind ?? null });
+      s?.trace?.({ event: "review", decision: out.label, model, latencyMs: Date.now() - started, errorKind: out.errorKind ?? null, by: auto ? "auto" : undefined });
     } catch {
       out = { verdict: { kind: "defer" }, label: "error", errorKind: "internal" };
     }
     try {
-      log?.review("foreman_review.decision", { requestId: d.requestId ?? null, sessionId: id, model, verdict: out.verdict.kind, outcome: out.label, errorKind: out.errorKind ?? null, riskLevel: out.riskLevel ?? null, latencyMs: Date.now() - started });
+      log?.review("foreman_review.decision", { requestId: d.requestId ?? null, sessionId: id, model, autoPicked: auto, verdict: out.verdict.kind, outcome: out.label, errorKind: out.errorKind ?? null, riskLevel: out.riskLevel ?? null, latencyMs: Date.now() - started });
     } catch {
       // logging is best effort
     }

@@ -87,9 +87,9 @@ class TestModelReview(ReplayCase):
         pi.request({"type": "set_model", "provider": PROVIDER_B, "modelId": "foreman"})
         dialog, bash = self.ask(pi)
         pi.close()
-        self.assertTrue(dialog, "provider B has no review model: the ask must reach the human")
+        self.assertTrue(dialog, "provider B sets no review model: its auto-picked role-map model answers nothing, the ask reaches the human")
         self.assertEqual([e for e, _ in bash], [False])
-        self.assertEqual(self.outcomes(rig), ["allow", "no-model"])
+        self.assertEqual(self.outcomes(rig), ["allow", "empty"])
 
 
 if __name__ == "__main__":

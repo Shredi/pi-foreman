@@ -70,6 +70,36 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(res["layers"], ["L1", "L3:@scope/other", "L3:org-pkg"])
         self.assertEqual(res["config"]["fanout"]["max"], 4)
 
+    def test_ladder_keys_user_only_and_presets_valid(self):
+        p1 = dict(PROV["p1"], strongAbove=6000, childMaxTurns=5, ranks=[{"match": "m-*", "tier": 2}])
+        self.l2({"ladder": {"childPolicy": "at-or-below", "strongAbove": 5000, "childMaxTurns": 9},
+                 "roles": {"builder": {"strongAbove": 7000, "childMaxTurns": 4}}, "providers": {"p1": p1}})
+        self.proj({"ladder": {"childPolicy": "any"}, "providers": {"p1": {"ranks": [], "strongAbove": 1}},
+                   "roles": {"builder": {"childMaxTurns": 999}}})
+        res = self.load(trusted_project=True)
+        self.assertEqual(res["errors"], [])
+        cfg = res["config"]
+        self.assertEqual(cfg["ladder"], {"childPolicy": "at-or-below", "strongAbove": 5000, "childMaxTurns": 9})
+        self.assertEqual((cfg["providers"]["p1"]["ranks"], cfg["providers"]["p1"]["strongAbove"]), (p1["ranks"], 6000))
+        self.assertEqual(cfg["roles"]["builder"]["childMaxTurns"], 4)
+        self.assertIn("project ladder.childPolicy ignored", "\n".join(res["warnings"]))
+        self.l2({"childMaxThinking": "medium"})
+        self.proj({"childMaxThinking": "max"})
+        res = self.load(trusted_project=True)
+        self.assertEqual(res["config"]["childMaxThinking"], "medium")
+        self.proj({"childMaxThinking": "low"})
+        self.assertEqual(self.load(trusted_project=True)["config"]["childMaxThinking"], "low")
+        self.l2({})
+        self.assertNotIn("childMaxThinking", self.load()["config"])
+        self.assertEqual(self.load()["config"]["ladder"], {"strongAbove": 100000, "childMaxTurns": 60})
+        self.l2({"ladder": {"childPolicy": "sometimes"}})
+        self.assertTrue(self.load()["errors"])
+        presets = sorted((ROOT / "config" / "presets").glob("*.json"))
+        self.assertTrue(presets)
+        for preset in presets:  # opt-in overlay files: valid as an L2 layer, never merged by default
+            self.l2(json.loads(preset.read_text()))
+            self.assertEqual(self.load()["errors"], [], preset.name)
+
     def test_project_ignored_without_trust(self):
         self.proj({"fanout": {"max": 9}})
         self.assertEqual(self.load()["config"]["fanout"]["max"], 3)

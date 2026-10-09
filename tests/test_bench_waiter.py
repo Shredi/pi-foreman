@@ -89,7 +89,7 @@ class BuildWorldTest(unittest.TestCase):
     def test_review_strong_trace_and_schema(self):
         cfg = ws.foreman_config(row(_required_child_extensions=["/x/fake.ts"]))
         p = cfg["providers"]["p"]
-        self.assertEqual(p["review"], {"model": "p/reviewer"})
+        self.assertNotIn("review", p)  # no review_model: the harness default (cheapest role-map model) applies
         self.assertEqual(p["roles"]["builder"]["strong"], {"model": "p/builder-strong"})
         self.assertTrue(cfg["trace"]["enabled"])
         self.assertNotIn("ceremony", cfg)

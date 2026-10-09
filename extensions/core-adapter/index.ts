@@ -7,7 +7,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, promptSignals, tierLine, userOverride } from "./ceremony.ts";
 import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint } from "./config.ts";
-import type { MergedConfig } from "./config.ts";
+import type { Json, MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
 import { buildOverlayRules, checkToolCall, isOverlayTool, OVERLAY_UNAVAILABLE, readBaseline, resolveDecision } from "./permoverlay.ts";
 import type { OverlayRules } from "./permoverlay.ts";
@@ -52,7 +52,7 @@ import type { ReviewRecord } from "./reviews.ts";
 import { openTrace } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
 import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
-import type { LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
+import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { CompactionGate } from "./compaction.ts";
 import { UsageFooter } from "./footer.ts";
@@ -66,13 +66,15 @@ let herdrEvents: EventBus | undefined;
 import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait, waitLimits } from "./wait.ts";
-import { dedupeNotices, dedupeOn, dropReturnControl, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
+import { dedupeNotices, dedupeOn, dropReturnControl, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { registerClose, syncCommand } from "./close.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
 import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_TOOL, workspaceTargets } from "./triage.ts";
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
+import { ChildLadder, childMaxTurns, climbHint, LadderState, ledgerLines, onBottomRung, strongAbove, type Climb } from "./ladder.ts";
+import { launchedModels, rankRefusal } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
 
@@ -173,6 +175,9 @@ interface Session {
   childFiles: Set<string>;
   /** Foreman only: bash calls that run `ledger`, by tool call id until tool_execution_end (trace ledger_call). */
   ledgerBash: Set<string>;
+  /** Foreman: rung per launch and climb-eligible runs (ladder.ts). Child: the once-only context steer. */
+  ladder: LadderState;
+  childLadder: ChildLadder;
 }
 
 export interface AdapterDeps {
@@ -289,6 +294,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ledgerBash: new Set(),
       launchBatch: new LaunchBatch(),
       dedupeTraced: new Set(),
+      ladder: new LadderState(),
+      childLadder: new ChildLadder(isChild ? b?.ladder : undefined),
     };
     sessions.set(id, s);
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
@@ -703,6 +710,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         endActive(s.activeRuns, data);
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
+          s.ladder.onRunEnd(runEndOf(data));
           for (const step of stepsOfRunEnd(data)) s.steps[step]++;
           s.reviewGate = onReviewVerdicts(s.reviewGate, reviewVerdictsOfRunEnd(data));
         }
@@ -805,6 +813,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let notices: string[] = [];
       let rounds: LaunchRounds | undefined;
       let kind: LaunchKind | undefined;
+      let climbs: Climb[] = [];
+      let ladderRoles: Record<string, Json> | undefined;
       if (event.toolName === "subagent") {
         // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
         stripBinding(input);
@@ -869,7 +879,26 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           preferStrong = revision && !resumed && !keyword && get(s.config.config, `providers.${resolution.provider}.strongOnRevision`) === true;
           kind = revision ? (preferStrong ? "strong-relaunch" : "revision") : undefined;
         }
-        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong });
+        // Ladder (ladder.ts): a strong launch needs a reason or a trigger; rank policy (ranks.ts) after the models are written.
+        if (!s.isChild && actionOf(input) === null) {
+          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong });
+          if (lp.block) {
+            s.trace?.emit({ event: "launch_refused", reason: "strong_no_reason", tier: s.ceremony.tier });
+            return { block: true, reason: lp.block };
+          }
+          climbs = lp.climbs;
+          ladderRoles = resolution.roles;
+        }
+        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking") });
+        if (!s.isChild && actionOf(input) === null) {
+          const foremanModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null;
+          for (const m of launchedModels(input)) {
+            const no = rankRefusal(s.config.config, foremanModel, m);
+            if (!no) continue;
+            s.trace?.emit({ event: "launch_refused", reason: "rank_policy", policy: no.policy, foreman: no.foreman, requested: no.requested });
+            return { block: true, reason: no.message };
+          }
+        }
         for (const o of launched.overrides) s.trace?.emit({ event: "model_override", role: o.role, model: o.model, requested: o.requested });
         for (const n of launched.notices) s.trace?.emit({ event: "strong_unmapped", role: n.role, model: n.model, tier: s.ceremony.tier });
         notices = launched.notices.map((n) => n.text);
@@ -935,7 +964,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.rounds = rounds.next;
         for (let i = 0; i < rounds.revisions; i++) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: kind });
       }
-      if (event.toolName === "subagent") recordLaunchUsage(s, ctx, input, kind);
+      if (event.toolName === "subagent" && climbs.length > 0) {
+        const ledgerFile = boundLedger(s.markerDir, s.id);
+        const ledger = (() => { try { return ledgerFile ? fs.readFileSync(ledgerFile, "utf8") : null; } catch { return null; } })();
+        if (climbs.some((c) => c.handoff) && !kind) kind = "strong-relaunch";
+        for (const r of s.ladder.apply(climbs, (task) => ledgerLines(ledger, task))) s.trace?.emit(r);
+      }
+      let limits: LadderLimits | undefined;
+      const single = event.toolName === "subagent" && !s.isChild ? singleLaunchRole(input) : null;
+      if (single && ladderRoles) {
+        const bottom = onBottomRung(ladderRoles, single, input.model);
+        const p = s.configProvider ?? ctx.model?.provider;
+        s.ladder.onLaunch(event.toolCallId, single, bottom);
+        limits = { bottom, maxTurns: childMaxTurns(s.config.config, p, single), ...(bottom ? { strongAbove: strongAbove(s.config.config, p, single) } : {}) };
+      }
+      if (event.toolName === "subagent") recordLaunchUsage(s, ctx, input, kind, limits);
       if (event.toolName === "subagent" && !s.isChild && launchRoles(s, input).includes("planner")) capSet(s.planSnaps.byCall, event.toolCallId, planSnapshot(planOpts(s, ctx)));
       return undefined;
     } catch (err) {
@@ -970,6 +1013,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
       }
       if (codemode) s.turn.codemode = true;
+    }
+    const steer = s.isChild ? s.childLadder.onUsage(m.usage) : null;
+    if (steer) {
+      if (steer.trigger === "turns") s.trace?.emit({ event: "child_turn_cap", role: s.usage.line.role, turns: steer.count, rung: steer.rung });
+      else s.trace?.emit({ event: "rung_up_steer", role: s.usage.line.role, count: steer.count, rung: steer.rung, reason: "context" });
+      pi.sendUserMessage(steer.text, { deliverAs: "steer" });
     }
     if (!appendUsage(s.usage.file, usageLine(s.usage.line, event.message))) notifyOnce(s, ctx, "usage", `pi-foreman: could not append to the usage log ${s.usage.file}; /foreman cost will be incomplete.`);
     if (!s.isChild) {
@@ -1152,11 +1201,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** D8: give a single-child launch its usage binding (role, launch id, kind) through extensionBindings. */
-  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, kind?: LaunchKind): void {
+  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, kind?: LaunchKind, ladder?: LadderLimits): void {
     const role = singleLaunchRole(input);
     if (!role) return;
     const model = typeof input.model === "string" && input.model ? input.model : null;
-    const b = recordUsageLaunch(s.launches, { foremanSession: s.usage.line.foremanSession, workspace: s.usage.line.workspace, role, model, kind, activeProvider: ctx.model?.provider });
+    const b = recordUsageLaunch(s.launches, { foremanSession: s.usage.line.foremanSession, workspace: s.usage.line.workspace, role, model, kind, activeProvider: ctx.model?.provider, ladder });
     bindLaunch(input, b);
   }
 
@@ -1204,6 +1253,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const heads = s.launchHeadsByCall.get(event.toolCallId);
         s.launchHeadsByCall.delete(event.toolCallId);
         const runId = launchId(event.input, event.details, event.isError);
+        s.ladder.onLaunched(event.toolCallId, runId);
         if (heads && runId) capSet(s.launchHeads, runId, heads);
         const snap = s.planSnaps.byCall.get(event.toolCallId);
         s.planSnaps.byCall.delete(event.toolCallId);
@@ -1278,7 +1328,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const raw = details && typeof details === "object" ? (details as { asyncDir?: unknown }).asyncDir : undefined;
     const asyncDir = typeof raw === "string" ? raw : null;
     const text = launchWaitText({ outcome: r.outcome, runId, role: run.role, ms, maxSeconds: cap.seconds, capBy: cap.by, by: r.by, end: r.end, asyncDir });
-    return { text, path: r.end?.resultPath ?? asyncDir };
+    const climb = s.ladder.eligible.get(run.role);
+    return { text: climb && climb.runId === runId ? `${text}\n${climbHint(climb)}` : text, path: r.end?.resultPath ?? asyncDir };
   }
 
   // Knob 5a (launchwait.ts): a completion notice whose result an earlier message delivered becomes a stub.

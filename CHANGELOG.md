@@ -3,6 +3,16 @@
 ## [Unreleased]
 
 ### Added
+- Role ladder: `ladder.strongAbove` (100000) and `ladder.childMaxTurns` (60), per provider and per role; a
+  bottom-rung child past either is steered to hand off (`RUNG_UP: context|turns`), `STATUS: stuck` / "own checks
+  failed" also make the run climb-eligible; the foreman's strong relaunch gets the handoff prepended (trace `rung_up`,
+  `rung_up_steer`, `child_turn_cap`). A strong launch with no reason and no trigger is refused (`strong_no_reason`).
+- Rank policy: `providers.<p>.ranks` and `ladder.childPolicy` (`below` default, `at-or-below`, `any`); tiers compare
+  across providers; inert while no ranks are configured (trace `launch_refused {policy, foreman, requested}`).
+- Opt-in presets `config/presets/claude-bridge.json` (Haiku 5.5 -> Sonnet 5.5 children, Opus 5.5 foreman, Haiku
+  auto-review), `openai.json`, `google.json`; never merged by default.
+- `childMaxThinking` (no default): caps every child launch's thinking level, ladder rungs included.
+- Permission auto-review without `review.model` picks the cheapest role-map model with auth (trace `by: "auto"`).
 - `ceremony.ledgerHelper` (`tool` default, `bash`, `off`) and the foreman's `foreman_ledger` tool; the foreman
   closes V itself after a reviewer PASS with no revision since (harness-attested), reviewer children mark V only.
 - `foreman_ledger` action `upsert` (`item?`, `text`): replaces an item's text keeping its state, or appends a new item;
@@ -26,6 +36,9 @@
   `review_defer_headless`, `child_turn_cap`, `launch_refused`, `thinking_by_role`, `tier_dist`, `cache_write_per_launch`.
 
 ### Changed
+- A rung's configured `thinking` (or model suffix) now wins over the foreman's passed level; only a rung without
+  one takes the foreman's level.
+- Bench rows without `review_model` no longer default the auto-review to the reviewer's model.
 - Foreman tier in the bench is taken from the foreman's own trace only.
 - Pure-ledger shell commands no longer count against the read and recheck budgets (helper on).
 - Foreman read budget before the first launch is now warn 4 / deny 8 (was 6/12); the deny text

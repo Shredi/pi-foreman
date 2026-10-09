@@ -36,6 +36,16 @@ export interface LaunchBinding {
   launchId: string;
   kind: LaunchKind;
   model: string | null;
+  /** Ladder (ladder.ts): the child's limits and rung; absent = no check. */
+  ladder?: LadderLimits;
+}
+
+export interface LadderLimits {
+  /** Context limit, bottom rung only. */
+  strongAbove?: number;
+  maxTurns?: number;
+  /** On the bottom rung of a role that has a strong rung. */
+  bottom?: boolean;
 }
 
 export interface UsageCost {
@@ -91,6 +101,7 @@ export interface RecordLaunchInput {
   /** Explicit kind (`revision`, `strong-relaunch` from later callers); default first/fallback. */
   kind?: LaunchKind;
   activeProvider?: string;
+  ladder?: LadderLimits;
 }
 
 /** A new launch id with role, model and kind, kept in `registry` (keyed by launch id). */
@@ -102,6 +113,7 @@ export function recordUsageLaunch(registry: Map<string, LaunchBinding>, input: R
     launchId: newLaunchId(),
     kind: input.kind ?? launchKind(input.model, input.activeProvider),
     model: input.model,
+    ...(input.ladder ? { ladder: input.ladder } : {}),
   };
   registry.set(b.launchId, b);
   return b;
@@ -141,7 +153,10 @@ export function readBinding(env: Env): LaunchBinding | null {
     const role = str(b.role);
     const launchId = str(b.launchId);
     if (!foremanSession || !role || !launchId) return null;
-    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model) };
+    const pos = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : undefined);
+    const l = isObj(b.ladder) ? b.ladder : null;
+    const limit = l ? { ladder: { strongAbove: pos(l.strongAbove), maxTurns: pos(l.maxTurns), bottom: l.bottom === true } } : {};
+    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit };
   } catch {
     return null;
   }
