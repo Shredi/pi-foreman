@@ -19,7 +19,10 @@ basename of the git top level of --cwd (default: the current dir), else `workspa
 the one command string is built from validated, shell-quoted values only. Herdr runs as an argv
 list (no shell); its JSON is parsed here. Without Herdr the exact command for a new terminal is
 printed (POSIX `env A=B pi ...` or PowerShell `$env:A='B'; pi ...`, both with --print-all) and
-the session is recorded as `pending`. --dry-run writes the handoff dir and prints; no Herdr call,
+the session is recorded as `pending`. After a Herdr open the child pane gets the display-only group tag
+`report-metadata <pane> --source user:pi-foreman --display-agent "<parent-slug> › <child-slug>"`
+(best effort, skipped when `herdr.groupTag` is false in L1 -> L3 -> L2); the child gets
+PI_FOREMAN_PARENT_LABEL=<parent-slug> so its Pi refreshes the tag. --dry-run writes the handoff dir and prints; no Herdr call,
 no registry entry.
 
 Agent dir: --agent-dir, else PI_CODING_AGENT_DIR, else ~/.pi/agent. Parent id: --parent-id, else
@@ -53,6 +56,9 @@ HERDR_TIMEOUT = 30
 ENV_HANDOFF = "PI_FOREMAN_HANDOFF_DIR"
 ENV_PARENT = "PI_FOREMAN_PARENT_INTERCOM"
 ENV_STABLE = "PI_INTERCOM_STABLE_ID"
+ENV_PARENT_LABEL = "PI_FOREMAN_PARENT_LABEL"
+META_SOURCE = "user:pi-foreman"
+META_TTL_MS = 180000
 
 
 class Refused(Exception):
@@ -216,8 +222,40 @@ def need_id(value, what):
     return value
 
 
-def child_env(handoff, parent, child):
-    return [(ENV_HANDOFF, str(handoff)), (ENV_PARENT, parent), (ENV_STABLE, child)]
+def child_env(handoff, parent, child, parent_slug):
+    return [(ENV_HANDOFF, str(handoff)), (ENV_PARENT, parent), (ENV_STABLE, child), (ENV_PARENT_LABEL, parent_slug)]
+
+
+def opener_slug(cwd, top):
+    """The opener's slug: its own session label when it is an opened child, else its repo (or cwd) name."""
+    handoff = os.environ.get(ENV_HANDOFF, "").strip()
+    if handoff:
+        name = re.sub(r"^\d{8}-\d{6}-", "", Path(handoff).name)
+        tail = os.environ.get(ENV_STABLE, "").strip()[-6:]
+        if re.match(r"^[0-9a-f]{6}$", tail) and name.endswith("-" + tail):
+            name = name[:-7]
+        return slug_of(name)
+    return slug_of((top or cwd).name)
+
+
+def group_tag_on(adir):
+    """`herdr.groupTag` from L1 -> L3 -> L2 (the project layer needs Pi's trust decision; not read here)."""
+    try:
+        import foreman_config
+        cfg = foreman_config.load_config(agent_dir=str(adir))["config"]
+    except Exception:  # noqa: BLE001 - a config problem never blocks the open
+        return True
+    herdr_cfg = cfg.get("herdr") if isinstance(cfg, dict) else None
+    return not (isinstance(herdr_cfg, dict) and herdr_cfg.get("groupTag") is False)
+
+
+def report_group_tag(binary, pane, text):
+    """Best effort: display-only Herdr metadata on the child pane; failures are ignored."""
+    try:
+        herdr(binary, ["pane", "report-metadata", pane, "--source", META_SOURCE, "--display-agent", text,
+                       "--ttl-ms", str(META_TTL_MS)])
+    except HerdrError:
+        pass
 
 
 def prompt_text(handoff):
@@ -302,7 +340,9 @@ def cmd_open(a):
     (handoff / "child").write_text(child + "\n", "utf-8")
     top = git_top(cwd)
     ws_label = (top or cwd).name
-    env = child_env(handoff, parent, child)
+    here = Path.cwd()  # the opener runs this command from its own cwd; the child may live elsewhere (--cwd)
+    parent_slug = opener_slug(here, git_top(here))
+    env = child_env(handoff, parent, child, parent_slug)
     prompt = prompt_text(handoff)
     command = posix_command(env, a.model, prompt)
     binary = herdr_bin() if os.environ.get("HERDR_PANE_ID") else None
@@ -321,6 +361,8 @@ def cmd_open(a):
         try:
             entry.update(open_in_herdr(binary, a.label, cwd, ws_label, command, a.focus))
             entry["status"] = "open"
+            if group_tag_on(adir):
+                report_group_tag(binary, entry["pane"], "%s › %s" % (parent_slug, slug))
             print("opened in Herdr: workspace %s, tab %s, pane %s" % (entry["workspace"], entry["tab"], entry["pane"]))
         except HerdrError as e:
             entry["status"] = "failed"

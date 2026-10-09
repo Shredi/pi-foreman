@@ -63,6 +63,8 @@
   "intercom": { "allowRemote": false, "allowOpenPane": false },
   "close": { "from": ["herdr", "intercom-parent"] },
   "footer": { "usage": true },
+  "widget": { "children": true },
+  "herdr": { "blockedShim": true, "groupTag": true },
   "compaction": {
     "priceTiers": { "cheap": 1, "standard": 5 },
     "threshold": { "cheap": 0.85, "standard": 0.75, "premium": 0.6 }

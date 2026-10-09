@@ -59,12 +59,15 @@ import type { TraceWriter } from "./trace.ts";
 import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
+import { ChildWidget, rungOf } from "./childwidget.ts";
+import { LiveState } from "./livestate.ts";
 import { CompactionGate } from "./compaction.ts";
 import { citedItems, ledgerHint, writeHint } from "./hints.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, withDigest } from "./retro.ts";
 import { extractRetro, lastAssistantText, MODEL_RETRO_PROMPT, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
 import { UsageFooter, lookupRate } from "./footer.ts";
-import { blockedConfirm, bridgePermissionBlocked, withBlocked } from "./herdr.ts";
+import { blockedConfirm, installBlockedShim, PERMISSIONS_DECISION, PERMISSIONS_UI_PROMPT, withBlocked } from "./herdr.ts";
+import { installHerdrMeta } from "./herdrmeta.ts";
 import { builderLaunchRefusal, changedPlans, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, planSnapshot, planSummary, readPlan } from "./checkpoint.ts";
 import type { PlanRecord } from "./checkpoint.ts";
 import type { EventBus } from "./herdr.ts";
@@ -196,6 +199,10 @@ interface Session {
   /** Foreman: latest explorer report for the next builder launch (builderbrief.ts). Child: its read-class call count (childreads.ts). */
   brief: ExplorerBrief;
   childReads: ChildReads;
+  /** Children widget and its run view (childwidget.ts). */
+  widget: ChildWidget;
+  /** Presence file (livestate.ts); null for a subagent child or a print/json run. */
+  live: LiveState | null;
 }
 
 export interface AdapterDeps {
@@ -223,10 +230,33 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const usageFooter = new UsageFooter();
   const compactionGate = new CompactionGate();
   herdrEvents = pi.events as EventBus | undefined;
-  const permBlocked = bridgePermissionBlocked(herdrEvents);
-  pi.on("agent_end", async () => permBlocked.clear());
-  pi.on("session_shutdown", async () => permBlocked.clear());
+  // Herdr blocked shim (herdr.ts); `blockedShim.onChange((active) => ...)` can feed other consumers.
+  const blockedShim = installBlockedShim(pi, { enabled: () => [...sessions.values()].every((x) => get(x.config.config, "herdr.blockedShim") !== false) });
+  const herdrMeta = installHerdrMeta(pi); // group tag (herdrmeta.ts), started at the end of session_start
   pi.events?.on("permissions:ready", (payload: unknown) => review.onReady(payload));
+  // Radar: forwarded permission prompts put a child run in "ask" (childwidget.ts); blocked/working feed the presence file.
+  const radarEvent = (fn: (s: Session) => void): void => {
+    for (const s of sessions.values()) {
+      fn(s);
+      s.live?.touch();
+      s.widget.refresh();
+    }
+  };
+  pi.events?.on(PERMISSIONS_UI_PROMPT, (d: unknown) => radarEvent((s) => s.widget.runs.onPrompt(d)));
+  pi.events?.on(PERMISSIONS_DECISION, (d: unknown) => radarEvent((s) => s.widget.runs.onDecision(d)));
+  const radarTouch = (s: Session | undefined, ctx: ExtensionContext): void => {
+    if (!s) return;
+    s.live?.touch();
+    s.widget.request(ctx, { enabled: get(s.config.config, "widget.children") === true, agentDir: s.agentDir, intercomId: s.live?.intercomId ?? null });
+  };
+  pi.on("agent_start", async (_e, ctx) => {
+    const s = sessionFor(ctx);
+    s?.live?.onAgentStart();
+    radarTouch(s, ctx);
+  });
+  pi.on("ui_prompt_start", async (_e, ctx) => sessionFor(ctx)?.live?.setBlocked(true));
+  pi.on("ui_prompt_end", async (_e, ctx) => sessionFor(ctx)?.live?.setBlocked(false));
+  pi.on("input", async (e, ctx) => { if (e.source === "interactive") sessionFor(ctx)?.live?.setBlocked(false); }); // orphaned dialog, see herdr.ts
   pi.events?.on(CHILD_TRACE_EVENT, (data: unknown) => {
     const e = (data ?? {}) as Record<string, unknown>;
     if (e.event === "test_restore") sessions.get(String(e.sessionId))?.trace?.emit({ event: e.event, cmd: e.cmd });
@@ -324,8 +354,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       childLadder: new ChildLadder(isChild ? b?.ladder : undefined),
       brief: new ExplorerBrief(),
       childReads: new ChildReads(),
+      widget: new ChildWidget(usageFile(agentDir, foremanSession)),
+      live: null,
     };
     sessions.set(id, s);
+    if (!isChild) s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views());
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
     try {
       bridgeIso.apply(process.env, agentDir, isoSetting, provider);
@@ -519,6 +552,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (fs.existsSync(psProjectConfigPath(s.cwd))) {
       notifyOnce(s, ctx, "ps-project-file", `pi-foreman: ${psProjectConfigPath(s.cwd)} exists. A project permission file can loosen the permission system's rules (it applies once the project is trusted). pi-foreman still enforces its deny rules itself, but put your rules in foreman.json and remove this file. /foreman doctor fails while it exists.`);
     }
+    herdrMeta.start(ctx, get(s.config.config, "herdr.groupTag") !== false);
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
@@ -531,6 +565,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     s.registration = undefined;
     review.drop(s.id);
+    s.live?.stop();
+    s.widget.dispose();
     usageFooter.drop(s.id);
     compactionGate.reset(s.id);
     pythonCache.drop(s.id);
@@ -725,6 +761,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("agent_settled", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (s) s.stopContinued = false;
+    s?.live?.onSettled(ctx.isIdle?.());
+    radarTouch(s, ctx);
   });
 
   /** Layer 6: while a child's supervisor request is open, only that role's tools (supervisor.ts). */
@@ -791,6 +829,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.supervisor.onRunEnd(data);
         endActive(s.activeRuns, data);
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
+        if (typeof runId === "string" && !s.isChild) {
+          s.widget.runs.onRunEnd(runId);
+          s.live?.touch();
+          s.widget.refresh();
+        }
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
           s.ladder.onRunEnd(runEndOf(data));
           if (!s.isChild) s.brief.onRunEnd(runEndOf(data), s.launchedRoles.get(runId));
@@ -1080,7 +1123,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.ladder.onLaunch(event.toolCallId, single, bottom);
         limits = { bottom, maxTurns: childMaxTurns(s.config.config, p, single), ...(bottom ? { strongAbove: strongAbove(s.config.config, p, single) } : {}) };
       } else if (ladderRoles && !single && launchRoles(s, input).includes("builder")) s.lastBuilderModel = null;
-      if (event.toolName === "subagent") recordLaunchUsage(s, ctx, input, kind, limits);
+      if (event.toolName === "subagent") {
+        const b = recordLaunchUsage(s, ctx, input, kind, limits);
+        if (!s.isChild) s.widget.runs.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null });
+      }
       if (event.toolName === "subagent" && !s.isChild && launchRoles(s, input).includes("planner")) capSet(s.planSnaps.byCall, event.toolCallId, planSnapshot(planOpts(s, ctx)));
       return undefined;
     } catch (err) {
@@ -1127,6 +1173,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.turn.cacheRead += Number(m.usage?.cacheRead) || 0;
       s.turn.cacheWrite += Number(m.usage?.cacheWrite) || 0;
     }
+    radarTouch(s, ctx);
     usageFooter.update(s.id, ctx, event.message, { enabled: get(s.config.config, "footer.usage"), isChild: s.isChild, children: s.launches.size });
     return undefined;
   });
@@ -1305,12 +1352,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** D8: give a single-child launch its usage binding (role, launch id, kind) through extensionBindings. */
-  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, kind?: LaunchKind, ladder?: LadderLimits): void {
+  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, kind?: LaunchKind, ladder?: LadderLimits): LaunchBinding | null {
     const role = singleLaunchRole(input);
-    if (!role) return;
+    if (!role) return null;
     const model = typeof input.model === "string" && input.model ? input.model : null;
     const b = recordUsageLaunch(s.launches, { foremanSession: s.usage.line.foremanSession, workspace: s.usage.line.workspace, role, model, kind, activeProvider: ctx.model?.provider, ladder });
     bindLaunch(input, b);
+    return b;
   }
 
   // ledger_call for the foreman's shell `ledger` calls. A call blocked by a permission rule never
@@ -1358,6 +1406,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.launchHeadsByCall.delete(event.toolCallId);
         const runId = launchId(event.input, event.details, event.isError);
         s.ladder.onLaunched(event.toolCallId, runId);
+        if (runId && !s.isChild) {
+          s.widget.runs.onLaunched(event.toolCallId, runId, s.launchedRoles.get(runId) ?? []);
+          radarTouch(s, ctx);
+        }
         if (heads && runId) capSet(s.launchHeads, runId, heads);
         const snap = s.planSnaps.byCall.get(event.toolCallId);
         s.planSnaps.byCall.delete(event.toolCallId);
