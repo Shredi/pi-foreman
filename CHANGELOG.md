@@ -3,6 +3,15 @@
 ## [Unreleased]
 
 ### Added
+- Explorer brief: the latest completed explorer report (4000 characters, cut with a marker, plus its result path) is
+  prepended once to the next fresh builder launch (after any rung-up handoff); trace `explorer_brief {role, chars}`.
+- `ceremony.childReads.<role>.{warn,deny}` (builder 20/40, reviewer 15/30, explorer none): a child's read, grep, find,
+  ls and read-only bash calls get a notice at warn and are refused above deny with a "return your report / STATUS:
+  stuck" message; trace `child_read_budget {role, count, action}`.
+- `review.headless` (default false) in the config schema and defaults.
+- Replay fake provider `FOREMAN_FAKE_USAGE=size`, `FOREMAN_FAKE_SIZES`, `FOREMAN_FAKE_SYSTEM`: usage and per-request
+  prompt size for every model; child system prompt measured at 1.1k to 1.3k tokens, nothing trimmed
+  (design/architecture.md, builder frugality).
 - Role ladder: `ladder.strongAbove` (100000) and `ladder.childMaxTurns` (60), per provider and per role; a
   bottom-rung child past either is steered to hand off (`RUNG_UP: context|turns`), `STATUS: stuck` / "own checks
   failed" also make the run climb-eligible; the foreman's strong relaunch gets the handoff prepended (trace `rung_up`,

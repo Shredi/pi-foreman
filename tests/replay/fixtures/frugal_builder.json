@@ -1,0 +1,45 @@
+{
+ "foreman": {
+  "sz": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:ex]] where is alpha?"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:bd]] implement item 1"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:rv]] review item 1"}}]},
+   {"text": "Done."}
+  ],
+  "reads": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:many]] implement item 1"}}]},
+   {"text": "Done."}
+  ],
+  "nobrief": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:bd]] implement item 1"}}]},
+   {"text": "Done."}
+  ]
+ },
+ "explorer": {
+  "ex": [
+   {"text": "looking", "tools": [{"name": "read", "arguments": {"path": "a.txt"}}]},
+   {"text": "Findings: a.txt line 1 holds alpha."}
+  ]
+ },
+ "builder": {
+  "bd": [
+   {"text": "reading", "tools": [{"name": "read", "arguments": {"path": "a.txt"}}]},
+   {"text": "editing", "tools": [{"name": "bash", "arguments": {"command": "echo built"}}]},
+   {"text": "Files changed: none"}
+  ],
+  "many": [
+   {"tools": [{"name": "read", "arguments": {"path": "a.txt"}}]},
+   {"tools": [{"name": "read", "arguments": {"path": "a.txt"}}]},
+   {"tools": [{"name": "read", "arguments": {"path": "a.txt"}}]},
+   {"tools": [{"name": "read", "arguments": {"path": "a.txt"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "echo tests"}}]},
+   {"text": "STATUS: stuck\nread budget"}
+  ]
+ },
+ "reviewer": {
+  "rv": [
+   {"text": "checking", "tools": [{"name": "read", "arguments": {"path": "a.txt"}}]},
+   {"text": "VERDICT: PASS\n1. PASS a.txt"}
+  ]
+ }
+}

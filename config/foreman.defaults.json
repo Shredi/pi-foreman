@@ -47,6 +47,7 @@
     "scratchDir": ".workflow/scratch",
     "reviewBeforePr": true,
     "foremanReads": { "before": { "warn": 4, "deny": 8 }, "after": { "warn": 4, "deny": 8 } },
+    "childReads": { "builder": { "warn": 20, "deny": 40 }, "reviewer": { "warn": 15, "deny": 30 } },
     "recheckBudget": 3,
     "launchWait": "block",
     "dedupeNotify": true,
@@ -56,6 +57,7 @@
     "reviewPerRevision": true,
     "heavyThreshold": "strict"
   },
+  "review": { "headless": false },
   "sync": { "repos": [], "runRetro": true },
   "retro": { "proposalMinReviews": 5 },
   "intercom": { "allowRemote": false, "allowOpenPane": false },

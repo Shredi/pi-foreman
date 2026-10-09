@@ -167,6 +167,35 @@ configured, an unranked child or foreman model refuses every launch except under
 the policy is inert, so the shipped defaults behave as before. Strong rungs and relaunches are checked like any
 launch. A refusal is traced `launch_refused {reason: rank_policy, policy, foreman, requested}`.
 
+### Builder frugality (explorer brief, child read budget, child prompt)
+
+- **Explorer brief.** The latest completed explorer report of the session (bounded 4000 characters, cut with a marker,
+  plus its result path) is prepended once to the next fresh builder launch's task, after any rung-up handoff
+  (handoff, brief, task); a resume gets none. Trace `explorer_brief {role, chars}`.
+- **Child read budget.** `ceremony.childReads.<role>.{warn,deny}` (defaults builder 20/40, reviewer 15/30, explorer and
+  others none) counts a child's read, grep, find, ls and read-only bash calls (`childreads.ts`; a test or build bash
+  call is not counted). At warn the result carries a notice; above deny the call is refused and the child is told to
+  return its report with what it has, or `STATUS: stuck` (ladder trigger b). Trace `child_read_budget {role, count,
+  action}`.
+- **Child system prompt: measured, nothing to trim.** Replay fake provider, size mode (`FOREMAN_FAKE_USAGE=size`,
+  `FOREMAN_FAKE_SIZES`, `FOREMAN_FAKE_SYSTEM`); estimated tokens = chars / 4, one fixed-size launch each:
+
+  | Role (before = after) | System chars | Est. tokens | Of which |
+  |---|---|---|---|
+  | builder | 4612 | 1150 | pi-subagents child preamble 480, role prompt 990, intercom block 1490, acceptance contract 1520 |
+  | reviewer | 5039 | 1260 | the same, role prompt larger, `instructions/reviewer.md` section ~430 |
+  | explorer | 4502 | 1125 | the same, role prompt smaller |
+  | foreman (reference) | 31509 | 7880 | Pi base prompt, tool schemas, pi-foreman section, orientation |
+
+  pi-subagents already gives a custom agent a replaced system prompt: no Pi base prompt, no `AGENTS.md`/`CLAUDE.md`,
+  no skills catalog (`systemPromptMode: replace`, inherit flags off by default), and the `tools:` frontmatter is a strict
+  allowlist (reviewer and explorer have no edit/write). The adapter removes nothing more: the remaining blocks are
+  pi-subagents' supervisor and acceptance protocols, and the role prompt. A child system prompt is about 1.1k to 1.3k
+  tokens, so a measured 22k to 29k cacheWrite per launch is context growth (tool results), not the prompt; the levers
+  are the explorer brief, the read budget and the ladder's context steer. Candidate not taken (changes pi-subagents'
+  acceptance gating, a decision for the owner): `acceptance: none` in the frontmatter drops the 1520-character contract
+  and the closing JSON report.
+
 How thinking reaches each provider (Pi 1.0.0 catalogue and source):
 
 | Provider | Thinking behaviour | Status |
