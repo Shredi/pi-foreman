@@ -117,7 +117,7 @@
   it now needs a call-shaped match, same package for unexported Go symbols, nearest path first.
   `review_facts.count` is the number of facts (was the number of reviewer steps).
 - Forwarded child asks reached auto-review as the offending unit only (a bare `python3`); the model and the
-  `review_defer_headless` trace now get the full command, deterministic allows still check the unit.
+  `review_defer_headless` trace now get the full command.
 - Explorer brief cap 4000 -> 8000 characters (7 of 8 bench briefs were cut); `explorer_brief` records `cut`.
 - Deterministic auto-review allows (sed-read, timeout-wrapper, tmp-scratch) checked only the forwarded unit, so a
   chained command (`... && rm -rf src`) passed without a model; the full command must now pass as well.
