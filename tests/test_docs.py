@@ -165,7 +165,7 @@ class DocsCurrency(unittest.TestCase):
         self.assertIn(lines[0], ("<p>", '<p align="center">'))
         self.assertTrue(lines[1].lstrip().startswith('<img src="banner.svg"'), lines[1])
         self.assertEqual(lines[2].strip(), "</p>")
-        hits = re.findall(r"(?:ceremony|ladder|safety|review|bridge)\.[a-zA-Z]\w*", "\n".join(lines))
+        hits = re.findall(r"(?:ceremony|ladder|safety|review|bridge)\.(?!md\b)[a-zA-Z]\w*", "\n".join(lines))
         self.assertEqual(hits, [], "README must not name config keys")
 
     def test_banner_current(self):

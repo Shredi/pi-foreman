@@ -42,7 +42,7 @@ git clone https://github.com/Shredi/pi-foreman.git && cd pi-foreman && node setu
 | [docs/roles.md](docs/roles.md) | Roles, model ladder, rank policy, presets |
 | [docs/ceremony.md](docs/ceremony.md) | Tiers, review and finish gates, planning, budgets |
 | [docs/safety.md](docs/safety.md) | Shell and git guards, PR gate, permissions, known limits |
-| [docs/sessions.md](docs/sessions.md) | `/sync`, `/retro`, `/foreman close`, intercom, Herdr |
+| [docs/sessions.md](docs/sessions.md) | `/sync`, `/retro`, `/foreman close`, `/foreman session`, intercom, Herdr |
 | [docs/bench.md](docs/bench.md) | Measuring the harness with `foreman bench` |
 | [docs/overlays.md](docs/overlays.md) | Private and organisation overlays |
 | [docs/development.md](docs/development.md) | Layout, tests, CI, working on pi-foreman |

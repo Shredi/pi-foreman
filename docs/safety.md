@@ -51,3 +51,25 @@ Login steps are in [install](install.md). Rationale: `design/architecture.md`
 
 Key-by-key layer rules for `safety.*`: `design/architecture.md`
 [safety and loosening keys by layer](../design/architecture.md#safety-and-loosening-keys-by-layer).
+
+## Further safety and runtime keys
+
+| Key | Meaning and layer rule |
+|---|---|
+| `safety.permissions.deny`, `safety.permissions.ask` | Bash patterns that are always denied / need approval, on top of the baseline; a project can add entries, not remove them. |
+| `safety.permissions.allow` | Bash patterns allowed without asking, on top of the baseline; a project or session cannot extend it. |
+| `safety.permissions.projectCommands` | The repo's own test and build commands as bash patterns, allowed without asking; not settable by project/session. |
+| `safety.permissions.paths.deny`, `safety.permissions.paths.ask` | Path patterns tools and shell commands may never touch / need approval, on top of the baseline secret paths; a project can add entries only. |
+| `safety.review.required` | Require a review before close-out; a project can only set true. |
+| `safety.git.protectedBranches` | Branch patterns that never receive a force push, mirror push or delete from the foreman; a project can add entries only. |
+| `safety.git.commit.messagePattern` | Regular expression the commit subject must match; `null` switches the check off; a project cannot set it. |
+| `safety.git.commit.requiredTrailers`, `safety.git.commit.forbiddenTrailers` | Regular expressions each required trailer line must match / no trailer line may match; a project can add entries only. |
+| `safety.git.commit.checkCommand` | argv run before each foreman commit with the staged diff on stdin and the message in `PI_FOREMAN_COMMIT_MESSAGE`; a non-zero exit blocks the commit. |
+| `safety.ops.copyMaxBytes` | Size cap for `foreman_copy`; a project can only lower it. |
+| `safety.ops.worktreeDisposable` | Path components whose ignored files `foreman_worktree_remove` may delete (`name/` = a directory); not settable by a project. |
+| `safety.ops.baseBranch` | Base branch for the merged check of `foreman_worktree_remove`; `null` = origin HEAD, else main, else master. |
+| `safety.preconditionOps` | Settings container for the precondition-checked operations; a project cannot set it. |
+| `intercom.allowRemote`, `intercom.allowOpenPane` | Allow remote intercom / opening a pane (both default `false`); a project or session can only set false. |
+| `close.from` | Sources a close request is accepted from (default `herdr`, `intercom-parent`); a project or session can only narrow it. |
+| `python.path` | Python 3.9+ interpreter; `null` auto-detects. It runs every guard, so a project or session value is ignored. |
+| `trace.enabled`, `trace.dir` | The opt-in allowlisted trace (default off) and its directory (`null` = the state dir; a project or session value must resolve inside the workspace). |

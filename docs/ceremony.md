@@ -6,6 +6,8 @@
 
 ## Triage and delegation
 
+`/ceremony [trivial|standard|heavy]` shows the current tier, or sets it yourself (you may move it either way).
+
 The foreman records a tier (trivial, standard, heavy) before it changes files itself, and the adapter checks the claim instead of trusting it:
 
 - Trivial builder path (`ceremony.required.trivial: ["builder"]`, default): a trivial change keeps a `Tier: trivial`
@@ -53,3 +55,19 @@ builder launch) is appended to a reviewer's launch task (`diffscan.ts`; trace `r
 
 Design record: `design/architecture.md`
 [section 6](../design/architecture.md#6-ledger-gates-and-proportional-ceremony).
+
+## Further ceremony keys
+
+| Key | Default | Meaning and layer rule |
+|---|---|---|
+| `ceremony.default` | `standard` | Tier assumed when no signal applies (`trivial`, `standard`, `heavy`). |
+| `ceremony.heavySignals` | `delete, migration, safety, auth, ci, release, public-api` | Keywords or areas that hint at heavy (a hint only under `heavyThreshold: strict`). |
+| `ceremony.heavyFileCount` | `8` | A task touching more files than this is heavy. |
+| `ceremony.overrides` | `{}` | Per-repository-path tier, `{path: tier}`. |
+| `ceremony.revisionRounds.standard`, `ceremony.revisionRounds.heavy` | 1, 2 | Builder revision rounds after a review (trivial has none); project/session can only lower. |
+| `ceremony.requireTriage` | `true` | The foreman records a tier before it edits workspace files itself; project/session can only set true. |
+| `ceremony.trivialBound.files`, `ceremony.trivialBound.lines`, `ceremony.trivialBound.newFiles` | 2, 40, 0 | The bound of `bounded` mode at trivial: distinct files, changed lines, new files. |
+| `ceremony.required.standard` | `[builder, reviewer]` | Steps a standard session completes before the foreman may finish (trivial and heavy are above); steps are added, never removed, by a project. |
+| `ceremony.foremanReads.before.warn`, `ceremony.foremanReads.before.deny`, `ceremony.foremanReads.after.warn`, `ceremony.foremanReads.after.deny` | 4/8, 4/8 | The read-budget pairs per phase (see the table above). |
+| `ceremony.childReads.<role>.warn`, `ceremony.childReads.<role>.deny` | builder 20/40, reviewer 15/30 | Read budget per child role; a role without an entry has none. |
+| `ceremony.orientation.enabled`, `ceremony.orientation.maxLines` | `true`, 120 | Orientation packet switch and size. |

@@ -61,3 +61,21 @@ cheapest role-map model (by registry input price, with auth) and traces it as `b
 
 Design record for the ladder: `design/architecture.md`
 [role ladder and rank policy](../design/architecture.md#role-ladder-and-rank-policy).
+
+## Further role and provider keys
+
+| Key | Meaning and layer rule |
+|---|---|
+| `displayPresets.<name>` | Named display-name presets, each a map `{role id: display name}`; chosen by `displayNames`. |
+| `roles.<role>.promptAppend` | Text appended to the role prompt. |
+| `roles.<role>.tools` | Strict tool allowlist, written into the generated settings (informational for the foreman); project/session can only narrow it. |
+| `roles.<role>.launch` | How the role is launched; only `detached` exists (detached children forward permission asks to the parent). Not settable by project/session. |
+| `roles.<role>.timeoutMinutes` | Run-time limit of one launch; the adapter clamps a longer foreman value down to it. |
+| `roles.<role>.childMaxTurns` | Ladder: assistant turns after which a child of this role is steered once to stop and hand off (rung up when on its bottom rung). |
+| `providers.<p>.costTier` | Relative cost tier; a fallback to a higher tier needs one confirmation per session. |
+| `providers.<p>.roles.<role>.model`, `providers.<p>.roles.<role>.thinking`, `providers.<p>.roles.<role>.codemode` | The provider's model for the role as `<provider>/<model>`, its thinking level (capped by `maxThinking`) and a per-provider codemode override. |
+| `providers.<p>.roles.<role>.strong.model`, `providers.<p>.roles.<role>.strong.thinking` | Stronger model for the role, picked by the strength keyword `strong` (the builder also on a heavy tier). User or overlay config only. |
+| `providers.<p>.childMaxTurns` | `childMaxTurns` for every role of this provider. User or overlay config only. |
+| `providers.<p>.strongOnRevision` | Relaunch the builder on its strong model for a revision round (default false); project/session can only set false. |
+| `providers.<p>.review.timeoutMs` | Timeout of the model review of permission asks (default 15000 ms); a timeout defers to the human. |
+| `providers.<p>.fallback.provider`, `providers.<p>.fallback.confirm` | One explicit fallback provider for roles this provider does not map (auth failure or unavailability only), and whether to ask once per session first. |
