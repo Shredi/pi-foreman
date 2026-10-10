@@ -74,3 +74,5 @@ Design record: `design/architecture.md`
 | `ceremony.childReads.<role>.warn`, `ceremony.childReads.<role>.deny` | builder 20/40, reviewer 15/30 | Read budget per child role; a role without an entry has none. |
 | `ceremony.childScratch.keep` | `false` | Keep the child scratch dirs after the run and at shutdown; any layer may set it (it only retains temporary data). |
 | `ceremony.orientation.enabled`, `ceremony.orientation.maxLines` | `true`, 120 | Orientation packet switch and size. |
+| `ceremony.reviewModel` | `null` | Reviewer model used when a reviewer launch resolves to the foreman's own model and no later reviewer climb rung differs (trace `review_model`). User or overlay config only. |
+| `ceremony.planReview.trivial`, `ceremony.planReview.standard`, `ceremony.planReview.heavy` | `false`, `false`, `true` | The checkpoint needs a `[plan-review]` verdict for the current plan first; project/session can only set true. |

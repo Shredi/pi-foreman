@@ -72,13 +72,15 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.orientation.<enabled|maxLines>   free per layer (no tighten rule)
     ceremony.ledgerHelper            tighten only, off < bash < tool (may only move toward off)
     ceremony.reviewPerRevision       only true is accepted (false lifts the one-review-per-revision refusal)
+    ceremony.reviewModel             ignored (the fallback reviewer model: L1/L3/L2 only)
+    ceremony.planReview.<tier>       only true is accepted (false skips the plan review)
     ceremony.heavyThreshold          tighten only, eee843d < strict (may only move toward eee843d, which escalates more)
     ceremony.trivialBound.<field>    lower only, minimum 0 (a higher bound lets the foreman edit more)
     ceremony.trivialBound            not an object: ignored
     ceremony.foremanReads[.<phase>]  not an object: ignored
     ceremony.required.<tier>         union only (a project can add required steps, not remove one)
     ceremony.required                not an object: ignored; unknown steps dropped
-    sync.repos, retro.proposalMinReviews, compaction.priceTiers   ignored (L1/L3/L2 only)
+    sync.repos, retro.proposalMinReviews, retro.panelThreshold, compaction.priceTiers   ignored (L1/L3/L2 only)
     intercom.allowRemote, intercom.allowOpenPane, wait.ci         only false is accepted
     close.from                       intersect (a project can only narrow the allowed sources)
     compaction.threshold.<tier>      lower only, minimum 0.3 (a higher threshold compacts later)
@@ -174,11 +176,14 @@ IGNORED_KEYS = [
     (("retro", "backlogDir"), "the backlog location comes from the user or overlay config"),
     (("retro", "repoBacklog"), "repository backlogs come from the user or overlay config"),
     (("retro", "workspaceKey"), "the backlog key comes from the user or overlay config"),
+    (("retro", "panelThreshold"), "the panel threshold comes from the user or overlay config"),
+    (("ceremony", "reviewModel"), "the fallback reviewer model comes from the user or overlay config"),
     (("compaction", "priceTiers"), "the price tiers come from the user or overlay config"),
     (("ladder", "strongAbove"), "the ladder and the child rank policy come from the user or overlay config"),
     (("ladder", "childMaxTurns"), "the ladder and the child rank policy come from the user or overlay config"),
     (("ladder", "childPolicy"), "the ladder and the child rank policy come from the user or overlay config"),
     (("ladder", "reviewerClimb"), "the ladder and the child rank policy come from the user or overlay config"),
+    (("ladder", "reviewPanel"), "the review panel's models come from the user or overlay config"),
     (("providers", "*", "ranks"), "model ranks decide which children may launch: user or overlay config only"),
     (("providers", "*", "strongAbove"), "the ladder comes from the user or overlay config"),
     (("providers", "*", "childMaxTurns"), "the ladder comes from the user or overlay config"),
@@ -211,6 +216,7 @@ LAYER_TIGHTEN = [
     (("ceremony", "reviewPerRevision"), "true_only"),
     (("ceremony", "heavyThreshold"), ("ordered", ("eee843d", "strict"))),
     (("ceremony", "required", "*"), "union"),
+    (("ceremony", "planReview", "*"), "true_only"),
     (("roles", "*", "timeoutMinutes"), "lower_only"),
     (("intercom", "allowRemote"), "false_only"),
     (("intercom", "allowOpenPane"), "false_only"),

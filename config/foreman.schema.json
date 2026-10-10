@@ -125,7 +125,19 @@
           "description": "The reviewer's own climb (docs/ladder.md; L1: enabled false). User or overlay config only.",
           "properties": {
             "enabled": { "type": "boolean", "description": "true: the second FAIL of the same ledger item across reviewer runs sends the next reviewer launch to roles.reviewer.strong (rung_up reason review_fail_repeat), and a security-shaped diff sends it to securityRung (reason security)." },
-            "securityRung": { "type": "string", "minLength": 1, "description": "Model of a reviewer launch on a security-shaped diff, <provider>/<model>[:<level>]. Unset: the mapped model in the next rank above the reviewer's strong rung (providers.<p>.ranks), else no extra climb. Not subject to ladder.childPolicy." }
+            "securityRung": { "type": "string", "minLength": 1, "description": "Model of a reviewer launch on a security-shaped diff, <provider>/<model>[:<level>]. Unset: the mapped model in the next rank above the reviewer's strong rung (providers.<p>.ranks), else no extra climb. Not subject to ladder.childPolicy." },
+            "mode": { "type": "string", "enum": ["repeat-fail", "on-find"], "description": "repeat-fail (L1): the triggers above. on-find: each ledger item climbs one rung of `rungs` per FAIL or per PASS with located findings, until a clean verdict (climb_done reason clean) or the top rung still finds (reason exhausted); the security rung and the repeat-FAIL rule still apply." },
+            "rungs": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Reviewer models of the on-find climb, bottom first, <provider>/<model>[:<level>]. Empty or unset: [roles.reviewer, roles.reviewer.strong]." }
+          }
+        },
+        "reviewPanel": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Shadow reviewers launched beside the primary reviewer on gate occasions; their findings never block (L1: off). User or overlay config only.",
+          "properties": {
+            "shadows": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Shadow reviewer models, <provider>/<model>[:<level>]. Empty = panel off." },
+            "gates": { "type": "array", "items": { "type": "string", "enum": ["item", "plan-review", "pre-pr", "second-opinion"] }, "description": "Review occasions that get the panel (L1: [pre-pr])." },
+            "visible": { "type": "boolean", "description": "Show the shadow findings block to the foreman (L1: true)." }
           }
         }
       }
@@ -205,6 +217,13 @@
         "orientation": { "type": "object", "additionalProperties": false, "description": "Orientation packet appended to the foreman's system prompt once per session (tracked-file tree to depth 2, head of AGENTS.md or README.md, detected build/test commands, explorer hint). Not a tool call, so it does not count against the read budget. enabled false = nothing injected.", "properties": { "enabled": { "type": "boolean" }, "maxLines": { "type": "integer", "minimum": 1 } } },
         "ledgerHelper": { "type": "string", "enum": ["tool", "bash", "off"], "description": "How the foreman manages its ledger. tool = the foreman_ledger tool (batched marks, returns ledger status, not counted against recheckBudget; closes V only after a reviewer PASS with no revision since, with --verifier) and reviewer / senior-reviewer children get foreman_ledger for marking V only; bash = the shell command ledger, a pure-ledger command is not counted against recheckBudget, ledger defer is allowlisted; off = as before (every ledger shell call counts). A project or session can only move toward off (off < bash < tool)." },
         "reviewPerRevision": { "type": "boolean", "description": "true = a reviewer or senior-reviewer launch is refused while the last review passed and nothing was revised since, unless the task carries [second-opinion]; false = no refusal (as before). A project or session can only set true." },
+        "reviewModel": { "type": ["string", "null"], "description": "Reviewer model used when a reviewer launch resolves to the foreman's own model and no later climb rung differs, <provider>/<model>[:<level>]. null = none. User or overlay config only." },
+        "planReview": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Per tier: the checkpoint needs a [plan-review] verdict for the current plan first (L1: heavy only). A project or session can only set true.",
+          "properties": { "trivial": { "type": "boolean" }, "standard": { "type": "boolean" }, "heavy": { "type": "boolean" } }
+        },
         "heavyThreshold": { "type": "string", "enum": ["strict", "eee843d"], "description": "strict = heavy is for multi-component or risky changes (prompt criteria); heavySignals keyword hits in a request are only a hint to the foreman; heavyFileCount still escalates. eee843d = the old prompt line and keyword auto-escalation. A project or session can only move toward eee843d." }
       }
     },
@@ -258,7 +277,8 @@
           }
         },
         "expireDays": { "type": "integer", "minimum": 1, "description": "Days without a sighting after which an open or planned backlog entry expires." },
-        "askThreshold": { "type": "integer", "minimum": 1, "description": "Permission asks in one run that make a backlog finding." }
+        "askThreshold": { "type": "integer", "minimum": 1, "description": "Permission asks in one run that make a backlog finding." },
+        "panelThreshold": { "type": "integer", "minimum": 1, "description": "Unique accepted findings of a shadow reviewer model that make a review-model backlog candidate. User or overlay config only." }
       }
     },
     "intercom": {
