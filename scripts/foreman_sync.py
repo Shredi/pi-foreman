@@ -3,7 +3,7 @@
 
     python scripts/foreman_sync.py --cwd <workspace> --state <agentDir>/pi-foreman/state
                                    --session <id> [--dry-run] [--json] [--trusted-project]
-                                   [--agent-dir D] [--session-file F] [--trace F] [--usage F]
+                                   [--agent-dir D] [--session-file F] [--trace F ...] [--usage F]
                                    [--review-log F]
 
 For each `sync.repos` entry {path, branch, paths} of the merged config (scripts/foreman_config.py,
@@ -538,7 +538,9 @@ def sync_repo(entry, ctx):
 
 def run_retro(args, agent_dir):
     cmd = [sys.executable, "-E", "-s", os.path.join(HERE, "foreman_retro.py"), "--agent-dir", agent_dir]
-    for flag, val in (("--session", args.session_file), ("--trace", args.trace), ("--usage", args.usage),
+    for t in args.trace or []:
+        cmd += ["--trace", t]
+    for flag, val in (("--session", args.session_file), ("--usage", args.usage),
                       ("--review-log", args.review_log), ("--rates", args.rates),
                       ("--backlog-workspace", args.backlog_workspace), ("--workspace-key", args.workspace_key),
                       ("--backlog-session", args.backlog_session)):
@@ -581,7 +583,7 @@ def build_parser():
     p.add_argument("--trusted-project", action="store_true")
     p.add_argument("--agent-dir")
     p.add_argument("--session-file")
-    p.add_argument("--trace")
+    p.add_argument("--trace", action="append")
     p.add_argument("--usage")
     p.add_argument("--review-log")
     p.add_argument("--rates")

@@ -68,6 +68,12 @@ class BacklogTest(unittest.TestCase):
         [e] = self.entries()
         self.assertEqual((e["count"], e["sessions"], e["status"], e["first_seen"]), (1, ["s1"], "open", T0))
 
+    def test_candidate_paths_scrubbed_before_the_id(self):
+        [(eid, _)] = self.rec([cand(text="allow bash pattern /opt/x/tools/run.sh *")])
+        [e] = self.entries()
+        self.assertEqual((e["candidate"], eid), ("allow bash pattern run.sh *", fb.entry_id("permission", "allow bash pattern run.sh *")))
+        self.assertEqual(self.rec([cand(text="allow bash pattern C:\\x\\run.sh *")], session="s2")[0], (eid, "bumped"))
+
     def test_bump_and_same_session(self):
         self.rec([cand()])
         self.assertEqual(self.rec([cand(evidence="asks=3")], session="s1", now=T1)[0][1], "seen")

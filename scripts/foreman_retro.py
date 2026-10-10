@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Session friction metrics and permission-allow proposals (stdlib, 3.9+).
 
-    python scripts/foreman_retro.py [--session F] [--trace F] [--usage F] [--review-log F]
+    python scripts/foreman_retro.py [--session F] [--trace F ...] [--usage F] [--review-log F]
                                     [--proposals-out F] [--min-reviews N] [--agent-dir D] [--json]
     python scripts/foreman_retro.py --selftest
 
@@ -51,6 +51,18 @@ def read_jsonl(path):
             return list(rls.read_records(fh))
     except OSError:
         return None
+
+
+def read_traces(paths):
+    """Records of one or more trace files (the foreman's and its children's) joined; None when none is readable."""
+    if isinstance(paths, str):
+        paths = [paths]
+    out = None
+    for p in paths or []:
+        recs = read_jsonl(p)
+        if recs is not None:
+            out = (out or []) + recs
+    return out
 
 
 def bash_family(cmd):
@@ -467,7 +479,8 @@ def candidates(report, trace_events, usage_lines, session_tools, ask_threshold=D
     nothing is derived): bulk reads (the trace and the session file carry no per-call file lists,
     only child_read_budget counts), and the command family behind an ask (the trace `ask` event
     has toolFamily, not the command; families come only from the review log via `proposals`).
-    Today's `ask` event has no role/runId; when absent the asks count as one `session` bucket."""
+    A child's `ask` carries role and runId (its launch id); the foreman's own asks have neither and
+    count as one `session` bucket."""
     out = []
     report = report or {}
     threshold = ask_threshold if isinstance(ask_threshold, int) and ask_threshold > 0 else DEFAULT_ASK_THRESHOLD
@@ -554,8 +567,7 @@ def candidates(report, trace_events, usage_lines, session_tools, ask_threshold=D
         if e.get("event") == "friction" and str(e.get("note") or "").strip():
             kind = e.get("kind") if e.get("kind") in FRICTION_KINDS else "prompt"
             role = _tag(e.get("role"), "agent")
-            import foreman_backlog as bl
-            out.append({"kind": kind, "candidate": bl.scrub("%s: %s" % (role, e["note"])), "evidence": "Friction line reported by a %s run" % role})
+            out.append({"kind": kind, "candidate": "%s: %s" % (role, e["note"]), "evidence": "Friction line reported by a %s run" % role})
     return out
 
 
@@ -574,7 +586,7 @@ def emit_backlog(args, report, trace=None, usage=None):
         thr = rc.get("askThreshold")
         cands = candidates(report, trace, usage, report.get("session_tools"),
                            thr if isinstance(thr, int) and not isinstance(thr, bool) else DEFAULT_ASK_THRESHOLD)
-        sid = args.backlog_session or report.get("session") or re.sub(r"^trace-|\.jsonl$", "", os.path.basename(args.trace or "")) or None
+        sid = args.backlog_session or report.get("session") or re.sub(r"^trace-|\.jsonl$", "", os.path.basename((args.trace or [""])[0])) or None
         res = bl.record(cands, workspace_root=cwd, key=args.workspace_key, session=sid, cfg=cfg, agent_dir=args.agent_dir)
         if res:
             kind = next((c["kind"] for c in cands if c.get("kind")), "agent")
@@ -603,7 +615,7 @@ def run(args):
                 rates = json.load(fh)
         except (OSError, ValueError):
             pass
-    trace, usage = read_jsonl(args.trace), read_jsonl(args.usage)
+    trace, usage = read_traces(args.trace), read_jsonl(args.usage)
     rep = build(read_jsonl(args.session), trace, usage, read_jsonl(args.review_log), min_reviews, args.agent_dir, rates)
     filed = emit_backlog(args, rep, trace, usage)
     note = None
@@ -655,7 +667,7 @@ def selftest():
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--session")
-    p.add_argument("--trace")
+    p.add_argument("--trace", action="append", help="trace file; repeat for the child runs' trace files")
     p.add_argument("--usage")
     p.add_argument("--review-log")
     p.add_argument("--rates", help="JSON file: {provider/model: {input, output, cacheRead, cacheWrite}} USD per million tokens")

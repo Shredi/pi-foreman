@@ -314,7 +314,7 @@ def record(candidates, *, workspace_root, key=None, session, cfg, agent_dir, now
     groups = {}
     for c in candidates or []:
         kind = (c or {}).get("kind")
-        text = one_line((c or {}).get("candidate"))
+        text = scrub((c or {}).get("candidate"))  # path tokens -> basenames, before the id hash
         if kind not in KINDS or not text:
             continue
         path, origin = store_path_for(kind, workspace_root=workspace_root, key=key, cfg=cfg, agent_dir=agent_dir)

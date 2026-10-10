@@ -231,6 +231,17 @@ class RetroTest(unittest.TestCase):
         self.backlog_run("s2")
         self.assertFalse((self.tmp / "agent" / "pi-foreman").exists())
 
+    def test_child_trace_file_gives_a_per_role_ask_candidate(self):
+        fore = self.write("trace-F1.jsonl", [{"event": "ask", "toolFamily": "Bash", "decision": "ask"}])
+        child = self.write("trace-L1.jsonl", [
+            {"event": "ask", "role": "builder", "runId": "L1", "toolFamily": "Bash", "decision": "child"},
+            {"event": "ask", "role": "builder", "runId": "L1", "toolFamily": "Bash", "decision": "child"}])
+        out = self.run_cli("--trace", fore, "--trace", child, "--agent-dir", str(self.tmp / "agent"),
+                           "--backlog-workspace", str(self.tmp / "ws"), "--workspace-key", "proj")
+        self.assertIn("backlog: 1 new", out)
+        [e] = self.entries()
+        self.assertEqual((e["kind"], e["candidate"], e["sessions"]), ("permission", "builder runs hit >=2 permission asks", ["F1"]))
+
     def test_candidate_classes_from_trace_usage_and_session_tools(self):
         trace = [{"event": "child_read_budget", "role": "explorer", "action": "deny"},
                  {"event": "rereview", "role": "reviewer"}, {"event": "rung_up", "role": "builder", "reason": "context"},

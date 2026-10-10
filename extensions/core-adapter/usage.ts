@@ -40,6 +40,8 @@ export interface LaunchBinding {
   ladder?: LadderLimits;
   /** Child scratch dir (childscratch.ts), set in the child as env FOREMAN_SCRATCH. */
   scratch?: string;
+  /** The foreman's effective retro was on: the child traces when its `trace.enabled` is null (retro.ts sessionTrace). */
+  retro?: boolean;
 }
 
 export interface LadderLimits {
@@ -161,7 +163,7 @@ export function readBinding(env: Env): LaunchBinding | null {
     const l = isObj(b.ladder) ? b.ladder : null;
     const limit = l ? { ladder: { strongAbove: pos(l.strongAbove), maxTurns: pos(l.maxTurns), bottom: l.bottom === true } } : {};
     const scratch = str(b.scratch);
-    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}) };
+    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(b.retro === true ? { retro: true } : {}) };
   } catch {
     return null;
   }

@@ -35,15 +35,23 @@ export interface TraceOptions {
   dir: unknown;
   stateDir: string;
   sessionId: string;
+  /** Fields every record carries unless it sets them itself (a child's role and runId). */
+  base?: Record<string, unknown>;
   now?: () => Date;
+}
+
+/** The trace file of id `id`: `trace.dir` when set, else the state dir. */
+export function traceFile(dir: unknown, stateDir: string, id: string): string {
+  const d = typeof dir === "string" && dir.trim() ? path.resolve(dir) : stateDir;
+  return path.join(d, `trace-${id.replace(/[^A-Za-z0-9_-]/g, "") || "session"}.jsonl`);
 }
 
 /** A writer when `trace.enabled === true`, else null. Write errors are swallowed (tracing never blocks work). */
 export function openTrace(opts: TraceOptions): TraceWriter | null {
   if (opts.enabled !== true) return null;
-  const dir = typeof opts.dir === "string" && opts.dir.trim() ? path.resolve(opts.dir) : opts.stateDir;
-  const safeId = opts.sessionId.replace(/[^A-Za-z0-9_-]/g, "") || "session";
-  const file = path.join(dir, `trace-${safeId}.jsonl`);
+  const file = traceFile(opts.dir, opts.stateDir, opts.sessionId);
+  const dir = path.dirname(file);
+  const base = opts.base ? sanitizeTrace(opts.base) : {};
   const now = opts.now ?? (() => new Date());
   let ready = false;
   return {
@@ -56,7 +64,7 @@ export function openTrace(opts: TraceOptions): TraceWriter | null {
         }
         const clean = sanitizeTrace(rec);
         delete clean.ts;
-        const line = { ts: now().toISOString(), ...clean };
+        const line = { ts: now().toISOString(), ...base, ...clean };
         fs.appendFileSync(file, JSON.stringify(line) + "\n", "utf8");
       } catch {
         // tracing is best effort

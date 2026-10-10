@@ -16,6 +16,24 @@ export function traceEnabled(configured: unknown, retroOn: boolean): boolean {
   return configured === true || (configured == null && retroOn);
 }
 
+/** What the trace of a session needs from a child's launch binding (usage.ts). */
+export interface TraceBinding {
+  role: string;
+  launchId: string;
+  /** The parent's effective retro was on at launch. */
+  retro?: boolean;
+}
+
+/**
+ * Trace setup of a session. A bound child also traces when its parent's retro is on (its own
+ * `trace.enabled` null; explicit false still wins), writes `trace-<launchId>.jsonl` so the foreman's
+ * retro can find it, and stamps role and runId (= launch id) on every record.
+ */
+export function sessionTrace(traceConf: unknown, retroConf: unknown, mode: string | undefined, sessionId: string, b: TraceBinding | null): { enabled: boolean; id: string; base?: Record<string, string> } {
+  const retroOn = retroEnabled(retroConf, mode) || b?.retro === true;
+  return { enabled: traceEnabled(traceConf, retroOn), id: b ? b.launchId : sessionId, ...(b ? { base: { role: b.role, runId: b.launchId } } : {}) };
+}
+
 export class RetroState {
   readonly hints = new HintLog();
   /** Closed item ids at the last compaction (digest "closed since"). */

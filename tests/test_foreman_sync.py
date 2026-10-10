@@ -451,11 +451,13 @@ class SyncTest(unittest.TestCase):
             seen["cmd"] = cmd
             return subprocess.CompletedProcess(cmd, 0, b"ok", b"")
         args = fs.build_parser().parse_args(["--cwd", ".", "--state", ".", "--session", "s", "--backlog-workspace", "W",
-                                             "--workspace-key", "bench/t", "--backlog-session", "r1", "--no-backlog"])
+                                             "--workspace-key", "bench/t", "--backlog-session", "r1", "--no-backlog",
+                                             "--trace", "T1", "--trace", "T2"])
         with mock.patch.object(fs.subprocess, "run", fake_run):
             fs.run_retro(args, "A")
         self.assertEqual(seen["cmd"][-7:], ["--backlog-workspace", "W", "--workspace-key", "bench/t",
                                             "--backlog-session", "r1", "--no-backlog"])
+        self.assertEqual(seen["cmd"][6:10], ["--trace", "T1", "--trace", "T2"])  # every trace file is forwarded
 
     def test_banned_argv_shapes_absent(self):
         src = (SCRIPTS / "foreman_sync.py").read_text()

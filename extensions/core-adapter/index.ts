@@ -59,7 +59,7 @@ import { appendReview, capSet, headOf, headsAt, isPrToolName, launchCwds, passHe
 import type { ReviewRecord } from "./reviews.ts";
 import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
 import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts";
-import { openTrace } from "./trace.ts";
+import { openTrace, traceFile } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
 import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
@@ -70,7 +70,7 @@ import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate } from "./compaction.ts";
 import { applyLedgerItems } from "./ledgerblock.ts";
 import { citedItems, ledgerHint, writeHint } from "./hints.ts";
-import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, traceEnabled, withDigest } from "./retro.ts";
+import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, sessionTrace, withDigest } from "./retro.ts";
 import { frictionOfRunEnd } from "./friction.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
 import { UsageFooter, lookupRate } from "./footer.ts";
@@ -349,7 +349,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       supervisor: new SupervisorWindow(),
       gitDrift: new GitDriftWatch(),
       claudeCfg: new ClaudeConfigWatch(),
-      trace: openTrace({ enabled: traceEnabled(get(config.config, "trace.enabled"), retroEnabled(get(config.config, "retro.enabled"), ctx.mode)), dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: id }),
+      trace: ((t) => openTrace({ enabled: t.enabled, dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: t.id, base: t.base }))(sessionTrace(get(config.config, "trace.enabled"), get(config.config, "retro.enabled"), ctx.mode, id, b)),
       usage: { file: usageFile(agentDir, foremanSession), line },
       launches: new Map(),
       turn: { cause: "other", cacheRead: 0, cacheWrite: 0 },
@@ -1460,6 +1460,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const model = typeof input.model === "string" && input.model ? input.model : null;
     const b = recordUsageLaunch(s.launches, { foremanSession: s.usage.line.foremanSession, workspace: s.usage.line.workspace, role, model, kind, activeProvider: ctx.model?.provider, ladder });
     launchScratch(s, input, b);
+    if (retroEnabled(get(s.config.config, "retro.enabled"), ctx.mode)) b.retro = true; // the child traces for the retro
     bindLaunch(input, b);
     return b;
   }
@@ -2063,6 +2064,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const sessionFile = ctx.sessionManager.getSessionFile();
     if (sessionFile) args.push(sessionFlag, sessionFile);
     if (s.trace) args.push("--trace", s.trace.file);
+    // Bound children of this session trace to trace-<launchId>.jsonl (retro.ts sessionTrace).
+    for (const id of s.launches.keys()) {
+      const f = traceFile(get(s.config.config, "trace.dir"), s.markerDir, id);
+      if (fs.existsSync(f)) args.push("--trace", f);
+    }
     // Backlog: file under this workspace; off when retro is off, and for the compaction report (counted by the next /retro or /sync).
     args.push("--backlog-workspace", workspaceOf(s.cwd).root);
     const wsKey = get(s.config.config, "retro.workspaceKey");

@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { openTrace, sanitizeTrace, TRACE_FIELDS } from "../trace.ts";
+import { openTrace, sanitizeTrace, traceFile, TRACE_FIELDS } from "../trace.ts";
+import { sessionTrace } from "../retro.ts";
+import { BINDINGS_ENV, bindLaunch, readBinding } from "../usage.ts";
 
 test("trace: non-allowlisted keys and non-primitive values are dropped", () => {
   const out = sanitizeTrace({
@@ -56,5 +58,28 @@ test("trace: disabled writes nothing; enabled writes one sanitized JSONL line pe
   assert.deepEqual(lines, [
     { ts: "1970-01-01T00:00:00.000Z", event: "tier", tier: "standard" },
     { ts: "1970-01-01T00:00:00.000Z", event: "role_launch", role: "explorer" },
+  ]);
+});
+
+test("trace: a bound child traces when the parent's retro is on, to trace-<launchId>, with role and runId on every event", () => {
+  const input: Record<string, unknown> = {};
+  bindLaunch(input, { foremanSession: "F1", workspace: "w", role: "builder", launchId: "L1-ab", kind: "first", model: null, retro: true });
+  const b = readBinding({ [BINDINGS_ENV]: JSON.stringify(input.extensionBindings) })!;
+  assert.equal(b.retro, true);
+  const t = sessionTrace(null, null, "json", "child-sid", b);
+  assert.deepEqual(t, { enabled: true, id: "L1-ab", base: { role: "builder", runId: "L1-ab" } });
+  assert.equal(sessionTrace(false, null, "json", "c", b).enabled, false); // explicit false wins
+  assert.equal(sessionTrace(null, null, "json", "c", { ...b, retro: undefined }).enabled, false); // parent retro off
+  assert.equal(sessionTrace(true, null, "json", "c", { ...b, retro: undefined }).enabled, true);
+  assert.deepEqual(sessionTrace(null, null, "tui", "s1", null), { enabled: true, id: "s1" }); // foreman: unchanged
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-trace-"));
+  const w = openTrace({ enabled: t.enabled, dir: null, stateDir: dir, sessionId: t.id, base: t.base, now: () => new Date(0) })!;
+  assert.equal(w.file, traceFile(null, dir, "L1-ab"));
+  w.emit({ event: "ask", guard: "destructive_guard", toolFamily: "Bash", decision: "no-ui" });
+  w.emit({ event: "session_start", role: "child" });
+  const lines = fs.readFileSync(w.file, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  assert.deepEqual(lines, [
+    { ts: "1970-01-01T00:00:00.000Z", role: "builder", runId: "L1-ab", event: "ask", guard: "destructive_guard", toolFamily: "Bash", decision: "no-ui" },
+    { ts: "1970-01-01T00:00:00.000Z", role: "child", runId: "L1-ab", event: "session_start" },
   ]);
 });
