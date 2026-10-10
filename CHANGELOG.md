@@ -3,6 +3,14 @@
 ## [Unreleased]
 
 ### Added
+- Herdr sidebar, live: the Pi session pushes its own pane's `fm_*` tokens (`sidebar.py push`) on run start and end, asks,
+  state changes, permission prompts and every 5 s (debounced, at most 4 per second, a final row at session end, so it never goes blank), so spawns
+  and short runs show at once; while a session pushes, the daemon publishes only `fm_sort` (and the tree layout) and
+  takes all keys back when the push stops or the session is lost. A working session cycles a braille spinner in
+  `fm_sym` (`ui.spinner`, default true; `false` keeps the hourglass). A finished run shows as `✓ role` on line 2 for
+  `radar.recentRunSeconds` (default 8). Line 3 counts uncached input (fresh input plus cache writes); radar JSON gains
+  `recentRunSeconds`, run `ended_s`, session `sid` and `uncached`. Lead cells default to 0. Re-merge the rows snippet
+  (the working colour now sits on the glyph cell, one `contains = "!"` rule) and run `herdr server reload-config`.
 - Herdr sidebar plugin `pi-foreman.sidebar` (`integrations/herdr/pi-foreman-sidebar/`, `docs/herdr.md`): a stdlib
   daemon reads `foreman radar --json --follow`, joins sessions to panes (presence `paneId`, else pid, else a unique
   cwd) and publishes `fm_*` pane tokens (state glyph, label and age or blocked timer, children, tokens, cost, sort key;

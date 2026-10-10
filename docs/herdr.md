@@ -76,7 +76,7 @@ colours red; the `!` also reads without colour. The colours in the snippet are p
 ## Tokens
 
 All tokens come from the source `plugin:pi-foreman.sidebar`, with a 15 s TTL (60 s for `run --once`), refreshed
-every 5 s; values are at most 80 characters.
+every 5 s by the session or, for a pane it does not push, the daemon; values are at most 80 characters.
 
 | Token | Value |
 |---|---|
@@ -103,8 +103,33 @@ pane's foreground pid, else by a working directory only one Pi pane has. When se
 (sessions restarted in it), the live one wins. When a session leaves radar its tokens are cleared at once; if the
 daemon dies they expire with the TTL.
 
-A working session cycles a braille spinner in `fm_sym` while `ui.spinner` is true (default; `false` shows the static
-working glyph). The glyph cell's own `fg` in the snippet colours the spinner frames.
+## Who publishes what
+
+The Pi session publishes its own pane, so a spawn, a finished run or a state change shows within a fraction of a second
+instead of after the next poll. It runs `python3 sidebar.py push --session <id> --pane <pane>` (also `--symbols`,
+`--final`, `--clear`) on run start and end, ask open and close, state change, its own asks, permission prompts and decisions, and
+every 5 s. Pushes are debounced to at most 4 per second with one in flight, and take well under a second. At session end `push --final` publishes a last composed row (done
+glyph, done count, totals; normal 15 s TTL) and removes only the push stamp, so the daemon takes the keys over at its
+next tick and the row never goes blank. `--clear` is for the hand smoke and the daemon's cleanup of a lost pane. The session pushes only when `HERDR_ENV=1` and `HERDR_PANE_ID` are set, in TUI mode, with Python
+found. Both publishers use the source `plugin:pi-foreman.sidebar`. Herdr token reports are per-key patches with a TTL
+per key (15 s here), so each publisher owns fixed keys and omits the others.
+
+| Session | Daemon | Session keys (`fm_sym` `fm_l1` `fm_l2` `fm_l3` `fm_cost` `fm_state` `fm_block_s`) |
+|---|---|---|
+| pushed under 15 s ago, radar sees it live | only `fm_sort`, and the tree layout (`layout.json` in the state folder, read by `push` for the `├─`/`└─` prefix) | published by the session |
+| older session without push, no push for 15 s (hung), lost, stale or done | every key, as before | not published |
+
+The push stamp is `push/<session id>.stamp` in the state folder; the daemon takes a pane over within one tick when it
+goes stale. A usage byte-offset cache (`push/<session id>.usage.json`) keeps the push short on long sessions.
+
+Spinner: while a session works, it cycles `⣾⣽⣻⢿⡿⣟⣯⣷` in `fm_sym` about once a second, sending only that token. It
+stops at idle, blocked and done. `ui.spinner: false` keeps the static hourglass; radar's own screen always shows the
+hourglass. The glyph cell's `fg` in the snippet is the working colour and the frames inherit it (Herdr caps a cell at
+16 rules, so there are no per-frame rules; the blocked `!` is one `contains = "!"` rule). After updating, merge the new
+snippet again and run `herdr server reload-config`, else the frames render uncoloured.
+
+Recent runs: a run that ended shows as `✓ role` on line 2 for `radar.recentRunSeconds` (default 8), then moves into
+the `✓n` count. Tokens: line 3 counts uncached input (see `fm_l3`); radar's TUI and JSON keep the raw totals.
 
 ## Agents view
 

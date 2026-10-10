@@ -184,8 +184,10 @@ every `--interval` seconds (default 3) until `q` or Ctrl-C (no curses, so Window
 terminal behaves like `--once`, which also prints the footer). `--json` prints one snapshot as a JSON line and exits;
 `--follow` prints one such line every `--interval` seconds until stopped (no ANSI, no keys; the Herdr sidebar plugin
 reads it): `{"v":1,"now","symbols","roots":[node]}`, each node with `key`, `kind`, `name`, `role`, `rung`, `state`,
-`sym`, `glyph`, `paneId`, `pid`, `cwd`, `age_s`, `blocked_s`, `own` and `tot` (`in`, `out`, `cost`), `done_children` and
-`children`. `--symbols unicode|nerd` overrides `ui.symbols`. `--agent-dir` (default `PI_CODING_AGENT_DIR`, else `~/.pi/agent`). `--since HOURS`
+`sym`, `glyph`, `paneId`, `pid`, `cwd`, `age_s`, `blocked_s`, `own` and `tot` (`in`, `out`, `uncached`, `cost`), `done_children` and
+`children`. The header also has `recentRunSeconds` (`radar.recentRunSeconds`, default 8: how long a finished run stays visible
+as `✓ role` before it joins the done count), run nodes have `ended_s` (seconds since the run ended, or `null`) and session
+nodes have `sid` (session id). `uncached` is fresh input plus cache writes; `in` still includes cache reads. `--symbols unicode|nerd` overrides `ui.symbols`. `--agent-dir` (default `PI_CODING_AGENT_DIR`, else `~/.pi/agent`). `--since HOURS`
 (default 24) hides finished or lost sessions whose last activity is older, unless a descendant is still shown.
 `--no-color` or `NO_COLOR` turns off colors (and with them the selection band).
 
@@ -245,7 +247,7 @@ it as plain text `foreman:close`, accepted only from the recorded parent session
 Herdr's Pi integration (`herdr integration install pi`, installed by you, never by the installer) shows a session
 as working, idle or blocked. pi-foreman emits `herdr:blocked` on `pi.events` while any dialog waits for you, so
 the pane reads blocked ("?") instead of working. The foreman tree in Herdr's Agents panel is a separate plugin:
-[Herdr sidebar](herdr.md). Design record: `design/architecture.md`
+[Herdr sidebar](herdr.md). In a Herdr pane the session also pushes its own sidebar tokens (`sidebar.py push`, on every state change and every 5 s, spinner while working; `ui.spinner: false` turns the spinner off); see [who publishes what](herdr.md#who-publishes-what). Design record: `design/architecture.md`
 [session features](../design/architecture.md#session-features-phase-4).
 
 ### Blocked shim
