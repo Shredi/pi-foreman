@@ -3,10 +3,10 @@
 
     python scripts/foreman_backlog.py [--agent-dir D] [--cwd DIR] [--json] <command> ...
         list   [--workspace KEY | --all] [--min-count N] [--kind K] [--status S]
-        show   <id>
+        show   <id> [--workspace KEY]
         expire [--now ISO]
-        mark   <id> planned|done|open
-        move   <id> --to repo|central
+        mark   <id> planned|done|open [--workspace KEY]
+        move   <id> --to repo|central [--workspace KEY]
         brief  [--workspace KEY] [--min-count 2] [--out PATH]
 
 A store is a markdown file: a `# Retro backlog: <key>` header, then one fenced block per entry
@@ -638,7 +638,7 @@ def cmd_brief(ctx, args):
           "2. Group complementary findings and fix each group with one change.",
           "3. Implement in the harness repository or in a user-level skill directory; where the output lives is"
           " this session's decision.",
-          "4. Run `foreman backlog mark <id> done` for every finished entry.", ""]
+          "4. Run `foreman backlog mark <id> done --workspace %s` for every finished entry." % key, ""]
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     with open(out, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(L))

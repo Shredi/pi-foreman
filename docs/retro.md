@@ -124,10 +124,12 @@ Writes are atomic (temp file, then replace) under a lock file next to the store.
 | Command | What it does |
 |---|---|
 | `foreman backlog list [--workspace KEY \| --all] [--min-count N] [--kind K] [--status S]` | Lists entries, most frequent first. Default: this workspace's open and planned entries. `--all` spans every store. |
-| `foreman backlog show <id>` | Prints every field of one entry. |
+| `foreman backlog show <id> [--workspace KEY]` | Prints every field of one entry. |
 | `foreman backlog expire [--now ISO]` | Applies the aging rules above to every store. |
-| `foreman backlog mark <id> planned\|done\|open` | Sets the status and stamps `marked`. |
-| `foreman backlog move <id> --to repo\|central` | Moves an entry between the central and the repository store; counts merge if it exists there. |
+| `foreman backlog mark <id> planned\|done\|open [--workspace KEY]` | Sets the status and stamps `marked`. |
+| `foreman backlog move <id> --to repo\|central [--workspace KEY]` | Moves an entry between the central and the repository store; counts merge if it exists there. |
+
+`show`, `mark` and `move` look for the id in the current workspace (or `--workspace KEY`) and `global.md` first, then in every other store. Ids repeat across workspaces, so when several other stores hold it the command exits 2 and asks for `--workspace KEY`.
 | `foreman backlog brief [--workspace KEY] [--min-count 2] [--out PATH]` | Writes a lessons brief (below). |
 
 ## The lessons flow
