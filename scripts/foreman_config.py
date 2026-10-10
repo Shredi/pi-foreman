@@ -83,6 +83,8 @@ Keys outside safety that the project and session layers cannot loosen either
     sync.repos, retro.proposalMinReviews, retro.panelThreshold, compaction.priceTiers   ignored (L1/L3/L2 only)
     intercom.allowRemote, intercom.allowOpenPane, wait.ci         only false is accepted
     close.from                       intersect (a project can only narrow the allowed sources)
+    close.autoClean                  only false is accepted (true removes worktrees and scratch at close)
+    close.worktreeDir                ignored (the worktree convention: L1/L3/L2 only)
     compaction.threshold.<tier>      lower only, minimum 0.3 (a higher threshold compacts later)
     wait.maxSeconds, wait.maxActive  lower only, minimum 1
     roles.*.timeoutMinutes           lower only (a higher limit lets a child run longer)
@@ -177,6 +179,7 @@ IGNORED_KEYS = [
     (("retro", "repoBacklog"), "repository backlogs come from the user or overlay config"),
     (("retro", "workspaceKey"), "the backlog key comes from the user or overlay config"),
     (("retro", "panelThreshold"), "the panel threshold comes from the user or overlay config"),
+    (("close", "worktreeDir"), "the worktree convention comes from the user or overlay config"),
     (("ceremony", "reviewModel"), "the fallback reviewer model comes from the user or overlay config"),
     (("compaction", "priceTiers"), "the price tiers come from the user or overlay config"),
     (("ladder", "strongAbove"), "the ladder and the child rank policy come from the user or overlay config"),
@@ -222,6 +225,7 @@ LAYER_TIGHTEN = [
     (("intercom", "allowOpenPane"), "false_only"),
     (("wait", "ci"), "false_only"),
     (("close", "from"), "intersect"),
+    (("close", "autoClean"), "false_only"),
     (("compaction", "threshold", "*"), "lower_only_number"),
     (("wait", "maxSeconds"), "lower_only"),
     (("wait", "maxActive"), "lower_only"),
