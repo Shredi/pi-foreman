@@ -262,6 +262,11 @@
       "additionalProperties": false,
       "properties": { "usage": { "type": "boolean", "description": "Show usage in the footer." } }
     },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "symbols": { "type": "string", "enum": ["unicode", "nerd"], "description": "State glyph set for the children widget, radar and the Herdr sidebar: unicode (default) or nerd (Nerd Font icons)." } }
+    },
     "widget": {
       "type": "object",
       "additionalProperties": false,

@@ -38,6 +38,14 @@ export interface LiveFile {
   lastEventAt: string;
   state: LiveStateName;
   runs: LiveRun[];
+  /** env HERDR_PANE_ID, else null. */
+  paneId: string | null;
+  /** The session's own usage as the footer shows it: in = input + cache read + cache write, out = output; cost = list price. */
+  tokensIn: number;
+  tokensOut: number;
+  cost: number;
+  /** ISO time the session became blocked (blockers empty -> non-empty); null when not blocked. */
+  blockedSince: string | null;
 }
 
 export const liveDir = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "live");
@@ -61,6 +69,12 @@ export function intercomIdOf(env: Record<string, string | undefined>, agentDir: 
 
 const short = (s: string, n = 80): string => (s.length > n ? s.slice(0, n) : s);
 
+export interface SessionTotals {
+  tokensIn: number;
+  tokensOut: number;
+  cost: number;
+}
+
 export interface LiveInit {
   agentDir: string;
   sessionId: string;
@@ -72,7 +86,7 @@ export interface LiveInit {
 
 export class LiveState {
   private readonly file: string;
-  private readonly base: Omit<LiveFile, "heartbeatAt" | "lastEventAt" | "state" | "runs" | "intercomId">;
+  private readonly base: Omit<LiveFile, "heartbeatAt" | "lastEventAt" | "state" | "runs" | "intercomId" | "tokensIn" | "tokensOut" | "cost" | "blockedSince">;
   private readonly idOf: () => string;
   private readonly startedMs = Date.now();
   private lastEventMs = this.startedMs;
@@ -80,16 +94,17 @@ export class LiveState {
   /** Open blocking sources: "ui" (Pi's ui_prompt_start..end, released by typed input) and own:<n> (own asks). */
   private readonly blockers = new Set<string>();
   private holds = 0;
+  private blockedSinceMs: number | null = null;
   private done = false;
   private lastWrite = 0;
   private interval: ReturnType<typeof setInterval> | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   /** Null when the mode writes no file (print, json, or unknown). */
-  static start(init: LiveInit, runs: () => RunView[]): LiveState | null {
+  static start(init: LiveInit, runs: () => RunView[], totals?: () => SessionTotals | null): LiveState | null {
     const mode = init.mode;
     if (mode !== "tui" && mode !== "rpc") return null;
-    const l = new LiveState(init, mode, runs);
+    const l = new LiveState(init, mode, runs, totals);
     l.write();
     l.interval = setInterval(() => l.write(), HEARTBEAT_MS);
     l.interval.unref?.();
@@ -97,8 +112,10 @@ export class LiveState {
   }
 
   private readonly runs: () => RunView[];
-  private constructor(init: LiveInit, mode: LiveMode, runs: () => RunView[]) {
+  private readonly totals: (() => SessionTotals | null) | undefined;
+  private constructor(init: LiveInit, mode: LiveMode, runs: () => RunView[], totals?: () => SessionTotals | null) {
     this.runs = runs;
+    this.totals = totals;
     this.file = path.join(liveDir(init.agentDir), `${init.sessionId}.json`);
     const handoff = (init.env.PI_FOREMAN_HANDOFF_DIR ?? "").trim() || null;
     // Re-read on each write: pi-intercom publishes PI_INTERCOM_SESSION_ID after session_start.
@@ -113,6 +130,7 @@ export class LiveState {
       pid: init.pid ?? process.pid,
       mode,
       startedAt: new Date(this.startedMs).toISOString(),
+      paneId: (init.env.HERDR_PANE_ID ?? "").trim() || null,
     };
   }
 
@@ -139,8 +157,11 @@ export class LiveState {
 
   /** One source on or off; the session is blocked while any source is open, so sources never clear each other. */
   setBlocked(active: boolean, source = "ui"): void {
+    const was = this.blockers.size > 0;
     if (active) this.blockers.add(source);
     else this.blockers.delete(source);
+    if (!was && this.blockers.size > 0) this.blockedSinceMs = Date.now();
+    else if (this.blockers.size === 0) this.blockedSinceMs = null;
     this.touch();
   }
 
@@ -171,8 +192,14 @@ export class LiveState {
     } catch {
       // runs are best effort
     }
+    let t: SessionTotals | null = null;
+    try {
+      t = this.totals?.() ?? null;
+    } catch {
+      // totals are best effort
+    }
     const state: LiveStateName = this.done ? "done" : this.blockers.size > 0 ? "blocked" : this.working ? "working" : "idle";
-    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs };
+    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString() };
   }
 
   private schedule(): void {
