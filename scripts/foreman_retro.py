@@ -4,6 +4,7 @@
     python scripts/foreman_retro.py [--session F] [--trace F ...] [--usage F] [--review-log F]
                                     [--proposals-out F] [--min-reviews N] [--agent-dir D] [--json]
     python scripts/foreman_retro.py --selftest
+    python scripts/foreman_retro.py models [--since 30d] [--source live|panel|bench] [--json] [--agent-dir D] [--cwd REPO]
 
 Every input is optional; a missing or unreadable file makes its section say "no data". Only counts,
 command families (first two words, three for sudo/ssh, digits -> N, hex -> HASH), tool names and
@@ -683,7 +684,65 @@ def selftest():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def models_main(argv):
+    """`foreman retro models [--since 30d] [--source live|panel|bench] [--json]`: per model x rung review stats from the
+    findings store (scripts/foreman_findings.py); files a `review-model` backlog candidate for a shadow model whose
+    unique accepted findings reach retro.panelThreshold (default 3)."""
+    import foreman_findings as ff
+    p = argparse.ArgumentParser(prog="foreman retro models")
+    p.add_argument("--since")
+    p.add_argument("--source", choices=("live", "panel", "bench"))
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--agent-dir")
+    p.add_argument("--cwd", help="repository whose git history resolves the recorded heads (default: current directory)")
+    p.add_argument("--workspace-key")
+    p.add_argument("--no-backlog", action="store_true")
+    args = p.parse_args(argv)
+    try:
+        since = ff.parse_since(args.since) if args.since else None
+    except ValueError as exc:
+        print("retro models: %s" % exc, file=sys.stderr)
+        return 2
+    agent = str(pg.fc.resolve_agent_dir(args.agent_dir))
+    cwd = args.cwd or os.getcwd()
+    rates = None
+    try:
+        with open(os.path.join(agent, "pi-foreman", "state", "retro", "rates.json"), "r", encoding="utf-8") as fh:
+            rates = json.load(fh)
+    except (OSError, ValueError):
+        pass
+    cache = {}
+
+    def usage(session):
+        if session not in cache:
+            cache[session] = read_jsonl(os.path.join(agent, "pi-foreman", "state", "usage",
+                                                     ff._session_id(session) + ".jsonl"))
+        return cache[session]
+
+    table = ff.models_table(ff.load_records(agent), usage=usage, rates=rates, hunks=ff.git_hunks(cwd), since=since,
+                            source=args.source)
+    if args.json:
+        print(json.dumps(table, indent=2, sort_keys=True))
+    else:
+        print(ff.render_models(table))
+    if not args.no_backlog:
+        try:
+            import foreman_backlog as bl
+            cfg = pg.fc.load_config(agent, cwd)["config"]
+            thr = (cfg.get("retro") or {}).get("panelThreshold")
+            thr = thr if isinstance(thr, int) and not isinstance(thr, bool) and thr > 0 else 3
+            cands = ff.shadow_candidates(table, thr)
+            if cands:
+                bl.record(cands, workspace_root=cwd, key=args.workspace_key, session=None, cfg=cfg, agent_dir=agent)
+        except Exception as exc:  # noqa: BLE001 - the table matters more than the backlog
+            print("retro backlog: %s" % exc, file=sys.stderr)
+    return 0
+
+
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv and argv[0] == "models":
+        return models_main(argv[1:])
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--session")
     p.add_argument("--trace", action="append", help="trace file; repeat for the child runs' trace files")
