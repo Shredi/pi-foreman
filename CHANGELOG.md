@@ -18,6 +18,12 @@
   it to `securityRung`, else the next ranked mapped model (`rung_up` reason `security`, `hits`; none:
   `security_rung_unset`). A security rung above what `childPolicy` allows is kept (user/overlay config only) and its
   `rung_up` carries `policy_override: true`. New page `docs/ladder.md`.
+- Bench: `foreman bench review` scores reviewer models on diffs with planted defects, one reviewer launch per cell
+  through the real review path (diff facts and owner block from `diffscan.ts`, core-adapter loaded as a reviewer
+  child, empty `CLAUDE_CONFIG_DIR`, token from `FOREMAN_BENCH_OAUTH_TOKEN_FILE`): located and diagnosed defects,
+  false alarms per FAIL item (process items apart), clean-control verdicts, USD and a per-class matrix; resumable,
+  `--dry-run`, `review-table` rescores old runs with the current scorer (versioned). Three synthetic sample tasks in
+  `bench/review-samples/`; `bin/foreman bench` runs `scripts/foreman_bench.py`.
 - `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]`: merges `config/presets/<name>.json` into
   `<agent dir>/foreman.json` (preset wins), validates before writing, keeps `foreman.json.bak-<date>`. With no role or
   review model configured, an interactive top-level session prints one notice naming the presets and this command;

@@ -129,7 +129,7 @@ The usage footer (tokens, list-price cost, child launches) is on by default (`fo
 widget (`widget.children`, on by default, TUI only) lists this session's subagent runs as `role · rung · state · ↑in ↓out · $cost`
 (state `working`, `ask` while a forwarded permission ask of that role waits, `done` for 10 minutes) and its opened sessions as
 `label · status · age`; it costs no model tokens. Outside Pi,
-the `foreman` launcher in `bin/` (`.cmd` and `.ps1` on Windows) runs the same scripts: `foreman update-check`, `foreman retro [args]`, `foreman sync [args]`, `foreman session` (below) and `foreman radar` ([Radar](#radar)). The keys
+the `foreman` launcher in `bin/` (`.cmd` and `.ps1` on Windows) runs the same scripts: `foreman update-check`, `foreman retro [args]`, `foreman sync [args]`, `foreman session` (below), `foreman radar` ([Radar](#radar)) and `foreman bench` ([benchmark](bench.md), including `foreman bench review`). The keys
 and their layer rules are in the tables of [ceremony](ceremony.md) and [safety](safety.md) and in the schema
 `config/foreman.schema.json`.
 

@@ -1,0 +1,4 @@
+{"clean": false, "defects": [
+ {"id": "d1", "file": "src/release.ts", "lines": [21, 24], "class": "shell-injection",
+  "description": "tagsMatching interpolates the caller's pattern (the command-line prefix) unquoted into an execSync shell string; use execFileSync with an argument list."}
+]}
