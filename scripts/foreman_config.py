@@ -73,6 +73,7 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.ledgerHelper            tighten only, off < bash < tool (may only move toward off)
     ceremony.reviewPerRevision       only true is accepted (false lifts the one-review-per-revision refusal)
     ceremony.reviewModel             ignored (the fallback reviewer model: L1/L3/L2 only)
+    ceremony.reviewByOccasion        ignored (per-occasion reviewer thinking/model: L1/L3/L2 only)
     ceremony.planReview.<tier>       only true is accepted (false skips the plan review)
     ceremony.heavyThreshold          tighten only, eee843d < strict (may only move toward eee843d, which escalates more)
     ceremony.trivialBound.<field>    lower only, minimum 0 (a higher bound lets the foreman edit more)
@@ -181,6 +182,7 @@ IGNORED_KEYS = [
     (("retro", "panelThreshold"), "the panel threshold comes from the user or overlay config"),
     (("close", "worktreeDir"), "the worktree convention comes from the user or overlay config"),
     (("ceremony", "reviewModel"), "the fallback reviewer model comes from the user or overlay config"),
+    (("ceremony", "reviewByOccasion"), "the per-occasion reviewer overrides come from the user or overlay config"),
     (("compaction", "priceTiers"), "the price tiers come from the user or overlay config"),
     (("ladder", "strongAbove"), "the ladder and the child rank policy come from the user or overlay config"),
     (("ladder", "childMaxTurns"), "the ladder and the child rank policy come from the user or overlay config"),
