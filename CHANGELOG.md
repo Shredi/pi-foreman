@@ -3,6 +3,11 @@
 ## [Unreleased]
 
 ### Added
+- Radar: `radar.doneTtlMinutes` (default 30) and `foreman radar --done-ttl MINUTES`. A `done` session older than the TTL
+  is hidden and its presence file deleted on refresh (only `state: "done"` files, never unparseable ones); a not-done
+  session with no heartbeat for 15 minutes reads `stale` instead of `lost`. Working, blocked and lost rows never expire by age.
+- Startup warning when the session's model provider has no `providers.<id>` map (tui and rpc, top-level, not silenced
+  by `quiet`): names the fitting presets or says to add `providers.<id>`, instead of failing at the first role launch.
 - Review link, child bash asks (`docs/permissions.md`): effect classes `read`, `build-test` (from the project manifest
   at the worktree root), `write-in`, `write-out`, `unknown` (`effects.ts`); only write-out and unknown reach the review
   model. Read and write paths must resolve inside the worktree or `$FOREMAN_SCRATCH`, writes also under `/tmp`, reads

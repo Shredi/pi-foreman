@@ -165,6 +165,62 @@ class TreeTests(Fixture):
         self.assertEqual(len(fr.rows(self.snap())), 2)
 
 
+class DoneTtlTests(Fixture):
+    def path(self, sid):
+        return self.base / "state" / "live" / (sid + ".json")
+
+    def snap_ttl(self, ttl=30.0):
+        return fr.snapshot(self.adir, NOW, 24.0, None, ttl)
+
+    def test_done_older_than_ttl_hidden_and_file_deleted(self):
+        self.put_live(live("a", "gone", "fm-a", state="done", hb=3600, last=3600))
+        self.assertEqual(self.snap_ttl(), [])
+        self.assertFalse(self.path("a").exists())
+
+    def test_done_inside_ttl_shown_and_kept(self):
+        self.put_live(live("a", "recent", "fm-a", state="done", hb=600, last=600))
+        self.assertEqual([n["name"] for n in self.snap_ttl()], ["recent"])
+        self.assertTrue(self.path("a").exists())
+
+    def test_working_old_with_fresh_heartbeat_kept(self):
+        self.put_live(live("a", "long", "fm-a", hb=5, last=10 * 3600, started=11 * 3600))
+        (n,) = self.snap_ttl()
+        self.assertEqual((n["state"], self.path("a").exists()), ("working", True))
+
+    def test_stale_heartbeat_labelled_not_deleted(self):
+        self.put_live(live("a", "quiet", "fm-a", hb=1200, last=1200))
+        self.put_live(live("b", "lostish", "fm-b", hb=300, last=300))
+        states = {n["name"]: n["state"] for n in self.snap_ttl()}
+        self.assertEqual(states, {"quiet": "stale", "lostish": "lost"})
+        self.assertTrue(self.path("a").exists())
+
+    def test_blocked_old_kept(self):
+        self.put_live(live("a", "wait", "fm-a", state="blocked", hb=5, last=5 * 3600))
+        self.assertEqual([n["name"] for n in self.snap_ttl()], ["wait"])
+        self.assertTrue(self.path("a").exists())
+
+    def test_unparseable_file_never_deleted(self):
+        p = self.path("bad")
+        p.parent.mkdir(parents=True)
+        p.write_text("{nope", "utf-8")
+        self.assertEqual(self.snap_ttl(), [])
+        self.assertTrue(p.exists())
+
+    def test_config_key_and_cli_override(self):
+        self.assertEqual(fr.config_done_ttl(self.adir), 30.0)
+        (self.adir).mkdir(parents=True)
+        (self.adir / "foreman.json").write_text(json.dumps({"radar": {"doneTtlMinutes": 5}}), "utf-8")
+        self.assertEqual(fr.config_done_ttl(self.adir), 5.0)
+        self.put_live(live("a", "old", "fm-a", state="done", hb=3600, last=3600))
+        with mock.patch.object(fr.time, "time", return_value=NOW):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                fr.main(["--once", "--agent-dir", str(self.adir), "--done-ttl", "120"])
+            self.assertIn(" old ", out.getvalue())
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                fr.main(["--once", "--agent-dir", str(self.adir)])
+            self.assertIn("no sessions", out.getvalue())
+
+
 ANSI = __import__("re").compile(r"\x1b\[[0-9;]*m")
 
 

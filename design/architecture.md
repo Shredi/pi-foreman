@@ -508,6 +508,7 @@ The `foreman` CLI (`bin/foreman`, `.cmd`, `.ps1`; `foreman update-check|retro|sy
 |---|---|---|---|
 | `sync.repos` | `[]` | loosens (what gets committed and pushed) | L1, L3, L2; project ignored |
 | `sync.runRetro` | `true` | neutral | any |
+| `radar.doneTtlMinutes` | `30` | neutral (display) | L1, L3, L2 (radar reads no project file) |
 | `retro.proposalMinReviews` | `5` | lower proposes sooner | L1, L3, L2; project ignored |
 | `intercom.allowRemote`, `intercom.allowOpenPane` | `false` | `true` loosens | any layer may set false; a project or session can only set false |
 | `close.from` | `["herdr","intercom-parent"]` | fewer is tighter | any; project and session intersect |

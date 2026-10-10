@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Radar: a read-only tree of the running pi-foreman sessions and their subagent runs (stdlib, 3.9+).
 
-    python scripts/foreman_radar.py [--once] [--agent-dir D] [--interval SECONDS] [--since HOURS] [--no-color]
+    python scripts/foreman_radar.py [--once] [--agent-dir D] [--interval SECONDS] [--since HOURS] [--done-ttl MINUTES] [--no-color]
 
 Shows top sessions, the sessions they opened and every session's subagent runs, with state, last-event
 age and the tokens and cost of each subtree. Display only, no control actions; works without Herdr.
@@ -30,6 +30,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from foreman_session import agent_dir  # noqa: E402
 
 LOST_AFTER = 90.0
+STALE_AFTER = 900.0
+DONE_TTL_MINUTES = 30.0
 STARTING_WINDOW = 120.0
 GLYPHS = {"working": "●", "blocked": "◐", "starting": "◌", "idle": "○", "lost": "×"}
 COLORS = {"working": "32", "blocked": "33", "starting": "36", "idle": "90", "lost": "31"}
@@ -130,8 +132,36 @@ class UsageCache:
         return st
 
 
-def load(adir, cache=None):
-    """Read every source into plain data. No clock, no printing."""
+def config_done_ttl(adir):
+    """radar.doneTtlMinutes of the merged config (user/organisation layers); the default on any failure."""
+    try:
+        import foreman_config
+        v = (foreman_config.load_config(agent_dir=str(adir))["config"].get("radar") or {}).get("doneTtlMinutes")
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
+            return float(v)
+    except Exception:  # noqa: BLE001 - display tool: a broken config must not stop the radar
+        pass
+    return DONE_TTL_MINUTES
+
+
+def prune_done(path, d, now, ttl_min):
+    """Delete one presence file whose state is done and whose last activity is older than the TTL."""
+    if d.get("state") != "done":
+        return False
+    times = [t for t in (parse_ts(d.get("heartbeatAt")), parse_ts(d.get("lastEventAt"))) if t is not None]
+    last = max(times) if times else mtime(path)
+    if last is None or now - last <= ttl_min * 60:
+        return False
+    try:
+        os.remove(path)
+    except OSError:
+        return False
+    return True
+
+
+def load(adir, cache=None, now=None, done_ttl=None):
+    """Read every source into plain data. No clock, no printing; with now and done_ttl (minutes) it also deletes
+    the presence files of sessions that finished longer ago than the TTL."""
     base = Path(adir) / "pi-foreman"
     cache = cache if cache is not None else UsageCache()
     live, usage, trace = [], {}, {}
@@ -144,6 +174,8 @@ def load(adir, cache=None):
             continue
         d = read_json(base / "state" / "live" / name)
         if not isinstance(d, dict):
+            continue
+        if now is not None and done_ttl is not None and prune_done(base / "state" / "live" / name, d, now, done_ttl):
             continue
         sid = d.get("sessionId") if isinstance(d.get("sessionId"), str) and d.get("sessionId") else name[:-5]
         d["sessionId"] = sid
@@ -177,7 +209,7 @@ def live_glyph(d, now):
     state = d.get("state")
     hb = parse_ts(d.get("heartbeatAt"))
     if state != "done" and (hb is None or now - hb > LOST_AFTER):
-        return "lost", "lost"
+        return "lost", "stale" if hb is None or now - hb > STALE_AFTER else "lost"
     if state == "blocked":
         return "blocked", "blocked"
     if state == "working":
@@ -307,9 +339,10 @@ def rank(n):
     return 0 if n["glyph"] in ACTIVE else 1 if n["glyph"] == "idle" else 2
 
 
-def finish(n, now, since_h):
-    """Sum subtrees, sort children, prune finished or lost nodes older than since_h. True = keep."""
-    kids = [c for c in n["children"] if c["kind"] == "run" or finish(c, now, since_h)]
+def finish(n, now, since_h, done_ttl=None):
+    """Sum subtrees, sort children, prune finished or lost nodes older than since_h and done nodes older than
+    done_ttl minutes (a done node with a shown descendant stays). True = keep."""
+    kids = [c for c in n["children"] if c["kind"] == "run" or finish(c, now, since_h, done_ttl)]
     runs = [c for c in kids if c["kind"] == "run"]
     subs = sorted([c for c in kids if c["kind"] == "session"],
                   key=lambda c: (rank(c), c["started"] if c["started"] is not None else float("inf")))
@@ -320,12 +353,14 @@ def finish(n, now, since_h):
             n["tot"][i] += c["tot"][i]
     if n["glyph"] in ACTIVE or subs:
         return True
+    if done_ttl is not None and n["state"] == "done" and n["last"] is not None and now - n["last"] > done_ttl * 60:
+        return False
     return n["last"] is None or now - n["last"] <= since_h * 3600
 
 
-def snapshot(adir, now, since_h=24.0, cache=None):
-    roots = build(load(adir, cache), now)
-    roots = [r for r in roots if finish(r, now, since_h)]
+def snapshot(adir, now, since_h=24.0, cache=None, done_ttl=None):
+    roots = build(load(adir, cache, now, done_ttl), now)
+    roots = [r for r in roots if finish(r, now, since_h, done_ttl)]
     roots.sort(key=lambda c: (rank(c), c["started"] if c["started"] is not None else float("inf")))
     return roots
 
@@ -489,7 +524,7 @@ def read_key(seconds, state):
     return os.read(sys.stdin.fileno(), 8).decode("utf-8", "replace") if ready else ""
 
 
-def loop(adir, interval, since_h, color):
+def loop(adir, interval, since_h, color, done_ttl=None):
     if sys.platform == "win32":
         os.system("")  # enable VT escape processing in the console
     state = {"tty": False}
@@ -516,7 +551,7 @@ def loop(adir, interval, since_h, color):
     try:
         while True:
             ui["now"] = time.time()
-            ui["roots"] = snapshot(adir, ui["now"], since_h, cache)
+            ui["roots"] = snapshot(adir, ui["now"], since_h, cache, done_ttl)
             draw()
             end = time.time() + interval
             while time.time() < end:
@@ -550,6 +585,8 @@ def main(argv=None):
     ap.add_argument("--agent-dir")
     ap.add_argument("--interval", type=float, default=3.0)
     ap.add_argument("--since", type=float, default=24.0, help="hours; hide finished or lost sessions older than this")
+    ap.add_argument("--done-ttl", type=float, metavar="MINUTES",
+                    help="hide done sessions (and delete their presence files) after this many minutes; default radar.doneTtlMinutes")
     ap.add_argument("--no-color", action="store_true")
     a = ap.parse_args(argv)
     for stream in (sys.stdout,):
@@ -558,13 +595,14 @@ def main(argv=None):
         except (AttributeError, ValueError):
             pass
     adir = agent_dir(a.agent_dir)
+    ttl = a.done_ttl if a.done_ttl is not None else config_done_ttl(adir)
     if a.once or not sys.stdout.isatty():
         now = time.time()
         width = shutil.get_terminal_size((80, 24)).columns
-        print("\n".join(render(snapshot(adir, now, a.since), now, width) + ["", render_footer()]))
+        print("\n".join(render(snapshot(adir, now, a.since, None, ttl), now, width) + ["", render_footer()]))
         return 0
     color = not a.no_color and not os.environ.get("NO_COLOR")
-    return loop(adir, max(0.5, a.interval), a.since, color)
+    return loop(adir, max(0.5, a.interval), a.since, color, ttl)
 
 
 if __name__ == "__main__":
