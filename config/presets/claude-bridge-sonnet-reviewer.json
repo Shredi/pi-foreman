@@ -1,7 +1,7 @@
 {
   "version": 1,
   "childMaxThinking": "high",
-  "ladder": { "childPolicy": "below", "strongAbove": 100000, "childMaxTurns": 60 },
+  "ladder": { "childPolicy": "below", "strongAbove": 100000, "childMaxTurns": 60, "reviewerClimb": { "enabled": true, "securityRung": "claude-bridge/claude-opus-5-5:high" } },
   "providers": {
     "claude-bridge": {
       "strongAbove": 100000,

@@ -118,7 +118,16 @@
         "strongAbove": { "type": "integer", "minimum": 1, "description": "Default context limit of a bottom-rung child (L1: 100000)." },
         "childMaxTurns": { "type": "integer", "minimum": 1, "description": "Default assistant-turn cap of a child (L1: 60)." },
         "strongOnRevision": { "type": "boolean", "description": "A builder revision launched after a reviewer FAIL goes to the builder's strong rung (rung_up reason review_fail; L1: true). No-op without a strong rung. Overridden by providers.<p>.strongOnRevision and roles.<id>.strongOnRevision. A project or session can only set false." },
-        "childPolicy": { "type": "string", "enum": ["below", "at-or-below", "any"], "description": "Which child models a foreman may launch by providers.<p>.ranks: below = strictly lower tier than the foreman's model (default), at-or-below = the same tier too, any = no check. Inert while no provider has ranks." }
+        "childPolicy": { "type": "string", "enum": ["below", "at-or-below", "any"], "description": "Which child models a foreman may launch by providers.<p>.ranks: below = strictly lower tier than the foreman's model (default), at-or-below = the same tier too, any = no check. Inert while no provider has ranks." },
+        "reviewerClimb": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The reviewer's own climb (docs/ladder.md; L1: enabled false). User or overlay config only.",
+          "properties": {
+            "enabled": { "type": "boolean", "description": "true: the second FAIL of the same ledger item across reviewer runs sends the next reviewer launch to roles.reviewer.strong (rung_up reason review_fail_repeat), and a security-shaped diff sends it to securityRung (reason security)." },
+            "securityRung": { "type": "string", "minLength": 1, "description": "Model of a reviewer launch on a security-shaped diff, <provider>/<model>[:<level>]. Unset: the mapped model in the next rank above the reviewer's strong rung (providers.<p>.ranks), else no extra climb. Not subject to ladder.childPolicy." }
+          }
+        }
       }
     },
     "childMaxThinking": { "type": "string", "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"], "description": "Ceiling for every child launch's thinking level (ladder rungs included), applied on top of maxThinking. Unset = no extra cap." },

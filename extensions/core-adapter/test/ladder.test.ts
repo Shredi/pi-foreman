@@ -112,6 +112,36 @@ test("a climb-eligible bottom-rung run allows strong and its handoff is prepende
   assert.equal(l.onRunEnd(end("r2", "STATUS: stuck")), null);
 });
 
+test("live rung: every launch path records the role's model; a climb starts from it", () => {
+  const l = new LadderState();
+  l.noteLaunched({ tasks: [{ agent: "builder", model: "p/small:medium" }, { agent: "reviewer", model: "p/r" }] });
+  assert.deepEqual([...l.live], [["builder", "p/small:medium"], ["reviewer", "p/r"]]);
+  l.noteLaunched({ chain: [{ parallel: [{ agent: "builder", model: "p/big:medium" }] }] });
+  assert.equal(l.live.get("builder"), "p/big:medium");
+  l.noteLaunched({ agent: "builder", model: "p/small" });
+  assert.equal(l.live.get("builder"), "p/small");
+  const opts = { preferStrong: true, revisionReason: "review_fail" as const };
+  assert.deepEqual(l.apply(l.plan({ agent: "builder", task: "t" }, ROLES, opts).climbs, () => []), [{ event: "rung_up", role: "builder", from: "p/small", to: "p/big", reason: "review_fail" }]);
+});
+
+test("live rung: on the strong rung a climb is rung_top, not a stale rung_up from the bottom", () => {
+  const l = new LadderState();
+  l.onLaunch("c1", "builder", true);
+  l.onLaunched("c1", "r1");
+  l.onRunEnd(end("r1", "RUNG_UP: context\nDone: x"));
+  const strong: Record<string, unknown> = { agent: "builder", task: "t", model: "strong" };
+  const p1 = l.plan(strong, ROLES);
+  applyLaunchModels(strong, ROLES, "high");
+  assert.deepEqual(l.apply(p1.climbs, () => []), [{ event: "rung_up", role: "builder", from: "p/small", to: "p/big", reason: "context" }]);
+  l.noteLaunched(strong);
+  const revision: Record<string, unknown> = { agent: "builder", task: "fix" };
+  const p2 = l.plan(revision, ROLES, { preferStrong: true, revisionReason: "review_fail" });
+  assert.deepEqual(l.apply(p2.climbs, () => []), [{ event: "rung_top", role: "builder", model: "p/big", reason: "review_fail" }]);
+  applyLaunchModels(revision, ROLES, "high", { preferStrong: true });
+  assert.equal(revision.model, "p/big:medium"); // the launch proceeds unchanged
+  assert.equal(onBottomRung(ROLES, "builder", l.live.get("builder")), false); // finish gate: no climb_available, the valve applies
+});
+
 test("ledgerLines: named items, else the open ones; bounded handoff summary", () => {
   const ledger = "- [ ] 1. a\n```\n- [ ] 9. fenced\n```\n- [x] 2. b\n- [ ] 3. c\n";
   assert.deepEqual(ledgerLines(ledger, "do items 2 and 3"), ["- [x] 2. b", "- [ ] 3. c"]);

@@ -35,6 +35,7 @@ import { applyLaunchModels, applyLaunchTimeouts, roleTimeoutMs, splitLevel, STRE
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
 import { ReviewFacts } from "./diffscan.ts";
+import { applySecurityRungs, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
@@ -176,8 +177,8 @@ interface Session {
   finishRefusals: number;
   /** Uncounted finish refusals that ask for the builder's review_fail climb, since the last user prompt (at most 2). */
   climbRefusals: number;
-  /** Foreman only: the model of the latest single builder launch (null after a tasks/chain one), for the climb refusal. */
-  lastBuilderModel: string | null;
+  /** Foreman only: per-item FAIL counts of reviewer runs (ladder.reviewerClimb, reviewerclimb.ts). */
+  reviewerFails: ReviewerFails;
   /** Foreman only: reviewer verdicts with the HEAD they covered, newest last, at most 50 (reviews.ts; the PR gate reads it). */
   reviews: ReviewRecord[];
   /** Pending HEAD reads of `reviews`; the PR gate waits for it. */
@@ -352,7 +353,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       triageHint: "",
       finishRefusals: 0,
       climbRefusals: 0,
-      lastBuilderModel: null,
+      reviewerFails: new ReviewerFails(),
       reviews: [],
       reviewSync: Promise.resolve(),
       reviewMarked: new Set(),
@@ -865,6 +866,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
           s.ladder.onRunEnd(runEndOf(data));
+          if (!s.isChild) s.reviewerFails.onRun(runId, reviewerTextsOfRunEnd(data), boundLedger(s.markerDir, s.id));
           if (!s.isChild) s.brief.onRunEnd(runEndOf(data), s.launchedRoles.get(runId));
           for (const step of stepsOfRunEnd(data)) s.steps[step]++;
           const verdicts = reviewVerdictsOfRunEnd(data);
@@ -977,6 +979,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let kind: LaunchKind | undefined;
       let climbs: Climb[] = [];
       let ladderRoles: Record<string, Json> | undefined;
+      let reviewerClimbs: ReviewerClimb[] = [];
+      let reviewerTraces: Record<string, unknown>[] = [];
       if (event.toolName === "subagent") {
         // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
         stripBinding(input);
@@ -1054,6 +1058,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           }
           climbs = lp.climbs;
           ladderRoles = resolution.roles;
+          // ladder.reviewerClimb (reviewerclimb.ts): the reviewer's diff is taken here, before its model is picked; the facts reuse it.
+          const rc = await planReviewerClimbs(input, resolution.roles, { config: s.config.config, live: s.ladder.live, fails: s.reviewerFails, diffOf: async (e) => (await reviewFacts.diffOf(e, input, ctx.cwd)).diff });
+          reviewerClimbs = rc.climbs;
+          reviewerTraces = rc.traces;
         }
         const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking") });
         if (!s.isChild && actionOf(input) === null) {
@@ -1064,6 +1072,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             s.trace?.emit({ event: "launch_refused", reason: "rank_policy", policy: no.policy, foreman: no.foreman, requested: no.requested });
             return { block: true, reason: no.message };
           }
+          // The security rung is explicit config: written after the rank check (docs/ladder.md).
+          applySecurityRungs(reviewerClimbs, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
         }
         for (const o of launched.overrides) s.trace?.emit({ event: "model_override", role: o.role, model: o.model, requested: o.requested });
         for (const n of launched.notices) s.trace?.emit({ event: "strong_unmapped", role: n.role, model: n.model, tier: s.ceremony.tier });
@@ -1149,15 +1159,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         setCeremony(s, onStrongLaunch(s.ceremony, climbs.map((c) => c.reason)));
         if (s.ceremony.tier !== was) s.trace?.emit({ event: "triage_escalated", from: was, to: s.ceremony.tier, reason: "strong" });
       }
+      if (event.toolName === "subagent") for (const r of [...reviewerTraces, ...reviewerClimbs.map((c) => c.trace)]) s.trace?.emit(r);
+      // The live rung of every launched role (ladder.ts LadderState.live): single, tasks, chain and parallel.
+      if (event.toolName === "subagent" && ladderRoles) s.ladder.noteLaunched(input);
       let limits: LadderLimits | undefined;
       const single = event.toolName === "subagent" && !s.isChild ? singleLaunchRole(input) : null;
       if (single && ladderRoles) {
         const bottom = onBottomRung(ladderRoles, single, input.model);
-        if (single === "builder") s.lastBuilderModel = typeof input.model === "string" ? input.model : null;
         const p = s.configProvider ?? ctx.model?.provider;
         s.ladder.onLaunch(event.toolCallId, single, bottom);
         limits = { bottom, maxTurns: childMaxTurns(s.config.config, p, single), ...(bottom ? { strongAbove: strongAbove(s.config.config, p, single) } : {}) };
-      } else if (ladderRoles && !single && launchRoles(s, input).includes("builder")) s.lastBuilderModel = null;
+      }
       if (event.toolName === "subagent") {
         const b = recordLaunchUsage(s, ctx, input, kind, limits);
         if (!s.isChild) s.widget.runs.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null });
@@ -1636,11 +1648,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     };
   }
 
-  /** The builder's review_fail climb is on and its latest single launch ran on its bottom rung. */
+  /** The builder's review_fail climb is on and its live rung (latest launch, any path) is the bottom one; on the top rung the valve applies. */
   async function builderClimbOpen(s: Session, ctx: ExtensionContext): Promise<boolean> {
-    if (!s.lastBuilderModel) return false;
+    const live = s.ladder.live.get("builder");
+    if (!live) return false;
     const r = await currentRoles(s, ctx);
-    return strongOnRevision(s.config.config, r.provider, "builder") && onBottomRung(r.roles, "builder", s.lastBuilderModel);
+    return strongOnRevision(s.config.config, r.provider, "builder") && onBottomRung(r.roles, "builder", live);
   }
 
   /** ceremony.required.<tier> as it applies to this session (trivial.ts effectiveRequired). */
