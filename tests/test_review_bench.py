@@ -233,5 +233,83 @@ class FakeCell(unittest.TestCase):
         self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", rec["env_set"])
 
 
+def _cell(model, rep, verdict, located, diagnosed, fa, secs, usd, clean=False, defects=1):
+    return {"task": "t", "model": model, "repeat": rep, "secs": secs, "usd": usd,
+            "score": {"clean": clean, "verdict": verdict, "located": located, "diagnosed": diagnosed,
+                      "false_alarms": ["x"] * fa, "defects": defects}}
+
+
+class Policies(unittest.TestCase):
+    def test_nearest_rank_and_stats_on_synthetic_units(self):
+        self.assertEqual([rb.nearest_rank(list(range(1, 11)), p) for p in (50, 90, 100)], [5, 9, 10])
+        self.assertIsNone(rb.nearest_rank([], 90))
+        a1, a2 = _cell("a", 1, "fail", ["d1"], [], 1, 10, 0.1), _cell("b", 1, "pass", [], ["d1"], 0, 30, 0.5)
+        b1 = _cell("a", 2, "pass", [], [], 0, 20, 0.1, clean=True, defects=0)
+        c1 = _cell("a", 3, "fail", [], [], 2, 40, 0.1, clean=True, defects=0)
+        s = rb.policy_stats([{"cells": [a1, a2], "stop": 2}, {"cells": [b1], "stop": 1}, {"cells": [c1], "stop": "exhausted"}])
+        self.assertEqual((s["cells"], s["located"], s["diagnosed"], s["total"]), (3, 1, 1, 1))  # union over rungs
+        self.assertEqual((s["fa_seeded"], s["fa_clean"], s["seeded"], s["clean"]), (1, 2, 1, 2))
+        self.assertAlmostEqual(s["usd"], 0.8)
+        self.assertEqual((s["median"], s["p90"], s["hist"]), (40, 40, {"r2": 1, "r1": 1, "ex": 1}))
+
+    def test_table_marks_climb_rows_as_composed(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, str(tmp), True)
+        out = tmp / "run"
+        (out / "cells").mkdir(parents=True)
+        (out / "policies" / "x").mkdir(parents=True)
+        truth = {"clean": False, "defects": [dict(TRUTH["defects"][0])]}
+        for model, text in (("p/a", "VERDICT: FAIL\n1. FAIL app/client.py:38 logs the bearer token"), ("p/b", "VERDICT: PASS")):
+            rec = {"task": "t", "model": model, "repeat": 1, "status": "ok", "secs": 5, "usd": 0.25, "final_text": text,
+                   "ground_truth": truth, "files": FILES}
+            (out / "cells" / (rb.cell_name("t", model, 1) + ".json")).write_text(json.dumps(rec), "utf-8")
+        pol = {"policy": rb.climb_policy(["p/a", "p/b"]), "task": "t", "repeat": 1, "stop_rung": 2,
+               "rungs": [{"cell": rb.cell_name("t", "p/a", 1)}, {"cell": rb.cell_name("t", "p/b", 1)}]}
+        (out / "policies" / "x" / "t__r1.json").write_text(json.dumps(pol), "utf-8")
+        table = rb.render_table(out)
+        self.assertIn("| single:p/a | run | 1 | 1/1 (100%) | 1/1 (100%) | 0 |", table)
+        self.assertIn("| climb:a\u2192b | composed from cached rungs | 1 | 1/1 (100%) | 1/1 (100%) | 0 | 0/1 | 0/0 | 0.500 | 0.500 | 10 | 10 | r2:1 |", table)
+        self.assertIn("composed from cached single-model rung cells", table)
+
+    def test_mode_flags(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(rb.main(["--tasks", str(SAMPLES), "--mode", "climb"]), 2)
+            self.assertEqual(rb.main(["--tasks", str(SAMPLES), "--rungs", "a/x,a/y"]), 2)
+        self.assertIn("--rungs", err.getvalue())
+
+
+@unittest.skipUnless(HAVE_TOOLS and pi_cli(), "needs node, git and the Pi CLI")
+class FakeClimb(unittest.TestCase):
+    RUNGS = ["foreman-fake/reviewer", "foreman-fake/senior-reviewer"]
+    FAIL = "VERDICT: FAIL\n1. FAIL reports/store.py:25 path traversal: ../ segments escape the root"
+    PASS = "VERDICT: PASS\n1. PASS ok"
+
+    def climb(self, first, second):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, str(tmp), True)
+        script = tmp / "script.json"
+        script.write_text(json.dumps({m.split("/")[1]: {"review-bench": [{"text": x}]} for m, x in zip(self.RUNGS, (first, second))}), "utf-8")
+        bench = rb.Bench(tmp / "out", [SAMPLES / "py-path-serve"], self.RUNGS, repeats=1, timeout=120, work=tmp / "work",
+                         pi_cli=pi_cli(), fake_script=script, prices=fb.load_prices(), log=lambda s: None, mode="climb")
+        bench.cells_dir.mkdir(parents=True)
+        self.assertEqual(bench.run_chain("py-path-serve", 1), "done")
+        return bench, json.loads(bench.policy_path("py-path-serve", 1).read_text("utf-8"))
+
+    def test_located_first_rung_climbs_to_the_second(self):
+        bench, rec = self.climb(self.FAIL, self.PASS)
+        self.assertEqual((rec["policy"], rec["stop_rung"], [r["located_count"] for r in rec["rungs"]]),
+                         ("climb:reviewer\u2192senior-reviewer", 2, [1, 0]))
+        cells = [json.loads(bench.cell_path("py-path-serve", m, 1).read_text("utf-8")) for m in self.RUNGS]
+        self.assertAlmostEqual(rec["secs"], sum(c["secs"] for c in cells), places=1)
+        self.assertAlmostEqual(rec["usd"] or 0, sum(c["usd"] or 0 for c in cells), places=5)
+        self.assertEqual(rec["rung_secs"], [c["secs"] for c in cells])
+
+    def test_clean_first_rung_never_runs_the_second(self):
+        bench, rec = self.climb(self.PASS, self.FAIL)
+        self.assertEqual((rec["stop_rung"], len(rec["rungs"])), (1, 1))
+        self.assertFalse(bench.cell_path("py-path-serve", self.RUNGS[1], 1).exists())
+
+
 if __name__ == "__main__":
     unittest.main()

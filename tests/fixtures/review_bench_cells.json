@@ -1,0 +1,357 @@
+[
+ {
+  "name": "fail-located-diagnosed",
+  "final_text": "VERDICT: FAIL\n1. PASS ok\n2. FAIL apiclient/client.py:38 the warning logs the bearer token\nMissing: none",
+  "ground_truth": {
+   "clean": false,
+   "defects": [
+    {
+     "id": "d1",
+     "file": "apiclient/client.py",
+     "lines": [
+      38,
+      39
+     ],
+     "class": "secret-log",
+     "description": "The retry warning logs the full request headers, including the Authorization bearer token."
+    }
+   ]
+  },
+  "files": [
+   "apiclient/client.py",
+   "tests/test_client.py"
+  ],
+  "expected": {
+   "scorer": 3,
+   "verdict": "fail",
+   "located": [
+    "d1"
+   ],
+   "diagnosed": [
+    "d1"
+   ],
+   "missed": [],
+   "false_alarms": [],
+   "process": 0,
+   "notes": 0,
+   "defects": 1,
+   "clean": false
+  }
+ },
+ {
+  "name": "fail-line-only",
+  "final_text": "VERDICT: FAIL\n2. FAIL apiclient/client.py:41 wrong",
+  "ground_truth": {
+   "clean": false,
+   "defects": [
+    {
+     "id": "d1",
+     "file": "apiclient/client.py",
+     "lines": [
+      38,
+      39
+     ],
+     "class": "secret-log",
+     "description": "The retry warning logs the full request headers, including the Authorization bearer token."
+    }
+   ]
+  },
+  "files": [
+   "apiclient/client.py",
+   "tests/test_client.py"
+  ],
+  "expected": {
+   "scorer": 3,
+   "verdict": "fail",
+   "located": [
+    "d1"
+   ],
+   "diagnosed": [],
+   "missed": [],
+   "false_alarms": [],
+   "process": 0,
+   "notes": 0,
+   "defects": 1,
+   "clean": false
+  }
+ },
+ {
+  "name": "fail-negated",
+  "final_text": "VERDICT: FAIL\n2. FAIL apiclient/client.py:38 is not a token leak, just noisy",
+  "ground_truth": {
+   "clean": false,
+   "defects": [
+    {
+     "id": "d1",
+     "file": "apiclient/client.py",
+     "lines": [
+      38,
+      39
+     ],
+     "class": "secret-log",
+     "description": "The retry warning logs the full request headers, including the Authorization bearer token."
+    }
+   ]
+  },
+  "files": [
+   "apiclient/client.py",
+   "tests/test_client.py"
+  ],
+  "expected": {
+   "scorer": 3,
+   "verdict": "fail",
+   "located": [
+    "d1"
+   ],
+   "diagnosed": [],
+   "missed": [],
+   "false_alarms": [],
+   "process": 0,
+   "notes": 0,
+   "defects": 1,
+   "clean": false
+  }
+ },
+ {
+  "name": "pass-lists-defect",
+  "final_text": "VERDICT: PASS\n1. PASS ok\n- apiclient/client.py:38 logs the bearer token",
+  "ground_truth": {
+   "clean": false,
+   "defects": [
+    {
+     "id": "d1",
+     "file": "apiclient/client.py",
+     "lines": [
+      38,
+      39
+     ],
+     "class": "secret-log",
+     "description": "The retry warning logs the full request headers, including the Authorization bearer token."
+    }
+   ]
+  },
+  "files": [
+   "apiclient/client.py",
+   "tests/test_client.py"
+  ],
+  "expected": {
+   "scorer": 3,
+   "verdict": "pass",
+   "located": [],
+   "diagnosed": [],
+   "missed": [
+    "d1"
+   ],
+   "false_alarms": [],
+   "process": 0,
+   "notes": 0,
+   "defects": 1,
+   "clean": false
+  }
+ },
+ {
+  "name": "fail-defects-section",
+  "final_text": "VERDICT: FAIL\n1. FAIL. Defects:\n- reports/store.py:25 path traversal via ../ segments\n- tests/test_store.py:3 weak assert\n- no tests were added for the change",
+  "ground_truth": {
+   "clean": false,
+   "defects": [
+    {
+     "id": "d1",
+     "file": "reports/store.py",
+     "lines": [
+      25,
+      25
+     ],
+     "class": "path-traversal",
+     "description": "ReportStore.read joins the client-given subpath onto the root with os.path.join and never checks containment, so '../' segments or an absolute path read files outside the root."
+    }
+   ]
+  },
+  "files": [
+   "reports/store.py",
+   "tests/test_store.py"
+  ],
+  "expected": {
+   "scorer": 3,
+   "verdict": "fail",
+   "located": [
+    "d1"
+   ],
+   "diagnosed": [
+    "d1"
+   ],
+   "missed": [],
+   "false_alarms": [
+    "- tests/test_store.py:3 weak assert"
+   ],
+   "process": 1,
+   "notes": 0,
+   "defects": 1,
+   "clean": false
+  }
+ },
+ {
+  "name": "fail-basename-ambiguous",
+  "final_text": "VERDICT: FAIL\n2. FAIL store.py:25 reads outside the root",
+  "ground_truth": {
+   "clean": false,
+   "defects": [
+    {
+     "id": "d1",
+     "file": "reports/store.py",
+     "lines": [
+      25,
+      25
+     ],
+     "class": "path-traversal",
+     "description": "ReportStore.read joins the client-given subpath onto the root with os.path.join and never checks containment, so '../' segments or an absolute path read files outside the root."
+    }
+   ]
+  },
+  "files": [
+   "reports/store.py",
+   "tests/test_store.py",
+   "lib/store.py"
+  ],
+  "expected": {
+   "scorer": 3,
+   "verdict": "fail",
+   "located": [],
+   "diagnosed": [],
+   "missed": [
+    "d1"
+   ],
+   "false_alarms": [
+    "2. FAIL store.py:25 reads outside the root"
+   ],
+   "process": 0,
+   "notes": 0,
+   "defects": 1,
+   "clean": false
+  }
+ },
+ {
+  "name": "clean-false-alarm",
+  "final_text": "VERDICT: FAIL\n1. FAIL textstats/words.py:10 bad name\n2. FAIL harmless, not blocking: see below\n3. FAIL tests do not run",
+  "ground_truth": {
+   "clean": true,
+   "defects": []
+  },
+  "files": [
+   "tests/test_words.py",
+   "textstats/words.py"
+  ],
+  "expected": {
+   "scorer": 3,
+   "verdict": "fail",
+   "located": [],
+   "diagnosed": [],
+   "missed": [],
+   "false_alarms": [
+    "1. FAIL textstats/words.py:10 bad name"
+   ],
+   "process": 1,
+   "notes": 1,
+   "defects": 0,
+   "clean": true
+  }
+ },
+ {
+  "name": "clean-pass",
+  "final_text": "VERDICT: PASS\n1. PASS ok\nMissing: none",
+  "ground_truth": {
+   "clean": true,
+   "defects": []
+  },
+  "files": [
+   "tests/test_words.py",
+   "textstats/words.py"
+  ],
+  "expected": {
+   "scorer": 3,
+   "verdict": "pass",
+   "located": [],
+   "diagnosed": [],
+   "missed": [],
+   "false_alarms": [],
+   "process": 0,
+   "notes": 0,
+   "defects": 0,
+   "clean": true
+  }
+ },
+ {
+  "name": "no-verdict",
+  "final_text": "looks fine to me",
+  "ground_truth": {
+   "clean": false,
+   "defects": [
+    {
+     "id": "d1",
+     "file": "apiclient/client.py",
+     "lines": [
+      38,
+      39
+     ],
+     "class": "secret-log",
+     "description": "The retry warning logs the full request headers, including the Authorization bearer token."
+    }
+   ]
+  },
+  "files": [
+   "apiclient/client.py",
+   "tests/test_client.py"
+  ],
+  "expected": {
+   "scorer": 3,
+   "verdict": null,
+   "located": [],
+   "diagnosed": [],
+   "missed": [
+    "d1"
+   ],
+   "false_alarms": [],
+   "process": 0,
+   "notes": 0,
+   "defects": 1,
+   "clean": false
+  }
+ },
+ {
+  "name": "missing-path",
+  "final_text": "VERDICT: FAIL\n4. Missing: reports/store.py containment check",
+  "ground_truth": {
+   "clean": false,
+   "defects": [
+    {
+     "id": "d1",
+     "file": "reports/store.py",
+     "lines": [
+      25,
+      25
+     ],
+     "class": "path-traversal",
+     "description": "ReportStore.read joins the client-given subpath onto the root with os.path.join and never checks containment, so '../' segments or an absolute path read files outside the root."
+    }
+   ]
+  },
+  "files": [
+   "reports/store.py",
+   "tests/test_store.py"
+  ],
+  "expected": {
+   "scorer": 3,
+   "verdict": "fail",
+   "located": [],
+   "diagnosed": [],
+   "missed": [
+    "d1"
+   ],
+   "false_alarms": [],
+   "process": 0,
+   "notes": 0,
+   "defects": 1,
+   "clean": false
+  }
+ }
+]

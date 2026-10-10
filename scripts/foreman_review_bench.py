@@ -51,9 +51,12 @@ REPO = HERE.parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import foreman_bench  # noqa: E402
+from foreman_findings import (  # noqa: E402,F401 - re-exported: the extraction half of scorer v3 lives there
+    CLASSES, CLASS_SYNONYMS, LINE_SLACK, _SYN, VERDICT_RE, ITEM_RE, MISSING_RE, DEFECTS_RE, OVERALL_RE, BULLET_RE,
+    NONE_RE, PATHTOKEN_RE, GENERIC_LINE_RE, NEGATION, PROCESS_RE, NOTE_RE, XREF_RE, NOTE_HEAD_RE, SYMBOL_RE, _NUM,
+    _indent, _line_spans, _negated, _norm, _unique, _has_symbol, fail_evidence, fail_units, items_of, names_file,
+    patch_files, symbols_of, verdict_of, located_findings, finding_id)
 
-CLASSES = ("auth", "shell-injection", "path-traversal", "secret-log", "off-by-one", "resource-leak", "race",
-           "swallowed-error", "insecure-default")
 DEFAULT_MODELS = ("claude-bridge/claude-haiku-5-5:medium", "claude-bridge/claude-sonnet-5-5:medium",
                   "claude-bridge/claude-opus-5-5:medium")
 BRIDGE_PROVIDER = "claude-bridge"
@@ -70,7 +73,6 @@ REVIEWER_AGENT = REPO / "agents" / "reviewer.md"
 FAKE_TAG = "[[replay:review-bench]]"
 # Words that must never reach the reviewer (its prompt, env, cwd or file names).
 FORBIDDEN = ("seeded", "ground_truth")
-LINE_SLACK = 3
 
 # The foreman's task text: fixed and neutral, followed by the owner's prompt.md.
 TASK_TEMPLATE = (
@@ -82,202 +84,11 @@ TASK_TEMPLATE = (
     "3. The tests pass; no test is weakened, removed or skipped.\n\n"
     "Owner's task:\n{prompt}")
 
-# Class words (regex, case-insensitive, matched at a word start): a FAIL unit naming the defect's file and one of
-# its class's words locates it, and diagnoses it when the word is not negated (see judge).
-CLASS_SYNONYMS = {
-    "auth": [r"auth", r"permission", r"access control", r"privilege", r"bypass", r"unauthori[sz]ed",
-             r"pass(?:es|ed)? (?:the )?(?:validation|check)", r"accepts? (?:\w+ ){0,2}characters?"],
-    "shell-injection": [r"shell", r"inject", r"unquoted", r"unescaped", r"quot(?:e|ing)", r"metachar",
-                        r"execsync", r"sh -c", r"command line"],
-    "path-traversal": [r"travers", r"\.\./", r"\.\.\\", r"escape", r"outside (?:the|of)(?! ledger)", r"symlink",
-                       r"canonical", r"absolute path", r"sanitiz"],
-    "secret-log": [r"secret", r"token", r"credential", r"password", r"bearer", r"authorization header",
-                   r"api key", r"leak", r"redact", r"sensitive"],
-    "off-by-one": [r"off[- ]by[- ]one", r"fencepost", r"boundar", r"inclusive", r"exclusive", r"one too",
-                   r"out of (?:range|bounds)", r"last (?:element|item|byte|line)", r"first (?:element|item)",
-                   r"one (?:\w+ )?too (?:far|short|early|late|many|few|high|low)", r"one[- ]\w+ (?:gap|short)",
-                   r"one \w+ short", r"[a-z_]\w*\)? ?[-+] ?1(?![\w.])"],
-    "resource-leak": [r"leak", r"not closed", r"never closed", r"unclosed", r"close", r"defer", r"handle",
-                      r"descriptor", r"not released", r"dispose", r"unbounded", r"grows? without (?:bound|limit)",
-                      r"never (?:freed|cleared|drained|trimmed|stop)",
-                      r"stale(?! (?:comments?|docs?|documentation|readme|todos?|links?|branch(?:es)?)\b)",
-                      r"(?:never|not) (?:\w+ )?(?:clear(?:s|ed)?|reset)\b", r"keeps? its (?:old|last|previous)"],
-    "race": [r"race", r"racy", r"lock", r"mutex", r"concurren", r"thread[- ]safe", r"atomic", r"synchroni",
-             r"toctou", r"goroutine", r"simultaneous"],
-    "swallowed-error": [r"swallow", r"ignor", r"discard", r"silent", r"unchecked", r"not checked",
-                        r"error handling", r"lost error", r"unwrap_or", r"except(?:ion)?: pass", r"suppress",
-                        r"nothing (?:is |gets )?logged", r"(?:deletes?|removes?|drops?) the (?:\w+ ){0,2}error log",
-                        r"error log (?:\w+ ){0,2}(?:was |is )?(?:removed|deleted|dropped|gone)"],
-    "insecure-default": [r"insecure", r"default", r"tls", r"verif", r"permissive", r"world[- ]", r"0o?777",
-                         r"0o?666", r"plaintext", r"debug"],
-}
-_SYN = {c: re.compile(r"(?<![\w])(?:%s)" % "|".join(v), re.I) for c, v in CLASS_SYNONYMS.items()}
 
 SCORER_VERSION = 3
-VERDICT_RE = re.compile(r"\b(?:overall\s+)?verdict\s*\**\s*:\s*\**\s*(pass|fail|approve|block)\b", re.I)
-ITEM_RE = re.compile(r"^\s*(?:[-*]\s+)?\**\s*(\d+)\.\s*(?:\d+\.\s*)?\**\s*(PASS|FAIL)\b\**[.:]?\s*(.*)", re.M)
-MISSING_RE = re.compile(r"^\W*(?:\d+\.\s*)?\W*missing\s*\**\s*:\s*(.*)", re.I)
-DEFECTS_RE = re.compile(r"^\W*(?:\d+\.\s*)?\W*(?:other\s+)?defects\b([^:`/]*?)(?::\s*(.*)|\**\s*)$", re.I)
-OVERALL_RE = re.compile(r"^\W*(?:\d+\.\s*)?\W*(?:overall|summary|verdict)\b", re.I)
-BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)]|[a-z][.)])\s")
-NONE_RE = re.compile(r"^\W*(?:none|n/a|nothing|no (?:other |further |additional |new )?(?:\w+[ -])?"
-                     r"(?:defects?|issues?|problems?)\b)", re.I)
-PATHTOKEN_RE = re.compile(r"[\w./\\-]*\w\.[A-Za-z][A-Za-z0-9]{0,5}(?![\w])")
-# Line references: `file:N`, `file:~N`, `file:LN`, `file ~N`, `file line(s) N-M`; on a line naming the file but
-# not attaching a number to it, `line(s) N`, `~N`, `~LN` or `LN` anywhere on that line.
-_NUM = r"~?L?(\d+)(?:\s*[-–]\s*~?L?(\d+))?"
-GENERIC_LINE_RE = re.compile(r"(?:\blines?\s+~?L?|~L?|\bL)(\d+)(?:\s*[-–]\s*~?L?(\d+))?", re.I)
-NEGATION = ("not", "no", "isn't", "without", "never")
-# A FAIL item that locates no plant and only concerns tests not added or not run is a process item, not an FA.
-PROCESS_RE = re.compile(
-    r"\b(?:no|missing|without|lacks?|adds? no|did not add|does not add|doesn't add)\s+(?:new\s+|regression\s+|unit\s+"
-    r"|the\s+|a\s+|any\s+|required\s+)*tests?\b|\btests?\b[^.]{0,40}\b(?:not|never)\s+(?:been\s+)?(?:added|run|written)"
-    r"|\b(?:did not|didn't|could not|couldn't|cannot|can't|not)\s+run\s+(?:the\s+|any\s+)?(?:tests?|`?(?:go|cargo|npm)"
-    r" test)|\b(?:requires?|required|asks? for|asked for|needs?)\s+(?:an?\s+|any\s+)?(?:new\s+|regression\s+|unit\s+)*"
-    r"tests?\b|\btests?\b[^.]{0,40}\b(?:is|are) missing\b|\bha(?:s|ve) no tests?\b"
-    r"|\bneither\b[^.]{0,40}\bha(?:s|ve) an? tests?\b", re.I)
-# A FAIL unit that marks itself as a note (not blocking, harmless, no signature changed) is a note, not an FA.
-NOTE_RE = re.compile(r"\b(?:not blocking|non-?blocking|harmless|informational|no (?:\w+ ){0,2}signatures? (?:is |was |were )?"
-                     r"changed|signatures? (?:is |are )?unchanged|surface is unchanged)", re.I)
-# ... and so is a unit that only points at another finding (`see the defect below`) without naming a file, and one
-# that reports callers or signatures, or rules on the diff-scan facts (agents/reviewer.md).
-XREF_RE = re.compile(r"\bsee (?:the )?(?:(?:defects?|items?|findings?) (?:below|above|\d)|below|above)\b", re.I)
-NOTE_HEAD_RE = re.compile(r"^\W*(?:facts? (?:to rule on|\d)|callers?\b|(?:changed |exported )*signatures?\b)", re.I)
-# Code-like names in a defect description (snake_case, camelCase, Name()), matched as the defect's symbol.
-SYMBOL_RE = re.compile(r"\b(?:[A-Za-z]\w*_\w+|[a-z]+[A-Z]\w*|[A-Z][a-z0-9]+[A-Z]\w*|[A-Z]{2,}[a-z]\w*)\b|\b[A-Za-z_]\w*(?=\(\))")
 
 
 # ------------------------------------------------------------------ parsing and scoring
-
-def verdict_of(text):
-    """Twin of rounds.ts verdictOf: any fail/block wins, else pass/approve, else None."""
-    found = [m.lower() for m in VERDICT_RE.findall(text or "")]
-    if any(v in ("fail", "block") for v in found):
-        return "fail"
-    return "pass" if found else None
-
-
-def items_of(text):
-    """Per-item lines `N. PASS|FAIL <evidence>` (reviewmarks.ts item shape, markdown bullets and bold allowed)."""
-    out = []
-    for m in ITEM_RE.finditer(text or ""):
-        line = (text[m.start():].split("\n", 1)[0]).strip()
-        out.append({"n": int(m.group(1)), "verdict": m.group(2).upper(), "line": line})
-    return out
-
-
-def _indent(raw):
-    return len(raw) - len(raw.lstrip())
-
-
-def fail_units(text):
-    """The review's FAIL evidence as units, each a list of lines: a `N. FAIL` item with its sub-bullets, one bullet
-    group (a top-level bullet with its deeper lines) of a defects section (`Defects ...:` or `N. FAIL. Defects ...`),
-    or a `Missing:` line that cites a path. PASS items and their sub-bullets, context and summary prose are never
-    evidence."""
-    units, cur, mode, top = [], None, None, None
-    for raw in (text or "").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        m = ITEM_RE.match(raw)
-        if m:
-            cur, top = None, None
-            rest = m.group(3)
-            if m.group(2).upper() == "PASS":
-                mode = "pass"
-            elif DEFECTS_RE.match(rest):
-                mode = "defects"
-                inline = DEFECTS_RE.match(rest).group(2) or ""
-                if re.search(r"\w", inline) and not NONE_RE.match(inline):
-                    cur = [line]
-                    units.append(cur)
-            else:
-                mode, cur = "fail", [line]
-                units.append(cur)
-            continue
-        m = MISSING_RE.match(line)
-        if m:
-            mode, cur = None, None
-            if PATHTOKEN_RE.search(m.group(1)) and not NONE_RE.match(m.group(1)):
-                units.append([line])
-            continue
-        m = DEFECTS_RE.match(line)
-        if m:
-            mode, cur, top = "defects", None, None
-            if re.search(r"\w", m.group(2) or "") and not NONE_RE.match(m.group(2)):
-                cur = [line]
-                units.append(cur)
-            continue
-        if OVERALL_RE.match(line) or VERDICT_RE.search(line):
-            mode, cur = None, None
-            continue
-        nested = _indent(raw) > 0 or BULLET_RE.match(raw)
-        if not nested:
-            mode, cur = None, None  # unindented prose ends an item or section
-        elif mode == "fail":
-            cur.append(line)
-        elif mode == "defects":
-            if BULLET_RE.match(raw) and (top is None or _indent(raw) <= top):
-                top = _indent(raw) if top is None else top
-                if NONE_RE.match(BULLET_RE.sub("", raw)):
-                    cur = None
-                    continue
-                cur = [line]
-                units.append(cur)
-            elif cur is not None:
-                cur.append(line)
-    return units
-
-
-def fail_evidence(text):
-    """FAIL evidence units as text (one string per unit, lines joined)."""
-    return ["\n".join(u) for u in fail_units(text)]
-
-
-def _norm(p):
-    return p.replace("\\", "/")
-
-
-def _unique(files, pred):
-    return sum(1 for f in files if pred(_norm(f))) <= 1
-
-
-def names_file(text, rel, files=()):
-    """True when `text` names repo file `rel`. A token with a directory must be the path (or a path ending in it, or
-    a directory-bounded tail of it that is unique among `files`); a bare basename counts only when it is unique among
-    `files` (the diff's files)."""
-    rel = _norm(rel)
-    base = rel.rsplit("/", 1)[-1]
-    for tok in PATHTOKEN_RE.findall(_norm(text)):
-        tok = re.sub(r"^(?:\./)+", "", tok)
-        if "/" in tok:
-            if tok == rel or tok.endswith("/" + rel):
-                return True
-            if rel.endswith("/" + tok) and _unique(files, lambda f: f == tok or f.endswith("/" + tok)):
-                return True
-        elif tok == base and _unique(files, lambda f: f.rsplit("/", 1)[-1] == base):
-            return True
-    return False
-
-
-def _line_spans(line, rel):
-    """Line spans `line` gives for `rel`: numbers attached to its basename, else the line's generic references."""
-    text = _norm(line)
-    base = re.escape(_norm(rel).rsplit("/", 1)[-1])
-    att = re.findall(base + r"`?(?::\s*|\s+(?=~|L\d|lines?\s)(?:lines?\s+)?)" + _NUM, text)
-    found = att or GENERIC_LINE_RE.findall(text)
-    return [(int(a), int(b or a)) for a, b in found]
-
-
-def _negated(text, start):
-    clause = re.split(r"[.;:!?]\s", text[:start])[-1]
-    words = re.findall(r"[\w']+", clause.lower())[-3:]
-    return any(w in NEGATION or w.endswith("n't") for w in words)
-
-
-def symbols_of(defect):
-    return sorted(set(m.group(0) for m in SYMBOL_RE.finditer(defect.get("description") or "")))
 
 
 def judge(unit, defect, files=()):
@@ -295,9 +106,6 @@ def judge(unit, defect, files=()):
                   for lo, hi in _line_spans(ln, defect["file"]))
     return bool(words) or by_line or _has_symbol(text, defect), diagnosed
 
-
-def _has_symbol(text, defect):
-    return any(re.search(r"(?<![\w])" + re.escape(s) + r"(?![\w])", text) for s in symbols_of(defect))
 
 
 def score(text, truth, files=()):
@@ -338,15 +146,6 @@ def score(text, truth, files=()):
 def _is_note(unit, text):
     return bool(NOTE_RE.search(text) or NOTE_HEAD_RE.match(unit[0])
                 or (XREF_RE.search(text) and not PATHTOKEN_RE.search(text)))
-
-
-def patch_files(patch_text):
-    """Repo-relative paths a unified diff touches."""
-    out = set()
-    for m in re.finditer(r"^(?:\+\+\+|---) (?:[ab]/)?(\S+)", patch_text or "", re.M):
-        if m.group(1) != "/dev/null":
-            out.add(_norm(m.group(1)))
-    return sorted(out)
 
 
 # ------------------------------------------------------------------ task dirs
@@ -424,6 +223,14 @@ def provider_of(model):
 
 def cell_name(task, model, rep):
     return "%s__%s__r%d" % (task, model_slug(model), rep)
+
+
+def climb_policy(rungs):
+    return "climb:" + "\u2192".join(bare_model(m) for m in rungs)
+
+
+def climb_slug(rungs):
+    return model_slug("climb-" + "-".join(bare_model(m) for m in rungs))
 
 
 def plan_cells(tasks, models, repeats):
@@ -640,10 +447,11 @@ class Bench:
     """One review-bench run: tasks x models x repeats into `out`."""
 
     def __init__(self, out, tasks, models, repeats=2, jobs=3, token_cap=None, timeout=900, work=None,
-                 pi_cli=None, bridge=None, token=None, fake_script=None, prices=None, log=None):
+                 pi_cli=None, bridge=None, token=None, fake_script=None, prices=None, log=None, mode="single"):
         self.out = Path(out)
         self.tasks = {Path(t).name: Path(t).resolve() for t in tasks}
         self.models, self.repeats, self.jobs = list(models), repeats, max(1, jobs)
+        self.mode = mode  # "climb": `models` are the rungs
         self.token_cap, self.timeout = token_cap, timeout
         self.work = Path(work) if work else Path(tempfile.gettempdir()) / "pf-rb-work" / hashlib.sha1(
             str(self.out.resolve()).encode()).hexdigest()[:10]
@@ -773,7 +581,10 @@ class Bench:
         """Run every missing cell. Exit codes: 0 done, 4 token cap reached, 6 interrupted."""
         self.cells_dir.mkdir(parents=True, exist_ok=True)
         _write_json(self.out / "run.json", {"run": self.out.name, "tasks": sorted(self.tasks), "models": self.models,
-                                            "repeats": self.repeats, "timeout": self.timeout, "work": str(self.work)})
+                                            "repeats": self.repeats, "timeout": self.timeout, "work": str(self.work),
+                                            "mode": self.mode})
+        if self.mode == "climb":
+            return self.run_climb()
         todo = [c for c in plan_cells(sorted(self.tasks), self.models, self.repeats) if not self.cell_path(*c).exists()]
         self.log("review bench: %d cells to run, %d done; work dir %s" % (
             len(todo), len(self.tasks) * len(self.models) * self.repeats - len(todo), self.work))
@@ -816,6 +627,76 @@ class Bench:
         self.log(text)
         return code
 
+    # ---- climb policy: rung cells are ordinary single cells; a policy record composes them
+
+    @property
+    def policy(self):
+        return climb_policy(self.models)
+
+    def policy_path(self, task, rep):
+        return self.out / "policies" / climb_slug(self.models) / ("%s__r%d.json" % (task, rep))
+
+    def run_chain(self, task, rep):
+        """One task x repeat: rung 1, and the next rung on the same diff while a rung has a located finding. Returns
+        "done", "cap" (token cap reached) or "error" (a rung failed to launch); writes the policy record when done."""
+        rungs, stop = [], "exhausted"
+        for i, model in enumerate(self.models, 1):
+            path = self.cell_path(task, model, rep)
+            if not path.exists():
+                if self.token_cap and self.used_tokens() >= self.token_cap:
+                    self.log("review bench: token cap %d reached; stopping (rerun to resume)" % self.token_cap)
+                    return "cap"
+                r = self.run_cell(task, model, rep)
+                s = r.get("score") or {}
+                self.log("%s %s%s" % (cell_name(task, model, rep), r.get("status"), " %s located %d diagnosed %d/%d fa %d %.0fs" % (
+                    s.get("verdict"), len(s.get("located", [])), len(s.get("diagnosed", [])), s.get("defects", 0),
+                    len(s.get("false_alarms", [])), r.get("secs", 0)) if r.get("status") == "ok"
+                    else ": " + _redact(str(r.get("error")), self.token)))
+                if r.get("status") != "ok":
+                    return "error"
+            cell = json.loads(path.read_text("utf-8"))
+            n = len(located_findings(cell.get("final_text") or "", cell_diff_files(cell)))
+            rungs.append({"model": model, "cell": cell_name(task, model, rep), "usd": cell.get("usd"),
+                          "secs": cell.get("secs"), "located_count": n})
+            if not n:
+                stop = i
+                break
+        usds = [r["usd"] for r in rungs if r["usd"] is not None]
+        secs = [r["secs"] or 0 for r in rungs]
+        self.policy_path(task, rep).parent.mkdir(parents=True, exist_ok=True)
+        _write_json(self.policy_path(task, rep), {
+            "policy": self.policy, "task": task, "repeat": rep, "rungs": rungs, "stop_rung": stop,
+            "usd": round(sum(usds), 6) if usds else None, "secs": round(sum(secs), 1), "rung_secs": secs}, self.token)
+        return "done"
+
+    def run_climb(self):
+        chains = [(t, r) for r in range(1, self.repeats + 1) for t in sorted(self.tasks)
+                  if not self.policy_path(t, r).exists()]
+        self.log("review bench: climb %s, %d chain(s) to run, %d done; work dir %s" % (
+            self.policy, len(chains), len(self.tasks) * self.repeats - len(chains), self.work))
+        code = 0
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=self.jobs)
+        try:
+            futs = {pool.submit(self.run_chain, *c): c for c in chains}
+            for f in concurrent.futures.as_completed(futs):
+                try:
+                    res = f.result()
+                except Exception as e:  # noqa: BLE001 - one broken chain must not stop the run
+                    self.log("%s r%d: %s: %s" % (futs[f][0], futs[f][1], type(e).__name__, e))
+                    continue
+                code = 4 if res == "cap" else code
+        except KeyboardInterrupt:
+            for p in list(self.procs):
+                _kill_tree(p)
+            code = 6
+            self.log("review bench: interrupted; rerun to resume")
+        finally:
+            pool.shutdown(wait=code != 6, cancel_futures=True)
+        text = render_table(self.out, self.prices)
+        (self.out / ("review-bench-%s.md" % self.out.name)).write_text(text, "utf-8")
+        self.log(text)
+        return code
+
     def dry_run(self):
         """Validate, prepare one workspace per task (no launch) and print the plan; writes nothing under --out."""
         keep = self.work
@@ -837,8 +718,15 @@ class Bench:
         finally:
             _remove_tree(self.work)
             self.work = keep
-        for c in plan_cells(sorted(self.tasks), self.models, self.repeats):
-            self.log("%-60s %s" % (cell_name(*c), "done" if self.cell_path(*c).exists() else "run"))
+        if self.mode == "climb":
+            self.log("policy %s: a later rung runs on the same diff only when the previous rung has a located finding" % self.policy)
+            for r in range(1, self.repeats + 1):
+                for t in sorted(self.tasks):
+                    self.log("%s r%d: %s" % (t, r, " -> ".join("%s (%s)" % (bare_model(m), "done" if self.cell_path(
+                        t, m, r).exists() else "run") for m in self.models)))
+        else:
+            for c in plan_cells(sorted(self.tasks), self.models, self.repeats):
+                self.log("%-60s %s" % (cell_name(*c), "done" if self.cell_path(*c).exists() else "run"))
         self.log("launch: node <pi cli> -p --mode json --no-session --no-context-files --no-skills -e %s --model <model> "
                  "--tools %s --system-prompt <reviewer> <task>" % (Path(ADAPTER).relative_to(REPO).as_posix(), TOOLS))
         return 1 if problems else 0
@@ -885,6 +773,78 @@ def cell_diff_files(cell, tasks_root=None):
     if patch is not None and patch.is_file():
         return patch_files(patch.read_text("utf-8", "replace"))
     return cell.get("files") or ()
+
+
+def nearest_rank(values, pct):
+    """Nearest-rank percentile of a list (stdlib only); None for an empty list."""
+    v = sorted(values)
+    return v[max(0, math.ceil(pct / 100.0 * len(v)) - 1)] if v else None
+
+
+def policy_stats(units):
+    """Aggregate policy units. A unit is {"cells": [scored cells of the rungs run, in order], "stop": rung index,
+    "exhausted" or None (single model)}. Located / diagnosed are unions over the rungs run; false alarms count every
+    FAIL unit of every rung run that locates no plant."""
+    seeded = [u for u in units if not u["cells"][0]["score"]["clean"]]
+    clean = [u for u in units if u["cells"][0]["score"]["clean"]]
+    union = lambda u, k: set().union(*(set(c["score"][k]) for c in u["cells"]))  # noqa: E731
+    fa = lambda us: sum(len(c["score"]["false_alarms"]) for u in us for c in u["cells"])  # noqa: E731
+    usds = [c["usd"] for u in units for c in u["cells"] if c.get("usd") is not None]
+    secs = [sum(c.get("secs") or 0 for c in u["cells"]) for u in units]
+    hist = {}
+    for u in units:
+        if u["stop"] is not None:
+            k = "ex" if u["stop"] == "exhausted" else "r%d" % u["stop"]
+            hist[k] = hist.get(k, 0) + 1
+    total = sum(u["cells"][0]["score"]["defects"] for u in seeded)
+    return {"cells": len(units), "located": sum(len(union(u, "located")) for u in seeded),
+            "diagnosed": sum(len(union(u, "diagnosed")) for u in seeded), "total": total,
+            "fa_seeded": fa(seeded), "seeded": len(seeded), "fa_clean": fa(clean), "clean": len(clean),
+            "usd": sum(usds) if usds else None, "median": statistics.median(secs) if secs else None,
+            "p90": nearest_rank(secs, 90), "hist": hist}
+
+
+def load_policy_units(out, cells):
+    """{policy: [unit]} from `<out>/policies/*/*.json`, composed from the cached rung cells in `cells` (rescored)."""
+    by_name = {cell_name(c["task"], c["model"], c["repeat"]): c for c in cells}
+    found = {}
+    pdir = Path(out) / "policies"
+    for p in sorted(pdir.glob("*/*.json")) if pdir.is_dir() else []:
+        try:
+            rec = json.loads(p.read_text("utf-8"))
+            rungs = [by_name[r["cell"]] for r in rec["rungs"]]
+        except (OSError, ValueError, KeyError):
+            continue
+        if rungs:
+            found.setdefault(rec["policy"], []).append({"cells": rungs, "stop": rec.get("stop_rung")})
+    return found
+
+
+def render_policies(out, cells):
+    """The Policies section: one row per single model and per climb policy found under `<out>/policies/`."""
+    rows = [("single:" + m, "run", [{"cells": [c], "stop": None} for c in cells if c["model"] == m])
+            for m in sorted({c["model"] for c in cells})]
+    rows += [(name, "composed from cached rungs", units) for name, units in sorted(load_policy_units(out, cells).items())]
+    pct = lambda n, tot: " (%.0f%%)" % (100.0 * n / tot) if tot else ""  # noqa: E731
+    secs = lambda x: "-" if x is None else "%.0f" % x  # noqa: E731
+    lines = ["", "## Policies", "",
+             "| policy | source | cells | located | diagnosed | misses | FA seeded | FA clean | USD | $/diagnosed "
+             "| median s | p90 s | stop rungs |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for name, src, units in rows:
+        s = policy_stats(units)
+        usd = s["usd"]
+        lines.append("| %s | %s | %d | %d/%d%s | %d/%d%s | %d | %d/%d | %d/%d | %s | %s | %s | %s | %s |" % (
+            name, src, s["cells"], s["located"], s["total"], pct(s["located"], s["total"]), s["diagnosed"], s["total"],
+            pct(s["diagnosed"], s["total"]), s["total"] - s["diagnosed"], s["fa_seeded"], s["seeded"], s["fa_clean"],
+            s["clean"], _fmt_usd(usd), _fmt_usd(usd / s["diagnosed"]) if usd is not None and s["diagnosed"] else "-",
+            secs(s["median"]), secs(s["p90"]),
+            " ".join("%s:%d" % kv for kv in sorted(s["hist"].items(), key=lambda kv: (kv[0] == "ex", kv[0]))) or "-"))
+    lines += ["", "cells: task x repeat units (a climb unit is one chain). Located / diagnosed are unions over the rungs "
+              "run; misses are planted defects not diagnosed; FA counts every rung run; USD and seconds sum the rungs "
+              "run; p90 is nearest-rank. stop rungs: where the climb stopped (`r2` = the second rung had no located "
+              "finding, `ex` = exhausted). Climb rows are composed from cached single-model rung cells, not a separate "
+              "run."]
+    return lines
 
 
 def render_table(out, prices=None, tasks_root=None):
@@ -954,6 +914,8 @@ def render_table(out, prices=None, tasks_root=None):
                     c["repeat"], c["score"]["verdict"] or "none", len(c["score"]["located"]),
                     len(c["score"]["diagnosed"]), c["score"]["defects"], len(c["score"]["false_alarms"]),
                     c["score"]["process"]) for c in tc)))
+    if cells:
+        lines += render_policies(out, cells)
     if errors:
         lines += ["", "## Failed launches", ""] + ["- %s %s r%s: %s" % (e.get("task"), e.get("model"), e.get("repeat"),
                                                                        str(e.get("error"))[:200]) for e in errors]
@@ -1006,6 +968,9 @@ def bridge_dir():
 def add_arguments(p):
     p.add_argument("--tasks", required=True, help="a task dir or a folder of task dirs")
     p.add_argument("--models", default=",".join(DEFAULT_MODELS), help="comma-separated provider/model[:thinking]")
+    p.add_argument("--mode", choices=("single", "climb"), default="single",
+                   help="single: every --models entry per cell; climb: --rungs in order, the next only while a rung has a located finding")
+    p.add_argument("--rungs", default=None, help="comma-separated provider/model[:thinking] ladder (required with --mode climb)")
     p.add_argument("--repeats", type=int, default=2)
     p.add_argument("--out", default=None, help="run dir (default ~/.pi-foreman/review-bench/<timestamp>)")
     p.add_argument("--jobs", type=int, default=3, help="parallel launches")
@@ -1021,7 +986,15 @@ def add_table_arguments(p):
     p.add_argument("--tasks", default=None, help="task folder: diff.patch file lists for cells recorded without them")
 
 
+def _safe_stdout():
+    try:
+        sys.stdout.reconfigure(errors="replace")  # policy names use an arrow; a legacy console codepage lacks it
+    except (AttributeError, ValueError):
+        pass
+
+
 def run_args(args):
+    _safe_stdout()
     tasks = find_tasks(args.tasks)
     if not tasks:
         print("review bench: no task dirs under %s" % args.tasks, file=sys.stderr)
@@ -1032,17 +1005,25 @@ def run_args(args):
             print("review bench: %s: %s" % (name, e), file=sys.stderr)
         return 1
     models = [m.strip() for m in args.models.split(",") if m.strip()]
+    if args.mode == "climb":
+        models = [m.strip() for m in (args.rungs or "").split(",") if m.strip()]
+        if len(models) < 2:
+            print("review bench: --mode climb needs --rungs m1,m2[,...] (at least two models)", file=sys.stderr)
+            return 2
+    elif args.rungs:
+        print("review bench: --rungs needs --mode climb", file=sys.stderr)
+        return 2
     out = Path(args.out).expanduser() if args.out else Path.home() / ".pi-foreman" / "review-bench" / time.strftime("%Y%m%d-%H%M%S")
     if any(w in str(out.resolve()).lower() for w in FORBIDDEN):
         print("review bench: --out must not contain %s" % " or ".join(FORBIDDEN), file=sys.stderr)
         return 2
     prices = foreman_bench.load_prices(args.prices)
     bench = Bench(out, tasks, models, repeats=args.repeats, jobs=args.jobs, token_cap=args.token_cap,
-                  timeout=args.timeout, prices=prices, fake_script=os.environ.get("FOREMAN_REVIEW_BENCH_FAKE_SCRIPT"))
+                  timeout=args.timeout, prices=prices, mode=args.mode, fake_script=os.environ.get("FOREMAN_REVIEW_BENCH_FAKE_SCRIPT"))
     bridged = any(provider_of(m) == BRIDGE_PROVIDER for m in models)
     if args.dry_run:
-        print("review bench (dry run): %d task(s), models %s, %d repeat(s), out %s; token source: %s" % (
-            len(tasks), ", ".join(models), args.repeats, out, "FOREMAN_BENCH_OAUTH_TOKEN_FILE" if os.environ.get(
+        print("review bench (dry run): %d task(s), %s %s, %d repeat(s), out %s; token source: %s" % (
+            len(tasks), "rungs" if args.mode == "climb" else "models", ", ".join(models), args.repeats, out, "FOREMAN_BENCH_OAUTH_TOKEN_FILE" if os.environ.get(
                 "FOREMAN_BENCH_OAUTH_TOKEN_FILE") else "FOREMAN_BENCH_OAUTH_TOKEN" if os.environ.get(
                 "FOREMAN_BENCH_OAUTH_TOKEN") else "none" if bridged else "not needed"))
         return bench.dry_run()
@@ -1061,6 +1042,7 @@ def run_args(args):
 
 
 def table_args(args):
+    _safe_stdout()
     text = render_table(args.out, foreman_bench.load_prices(args.prices), args.tasks)
     out = Path(args.out)
     if (out / "cells").is_dir():
