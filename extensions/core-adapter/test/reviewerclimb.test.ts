@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { applyLaunchModels } from "../launchmodel.ts";
-import { applySecurityRungs, defaultSecurityRung, failItemsOf, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd } from "../reviewerclimb.ts";
+import { rankRefusal } from "../ranks.ts";
+import { applySecurityRungs, defaultSecurityRung, failItemsOf, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd } from "../reviewerclimb.ts";
 
 const ROLES = {
   foreman: { model: "p/m-opus", thinking: "high" },
@@ -71,10 +72,15 @@ test("security-shaped diff: the reviewer goes to securityRung, written after the
 });
 
 test("security default rung: next rank above the reviewer's strong rung, else none with a trace", async () => {
-  assert.equal(defaultSecurityRung(RANKS, ROLES), "p/m-opus:high");
-  assert.equal(defaultSecurityRung({}, ROLES), null);
+  const withStrong = { ...ROLES, builder: { model: "p/m-haiku", strong: { model: "p/m-opus", thinking: "high" } } };
+  assert.equal(defaultSecurityRung(RANKS, withStrong), "p/m-opus:high");
+  assert.equal(defaultSecurityRung({}, withStrong), null);
+  // a role's plain model may come from the project layer: never a candidate (only strong rungs and literal ranks)
+  assert.equal(defaultSecurityRung(RANKS, { ...ROLES, explorer: { model: "p/m-opus" } }), null);
+  const literal = { providers: { p: { ranks: [{ match: "m-opus-1", tier: 1 }, ...RANKS.providers.p.ranks] } } };
+  assert.equal(defaultSecurityRung(literal, ROLES), "p/m-opus-1");
   const on = { ladder: { reviewerClimb: { enabled: true } } };
-  const ranked = await run({ ...RANKS, ...on }, { agent: "reviewer", task: "t" }, new ReviewerFails(), AUTH_DIFF);
+  const ranked = await planReviewerClimbs({ agent: "reviewer", task: "t" }, withStrong, { config: { ...RANKS, ...on }, live: new Map(), fails: new ReviewerFails(), diffOf: async () => AUTH_DIFF });
   assert.deepEqual(ranked.climbs.map((c) => [c.reason, c.model]), [["security", "p/m-opus:high"]]);
   const none = await run(on, { agent: "reviewer", task: "t" }, new ReviewerFails(), AUTH_DIFF);
   assert.deepEqual([none.climbs, none.traces], [[], [{ event: "security_rung_unset", role: "reviewer", reason: "security", hits: "path:auth" }]]);
@@ -83,4 +89,17 @@ test("security default rung: next rank above the reviewer's strong rung, else no
 test("no security hit and no repeated FAIL: no climb", async () => {
   const r = await run({ ladder: { reviewerClimb: { enabled: true, securityRung: "p/m-opus" } } }, { agent: "reviewer", task: "t" });
   assert.deepEqual([r.climbs, r.traces], [[], []]);
+});
+
+test("security rung over the child rank policy: the trace carries policy_override, a rung within it does not", async () => {
+  const climb = { enabled: true, securityRung: "p/m-opus" };
+  const cfg = { ...RANKS, ladder: { childPolicy: "below", reviewerClimb: climb } };
+  const refused = (m: string): boolean => rankRefusal(cfg, "p/m-opus", m) !== null;
+  const over = await run(cfg, { agent: "reviewer", task: "t" }, new ReviewerFails(), AUTH_DIFF);
+  markPolicyOverrides(over.climbs, refused);
+  assert.equal(over.climbs[0].trace.policy_override, true);
+  climb.securityRung = "p/m-sonnet";
+  const within = await run(cfg, { agent: "reviewer", task: "t" }, new ReviewerFails(), AUTH_DIFF);
+  markPolicyOverrides(within.climbs, refused);
+  assert.deepEqual([within.climbs[0].trace.event, "policy_override" in within.climbs[0].trace], ["rung_up", false]);
 });

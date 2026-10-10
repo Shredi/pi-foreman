@@ -88,7 +88,7 @@ export class ReviewerFails {
 }
 
 /**
- * The default security rung: the mapped model (any role's model or strong rung) in the next rank
+ * The default security rung: the mapped strong rung (of any role) in the next rank
  * above the reviewer's strong rung (its model without one), by providers.<p>.ranks; null without
  * ranks or such a model. A literal rank match (no `*`/`?`) counts as a model of its provider too.
  */
@@ -105,10 +105,8 @@ export function defaultSecurityRung(config: Json | undefined, roles: Record<stri
     const lvl = typeof o.thinking === "string" ? o.thinking : null;
     cands.push(lvl && !splitLevel(o.model).level ? `${o.model}:${lvl}` : o.model);
   };
-  for (const v of Object.values(roles)) {
-    add(v);
-    if (isObj(v)) add(v.strong);
-  }
+  // strong rungs and ranks only: a project layer may set a role's model, never its strong rung or the ranks
+  for (const v of Object.values(roles)) if (isObj(v)) add(v.strong);
   for (const [p, list] of ranks) for (const e of list) if (!/[*?]/.test(e.match)) cands.push(e.match.includes("/") ? e.match : `${p}/${e.match}`);
   let best: { m: string; t: number } | null = null;
   for (const m of cands) {
@@ -178,6 +176,11 @@ export async function planReviewerClimbs(input: Json, roles: Record<string, Json
     }
   }
   return { climbs, traces };
+}
+
+/** At the rank check: a security climb whose rung the child rank policy would refuse gets `policy_override: true` in its trace. */
+export function markPolicyOverrides(climbs: ReviewerClimb[], refused: (model: string) => boolean): void {
+  for (const c of climbs) if (c.reason === "security" && refused(c.model)) c.trace.policy_override = true;
 }
 
 /** After the rank check: write each security climb's rung (level capped) into its entry. */

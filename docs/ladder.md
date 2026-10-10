@@ -55,18 +55,20 @@ climbs here), and only user or overlay config can set it.
   `rung_up {role: "reviewer", from, to, reason: "security", hits}` (`hits` lists pattern labels such as
   `path:auth,spawn(`, never a path or a line). The scan is line-based, a floor and not a proof.
 
-Without `securityRung` the harness takes the mapped model (any role's model or strong rung) in the next rank above
-the reviewer's strong rung, by `providers.<p>.ranks`. With no ranks or no such model there is no extra climb and the
+Without `securityRung` the harness takes the mapped strong rung (of any role) or literal ranks entry in the next rank
+above the reviewer's strong rung, by `providers.<p>.ranks`. A role's plain model is never a candidate, since a
+project layer may set it; strong rungs and ranks come from the user or overlay config only. With no ranks or no such model there is no extra climb and the
 trace records `security_rung_unset {role: "reviewer", reason: "security", hits}`; the repeated-FAIL climb still
 applies. The security rung is explicit config: it is written after the rank check, so `ladder.childPolicy` does not
 refuse it. Its thinking level is capped by `maxThinking` and `childMaxThinking`.
+When the rung goes beyond what `ladder.childPolicy` would allow, its `rung_up` (or `rung_top`) record carries `policy_override: true`.
 
 ## Trace records
 
 | Event | Fields | When |
 |---|---|---|
-| `rung_up` | `role, from, to, reason` (+ `item` or `hits` for the reviewer) | A launch climbs from its live rung. |
-| `rung_top` | `role, model, reason` (+ `item` or `hits`) | A climb was due but the live rung already is the top one. |
+| `rung_up` | `role, from, to, reason` (+ `item` or `hits`, and `policy_override` for the reviewer) | A launch climbs from its live rung. |
+| `rung_top` | `role, model, reason` (+ `item` or `hits`, `policy_override`) | A climb was due but the live rung already is the top one. |
 | `security_rung_unset` | `role, reason, hits` | A security-shaped diff found no security rung. |
 | `rung_up_steer` | `role, count, rung` | A child was steered to hand off (context or turns). |
 | `finish_refused` | `climb_available` | The uncounted refusal while the builder's failure climb is open. |
