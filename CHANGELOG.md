@@ -216,11 +216,6 @@
   at most 10 lines. The bench `retro` post-step sends `/retro --model`. `foreman_retro.py` counts rereviews, budget
   hits, rung-ups, child read-budget hits, headless defers and turns.
 
-### Removed
-- Runtime on-find reviewer climb: `ladder.reviewerClimb.mode` and `rungs` (a stale key gets the unknown-key warning),
-  traces `climb_done` and `rung_up {reason: on_find}`. The bench climb policy (`foreman bench review --mode climb`)
-  stays, as offline exploration.
-
 ### Changed
 - `trace.enabled` defaults to `null` (was `false`): the trace follows the effective `retro.enabled` (on in tui and rpc,
   off in json and print). An explicit `false` still turns it off.
@@ -246,6 +241,11 @@
   suites re-run on 1.1.0. pi-subagents 0.75.0, pi-permission-system 39.0.2 and pi-intercom 0.16.1 held.
 - Bench: pi-claude-bridge 0.9.2 (forwards Pi's custom prompt sections, so the foreman rules reach bridge
   models) with claude-agent-sdk 0.3.293.
+
+### Removed
+- Runtime on-find reviewer climb: `ladder.reviewerClimb.mode` and `rungs` (a stale key gets the unknown-key warning),
+  traces `climb_done` and `rung_up {reason: on_find}`. The bench climb policy (`foreman bench review --mode climb`)
+  stays, as offline exploration.
 
 ### Fixed
 - Tests no longer write fixture retro backlog entries into the real `~/.pi/agent`: `tests/_isolation.py` points `PI_CODING_AGENT_DIR` at a per-run temp dir, plus a regression test.

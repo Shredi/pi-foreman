@@ -70,7 +70,7 @@ A child's records carry `role` and `runId` (the launch id) in its own `trace-<la
 
 | Event | Fields | When |
 |---|---|---|
-| `rung_up` | `role, from, to, reason` (+ `item`, `rung` or `hits`, and `policy_override` for the reviewer) | A launch climbs from its live rung. |
+| `rung_up` | `role, from, to, reason` (+ `item` or `hits`, and `policy_override` for the reviewer) | A launch climbs from its live rung. |
 | `rung_top` | `role, model, reason` (+ `item` or `hits`, `policy_override`) | A climb was due but the live rung already is the top one. |
 | `review_model` | `role, from, to, reason` | The different-model rule moved a reviewer off the foreman's model (`same_as_foreman`) or found no alternative (`no_alternative`). |
 | `review_occasion` | `occasion, thinking, model_overridden` | A reviewer launch for that occasion (`item`, `plan-review`, `pre-pr`, `second-opinion`); `ceremony.reviewByOccasion` applied (see [review](review.md#per-occasion-overrides)). |
