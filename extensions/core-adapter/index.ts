@@ -35,7 +35,7 @@ import { applyLaunchModels, applyLaunchTimeouts, roleTimeoutMs, splitLevel, STRE
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
 import { ReviewFacts } from "./diffscan.ts";
-import { applyOnFindRungs, applyReviewModelRule, applySecurityRungs, markPolicyOverrides, OnFindClimb, planReviewerClimbs, ReviewerFails, reviewerClimbConfig, reviewerRunsOfRunEnd, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
+import { applyOnFindRungs, applyReviewModelRule, applySecurityRungs, markPolicyOverrides, OnFindClimb, planReviewerClimbs, ReviewerFails, reviewerClimbConfig, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
@@ -57,7 +57,7 @@ import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
 import { appendReview, capSet, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prToolRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
-import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd, verdictItemsOf } from "./reviewmarks.ts";
+import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
 import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts";
 import { openTrace, traceFile } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
@@ -96,6 +96,10 @@ import { familyWarnings, modelGaps } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { launchedModels, rankRefusal } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
+import { countingView, entryOccasions, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch } from "./occasion.ts";
+import { applyPanel, panelConfig } from "./panel.ts";
+import { filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
+import { launchEntries } from "./ladder.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -183,6 +187,12 @@ interface Session {
   reviewerFails: ReviewerFails;
   /** Foreman only: the on-find climb per ledger item (ladder.reviewerClimb.mode on-find, reviewerclimb.ts). */
   onFind: OnFindClimb;
+  /**
+   * Foreman only: review launches (occasion.ts) by tool call id, then by run id; the panel block of a
+   * run end; each run end's review results with their located findings (findings.ts); pending
+   * findings records (the climb waits for them).
+   */
+  reviewRuns: { byCall: Map<string, ReviewLaunch>; byRun: Map<string, ReviewLaunch>; blocks: Map<string, { text: Promise<string>; claimed: boolean }>; findings: Map<string, Promise<RunEndFindings["byResult"]>>; sync: Promise<void> };
   /** Foreman only: reviewer verdicts with the HEAD they covered, newest last, at most 50 (reviews.ts; the PR gate reads it). */
   reviews: ReviewRecord[];
   /** Pending HEAD reads of `reviews`; the PR gate waits for it. */
@@ -366,6 +376,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       climbRefusals: 0,
       reviewerFails: new ReviewerFails(),
       onFind: new OnFindClimb(),
+      reviewRuns: { byCall: new Map(), byRun: new Map(), blocks: new Map(), findings: new Map(), sync: Promise.resolve() },
       reviews: [],
       reviewSync: Promise.resolve(),
       reviewMarked: new Set(),
@@ -885,23 +896,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
           s.ladder.onRunEnd(runEndOf(data));
-          if (!s.isChild) s.reviewerFails.onRun(runId, reviewerTextsOfRunEnd(data), boundLedger(s.markerDir, s.id));
-          const rcCfg = reviewerClimbConfig(s.config.config);
-          if (!s.isChild && rcCfg.enabled && rcCfg.mode === "on-find") {
-            // on-find climb: located = false for now (wave 2 feeds it from the findings extractor at run end).
-            const ledger = boundLedger(s.markerDir, s.id);
-            for (const r of reviewerRunsOfRunEnd(data)) {
-              const model = r.model ?? s.ladder.live.get("reviewer") ?? "";
-              const recs = [...s.onFind.onVerdict(runId, verdictItemsOf(r.text, "FAIL"), "fail", false, model, ledger), ...s.onFind.onVerdict(runId, verdictItemsOf(r.text, "PASS"), "pass", false, model, ledger)];
-              for (const rec of recs) s.trace?.emit(rec);
-            }
-          }
+          // Review results with their occasion (occasion.ts); the verdict consumers see only the counting ones.
+          const reviewResults = s.isChild ? [] : reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId));
+          const counted = s.isChild ? data : countingView(data, reviewResults);
+          if (!s.isChild) s.reviewerFails.onRun(runId, reviewerTextsOfRunEnd(counted), boundLedger(s.markerDir, s.id));
+          if (reviewResults.length > 0) recordRunFindings(s, runId, reviewResults);
           if (!s.isChild) s.brief.onRunEnd(runEndOf(data), s.launchedRoles.get(runId), (id, text) => storeBrief(s, id, text));
           for (const step of stepsOfRunEnd(data)) s.steps[step]++;
           for (const f of frictionOfRunEnd(data)) s.trace?.emit({ event: "friction", role: f.role, runId: f.runId, kind: f.kind, note: f.note });
-          const verdicts = reviewVerdictsOfRunEnd(data);
+          const verdicts = reviewVerdictsOfRunEnd(counted);
           s.reviewGate = onReviewVerdicts(s.reviewGate, verdicts);
-          if (!s.isChild) onRunEndReview(s, runId, data, verdicts.length > 0);
+          if (!s.isChild) onRunEndReview(s, runId, counted, verdicts.length > 0);
           const cited = s.retro.launchItems.get(runId) ?? [];
           s.retro.launchItems.delete(runId);
           if (!s.isChild && verdicts.length) writeHint(boundLedger(s.markerDir, s.id), cited, `review ${verdicts.map((v) => (v ?? "no verdict").toUpperCase()).join(", ")} (run ${runId.slice(0, 8)})`, s.retro.hints);
@@ -914,7 +919,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // PR gate: the verdict is recorded with HEAD of the run's cwd if unchanged since launch (reviews.ts).
           const start = s.launchHeads.get(runId);
           s.launchHeads.delete(runId);
-          for (const r of reviewsOfRunEnd(data)) {
+          for (const r of reviewsOfRunEnd(countingView(data, reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId))))) {
             s.reviewSync = s.reviewSync.then(async () => {
               const cwd = r.cwd ?? s.cwd;
               appendReview(s.reviews, { role: r.role, verdict: r.verdict, head: reviewedHead(start, cwd, await headOf(cwd)) });
@@ -922,6 +927,42 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           }
         }
       }
+    });
+  }
+
+  /**
+   * Run-end findings (findings.ts): each review result is recorded through foreman_findings.py
+   * (awaited, 10 s, fail-soft), its findings traced, the on-find climb fed; a panel run's block
+   * goes to its held launch result, else to its own message. Reviewer launches wait on `sync`.
+   */
+  function recordRunFindings(s: Session, runId: string, results: ReturnType<typeof reviewResultsOfRunEnd>): void {
+    const launch = s.reviewRuns.byRun.get(runId);
+    const rc = reviewerClimbConfig(s.config.config);
+    const entry = { text: Promise.resolve(""), claimed: false };
+    const work = (async (): Promise<RunEndFindings> => {
+      const cwd = results.find((r) => r.cwd)?.cwd ?? s.cwd;
+      const head = await headOf(cwd);
+      const out = await onReviewRunEnd(
+        {
+          results,
+          launch,
+          context: { session: s.usage.line.foremanSession, agentDir: s.agentDir, runId, cwd, head, rungs: s.onFind.rungs, live: s.ladder.live.get("reviewer") ?? null, now: Date.now() },
+          tmpDir: s.markerDir,
+          climb: rc.enabled && rc.mode === "on-find" ? s.onFind : undefined,
+          ledger: boundLedger(s.markerDir, s.id),
+          visible: panelConfig(s.config.config).visible,
+        },
+        (args, input) => runScript(s, "foreman_findings.py", args, RECORD_TIMEOUT_MS, input),
+      );
+      for (const rec of out.traces) s.trace?.emit(rec);
+      return out;
+    })().catch((): RunEndFindings => ({ traces: [], block: "", byResult: [] }));
+    entry.text = work.then((o) => o.block);
+    if (launch?.panel) capSet(s.reviewRuns.blocks, runId, entry);
+    capSet(s.reviewRuns.findings, runId, work.then((o) => o.byResult));
+    s.reviewRuns.sync = s.reviewRuns.sync.then(() => work.then(() => undefined));
+    void entry.text.then((text) => {
+      if (text && !entry.claimed) pi.sendMessage({ customType: "pi-foreman-panel", content: text, display: true }, { triggerTurn: false });
     });
   }
 
@@ -1011,6 +1052,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let ladderRoles: Record<string, Json> | undefined;
       let reviewerClimbs: ReviewerClimb[] = [];
       let reviewerTraces: Record<string, unknown>[] = [];
+      let occasions = new Map<Record<string, unknown>, Occasion>();
+      let panel: ReturnType<typeof applyPanel> | null = null;
       if (event.toolName === "subagent") {
         // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
         stripBinding(input);
@@ -1048,8 +1091,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (noModel) return { block: true, reason: noModel };
         const noPlan = s.isChild ? undefined : builderPlanBlock(s, ctx, input);
         if (noPlan) return { block: true, reason: noPlan };
-        // ceremony.reviewPerRevision (D5): a second review of unchanged, already passed work is refused.
-        const dup = !s.isChild && get(s.config.config, "ceremony.reviewPerRevision") !== false ? dupReview(s.reviewGate, launchRoles(s, input), input) : null;
+        // Review occasions (occasion.ts) from the task markers, before any rewrite or facts block.
+        if (!s.isChild && actionOf(input) === null) occasions = entryOccasions(input);
+        // ceremony.reviewPerRevision (D5): a second review of unchanged, already passed work is refused (a pre-pr or plan review is no repeat).
+        const ownOccasion = [...occasions.values()].some((o) => o === "pre-pr" || o === "plan-review");
+        const dup = !s.isChild && !ownOccasion && get(s.config.config, "ceremony.reviewPerRevision") !== false ? dupReview(s.reviewGate, launchRoles(s, input), input) : null;
         if (dup) {
           const agent = [...new Set(launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)))].join(",");
           if (dup === "second-opinion") s.trace?.emit({ event: "review_second_opinion", agent });
@@ -1089,6 +1135,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           climbs = lp.climbs;
           ladderRoles = resolution.roles;
           // ladder.reviewerClimb (reviewerclimb.ts): the reviewer's diff is taken here, before its model is picked; the facts reuse it.
+          await s.reviewRuns.sync; // the on-find climb has the findings of earlier run ends
           const rc = await planReviewerClimbs(input, resolution.roles, { config: s.config.config, live: s.ladder.live, fails: s.reviewerFails, climb: s.onFind, diffOf: async (e) => { const d = await reviewFacts.diffOf(e, input, ctx.cwd); return d.diff || d.untracked ? (d.diff ?? "") + d.untracked : null; } });
           reviewerClimbs = rc.climbs;
           reviewerTraces = rc.traces;
@@ -1110,6 +1157,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // Different-model rule (every reviewer launch): after the security rung, so it sees the final model; traced with policy_override.
           const refusedBy = (m: string): boolean => rankRefusal(s.config.config, foremanModel, m) !== null;
           reviewerTraces.push(...applyReviewModelRule(input, resolution.roles, { config: s.config.config, foreman: foremanModel, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: refusedBy }));
+          // Review panel (panel.ts): gate-occasion reviewer entries get their shadow entries, after every model rule.
+          panel = applyPanel(input, occasions, { config: s.config.config, foreman: foremanModel, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: refusedBy });
+          reviewerTraces.push(...panel.traces);
         }
         for (const o of launched.overrides) s.trace?.emit({ event: "model_override", role: o.role, model: o.model, requested: o.requested });
         for (const n of launched.notices) s.trace?.emit({ event: "strong_unmapped", role: n.role, model: n.model, tier: s.ceremony.tier });
@@ -1166,6 +1216,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.gitDrift.snapshot(ctx.cwd, os.homedir());
         // Frugal-roles D5: base for the review diff at a builder launch, diff facts into a reviewer's task.
         await reviewFacts.noteBuilders(input, ctx.cwd);
+        if (occasions.size > 0) {
+          // Review bookkeeping to the run end (occasion.ts): occasion, shadow, model per entry; the files the findings are located in.
+          const first = launchEntries(input).find((e) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent));
+          const occ = first ? occasions.get(first) : undefined;
+          const files = !first ? [] : occ === "plan-review" ? planReviewFiles(String(first.task ?? ""), boundLedger(s.markerDir, s.id)) : await reviewFacts.diffOf(first, input, ctx.cwd).then((d) => filesOfDiff(`${d.diff ?? ""}\n${d.untracked}`), () => []);
+          const rl = reviewLaunchOf(input, occasions, panel?.shadows ?? new Map(), { started: Date.now(), files, panel: panel?.panel ?? null });
+          if (rl) capSet(s.reviewRuns.byCall, event.toolCallId, rl);
+        }
         const factCount = await reviewFacts.augment(input, ctx.cwd);
         if (factCount > 0) s.trace?.emit({ event: "review_facts", count: factCount });
         // PR gate (B-M4): HEAD at a reviewer's launch; the verdict keeps a head only if it is unchanged at run end.
@@ -1198,6 +1256,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === "subagent") for (const r of [...reviewerTraces, ...reviewerClimbs.map((c) => c.trace)]) s.trace?.emit(r);
       // The live rung of every launched role (ladder.ts LadderState.live): single, tasks, chain and parallel.
       if (event.toolName === "subagent" && ladderRoles) s.ladder.noteLaunched(input);
+      if (event.toolName === "subagent" && panel?.panel) {
+        // the reviewer's live rung is the primary's, never a shadow's
+        const primary = launchEntries(input).find((e) => e.agent === "reviewer" && !panel?.shadows.has(e));
+        if (primary && typeof primary.model === "string") s.ladder.live.set("reviewer", primary.model);
+      }
       let limits: LadderLimits | undefined;
       const single = event.toolName === "subagent" && !s.isChild ? singleLaunchRole(input) : null;
       if (single && ladderRoles) {
@@ -1304,7 +1367,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (reviews.length === 0) return;
     const verdict = verdictOf(text);
     const passed = reviewerPassOfNotice(text);
-    if (passed) markByReview(s, passed.runId, passed.text);
+    // a second opinion, plan review or panel never marks items (occasion.ts); the run end marks the counting primary
+    const launch = passed ? s.reviewRuns.byRun.get(passed.runId) : undefined;
+    if (passed && !(launch && (launch.panel || launch.entries.some((e) => REVIEW_ROLES.includes(e.role) && (e.occasion === "second-opinion" || e.occasion === "plan-review"))))) markByReview(s, passed.runId, passed.text);
     s.rounds = onReviewDone(s.rounds, verdict);
     for (const role of reviews) s.trace?.emit({ event: "review_done", role, decision: verdict ?? "no-verdict" });
     if (verdict === "pass") {
@@ -1535,6 +1600,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           radarTouch(s, ctx);
         }
         if (heads && runId) capSet(s.launchHeads, runId, heads);
+        const rl = s.reviewRuns.byCall.get(event.toolCallId);
+        s.reviewRuns.byCall.delete(event.toolCallId);
+        if (rl && runId) capSet(s.reviewRuns.byRun, runId, rl);
         const snap = s.planSnaps.byCall.get(event.toolCallId);
         s.planSnaps.byCall.delete(event.toolCallId);
         if (snap && runId) capSet(s.planSnaps.byRun, runId, snap);
@@ -1564,6 +1632,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const notices = s?.launchNotices.get(event.toolCallId);
       if (s && notices) s.launchNotices.delete(event.toolCallId);
       const held = s ? await holdLaunch(s, ctx, event.toolCallId, event.input, event.details, event.isError) : null;
+      // A held launch's result carries the panel block of its run end (else it comes as its own message).
+      const pb = s && held ? s.reviewRuns.blocks.get(launchId(event.input, event.details, event.isError) ?? "") : undefined;
+      if (pb) pb.claimed = true;
+      const panelText = pb ? await pb.text : "";
+      if (held && panelText) held.text = `${held.text}\n\n${panelText}`;
       if (s && held?.path) recordChild(s, [held.path]);
       // subagent has no post guards (toolmap.ts), so the amended result can be returned here.
       // The held text stays the last block: deliveredRuns accepts the "done" marker only there.
@@ -2016,10 +2089,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   /** Run one scripts/*.py of the package with the resolved interpreter; the text to show. */
-  async function runScript(s: Session, script: string, args: string[], timeoutMs = 60_000): Promise<{ text: string; ok: boolean }> {
+  async function runScript(s: Session, script: string, args: string[], timeoutMs = 60_000, input?: string): Promise<{ text: string; ok: boolean }> {
     const py = pyPath(s);
     if (!py) return { text: `${script}: no usable Python (run /foreman doctor).`, ok: false };
-    const r = await spawner(py, ["-E", "-s", path.join(PKG_ROOT, "scripts", script), ...args], { timeoutMs, cwd: s.cwd });
+    const r = await spawner(py, ["-E", "-s", path.join(PKG_ROOT, "scripts", script), ...args], { timeoutMs, cwd: s.cwd, input });
     const text = (r.stdout.trim() || r.stderr.trim() || `${script} produced no output.`);
     return { text, ok: !r.error && !r.timedOut && r.code === 0 };
   }
