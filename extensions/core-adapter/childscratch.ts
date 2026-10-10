@@ -326,7 +326,7 @@ function scratchUnit(unit: string, dirs: string[], platform: string): boolean {
   let k = 0;
   const inside = (o: string): boolean => !!o && !o.startsWith("-") && insideScratch(o, dirs, platform);
   if (prog === "cp") {
-    while (k < args.length && args[k].startsWith("-")) if (!/^-[rRapf]+$/.test(args[k++])) return false;
+    while (k < args.length && args[k].startsWith("-")) if (!/^-[Rapf]+$/.test(args[k++])) return false;
     const ops = args.slice(k);
     return ops.length >= 2 && ops.every((o) => !!o && !o.startsWith("-")) && inside(ops[ops.length - 1]);
   }

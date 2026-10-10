@@ -381,7 +381,8 @@ export class ForemanReview {
       const value = unitValue(d);
       if (d.payload?.kind === "bash_external_directory" || d.toolName === "bash") {
         const rules = s.bashRules?.();
-        return rules && deterministicAllow(rules, reviewValue(d), { scratchDirs: dirs }) === "child-scratch" ? "child-scratch" : null;
+        const effects = this.classOf(s, d)?.ctx;
+        return rules && effects && deterministicAllow(rules, reviewValue(d), { scratchDirs: dirs, effects }) === "child-scratch" ? "child-scratch" : null;
       }
       return insideScratch(value, dirs) ? "child-scratch" : null;
     } catch {

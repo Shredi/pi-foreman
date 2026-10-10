@@ -11,6 +11,6 @@ test("isReadOnlySed: writes, exec, reads, s, script files and shell tricks are r
     "sed -n '1wout' f", "sed -n 's/a/b/wout' f", "sed -n '1etouch x' f", "sed -n -f s.sed f", "sed -i 1d f",
     "sed -n 1p f > out", "sed --in-place=.bak -n 1p f", "sed -n 'w out' f", "sed -n '1r /etc/passwd' f", "sed -n s/a/b/p f",
     "sed -n 1p $(x)", "sed -n 1p `x`", "sed -n \"$p\" f", "sed -n 1p *.go", "sed -n '/[/]w x/p' f", "sed -n '1p' f; rm f",
-    "sed -n --file=s f", "sed -n '1p w' f", "sed -n '1{p' f", "sed",
+    "sed -n --file=s f", "sed -n '1p w' f", "sed -n '1{p' f", "sed", "sed -n p f -e /x/p",
   ]) assert.ok(!isReadOnlySed(c), c);
 });

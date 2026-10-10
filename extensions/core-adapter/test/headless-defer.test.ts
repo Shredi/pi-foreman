@@ -67,7 +67,9 @@ test("timeout-wrapped child ask is allowed without calling the model", async () 
   const r = new ForemanReview();
   const reg: RegistryLike = { find: () => { throw new Error("model called"); }, complete: async () => ({}) };
   r.upsert("s", session({ registry: reg, bashRules: () => rules }, []));
-  assert.deepEqual(await r.authorize("s", { ...ask, command: undefined, value: "cd /app && timeout 900 cargo test" }), { kind: "allow" });
+  assert.deepEqual(await r.authorize("s", { ...ask, command: undefined, value: "timeout 900 cargo test" }), { kind: "allow" });
+  // a build run after a cd away from the worktree root is not judged by the rules (effects.ts)
+  assert.deepEqual(await r.authorize("s", { ...ask, command: undefined, value: "cd /app && timeout 900 cargo test" }), { kind: "defer" });
   assert.deepEqual(await r.authorize("s", { ...ask, command: undefined, value: "timeout 900 rm -rf x" }), { kind: "defer" });
   // a forwarded child ask carries the command in `value`, not `command`: the reviewer must see it
   assert.equal(reviewValue({ value: "sed -n 1p f" }), "sed -n 1p f");

@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { classify, effectCtx } from "../effects.ts";
+import { classify, effectCtx, readRootsOf } from "../effects.ts";
 import type { EffectCtx } from "../effects.ts";
 import { splitChain } from "../shellchain.ts";
 import { bashRules, deterministicAllow } from "../timeoutallow.ts";
@@ -61,7 +61,7 @@ test("effect classes: read, build-test, write-in, write-out, unknown", () => {
   const want: Record<string, string[]> = {
     read: ["cat f", "grep -n x src/main.go", "find . -name '*.go'", "git status", "git diff HEAD~1 -- src", "git add -n .", "git clean -nd", `ls ${scratch}`, "npm install --dry-run", "tail -50"],
     "build-test": ["cargo test", "npm test", "npm run build", "make test-unit", "npm ci"],
-    "write-in": ["mkdir -p build/x", "touch src/new.go", "rm -rf build", "cp f src/g", "sed -i 's/a/b/g' f", "mv f g", `rm -r ${scratch}/x`],
+    "write-in": ["mkdir -p build/x", "touch src/new.go", "rm -rf build", "cp f src/g", "sed -i '' -e 's/a/b/g' f", "sed -i.bak -e 's/a/b/' f", "mv f g", `rm -r ${scratch}/x`],
     "write-out": ["cp f /etc/x", "rm -rf /tmp/pf-x", "cp /etc/hosts src/x", "touch .git/hooks/pre-commit", "rm -rf .", "mv f ../g", "ls > out.txt", "tee /etc/x"],
     unknown: ["cat ~/.ssh/id_rsa", "sed -n 1p /etc/passwd", "grep -f /etc/passwd x", "git diff --no-index /etc/passwd f", "ls -la /", "cat /etc/passwd", "cat ../secret", "git commit -n -m x", "find . -exec rm x ;", "find . -delete", "git -c core.pager=x log", "git diff --ext-diff", "git log --output=/tmp/x", "sed -i 's/a/b/e' f", "npm run lint", "make deploy", "go test ./...", "python3 x.py", "rg --pre x y", "ls $(id)", "npm install left-pad"],
   };
@@ -105,7 +105,7 @@ test("security review: a chain may not use what an earlier segment copied or wro
   }
   assert.equal(classify("cp -R /tmp/pkg vendor", ctx()), "write-out");
   assert.equal(classify(`cp -a ${scratch}/x src/x`, ctx()), "write-out");
-  assert.equal(classify("cp -r src build", ctx()), "write-in");
+  assert.equal(classify("cp -R src build", ctx()), "write-in");
   assert.equal(classify("mkdir -p out && touch out/x && cat f", ctx()), "write-in");
 });
 
@@ -185,4 +185,49 @@ test("review link: an allowed chain traces chain_allow {segments}", async () => 
   r.upsert("s", session(traces, { n: 0 }));
   assert.deepEqual(await r.authorize("s", childAsk(`cd ${repo} && grep -rn x . | head`, "grep -rn x .")), { kind: "allow" });
   assert.equal(traces.find((t) => t.event === "chain_allow")?.segments, 3);
+});
+
+test("security review 2: sed -i only in shapes GNU and BSD sed read alike, on existing regular files (B1)", () => {
+  // BSD takes the word after a bare -i as the backup suffix and the next word as the script
+  for (const cmd of ["sed -i 's,a,b,' 'w x' f", "sed -i -e 's/a/b/' f", "sed -i '' 's/a/b/' f", "sed -i '' -e 's/a/b/' f -e 's/c/d/'", "sed -i '' -e 's/a/b/' missing", "sed -i '' -e 's/a/b/w x' f", "sed -i '' -e 's/a/b/' 'f g'", "sed -n p f -e /x/p"]) {
+    assert.equal(classify(cmd, ctx()), "unknown", cmd);
+    assert.equal(allow(cmd), null, cmd);
+  }
+  if (posix) {
+    fs.symlinkSync("f", path.join(repo, "f-link"));
+    assert.equal(classify("sed -i '' -e 's/a/b/' f-link", ctx()), "unknown");
+  }
+  assert.equal(allow("sed -i '' -e 's/a/b/' f"), "effect-write-in");
+});
+
+test("security review 2: lowercase cp -r (BSD follows symlinks) is not write-in (MAJOR-1)", () => {
+  for (const cmd of ["cp -r src v", "cp -rp src /tmp/pf-x", "cp -r src build"]) assert.equal(classify(cmd, ctx()), "unknown", cmd);
+  assert.equal(classify("cp -a src v", ctx()), "write-in");
+});
+
+test("security review 2: child-scratch goes through the composer; cp sources are reads ((a))", () => {
+  const outside = path.join(base, "outside-cs");
+  fs.mkdirSync(outside, { recursive: true });
+  const cs = (cmd: string): string | null => deterministicAllow(rules, cmd, { scratchDirs: [scratch], effects: ctx() });
+  assert.equal(cs(`cp -R ${outside} $FOREMAN_SCRATCH/v`), null);
+  assert.equal(cs(`cp -r src $FOREMAN_SCRATCH/v`), null);
+  assert.equal(cs(`cp -R src $FOREMAN_SCRATCH/v && cat $FOREMAN_SCRATCH/v/main.go`), null);
+  assert.equal(cs(`cp -R src $FOREMAN_SCRATCH/v`), "child-scratch");
+  assert.equal(deterministicAllow(rules, `cp -R src ${scratch}/v`, { scratchDirs: [scratch] }), null, "no effect context, no child-scratch");
+});
+
+test("security review 2: build tools after a cd away from the root, cargo publish, make -n/--eval, go vet -vettool ((b)-(d), m-d)", () => {
+  for (const cmd of ["cd /x && npm test", "cd /x && timeout 60 npm test", "cd src && make test-unit", "cargo publish --dry-run", "make -n --eval=x test-unit", "make -E x test-unit", "go vet -vettool=./x ."]) {
+    assert.equal(classify(cmd, ctx()), "unknown", cmd);
+    assert.equal(allow(cmd), null, cmd);
+  }
+  assert.notEqual(classify("make -n deploy", ctx()), "read");
+  assert.equal(classify("make -n test-unit", ctx()), "read");
+  assert.equal(classify("cd src && cd .. && npm test", ctx()), "unknown");
+});
+
+test("security review 2: readRoots drops filesystem roots, UNC share roots and the home dir itself (m-a)", () => {
+  const id = (p: string): string => p;
+  assert.deepEqual(readRootsOf(["/", "~", "/u/me", "/u/me/", "/u/me/src"], "linux", id, "/u/me"), ["/u/me/src"]);
+  assert.deepEqual(readRootsOf(["C:\\", "d:/", "\\\\srv\\share", "\\\\srv\\share\\", "%USERPROFILE%", "D:\\H\\ME", "\\\\srv\\share\\lib"], "win32", id, "D:\\h\\me"), ["\\\\srv\\share\\lib"]);
 });

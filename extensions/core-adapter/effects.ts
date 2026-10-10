@@ -5,7 +5,7 @@
 //   build-test  the project's own test/build commands, taken from its manifest at the worktree root
 //               (package.json scripts test/build/lint, Makefile test targets, Cargo.toml, go.mod,
 //               pytest config) and run from that root
-//   write-in    mkdir touch cp mv rm tee, `sed -i` with one plain s/// script, the test restore
+//   write-in    mkdir touch cp mv rm tee, `sed -i '' -e` with one plain s/// script, the test restore
 //   write-out   one of those writes (or a redirect) that reaches outside the allowed places
 //   unknown     everything else, and anything the chain splitter (shellchain.ts) refuses
 // Every path argument of a read or a write must resolve inside the worktree (git top level of the
@@ -42,6 +42,8 @@ export interface EffectCtx {
   /** Injectable for tests: realpath of an existing path, lstat existence, a file below root. */
   realpath?: (p: string) => string | null;
   exists?: (p: string) => boolean;
+  /** lstat says a regular file (not a symlink); injectable for tests. */
+  isFile?: (p: string) => boolean;
   readFile?: (p: string) => string | null;
 }
 
@@ -79,7 +81,7 @@ const existsDefault = (p: string): boolean => {
   }
 };
 
-/** safety.permissions.readRoots as real absolute dirs: `~` and `%USERPROFILE%` mean the home dir; empty, relative or missing roots are dropped. */
+/** safety.permissions.readRoots as real absolute dirs: `~` and `%USERPROFILE%` mean the home dir; empty, relative or missing roots are dropped, and so are a filesystem root (`/`, `C:\`, a UNC share root) and the home dir itself. */
 export function readRootsOf(roots: unknown, platform: string = process.platform, real: (p: string) => string | null = realDefault, home: string = os.homedir()): string[] {
   if (!Array.isArray(roots)) return [];
   const x = platform === "win32" ? path.win32 : path.posix;
@@ -90,7 +92,11 @@ export function readRootsOf(roots: unknown, platform: string = process.platform,
     if (p === "~" || /^~[\\/]/.test(p)) p = home + p.slice(1);
     if (!x.isAbsolute(p) || (platform === "win32" && !/^([A-Za-z]:[\\/]|\\\\)/.test(p))) continue;
     const rp = real(x.resolve(p));
-    if (rp) out.push(rp);
+    if (!rp || x.dirname(rp) === rp || x.dirname(x.resolve(p)) === x.resolve(p)) continue;
+    const rh = real(home) ?? home;
+    const f = (s: string): string => x.resolve(platform === "win32" || platform === "darwin" ? s.toLowerCase() : s);
+    if (f(rp) === f(rh) || f(rp) === f(home)) continue;
+    out.push(rp);
   }
   return out;
 }
@@ -158,7 +164,7 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
 }
 
 /** Options that name a program to run (`rg --hostname-bin`, `go test -exec`, `npm --script-shell`, `--*-command`, `--exec*`). */
-const PROGRAM_OPT = /^--?([\w-]*-command|exec[\w-]*|toolexec|hostname-bin|pre|script-shell)(=|$)/;
+const PROGRAM_OPT = /^--?([\w-]*-command|exec[\w-]*|toolexec|vettool|hostname-bin|pre|script-shell)(=|$)/;
 
 /** An option word: `--x=value` checks the value as a path; a bare option must not hold a path or name a program. */
 function optionOk(c: EffectCtx, cwd: string | null, w: string, write: boolean): boolean {
@@ -231,8 +237,13 @@ function readVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[]
   return argsOk(c, cwd, args, skip);
 }
 
-/** Positional file operands of a sed call (the script operand dropped), or null on an option it does not know. */
-function sedFiles(args: string[]): { files: string[]; scripts: string[]; inPlace: boolean } | null {
+/**
+ * Positional file operands of a sed call (the script operand dropped), or null on an option it does
+ * not know. GNU and BSD sed must read the call the same way: no option after the first operand (GNU
+ * permutes, BSD stops), and a bare `-i` only as `-i ''` (BSD takes the next word as the backup
+ * suffix, GNU as the script). `explicit` is true when every script came through `-e`/`--expression`.
+ */
+function sedFiles(args: string[]): { files: string[]; scripts: string[]; inPlace: boolean; explicit: boolean } | null {
   const files: string[] = [];
   const scripts: string[] = [];
   let inPlace = false;
@@ -240,10 +251,12 @@ function sedFiles(args: string[]): { files: string[]; scripts: string[]; inPlace
   for (let k = 0; k < args.length; k++) {
     const a = args[k];
     if (!opts || a === "-" || !a.startsWith("-")) files.push(a);
+    else if (files.length) return null;
     else if (a === "--") opts = false;
     else if (a === "-i") {
+      if (args[k + 1] !== "") return null;
       inPlace = true;
-      if (args[k + 1] === "") k++; // BSD `sed -i '' ...`
+      k++; // `sed -i '' ...`: BSD reads '' as the suffix, GNU as a missing file
     } else if (/^-i[A-Za-z0-9._~-]+$/.test(a) || /^--in-place(=[A-Za-z0-9._~-]*)?$/.test(a)) inPlace = true;
     else if (a === "-e" || a === "--expression") {
       if (++k >= args.length) return null;
@@ -256,12 +269,21 @@ function sedFiles(args: string[]): { files: string[]; scripts: string[]; inPlace
     } else if (/^-[nErsuz]+$/.test(a)) continue;
     else return null;
   }
+  const explicit = scripts.length > 0;
   if (!scripts.length) {
     if (!files.length) return null;
     scripts.push(files.shift()!);
   }
-  return { files, scripts, inPlace };
+  return { files, scripts, inPlace, explicit };
 }
+
+const isFileDefault = (p: string): boolean => {
+  try {
+    return fs.lstatSync(p).isFile();
+  } catch {
+    return false;
+  }
+};
 
 /** One plain substitution: `[addr]s<d>re<d>repl<d>[gIiMmp0-9]`, nothing after it (no e or w flag). */
 export function plainSubst(script: string): boolean {
@@ -285,15 +307,19 @@ function sedEffect(c: EffectCtx, cwd: string | null, words: string[]): { cls: Ef
   const parsed = sedFiles(words.slice(1));
   if (!parsed) return { cls: "unknown" };
   if (parsed.inPlace) {
-    if (!parsed.files.length || !parsed.scripts.every(plainSubst)) return { cls: "unknown" };
-    return parsed.files.every((f) => f !== "-" && contained(c, cwd, f, true)) ? { cls: "write-in", label: "effect-write-in" } : { cls: "write-out" };
+    // the script only through -e; every file an existing regular file (lstat) with no blank in its name
+    if (!parsed.explicit || !parsed.files.length || !parsed.scripts.every(plainSubst)) return { cls: "unknown" };
+    if (parsed.files.some((f) => f === "-" || /\s/.test(f))) return { cls: "unknown" };
+    if (!parsed.files.every((f) => contained(c, cwd, f, true))) return { cls: "write-out" };
+    const isFile = c.isFile ?? isFileDefault;
+    return parsed.files.every((f) => isFile(px(c).resolve(cwd!, f))) ? { cls: "write-in", label: "effect-write-in" } : { cls: "unknown" };
   }
   const quoted = words.map(quoteWord);
   if (quoted.some((q) => q === null) || !isReadOnlySed(quoted.join(" "))) return { cls: "unknown" };
   return parsed.files.every((f) => f === "-" || contained(c, cwd, f, false)) ? { cls: "read", label: "sed-read" } : { cls: "unknown" };
 }
 
-const WRITE_FLAGS: Record<string, RegExp> = { mkdir: /^-[pv]+$/, touch: /^-[acm]+$/, cp: /^-[rRapfnv]+$/, mv: /^-[fnv]+$/, rm: /^-[rRfdv]+$/, tee: /^-[aip]+$/ };
+const WRITE_FLAGS: Record<string, RegExp> = { mkdir: /^-[pv]+$/, touch: /^-[acm]+$/, cp: /^-[Rapfnv]+$/, mv: /^-[fnv]+$/, rm: /^-[rRfdv]+$/, tee: /^-[aip]+$/ };
 
 function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[]): EffectClass {
   const ops: string[] = [];
@@ -306,7 +332,8 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
   }
   if (prog !== "tee" && ops.length < (prog === "cp" || prog === "mv" ? 2 : 1)) return "unknown";
   if (ops.includes("-")) return "unknown";
-  // a recursive copy keeps the symlinks of its source tree: only from the worktree (shared /tmp can be planted)
+  // -R/-a keep the symlinks of the source tree on GNU and BSD (lowercase -r is refused above: BSD
+  // `cp -r` follows them); the source only from the worktree (shared /tmp can be planted)
   if (prog === "cp" && args.some((a) => /^-[A-Za-z]*[rRa]/.test(a)) && !ops.slice(0, -1).every((o) => c.root !== null && contained(c, cwd, o, false, [c.root]))) return "write-out";
   const reads = prog === "cp" ? ops.slice(0, -1) : [];
   const writes = prog === "cp" ? ops.slice(-1) : ops;
@@ -444,17 +471,18 @@ function buildTest(c: EffectCtx, cwd: string | null, prog: string, args: string[
     return null;
   }
   if (prog === "cargo") {
-    if (sub === "publish" && args.includes("--dry-run")) return "read";
+    if (sub === "publish") return "unknown"; // --dry-run still runs build.rs and reaches the registry
     if (!m.cargo) return null;
     if (sub === "test" || sub === "build" || sub === "clippy") return "build-test";
     return sub === "fmt" && rest.includes("--check") ? "build-test" : null;
   }
   if (prog === "go") return m.gomod && (sub === "test" || sub === "build" || sub === "vet") ? "build-test" : null;
   if (prog === "make") {
+    if (args.some((a) => a.startsWith("--eval") || /^-[A-Za-z]*E/.test(a))) return "unknown";
     if (!m.makefile) return null;
-    if (args.some((a) => a === "-n" || a === "--dry-run" || a === "--just-print" || a === "--recon")) return args.every((a) => !/^(-[Cf]|--directory|--file|--makefile)/.test(a)) ? "read" : null;
     const targets = args.filter((a) => !a.startsWith("-") && !/^\d+$/.test(a));
     if (!targets.length || !targets.every((t) => m.makeTests.has(t))) return null;
+    if (args.some((a) => a === "-n" || a === "--dry-run" || a === "--just-print" || a === "--recon")) return args.every((a) => !/^(-[Cf]|--directory|--file|--makefile)/.test(a)) ? "read" : null;
     return args.every((a) => !a.startsWith("-") || /^(-j\d*|-k|-s|--keep-going|--silent)$/.test(a)) ? "build-test" : null;
   }
   if (prog === "pytest" || ((prog === "python" || prog === "python3") && sub === "-m" && rest[0] === "pytest")) return m.pytest ? "build-test" : null;
@@ -515,6 +543,8 @@ export function segmentEffect(c: EffectCtx, cwd: string | null, seg: Segment): S
     return out(g.cls, g.known, "effect-read");
   }
   if (BUILD_TOOLS.has(prog)) {
+    // a build or test run from a cwd a `cd` moved away from the worktree root: not judged by the rules either
+    if (cwd !== c.cwd && (!c.root || cwd === null || !within(c, c.root, cwd, false) || !within(c, cwd, c.root, false))) return out("unknown", true);
     const b = buildTest(c, cwd, prog, args);
     return b ? out(b, true, b === "read" ? "effect-read" : b === "build-test" ? "effect-build-test" : undefined) : out("unknown", false);
   }

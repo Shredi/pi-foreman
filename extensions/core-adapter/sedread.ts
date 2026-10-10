@@ -6,7 +6,7 @@
 //   script   [addr[,addr2]][!] cmd, separated by `;` or newlines, with { } blocks
 //   addr     N, N~S, $, /regex/   addr2 also +N, ~N
 //   cmd      p P l = q Q n N d D (l, q, Q with an optional number)
-// No s, y, w, W, e, r, R, a, i, c or any other command; no -i, -f, --in-place, --file. Shell
+// No s, y, w, W, e, r, R, a, i, c or any other command; no -i, -f, --in-place, --file, and no option after the first operand. Shell
 // syntax is limited to bare words, single quotes and double quotes without `$`, backticks or `\`;
 // unquoted `$`, globs, redirects, substitutions and the like are refused.
 
@@ -143,6 +143,8 @@ export function isReadOnlySed(unit: string): boolean {
   for (let k = 1; k < w.length; k++) {
     const a = w[k];
     if (!opts || a === "-" || !a.startsWith("-")) positional.push(a);
+    // GNU sed permutes, BSD sed stops at the first operand: `sed p f -e /x/p` reads /x/p on BSD
+    else if (positional.length) return false;
     else if (a === "--") opts = false;
     else if (LONG_FLAGS.has(a)) continue;
     else if (a === "--expression") {

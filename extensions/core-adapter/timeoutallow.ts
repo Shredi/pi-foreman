@@ -13,7 +13,7 @@ import { get } from "./config.ts";
 import type { Baseline } from "./permoverlay.ts";
 import { wildcardRegExp } from "./permoverlay.ts";
 import { isReadOnlySed } from "./sedread.ts";
-import { scratchCommandAllowed } from "./childscratch.ts";
+import { expandScratchVar, scratchCommandAllowed } from "./childscratch.ts";
 import { isTmpScratch } from "./tmpscratch.ts";
 import type { TmpScratchDeps } from "./tmpscratch.ts";
 import { ChainWrites, redirectOk, refusedProgram, SAFE_CLASSES, scratchExpansions, segmentEffect } from "./effects.ts";
@@ -92,8 +92,9 @@ export interface AllowDeps extends TmpScratchDeps {
 /**
  * The link's deterministic allow for a forwarded ask, or null:
  *  - "tmp-scratch": the whole command is one `cp`/`mkdir` writing only under /tmp/ (tmpscratch.ts);
- *  - "child-scratch": every `&&`/`;` unit copies into, makes, removes inside or cds into one of
- *    `scratchDirs` (childscratch.ts) or is allowed by the rules;
+ *  - "child-scratch" (only with an effect context): every `&&`/`;` unit copies into, makes, removes
+ *    inside or cds into one of `scratchDirs` (childscratch.ts) or is allowed by the rules, and the
+ *    chain composer below allows the command too;
  *  - else the chain composer: `command` is split on top-level `&&`, `||`, `;` and `|`
  *    (shellchain.ts refuses subshells, substitutions, heredocs, background and the like), every
  *    redirect goes to /dev/null, a scratch dir or /tmp (or is an fd dup), and every segment is
@@ -111,7 +112,13 @@ export function deterministicAllowInfo(rules: BashRules, command: string, deps: 
   const whole = command.trim();
   if (hits(rules.ask, whole, "") || hits(rules.deny, whole, "")) return null;
   if (isTmpScratch(command, deps)) return { label: "tmp-scratch", segments: 1 };
-  if (deps.scratchDirs?.length && scratchCommandAllowed(command, deps.scratchDirs, (u) => unitAllowed(rules, u), deps.platform)) return { label: "child-scratch", segments: command.split(/&&|;/).length };
+  if (deps.scratchDirs?.length && deps.effects) {
+    // child-scratch needs the composer as well: every segment a deterministic allow, cp sources checked as reads, ChainWrites
+    for (const d of deps.scratchDirs) {
+      const text = expandScratchVar(command, d);
+      if (text !== null && scratchCommandAllowed(text, deps.scratchDirs, (u) => unitAllowed(rules, u), deps.platform) && compose(rules, text, deps)) return { label: "child-scratch", segments: text.split(/&&|;/).length };
+    }
+  }
   for (const text of scratchExpansions(command, deps.scratchDirs ?? [])) {
     const r = compose(rules, text, deps);
     if (r) return r;
