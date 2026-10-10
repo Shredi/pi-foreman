@@ -118,6 +118,7 @@ test("session: command sends through the pi-intercom outbox event", async () => 
 test("session: inbound reports from a registry child update the registry (display only)", async () => {
   assert.deepEqual(parseInbound("Result from demo: /h/result.md"), { kind: "result", label: "demo", path: "/h/result.md" });
   assert.deepEqual(parseInbound("foreman:closed /w/.workflow/r.md"), { kind: "closed", path: "/w/.workflow/r.md" });
+  assert.deepEqual(parseInbound("foreman:closed /w/.workflow/r.md CLOSE: open"), { kind: "closed", path: "/w/.workflow/r.md" });
   for (const t of ["Result from demo:", "result from demo: x", "foreman:close x", "Plan from demo: a\nb", 3]) assert.equal(parseInbound(t), null, String(t));
   const agent = path.join(root, "agent-in");
   seed(agent);

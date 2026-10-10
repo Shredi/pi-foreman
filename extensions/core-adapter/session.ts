@@ -146,7 +146,7 @@ export function parseInbound(text: unknown): Inbound | null {
   if (/[\r\n]/.test(t)) return null;
   const m = /^(Plan|Result|Update) from ([A-Za-z0-9._-]{1,40}): (\S.*)$/.exec(t);
   if (m) return { kind: m[1].toLowerCase() as "plan" | "result" | "update", label: m[2], path: m[3].trim() };
-  const c = new RegExp(`^${CLOSED_TEXT} (\\S.*)$`).exec(t);
+  const c = new RegExp(`^${CLOSED_TEXT} (\\S.*?)(?: CLOSE: (?:ready|open))?$`).exec(t); // optional CLOSE tail (close.md)
   return c ? { kind: "closed", path: c[1].trim() } : null;
 }
 

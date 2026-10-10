@@ -60,7 +60,7 @@ Plain pi-intercom text, one line each:
   `Update from <label>: <absolute path>`. They update the registry entry (`last`, `result`, status `open`) and
   show a notice; nothing is acted on. Only a registry child's id is accepted as sender.
 - Parent to child: `foreman:close` or `foreman:close <path>`. The child runs its [close sequence](#commands)
-  (result file, sync, exit) and replies `foreman:closed <result path>` before it exits; the parent's registry
+  (result file, sync, exit) and replies `foreman:closed <result path> CLOSE: ready|open` before it exits; the parent's registry
   entry becomes `closed` with that result path. A close that is refused is answered with
   `pi-foreman: close refused: <reason>`, for example `the sender is not the parent recorded at spawn`,
   `N child run(s) still active; let them finish (a close never cancels them), then close again` or
