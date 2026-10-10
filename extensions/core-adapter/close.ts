@@ -146,8 +146,47 @@ export interface CloseDeps {
   markCause: () => void;
   writeStub: (file: string, text: string) => void;
   exists: (file: string) => boolean;
+  /** Close report after the sync (foreman_close.py, cleanup + `## Close` into `file`); null = none. */
+  report?: (file: string) => Promise<CloseReport | null>;
   /** Timer for the start deadline (default: an unref'd setTimeout). */
   setTimer?: (fn: () => void, ms: number) => () => void;
+}
+
+/** The parts of `<state>/sessions/<sid>/close.json` the close flow uses (scripts/foreman_close.py). */
+export interface CloseReport {
+  ready: boolean;
+  removed: number;
+  handover: { path: string; reason: string }[];
+  /** `CLOSE: ready|open`. */
+  closeLine: string;
+}
+
+/** A close.json / `--json` object as a CloseReport; null when it has no boolean `ready`. */
+export function parseCloseReport(raw: unknown): CloseReport | null {
+  const o = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null) as Record<string, unknown> | null;
+  if (!o || typeof o.ready !== "boolean") return null;
+  const list = Array.isArray(o.handovers) ? o.handovers : Array.isArray(o.handover) ? o.handover : [];
+  const handover = list.flatMap((h) => {
+    const x = (h && typeof h === "object" ? h : {}) as { path?: unknown; reason?: unknown };
+    return typeof x.path === "string" ? [{ path: x.path, reason: typeof x.reason === "string" ? x.reason : "" }] : [];
+  });
+  const first = Array.isArray(o.lines) && typeof o.lines[0] === "string" ? o.lines[0].trim() : "";
+  const closeLine = /^CLOSE: (ready|open)$/.test(first) ? first : `CLOSE: ${o.ready ? "ready" : "open"}`;
+  return { ready: o.ready, removed: Array.isArray(o.removed) ? o.removed.length : 0, handover, closeLine };
+}
+
+/** The CLOSE line and one `handover: <path> — <reason>` line per handover. */
+export function closeReportLines(r: CloseReport): string[] {
+  return [r.closeLine, ...r.handover.map((h) => `handover: ${h.path}${h.reason ? ` — ${h.reason}` : ""}`)];
+}
+
+/** The session's close.json, or null (missing, unreadable, not a report). */
+export function readCloseJson(stateDir: string, sessionId: string): CloseReport | null {
+  try {
+    return parseCloseReport(JSON.parse(fs.readFileSync(path.join(stateDir, "sessions", sessionId, "close.json"), "utf8")));
+  } catch {
+    return null;
+  }
 }
 
 export interface CloseRequest {
@@ -295,10 +334,19 @@ export class CloseFlow {
         this.d.notify(`pi-foreman: could not write the stub result ${req.file}: ${(err as Error).message}`, "error");
       }
     }
-    this.d.notify(`pi-foreman: close: ${sync.text.split("\n").slice(0, 3).join(" | ")}`, sync.ok ? "info" : "warning");
+    // The report runs after the stub so `--result` appends `## Close` to whichever file exists.
+    let report: CloseReport | null = null;
+    try {
+      report = this.d.report ? await this.d.report(req.file) : null;
+    } catch {
+      report = null;
+    }
+    if (report) this.d.trace({ event: "close", cause: req.source, decision: "report", ready: report.ready, removed: report.removed, handover: report.handover.length });
+    const head = `pi-foreman: close: ${sync.text.split("\n").slice(0, 3).join(" | ")}`;
+    this.d.notify(report ? [head, ...closeReportLines(report)].join("\n") : head, sync.ok && report?.ready !== false ? "info" : "warning");
     if (req.replyTo) {
       try {
-        await this.d.reply(req.replyTo, `${CLOSED_TEXT} ${req.file}`);
+        await this.d.reply(req.replyTo, `${CLOSED_TEXT} ${req.file}${report ? ` ${report.closeLine}` : ""}`);
       } catch {
         // the ack is best effort; the close itself is done
       }
@@ -336,6 +384,8 @@ export interface CloseSession {
   trace: (rec: Record<string, unknown>) => void;
   markCause: () => void;
   runSync: (ctx: ExtensionContext) => Promise<{ text: string; ok: boolean }>;
+  /** Close report with `--result file` (scripts/foreman_close.py); null = none. */
+  report?: (ctx: ExtensionContext, file: string) => Promise<CloseReport | null>;
   retro: (ctx: ExtensionContext) => Promise<string>;
 }
 
@@ -388,6 +438,7 @@ export function registerClose(
       activeRuns: () => deps.activeRuns(s.id),
       sendUserMessage: (text) => pi.sendUserMessage(text),
       runSync: () => s.runSync(holder.ctx),
+      report: s.report ? (file) => s.report!(holder.ctx, file) : undefined,
       retro: () => (get(s.config(), "sync.runRetro") === false ? s.retro(holder.ctx) : Promise.resolve("")),
       reply: (to, text) => outboxSend(pi.events, to, text, "close"),
       notify: (text, level) => {

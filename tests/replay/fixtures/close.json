@@ -4,6 +4,10 @@
    {"text": "Ready."},
    {"tools": [{"name": "write", "arguments": {"path": ".workflow/result-close.md", "content": "# Result\n\nsummary: replay close\n"}}]},
    {"text": "Result written."}
+  ],
+  "c2": [
+   {"tools": [{"name": "bash", "arguments": {"command": "git worktree add -b wt-replay ../project.worktrees/wt-replay"}}]},
+   {"text": "Worktree added."}
   ]
  }
 }

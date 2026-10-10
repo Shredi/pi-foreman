@@ -4,7 +4,8 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { closeFrom, CloseFlow, closePrompt, intercomClose, INTERCOM_WAKE_TEXT, parentIntercomId, parseCloseText, registerClose, resultPath } from "../close.ts";
+import { sanitizeTrace } from "../trace.ts";
+import { closeFrom, CloseFlow, parseCloseReport, closePrompt, intercomClose, INTERCOM_WAKE_TEXT, parentIntercomId, parseCloseText, registerClose, resultPath } from "../close.ts";
 import type { CloseDeps } from "../close.ts";
 
 const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-close-")));
@@ -56,7 +57,7 @@ test("close: result path default and bound to the workspace .workflow/", () => {
   for (const bad of ["README.md", ".workflow", ".workflow/r.txt", "../outside/r.md", ".workflow/link/r.md", path.join(outside, "r.md")]) assert.ok("error" in resultPath(bad, opts), bad);
 });
 
-function rig(waits: { id: string; kind: string; note: string }[] = [], runs = 0) {
+function rig(waits: { id: string; kind: string; note: string }[] = [], runs = 0, report?: CloseDeps["report"]) {
   const log: string[] = [];
   const timers: (() => void)[] = [];
   const files = new Map<string, string>();
@@ -73,6 +74,7 @@ function rig(waits: { id: string; kind: string; note: string }[] = [], runs = 0)
     writeStub: (f, t) => void (files.set(f, t), log.push("stub")),
     exists: (f) => files.has(f),
     setTimer: (fn) => (timers.push(fn), () => void timers.splice(timers.indexOf(fn), 1)),
+    report,
   };
   let idle = true;
   const ctx = { isIdle: () => idle, shutdown: () => void log.push("shutdown") };
@@ -115,6 +117,26 @@ test("close: sequence waits for idle, one close turn, then sync, stub, shutdown"
   assert.deepEqual(seq, [`prompt:${closePrompt(file)}`, "cause:close", "sync", "retro", "stub", `reply:parent-1:foreman:closed ${file}`, "shutdown"]);
   assert.match(r.files.get(file)!, /repo: pushed[\s\S]*approvals: 3/);
   assert.equal(r.flow.active, false);
+});
+
+test("close: the report runs after the stub; CLOSE and handovers reach the notify, the reply and a path-free trace", async () => {
+  const traces: Record<string, unknown>[] = [];
+  const close = { ready: false, lines: ["CLOSE: open", "handover: /w/wt — worktree_dirty"], removed: ["/w/s"], handovers: [{ path: "/w/wt", reason: "worktree_dirty" }] };
+  const r = rig([], 0, async (f) => (r.log.push(`report:${f}`), parseCloseReport(close)));
+  const orig = r.flow["d"].trace;
+  r.flow["d"].trace = (t) => (traces.push(t), orig(t));
+  const file = "/x/.workflow/r.md";
+  r.flow.request({ source: "intercom-parent", file, replyTo: "parent-1" }, r.ctx);
+  r.flow.onInput(closePrompt(file), "extension");
+  r.flow.onModelReply("stop");
+  await r.flow.onSettled(r.ctx);
+  const seq = r.log.filter((l) => /^(sync|stub|report|reply|shutdown)/.test(l));
+  assert.deepEqual(seq, ["sync", "stub", `report:${file}`, `reply:parent-1:foreman:closed ${file} CLOSE: open`, "shutdown"]);
+  assert.ok(r.log.some((l) => l.startsWith("notify:pi-foreman: close:") && l.includes("\nCLOSE: open\nhandover: /w/wt — worktree_dirty")));
+  const rec = traces.find((t) => t.decision === "report")!;
+  assert.deepEqual(sanitizeTrace(rec), { event: "close", cause: "intercom-parent", decision: "report", ready: false, removed: 1, handover: 1 });
+  assert.deepEqual(sanitizeTrace({ event: "close", decision: "report", ready: true, removed: ["/w/s"], handover: [{ path: "/p" }] }), { event: "close", decision: "report", ready: true }, "lists never reach the trace");
+  assert.equal(parseCloseReport({ lines: ["CLOSE: ready"] }), null, "no boolean ready: no report");
 });
 
 test("close: no stub when the close turn wrote the result file; a second request while closing is refused", async () => {
