@@ -4,7 +4,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-export const TRACE_FIELDS = ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by", "phase", "count", "action", "runId", "outcome", "ms", "codemode", "after", "allowed", "items", "attested", "agent", "signals", "policy", "foreman", "turns", "rung", "cmd", "chars", "cut", "climb_available", "trimmed_lines", "skipped", "bytes", "segments", "class", "item", "hits", "policy_override", "note", "rungs"] as const;
+export const TRACE_FIELDS = ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by", "phase", "count", "action", "runId", "outcome", "ms", "codemode", "after", "allowed", "items", "attested", "agent", "signals", "policy", "foreman", "turns", "rung", "cmd", "chars", "cut", "climb_available", "trimmed_lines", "skipped", "bytes", "segments", "class", "item", "hits", "policy_override", "note", "rungs", "findingId", "gate", "file", "line", "primary", "models"] as const;
 export type TraceField = (typeof TRACE_FIELDS)[number];
 export type TraceRecord = Partial<Record<TraceField, string | number | boolean | null>>;
 
@@ -17,6 +17,11 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
   for (const [k, v] of Object.entries(rec)) {
     if (!ALLOWED.has(k)) continue;
     if (k === "note" && rec.event !== "friction") continue; // free text: only the scrubbed friction note
+    if (k === "file" && rec.event !== "finding") continue; // a path: only a finding's file, as its base name
+    if (k === "file" && typeof v === "string") {
+      out[k] = (v.split(/[\\/]/).pop() ?? "").slice(0, MAX_STRING);
+      continue;
+    }
     if (v === null || typeof v === "boolean") out[k] = v as null | boolean;
     else if (typeof v === "number") {
       if (Number.isFinite(v)) out[k] = v;
