@@ -1,4 +1,4 @@
-# pi-foreman: `foreman update-check|retro|sync|session|radar|config|bench [args]` for PowerShell.
+# pi-foreman: `foreman update-check|retro|sync|session|radar|config|bench|backlog [args]` for PowerShell.
 $sub = if ($args.Count -gt 0) { [string]$args[0] } else { '' }
 $rest = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
 switch ($sub) {
@@ -9,7 +9,8 @@ switch ($sub) {
     'radar' { $name = 'foreman_radar.py' }
     'config' { $name = 'foreman_config.py' }
     'bench' { $name = 'foreman_bench.py' }
-    default { [Console]::Error.WriteLine('usage: foreman update-check|retro|sync|session|radar|config|bench [args]'); exit 2 }
+    'backlog' { $name = 'foreman_backlog.py' }
+    default { [Console]::Error.WriteLine('usage: foreman update-check|retro|sync|session|radar|config|bench|backlog [args]'); exit 2 }
 }
 $script = Join-Path $PSScriptRoot "..\scripts\$name"
 $py = $env:PI_FOREMAN_PYTHON
