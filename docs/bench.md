@@ -162,6 +162,12 @@ stop rung, summed USD and seconds, seconds per rung). `--dry-run` prints the cha
 cells (task x repeat), located and diagnosed (unions over the rungs run), misses (planted defects not diagnosed), false
 alarms over seeded and clean cells (every rung run), summed USD, $ per diagnosed, median and p90 seconds per cell
 (nearest rank), and the stop-rung histogram (`r1:10 r2:5 ex:4`, `ex` = exhausted). Climb rows are marked "composed from
-cached rungs": they are read from the stored rung cells and rescored, never a separate run.
+cached rungs": they are read from the stored rung cells and rescored, never a separate run. Read the table as a policy
+comparison: a climb row costs the cheap rung on every cell and the dearer rungs only where the cheap one located
+something, so compare its misses and $ per diagnosed against `single:` rows of the same models.
+
+Harvested tasks: `foreman findings export` ([review-climb](review-climb.md#foreman-findings)) writes a task dir with
+`harvest.json` `"confirmed": false`. `foreman bench review` skips such a task (and says how many) until you check
+`ground_truth.json` and set `"confirmed": true`; a dir without `harvest.json` is always used.
 
 Design record: `design/architecture.md` [section 12](../design/architecture.md#12-benchmark-design-design-only-no-runs).

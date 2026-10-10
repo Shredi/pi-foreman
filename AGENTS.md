@@ -61,6 +61,7 @@ Repo layout and test commands: `docs/development.md`. Read the page for the area
 - `docs/install.md`: installer flags, what setup writes, config layers, updating Pi, Claude bridge login.
 - `docs/roles.md`: roles, display-name presets, model ladder, rank policy, presets.
 - `docs/ladder.md`: ladder rungs, live rung, context and failure climbs, `rung_top`, reviewer climb, traces.
+- `docs/review-climb.md`: on-find reviewer climb, review occasions, different-model rule, plan review, review panel, findings store, `foreman findings`, `retro models`.
 - `docs/ceremony.md`: tiers, finish gates, planner and checkpoint, budgets, key table.
 - `docs/safety.md`: shell-write and repository guards, PR gate, permissions and auto-review, known limits.
 - `docs/permissions.md`: effect classes of child bash asks, chain composition, deterministic allow labels, traces.

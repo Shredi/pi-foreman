@@ -2,7 +2,7 @@
 
 > Covers the two-rung role ladder at run time: the live rung, context and failure climbs, `rung_top`, the
 > reviewer's own climb (`ladder.reviewerClimb`, `securityRung`) and the trace records. The role map, rank policy
-> and presets are in [roles](roles.md).
+> and presets are in [roles](roles.md); the on-find climb and panel in [review-climb](review-climb.md).
 
 ## Rungs and the live rung
 
@@ -41,9 +41,9 @@ climbs here), and only user or overlay config can set it.
 |---|---|---|
 | `ladder.reviewerClimb.enabled` | `false` | Turn the two triggers below on. |
 | `ladder.reviewerClimb.securityRung` | unset | Model of a reviewer launch on a security-shaped diff, `<provider>/<model>[:<level>]`. |
-| `ladder.reviewerClimb.mode` | `repeat-fail` | `repeat-fail`: the two triggers below. `on-find`: each ledger item climbs one rung per FAIL or per PASS with located findings until a clean verdict (`climb_done {rungs, reason: clean, item}`) or the top rung still finds (`reason: exhausted`). |
+| `ladder.reviewerClimb.mode` | `repeat-fail` | `repeat-fail`: the two triggers below. `on-find`: each ledger item climbs one rung per FAIL or per PASS with located findings until a clean verdict (`climb_done {rungs, reason: clean, item}`) or the top rung still finds (`reason: exhausted`); the two triggers still apply. See [review-climb](review-climb.md). |
 | `ladder.reviewerClimb.rungs` | `[]` | On-find reviewer models, bottom first; empty means `[roles.reviewer, roles.reviewer.strong]`. |
-| `ladder.reviewPanel.shadows`, `ladder.reviewPanel.gates`, `ladder.reviewPanel.visible` | `[]`, `[pre-pr]`, `true` | Shadow reviewer models launched beside the primary on the named occasions (`item`, `plan-review`, `pre-pr`, `second-opinion`); their findings never block. Empty `shadows` = off. User or overlay config only. |
+| `ladder.reviewPanel.shadows`, `ladder.reviewPanel.gates`, `ladder.reviewPanel.visible` | `[]`, `[pre-pr]`, `true` | Shadow reviewer models launched beside the primary on the named occasions (`item`, `plan-review`, `pre-pr`, `second-opinion`); their findings never block. Empty `shadows` = off. User or overlay config only; see [review-climb](review-climb.md#review-panel). |
 
 - **Repeated FAIL.** The harness reads each reviewer run's per-item `N. FAIL` lines (a list marker, backticks,
   `**` and `N)` are accepted; fenced blocks are skipped). When the same ledger item fails in a second reviewer run,
@@ -72,8 +72,11 @@ A child's records carry `role` and `runId` (the launch id) in its own `trace-<la
 
 | Event | Fields | When |
 |---|---|---|
-| `rung_up` | `role, from, to, reason` (+ `item` or `hits`, and `policy_override` for the reviewer) | A launch climbs from its live rung. |
+| `rung_up` | `role, from, to, reason` (+ `item`, `rung` or `hits`, and `policy_override` for the reviewer) | A launch climbs from its live rung. |
 | `rung_top` | `role, model, reason` (+ `item` or `hits`, `policy_override`) | A climb was due but the live rung already is the top one. |
+| `climb_done` | `role, rungs, reason, item` | An on-find item climb ended (`clean` or `exhausted`). |
+| `review_model` | `role, from, to, reason` | The different-model rule moved a reviewer off the foreman's model (`same_as_foreman`) or found no alternative (`no_alternative`). |
+| `panel`, `finding` | see [review-climb](review-climb.md) | Shadow launch; a located finding. |
 | `security_rung_unset` | `role, reason, hits` | A security-shaped diff found no security rung. |
 | `rung_up_steer` | `role, count, rung` | A child was steered to hand off (context or turns). |
 | `finish_refused` | `climb_available` | The uncounted refusal while the builder's failure climb is open. |
