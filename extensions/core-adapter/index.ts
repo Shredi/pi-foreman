@@ -86,7 +86,8 @@ import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone,
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
-import { registerClose, syncCommand } from "./close.ts";
+import { parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
+import type { CloseReport } from "./close.ts";
 import { registerSession } from "./session.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
 import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_RULES, TRIAGE_TOOL, trivialPathAdvice, workspaceTargets } from "./triage.ts";
@@ -101,6 +102,7 @@ import { applyPanel, panelConfig } from "./panel.ts";
 import { filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewHash, planReviewOn, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { launchEntries } from "./ladder.ts";
+import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -996,7 +998,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return r;
   }
 
+  // Session manifest (manifest.ts): pre-state here, silent `foreman_close.py record` at tool_result.
+  const manifest = new ManifestRecorder((p) => fs.existsSync(p));
+  const manifestCtx = (s: Session, cwd: string) => ({ cwd, stateDir: path.join(s.agentDir, "pi-foreman", "state"), platform });
+
   pi.on("tool_call", async (event, ctx) => {
+    const ms = sessionFor(ctx);
+    if (ms) manifest.onToolCall(event.toolCallId, event.toolName, event.input as Record<string, unknown>, manifestCtx(ms, ctx.cwd));
     if (event.toolName === "subagent") sessionFor(ctx)?.launchBatch.onToolCall(event.toolCallId);
     if (event.toolName === "bash") {
       const ps = sessionFor(ctx);
@@ -1587,6 +1595,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("tool_result", async (event, ctx) => {
     sessionFor(ctx)?.gitDrift.after(ctx.cwd, os.homedir(), event.toolCallId);
     const owner = sessionFor(ctx);
+    const created = manifest.onToolResult(event.toolCallId, event.isError);
+    if (owner && created.length) {
+      const o = manifestOwner({ id: owner.id, isChild: owner.isChild, foremanSession: owner.usage.line.foremanSession, launchId: owner.usage.line.launchId }, process.env);
+      await recordEntries(created, { ...o, stateDir: manifestCtx(owner, ctx.cwd).stateDir }, (args) => runScript(owner, "foreman_close.py", args, 15_000));
+    }
     const pending = owner?.pendingChanges.get(event.toolCallId);
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit") && isPlanPath((event.input as Record<string, unknown>).path, planOpts(owner, ctx))) {
       owner.trace?.emit({ event: "plan_written", tier: owner.ceremony.tier, by: "foreman" });
@@ -1841,7 +1854,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     activeRuns: (id) => sessions.get(id)?.activeRuns.size ?? 0,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), runSync: (c) => runSync(s, c), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text };
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), runSync: (c) => runSync(s, c), report: (_c, file) => closeReport(s, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text };
     },
   });
 
@@ -2215,6 +2228,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // no rates: the logged cost is kept
     }
     return args;
+  }
+
+  /** scripts/foreman_close.py report + cleanup for `/foreman close` (`## Close` into `file`); close.json as fallback. */
+  async function closeReport(s: Session, file: string): Promise<CloseReport | null> {
+    const stateDir = path.join(s.agentDir, "pi-foreman", "state");
+    const r = await runScript(s, "foreman_close.py", ["--session", s.id, "--state", stateDir, "--cwd", s.cwd, "--result", file, "--json"], 600_000);
+    try {
+      const parsed = parseCloseReport(JSON.parse(r.text));
+      if (parsed) return parsed;
+    } catch {
+      // not JSON: read what the script wrote
+    }
+    return readCloseJson(stateDir, s.id);
   }
 
   /** scripts/foreman_sync.py for this session (/sync and remote close). */

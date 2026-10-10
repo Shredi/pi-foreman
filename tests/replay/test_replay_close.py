@@ -9,14 +9,19 @@ Same prerequisites and skips as test_replay.py.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import time
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture, tool_results  # noqa: E402
+from driver import REPO, load_fixture, shape, tool_results  # noqa: E402
 from test_replay import REASON, ReplayCase  # noqa: E402
+
+CLOSE_KEYS = ("event", "role", "toolFamily", "guard", "decision", "model", "tier", "exit", "ready", "removed", "handover")
+# Session-close wave A ships the report script; until it is merged the report test is pending.
+HAVE_CLOSE = (REPO / "scripts" / "foreman_close.py").is_file()
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
@@ -42,6 +47,38 @@ class TestRemoteClose(ReplayCase):
         trace = rig.traces()["trace-" + safe]
         self.assertEqual([r["decision"] for r in trace if r.get("event") == "close"], ["accepted", "turn", "synced", "shutdown"])
         self.assertEqual([r["cause"] for r in trace if r.get("event") == "turn"], ["user", "close"])
+
+    @unittest.skipUnless(HAVE_CLOSE, "scripts/foreman_close.py not present yet (session-close wave A)")
+    def test_close_removes_the_worktree_the_session_added(self):
+        """A bash `git worktree add` is recorded silently in the manifest; the close report removes it."""
+        rig = self.rig("closewt", load_fixture("close"), config={"sync": {"runRetro": False}})
+        git = ["git", "-c", "user.name=replay", "-c", "user.email=replay@example.invalid"]
+        subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "base"], cwd=str(rig.project), check=True)
+        pi = rig.start()
+        sid = pi.session_id()
+        res = tool_results(pi.prompt("[[replay:c2]] add a worktree", timeout=60))
+        self.assertEqual([(n, e) for n, e, _ in res], [("bash", False)], res)
+        wt = rig.root / "project.worktrees" / "wt-replay"
+        self.assertTrue(wt.is_dir())
+        safe = "".join(c for c in sid if c.isalnum() or c in "-_")
+        manifest = json.loads((rig.state_dir / "sessions" / sid / "manifest.json").read_text("utf-8"))
+        self.assertEqual([(e["kind"], e.get("branch")) for e in manifest["entries"] if e["kind"] == "worktree"], [("worktree", "wt-replay")])
+        pi.prompt("[[replay:c1]] hello", timeout=60)
+        try:
+            pi.prompt("/foreman close .workflow/result-close.md", timeout=60)
+            pi.drain(30)
+        except EOFError:
+            pass
+        deadline = time.time() + 60
+        while pi.proc.poll() is None and time.time() < deadline:
+            time.sleep(0.2)
+        self.assertEqual(pi.proc.poll(), 0, "\n".join(pi.stderr[-15:]))
+        self.assertFalse(wt.exists(), "the merged, clean worktree is removed at close")
+        self.assertIn("## Close", (rig.project / ".workflow" / "result-close.md").read_text("utf-8"))
+        trace = rig.traces()["trace-" + safe]
+        closes = [r for r in trace if r.get("event") == "close"]
+        self.assertNotIn("wt-replay", json.dumps(closes))
+        self.golden("close_report", {"session": shape(closes, CLOSE_KEYS)})
 
     def test_intercom_close_from_the_parent_on_an_idle_foreman(self):
         """Review S1: the idle case (no extension message_end; pi-intercom's wake prompt only)."""
