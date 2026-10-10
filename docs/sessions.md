@@ -246,6 +246,9 @@ It emits `herdr:blocked {active:true,label}` when the first one opens and `{acti
 so Herdr's counter stays balanced however they overlap. The end of a turn releases permission and own asks that never
 got their decision (an open Pi dialog stays until Pi closes it); shutdown releases everything. Pi can orphan a
 dialog that a second dialog replaces (it never sends that dialog's end); typed input then releases the stale dialog.
+While such a dialog is unsettled Pi sends no `ui_prompt_start` for later ones, so pi-foreman's own asks also hold the
+presence file's `state` at `blocked` directly (with or without Herdr); a Pi dialog's end or typed input does not
+release an own ask that is still open.
 
 Label: for a permission ask `<agent> · <tool> <first word>` (the requesting child's agent when forwarded; a path is
 cut to its basename; leading `env` and `NAME=value` assignments are skipped (a quoted or `$(…)` value up to its closing quote or paren),

@@ -181,6 +181,9 @@
   models) with claude-agent-sdk 0.3.293.
 
 ### Fixed
+- Radar presence: pi-foreman's own asks (git/claude config drift, protect, checkpoint) hold the session `blocked`
+  directly, also without `HERDR_ENV`; Pi suppresses `ui_prompt_start` while an earlier dialog is unsettled. Blocking
+  sources are counted, so a Pi dialog's end or typed input no longer clears an open own ask (`livestate.ts`, `herdr.ts`).
 - Reviewer PASS marks: `N. PASS` lines are recognised with decoration (`` `1. PASS` ``, `**1. PASS**`, `1) PASS`,
   `- 1. PASS`, the doubled "1. `1. PASS`"); `PASSED` in prose, fenced blocks and `10. PASS` for item 1 stay out.
 - Triage: `release` is a heavy signal only when the prompt also names a version, changelog or manifest bump; a slash

@@ -329,7 +329,8 @@ class PiRpc:
 
     def _answer(self, rec, answers):
         if rec.get("type") == "extension_ui_request" and rec.get("method") in DIALOGS:
-            ans = dict(answers.pop(0)) if answers else {"cancelled": True}
+            ans = answers.pop(0) if answers else {"cancelled": True}
+            ans = dict(ans(rec) if callable(ans) else ans)  # a callable sees the open dialog first
             ans.update({"type": "extension_ui_response", "id": rec["id"]})
             self.send(ans)
 
