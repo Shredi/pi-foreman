@@ -237,7 +237,7 @@
     "radar": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "doneTtlMinutes": { "type": "number", "minimum": 0, "description": "Minutes after which radar hides a finished session and deletes its presence file." } }
+      "properties": { "doneTtlMinutes": { "type": "number", "minimum": 0, "description": "Minutes after which radar hides a finished session and deletes its presence file." }, "recentRunSeconds": { "type": "integer", "minimum": 0, "description": "Seconds a finished subagent run stays on the Herdr sidebar's children line (as done glyph + role) before it joins the done count." } }
     },
     "retro": {
       "type": "object",
@@ -265,7 +265,7 @@
     "ui": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "symbols": { "type": "string", "enum": ["unicode", "nerd"], "description": "State glyph set for the children widget, radar and the Herdr sidebar: unicode (default) or nerd (Nerd Font icons)." } }
+      "properties": { "symbols": { "type": "string", "enum": ["unicode", "nerd"], "description": "State glyph set for the children widget, radar and the Herdr sidebar: unicode (default) or nerd (Nerd Font icons)." }, "spinner": { "type": "boolean", "description": "Herdr sidebar: cycle a braille spinner in the glyph cell while the session works (default true); false shows the static working glyph." } }
     },
     "widget": {
       "type": "object",

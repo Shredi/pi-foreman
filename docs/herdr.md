@@ -10,12 +10,12 @@ pane a state glyph, the label, age or blocked timer, the children (subagent runs
 [sessions](sessions.md#herdr).
 
 ```text
-⏳ · › pi-foreman 01a1…  12s
-⏳ builder strong · ? reviewer
-↑341k ↓2.3k · $0.47     ✓1
-✋ · ├─ › ladder-polish   6m
-│⠀ ⏳ explorer
-│⠀ ↑64k ↓0.7k · $0.12
+⏳ · › pi-foreman… 12s
+⏳ builder · ✓ explorer
+↑38k ↓2.3k · $0.47    ✓1
+✋ · └─ › ladder-p… 6m
+⠀⠀ ⏳ explorer
+⠀⠀ ↑9.1k ↓700 · $0.12
 ```
 
 ## Install
@@ -42,8 +42,9 @@ checkout the plugin is linked from, then `foreman` on `PATH`. If none is found i
 and `stop` by hand reach the daemon Herdr started.
 
 The daemon logs its start, the first radar line, every change of the joined pane count (`joined N of S sessions
-(A agents listed)`, with a short reason when none joined) and every failed report; a steady state logs nothing. A
-radar child that prints no line for three intervals (plus a startup grace) is killed with a stack dump in the log and
+(A agents listed)`, with a short reason when none joined) and a report that starts or stops failing; a steady state logs nothing. A
+radar child that prints no line for three intervals, or twice its last snapshot duration if longer (plus a startup
+grace), is killed with a stack dump in the log and
 restarted. On Linux and macOS `kill -USR1 <pid>` writes the daemon's thread stacks to the log.
 
 ### Hand smoke
@@ -69,8 +70,8 @@ or ship row templates for `pi`; two owners of the view replace each other's sort
 
 Colour rules test only the cell's own value, so the state colour sits on the glyph cell: one `equals` rule per glyph of
 both symbol sets. A nested session's tree prefix (`├─`, `└─`) starts its `fm_l1`, so the glyph cell holds the glyph
-alone. A session blocked for more than 15 minutes gets a `!` after its glyph (`✋!`), which the first rules
-colour red; the `!` also reads without colour. The colours in the snippet are placeholders.
+alone. A session blocked for more than 15 minutes gets a `!` after its glyph (`✋!`), which the first rule (`contains = "!"`)
+colours red; the `!` also reads without colour. The colours in the snippet are placeholders.
 
 ## Tokens
 
@@ -81,8 +82,8 @@ every 5 s; values are at most 80 characters.
 |---|---|
 | `fm_sym` | state glyph, plus `!` when blocked longer than 15 minutes |
 | `fm_l1` | tree prefix of a nested session (`├─`, `└─`), `› label`, the age or blocked timer right-aligned to the width |
-| `fm_l2` | children: glyph, role and rung per active run (`×n` for repeats); `no children`, `no active children`, `done · n children` or `lost`; the base rung `model` is not shown |
-| `fm_l3` | `↑in ↓out` of the session and its children |
+| `fm_l2` | children: glyph, role and rung per active run (`×n` for repeats), a finished run as `✓ role` for `radar.recentRunSeconds` (default 8) before it joins the `✓n` count; `no children`, `no active children`, `done · n children` or `lost`; the base rung `model` is not shown |
+| `fm_l3` | `↑in ↓out` of the session and its children; `in` counts uncached input only (fresh input plus cache writes, from the usage file), `↑~n` marks the raw total incl. cache reads when no usage file has the split; radar and its JSON keep the raw total. Dropped before the cost when the row is too narrow |
 | `fm_cost` | `$cost` and `✓n` finished children |
 | `fm_state` | `working`, `waiting`, `asking`, `blocked`, `done` or `lost`, for your own rules |
 | `fm_block_s` | seconds blocked, set only while blocked, for your own `gt`/`lt` rules |
@@ -92,14 +93,18 @@ Width: `--width`, else `HERDR_SIDEBAR_WIDTH`, else `ui.sidebar_width` from Herdr
 (Herdr's default). Herdr may auto-scale the panel between `ui.sidebar_min_width` and `ui.sidebar_max_width`; set the
 width you see when it differs. Below 24 columns `fm_l3` drops the token counts; below 20 `fm_l3` and `fm_cost` are
 cleared. The layout counts 2 columns of panel frame and Herdr's ` · ` separator (3 columns) between two cells of a row.
-Row 1 also reserves the cells you put before `$fm_sym` (an icon token, say): one by default, each counted 1 column
-plus a separator; set `--lead-cells N` or `HERDR_SIDEBAR_LEAD` to the number you use (0 for none). Line 1 stops
-2 columns short of its budget; when it is short of room the label is cut (`…`), never the age.
+Row 1 also reserves the cells you put before `$fm_sym` (an icon token, say): none by default, each counted 1 column
+plus a separator; set `--lead-cells N` or `HERDR_SIDEBAR_LEAD` to the number you add. Line 1 stops
+2 columns short of its budget; when it is short of room the label is cut (`…`), down to `›…`, and only then the age is
+dropped.
 
 A session is joined to its pane by the presence file's `paneId` (pi-foreman writes `HERDR_PANE_ID` there), else by the
 pane's foreground pid, else by a working directory only one Pi pane has. When several presence files name the same pane
 (sessions restarted in it), the live one wins. When a session leaves radar its tokens are cleared at once; if the
 daemon dies they expire with the TTL.
+
+A working session cycles a braille spinner in `fm_sym` while `ui.spinner` is true (default; `false` shows the static
+working glyph). The glyph cell's own `fg` in the snippet colours the spinner frames.
 
 ## Agents view
 

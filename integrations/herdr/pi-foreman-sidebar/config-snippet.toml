@@ -7,20 +7,20 @@
 #
 # Colours are neutral placeholders: pick the ones that suit your theme.
 # Rules test the glyph cell's own value; the first match wins. "…!" marks a
-# session blocked for more than 15 minutes, so those rules come first.
+# session blocked for more than 15 minutes, so that rule comes first.
+# The cell's own fg is the working colour: the braille spinner frames
+# ⣾⣽⣻⢿⡿⣟⣯⣷ a working session cycles (ui.spinner) match no rule and take it.
+# Herdr allows 16 rules per cell, too few for 8 frame rules on top.
 # Glyphs: unicode set as characters, nerd set as \u escapes (ui.symbols).
 # Nested sessions carry their tree prefix (├─ / └─) at the start of $fm_l1.
 # Width: each cell you add before $fm_sym (an icon token, say) costs its
-# width plus Herdr's " · " separator. The plugin reserves one such cell; set
-# HERDR_SIDEBAR_LEAD (or --lead-cells) to the number you really use.
+# width plus Herdr's " · " separator. The plugin reserves none by default; set
+# HERDR_SIDEBAR_LEAD (or --lead-cells) to the number you add.
 
 [ui.sidebar.agents.rows_by_agent]
 pi = [
-  [{ token = "$fm_sym", rules = [
-      { equals = "✋!", fg = "#d9534f", bold = true },
-      { equals = "?!", fg = "#d9534f", bold = true },
-      { equals = "\uf256!", fg = "#d9534f", bold = true },
-      { equals = "\uf128!", fg = "#d9534f", bold = true },
+  [{ token = "$fm_sym", fg = "#6aa84f", rules = [
+      { contains = "!", fg = "#d9534f", bold = true },
       { equals = "⏳", fg = "#6aa84f" },
       { equals = "\uf252", fg = "#6aa84f" },
       { equals = "⏸", fg = "#8a8a8a" },

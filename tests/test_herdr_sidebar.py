@@ -31,14 +31,16 @@ SYMS = {
 
 
 def node(key, kind, name, sym, state, glyphs, pane=None, children=(), role=None, rung=None,
-         age=12, blocked=None, tot=(0, 0, 0.0), cwd=None, pid=None):
+         age=12, blocked=None, tot=(0, 0, 0.0), cwd=None, pid=None, sid=None, ended=None):
     kids = list(children)
+    unc = tot[3] if len(tot) > 3 else tot[0]
     return {"key": key, "kind": kind, "name": name, "role": role, "rung": rung, "state": state,
             "sym": sym, "glyph": glyphs[sym], "paneId": pane, "pid": pid, "cwd": cwd,
             "age_s": age, "blocked_s": blocked,
             "own": {"in": 0, "out": 0, "cost": 0.0},
-            "tot": {"in": tot[0], "out": tot[1], "cost": tot[2]},
-            "done_children": sum(1 for k in kids if k["state"] == "done"), "children": kids}
+            "tot": {"in": tot[0], "out": tot[1], "cost": tot[2], "uncached": unc},
+            "done_children": sum(1 for k in kids if k["state"] == "done"), "children": kids,
+            "sid": sid, "ended_s": ended}
 
 
 def snapshot(symbols="unicode"):
@@ -74,8 +76,7 @@ class ComposeTest(unittest.TestCase):
                     root = out["w1:p1"]
                     self.assertTrue(root["fm_l1"].startswith("› "))
                     self.assertTrue(root["fm_l1"].endswith("6m"))
-                    used = (sidebar.INSET + sidebar.LEAD_CELL_W + sidebar.GAP
-                            + sidebar.cell_width(root["fm_sym"]) + sidebar.GAP)
+                    used = sidebar.INSET + sidebar.cell_width(root["fm_sym"]) + sidebar.GAP  # lead 0
                     self.assertEqual(sidebar.cell_width(root["fm_l1"]), width - used - 2)
                     self.assertIn("builder" if width < 26 else "builder strong ×2", root["fm_l2"])
                     self.assertNotIn("explorer", root["fm_l2"])
@@ -166,7 +167,7 @@ class ComposeTest(unittest.TestCase):
         class A:
             lead_cells = None
         a = A()
-        self.assertEqual(sidebar.read_lead(a, {}), 1)
+        self.assertEqual(sidebar.read_lead(a, {}), 0)   # default: no lead cells
         self.assertEqual(sidebar.read_lead(a, {"HERDR_SIDEBAR_LEAD": "0"}), 0)
         a.lead_cells = 2
         self.assertEqual(sidebar.read_lead(a, {"HERDR_SIDEBAR_LEAD": "0"}), 2)
@@ -174,6 +175,89 @@ class ComposeTest(unittest.TestCase):
     def test_wide_glyph_width(self):
         self.assertEqual(sidebar.cell_width("⏳ ab"), 5)
         self.assertEqual(sidebar.cell_width("\uf252"), 1)
+
+
+    def test_two_lead_cells_never_overflow_line1(self):
+        for width in (18, 19, 20):
+            for blocked in (None, 59, 3000, 90000):
+                snap = snapshot()
+                snap["roots"][0]["blocked_s"] = blocked
+                out = sidebar.compose(snap, width, lead=2)
+                for pane, t in out.items():
+                    with self.subTest(width=width, blocked=blocked, pane=pane):
+                        used = (sidebar.INSET + 2 * (sidebar.LEAD_CELL_W + sidebar.GAP)
+                                + sidebar.cell_width(t["fm_sym"]) + sidebar.GAP)
+                        self.assertLessEqual(sidebar.cell_width(t["fm_l1"] or ""), width - used - 2)
+        root = sidebar.compose(snapshot(), 20, lead=2)["w1:p1"]["fm_l1"]   # budget 3: age dropped
+        self.assertEqual(root, "› …")
+        root = sidebar.compose(snapshot(), 22, lead=2)["w1:p1"]["fm_l1"]   # budget 5: "›…" + age fit
+        self.assertEqual(root, "›… 6m")
+
+    def test_depth2_large_totals_drop_counts_before_cost(self):
+        g = SYMS["unicode"]
+        snap = snapshot()
+        deep = node("s9", "session", "deep", "working", "working", g, pane="w1:p9",
+                    tot=(12300000, 4560000, 123.4, 2300000),
+                    children=[node("r9", "run", "builder", "done", "done", g, role="builder")])
+        snap["roots"][0]["children"][3]["children"].append(deep)
+        t = sidebar.compose(snap, 26)["w1:p9"]
+        self.assertTrue(t["fm_cost"].startswith("$123 ") and t["fm_cost"].endswith(" ✓1"), t["fm_cost"])
+        self.assertEqual(t["fm_l3"].strip(sidebar.BLANK + " │"), "")   # tree indent only, counts dropped
+        self.assertNotIn("↑", t["fm_l3"])
+
+    def test_counts_show_uncached_input_or_marked_total(self):
+        g = SYMS["unicode"]
+        snap = {"roots": [node("s", "session", "s", "working", "working", g, pane="w1:p1",
+                               tot=(341000, 3100, 0.5, 38000))]}
+        self.assertEqual(sidebar.compose(snap, 26)["w1:p1"]["fm_l3"], "↑38k ↓3.1k")
+        snap["roots"][0]["tot"]["uncached"] = None   # no usage file with the cache split
+        self.assertEqual(sidebar.compose(snap, 26)["w1:p1"]["fm_l3"], "↑~341k ↓3.1k")
+
+    def test_recent_done_run_shown_then_counted(self):
+        g = SYMS["unicode"]
+
+        def snap(ended):
+            run = node("r1", "run", "builder", "done", "done", g, role="builder", rung="strong", ended=ended)
+            return {"recentRunSeconds": 8, "roots": [node("s", "session", "s", "working", "working", g,
+                                                         pane="w1:p1", children=[run])]}
+        fresh = sidebar.compose(snap(3), 26)["w1:p1"]
+        self.assertEqual(fresh["fm_l2"], "✓ builder strong")
+        self.assertEqual(fresh["fm_cost"], "$0.00")              # not counted while shown
+        old = sidebar.compose(snap(9), 26)["w1:p1"]
+        self.assertEqual(old["fm_l2"], "no active children")
+        self.assertTrue(old["fm_cost"].endswith("✓1"))
+        self.assertEqual(sidebar.compose(snap(None), 26)["w1:p1"]["fm_l2"], "no active children")
+
+    def test_self_pushing_pane_gets_only_sort(self):
+        g = SYMS["unicode"]
+        tmp = tempfile.mkdtemp()
+        try:
+            os.mkdir(os.path.join(tmp, "push"))
+            stamp = os.path.join(tmp, "push", "sid-1.stamp")
+            with open(stamp, "w", encoding="utf-8") as fh:
+                fh.write("w1:p1")
+
+            def tick(state="working"):
+                snap = {"roots": [node("k1", "session", "a", "working", state, g, pane="w1:p1", sid="sid-1"),
+                                  node("k2", "session", "b", "working", "working", g, pane="w1:p2", sid="sid-2")]}
+                joins = {"k1": "w1:p1", "k2": "w1:p2"}
+                own = sidebar.self_panes_for(snap["roots"], joins, sidebar.fresh_stamps(tmp))
+                layout = {}
+                return sidebar.compose(snap, 26, joins, self_panes=own, layout_out=layout), layout
+            out, layout = tick()
+            self.assertEqual(out["w1:p1"], {"fm_sort": "r001"})     # other keys omitted, not None
+            self.assertEqual(set(out["w1:p2"]), set(sidebar.KEYS))
+            self.assertEqual(layout["k1"], {"pre": "", "cont": ""})
+            for state in ("lost", "stale", "done"):
+                self.assertEqual(set(tick(state)[0]["w1:p1"]), set(sidebar.KEYS), state)
+            old = time.time() - sidebar.STAMP_FRESH_S - 1
+            os.utime(stamp, (old, old))
+            self.assertEqual(set(tick()[0]["w1:p1"]), set(sidebar.KEYS))   # stale stamp: daemon owns all
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_lead_default_is_zero(self):
+        self.assertEqual(sidebar.DEFAULT_LEAD, 0)
 
 
 class JoinTest(unittest.TestCase):
@@ -211,6 +295,47 @@ class DecisionTest(unittest.TestCase):
         self.assertEqual(list(out), ["w1:p2"])
         self.assertTrue(all(v is None for v in out["w1:p2"].values()))
         self.assertEqual(set(out["w1:p2"]), set(sidebar.KEYS))
+
+    def test_clears_keep_self_pushing_keys(self):
+        out = sidebar.clears({"w1:p1": {}, "w1:p2": {}}, {}, keep={"w1:p1"})
+        self.assertEqual(out["w1:p1"], {"fm_sort": None})
+        self.assertEqual(set(out["w1:p2"]), set(sidebar.KEYS))
+
+    def test_watchdog_grace_scales_with_last_snapshot(self):
+        self.assertEqual(sidebar._watchdog_s({}), (25, 15))
+        self.assertEqual(sidebar._watchdog_s({}, 6.0), (25, 15))
+        self.assertEqual(sidebar._watchdog_s({}, 12.0), (34, 24))
+        self.assertEqual(sidebar._watchdog_s({sidebar.WATCHDOG_ENV: "1.5"}, 12.0), (1.5, 1.5))
+
+    def test_report_failure_logged_on_transition_only(self):
+        class A:
+            no_view, width, lead_cells = True, 26, None
+        tmp = tempfile.mkdtemp()
+        try:
+            pub = sidebar.Publisher(A(), tmp)
+            pub.joins_for = lambda snap: ({"s1": "p1"}, [])
+            fail = [True]
+
+            def fake_call(method, params):
+                if fail[0]:
+                    raise sidebar.HerdrError("down")
+                return {}
+            pub._call = fake_call
+            logged = []
+            orig, sidebar.log = sidebar.log, logged.append
+            try:
+                snap = json.loads(SNAP_LINE)
+                for _ in range(3):
+                    pub.publish(snap)
+                fail[0] = False
+                pub.publish(snap)
+                pub.publish(snap)
+            finally:
+                sidebar.log = orig
+            reports = [m for m in logged if m.startswith("report ")]
+            self.assertEqual(reports, ["report p1 failed: down", "report p1 recovered"])
+        finally:
+            shutil.rmtree(tmp)
 
     def test_view_decision(self):
         self.assertEqual(sidebar.view_decision(False, 2), "set")
@@ -261,15 +386,22 @@ class SnippetTest(unittest.TestCase):
                 rules = cell.get("rules", []) if isinstance(cell, dict) else []
                 self.assertLessEqual(len(rules), 16)
                 for r in rules:
-                    self.assertTrue(r["equals"].rstrip("!") in glyphs, r)
+                    self.assertTrue(r.get("contains") == "!" or r["equals"] in glyphs, r)
         sym_file = ROOT / "config" / "symbols.json"
         if sym_file.is_file():
             with open(sym_file, encoding="utf-8") as fh:
                 shared = json.load(fh)
             self.assertEqual(shared, SYMS)
         self.assertNotIn("$fm_pre", json.dumps(rows))
-        sym_rules = rows[0][0]["rules"]
-        self.assertEqual({r["equals"] for r in sym_rules if not r["equals"].endswith("!")}, glyphs)
+        sym_cell = rows[0][0]
+        sym_rules = sym_cell["rules"]
+        self.assertEqual(sym_rules[0], {"contains": "!", "fg": "#d9534f", "bold": True})  # late first
+        self.assertEqual({r["equals"] for r in sym_rules[1:]}, glyphs)
+        working = next(r["fg"] for r in sym_rules if r.get("equals") == "⏳")
+        self.assertEqual(sym_cell["fg"], working)   # spinner frames match no rule: working colour
+        for frame in "⣾⣽⣻⢿⡿⣟⣯⣷":
+            self.assertFalse(any(r.get("equals") == frame or r.get("contains", "\0") in frame
+                                 for r in sym_rules), frame)
         with open(PLUGIN / "herdr-plugin.toml", "rb") as fh:
             manifest = tomllib.load(fh)
         self.assertEqual(manifest["id"], "pi-foreman.sidebar")
@@ -434,6 +566,92 @@ class DaemonLoopTest(unittest.TestCase):
         self.assertTrue(self.wait_for(lambda: "foreman radar stalled" in self.read_log(), 6),
                         self.read_log())
         self.assertIn("watchdog: no radar line", self.read_log())
+
+
+def write_agent_dir(root):
+    """One live session `sid-1` (pane p1) with a done run that ended 2 s ago."""
+    import datetime
+    iso = lambda ago: (datetime.datetime.now(datetime.timezone.utc)  # noqa: E731
+                       - datetime.timedelta(seconds=ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    adir = os.path.join(root, "agent")
+    live = os.path.join(adir, "pi-foreman", "state", "live")
+    os.makedirs(live)
+    d = {"v": 1, "sessionId": "sid-1", "intercomId": "fm-1", "label": "demo", "cwd": "/x", "pid": 1,
+         "paneId": "p1", "startedAt": iso(60), "heartbeatAt": iso(1), "lastEventAt": iso(1),
+         "state": "working", "runs": [{"launchId": "L1", "role": "builder", "rung": None, "state": "done",
+                                       "tokensIn": 0, "tokensOut": 0, "cost": 0, "endedAt": iso(2)}]}
+    with open(os.path.join(live, "sid-1.json"), "w", encoding="utf-8") as fh:
+        json.dump(d, fh)
+    return adir
+
+
+class PushComposeTest(unittest.TestCase):
+    def test_push_tokens_use_layout_prefix(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            adir = write_agent_dir(tmp)
+            sdir = os.path.join(tmp, "state")
+            os.makedirs(sdir)
+            radar = sidebar._import_radar()
+            args = type("A", (), {"session": "sid-1", "pane": "p1", "symbols": None, "agent_dir": adir,
+                                  "width": 26, "lead_cells": None, "dry_run": True})()
+            root = sidebar.push_tokens(radar, args, sdir)["p1"]
+            self.assertEqual(set(root), set(sidebar.SESSION_KEYS))   # never fm_sort
+            self.assertTrue(root["fm_l1"].startswith("› demo"))       # no layout: root row
+            self.assertEqual(root["fm_l2"], "✓ builder")              # recent run (8 s default)
+            with open(os.path.join(sdir, "layout.json"), "w", encoding="utf-8") as fh:
+                json.dump({"fm-1": {"pre": "└─", "cont": sidebar.BLANK * 2}}, fh)
+            nested = sidebar.push_tokens(radar, args, sdir)["p1"]
+            self.assertTrue(nested["fm_l1"].startswith("└─ › demo"), nested["fm_l1"])
+            self.assertTrue(nested["fm_l2"].startswith(sidebar.BLANK * 2 + " "), nested["fm_l2"])
+            args.session = "nope"
+            self.assertEqual(sidebar.push_tokens(radar, args, sdir), {})
+        finally:
+            shutil.rmtree(tmp)
+
+
+@unittest.skipUnless(os.name == "posix" and hasattr(socket, "AF_UNIX"), "POSIX AF_UNIX socket")
+class PushTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(dir="/tmp" if os.path.isdir("/tmp") else None)
+        self.herdr = FakeHerdr(os.path.join(self.tmp, "h.sock"))
+        self.adir = write_agent_dir(self.tmp)
+        self.stamp = os.path.join(self.tmp, "state", "push", "sid-1.stamp")
+
+    def tearDown(self):
+        self.herdr.close()
+        shutil.rmtree(self.tmp)
+
+    def push(self, *extra, sock="h.sock"):
+        env = dict(os.environ, HERDR_SOCKET_PATH=os.path.join(self.tmp, sock),
+                   HERDR_PLUGIN_STATE_DIR=os.path.join(self.tmp, "state"), HERDR_SIDEBAR_WIDTH="26")
+        return subprocess.run([sys.executable, str(PLUGIN / "sidebar.py"), "push", "--session", "sid-1",
+                               "--pane", "p1", "--agent-dir", self.adir] + list(extra),
+                              env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+
+    def test_push_publishes_and_stamps_then_clear(self):
+        res = self.push()
+        self.assertEqual((res.returncode, res.stdout, res.stderr), (0, b"", b""))
+        (rep,) = self.herdr.reports()
+        self.assertEqual((rep["pane_id"], rep["source"], rep["ttl_ms"]), ("p1", sidebar.SOURCE, 15000))
+        self.assertEqual(set(rep["tokens"]), set(sidebar.SESSION_KEYS))
+        self.assertTrue(rep["tokens"]["fm_l1"].startswith("› demo"))
+        with open(self.stamp, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "p1")
+        res = self.push("--clear")
+        self.assertEqual((res.returncode, res.stdout), (0, b""))
+        last = self.herdr.reports()[-1]["tokens"]
+        self.assertEqual(last, {k: None for k in sidebar.SESSION_KEYS})
+        self.assertFalse(os.path.exists(self.stamp))
+
+    def test_unreachable_herdr_is_quiet_and_dry_run_prints(self):
+        res = self.push(sock="missing.sock")
+        self.assertEqual((res.returncode, res.stdout, res.stderr), (0, b"", b""))
+        self.assertFalse(os.path.exists(self.stamp))
+        res = self.push("--dry-run", sock="missing.sock")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("fm_l1", json.loads(res.stdout.decode("utf-8"))["p1"])
+        self.assertEqual(self.herdr.reports(), [])
 
 
 class DaemonTest(unittest.TestCase):

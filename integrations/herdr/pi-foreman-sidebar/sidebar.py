@@ -7,7 +7,12 @@ rows that render those tokens live in config-snippet.toml (`configure` prints
 it). Standard library only, Python 3.9+. Imports on every OS; the daemon's
 POSIX parts (flock, AF_UNIX) are reached only inside functions.
 
-Subcommands: start | stop | run | status | configure.
+Subcommands: start | stop | run | status | configure | push.
+
+`push` is the session's own fast path: it composes the tokens of one session
+(radar imported in-process) and reports them for its pane, then touches a push
+stamp. While a pane's stamp is fresh and its session is live, the daemon
+publishes only `fm_sort` for that pane and leaves the other keys to the session.
 """
 
 import argparse
@@ -31,8 +36,9 @@ SOURCE = "plugin:" + PLUGIN_ID
 TTL_MS = 15000
 ONCE_TTL_MS = 60000  # `run --once`: long enough to inspect by hand
 INTERVAL_S = 5
-# Watchdog: a radar child that prints no line for 3 intervals (plus a startup
-# grace for its first line) is killed and restarted.
+# Watchdog: a radar child that prints no line for max(3 intervals, 2x the last
+# snapshot duration) (plus a startup grace for its first line) is killed and
+# restarted.
 STARTUP_GRACE_S = 10
 WATCHDOG_ENV = "PI_FOREMAN_SIDEBAR_WATCHDOG_S"  # hidden override (tests)
 # Herdr config reference: "`ui.sidebar_width` integer default `26`".
@@ -54,7 +60,7 @@ INSET = 2
 GAP = 3
 # Cells the user puts before $fm_sym on row 1 (an icon token, say), each
 # assumed 1 column wide plus its separator; --lead-cells / HERDR_SIDEBAR_LEAD.
-DEFAULT_LEAD = 1
+DEFAULT_LEAD = 0
 LEAD_CELL_W = 1
 # Line 1 stops this many columns short of its budget, so a misjudged frame
 # or glyph width does not push the age into Herdr's ellipsis.
@@ -65,6 +71,15 @@ BLANK = "⠀"
 KEYS = ("fm_sym", "fm_l1", "fm_l2", "fm_l3", "fm_cost",
         "fm_state", "fm_block_s", "fm_sort")
 STALE_KEYS = ("fm_pre",)  # published by older versions; nulled at shutdown
+# Keys a self-pushing session owns; the daemon keeps fm_sort (tree order).
+SESSION_KEYS = tuple(k for k in KEYS if k != "fm_sort")
+# A pane is self-pushing while its push stamp is younger than this (the TTL)
+# and its session is not in one of these radar states.
+STAMP_FRESH_S = TTL_MS / 1000.0
+NOT_SELF_STATES = ("lost", "stale", "done")
+SID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
+# Minimum line-1 label when the age is kept: "›…".
+L1_MIN_LABEL = 2
 SOCKET_FAILURES_MAX = 40
 VIEW_RETRY_S = 60
 VIEW_REFRESH_S = 60
@@ -128,8 +143,10 @@ def fmt_cost(c):
 
 
 def spread(left, right, width):
-    """`left` + inner padding + `right`, right edge at `width` cells."""
-    if not right:
+    """`left` + inner padding + `right`, right edge at `width` cells. When
+    `left` would get fewer than L1_MIN_LABEL cells (`›…`), `right` is dropped,
+    so the result never exceeds `width`."""
+    if not right or width - cell_width(right) - 1 < L1_MIN_LABEL:
         return truncate(left, width)
     room = width - cell_width(right) - 1
     left = truncate(left, room)
@@ -167,7 +184,23 @@ def _row_children(nodes, joins):
     return out
 
 
-def _children_text(node, joins):
+def _recent_run(k, recent):
+    """A done run that ended at most `recent` seconds ago (shown, not counted)."""
+    ended = k.get("ended_s")
+    return (k.get("kind") == "run" and k.get("state") == "done" and recent is not None
+            and ended is not None and ended <= recent)
+
+
+def fmt_counts(tot):
+    """Row 3 counts: uncached input (fresh + cache writes) and output; the raw
+    total with a "~" when the snapshot has no uncached figure."""
+    unc = tot.get("uncached")
+    if unc is None:
+        return "↑~%s ↓%s" % (fmt_tok(tot.get("in")), fmt_tok(tot.get("out")))
+    return "↑%s ↓%s" % (fmt_tok(unc), fmt_tok(tot.get("out")))
+
+
+def _children_text(node, joins, recent=None):
     state = node.get("state")
     kids = node.get("children") or []
     if state == "lost":
@@ -179,7 +212,7 @@ def _children_text(node, joins):
     groups = []
     counts = {}
     for k in kids:
-        if _is_row(k, joins) or k.get("state") == "done":
+        if _is_row(k, joins) or (k.get("state") == "done" and not _recent_run(k, recent)):
             continue
         label = k.get("role") or k.get("name") or "?"
         if k.get("rung") and k["rung"] != "model":  # the base rung is implied
@@ -194,12 +227,15 @@ def _children_text(node, joins):
     return " · ".join(g if counts[g] == 1 else "%s ×%d" % (g, counts[g]) for g in groups)
 
 
-def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD):
+def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, layout=None,
+            layout_out=None):
     """Snapshot (radar --json) -> {paneId: {fm_key: value or None}}.
 
     `joins` maps node key -> paneId; without it each node's own `paneId` is
     used. `lead` counts the user's cells before $fm_sym on row 1. None values
-    clear the token.
+    clear the token. Panes in `self_panes` get only `fm_sort` (their session
+    publishes the rest). `layout` ({key: {pre, cont}}) places a root row at a
+    tree position computed elsewhere; `layout_out` collects every row's.
     """
     if joins is None:
         joins = {}
@@ -209,10 +245,17 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD):
     roots, joins = dedupe_panes(snapshot.get("roots") or [], joins)
     width = int(width)
     lead = max(0, int(lead))
+    recent = snapshot.get("recentRunSeconds")
+    self_panes = self_panes or ()
     out = {}
 
     def emit(node, sort, pre, cont):
         pane = joins[node["key"]]
+        if layout_out is not None:
+            layout_out[node["key"]] = {"pre": pre, "cont": cont}
+        if pane in self_panes:
+            out[pane] = {"fm_sort": _cap(sort)}
+            return
         glyph = node.get("glyph") or ""
         blocked_s = node.get("blocked_s")
         sym = glyph
@@ -226,17 +269,22 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD):
         # rows 2 and 3 indent under the glyph with the tree continuation
         indent = (cont + " ") if cont else ""
         room = width - INSET - cell_width(indent)
-        l2 = indent + truncate(_children_text(node, joins), room)
+        l2 = indent + truncate(_children_text(node, joins, recent), room)
         tot = node.get("tot") or {}
         l3 = cost = None
         if width >= NARROW_COST:
+            shown = sum(1 for k in node.get("children") or [] if _recent_run(k, recent))
+            done = max(0, (node.get("done_children") or 0) - shown)
+            cost_text, tick = fmt_cost(tot.get("cost")), ("✓%d" % done if done else "")
+            cost_w = cell_width(cost_text) + (1 + cell_width(tick) if tick else 0)
             counts = ""
             if width >= NARROW_COUNTS:
-                counts = "↑%s ↓%s" % (fmt_tok(tot.get("in")), fmt_tok(tot.get("out")))
+                counts = fmt_counts(tot)
+                if cell_width(indent + counts) + GAP + cost_w > width - INSET:
+                    counts = ""  # the cost outranks the counts
             l3 = indent + counts if counts else (indent or None)
-            done = node.get("done_children") or 0
             cost_room = width - INSET - (cell_width(l3) + GAP if l3 else 0)
-            cost = spread(fmt_cost(tot.get("cost")), "✓%d" % done if done else "", cost_room)
+            cost = spread(cost_text, tick, cost_room)
         tokens = {
             "fm_sym": sym or None,
             "fm_l1": l1,
@@ -255,6 +303,10 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD):
             last = i == len(rows)
             if depth == 0:
                 sort, pre, cont, child_cont = "r%03d" % i, "", "", ""
+                placed = (layout or {}).get(n.get("key"))
+                if isinstance(placed, dict):
+                    pre, cont = str(placed.get("pre") or ""), str(placed.get("cont") or "")
+                    child_cont = cont
             else:
                 sort = "%s.c%03d" % (sort_prefix, i)
                 pre = prefix_cont + ("└─" if last else "├─")
@@ -347,9 +399,71 @@ def join(nodes, agents, procinfo=None):
     return joins
 
 
-def clears(prev, now):
-    """Null patches for panes published before and absent now."""
-    return {pane: {k: None for k in KEYS} for pane in prev if pane not in now}
+def clears(prev, now, keep=()):
+    """Null patches for panes published before and absent now; for panes in
+    `keep` (fresh push stamp: the session owns its keys) only fm_sort."""
+    return {pane: ({"fm_sort": None} if pane in keep else {k: None for k in KEYS})
+            for pane in prev if pane not in now}
+
+
+def fresh_stamps(sdir, now=None):
+    """{session id: paneId} of push stamps younger than STAMP_FRESH_S."""
+    now = time.time() if now is None else now
+    d = os.path.join(sdir, "push")
+    out = {}
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return out
+    for name in names:
+        if not name.endswith(".stamp"):
+            continue
+        path = os.path.join(d, name)
+        try:
+            if now - os.path.getmtime(path) >= STAMP_FRESH_S:
+                continue
+            with open(path, encoding="utf-8") as fh:
+                pane = fh.read().strip()
+        except OSError:
+            continue
+        if pane:
+            out[name[:-len(".stamp")]] = pane
+    return out
+
+
+def self_panes_for(roots, joins, fresh):
+    """Panes whose session pushes its own tokens: fresh stamp naming the pane
+    the session is joined to, and the session neither lost, stale nor done."""
+    out = set()
+    for n in walk(roots):
+        pane = joins.get(n.get("key"))
+        sid = n.get("sid")
+        if (n.get("kind") == "session" and pane and sid and fresh.get(sid) == pane
+                and n.get("state") not in NOT_SELF_STATES):
+            out.add(pane)
+    return out
+
+
+def write_atomic(path, text):
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def read_layout(sdir):
+    try:
+        with open(os.path.join(sdir, "layout.json"), encoding="utf-8") as fh:
+            d = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
 
 
 def view_retry_due(failed_at, now, every=None):
@@ -415,7 +529,7 @@ def read_width(args, env, herdr_config_path):
 
 
 def read_lead(args, env):
-    """--lead-cells > HERDR_SIDEBAR_LEAD > 1."""
+    """--lead-cells > HERDR_SIDEBAR_LEAD > 0."""
     n = getattr(args, "lead_cells", None) if args is not None else None
     if n is not None and n >= 0:
         return int(n)
@@ -588,6 +702,8 @@ class Publisher:
         self.view_errors = set()
         self.ttl_ms = TTL_MS
         self.joined_logged = None
+        self.self_panes = set()
+        self.report_failed = set()
 
     def width(self):
         return read_width(self.args, os.environ, os.path.join(herdr_config_dir(), "config.toml"))
@@ -693,10 +809,14 @@ class Publisher:
     def publish(self, snapshot):
         """Join, compose and report; returns {paneId: "ok" or "error: ..."}."""
         joins, agents = self.joins_for(snapshot)
-        now = compose(snapshot, self.width(), joins, self.lead())
+        fresh = fresh_stamps(self.sdir)
+        self.self_panes = self_panes_for(snapshot.get("roots") or [], joins, fresh)
+        layout = {}
+        now = compose(snapshot, self.width(), joins, self.lead(), self.self_panes, layout_out=layout)
+        write_atomic(os.path.join(self.sdir, "layout.json"), json.dumps(layout, ensure_ascii=False))
         self.log_joined(snapshot, agents, len(now))
         patches = dict(now)
-        patches.update(clears(self.published, now))
+        patches.update(clears(self.published, now, set(fresh.values())))
         results = {}
         for pane, tokens in patches.items():
             try:
@@ -705,7 +825,13 @@ class Publisher:
                 results[pane] = "ok"
             except HerdrError as exc:
                 results[pane] = "error: %s" % exc
-                log("report %s failed: %s" % (pane, exc))
+                if pane not in self.report_failed:  # log the transition, not every tick
+                    self.report_failed.add(pane)
+                    log("report %s failed: %s" % (pane, exc))
+                continue
+            if pane in self.report_failed:
+                self.report_failed.discard(pane)
+                log("report %s recovered" % pane)
         self.published = now
         since = None if self.view_set_at is None else time.monotonic() - self.view_set_at
         self.view(view_decision(self.view_active, len(now), since))
@@ -713,9 +839,11 @@ class Publisher:
 
     def shutdown(self):
         for pane in list(self.published):
+            # a self-pushing session keeps its keys; its own TTL ends them
+            keys = ("fm_sort",) + STALE_KEYS if pane in self.self_panes else KEYS + STALE_KEYS
             try:
                 call("pane.report_metadata", {"pane_id": pane, "source": SOURCE,
-                                              "tokens": {k: None for k in KEYS + STALE_KEYS}})
+                                              "tokens": {k: None for k in keys}})
             except (OSError, ValueError, HerdrError):
                 pass
         self.published = {}
@@ -804,7 +932,9 @@ def _executable(path):
     return shutil.which(path) or path
 
 
-def _watchdog_s(env=None):
+def _watchdog_s(env=None, last_s=0.0):
+    """(first-line wait, line wait): max(3 intervals, 2x the last snapshot
+    duration `last_s`), plus the startup grace for the first line."""
     env = os.environ if env is None else env
     try:
         v = float(env.get(WATCHDOG_ENV, ""))
@@ -812,7 +942,8 @@ def _watchdog_s(env=None):
             return v, v
     except ValueError:
         pass
-    return 3 * INTERVAL_S + STARTUP_GRACE_S, 3 * INTERVAL_S
+    base = max(3 * INTERVAL_S, 2 * float(last_s or 0.0))
+    return base + STARTUP_GRACE_S, base
 
 
 def _spawn_radar(foreman, args):
@@ -863,7 +994,7 @@ def run_daemon(args, foreman):
     proc = None
     last = None
     backoff = 1.0
-    first_wait, line_wait = _watchdog_s()
+    last_s = 0.0  # duration of the last radar snapshot, kept across restarts
     log("started, foreman %s, state dir %s" % (foreman, sdir))
     try:
         pub.reapply_view()
@@ -877,6 +1008,7 @@ def run_daemon(args, foreman):
             spawned = last_line = time.monotonic()
             got_line = False
             stalled = False
+            first_wait, line_wait = _watchdog_s(last_s=last_s)
             while True:
                 try:
                     raw = q.get(timeout=1.0)
@@ -886,11 +1018,15 @@ def run_daemon(args, foreman):
                     break
                 now = time.monotonic()
                 if raw:
+                    last_s = max(0.0, now - last_line - (INTERVAL_S if got_line else 0))
+                    first_wait, line_wait = _watchdog_s(last_s=last_s)
                     last_line = now
                     if not got_line:
                         got_line = True
                         log("first radar line after %.1fs" % (now - spawned))
                 elif now - last_line > (line_wait if got_line else first_wait):
+                    # a slow snapshot widens the next grace instead of looping
+                    last_s = max(last_s, now - last_line - (INTERVAL_S if got_line else 0))
                     log("watchdog: no radar line for %.0fs, killing pid %d; stacks follow"
                         % (now - last_line, proc.pid))
                     _dump_stacks()
@@ -965,6 +1101,99 @@ def cmd_status():
     return 1
 
 
+def _import_radar():
+    """scripts/foreman_radar.py of the package this plugin lives in, or None."""
+    scripts = os.path.normpath(os.path.join(HERE, "..", "..", "..", "scripts"))
+    if not os.path.isfile(os.path.join(scripts, "foreman_radar.py")):
+        log("push: foreman_radar.py not found next to the plugin (%s)" % scripts)
+        return None
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import foreman_radar
+    return foreman_radar
+
+
+def _cache_path(sdir, sid):
+    return os.path.join(sdir, "push", sid + ".usage.json")
+
+
+def push_tokens(radar, args, sdir, now=None):
+    """{paneId: tokens} for the session `args.session` on pane `args.pane`
+    (session-owned keys only); {} when radar does not know the session.
+    Usage totals resume from a per-session byte-offset cache in the state dir,
+    so a push reads only the usage lines appended since the last one."""
+    now = time.time() if now is None else now
+    adir = radar.agent_dir(args.agent_dir)
+    sym_name = args.symbols or radar.config_symbols(adir)
+    cache_file = _cache_path(sdir, args.session)
+    try:
+        with open(cache_file, encoding="utf-8") as fh:
+            cache = radar.UsageCache(json.load(fh))
+    except (OSError, ValueError):
+        cache = radar.UsageCache()
+    roots = radar.snapshot(adir, now, 24.0, cache, None, only=args.session)
+    if not args.dry_run:
+        try:
+            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+            write_atomic(cache_file, json.dumps(cache.files))
+        except OSError:
+            pass
+    if not roots:
+        return {}
+    snap = radar.json_doc(roots, now, sym_name, radar.load_symbols(sym_name),
+                          radar.config_recent_runs(adir))
+    root = snap["roots"][0]
+    joins = {n["key"]: n["paneId"] for n in walk([root])
+             if n.get("kind") == "session" and n.get("paneId") and n["paneId"] != args.pane}
+    joins[root["key"]] = args.pane
+    width = read_width(args, os.environ, os.path.join(herdr_config_dir(), "config.toml"))
+    out = compose(snap, width, joins, read_lead(args, os.environ), layout=read_layout(sdir))
+    tokens = out.get(args.pane) or {}
+    return {args.pane: {k: tokens.get(k) for k in SESSION_KEYS}}
+
+
+def cmd_push(args):
+    """Best effort: exit 0 and quiet when Herdr is unreachable; 2 on bad usage
+    or a missing radar. --dry-run prints the tokens and reports nothing."""
+    if not args.session or not SID_RE.match(args.session) or not args.pane:
+        log("push needs --session <id> and --pane <id>")
+        return 2
+    sdir = state_dir()
+    stamp = os.path.join(sdir, "push", args.session + ".stamp")
+    if args.clear:
+        patch = {args.pane: {k: None for k in SESSION_KEYS}}
+        if args.dry_run:
+            print(json.dumps(patch))
+            return 0
+        for path in (stamp, _cache_path(sdir, args.session)):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    else:
+        radar = _import_radar()
+        if radar is None:
+            return 2
+        patch = push_tokens(radar, args, sdir)
+        if args.dry_run:
+            print(json.dumps(patch, ensure_ascii=False))
+            return 0
+        if not patch:
+            return 0
+    try:
+        call("pane.report_metadata", {"pane_id": args.pane, "source": SOURCE,
+                                      "tokens": patch[args.pane], "ttl_ms": TTL_MS}, timeout=2.0)
+    except (OSError, ValueError, HerdrError):
+        return 0
+    if not args.clear:
+        try:
+            os.makedirs(os.path.dirname(stamp), exist_ok=True)
+        except OSError:
+            return 0
+        write_atomic(stamp, args.pane)
+    return 0
+
+
 def cmd_configure():
     with open(os.path.join(HERE, "config-snippet.toml"), encoding="utf-8") as fh:
         sys.stdout.write(fh.read())
@@ -973,7 +1202,7 @@ def cmd_configure():
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sidebar.py", description=__doc__.splitlines()[0])
-    ap.add_argument("command", choices=("start", "stop", "run", "status", "configure"))
+    ap.add_argument("command", choices=("start", "stop", "run", "status", "configure", "push"))
     ap.add_argument("--width", type=int)
     ap.add_argument("--no-view", action="store_true")
     ap.add_argument("--lead-cells", type=int)
@@ -981,6 +1210,10 @@ def main(argv=None):
     ap.add_argument("--dry-run", action="store_true", help="with run: compose once, report nothing")
     ap.add_argument("--foreman")
     ap.add_argument("--agent-dir")
+    ap.add_argument("--session", help="with push: the session id")
+    ap.add_argument("--pane", help="with push: the session's Herdr pane id")
+    ap.add_argument("--symbols", choices=("unicode", "nerd"), help="with push: glyph set; default ui.symbols")
+    ap.add_argument("--clear", action="store_true", help="with push: clear the session's keys")
     argv = sys.argv[1:] if argv is None else argv
     args = ap.parse_args(argv)
     if args.command == "start":
@@ -991,6 +1224,8 @@ def main(argv=None):
         return cmd_status()
     if args.command == "configure":
         return cmd_configure()
+    if args.command == "push":
+        return cmd_push(args)
     foreman = find_foreman(args.foreman, os.environ, plugin_root())
     if not foreman:
         log("foreman not found (set --foreman or PI_FOREMAN_BIN, or put foreman on PATH)")
