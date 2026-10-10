@@ -1,0 +1,23 @@
+{
+ "foreman": [
+  {
+   "event": "checkpoint",
+   "decision": "refused",
+   "tier": "heavy"
+  },
+  {
+   "event": "role_launch",
+   "role": "reviewer"
+  },
+  {
+   "event": "plan_review",
+   "decision": "pass",
+   "model": "foreman-fake/reviewer"
+  },
+  {
+   "event": "checkpoint",
+   "decision": "approve",
+   "tier": "heavy"
+  }
+ ]
+}

@@ -1,0 +1,13 @@
+{
+ "foreman": [
+  {
+   "event": "role_launch",
+   "role": "reviewer"
+  },
+  {
+   "event": "panel",
+   "role": "reviewer",
+   "decision": "unsupported"
+  }
+ ]
+}

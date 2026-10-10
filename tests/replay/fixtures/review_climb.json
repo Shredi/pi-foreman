@@ -1,0 +1,46 @@
+{
+ "foreman": {
+  "c1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a fix"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-rc.md", "content": "# Requirements Ledger: rc\n\n- [ ] 1. fix add\n- [ ] V. fresh-eyes verification passed\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-c2]] review item 1"}}]},
+   {"text": "Reviewer launched."}
+  ],
+  "c2": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-c3]] review item 1 again"}}]},
+   {"text": "Re-review launched."}
+  ],
+  "c3": [{"text": "Reviewed."}, {"text": "Still reviewed."}, {"text": "Done."}],
+  "p1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a fix"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-rp.md", "content": "# Requirements Ledger: rp\n\n- [ ] 1. fix add\n- [ ] V. fresh-eyes verification passed\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-p2]] [pre-pr] review the branch, item 1"}}]},
+   {"text": "Panel launched."}
+  ],
+  "p2": [{"text": "Reviewed."}, {"text": "Still reviewed."}, {"text": "Done."}],
+  "pr-gh": [{"tools": [{"name": "bash", "arguments": {"command": "gh pr create --title t --body b"}}]}, {"text": "PR attempt done."}],
+  "q1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a large change"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-pq.md", "content": "# Requirements Ledger: pq\nTier: heavy\n\n- [ ] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/plan-pq.md", "content": "# Widget\n\n## Goal\nShip the widget.\n\n## Approach\nOne builder.\n\n## Verification\nTests.\n"}}]},
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-pq.md"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-q2]] [plan-review] review .workflow/scratch/plan-pq.md against the ledger"}}]},
+   {"text": "Plan reviewer launched."}
+  ],
+  "q2": [
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-pq.md"}}]},
+   {"text": "Checkpoint answered."},
+   {"text": "Still waiting."},
+   {"text": "Done."}
+  ]
+ },
+ "reviewer": {
+  "r-c2": [{"text": "[[replay:c2]] VERDICT: FAIL\n1. FAIL calc.py:2 off-by-one: add returns a - b\nOverall verdict: FAIL"}],
+  "r-p2": [{"text": "[[replay:p2]] VERDICT: PASS\n1. PASS calc.py:2\nOverall verdict: PASS"}],
+  "r-q2": [{"text": "[[replay:q2]] VERDICT: PASS\n1. PASS the plan covers item 1\nOverall verdict: PASS"}]
+ },
+ "senior-reviewer": {
+  "r-c3": [{"text": "[[replay:c3]] VERDICT: PASS\n1. PASS calc.py:2\nOverall verdict: PASS"}],
+  "r-p2": [{"text": "VERDICT: FAIL\n1. FAIL calc.py:2 race: the counter is shared without a lock\nOverall verdict: FAIL"}]
+ }
+}

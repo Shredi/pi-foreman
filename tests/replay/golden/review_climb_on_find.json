@@ -1,0 +1,29 @@
+{
+ "foreman": [
+  {
+   "event": "role_launch",
+   "role": "reviewer"
+  },
+  {
+   "event": "finding",
+   "role": "reviewer",
+   "model": "foreman-fake/reviewer"
+  },
+  {
+   "event": "rung_up",
+   "role": "reviewer"
+  },
+  {
+   "event": "role_launch",
+   "role": "reviewer"
+  },
+  {
+   "event": "rung_up",
+   "role": "reviewer"
+  },
+  {
+   "event": "climb_done",
+   "role": "reviewer"
+  }
+ ]
+}
