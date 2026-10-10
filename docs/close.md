@@ -24,7 +24,7 @@
 ## Manifest
 
 `<state>/sessions/<session>/manifest.json` (`<state>` = `<agent dir>/pi-foreman/state`, or `PI_FOREMAN_STATE_DIR`):
-`{v, session, entries: [{path, kind, class, owner, branch?, base?, ts}], dropped: [path]}`.
+`{v, session, entries: [{path, kind, class, owner, branch?, base?, ts, removed?}], dropped: [path]}`.
 Kinds are `worktree`, `scratch` and `handoff`; classes `private`, `round`, `durable`. Entries are additive and
 deduplicated by real path; `scripts/foreman_close.py` is the only writer.
 
