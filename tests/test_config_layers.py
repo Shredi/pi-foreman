@@ -228,6 +228,14 @@ class LayerRulesTest(unittest.TestCase):
         self.assertIn("project intercom.allowRemote ignored", joined)
         self.assertIn("project close.from: entries not extended: other", joined)
 
+    def test_retro_backlog_location_keys_not_from_project(self):
+        res = self.load(proj={"retro": {"backlogDir": "x", "workspaceKey": "k", "repoBacklog": [{"path": "/x", "commit": True}],
+                                        "expireDays": 3}}, session={})
+        retro, joined = res["config"]["retro"], "\n".join(res["warnings"])
+        self.assertEqual((retro["backlogDir"], retro["workspaceKey"], retro["repoBacklog"], retro["expireDays"]), (None, None, [], 3))
+        for key in ("backlogDir", "workspaceKey", "repoBacklog"):
+            self.assertIn("project retro.%s ignored" % key, joined)
+
     def test_ceremony_escalation_keys_tighten_only(self):
         # MINOR-7: signals union only, file count lower only (>= 1), default raise only, wrong types dropped.
         res = self.load(proj={"ceremony": {"heavySignals": ["schema"], "heavyFileCount": 50, "default": "trivial"}},

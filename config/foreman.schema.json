@@ -242,7 +242,24 @@
     "retro": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "proposalMinReviews": { "type": "integer", "minimum": 1, "description": "Reviews needed before a retro proposal. User or overlay config only." } }
+      "properties": {
+        "proposalMinReviews": { "type": "integer", "minimum": 1, "description": "Reviews needed before a retro proposal. User or overlay config only." },
+        "enabled": { "type": ["boolean", "null"], "description": "Run retro and record backlog findings. null means auto: on in interactive (tui, rpc) sessions, off in json and print mode." },
+        "workspaceKey": { "type": ["string", "null"], "description": "Backlog key of this workspace ('/' makes subdirectories). null means <basename>-<hash of the workspace root>. User or overlay config only." },
+        "backlogDir": { "type": ["string", "null"], "description": "Central backlog directory. null means <agentDir>/pi-foreman/state/retro/backlog. User or overlay config only." },
+        "repoBacklog": {
+          "type": "array",
+          "description": "Workspaces (absolute path or glob) whose backlog lives in <workspace>/.workflow/retro-backlog.md. commit: true lets sync commit it. User or overlay config only.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "commit"],
+            "properties": { "path": { "type": "string" }, "commit": { "type": "boolean" } }
+          }
+        },
+        "expireDays": { "type": "integer", "minimum": 1, "description": "Days without a sighting after which an open or planned backlog entry expires." },
+        "askThreshold": { "type": "integer", "minimum": 1, "description": "Permission asks in one run that make a backlog finding." }
+      }
     },
     "intercom": {
       "type": "object",
@@ -397,7 +414,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean", "description": "Write the opt-in allowlisted trace." },
+        "enabled": { "type": ["boolean", "null"], "description": "Write the allowlisted trace. null means it follows the effective retro.enabled; false always turns it off." },
         "dir": { "type": ["string", "null"], "description": "Trace directory. null means the state dir. A project or session value must resolve inside the workspace, else it is ignored." }
       }
     }

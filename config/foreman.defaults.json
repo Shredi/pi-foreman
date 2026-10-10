@@ -62,7 +62,7 @@
   "review": { "headless": false },
   "sync": { "repos": [], "runRetro": true },
   "radar": { "doneTtlMinutes": 30, "recentRunSeconds": 8 },
-  "retro": { "proposalMinReviews": 5 },
+  "retro": { "proposalMinReviews": 5, "enabled": null, "workspaceKey": null, "backlogDir": null, "repoBacklog": [], "expireDays": 14, "askThreshold": 2 },
   "intercom": { "allowRemote": false, "allowOpenPane": false },
   "close": { "from": ["herdr", "intercom-parent"] },
   "footer": { "usage": true },
@@ -97,5 +97,5 @@
   },
   "bridge": { "isolateClaudeConfig": "auto" },
   "python": { "path": null },
-  "trace": { "enabled": false, "dir": null }
+  "trace": { "enabled": null, "dir": null }
 }
