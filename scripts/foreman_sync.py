@@ -564,6 +564,8 @@ def close_block(state, session, cwd, cfg, dry_run):
     entries when close.autoClean is on and not --dry-run), capped at CLOSE_LINES with an overflow line pointing
     at close.json. A failure is one line, never an exit code."""
     import foreman_close as fcl  # lazy: foreman_close imports this module
+    if not fcl.safe_sid(session):  # as foreman_close.main: no close.json under sessions/ itself
+        return ["CLOSE: unknown (session id %r has no safe characters)" % session]
     try:
         rep = fcl.run(state, session, cwd, cfg, clean=True, dry_run=dry_run)
     except Exception as exc:  # the report must not break the sync

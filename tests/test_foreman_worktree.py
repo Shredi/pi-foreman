@@ -67,6 +67,16 @@ class SweepTest(unittest.TestCase):
         self.assertFalse(self.conv.exists() or self.off.exists())
         self.assertTrue(self.dirty.is_dir())
 
+    def test_sweep_skips_the_worktree_holding_the_callers_cwd(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = fw.main(["sweep", "--cwd", str(self.conv), "--state", str(self.state), "--session", "s"])
+        lines = out.getvalue().splitlines()
+        self.assertEqual(code, 0)
+        self.assertIn("skipped: %s — in_use_by_caller" % self.conv, lines)
+        self.assertIn("removed: %s" % self.off, lines)
+        self.assertTrue(self.conv.is_dir())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,7 +7,8 @@
 removes each one that passes the session-close preconditions, whether or not a manifest lists it:
 safe_ops.check_worktree (clean including ignored files outside safety.ops.worktreeDisposable,
 merged into the base branch or contained in its pushed upstream, not locked, no stash) plus no
-live non-done session other than S (default CLAUDE_CODE_SESSION_ID) with its cwd inside. Removal is
+live non-done session other than S (default CLAUDE_CODE_SESSION_ID) with its cwd inside, and never the
+worktree that contains --cwd itself (`in_use_by_caller`). Removal is
 `git worktree remove` (never --force) and `git branch -d` (never -D). Each worktree is listed as
 `removed:` (`would remove:` with --dry-run) or `skipped: <path> — <reason>`. A worktree outside
 close.worktreeDir (`<repo>` = the main worktree's name, relative to the main worktree) and outside
@@ -45,6 +46,7 @@ def sweep(cwd, cfg, state, sid, dry_run=False):
     main_dir = os.path.realpath(items[0]["worktree"])
     conv = convention_dirs(main_dir, cfg)
     ops_cfg = safe_ops.ops_config(cfg)
+    caller = os.path.realpath(cwd)
     lines = []
     for w in items[1:]:
         path = w.get("worktree")
@@ -58,6 +60,8 @@ def sweep(cwd, cfg, state, sid, dry_run=False):
         user = fcl.in_use_by(state, sid, real)
         if user:
             reason = "in_use (session %s)" % user
+        elif safe_ops.is_inside(real, caller, True):
+            reason = "in_use_by_caller"
         elif not os.path.isdir(real):
             reason = "missing"
         else:

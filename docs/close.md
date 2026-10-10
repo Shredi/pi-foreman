@@ -59,9 +59,11 @@ handovers block only a top session (no parent); with a parent they are passed up
 
 `close.json` next to the manifest holds `{v, session, parent, ts, dryRun, uncommitted, unmerged, openItems,
 pendingChildren, removed, wouldRemove, kept, handovers, childHandovers, ready, lines}`; `--dry-run` writes
-nothing. `--result PATH` appends `## Close` with the lines to that file. Exit 0 ready, 3 open, 2 usage or
-config error. `/foreman close` runs the report and traces `close` with decision `report`.
-A second run re-reports; entries whose path is already gone are skipped.
+nothing. `--result PATH` appends `## Close` with the lines to that file. Exit 0 ready, 3 open, 1 lock timeout
+(another writer holds the manifest lock), 2 usage or config error. `/foreman close` runs the report (with
+`--trusted-project` in a trusted project, as `/sync`) and traces `close` with decision `report`.
+A removed entry is marked `removed: <ts>` in the manifest, so a second run of the same session lists it as
+`removed:` again (never as a handover); other entries whose path is already gone are skipped.
 
 ## Cleanup preconditions
 
@@ -74,7 +76,8 @@ Cleanup runs when `close.autoClean` is on and not `--dry-run`. Per manifest entr
 - Scratch: a directory inside `.workflow/scratch/` or `<state>/scratch/`, not a symlink, no live session inside.
   Removal uses `trash` when available, else removes exactly that path and nothing else.
 - A failed precondition turns the entry into a handover with the reason (`worktree_dirty`, `ignored_files`,
-  `not_merged`, `worktree_locked`, `stash_references_branch`, `in_use (session X)`, `symlink`, `outside_scratch`,
+  `not_merged`, `worktree_locked`, `stash_references_branch`, `in_use (session X)`, `in_use_by_caller` (sweep only),
+  `symlink`, `outside_scratch`,
   `autoClean off`, ...).
 
 ## Commands
@@ -87,6 +90,8 @@ Cleanup runs when `close.autoClean` is on and not `--dry-run`. Per manifest entr
   the same preconditions, listed in a manifest or not (`removed:`, `would remove:`, `skipped: <path> — <reason>`).
   A worktree outside `close.worktreeDir` and `.claude/worktrees` also gets an `off-convention: <path>` line
   (information only). A branch with no commits beyond its base counts as merged, so a fresh empty worktree is swept.
+  The worktree that contains `--cwd` (default: the current dir) is skipped with `in_use_by_caller`.
+  Warning: sweep removes a freshly created worktree that has no commits beyond its base yet; use `--dry-run` first.
 
 ## Sync
 
