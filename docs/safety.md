@@ -131,4 +131,4 @@ Key-by-key layer rules for `safety.*`: `design/architecture.md`
 | `intercom.allowRemote`, `intercom.allowOpenPane` | Allow remote intercom / opening a pane (both default `false`); a project or session can only set false. |
 | `close.from` | Sources a close request is accepted from (default `herdr`, `intercom-parent`); a project or session can only narrow it. |
 | `python.path` | Python 3.9+ interpreter; `null` auto-detects. It runs every guard, so a project or session value is ignored. |
-| `trace.enabled`, `trace.dir` | The opt-in allowlisted trace (default off) and its directory (`null` = the state dir; a project or session value must resolve inside the workspace). |
+| `trace.enabled`, `trace.dir` | The allowlisted trace and its directory. `trace.enabled` defaults to `null`, which follows the effective `retro.enabled` (on in tui and rpc, off in json and print); an explicit `true` or `false` wins, so `false` always turns it off. The directory (`null` = the state dir; a project or session value must resolve inside the workspace). |

@@ -63,6 +63,10 @@
    "role": "builder"
   },
   {
+   "event": "friction",
+   "role": "builder"
+  },
+  {
    "event": "llm",
    "model": "foreman-fake/foreman"
   },
