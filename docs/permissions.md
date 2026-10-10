@@ -27,8 +27,8 @@ deterministic allow must hold for that unit and for the full command.
 | unknown | everything else, and every command the chain splitter refuses | yes |
 
 Paths. Every path argument (operands, `--opt=value` values, input redirects) of a read or a write must resolve inside
-the worktree (the git top level of the cwd), a live `$FOREMAN_SCRATCH` dir of the asking role, or `/tmp` (not on
-Windows). A path that starts with `~` or holds `=~` or `:~` (bash expands those too), holds a `..` component, is drive-relative (`C:x`) or resolves elsewhere
+the worktree (the git top level of the cwd) or a live `$FOREMAN_SCRATCH` dir of the asking role; a write may also go
+under `/tmp` (not on Windows), a read never does (the shared `/tmp` holds other programs' files). A path that starts with `~` or holds `=~` or `:~` (bash expands those too), holds a `..` component, is drive-relative (`C:x`) or resolves elsewhere
 (`/etc/passwd`, another absolute path) is outside, and the command goes to the model review. The realpath of the
 nearest existing ancestor must stay inside too, so a symlink cannot lead out. The cwd a classified program runs in
 must be such a place as well (`cd /etc && ls` goes to the model). `cd` with no operand, an option or `-` (`cd`,
@@ -119,7 +119,7 @@ The `review` trace's `decision` is one of these when no model was called:
 
 | Label | Allows |
 |---|---|
-| `tmp-scratch` | one `cp`/`mkdir` writing only under `/tmp/`; every `cp` source a contained read (worktree, scratch dir, `/tmp`, read roots), a recursive source from the worktree only, lowercase `-r` on Linux only, into an existing dir each `dest/<name>` checked and no recursive copy |
+| `tmp-scratch` | one `cp`/`mkdir` writing only under `/tmp/`; every `cp` source a contained read (worktree, scratch dir, read roots), a recursive source from the worktree only, lowercase `-r` on Linux only, into an existing dir each `dest/<name>` checked and no recursive copy |
 | `child-scratch` | `cp`/`mkdir`/`rm`/`cd` inside a live `$FOREMAN_SCRATCH` dir of the asking role; the chain composer must allow the whole command too (every segment a deterministic allow, `cp` sources checked as reads, the earlier-write rule) |
 | `timeout-wrapper` | `timeout N <allowed segment>` in the chain |
 | `test-restore` | `git restore [--worktree\|-W] [--] <paths>` or `git checkout -- <paths>`, every path a relative test path (the `isTestPath` rule) inside the worktree, no `..`, no `--source`/`-s`/`--staged`, glob or `:` pathspec magic |
@@ -146,6 +146,5 @@ paths are recognised, and `/tmp` never counts.
 - `cd <rel>` is resolved as `./<rel>`; an exported `CDPATH` can send it elsewhere.
 - Paths are checked when the ask is reviewed, not when the command runs: another local user can swap a `/tmp` path
   for a symlink in between. The `tmp-scratch` allow has the same gap.
-- `/tmp` counts as a read place (parent ruling). Every deterministic copy into it reads only from contained places,
-  so it cannot carry an outside file there, but other programs' files in the shared `/tmp` (a Kerberos ticket cache
-  `/tmp/krb5cc_<uid>`, another tool's temp files) are readable without a model call.
+- `/tmp` counts for writes only. Reads under `/tmp` go to the model review: the shared `/tmp` holds other programs'
+  files, such as a Kerberos ticket cache `/tmp/krb5cc_<uid>`. Children read their own files through `$FOREMAN_SCRATCH`.

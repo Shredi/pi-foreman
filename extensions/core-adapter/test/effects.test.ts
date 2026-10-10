@@ -114,6 +114,12 @@ test("security review: ~ after = or :, npm publish/pack dry runs, diff -r (m2, m
   assert.equal(classify("diff -u f src/main.go", ctx()), "read");
 });
 
+test("security review 4: /tmp counts for writes only; a read under /tmp goes to the review", { skip: !posix }, () => {
+  for (const cmd of ["cat /tmp/krb5cc_1000", "find /tmp -name krb5cc_*", "cp /tmp/krb5cc_1000 g"]) assert.ok(!["read", "write-in"].includes(classify(cmd, ctx())), cmd);
+  assert.equal(classify("cat /tmp/krb5cc_1000", ctx()), "unknown");
+  assert.equal(classify("cargo test > /tmp/out.txt", ctx()), "build-test");
+});
+
 test("security review: win32 .git aliases (8.3 short name, trailing dot or space, realpath) are not writable (m1)", () => {
   const real = (p: string): string => p.replace(/\\git~1(?=\\|$)/i, "\\.git");
   const w: EffectCtx = { cwd: "C:\\w", root: "C:\\w", platform: "win32", realpath: real, exists: (p) => /^c:\\w(\\(src|git~1|\.git))?$/i.test(p), readFile: () => null };

@@ -155,10 +155,10 @@ function resolveWord(c: EffectCtx, cwd: string | null, word: string): string | n
 }
 
 function bases(c: EffectCtx, write: boolean): string[] {
-  return [...(c.root ? [c.root] : []), ...(c.scratch ?? []), ...(plat(c) === "win32" ? [] : ["/tmp"]), ...(write ? [] : (c.readRoots ?? []))];
+  return [...(c.root ? [c.root] : []), ...(c.scratch ?? []), ...(write && plat(c) !== "win32" ? ["/tmp"] : []), ...(write ? [] : (c.readRoots ?? []))];
 }
 
-/** A read (`write` false) or write path inside the worktree, a scratch dir or /tmp (see the header). */
+/** A read (`write` false) or write path inside the worktree or a scratch dir; writes also under /tmp, reads also under read roots (see the header). */
 export function contained(c: EffectCtx, cwd: string | null, word: string, write: boolean, only?: string[]): boolean {
   const abs = resolveWord(c, cwd, word);
   if (!abs) return false;
