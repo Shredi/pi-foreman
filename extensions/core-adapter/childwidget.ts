@@ -7,7 +7,6 @@ import { abbrev } from "./footer.ts";
 import { parseLines } from "./usage.ts";
 
 export const WIDGET_KEY = "foreman-children";
-export const DONE_KEEP_MS = 10 * 60 * 1000;
 export const MAX_ROWS = 8;
 const RENDER_GAP_MS = 1000;
 
@@ -228,25 +227,71 @@ export function readOpened(agentDir: string, parent: string | null): SessionRow[
   }
 }
 
-/** Active runs first, then opened sessions, then done runs kept 10 minutes; at most 8 lines. */
-export function widgetLines(runs: RunView[], sessions: SessionRow[], now: number): string[] {
+/** One summary line for the finished runs of the current batch. */
+export function doneLine(done: RunView[]): string {
+  const sum = (f: (r: RunView) => number): number => done.reduce((a, r) => a + f(r), 0);
+  return [`${done.length} done`, `↑${abbrev(sum((r) => r.tokensIn))} ↓${abbrev(sum((r) => r.tokensOut))}`, usd(sum((r) => r.cost))].join(" · ");
+}
+
+/**
+ * Active runs, then opened sessions, then one summary line for the runs that finished during the batch
+ * (ended at or after `since`, the start of the oldest active run); at most 8 lines. With no active run
+ * only the opened sessions remain.
+ */
+export function widgetLines(runs: RunView[], sessions: SessionRow[], now: number, since: number | null = null): string[] {
   const active = runs.filter((r) => r.state !== "done");
-  const done = runs.filter((r) => r.state === "done" && r.endedAt !== null && now - r.endedAt < DONE_KEEP_MS);
-  const opened = [...sessions].sort((a, b) => (b.at || 0) - (a.at || 0));
-  return [...active.map(runLine), ...opened.map((s) => sessionLine(s, now)), ...done.reverse().map(runLine)].slice(0, MAX_ROWS);
+  const opened = [...sessions].sort((a, b) => (b.at || 0) - (a.at || 0)).map((s) => sessionLine(s, now));
+  if (!active.length) return opened.slice(0, MAX_ROWS);
+  const from = since ?? Math.min(...active.map((r) => r.startedAt));
+  const done = runs.filter((r) => r.state === "done" && r.endedAt !== null && r.endedAt >= from);
+  return [...active.map(runLine), ...opened, ...(done.length ? [doneLine(done)] : [])].slice(0, MAX_ROWS);
+}
+
+/** Cut a line to the terminal width so a row never wraps (one widget line = one screen row). */
+export function fitLine(s: string, width: number): string {
+  const cps = [...s];
+  if (width <= 0) return "";
+  return cps.length <= width ? s : cps.slice(0, Math.max(0, width - 1)).join("") + "…";
 }
 
 // ------------------------------------------------------------------ widget
 
-export interface WidgetCtx {
-  mode?: string;
-  ui: { setWidget(key: string, content: string[] | undefined, options?: { placement?: "aboveEditor" | "belowEditor" }): void };
+/** The one component of a shown widget; lines are swapped in place, Pi keeps the same component. */
+export class WidgetRows {
+  lines: string[];
+  disposed = false;
+  constructor(lines: string[]) {
+    this.lines = lines;
+  }
+  render(width: number): string[] {
+    return this.lines.map((l) => fitLine(l ? ` ${l}` : "", width));
+  }
+  invalidate(): void {
+    // stateless: render reads the current lines
+  }
+  dispose(): void {
+    this.disposed = true;
+  }
 }
 
+export interface WidgetCtx {
+  mode?: string;
+  ui: { setWidget(key: string, content: ((tui: { requestRender(): void }) => WidgetRows) | undefined, options?: { placement?: "aboveEditor" | "belowEditor" }): void };
+}
+
+/**
+ * Height is stable while a batch of runs is active: rows are reserved for the most lines shown in the batch
+ * (blank padding, never shrinking), finished runs fold into one summary line, and updates swap the lines of the
+ * same component. When the last active run ends the rows are released (only opened sessions stay, else cleared).
+ * Unchanged content never reaches Pi: no setWidget, no requestRender.
+ */
 export class ChildWidget {
   readonly runs: ChildRuns;
   private last = 0;
   private shown = "";
+  private reserved = 0;
+  private rows: WidgetRows | null = null;
+  private tui: { requestRender(): void } | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private ctx: WidgetCtx | null = null;
   private opts: { enabled: boolean; agentDir: string; intercomId: string | null } | null = null;
@@ -279,11 +324,32 @@ export class ChildWidget {
     this.last = now;
     try {
       if (!this.ctx || !this.opts) return;
-      const lines = widgetLines(this.runs.views(), readOpened(this.opts.agentDir, this.opts.intercomId), now);
+      const views = this.runs.views();
+      const lines = widgetLines(views, readOpened(this.opts.agentDir, this.opts.intercomId), now);
+      if (views.some((r) => r.state !== "done")) {
+        this.reserved = Math.max(this.reserved, lines.length);
+        while (lines.length < this.reserved) lines.push("");
+      } else this.reserved = 0;
       const key = lines.join("\n");
-      if (key === this.shown) return;
+      if (key === this.shown && (!this.rows || !this.rows.disposed)) return;
       this.shown = key;
-      this.ctx.ui.setWidget(WIDGET_KEY, lines.length ? lines : undefined, { placement: "belowEditor" });
+      if (!lines.length) {
+        this.rows = null;
+        this.tui = null;
+        this.ctx.ui.setWidget(WIDGET_KEY, undefined, { placement: "belowEditor" });
+        return;
+      }
+      if (this.rows && !this.rows.disposed) {
+        this.rows.lines = lines;
+        this.tui?.requestRender();
+        return;
+      }
+      const rows = new WidgetRows(lines);
+      this.rows = rows;
+      this.ctx.ui.setWidget(WIDGET_KEY, (tui) => {
+        this.tui = tui;
+        return rows;
+      }, { placement: "belowEditor" });
     } catch {
       // the widget is cosmetic
     }

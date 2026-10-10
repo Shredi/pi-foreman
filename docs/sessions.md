@@ -127,8 +127,10 @@ In a Pi session (the foreman, not children):
 
 The usage footer (tokens, list-price cost, child launches) is on by default (`footer.usage`). Below the editor, the children
 widget (`widget.children`, on by default, TUI only) lists this session's subagent runs as `role · rung · state · ↑in ↓out · $cost`
-(state `working`, `ask` while a forwarded permission ask of that role waits, `done` for 10 minutes) and its opened sessions as
-`label · status · age`; it costs no model tokens. Outside Pi,
+(state `working`, or `ask` while a forwarded permission ask of that role waits) and its opened sessions as
+`label · status · age`; runs that finished during the batch fold into one `<n> done` line. While any run is active the
+widget keeps its height (it may grow when a run starts, padded rather than shrunk, at most 8 rows, one screen row each)
+and updates in place, so the view does not shift; the run rows go when the last active run ends. It costs no model tokens. Outside Pi,
 the `foreman` launcher in `bin/` (`.cmd` and `.ps1` on Windows) runs the same scripts: `foreman update-check`, `foreman retro [args]`, `foreman sync [args]`, `foreman session` (below), `foreman radar` ([Radar](#radar)) and `foreman bench` ([benchmark](bench.md), including `foreman bench review`). The keys
 and their layer rules are in the tables of [ceremony](ceremony.md) and [safety](safety.md) and in the schema
 `config/foreman.schema.json`.

@@ -181,6 +181,9 @@
   models) with claude-agent-sdk 0.3.293.
 
 ### Fixed
+- Children widget: the TUI view no longer jumps while children run. The widget keeps its height during a batch (rows
+  reserved, finished runs fold into one `<n> done` line, lines cut to one row each, same component updated in place)
+  and clears when the last active run ends; unchanged content makes no UI call (`childwidget.ts`).
 - Radar presence: pi-foreman's own asks (git/claude config drift, protect, checkpoint) hold the session `blocked`
   directly, also without `HERDR_ENV`; Pi suppresses `ui_prompt_start` while an earlier dialog is unsettled. Blocking
   sources are counted, so a Pi dialog's end or typed input no longer clears an open own ask (`livestate.ts`, `herdr.ts`).
