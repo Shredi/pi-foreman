@@ -41,6 +41,7 @@ one reviewer launch over a builder diff with planted defects, scored for catches
 
     foreman bench review --tasks DIR [--models id[,id]] [--repeats 2] [--out DIR] [--jobs 3]
                          [--token-cap N] [--timeout 900] [--dry-run] [--prices FILE]
+                         [--mode single|climb] [--rungs id,id,...]
     foreman bench review-table --out DIR [--tasks DIR]
 
 Task dir (`--tasks` names one, or a folder of them; five synthetic samples (clean, secret-log, shell-injection in TypeScript and Python, path-traversal) are in `bench/review-samples/`):
@@ -147,5 +148,20 @@ usage for a request, its tokens are a chars/4 estimate priced as uncached input,
 upper bound. Reviewers run on the host, not in Docker: a reviewer that runs Go or Rust tests may fail or fetch
 dependencies; `--timeout` bounds each launch and the work dirs stay in the temp dir for audit (delete
 `pf-rb-work/` when done).
+
+Policies: `--mode climb --rungs m1,m2,...` (at least two; `--rungs` is an error with `--mode single`, the default)
+measures a reviewer ladder. For each task and repeat, rung 1 runs as a normal single cell
+(`<task>__<model>__r<n>`); while a rung's report has a located finding (`scripts/foreman_findings.py`
+`located_findings`: a FAIL unit, or a bullet of a PASS report, that names a diff file with a line or a class word) the
+next rung reviews the same diff. The chain stops at the first rung without one, or is exhausted after the last. Rung
+cells are ordinary single cells in the same `--out`, so a climb resumes, a later `--mode single` run over the same models
+reuses them, and `--token-cap` counts every rung run. Each finished chain writes
+`policies/<policy>/<task>__r<n>.json` (policy name `climb:a→b→c`, rungs run with cell, USD, seconds and located count,
+stop rung, summed USD and seconds, seconds per rung). `--dry-run` prints the chains and which rung cells exist.
+`review-table` keeps the model table and adds a Policies table: one row per `single:<model>` and per climb policy, with
+cells (task x repeat), located and diagnosed (unions over the rungs run), misses (planted defects not diagnosed), false
+alarms over seeded and clean cells (every rung run), summed USD, $ per diagnosed, median and p90 seconds per cell
+(nearest rank), and the stop-rung histogram (`r1:10 r2:5 ex:4`, `ex` = exhausted). Climb rows are marked "composed from
+cached rungs": they are read from the stored rung cells and rescored, never a separate run.
 
 Design record: `design/architecture.md` [section 12](../design/architecture.md#12-benchmark-design-design-only-no-runs).

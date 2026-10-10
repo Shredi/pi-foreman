@@ -225,6 +225,14 @@ def cell_name(task, model, rep):
     return "%s__%s__r%d" % (task, model_slug(model), rep)
 
 
+def climb_policy(rungs):
+    return "climb:" + "\u2192".join(bare_model(m) for m in rungs)
+
+
+def climb_slug(rungs):
+    return model_slug("climb-" + "-".join(bare_model(m) for m in rungs))
+
+
 def plan_cells(tasks, models, repeats):
     """Repeat outermost, then task, then model: a stop leaves every model with the same tasks."""
     return [(t, m, r) for r in range(1, repeats + 1) for t in tasks for m in models]
@@ -439,10 +447,11 @@ class Bench:
     """One review-bench run: tasks x models x repeats into `out`."""
 
     def __init__(self, out, tasks, models, repeats=2, jobs=3, token_cap=None, timeout=900, work=None,
-                 pi_cli=None, bridge=None, token=None, fake_script=None, prices=None, log=None):
+                 pi_cli=None, bridge=None, token=None, fake_script=None, prices=None, log=None, mode="single"):
         self.out = Path(out)
         self.tasks = {Path(t).name: Path(t).resolve() for t in tasks}
         self.models, self.repeats, self.jobs = list(models), repeats, max(1, jobs)
+        self.mode = mode  # "climb": `models` are the rungs
         self.token_cap, self.timeout = token_cap, timeout
         self.work = Path(work) if work else Path(tempfile.gettempdir()) / "pf-rb-work" / hashlib.sha1(
             str(self.out.resolve()).encode()).hexdigest()[:10]
@@ -572,7 +581,10 @@ class Bench:
         """Run every missing cell. Exit codes: 0 done, 4 token cap reached, 6 interrupted."""
         self.cells_dir.mkdir(parents=True, exist_ok=True)
         _write_json(self.out / "run.json", {"run": self.out.name, "tasks": sorted(self.tasks), "models": self.models,
-                                            "repeats": self.repeats, "timeout": self.timeout, "work": str(self.work)})
+                                            "repeats": self.repeats, "timeout": self.timeout, "work": str(self.work),
+                                            "mode": self.mode})
+        if self.mode == "climb":
+            return self.run_climb()
         todo = [c for c in plan_cells(sorted(self.tasks), self.models, self.repeats) if not self.cell_path(*c).exists()]
         self.log("review bench: %d cells to run, %d done; work dir %s" % (
             len(todo), len(self.tasks) * len(self.models) * self.repeats - len(todo), self.work))
@@ -615,6 +627,76 @@ class Bench:
         self.log(text)
         return code
 
+    # ---- climb policy: rung cells are ordinary single cells; a policy record composes them
+
+    @property
+    def policy(self):
+        return climb_policy(self.models)
+
+    def policy_path(self, task, rep):
+        return self.out / "policies" / climb_slug(self.models) / ("%s__r%d.json" % (task, rep))
+
+    def run_chain(self, task, rep):
+        """One task x repeat: rung 1, and the next rung on the same diff while a rung has a located finding. Returns
+        "done", "cap" (token cap reached) or "error" (a rung failed to launch); writes the policy record when done."""
+        rungs, stop = [], "exhausted"
+        for i, model in enumerate(self.models, 1):
+            path = self.cell_path(task, model, rep)
+            if not path.exists():
+                if self.token_cap and self.used_tokens() >= self.token_cap:
+                    self.log("review bench: token cap %d reached; stopping (rerun to resume)" % self.token_cap)
+                    return "cap"
+                r = self.run_cell(task, model, rep)
+                s = r.get("score") or {}
+                self.log("%s %s%s" % (cell_name(task, model, rep), r.get("status"), " %s located %d diagnosed %d/%d fa %d %.0fs" % (
+                    s.get("verdict"), len(s.get("located", [])), len(s.get("diagnosed", [])), s.get("defects", 0),
+                    len(s.get("false_alarms", [])), r.get("secs", 0)) if r.get("status") == "ok"
+                    else ": " + _redact(str(r.get("error")), self.token)))
+                if r.get("status") != "ok":
+                    return "error"
+            cell = json.loads(path.read_text("utf-8"))
+            n = len(located_findings(cell.get("final_text") or "", cell_diff_files(cell)))
+            rungs.append({"model": model, "cell": cell_name(task, model, rep), "usd": cell.get("usd"),
+                          "secs": cell.get("secs"), "located_count": n})
+            if not n:
+                stop = i
+                break
+        usds = [r["usd"] for r in rungs if r["usd"] is not None]
+        secs = [r["secs"] or 0 for r in rungs]
+        self.policy_path(task, rep).parent.mkdir(parents=True, exist_ok=True)
+        _write_json(self.policy_path(task, rep), {
+            "policy": self.policy, "task": task, "repeat": rep, "rungs": rungs, "stop_rung": stop,
+            "usd": round(sum(usds), 6) if usds else None, "secs": round(sum(secs), 1), "rung_secs": secs}, self.token)
+        return "done"
+
+    def run_climb(self):
+        chains = [(t, r) for r in range(1, self.repeats + 1) for t in sorted(self.tasks)
+                  if not self.policy_path(t, r).exists()]
+        self.log("review bench: climb %s, %d chain(s) to run, %d done; work dir %s" % (
+            self.policy, len(chains), len(self.tasks) * self.repeats - len(chains), self.work))
+        code = 0
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=self.jobs)
+        try:
+            futs = {pool.submit(self.run_chain, *c): c for c in chains}
+            for f in concurrent.futures.as_completed(futs):
+                try:
+                    res = f.result()
+                except Exception as e:  # noqa: BLE001 - one broken chain must not stop the run
+                    self.log("%s r%d: %s: %s" % (futs[f][0], futs[f][1], type(e).__name__, e))
+                    continue
+                code = 4 if res == "cap" else code
+        except KeyboardInterrupt:
+            for p in list(self.procs):
+                _kill_tree(p)
+            code = 6
+            self.log("review bench: interrupted; rerun to resume")
+        finally:
+            pool.shutdown(wait=code != 6, cancel_futures=True)
+        text = render_table(self.out, self.prices)
+        (self.out / ("review-bench-%s.md" % self.out.name)).write_text(text, "utf-8")
+        self.log(text)
+        return code
+
     def dry_run(self):
         """Validate, prepare one workspace per task (no launch) and print the plan; writes nothing under --out."""
         keep = self.work
@@ -636,8 +718,15 @@ class Bench:
         finally:
             _remove_tree(self.work)
             self.work = keep
-        for c in plan_cells(sorted(self.tasks), self.models, self.repeats):
-            self.log("%-60s %s" % (cell_name(*c), "done" if self.cell_path(*c).exists() else "run"))
+        if self.mode == "climb":
+            self.log("policy %s: a later rung runs on the same diff only when the previous rung has a located finding" % self.policy)
+            for r in range(1, self.repeats + 1):
+                for t in sorted(self.tasks):
+                    self.log("%s r%d: %s" % (t, r, " -> ".join("%s (%s)" % (bare_model(m), "done" if self.cell_path(
+                        t, m, r).exists() else "run") for m in self.models)))
+        else:
+            for c in plan_cells(sorted(self.tasks), self.models, self.repeats):
+                self.log("%-60s %s" % (cell_name(*c), "done" if self.cell_path(*c).exists() else "run"))
         self.log("launch: node <pi cli> -p --mode json --no-session --no-context-files --no-skills -e %s --model <model> "
                  "--tools %s --system-prompt <reviewer> <task>" % (Path(ADAPTER).relative_to(REPO).as_posix(), TOOLS))
         return 1 if problems else 0
@@ -684,6 +773,78 @@ def cell_diff_files(cell, tasks_root=None):
     if patch is not None and patch.is_file():
         return patch_files(patch.read_text("utf-8", "replace"))
     return cell.get("files") or ()
+
+
+def nearest_rank(values, pct):
+    """Nearest-rank percentile of a list (stdlib only); None for an empty list."""
+    v = sorted(values)
+    return v[max(0, math.ceil(pct / 100.0 * len(v)) - 1)] if v else None
+
+
+def policy_stats(units):
+    """Aggregate policy units. A unit is {"cells": [scored cells of the rungs run, in order], "stop": rung index,
+    "exhausted" or None (single model)}. Located / diagnosed are unions over the rungs run; false alarms count every
+    FAIL unit of every rung run that locates no plant."""
+    seeded = [u for u in units if not u["cells"][0]["score"]["clean"]]
+    clean = [u for u in units if u["cells"][0]["score"]["clean"]]
+    union = lambda u, k: set().union(*(set(c["score"][k]) for c in u["cells"]))  # noqa: E731
+    fa = lambda us: sum(len(c["score"]["false_alarms"]) for u in us for c in u["cells"])  # noqa: E731
+    usds = [c["usd"] for u in units for c in u["cells"] if c.get("usd") is not None]
+    secs = [sum(c.get("secs") or 0 for c in u["cells"]) for u in units]
+    hist = {}
+    for u in units:
+        if u["stop"] is not None:
+            k = "ex" if u["stop"] == "exhausted" else "r%d" % u["stop"]
+            hist[k] = hist.get(k, 0) + 1
+    total = sum(u["cells"][0]["score"]["defects"] for u in seeded)
+    return {"cells": len(units), "located": sum(len(union(u, "located")) for u in seeded),
+            "diagnosed": sum(len(union(u, "diagnosed")) for u in seeded), "total": total,
+            "fa_seeded": fa(seeded), "seeded": len(seeded), "fa_clean": fa(clean), "clean": len(clean),
+            "usd": sum(usds) if usds else None, "median": statistics.median(secs) if secs else None,
+            "p90": nearest_rank(secs, 90), "hist": hist}
+
+
+def load_policy_units(out, cells):
+    """{policy: [unit]} from `<out>/policies/*/*.json`, composed from the cached rung cells in `cells` (rescored)."""
+    by_name = {cell_name(c["task"], c["model"], c["repeat"]): c for c in cells}
+    found = {}
+    pdir = Path(out) / "policies"
+    for p in sorted(pdir.glob("*/*.json")) if pdir.is_dir() else []:
+        try:
+            rec = json.loads(p.read_text("utf-8"))
+            rungs = [by_name[r["cell"]] for r in rec["rungs"]]
+        except (OSError, ValueError, KeyError):
+            continue
+        if rungs:
+            found.setdefault(rec["policy"], []).append({"cells": rungs, "stop": rec.get("stop_rung")})
+    return found
+
+
+def render_policies(out, cells):
+    """The Policies section: one row per single model and per climb policy found under `<out>/policies/`."""
+    rows = [("single:" + m, "run", [{"cells": [c], "stop": None} for c in cells if c["model"] == m])
+            for m in sorted({c["model"] for c in cells})]
+    rows += [(name, "composed from cached rungs", units) for name, units in sorted(load_policy_units(out, cells).items())]
+    pct = lambda n, tot: " (%.0f%%)" % (100.0 * n / tot) if tot else ""  # noqa: E731
+    secs = lambda x: "-" if x is None else "%.0f" % x  # noqa: E731
+    lines = ["", "## Policies", "",
+             "| policy | source | cells | located | diagnosed | misses | FA seeded | FA clean | USD | $/diagnosed "
+             "| median s | p90 s | stop rungs |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for name, src, units in rows:
+        s = policy_stats(units)
+        usd = s["usd"]
+        lines.append("| %s | %s | %d | %d/%d%s | %d/%d%s | %d | %d/%d | %d/%d | %s | %s | %s | %s | %s |" % (
+            name, src, s["cells"], s["located"], s["total"], pct(s["located"], s["total"]), s["diagnosed"], s["total"],
+            pct(s["diagnosed"], s["total"]), s["total"] - s["diagnosed"], s["fa_seeded"], s["seeded"], s["fa_clean"],
+            s["clean"], _fmt_usd(usd), _fmt_usd(usd / s["diagnosed"]) if usd is not None and s["diagnosed"] else "-",
+            secs(s["median"]), secs(s["p90"]),
+            " ".join("%s:%d" % kv for kv in sorted(s["hist"].items(), key=lambda kv: (kv[0] == "ex", kv[0]))) or "-"))
+    lines += ["", "cells: task x repeat units (a climb unit is one chain). Located / diagnosed are unions over the rungs "
+              "run; misses are planted defects not diagnosed; FA counts every rung run; USD and seconds sum the rungs "
+              "run; p90 is nearest-rank. stop rungs: where the climb stopped (`r2` = the second rung had no located "
+              "finding, `ex` = exhausted). Climb rows are composed from cached single-model rung cells, not a separate "
+              "run."]
+    return lines
 
 
 def render_table(out, prices=None, tasks_root=None):
@@ -753,6 +914,8 @@ def render_table(out, prices=None, tasks_root=None):
                     c["repeat"], c["score"]["verdict"] or "none", len(c["score"]["located"]),
                     len(c["score"]["diagnosed"]), c["score"]["defects"], len(c["score"]["false_alarms"]),
                     c["score"]["process"]) for c in tc)))
+    if cells:
+        lines += render_policies(out, cells)
     if errors:
         lines += ["", "## Failed launches", ""] + ["- %s %s r%s: %s" % (e.get("task"), e.get("model"), e.get("repeat"),
                                                                        str(e.get("error"))[:200]) for e in errors]
@@ -805,6 +968,9 @@ def bridge_dir():
 def add_arguments(p):
     p.add_argument("--tasks", required=True, help="a task dir or a folder of task dirs")
     p.add_argument("--models", default=",".join(DEFAULT_MODELS), help="comma-separated provider/model[:thinking]")
+    p.add_argument("--mode", choices=("single", "climb"), default="single",
+                   help="single: every --models entry per cell; climb: --rungs in order, the next only while a rung has a located finding")
+    p.add_argument("--rungs", default=None, help="comma-separated provider/model[:thinking] ladder (required with --mode climb)")
     p.add_argument("--repeats", type=int, default=2)
     p.add_argument("--out", default=None, help="run dir (default ~/.pi-foreman/review-bench/<timestamp>)")
     p.add_argument("--jobs", type=int, default=3, help="parallel launches")
@@ -820,7 +986,15 @@ def add_table_arguments(p):
     p.add_argument("--tasks", default=None, help="task folder: diff.patch file lists for cells recorded without them")
 
 
+def _safe_stdout():
+    try:
+        sys.stdout.reconfigure(errors="replace")  # policy names use an arrow; a legacy console codepage lacks it
+    except (AttributeError, ValueError):
+        pass
+
+
 def run_args(args):
+    _safe_stdout()
     tasks = find_tasks(args.tasks)
     if not tasks:
         print("review bench: no task dirs under %s" % args.tasks, file=sys.stderr)
@@ -831,17 +1005,25 @@ def run_args(args):
             print("review bench: %s: %s" % (name, e), file=sys.stderr)
         return 1
     models = [m.strip() for m in args.models.split(",") if m.strip()]
+    if args.mode == "climb":
+        models = [m.strip() for m in (args.rungs or "").split(",") if m.strip()]
+        if len(models) < 2:
+            print("review bench: --mode climb needs --rungs m1,m2[,...] (at least two models)", file=sys.stderr)
+            return 2
+    elif args.rungs:
+        print("review bench: --rungs needs --mode climb", file=sys.stderr)
+        return 2
     out = Path(args.out).expanduser() if args.out else Path.home() / ".pi-foreman" / "review-bench" / time.strftime("%Y%m%d-%H%M%S")
     if any(w in str(out.resolve()).lower() for w in FORBIDDEN):
         print("review bench: --out must not contain %s" % " or ".join(FORBIDDEN), file=sys.stderr)
         return 2
     prices = foreman_bench.load_prices(args.prices)
     bench = Bench(out, tasks, models, repeats=args.repeats, jobs=args.jobs, token_cap=args.token_cap,
-                  timeout=args.timeout, prices=prices, fake_script=os.environ.get("FOREMAN_REVIEW_BENCH_FAKE_SCRIPT"))
+                  timeout=args.timeout, prices=prices, mode=args.mode, fake_script=os.environ.get("FOREMAN_REVIEW_BENCH_FAKE_SCRIPT"))
     bridged = any(provider_of(m) == BRIDGE_PROVIDER for m in models)
     if args.dry_run:
-        print("review bench (dry run): %d task(s), models %s, %d repeat(s), out %s; token source: %s" % (
-            len(tasks), ", ".join(models), args.repeats, out, "FOREMAN_BENCH_OAUTH_TOKEN_FILE" if os.environ.get(
+        print("review bench (dry run): %d task(s), %s %s, %d repeat(s), out %s; token source: %s" % (
+            len(tasks), "rungs" if args.mode == "climb" else "models", ", ".join(models), args.repeats, out, "FOREMAN_BENCH_OAUTH_TOKEN_FILE" if os.environ.get(
                 "FOREMAN_BENCH_OAUTH_TOKEN_FILE") else "FOREMAN_BENCH_OAUTH_TOKEN" if os.environ.get(
                 "FOREMAN_BENCH_OAUTH_TOKEN") else "none" if bridged else "not needed"))
         return bench.dry_run()
@@ -860,6 +1042,7 @@ def run_args(args):
 
 
 def table_args(args):
+    _safe_stdout()
     text = render_table(args.out, foreman_bench.load_prices(args.prices), args.tasks)
     out = Path(args.out)
     if (out / "cells").is_dir():
