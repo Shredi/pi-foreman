@@ -231,3 +231,41 @@ test("security review 2: readRoots drops filesystem roots, UNC share roots and t
   assert.deepEqual(readRootsOf(["/", "~", "/u/me", "/u/me/", "/u/me/src"], "linux", id, "/u/me"), ["/u/me/src"]);
   assert.deepEqual(readRootsOf(["C:\\", "d:/", "\\\\srv\\share", "\\\\srv\\share\\", "%USERPROFILE%", "D:\\H\\ME", "\\\\srv\\share\\lib"], "win32", id, "D:\\h\\me"), ["\\\\srv\\share\\lib"]);
 });
+
+test("security review 3: cp/mv into an existing dir checks the written dest/<name>; no symlink destination (B1)", { skip: !posix }, () => {
+  const outside = path.join(base, "outside-b1");
+  fs.mkdirSync(outside, { recursive: true });
+  fs.mkdirSync(path.join(repo, "d3"));
+  fs.symlinkSync(path.join(outside, "t"), path.join(repo, "d3", "f")); // a committed `d3/f -> outside`
+  fs.symlinkSync("f", path.join(repo, "f-in-link")); // a symlink that stays inside
+  for (const cmd of ["cp f d3", "cp f d3/", "cp -p f d3", "cp -f f d3", "mv f d3", "cp f d3/f", "cp src/main.go f-in-link"]) {
+    assert.equal(classify(cmd, ctx()), "write-out", cmd);
+    assert.equal(allow(cmd), null, cmd);
+  }
+  for (const cmd of ["cp -R src/main.go d3", "cp -a f src"]) assert.equal(classify(cmd, ctx()), "unknown", cmd);
+  assert.equal(classify("cp f src", ctx()), "write-in");
+});
+
+test("security review 3: tmp-scratch cp sources are contained reads, a tree from the worktree only (M1)", { skip: !posix }, () => {
+  const outside = path.join(base, "outside-m1");
+  fs.mkdirSync(outside, { recursive: true });
+  fs.writeFileSync(path.join(outside, "id_ed25519"), "x\n");
+  for (const cmd of ["cp -R ~/.ssh /tmp/pf-m1-x", `cp -R ${outside} /tmp/pf-m1-x`, `cp ${outside}/id_ed25519 /tmp/pf-m1-x`, "cp /etc/hosts /tmp/pf-m1-x"]) assert.equal(allow(cmd), null, cmd);
+  assert.equal(allow("cp -R src /tmp/pf-m1-x"), "tmp-scratch");
+  assert.equal(allow("cp f /tmp/pf-m1-x"), "tmp-scratch");
+});
+
+test("security review 3: make -n takes an exact option list (no abbreviated long options) (m-d)", () => {
+  for (const cmd of ["make -n --eva='test-unit: ; +touch /tmp/pwn' test-unit", "make -n --dir=/tmp test-unit", "make -n --direct=/tmp test-unit", "make -n --fil=x test-unit", "make -n --makef=x test-unit", "make -n --include-dir=x test-unit", "make -n -w test-unit"]) {
+    assert.equal(classify(cmd, ctx()), "unknown", cmd);
+    assert.equal(allow(cmd), null, cmd);
+  }
+  assert.equal(classify("make -n -s -k -j4 test-unit", ctx()), "read");
+  assert.equal(classify("make --dry-run test-unit", ctx()), "read");
+});
+
+test("security review 3: readRoots drops the home dir's ancestors, raw and realpath, case-folded on darwin (m-a)", () => {
+  const real = (p: string): string => (p.startsWith("/u/me") ? "/private" + p : p);
+  assert.deepEqual(readRootsOf(["/u", "~/..", "/U", "/private", "/u/me/src"], "darwin", real, "/u/me"), ["/private/u/me/src"]);
+  assert.deepEqual(readRootsOf(["D:\\Home", "d:\\home\\ME\\..", "D:\\Home\\me\\src"], "win32", (p) => p, "D:\\Home\\me"), ["D:\\Home\\me\\src"]);
+});

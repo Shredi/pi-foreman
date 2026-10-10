@@ -16,7 +16,7 @@ import { isReadOnlySed } from "./sedread.ts";
 import { expandScratchVar, scratchCommandAllowed } from "./childscratch.ts";
 import { isTmpScratch } from "./tmpscratch.ts";
 import type { TmpScratchDeps } from "./tmpscratch.ts";
-import { ChainWrites, redirectOk, refusedProgram, SAFE_CLASSES, scratchExpansions, segmentEffect } from "./effects.ts";
+import { ChainWrites, contained, redirectOk, refusedProgram, SAFE_CLASSES, scratchExpansions, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
 import { splitChain } from "./shellchain.ts";
 
@@ -111,7 +111,10 @@ export function deterministicAllow(rules: BashRules, command: string, deps: Allo
 export function deterministicAllowInfo(rules: BashRules, command: string, deps: AllowDeps = {}): { label: AllowLabel; segments: number } | null {
   const whole = command.trim();
   if (hits(rules.ask, whole, "") || hits(rules.deny, whole, "")) return null;
-  if (isTmpScratch(command, deps)) return { label: "tmp-scratch", segments: 1 };
+  // tmp-scratch cp sources: a contained read (no `cp -R ~/.ssh /tmp/x` then `cat /tmp/x/..`), a tree from the worktree only
+  const c = deps.effects;
+  const source = deps.source ?? (c ? (s: string, rec: boolean) => contained(c, c.cwd, s, false) && (!rec || (c.root !== null && contained(c, c.cwd, s, false, [c.root]))) : undefined);
+  if (isTmpScratch(command, { ...deps, source })) return { label: "tmp-scratch", segments: 1 };
   if (deps.scratchDirs?.length && deps.effects) {
     // child-scratch needs the composer as well: every segment a deterministic allow, cp sources checked as reads, ChainWrites
     for (const d of deps.scratchDirs) {

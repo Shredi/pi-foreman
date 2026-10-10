@@ -37,8 +37,9 @@ git repository there is no worktree; only the scratch dir and `/tmp` count.
 
 Read roots. `safety.permissions.readRoots` (list of dirs, default `[]`) adds places a read may reach: a read inside a
 listed dir is a read too. `~` and `%USERPROFILE%` at the start mean the home dir; an empty, relative or missing entry is
-dropped, and so is a filesystem root (`/`, a drive root `C:\`, a UNC share root `\\server\share`) and the home dir
-itself (each would make every read below it deterministic). Each root is taken by its realpath and the realpath rule above applies, so a symlink inside a root cannot lead
+dropped, and so is a filesystem root (`/`, a drive root `C:\`, a UNC share root `\\server\share`), the home dir
+itself and any dir that contains it (`/Users`, `~/..`, `/private` when the home realpath lies below it), checked on the
+path as written and on its realpath, case-folded on macOS and Windows (each would make every read below it deterministic). Each root is taken by its realpath and the realpath rule above applies, so a symlink inside a root cannot lead
 out. Roots count for reads only: writes, `rm` and the build-test cwd stay in the worktree, scratch dir and `/tmp`. Only
 the user and overlay config may set it; a project or session value is ignored with a warning. pi-foreman is generic and
 must be safe without an overlay; an overlay adds e.g. the folder holding the user's repos.
@@ -50,6 +51,10 @@ never count `/tmp` (as `tmp-scratch`: `rm -rf /tmp/...` stays reviewed). Allowed
 (`cp -Rapfnv`, `rm -rRfdv`, `mkdir -pv`, `touch -acm`, `mv -fnv`, `tee -aip`); any other flag is unknown. A recursive
 `cp` (`-R`, `-a`) copies only from the worktree: `-R` and `-a` keep the symlinks of the source tree on GNU and BSD, and
 `/tmp` is shared. A lowercase `cp -r` is unknown: BSD (macOS) `cp -r` follows every symlink in the tree.
+For `cp` and `mv` the path really written is checked: a destination that is a symlink is write-out (cp writes through
+it), and into an existing directory each `dest/<basename of source>` must be a contained write that is not a symlink
+(a committed `d/f -> outside` makes `cp f d` write-out). A recursive `cp -R`/`-a` into an existing directory is unknown:
+the tree below it is not walked.
 
 `sed -i` is write-in only in a shape GNU and BSD (macOS) sed read the same way: `-i ''` (an empty separate word) or an
 attached suffix (`-i.bak`, `--in-place[=suffix]`), the script given by `-e`/`--expression` as one plain `s///` (no `w`
@@ -73,7 +78,9 @@ Build-test, from the manifest only (no per-task list):
 - `Makefile` targets named `test*`: `make <target>`;
 - `Cargo.toml`: `cargo test`, `cargo build`, `cargo clippy`, `cargo fmt --check`;
 - `go.mod`: `go test`, `go build`, `go vet`;
-- `make -n` (also `--dry-run`, `--just-print`, `--recon`) with `test*` targets only is a read; `--eval`/`-E` is unknown;
+- `make -n` (also `--dry-run`, `--just-print`, `--recon`) with `test*` targets only is a read, with no other option
+  than `-s`/`--silent`, `-k`/`--keep-going` and `-j[N]`; any other option is unknown, also an abbreviated long one
+  (GNU make takes `--eva=`, `--fil=`, `--dir=`); `--eval`/`-E` is unknown;
 - pytest config (`pytest.ini`, `tox.ini [pytest]`, `setup.cfg [tool:pytest]`, `pyproject.toml [tool.pytest]`):
   `pytest`, `python -m pytest`.
 
@@ -112,7 +119,7 @@ The `review` trace's `decision` is one of these when no model was called:
 
 | Label | Allows |
 |---|---|
-| `tmp-scratch` | one `cp`/`mkdir` writing only under `/tmp/` |
+| `tmp-scratch` | one `cp`/`mkdir` writing only under `/tmp/`; every `cp` source a contained read (worktree, scratch dir, `/tmp`, read roots), a recursive source from the worktree only, lowercase `-r` on Linux only, into an existing dir each `dest/<name>` checked and no recursive copy |
 | `child-scratch` | `cp`/`mkdir`/`rm`/`cd` inside a live `$FOREMAN_SCRATCH` dir of the asking role; the chain composer must allow the whole command too (every segment a deterministic allow, `cp` sources checked as reads, the earlier-write rule) |
 | `timeout-wrapper` | `timeout N <allowed segment>` in the chain |
 | `test-restore` | `git restore [--worktree\|-W] [--] <paths>` or `git checkout -- <paths>`, every path a relative test path (the `isTestPath` rule) inside the worktree, no `..`, no `--source`/`-s`/`--staged`, glob or `:` pathspec magic |
@@ -139,3 +146,6 @@ paths are recognised, and `/tmp` never counts.
 - `cd <rel>` is resolved as `./<rel>`; an exported `CDPATH` can send it elsewhere.
 - Paths are checked when the ask is reviewed, not when the command runs: another local user can swap a `/tmp` path
   for a symlink in between. The `tmp-scratch` allow has the same gap.
+- `/tmp` counts as a read place (parent ruling). Every deterministic copy into it reads only from contained places,
+  so it cannot carry an outside file there, but other programs' files in the shared `/tmp` (a Kerberos ticket cache
+  `/tmp/krb5cc_<uid>`, another tool's temp files) are readable without a model call.

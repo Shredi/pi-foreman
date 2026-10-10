@@ -56,7 +56,9 @@ Asks go through a model review link (`foreman-review`) using `providers.<p>.revi
   command>` and every other unit is allowed (PS floors wrappers).
 - Scratch copies under `/tmp` (trace label `tmp-scratch`): the whole command is one simple command, nothing chained,
   piped or redirected, that is `cp [-r|-R|-a|-p] <src>... <dest>` or `mkdir [-p] <dest>...` with every destination
-  under `/tmp/` (no `..`, not `/tmp` itself, not a symlink, no symlink leading out). No `rm` in any form: `rm -rf /tmp/...` stays
+  under `/tmp/` (no `..`, not `/tmp` itself, not a symlink, no symlink leading out; into an existing dir each
+  `dest/<name>` the same, and no recursive copy into it). Every `cp` source must be a contained read
+  ([permissions](permissions.md)), a recursive one from the worktree only. No `rm` in any form: `rm -rf /tmp/...` stays
   reviewed. POSIX only; on Windows it never matches. A user `ask`/`deny` pattern that catches the command wins.
 - The permission system forwards only one unit of a chained command (the first most restrictive one), with the
   whole command as `full command` evidence. Every deterministic allow (`sed-read`, `timeout-wrapper`, `tmp-scratch`,

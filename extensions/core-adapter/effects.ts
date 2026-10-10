@@ -44,6 +44,9 @@ export interface EffectCtx {
   exists?: (p: string) => boolean;
   /** lstat says a regular file (not a symlink); injectable for tests. */
   isFile?: (p: string) => boolean;
+  /** lstat says a symlink / stat says a directory (follows links); injectable for tests. */
+  isLink?: (p: string) => boolean;
+  isDir?: (p: string) => boolean;
   readFile?: (p: string) => string | null;
 }
 
@@ -81,7 +84,7 @@ const existsDefault = (p: string): boolean => {
   }
 };
 
-/** safety.permissions.readRoots as real absolute dirs: `~` and `%USERPROFILE%` mean the home dir; empty, relative or missing roots are dropped, and so are a filesystem root (`/`, `C:\`, a UNC share root) and the home dir itself. */
+/** safety.permissions.readRoots as real absolute dirs: `~` and `%USERPROFILE%` mean the home dir; empty, relative or missing roots are dropped, and so are a filesystem root (`/`, `C:\`, a UNC share root) and the home dir or any dir that contains it (raw and realpath). */
 export function readRootsOf(roots: unknown, platform: string = process.platform, real: (p: string) => string | null = realDefault, home: string = os.homedir()): string[] {
   if (!Array.isArray(roots)) return [];
   const x = platform === "win32" ? path.win32 : path.posix;
@@ -95,7 +98,12 @@ export function readRootsOf(roots: unknown, platform: string = process.platform,
     if (!rp || x.dirname(rp) === rp || x.dirname(x.resolve(p)) === x.resolve(p)) continue;
     const rh = real(home) ?? home;
     const f = (s: string): string => x.resolve(platform === "win32" || platform === "darwin" ? s.toLowerCase() : s);
-    if (f(rp) === f(rh) || f(rp) === f(home)) continue;
+    // the root is the home dir or one of its ancestors (`/Users`, `~/..`, `/private`): it would cover all of home
+    const holds = (r: string, h: string): boolean => {
+      const rel = x.relative(f(r), f(h));
+      return rel === "" || (rel !== ".." && !rel.startsWith(".." + x.sep) && !x.isAbsolute(rel));
+    };
+    if ([rp, x.resolve(p)].some((r) => holds(r, home) || holds(r, rh))) continue;
     out.push(rp);
   }
   return out;
@@ -284,6 +292,20 @@ const isFileDefault = (p: string): boolean => {
     return false;
   }
 };
+const isLinkDefault = (p: string): boolean => {
+  try {
+    return fs.lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+const isDirDefault = (p: string): boolean => {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
 
 /** One plain substitution: `[addr]s<d>re<d>repl<d>[gIiMmp0-9]`, nothing after it (no e or w flag). */
 export function plainSubst(script: string): boolean {
@@ -334,11 +356,27 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
   if (ops.includes("-")) return "unknown";
   // -R/-a keep the symlinks of the source tree on GNU and BSD (lowercase -r is refused above: BSD
   // `cp -r` follows them); the source only from the worktree (shared /tmp can be planted)
-  if (prog === "cp" && args.some((a) => /^-[A-Za-z]*[rRa]/.test(a)) && !ops.slice(0, -1).every((o) => c.root !== null && contained(c, cwd, o, false, [c.root]))) return "write-out";
+  const recursive = prog === "cp" && args.some((a) => /^-[A-Za-z]*[rRa]/.test(a));
+  if (recursive && !ops.slice(0, -1).every((o) => c.root !== null && contained(c, cwd, o, false, [c.root]))) return "write-out";
   const reads = prog === "cp" ? ops.slice(0, -1) : [];
   const writes = prog === "cp" ? ops.slice(-1) : ops;
   // rm and mv never reach into the shared /tmp (as tmp-scratch: `rm -rf /tmp/...` stays reviewed)
   const where = prog === "rm" || prog === "mv" ? [...(c.root ? [c.root] : []), ...(c.scratch ?? [])] : undefined;
+  if (prog === "cp" || prog === "mv") {
+    // the path really written: the destination itself, or `dest/<basename of src>` in an existing dir,
+    // and neither may be a symlink (cp writes through it; `d/f -> outside` may be committed)
+    const dest = resolveWord(c, cwd, ops[ops.length - 1]);
+    const isLink = c.isLink ?? isLinkDefault;
+    if (dest && isLink(dest)) return "write-out";
+    if (dest && (c.isDir ?? isDirDefault)(dest)) {
+      if (recursive) return "unknown"; // `cp -R src d` into an existing dir: the tree below d is not walked
+      const x = px(c);
+      for (const s of ops.slice(0, -1)) {
+        const t = x.join(dest, x.basename(s));
+        if (!contained(c, cwd, t, true, where) || isLink(t)) return "write-out";
+      }
+    }
+  }
   return reads.every((o) => contained(c, cwd, o, false)) && writes.every((o) => contained(c, cwd, o, true, where)) ? "write-in" : "write-out";
 }
 
@@ -482,7 +520,8 @@ function buildTest(c: EffectCtx, cwd: string | null, prog: string, args: string[
     if (!m.makefile) return null;
     const targets = args.filter((a) => !a.startsWith("-") && !/^\d+$/.test(a));
     if (!targets.length || !targets.every((t) => m.makeTests.has(t))) return null;
-    if (args.some((a) => a === "-n" || a === "--dry-run" || a === "--just-print" || a === "--recon")) return args.every((a) => !/^(-[Cf]|--directory|--file|--makefile)/.test(a)) ? "read" : null;
+    // GNU make takes unique abbreviations of long options (`--eva=`, `--fil=`): an exact option list only
+    if (args.some((a) => a === "-n" || a === "--dry-run" || a === "--just-print" || a === "--recon")) return args.every((a) => !a.startsWith("-") || /^(-n|--dry-run|--just-print|--recon|-s|--silent|-k|--keep-going|-j\d*)$/.test(a)) ? "read" : "unknown";
     return args.every((a) => !a.startsWith("-") || /^(-j\d*|-k|-s|--keep-going|--silent)$/.test(a)) ? "build-test" : null;
   }
   if (prog === "pytest" || ((prog === "python" || prog === "python3") && sub === "-m" && rest[0] === "pytest")) return m.pytest ? "build-test" : null;

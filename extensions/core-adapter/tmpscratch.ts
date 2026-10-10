@@ -3,8 +3,11 @@
 // model review and, headless, is denied. Only one simple command is handled, nothing chained:
 //   cp [-r|-R|-a|-p, also combined] <src>... <dest>     mkdir [-p] <dest>...
 // Every destination must be an absolute path under /tmp/ (no `..`, not /tmp itself) whose deepest
-// existing ancestor really lies inside /tmp (a symlink planted in /tmp cannot lead out). Sources may
-// be anything readable. No rm in any form: `rm -rf /tmp/...` stays reviewed. POSIX only; on Windows
+// existing ancestor really lies inside /tmp (a symlink planted in /tmp cannot lead out); into an existing
+// dir the written `dest/<basename>` is checked the same way, and a recursive copy into one is refused.
+// Every source must pass `deps.source` (timeoutallow.ts: a contained read of the effect context, a
+// recursive source from the worktree only); without it no cp matches. A lowercase `-r` only on Linux
+// (BSD `cp -r` follows the symlinks of the tree). No rm in any form: `rm -rf /tmp/...` stays reviewed. POSIX only; on Windows
 // it never matches. Words are parsed by sedread.ts `shellWords` (bare words and plain quotes only).
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -18,6 +21,10 @@ export interface TmpScratchDeps {
   /** realpath of an existing path, or null; injectable for tests. */
   realpath?: (p: string) => string | null;
   exists?: (p: string) => boolean;
+  /** stat says a directory (follows links); injectable for tests. */
+  isDir?: (p: string) => boolean;
+  /** A cp source may be read (and, `recursive`, copied as a tree); no cp matches without it. */
+  source?: (src: string, recursive: boolean) => boolean;
 }
 
 const defaultRealpath = (p: string): string | null => {
@@ -60,7 +67,16 @@ export function isTmpScratch(command: string, deps: TmpScratchDeps = {}): boolea
     while (k < args.length && args[k].startsWith("-")) if (!CP_FLAGS.test(args[k++])) return false;
     const ops = args.slice(k);
     if (ops.length < 2 || ops.some((o) => !o || o.startsWith("-"))) return false;
-    return tmpDest(ops[ops.length - 1], deps);
+    const flags = args.slice(0, k).join("");
+    const recursive = /[rRa]/.test(flags);
+    if (flags.includes("r") && (deps.platform ?? process.platform) !== "linux") return false;
+    const srcs = ops.slice(0, -1);
+    const dest = ops[ops.length - 1];
+    if (!deps.source || !srcs.every((o) => deps.source!(o, recursive)) || !tmpDest(dest, deps)) return false;
+    const isDir = deps.isDir ?? ((p: string) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
+    const d = path.posix.normalize(dest).replace(/\/+$/, "");
+    if (!isDir(d)) return true;
+    return !recursive && srcs.every((o) => tmpDest(`${d}/${path.posix.basename(o)}`, deps));
   }
   if (prog === "mkdir") {
     while (k < args.length && args[k].startsWith("-")) if (args[k++] !== "-p") return false;
