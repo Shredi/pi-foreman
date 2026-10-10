@@ -9,12 +9,15 @@
 //   write-out   one of those writes (or a redirect) that reaches outside the allowed places
 //   unknown     everything else, and anything the chain splitter (shellchain.ts) refuses
 // Every path argument of a read or a write must resolve inside the worktree (git top level of the
-// cwd), a live $FOREMAN_SCRATCH dir of the asking role, or /tmp (POSIX): no `~`, no `..`, no
-// drive-relative `C:x`, and the realpath of the nearest existing ancestor must stay inside (no
-// symlink out). Writes must lie strictly below such a place and never under `.git`. A chain takes
-// the class of its worst segment; `cd <dir>` moves the cwd the later segments resolve against.
+// cwd), a live $FOREMAN_SCRATCH dir of the asking role, or /tmp (POSIX), and for reads also a
+// safety.permissions.readRoots dir: no `~`, no `..`, no drive-relative `C:x`, and the realpath of
+// the nearest existing ancestor must stay inside (no symlink out). Writes must lie strictly below
+// such a place and never under `.git`. A chain takes the class of its worst segment; `cd <dir>`
+// moves the cwd the later segments resolve against; a path under an earlier segment's write
+// destination is unknown (ChainWrites).
 // Only write-out and unknown go on to the model review (timeoutallow.ts composes the allow).
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { isTestPath } from "./diffscan.ts";
 import { workspaceTop } from "./gitdrift.ts";
@@ -33,6 +36,8 @@ export interface EffectCtx {
   /** Git top level of the cwd; null outside a repo (then only scratch and /tmp count). */
   root: string | null;
   scratch?: string[];
+  /** safety.permissions.readRoots as real absolute dirs (readRootsOf): extra places for reads only. */
+  readRoots?: string[];
   platform?: string;
   /** Injectable for tests: realpath of an existing path, lstat existence, a file below root. */
   realpath?: (p: string) => string | null;
@@ -40,8 +45,8 @@ export interface EffectCtx {
   readFile?: (p: string) => string | null;
 }
 
-export function effectCtx(cwd: string, scratch: string[] = [], platform: string = process.platform): EffectCtx {
-  return { cwd: path.resolve(cwd), root: workspaceTop(cwd), scratch, platform };
+export function effectCtx(cwd: string, scratch: string[] = [], platform: string = process.platform, readRoots: unknown = []): EffectCtx {
+  return { cwd: path.resolve(cwd), root: workspaceTop(cwd), scratch, platform, readRoots: readRootsOf(readRoots, platform) };
 }
 
 /** Programs that run other commands or change who/how they run: the whole command is refused. */
@@ -74,6 +79,22 @@ const existsDefault = (p: string): boolean => {
   }
 };
 
+/** safety.permissions.readRoots as real absolute dirs: `~` and `%USERPROFILE%` mean the home dir; empty, relative or missing roots are dropped. */
+export function readRootsOf(roots: unknown, platform: string = process.platform, real: (p: string) => string | null = realDefault, home: string = os.homedir()): string[] {
+  if (!Array.isArray(roots)) return [];
+  const x = platform === "win32" ? path.win32 : path.posix;
+  const out: string[] = [];
+  for (const r of roots) {
+    if (typeof r !== "string" || !r.trim()) continue;
+    let p = r.trim().replace(/^%USERPROFILE%(?=$|[\\/])/i, home);
+    if (p === "~" || /^~[\\/]/.test(p)) p = home + p.slice(1);
+    if (!x.isAbsolute(p) || (platform === "win32" && !/^([A-Za-z]:[\\/]|\\\\)/.test(p))) continue;
+    const rp = real(x.resolve(p));
+    if (rp) out.push(rp);
+  }
+  return out;
+}
+
 const plat = (c: EffectCtx): string => c.platform ?? process.platform;
 const px = (c: EffectCtx): path.PlatformPath => (plat(c) === "win32" ? path.win32 : path.posix);
 const fold = (c: EffectCtx, s: string): string => (plat(c) === "win32" || plat(c) === "darwin" ? s.toLowerCase() : s);
@@ -86,8 +107,14 @@ function within(c: EffectCtx, base: string, p: string, strict: boolean): boolean
   return rel !== ".." && !rel.startsWith(".." + x.sep) && !x.isAbsolute(rel);
 }
 
-/** The deepest existing ancestor of `abs` (itself included) resolves inside realpath(base). */
-function realInside(c: EffectCtx, base: string, abs: string, strict: boolean): boolean {
+/** A path component that is or may alias `.git`: on win32 also an 8.3 short name (`GIT~1`) or a trailing dot or space (`.git.`). */
+function gitAlias(c: EffectCtx, part: string): boolean {
+  return fold(c, part) === ".git" || (plat(c) === "win32" && (/[. ]$/.test(part) || /~\d/.test(part)));
+}
+const hasGitPart = (c: EffectCtx, rel: string): boolean => rel.split(/[\\/]/).some((p) => gitAlias(c, p));
+
+/** The deepest existing ancestor of `abs` (itself included) resolves inside realpath(base); with `noGit` not under its `.git` either. */
+function realInside(c: EffectCtx, base: string, abs: string, strict: boolean, noGit = false): boolean {
   const x = px(c);
   const real = c.realpath ?? realDefault;
   const exists = c.exists ?? existsDefault;
@@ -100,19 +127,21 @@ function realInside(c: EffectCtx, base: string, abs: string, strict: boolean): b
   }
   const r = real(e);
   if (!r) return false;
+  if (noGit && hasGitPart(c, x.relative(rb, r))) return false;
   return within(c, rb, r, strict && e === abs);
 }
 
 /** `word` as an absolute path against `cwd`, or null for `~`, `..`, drive-relative or an unknown cwd. */
 function resolveWord(c: EffectCtx, cwd: string | null, word: string): string | null {
-  if (cwd === null || !word || word.startsWith("~")) return null;
+  // bash expands `~` after `=` or `:` too (`a=~/x`, `--file=~/x`)
+  if (cwd === null || !word || word.startsWith("~") || /[=:]~/.test(word)) return null;
   if (plat(c) === "win32" && /^[A-Za-z]:(?![\\/])/.test(word)) return null;
   if (word.split(/[\\/]/).includes("..")) return null;
   return px(c).resolve(cwd, word);
 }
 
-function bases(c: EffectCtx): string[] {
-  return [...(c.root ? [c.root] : []), ...(c.scratch ?? []), ...(plat(c) === "win32" ? [] : ["/tmp"])];
+function bases(c: EffectCtx, write: boolean): string[] {
+  return [...(c.root ? [c.root] : []), ...(c.scratch ?? []), ...(plat(c) === "win32" ? [] : ["/tmp"]), ...(write ? [] : (c.readRoots ?? []))];
 }
 
 /** A read (`write` false) or write path inside the worktree, a scratch dir or /tmp (see the header). */
@@ -120,16 +149,20 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
   const abs = resolveWord(c, cwd, word);
   if (!abs) return false;
   const x = px(c);
-  for (const b of only ?? bases(c)) {
+  for (const b of only ?? bases(c, write)) {
     if (!within(c, b, abs, write)) continue;
-    if (write && x.relative(x.resolve(b), abs).split(/[\\/]/).some((p) => fold(c, p) === ".git")) return false;
-    if (realInside(c, b, abs, write)) return true;
+    if (write && hasGitPart(c, x.relative(x.resolve(b), abs))) return false;
+    if (realInside(c, b, abs, write, write)) return true;
   }
   return false;
 }
 
-/** An option word: `--x=value` checks the value as a path; a bare option must not hold a path. */
+/** Options that name a program to run (`rg --hostname-bin`, `go test -exec`, `npm --script-shell`, `--*-command`, `--exec*`). */
+const PROGRAM_OPT = /^--?([\w-]*-command|exec[\w-]*|toolexec|hostname-bin|pre|script-shell)(=|$)/;
+
+/** An option word: `--x=value` checks the value as a path; a bare option must not hold a path or name a program. */
 function optionOk(c: EffectCtx, cwd: string | null, w: string, write: boolean): boolean {
+  if (PROGRAM_OPT.test(w)) return false;
   const eq = w.indexOf("=");
   if (eq >= 0) {
     const v = w.slice(eq + 1);
@@ -178,6 +211,8 @@ function readVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[]
   if (prog === "find" && args.some((a) => FIND_BAD.has(a))) return false;
   if (prog === "rg" && opts.some((a) => /^--(pre|pre-glob|follow)(=|$)/.test(a) || shortHas(a, "L"))) return false;
   if (/^[ef]?grep$/.test(prog) && opts.some((a) => a === "--dereference-recursive" || shortHas(a, "R"))) return false;
+  // GNU diff -r follows symlinks below its operands
+  if (prog === "diff" && opts.some((a) => a === "--recursive" || shortHas(a, "r"))) return false;
   if (prog === "tree" && opts.some((a) => a === "-o" || a === "-l")) return false;
   if (prog === "file" && opts.some((a) => shortHas(a, "C") || a === "--compile")) return false;
   const skip = new Set<number>();
@@ -271,6 +306,8 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
   }
   if (prog !== "tee" && ops.length < (prog === "cp" || prog === "mv" ? 2 : 1)) return "unknown";
   if (ops.includes("-")) return "unknown";
+  // a recursive copy keeps the symlinks of its source tree: only from the worktree (shared /tmp can be planted)
+  if (prog === "cp" && args.some((a) => /^-[A-Za-z]*[rRa]/.test(a)) && !ops.slice(0, -1).every((o) => c.root !== null && contained(c, cwd, o, false, [c.root]))) return "write-out";
   const reads = prog === "cp" ? ops.slice(0, -1) : [];
   const writes = prog === "cp" ? ops.slice(-1) : ops;
   // rm and mv never reach into the shared /tmp (as tmp-scratch: `rm -rf /tmp/...` stays reviewed)
@@ -289,9 +326,24 @@ function gitEffect(c: EffectCtx, cwd: string | null, args: string[]): { cls: Eff
     if (rest.some((a) => a === "-c" || a === "-o" || a.startsWith("--output") || a === "--ext-diff" || a.startsWith("--textconv"))) return { cls: "unknown", known: true };
     return { cls: argsOk(c, cwd, rest) ? "read" : "unknown", known: true };
   }
-  if (GIT_DRY.has(sub) && rest.some((a) => a === "--dry-run" || /^-[A-Za-z]*n[A-Za-z]*$/.test(a))) return { cls: argsOk(c, cwd, rest) ? "read" : "unknown", known: true };
+  if (GIT_DRY.has(sub) && gitDryRun(sub, rest)) return { cls: argsOk(c, cwd, rest) ? "read" : "unknown", known: true };
   if (sub === "commit") return { cls: "unknown", known: true }; // `commit -n` is --no-verify, not a dry run
   return { cls: "unknown", known: false };
+}
+
+/** Long options of git add/clean/mv/rm that take a value (also by a unique prefix): `-n` after them may be that value. */
+const GIT_VALUE_OPTS = ["exclude", "chmod", "pathspec-from-file"];
+
+/** `-n`/`--dry-run` before `--`, with no value-taking option that could swallow it (`git clean -fdx -e -n`). */
+function gitDryRun(sub: string, rest: string[]): boolean {
+  const dd = rest.indexOf("--");
+  const opts = (dd < 0 ? rest : rest.slice(0, dd)).filter((a) => a.startsWith("-"));
+  for (const a of opts) {
+    const name = a.startsWith("--") ? a.slice(2).split("=")[0] : null;
+    if (name && GIT_VALUE_OPTS.some((v) => v.startsWith(name))) return false;
+    if (!name && sub === "clean" && /^-[A-Za-z]*e/.test(a)) return false; // -e<pattern> / -e <pattern>
+  }
+  return opts.some((a) => a === "--dry-run" || /^-[A-Za-z]*n[A-Za-z]*$/.test(a));
 }
 
 /** `git restore [--worktree|-W] [--] <paths>` / `git checkout -- <paths>`, every path a test file inside the worktree. */
@@ -367,10 +419,16 @@ function manifestOf(c: EffectCtx): Manifest {
 }
 
 const BUILD_TOOLS = new Set(["npm", "cargo", "go", "make", "pytest", "python", "python3"]);
-const NPM_DRY = new Set(["install", "i", "ci", "uninstall", "update", "publish", "pack", "dedupe", "prune"]);
+// publish and pack run the prepack/prepare scripts even with --dry-run: not a read
+const NPM_DRY = new Set(["install", "i", "ci", "uninstall", "update", "dedupe", "prune"]);
+/** Build options that write where they choose or name a program to run: refused outright (model review). */
+const BUILD_BAD = /^--?(o|exec|toolexec|basetemp|junit-?xml|result-?log|report-log|target-dir|out-dir|artifact-dir|manifest-path|prefix|script-shell|directory|C|f|file|makefile|config|userconfig|globalconfig|node-options|init-module|cache|cache-dir|modfile|overlay|pkgdir|outputdir|(cover|cpu|mem|block|mutex)profile|trace|override-ini|rootdir|log-file|html|cov-report)(=|$)/;
 
-/** "build-test" / "read" (a dry run) for a manifest command run from the worktree root, else null. */
+/** "build-test" / "read" (a dry run) for a manifest command run from the worktree root, "unknown" for a refused option, else null. */
 function buildTest(c: EffectCtx, cwd: string | null, prog: string, args: string[]): EffectClass | null {
+  const pytest = prog === "pytest" || ((prog === "python" || prog === "python3") && args[0] === "-m" && args[1] === "pytest");
+  const checked = prog === "npm" || prog === "cargo" || prog === "go" || pytest;
+  if (checked && args.some((a) => BUILD_BAD.test(a) || PROGRAM_OPT.test(a) || (pytest && /^-[op]/.test(a)))) return "unknown";
   if (!c.root || cwd === null || !within(c, c.root, cwd, false) || !within(c, cwd, c.root, false)) return null;
   if (!argsOk(c, cwd, args)) return null;
   const m = manifestOf(c);
@@ -433,7 +491,8 @@ export function segmentEffect(c: EffectCtx, cwd: string | null, seg: Segment): S
   const out = (cls: EffectClass, known: boolean, label?: string, next: string | null = cwd): SegmentEffect => ({ cls, known, cwd: next, unit, wrapped, ...(label && SAFE_CLASSES.includes(cls) ? { label } : {}) });
   const [prog, ...args] = words;
   if (prog === "cd") {
-    if (wrapped || args.length !== 1) return out("unknown", false, undefined, null);
+    // `cd`, `cd -P`, `cd --`, `cd -`, `cd ~` go to $HOME or $OLDPWD: refused, the later cwd is unknown
+    if (wrapped || args.length !== 1 || args[0].startsWith("-") || args[0].startsWith("~")) return out("unknown", true, undefined, null);
     const abs = resolveWord(c, cwd, args[0]);
     if (abs && contained(c, cwd, args[0], false)) return out("read", true, "cd", abs);
     return out("unknown", false, undefined, abs);
@@ -457,9 +516,47 @@ export function segmentEffect(c: EffectCtx, cwd: string | null, seg: Segment): S
   }
   if (BUILD_TOOLS.has(prog)) {
     const b = buildTest(c, cwd, prog, args);
-    return b ? out(b, true, b === "read" ? "effect-read" : "effect-build-test") : out("unknown", false);
+    return b ? out(b, true, b === "read" ? "effect-read" : b === "build-test" ? "effect-build-test" : undefined) : out("unknown", false);
   }
   return out("unknown", false);
+}
+
+/**
+ * The destinations earlier segments of a chain wrote (cp/mv/ln/install/rsync/tee targets, output
+ * redirects): a later segment's path at or below one may run through a symlink the copy planted
+ * (`cp -R /tmp/pkg vendor && cat vendor/link`), which the review-time realpath check cannot see.
+ */
+export class ChainWrites {
+  private readonly dests: string[] = [];
+  private readonly c: EffectCtx;
+  constructor(c: EffectCtx) {
+    this.c = c;
+  }
+
+  /** False when `seg`, run in `cwd`, names a path at or below an earlier destination; else records its own. */
+  pass(cwd: string | null, seg: Segment): boolean {
+    const x = px(this.c);
+    const abs = (w: string): string | null => (cwd === null && !x.isAbsolute(w) ? null : x.resolve(cwd ?? "", w));
+    const value = (w: string): string => (!w.startsWith("-") ? w : w.includes("=") ? w.slice(w.indexOf("=") + 1) : "");
+    const named = [...seg.words.slice(1).map(value), ...seg.redirects.filter((r) => r.op !== "dup").map((r) => r.target)].filter(Boolean);
+    for (const w of named) {
+      const a = abs(w);
+      if (a && this.dests.some((d) => within(this.c, d, a, false))) return false;
+    }
+    let words = seg.words;
+    if (words[0] === "timeout") {
+      const inner = unwrapTimeout(seg.text);
+      words = (inner ? splitChain(inner)?.segments[0]?.words : null) ?? [];
+    }
+    const ops = words.slice(1).filter((w) => !w.startsWith("-"));
+    const prog = (words[0] ?? "").replace(/^.*\//, "");
+    const out = prog === "tee" ? ops : ["cp", "mv", "ln", "install", "rsync"].includes(prog) ? ops.slice(-1) : [];
+    for (const w of [...out, ...seg.redirects.filter((r) => r.op !== "dup" && r.op !== "<").map((r) => r.target)]) {
+      const a = abs(w);
+      if (a && w !== "/dev/null") this.dests.push(a);
+    }
+    return true;
+  }
 }
 
 /** `command` with $FOREMAN_SCRATCH resolved once per scratch dir (the command itself when there is none). */
@@ -476,9 +573,11 @@ export function classify(command: string, c: EffectCtx): EffectClass {
     if (!chain) continue;
     let worst: EffectClass = "read";
     let cwd: string | null = c.cwd;
+    const writes = new ChainWrites(c);
     for (const seg of chain.segments) {
       const e = segmentEffect(c, cwd, seg);
-      if (RANK[e.cls] > RANK[worst]) worst = e.cls;
+      const cls = writes.pass(cwd, seg) ? e.cls : "unknown";
+      if (RANK[cls] > RANK[worst]) worst = cls;
       cwd = e.cwd;
     }
     if (RANK[worst] < RANK[best]) best = worst;

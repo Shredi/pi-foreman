@@ -35,7 +35,7 @@ import { applyLaunchModels, applyLaunchTimeouts, roleTimeoutMs, splitLevel, STRE
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
 import { ReviewFacts } from "./diffscan.ts";
-import { applySecurityRungs, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
+import { applySecurityRungs, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
@@ -1072,7 +1072,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             s.trace?.emit({ event: "launch_refused", reason: "rank_policy", policy: no.policy, foreman: no.foreman, requested: no.requested });
             return { block: true, reason: no.message };
           }
-          // The security rung is explicit config: written after the rank check (docs/ladder.md).
+          // The security rung is explicit config: written after the rank check (docs/ladder.md); traced when it overrides the policy.
+          markPolicyOverrides(reviewerClimbs, (m) => rankRefusal(s.config.config, foremanModel, m) !== null);
           applySecurityRungs(reviewerClimbs, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
         }
         for (const o of launched.overrides) s.trace?.emit({ event: "model_override", role: o.role, model: o.model, requested: o.requested });

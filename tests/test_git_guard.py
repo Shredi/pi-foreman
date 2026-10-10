@@ -94,6 +94,8 @@ TABLE = [
     ("git clean -xfd", "bash", D, A),
     ("git clean --force", "bash", D, A),
     ("git clean -n", "bash", A, A),
+    ("git clean -fdx -e -n", "bash", D, A),     # -e takes -n as its pattern: not a dry run
+    ("git clean -fdx -en", "bash", D, A),
     ("git stash", "bash", A, A),
     ("git stash drop", "bash", D, A),
     ("git stash clear", "bash", D, A),

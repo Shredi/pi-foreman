@@ -59,7 +59,7 @@ test("chains: every segment must be a deterministic allow; the 2k shapes pass", 
 test("effect classes: read, build-test, write-in, write-out, unknown", () => {
   const c = ctx();
   const want: Record<string, string[]> = {
-    read: ["cat f", "grep -n x src/main.go", "find . -name '*.go'", "git status", "git diff HEAD~1 -- src", "git add -n .", "git clean -nd", `ls ${scratch}`, "npm publish --dry-run", "tail -50"],
+    read: ["cat f", "grep -n x src/main.go", "find . -name '*.go'", "git status", "git diff HEAD~1 -- src", "git add -n .", "git clean -nd", `ls ${scratch}`, "npm install --dry-run", "tail -50"],
     "build-test": ["cargo test", "npm test", "npm run build", "make test-unit", "npm ci"],
     "write-in": ["mkdir -p build/x", "touch src/new.go", "rm -rf build", "cp f src/g", "sed -i 's/a/b/g' f", "mv f g", `rm -r ${scratch}/x`],
     "write-out": ["cp f /etc/x", "rm -rf /tmp/pf-x", "cp /etc/hosts src/x", "touch .git/hooks/pre-commit", "rm -rf .", "mv f ../g", "ls > out.txt", "tee /etc/x"],
@@ -73,6 +73,72 @@ test("effect classes: read, build-test, write-in, write-out, unknown", () => {
   assert.equal(classify("cd src && cargo test", c), "unknown");
   // outside a repository nothing is the worktree
   assert.equal(classify("cat f", effectCtx(base)), "unknown");
+});
+
+test("security review: cd with an option, `-` or no operand leaves the cwd unknown (B1)", () => {
+  for (const cmd of ["cd -- && sed -i '1s/^/X/' .zshrc", "cd -P && cp /tmp/k .ssh/authorized_keys", "cd -L && tee -a .bashrc", "cd - && cat .aws/credentials", "cd src && cd -- && rm .zshrc", "cd && cat .profile", "cd ~ && cat .profile", "cd -P && npm test"]) {
+    assert.equal(classify(cmd, ctx()), "unknown", cmd);
+    assert.equal(allow(cmd), null, cmd);
+  }
+});
+
+test("security review: a git dry run -n that a value-taking option swallows is not a read (M1)", () => {
+  for (const cmd of ["git clean -fdx -e -n", "git clean -ffdx -e -n", "git clean -fdx -en", "git clean -fdx --exclude -n", "git clean -fdx --exc -n", "git clean -fdx -- -n", "git add --chmod -n x"]) assert.equal(classify(cmd, ctx()), "unknown", cmd);
+  assert.equal(classify("git clean -n -e build", ctx()), "unknown");
+  assert.equal(classify("git clean -nd -- src", ctx()), "read");
+});
+
+test("security review: build-test options that write or name a program are refused (M2, m4)", () => {
+  for (const cmd of ["go build -o .git/hooks/pre-commit .", "pytest --basetemp=.", "pytest --basetemp=/tmp", "python3 -m pytest --basetemp=src", "cargo build --target-dir=.git/x", "pytest --junitxml=.git/hooks/pre-commit", "cargo test --manifest-path ../x/Cargo.toml", "npm test --prefix /x", "npm test --script-shell=evil.sh", "go test -exec=./evil .", "pytest -p evil", "cargo test --config x", "npm run build -- --out-dir=/x"]) {
+    assert.equal(classify(cmd, ctx()), "unknown", cmd);
+    assert.equal(allow(cmd), null, cmd);
+  }
+  assert.equal(classify("cargo test -p core --release", ctx()), "build-test");
+  for (const cmd of ["rg --hostname-bin=x y", "grep --foo-command=x y f", "make -C /x test-unit", "make -f /x/Makefile -n"]) assert.equal(classify(cmd, ctx()), "unknown", cmd);
+});
+
+test("security review: a chain may not use what an earlier segment copied or wrote; recursive cp only from the worktree (M3)", () => {
+  for (const cmd of ["cp -R /tmp/pkg ./vendor && cat vendor/link", "cp -r src build && cat build/main.go", "cp f src/g && rm -rf src/g/x", `ls > ${scratch}/o && cat ${scratch}/o/x`]) {
+    assert.notEqual(classify(cmd, ctx()), "read", cmd);
+    assert.notEqual(classify(cmd, ctx()), "write-in", cmd);
+    assert.equal(allow(cmd), null, cmd);
+  }
+  assert.equal(classify("cp -R /tmp/pkg vendor", ctx()), "write-out");
+  assert.equal(classify(`cp -a ${scratch}/x src/x`, ctx()), "write-out");
+  assert.equal(classify("cp -r src build", ctx()), "write-in");
+  assert.equal(classify("mkdir -p out && touch out/x && cat f", ctx()), "write-in");
+});
+
+test("security review: ~ after = or :, npm publish/pack dry runs, diff -r (m2, m5, m6)", () => {
+  for (const cmd of ["cat a=~/.ssh/id_rsa", "grep --file=~/x y f", "make test-unit X=~/y", "npm publish --dry-run", "npm pack --dry-run", "diff -r src /tmp", "diff --recursive src f", "diff -ru src f"]) assert.equal(classify(cmd, ctx()), "unknown", cmd);
+  assert.equal(classify("diff -u f src/main.go", ctx()), "read");
+});
+
+test("security review: win32 .git aliases (8.3 short name, trailing dot or space, realpath) are not writable (m1)", () => {
+  const real = (p: string): string => p.replace(/\\git~1(?=\\|$)/i, "\\.git");
+  const w: EffectCtx = { cwd: "C:\\w", root: "C:\\w", platform: "win32", realpath: real, exists: (p) => /^c:\\w(\\(src|git~1|\.git))?$/i.test(p), readFile: () => null };
+  for (const cmd of ["rm -rf GIT~1", "touch GIT~1/hooks/pre-commit", "rm -rf .git.", "touch '.git /config'", "rm -rf src/x~1"]) assert.equal(classify(cmd, w), "write-out", cmd);
+  assert.equal(classify("touch src/x.ts", w), "write-in");
+});
+
+test("readRoots: reads (only) inside a configured root; no symlink out, no relative or empty root", () => {
+  const other = path.join(base, "other");
+  fs.mkdirSync(path.join(other, "lib"), { recursive: true });
+  fs.writeFileSync(path.join(other, "lib", "a.ts"), "x\n");
+  const outside = path.join(base, "outside");
+  fs.mkdirSync(outside, { recursive: true });
+  fs.writeFileSync(path.join(outside, "s"), "x\n");
+  const c = effectCtx(repo, [scratch], process.platform, [other, "", "rel/dir", path.join(base, "missing")]);
+  assert.deepEqual(c.readRoots, [fs.realpathSync.native(other)]);
+  const inRoot = path.join(fs.realpathSync.native(other), "lib", "a.ts");
+  assert.equal(classify(`cat ${inRoot}`, c), "read");
+  assert.equal(deterministicAllow(rules, `grep -n x ${inRoot}`, { scratchDirs: [scratch], effects: c }), "effect-read");
+  assert.equal(classify(`cat ${path.join(outside, "s")}`, c), "unknown");
+  assert.equal(classify(`touch ${path.join(fs.realpathSync.native(other), "lib", "b.ts")}`, c), "write-out");
+  if (posix) {
+    fs.symlinkSync(outside, path.join(other, "out-link"));
+    assert.equal(classify(`cat ${path.join(fs.realpathSync.native(other), "out-link", "s")}`, c), "unknown");
+  }
 });
 
 test("effect classes: a symlink inside the worktree cannot lead out", { skip: !posix }, () => {
