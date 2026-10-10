@@ -19,7 +19,9 @@ import { get } from "./config.ts";
 import { BRIDGE_PROVIDER } from "./bridgeiso.ts";
 import type { BashRules } from "./timeoutallow.ts";
 import { insideScratch } from "./childscratch.ts";
-import { deterministicAllow } from "./timeoutallow.ts";
+import { deterministicAllow, deterministicAllowInfo } from "./timeoutallow.ts";
+import { classify, effectCtx } from "./effects.ts";
+import type { EffectClass, EffectCtx } from "./effects.ts";
 
 export const REVIEW_LINK = "foreman-review";
 export const DEFAULT_REVIEW_TIMEOUT_MS = 15_000;
@@ -188,7 +190,7 @@ export interface ReviewSession {
 
 /** Deny text for a forwarded child ask that deferred with no human to ask: names what runs without approval. */
 export const HEADLESS_DENY =
-  "pi-foreman: not approved - the model review deferred and no human is available to confirm. Runs without approval: read-only git (status, diff, log, show), ls, cat, head, tail, wc, rg, grep, find, print-only `sed -n '<addr>p' <file>` (no s, w, e, r commands, no -i or -f), `cd <dir inside the workspace> && <allowed command>`, the project's test and build commands, `timeout N <allowed command>`, `cp [-r] <src> /tmp/<dir>` and `mkdir -p /tmp/<dir>` (one command, no chaining or redirection), `cp`, `mkdir`, `rm -r` and `cd` inside your $FOREMAN_SCRATCH (literal path). Not allowed: sed -i, sed s/w/e/r scripts, writes outside the workspace, network. Use the read, grep, find and ls tools for inspection.";
+  "pi-foreman: not approved - the model review deferred and no human is available to confirm. Runs without approval: read-only git (status, diff, log, show), ls, cat, head, tail, wc, rg, grep, find, print-only `sed -n '<addr>p' <file>` (no s, w, e, r commands, no -i or -f), `cd <dir inside the workspace> && <allowed command>`, the project's test and build commands, `timeout N <allowed command>`, `git restore`/`git checkout -- <test files>`, mkdir, touch, cp, mv, rm, tee and `sed -i 's/a/b/' <file>` on relative paths inside the workspace, chains of these joined by &&, ||, ; or | with redirects only to /dev/null, $FOREMAN_SCRATCH or /tmp, `cp`, `mkdir`, `rm -r` and `cd` inside your $FOREMAN_SCRATCH. Not allowed: $(...), backticks, subshells, xargs, sh -c, sed s/w/e/r print scripts, paths outside the workspace (~, .., absolute), network. Use the read, grep, find and ls tools for inspection.";
 
 interface PermissionsServiceLike {
   registerAuthorizer(name: string, authorize: (details: AskDetails, query: unknown, log: ReviewLog) => Promise<Verdict>): () => void;
@@ -301,23 +303,25 @@ export class ForemanReview {
     let model: string | null = null;
     let auto = false;
     let fixed: string | null = null;
+    let cls: { ctx: EffectCtx; cls: EffectClass } | null = null;
     try {
       const s = this.sessions.get(id);
       const surface = String(d.surface ?? d.payload?.request?.surface ?? "");
       const target = s && !s.isChild ? reviewTarget(s.config(), s.provider) ?? autoReviewTarget(s.config(), s.provider, s.registry) : null;
       auto = target?.auto === true;
+      if (s && !s.isChild && surface === "bash") cls = this.classOf(s, d);
       if (!s) out = { verdict: { kind: "defer" }, label: "no-session" };
       else if (s.isChild) out = { verdict: { kind: "defer" }, label: "child" };
       else if (d.forwarding && surface.startsWith("external_directory") && (fixed = this.scratchPathAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (!REVIEW_SURFACES.includes(surface)) out = { verdict: { kind: "defer" }, label: "surface" };
-      else if (surface === "bash" && d.forwarding && (fixed = this.fixedAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
+      else if (surface === "bash" && d.forwarding && (fixed = this.fixedAllow(s, d, cls))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (!target) out ={ verdict: { kind: "defer" }, label: "no-model" };
       else if (reviewValue(d).length > MAX_VALUE) out = { verdict: { kind: "defer" }, label: "truncated" };
       else {
         model = `${target.provider}/${target.modelId}`;
         out = await this.callModel(s, target, requestText(d, surface, s), reviewValue(d));
       }
-      s?.trace?.({ event: "review", decision: out.label, model, latencyMs: Date.now() - started, errorKind: out.errorKind ?? null, by: auto ? "auto" : undefined, ...(out.reason ? { reason: out.reason.slice(0, 100) } : {}) });
+      s?.trace?.({ event: "review", decision: out.label, model, ...(cls ? { class: cls.cls } : {}), latencyMs: Date.now() - started, errorKind: out.errorKind ?? null, by: auto ? "auto" : undefined, ...(out.reason ? { reason: out.reason.slice(0, 100) } : {}) });
       if (s && out.verdict.kind === "defer" && d.forwarding && surface === "bash" && this.isHeadless(s)) {
         s.trace?.({ event: "review_defer_headless", role: d.agentName ?? "?", cmd: reviewValue(d).replace(/\s+/g, " ").slice(0, 80) });
         out = { verdict: { kind: "deny", reason: HEADLESS_DENY }, label: "defer-headless", ...(out.errorKind ? { errorKind: out.errorKind } : {}) };
@@ -333,17 +337,29 @@ export class ForemanReview {
     return out.verdict;
   }
 
-  /** "timeout-wrapper" or "sed-read" when the forwarded command is allowed without the model (timeoutallow.ts). */
-  private fixedAllow(s: ReviewSession, d: AskDetails): string | null {
+  /** The effect context and class of a forwarded bash ask's full command (effects.ts), for the allow and the `review` trace. */
+  private classOf(s: ReviewSession, d: AskDetails): { ctx: EffectCtx; cls: EffectClass } | null {
+    try {
+      const ctx = effectCtx(s.cwd, this.scratchOf(s, d));
+      return { ctx, cls: classify(reviewValue(d), ctx) };
+    } catch {
+      return null;
+    }
+  }
+
+  /** A deterministic label (timeoutallow.ts) when the forwarded command is allowed without the model; traces `chain_allow {segments}` for a chain. */
+  private fixedAllow(s: ReviewSession, d: AskDetails, cls: { ctx: EffectCtx } | null): string | null {
     try {
       const rules = s.bashRules?.();
       if (!rules) return null;
       // PS forwards only the first most-restrictive unit; the allow must also hold for the full command.
       const unit = unitValue(d);
       const full = reviewValue(d);
-      const scratch = { scratchDirs: this.scratchOf(s, d) };
-      const label = deterministicAllow(rules, unit, scratch);
-      return label && full !== unit ? deterministicAllow(rules, full, scratch) : label;
+      const deps = { scratchDirs: this.scratchOf(s, d), ...(cls ? { effects: cls.ctx } : {}) };
+      if (!deterministicAllow(rules, unit, deps)) return null;
+      const info = deterministicAllowInfo(rules, full, deps);
+      if (info && info.segments >= 2) s.trace?.({ event: "chain_allow", segments: info.segments, decision: info.label, role: d.agentName ?? "?" });
+      return info?.label ?? null;
     } catch {
       return null;
     }

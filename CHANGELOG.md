@@ -3,6 +3,13 @@
 ## [Unreleased]
 
 ### Added
+- Review link, child bash asks (`docs/permissions.md`): effect classes `read`, `build-test` (from the project manifest
+  at the worktree root), `write-in`, `write-out`, `unknown` (`effects.ts`); only write-out and unknown reach the review
+  model. Read and write paths must resolve inside the worktree, `$FOREMAN_SCRATCH` or `/tmp` (no `~`, `..`, other
+  absolute paths, symlinks out, `.git`). Chains joined by `&&`, `||`, `;`, `|` are allowed when every segment is
+  (`shellchain.ts`; `$(`, backticks, subshells, `eval`, `sh -c`, `xargs`, `&`, heredocs refused; redirects only to
+  `/dev/null`, scratch or `/tmp`); trace `chain_allow {segments}`. New label `test-restore` for `git restore`/`git
+  checkout --` on test files, so the git guard's test restore no longer defers headless. The `review` trace gains `class`.
 - `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]`: merges `config/presets/<name>.json` into
   `<agent dir>/foreman.json` (preset wins), validates before writing, keeps `foreman.json.bak-<date>`. With no role or
   review model configured, an interactive top-level session prints one notice naming the presets and this command;

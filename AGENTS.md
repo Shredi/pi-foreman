@@ -62,6 +62,7 @@ Repo layout and test commands: `docs/development.md`. Read the page for the area
 - `docs/roles.md`: roles, display-name presets, model ladder, rank policy, presets.
 - `docs/ceremony.md`: tiers, finish gates, planner and checkpoint, budgets, key table.
 - `docs/safety.md`: shell-write and repository guards, PR gate, permissions and auto-review, known limits.
+- `docs/permissions.md`: effect classes of child bash asks, chain composition, deterministic allow labels, traces.
 - `docs/sessions.md`: `/sync`, `/retro`, `/foreman close`, footer, `bin/foreman`, intercom, Herdr.
 - `docs/bench.md`: `foreman bench`, columns, price tiers.
 - `docs/overlays.md`: private and organisation overlays, one-way flow, extension points.

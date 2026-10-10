@@ -3,10 +3,11 @@
 // baseline glob can allow `timeout 900 cargo test`. The foreman's review link therefore allows it
 // itself, and only when every unit of the command is allowed by the rules the permission file
 // carries: the wrapped command must match an allow pattern and no later ask or deny pattern
-// (last matching rule wins, as in the generated file). Anything with shell syntax beyond `&&` and
-// `;` (pipes, redirects, substitutions, quotes holding such characters) is not handled here and
-// goes on to the model review. A read-only sed unit (sedread.ts) is allowed the same way: the
-// baseline has no sed rule because no glob can separate a print from `1wout` or `1etouch x`.
+// (last matching rule wins, as in the generated file). Chains (`&&`, `||`, `;`, `|`) are split by
+// shellchain.ts, which refuses substitutions, subshells, heredocs and the like; those go on to the
+// model review. A read-only sed unit (sedread.ts) is allowed the same way: the baseline has no sed
+// rule because no glob can separate a print from `1wout` or `1etouch x`. With an effect context
+// (effects.ts) a segment may also pass by its effect class; docs/permissions.md has the whole set.
 import type { Json } from "./config.ts";
 import { get } from "./config.ts";
 import type { Baseline } from "./permoverlay.ts";
@@ -15,6 +16,9 @@ import { isReadOnlySed } from "./sedread.ts";
 import { scratchCommandAllowed } from "./childscratch.ts";
 import { isTmpScratch } from "./tmpscratch.ts";
 import type { TmpScratchDeps } from "./tmpscratch.ts";
+import { redirectOk, refusedProgram, SAFE_CLASSES, scratchExpansions, segmentEffect } from "./effects.ts";
+import type { EffectCtx } from "./effects.ts";
+import { splitChain } from "./shellchain.ts";
 
 export interface BashRules {
   allow: string[];
@@ -52,7 +56,6 @@ function hits(list: string[], unit: string, home: string): boolean {
 const DURATION = /^\d+(?:\.\d+)?[smhd]?$/;
 const FLAGS_WITH_VALUE = new Set(["-s", "-k"]);
 const PLAIN_FLAGS = new Set(["--foreground", "--preserve-status", "-v", "--verbose"]);
-const UNSAFE = /[`$(){}<>|&\\\n\r!]/;
 
 /** `timeout [flags] N rest` -> `rest`, or null when the form is anything else. */
 export function unwrapTimeout(unit: string): string | null {
@@ -75,35 +78,82 @@ export function unwrapTimeout(unit: string): string | null {
   }
 }
 
+export type AllowLabel = "timeout-wrapper" | "test-restore" | "sed-read" | "tmp-scratch" | "child-scratch" | "effect-write-in" | "effect-build-test" | "effect-read";
+
+/** Label precedence when a chain mixes allowed segments (the first present wins). */
+const PRECEDENCE: AllowLabel[] = ["timeout-wrapper", "test-restore", "sed-read", "effect-write-in", "effect-build-test", "effect-read"];
+
+export interface AllowDeps extends TmpScratchDeps {
+  scratchDirs?: string[];
+  /** The effect context (effects.ts); without it only the rules, sed-read and timeout-wrapper apply per segment. */
+  effects?: EffectCtx;
+}
+
 /**
- * The link's deterministic allow for a forwarded ask: "timeout-wrapper" when `command` holds a
- * `timeout N <allowed>` unit, else "sed-read" when it holds a read-only sed unit, provided every
- * other unit is allowed by the rules; null otherwise. Units are separated by `&&` or `;`.
- * "tmp-scratch" when the whole command is one `cp`/`mkdir` writing only under /tmp/ (tmpscratch.ts)
- * that no ask or deny pattern catches. "child-scratch" when every unit copies into, makes, removes
- * inside or cds into one of `scratchDirs` (childscratch.ts) or is allowed, and no ask or deny pattern
- * catches the command.
+ * The link's deterministic allow for a forwarded ask, or null:
+ *  - "tmp-scratch": the whole command is one `cp`/`mkdir` writing only under /tmp/ (tmpscratch.ts);
+ *  - "child-scratch": every `&&`/`;` unit copies into, makes, removes inside or cds into one of
+ *    `scratchDirs` (childscratch.ts) or is allowed by the rules;
+ *  - else the chain composer: `command` is split on top-level `&&`, `||`, `;` and `|`
+ *    (shellchain.ts refuses subshells, substitutions, heredocs, background and the like), every
+ *    redirect goes to /dev/null, a scratch dir or /tmp (or is an fd dup), and every segment is
+ *    allowed on its own: a `timeout N` wrapper around an allowed segment, print-only sed, a test
+ *    restore or a read/build-test/write-in effect class (effects.ts), or a unit the rules allow
+ *    when the effect layer does not know the program. At least one segment must carry a label.
+ * No ask or deny pattern (a user's own included) may catch the command or any segment.
  */
-export function deterministicAllow(rules: BashRules, command: string, scratch: TmpScratchDeps & { scratchDirs?: string[] } = {}): "timeout-wrapper" | "sed-read" | "tmp-scratch" | "child-scratch" | null {
-  if (isTmpScratch(command, scratch) && !hits(rules.ask, command.trim(), "") && !hits(rules.deny, command.trim(), "")) return "tmp-scratch";
-  if (scratch.scratchDirs?.length && !hits(rules.ask, command.trim(), "") && !hits(rules.deny, command.trim(), "") && scratchCommandAllowed(command, scratch.scratchDirs, (u) => unitAllowed(rules, u), scratch.platform)) return "child-scratch";
-  if (UNSAFE.test(command.replace(/&&/g, ";"))) return null;
-  const units = command.split(/&&|;/).map((u) => u.trim());
-  if (units.some((u) => !u)) return null;
-  let wrapped = 0;
-  let sed = 0;
-  for (const u of units) {
-    let unit = u;
-    if (/^timeout(\s|$)/.test(u)) {
-      const inner = unwrapTimeout(u);
-      if (!inner || /^timeout(\s|$)/.test(inner)) return null;
-      unit = inner;
-      wrapped++;
+export function deterministicAllow(rules: BashRules, command: string, deps: AllowDeps = {}): AllowLabel | null {
+  return deterministicAllowInfo(rules, command, deps)?.label ?? null;
+}
+
+/** deterministicAllow with the number of chain segments (for the `chain_allow` trace). */
+export function deterministicAllowInfo(rules: BashRules, command: string, deps: AllowDeps = {}): { label: AllowLabel; segments: number } | null {
+  const whole = command.trim();
+  if (hits(rules.ask, whole, "") || hits(rules.deny, whole, "")) return null;
+  if (isTmpScratch(command, deps)) return { label: "tmp-scratch", segments: 1 };
+  if (deps.scratchDirs?.length && scratchCommandAllowed(command, deps.scratchDirs, (u) => unitAllowed(rules, u), deps.platform)) return { label: "child-scratch", segments: command.split(/&&|;/).length };
+  for (const text of scratchExpansions(command, deps.scratchDirs ?? [])) {
+    const r = compose(rules, text, deps);
+    if (r) return r;
+  }
+  return null;
+}
+
+function compose(rules: BashRules, text: string, deps: AllowDeps): { label: AllowLabel; segments: number } | null {
+  const chain = splitChain(text);
+  if (!chain) return null;
+  const c = deps.effects ?? null;
+  const scratch = c?.scratch ?? deps.scratchDirs ?? [];
+  const platform = c?.platform ?? deps.platform ?? process.platform;
+  let cwd: string | null = c?.cwd ?? null;
+  const labels = new Set<string>();
+  for (const seg of chain.segments) {
+    if (hits(rules.ask, seg.text, "") || hits(rules.deny, seg.text, "") || refusedProgram(seg.words)) return null;
+    if (!seg.redirects.every((r) => redirectOk(r, c, cwd, scratch, platform))) return null;
+    if (c) {
+      const e = segmentEffect(c, cwd, seg);
+      if (e.unit !== seg.text && (hits(rules.ask, e.unit, "") || hits(rules.deny, e.unit, ""))) return null;
+      if (e.label && SAFE_CLASSES.includes(e.cls)) labels.add(e.label);
+      else if (!e.known && unitAllowed(rules, e.unit)) labels.add("rules");
+      else return null;
+      if (e.wrapped) labels.add("timeout-wrapper");
+      cwd = e.cwd;
+      continue;
     }
-    if (sedUnitAllowed(rules, unit)) sed++;
+    // no effect context: the rules, print-only sed and the timeout wrapper only
+    let unit = seg.text;
+    if (seg.words[0] === "timeout") {
+      const inner = unwrapTimeout(unit);
+      const sub = inner ? splitChain(inner) : null;
+      if (!inner || !sub || sub.segments.length !== 1 || sub.segments[0].redirects.length || sub.segments[0].words[0] === "timeout" || refusedProgram(sub.segments[0].words)) return null;
+      unit = inner;
+      labels.add("timeout-wrapper");
+    }
+    if (sedUnitAllowed(rules, unit)) labels.add("sed-read");
     else if (!unitAllowed(rules, unit)) return null;
   }
-  return wrapped > 0 ? "timeout-wrapper" : sed > 0 ? "sed-read" : null;
+  const label = PRECEDENCE.find((l) => labels.has(l));
+  return label ? { label, segments: chain.segments.length } : null;
 }
 
 /** Does the ask `command` consist only of allowed units and at least one `timeout N <allowed>` or read-only sed unit? */
