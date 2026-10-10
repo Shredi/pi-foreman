@@ -42,31 +42,67 @@ class Parse(unittest.TestCase):
         self.assertEqual([(i["n"], i["verdict"]) for i in rb.items_of(text)], [(1, "PASS"), (2, "FAIL")])
         self.assertEqual(rb.fail_evidence(text), ["- **2. FAIL** app/client.py:38 logs it", "- tests/test_client.py:5 weak assert"])
 
+    def test_pass_sub_bullets_and_prose_are_no_evidence(self):  # bug 1
+        text = ("VERDICT: FAIL\nContext: app/util.py:3 was read first.\n1. PASS done:\n   - app/util.py:12 adds the cap\n"
+                "   - app/util.py:20 trims it\n2. FAIL app/client.py:38 logs it\n   - see app/client.py:39\n"
+                "Overall: FAIL because of app/util.py:12")
+        self.assertEqual(rb.fail_units(text), [["2. FAIL app/client.py:38 logs it", "- see app/client.py:39"]])
+
+    def test_doubled_numbering_and_numbered_missing(self):  # bug 4
+        text = "VERDICT: FAIL\n1. 1. PASS ok at app/util.py:4\n2. FAIL x\n4. Missing: app/schema.sql was not in the diff"
+        self.assertEqual([(i["n"], i["verdict"]) for i in rb.items_of(text)], [(1, "PASS"), (2, "FAIL")])
+        self.assertEqual(rb.fail_units(text), [["2. FAIL x"], ["4. Missing: app/schema.sql was not in the diff"]])
+
 
 class Score(unittest.TestCase):
-    def s(self, text, truth=TRUTH):
-        return rb.score(text, truth, FILES)
+    def s(self, text, truth=TRUTH, files=FILES):
+        return rb.score(text, truth, files)
 
-    def test_caught_by_class_word(self):
-        self.assertEqual(self.s("VERDICT: FAIL\n2. FAIL client.py writes the bearer token to the log")["caught"], ["d1"])
+    def test_located_and_diagnosed_by_class_word(self):
+        r = self.s("VERDICT: FAIL\n2. FAIL client.py writes the bearer token to the log")
+        self.assertEqual((r["located"], r["diagnosed"], r["scorer"]), (["d1"], ["d1"], rb.SCORER_VERSION))
 
-    def test_caught_by_line_within_slack(self):
-        self.assertEqual(self.s("VERDICT: FAIL\n2. FAIL app/client.py:41 wrong")["caught"], ["d1"])
-        self.assertEqual(self.s("VERDICT: FAIL\n2. FAIL app/client.py:45 wrong")["caught"], [])
+    def test_line_within_slack_locates_but_does_not_diagnose(self):  # bug 5
+        r = self.s("VERDICT: FAIL\n2. FAIL app/client.py:41 wrong")
+        self.assertEqual((r["located"], r["diagnosed"]), (["d1"], []))
+        self.assertEqual(self.s("VERDICT: FAIL\n2. FAIL app/client.py:45 wrong")["located"], [])
 
-    def test_other_file_or_basename_is_no_catch(self):
-        r = self.s("VERDICT: FAIL\n2. FAIL tests/test_client.py:38 token logged")
-        self.assertEqual((r["caught"], r["false_alarms"]), ([], ["tests/test_client.py"]))
+    def test_negated_class_word_does_not_diagnose(self):  # bug 5
+        race = {"clean": False, "defects": [{"id": "d1", "file": "app/counter.go", "lines": [63, 63], "class": "race",
+                                             "description": "counter bumped without the lock"}]}
+        r = self.s("VERDICT: FAIL\n2. FAIL app/counter.go:63 bumps a counter, so it is not a race", race, ["app/counter.go"])
+        self.assertEqual((r["located"], r["diagnosed"]), (["d1"], []))
+        r = self.s("VERDICT: FAIL\n2. FAIL app/counter.go:63 bumps a counter: a data race", race, ["app/counter.go"])
+        self.assertEqual(r["diagnosed"], ["d1"])
+
+    def test_approximate_lines_and_file_only_bullets_locate(self):  # bug 2
+        for ref in ("app/client.py:~38", "client.py ~40", "app/client.py:~L39", "app/client.py:L36", "app/client.py lines 30-36"):
+            self.assertEqual(self.s("VERDICT: FAIL\n2. FAIL odd write at %s" % ref)["located"], ["d1"], ref)
+        sym = {"clean": False, "defects": [dict(TRUTH["defects"][0], description="retry_warning prints every header")]}
+        r = self.s("VERDICT: FAIL\n2. FAIL two problems:\n   - `app/client.py`: `retry_warning` is new and unasked", sym)
+        self.assertEqual((r["located"], r["false_alarms"]), (["d1"], []))
+
+    def test_basename_needs_full_path_or_unique_name(self):  # bug 3
+        files = ["app/client.py", "lib/client.py"]
+        self.assertEqual(self.s("VERDICT: FAIL\n2. FAIL client.py:38 leaks the token", files=files)["located"], [])
+        self.assertEqual(self.s("VERDICT: FAIL\n2. FAIL lib/client.py:38 leaks the token", files=files)["located"], [])
+        self.assertEqual(self.s("VERDICT: FAIL\n2. FAIL app/client.py:38 leaks the token", files=files)["located"], ["d1"])
+        self.assertEqual(self.s("VERDICT: FAIL\n2. FAIL client.py:38 leaks the token")["located"], ["d1"])
+
+    def test_false_alarms_per_item_and_process_items(self):  # bug 6
+        text = ("VERDICT: FAIL\n1. FAIL no tests were added for the change\n2. FAIL defects:\n"
+                "   - tests/test_client.py:5 weak assert\n     also tests/test_client.py:9\n   - app/util.py:2 and app/x.py:3 typo\n"
+                "   - app/client.py:38 logs the token\n   - app/client.py:90 style nit\n   - app/util.py:7 harmless, not blocking")
+        r = self.s(text, files=FILES + ["app/util.py", "app/x.py"])
+        self.assertEqual((r["located"], len(r["false_alarms"]), r["process"], r["notes"]), (["d1"], 2, 1, 1))
+        clean = {"clean": True, "defects": []}
+        r = self.s("VERDICT: FAIL\n1. FAIL tests do not run\n2. FAIL app/client.py:3 x\n- app/client.py:9 y", clean)
+        self.assertEqual((len(r["false_alarms"]), r["process"]), (1, 1))
 
     def test_overall_pass_scores_nothing(self):
         r = self.s("VERDICT: PASS\n2. FAIL app/client.py:38 token logged")
-        self.assertEqual((r["caught"], r["false_alarms"]), ([], []))
-
-    def test_false_alarms_on_clean_task(self):
-        clean = {"clean": True, "defects": []}
-        r = self.s("VERDICT: FAIL\n1. FAIL tests do not run\n- app/client.py:3 x\n- app/client.py:9 y", clean)
-        self.assertEqual(r["false_alarms"], ["(no file)", "app/client.py"])
-        self.assertEqual(self.s("VERDICT: PASS\n1. PASS ok\nMissing: none", clean)["false_alarms"], [])
+        self.assertEqual((r["located"], r["false_alarms"]), ([], []))
+        self.assertEqual(self.s("VERDICT: PASS\n1. PASS ok\nMissing: none", {"clean": True, "defects": []})["false_alarms"], [])
 
 
 class TaskDirs(unittest.TestCase):
@@ -124,12 +160,14 @@ class ResumeAndDryRun(unittest.TestCase):
         bench.cells_dir.mkdir(parents=True)
         rec = {"task": "py-token-log", "model": "foreman-fake/reviewer", "repeat": 1, "status": "ok", "secs": 3,
                "final_text": "VERDICT: FAIL\n1. FAIL apiclient/client.py:38 logs the bearer token",
-               "ground_truth": bench.truth("py-token-log"), "files": ["apiclient/client.py"], "usd": None}
+               "ground_truth": bench.truth("py-token-log"), "files": ["apiclient/client.py"], "usd": None,
+               "score": {"located": [], "diagnosed": [], "false_alarms": ["stale"]}}
         bench.cell_path("py-token-log", "foreman-fake/reviewer", 1).write_text(json.dumps(rec), "utf-8")
         bench.run_cell = lambda *c: self.fail("a finished cell was launched again")
         self.assertEqual(bench.run(), 0)
         table = (out / "review-bench-run1.md").read_text("utf-8")
-        self.assertIn("| foreman-fake/reviewer | 1 | 1/1 (100%) |", table)
+        self.assertIn("Scorer v%d." % rb.SCORER_VERSION, table)  # rescored, the stored score is ignored
+        self.assertIn("| foreman-fake/reviewer | 1 | 1/1 (100%) | 1/1 (100%) | 0/1 |", table)
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             self.assertEqual(fb.main(["review-table", "--out", str(out)]), 0)
@@ -161,7 +199,7 @@ class FakeCell(unittest.TestCase):
         bench.cells_dir.mkdir(parents=True)
         rec = bench.run_cell("py-token-log", "foreman-fake/reviewer", 1)
         self.assertEqual(rec["status"], "ok", rec.get("error"))
-        self.assertEqual((rec["verdict"], rec["score"]["caught"]), ("fail", ["d1"]))
+        self.assertEqual((rec["verdict"], rec["score"]["diagnosed"]), ("fail", ["d1"]))
         self.assertTrue(bench.cell_path("py-token-log", "foreman-fake/reviewer", 1).is_file())
         self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", rec["env_set"])
 

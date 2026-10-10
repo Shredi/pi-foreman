@@ -39,7 +39,7 @@ one reviewer launch over a builder diff with planted defects, scored for catches
 
     foreman bench review --tasks DIR [--models id[,id]] [--repeats 2] [--out DIR] [--jobs 3]
                          [--token-cap N] [--timeout 900] [--dry-run] [--prices FILE]
-    foreman bench review-table --out DIR
+    foreman bench review-table --out DIR [--tasks DIR]
 
 Task dir (`--tasks` names one, or a folder of them; three synthetic samples are in `bench/review-samples/`):
 
@@ -81,26 +81,37 @@ in its env; it is never printed or written, and every file the runner writes is 
 they set, never the values. `FOREMAN_PI_CLI` points at another Pi `cli.js`; `FOREMAN_REVIEW_BENCH_FAKE_SCRIPT` feeds
 the replay fake provider (`foreman-fake/<model>`, tests only).
 
-Scoring (deterministic, recomputed by `review-table` from each cell's raw text):
+Scoring (deterministic; scorer version 2, recorded as `scorer` in every score). `review-table` rescores every cell
+from its stored final text with the current scorer, never from the stored score, so an old run is rescored without a
+launch; `--tasks` supplies each task's `diff.patch` file list for cells recorded before cells kept `diff_files`.
 
-- Verdict: a twin of `verdictOf` (`rounds.ts`); any FAIL or BLOCK wins. An overall PASS scores no catch and no false
-  alarm.
-- FAIL evidence lines: `N. FAIL` item lines (bullets and bold allowed), every other line citing `path:line` (not a
-  `N. PASS` or verdict line), and a `Missing:` line that cites a path.
-- A defect is caught when one evidence line names its file (repo path or basename) and either a word of its class
-  (table below, matched at a word start, case-insensitive) or a line number within its `lines` range +-3
-  (`file:N`, `file:N-M`, `line N`).
-- False alarm: an evidence line that catches nothing counts once per distinct repo file it names that holds no planted
-  defect; on a clean control such a line naming no repo file counts once as `(no file)`.
+- Verdict: a twin of `verdictOf` (`rounds.ts`); any FAIL or BLOCK wins. An overall PASS scores nothing.
+- FAIL units, the only evidence: a `N. FAIL` item with its indented lines and sub-bullets; each top-level bullet
+  (with its deeper lines) of a defects section (`Defects ...:` or `N. FAIL. Defects ...:`); a `Missing:` line that
+  cites a path and is not `none`. `N. PASS` items and their sub-bullets, context, summary and `Overall` prose are never
+  evidence. `1. 1. PASS` and `4. Missing:` numbering is accepted.
+- Naming a file: a token with a directory must be the defect's path (or end in it, or be a directory-bounded tail of
+  it that is unique among the diff's files); a bare basename counts only when it is unique among the diff's files.
+- Located: a unit names the defect's file and gives a line within its `lines` range +-3 on a line naming the file
+  (`file:N`, `file:N-M`, `file:~N`, `file:LN`, `file ~N`, `file line(s) N-M`; else `line(s) N`, `~N`, `~LN`, `LN` on
+  that line), a word of its class (table below, matched at a word start, case-insensitive), or a code name from its
+  description (snake_case, camelCase, `Name()`).
+- Diagnosed: a unit names the file and a class word that is not negated (none of not, no, isn't, without, never, or a
+  word ending in n't, among the 3 words before it in the same clause).
+- False alarm: a FAIL unit that names no planted file or code name and locates no defect, counted once per unit. A
+  unit that mentions tests not added, missing or not run counts under `process` (the table's process column). A unit
+  that marks itself not blocking or harmless, reports callers or signatures, rules on the diff-scan facts, or only
+  points at another finding (`see the defect below`) without naming a file counts under `notes`. Neither is a false
+  alarm. A false alarm is not proof of a wrong finding: a real flaw in the reference change counts too.
 
 | class | words |
 |---|---|
 | auth | auth, permission, access control, privilege, bypass, unauthorized |
 | shell-injection | shell, inject, unquoted, unescaped, quote/quoting, metachar, execsync, sh -c, command line |
-| path-traversal | travers, `../`, `..\`, escape, outside the/of, symlink, canonical, absolute path, sanitiz |
+| path-traversal | travers, `../`, `..\`, escape, outside the/of (not "outside the ledger"), symlink, canonical, absolute path, sanitiz |
 | secret-log | secret, token, credential, password, bearer, authorization header, api key, leak, redact, sensitive |
 | off-by-one | off-by-one, fencepost, boundar, inclusive, exclusive, one too, out of range/bounds, last/first element |
-| resource-leak | leak, not/never closed, unclosed, close, defer, handle, descriptor, not released, dispose |
+| resource-leak | leak, not/never closed, unclosed, close, defer, handle, descriptor, not released, dispose, unbounded, grows without bound/limit, never freed/cleared/drained/trimmed/stop |
 | race | race, racy, lock, mutex, concurren, thread-safe, atomic, synchroni, toctou, goroutine, simultaneous |
 | swallowed-error | swallow, ignor, discard, silent, unchecked, not checked, error handling, lost error, unwrap_or, suppress |
 | insecure-default | insecure, default, tls, verif, permissive, world-, 0777, 0666, plaintext, debug |
@@ -110,8 +121,9 @@ The source of truth is `CLASS_SYNONYMS` in the script.
 Output in `--out` (default `~/.pi-foreman/review-bench/<timestamp>`): `cells/<task>__<model>__r<n>.json` (final text,
 items, evidence, score, ground truth, usage per request, USD, seconds, the composed prompt, the env keys set, the work
 dir with `events.jsonl`, the raw Pi event stream) and `review-bench-<run>.md`. The table has one row per model:
-catches/total over planted defects, false alarms over seeded and over clean cells, clean controls with an overall PASS,
-USD, $ per caught defect, median seconds and failed launches. A per-class catch matrix and a per-task line follow.
+located/total and diagnosed/total over planted defects, false alarms over seeded and over clean cells, process items,
+clean controls with an overall PASS, USD, $ per diagnosed and per located defect, median seconds and failed launches.
+A per-class matrix (diagnosed, located in brackets) and a per-task line follow.
 A cell whose json exists is skipped, so a second run resumes. A failed launch (timeout, provider error, no answer) is
 written as `<cell>.error.json`, listed in the table and retried by the next run. `--token-cap N` stops before the next
 cell once finished cells (failed ones included) used N tokens (exit 4); Ctrl-C kills the running launches (exit 6).

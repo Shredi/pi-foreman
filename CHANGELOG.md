@@ -5,8 +5,9 @@
 ### Added
 - Bench: `foreman bench review` scores reviewer models on diffs with planted defects, one reviewer launch per cell
   through the real review path (diff facts and owner block from `diffscan.ts`, core-adapter loaded as a reviewer
-  child, empty `CLAUDE_CONFIG_DIR`, token from `FOREMAN_BENCH_OAUTH_TOKEN_FILE`): catches, false alarms, clean-control
-  verdicts, USD and a per-class matrix; resumable, `--dry-run`, `review-table`. Three synthetic sample tasks in
+  child, empty `CLAUDE_CONFIG_DIR`, token from `FOREMAN_BENCH_OAUTH_TOKEN_FILE`): located and diagnosed defects,
+  false alarms per FAIL item (process items apart), clean-control verdicts, USD and a per-class matrix; resumable,
+  `--dry-run`, `review-table` rescores old runs with the current scorer (versioned). Three synthetic sample tasks in
   `bench/review-samples/`; `bin/foreman bench` runs `scripts/foreman_bench.py`.
 - `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]`: merges `config/presets/<name>.json` into
   `<agent dir>/foreman.json` (preset wins), validates before writing, keeps `foreman.json.bak-<date>`. With no role or

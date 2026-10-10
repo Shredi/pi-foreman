@@ -3,7 +3,7 @@
 
     python scripts/foreman_bench.py review --tasks DIR [--models id[,id]] [--repeats 2] [--out DIR]
                                            [--jobs 3] [--token-cap N] [--timeout 900] [--dry-run]
-    python scripts/foreman_bench.py review-table --out DIR
+    python scripts/foreman_bench.py review-table --out DIR [--tasks DIR]
 
 Task dir (one per task; --tasks names one task dir or a folder of them):
     base/ (or base.tar.gz)  the repo before the builder's change, plain files
@@ -82,20 +82,21 @@ TASK_TEMPLATE = (
     "3. The tests pass; no test is weakened, removed or skipped.\n\n"
     "Owner's task:\n{prompt}")
 
-# A defect counts as caught when a FAIL evidence line names its file and either one of its
-# class's words (regex, case-insensitive, matched at a word start) or a line inside its range +-3.
+# Class words (regex, case-insensitive, matched at a word start): a FAIL unit naming the defect's file and one of
+# its class's words locates it, and diagnoses it when the word is not negated (see judge).
 CLASS_SYNONYMS = {
     "auth": [r"auth", r"permission", r"access control", r"privilege", r"bypass", r"unauthori[sz]ed"],
     "shell-injection": [r"shell", r"inject", r"unquoted", r"unescaped", r"quot(?:e|ing)", r"metachar",
                         r"execsync", r"sh -c", r"command line"],
-    "path-traversal": [r"travers", r"\.\./", r"\.\.\\", r"escape", r"outside (?:the|of)", r"symlink",
+    "path-traversal": [r"travers", r"\.\./", r"\.\.\\", r"escape", r"outside (?:the|of)(?! ledger)", r"symlink",
                        r"canonical", r"absolute path", r"sanitiz"],
     "secret-log": [r"secret", r"token", r"credential", r"password", r"bearer", r"authorization header",
                    r"api key", r"leak", r"redact", r"sensitive"],
     "off-by-one": [r"off[- ]by[- ]one", r"fencepost", r"boundar", r"inclusive", r"exclusive", r"one too",
                    r"out of (?:range|bounds)", r"last (?:element|item|byte|line)", r"first (?:element|item)"],
     "resource-leak": [r"leak", r"not closed", r"never closed", r"unclosed", r"close", r"defer", r"handle",
-                      r"descriptor", r"not released", r"dispose"],
+                      r"descriptor", r"not released", r"dispose", r"unbounded", r"grows? without (?:bound|limit)",
+                      r"never (?:freed|cleared|drained|trimmed|stop)"],
     "race": [r"race", r"racy", r"lock", r"mutex", r"concurren", r"thread[- ]safe", r"atomic", r"synchroni",
              r"toctou", r"goroutine", r"simultaneous"],
     "swallowed-error": [r"swallow", r"ignor", r"discard", r"silent", r"unchecked", r"not checked",
@@ -105,11 +106,38 @@ CLASS_SYNONYMS = {
 }
 _SYN = {c: re.compile(r"(?<![\w])(?:%s)" % "|".join(v), re.I) for c, v in CLASS_SYNONYMS.items()}
 
+SCORER_VERSION = 2
 VERDICT_RE = re.compile(r"\b(?:overall\s+)?verdict\s*\**\s*:\s*\**\s*(pass|fail|approve|block)\b", re.I)
-ITEM_RE = re.compile(r"^\s*(?:[-*]\s+)?\**\s*(\d+)\.\s*\**\s*(PASS|FAIL)\b", re.M)
-PATHLINE_RE = re.compile(r"[\w./\\-]*\w\.[A-Za-z0-9]{1,6}:\d+")
+ITEM_RE = re.compile(r"^\s*(?:[-*]\s+)?\**\s*(\d+)\.\s*(?:\d+\.\s*)?\**\s*(PASS|FAIL)\b\**[.:]?\s*(.*)", re.M)
+MISSING_RE = re.compile(r"^\W*(?:\d+\.\s*)?\W*missing\s*\**\s*:\s*(.*)", re.I)
+DEFECTS_RE = re.compile(r"^\W*(?:\d+\.\s*)?\W*(?:other\s+)?defects\b([^:`/]*?)(?::\s*(.*)|\**\s*)$", re.I)
+OVERALL_RE = re.compile(r"^\W*(?:\d+\.\s*)?\W*(?:overall|summary|verdict)\b", re.I)
+BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)]|[a-z][.)])\s")
+NONE_RE = re.compile(r"^\W*(?:none|n/a|nothing|no (?:other |further |additional |new )?(?:\w+[ -])?"
+                     r"(?:defects?|issues?|problems?)\b)", re.I)
 PATHTOKEN_RE = re.compile(r"[\w./\\-]*\w\.[A-Za-z][A-Za-z0-9]{0,5}(?![\w])")
-LINENUM_RE = re.compile(r"(?::|\blines?\s+)(\d+)(?:\s*[-–]\s*(\d+))?", re.I)
+# Line references: `file:N`, `file:~N`, `file:LN`, `file ~N`, `file line(s) N-M`; on a line naming the file but
+# not attaching a number to it, `line(s) N`, `~N`, `~LN` or `LN` anywhere on that line.
+_NUM = r"~?L?(\d+)(?:\s*[-–]\s*~?L?(\d+))?"
+GENERIC_LINE_RE = re.compile(r"(?:\blines?\s+~?L?|~L?|\bL)(\d+)(?:\s*[-–]\s*~?L?(\d+))?", re.I)
+NEGATION = ("not", "no", "isn't", "without", "never")
+# A FAIL item that locates no plant and only concerns tests not added or not run is a process item, not an FA.
+PROCESS_RE = re.compile(
+    r"\b(?:no|missing|without|lacks?|adds? no|did not add|does not add|doesn't add)\s+(?:new\s+|regression\s+|unit\s+"
+    r"|the\s+|a\s+|any\s+|required\s+)*tests?\b|\btests?\b[^.]{0,40}\b(?:not|never)\s+(?:been\s+)?(?:added|run|written)"
+    r"|\b(?:did not|didn't|could not|couldn't|cannot|can't|not)\s+run\s+(?:the\s+|any\s+)?(?:tests?|`?(?:go|cargo|npm)"
+    r" test)|\b(?:requires?|required|asks? for|asked for|needs?)\s+(?:an?\s+|any\s+)?(?:new\s+|regression\s+|unit\s+)*"
+    r"tests?\b|\btests?\b[^.]{0,40}\b(?:is|are) missing\b|\bha(?:s|ve) no tests?\b"
+    r"|\bneither\b[^.]{0,40}\bha(?:s|ve) an? tests?\b", re.I)
+# A FAIL unit that marks itself as a note (not blocking, harmless, no signature changed) is a note, not an FA.
+NOTE_RE = re.compile(r"\b(?:not blocking|non-?blocking|harmless|informational|no (?:\w+ ){0,2}signatures? (?:is |was |were )?"
+                     r"changed|signatures? (?:is |are )?unchanged|surface is unchanged)", re.I)
+# ... and so is a unit that only points at another finding (`see the defect below`) without naming a file, and one
+# that reports callers or signatures, or rules on the diff-scan facts (agents/reviewer.md).
+XREF_RE = re.compile(r"\bsee (?:the )?(?:(?:defects?|items?|findings?) (?:below|above|\d)|below|above)\b", re.I)
+NOTE_HEAD_RE = re.compile(r"^\W*(?:facts? (?:to rule on|\d)|callers?\b|(?:changed |exported )*signatures?\b)", re.I)
+# Code-like names in a defect description (snake_case, camelCase, Name()), matched as the defect's symbol.
+SYMBOL_RE = re.compile(r"\b(?:[A-Za-z]\w*_\w+|[a-z]+[A-Z]\w*|[A-Z][a-z0-9]+[A-Z]\w*|[A-Z]{2,}[a-z]\w*)\b|\b[A-Za-z_]\w*(?=\(\))")
 
 
 # ------------------------------------------------------------------ parsing and scoring
@@ -131,99 +159,187 @@ def items_of(text):
     return out
 
 
-def fail_evidence(text):
-    """FAIL evidence lines: `N. FAIL` items, lines citing `path:line` (not `N. PASS` or verdict lines), and
-    `Missing:` lines that cite a path."""
-    out = []
+def _indent(raw):
+    return len(raw) - len(raw.lstrip())
+
+
+def fail_units(text):
+    """The review's FAIL evidence as units, each a list of lines: a `N. FAIL` item with its sub-bullets, one bullet
+    group (a top-level bullet with its deeper lines) of a defects section (`Defects ...:` or `N. FAIL. Defects ...`),
+    or a `Missing:` line that cites a path. PASS items and their sub-bullets, context and summary prose are never
+    evidence."""
+    units, cur, mode, top = [], None, None, None
     for raw in (text or "").splitlines():
         line = raw.strip()
         if not line:
             continue
-        m = ITEM_RE.match(line)
+        m = ITEM_RE.match(raw)
         if m:
-            if m.group(2).upper() == "FAIL":
-                out.append(line)
+            cur, top = None, None
+            rest = m.group(3)
+            if m.group(2).upper() == "PASS":
+                mode = "pass"
+            elif DEFECTS_RE.match(rest):
+                mode = "defects"
+                inline = DEFECTS_RE.match(rest).group(2) or ""
+                if re.search(r"\w", inline) and not NONE_RE.match(inline):
+                    cur = [line]
+                    units.append(cur)
+            else:
+                mode, cur = "fail", [line]
+                units.append(cur)
             continue
-        if VERDICT_RE.search(line) and not PATHLINE_RE.search(line):
+        m = MISSING_RE.match(line)
+        if m:
+            mode, cur = None, None
+            if PATHTOKEN_RE.search(m.group(1)) and not NONE_RE.match(m.group(1)):
+                units.append([line])
             continue
-        if re.match(r"^\W*missing\s*:", line, re.I):
-            if PATHTOKEN_RE.search(line) and not re.match(r"^\W*missing\s*:\W*none\b", line, re.I):
-                out.append(line)
+        m = DEFECTS_RE.match(line)
+        if m:
+            mode, cur, top = "defects", None, None
+            if re.search(r"\w", m.group(2) or "") and not NONE_RE.match(m.group(2)):
+                cur = [line]
+                units.append(cur)
             continue
-        if PATHLINE_RE.search(line):
-            out.append(line)
-    return out
+        if OVERALL_RE.match(line) or VERDICT_RE.search(line):
+            mode, cur = None, None
+            continue
+        nested = _indent(raw) > 0 or BULLET_RE.match(raw)
+        if not nested:
+            mode, cur = None, None  # unindented prose ends an item or section
+        elif mode == "fail":
+            cur.append(line)
+        elif mode == "defects":
+            if BULLET_RE.match(raw) and (top is None or _indent(raw) <= top):
+                top = _indent(raw) if top is None else top
+                if NONE_RE.match(BULLET_RE.sub("", raw)):
+                    cur = None
+                    continue
+                cur = [line]
+                units.append(cur)
+            elif cur is not None:
+                cur.append(line)
+    return units
+
+
+def fail_evidence(text):
+    """FAIL evidence units as text (one string per unit, lines joined)."""
+    return ["\n".join(u) for u in fail_units(text)]
 
 
 def _norm(p):
     return p.replace("\\", "/")
 
 
-def names_file(line, rel):
-    """True when `line` names repo file `rel` by its path or its basename."""
+def _unique(files, pred):
+    return sum(1 for f in files if pred(_norm(f))) <= 1
+
+
+def names_file(text, rel, files=()):
+    """True when `text` names repo file `rel`. A token with a directory must be the path (or a path ending in it, or
+    a directory-bounded tail of it that is unique among `files`); a bare basename counts only when it is unique among
+    `files` (the diff's files)."""
     rel = _norm(rel)
-    text = _norm(line)
     base = rel.rsplit("/", 1)[-1]
-    if re.search(r"(?<![\w.-])" + re.escape(rel) + r"(?![\w])", text) or ("/" + rel) in text:
-        return True
-    return re.search(r"(?<![\w-])" + re.escape(base) + r"(?![\w])", text) is not None
+    for tok in PATHTOKEN_RE.findall(_norm(text)):
+        tok = re.sub(r"^(?:\./)+", "", tok)
+        if "/" in tok:
+            if tok == rel or tok.endswith("/" + rel):
+                return True
+            if rel.endswith("/" + tok) and _unique(files, lambda f: f == tok or f.endswith("/" + tok)):
+                return True
+        elif tok == base and _unique(files, lambda f: f.rsplit("/", 1)[-1] == base):
+            return True
+    return False
 
 
-def _line_hits(line, rel):
-    """Line numbers the evidence line gives: `<file>:N[-M]` for this file, else `line(s) N[-M]`."""
+def _line_spans(line, rel):
+    """Line spans `line` gives for `rel`: numbers attached to its basename, else the line's generic references."""
     text = _norm(line)
     base = re.escape(_norm(rel).rsplit("/", 1)[-1])
-    spans = [(int(a), int(b or a)) for a, b in re.findall(base + r":(\d+)(?:\s*[-–]\s*(\d+))?", text)]
-    if spans:
-        return spans
-    return [(int(a), int(b or a)) for a, b in re.findall(r"\blines?\s+(\d+)(?:\s*[-–]\s*(\d+))?", text, re.I)]
+    att = re.findall(base + r"`?(?::\s*|\s+(?=~|L\d|lines?\s)(?:lines?\s+)?)" + _NUM, text)
+    found = att or GENERIC_LINE_RE.findall(text)
+    return [(int(a), int(b or a)) for a, b in found]
 
 
-def catches(line, defect):
-    if not names_file(line, defect["file"]):
-        return False
-    if _SYN.get(defect["class"]) and _SYN[defect["class"]].search(line):
-        return True
+def _negated(text, start):
+    clause = re.split(r"[.;:!?]\s", text[:start])[-1]
+    words = re.findall(r"[\w']+", clause.lower())[-3:]
+    return any(w in NEGATION or w.endswith("n't") for w in words)
+
+
+def symbols_of(defect):
+    return sorted(set(m.group(0) for m in SYMBOL_RE.finditer(defect.get("description") or "")))
+
+
+def judge(unit, defect, files=()):
+    """(located, diagnosed) for one FAIL unit against one defect. Located: the unit names the defect's file and gives
+    a line within its range +-3 (on a line naming the file), one of its class's words, or its symbol. Diagnosed: the
+    unit names the file and a class word that is not negated (no not/no/isn't/without/never in the 3 words before)."""
+    text = "\n".join(unit)
+    if not names_file(text, defect["file"], files):
+        return False, False
+    syn = _SYN.get(defect["class"])
+    words = list(syn.finditer(text)) if syn else []
+    diagnosed = any(not _negated(text, m.start()) for m in words)
     a, b = defect["lines"][0] - LINE_SLACK, defect["lines"][-1] + LINE_SLACK
-    return any(lo <= b and hi >= a for lo, hi in _line_hits(line, defect["file"]))
+    by_line = any(lo <= b and hi >= a for ln in unit if names_file(ln, defect["file"], files)
+                  for lo, hi in _line_spans(ln, defect["file"]))
+    return bool(words) or by_line or _has_symbol(text, defect), diagnosed
 
 
-def files_named(line, files):
-    """Repo files (from `files`) the line names; with no file list, the path-like tokens themselves."""
-    if files:
-        return sorted(f for f in files if names_file(line, f))
-    return sorted({_norm(t).lstrip("./") for t in PATHTOKEN_RE.findall(line)})
+def _has_symbol(text, defect):
+    return any(re.search(r"(?<![\w])" + re.escape(s) + r"(?![\w])", text) for s in symbols_of(defect))
 
 
 def score(text, truth, files=()):
     """Deterministic score of one review against its ground truth (docs/bench.md "Review bench").
 
-    An overall PASS scores nothing (no catches, no false alarms). Otherwise a defect is caught when one FAIL
-    evidence line names its file and a class word or a line within its range +-3. Evidence lines that catch
-    nothing are false alarms, counted once per distinct repo file they name that holds no planted defect; on a
-    clean task a line naming no repo file counts once as `(no file)`."""
+    An overall PASS scores nothing. Otherwise each FAIL unit (see fail_units) is judged against every defect: a
+    defect is located / diagnosed when some unit locates / diagnoses it (see judge). A unit that locates no defect is
+    a false alarm, one per unit, unless it is a process item (tests not added or not run), counted under `process`.
+    `files` should be the diff's files: a bare basename only names a file that is unique among them."""
     verdict = verdict_of(text)
     defects = truth.get("defects") or []
-    res = {"verdict": verdict, "caught": [], "missed": [d["id"] for d in defects], "false_alarms": [],
-           "defects": len(defects), "clean": bool(truth.get("clean"))}
+    res = {"scorer": SCORER_VERSION, "verdict": verdict, "located": [], "diagnosed": [],
+           "missed": [d["id"] for d in defects], "false_alarms": [], "process": 0, "notes": 0, "defects": len(defects),
+           "clean": bool(truth.get("clean"))}
     if verdict == "pass":
         return res
-    evidence = fail_evidence(text)
-    planted = {_norm(d["file"]) for d in defects}
-    caught, fa = set(), set()
-    for line in evidence:
-        hit = [d["id"] for d in defects if catches(line, d)]
-        caught.update(hit)
-        if hit:
+    located, diagnosed = set(), set()
+    for unit in fail_units(text):
+        hits = [(d["id"],) + judge(unit, d, files) for d in defects]
+        located.update(i for i, loc, _ in hits if loc)
+        diagnosed.update(i for i, _, dia in hits if dia)
+        text = "\n".join(unit)
+        if any(loc for _, loc, _ in hits) or any(names_file(text, d["file"], files) or _has_symbol(text, d)
+                                                 for d in defects):
             continue
-        named = [f for f in files_named(line, files) if _norm(f) not in planted]
-        fa.update(named)
-        if not named and res["clean"]:
-            fa.add("(no file)")
-    res["caught"] = [d["id"] for d in defects if d["id"] in caught]
-    res["missed"] = [d["id"] for d in defects if d["id"] not in caught]
-    res["false_alarms"] = sorted(fa)
+        if PROCESS_RE.search(text):
+            res["process"] += 1
+        elif _is_note(unit, text):
+            res["notes"] += 1
+        else:
+            res["false_alarms"].append(unit[0][:120])
+    res["located"] = [d["id"] for d in defects if d["id"] in located]
+    res["diagnosed"] = [d["id"] for d in defects if d["id"] in diagnosed]
+    res["missed"] = [d["id"] for d in defects if d["id"] not in located]
     return res
+
+
+def _is_note(unit, text):
+    return bool(NOTE_RE.search(text) or NOTE_HEAD_RE.match(unit[0])
+                or (XREF_RE.search(text) and not PATHTOKEN_RE.search(text)))
+
+
+def patch_files(patch_text):
+    """Repo-relative paths a unified diff touches."""
+    out = set()
+    for m in re.finditer(r"^(?:\+\+\+|---) (?:[ab]/)?(\S+)", patch_text or "", re.M):
+        if m.group(1) != "/dev/null":
+            out.add(_norm(m.group(1)))
+    return sorted(out)
 
 
 # ------------------------------------------------------------------ task dirs
@@ -565,7 +681,8 @@ class Bench:
         diff_text = (tdir / "diff.patch").read_text("utf-8", "replace").lower()
         bad += ["diff.patch contains %r" % w for w in FORBIDDEN if w in diff_text]
         return {"root": root, "repo": repo, "base": base, "facts": facts, "system": system, "user": user,
-                "env": env, "env_set": added, "fake": fake, "blind": bad, "files": repo_files(repo)}
+                "env": env, "env_set": added, "fake": fake, "blind": bad, "files": repo_files(repo),
+                "diff_files": patch_files((tdir / "diff.patch").read_text("utf-8", "replace"))}
 
     def run_cell(self, task, model, rep):
         """Launch one cell; writes cells/<cell>.json (or .error.json) and returns its record."""
@@ -613,10 +730,11 @@ class Bench:
         truth = self.truth(task)
         rec.update({"secs": secs, "exit_code": proc.returncode, "timed_out": timed_out, "stop_reason": stop,
                     "verdict": verdict_of(final), "items": items_of(final), "evidence": fail_evidence(final),
-                    "score": score(final, truth, prep["files"]), "ground_truth": truth, "usage": usage,
+                    "score": score(final, truth, prep["diff_files"]), "ground_truth": truth, "usage": usage,
                     "usd": None if cost is None or cost["unpriced"] else round(cost["usd"], 6),
                     "unpriced": cost["unpriced"] if cost else [], "base": prep["base"],
                     "facts_count": prep["facts"].get("count", 0), "files": prep["files"],
+                    "diff_files": prep["diff_files"],
                     "work": str(prep["root"]), "final_text": final,
                     "prompt": {"system": prep["system"], "task": prep["user"]},
                     "env_set": sorted(prep["env_set"]) + (["CLAUDE_CODE_OAUTH_TOKEN"] if not prep["fake"] and self.token else []),
@@ -676,8 +794,8 @@ class Bench:
                         _write_json(self.cells_dir / (cell_name(*c) + ".error.json"),
                                     dict(task=c[0], model=c[1], repeat=c[2], **r), self.token)
                     s = r.get("score") or {}
-                    self.log("%s %s%s" % (cell_name(*c), r.get("status"), " %s caught %d/%d fa %d %.0fs" % (
-                        s.get("verdict"), len(s.get("caught", [])), s.get("defects", 0), len(s.get("false_alarms", [])),
+                    self.log("%s %s%s" % (cell_name(*c), r.get("status"), " %s located %d diagnosed %d/%d fa %d %.0fs" % (
+                        s.get("verdict"), len(s.get("located", [])), len(s.get("diagnosed", [])), s.get("defects", 0), len(s.get("false_alarms", [])),
                         r.get("secs", 0)) if r.get("status") == "ok" else ": " + _redact(str(r.get("error")), self.token)))
         except KeyboardInterrupt:
             for p in list(self.procs):
@@ -752,63 +870,83 @@ def _fmt_usd(x):
     return "-" if x is None else "%.2f" % x if x >= 1 else "%.3f" % x
 
 
-def render_table(out, prices=None):
-    """The markdown result: one row per model, the per-class catch matrix and the per-task detail. Scores are
-    recomputed from each cell's final text and ground truth, so a scorer change applies to old cells."""
+def cell_diff_files(cell, tasks_root=None):
+    """The diff's files for a cell: its `diff_files`, else from <tasks_root>/<task>/diff.patch, else its repo files."""
+    if cell.get("diff_files"):
+        return cell["diff_files"]
+    patch = Path(tasks_root) / cell.get("task", "") / "diff.patch" if tasks_root else None
+    if patch is not None and patch.is_file():
+        return patch_files(patch.read_text("utf-8", "replace"))
+    return cell.get("files") or ()
+
+
+def render_table(out, prices=None, tasks_root=None):
+    """The markdown result: one row per model, the per-class matrix and the per-task detail. Scores are recomputed
+    with the current scorer from each cell's final text and ground truth (never the stored score), so a scorer change
+    applies to old cells without a launch. `tasks_root` supplies diff.patch for old cells without `diff_files`."""
     cells, errors = load_cells(out)
     for c in cells:
         c["score"] = score(c.get("final_text") or "", c.get("ground_truth") or {"clean": True, "defects": []},
-                           c.get("files") or ())
+                           cell_diff_files(c, tasks_root))
     models = sorted({c["model"] for c in cells} | {e.get("model") for e in errors if e.get("model")})
     tasks = sorted({c["task"] for c in cells})
     lines = ["# Review bench %s" % Path(out).name, "",
-             "Cells: %d scored, %d failed launches. USD is the %s; `~est` marks chars/4 token estimates." % (
-                 len(cells), len(errors), foreman_bench.COST_LABEL), "",
-             "| model | cells | catches | FA seeded | FA clean | clean PASS | USD | $/catch | median s | errors |",
-             "|---|---|---|---|---|---|---|---|---|---|"]
+             "Scorer v%d. Cells: %d scored, %d failed launches. USD is the %s; `~est` marks chars/4 token estimates." % (
+                 SCORER_VERSION, len(cells), len(errors), foreman_bench.COST_LABEL), "",
+             "| model | cells | located | diagnosed | FA seeded | FA clean | process | clean PASS | USD | $/diagnosed "
+             "| $/located | median s | errors |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for m in models:
         mc = [c for c in cells if c["model"] == m]
         seeded = [c for c in mc if not c["score"]["clean"]]
         clean = [c for c in mc if c["score"]["clean"]]
-        caught = sum(len(c["score"]["caught"]) for c in seeded)
+        loc = sum(len(c["score"]["located"]) for c in seeded)
+        dia = sum(len(c["score"]["diagnosed"]) for c in seeded)
         total = sum(c["score"]["defects"] for c in seeded)
         usd_cells = [c["usd"] for c in mc if c.get("usd") is not None]
         usd = sum(usd_cells) if usd_cells else None
         est = any((c.get("usage") or {}).get("estimated") for c in mc)
         secs = [c["secs"] for c in mc if c.get("secs") is not None]
-        lines.append("| %s | %d | %d/%d%s | %d/%d | %d/%d | %d/%d | %s%s | %s | %s | %d |" % (
-            m, len(mc), caught, total, " (%.0f%%)" % (100.0 * caught / total) if total else "",
+        pct = lambda n: " (%.0f%%)" % (100.0 * n / total) if total else ""  # noqa: E731
+        lines.append("| %s | %d | %d/%d%s | %d/%d%s | %d/%d | %d/%d | %d | %d/%d | %s%s | %s | %s | %s | %d |" % (
+            m, len(mc), loc, total, pct(loc), dia, total, pct(dia),
             sum(len(c["score"]["false_alarms"]) for c in seeded), len(seeded),
             sum(len(c["score"]["false_alarms"]) for c in clean), len(clean),
+            sum(c["score"]["process"] for c in mc),
             sum(1 for c in clean if c["score"]["verdict"] == "pass"), len(clean),
             _fmt_usd(usd), " ~est" if est and usd is not None else "",
-            _fmt_usd(usd / caught) if usd is not None and caught else "-",
+            _fmt_usd(usd / dia) if usd is not None and dia else "-",
+            _fmt_usd(usd / loc) if usd is not None and loc else "-",
             "%.0f" % statistics.median(secs) if secs else "-", sum(1 for e in errors if e.get("model") == m)))
-    lines += ["", "FA seeded / FA clean: false alarms over seeded / clean cells. clean PASS: clean cells with an "
-              "overall PASS.", "", "## Catches by class", ""]
+    lines += ["", "located / diagnosed: planted defects a FAIL item locates / diagnoses (docs/bench.md). FA seeded / FA "
+              "clean: FAIL items that locate no plant, over seeded / clean cells. process: FAIL items only about tests "
+              "not added or not run. clean PASS: clean cells with an overall PASS.", "",
+              "## Diagnosed by class (located in brackets)", ""]
     classes = [k for k in CLASSES if any(d["class"] == k for c in cells for d in (c.get("ground_truth") or {}).get("defects", []))]
     lines += ["| model | " + " | ".join(classes) + " |", "|---|" + "---|" * len(classes)]
     for m in models:
         row = []
         for k in classes:
-            hit = tot = 0
+            hit = loc = tot = 0
             for c in cells:
                 if c["model"] != m:
                     continue
                 for d in c["ground_truth"].get("defects", []):
                     if d["class"] == k:
                         tot += 1
-                        hit += d["id"] in c["score"]["caught"]
-            row.append("%d/%d" % (hit, tot))
+                        hit += d["id"] in c["score"]["diagnosed"]
+                        loc += d["id"] in c["score"]["located"]
+            row.append("%d/%d (%d)" % (hit, tot, loc))
         lines.append("| %s | %s |" % (m, " | ".join(row)))
-    lines += ["", "## Per task", "", "| task | model | cells (verdict caught/defects fa) |", "|---|---|---|"]
+    lines += ["", "## Per task", "", "| task | model | cells (verdict located diagnosed/defects fa process) |", "|---|---|---|"]
     for t in tasks:
         for m in models:
             tc = sorted((c for c in cells if c["task"] == t and c["model"] == m), key=lambda c: c["repeat"])
             if tc:
-                lines.append("| %s | %s | %s |" % (t, m, ", ".join("r%d %s %d/%d fa%d" % (
-                    c["repeat"], c["score"]["verdict"] or "none", len(c["score"]["caught"]), c["score"]["defects"],
-                    len(c["score"]["false_alarms"])) for c in tc)))
+                lines.append("| %s | %s | %s |" % (t, m, ", ".join("r%d %s L%d D%d/%d fa%d p%d" % (
+                    c["repeat"], c["score"]["verdict"] or "none", len(c["score"]["located"]),
+                    len(c["score"]["diagnosed"]), c["score"]["defects"], len(c["score"]["false_alarms"]),
+                    c["score"]["process"]) for c in tc)))
     if errors:
         lines += ["", "## Failed launches", ""] + ["- %s %s r%s: %s" % (e.get("task"), e.get("model"), e.get("repeat"),
                                                                        str(e.get("error"))[:200]) for e in errors]
@@ -873,6 +1011,7 @@ def add_arguments(p):
 def add_table_arguments(p):
     p.add_argument("--out", required=True, help="the run dir of a review run")
     p.add_argument("--prices", default=None)
+    p.add_argument("--tasks", default=None, help="task folder: diff.patch file lists for cells recorded without them")
 
 
 def run_args(args):
@@ -915,7 +1054,7 @@ def run_args(args):
 
 
 def table_args(args):
-    text = render_table(args.out, foreman_bench.load_prices(args.prices))
+    text = render_table(args.out, foreman_bench.load_prices(args.prices), args.tasks)
     out = Path(args.out)
     if (out / "cells").is_dir():
         (out / ("review-bench-%s.md" % out.name)).write_text(text, "utf-8")
