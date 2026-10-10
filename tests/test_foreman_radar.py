@@ -400,7 +400,8 @@ class JsonTests(Fixture):
         self.put_live(live("a", "a", "fm-a"))
         import subprocess
         r = subprocess.run([sys.executable, "-E", "-s", str(SCRIPTS / "foreman_radar.py"), "--json", "--follow",
-                            "--interval", "0", "--max-ticks", "2", "--agent-dir", str(self.adir)],
+                            "--interval", "0", "--max-ticks", "2", "--since", "1000000",  # fixtures use a fixed NOW
+                            "--agent-dir", str(self.adir)],
                            capture_output=True, timeout=60, check=False)
         self.assertEqual(r.returncode, 0, r.stderr)
         lines = r.stdout.decode("utf-8").splitlines()

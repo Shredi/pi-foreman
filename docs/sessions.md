@@ -143,17 +143,17 @@ orchestrators and their children) and every session's subagent runs. It only dis
 session, and it works without Herdr.
 
 ```
-pi-foreman radar                ⏳ 4  ⏸ 1  ? 1  ✋ 1  ✓ 0  ✗ 0    14:00:00
+pi-foreman radar                ⏳ 5  ⏸ 0  ? 1  ✋ 1  ✓ 1  ✗ 0    14:00:00
 6 sessions · 1 tree · ↑2.1k ↓175 · $1.25 · oldest block 12s
 
-● top                  working    12s  ↑2.1k ↓175 $1.25
-├─ ● builder/strong    working    12s  ↑1.0k ↓100 $0.25
-├─ ◐ reviewer          ask        12s  ↑500 ↓50 $0.25
-├─ ○ explorer          done       12s
-├─ ● docs-fix          working    12s  ↑610 ↓25 $0.75
-│  ├─ ● builder        working    12s  ↑10 ↓5 $0.50
-│  └─ ◐ api            blocked    12s  ↑600 ↓20 $0.25
-└─ ◌ tests             starting   40s
+⏳ top                  working    12s  ↑2.1k ↓175 $1.25
+├─ ⏳ builder/strong    working    12s  ↑1.0k ↓100 $0.25
+├─ ?  reviewer          ask        12s  ↑500 ↓50 $0.25
+├─ ✓  explorer          done       12s
+├─ ⏳ docs-fix          working    12s  ↑610 ↓25 $0.75
+│  ├─ ⏳ builder        working    12s  ↑10 ↓5 $0.50
+│  └─ ✋ api            blocked    12s  ↑600 ↓20 $0.25
+└─ ⏳ tests             starting   40s
 
 q quit · r refresh · c cost on/off · ↑↓ select · enter show session path
 ```
