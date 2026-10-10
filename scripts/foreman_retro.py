@@ -437,6 +437,13 @@ def write_proposals(path, proposals, min_reviews, source):
     p.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
 
 
+def emit_backlog(args, report):
+    """File this session's findings in the retro backlog (scripts/foreman_backlog.py). Stub: the
+    candidate classes come in a later change; --no-backlog, --backlog-workspace, --workspace-key
+    and --backlog-session are accepted now. Never changes the report."""
+    return []
+
+
 def run(args):
     min_reviews = args.min_reviews
     if min_reviews is None:
@@ -456,6 +463,7 @@ def run(args):
             pass
     rep = build(read_jsonl(args.session), read_jsonl(args.trace), read_jsonl(args.usage),
                 read_jsonl(args.review_log), min_reviews, args.agent_dir, rates)
+    emit_backlog(args, rep)
     note = None
     if args.proposals_out and rep["proposals"] is not None:
         try:
@@ -510,6 +518,10 @@ def main(argv=None):
     p.add_argument("--agent-dir")
     p.add_argument("--json", action="store_true")
     p.add_argument("--selftest", action="store_true")
+    p.add_argument("--backlog-workspace", help="workspace root whose backlog gets this session's findings")
+    p.add_argument("--workspace-key", help="backlog key (default: retro.workspaceKey, else derived from the root)")
+    p.add_argument("--backlog-session", help="session id recorded with each finding")
+    p.add_argument("--no-backlog", action="store_true", help="do not write the backlog")
     args = p.parse_args(argv)
     if args.selftest:
         return selftest()

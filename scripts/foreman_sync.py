@@ -46,8 +46,12 @@ Candidates are scanned whole as bytes (larger than 20 MiB: refused); symlinks an
 refused. Git output shown in a report is redacted (`scheme://user:pass@` and token-like strings). That is deliberate: a hook is
 code from the repository, and sync runs with the owner's credentials.
 
-When `sync.runRetro` is on, scripts/foreman_retro.py runs for this session and its summary is
-appended. Output is at most 40 lines (text or JSON). Exit 0 when every repo is clean, committed
+When `sync.runRetro` is on, scripts/foreman_retro.py runs for this session BEFORE the repo syncs (it
+writes only outside the repos or into an opted-in repo backlog) and its summary is appended.
+A sync.repos entry matching a retro.repoBacklog entry {path, commit}: commit true adds a changed
+`.workflow/retro-backlog.md` to that repo's commit even when ignored (`git update-index --add`, same
+secret check); commit false appends `/.workflow/retro-backlog.md` once to the repo's info/exclude. A
+commit:true repoBacklog entry that matches no sync.repos entry only gets a warning line. Output is at most 40 lines (text or JSON). Exit 0 when every repo is clean, committed
 or pushed; 1 when any repo was skipped or refused; 2 on a usage or config error.
 """
 from __future__ import annotations
@@ -65,6 +69,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import foreman_backlog as fb  # noqa: E402
 import foreman_config as fc  # noqa: E402
 import safe_ops  # noqa: E402
 
@@ -336,17 +341,73 @@ def secret_hit(root, rel):
         return None
 
 
-def commit_paths(root, files, message):
-    for i in range(0, len(files), CHUNK):
-        code, _, err = git(["add", "--"] + files[i:i + CHUNK], root)
+def commit_paths(root, files, message, ignored=()):
+    """Stage and commit `files`; those in `ignored` are staged with update-index (git add refuses them)."""
+    plain = [f for f in files if f not in ignored]
+    for i in range(0, len(plain), CHUNK):
+        code, _, err = git(["add", "--"] + plain[i:i + CHUNK], root)
         if code != 0:
             return "git add failed: %s" % first_line(err)
+    for f in ignored:
+        code, _, err = git(["update-index", "--add", "--", f], root)
+        if code != 0:
+            return "git update-index failed: %s" % first_line(err)
     if sum(len(f) + 1 for f in files) < 20000:
         code, _, err = git(["commit", "-m", message, "--"] + files, root)
     else:
         spec = ("\0".join(files) + "\0").encode("utf-8", "surrogateescape")
         code, _, err = git(["commit", "-m", message, "--pathspec-from-file=-", "--pathspec-file-nul"], root, stdin=spec)
     return None if code == 0 else "git commit failed: %s" % first_line(err)
+
+
+REPO_BACKLOG = "/".join(fb.REPO_STORE)
+
+
+def repo_backlog_changed(root):
+    """[REPO_BACKLOG] when the repo backlog file is new (ignored or not) or modified, else []."""
+    code, out, err = git(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching",
+                          "--ignore-submodules=all", "--", REPO_BACKLOG], root)
+    if code != 0:
+        raise RuntimeError("git status failed: %s" % first_line(err))
+    return [REPO_BACKLOG] if out.strip("\0") else []
+
+
+def exclude_repo_backlog(root):
+    """Append `/.workflow/retro-backlog.md` once to the repo's info/exclude; an error text or None."""
+    code, out, err = git(["rev-parse", "--git-path", "info/exclude"], root)
+    if code != 0 or not out.strip():
+        return "info/exclude not found (%s)" % first_line(err)
+    path = out.strip()
+    path = path if os.path.isabs(path) else os.path.join(root, path)
+    line = "/" + REPO_BACKLOG
+    try:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+        except FileNotFoundError:
+            text = ""
+        if line in (ln.strip() for ln in text.splitlines()):
+            return None
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8", newline="\n") as fh:
+            fh.write(("" if not text or text.endswith("\n") else "\n") + line + "\n")
+    except OSError as exc:
+        return "info/exclude not written (%s)" % (exc.strerror or exc)
+    return None
+
+
+def repo_backlog_warnings(cfg, repos):
+    """A line per commit:true retro.repoBacklog entry that matches no sync.repos path."""
+    paths = [os.path.abspath(os.path.expanduser(e["path"])) for e in repos
+             if isinstance(e, dict) and isinstance(e.get("path"), str) and e["path"].strip()]
+    out = []
+    for b in (cfg.get("retro") or {}).get("repoBacklog") or []:
+        if not isinstance(b, dict) or b.get("commit") is not True:
+            continue
+        if not any(fb.repo_backlog_entry(p, {"retro": {"repoBacklog": [b]}}) for p in paths):
+            out.append("retro.repoBacklog %s: commit is true but it is not a sync.repos entry, not committed"
+                       % b.get("path"))
+    return out
 
 
 # ------------------------------------------------------------------ one repo
@@ -405,12 +466,19 @@ def sync_repo(entry, ctx):
             return rep
     elif not has_upstream:
         notes.append("no upstream, pull skipped")
+    backlog = fb.repo_backlog_entry(root, ctx.get("cfg"))
+    if backlog is not None and backlog.get("commit") is not True and not ctx["dry_run"]:
+        err = exclude_repo_backlog(root)
+        if err:
+            notes.append(err)
     try:
         files = [p for p in status_paths(root) if matches(p, entry["paths"])]
+        forced = repo_backlog_changed(root) if backlog is not None and backlog.get("commit") is True else []
     except RuntimeError as exc:
         rep["status"] = "skipped"
         rep["detail"] = str(exc)
         return rep
+    files += [f for f in forced if f not in files]
     hits = [(f, secret_hit(root, f)) for f in files]
     hits = [(f, h) for f, h in hits if h]
     if hits:
@@ -426,7 +494,7 @@ def sync_repo(entry, ctx):
     if files:
         if not recheck(root, rep, "before commit: "):
             return rep
-        err = commit_paths(root, files, "chore(sync): %s %s" % (ctx["date"], ctx["session"][:8]))
+        err = commit_paths(root, files, "chore(sync): %s %s" % (ctx["date"], ctx["session"][:8]), forced)
         if err:
             rep["status"] = "skipped"
             rep["detail"] = err
@@ -471,9 +539,13 @@ def sync_repo(entry, ctx):
 def run_retro(args, agent_dir):
     cmd = [sys.executable, "-E", "-s", os.path.join(HERE, "foreman_retro.py"), "--agent-dir", agent_dir]
     for flag, val in (("--session", args.session_file), ("--trace", args.trace), ("--usage", args.usage),
-                      ("--review-log", args.review_log), ("--rates", args.rates)):
+                      ("--review-log", args.review_log), ("--rates", args.rates),
+                      ("--backlog-workspace", args.backlog_workspace), ("--workspace-key", args.workspace_key),
+                      ("--backlog-session", args.backlog_session)):
         if val:
             cmd += [flag, val]
+    if args.no_backlog:
+        cmd.append("--no-backlog")
     try:
         r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -482,10 +554,11 @@ def run_retro(args, agent_dir):
     return text or "retro produced no output"
 
 
-def render(reps, retro):
+def render(reps, retro, warnings=()):
     lines = ["pi-foreman sync"]
     if not reps:
         lines.append("no sync.repos configured")
+    lines.extend("warning: %s" % w for w in warnings)
     for r in reps:
         lines.append("%s: %s%s" % (r["path"], r["status"], (" (%s)" % r["detail"]) if r["detail"] else ""))
         for s in r["secrets"]:
@@ -512,6 +585,10 @@ def build_parser():
     p.add_argument("--usage")
     p.add_argument("--review-log")
     p.add_argument("--rates")
+    p.add_argument("--backlog-workspace")
+    p.add_argument("--workspace-key")
+    p.add_argument("--backlog-session")
+    p.add_argument("--no-backlog", action="store_true")
     return p
 
 
@@ -536,14 +613,17 @@ def main(argv=None):
     sync = res["config"].get("sync") or {}
     repos = sync.get("repos") or []
     ctx = {"session": args.session.strip(), "dry_run": args.dry_run, "created": read_created(state),
-           "date": datetime.date.today().isoformat()}
-    reps = [sync_repo(e, ctx) for e in repos]
+           "date": datetime.date.today().isoformat(), "cfg": res["config"]}
+    # Retro first: it writes outside the repos or into an opted-in repo backlog the commit below stages.
     retro = run_retro(args, agent_dir) if sync.get("runRetro") else ""
+    warnings = repo_backlog_warnings(res["config"], repos)
+    reps = [sync_repo(e, ctx) for e in repos]
     code = 0 if all(r["status"] in OK_STATUSES for r in reps) else 1
     if args.json:
-        print(json.dumps({"repos": reps, "retro": retro.splitlines()[:MAX_LINES], "exit": code}, separators=(",", ":")))
+        print(json.dumps({"repos": reps, "retro": retro.splitlines()[:MAX_LINES], "warnings": warnings, "exit": code},
+                         separators=(",", ":")))
     else:
-        print(render(reps, retro))
+        print(render(reps, retro, warnings))
     return code
 
 
