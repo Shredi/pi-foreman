@@ -21,3 +21,4 @@ Return exactly:
 3. Staged paths: one per line, or "none staged".
 4. Open issues: anything the foreman must decide. Write "none" if there is none.
 5. Missing: <file | allow rule | brief detail | none> — what you lacked for this task, one line.
+6. Friction: <what blocked, retried, or was missing — ≤ 3 lines, or "none">

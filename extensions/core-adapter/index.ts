@@ -70,7 +70,8 @@ import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate } from "./compaction.ts";
 import { applyLedgerItems } from "./ledgerblock.ts";
 import { citedItems, ledgerHint, writeHint } from "./hints.ts";
-import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, withDigest } from "./retro.ts";
+import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, traceEnabled, withDigest } from "./retro.ts";
+import { frictionOfRunEnd } from "./friction.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
 import { UsageFooter, lookupRate } from "./footer.ts";
 import { blockedConfirm, installBlockedShim, PERMISSIONS_DECISION, PERMISSIONS_UI_PROMPT, withBlocked } from "./herdr.ts";
@@ -348,7 +349,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       supervisor: new SupervisorWindow(),
       gitDrift: new GitDriftWatch(),
       claudeCfg: new ClaudeConfigWatch(),
-      trace: openTrace({ enabled: get(config.config, "trace.enabled"), dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: id }),
+      trace: openTrace({ enabled: traceEnabled(get(config.config, "trace.enabled"), retroEnabled(get(config.config, "retro.enabled"), ctx.mode)), dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: id }),
       usage: { file: usageFile(agentDir, foremanSession), line },
       launches: new Map(),
       turn: { cause: "other", cacheRead: 0, cacheWrite: 0 },
@@ -701,7 +702,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   async function onForemanCompact(s: Session, ctx: ExtensionContext, summary: string, reason: string): Promise<void> {
     const section = s.retro.commit();
     if (section) s.foremanSection = section;
-    const r = await runScript(s, "foreman_retro.py", [...retroInputs(s, ctx, "--session"), "--json"]);
+    const r = await runScript(s, "foreman_retro.py", [...retroInputs(s, ctx, "--session", true), "--json"]);
     let counters: unknown = null;
     try {
       counters = r.ok ? JSON.parse(r.text) : null;
@@ -884,6 +885,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (!s.isChild) s.reviewerFails.onRun(runId, reviewerTextsOfRunEnd(data), boundLedger(s.markerDir, s.id));
           if (!s.isChild) s.brief.onRunEnd(runEndOf(data), s.launchedRoles.get(runId), (id, text) => storeBrief(s, id, text));
           for (const step of stepsOfRunEnd(data)) s.steps[step]++;
+          for (const f of frictionOfRunEnd(data)) s.trace?.emit({ event: "friction", role: f.role, runId: f.runId, kind: f.kind, note: f.note });
           const verdicts = reviewVerdictsOfRunEnd(data);
           s.reviewGate = onReviewVerdicts(s.reviewGate, verdicts);
           if (!s.isChild) onRunEndReview(s, runId, data, verdicts.length > 0);
@@ -2011,6 +2013,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         ctx.ui.notify("/retro is for the foreman only.", "warning");
         return;
       }
+      if (/(?:^|\s)--model(?:\s|$)/.test(args) && (!retroEnabled(get(s.config.config, "retro.enabled"), ctx.mode) || (ctx.mode !== "tui" && ctx.mode !== "rpc"))) {
+        ctx.ui.notify("pi-foreman: /retro --model is off (retro is disabled or this is not an interactive session).", "warning");
+        return;
+      }
       const day = new Date().toISOString().slice(0, 10);
       const argv = [...retroInputs(s, ctx, "--session"), "--proposals-out", path.join(s.agentDir, "pi-foreman", "state", "retro", `permission-proposals-${day}.json`)];
       const r = await runScript(s, "foreman_retro.py", argv);
@@ -2052,11 +2058,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   /** Retro inputs of this session (agent dir, review log, usage, session file, trace). */
-  function retroInputs(s: Session, ctx: ExtensionContext, sessionFlag: string): string[] {
+  function retroInputs(s: Session, ctx: ExtensionContext, sessionFlag: string, reportOnly = false): string[] {
     const args = ["--agent-dir", s.agentDir, "--review-log", path.join(s.agentDir, "extensions", "pi-permission-system", "logs", "pi-permission-system-permission-review.jsonl"), "--usage", s.usage.file];
     const sessionFile = ctx.sessionManager.getSessionFile();
     if (sessionFile) args.push(sessionFlag, sessionFile);
     if (s.trace) args.push("--trace", s.trace.file);
+    // Backlog: file under this workspace; off when retro is off, and for the compaction report (counted by the next /retro or /sync).
+    args.push("--backlog-workspace", workspaceOf(s.cwd).root);
+    const wsKey = get(s.config.config, "retro.workspaceKey");
+    if (typeof wsKey === "string" && wsKey.trim()) args.push("--workspace-key", wsKey.trim());
+    if (reportOnly || !retroEnabled(get(s.config.config, "retro.enabled"), ctx.mode)) args.push("--no-backlog");
     // The bridge logs cost 0: pass registry rates of the logged models (a file, not the command line).
     try {
       const rates: Record<string, unknown> = {};

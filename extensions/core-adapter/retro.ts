@@ -6,6 +6,16 @@ import * as path from "node:path";
 import { HintLog } from "./hints.ts";
 import { buildDigest, countersLine, retroEntry } from "./retrodigest.ts";
 
+/** Effective retro: an explicit `retro.enabled` boolean wins, else on in the interactive modes (tui, rpc). */
+export function retroEnabled(configured: unknown, mode: string | undefined): boolean {
+  return typeof configured === "boolean" ? configured : mode === "tui" || mode === "rpc";
+}
+
+/** Trace on: `trace.enabled` true always, false never, null/unset follows the effective retro. */
+export function traceEnabled(configured: unknown, retroOn: boolean): boolean {
+  return configured === true || (configured == null && retroOn);
+}
+
 export class RetroState {
   readonly hints = new HintLog();
   /** Closed item ids at the last compaction (digest "closed since"). */
