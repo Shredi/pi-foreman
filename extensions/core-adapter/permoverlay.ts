@@ -97,7 +97,7 @@ export interface OverlayRules {
 export interface Baseline {
   bash: { deny: string[]; ask: string[]; allow?: string[] };
   paths: { deny: string[]; except: string[] };
-  protect: { deny: string[]; ask: string[]; childDeny: string[]; writeAsk: string[]; removeAsk?: string[] };
+  protect: { deny: string[]; ask: string[]; childDeny: string[]; writeAsk: string[]; writeAskSelfHost?: string[]; removeAsk?: string[] };
 }
 
 export type Decision = { kind: "deny" | "ask"; reason: string };
@@ -133,7 +133,7 @@ export function readBaseline(pkgRoot: string): Baseline | null {
     return {
       bash: { deny: strs(bash.deny), ask: strs(bash.ask), allow: strs(bash.allow) },
       paths: { deny: strs(paths.deny), except: strs(paths.except) },
-      protect: { deny: strs(pr.deny), ask: strs(pr.ask), childDeny: strs(pr.childDeny), writeAsk: strs(pr.writeAsk), removeAsk: strs(pr.removeAsk) },
+      protect: { deny: strs(pr.deny), ask: strs(pr.ask), childDeny: strs(pr.childDeny), writeAsk: strs(pr.writeAsk), writeAskSelfHost: strs(pr.writeAskSelfHost), removeAsk: strs(pr.removeAsk) },
     };
   } catch {
     return null;
@@ -144,12 +144,27 @@ function without(list: string[], base: string[]): string[] {
   return list.filter((x) => !base.includes(x));
 }
 
+/** True when the session cwd is the package root or inside it (a dev checkout). Paths are resolved through symlinks; case-insensitive on win32/darwin. */
+export function isSelfHost(cwd: string, pkgRoot: string, platform: string = process.platform): boolean {
+  const real = (p: string): string => {
+    try {
+      return fs.realpathSync.native(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  const fold = platform === "win32" || platform === "darwin";
+  const norm = (p: string): string => (fold ? p.toLowerCase() : p);
+  const rel = (platform === "win32" ? path.win32 : path.posix).relative(norm(real(pkgRoot)), norm(real(cwd)));
+  return rel === "" || (!rel.startsWith("..") && !(platform === "win32" ? path.win32 : path.posix).isAbsolute(rel));
+}
+
 /**
  * Rules from the baseline plus the merged `safety.permissions`. `base` is the same block before
  * the project and session layers (the config CLI's `basePermissions`); asks present there are
  * PS's job, only the added ones are enforced here. Without `base` no ask is enforced.
  */
-export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unknown, agentDir: string, pkgRoot?: string, xdgConfigHome: string | undefined = process.env.XDG_CONFIG_HOME): OverlayRules {
+export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unknown, agentDir: string, pkgRoot?: string, xdgConfigHome: string | undefined = process.env.XDG_CONFIG_HOME, selfHost = false): OverlayRules {
   const m = obj(merged);
   const b = obj(base);
   const slash = (d: string): string => d.split(path.sep).join("/").replace(/\/+$/, "");
@@ -180,7 +195,7 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
       ...strs(mp.deny).map((pattern): PathRule => ({ pattern: sub(pattern), action: "deny" })),
     ],
     pathAsk: hasBase ? without(strs(mp.ask), strs(bp.ask)) : [],
-    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true), ...prot(pb?.childDeny, null, true), ...prot(pb?.writeAsk, "ask", false), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true }))],
+    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true), ...prot(pb?.childDeny, null, true), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true }))],
   };
 }
 

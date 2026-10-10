@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildOverlayRules, checkToolCall, codeLiterals, expandBraces, readBaseline } from "../permoverlay.ts";
+import { buildOverlayRules, checkToolCall, codeLiterals, expandBraces, isSelfHost, readBaseline } from "../permoverlay.ts";
 import type { MatchCtx } from "../permoverlay.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -158,6 +158,36 @@ test("S14: find -exec/-execdir/-delete are asks in the baseline (PS prompts)", (
   for (const p of ["find * -exec*", "find * -execdir*", "find * -delete*"]) assert.ok(baseline.bash.ask.includes(p), p);
 });
 
+test("self-host: package-root writes narrowed to the baseline and package.json", () => {
+  const sr = buildOverlayRules(baseline, {}, {}, agentDir, pkgRoot, undefined, true);
+  const k = (p: string, role: "main" | "child", tool = "write"): string => checkToolCall(sr, tool, { path: p, content: "x" }, ctx(role))?.kind ?? "pass";
+  for (const p of [at(pkgRoot, "docs", "x.md"), at(pkgRoot, "extensions", "core-adapter", "x.ts")]) for (const tool of ["write", "edit"]) for (const role of ["main", "child"] as const) assert.equal(k(p, role, tool), "pass", `${role} ${tool} ${p}`);
+  for (const p of [at(pkgRoot, "config", "permissions.baseline.json"), at(pkgRoot, "config", "foreman.defaults.json"), at(pkgRoot, "package.json")]) {
+    assert.equal(k(p, "main"), "ask", p);
+    assert.equal(k(p, "child"), "deny", p);
+  }
+  assert.equal(k(at(agentDir, "settings.json"), "main"), "ask"); // other protect lists unchanged
+  assert.equal(k(at(pkgRoot, "docs", "x.md"), "main"), "pass");
+  assert.equal(checkToolCall(r, "write", { path: at(pkgRoot, "docs", "x.md"), content: "x" }, ctx("main"))?.kind, "ask"); // not self-host: as before
+  assert.equal(checkToolCall(r, "write", { path: at(pkgRoot, "docs", "x.md"), content: "x" }, ctx("child"))?.kind, "deny");
+});
+test("isSelfHost: equal, inside, sibling prefix, outside, symlinked cwd", () => {
+  assert.equal(isSelfHost(pkgRoot, pkgRoot), true);
+  fs.mkdirSync(path.join(pkgRoot, "sub"), { recursive: true });
+  assert.equal(isSelfHost(path.join(pkgRoot, "sub"), pkgRoot), true);
+  fs.mkdirSync(pkgRoot + "-x", { recursive: true });
+  assert.equal(isSelfHost(pkgRoot + "-x", pkgRoot), false);
+  assert.equal(isSelfHost(cwd, pkgRoot), false);
+  const link = path.join(root, "link");
+  try {
+    fs.symlinkSync(path.join(pkgRoot, "sub"), link, "dir");
+    assert.equal(isSelfHost(link, pkgRoot), true);
+  } catch (e) {
+    if (process.platform !== "win32") throw e;
+  }
+  assert.equal(isSelfHost("C:\\Dev\\PI-Foreman\\x", "c:\\dev\\pi-foreman", "win32"), true);
+  assert.equal(isSelfHost("C:\\Dev\\pi-foreman-x", "C:\\Dev\\pi-foreman", "win32"), false);
+});
 test("win32: native and MSYS paths in bash commands, case and separators folded", () => {
   const w = buildOverlayRules(baseline, {}, {}, "C:\\Profiles\\u\\.pi\\agent");
   const wctx: MatchCtx = { cwd: "C:\\w\\proj", home: "C:\\Profiles\\u", platform: "win32", exists: () => false, isDir: () => false, realpath: () => null, list: () => [] };

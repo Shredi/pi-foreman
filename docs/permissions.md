@@ -135,6 +135,16 @@ guard still decides `git restore`/`git checkout` first (tracked, modified test f
 - `chain_allow {segments, decision, role}`: a chain of two or more segments was allowed without the model.
 - `review_defer_headless {role, cmd}`: a forwarded ask deferred with no human to ask and was denied.
 
+## Developing pi-foreman itself
+
+When the session's working directory is the package root or inside it (symlinks resolved; case-insensitive on
+Windows and macOS), the baseline's `protect.writeAsk` entries for `{pkgRoot}` and `{pkgRoot}/*` are replaced by
+`protect.writeAskSelfHost`: only `config/permissions*.json`, `config/foreman.defaults.json` and `package.json`
+under the package root still ask in the main session and are denied to children. Other writes in the checkout (docs,
+extensions, tests, scripts) pass. Every other protect list is unchanged (`.git`, agent dir, `.pi`, handoffs), as is
+the child ban on naming the package root in a shell. The session writes a `protect_selfhost` trace event and a top
+session shows one notice: "pi-foreman: dev checkout: package-root write protection narrowed".
+
 ## Known limits
 
 The splitter and the classes work on the command string; they are not a sandbox. Git config in the repository

@@ -194,6 +194,11 @@
       "{pkgRoot}/*",
       "{agentDir}/pi-foreman/handoffs/*/parent",
       "{agentDir}/pi-foreman/handoffs/*/child"
+    ],
+    "writeAskSelfHost": [
+      "{pkgRoot}/config/permissions*.json",
+      "{pkgRoot}/config/foreman.defaults.json",
+      "{pkgRoot}/package.json"
     ]
   }
 }
