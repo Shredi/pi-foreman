@@ -51,7 +51,9 @@ writes only outside the repos or into an opted-in repo backlog) and its summary 
 A sync.repos entry matching a retro.repoBacklog entry {path, commit}: commit true adds a changed
 `.workflow/retro-backlog.md` to that repo's commit even when ignored (`git update-index --add`, same
 secret check); commit false appends `/.workflow/retro-backlog.md` once to the repo's info/exclude. A
-commit:true repoBacklog entry that matches no sync.repos entry only gets a warning line. Output is at most 40 lines (text or JSON). Exit 0 when every repo is clean, committed
+commit:true repoBacklog entry that matches no sync.repos entry only gets a warning line. After the repo pushes the
+CLOSE report of scripts/foreman_close.py (report only, it removes nothing; writes close.json unless --dry-run) heads the
+output, at most 15 lines (JSON key `close`). Output is at most 40 lines (text or JSON). Exit 0 when every repo is clean, committed
 or pushed; 1 when any repo was skipped or refused; 2 on a usage or config error.
 """
 from __future__ import annotations
@@ -74,6 +76,7 @@ import foreman_config as fc  # noqa: E402
 import safe_ops  # noqa: E402
 
 MAX_LINES = 40
+CLOSE_LINES = 15
 CHUNK = 100
 SCAN_CHUNK = 1024 * 1024
 SCAN_OVERLAP = 4096
@@ -556,8 +559,19 @@ def run_retro(args, agent_dir):
     return text or "retro produced no output"
 
 
-def render(reps, retro, warnings=()):
-    lines = ["pi-foreman sync"]
+def close_block(state, session, cwd, cfg, dry_run):
+    """CLOSE report lines (scripts/foreman_close.py, report only: nothing is removed here), capped at
+    CLOSE_LINES with an overflow line pointing at close.json. A failure is one line, never an exit code."""
+    import foreman_close as fcl  # lazy: foreman_close imports this module
+    try:
+        rep = fcl.run(state, session, cwd, cfg, clean=False, dry_run=dry_run)
+    except Exception as exc:  # the report must not break the sync
+        return ["CLOSE: unknown (%s)" % first_line(str(exc))]
+    return fcl.capped(rep["lines"], CLOSE_LINES, fcl.close_path(state, session))
+
+
+def render(reps, retro, warnings=(), close=()):
+    lines = ["pi-foreman sync"] + list(close)
     if not reps:
         lines.append("no sync.repos configured")
     lines.extend("warning: %s" % w for w in warnings)
@@ -621,11 +635,12 @@ def main(argv=None):
     warnings = repo_backlog_warnings(res["config"], repos)
     reps = [sync_repo(e, ctx) for e in repos]
     code = 0 if all(r["status"] in OK_STATUSES for r in reps) else 1
+    close = close_block(state, ctx["session"], os.path.abspath(args.cwd), res["config"], args.dry_run)
     if args.json:
-        print(json.dumps({"repos": reps, "retro": retro.splitlines()[:MAX_LINES], "warnings": warnings, "exit": code},
-                         separators=(",", ":")))
+        print(json.dumps({"repos": reps, "retro": retro.splitlines()[:MAX_LINES], "warnings": warnings, "close": close,
+                          "exit": code}, separators=(",", ":")))
     else:
-        print(render(reps, retro, warnings))
+        print(render(reps, retro, warnings, close))
     return code
 
 

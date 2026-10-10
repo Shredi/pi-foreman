@@ -1,5 +1,5 @@
 @echo off
-rem pi-foreman: `foreman update-check|retro|sync|session|radar|config|bench|backlog|findings [args]` for cmd.
+rem pi-foreman: `foreman update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree [args]` for cmd.
 setlocal
 set "PF_PY=%PI_FOREMAN_PYTHON%"
 set "PF_PYARGS="
@@ -13,7 +13,9 @@ if /i "%~1"=="config" set "PF_SCRIPT=foreman_config.py"
 if /i "%~1"=="bench" set "PF_SCRIPT=foreman_bench.py"
 if /i "%~1"=="backlog" set "PF_SCRIPT=foreman_backlog.py"
 if /i "%~1"=="findings" set "PF_SCRIPT=foreman_findings.py"
-if not defined PF_SCRIPT (echo usage: foreman update-check^|retro^|sync^|session^|radar^|config^|bench^|backlog^|findings [args] 1>&2 & exit /b 2)
+if /i "%~1"=="close" set "PF_SCRIPT=foreman_close.py"
+if /i "%~1"=="worktree" set "PF_SCRIPT=foreman_worktree.py"
+if not defined PF_SCRIPT (echo usage: foreman update-check^|retro^|sync^|session^|radar^|config^|bench^|backlog^|findings^|close^|worktree [args] 1>&2 & exit /b 2)
 shift
 set "PF_ARGS="
 :collect
