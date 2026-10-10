@@ -11,6 +11,6 @@
   ]
  },
  "builder": {
-  "role": [{"text": "builder child result"}]
+  "role": [{"text": "builder child result\nFriction: needed permission twice for ~/work/example-repo/scripts/run.sh"}]
  }
 }

@@ -39,6 +39,7 @@ only a repository's project file is held to tighten-only.
 | Guards and child extensions | `safety.requiredChildExtensions` |
 | MCP servers | Pi `mcp.json` or `registerMcpServer` from the overlay extension |
 | Events | Listen on `pi.events` `foreman:*` (`role_launch`, `role_result`, `ledger_phase`, `ceremony_tier`, `retro`); read-only notifications |
+| Retro backlog | `retro.backlogDir` points the central backlog elsewhere; `retro.repoBacklog` and `retro.workspaceKey` pick per-workspace stores and keys (see [retro](retro.md)). User or overlay config only. |
 | Ceremony, fan-out, fallback | `ceremony.*`, `fanout.max`, `providers.<p>.fallback` |
 
 Conflict rules and rationale: `design/architecture.md`

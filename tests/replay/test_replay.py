@@ -293,8 +293,10 @@ class TestRoleAllowlist(ReplayCase):
         self.assertIn("builder child result", notice)
         pi.close()
         t = rig.traces()
+        fr = [r for r in t["trace-" + sid] if r["event"] == "friction"]
         foreman = shape(t.pop("trace-" + sid))
         self.assertEqual([r["role"] for r in foreman if r["event"] == "role_launch"], ["builder"])
+        self.assertEqual([(r["role"], r["kind"], r["note"]) for r in fr], [("builder", "permission", "needed permission twice for run.sh")])
         self.golden("role_allowlist", {"foreman": foreman})
 
 

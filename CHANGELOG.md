@@ -3,6 +3,14 @@
 ## [Unreleased]
 
 ### Added
+- Retro backlog (`docs/retro.md`): findings survive sessions in a local store (central `<agentDir>/pi-foreman/state/retro/backlog/<key>.md`,
+  `global.md` for harness bugs, or `<workspace>/.workflow/retro-backlog.md` via `retro.repoBacklog`), counted per
+  session and aged out (`retro.expireDays`, 90-day purge). `foreman backlog list|show|expire|mark|move|brief`. New keys
+  `retro.enabled`, `retro.workspaceKey`, `retro.backlogDir`, `retro.repoBacklog`, `retro.expireDays`, `retro.askThreshold`.
+- Roles end their report with a `Friction:` line; the foreman emits one `friction` trace event per non-empty line
+  (`role`, `runId`, `kind`, `note` of 120 characters, paths reduced to basenames).
+- `/retro` and `/sync` feed the backlog; `foreman backlog brief` writes a lessons brief you hand to a session you
+  open yourself. Bench cells file under `bench/<task-id>`; their retro usage (`kind: "retro"`) stays out of cost columns.
 - Herdr sidebar, live: the Pi session pushes its own pane's `fm_*` tokens (`sidebar.py push`) on run start and end, asks,
   state changes, permission prompts and every 5 s (debounced, at most 4 per second, a final row at session end, so it never goes blank), so spawns
   and short runs show at once; while a session pushes, the daemon publishes only `fm_sort` (and the tree layout) and
@@ -181,6 +189,11 @@
   hits, rung-ups, child read-budget hits, headless defers and turns.
 
 ### Changed
+- `trace.enabled` defaults to `null` (was `false`): the trace follows the effective `retro.enabled` (on in tui and rpc,
+  off in json and print). An explicit `false` still turns it off.
+- `/sync` runs the retro before the repository commits; a `retro.repoBacklog` entry with `commit: true` is staged in the
+  sync commit, one with `commit: false` goes to `.git/info/exclude`. `/foreman close` is the sub-orchestrator exit.
+- The roles' output contract gains the `Friction:` line.
 - Git config drift no longer asks for added or removed `branch.<name>.remote` / `branch.<name>.merge` keys
   (`git worktree add -b`, `git push -u`, `git checkout -b`); a changed value still asks.
 - `foreman radar`: header with colored non-zero counts and a right-aligned clock, a totals line (sessions, trees,
