@@ -1,0 +1,20 @@
+{
+ "foreman": {
+  "b1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:bld]] short task"}}]},
+   {"text": "Launched."},
+   {"text": "Builder reported."}
+  ]
+ },
+ "builder": {
+  "bld": [
+   {"tools": [
+    {"name": "bash", "arguments": {"command": "git checkout -- pkg/hub_test.go"}}
+   ]},
+   {"tools": [
+    {"name": "bash", "arguments": {"command": "sed -n '1,2p' pkg/hub.go; grep -n package pkg/hub.go | head -3"}}
+   ]},
+   {"text": "effects child finished"}
+  ]
+ }
+}

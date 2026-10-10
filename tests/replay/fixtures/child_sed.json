@@ -12,7 +12,7 @@
     {"name": "bash", "arguments": {"command": "cd sub; sed -n 1,20p f.go; sed -n 5,9p g.go"}}
    ]},
    {"tools": [
-    {"name": "bash", "arguments": {"command": "touch made.txt"}}
+    {"name": "bash", "arguments": {"command": "touch ../made.txt"}}
    ]},
    {"tools": [
     {"name": "bash", "arguments": {"command": "sed -n '1wwritten' sub/f.go"}}

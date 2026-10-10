@@ -2,7 +2,7 @@
 
 The baseline has no sed rule, so every sed unit asks and is forwarded to the foreman. A print-only
 `cd sub; sed -n ..; sed -n ..` chain is allowed there without a model call (label `sed-read`); a write
-command (`touch`, and `sed -n '1wwritten'`) is forwarded, the review model defers, and with no human
+command outside the worktree (`touch ../made.txt`) and `sed -n '1wwritten'` are forwarded, the review model defers, and with no human
 (`review.headless`) the child gets a deny that names the allowed forms and the foreman traces
 `review_defer_headless`; the sed write never runs.
 Same prerequisites and skips as test_replay.py."""
@@ -41,9 +41,9 @@ class TestChildSed(ReplayCase):
         self.assertIsNone(reviews[0].get("model"), reviews[0])
         headless = [r for r in events if r.get("event") == "review_defer_headless"]
         self.assertEqual([h.get("role") for h in headless], ["builder", "builder"], headless)
-        self.assertIn("touch made.txt", headless[0].get("cmd", ""))
+        self.assertIn("touch ../made.txt", headless[0].get("cmd", ""))
         self.assertIn("1wwritten", headless[1].get("cmd", ""))
-        self.assertFalse((rig.project / "made.txt").exists())
+        self.assertFalse((rig.project.parent / "made.txt").exists())
         self.assertFalse((rig.project / "written").exists())
         self.assertFalse((sub / "written").exists())
         text = "\n".join(p.read_text("utf-8", "replace") for p in rig.agent.rglob("*.jsonl"))
