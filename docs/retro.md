@@ -17,7 +17,7 @@ from usage records and the Pi model registry rates, whichever provider logged th
 
 ## What counts as friction
 
-Each finding is a candidate with a kind (`agent`, `routing`, `skill`, `rule`, `permission`, `prompt`, `harness-bug`).
+Each finding is a candidate with a kind (`agent`, `routing`, `skill`, `rule`, `permission`, `prompt`, `harness-bug`, `review-model`; the last only from `foreman retro models`, below).
 Retro files a candidate for these classes, from these inputs:
 
 - permission asks (kind `permission`; trace `ask` events): asks are grouped per run (a child's `ask` carries `role`
@@ -54,6 +54,14 @@ its own. `/retro` and `/sync` read the foreman trace plus each child trace of th
 `foreman_retro.py` and `foreman_sync.py` take `--trace` more than once for this. Child traces are found for launches
 since the foreman process started. Launches through `tasks` or `chain`
 have no binding, so their children are not covered.
+
+## Reviewer models
+
+`foreman retro models [--since 30d] [--source live|panel|bench] [--json] [--no-backlog]` reads the reviewer findings store
+(`<agent dir>/pi-foreman/state/findings/`) and prints per model and rung: reviews, findings, accepted, rejected, unique,
+late misses, USD, USD per accepted finding, median and p90 seconds, plus the time to clean per ledger item. A shadow
+reviewer model whose unique accepted findings reach `retro.panelThreshold` files a candidate of kind `review-model` in
+the backlog ("consider it as primary or rung"). Columns, outcomes and the store are in [review-climb](review-climb.md).
 
 ## The `Friction:` line and event
 
@@ -185,5 +193,6 @@ waiter runs retro after the session ends; it calls no model and spends no tokens
 
 - Retro reads local files and writes local files. Nothing is sent anywhere.
 - The trace carries allowlisted fields only (`note` for `friction` events, 120 characters, paths reduced to basenames).
+- `retro models` reads local findings records only; the trace carries a finding's file as a basename.
 - Backlog evidence holds counts, family names and basenames, not command lines or file contents.
 - Nothing is committed unless a `retro.repoBacklog` entry says `commit: true` and `/sync` covers that repository.

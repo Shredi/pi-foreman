@@ -3,6 +3,21 @@
 ## [Unreleased]
 
 ### Added
+- Review climb (`docs/review-climb.md`): `ladder.reviewerClimb.mode` `on-find` (default `repeat-fail`) and `rungs` climb
+  each ledger item one reviewer rung per FAIL or per PASS that still locates a defect, until clean (`climb_done`) or
+  the top rung still finds; `rung_up` reason `on_find`. Four review occasions (`item`, `[plan-review]`, `[pre-pr]`,
+  `[second-opinion]`) share one path; only `item` and `pre-pr` count for items and gates. Different-model rule: a
+  reviewer on the foreman's own model moves to the next differing rung or `ceremony.reviewModel` (trace `review_model`).
+- Plan review: `ceremony.planReview.<tier>` (heavy on; a project can only tighten) makes `foreman_checkpoint` wait for a
+  `[plan-review]` verdict on the current plan (`plan_review_required`, `plan_revision_required`; trace `plan_review`).
+- Review panel: `ladder.reviewPanel` `{shadows, gates, visible}` runs shadow models beside the primary; their findings
+  are attributed, deduplicated, never block (trace `panel`).
+- Findings store `<agent dir>/pi-foreman/state/findings/<session>.jsonl` (trace `finding`, basenames only) and
+  `foreman findings list|dismiss|export`; export writes an unconfirmed bench task that `foreman bench review` skips.
+  `foreman retro models` (per model and rung: findings, accepted, rejected, unique, late misses, USD, median and p90
+  seconds, time to clean), `retro.panelThreshold` and backlog kind `review-model`.
+- `foreman bench review --mode climb --rungs a,b,...` composes cached rung cells into policies; `review-table` gains a
+  Policies table.
 - Retro backlog (`docs/retro.md`): findings survive sessions in a local store (central `<agentDir>/pi-foreman/state/retro/backlog/<key>.md`,
   `global.md` for harness bugs, or `<workspace>/.workflow/retro-backlog.md` via `retro.repoBacklog`), counted per
   session and aged out (`retro.expireDays`, 90-day purge). `foreman backlog list|show|expire|mark|move|brief`. New keys

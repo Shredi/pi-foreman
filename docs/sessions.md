@@ -131,7 +131,7 @@ widget (`widget.children`, on by default, TUI only) lists this session's subagen
 `label · status · age`; runs that finished during the batch fold into one `<n> done` line. While any run is active the
 widget keeps its height (it may grow when a run starts, padded rather than shrunk, at most 8 rows, one screen row each)
 and updates in place, so the view does not shift; the run rows go when the last active run ends. It costs no model tokens. Outside Pi,
-the `foreman` launcher in `bin/` (`.cmd` and `.ps1` on Windows) runs the same scripts: `foreman update-check`, `foreman retro [args]`, `foreman sync [args]`, `foreman backlog [args]` ([retro](retro.md)), `foreman session` (below), `foreman radar` ([Radar](#radar)) and `foreman bench` ([benchmark](bench.md), including `foreman bench review`). The keys
+the `foreman` launcher in `bin/` (`.cmd` and `.ps1` on Windows) runs the same scripts: `foreman update-check`, `foreman retro [args]`, `foreman sync [args]`, `foreman backlog [args]` ([retro](retro.md)), `foreman findings list|dismiss|export` and `foreman retro models` ([review-climb](review-climb.md)), `foreman session` (below), `foreman radar` ([Radar](#radar)) and `foreman bench` ([benchmark](bench.md), including `foreman bench review`). The keys
 and their layer rules are in the tables of [ceremony](ceremony.md) and [safety](safety.md) and in the schema
 `config/foreman.schema.json`.
 
