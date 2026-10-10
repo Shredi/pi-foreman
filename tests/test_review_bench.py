@@ -88,8 +88,8 @@ class Score(unittest.TestCase):
                  ("swallowed-error", "the read error log was removed"),
                  ("resource-leak", "a stale value survives"), ("resource-leak", "it never clears the field"),
                  ("resource-leak", "it keeps its old value"),
-                 ("off-by-one", "starts one tile too far east"), ("off-by-one", "a one-tile gap in the lane"),
-                 ("off-by-one", "the lane is one tile short"), ("off-by-one", "should be anchor.y - 1")]
+                 ("off-by-one", "starts one row too far left"), ("off-by-one", "a one-cell gap in the range"),
+                 ("off-by-one", "the buffer is one byte short"), ("off-by-one", "should be end - 1")]
         for cls, phrase in cases:
             self.assertTrue(self.sym(cls, phrase), phrase)
 
@@ -98,7 +98,7 @@ class Score(unittest.TestCase):
                  ("swallowed-error", "no error log was removed"), ("swallowed-error", "nothing else is printed"),
                  ("resource-leak", "a stale comment above"), ("resource-leak", "a stale readme"),
                  ("resource-leak", "this is not clearly a problem"), ("resource-leak", "keeps its shape"),
-                 ("off-by-one", "one tile is fine"), ("off-by-one", "not one tile too far"),
+                 ("off-by-one", "one cell is fine"), ("off-by-one", "not one row too far"),
                  ("off-by-one", "bumps the version to 1.4 + 1.5"), ("off-by-one", "total is 3 + 1 lines"),
                  ("off-by-one", "adds v2 + 10")]
         for cls, phrase in cases:
