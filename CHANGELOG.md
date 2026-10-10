@@ -3,6 +3,16 @@
 ## [Unreleased]
 
 ### Added
+- Session close (`docs/close.md`): a per-session manifest (`<state>/sessions/<session>/manifest.json`) records the
+  worktrees and scratch dirs a session creates (bash `git worktree add`, `mkdir`, writes into a new scratch topic dir,
+  `foreman close record`; silent, no tokens). `foreman close` prints a CLOSE report (`CLOSE: ready|open`, `uncommitted:`,
+  `unmerged:`, `open item:`, `pending child:`, `removed:`, `kept:`, `handover:`, `child handover:`), writes `close.json`,
+  and cleans up manifest entries only when the preconditions pass (worktree clean, merged or pushed, unlocked, no stash,
+  no live session inside, never `--force`; scratch via trash or an exact-path remove). `--dry-run`, `--take` and `--drop`
+  hand a child's leftovers to the parent; `foreman worktree sweep [--dry-run]` removes any passing linked worktree and
+  lists `off-convention:` ones. `foreman sync` and `/sync` run the same report and cleanup; `/foreman close` traces
+  `close` with decision `report`. Keys `close.autoClean` (a project may only turn it off) and `close.worktreeDir`
+  (user or overlay only).
 - Review climb (`docs/review-climb.md`): `ladder.reviewerClimb.mode` `on-find` (default `repeat-fail`) and `rungs` climb
   each ledger item one reviewer rung per FAIL or per PASS that still locates a defect, until clean (`climb_done`) or
   the top rung still finds; `rung_up` reason `on_find`. Four review occasions (`item`, `[plan-review]`, `[pre-pr]`,

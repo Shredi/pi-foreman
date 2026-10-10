@@ -512,6 +512,8 @@ The `foreman` CLI (`bin/foreman`, `.cmd`, `.ps1`; `foreman update-check|retro|sy
 | `retro.proposalMinReviews` | `5` | lower proposes sooner | L1, L3, L2; project ignored |
 | `intercom.allowRemote`, `intercom.allowOpenPane` | `false` | `true` loosens | any layer may set false; a project or session can only set false |
 | `close.from` | `["herdr","intercom-parent"]` | fewer is tighter | any; project and session intersect |
+| `close.autoClean` | `true` | `true` loosens (removes worktrees and scratch) | any; project and session only false |
+| `close.worktreeDir` | `../<repo>.worktrees` | neutral (names the sweep convention) | L1, L3, L2; project ignored |
 | `footer.usage` | `true` | neutral | any |
 | `compaction.priceTiers` | `{cheap: 1, standard: 5}` | neutral (classification) | L1, L3, L2; project ignored |
 | `compaction.threshold.<cheap\|standard\|premium>` | `0.85`, `0.75`, `0.6` | higher compacts later (loosens) | any; project and session only lower, minimum 0.3 |

@@ -65,6 +65,7 @@ Repo layout and test commands: `docs/development.md`. Read the page for the area
 - `docs/ceremony.md`: tiers, finish gates, planner and checkpoint, budgets, key table.
 - `docs/safety.md`: shell-write and repository guards, PR gate, permissions and auto-review, known limits.
 - `docs/permissions.md`: effect classes of child bash asks, chain composition, deterministic allow labels, traces.
+- `docs/close.md`: session manifest, CLOSE report, cleanup preconditions, take/drop, `foreman worktree sweep`.
 - `docs/sessions.md`: `/sync`, `/retro`, `/foreman close`, footer, `bin/foreman`, intercom, Herdr.
 - `docs/retro.md`: retro sources, friction classes, `Friction:` line and trace event, backlog store and CLI, lessons brief.
 - `docs/herdr.md`: Herdr sidebar plugin `pi-foreman.sidebar`, rows snippet, tokens, Agents view, symbols.
