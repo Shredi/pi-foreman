@@ -8,6 +8,9 @@
   session with no heartbeat for 15 minutes reads `stale` instead of `lost`. Working, blocked and lost rows never expire by age.
 - Startup warning when the session's model provider has no `providers.<id>` map (tui and rpc, top-level, not silenced
   by `quiet`): names the fitting presets or says to add `providers.<id>`, instead of failing at the first role launch.
+- Dev checkout (`docs/permissions.md`): when the session cwd resolves to the package root or inside it, the
+  `{pkgRoot}` write protection narrows to `protect.writeAskSelfHost` (`config/permissions*.json`,
+  `config/foreman.defaults.json`, `package.json`); trace `protect_selfhost`, one startup notice.
 - Review link, child bash asks (`docs/permissions.md`): effect classes `read`, `build-test` (from the project manifest
   at the worktree root), `write-in`, `write-out`, `unknown` (`effects.ts`); only write-out and unknown reach the review
   model. Read and write paths must resolve inside the worktree or `$FOREMAN_SCRATCH`, writes also under `/tmp`, reads
@@ -157,6 +160,8 @@
   hits, rung-ups, child read-budget hits, headless defers and turns.
 
 ### Changed
+- Git config drift no longer asks for added or removed `branch.<name>.remote` / `branch.<name>.merge` keys
+  (`git worktree add -b`, `git push -u`, `git checkout -b`); a changed value still asks.
 - `foreman radar`: header with colored non-zero counts and a right-aligned clock, a totals line (sessions, trees,
   tokens, cost, oldest block), blocked ages amber over 5 min and red over 15 min, blue cost, dim ids, tokens and tree
   lines; footer `q quit · r refresh · c cost on/off · ↑↓ select · enter show session path` with those keys live.
