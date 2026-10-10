@@ -143,10 +143,13 @@ class JoinTest(unittest.TestCase):
                 node("b", "session", "b", "working", "working", g, pid=42, cwd="/y"),
                 node("c", "session", "c", "working", "working", g, cwd="/z"),
                 node("d", "session", "d", "working", "working", g, cwd="/same"),
-                node("e", "session", "e", "working", "working", g, cwd="/q")]
+                node("e", "session", "e", "working", "working", g, cwd="/q"),
+                node("f", "session", "f", "working", "working", g, pane="w1:p7", cwd="/w")]
 
     def test_precedence(self):
-        agents = [{"pane_id": "w1:p1", "agent": "pi", "cwd": "/x"},
+        agents = [{"pane_id": "w1:p9", "agent": "pi", "cwd": "/other"},
+                  {"pane_id": "w1:p10", "agent": "pi", "cwd": "/w"},
+                  {"pane_id": "w1:p1", "agent": "pi", "cwd": "/x"},
                   {"pane_id": "w1:p2", "agent": "pi", "cwd": "/y"},
                   {"pane_id": "w1:p3", "agent": "pi", "cwd": "/z"},
                   {"pane_id": "w1:p4", "agent": "pi", "cwd": "/same"},
@@ -158,6 +161,7 @@ class JoinTest(unittest.TestCase):
         self.assertEqual(joins["c"], "w1:p3")       # unique cwd among pi panes
         self.assertNotIn("d", joins)                # two pi panes share the cwd
         self.assertNotIn("e", joins)                # only a non-pi pane matches
+        self.assertEqual(joins["f"], "w1:p10")      # closed presence pane falls through to cwd
 
 
 class DecisionTest(unittest.TestCase):
@@ -173,6 +177,9 @@ class DecisionTest(unittest.TestCase):
         self.assertEqual(sidebar.view_decision(True, 0), "clear")
         self.assertIsNone(sidebar.view_decision(True, 1))
         self.assertIsNone(sidebar.view_decision(False, 0))
+        self.assertIsNone(sidebar.view_decision(True, 1, 59.0))
+        self.assertEqual(sidebar.view_decision(True, 1, 60.0), "set")   # periodic re-set
+        self.assertIsNone(sidebar.view_decision(False, 0, 600.0))
 
     def test_view_retry_throttle(self):
         self.assertTrue(sidebar.view_retry_due(None, 5.0))

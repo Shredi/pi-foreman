@@ -45,6 +45,8 @@ KEYS = ("fm_pre", "fm_sym", "fm_l1", "fm_l2", "fm_l3", "fm_cost",
         "fm_state", "fm_block_s", "fm_sort")
 SOCKET_FAILURES_MAX = 40
 VIEW_RETRY_S = 60
+VIEW_REFRESH_S = 60
+LOG_MAX_BYTES = 1024 * 1024
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -284,14 +286,16 @@ def _norm(path):
 
 
 def join(nodes, agents, procinfo=None):
-    """Session nodes -> paneId. Presence paneId first, then the node pid as a
+    """Session nodes -> paneId. Presence paneId first (only while that pane is
+    in `agents`, i.e. still open), then the node pid as a
     pane's foreground pid (`procinfo` = {paneId: pid}), then a cwd that
     matches exactly one unclaimed pi pane (and one unjoined node)."""
     procinfo = procinfo or {}
     sessions = [n for n in walk(nodes) if n.get("kind") == "session"]
     joins, claimed = {}, set()
+    live = {a.get("pane_id") for a in agents or [] if a.get("pane_id")}
     for n in sessions:
-        if n.get("paneId"):
+        if n.get("paneId") and n["paneId"] in live:
             joins[n["key"]] = n["paneId"]
             claimed.add(n["paneId"])
     by_pid = {}
@@ -329,11 +333,16 @@ def view_retry_due(failed_at, now, every=None):
     return failed_at is None or now - failed_at >= (VIEW_RETRY_S if every is None else every)
 
 
-def view_decision(prev_active, joined_count):
+def view_decision(prev_active, joined_count, since_set=None):
+    """"set"/"clear" on transitions; while active, "set" again once
+    `since_set` seconds reach VIEW_REFRESH_S (a restarted Herdr server
+    forgets the view, and set is idempotent)."""
     if joined_count > 0 and not prev_active:
         return "set"
     if joined_count == 0 and prev_active:
         return "clear"
+    if prev_active and joined_count > 0 and since_set is not None and since_set >= VIEW_REFRESH_S:
+        return "set"
     return None
 
 
@@ -529,6 +538,7 @@ class Publisher:
         self.view_active = False
         self.failures = 0
         self.view_failed_at = None
+        self.view_set_at = None
         self.view_errors = set()
 
     def width(self):
@@ -565,6 +575,7 @@ class Publisher:
                     {"field": {"token": "fm_sort"}, "order": "asc"},
                     {"field": "attention", "order": "desc"}]})
                 self.view_active = True
+                self.view_set_at = now
             else:
                 self._call("agent.view.clear", {"source": SOURCE})
                 self.view_active = False
@@ -617,7 +628,8 @@ class Publisher:
             except HerdrError as exc:
                 log("report %s failed: %s" % (pane, exc))
         self.published = now
-        self.view(view_decision(self.view_active, len(now)))
+        since = None if self.view_set_at is None else time.monotonic() - self.view_set_at
+        self.view(view_decision(self.view_active, len(now), since))
 
     def shutdown(self):
         for pane in list(self.published):
@@ -672,6 +684,7 @@ def run_once(args, foreman):
     if snap is None:
         log("foreman radar gave no snapshot (exit %d)" % out.returncode)
         return 1
+    args.no_view = True  # --once never touches the Agents view
     pub = Publisher(args, state_dir())
     try:
         pub.publish(snap)
@@ -756,7 +769,13 @@ def cmd_start(extra):
     pid = _read_pid(os.path.join(sdir, "sidebar.pid"))
     if pid and _pid_alive(pid):
         return 0
-    logf = open(os.path.join(sdir, "sidebar.log"), "ab")
+    log_path = os.path.join(sdir, "sidebar.log")
+    try:
+        if os.path.getsize(log_path) > LOG_MAX_BYTES:
+            os.replace(log_path, log_path + ".1")
+    except OSError:
+        pass
+    logf = open(log_path, "ab")
     subprocess.Popen([sys.executable, os.path.abspath(__file__), "run"] + extra,
                      start_new_session=True, stdin=subprocess.DEVNULL,
                      stdout=logf, stderr=logf)
