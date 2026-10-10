@@ -1,4 +1,4 @@
-// Review panel (ladder.reviewPanel, docs/ladder.md): shadow models review next to the reviewer on
+// Review panel (ladder.reviewPanel, docs/review-climb.md): shadow models review next to the reviewer on
 // the gate occasions. A `reviewer` entry whose occasion is in `gates` becomes a parallel group of
 // the primary entry plus one entry per shadow model (same task text, `policy_override: true`: the
 // shadows are explicit user or overlay config, written after the rank check like the security

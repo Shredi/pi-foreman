@@ -1,4 +1,4 @@
-// Run-end findings (docs/ladder.md): every completed review child of a run is handed to
+// Run-end findings (docs/review-climb.md): every completed review child of a run is handed to
 // `scripts/foreman_findings.py record` (report text on stdin, the reviewed files in a temp list),
 // which appends the review and its located findings to the session's findings store and prints
 // them. Fail-soft: a failed, slow or unparsable call counts as zero findings and traces nothing.
