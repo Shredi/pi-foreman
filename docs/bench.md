@@ -51,6 +51,16 @@ Task dir (`--tasks` names one, or a folder of them; five synthetic samples (clea
   or `{"clean": true, "defects": []}` for a clean control. Classes: `auth`, `shell-injection`, `path-traversal`,
   `secret-log`, `off-by-one`, `resource-leak`, `race`, `swallowed-error`, `insecure-default`.
 
+Plant defects inside the requested change, not next to it. An add-on plant (a helper or code path the prompt never
+asked for) is caught by the reviewer's "unrelated change" rule without the reviewer understanding the defect, so it
+over-credits weak reviewers. An in-scope plant keeps the diff doing exactly what the prompt asks and makes one line of
+it wrong: a check inverted or skipped on one branch, a bound off by one, a lock pair dropped, a value interpolated into
+a shell string, a join without a containment check. Verify that the task's own tests still pass with the plant, and
+complete the diff wherever the reference change misses something the prompt asks for (requested tests, a required
+log line), so seeded cells fail only on the plant and a clean control can honestly pass. When no reference change
+offers an honest site for a class, add a small synthetic task whose prompt requests the feature and whose plant is the
+unsafe implementation of exactly that request (as `py-shell-filter` and `py-path-serve` do).
+
 Launch, one per cell, through the harness's own review path: the base is committed in a fresh git repo and the diff
 applied uncommitted (new files intent-to-add). `bench/review_facts.mjs` runs `collectFacts` and `ownerBlock` from
 `extensions/core-adapter/diffscan.ts` and the child scratch line from `childscratch.ts`, so the task is composed as a
