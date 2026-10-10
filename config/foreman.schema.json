@@ -315,6 +315,7 @@
             "ask": { "type": "array", "items": { "type": "string" }, "description": "Bash patterns that need approval. A project can add entries, not remove them." },
             "allow": { "type": "array", "items": { "type": "string" }, "description": "Bash patterns (permission-system wildcard syntax) allowed without asking, on top of the baseline. A project or session cannot extend it." },
             "projectCommands": { "type": "array", "items": { "type": "string" }, "description": "The repo's own test and build commands, as bash patterns; allowed without asking. A project or session cannot set it." },
+            "readRoots": { "type": "array", "items": { "type": "string" }, "description": "Absolute dirs (or ~/...) a child's read-class bash ask may also read without the model review (docs/permissions.md). Reads only. A project or session cannot set it." },
             "paths": {
               "type": "object",
               "additionalProperties": false,

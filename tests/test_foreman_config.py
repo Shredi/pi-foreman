@@ -70,6 +70,16 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(res["layers"], ["L1", "L3:@scope/other", "L3:org-pkg"])
         self.assertEqual(res["config"]["fanout"]["max"], 4)
 
+    def test_read_roots_user_only(self):
+        self.l2({"safety": {"permissions": {"readRoots": ["~/src"]}}})
+        self.proj({"safety": {"permissions": {"readRoots": ["/"]}}})
+        res = self.load(trusted_project=True)
+        self.assertEqual(res["errors"], [])
+        self.assertEqual(res["config"]["safety"]["permissions"]["readRoots"], ["~/src"])
+        self.assertIn("safety.permissions.readRoots", "\n".join(res["warnings"]))
+        self.l2({})
+        self.assertEqual(self.load()["config"]["safety"]["permissions"]["readRoots"], [])
+
     def test_ladder_keys_user_only_and_presets_valid(self):
         p1 = dict(PROV["p1"], strongAbove=6000, childMaxTurns=5, ranks=[{"match": "m-*", "tier": 2}])
         self.l2({"ladder": {"childPolicy": "at-or-below", "strongAbove": 5000, "childMaxTurns": 9},

@@ -22,6 +22,7 @@ layer: it goes through the same rules. Neither can set a key that is not in the 
     safety.permissions.deny/ask      union (entries are added, never removed)
     safety.permissions.paths.deny/ask  union
     safety.permissions.projectCommands  ignored with a warning (it loosens: allows commands)
+    safety.permissions.readRoots     ignored with a warning (it loosens: allows reads outside the worktree)
     safety.requiredChildExtensions   union
     safety.git.protectedBranches     union
     safety.git.commit.requiredTrailers / forbiddenTrailers   union

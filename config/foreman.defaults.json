@@ -73,7 +73,7 @@
   },
   "wait": { "batchWindowSeconds": 300, "maxSeconds": 86400, "maxActive": 8, "ci": true },
   "safety": {
-    "permissions": { "allow": [], "ask": [], "deny": [], "paths": { "deny": [], "ask": [] }, "projectCommands": [] },
+    "permissions": { "allow": [], "ask": [], "deny": [], "paths": { "deny": [], "ask": [] }, "projectCommands": [], "readRoots": [] },
     "requiredChildExtensions": [],
     "children": { "mayPush": false },
     "review": { "required": false },

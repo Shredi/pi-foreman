@@ -16,7 +16,7 @@ import { isReadOnlySed } from "./sedread.ts";
 import { scratchCommandAllowed } from "./childscratch.ts";
 import { isTmpScratch } from "./tmpscratch.ts";
 import type { TmpScratchDeps } from "./tmpscratch.ts";
-import { redirectOk, refusedProgram, SAFE_CLASSES, scratchExpansions, segmentEffect } from "./effects.ts";
+import { ChainWrites, redirectOk, refusedProgram, SAFE_CLASSES, scratchExpansions, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
 import { splitChain } from "./shellchain.ts";
 
@@ -127,10 +127,12 @@ function compose(rules: BashRules, text: string, deps: AllowDeps): { label: Allo
   const platform = c?.platform ?? deps.platform ?? process.platform;
   let cwd: string | null = c?.cwd ?? null;
   const labels = new Set<string>();
+  const writes = c ? new ChainWrites(c) : null;
   for (const seg of chain.segments) {
     if (hits(rules.ask, seg.text, "") || hits(rules.deny, seg.text, "") || refusedProgram(seg.words)) return null;
     if (!seg.redirects.every((r) => redirectOk(r, c, cwd, scratch, platform))) return null;
     if (c) {
+      if (!writes!.pass(cwd, seg)) return null; // a path under an earlier segment's write (effects.ts ChainWrites)
       const e = segmentEffect(c, cwd, seg);
       if (e.unit !== seg.text && (hits(rules.ask, e.unit, "") || hits(rules.deny, e.unit, ""))) return null;
       if (e.label && SAFE_CLASSES.includes(e.cls)) labels.add(e.label);

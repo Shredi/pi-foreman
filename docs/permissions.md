@@ -20,7 +20,7 @@ deterministic allow must hold for that unit and for the full command.
 
 | Class | What | Goes to the model |
 |---|---|---|
-| read | `ls`, `cat`, `head`, `tail`, `wc`, `stat`, `file`, `tree`, `diff`, `grep`, `rg`, `find`; print-only sed; `git status/log/diff/show`; `git add/clean/mv/rm` with `-n`/`--dry-run`; `npm install/ci/publish/pack/... --dry-run`, `cargo publish --dry-run`, `make -n`; `cd` into an allowed place | no |
+| read | `ls`, `cat`, `head`, `tail`, `wc`, `stat`, `file`, `tree`, `diff`, `grep`, `rg`, `find`; print-only sed; `git status/log/diff/show`; `git add/clean/mv/rm` with `-n`/`--dry-run`; `npm install/ci/update/... --dry-run` (not `publish`/`pack`), `cargo publish --dry-run`, `make -n`; `cd` into an allowed place | no |
 | build-test | the project's own commands, from its manifest at the worktree root, run from that root | no |
 | write-in | `mkdir`, `touch`, `cp`, `mv`, `rm`, `tee`, `sed -i` with one plain `s///` script, the test restore | no |
 | write-out | one of those writes, or a redirect, that reaches outside the allowed places | yes |
@@ -28,19 +28,33 @@ deterministic allow must hold for that unit and for the full command.
 
 Paths. Every path argument (operands, `--opt=value` values, input redirects) of a read or a write must resolve inside
 the worktree (the git top level of the cwd), a live `$FOREMAN_SCRATCH` dir of the asking role, or `/tmp` (not on
-Windows). A path that starts with `~`, holds a `..` component, is drive-relative (`C:x`) or resolves elsewhere
+Windows). A path that starts with `~` or holds `=~` or `:~` (bash expands those too), holds a `..` component, is drive-relative (`C:x`) or resolves elsewhere
 (`/etc/passwd`, another absolute path) is outside, and the command goes to the model review. The realpath of the
 nearest existing ancestor must stay inside too, so a symlink cannot lead out. The cwd a classified program runs in
-must be such a place as well (`cd /etc && ls` goes to the model). Outside a git repository there is no
-worktree; only the scratch dir and `/tmp` count.
+must be such a place as well (`cd /etc && ls` goes to the model). `cd` with no operand, an option or `-` (`cd`,
+`cd -P`, `cd --`, `cd -`) or a `~` operand goes to `$HOME` or `$OLDPWD`: the whole command goes to the model. Outside a
+git repository there is no worktree; only the scratch dir and `/tmp` count.
 
-Writes must lie strictly below an allowed place (never the worktree root itself) and never under `.git`. `rm` and `mv`
+Read roots. `safety.permissions.readRoots` (list of dirs, default `[]`) adds places a read may reach: a read inside a
+listed dir is a read too. `~` and `%USERPROFILE%` at the start mean the home dir; an empty, relative or missing entry is
+dropped. Each root is taken by its realpath and the realpath rule above applies, so a symlink inside a root cannot lead
+out. Roots count for reads only: writes, `rm` and the build-test cwd stay in the worktree, scratch dir and `/tmp`. Only
+the user and overlay config may set it; a project or session value is ignored with a warning. pi-foreman is generic and
+must be safe without an overlay; an overlay adds e.g. the folder holding the user's repos.
+
+Writes must lie strictly below an allowed place (never the worktree root itself) and never under `.git`; the `.git`
+check runs on the path as written and again on the realpath of its nearest existing ancestor. On Windows a component
+with a trailing dot or space (`.git.`) or an 8.3 short-name shape (`GIT~1`) counts as `.git`. `rm` and `mv`
 never count `/tmp` (as `tmp-scratch`: `rm -rf /tmp/...` stays reviewed). Allowed flags are fixed per program
-(`cp -rRapfnv`, `rm -rRfdv`, `mkdir -pv`, `touch -acm`, `mv -fnv`, `tee -aip`); any other flag is unknown.
+(`cp -rRapfnv`, `rm -rRfdv`, `mkdir -pv`, `touch -acm`, `mv -fnv`, `tee -aip`); any other flag is unknown. A recursive
+`cp` (`-r`, `-R`, `-a`) copies only from the worktree: it keeps the symlinks of its source tree, and `/tmp` is shared.
 
 Read guards. `find` with `-exec`, `-execdir`, `-ok`, `-delete`, `-fprint*`, `-fls`, `-L`/`-H`/`-follow`; `rg --pre`
-or `--follow`; `grep -R`; `tree -o`; git global options (`git -c`, `git -C`); `git status/log/diff/show` with `-c`,
-`--output`, `--ext-diff` or `--textconv` are unknown. `-n` counts as a dry run only for `git add/clean/mv/rm`:
+or `--follow`; `grep -R`; `diff -r`/`--recursive` (it follows symlinks below its operands); `tree -o`; git global
+options (`git -c`, `git -C`); `git status/log/diff/show` with `-c`, `--output`, `--ext-diff` or `--textconv`; and any
+option that names a program (`rg --hostname-bin`, `--*-command`, `--exec*`) are unknown. `-n`/`--dry-run` counts as a
+dry run only for `git add/clean/mv/rm`, only before `--`, and only without a value-taking option (`-e`/`--exclude`,
+`--chmod`, `--pathspec-from-file`, also abbreviated) that could take it as its value: `git clean -fdx -e -n` deletes.
 `git commit -n` means `--no-verify` and is unknown.
 
 Build-test, from the manifest only (no per-task list):
@@ -54,6 +68,9 @@ Build-test, from the manifest only (no per-task list):
   `pytest`, `python -m pytest`.
 
 A build command that is not in the manifest is left to the permission rules (`safety.permissions.projectCommands`).
+An `npm`, `cargo`, `go` or pytest command with an option that writes where it chooses or names a program goes to the
+model, manifest or not: `-o`, `-exec`, `-toolexec`, `--basetemp`, `--junitxml`, `--target-dir`, `--out-dir`,
+`--manifest-path`, `--prefix`, `--script-shell`, `--config`, `--cache`, profile outputs, pytest `-o`/`-p`, and the like.
 
 ## Chains
 
@@ -66,7 +83,9 @@ command is refused (model review) when it holds `$(`, a backtick or a newline an
 Redirects go only to `/dev/null`, into a scratch dir (`$FOREMAN_SCRATCH` is expanded), or under `/tmp/`; fd dups
 such as `2>&1` are fine. Every segment must then be allowed on its own: a deterministic label below, or a unit the
 permission rules allow when the effect layer does not know the program (`echo`, `pwd`, `git blame`, ...). A `cd`
-moves the cwd the later segments resolve against. A user's `ask` or `deny` pattern that catches the command or any
+moves the cwd the later segments resolve against. A segment that names a path at or below a destination an earlier
+segment wrote (a `cp`/`mv`/`ln`/`install`/`rsync` target, `tee` file or output redirect) goes to the model: the copy may
+have planted a symlink there that the review-time check cannot see (`cp -R /tmp/pkg vendor && cat vendor/link`). A user's `ask` or `deny` pattern that catches the command or any
 segment wins.
 
 Examples that run without a model call: `sed -n '1,40p' f; grep -n x f`, `timeout 900 cargo test -p x | tail -50`,
@@ -100,3 +119,9 @@ guard still decides `git restore`/`git checkout` first (tracked, modified test f
 The splitter and the classes work on the command string; they are not a sandbox. Git config in the repository
 (`diff.external`, a pager) still applies to `git diff`/`git log`. Shell forms are POSIX; on Windows only forward-slash
 paths are recognised, and `/tmp` never counts.
+
+- `npm ci` and a bare `npm install` are build-test: they run the packages' lifecycle scripts and reach the registry.
+- `make -n` is a read, but make still runs `+` recipe lines and `$(shell ...)` while it parses the Makefile.
+- `cd <rel>` is resolved as `./<rel>`; an exported `CDPATH` can send it elsewhere.
+- Paths are checked when the ask is reviewed, not when the command runs: another local user can swap a `/tmp` path
+  for a symlink in between. The `tmp-scratch` allow has the same gap.

@@ -340,7 +340,7 @@ export class ForemanReview {
   /** The effect context and class of a forwarded bash ask's full command (effects.ts), for the allow and the `review` trace. */
   private classOf(s: ReviewSession, d: AskDetails): { ctx: EffectCtx; cls: EffectClass } | null {
     try {
-      const ctx = effectCtx(s.cwd, this.scratchOf(s, d));
+      const ctx = effectCtx(s.cwd, this.scratchOf(s, d), process.platform, get(s.config(), "safety.permissions.readRoots"));
       return { ctx, cls: classify(reviewValue(d), ctx) };
     } catch {
       return null;
