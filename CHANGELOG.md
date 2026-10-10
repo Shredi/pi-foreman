@@ -32,6 +32,9 @@
   false alarms per FAIL item (process items apart), clean-control verdicts, USD and a per-class matrix; resumable,
   `--dry-run`, `review-table` rescores old runs with the current scorer (versioned). Three synthetic sample tasks in
   `bench/review-samples/`; `bin/foreman bench` runs `scripts/foreman_bench.py`.
+- Review bench: scorer v3 credits symptom descriptions per class (e.g. "passes validation", "nothing is logged",
+  "stale", "one tile short", an explicit `x - 1` fix), negation rule unchanged; samples `py-shell-filter` and
+  `py-path-serve` (in-scope shell-injection and path-traversal plants); `docs/bench.md` on in-scope versus add-on plants.
 - `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]`: merges `config/presets/<name>.json` into
   `<agent dir>/foreman.json` (preset wins), validates before writing, keeps `foreman.json.bak-<date>`. With no role or
   review model configured, an interactive top-level session prints one notice naming the presets and this command;
