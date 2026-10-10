@@ -26,6 +26,8 @@ cmd); otherwise it is refused and the
 refusal names the allowed form. Each allowed path leaves a `test_restore` trace line (path in `cmd`) in the child's
 trace. Children are not stopped from committing; after a child commit "vs HEAD" means its changes since that commit.
 
+Git config drift (a changed `.git/config`, hooks, includes) asks before the foreman's next git run; added or removed `branch.<name>.remote` and `branch.<name>.merge` keys (from `worktree add -b`, `push -u`, `checkout -b`) are routine and ignored, a changed value is still reported.
+
 ## Permission baseline and auto-review
 
 The installer generates the permission-system config from `config/permissions.baseline.json` plus

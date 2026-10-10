@@ -407,6 +407,8 @@ function worktreeLabel(lbl: string): { n: string; what: string; quiet: string[] 
   return f[1] === "git-file" ? { n: f[2], what: ".git file", quiet: ["new", "removed"] } : { n: f[2], what: "link", quiet: ["removed"] };
 }
 
+const BRANCH_TRACKING = /^branch\..+\.(remote|merge)$/;
+
 /** What changed between two snapshots, as short lines naming files, keys and hooks (never values). Empty = no drift. */
 export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot | null): string[] {
   if (!before) return [];
@@ -426,10 +428,13 @@ export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot 
     else {
       const ka = a!.keys ?? new Map<string, string>();
       const kb = b!.keys ?? new Map<string, string>();
-      const added = [...kb.keys()].filter((k) => !ka.has(k));
-      const removed = [...ka.keys()].filter((k) => !kb.has(k));
+      // branch.<name>.remote/.merge appear and vanish with `worktree add -b`, `push -u`, `checkout -b`: routine, not drift.
+      const added = [...kb.keys()].filter((k) => !ka.has(k) && !BRANCH_TRACKING.test(k));
+      const removed = [...ka.keys()].filter((k) => !kb.has(k) && !BRANCH_TRACKING.test(k));
       const changed = [...kb.keys()].filter((k) => ka.has(k) && ka.get(k) !== kb.get(k));
       const parts = [listed("added", added), listed("changed", changed), listed("removed", removed)].filter(Boolean);
+      const onlyTracking = !parts.length && [...ka.keys(), ...kb.keys()].some((k) => BRANCH_TRACKING.test(k) && ka.has(k) !== kb.has(k));
+      if (onlyTracking) continue;
       state = parts.length ? parts.join("; ") : "content changed";
     }
     const w = worktreeLabel(lbl);

@@ -139,3 +139,22 @@ test("gate: no snapshot -> no check; drift asks in rpc, denies without UI, re-sn
     { event: "git_config_drift", decision: "approved" },
   ]);
 });
+
+const BR = ["main", "dev", "feat/x.y", "fix"];
+const trackCfg = (names: string[]): string => names.map((n) => `[branch "${n}"]\n\tremote = origin\n\tmerge = refs/heads/${n}\n`).join("");
+
+test("branch tracking keys are routine: added or removed they are no drift, a changed value is", (t) => {
+  const dir = tempRepo(t);
+  const cfg = path.join(dir, ".git", "config");
+  const base = fs.readFileSync(cfg, "utf8");
+  const before = takeGitSnapshot(dir, HOME);
+  fs.writeFileSync(cfg, base + trackCfg(BR));
+  const withKeys = takeGitSnapshot(dir, HOME);
+  assert.deepEqual(diffGitSnapshots(before, withKeys), []);
+  fs.writeFileSync(cfg, base + trackCfg(BR) + "[core]\n\tfsmonitor = x\n");
+  assert.deepEqual(diffGitSnapshots(before, takeGitSnapshot(dir, HOME)), ["git:config: added core.fsmonitor"]);
+  fs.writeFileSync(cfg, base);
+  assert.deepEqual(diffGitSnapshots(withKeys, takeGitSnapshot(dir, HOME)), [], "removal");
+  fs.writeFileSync(cfg, base + trackCfg(BR).replace("refs/heads/main", "refs/heads/evil"));
+  assert.deepEqual(diffGitSnapshots(withKeys, takeGitSnapshot(dir, HOME)), ["git:config: changed branch.main.merge"]);
+});
