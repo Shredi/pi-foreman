@@ -110,10 +110,17 @@ function signalPattern(signal: string): RegExp {
   return new RegExp(`\\b${[...words, inflected].join("[-\\s_]+")}\\b`, "i");
 }
 
-/** heavySignals named in a user prompt (whole words; `public-api` also matches "public api"). */
+/** The prompt names a version/changelog/manifest bump (the only context in which "release" is a risk signal). */
+const BUMP_CONTEXT = /\bchangelog|\bVERSION\b|\bpackage\.json\b|\bCargo\.toml\b|\bpyproject\.toml\b|\.gemspec\b|\.csproj\b|\bbump\w*\b[^.\n]{0,40}\bversion|\bversion\b[^.\n]{0,20}\bbump|\b\d+\.\d+\.\d+\b/i;
+
+/**
+ * heavySignals named in a user prompt (whole words; `public-api` also matches "public api").
+ * A slash command (`/retro ...`, `/sync`) is no task statement and has none. `release` counts only
+ * when the prompt also names a version, changelog or manifest bump.
+ */
 export function promptSignals(prompt: string, signals: unknown): string[] {
-  if (!Array.isArray(signals)) return [];
-  return signals.filter((s): s is string => typeof s === "string" && s.trim() !== "" && signalPattern(s).test(prompt));
+  if (!Array.isArray(signals) || /^\s*\//.test(prompt)) return [];
+  return signals.filter((s): s is string => typeof s === "string" && s.trim() !== "" && signalPattern(s).test(prompt) && (s.trim().toLowerCase() !== "release" || BUMP_CONTEXT.test(prompt)));
 }
 
 /** LEDGER_GUARD_THRESHOLD for the spawn gate, or null to keep the core default. */

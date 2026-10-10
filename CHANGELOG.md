@@ -150,6 +150,13 @@
   models) with claude-agent-sdk 0.3.293.
 
 ### Fixed
+- Reviewer PASS marks: `N. PASS` lines are recognised with decoration (`` `1. PASS` ``, `**1. PASS**`, `1) PASS`,
+  `- 1. PASS`, the doubled "1. `1. PASS`"); `PASSED` in prose, fenced blocks and `10. PASS` for item 1 stay out.
+- Triage: `release` is a heavy signal only when the prompt also names a version, changelog or manifest bump; a slash
+  command prompt (`/retro`, `/sync`) gets no signals or `triage_hint`.
+- Explorer brief: the harness writes the full report to `explorer-brief.md` in a session scratch dir every child may
+  read without an ask; the task keeps the first 8000 characters and, when cut, a `[full brief at <path>]` marker;
+  `explorer_brief` records `action: file|none`.
 - Git drift: git's own worktree bookkeeping (`commondir`, `gitdir` and worktree `.git` files appearing or vanishing
   on `git worktree add/remove`) no longer reports; a worktree whose `commondir` or `.git` file points elsewhere does
   (`worktree-link:<n>`), and all per-worktree changes collapse into one `worktrees: N changed (...)` line.

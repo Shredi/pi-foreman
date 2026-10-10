@@ -13,9 +13,43 @@ export const MARK_NOTE = "verified by reviewer PASS";
 // Same item line as ladder.ts / core/scripts/ledger.py ITEM_RE.
 const ITEM_LINE = /^\s*[-*] \[(.)\]\s+(?:deferred:.*? — )?(\d+|V)\.(?:\s+|$)/;
 
+/** A line without leading decoration: list markers (`-`, `*`), backticks and bold (`**`), in any mix. */
+export function stripLineDecoration(line: string): string {
+  return line.replace(/^(?:\s+|[-*]\s+|`+|\*\*+|__)+/, "");
+}
+
+/**
+ * Item numbers of the review's per-item `N. <word>` lines (word PASS or FAIL), in order, without
+ * repeats. Each line may carry decoration (`- 1. PASS`, `**1. PASS**`, `` `1. PASS` ``, `1) PASS`)
+ * and the doubled bench form "1. `1. PASS`". Lines inside ``` fences and `PASSED` do not count.
+ */
+export function verdictItemsOf(text: string, word: "PASS" | "FAIL"): string[] {
+  const out: string[] = [];
+  let fenced = false;
+  const re = new RegExp(`^${word}\\b`);
+  for (const line of text.split(/\r?\n/)) {
+    if (line.trimStart().startsWith("```")) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
+    let rest = stripLineDecoration(line);
+    let n: string | null = null;
+    // one number, or two (outside and inside the backticks): the inner one counts
+    for (let i = 0; i < 2; i++) {
+      const m = /^(\d+)[.)]\s*/.exec(rest);
+      if (!m) break;
+      n = m[1];
+      rest = stripLineDecoration(rest.slice(m[0].length));
+    }
+    if (n !== null && re.test(rest)) out.push(String(Number(n)));
+  }
+  return [...new Set(out)];
+}
+
 /** Item numbers of the review's per-item `N. PASS` lines, in order, without repeats. */
 export function passItemsOf(text: string): string[] {
-  return [...new Set([...text.matchAll(/^\s*(\d+)\.\s*PASS\b/gm)].map((m) => String(Number(m[1]))))];
+  return verdictItemsOf(text, "PASS");
 }
 
 /** Numbered items that are open (`- [ ]`) in a ledger, outside ``` fences. */

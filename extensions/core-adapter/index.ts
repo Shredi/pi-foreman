@@ -38,7 +38,7 @@ import { ReviewFacts } from "./diffscan.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
-import { boundLaunchId, ChildScratch, finishScratch, launchScratch, SCRATCH_ENV, sweepScratch } from "./childscratch.ts";
+import { boundLaunchId, ChildScratch, finishScratch, launchScratch, SCRATCH_ENV, storeBrief, sweepScratch } from "./childscratch.ts";
 import { GitDriftWatch, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
@@ -865,7 +865,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
           s.ladder.onRunEnd(runEndOf(data));
-          if (!s.isChild) s.brief.onRunEnd(runEndOf(data), s.launchedRoles.get(runId));
+          if (!s.isChild) s.brief.onRunEnd(runEndOf(data), s.launchedRoles.get(runId), (id, text) => storeBrief(s, id, text));
           for (const step of stepsOfRunEnd(data)) s.steps[step]++;
           const verdicts = reviewVerdictsOfRunEnd(data);
           s.reviewGate = onReviewVerdicts(s.reviewGate, verdicts);
