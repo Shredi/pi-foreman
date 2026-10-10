@@ -19,5 +19,6 @@ Return exactly:
 2. Gaps: what you looked for and did not find.
 3. Confidence: high, medium or low, with one sentence of reason.
 4. Missing: <file | allow rule | brief detail | none> — what you lacked for this task, one line.
+5. Friction: <what blocked, retried, or was missing — ≤ 3 lines, or "none">
 
 Keep the whole answer within 40 lines. Quote at most a few lines per finding.

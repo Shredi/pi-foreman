@@ -23,3 +23,4 @@ Return exactly:
 3. Ledger items addressed: item numbers, each marked done or partial.
 4. Open issues: anything unfinished, surprising or out of scope. Write "none" if there is none.
 5. Missing: <file | allow rule | brief detail | none> — what you lacked for this task, one line.
+6. Friction: <what blocked, retried, or was missing — ≤ 3 lines, or "none">
