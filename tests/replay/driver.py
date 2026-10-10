@@ -155,6 +155,14 @@ class Rig:
         # which the default temp dir there exceeds, so intercom rigs use /tmp on POSIX.
         base = "/tmp" if intercom and os.name != "nt" and os.path.isdir("/tmp") else None
         self.root = Path(tempfile.mkdtemp(prefix="pf-replay-%s-" % name, dir=base)).resolve()
+        self.procs = []
+        try:
+            self._setup(script, providers, config, settings, unmapped, project_config, l2_providers, permissions, intercom)
+        except BaseException:
+            self.close()  # same pf-replay- prefix and tmp-root check; the caller's addCleanup is not registered yet
+            raise
+
+    def _setup(self, script, providers, config, settings, unmapped, project_config, l2_providers, permissions, intercom):
         self.agent = self.root / "agent"
         self.project = self.root / "project"
         self.tmp = self.root / "tmp"
@@ -197,7 +205,6 @@ class Rig:
         if project_config is not None:
             (self.project / ".pi").mkdir()
             (self.project / ".pi" / "foreman.json").write_text(json.dumps(project_config, indent=1), "utf-8")
-        self.procs = []
 
     @property
     def state_dir(self):
