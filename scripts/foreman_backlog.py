@@ -45,7 +45,7 @@ sys.path.insert(0, HERE)
 import foreman_config as fc  # noqa: E402
 import safe_ops  # noqa: E402
 
-KINDS = ("agent", "routing", "skill", "rule", "permission", "prompt", "harness-bug")
+KINDS = ("agent", "routing", "skill", "rule", "permission", "prompt", "harness-bug", "review-model")
 STATUSES = ("open", "planned", "done", "expired")
 FIELDS = ("id", "kind", "candidate", "workspace", "first_seen", "last_seen", "count", "sessions", "evidence", "status")
 MAX_SESSIONS = 20

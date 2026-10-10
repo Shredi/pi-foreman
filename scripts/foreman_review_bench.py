@@ -207,6 +207,17 @@ def find_tasks(root):
     return sorted((d for d in r.iterdir() if d.is_dir() and any((d / m).exists() for m in marks)), key=lambda d: d.name)
 
 
+def unconfirmed_harvest(task):
+    """True for a task dir whose harvest.json exists and does not say `"confirmed": true`."""
+    f = Path(task) / "harvest.json"
+    if not f.is_file():
+        return False
+    try:
+        return json.loads(f.read_text("utf-8")).get("confirmed") is not True
+    except (OSError, ValueError, AttributeError):
+        return True
+
+
 # ------------------------------------------------------------------ cells
 
 def model_slug(model):
@@ -996,6 +1007,10 @@ def _safe_stdout():
 def run_args(args):
     _safe_stdout()
     tasks = find_tasks(args.tasks)
+    skipped = [t for t in tasks if unconfirmed_harvest(t)]
+    if skipped:
+        tasks = [t for t in tasks if t not in skipped]
+        print("skipped %d unconfirmed harvested task(s)" % len(skipped))
     if not tasks:
         print("review bench: no task dirs under %s" % args.tasks, file=sys.stderr)
         return 2

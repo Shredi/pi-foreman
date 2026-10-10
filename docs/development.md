@@ -8,7 +8,8 @@
 
 - `extensions/` Pi extensions (TypeScript): `core-adapter/`, `git-guard/`
 - `agents/` role definitions; `instructions/` foreman and reviewer prompts
-- `core/` vendored Python core; `scripts/` own Python (config, guards, retro, sync, bench, update-check)
+- `core/` vendored Python core; `scripts/` own Python (config, guards, retro, sync, bench, update-check); `foreman findings list|dismiss|export` and `foreman retro models` read
+  the reviewer findings store (`scripts/foreman_findings.py`)
 - `config/` defaults, schema, permission baseline, `symbols.json` glyph sets, opt-in `presets/`
 - `integrations/herdr/pi-foreman-sidebar/` Herdr plugin (Python daemon, manifest, rows snippet)
 - `bench/` benchmark presets, prices and Harbor agents; `bin/` the `foreman` and `ledger` wrappers
