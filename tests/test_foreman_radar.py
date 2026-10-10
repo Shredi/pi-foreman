@@ -232,16 +232,16 @@ class RenderTests(Fixture):
         self.three_levels()
         text = "\n".join(self.lines())
         self.assertNotIn("\x1b", text)
-        self.assertIn("\u25cf top", text)
-        self.assertRegex(text, r"\u25d0 api +blocked +\d+s +\u2191600 \u219320 \$0\.25")
+        self.assertIn("\u23f3 top", text)
+        self.assertRegex(text, r"\u270b api +blocked +\d+s +\u2191600 \u219320 \$0\.25")
 
     def test_header_plain(self):
         self.three_levels()
         l1, l2 = self.lines()[:2]
         self.assertTrue(l1.startswith("pi-foreman radar"))
-        self.assertIn("\u25cf 4  \u25d0 2  \u25cc 0  \u25cb 1  \u00d7 0", l1)
+        self.assertIn("\u23f3 4  \u23f8 0  ? 1  \u270b 1  \u2713 1  \u2717 0", l1)
         self.assertTrue(l1.endswith(time.strftime("%H:%M:%S", time.localtime(NOW))))
-        self.assertEqual(len(l1), 80)
+        self.assertEqual(fr.cell_width(l1), 80)
         self.assertNotIn("agent", l1)
         self.assertEqual(l2, "3 sessions \u00b7 1 tree \u00b7 \u21912.1k \u2193175 \u00b7 $1.25 \u00b7 oldest block 12s")
 
@@ -255,10 +255,10 @@ class RenderTests(Fixture):
         self.three_levels()
         l1, l2 = self.lines(color=True)[:2]
         self.assertIn("\x1b[1mpi-foreman radar\x1b[0m", l1)
-        self.assertIn("\x1b[32m\u25cf 4\x1b[0m", l1)
-        self.assertIn("\x1b[33m\u25d0 2\x1b[0m", l1)
-        self.assertIn("\x1b[2m\u25cc 0\x1b[0m", l1)
-        self.assertIn("\x1b[2m\u00d7 0\x1b[0m", l1)
+        self.assertIn("\x1b[32m\u23f3 4\x1b[0m", l1)
+        self.assertIn("\x1b[33m\u270b 1\x1b[0m", l1)
+        self.assertIn("\x1b[2m\u23f8 0\x1b[0m", l1)
+        self.assertIn("\x1b[2m\u2717 0\x1b[0m", l1)
         self.assertEqual(ANSI.sub("", l1), self.lines()[0])
         self.assertIn("\x1b[34m$1.25\x1b[0m", l2)
         self.assertIn("\x1b[33m12s\x1b[0m", l2)
@@ -284,7 +284,7 @@ class RenderTests(Fixture):
     def test_lost_row_dim_with_red_glyph(self):
         self.put_live(live("d", "stale", "fm-d", hb=200))
         row = self.lines(color=True)[3]
-        self.assertIn("\x1b[31m\u00d7\x1b[0m", row)
+        self.assertIn("\x1b[31m\u2717\x1b[0m", row)
         self.assertIn("\x1b[2mstale\x1b[0m", row)
         self.assertIn("\x1b[2mlost     \x1b[0m", row)
 
@@ -292,7 +292,7 @@ class RenderTests(Fixture):
         self.three_levels()
         lines = fr.render(self.snap(), NOW, 80, True, True, 1)
         self.assertTrue(lines[4].startswith("\x1b[7m") and lines[4].endswith("\x1b[0m"))
-        self.assertEqual(len(ANSI.sub("", lines[4])), 80)
+        self.assertEqual(fr.cell_width(ANSI.sub("", lines[4])), 80)
         self.assertFalse(lines[3].startswith("\x1b[7m"))
         self.assertNotIn("\x1b", "\n".join(fr.render(self.snap(), NOW, 80, False, True, 1)))
 
@@ -340,6 +340,83 @@ class RenderTests(Fixture):
         with contextlib.redirect_stdout(out):
             self.assertEqual(fr.main(["--agent-dir", str(self.adir)]), 0)
         self.assertIn("no sessions", out.getvalue())
+
+
+class JsonTests(Fixture):
+    def cli(self, *args, symbols=None):
+        if symbols:
+            self.adir.mkdir(parents=True, exist_ok=True)
+            (self.adir / "foreman.json").write_text(json.dumps({"ui": {"symbols": symbols}}), "utf-8")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), mock.patch.object(fr.time, "time", return_value=NOW):
+            self.assertEqual(fr.main(["--agent-dir", str(self.adir)] + list(args)), 0)
+        return out.getvalue()
+
+    def test_json_shape_nesting_and_fields(self):
+        self.three_levels()
+        top = live("s-pres", "pres", "fm-pres", state="blocked", last=40)
+        top.update(paneId="w1:p2", tokensIn=70, tokensOut=8, cost=0.125, blockedSince=iso(300), pid=4242)
+        self.put_live(top)
+        text = self.cli("--json")
+        self.assertEqual(len(text.splitlines()), 1)
+        d = json.loads(text)
+        self.assertEqual((d["v"], d["now"], d["symbols"]), (1, "2026-10-09T12:00:00Z", "unicode"))
+        pres = next(r for r in d["roots"] if r["key"] == "fm-pres")
+        self.assertEqual((pres["kind"], pres["sym"], pres["glyph"], pres["paneId"], pres["pid"], pres["cwd"]),
+                         ("session", "blocked", "\u270b", "w1:p2", 4242, "/work/x"))
+        self.assertEqual((pres["blocked_s"], pres["age_s"]), (300, 40))
+        self.assertEqual(pres["own"], {"in": 70, "out": 8, "cost": 0.125})
+        top = next(r for r in d["roots"] if r["key"] == "fm-top")
+        self.assertEqual(top["done_children"], 1)
+        self.assertEqual([c["name"] for c in top["children"]], ["builder/strong", "reviewer", "explorer", "docs-fix"])
+        self.assertEqual((top["children"][0]["role"], top["children"][0]["rung"]), ("builder", "strong"))
+        ask = top["children"][1]
+        self.assertEqual((ask["sym"], ask["blocked_s"], ask["paneId"]), ("asking", 12, None))
+        api = top["children"][3]["children"][1]
+        self.assertEqual((api["blocked_s"], api["tot"]), (12, {"in": 600, "out": 20, "cost": 0.25}))
+        self.assertEqual(set(api), {"key", "kind", "name", "role", "rung", "state", "sym", "glyph", "paneId", "pid",
+                                    "cwd", "age_s", "blocked_s", "own", "tot", "done_children", "children"})
+
+    def test_presence_tot_adds_runs_and_subsessions(self):
+        top = live("s-p", "p", "fm-p", runs=[run("L1", "builder", tin=10, tout=5, cost=0.5)])
+        top.update(tokensIn=100, tokensOut=20, cost=1.0)
+        self.put_live(top)
+        self.put_live(live("s-c", "c", "fm-c", parent="fm-p", runs=[run("L2", "builder", tin=1, tout=1, cost=0.25)]))
+        (root,) = json.loads(self.cli("--json"))["roots"]
+        self.assertEqual(root["own"], {"in": 100, "out": 20, "cost": 1.0})
+        self.assertEqual(root["tot"], {"in": 111, "out": 26, "cost": 1.75})
+
+    def test_symbol_sets_from_config_and_no_ansi(self):
+        self.put_live(live("a", "a", "fm-a", runs=[run("L1", "builder")]))
+        uni = self.cli("--json")
+        nerd = self.cli("--json", symbols="nerd")
+        self.assertEqual(json.loads(uni)["roots"][0]["glyph"], "\u23f3")
+        d = json.loads(nerd)
+        self.assertEqual((d["symbols"], d["roots"][0]["glyph"]), ("nerd", "\uf252"))
+        self.assertNotIn("\x1b", uni + nerd)
+        self.assertIn("\uf252", self.cli("--once", symbols="nerd"))
+
+    def test_follow_emits_one_line_per_tick(self):
+        self.put_live(live("a", "a", "fm-a"))
+        import subprocess
+        r = subprocess.run([sys.executable, "-E", "-s", str(SCRIPTS / "foreman_radar.py"), "--json", "--follow",
+                            "--interval", "0", "--max-ticks", "2", "--agent-dir", str(self.adir)],
+                           capture_output=True, timeout=60, check=False)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.decode("utf-8").splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertEqual([json.loads(x)["roots"][0]["key"] for x in lines], ["fm-a", "fm-a"])
+        self.assertNotIn(b"\x1b", r.stdout)
+
+    def test_wide_glyphs_align_columns(self):
+        self.three_levels()
+        self.assertEqual([fr.cell_width(x) for x in ("\u23f3", "\u270b", "?", "a\u0301", "\uf252")], [2, 2, 1, 1, 1])
+        rows = self.lines_plain()[3:]
+        cols = {fr.cell_width(r[:r.index("working" if "working" in r else "ask" if " ask " in r else "done" if "done" in r else "blocked")]) for r in rows}
+        self.assertEqual(len(cols), 1)
+
+    def lines_plain(self):
+        return fr.render(self.snap(), NOW, 80)
 
 
 if __name__ == "__main__":

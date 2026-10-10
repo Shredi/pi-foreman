@@ -24,6 +24,7 @@ import re
 import shutil
 import sys
 import time
+import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -33,7 +34,10 @@ LOST_AFTER = 90.0
 STALE_AFTER = 900.0
 DONE_TTL_MINUTES = 30.0
 STARTING_WINDOW = 120.0
-GLYPHS = {"working": "●", "blocked": "◐", "starting": "◌", "idle": "○", "lost": "×"}
+SYMBOLS_PATH = Path(__file__).resolve().parent.parent / "config" / "symbols.json"
+SYM_ORDER = ("working", "waiting", "asking", "blocked", "done", "lost")
+SYM_COLORS = {"working": "32", "waiting": "90", "asking": "33", "blocked": "33", "done": "90", "lost": "31"}
+FALLBACK_SYMBOLS = {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗"}
 COLORS = {"working": "32", "blocked": "33", "starting": "36", "idle": "90", "lost": "31"}
 ACTIVE = ("working", "blocked", "starting")
 
@@ -144,6 +148,55 @@ def config_done_ttl(adir):
     return DONE_TTL_MINUTES
 
 
+def config_symbols(adir):
+    """ui.symbols of the merged config: "nerd" or "unicode" (default, also for any unknown value or failure)."""
+    try:
+        import foreman_config
+        v = (foreman_config.load_config(agent_dir=str(adir))["config"].get("ui") or {}).get("symbols")
+        if v == "nerd":
+            return "nerd"
+    except Exception:  # noqa: BLE001 - display tool: a broken config must not stop the radar
+        pass
+    return "unicode"
+
+
+def load_symbols(name="unicode"):
+    """State-symbol table of one set from config/symbols.json; the built-in unicode set when unreadable."""
+    d = read_json(SYMBOLS_PATH)
+    table = d.get(name) if isinstance(d, dict) and isinstance(d.get(name), dict) else None
+    if table is None:
+        table = d.get("unicode") if isinstance(d, dict) and isinstance(d.get("unicode"), dict) else {}
+    return {k: table[k] if isinstance(table.get(k), str) else FALLBACK_SYMBOLS[k] for k in SYM_ORDER}
+
+
+def sym_key(n):
+    """Symbol key of a node (working, waiting, asking, blocked, done, lost)."""
+    st = n["state"]
+    if st == "stale":
+        return "waiting"
+    if n["glyph"] == "lost":
+        return "lost"
+    if st in ("working", "starting", "pending"):
+        return "working"
+    if st == "ask":
+        return "asking"
+    if st in ("done", "closed"):
+        return "done"
+    if st == "failed":
+        return "lost"
+    return "blocked" if st == "blocked" else "waiting"
+
+
+def cell_width(text):
+    """Terminal cells of a string: wide and fullwidth characters count 2, combining marks 0."""
+    w = 0
+    for ch in str(text):
+        if unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Me", "Cf"):
+            continue
+        w += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return w
+
+
 def prune_done(path, d, now, ttl_min):
     """Delete one presence file whose state is done and whose last activity is older than the TTL."""
     if d.get("state") != "done":
@@ -202,7 +255,8 @@ def load(adir, cache=None, now=None, done_ttl=None):
 
 def new_node(kind, key, name):
     return {"kind": kind, "key": key, "name": name, "glyph": "idle", "state": "", "last": None, "started": None,
-            "own": [0, 0, 0.0], "children": [], "tot": [0, 0, 0.0], "parent": None, "path": ""}
+            "own": [0, 0, 0.0], "children": [], "tot": [0, 0, 0.0], "parent": None, "path": "",
+            "role": None, "rung": None, "pane": None, "pid": None, "cwd": None, "blockedSince": None}
 
 
 def live_glyph(d, now):
@@ -244,6 +298,10 @@ def build(data, now):
         n["last"] = max(times) if times else parse_ts(d.get("heartbeatAt"))
         n["started"] = parse_ts(d.get("startedAt"))
         n["path"] = next((d[k] for k in ("sessionFile", "cwd", "handoff") if isinstance(d.get(k), str) and d[k]), "")
+        n["pane"] = d["paneId"] if isinstance(d.get("paneId"), str) and d["paneId"] else None
+        n["pid"] = d["pid"] if isinstance(d.get("pid"), int) and not isinstance(d.get("pid"), bool) else None
+        n["cwd"] = d["cwd"] if isinstance(d.get("cwd"), str) and d["cwd"] else None
+        n["blockedSince"] = parse_ts(d.get("blockedSince"))
         n["parent"] = d.get("parentIntercom") if isinstance(d.get("parentIntercom"), str) and d.get("parentIntercom") else n["parent"]
         ho = handoff_by_leaf.get(leaf(d.get("handoff")))
         if ho and not n["parent"] and ho["parent"]:
@@ -256,6 +314,8 @@ def build(data, now):
             rn["name"] = role + ("/" + r["rung"] if isinstance(r.get("rung"), str) and r["rung"] else "")
             rs = r.get("state")
             rn["state"] = rs if isinstance(rs, str) else ""
+            rn["role"] = role
+            rn["rung"] = r["rung"] if isinstance(r.get("rung"), str) and r["rung"] else None
             rn["glyph"] = "blocked" if rs == "ask" else "working" if rs == "working" else "idle"
             if rn["glyph"] != "idle" and n["glyph"] == "lost":
                 rn["glyph"] = "lost"
@@ -264,9 +324,14 @@ def build(data, now):
             rn["own"] = list(ru) if ru else [num(r.get("tokensIn")), num(r.get("tokensOut")), num(r.get("cost"))]
             rn["tot"] = list(rn["own"])
             n["children"].append(rn)
-        n["own"] = list(u["tot"]) if u else [sum(c["own"][0] for c in n["children"]),
-                                              sum(c["own"][1] for c in n["children"]),
-                                              sum(c["own"][2] for c in n["children"])]
+        pres = [d.get("tokensIn"), d.get("tokensOut"), d.get("cost")]
+        if any(isinstance(x, (int, float)) and not isinstance(x, bool) for x in pres):
+            n["own"] = [num(x) for x in pres]
+            n["pres"] = True
+        else:
+            n["own"] = list(u["tot"]) if u else [sum(c["own"][0] for c in n["children"]),
+                                                  sum(c["own"][1] for c in n["children"]),
+                                                  sum(c["own"][2] for c in n["children"])]
         nodes[key] = n
         by_sid[sid] = n
     for e in data["registry"]:
@@ -348,7 +413,7 @@ def finish(n, now, since_h, done_ttl=None):
                   key=lambda c: (rank(c), c["started"] if c["started"] is not None else float("inf")))
     n["children"] = runs + subs
     n["tot"] = [n["own"][0], n["own"][1], n["own"][2]]
-    for c in subs:
+    for c in (runs + subs if n.get("pres") else subs):  # presence totals exclude the runs; usage-file totals include them
         for i in range(3):
             n["tot"][i] += c["tot"][i]
     if n["glyph"] in ACTIVE or subs:
@@ -439,17 +504,18 @@ def node_path(n):
     return n.get("path") or "no path"
 
 
-def render(roots, now, width=80, color=False, show_cost=True, selected=None):
+def render(roots, now, width=80, color=False, show_cost=True, selected=None, symbols=None):
     """Pure: tree -> list of text lines (no clock reads). `selected` = row index shown as an inverted band."""
     table = rows(roots)
-    counts = dict.fromkeys(GLYPHS, 0)
+    symbols = symbols or load_symbols()
+    counts = dict.fromkeys(SYM_ORDER, 0)
     for _, n in table:
-        counts[n["glyph"]] += 1
+        counts[sym_key(n)] += 1
     stamp = time.strftime("%H:%M:%S", time.localtime(now))
-    left_plain = "pi-foreman radar" + " " * 22 + "  ".join("%s %d" % (GLYPHS[g], counts[g]) for g in GLYPHS)
+    left_plain = "pi-foreman radar" + " " * 22 + "  ".join("%s %d" % (symbols[g], counts[g]) for g in SYM_ORDER)
     left = sgr("1", "pi-foreman radar", color) + " " * 22 + "  ".join(
-        sgr(COLORS[g] if counts[g] else "2", "%s %d" % (GLYPHS[g], counts[g]), color) for g in GLYPHS)
-    head = left + " " * max(2, width - len(left_plain) - len(stamp)) + sgr("2", stamp, color)
+        sgr(SYM_COLORS[g] if counts[g] else "2", "%s %d" % (symbols[g], counts[g]), color) for g in SYM_ORDER)
+    head = left + " " * max(2, width - cell_width(left_plain) - len(stamp)) + sgr("2", stamp, color)
     nsess = sum(1 for _, n in table if n["kind"] == "session")
     tin = sum(r["tot"][0] for r in roots)
     tout = sum(r["tot"][1] for r in roots)
@@ -465,17 +531,19 @@ def render(roots, now, width=80, color=False, show_cost=True, selected=None):
         line2 += d(" · oldest block ") + sgr("33", fmt_age(max(ages)), color)
     if not table:
         return [head, line2, "", "no sessions"]
-    pw = max(len(p) + 2 + len(n["name"]) for p, n in table)
+    gw = max(cell_width(symbols[sym_key(n)]) for _, n in table)
+    pw = max(cell_width(p) + 2 + cell_width(n["name"]) for p, n in table)
     lines = [head, line2, ""]
     for i, (prefix, n) in enumerate(table):
         lost = n["glyph"] == "lost"
-        pad = " " * (pw - len(prefix) - 2 - len(n["name"]))
+        pad = " " * (pw - cell_width(prefix) - 2 - cell_width(n["name"]))
         name = n["name"]
         m = re.search(r"[0-9a-f]{8}$", name)
         name_c = name if lost or not m or m.start() == 0 else name[:m.start()] + d(m.group(0))
         if lost:
             name_c = d(name)
-        glyph_c = sgr(COLORS[n["glyph"]], GLYPHS[n["glyph"]], color)
+        sym = symbols[sym_key(n)]
+        glyph_c = sgr(COLORS[n["glyph"]], sym, color) + " " * (gw - cell_width(sym))
         sc = COLORS[n["glyph"]] if n["glyph"] in ("working", "blocked") else "2"
         state_c = sgr(sc, "%-9s" % n["state"], color)
         if lost:
@@ -499,7 +567,7 @@ def render(roots, now, width=80, color=False, show_cost=True, selected=None):
         if not color:
             row = row.rstrip()
         if color and i == selected:
-            vis = len(prefix) + 1 + 1 + len(name) + len(pad) + 2 + 9 + 1 + 4 + (2 + len(re.sub(r"\x1b\[[0-9;]*m", "", usage)) if usage else 0)
+            vis = cell_width(prefix) + gw + 1 + cell_width(name) + len(pad) + 2 + 9 + 1 + 4 + (2 + cell_width(re.sub(r"\x1b\[[0-9;]*m", "", usage)) if usage else 0)
             row = "\x1b[7m" + row.replace("\x1b[0m", "\x1b[0m\x1b[7m") + " " * max(0, width - vis) + "\x1b[0m"
         lines.append(row)
     return lines
@@ -524,7 +592,52 @@ def read_key(seconds, state):
     return os.read(sys.stdin.fileno(), 8).decode("utf-8", "replace") if ready else ""
 
 
-def loop(adir, interval, since_h, color, done_ttl=None):
+def to_json_node(n, now, symbols):
+    key = sym_key(n)
+    age = None if n["last"] is None else max(0, int(now - n["last"]))
+    blocked = None
+    if n["state"] == "blocked":
+        since = n["blockedSince"]
+        blocked = max(0, int(now - since)) if since is not None else age
+    elif n["state"] == "ask":
+        blocked = age
+    kids = [to_json_node(c, now, symbols) for c in n["children"]]
+    cost = lambda t: {"in": int(t[0]), "out": int(t[1]), "cost": round(float(t[2]), 4)}  # noqa: E731
+    return {"key": n["key"], "kind": n["kind"], "name": n["name"], "role": n["role"], "rung": n["rung"],
+            "state": n["state"], "sym": key, "glyph": symbols[key], "paneId": n["pane"], "pid": n["pid"],
+            "cwd": n["cwd"], "age_s": age, "blocked_s": blocked, "own": cost(n["own"]), "tot": cost(n["tot"]),
+            "done_children": sum(1 for c in n["children"] if c["state"] == "done"), "children": kids}
+
+
+def json_line(roots, now, sym_name, symbols):
+    stamp = datetime.datetime.fromtimestamp(now, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return json.dumps({"v": 1, "now": stamp, "symbols": sym_name,
+                       "roots": [to_json_node(r, now, symbols) for r in roots]}, separators=(",", ":"))
+
+
+def follow(adir, interval, since_h, done_ttl, sym_name, symbols, max_ticks=None):
+    """One JSON line per refresh, flushed; quiet exit 0 on a closed pipe or Ctrl-C. No TTY handling."""
+    cache = UsageCache()
+    tick = 0
+    try:
+        while max_ticks is None or tick < max_ticks:
+            now = time.time()
+            print(json_line(snapshot(adir, now, since_h, cache, done_ttl), now, sym_name, symbols))
+            sys.stdout.flush()
+            tick += 1
+            if max_ticks is None or tick < max_ticks:
+                time.sleep(max(0.0, interval))
+    except KeyboardInterrupt:
+        pass
+    except BrokenPipeError:
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except (OSError, ValueError):
+            pass
+    return 0
+
+
+def loop(adir, interval, since_h, color, done_ttl=None, symbols=None):
     if sys.platform == "win32":
         os.system("")  # enable VT escape processing in the console
     state = {"tty": False}
@@ -543,7 +656,7 @@ def loop(adir, interval, since_h, color, done_ttl=None):
         table = rows(ui["roots"])
         ui["sel"] = max(0, min(ui["sel"], len(table) - 1))
         width = shutil.get_terminal_size((80, 24)).columns
-        lines = render(ui["roots"], ui["now"], width, color, ui["cost"], ui["sel"] if table else None)
+        lines = render(ui["roots"], ui["now"], width, color, ui["cost"], ui["sel"] if table else None, symbols)
         out = "\n".join(lines) + "\n\n" + render_footer(color) + "\n" + ui["status"] + "\n"
         sys.stdout.write("\x1b[H\x1b[2J" + out)
         sys.stdout.flush()
@@ -588,6 +701,10 @@ def main(argv=None):
     ap.add_argument("--done-ttl", type=float, metavar="MINUTES",
                     help="hide done sessions (and delete their presence files) after this many minutes; default radar.doneTtlMinutes")
     ap.add_argument("--no-color", action="store_true")
+    ap.add_argument("--json", action="store_true", help="print one JSON snapshot line and exit")
+    ap.add_argument("--follow", action="store_true", help="print one JSON line per --interval until interrupted")
+    ap.add_argument("--symbols", choices=("unicode", "nerd"), help="state symbol set; default ui.symbols")
+    ap.add_argument("--max-ticks", type=int, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     for stream in (sys.stdout,):
         try:
@@ -596,13 +713,21 @@ def main(argv=None):
             pass
     adir = agent_dir(a.agent_dir)
     ttl = a.done_ttl if a.done_ttl is not None else config_done_ttl(adir)
+    sym_name = a.symbols or config_symbols(adir)
+    symbols = load_symbols(sym_name)
+    if a.follow:
+        return follow(adir, a.interval, a.since, ttl, sym_name, symbols, a.max_ticks)
+    if a.json:
+        now = time.time()
+        print(json_line(snapshot(adir, now, a.since, None, ttl), now, sym_name, symbols))
+        return 0
     if a.once or not sys.stdout.isatty():
         now = time.time()
         width = shutil.get_terminal_size((80, 24)).columns
-        print("\n".join(render(snapshot(adir, now, a.since, None, ttl), now, width) + ["", render_footer()]))
+        print("\n".join(render(snapshot(adir, now, a.since, None, ttl), now, width, symbols=symbols) + ["", render_footer()]))
         return 0
     color = not a.no_color and not os.environ.get("NO_COLOR")
-    return loop(adir, max(0.5, a.interval), a.since, color, ttl)
+    return loop(adir, max(0.5, a.interval), a.since, color, ttl, symbols)
 
 
 if __name__ == "__main__":
