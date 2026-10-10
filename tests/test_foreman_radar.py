@@ -94,10 +94,10 @@ class TreeTests(Fixture):
         (top,) = self.snap()
         docs = top["children"][3]
         api = docs["children"][1]
-        self.assertEqual(api["tot"], [600, 20, 0.25])  # input + cacheRead + cacheWrite, output, cost.total
-        self.assertEqual(top["own"], [1500, 150, 0.5])
-        self.assertEqual(docs["tot"], [610, 25, 0.75])  # live-file run values stand in without a usage file
-        self.assertEqual(top["tot"], [2110, 175, 1.25])
+        self.assertEqual(api["tot"], [600, 20, 0.25, 300])  # in = input + cacheRead + cacheWrite, out, cost, uncached
+        self.assertEqual(top["own"], [1500, 150, 0.5, 1500])
+        self.assertEqual(docs["tot"], [610, 25, 0.75, None])  # live-file run values stand in; uncached unknown
+        self.assertEqual(top["tot"], [2110, 175, 1.25, None])
 
     def test_glyphs(self):
         self.put_live(live("a", "working", "fm-a"))
@@ -365,7 +365,7 @@ class JsonTests(Fixture):
         self.assertEqual((pres["kind"], pres["sym"], pres["glyph"], pres["paneId"], pres["pid"], pres["cwd"]),
                          ("session", "blocked", "\u270b", "w1:p2", 4242, "/work/x"))
         self.assertEqual((pres["blocked_s"], pres["age_s"]), (300, 40))
-        self.assertEqual(pres["own"], {"in": 70, "out": 8, "cost": 0.125})
+        self.assertEqual(pres["own"], {"in": 70, "out": 8, "cost": 0.125, "uncached": None})
         top = next(r for r in d["roots"] if r["key"] == "fm-top")
         self.assertEqual(top["done_children"], 1)
         self.assertEqual([c["name"] for c in top["children"]], ["builder/strong", "reviewer", "explorer", "docs-fix"])
@@ -373,9 +373,9 @@ class JsonTests(Fixture):
         ask = top["children"][1]
         self.assertEqual((ask["sym"], ask["blocked_s"], ask["paneId"]), ("asking", 12, None))
         api = top["children"][3]["children"][1]
-        self.assertEqual((api["blocked_s"], api["tot"]), (12, {"in": 600, "out": 20, "cost": 0.25}))
+        self.assertEqual((api["blocked_s"], api["tot"]), (12, {"in": 600, "out": 20, "cost": 0.25, "uncached": 300}))
         self.assertEqual(set(api), {"key", "kind", "name", "role", "rung", "state", "sym", "glyph", "paneId", "pid",
-                                    "cwd", "age_s", "blocked_s", "own", "tot", "done_children", "children"})
+                                    "cwd", "age_s", "blocked_s", "own", "tot", "done_children", "children", "sid"})
 
     def test_presence_tot_adds_runs_and_subsessions(self):
         top = live("s-p", "p", "fm-p", runs=[run("L1", "builder", tin=10, tout=5, cost=0.5)])
@@ -383,8 +383,43 @@ class JsonTests(Fixture):
         self.put_live(top)
         self.put_live(live("s-c", "c", "fm-c", parent="fm-p", runs=[run("L2", "builder", tin=1, tout=1, cost=0.25)]))
         (root,) = json.loads(self.cli("--json"))["roots"]
-        self.assertEqual(root["own"], {"in": 100, "out": 20, "cost": 1.0})
-        self.assertEqual(root["tot"], {"in": 111, "out": 26, "cost": 1.75})
+        self.assertEqual(root["own"], {"in": 100, "out": 20, "cost": 1.0, "uncached": None})
+        self.assertEqual(root["tot"], {"in": 111, "out": 26, "cost": 1.75, "uncached": None})
+
+    def test_uncached_from_usage_file_next_to_presence_totals(self):
+        top = live("s-p", "p", "fm-p", runs=[run("L1", "builder", tin=10, tout=5, cost=0.5)])
+        top.update(tokensIn=9000, tokensOut=20, cost=1.0)
+        self.put_live(top)
+        self.put_usage("s-p", [use(None, 100, 10, 0.5, cacheRead=8000, cacheWrite=50),
+                               use("L1", 7, 5, 0.5, cacheRead=900, cacheWrite=3)])
+        (root,) = json.loads(self.cli("--json"))["roots"]
+        self.assertEqual(root["own"]["uncached"], 150)       # fresh input + cache writes, runs excluded
+        self.assertEqual(root["tot"]["uncached"], 160)       # every call in the usage file
+        self.assertEqual(root["children"][0]["tot"]["uncached"], 10)
+        self.assertEqual(root["tot"]["in"], 9000 + 910)      # the raw total stays as before
+
+    def test_run_end_and_recent_seconds_header(self):
+        done = run("L1", "builder", "done")
+        done["endedAt"] = iso(5)
+        self.put_live(live("a", "a", "fm-a", runs=[done, run("L2", "explorer")]))
+        d = json.loads(self.cli("--json"))
+        self.assertEqual(d["recentRunSeconds"], 8)
+        self.assertEqual([c["ended_s"] for c in d["roots"][0]["children"]], [5, None])
+        self.assertEqual(d["roots"][0]["sid"], "a")
+        (self.adir / "foreman.json").write_text(json.dumps({"radar": {"recentRunSeconds": 3}}), "utf-8")
+        self.assertEqual(json.loads(self.cli("--json"))["recentRunSeconds"], 3)
+
+    def test_only_builds_one_subtree_and_reads_its_usage(self):
+        self.three_levels()
+        self.put_live(live("s-other", "other", "fm-other"))
+        reads = []
+        cache = fr.UsageCache()
+        orig = cache.read
+        cache.read = lambda path: reads.append(Path(path).name) or orig(path)
+        (docs,) = fr.snapshot(self.adir, NOW, 24.0, cache, only="s-docs")
+        self.assertEqual((docs["key"], [c["name"] for c in docs["children"]]), ("fm-docs", ["builder", "api"]))
+        self.assertEqual(sorted(reads), ["s-api.jsonl", "s-docs.jsonl"])
+        self.assertEqual(fr.snapshot(self.adir, NOW, 24.0, only="missing"), [])
 
     def test_symbol_sets_from_config_and_no_ansi(self):
         self.put_live(live("a", "a", "fm-a", runs=[run("L1", "builder")]))

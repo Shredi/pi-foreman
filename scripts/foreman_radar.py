@@ -33,6 +33,7 @@ from foreman_session import agent_dir  # noqa: E402
 LOST_AFTER = 90.0
 STALE_AFTER = 900.0
 DONE_TTL_MINUTES = 30.0
+RECENT_RUN_SECONDS = 8
 STARTING_WINDOW = 120.0
 SYMBOLS_PATH = Path(__file__).resolve().parent.parent / "config" / "symbols.json"
 SYM_ORDER = ("working", "waiting", "asking", "blocked", "done", "lost")
@@ -93,21 +94,24 @@ def mtime(path):
 
 
 class UsageCache:
-    """Per usage file: byte offset and running totals, so a refresh reads only appended lines."""
+    """Per usage file: byte offset and running totals, so a refresh reads only appended lines.
+    Totals are [in, out, cost, uncached]: in counts fresh input + cache reads + cache writes, uncached only
+    fresh input + cache writes (the tokens that cost more than a cache read)."""
 
-    def __init__(self):
-        self.files = {}
+    def __init__(self, files=None):
+        self.files = files if isinstance(files, dict) else {}
 
     def read(self, path):
         key = str(path)
         st = self.files.get(key)
         try:
-            size = Path(path).stat().st_size
+            info = Path(path).stat()
         except OSError:
             self.files.pop(key, None)
             return None
-        if st is None or size < st["offset"]:
-            st = {"offset": 0, "tot": [0, 0, 0.0], "runs": {}}
+        size, ino = info.st_size, info.st_ino
+        if not isinstance(st, dict) or size < st.get("offset", 0) or st.get("ino", ino) != ino:
+            st = {"offset": 0, "tot": [0, 0, 0.0, 0], "runs": {}, "ino": ino}
             self.files[key] = st
         if size > st["offset"]:
             try:
@@ -128,10 +132,12 @@ class UsageCache:
                 cost = num(cost.get("total")) if isinstance(cost, dict) else 0
                 tin = num(row.get("input")) + num(row.get("cacheRead")) + num(row.get("cacheWrite"))
                 tout = num(row.get("output"))
-                for tot in (st["tot"], st["runs"].setdefault(str(row.get("launchId")), [0, 0, 0.0])):
+                unc = num(row.get("input")) + num(row.get("cacheWrite"))
+                for tot in (st["tot"], st["runs"].setdefault(str(row.get("launchId")), [0, 0, 0.0, 0])):
                     tot[0] += tin
                     tot[1] += tout
                     tot[2] += cost
+                    tot[3] += unc
             st["offset"] += end
         return st
 
@@ -146,6 +152,18 @@ def config_done_ttl(adir):
     except Exception:  # noqa: BLE001 - display tool: a broken config must not stop the radar
         pass
     return DONE_TTL_MINUTES
+
+
+def config_recent_runs(adir):
+    """radar.recentRunSeconds of the merged config; the default on any failure."""
+    try:
+        import foreman_config
+        v = (foreman_config.load_config(agent_dir=str(adir))["config"].get("radar") or {}).get("recentRunSeconds")
+        if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+            return v
+    except Exception:  # noqa: BLE001 - display tool: a broken config must not stop the radar
+        pass
+    return RECENT_RUN_SECONDS
 
 
 def config_symbols(adir):
@@ -212,9 +230,10 @@ def prune_done(path, d, now, ttl_min):
     return True
 
 
-def load(adir, cache=None, now=None, done_ttl=None):
+def load(adir, cache=None, now=None, done_ttl=None, only=None):
     """Read every source into plain data. No clock, no printing; with now and done_ttl (minutes) it also deletes
-    the presence files of sessions that finished longer ago than the TTL."""
+    the presence files of sessions that finished longer ago than the TTL. With `only` (a session id) usage and
+    trace files are read only for that session's subtree."""
     base = Path(adir) / "pi-foreman"
     cache = cache if cache is not None else UsageCache()
     live, usage, trace = [], {}, {}
@@ -233,10 +252,6 @@ def load(adir, cache=None, now=None, done_ttl=None):
         sid = d.get("sessionId") if isinstance(d.get("sessionId"), str) and d.get("sessionId") else name[:-5]
         d["sessionId"] = sid
         live.append(d)
-        u = cache.read(base / "state" / "usage" / (sid + ".jsonl"))
-        if u:
-            usage[sid] = u
-        trace[sid] = mtime(base / "state" / ("trace-" + sid + ".jsonl"))
     reg = read_json(base / "state" / "sessions.json")
     reg = [s for s in (reg.get("sessions") if isinstance(reg, dict) else None) or [] if isinstance(s, dict)]
     handoffs = {}
@@ -250,13 +265,52 @@ def load(adir, cache=None, now=None, done_ttl=None):
             continue
         handoffs[dn] = {"parent": read_line(p / "parent"), "child": read_line(p / "child"), "mtime": mtime(p),
                         "has": [f for f in ("result.md", "plan.md", "brief.md") if (p / f).exists()]}
-    return {"live": live, "registry": reg, "handoffs": handoffs, "usage": usage, "trace": trace}
+    data = {"live": live, "registry": reg, "handoffs": handoffs, "usage": usage, "trace": trace}
+    keep = None if only is None else subtree_sids(data, only)
+    for d in live:
+        sid = d["sessionId"]
+        if keep is not None and sid not in keep:
+            continue
+        u = cache.read(base / "state" / "usage" / (sid + ".jsonl"))
+        if u:
+            usage[sid] = u
+        trace[sid] = mtime(base / "state" / ("trace-" + sid + ".jsonl"))
+    return data
+
+
+def find_sid(roots, sid):
+    for n in roots:
+        if n.get("sid") == sid:
+            return n
+        hit = find_sid([c for c in n["children"] if c["kind"] == "session"], sid)
+        if hit is not None:
+            return hit
+    return None
+
+
+def subtree_sids(data, sid):
+    """Session ids of the subtree rooted at session `sid` (tree built without usage files)."""
+    root = find_sid(build(dict(data, usage={}, trace={}), time.time()), sid)
+    out = set()
+
+    def visit(n):
+        if n.get("sid"):
+            out.add(n["sid"])
+        for c in n["children"]:
+            if c["kind"] == "session":
+                visit(c)
+
+    if root is not None:
+        visit(root)
+    return out
 
 
 def new_node(kind, key, name):
+    # own/tot: [in, out, cost, uncached]; uncached None = unknown (no usage file with the cache split)
     return {"kind": kind, "key": key, "name": name, "glyph": "idle", "state": "", "last": None, "started": None,
-            "own": [0, 0, 0.0], "children": [], "tot": [0, 0, 0.0], "parent": None, "path": "",
-            "role": None, "rung": None, "pane": None, "pid": None, "cwd": None, "blockedSince": None}
+            "own": [0, 0, 0.0, 0], "children": [], "tot": [0, 0, 0.0, 0], "parent": None, "path": "",
+            "role": None, "rung": None, "pane": None, "pid": None, "cwd": None, "blockedSince": None,
+            "sid": None, "ended": None, "unc_self": 0}
 
 
 def live_glyph(d, now):
@@ -293,6 +347,7 @@ def build(data, now):
         cwd_name = base_name(d["cwd"]) + " " if isinstance(d.get("cwd"), str) and d.get("cwd") else ""
         n["name"] = (d.get("label") if isinstance(d.get("label"), str) and d.get("label") else "") or n["name"] or cwd_name + sid[:8]
         n["glyph"], n["state"] = live_glyph(d, now)
+        n["sid"] = sid
         times = [parse_ts(d.get("lastEventAt")), data["trace"].get(sid)]
         times = [t for t in times if t is not None]
         n["last"] = max(times) if times else parse_ts(d.get("heartbeatAt"))
@@ -320,18 +375,25 @@ def build(data, now):
             if rn["glyph"] != "idle" and n["glyph"] == "lost":
                 rn["glyph"] = "lost"
             rn["last"], rn["path"] = n["last"], n["path"]
+            rn["ended"] = parse_ts(r.get("endedAt"))
             ru = (u or {}).get("runs", {}).get(str(r.get("launchId")))
-            rn["own"] = list(ru) if ru else [num(r.get("tokensIn")), num(r.get("tokensOut")), num(r.get("cost"))]
+            rn["own"] = list(ru) if ru else [num(r.get("tokensIn")), num(r.get("tokensOut")), num(r.get("cost")), None]
             rn["tot"] = list(rn["own"])
             n["children"].append(rn)
         pres = [d.get("tokensIn"), d.get("tokensOut"), d.get("cost")]
+        # uncached: the presence file has no cache split, so it always comes from the usage file, which holds
+        # every call of the session and its runs
+        n["unc_self"] = u["tot"][3] if u else None
         if any(isinstance(x, (int, float)) and not isinstance(x, bool) for x in pres):
-            n["own"] = [num(x) for x in pres]
+            own_unc = None
+            if u:
+                own_unc = u["tot"][3] - sum(c["own"][3] for c in n["children"] if c["own"][3] is not None)
+            n["own"] = [num(x) for x in pres] + [own_unc]
             n["pres"] = True
         else:
             n["own"] = list(u["tot"]) if u else [sum(c["own"][0] for c in n["children"]),
                                                   sum(c["own"][1] for c in n["children"]),
-                                                  sum(c["own"][2] for c in n["children"])]
+                                                  sum(c["own"][2] for c in n["children"]), None]
         nodes[key] = n
         by_sid[sid] = n
     for e in data["registry"]:
@@ -412,10 +474,12 @@ def finish(n, now, since_h, done_ttl=None):
     subs = sorted([c for c in kids if c["kind"] == "session"],
                   key=lambda c: (rank(c), c["started"] if c["started"] is not None else float("inf")))
     n["children"] = runs + subs
-    n["tot"] = [n["own"][0], n["own"][1], n["own"][2]]
+    n["tot"] = [n["own"][0], n["own"][1], n["own"][2], n["own"][3] if n["kind"] == "run" else n["unc_self"]]
     for c in (runs + subs if n.get("pres") else subs):  # presence totals exclude the runs; usage-file totals include them
         for i in range(3):
             n["tot"][i] += c["tot"][i]
+    for c in subs:  # unc_self already holds the runs (usage file)
+        n["tot"][3] = None if n["tot"][3] is None or c["tot"][3] is None else n["tot"][3] + c["tot"][3]
     if n["glyph"] in ACTIVE or subs:
         return True
     if done_ttl is not None and n["state"] == "done" and n["last"] is not None and now - n["last"] > done_ttl * 60:
@@ -423,8 +487,12 @@ def finish(n, now, since_h, done_ttl=None):
     return n["last"] is None or now - n["last"] <= since_h * 3600
 
 
-def snapshot(adir, now, since_h=24.0, cache=None, done_ttl=None):
-    roots = build(load(adir, cache, now, done_ttl), now)
+def snapshot(adir, now, since_h=24.0, cache=None, done_ttl=None, only=None):
+    """Roots of the session tree; with `only` (a session id) just that session's subtree as the one root."""
+    roots = build(load(adir, cache, now, done_ttl, only), now)
+    if only is not None:
+        hit = find_sid(roots, only)
+        roots = [hit] if hit is not None else []
     roots = [r for r in roots if finish(r, now, since_h, done_ttl)]
     roots.sort(key=lambda c: (rank(c), c["started"] if c["started"] is not None else float("inf")))
     return roots
@@ -556,7 +624,7 @@ def render(roots, now, width=80, color=False, show_cost=True, selected=None, sym
         age_c = sgr(ac, "%4s" % age, color)
         if lost:
             age_c = d("%4s" % age)
-        tin, tout, cost = n["tot"]
+        tin, tout, cost = n["tot"][:3]
         if tin or tout or cost:
             tok = d("↑%s ↓%s" % (fmt_tok(tin), fmt_tok(tout)))
             usage = tok + (" " + sgr("34", "$%.2f" % cost, color) if show_cost else "")
@@ -602,27 +670,37 @@ def to_json_node(n, now, symbols):
     elif n["state"] == "ask":
         blocked = age
     kids = [to_json_node(c, now, symbols) for c in n["children"]]
-    cost = lambda t: {"in": int(t[0]), "out": int(t[1]), "cost": round(float(t[2]), 4)}  # noqa: E731
-    return {"key": n["key"], "kind": n["kind"], "name": n["name"], "role": n["role"], "rung": n["rung"],
+    cost = lambda t: {"in": int(t[0]), "out": int(t[1]), "cost": round(float(t[2]), 4),  # noqa: E731
+                      "uncached": None if t[3] is None else int(t[3])}
+    out = {"key": n["key"], "kind": n["kind"], "name": n["name"], "role": n["role"], "rung": n["rung"],
             "state": n["state"], "sym": key, "glyph": symbols[key], "paneId": n["pane"], "pid": n["pid"],
             "cwd": n["cwd"], "age_s": age, "blocked_s": blocked, "own": cost(n["own"]), "tot": cost(n["tot"]),
             "done_children": sum(1 for c in n["children"] if c["state"] == "done"), "children": kids}
+    if n["kind"] == "session":
+        out["sid"] = n["sid"]
+    else:
+        out["ended_s"] = None if n["ended"] is None else max(0, int(now - n["ended"]))
+    return out
 
 
-def json_line(roots, now, sym_name, symbols):
+def json_doc(roots, now, sym_name, symbols, recent=RECENT_RUN_SECONDS):
     stamp = datetime.datetime.fromtimestamp(now, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return json.dumps({"v": 1, "now": stamp, "symbols": sym_name,
-                       "roots": [to_json_node(r, now, symbols) for r in roots]}, separators=(",", ":"))
+    return {"v": 1, "now": stamp, "symbols": sym_name, "recentRunSeconds": recent,
+            "roots": [to_json_node(r, now, symbols) for r in roots]}
 
 
-def follow(adir, interval, since_h, done_ttl, sym_name, symbols, max_ticks=None):
+def json_line(roots, now, sym_name, symbols, recent=RECENT_RUN_SECONDS):
+    return json.dumps(json_doc(roots, now, sym_name, symbols, recent), separators=(",", ":"))
+
+
+def follow(adir, interval, since_h, done_ttl, sym_name, symbols, max_ticks=None, recent=RECENT_RUN_SECONDS):
     """One JSON line per refresh, flushed; quiet exit 0 on a closed pipe or Ctrl-C. No TTY handling."""
     cache = UsageCache()
     tick = 0
     try:
         while max_ticks is None or tick < max_ticks:
             now = time.time()
-            print(json_line(snapshot(adir, now, since_h, cache, done_ttl), now, sym_name, symbols))
+            print(json_line(snapshot(adir, now, since_h, cache, done_ttl), now, sym_name, symbols, recent))
             sys.stdout.flush()
             tick += 1
             if max_ticks is None or tick < max_ticks:
@@ -715,11 +793,13 @@ def main(argv=None):
     ttl = a.done_ttl if a.done_ttl is not None else config_done_ttl(adir)
     sym_name = a.symbols or config_symbols(adir)
     symbols = load_symbols(sym_name)
+    if a.follow or a.json:
+        recent = config_recent_runs(adir)
     if a.follow:
-        return follow(adir, a.interval, a.since, ttl, sym_name, symbols, a.max_ticks)
+        return follow(adir, a.interval, a.since, ttl, sym_name, symbols, a.max_ticks, recent)
     if a.json:
         now = time.time()
-        print(json_line(snapshot(adir, now, a.since, None, ttl), now, sym_name, symbols))
+        print(json_line(snapshot(adir, now, a.since, None, ttl), now, sym_name, symbols, recent))
         return 0
     if a.once or not sys.stdout.isatty():
         now = time.time()
