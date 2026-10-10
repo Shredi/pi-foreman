@@ -1,34 +1,16 @@
-# Review climb, occasions, panel and findings
+# Review: occasions, model rule, panel and findings
 
-> Covers how the reviewer escalates (`ladder.reviewerClimb` modes), the four review occasions, the different-model
-> rule, plan review, the shadow-model panel, the findings store with `foreman findings` and `foreman retro models`,
-> and what stays on the machine. Read it when you tune reviewer cost against catch rate (base triggers: [ladder](ladder.md)).
+> Covers the four review occasions, the different-model rule, plan review, per-occasion overrides
+> (`ceremony.reviewByOccasion`), the shadow-model panel, the findings store with `foreman findings` and
+> `foreman retro models`. Read it when you tune reviewer cost against catch rate (base triggers: [ladder](ladder.md)).
 
-## Climb modes
+## Reviewer escalation
 
-`ladder.reviewerClimb` applies to `reviewer` launches the foreman passed no model for; `senior-reviewer` never climbs.
-Only user or overlay config can set it.
-
-| Key | Default | Meaning |
-|---|---|---|
-| `ladder.reviewerClimb.enabled` | `false` | Master switch (both `claude-bridge` presets turn it on). |
-| `ladder.reviewerClimb.mode` | `repeat-fail` | `repeat-fail`: the second FAIL of one item goes one rung up, plus the security rung. `on-find`: per-item climb below. |
-| `ladder.reviewerClimb.rungs` | `[]` | Reviewer models of the on-find climb, bottom first (`<provider>/<model>[:<level>]`). Empty means `[roles.reviewer, roles.reviewer.strong]`. |
-| `ladder.reviewerClimb.securityRung` | unset | Model for a security-shaped diff (see [ladder](ladder.md)). |
-
-**On-find.** Each ledger item has its own climb. A reviewer verdict on the item moves it one rung up when it is a FAIL,
-or a PASS whose report still locates a defect (a bullet naming a changed file with a line or a class word). A clean
-PASS ends the climb; a finding on the top rung ends it too.
-
-| Trace | Fields | When |
-|---|---|---|
-| `rung_up` | `role, from, to, reason: on_find, item` | An item moved up a rung. |
-| `climb_done` | `role, rungs, reason: clean\|exhausted, item` | The item's climb ended; `rungs` = reviews it took. |
-
-The next reviewer launch starts on the highest rung any item with an open climb has reached, else on rung 0. A
-climb is per item and starts over for the next one, and it clears when the bound ledger changes. A security-shaped
-diff still launches on the security rung and the repeated-FAIL rule still applies, but above rung 0 the on-find rung
-wins over the repeated-FAIL rung (one rung up at most). Only reviews that count (below) feed the climb.
+A `reviewer` launch the foreman passed no model for runs on `roles.reviewer`. `ladder.reviewerClimb` (user or overlay
+config only; `enabled` defaults to `false`, both `claude-bridge` presets turn it on) adds two triggers: the second FAIL
+of one ledger item sends the next launch to `roles.reviewer.strong` (`rung_up` reason `review_fail_repeat`), and a
+security-shaped diff sends it to `ladder.reviewerClimb.securityRung` (reason `security`; see [ladder](ladder.md)).
+`senior-reviewer` never climbs. There is no climb on a finding: see [Why one reviewer](#why-one-reviewer).
 
 ## Review occasions
 
@@ -42,18 +24,17 @@ is read from a marker in the reviewer's task text.
 | `pre-pr` | `[pre-pr]` | The whole branch diff before a PR | yes |
 | `second-opinion` | `[second-opinion]` | Advice on unchanged work (also exempt from `ceremony.reviewPerRevision`) | no |
 
-"Counts" means the verdict marks items, satisfies the review gate and PR gate, feeds the repeated-FAIL and on-find
-climbs. A plan review, a second opinion and every panel shadow are recorded as findings only and never block.
+"Counts" means the verdict marks items, satisfies the review gate and PR gate, feeds the repeated-FAIL rule. A plan review, a second opinion and every panel shadow are recorded as findings only and never block.
 `[second-opinion]` wins over `[plan-review]`, which wins over `[pre-pr]`.
 
 ## Different-model rule
 
 A review by the model that built the work is weak evidence. On every `reviewer` launch, when the resolved model is the
-foreman's own (base ids, the thinking level ignored), the harness moves it to the next climb rung that differs, else
+foreman's own (base ids, the thinking level ignored), the harness moves it to the next rung that differs, else
 to `ceremony.reviewModel` (default `null`, user or overlay config only). Trace `review_model {role, from, to, reason:
 same_as_foreman}` (+ `policy_override` when the rank policy would refuse the pick). With no differing rung and no
 `reviewModel` the launch proceeds unchanged and the trace says `reason: no_alternative`. The rule applies whether or
-not the climb is enabled.
+not the repeat-fail climb is enabled.
 
 ## Plan review
 
@@ -64,7 +45,27 @@ starts a new lineage. The first FAIL of a lineage refuses once with `plan_revisi
 before the owner sees it; once the revised plan (new bytes) has a verdict, the checkpoint opens whatever it says. The
 owner's dialog shows `Plan review: PASS|FAIL (reviewer <model>)` and up to 8 located findings (`file:line class note`).
 Trace `plan_review {model, decision}`. The foreman's instructions carry the plan-review step only while it is on
-(`<!--planReview=on-->` variant). Plan review uses the model rule and the climb like any other occasion.
+(`<!--planReview=on-->` variant). Plan review uses the model rule like any other occasion.
+
+## Per-occasion overrides
+
+`ceremony.reviewByOccasion` sets the thinking level and/or model of a `reviewer` launch per occasion. User or overlay
+config only (a project layer's value is dropped with a warning). Default `{}`: no override.
+
+| Key | Values | Meaning |
+|---|---|---|
+| `ceremony.reviewByOccasion.<occasion>.thinking` | `low`, `medium`, `high` | Thinking level of the launch. |
+| `ceremony.reviewByOccasion.<occasion>.model` | `<provider>/<model>[:<level>]` | Model of the launch. |
+
+`<occasion>` is `item`, `plan-review`, `pre-pr` or `second-opinion`, so the keys are
+`ceremony.reviewByOccasion.item.thinking`, `ceremony.reviewByOccasion.item.model`,
+`ceremony.reviewByOccasion.plan-review.thinking`, `ceremony.reviewByOccasion.plan-review.model`,
+`ceremony.reviewByOccasion.pre-pr.thinking`, `ceremony.reviewByOccasion.pre-pr.model`,
+`ceremony.reviewByOccasion.second-opinion.thinking` and `ceremony.reviewByOccasion.second-opinion.model`; any other key is an unknown-key warning. The
+override applies after the role map and before the different-model rule, so an overridden model takes part in that
+rule. The thinking level is clamped by `maxThinking` and `childMaxThinking`. A model chosen by the repeat-fail or
+security climb wins over an occasion model; the thinking override still applies. Trace `review_occasion {occasion,
+thinking, model_overridden}`.
 
 ## Review panel
 
@@ -102,7 +103,8 @@ and traces nothing). It extracts the located defects of the report against the c
 | `finding` | `id, file, line, class, note` (note cut to 120 characters) |
 | `dismiss` | `id, reason, session, ts` |
 
-`source` is `live` for the primary, `panel` for a shadow, `bench` for bench runs. A finding `id` is 12 hex characters of
+`source` is `live` for the primary, `panel` for a shadow, `bench` for bench runs. `rung` is `1` when the reviewer was raised to the strong rung by the repeat-fail rule or the security rung, else `0`.
+A finding `id` is 12 hex characters of
 a SHA-1 over file, `line // 5` and class, so a re-report of the same spot by the same model is one finding. The
 `finding` trace event carries `findingId, model, gate, class, file` (basename only), `line, primary`.
 
@@ -154,26 +156,32 @@ Everything stays on the machine. The trace carries a finding's file as a basenam
 code. Repo-relative paths and 120-character notes live only in the local findings store; `export` writes only into a
 directory you name. Nothing is sent anywhere.
 
+## Why one reviewer
+
+The runtime launches one reviewer per review. A climb from a cheap reviewer to a strong one on every finding was
+measured offline and not kept; the numbers are in [bench](bench.md#review-bench).
+
 ## Example overlay
 
-Cheap model first, strong model above it, a second vendor's model as a silent shadow before a PR, and a fallback for
-when the foreman runs on the cheap model:
+A second vendor's model as a silent shadow before a PR, a fallback for when the foreman runs on the cheap model, and a
+higher thinking level for the pre-PR review:
 
 ```json
 {
   "ladder": {
-    "reviewerClimb": {
-      "enabled": true,
-      "mode": "on-find",
-      "rungs": ["<provider>/<cheap-model>:medium", "<provider>/<strong-model>:high"]
-    },
+    "reviewerClimb": { "enabled": true },
     "reviewPanel": {
       "shadows": ["<other-provider>/<other-model>"],
       "gates": ["pre-pr"],
       "visible": true
     }
   },
-  "ceremony": { "reviewModel": "<provider>/<strong-model>" },
+  "ceremony": {
+    "reviewModel": "<provider>/<strong-model>",
+    "reviewByOccasion": { "pre-pr": { "thinking": "high" } }
+  },
   "retro": { "panelThreshold": 3 }
 }
 ```
+
+An occasion can name a model too: `"reviewByOccasion": {"plan-review": {"model": "<model-id>"}}`.
