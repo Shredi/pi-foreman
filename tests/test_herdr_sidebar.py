@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -19,8 +20,8 @@ except ImportError:  # Python < 3.11
 
 SYMS = {
     "unicode": {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗"},
-    "nerd": {"working": "", "waiting": "", "asking": "", "blocked": "",
-             "done": "", "lost": ""},
+    "nerd": {"working": "\uf252", "waiting": "\uf04c", "asking": "\uf128", "blocked": "\uf256",
+             "done": "\uf00c", "lost": "\uf00d"},
 }
 
 
@@ -98,11 +99,32 @@ class ComposeTest(unittest.TestCase):
         self.assertEqual(out["w2:p1"]["fm_l2"], "done · 1 child")
         self.assertEqual(out["w2:p1"]["fm_state"], "done")
         nerd = sidebar.compose(snapshot("nerd"), 34)
-        self.assertEqual(nerd["w1:p3"]["fm_sym"], "!")
+        self.assertEqual(nerd["w1:p3"]["fm_sym"], "\uf256!")
+
+    def test_pane_collision_keeps_live_youngest(self):
+        g = SYMS["unicode"]
+        snap = snapshot()
+        snap["roots"][0]["children"].append(
+            node("old1", "session", "old-a", "done", "done", g, pane="w1:p2", age=5))
+        snap["roots"].append(node("old2", "session", "old-b", "done", "done", g, pane="w1:p2", age=9))
+        snap["roots"].append(node("s5", "session", "older-live", "working", "working", g,
+                                  pane="w1:p2", age=500))
+        out = sidebar.compose(snap, 34)
+        self.assertIn("fix-parser", out["w1:p2"]["fm_l1"])   # live s2 (age 12) wins
+        self.assertEqual([out[p]["fm_sort"] for p in ("w1:p1", "w1:p3", "w2:p1")],
+                         ["r001", "r001.c002", "r002"])
+        self.assertNotIn("old-a", out["w1:p1"]["fm_l2"])
+        snap["roots"][0]["children"][3]["state"] = "done"  # s2 done -> live s5 wins
+        self.assertIn("older-live", sidebar.compose(snap, 34)["w1:p2"]["fm_l1"])
+
+    def test_done_without_children(self):
+        g = SYMS["unicode"]
+        snap = {"roots": [node("d", "session", "d", "done", "done", g, pane="w1:p1")]}
+        self.assertEqual(sidebar.compose(snap, 34)["w1:p1"]["fm_l2"], "done")
 
     def test_wide_glyph_width(self):
         self.assertEqual(sidebar.cell_width("⏳ ab"), 5)
-        self.assertEqual(sidebar.cell_width(""), 1)
+        self.assertEqual(sidebar.cell_width("\uf252"), 1)
 
 
 class JoinTest(unittest.TestCase):
@@ -143,6 +165,11 @@ class DecisionTest(unittest.TestCase):
         self.assertIsNone(sidebar.view_decision(True, 1))
         self.assertIsNone(sidebar.view_decision(False, 0))
 
+    def test_view_retry_throttle(self):
+        self.assertTrue(sidebar.view_retry_due(None, 5.0))
+        self.assertFalse(sidebar.view_retry_due(100.0, 159.0))
+        self.assertTrue(sidebar.view_retry_due(100.0, 160.0))
+
     def test_width_precedence(self):
         tmp = tempfile.mkdtemp()
         try:
@@ -179,6 +206,11 @@ class SnippetTest(unittest.TestCase):
                 self.assertLessEqual(len(rules), 16)
                 for r in rules:
                     self.assertTrue(r["equals"].rstrip("!") in glyphs, r)
+        sym_file = ROOT / "config" / "symbols.json"
+        if sym_file.is_file():
+            with open(sym_file, encoding="utf-8") as fh:
+                shared = json.load(fh)
+            self.assertEqual(shared, SYMS)
         sym_rules = rows[0][1]["rules"]
         self.assertEqual({r["equals"] for r in sym_rules if not r["equals"].endswith("!")}, glyphs)
         with open(PLUGIN / "herdr-plugin.toml", "rb") as fh:

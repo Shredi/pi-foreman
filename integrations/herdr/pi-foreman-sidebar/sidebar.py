@@ -44,6 +44,7 @@ BLANK = "⠀"
 KEYS = ("fm_pre", "fm_sym", "fm_l1", "fm_l2", "fm_l3", "fm_cost",
         "fm_state", "fm_block_s", "fm_sort")
 SOCKET_FAILURES_MAX = 40
+VIEW_RETRY_S = 60
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -148,6 +149,8 @@ def _children_text(node, joins):
     if state == "lost":
         return "lost"
     if state == "done":
+        if not kids:
+            return "done"
         return "done · %d child%s" % (len(kids), "" if len(kids) == 1 else "ren")
     groups = []
     counts = {}
@@ -178,6 +181,7 @@ def compose(snapshot, width, joins=None):
         for n in walk(snapshot.get("roots") or []):
             if n.get("paneId"):
                 joins[n["key"]] = n["paneId"]
+    roots, joins = dedupe_panes(snapshot.get("roots") or [], joins)
     width = int(width)
     out = {}
 
@@ -233,8 +237,35 @@ def compose(snapshot, width, joins=None):
             emit(n, sort, pre, cont)
             walk_rows(n.get("children") or [], sort, child_cont, depth + 1)
 
-    walk_rows(snapshot.get("roots") or [], "", "", 0)
+    walk_rows(roots, "", "", 0)
     return out
+
+
+def _rank(node):
+    """Live before done/lost, then the youngest."""
+    age = node.get("age_s")
+    return (node.get("state") in ("done", "lost"), float("inf") if age is None else age)
+
+
+def dedupe_panes(roots, joins):
+    """Keep exactly one session per pane (sessions restarted in one pane leave
+    several presence files with its paneId). Losers are pruned from the tree:
+    no row, no children text. Returns (pruned roots, joins of the winners)."""
+    by_pane = {}
+    for n in walk(roots):
+        pane = joins.get(n.get("key"))
+        if n.get("kind") == "session" and pane:
+            by_pane.setdefault(pane, []).append(n)
+    dropped = set()
+    for nodes in by_pane.values():
+        best = min(nodes, key=_rank)
+        dropped.update(n["key"] for n in nodes if n is not best)
+
+    def prune(nodes):
+        return [dict(n, children=prune(n.get("children") or []))
+                for n in nodes if n.get("key") not in dropped]
+
+    return prune(roots), {k: v for k, v in joins.items() if k not in dropped}
 
 
 def walk(nodes):
@@ -291,6 +322,11 @@ def join(nodes, agents, procinfo=None):
 def clears(prev, now):
     """Null patches for panes published before and absent now."""
     return {pane: {k: None for k in KEYS} for pane in prev if pane not in now}
+
+
+def view_retry_due(failed_at, now, every=None):
+    """After a failed view call, try again only once `every` seconds passed."""
+    return failed_at is None or now - failed_at >= (VIEW_RETRY_S if every is None else every)
 
 
 def view_decision(prev_active, joined_count):
@@ -492,6 +528,8 @@ class Publisher:
         self.published = {}
         self.view_active = False
         self.failures = 0
+        self.view_failed_at = None
+        self.view_errors = set()
 
     def width(self):
         return read_width(self.args, os.environ, os.path.join(herdr_config_dir(), "config.toml"))
@@ -518,6 +556,9 @@ class Publisher:
     def view(self, action):
         if self.args.no_view or action is None:
             return
+        now = time.monotonic()
+        if not view_retry_due(self.view_failed_at, now):
+            return
         try:
             if action == "set":
                 self._call("agent.view.set", {"source": SOURCE, "label": "pi-foreman", "sort": [
@@ -528,8 +569,13 @@ class Publisher:
                 self._call("agent.view.clear", {"source": SOURCE})
                 self.view_active = False
         except HerdrError as exc:
-            log("view %s failed: %s" % (action, exc))
+            self.view_failed_at = now
+            msg = "view %s failed: %s" % (action, exc)
+            if msg not in self.view_errors:
+                self.view_errors.add(msg)
+                log(msg + " (retrying at most every %ds)" % VIEW_RETRY_S)
             return
+        self.view_failed_at = None
         self._persist()
 
     def reapply_view(self):
