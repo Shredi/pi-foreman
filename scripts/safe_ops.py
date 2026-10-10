@@ -414,12 +414,12 @@ def resolve_base(cwd, configured):
     raise Precondition("base_branch_unknown", "no origin HEAD, main or master; set safety.ops.baseBranch")
 
 
-def op_worktree_remove(req):
-    cwd = req.get("cwd")
-    args = req.get("args") if isinstance(req.get("args"), dict) else {}
-    cfg = ops_config(req.get("config"))
+def check_worktree(cwd, raw, cfg):
+    """Every worktree_remove precondition for `raw` (relative to `cwd`); raises Precondition.
+
+    `cfg` is an ops_config() result. Returns {target, main_dir, branch, head} for remove_worktree.
+    """
     workspace_root(cwd)
-    raw = args.get("path")
     if not isinstance(raw, str) or not raw.strip() or "\0" in raw:
         raise Precondition("bad_request", "path must be a non-empty path")
     target = os.path.realpath(os.path.join(cwd, raw))
@@ -473,7 +473,12 @@ def op_worktree_remove(req):
             names = re.match(r"^(?:WIP on|On) (.+?):", subject)
             if (branch and names and names.group(1) == branch) or (parents and parents[0] == head):
                 raise Precondition("stash_references_branch", "a stash entry references this worktree's branch")
+    return {"target": target, "main_dir": main_dir, "branch": branch, "head": head}
 
+
+def remove_worktree(chk):
+    """`git worktree remove` (never --force) and `branch -d` (never -D) after check_worktree."""
+    target, main_dir, branch = chk["target"], chk["main_dir"], chk["branch"]
     git(["worktree", "remove", target], main_dir, check=True)  # never --force
     result = {"action": "worktree_remove", "path": target, "branch": branch, "branchDeleted": False}
     if branch:
@@ -482,6 +487,11 @@ def op_worktree_remove(req):
         if code != 0:
             result["branchMessage"] = err.strip()
     return result
+
+
+def op_worktree_remove(req):
+    args = req.get("args") if isinstance(req.get("args"), dict) else {}
+    return remove_worktree(check_worktree(req.get("cwd"), args.get("path"), ops_config(req.get("config"))))
 
 
 OPS = {"move": op_move, "copy": op_copy, "worktree_remove": op_worktree_remove}
