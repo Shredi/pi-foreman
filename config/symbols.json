@@ -1,0 +1,4 @@
+{
+  "unicode": {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗"},
+  "nerd":    {"working": "\uf252", "waiting": "\uf04c", "asking": "\uf128", "blocked": "\uf256", "done": "\uf00c", "lost": "\uf00d"}
+}
