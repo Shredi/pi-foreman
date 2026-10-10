@@ -141,8 +141,8 @@ When the session's working directory is the package root or inside it (symlinks 
 Windows and macOS), the baseline's `protect.writeAsk` entries for `{pkgRoot}` and `{pkgRoot}/*` are replaced by
 `protect.writeAskSelfHost`: only `config/permissions*.json`, `config/foreman.defaults.json` and `package.json`
 under the package root still ask in the main session and are denied to children. Other writes in the checkout (docs,
-extensions, tests, scripts) pass. Every other protect list is unchanged (`.git`, agent dir, `.pi`, handoffs), as is
-the child ban on naming the package root in a shell. The session writes a `protect_selfhost` trace event and a top
+extensions, tests, scripts) pass. The child ban on naming a protected path in a shell narrows the same way, to these
+three paths. Every other protect list is unchanged (`.git`, agent dir, `.pi`, handoffs). The session writes a `protect_selfhost` trace event and a top
 session shows one notice: "pi-foreman: dev checkout: package-root write protection narrowed".
 
 ## Known limits
