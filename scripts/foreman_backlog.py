@@ -407,9 +407,32 @@ def gather(stores):
     return out
 
 
-def find(ctx, eid):
+class Ambiguous(Exception):
+    pass
+
+
+def find(ctx, eid, key=None):
+    """Entry by id: the workspace's stores first, else any store if exactly one holds the id."""
+    hits = [e for e in gather(workspace_stores(ctx, key)) if e["id"] == eid]
+    if hits:
+        return hits[0]
     hits = [e for e in gather(all_stores(ctx)) if e["id"] == eid]
+    if len(hits) > 1:
+        raise Ambiguous(sorted({e.get("workspace") or "?" for e in hits}))
     return hits[0] if hits else None
+
+
+def resolve(ctx, args):
+    try:
+        e = find(ctx, args.id, getattr(args, "workspace", None))
+    except Ambiguous as a:
+        print("backlog id %s exists in several workspaces (%s); pass --workspace KEY" % (args.id, ", ".join(a.args[0])),
+              file=sys.stderr)
+        return None, 2
+    if e is None:
+        print("no backlog entry %s" % args.id, file=sys.stderr)
+        return None, 1
+    return e, 0
 
 
 def public(e):
@@ -442,10 +465,9 @@ def cmd_list(ctx, args):
 
 
 def cmd_show(ctx, args):
-    e = find(ctx, args.id)
+    e, rc = resolve(ctx, args)
     if e is None:
-        print("no backlog entry %s" % args.id, file=sys.stderr)
-        return 1
+        return rc
     if args.json:
         print(json.dumps(public(e), indent=2))
     else:
@@ -499,10 +521,9 @@ def _store_key(path, entries):
 
 
 def cmd_mark(ctx, args):
-    e = find(ctx, args.id)
+    e, rc = resolve(ctx, args)
     if e is None:
-        print("no backlog entry %s" % args.id, file=sys.stderr)
-        return 1
+        return rc
     path = e["_store"]
     with locked(path):
         entries = load(path)
@@ -524,10 +545,9 @@ def _merge(into, e):
 
 
 def cmd_move(ctx, args):
-    e = find(ctx, args.id)
+    e, rc = resolve(ctx, args)
     if e is None:
-        print("no backlog entry %s" % args.id, file=sys.stderr)
-        return 1
+        return rc
     if args.to == "repo":
         target, tkey = repo_store(ctx["root"]), ctx["key"]
     else:
@@ -644,13 +664,16 @@ def build_parser():
     s.add_argument("--status", choices=STATUSES + ("all",))
     s = sub.add_parser("show")
     s.add_argument("id")
+    s.add_argument("--workspace")
     s = sub.add_parser("expire")
     s.add_argument("--now")
     s = sub.add_parser("mark")
     s.add_argument("id")
+    s.add_argument("--workspace")
     s.add_argument("status", choices=("planned", "done", "open"))
     s = sub.add_parser("move")
     s.add_argument("id")
+    s.add_argument("--workspace")
     s.add_argument("--to", choices=("repo", "central"), required=True)
     s = sub.add_parser("brief")
     s.add_argument("--workspace")

@@ -347,6 +347,8 @@ def usage_metrics(records, sid, rates=None):
 def session_metrics(records):
     tools = collections.Counter()
     fams = collections.Counter()
+    reads = collections.Counter()
+    nreads = 0
     for r in records:
         msg = r.get("message") if r.get("type") == "message" else None
         if not isinstance(msg, dict) or msg.get("role") != "assistant" or not isinstance(msg.get("content"), list):
@@ -358,8 +360,15 @@ def session_metrics(records):
                 args = b.get("arguments")
                 if name in ("bash", "powershell") and isinstance(args, dict) and isinstance(args.get("command"), str):
                     fams[bash_family(args["command"])] += 1
+                elif name == "read":
+                    nreads += 1
+                    f = args.get("path") or args.get("file_path") if isinstance(args, dict) else None
+                    if isinstance(f, str) and f.strip():
+                        reads[f.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]] += 1
     return {"top_tools": dict(tools.most_common(10)),
-            "repeated_bash_families": {k: v for k, v in fams.most_common(6) if v >= 3}}
+            "repeated_bash_families": {k: v for k, v in fams.most_common(6) if v >= 3},
+            "read_calls": nreads,
+            "repeated_reads": {k: v for k, v in reads.most_common(6) if v >= 3}}
 
 
 def session_id_of(records):
@@ -456,6 +465,7 @@ DEFAULT_ASK_THRESHOLD = 2
 OUTLIER_FACTOR = 2
 OUTLIER_MIN_RUNS = 3
 REPEAT_MIN = 3
+BULK_READS = 50
 
 
 def _tag(value, default="session"):
@@ -549,6 +559,15 @@ def candidates(report, trace_events, usage_lines, session_tools, ask_threshold=D
         if big:
             out.append({"kind": "routing", "candidate": "%s run cost over %dx the role median" % (role, OUTLIER_FACTOR),
                         "evidence": "%d of %d run(s); worst %.1fx the median" % (len(big), len(vals), max(big) / med)})
+
+    # bulk reads: the same file read repeatedly, or very many read calls in one session
+    st = session_tools or {}
+    for base, n in sorted((st.get("repeated_reads") or {}).items()):
+        if n >= REPEAT_MIN:
+            out.append({"kind": "agent", "candidate": "repeated reads of %s" % base, "evidence": "read %d times in one session" % n})
+    if num(st.get("read_calls")) >= BULK_READS:
+        out.append({"kind": "agent", "candidate": "bulk reads: >=%d read calls in one session" % BULK_READS,
+                    "evidence": "%d read calls" % st["read_calls"]})
 
     # repeated bash families and permission proposals
     proposals = report.get("proposals") or []

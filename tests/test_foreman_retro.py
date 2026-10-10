@@ -259,6 +259,18 @@ class RetroTest(unittest.TestCase):
         self.assertEqual(got["allow bash pattern git fetch *"], "permission")
         self.assertEqual(got["denied permission asks were later approved for the same command family"], "permission")
 
+    def test_bulk_read_candidates_from_session(self):
+        def call(path):
+            return {"type": "toolCall", "name": "read", "arguments": {"path": path}}
+        calls = [call("/a/b/big.py")] * 3 + [call("C:\\x\\other.py")] + [call("/f%d.txt" % i) for i in range(46)]
+        sess = [{"type": "message", "message": {"role": "assistant", "content": calls}}]
+        m = fr.session_metrics(sess)
+        self.assertEqual((m["read_calls"], m["repeated_reads"]), (50, {"big.py": 3}))
+        got = {c["candidate"]: (c["kind"], c["evidence"]) for c in fr.candidates({}, [], [], m)}
+        self.assertEqual(got["repeated reads of big.py"][0], "agent")
+        self.assertEqual(got["bulk reads: >=50 read calls in one session"], ("agent", "50 read calls"))
+        self.assertEqual(fr.candidates({}, [], [], fr.session_metrics(sess[:0])), [])
+
     def test_selftest(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):

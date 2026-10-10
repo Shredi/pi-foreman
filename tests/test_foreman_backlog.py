@@ -193,6 +193,18 @@ class BacklogTest(unittest.TestCase):
         self.assertEqual(json.loads(self.cli("--json", "list", "--status", "done")), [])
         self.cli("show", "000000000000", code=1)
 
+    def test_find_prefers_workspace_then_unique_elsewhere(self):
+        [(eid, _)] = self.rec([cand()], key="ws-a")
+        self.rec([cand()], key="ws-b")
+        self.rec([cand(text="only in a")], key="ws-a")
+        self.cli("mark", eid, "done", "--workspace", "ws-b")
+        rows = json.loads(self.cli("list", "--all", "--status", "all", "--json"))
+        self.assertEqual({r["workspace"]: r["status"] for r in rows if r["id"] == eid}, {"ws-a": "open", "ws-b": "done"})
+        self.cli("show", eid, code=2)
+        self.cli("mark", eid, "planned", code=2)
+        uid = [r["id"] for r in rows if r["candidate"] == "only in a"][0]
+        self.assertIn("only in a", self.cli("show", uid, "--workspace", "ws-c"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,7 +10,7 @@ Retro (`/retro`, `foreman retro`, and the retro step of `/sync`) reads local fil
 
 - the trace (`trace.enabled`, see [safety](safety.md)): allowlisted events such as asks, denials, rung changes and `friction`;
 - the usage file the footer and `/foreman cost` use (tokens and list-price cost per request and role);
-- the Pi session JSONL (tool calls, for repeated bash families and bulk reads).
+- the Pi session JSONL (tool calls, for repeated bash families, repeated reads and bulk reads).
 
 It calls no model unless you run `/retro --model <id>`. Nothing here depends on a model provider: cost comes
 from usage records and the Pi model registry rates, whichever provider logged them.
@@ -35,8 +35,9 @@ Retro files a candidate for these classes, from these inputs:
 - permission proposals (`permission`; the allow rules `/retro` suggests);
 - `Friction:` lines from role reports (kind from the event; trace `friction`).
 
-Bulk reads (many files read one by one) are not emitted: neither the trace nor the session file carries per-call file
-lists today, so there is no signal. The command family behind an ask is not available either (the `ask` event carries
+Two read rules come from the session file's `read` tool calls (kind `agent`, basenames only): the same file read at
+least 3 times (`repeated reads of <basename>`, the count as evidence), and 50 or more read calls in one session
+(`bulk reads: >=50 read calls in one session`, the count as evidence). The command family behind an ask is not available either (the `ask` event carries
 the tool family, not the command), so ask candidates name tool families only.
 
 Candidate and evidence text name roles and families, never run ids, times or paths; any path-like token is cut to its
@@ -50,7 +51,8 @@ When the foreman's retro is on, a child traces too. A single-launch child (the `
 trace even in `json` and `print` mode when its `trace.enabled` is null; an explicit `false` wins. A bound child writes
 `trace-<launchId>.jsonl`, and every record it writes carries `role` and `runId` (the launch id) unless the event sets
 its own. `/retro` and `/sync` read the foreman trace plus each child trace of this session's launches;
-`foreman_retro.py` and `foreman_sync.py` take `--trace` more than once for this. Launches through `tasks` or `chain`
+`foreman_retro.py` and `foreman_sync.py` take `--trace` more than once for this. Child traces are found for launches
+since the foreman process started. Launches through `tasks` or `chain`
 have no binding, so their children are not covered.
 
 ## The `Friction:` line and event
@@ -155,7 +157,11 @@ rule) is that session's decision.
 ## Switches
 
 - `retro.enabled`: `null` (default) is on in `tui` and `rpc` sessions and off in `json` and `print` mode; an explicit
-  `true` or `false` wins. Off means no backlog writes.
+  `true` or `false` wins. Off means no backlog writes. The tui/rpc versus headless default is decided by the extension,
+  which passes `--no-backlog`; running `foreman retro` from a shell writes the backlog unless you give `--no-backlog`
+  or `retro.enabled` is false.
+- A bench row that opts into the existing `post_steps: ["retro"]` model digest runs it by design; its cost is booked
+  separately as `retro_usd`, not as this round's retro.
 - `trace.enabled`: `null` (default) follows the effective `retro.enabled`, so a session that retros also traces.
   An explicit `true` or `false` wins; `false` turns the trace off even when retro is on.
 - `/retro --model` is refused when retro is off or the session is not interactive.
