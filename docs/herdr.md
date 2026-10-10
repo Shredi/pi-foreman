@@ -68,8 +68,8 @@ agents keep your default rows. Herdr allows one rows table per key: if you alrea
 `[ui.sidebar.agents.rows_by_agent]`, add the `pi = [...]` entry to it. Disable other plugins that set the Agents view
 or ship row templates for `pi`; two owners of the view replace each other's sort.
 
-Colour rules test only the cell's own value, so the state colour sits on the glyph cell: one `equals` rule per glyph of
-both symbol sets. A nested session's tree prefix (`├─`, `└─`) starts its `fm_l1`, so the glyph cell holds the glyph
+Colour rules test only the cell's own value, so the state colour sits on the glyph cell: one `equals` rule per state glyph of
+both symbol sets, and the cell's own `fg` (the working colour) for anything no rule matches, such as the spinner frames. A nested session's tree prefix (`├─`, `└─`) starts its `fm_l1`, so the glyph cell holds the glyph
 alone. A session blocked for more than 15 minutes gets a `!` after its glyph (`✋!`), which the first rule (`contains = "!"`)
 colours red; the `!` also reads without colour. The colours in the snippet are placeholders.
 

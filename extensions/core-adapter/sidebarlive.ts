@@ -102,6 +102,7 @@ export class SidebarLive {
   private run(): void {
     this.lastStart = Date.now();
     this.inflight = true;
+    this.pending = false;
     try {
       this.d.flush();
     } catch {

@@ -77,7 +77,7 @@ SESSION_KEYS = tuple(k for k in KEYS if k != "fm_sort")
 # and its session is not in one of these radar states.
 STAMP_FRESH_S = TTL_MS / 1000.0
 NOT_SELF_STATES = ("lost", "stale", "done")
-SID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
+SID_RE = re.compile(r"^[A-Za-z0-9._-]{1,200}$")  # no ":" (an NTFS stream on Windows)
 # Minimum line-1 label when the age is kept: "›…".
 L1_MIN_LABEL = 2
 SOCKET_FAILURES_MAX = 40

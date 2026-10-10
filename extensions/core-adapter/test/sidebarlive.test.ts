@@ -65,6 +65,18 @@ test("a burst of 10 events: one push now, one trailing, never two in flight", as
   s.stop();
 });
 
+test("a push slower than the gap: one trailing push, then quiet", async () => {
+  const { s, pushes, st } = rig();
+  st.delay = 150;
+  s.request();
+  await sleep(20);
+  s.request();
+  await sleep(700);
+  assert.equal(pushes.length, 2);
+  assert.equal(st.maxInflight, 1);
+  s.stop();
+});
+
 test("shutdown pushes --final (not --clear) after marking the presence done, and stops later pushes", async () => {
   const { s, pushes, order } = rig();
   s.request();
