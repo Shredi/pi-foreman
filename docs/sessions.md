@@ -143,17 +143,17 @@ orchestrators and their children) and every session's subagent runs. It only dis
 session, and it works without Herdr.
 
 ```
-pi-foreman radar                      ● 4  ◐ 2  ◌ 1  ○ 1  × 0           14:00:00
+pi-foreman radar                ⏳ 5  ⏸ 0  ? 1  ✋ 1  ✓ 1  ✗ 0    14:00:00
 6 sessions · 1 tree · ↑2.1k ↓175 · $1.25 · oldest block 12s
 
-● top                  working    12s  ↑2.1k ↓175 $1.25
-├─ ● builder/strong    working    12s  ↑1.0k ↓100 $0.25
-├─ ◐ reviewer          ask        12s  ↑500 ↓50 $0.25
-├─ ○ explorer          done       12s
-├─ ● docs-fix          working    12s  ↑610 ↓25 $0.75
-│  ├─ ● builder        working    12s  ↑10 ↓5 $0.50
-│  └─ ◐ api            blocked    12s  ↑600 ↓20 $0.25
-└─ ◌ tests             starting   40s
+⏳ top                  working    12s  ↑2.1k ↓175 $1.25
+├─ ⏳ builder/strong    working    12s  ↑1.0k ↓100 $0.25
+├─ ?  reviewer          ask        12s  ↑500 ↓50 $0.25
+├─ ✓  explorer          done       12s
+├─ ⏳ docs-fix          working    12s  ↑610 ↓25 $0.75
+│  ├─ ⏳ builder        working    12s  ↑10 ↓5 $0.50
+│  └─ ✋ api            blocked    12s  ↑600 ↓20 $0.25
+└─ ⏳ tests             starting   40s
 
 q quit · r refresh · c cost on/off · ↑↓ select · enter show session path
 ```
@@ -167,17 +167,25 @@ tree lines dim; the age of a blocked row turns amber after 5 minutes and red aft
 `c` cost on/off, `↑`/`↓` select a row (inverted band), `enter` shows the selected session's path (presence `cwd`, else the
 handoff dir) under the footer.
 
+Glyphs come from the `ui.symbols` set (`unicode` shown; `nerd` uses Nerd Font icons, table in
+[Herdr sidebar](herdr.md#symbols)):
+
 | Glyph | Meaning |
 | --- | --- |
-| `●` | working |
-| `◐` | blocked: the session waits on a prompt, or a run waits on an ask |
-| `◌` | starting: registry entry `pending`, or `open` with no presence file yet and opened under 2 minutes ago |
-| `○` | idle or done (also a closed session, a finished run) |
-| `×` | lost: presence file not `done` and no heartbeat for 90 seconds (the state reads `stale` after 15 minutes without a heartbeat); or registry `open` with no presence file after 2 minutes; or `failed` |
+| `⏳` | working, or starting: registry entry `pending`, or `open` with no presence file yet and opened under 2 minutes ago |
+| `⏸` | waiting: idle, or `stale` (no heartbeat for 15 minutes) |
+| `?` | asking: a run waits on an ask |
+| `✋` | blocked: the session waits on a prompt |
+| `✓` | done (also a closed session, a finished run) |
+| `✗` | lost: presence file not `done` and no heartbeat for 90 seconds; or registry `open` with no presence file after 2 minutes; or `failed` |
 
 Options: `--once` prints one plain snapshot (no ANSI) and exits 0; without it the screen is redrawn with ANSI codes
 every `--interval` seconds (default 3) until `q` or Ctrl-C (no curses, so Windows works; a stdout that is not a
-terminal behaves like `--once`, which also prints the footer). `--agent-dir` (default `PI_CODING_AGENT_DIR`, else `~/.pi/agent`). `--since HOURS`
+terminal behaves like `--once`, which also prints the footer). `--json` prints one snapshot as a JSON line and exits;
+`--follow` prints one such line every `--interval` seconds until stopped (no ANSI, no keys; the Herdr sidebar plugin
+reads it): `{"v":1,"now","symbols","roots":[node]}`, each node with `key`, `kind`, `name`, `role`, `rung`, `state`,
+`sym`, `glyph`, `paneId`, `pid`, `cwd`, `age_s`, `blocked_s`, `own` and `tot` (`in`, `out`, `cost`), `done_children` and
+`children`. `--symbols unicode|nerd` overrides `ui.symbols`. `--agent-dir` (default `PI_CODING_AGENT_DIR`, else `~/.pi/agent`). `--since HOURS`
 (default 24) hides finished or lost sessions whose last activity is older, unless a descendant is still shown.
 `--no-color` or `NO_COLOR` turns off colors (and with them the selection band).
 
@@ -196,8 +204,9 @@ state change and on a 30 second heartbeat, and a final `state: "done"` at shutdo
 ```json
 {"v":1,"sessionId":"...","intercomId":"fm-top-1a2b3c","parentIntercom":null,"handoff":null,"label":"top",
  "cwd":"...","pid":1234,"mode":"tui","startedAt":"2026-10-09T10:00:00.000Z",
- "heartbeatAt":"2026-10-09T12:00:00.000Z","lastEventAt":"2026-10-09T11:59:48.000Z","state":"working",
- "runs":[{"launchId":"...","role":"builder","rung":"strong","state":"working","tokensIn":0,"tokensOut":0,"cost":0}]}
+ "paneId":"w1:p2","heartbeatAt":"2026-10-09T12:00:00.000Z","lastEventAt":"2026-10-09T11:59:48.000Z","state":"working",
+ "runs":[{"launchId":"...","role":"builder","rung":"strong","state":"working","tokensIn":0,"tokensOut":0,"cost":0}],
+ "tokensIn":341000,"tokensOut":2300,"cost":0.47,"blockedSince":null}
 ```
 
 | Field | Meaning |
@@ -208,7 +217,10 @@ state change and on a 30 second heartbeat, and a final `state: "done"` at shutdo
 | `label`, `cwd`, `pid` | display label (or `null`), working directory, process id |
 | `mode` | `tui` or `rpc` (print and json runs write no presence file; bench runs in rpc and does) |
 | `startedAt`, `heartbeatAt`, `lastEventAt` | ISO timestamps: start, last write by the heartbeat, last session event |
+| `paneId` | Herdr pane id from `HERDR_PANE_ID`, or `null` outside Herdr |
 | `state` | `working`, `blocked`, `idle` or `done` |
+| `blockedSince` | ISO time the session became blocked, or `null` when it is not blocked |
+| `tokensIn`, `tokensOut`, `cost` | the session's own model usage as its footer shows it (`↑` in incl. cache reads and writes, `↓` out, list cost); runs are not included |
 | `runs` | subagent runs: `launchId`, `role`, `rung` (`model`, `strong` or `null`), `state` (`working`, `ask`, `done`), `tokensIn`, `tokensOut`, `cost` (used when the usage file has no line for that `launchId`) |
 
 Rows of finished or lost sessions disappear from radar after `--since` hours; those files are not deleted.
@@ -219,7 +231,7 @@ keeps it, and on each refresh radar deletes the presence file of a `done` sessio
 are both older than the TTL (file mtime when neither parses). Only presence files with `state: "done"` are ever
 deleted; unparseable or unreadable files are skipped. `working`, `blocked`, `lost` and `stale` rows never expire by age
 (only by `--since`). A session that is not `done` and has had no heartbeat for 15 minutes shows the state `stale`
-(still the `×` glyph); between 90 seconds and 15 minutes it shows `lost`.
+(the waiting glyph); between 90 seconds and 15 minutes it shows `lost`.
 
 ## pi-intercom
 
@@ -232,7 +244,8 @@ it as plain text `foreman:close`, accepted only from the recorded parent session
 
 Herdr's Pi integration (`herdr integration install pi`, installed by you, never by the installer) shows a session
 as working, idle or blocked. pi-foreman emits `herdr:blocked` on `pi.events` while any dialog waits for you, so
-the pane reads blocked ("?") instead of working. Design record: `design/architecture.md`
+the pane reads blocked ("?") instead of working. The foreman tree in Herdr's Agents panel is a separate plugin:
+[Herdr sidebar](herdr.md). Design record: `design/architecture.md`
 [session features](../design/architecture.md#session-features-phase-4).
 
 ### Blocked shim
@@ -299,4 +312,5 @@ The tag is text only. Real grouping needs Herdr itself:
 | `wait.ci` | CI waits on or off (default `true`); a project or session can only set false. |
 | `herdr.blockedShim` | Show any open dialog or permission ask as blocked in Herdr (default `true`); any layer may set it. |
 | `herdr.groupTag` | Herdr group tag on opened child and parent panes (default `true`); any layer may set it. |
+| `ui.symbols` | Glyph set for radar, the children widget and the Herdr sidebar plugin: `unicode` (default) or `nerd` (Nerd Font); any layer may set it. |
 | `widget.children` | Children widget below the editor in the TUI (default `true`); any layer may set it. |

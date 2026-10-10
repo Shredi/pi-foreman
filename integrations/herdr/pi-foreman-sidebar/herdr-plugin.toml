@@ -1,0 +1,35 @@
+id = "pi-foreman.sidebar"
+name = "pi-foreman sidebar"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Shows the pi-foreman session tree (state, children, tokens, cost) in Herdr's Agents panel."
+platforms = ["linux", "macos"]
+
+# The daemon reads `foreman radar --json --follow` and publishes fm_* pane
+# tokens. `start` is idempotent: it returns at once while a daemon runs.
+[[startup]]
+command = ["python3", "sidebar.py", "start"]
+
+# Watchdog only: brings a crashed daemon back when the next agent appears.
+# The running daemon wakes itself through its own event subscription.
+[[events]]
+on = "pane.agent_detected"
+command = ["python3", "sidebar.py", "start"]
+
+[[actions]]
+id = "start"
+title = "Start"
+description = "Start the sidebar daemon (no-op while it runs)."
+command = ["python3", "sidebar.py", "start"]
+
+[[actions]]
+id = "stop"
+title = "Stop"
+description = "Stop the daemon; it clears its tokens and the Agents view it set."
+command = ["python3", "sidebar.py", "stop"]
+
+[[actions]]
+id = "configure"
+title = "Configure: print the rows snippet"
+description = "Print the [ui.sidebar.agents.rows_by_agent] block to merge into Herdr's config.toml. Writes nothing."
+command = ["python3", "sidebar.py", "configure"]

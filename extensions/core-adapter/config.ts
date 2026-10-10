@@ -24,6 +24,7 @@ const BUILTIN_DEFAULTS: Json = {
   ceremony: { default: "standard", heavySignals: [], heavyFileCount: 8, foremanEdits: "scratchpad", scratchDir: ".workflow/scratch", reviewBeforePr: true, foremanReads: { before: { warn: 4, deny: 8 }, after: { warn: 4, deny: 8 } }, recheckBudget: 3, launchWait: "block", dedupeNotify: true, reviewGate: "pass", orientation: { enabled: true, maxLines: 120 }, ledgerHelper: "tool", reviewPerRevision: true, heavyThreshold: "strict" },
   safety: { requiredChildExtensions: [] },
   python: { path: null },
+  ui: { symbols: "unicode" },
 };
 
 function readJsonFile(file: string): Json | null {

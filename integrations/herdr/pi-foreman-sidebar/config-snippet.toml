@@ -1,0 +1,35 @@
+# pi-foreman sidebar: Agents panel rows for pi panes.
+#
+# Merge this block into your Herdr config.toml (keep ONE
+# [ui.sidebar.agents.rows_by_agent] table; if you already have one, add the
+# `pi = [...]` entry to it), then run `herdr server reload-config`.
+# Only `pi` panes use these rows; other agents keep your default rows.
+#
+# Colours are neutral placeholders: pick the ones that suit your theme.
+# Rules test the glyph cell's own value; the first match wins. "…!" marks a
+# session blocked for more than 15 minutes, so those rules come first.
+# Glyphs: unicode set as characters, nerd set as \u escapes (ui.symbols).
+
+[ui.sidebar.agents.rows_by_agent]
+pi = [
+  [{ token = "$fm_pre", dim = true }, { token = "$fm_sym", rules = [
+      { equals = "✋!", fg = "#d9534f", bold = true },
+      { equals = "?!", fg = "#d9534f", bold = true },
+      { equals = "\uf256!", fg = "#d9534f", bold = true },
+      { equals = "\uf128!", fg = "#d9534f", bold = true },
+      { equals = "⏳", fg = "#6aa84f" },
+      { equals = "\uf252", fg = "#6aa84f" },
+      { equals = "⏸", fg = "#8a8a8a" },
+      { equals = "\uf04c", fg = "#8a8a8a" },
+      { equals = "?", fg = "#e0a030" },
+      { equals = "\uf128", fg = "#e0a030" },
+      { equals = "✋", fg = "#e0a030" },
+      { equals = "\uf256", fg = "#e0a030" },
+      { equals = "✓", fg = "#5b8def" },
+      { equals = "\uf00c", fg = "#5b8def" },
+      { equals = "✗", fg = "#d9534f" },
+      { equals = "\uf00d", fg = "#d9534f" },
+  ] }, "$fm_l1"],
+  [{ token = "$fm_l2", dim = true }],
+  [{ token = "$fm_l3", dim = true }, { token = "$fm_cost", fg = "#5b8def" }],
+]
