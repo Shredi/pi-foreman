@@ -25,6 +25,10 @@
 //       the strong rung when strongOnRevision resolves true (same lookup; L1 ladder.strongOnRevision
 //       true). A revision without a FAIL climbs only with providers.<p>.strongOnRevision true
 //       (reason revision). The finish gate refuses once more, uncounted, while that climb is open.
+//
+// The live rung: `live` holds each role's model of its latest launch (single, tasks, chain,
+// parallel). A climb starts from that model; when it already is the strong rung there is no
+// rung_up, the trace records `rung_top {role, model, reason}` and the launch proceeds unchanged.
 import { get, type Json } from "./config.ts";
 import { splitLevel, type Tier } from "./launchmodel.ts";
 import type { RunEnd } from "./launchwait.ts";
@@ -197,6 +201,8 @@ export interface Climb {
   /** context | stuck | checks_failed | foreman | heavy | revision | review_fail */
   reason: string;
   handoff?: Handoff;
+  /** The live model already is the strong rung: traced as rung_top, not rung_up. */
+  top?: boolean;
 }
 
 export interface LadderOptions {
@@ -212,6 +218,13 @@ export class LadderState {
   private readonly byCall = new Map<string, { role: string; bottom: boolean }>();
   private readonly byRun = new Map<string, { role: string; bottom: boolean }>();
   readonly eligible = new Map<string, Handoff>();
+  /** Per role: the model of its latest launch (the live rung). */
+  readonly live = new Map<string, string>();
+
+  /** A launch passed every check (models written): record each entry's model as its role's live rung. */
+  noteLaunched(input: Json): void {
+    for (const e of launchEntries(input)) if (typeof e.agent === "string" && typeof e.model === "string" && e.model) this.live.set(e.agent, e.model);
+  }
 
   /** tool_call of a single launch: whether it runs on the role's bottom rung. */
   onLaunch(callId: string, role: string, bottom: boolean): void {
@@ -267,16 +280,19 @@ export class LadderState {
       const strong = isObj(r) && isObj(r.strong) && typeof r.strong.model === "string" && r.strong.model ? (r.strong.model as string) : null;
       if (!strong || !isObj(r) || typeof r.model !== "string") continue;
       const keyword = typeof passed === "string" ? splitLevel(passed.trim()).base : "";
-      const from = splitLevel(r.model).base;
+      const bottom = splitLevel(r.model).base;
+      const lv = this.live.get(role);
+      const from = lv ? splitLevel(lv).base : bottom;
       const to = splitLevel(strong).base;
+      const top = from === to || undefined;
       if (keyword !== "strong") {
-        if (keyword === "" && role === "builder" && opts.preferStrong) climbs.push({ entry: e, role, from, to, reason: opts.revisionReason ?? "revision" });
+        if (keyword === "" && role === "builder" && opts.preferStrong) climbs.push({ entry: e, role, from, to, reason: opts.revisionReason ?? "revision", top });
         continue;
       }
       const h = this.eligible.get(role);
       const why = h ? h.cause : typeof reason === "string" && reason.trim() ? "foreman" : role === "builder" && opts.tier === "heavy" ? "heavy" : role === "builder" && opts.preferStrong ? (opts.revisionReason ?? "revision") : null;
-      if (!why) return { block: `pi-foreman: strong launch of ${role} refused [strong_no_reason]: pass a "reason" with model "strong" (why the bottom rung ${from} cannot do it), or launch on the default model; a climb-eligible run of ${role} (context, STATUS: stuck, own checks failed) also allows it.`, climbs: [] };
-      climbs.push({ entry: e, role, from, to, reason: why, handoff: h });
+      if (!why) return { block: `pi-foreman: strong launch of ${role} refused [strong_no_reason]: pass a "reason" with model "strong" (why the bottom rung ${bottom} cannot do it), or launch on the default model; a climb-eligible run of ${role} (context, STATUS: stuck, own checks failed) also allows it.`, climbs: [] };
+      climbs.push({ entry: e, role, from, to, reason: why, handoff: h, top });
     }
     return { climbs };
   }
@@ -290,10 +306,27 @@ export class LadderState {
         c.entry.task = handoffBlock(c.handoff, ledgerOf(task)) + task;
         this.eligible.delete(c.role);
       }
-      out.push({ event: "rung_up", role: c.role, from: c.from, to: c.to, reason: c.reason });
+      out.push(c.top ? { event: "rung_top", role: c.role, model: c.to, reason: c.reason } : { event: "rung_up", role: c.role, from: c.from, to: c.to, reason: c.reason });
     }
     return out;
   }
+}
+
+/** The launch entries of a `subagent` call: the call itself, or its tasks, chain and chain parallel entries. */
+export function launchEntries(input: Json): Json[] {
+  if (!Array.isArray(input.tasks) && !Array.isArray(input.chain)) return [input];
+  const out: Json[] = [];
+  const visit = (list: unknown): void => {
+    if (!Array.isArray(list)) return;
+    for (const e of list) {
+      if (!isObj(e)) continue;
+      out.push(e);
+      visit(e.parallel);
+    }
+  };
+  visit(input.tasks);
+  visit(input.chain);
+  return out;
 }
 
 /** Whether `role` has a strong rung in the role map. */

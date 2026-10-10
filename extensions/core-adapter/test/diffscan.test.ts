@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { collectFacts, diffWithFacts, factsBlock, isTestPath, OWNER_TEXT_MAX, ownerBlock, scanDiff } from "../diffscan.ts";
+import { collectFacts, diffWithFacts, factsBlock, isTestPath, OWNER_TEXT_MAX, ownerBlock, scanDiff, securityScan } from "../diffscan.ts";
 
 const diff = (file: string, removed: string[], added: string[], extra = ""): string =>
   `diff --git a/${file} b/${file}\n${extra}--- a/${file}\n+++ b/${file}\n@@ -1,${removed.length} +1,${added.length} @@\n${removed.map((l) => `-${l}`).join("\n")}\n${added.map((l) => `+${l}`).join("\n")}\n`;
@@ -100,4 +100,13 @@ test("git side: the Go caller is the test file in the package that calls the sym
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("securityScan: path words and call shapes on added lines, labels only", () => {
+  const calls = ["execFileSync('ls')", "spawn(cmd, args)", "require('child_process')", "subprocess.run(x)", "os.system(c)", 'Command::new("sh")', 'net.Listen("tcp", a)', "http.ListenAndServe(a, h)", "server.listen(80)", "s.bind((host, port))", "os.RemoveAll(d)", "unlinkSync(p)", "fs.rmSync(p)", "std::fs::remove_file(p)", "shutil.rmtree(d)", "import hashlib", '\t"crypto/sha256"'];
+  assert.deepEqual(securityScan(diff("src/view.ts", [], calls)), ["exec(", "spawn(", "child_process", "subprocess.", "os.system(", "Command::new(", "net.Listen(", "ListenAndServe(", ".listen(", "bind(", "os.Remove(", "unlink(", "fs.rm", "remove_file(", "rmtree(", "crypto import"]);
+  assert.deepEqual(securityScan(diff("internal/auth/token.go", [], ["x := 1"]) + diff("pkg/net/conn.go", [], ["y := 2"])), ["path:auth", "path:net"]);
+  // removed lines, prose and look-alikes do not count; no diff, no hits
+  assert.deepEqual(securityScan(diff("src/view.ts", ["spawn(cmd)"], ["const re = /x/; re.exec(s); f.bind(this); network_view(); // executes later"])), []);
+  assert.deepEqual(securityScan(null), []);
 });

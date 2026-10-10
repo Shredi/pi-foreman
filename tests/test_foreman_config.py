@@ -74,12 +74,12 @@ class ConfigTest(unittest.TestCase):
         p1 = dict(PROV["p1"], strongAbove=6000, childMaxTurns=5, ranks=[{"match": "m-*", "tier": 2}])
         self.l2({"ladder": {"childPolicy": "at-or-below", "strongAbove": 5000, "childMaxTurns": 9},
                  "roles": {"builder": {"strongAbove": 7000, "childMaxTurns": 4}}, "providers": {"p1": p1}})
-        self.proj({"ladder": {"childPolicy": "any"}, "providers": {"p1": {"ranks": [], "strongAbove": 1}},
+        self.proj({"ladder": {"childPolicy": "any", "reviewerClimb": {"enabled": True}}, "providers": {"p1": {"ranks": [], "strongAbove": 1}},
                    "roles": {"builder": {"childMaxTurns": 999}}})
         res = self.load(trusted_project=True)
         self.assertEqual(res["errors"], [])
         cfg = res["config"]
-        self.assertEqual(cfg["ladder"], {"childPolicy": "at-or-below", "strongAbove": 5000, "childMaxTurns": 9, "strongOnRevision": True})
+        self.assertEqual(cfg["ladder"], {"childPolicy": "at-or-below", "strongAbove": 5000, "childMaxTurns": 9, "strongOnRevision": True, "reviewerClimb": {"enabled": False}})
         self.assertEqual((cfg["providers"]["p1"]["ranks"], cfg["providers"]["p1"]["strongAbove"]), (p1["ranks"], 6000))
         self.assertEqual(cfg["roles"]["builder"]["childMaxTurns"], 4)
         self.assertIn("project ladder.childPolicy ignored", "\n".join(res["warnings"]))
@@ -91,7 +91,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(self.load(trusted_project=True)["config"]["childMaxThinking"], "low")
         self.l2({})
         self.assertNotIn("childMaxThinking", self.load()["config"])
-        self.assertEqual(self.load()["config"]["ladder"], {"strongAbove": 100000, "childMaxTurns": 60, "strongOnRevision": True})
+        self.assertEqual(self.load()["config"]["ladder"], {"strongAbove": 100000, "childMaxTurns": 60, "strongOnRevision": True, "reviewerClimb": {"enabled": False}})
         self.l2({"ladder": {"childPolicy": "sometimes"}})
         self.assertTrue(self.load()["errors"])
         presets = sorted((ROOT / "config" / "presets").glob("*.json"))

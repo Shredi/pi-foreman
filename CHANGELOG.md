@@ -10,6 +10,12 @@
   (`shellchain.ts`; `$(`, backticks, subshells, `eval`, `sh -c`, `xargs`, `&`, heredocs refused; redirects only to
   `/dev/null`, scratch or `/tmp`); trace `chain_allow {segments}`. New label `test-restore` for `git restore`/`git
   checkout --` on test files, so the git guard's test restore no longer defers headless. The `review` trace gains `class`.
+- Ladder: `ladder.reviewerClimb {enabled, securityRung}` (default off; on in both `claude-bridge` presets with the
+  foreman's Opus as `securityRung`). The second FAIL of the same ledger item across reviewer runs sends the next
+  reviewer launch to its strong rung (`rung_up` reason `review_fail_repeat`, `item`); a security-shaped work diff
+  (path words and call shapes, `securityScan` in `diffscan.ts`, diff taken once before the model is picked) sends
+  it to `securityRung`, else the next ranked mapped model (`rung_up` reason `security`, `hits`; none:
+  `security_rung_unset`). New page `docs/ladder.md`.
 - `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]`: merges `config/presets/<name>.json` into
   `<agent dir>/foreman.json` (preset wins), validates before writing, keeps `foreman.json.bak-<date>`. With no role or
   review model configured, an interactive top-level session prints one notice naming the presets and this command;
@@ -164,6 +170,10 @@
 - Explorer brief: the harness writes the full report to `explorer-brief.md` in a session scratch dir every child may
   read without an ask; the task keeps the first 8000 characters and, when cut, a `[full brief at <path>]` marker;
   `explorer_brief` records `action: file|none`.
+- Ladder: a climb starts from the role's live rung (its latest launch on any path: single, tasks, chain, parallel)
+  instead of the bottom rung, so a review FAIL after a context climb no longer emits a stale second `rung_up` from the
+  bottom; on the top rung the trace records `rung_top {role, model, reason}` and the finish gate uses the two-refusal
+  valve without the `climb_available` refusal.
 - Git drift: git's own worktree bookkeeping (`commondir`, `gitdir` and worktree `.git` files appearing or vanishing
   on `git worktree add/remove`) no longer reports; a worktree whose `commondir` or `.git` file points elsewhere does
   (`worktree-link:<n>`), and all per-worktree changes collapse into one `worktrees: N changed (...)` line.

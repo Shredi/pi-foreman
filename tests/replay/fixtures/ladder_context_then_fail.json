@@ -1,0 +1,35 @@
+{
+ "foreman": {
+  "c1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-ctf.md", "content": "# Requirements Ledger: ctf\n\n- [x] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:small]] build item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "c1b": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "continue item 1", "model": "strong"}}]},
+   {"text": "Strong builder launched."}
+  ],
+  "c2": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-c3]] review item 1"}}]}, {"text": "Reviewer launched."}],
+  "c3": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-c4]] fix the findings"}}]},
+   {"text": "Revision launched."}
+  ],
+  "c4": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-c5]] review the revision"}}]}, {"text": "Reviewer launched."}],
+  "c5": [{"text": "Done."}, {"text": "Still done."}, {"text": "Done, open findings reported."}]
+ },
+ "builder": {
+  "small": [
+   {"text": "working", "tools": [{"name": "bash", "arguments": {"command": "echo hi"}}], "usage": {"input": 2000}},
+   {"text": "RUNG_UP: context\n[[replay:c1b]]\nDone: half of item 1\nRemaining: the rest\nFiles touched: none"}
+  ]
+ },
+ "finalizer": {
+  "c1b": [{"text": "[[replay:c2]] built on the strong rung (the handoff carries the c1b tag first)"}]
+ },
+ "*": {
+  "r-c3": [{"text": "[[replay:c3]] VERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL"}],
+  "b-c4": [{"text": "[[replay:c4]] fixed on the strong rung"}],
+  "r-c5": [{"text": "[[replay:c5]] VERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL"}]
+ }
+}

@@ -32,7 +32,7 @@
   },
   "providers": {},
   "fanout": { "max": 3 },
-  "ladder": { "strongAbove": 100000, "childMaxTurns": 60, "strongOnRevision": true },
+  "ladder": { "strongAbove": 100000, "childMaxTurns": 60, "strongOnRevision": true, "reviewerClimb": { "enabled": false } },
   "maxThinking": "high",
   "quiet": false,
   "ceremony": {

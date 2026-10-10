@@ -41,6 +41,8 @@ its task, and the trace records `rung_up {role, from, to, reason}`. Knobs: `ladd
 `strongOnRevision` with the same lookup (a project or session can only set it false). A rung's own
 `thinking` wins over the foreman's level: the ladder climbs by model, never by thinking. `childMaxThinking`
 (unset by default) caps every child launch's level, rungs included, on top of `maxThinking`.
+The live rung, `rung_top`, the reviewer's own climb (`ladder.reviewerClimb`) and the trace records are in
+[ladder](ladder.md).
 
 **Rank policy.** `providers.<p>.ranks` lists `{match: <model-id glob>, tier: <0 = top>}` entries, highest first.
 `ladder.childPolicy` (one value for all providers) is `below` (default: children strictly below the foreman's

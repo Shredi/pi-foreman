@@ -208,7 +208,11 @@ export function git(cwd: string, args: string[]): Promise<string | null> {
 
 /** Facts for `cwd` against `base` (a commit; default HEAD): working tree and index changes included. */
 export async function collectFacts(cwd: string, base: string | null): Promise<{ block: string; base: string; count: number }> {
-  const r = await diffWithFacts(cwd, base);
+  return factsSummary(await diffWithFacts(cwd, base));
+}
+
+/** The facts block and count of a diffWithFacts result. */
+function factsSummary(r: { facts: DiffFact[]; base: string }): { block: string; base: string; count: number } {
   const count = Math.min(new Set(r.facts.map((f) => f.text)).size, MAX_FACTS);
   return { block: factsBlock(r.facts, r.base), base: r.base, count };
 }
@@ -266,6 +270,51 @@ export async function diffWithFacts(cwd: string, base: string | null): Promise<{
   return { diff, facts: scanDiff(diff, (name, lang, file) => cache.get(`${lang}\u0000${name}\u0000${file}`) ?? null), base: ref };
 }
 
+// ------------------------------------------------------------------ security scan (ladder.reviewerClimb)
+
+// Path words (a path segment or a `-`/`_`/`.` separated part of one) that make a change security-shaped.
+const SECURITY_PATH = /^(?:o?auth\w*|crypto\w*|crypt|cipher\w*|security|secur\w*|secrets?|exec\w*|shell\w*|net|network\w*|listen\w*|sockets?|sandbox\w*|permissions?)$/i;
+// Call shapes on added lines: [label, pattern]. A floor, line-based like the facts scan.
+const SECURITY_CALLS: [string, RegExp][] = [
+  ["exec(", /(?<![.\w])exec(?:Sync|File(?:Sync)?|vp?e?|lp?e?)?\s*\(|\bos\.exec\w*\s*\(|\bexec\.Command\w*\s*\(/],
+  ["spawn(", /\bspawn(?:Sync)?\s*\(/],
+  ["child_process", /\bchild_process\b/],
+  ["subprocess.", /\bsubprocess\./],
+  ["os.system(", /\bos\.system\s*\(/],
+  ["Command::new(", /\bCommand::new\s*\(/],
+  ["net.Listen(", /\bnet\.Listen\w*\s*\(/],
+  ["ListenAndServe(", /\bListenAndServe\w*\s*\(/],
+  [".listen(", /\.listen\s*\(/],
+  ["bind(", /(?<![.\w])bind\s*\(|\.bind\s*\(\s*[("'[]/],
+  ["os.Remove(", /\bos\.Remove(?:All)?\s*\(/],
+  ["unlink(", /\bunlink(?:Sync)?\s*\(/],
+  ["fs.rm", /\bfs(?:\.promises)?\.(?:rm|rmdir)(?:Sync)?\s*\(/],
+  ["remove_file(", /\bremove_(?:file|dir_all)\s*\(/],
+  ["rmtree(", /\brmtree\s*\(/],
+  ["crypto import", /^\s*(?:import\b|from\s+\S+\s+import\b|use\s|(?:const|let|var)\s.*\brequire\s*\(|"crypto\/|\w+\s+"crypto\/).*?\b(?:crypto\w*|hashlib|hmac|cipher\w*|bcrypt|openssl|nacl|ring)\b/i],
+];
+
+/**
+ * Why a work diff is security-shaped (ladder.reviewerClimb): labels like `path:auth` for a changed
+ * path part and the call labels above for added lines, in order, without repeats; [] when none.
+ * Labels only, never a path or a line (they go to the trace).
+ */
+export function securityScan(diff: string | null): string[] {
+  const hits = new Set<string>();
+  if (!diff) return [];
+  for (const line of diff.split(/\r?\n/)) {
+    const head = /^diff --git a\/(.*) b\/(.*)$/.exec(line);
+    if (head) {
+      for (const f of new Set([head[1], head[2]])) for (const part of f.split(/[\\/._-]+/)) if (SECURITY_PATH.test(part)) hits.add(`path:${part.toLowerCase()}`);
+      continue;
+    }
+    if (!line.startsWith("+") || line.startsWith("+++")) continue;
+    const text = line.slice(1);
+    for (const [label, re] of SECURITY_CALLS) if (re.test(text)) hits.add(label);
+  }
+  return [...hits];
+}
+
 /** Cap of the owner's task text appended to a reviewer's task. */
 export const OWNER_TEXT_MAX = 3000;
 
@@ -307,6 +356,8 @@ function steps(input: Json): Json[] {
  */
 export class ReviewFacts {
   private readonly bases = new Map<string, string>();
+  /** Diffs taken early for a reviewer step (before its model is picked); augment reuses them. */
+  private readonly early = new WeakMap<Json, Promise<{ diff: string | null; facts: DiffFact[]; base: string }>>();
   /** The owner's prompt that started this round (appended to a reviewer's task with the facts). */
   private owner = "";
 
@@ -337,13 +388,26 @@ export class ReviewFacts {
     }
   }
 
+  /** The work diff of one reviewer step, taken once per launch: augment reuses it (ladder.reviewerClimb security scan). */
+  diffOf(step: Json, input: Json, cwd: string): Promise<{ diff: string | null; facts: DiffFact[]; base: string }> {
+    let p = this.early.get(step);
+    if (!p) {
+      const dir = this.cwdOf(step, input, cwd);
+      p = diffWithFacts(dir, this.bases.get(dir) ?? null);
+      this.early.set(step, p);
+    }
+    return p;
+  }
+
   /** Call before a launch: appends the facts block and the owner's task text to each reviewer step's task; returns the number of facts added (summed over the steps changed). */
   async augment(input: Json, cwd: string): Promise<number> {
     let n = 0;
     for (const s of steps(input)) {
       if (typeof s.agent !== "string" || !REVIEW_ROLES.includes(s.agent) || typeof s.task !== "string") continue;
       const dir = this.cwdOf(s, input, cwd);
-      const { block, count } = await collectFacts(dir, this.bases.get(dir) ?? null);
+      const early = this.early.get(s);
+      this.early.delete(s);
+      const { block, count } = early ? factsSummary(await early) : await collectFacts(dir, this.bases.get(dir) ?? null);
       if (!block) continue;
       s.task = `${s.task}\n${block}\n${ownerBlock(this.owner)}`;
       n += count;
