@@ -102,7 +102,8 @@ folder and reapplied at startup, because Herdr forgets the view on a server rest
 - Subagent runs inside a Pi session are text on that session's row, not rows: Herdr has rows only for real panes.
   Nested sessions opened in their own panes (`foreman session open`) are rows of their own, indented under the parent.
 - Row templates are static config: the plugin cannot add or remove rows; empty tokens leave their cells empty.
-- Tokens and the Agents view are not restored after a Herdr server restart; the startup hook republishes them.
+- Herdr does not restore tokens or the Agents view after a server restart: a daemon that kept running republishes the
+  tokens within 5 s and the view within 60 s; after a full restart the startup hook starts a new daemon.
 
 ## Wishes for Herdr
 
