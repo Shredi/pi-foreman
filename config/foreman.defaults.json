@@ -61,6 +61,7 @@
   },
   "review": { "headless": false },
   "sync": { "repos": [], "runRetro": true },
+  "radar": { "doneTtlMinutes": 30 },
   "retro": { "proposalMinReviews": 5 },
   "intercom": { "allowRemote": false, "allowOpenPane": false },
   "close": { "from": ["herdr", "intercom-parent"] },

@@ -171,7 +171,7 @@ handoff dir) under the footer.
 | `◐` | blocked: the session waits on a prompt, or a run waits on an ask |
 | `◌` | starting: registry entry `pending`, or `open` with no presence file yet and opened under 2 minutes ago |
 | `○` | idle or done (also a closed session, a finished run) |
-| `×` | lost: presence file not `done` and no heartbeat for 90 seconds; or registry `open` with no presence file after 2 minutes; or `failed` |
+| `×` | lost: presence file not `done` and no heartbeat for 90 seconds (the state reads `stale` after 15 minutes without a heartbeat); or registry `open` with no presence file after 2 minutes; or `failed` |
 
 Options: `--once` prints one plain snapshot (no ANSI) and exits 0; without it the screen is redrawn with ANSI codes
 every `--interval` seconds (default 3) until `q` or Ctrl-C (no curses, so Windows works; a stdout that is not a
@@ -209,7 +209,15 @@ state change and on a 30 second heartbeat, and a final `state: "done"` at shutdo
 | `state` | `working`, `blocked`, `idle` or `done` |
 | `runs` | subagent runs: `launchId`, `role`, `rung` (`model`, `strong` or `null`), `state` (`working`, `ask`, `done`), `tokensIn`, `tokensOut`, `cost` (used when the usage file has no line for that `launchId`) |
 
-Rows of finished or lost sessions disappear from radar after `--since` hours; the files are not deleted.
+Rows of finished or lost sessions disappear from radar after `--since` hours; those files are not deleted.
+
+A `done` session expires sooner: once its last activity (newest of `heartbeatAt`, `lastEventAt`, the trace mtime) is older
+than `radar.doneTtlMinutes` (default 30; `--done-ttl MINUTES` overrides it) its row is hidden, unless a shown descendant
+keeps it, and on each refresh radar deletes the presence file of a `done` session whose `heartbeatAt` and `lastEventAt`
+are both older than the TTL (file mtime when neither parses). Only presence files with `state: "done"` are ever
+deleted; unparseable or unreadable files are skipped. `working`, `blocked`, `lost` and `stale` rows never expire by age
+(only by `--since`). A session that is not `done` and has had no heartbeat for 15 minutes shows the state `stale`
+(still the `×` glyph); between 90 seconds and 15 minutes it shows `lost`.
 
 ## pi-intercom
 
@@ -277,6 +285,7 @@ The tag is text only. Real grouping needs Herdr itself:
 | Key | Meaning and layer rule |
 |---|---|
 | `sync.runRetro` | Run the retro step during `/sync` (default `true`). |
+| `radar.doneTtlMinutes` | Minutes after which `foreman radar` hides a finished session and deletes its presence file (default 30). Radar reads the harness, organisation and user layers, no project file. |
 | `retro.proposalMinReviews` | Reviews needed before a retro proposal (default 5). User or overlay config only. |
 | `compaction.priceTiers.cheap`, `compaction.priceTiers.standard` | USD per MTok input upper bounds of the price tiers (1 and 5); above `standard` is premium. User or overlay config only. |
 | `compaction.threshold.cheap`, `compaction.threshold.standard`, `compaction.threshold.premium` | Context fraction that triggers compaction per tier (0.85, 0.75, 0.6); a project or session can only lower each value. |

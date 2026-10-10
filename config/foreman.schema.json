@@ -234,6 +234,11 @@
         "runRetro": { "type": "boolean", "description": "Run the retro step during sync." }
       }
     },
+    "radar": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "doneTtlMinutes": { "type": "number", "minimum": 0, "description": "Minutes after which radar hides a finished session and deletes its presence file." } }
+    },
     "retro": {
       "type": "object",
       "additionalProperties": false,
