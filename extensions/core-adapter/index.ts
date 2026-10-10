@@ -86,7 +86,7 @@ import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone,
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
-import { parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
+import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import type { CloseReport } from "./close.ts";
 import { registerSession } from "./session.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
@@ -1854,7 +1854,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     activeRuns: (id) => sessions.get(id)?.activeRuns.size ?? 0,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), runSync: (c) => runSync(s, c), report: (_c, file) => closeReport(s, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text };
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), runSync: (c) => runSync(s, c), report: (c, file) => closeReport(s, c, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text };
     },
   });
 
@@ -2231,9 +2231,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** scripts/foreman_close.py report + cleanup for `/foreman close` (`## Close` into `file`); close.json as fallback. */
-  async function closeReport(s: Session, file: string): Promise<CloseReport | null> {
+  async function closeReport(s: Session, ctx: ExtensionContext, file: string): Promise<CloseReport | null> {
     const stateDir = path.join(s.agentDir, "pi-foreman", "state");
-    const r = await runScript(s, "foreman_close.py", ["--session", s.id, "--state", stateDir, "--cwd", s.cwd, "--result", file, "--json"], 600_000);
+    const args = closeReportArgs({ sessionId: s.id, stateDir, cwd: s.cwd, file, trusted: safeTrusted(ctx) });
+    const r = await runScript(s, "foreman_close.py", args, 600_000);
     try {
       const parsed = parseCloseReport(JSON.parse(r.text));
       if (parsed) return parsed;

@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { sanitizeTrace } from "../trace.ts";
-import { closeFrom, CloseFlow, parseCloseReport, closePrompt, intercomClose, INTERCOM_WAKE_TEXT, parentIntercomId, parseCloseText, registerClose, resultPath } from "../close.ts";
+import { closeFrom, CloseFlow, closeReportArgs, parseCloseReport, closePrompt, intercomClose, INTERCOM_WAKE_TEXT, parentIntercomId, parseCloseText, registerClose, resultPath } from "../close.ts";
 import type { CloseDeps } from "../close.ts";
 
 const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-close-")));
@@ -228,4 +228,11 @@ test("close: a child session swallows pi-intercom's wake prompt (no child turn f
     if (before === undefined) delete process.env.PI_SUBAGENT_CHILD;
     else process.env.PI_SUBAGENT_CHILD = before;
   }
+});
+
+test("close: the report passes --trusted-project only for a trusted project, as /sync does (B1)", () => {
+  const o = { sessionId: "s1", stateDir: "/st", cwd: "/w", file: "/w/.workflow/r.md" };
+  const base = ["--session", "s1", "--state", "/st", "--cwd", "/w", "--result", "/w/.workflow/r.md", "--json"];
+  assert.deepEqual(closeReportArgs({ ...o, trusted: false }), base);
+  assert.deepEqual(closeReportArgs({ ...o, trusted: true }), [...base, "--trusted-project"]);
 });

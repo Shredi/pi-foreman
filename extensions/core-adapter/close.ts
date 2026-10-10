@@ -175,6 +175,13 @@ export function parseCloseReport(raw: unknown): CloseReport | null {
   return { ready: o.ready, removed: Array.isArray(o.removed) ? o.removed.length : 0, handover, closeLine };
 }
 
+/** scripts/foreman_close.py args for `/foreman close`; `--trusted-project` only for a trusted project (as /sync). */
+export function closeReportArgs(o: { sessionId: string; stateDir: string; cwd: string; file: string; trusted: boolean }): string[] {
+  const args = ["--session", o.sessionId, "--state", o.stateDir, "--cwd", o.cwd, "--result", o.file, "--json"];
+  if (o.trusted) args.push("--trusted-project");
+  return args;
+}
+
 /** The CLOSE line and one `handover: <path> — <reason>` line per handover. */
 export function closeReportLines(r: CloseReport): string[] {
   return [r.closeLine, ...r.handover.map((h) => `handover: ${h.path}${h.reason ? ` — ${h.reason}` : ""}`)];
