@@ -124,10 +124,12 @@
    },
    {
     "event": "llm",
+    "role": "explorer",
     "model": "foreman-fake/explorer"
    },
    {
     "event": "guard",
+    "role": "explorer",
     "toolFamily": "Stop",
     "guard": "ledger_guard_stop",
     "decision": "none"
@@ -142,10 +144,12 @@
    },
    {
     "event": "llm",
+    "role": "explorer",
     "model": "foreman-fake/explorer"
    },
    {
     "event": "guard",
+    "role": "explorer",
     "toolFamily": "Stop",
     "guard": "ledger_guard_stop",
     "decision": "none"

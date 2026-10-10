@@ -18,20 +18,40 @@ from usage records and the Pi model registry rates, whichever provider logged th
 ## What counts as friction
 
 Each finding is a candidate with a kind (`agent`, `routing`, `skill`, `rule`, `permission`, `prompt`, `harness-bug`).
-Retro files a candidate where the inputs carry a signal:
+Retro files a candidate for these classes, from these inputs:
 
-- permission asks: a run with at least `retro.askThreshold` asks (default 2);
-- denials that the user later overrode;
-- read-budget hits;
-- rereviews of the same change;
-- rung-ups (a role climbed the model ladder, see [ladder](ladder.md));
-- cost outliers per role;
-- repeated bash families (the same command shape again and again);
-- bulk reads (many files read one by one);
-- permission proposals (the allow rules `/retro` suggests);
-- `Friction:` lines from role reports.
+- permission asks (kind `permission`; trace `ask` events): asks are grouped per run (a child's `ask` carries `role`
+  and `runId`), and the candidate is per role: "runs hit >= N permission asks" when at least one of that role's runs
+  has `retro.askThreshold` asks (default 2). The foreman's own asks (no role or runId) count as one `session` bucket;
+- denials the user later overrode (`permission`; the review log);
+- read-budget hits (`agent`; trace `read_budget` and `recheck_budget` denials, and `child_read_budget` warn or deny
+  per role);
+- rereviews (`agent`; trace `rereview`, per role);
+- rung-ups (`routing`; trace `rung_up`, per role and reason; see [ladder](ladder.md));
+- cost outliers (`routing`; usage lines grouped by role and launch id, `kind: "retro"` lines left out): a role with at
+  least 3 runs where a run costs more than 2x the role's median;
+- repeated bash families (`rule`, or `permission` when a proposal covers it; the session file's tool calls): a family
+  that ran at least 3 times in the session;
+- permission proposals (`permission`; the allow rules `/retro` suggests);
+- `Friction:` lines from role reports (kind from the event; trace `friction`).
+
+Bulk reads (many files read one by one) are not emitted: neither the trace nor the session file carries per-call file
+lists today, so there is no signal. The command family behind an ask is not available either (the `ask` event carries
+the tool family, not the command), so ask candidates name tool families only.
+
+Candidate and evidence text name roles and families, never run ids, times or paths; any path-like token is cut to its
+basename before it is filed.
 
 The report `/retro` prints is unchanged; the backlog is an extra output.
+
+## Child traces
+
+When the foreman's retro is on, a child traces too. A single-launch child (the `agent` launch of one role) writes its
+trace even in `json` and `print` mode when its `trace.enabled` is null; an explicit `false` wins. A bound child writes
+`trace-<launchId>.jsonl`, and every record it writes carries `role` and `runId` (the launch id) unless the event sets
+its own. `/retro` and `/sync` read the foreman trace plus each child trace of this session's launches;
+`foreman_retro.py` and `foreman_sync.py` take `--trace` more than once for this. Launches through `tasks` or `chain`
+have no binding, so their children are not covered.
 
 ## The `Friction:` line and event
 

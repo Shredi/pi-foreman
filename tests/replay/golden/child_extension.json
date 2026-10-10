@@ -8,20 +8,24 @@
   },
   {
    "event": "llm",
+   "role": "explorer",
    "model": "foreman-fake/explorer"
   },
   {
    "event": "guard",
+   "role": "explorer",
    "toolFamily": "Bash",
    "guard": "destructive_guard",
    "decision": "deny"
   },
   {
    "event": "llm",
+   "role": "explorer",
    "model": "foreman-fake/explorer"
   },
   {
    "event": "guard",
+   "role": "explorer",
    "toolFamily": "Stop",
    "guard": "ledger_guard_stop",
    "decision": "none"

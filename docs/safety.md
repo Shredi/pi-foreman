@@ -73,6 +73,9 @@ Asks go through a model review link (`foreman-review`) using `providers.<p>.revi
   defer `reason`.
 - Review model calls are logged to the usage log with role `autoreview`.
 
+Child traces: with the foreman's retro on, a bound child writes `trace-<launchId>.jsonl` and each record carries `role`
+and `runId` (the launch id); see [retro](retro.md). `tasks` and `chain` launches are not covered.
+
 ## Child scratch
 
 Each single-child launch gets a scratch dir under the OS temp dir (`$FOREMAN_SCRATCH`, see

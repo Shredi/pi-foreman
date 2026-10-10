@@ -8,7 +8,10 @@
   session and aged out (`retro.expireDays`, 90-day purge). `foreman backlog list|show|expire|mark|move|brief`. New keys
   `retro.enabled`, `retro.workspaceKey`, `retro.backlogDir`, `retro.repoBacklog`, `retro.expireDays`, `retro.askThreshold`.
 - Roles end their report with a `Friction:` line; the foreman emits one `friction` trace event per non-empty line
-  (`role`, `runId`, `kind`, `note` of 120 characters, paths reduced to basenames).
+  (`role`, `runId`, `kind`, `note` of 120 characters, paths reduced to basenames). With the foreman's retro on, a bound
+  child writes `trace-<launchId>.jsonl` with `role` and `runId` on every record (also in json and print mode unless its
+  `trace.enabled` is an explicit false); `/retro` and `/sync` read those child traces, and `foreman_retro.py` and
+  `foreman_sync.py` take `--trace` repeatably.
 - `/retro` and `/sync` feed the backlog; `foreman backlog brief` writes a lessons brief you hand to a session you
   open yourself. Bench cells file under `bench/<task-id>`; their retro usage (`kind: "retro"`) stays out of cost columns.
 - Herdr sidebar, live: the Pi session pushes its own pane's `fm_*` tokens (`sidebar.py push`) on run start and end, asks,

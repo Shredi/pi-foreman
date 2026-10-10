@@ -65,6 +65,8 @@ When the rung goes beyond what `ladder.childPolicy` would allow, its `rung_up` (
 
 ## Trace records
 
+A child's records carry `role` and `runId` (the launch id) in its own `trace-<launchId>.jsonl`; see [retro](retro.md).
+
 | Event | Fields | When |
 |---|---|---|
 | `rung_up` | `role, from, to, reason` (+ `item` or `hits`, and `policy_override` for the reviewer) | A launch climbs from its live rung. |
