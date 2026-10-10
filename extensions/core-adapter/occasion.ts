@@ -1,4 +1,4 @@
-// Review occasions (docs/ladder.md): one launch path, climb rung, model rule and extractor for every
+// Review occasions (docs/review-climb.md): one launch path, climb rung, model rule and extractor for every
 // review, told apart by a marker in the reviewer's task text:
 //   [plan-review]    the plan before the checkpoint (ceremony.planReview),
 //   [pre-pr]         the whole branch diff before a pull request,

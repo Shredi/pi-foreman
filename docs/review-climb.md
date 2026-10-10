@@ -59,9 +59,12 @@ not the climb is enabled.
 
 With `ceremony.planReview.<tier>` on (heavy by default, see [ceremony](ceremony.md)), `foreman_checkpoint` refuses
 with `plan_review_required` until a `[plan-review]` reviewer run ended with a verdict for the current plan, keyed by
-the SHA-1 of the plan file's bytes. A FAIL verdict refuses once with `plan_revision_required`, so the plan is revised
-before the owner sees it. The owner's dialog shows the verdict. Trace `plan_review {model, decision}`. Plan review
-uses the model rule and the climb like any other occasion.
+the SHA-1 of the plan file's bytes. Verdicts are kept per plan path (in memory, for the session); a new plan path
+starts a new lineage. The first FAIL of a lineage refuses once with `plan_revision_required`, so the planner revises
+before the owner sees it; once the revised plan (new bytes) has a verdict, the checkpoint opens whatever it says. The
+owner's dialog shows `Plan review: PASS|FAIL (reviewer <model>)` and up to 8 located findings (`file:line class note`).
+Trace `plan_review {model, decision}`. The foreman's instructions carry the plan-review step only while it is on
+(`<!--planReview=on-->` variant). Plan review uses the model rule and the climb like any other occasion.
 
 ## Review panel
 
@@ -76,6 +79,11 @@ uses the model rule and the climb like any other occasion.
 On a gate occasion a `reviewer` launch becomes a parallel group: the primary plus one entry per shadow, same task
 text, `policy_override: true` (the shadows are explicit config, like the security rung). A shadow equal to the primary
 or the foreman model is left out. Trace `panel {role, gate, models, primary}`.
+
+**Pinned pi-subagents 0.75.0 runs no panel launch.** It refuses top-level `tasks` and `chain` (removed legacy
+inputs), and with `disabledFeatures: ["workflow-scripts"]` a `tasks` entry takes no `model`. Until a supported shape
+is wired in, the panel degrades: the launch stays unchanged, the primary review runs as asked, and the trace says
+`panel {role, gate, models, primary, decision: unsupported}`. No shadow runs and no shadow finding is recorded.
 
 Only the primary's verdict counts: shadows set no marks and no PR gate, and never block. The run end appends an
 attributed block to the result: the primary's findings, then "Shadow findings (do not block)" grouped by model. A

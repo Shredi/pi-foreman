@@ -23,6 +23,8 @@ from driver import PROVIDER_A, load_fixture, tool_results  # noqa: E402
 from test_replay import REASON, ReplayCase  # noqa: E402
 
 STRONG = {"providers": {PROVIDER_A: {"roles": {"builder": {"strong": {"model": "%s/finalizer" % PROVIDER_A}}}}}}
+# The heavy rigs here test triage and revision rounds, not the plan review before the checkpoint.
+NO_PLAN_REVIEW = {"planReview": {"heavy": False}}
 
 
 def strong_config(on):
@@ -58,7 +60,7 @@ def events(rig, sid, name):
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestTriageGate(ReplayCase):
     def test_untriaged_trivial_standard_heavy(self):
-        rig = self.rig("triage", load_fixture("review_flow"), config=dict(STRONG, ceremony={"foremanEdits": "bounded"}))
+        rig = self.rig("triage", load_fixture("review_flow"), config=dict(STRONG, ceremony=dict(NO_PLAN_REVIEW, foremanEdits="bounded")))
         a_txt = rig.project / "a.txt"
         a_txt.write_text("alpha\n", "utf-8")
 
@@ -126,7 +128,7 @@ class TestRevisionRounds(ReplayCase):
         self.assertEqual(done, [("reviewer", "fail"), ("reviewer", "fail")])
 
     def test_heavy_third_revision_refused(self):
-        rig, pi, sid = self.chain("rounds-heavy", "h1", None, "revision limit for heavy reached (2)")
+        rig, pi, sid = self.chain("rounds-heavy", "h1", {"ceremony": NO_PLAN_REVIEW}, "revision limit for heavy reached (2)")
         pi.close()
         rev = [r["decision"] for r in events(rig, sid, "revision")]
         self.assertEqual(rev, ["revision", "revision", "blocked"])
