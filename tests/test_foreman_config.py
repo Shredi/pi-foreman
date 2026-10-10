@@ -411,7 +411,8 @@ class PackageFilesTest(unittest.TestCase):
                 for review in ("on", "off"):
                     for trivial in ("builder", "off"):
                         kept = render_prompt(text, {"ledgerhelper": mode, "heavythreshold": heavy, "reviewperrevision": review,
-                                                    "trivialpath": trivial, "ladder": "on", "factrulings": "on", "launchbriefs": "on", "reviewmarks": "on"})
+                                                    "trivialpath": trivial, "ladder": "on", "factrulings": "on", "launchbriefs": "on", "reviewmarks": "on",
+                                                    "planreview": "on"})
                         self.assertLessEqual(len(kept.splitlines()), 70, (mode, heavy, review, trivial))
         for word in ("claude", "sonnet", "opus", "fable", "gpt", "gemini", "copilot", "openrouter"):
             self.assertNotIn(word, text)

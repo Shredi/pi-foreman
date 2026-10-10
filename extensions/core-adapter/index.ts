@@ -96,9 +96,10 @@ import { familyWarnings, modelGaps } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { launchedModels, rankRefusal } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
-import { countingView, entryOccasions, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch } from "./occasion.ts";
+import { countingView, entryOccasions, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch } from "./occasion.ts";
 import { applyPanel, panelConfig } from "./panel.ts";
 import { filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
+import { PlanReviews, planFactsBlock, planPathsOf, planReviewHash, planReviewOn, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { launchEntries } from "./ladder.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
 
@@ -209,6 +210,8 @@ interface Session {
   launchHeads: Map<string, Map<string, string | null>>;
   /** Foreman only: the latest plan checkpoint (checkpoint.ts; in memory, a restart checkpoints again). */
   plan: PlanRecord | null;
+  /** Foreman only: `[plan-review]` verdicts per plan lineage (planreview.ts; ceremony.planReview gates the checkpoint). */
+  planReviews: PlanReviews;
   /** Foreman only: plan-*.md snapshots at a planner launch, by tool call id, then by run id until its run end. */
   planSnaps: { byCall: Map<string, Map<string, string>>; byRun: Map<string, Map<string, string>> };
   /** Foreman only: read and recheck budgets (budget.ts), in memory only. */
@@ -385,6 +388,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchHeadsByCall: new Map(),
       launchHeads: new Map(),
       plan: null,
+      planReviews: new PlanReviews(),
       planSnaps: { byCall: new Map(), byRun: new Map() },
       budget: new ReadBudget(),
       readNotices: new Map(),
@@ -799,6 +803,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchBriefs: "on",
       // A reviewer PASS marks its items (reviewmarks.ts; "off" only renders the eee843d baseline).
       reviewMarks: "on",
+      // ceremony.planReview at heavy: the plan-review step before the checkpoint (planreview.ts).
+      planReview: planReviewOn(s.config.config, "heavy") ? "on" : "off",
     };
   }
   /** ceremony.heavyThreshold: anything but "eee843d" is the default strict. */
@@ -901,6 +907,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const counted = s.isChild ? data : countingView(data, reviewResults);
           if (!s.isChild) s.reviewerFails.onRun(runId, reviewerTextsOfRunEnd(counted), boundLedger(s.markerDir, s.id));
           if (reviewResults.length > 0) recordRunFindings(s, runId, reviewResults);
+          if (!s.isChild) recordPlanReviews(s, runId, reviewResults);
           if (!s.isChild) s.brief.onRunEnd(runEndOf(data), s.launchedRoles.get(runId), (id, text) => storeBrief(s, id, text));
           for (const step of stepsOfRunEnd(data)) s.steps[step]++;
           for (const f of frictionOfRunEnd(data)) s.trace?.emit({ event: "friction", role: f.role, runId: f.runId, kind: f.kind, note: f.note });
@@ -964,6 +971,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     void entry.text.then((text) => {
       if (text && !entry.claimed) pi.sendMessage({ customType: "pi-foreman-panel", content: text, display: true }, { triggerTurn: false });
     });
+  }
+
+  /** Plan review (planreview.ts): each primary `[plan-review]` verdict is kept for the plan bytes on disk now; traced `plan_review`. */
+  function recordPlanReviews(s: Session, runId: string, results: ReturnType<typeof reviewResultsOfRunEnd>): void {
+    const opts = { cwd: s.cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir };
+    const plans = planPathsOf(s.reviewRuns.byRun.get(runId)?.files ?? [], opts.scratchDir);
+    for (const r of planReviewResults(results)) {
+      s.trace?.emit({ event: "plan_review", model: r.model, decision: r.verdict });
+      const findings = (s.reviewRuns.findings.get(runId) ?? Promise.resolve([])).then((b) => b.find((x) => x.result.index === r.index)?.findings ?? [], () => []);
+      for (const p of plans) {
+        const rp = readPlan(p, opts);
+        if ("plan" in rp) s.planReviews.record(rp.plan.path, { hash: planReviewHash(rp.plan.bytes), verdict: r.verdict, model: r.model, findings });
+      }
+    }
   }
 
   /** Overlay check (see permoverlay.ts); undefined = let the call go on. */
@@ -1224,7 +1245,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const rl = reviewLaunchOf(input, occasions, panel?.shadows ?? new Map(), { started: Date.now(), files, panel: panel?.panel ?? null });
           if (rl) capSet(s.reviewRuns.byCall, event.toolCallId, rl);
         }
-        const factCount = await reviewFacts.augment(input, ctx.cwd);
+        const planLedger = boundLedger(s.markerDir, s.id);
+        const factCount = await reviewFacts.augment(input, ctx.cwd, (task) => {
+          if (occasionOf(task) !== "plan-review") return null;
+          const lg = (() => { try { return planLedger ? fs.readFileSync(planLedger, "utf8") : null; } catch { return null; } })();
+          return planFactsBlock(planPathsOf(planReviewFiles(task, null), editModeOfSession(s).scratchDir), planLedger, lg);
+        });
         if (factCount > 0) s.trace?.emit({ event: "review_facts", count: factCount });
         // PR gate (B-M4): HEAD at a reviewer's launch; the verdict keeps a head only if it is unchanged at run end.
         const action = actionOf(input);
@@ -2006,8 +2032,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       async execute(_id: string, params: Record<string, unknown>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
         const s = await ensureSession(ctx);
         const tier = s.ceremony.tier;
-        const done = (decision: string, by: string | null, text: string, isError = false) => {
-          s.trace?.emit({ event: "checkpoint", decision, by, tier });
+        const done = (decision: string, by: string | null, text: string, isError = false, reason?: string) => {
+          s.trace?.emit({ event: "checkpoint", decision, by, tier, ...(reason ? { reason } : {}) });
           return { content: [{ type: "text" as const, text }], details: { decision, by }, ...(isError ? { isError: true } : {}) };
         };
         if (s.isChild) return done("refused", null, `${CHECKPOINT_TOOL} is for the foreman only.`, true);
@@ -2020,6 +2046,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const plan = r.plan;
         const name = `plan-${plan.topic}.md`;
         const hash8 = plan.hash.slice(0, 8);
+        // ceremony.planReview (planreview.ts): a [plan-review] verdict on these bytes first; a first FAIL goes back to the planner.
+        let reviewed: string | null = null;
+        if (planReviewOn(s.config.config, tier)) {
+          const g = s.planReviews.gate(plan.path, planReviewHash(plan.bytes));
+          if ("refusal" in g) return done("refused", null, planReviewRefusalText(g.refusal, plan.rel, tier, g.stale), true, g.refusal);
+          reviewed = planReviewSection(g.verdict, await g.verdict.findings);
+        }
         if (s.plan && s.plan.status === "approved" && s.plan.hash === plan.hash && s.plan.path === plan.path) {
           // No dialog ran: the trace carries by: null so a re-check never counts as another approval.
           return done("approve", null, `${name} (${hash8}) is already approved by the owner (${s.plan.by}, ${s.plan.approvedAt}); builders may launch while it stays unchanged.`);
@@ -2032,7 +2065,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const title = `pi-foreman checkpoint: ${name} (${hash8})`;
         let answer: string | undefined;
         try {
-          ctx.ui.notify(planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash), "info");
+          ctx.ui.notify(planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash) + (reviewed ? `\n${reviewed}` : ""), "info");
           answer = await withBlocked(herdrEvents, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
         } catch {
           answer = undefined;

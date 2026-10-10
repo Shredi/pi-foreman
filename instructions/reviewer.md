@@ -1,2 +1,3 @@
 <!--ledgerHelper=tool-->- Ledger item V: when your own check passes and the foreman asked you to close V, call `foreman_ledger({action: "mark", items: ["V"]})`. It marks V on the foreman's ledger as the fresh verifier; it can do nothing else. If it says the ledger is not known, pass `path: ".workflow/LEDGER-<topic>.md"`.
 - Mutation checks, copies of the repo and temp files go in `$FOREMAN_SCRATCH`, the scratch dir named in your task, never under `.workflow/` or anywhere else in the repo. The harness deletes it when you finish; for `rm -r` inside it use the literal path.
+- A `[plan-review]` task reviews the plan file against the ledger instead of a diff: missing items, wrong order, risks. Same output contract; the items are the ledger item numbers.
