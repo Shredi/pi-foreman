@@ -37,8 +37,12 @@ STARTUP_GRACE_S = 10
 WATCHDOG_ENV = "PI_FOREMAN_SIDEBAR_WATCHDOG_S"  # hidden override (tests)
 # Herdr config reference: "`ui.sidebar_width` integer default `26`".
 DEFAULT_WIDTH = 26
-NARROW_COUNTS = 34   # below: drop token counts from fm_l3
-NARROW_COST = 28     # below: clear fm_l3 and fm_cost
+# Row 3 is [fm_l3][fm_cost]. A typical root row needs "↑287k ↓7.4k" (11) +
+# GAP (3) + "$0.25 ✓3" (8) = 22 columns inside width - INSET, so counts fit
+# from 24. Cost alone needs 8 + INSET = 10; 20 leaves room for the tree indent
+# of nested rows. Narrower panels (Herdr's minimum is 18) step down.
+NARROW_COUNTS = 24   # below: drop token counts from fm_l3
+NARROW_COST = 20     # below: clear fm_l3 and fm_cost
 LATE_S = 900         # blocked longer than this: glyph gets a "!"
 MAX_VALUE = 80
 # Columns the Agents panel takes from `ui.sidebar_width` for its frame and

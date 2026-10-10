@@ -62,7 +62,7 @@ def snapshot(symbols="unicode"):
 class ComposeTest(unittest.TestCase):
     def test_widths_and_symbol_sets(self):
         for symbols in ("unicode", "nerd"):
-            for width in (26, 30, 34, 44):
+            for width in (20, 22, 26, 34, 44):
                 with self.subTest(symbols=symbols, width=width):
                     out = sidebar.compose(snapshot(symbols), width)
                     self.assertEqual(set(out), {"w1:p1", "w1:p2", "w1:p3", "w2:p1"})
@@ -77,18 +77,23 @@ class ComposeTest(unittest.TestCase):
                     used = (sidebar.INSET + sidebar.LEAD_CELL_W + sidebar.GAP
                             + sidebar.cell_width(root["fm_sym"]) + sidebar.GAP)
                     self.assertEqual(sidebar.cell_width(root["fm_l1"]), width - used - 2)
-                    self.assertIn("builder strong ×2", root["fm_l2"])
+                    self.assertIn("builder" if width < 26 else "builder strong ×2", root["fm_l2"])
                     self.assertNotIn("explorer", root["fm_l2"])
-                    if width < 28:
+                    if width < sidebar.NARROW_COST:
                         self.assertIsNone(root["fm_l3"])
                         self.assertIsNone(root["fm_cost"])
-                    elif width < 34:
+                    elif width < sidebar.NARROW_COUNTS:
                         self.assertIsNone(root["fm_l3"])
                         self.assertTrue(root["fm_cost"].startswith("$0.47"))
                     else:
                         self.assertEqual(root["fm_l3"], "↑341k ↓2.3k")
                         self.assertTrue(root["fm_cost"].startswith("$0.47"))
                         self.assertTrue(root["fm_cost"].endswith("✓1"))
+
+    def test_row3_steps_down_below_20(self):
+        root = sidebar.compose(snapshot(), 18)["w1:p1"]
+        self.assertIsNone(root["fm_l3"])
+        self.assertIsNone(root["fm_cost"])
 
     def test_tree_sort_and_late_blocked(self):
         out = sidebar.compose(snapshot(), 34)
@@ -142,7 +147,7 @@ class ComposeTest(unittest.TestCase):
     def test_lines_fit_budget_and_keep_age(self):
         gap, inset = sidebar.GAP, sidebar.INSET
         for lead in (0, 1, 2):
-            for width in (24, 28, 34, 40):
+            for width in (24, 26, 28, 34, 40):
                 out = sidebar.compose(snapshot(), width, lead=lead)
                 for pane, t in out.items():
                     with self.subTest(lead=lead, width=width, pane=pane):

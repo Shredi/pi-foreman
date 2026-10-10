@@ -90,7 +90,7 @@ every 5 s; values are at most 80 characters.
 
 Width: `--width`, else `HERDR_SIDEBAR_WIDTH`, else `ui.sidebar_width` from Herdr's `config.toml` (read only), else 26
 (Herdr's default). Herdr may auto-scale the panel between `ui.sidebar_min_width` and `ui.sidebar_max_width`; set the
-width you see when it differs. Below 34 columns `fm_l3` drops the token counts; below 28 `fm_l3` and `fm_cost` are
+width you see when it differs. Below 24 columns `fm_l3` drops the token counts; below 20 `fm_l3` and `fm_cost` are
 cleared. The layout counts 2 columns of panel frame and Herdr's ` · ` separator (3 columns) between two cells of a row.
 Row 1 also reserves the cells you put before `$fm_sym` (an icon token, say): one by default, each counted 1 column
 plus a separator; set `--lead-cells N` or `HERDR_SIDEBAR_LEAD` to the number you use (0 for none). Line 1 stops
