@@ -327,6 +327,7 @@ def build(data, now):
         pres = [d.get("tokensIn"), d.get("tokensOut"), d.get("cost")]
         if any(isinstance(x, (int, float)) and not isinstance(x, bool) for x in pres):
             n["own"] = [num(x) for x in pres]
+            n["pres"] = True
         else:
             n["own"] = list(u["tot"]) if u else [sum(c["own"][0] for c in n["children"]),
                                                   sum(c["own"][1] for c in n["children"]),
@@ -412,7 +413,7 @@ def finish(n, now, since_h, done_ttl=None):
                   key=lambda c: (rank(c), c["started"] if c["started"] is not None else float("inf")))
     n["children"] = runs + subs
     n["tot"] = [n["own"][0], n["own"][1], n["own"][2]]
-    for c in subs:
+    for c in (runs + subs if n.get("pres") else subs):  # presence totals exclude the runs; usage-file totals include them
         for i in range(3):
             n["tot"][i] += c["tot"][i]
     if n["glyph"] in ACTIVE or subs:

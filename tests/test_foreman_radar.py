@@ -377,6 +377,15 @@ class JsonTests(Fixture):
         self.assertEqual(set(api), {"key", "kind", "name", "role", "rung", "state", "sym", "glyph", "paneId", "pid",
                                     "cwd", "age_s", "blocked_s", "own", "tot", "done_children", "children"})
 
+    def test_presence_tot_adds_runs_and_subsessions(self):
+        top = live("s-p", "p", "fm-p", runs=[run("L1", "builder", tin=10, tout=5, cost=0.5)])
+        top.update(tokensIn=100, tokensOut=20, cost=1.0)
+        self.put_live(top)
+        self.put_live(live("s-c", "c", "fm-c", parent="fm-p", runs=[run("L2", "builder", tin=1, tout=1, cost=0.25)]))
+        (root,) = json.loads(self.cli("--json"))["roots"]
+        self.assertEqual(root["own"], {"in": 100, "out": 20, "cost": 1.0})
+        self.assertEqual(root["tot"], {"in": 111, "out": 26, "cost": 1.75})
+
     def test_symbol_sets_from_config_and_no_ansi(self):
         self.put_live(live("a", "a", "fm-a", runs=[run("L1", "builder")]))
         uni = self.cli("--json")
