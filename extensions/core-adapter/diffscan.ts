@@ -422,14 +422,22 @@ export class ReviewFacts {
     return p;
   }
 
-  /** Call before a launch: appends the facts block and the owner's task text to each reviewer step's task; returns the number of facts added (summed over the steps changed). */
-  async augment(input: Json, cwd: string): Promise<number> {
+  /**
+   * Call before a launch: appends the facts block and the owner's task text to each reviewer step's task; returns the number of facts added (summed over the steps changed).
+   * `planFacts` returns the block of a plan-review step (plan path and ledger items instead of a diff), null for any other step.
+   */
+  async augment(input: Json, cwd: string, planFacts?: (task: string) => string | null): Promise<number> {
     let n = 0;
     for (const s of steps(input)) {
       if (typeof s.agent !== "string" || !REVIEW_ROLES.includes(s.agent) || typeof s.task !== "string") continue;
       const dir = this.cwdOf(s, input, cwd);
       const early = this.early.get(s);
       this.early.delete(s);
+      const plan = planFacts?.(s.task) ?? null;
+      if (plan !== null) {
+        s.task = `${s.task}\n${plan}\n${ownerBlock(this.owner)}`;
+        continue;
+      }
       const { block, count } = early ? factsSummary(await early) : await collectFacts(dir, this.bases.get(dir) ?? null);
       if (!block) continue;
       s.task = `${s.task}\n${block}\n${ownerBlock(this.owner)}`;
