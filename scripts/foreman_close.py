@@ -11,11 +11,13 @@ Session S defaults to CLAUDE_CODE_SESSION_ID; the state dir to PI_FOREMAN_STATE_
 `<agentDir>/pi-foreman/state` (foreman_config.resolve_agent_dir). This module is the single writer
 of `<state>/sessions/<S>/manifest.json` and `close.json` (docs/close.md):
 
-    manifest  {v:1, session, entries:[{path, kind, class, owner, branch?, base?, ts}], dropped:[path]}
+    manifest  {v:1, session, entries:[{path, kind, class, owner, branch?, base?, ts, removed?}], dropped:[path]}
 
 Entries are additive and deduplicated by realpath; writes hold `<file>.lock` (O_CREAT|O_EXCL, as
 foreman_backlog) and go through a temp file plus os.replace (retried on Windows). A directory
 `<state>/scratch/<S>/` is an implicit private scratch entry; handoff entries are durable (kept).
+An entry this session removed is marked `removed: <ts>` (never deleted from the manifest), so every
+later report of the session lists it under `removed` again and never as a handover.
 
 Report (text and close.json `lines`): `CLOSE: ready|open`, then `uncommitted:`, `unmerged:`,
 `open item:`, `pending child:`, `removed:` / `would remove:`, `kept:`, `handover: <path> — <reason>`,
@@ -411,6 +413,8 @@ def cleanup(entries, state, sid, ops_cfg, auto_clean, dry_run):
             res["kept"].append(path)
             continue
         if not os.path.lexists(path):
+            if e.get("removed"):
+                res["removed"].append(path)  # removed earlier in this session (mark_removed)
             continue
         if not auto_clean:
             res["handovers"].append({"path": path, "reason": "autoClean off", "kind": e["kind"], "branch": e.get("branch")})
@@ -434,6 +438,26 @@ def cleanup(entries, state, sid, ops_cfg, auto_clean, dry_run):
         else:
             res["handovers"].append({"path": path, "reason": reason, "kind": e["kind"], "branch": e.get("branch")})
     return res
+
+
+def mark_removed(state, sid, paths):
+    """Mark removed entries `removed: <ts>` in the manifest (idempotent; the implicit scratch is added)."""
+    if not paths:
+        return
+    mp = manifest_path(state, sid)
+    with fb.locked(mp):
+        m = load_manifest(state, sid)
+        changed = False
+        for p in paths:
+            e = next((x for x in m["entries"] if key(x["path"]) == key(p)), None)
+            if e is None:
+                e = {"path": p, "kind": "scratch", "class": "private", "owner": sid, "ts": now()}
+                m["entries"].append(e)
+            if not e.get("removed"):
+                e["removed"] = now()
+                changed = True
+        if changed:
+            write_json(mp, m)
 
 
 # ------------------------------------------------------------------ report
@@ -461,6 +485,7 @@ def build(state, sid, cwd, cfg, clean=True, dry_run=False):
            "openItems": open_items(bound_ledger(state, sid)),
            "pendingChildren": pending_children(state, sid, ids)}
     rep.update(cleanup(entries_of(state, sid, m), state, sid, ops_cfg, auto, dry_run or not clean))
+    mark_removed(state, sid, rep["removed"])
     rep["childHandovers"] = child_handovers(state, sid, ids, m["entries"], m["dropped"])
     blocking = (rep["uncommitted"] or rep["unmerged"] or rep["openItems"] or rep["pendingChildren"]
                 or rep["childHandovers"] or (rep["handovers"] and not parent))

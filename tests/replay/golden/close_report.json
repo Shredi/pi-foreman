@@ -16,7 +16,7 @@
    "event": "close",
    "decision": "report",
    "ready": false,
-   "removed": 0,
+   "removed": 1,
    "handover": 0
   },
   {

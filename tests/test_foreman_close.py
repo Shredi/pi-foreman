@@ -224,8 +224,16 @@ class HandoverTest(Base):
         self.assertFalse(wt.exists())
         self.assertTrue((self.state / "sessions" / SID / "close.json").is_file())
         code, rep = self.report("--result", str(self.tmp / "result.md"))  # close.ts re-runs after sync
-        self.assertEqual((code, rep["lines"], rep["handovers"]), (0, ["CLOSE: ready"], []))
-        self.assertIn("## Close\n\nCLOSE: ready\n", (self.tmp / "result.md").read_text())
+        self.assertEqual((code, rep["lines"], rep["handovers"]), (0, ["CLOSE: ready", "removed: %s" % wt], []))
+        self.assertEqual(rep["removed"], [str(wt)])  # marked in the manifest, listed again, never a handover
+        self.assertIn("## Close\n\nCLOSE: ready\nremoved: %s\n" % wt, (self.tmp / "result.md").read_text())
+
+    def test_sync_close_block_rejects_a_session_id_without_safe_characters(self):
+        lines = fsync.close_block(str(self.state), "!!/..", str(self.repo), {}, False)
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("CLOSE: unknown (session id"), lines)
+        self.assertFalse((self.state / "sessions" / "close.json").exists())
+        self.assertFalse((self.state / "sessions").exists())
 
 
 if __name__ == "__main__":
