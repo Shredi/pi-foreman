@@ -13,9 +13,8 @@
   lists `off-convention:` ones. `foreman sync` and `/sync` run the same report and cleanup; `/foreman close` traces
   `close` with decision `report`. Keys `close.autoClean` (a project may only turn it off) and `close.worktreeDir`
   (user or overlay only).
-- Review climb (`docs/review-climb.md`): `ladder.reviewerClimb.mode` `on-find` (default `repeat-fail`) and `rungs` climb
-  each ledger item one reviewer rung per FAIL or per PASS that still locates a defect, until clean (`climb_done`) or
-  the top rung still finds; `rung_up` reason `on_find`. Four review occasions (`item`, `[plan-review]`, `[pre-pr]`,
+- Review (`docs/review.md`, renamed from `docs/review-climb.md`): `ceremony.reviewByOccasion` sets reviewer thinking
+  and/or model per occasion (user or overlay only; trace `review_occasion`). Four review occasions (`item`, `[plan-review]`, `[pre-pr]`,
   `[second-opinion]`) share one path; only `item` and `pre-pr` count for items and gates. Different-model rule: a
   reviewer on the foreman's own model moves to the next differing rung or `ceremony.reviewModel` (trace `review_model`).
 - Plan review: `ceremony.planReview.<tier>` (heavy on; a project can only tighten) makes `foreman_checkpoint` wait for a
@@ -216,6 +215,11 @@
 - `/retro` writes `<agent dir>/pi-foreman/state/retro/retro-<session>.md`; `/retro --model` adds one foreman reply of
   at most 10 lines. The bench `retro` post-step sends `/retro --model`. `foreman_retro.py` counts rereviews, budget
   hits, rung-ups, child read-budget hits, headless defers and turns.
+
+### Removed
+- Runtime on-find reviewer climb: `ladder.reviewerClimb.mode` and `rungs` (a stale key gets the unknown-key warning),
+  traces `climb_done` and `rung_up {reason: on_find}`. The bench climb policy (`foreman bench review --mode climb`)
+  stays, as offline exploration.
 
 ### Changed
 - `trace.enabled` defaults to `null` (was `false`): the trace follows the effective `retro.enabled` (on in tui and rpc,

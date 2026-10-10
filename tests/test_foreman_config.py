@@ -89,7 +89,7 @@ class ConfigTest(unittest.TestCase):
         res = self.load(trusted_project=True)
         self.assertEqual(res["errors"], [])
         cfg = res["config"]
-        self.assertEqual(cfg["ladder"], {"childPolicy": "at-or-below", "strongAbove": 5000, "childMaxTurns": 9, "strongOnRevision": True, "reviewerClimb": {"enabled": False, "mode": "repeat-fail"}, "reviewPanel": {"shadows": [], "gates": ["pre-pr"], "visible": True}})
+        self.assertEqual(cfg["ladder"], {"childPolicy": "at-or-below", "strongAbove": 5000, "childMaxTurns": 9, "strongOnRevision": True, "reviewerClimb": {"enabled": False}, "reviewPanel": {"shadows": [], "gates": ["pre-pr"], "visible": True}})
         self.assertEqual((cfg["providers"]["p1"]["ranks"], cfg["providers"]["p1"]["strongAbove"]), (p1["ranks"], 6000))
         self.assertEqual(cfg["roles"]["builder"]["childMaxTurns"], 4)
         self.assertIn("project ladder.childPolicy ignored", "\n".join(res["warnings"]))
@@ -101,7 +101,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(self.load(trusted_project=True)["config"]["childMaxThinking"], "low")
         self.l2({})
         self.assertNotIn("childMaxThinking", self.load()["config"])
-        self.assertEqual(self.load()["config"]["ladder"], {"strongAbove": 100000, "childMaxTurns": 60, "strongOnRevision": True, "reviewerClimb": {"enabled": False, "mode": "repeat-fail"}, "reviewPanel": {"shadows": [], "gates": ["pre-pr"], "visible": True}})
+        self.assertEqual(self.load()["config"]["ladder"], {"strongAbove": 100000, "childMaxTurns": 60, "strongOnRevision": True, "reviewerClimb": {"enabled": False}, "reviewPanel": {"shadows": [], "gates": ["pre-pr"], "visible": True}})
         self.l2({"ladder": {"childPolicy": "sometimes"}})
         self.assertTrue(self.load()["errors"])
         presets = sorted((ROOT / "config" / "presets").glob("*.json"))
@@ -180,6 +180,14 @@ class ConfigTest(unittest.TestCase):
         self.assertIn("unknown key bogus", res["warnings"])
         self.assertIn("unknown key fanout.wide", res["warnings"])
         self.assertEqual(res["errors"], [])
+
+    def test_review_by_occasion_schema(self):
+        self.l2({"ceremony": {"reviewByOccasion": {"pre-pr": {"thinking": "high"}, "bogus": {"thinking": "low"}}}})
+        res = self.load()
+        self.assertIn("unknown key ceremony.reviewByOccasion.bogus", res["warnings"])
+        self.assertEqual(res["errors"], [])
+        self.l2({"ceremony": {"reviewByOccasion": {"item": {"thinking": "max"}}}})
+        self.assertTrue(self.load()["errors"])
 
     def test_invalid_safety_drops_only_that_entry(self):
         self.l2({"safety": {"children": {"mayPush": "yes"}, "git": {"protectedBranches": ["dev"]}}})

@@ -41,7 +41,7 @@ one reviewer launch over a builder diff with planted defects, scored for catches
 
     foreman bench review --tasks DIR [--models id[,id]] [--repeats 2] [--out DIR] [--jobs 3]
                          [--token-cap N] [--timeout 900] [--dry-run] [--prices FILE]
-                         [--mode single|climb] [--rungs id,id,...]
+                         [--mode single|climb] [--rungs id,id,...]   (climb: offline policy exploration, no runtime climb)
     foreman bench review-table --out DIR [--tasks DIR]
 
 Task dir (`--tasks` names one, or a folder of them; five synthetic samples (clean, secret-log, shell-injection in TypeScript and Python, path-traversal) are in `bench/review-samples/`):
@@ -149,7 +149,7 @@ upper bound. Reviewers run on the host, not in Docker: a reviewer that runs Go o
 dependencies; `--timeout` bounds each launch and the work dirs stay in the temp dir for audit (delete
 `pf-rb-work/` when done).
 
-Policies: `--mode climb --rungs m1,m2,...` (at least two; `--rungs` is an error with `--mode single`, the default)
+Policies: `--mode climb --rungs m1,m2,...` (offline policy exploration only: the runtime has no climb on find; at least two; `--rungs` is an error with `--mode single`, the default)
 measures a reviewer ladder. For each task and repeat, rung 1 runs as a normal single cell
 (`<task>__<model>__r<n>`); while a rung's report has a located finding (`scripts/foreman_findings.py`
 `located_findings`: a FAIL unit, or a bullet of a PASS report, that names a diff file with a line or a class word) the
@@ -166,7 +166,12 @@ cached rungs": they are read from the stored rung cells and rescored, never a se
 comparison: a climb row costs the cheap rung on every cell and the dearer rungs only where the cheap one located
 something, so compare its misses and $ per diagnosed against `single:` rows of the same models.
 
-Harvested tasks: `foreman findings export` ([review-climb](review-climb.md#foreman-findings)) writes a task dir with
+Why the runtime default is a single reviewer: a single Opus reviewer diagnosed 20/20 on one private set and 20/22 on
+another. A haiku to opus climb diagnosed 18/20 and 17/22 at about 57 % of the cost, with more false alarms. A haiku to
+sonnet to opus climb was worse and dearer; the sonnet rung never added a catch. An A/B rerun showed that a difference of
++-3 on a 20-task set is noise, and that the single strong reviewer was stable across runs.
+
+Harvested tasks: `foreman findings export` ([review](review.md#foreman-findings)) writes a task dir with
 `harvest.json` `"confirmed": false`. `foreman bench review` skips such a task (and says how many) until you check
 `ground_truth.json` and set `"confirmed": true`; a dir without `harvest.json` is always used.
 

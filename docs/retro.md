@@ -61,7 +61,7 @@ have no binding, so their children are not covered.
 (`<agent dir>/pi-foreman/state/findings/`) and prints per model and rung: reviews, findings, accepted, rejected, unique,
 late misses, USD, USD per accepted finding, median and p90 seconds, plus the time to clean per ledger item. A shadow
 reviewer model whose unique accepted findings reach `retro.panelThreshold` files a candidate of kind `review-model` in
-the backlog ("consider it as primary or rung"). Columns, outcomes and the store are in [review-climb](review-climb.md).
+the backlog ("consider it as primary or rung"). Columns, outcomes and the store are in [review](review.md).
 `--workspace-key KEY` sets the backlog key of that candidate (default `retro.workspaceKey`, else derived from the
 current directory).
 
