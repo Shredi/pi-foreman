@@ -41,6 +41,9 @@ climbs here), and only user or overlay config can set it.
 |---|---|---|
 | `ladder.reviewerClimb.enabled` | `false` | Turn the two triggers below on. |
 | `ladder.reviewerClimb.securityRung` | unset | Model of a reviewer launch on a security-shaped diff, `<provider>/<model>[:<level>]`. |
+| `ladder.reviewerClimb.mode` | `repeat-fail` | `repeat-fail`: the two triggers below. `on-find`: each ledger item climbs one rung per FAIL or per PASS with located findings until a clean verdict (`climb_done {rungs, reason: clean, item}`) or the top rung still finds (`reason: exhausted`). |
+| `ladder.reviewerClimb.rungs` | `[]` | On-find reviewer models, bottom first; empty means `[roles.reviewer, roles.reviewer.strong]`. |
+| `ladder.reviewPanel.shadows`, `ladder.reviewPanel.gates`, `ladder.reviewPanel.visible` | `[]`, `[pre-pr]`, `true` | Shadow reviewer models launched beside the primary on the named occasions (`item`, `plan-review`, `pre-pr`, `second-opinion`); their findings never block. Empty `shadows` = off. User or overlay config only. |
 
 - **Repeated FAIL.** The harness reads each reviewer run's per-item `N. FAIL` lines (a list marker, backticks,
   `**` and `N)` are accepted; fenced blocks are skipped). When the same ledger item fails in a second reviewer run,

@@ -313,6 +313,18 @@ class LayerRulesTest(unittest.TestCase):
         res = self.load(proj={"ceremony": {"heavyThreshold": "eee843d"}}, session={})
         self.assertEqual(res["config"]["ceremony"]["heavyThreshold"], "eee843d")
 
+    def test_review_climb_keys_user_only_and_plan_review_true_only(self):
+        proj = {"ladder": {"reviewPanel": {"shadows": ["p/x"]}}, "ceremony": {"reviewModel": "p/x", "planReview": {"heavy": False, "standard": True}},
+                "retro": {"panelThreshold": 1}}
+        res = self.load(proj=proj, session={})
+        cfg, warnings = res["config"], "\n".join(res["warnings"])
+        self.assertEqual((cfg["ladder"]["reviewPanel"]["shadows"], cfg["ceremony"]["reviewModel"], cfg["retro"]["panelThreshold"]), ([], None, 3))
+        self.assertEqual(cfg["ceremony"]["planReview"], {"trivial": False, "standard": True, "heavy": True})
+        for key in ("ladder.reviewPanel", "ceremony.reviewModel", "retro.panelThreshold", "ceremony.planReview.heavy"):
+            self.assertIn("project %s ignored" % key, warnings)
+        res = self.load(l2={"ceremony": {"reviewModel": "p/x", "planReview": {"heavy": False}}, "retro": {"panelThreshold": 5}}, proj={}, session={})
+        self.assertEqual((res["config"]["ceremony"]["reviewModel"], res["config"]["ceremony"]["planReview"]["heavy"], res["config"]["retro"]["panelThreshold"]), ("p/x", False, 5))
+
     def test_user_layer_reaches_the_eee843d_row(self):
         row = {"ledgerHelper": "off", "reviewPerRevision": False, "heavyThreshold": "eee843d"}
         res = self.load(l2={"ceremony": dict(row)}, proj={}, session={})

@@ -169,7 +169,9 @@ rule) is that session's decision.
 - `/retro --model` is refused when retro is off or the session is not interactive.
 
 Other keys: `retro.workspaceKey`, `retro.backlogDir`, `retro.repoBacklog`, `retro.expireDays` and
-`retro.askThreshold` (above), and `retro.proposalMinReviews` ([sessions](sessions.md)). `retro.workspaceKey`,
+`retro.askThreshold` (above), `retro.proposalMinReviews` ([sessions](sessions.md)), and `retro.panelThreshold`
+(default 3, user or overlay only: unique accepted findings of a shadow reviewer model that make a `review-model`
+backlog candidate). `retro.workspaceKey`,
 `retro.backlogDir` and `retro.repoBacklog` come from user or overlay config only; a project or session value is
 ignored.
 

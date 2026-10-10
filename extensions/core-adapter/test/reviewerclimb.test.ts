@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { applyLaunchModels } from "../launchmodel.ts";
 import { rankRefusal } from "../ranks.ts";
-import { applySecurityRungs, defaultSecurityRung, failItemsOf, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd } from "../reviewerclimb.ts";
+import { applyOnFindRungs, applyReviewModelRule, applySecurityRungs, defaultSecurityRung, failItemsOf, markPolicyOverrides, OnFindClimb, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd } from "../reviewerclimb.ts";
 
 const ROLES = {
   foreman: { model: "p/m-opus", thinking: "high" },
@@ -102,4 +102,82 @@ test("security rung over the child rank policy: the trace carries policy_overrid
   const within = await run(cfg, { agent: "reviewer", task: "t" }, new ReviewerFails(), AUTH_DIFF);
   markPolicyOverrides(within.climbs, refused);
   assert.deepEqual([within.climbs[0].trace.event, "policy_override" in within.climbs[0].trace], ["rung_up", false]);
+});
+
+const ON_FIND = { ladder: { reviewerClimb: { enabled: true, mode: "on-find" } } };
+/** Plan one reviewer launch with the on-find climb, then write the models as index.ts does. */
+async function launch(climb: OnFindClimb, config: Record<string, unknown> = ON_FIND, diff: string | null = PLAIN_DIFF, fails = new ReviewerFails()) {
+  const input: Record<string, unknown> = { agent: "reviewer", task: "t" };
+  const r = await planReviewerClimbs(input, ROLES, { config, live: new Map(), fails, climb, diffOf: async () => diff });
+  applyLaunchModels(input, ROLES, "high");
+  applyOnFindRungs(r.climbs, "high", undefined);
+  applySecurityRungs(r.climbs, "high", undefined);
+  return { model: input.model, traces: r.climbs.map((c) => c.trace) };
+}
+
+test("on-find: rung 0 FAIL climbs, the next launch runs on rung 1, its clean PASS ends the climb after two rungs", async () => {
+  const climb = new OnFindClimb();
+  assert.deepEqual(await launch(climb), { model: "p/m-haiku:medium", traces: [] });
+  assert.deepEqual(climb.onVerdict("r1", ["1"], "fail", false, "p/m-haiku:medium", "L"), [{ event: "rung_up", role: "reviewer", from: "p/m-haiku", to: "p/m-sonnet", reason: "on_find", item: "1" }]);
+  const second = await launch(climb);
+  assert.deepEqual(second, { model: "p/m-sonnet:medium", traces: [{ event: "rung_up", role: "reviewer", from: "p/m-haiku", to: "p/m-sonnet", reason: "on_find", rung: 1 }] });
+  assert.deepEqual(climb.onVerdict("r2", ["1"], "pass", false, "p/m-sonnet", "L"), [{ event: "climb_done", role: "reviewer", rungs: 2, reason: "clean", item: "1" }]);
+  assert.equal(climb.launchRung(), 0);
+});
+
+test("on-find: a finding on the top rung ends the climb as exhausted", async () => {
+  const climb = new OnFindClimb();
+  await launch(climb);
+  climb.onVerdict("r1", ["2"], "fail", false, "p/m-haiku", "L");
+  assert.deepEqual(climb.onVerdict("r2", ["2"], "fail", false, "p/m-sonnet", "L"), [{ event: "climb_done", role: "reviewer", rungs: 2, reason: "exhausted", item: "2" }]);
+  assert.equal(climb.launchRung(), 0);
+});
+
+test("on-find: rungs are per item; a ledger change resets them", async () => {
+  const climb = new OnFindClimb();
+  climb.rungs = ["p/a", "p/b", "p/c"];
+  climb.onVerdict("r1", ["1"], "fail", false, "p/a", "L");
+  climb.onVerdict("r2", ["1"], "fail", false, "p/b", "L");
+  assert.deepEqual(climb.onVerdict("r3", ["2"], "fail", false, "p/c", "L").map((t) => [t.item, t.from, t.to]), [["2", "p/a", "p/b"]]);
+  assert.equal(climb.launchRung(), 2);
+  climb.onVerdict("r3", ["2"], "fail", false, "p/c", "L"); // same run: counted once
+  climb.onVerdict("r4", ["1"], "pass", false, "p/c", "L");
+  assert.equal(climb.launchRung(), 1);
+  climb.onVerdict("r5", [], "fail", false, "p/a", "other ledger");
+  assert.equal(climb.launchRung(), 0);
+});
+
+test("on-find: a PASS with located findings climbs; a clean first review never climbs", () => {
+  const climb = new OnFindClimb();
+  climb.rungs = ["p/a", "p/b"];
+  assert.deepEqual(climb.onVerdict("r1", ["1"], "pass", false, "p/a", "L"), [{ event: "climb_done", role: "reviewer", rungs: 1, reason: "clean", item: "1" }]);
+  assert.deepEqual(climb.onVerdict("r2", ["3"], "pass", true, "p/a", "L").map((t) => [t.event, t.reason]), [["rung_up", "on_find"]]);
+  assert.equal(climb.launchRung(), 1);
+});
+
+test("on-find: a security-shaped diff jumps over the on-find rung; repeat-fail mode ignores the on-find climb", async () => {
+  const climb = new OnFindClimb();
+  const sec = { ladder: { reviewerClimb: { enabled: true, mode: "on-find", securityRung: "p/m-opus:max" } } };
+  await launch(climb, sec);
+  climb.onVerdict("r1", ["1"], "fail", false, "p/m-haiku", "L");
+  const r = await launch(climb, sec, AUTH_DIFF);
+  assert.deepEqual([r.model, r.traces.map((t) => t.reason)], ["p/m-opus:high", ["security"]]);
+  const plain = await launch(climb, { ladder: { reviewerClimb: { enabled: true } } });
+  assert.deepEqual(plain, { model: "p/m-haiku:medium", traces: [] });
+});
+
+test("different-model rule: same as the foreman moves to the next differing rung, else reviewModel, else stays", () => {
+  const roles = { ...ROLES, reviewer: { model: "p/m-opus", strong: { model: "p/m-sonnet", thinking: "high" } } };
+  const opts = (config: Record<string, unknown>) => ({ config, foreman: "p/m-opus", maxThinking: "medium", childMaxThinking: undefined });
+  const one: Record<string, unknown> = { agent: "reviewer", model: "p/m-opus:high" };
+  assert.deepEqual(applyReviewModelRule(one, roles, opts({})), [{ event: "review_model", role: "reviewer", from: "p/m-opus", to: "p/m-sonnet", reason: "same_as_foreman" }]);
+  assert.equal(one.model, "p/m-sonnet:medium");
+  const noStrong = { ...ROLES, reviewer: { model: "p/m-opus" } };
+  const two: Record<string, unknown> = { tasks: [{ agent: "reviewer", model: "p/m-opus" }, { agent: "builder", model: "p/m-opus" }] };
+  assert.deepEqual(applyReviewModelRule(two, noStrong, opts({ ceremony: { reviewModel: "q/other" } })).map((t) => [t.to, t.reason]), [["q/other", "same_as_foreman"]]);
+  assert.deepEqual((two.tasks as Record<string, unknown>[]).map((e) => e.model), ["q/other", "p/m-opus"]);
+  const three: Record<string, unknown> = { agent: "reviewer", model: "p/m-opus" };
+  assert.deepEqual(applyReviewModelRule(three, noStrong, opts({})), [{ event: "review_model", role: "reviewer", from: "p/m-opus", to: "p/m-opus", reason: "no_alternative" }]);
+  assert.equal(three.model, "p/m-opus");
+  assert.deepEqual(applyReviewModelRule({ agent: "reviewer", model: "p/m-haiku" }, roles, opts({})), []);
 });

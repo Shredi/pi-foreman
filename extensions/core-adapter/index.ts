@@ -35,7 +35,7 @@ import { applyLaunchModels, applyLaunchTimeouts, roleTimeoutMs, splitLevel, STRE
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
 import { ReviewFacts } from "./diffscan.ts";
-import { applySecurityRungs, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
+import { applyOnFindRungs, applyReviewModelRule, applySecurityRungs, markPolicyOverrides, OnFindClimb, planReviewerClimbs, ReviewerFails, reviewerClimbConfig, reviewerRunsOfRunEnd, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
@@ -57,7 +57,7 @@ import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
 import { appendReview, capSet, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prToolRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
-import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
+import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd, verdictItemsOf } from "./reviewmarks.ts";
 import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts";
 import { openTrace, traceFile } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
@@ -181,6 +181,8 @@ interface Session {
   climbRefusals: number;
   /** Foreman only: per-item FAIL counts of reviewer runs (ladder.reviewerClimb, reviewerclimb.ts). */
   reviewerFails: ReviewerFails;
+  /** Foreman only: the on-find climb per ledger item (ladder.reviewerClimb.mode on-find, reviewerclimb.ts). */
+  onFind: OnFindClimb;
   /** Foreman only: reviewer verdicts with the HEAD they covered, newest last, at most 50 (reviews.ts; the PR gate reads it). */
   reviews: ReviewRecord[];
   /** Pending HEAD reads of `reviews`; the PR gate waits for it. */
@@ -363,6 +365,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       finishRefusals: 0,
       climbRefusals: 0,
       reviewerFails: new ReviewerFails(),
+      onFind: new OnFindClimb(),
       reviews: [],
       reviewSync: Promise.resolve(),
       reviewMarked: new Set(),
@@ -883,6 +886,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
           s.ladder.onRunEnd(runEndOf(data));
           if (!s.isChild) s.reviewerFails.onRun(runId, reviewerTextsOfRunEnd(data), boundLedger(s.markerDir, s.id));
+          const rcCfg = reviewerClimbConfig(s.config.config);
+          if (!s.isChild && rcCfg.enabled && rcCfg.mode === "on-find") {
+            // on-find climb: located = false for now (wave 2 feeds it from the findings extractor at run end).
+            const ledger = boundLedger(s.markerDir, s.id);
+            for (const r of reviewerRunsOfRunEnd(data)) {
+              const model = r.model ?? s.ladder.live.get("reviewer") ?? "";
+              const recs = [...s.onFind.onVerdict(runId, verdictItemsOf(r.text, "FAIL"), "fail", false, model, ledger), ...s.onFind.onVerdict(runId, verdictItemsOf(r.text, "PASS"), "pass", false, model, ledger)];
+              for (const rec of recs) s.trace?.emit(rec);
+            }
+          }
           if (!s.isChild) s.brief.onRunEnd(runEndOf(data), s.launchedRoles.get(runId), (id, text) => storeBrief(s, id, text));
           for (const step of stepsOfRunEnd(data)) s.steps[step]++;
           for (const f of frictionOfRunEnd(data)) s.trace?.emit({ event: "friction", role: f.role, runId: f.runId, kind: f.kind, note: f.note });
@@ -1076,11 +1089,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           climbs = lp.climbs;
           ladderRoles = resolution.roles;
           // ladder.reviewerClimb (reviewerclimb.ts): the reviewer's diff is taken here, before its model is picked; the facts reuse it.
-          const rc = await planReviewerClimbs(input, resolution.roles, { config: s.config.config, live: s.ladder.live, fails: s.reviewerFails, diffOf: async (e) => { const d = await reviewFacts.diffOf(e, input, ctx.cwd); return d.diff || d.untracked ? (d.diff ?? "") + d.untracked : null; } });
+          const rc = await planReviewerClimbs(input, resolution.roles, { config: s.config.config, live: s.ladder.live, fails: s.reviewerFails, climb: s.onFind, diffOf: async (e) => { const d = await reviewFacts.diffOf(e, input, ctx.cwd); return d.diff || d.untracked ? (d.diff ?? "") + d.untracked : null; } });
           reviewerClimbs = rc.climbs;
           reviewerTraces = rc.traces;
         }
         const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking") });
+        // on-find rungs are written over the mapped models, before the rank check (a refusal stays possible).
+        applyOnFindRungs(reviewerClimbs, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
         if (!s.isChild && actionOf(input) === null) {
           const foremanModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null;
           for (const m of launchedModels(input)) {
@@ -1092,6 +1107,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // The security rung is explicit config: written after the rank check (docs/ladder.md); traced when it overrides the policy.
           markPolicyOverrides(reviewerClimbs, (m) => rankRefusal(s.config.config, foremanModel, m) !== null);
           applySecurityRungs(reviewerClimbs, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
+          // Different-model rule (every reviewer launch): after the security rung, so it sees the final model; traced with policy_override.
+          const refusedBy = (m: string): boolean => rankRefusal(s.config.config, foremanModel, m) !== null;
+          reviewerTraces.push(...applyReviewModelRule(input, resolution.roles, { config: s.config.config, foreman: foremanModel, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: refusedBy }));
         }
         for (const o of launched.overrides) s.trace?.emit({ event: "model_override", role: o.role, model: o.model, requested: o.requested });
         for (const n of launched.notices) s.trace?.emit({ event: "strong_unmapped", role: n.role, model: n.model, tier: s.ceremony.tier });
