@@ -158,7 +158,7 @@ def _children_text(node, joins):
         if _is_row(k, joins) or k.get("state") == "done":
             continue
         label = k.get("role") or k.get("name") or "?"
-        if k.get("rung"):
+        if k.get("rung") and k["rung"] != "model":  # the base rung is implied
             label += " " + k["rung"]
         item = (k.get("glyph") or "") + " " + label
         if item not in counts:
@@ -166,7 +166,7 @@ def _children_text(node, joins):
             counts[item] = 0
         counts[item] += 1
     if not groups:
-        return "no children"
+        return "no active children" if kids else "no children"
     return " · ".join(g if counts[g] == 1 else "%s ×%d" % (g, counts[g]) for g in groups)
 
 

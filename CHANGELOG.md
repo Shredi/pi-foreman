@@ -3,6 +3,16 @@
 ## [Unreleased]
 
 ### Added
+- Herdr sidebar plugin `pi-foreman.sidebar` (`integrations/herdr/pi-foreman-sidebar/`, `docs/herdr.md`): a stdlib
+  daemon reads `foreman radar --json --follow`, joins sessions to panes (presence `paneId`, else pid, else a unique
+  cwd) and publishes `fm_*` pane tokens (state glyph, label and age or blocked timer, children, tokens, cost, sort key;
+  15 s TTL, every 5 s); sets the Agents view sort while a foreman session exists and clears it otherwise. `configure`
+  prints a `rows_by_agent.pi` rows snippet; the plugin never writes Herdr's config.
+- Radar: `foreman radar --json` (one snapshot line) and `--follow` (one line per `--interval`), no ANSI; wide glyphs
+  align. `ui.symbols` (`unicode` default, `nerd`) picks the glyph set for radar, the children widget and the plugin
+  (`config/symbols.json`); radar glyphs are now ⏳ working, ⏸ waiting, ? asking, ✋ blocked, ✓ done, ✗ lost.
+- Presence file: `paneId` (from `HERDR_PANE_ID`), session totals `tokensIn`, `tokensOut`, `cost` and `blockedSince`
+  (additive, `v` stays 1). The children widget prefixes each run with its state glyph.
 - Radar: `radar.doneTtlMinutes` (default 30) and `foreman radar --done-ttl MINUTES`. A `done` session older than the TTL
   is hidden and its presence file deleted on refresh (only `state: "done"` files, never unparseable ones); a not-done
   session with no heartbeat for 15 minutes reads `stale` instead of `lost`. Working, blocked and lost rows never expire by age.

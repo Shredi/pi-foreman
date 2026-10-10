@@ -122,6 +122,15 @@ class ComposeTest(unittest.TestCase):
         snap = {"roots": [node("d", "session", "d", "done", "done", g, pane="w1:p1")]}
         self.assertEqual(sidebar.compose(snap, 34)["w1:p1"]["fm_l2"], "done")
 
+    def test_only_done_runs_and_base_rung(self):
+        g = SYMS["unicode"]
+        kids = [node("r1", "run", "explorer", "done", "done", g, role="explorer", rung="model")]
+        snap = {"roots": [node("s", "session", "s", "waiting", "idle", g, pane="w1:p1", children=kids)]}
+        self.assertEqual(sidebar.compose(snap, 34)["w1:p1"]["fm_l2"], "no active children")
+        kids = [node("r2", "run", "explorer", "working", "working", g, role="explorer", rung="model")]
+        snap = {"roots": [node("s", "session", "s", "working", "working", g, pane="w1:p1", children=kids)]}
+        self.assertEqual(sidebar.compose(snap, 34)["w1:p1"]["fm_l2"], g["working"] + " explorer")
+
     def test_wide_glyph_width(self):
         self.assertEqual(sidebar.cell_width("⏳ ab"), 5)
         self.assertEqual(sidebar.cell_width("\uf252"), 1)
