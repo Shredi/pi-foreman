@@ -41,7 +41,8 @@ test("ExplorerBrief: prepended once to fresh builder steps, bounded, handoff com
   const b = new ExplorerBrief();
   const input: Record<string, unknown> = { agent: "builder", task: "do it" };
   assert.deepEqual(b.apply(input), []);
-  b.onRunEnd(end("e1", "explorer", "x".repeat(BRIEF_MAX + 50)));
+  const stored: string[] = [];
+  b.onRunEnd(end("e1", "explorer", "x".repeat(BRIEF_MAX + 50)), undefined, (_id, text) => (stored.push(text), "/s/brief/explorer-brief.md"));
   const recs = b.apply(input);
   assert.equal(recs.length, 1);
   assert.deepEqual([recs[0].event, recs[0].role], ["explorer_brief", "builder"]);
@@ -50,6 +51,9 @@ test("ExplorerBrief: prepended once to fresh builder steps, bounded, handoff com
   assert.match(task, new RegExp(`cut at ${BRIEF_MAX} characters`));
   assert.equal(BRIEF_MAX, 8000);
   assert.equal(recs[0].cut, true);
+  assert.equal(recs[0].action, "file");
+  assert.match(task, /\[full brief at \/s\/brief\/explorer-brief\.md\]/);
+  assert.equal(stored[0], "x".repeat(BRIEF_MAX + 50), "the file holds the full report");
   assert.match(task, /Full result: \/r\/e1/);
   assert.ok(task.endsWith("do it"));
   assert.deepEqual(b.apply({ agent: "builder", task: "again" }), [], "handed over once");

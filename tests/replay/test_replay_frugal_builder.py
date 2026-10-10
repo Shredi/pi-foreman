@@ -63,6 +63,7 @@ class TestFrugalBuilder(ReplayCase):
         self.assertTrue([t for t in session_text(rig) if "[pi-foreman explorer brief]" in t and "a.txt line 1 holds alpha" in t], "no child session carries the explorer brief")
         briefs = [r for r in all_records(rig) if r.get("event") == "explorer_brief"]
         self.assertEqual([(r["role"], r["chars"] > 100) for r in briefs], [("builder", True)])
+        self.assertEqual(briefs[0].get("action"), "file", briefs)
         out = os.environ.get("FOREMAN_MEASURE_OUT")
         if out:
             Path(out).write_text(json.dumps(measure(rig.sizes), indent=1), "utf-8")

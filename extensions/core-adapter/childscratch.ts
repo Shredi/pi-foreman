@@ -221,7 +221,7 @@ export class ChildScratch {
 
   /** Live scratch dirs, of one role when given (a forwarded ask names only its role). */
   live(role?: string | null): string[] {
-    return [...this.launches.values()].filter((e) => !role || e.role === role).map((e) => e.dir);
+    return [...this.launches.values()].filter((e) => !role || e.role === role || e.role === "*").map((e) => e.dir);
   }
 }
 
@@ -369,6 +369,26 @@ export function launchScratch(h: ScratchHost, input: Record<string, unknown>, b:
   b.scratch = dir;
   h.scratch.add(b.launchId, dir, b.role);
   if (typeof input.task === "string") input.task = `${input.task}\n\n${scratchPromptBlock(dir)}`;
+}
+
+/**
+ * Explorer run end: write the full report to `<scratch>/<session>/brief-<run>/explorer-brief.md`
+ * and register that dir as a live scratch dir of every role (role "*"), so a builder or reviewer
+ * reads it with the read tool without an ask (review link: child-scratch). The session sweep
+ * removes it at shutdown. Returns the file path, or null when anything is off.
+ */
+export function storeBrief(h: ScratchHost, runId: string, text: string, deps: ScratchFs = {}): string | null {
+  const id = `brief-${safeId(runId)}`;
+  const dir = createScratch(h.id, id, deps);
+  if (!dir) return null;
+  const file = path.join(dir, "explorer-brief.md");
+  try {
+    fs.writeFileSync(file, text, { mode: 0o600 });
+  } catch {
+    return null;
+  }
+  h.scratch.add(id, dir, "*");
+  return file;
 }
 
 /** The run ended (or never started): trace `child_scratch {bytes, files}`, then remove unless kept. */

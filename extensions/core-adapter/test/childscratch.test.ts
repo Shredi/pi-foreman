@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ChildScratch, createScratch, expandScratchVar, finishScratch, insideScratch, launchScratch, removeScratch, scratchCommandAllowed, scratchRoot, sweepScratch } from "../childscratch.ts";
+import { ChildScratch, createScratch, expandScratchVar, finishScratch, insideScratch, launchScratch, removeScratch, scratchCommandAllowed, scratchRoot, storeBrief, sweepScratch } from "../childscratch.ts";
 import type { ScratchHost } from "../childscratch.ts";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import { deterministicAllow } from "../timeoutallow.ts";
@@ -126,4 +126,16 @@ test("guards: cd, cp, mkdir and rm inside a live scratch dir only", { skip: !pos
   assert.equal(cd("cd $FOREMAN_SCRATCH && ls", dir), "pass");
   assert.equal(cd(`cd ${dir} && ls`), "deny");
   assert.equal(cd(`cd ${path.dirname(dir)} && ls`, dir), "deny");
+});
+
+test("storeBrief: the full explorer report is a file in a scratch dir every role may read without an ask", () => {
+  const h = host();
+  const text = "x".repeat(9000);
+  const file = storeBrief(h, "run-1", text, deps)!;
+  assert.equal(path.basename(file), "explorer-brief.md");
+  assert.equal(fs.readFileSync(file, "utf8"), text);
+  for (const role of ["builder", "reviewer"]) assert.equal(insideScratch(file, h.scratch.live(role)), true, role);
+  assert.equal(insideScratch(path.join(repo, "x.md"), h.scratch.live("builder")), false);
+  finishScratch(h, "no-such-launch", deps);
+  assert.ok(fs.existsSync(file));
 });

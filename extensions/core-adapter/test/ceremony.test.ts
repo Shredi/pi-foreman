@@ -54,6 +54,17 @@ test("ledger header, file count and prompt signals", () => {
   assert.deepEqual(promptSignals("we are deleting old rows", ["delete"]), ["delete"]);
 });
 
+test("promptSignals: release needs a version/changelog/manifest bump, slash commands have no signals", () => {
+  const sig = ["release", "ci"];
+  assert.deepEqual(promptSignals("Toolchain is the stable Rust release baked into the image", sig), []);
+  assert.deepEqual(promptSignals("Cut the release: update CHANGELOG.md and tag it", sig), ["release"]);
+  assert.deepEqual(promptSignals("prepare the release, bump the version in package.json", sig), ["release"]);
+  assert.deepEqual(promptSignals("ship release 2.3.1 today", sig), ["release"]);
+  assert.deepEqual(promptSignals("fix CI before the release", sig), ["ci"]);
+  assert.deepEqual(promptSignals("/retro --model --known-limits notes.md\nfix ci, release 1.2.3", sig), []);
+  assert.deepEqual(promptSignals("  /sync", sig), []);
+});
+
 test("a bound ledger without a Tier: line counts as standard; no ledger stays untriaged", () => {
   const untriaged = initialCeremony("standard");
   assert.equal(gateThreshold(untriaged), null);
