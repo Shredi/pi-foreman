@@ -64,7 +64,7 @@ test("plan review: the dialog section names the verdict, the reviewer model and 
 });
 
 test("plan review: run-end results and the plan_review trace", () => {
-  const launch = { entries: [{ role: "reviewer", occasion: "plan-review" as const, model: "p/m-sonnet", shadow: null }], started: 0, files: [], panel: null };
+  const launch = { entries: [{ role: "reviewer", occasion: "plan-review" as const, model: "p/m-sonnet", shadow: null, rung: 0 }], started: 0, files: [], panel: null };
   const res = reviewResultsOfRunEnd({ runId: "r1", agent: "reviewer", status: "completed", success: true, output: "Verdict: FAIL\n1. FAIL plan-x.md:3 order" }, launch);
   const pr = planReviewResults(res);
   assert.deepEqual(pr.map((r) => [r.verdict, r.model, r.counts]), [["fail", "p/m-sonnet", false]]);

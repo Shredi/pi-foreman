@@ -6,7 +6,6 @@ import * as path from "node:path";
 import { countingView, entryOccasions, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd } from "../occasion.ts";
 import { applyPanel, composePanelBlock } from "../panel.ts";
 import { onReviewRunEnd, type RecordRunner } from "../findings.ts";
-import { OnFindClimb } from "../reviewerclimb.ts";
 import { sanitizeTrace } from "../trace.ts";
 import { reviewVerdictsOfRunEnd } from "../bound.ts";
 import { reviewsOfRunEnd } from "../reviews.ts";
@@ -25,7 +24,7 @@ test("occasionOf: markers select the occasion; second-opinion wins; none is item
   assert.equal(occasionOf(undefined), "item");
 });
 
-test("second-opinion and shadow verdicts do not count: no item marks, gate verdicts, PR heads or climb", async () => {
+test("second-opinion and shadow verdicts do not count: no item marks, gate verdicts or PR heads", () => {
   const input: Record<string, unknown> = { agent: "reviewer", task: "branch [pre-pr]", model: "p/m-haiku" };
   const occ = entryOccasions(input);
   const p = applyPanel(input, occ, panelOpts());
@@ -44,18 +43,12 @@ test("second-opinion and shadow verdicts do not count: no item marks, gate verdi
   assert.deepEqual(reviewVerdictsOfRunEnd(soView), []);
   assert.equal(reviewerPassOfRunEnd(soView), "");
   assert.equal(reviewsOfRunEnd(soView).length, 0);
-  // the climb is fed only by the counting primary
-  const climb = new OnFindClimb();
-  climb.rungs = ["p/m-haiku", "p/m-sonnet"];
-  const run: RecordRunner = async () => ({ ok: true, text: JSON.stringify({ findings: [{ id: "f1", file: "a.ts", line: 3, class: "logic", note: "n" }] }) });
-  const soOut = await onReviewRunEnd({ results: reviewResultsOfRunEnd(single, soLaunch), launch: soLaunch, context: ctx("r2"), tmpDir: tmp(), climb, ledger: "L", visible: true }, run);
-  assert.equal(soOut.traces.filter((t) => t.event === "rung_up" || t.event === "climb_done").length, 0);
 });
 
 const tmp = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "pf-occ-"));
-const ctx = (runId: string) => ({ session: "S", agentDir: "/agent", runId, cwd: "/repo", head: "abc", rungs: ["p/m-haiku", "p/m-sonnet"], live: "p/m-haiku", now: 5000 });
+const ctx = (runId: string) => ({ session: "S", agentDir: "/agent", runId, cwd: "/repo", head: "abc", live: "p/m-haiku", now: 5000 });
 
-test("run end: the record call gets the report on stdin and a file list; a PASS with a finding climbs (rung_up on_find)", async () => {
+test("run end: the record call gets the report on stdin and a file list; a finding is traced; a climbed launch records rung 1", async () => {
   const dir = tmp();
   const input: Record<string, unknown> = { agent: "reviewer", task: "items 1", model: "p/m-haiku" };
   const launch = reviewLaunchOf(input, entryOccasions(input), new Map(), { started: 1000, files: ["src/a.ts", "src/b.ts"], panel: null })!;
@@ -65,9 +58,7 @@ test("run end: the record call gets the report on stdin and a file list; a PASS 
     calls.push({ args, input: stdin, files: fs.readFileSync(args[args.indexOf("--files-from") + 1], "utf8") });
     return { ok: true, text: JSON.stringify({ verdict: "pass", findings: [{ id: "abc123", file: "src/deep/a.ts", line: 12, class: "leak", note: "n" }] }) };
   };
-  const climb = new OnFindClimb();
-  climb.rungs = ["p/m-haiku", "p/m-sonnet"];
-  const out = await onReviewRunEnd({ results: reviewResultsOfRunEnd(data, launch), launch, context: ctx("r1"), tmpDir: dir, climb, ledger: "L", visible: true }, run);
+  const out = await onReviewRunEnd({ results: reviewResultsOfRunEnd(data, launch), launch, context: ctx("r1"), tmpDir: dir, visible: true }, run);
   const a = calls[0].args;
   for (const [k, v] of [["--gate", "item"], ["--model", "p/m-haiku"], ["--rung", "0"], ["--primary", "1"], ["--source", "live"], ["--role", "reviewer"], ["--run-id", "r1"], ["--verdict", "PASS"], ["--head", "abc"], ["--secs", "4.0"], ["--session", "S"]]) assert.equal(a[a.indexOf(k) + 1], v, k);
   assert.match(calls[0].input, /leaks/);
@@ -75,8 +66,10 @@ test("run end: the record call gets the report on stdin and a file list; a PASS 
   assert.deepEqual(fs.readdirSync(dir), []); // the list is removed
   const finding = out.traces.find((t) => t.event === "finding")!;
   assert.deepEqual(sanitizeTrace(finding), { event: "finding", role: "reviewer", findingId: "abc123", model: "p/m-haiku", gate: "item", class: "leak", file: "a.ts", line: 12, primary: true });
-  assert.ok(out.traces.some((t) => t.event === "rung_up" && t.reason === "on_find" && t.item === "1"));
-  assert.equal(climb.launchRung(), 1);
+  // raised to the strong rung by repeat-fail or security: --rung 1
+  const climbed = reviewLaunchOf(input, entryOccasions(input), new Map(), { started: 1000, files: [], panel: null, climbed: new Set([input]) })!;
+  await onReviewRunEnd({ results: reviewResultsOfRunEnd(data, climbed), launch: climbed, context: ctx("r2"), tmpDir: dir, visible: true }, run);
+  assert.equal(calls[1].args[calls[1].args.indexOf("--rung") + 1], "1");
 });
 
 test("run end fail-soft: a failed or garbled record call is zero findings, no throw, no extra trace", async () => {
@@ -84,10 +77,8 @@ test("run end fail-soft: a failed or garbled record call is zero findings, no th
   const launch = reviewLaunchOf(input, entryOccasions(input), new Map(), { started: 0, files: [], panel: null })!;
   const data = { runId: "r1", results: [ok("reviewer", "1. PASS\nVerdict: PASS")] };
   for (const run of [async () => ({ ok: false, text: "timed out" }), async () => ({ ok: true, text: "not json" }), async () => { throw new Error("boom"); }] as RecordRunner[]) {
-    const climb = new OnFindClimb();
-    climb.rungs = ["p/m-haiku", "p/m-sonnet"];
-    const out = await onReviewRunEnd({ results: reviewResultsOfRunEnd(data, launch), launch, context: ctx("r1"), tmpDir: tmp(), climb, ledger: "L", visible: true }, run);
-    assert.deepEqual(out.traces.map((t) => [t.event, t.reason]), [["climb_done", "clean"]]);
+    const out = await onReviewRunEnd({ results: reviewResultsOfRunEnd(data, launch), launch, context: ctx("r1"), tmpDir: tmp(), visible: true }, run);
+    assert.deepEqual(out.traces, []);
   }
 });
 

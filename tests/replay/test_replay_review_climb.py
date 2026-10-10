@@ -1,8 +1,8 @@
-"""Replay: reviewer on-find climb, review panel and plan review (review-climb item 15) on the fake provider.
+"""Replay: reviewer repeat-fail climb, review panel and plan review on the fake provider.
 
-On-find: `ladder.reviewerClimb` mode on-find with rungs [reviewer, senior-reviewer]; the rung-0 reviewer
-FAILs item 1 with a located `calc.py:2` finding, so the next reviewer launch runs on rung 1, whose clean
-PASS ends the climb (`rung_up` on_find, `finding`, `climb_done` clean after 2 rungs).
+Repeat-fail: `ladder.reviewerClimb` enabled with reviewer.strong = senior-reviewer; the reviewer FAILs
+item 1 twice with a located `calc.py:2` finding, so the third reviewer launch goes to the strong rung
+(`rung_up` review_fail_repeat), whose PASS ends the round.
 Panel: `ladder.reviewPanel` with a senior-reviewer shadow on `pre-pr`. The pinned pi-subagents 0.75.0 runs no
 panel launch shape, so the panel degrades: `panel {decision: unsupported}`, the launch stays one primary
 reviewer whose PASS marks the item and lets `gh pr create` through; no shadow child runs.
@@ -28,7 +28,7 @@ from test_replay_pr_gate import fake_gh  # noqa: E402
 CHEAP, STRONG = PROVIDER_A + "/reviewer", PROVIDER_A + "/senior-reviewer"
 FOREMAN = PROVIDER_A + "/foreman"
 CALC = "def add(a, b):\n    return a + b\n"
-REVIEW_EVENTS = ("role_launch", "rung_up", "finding", "climb_done", "panel", "plan_review", "review_model", "checkpoint")
+REVIEW_EVENTS = ("role_launch", "rung_up", "finding", "panel", "plan_review", "review_model", "checkpoint")
 
 
 def review_shape(rig, sid):
@@ -46,24 +46,23 @@ def changed_calc(rig):
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestReviewClimb(ReplayCase):
-    def test_on_find_climb(self):
-        cfg = {"ladder": {"reviewerClimb": {"enabled": True, "mode": "on-find", "rungs": [CHEAP, STRONG]}}}
-        rig = self.rig("rc-onfind", load_fixture("review_climb"), config=cfg)
+    def test_repeat_fail_climb(self):
+        cfg = {"ladder": {"reviewerClimb": {"enabled": True}},
+               "providers": {PROVIDER_A: {"roles": {"reviewer": {"strong": {"model": STRONG}}}}}}
+        rig = self.rig("rc-repeat", load_fixture("review_climb"), config=cfg)
         changed_calc(rig)
         pi = rig.start()
         sid = pi.session_id()
         pi.prompt("[[replay:c1]] fix add", timeout=60)
-        for _ in range(2):
+        for _ in range(3):
             pi.wait_child_notify(timeout=180)
         pi.close()
-        [f] = events(rig, sid, "finding")
-        self.assertEqual((f["file"], f["line"], f["class"], f["model"], f["gate"], f["primary"]), ("calc.py", 2, "off-by-one", CHEAP, "item", True), f)
-        ups = events(rig, sid, "rung_up")
-        self.assertIn({"event": "rung_up", "role": "reviewer", "from": CHEAP, "to": STRONG, "reason": "on_find", "item": "1"},
-                      [{k: v for k, v in r.items() if k != "ts"} for r in ups], ups)
-        self.assertTrue(all(r["reason"] == "on_find" for r in ups), ups)
-        self.assertEqual([(r["reason"], r["rungs"], r["item"]) for r in events(rig, sid, "climb_done")], [("clean", 2, "1")])
-        self.golden("review_climb_on_find", {"foreman": review_shape(rig, sid)})
+        self.assertEqual([(f["file"], f["line"], f["model"], f["gate"]) for f in events(rig, sid, "finding")],
+                         [("calc.py", 2, CHEAP, "item")] * 2)
+        ups = [{k: v for k, v in r.items() if k != "ts"} for r in events(rig, sid, "rung_up")]
+        self.assertEqual(ups, [{"event": "rung_up", "role": "reviewer", "from": CHEAP, "to": STRONG, "reason": "review_fail_repeat", "item": "1"}])
+        self.assertIsNotNone(trace_of(rig.traces(), "child", STRONG), "the third review ran on the strong rung")
+        self.golden("review_climb_repeat_fail", {"foreman": review_shape(rig, sid)})
 
     def test_panel_degrades_and_never_blocks(self):
         cfg = {"ladder": {"reviewPanel": {"shadows": [STRONG], "gates": ["pre-pr"]}}}

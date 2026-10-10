@@ -1,4 +1,4 @@
-// Review occasions (docs/review-climb.md): one launch path, climb rung, model rule and extractor for every
+// Review occasions (docs/review.md): one launch path, climb rung, model rule and extractor for every
 // review, told apart by a marker in the reviewer's task text:
 //   [plan-review]    the plan before the checkpoint (ceremony.planReview),
 //   [pre-pr]         the whole branch diff before a pull request,
@@ -7,7 +7,7 @@
 // The occasion is taken at launch (tool_call, before the facts block is appended) and carried to
 // the run end by launch bookkeeping (tool call id, then run id), entry by entry in launch order.
 // Only primary results of an `item` or `pre-pr` review count for item marks, the review gate,
-// ReviewerFails, the on-find climb and the PR gate; second opinions, plan reviews and panel
+// ReviewerFails and the PR gate; second opinions, plan reviews and panel
 // shadows are recorded as findings only.
 import { launchEntries } from "./ladder.ts";
 import { REVIEW_ROLES, verdictOf, type Verdict } from "./rounds.ts";
@@ -38,6 +38,8 @@ export interface LaunchEntry {
   model: string | null;
   /** Panel shadow: the shadow model; null for the primary. */
   shadow: string | null;
+  /** 1 when a repeat-fail or security climb raised the entry to the strong rung, else 0 (findings --rung). */
+  rung: number;
 }
 
 /** A launch with at least one review child, kept from tool_call to its run end. */
@@ -59,11 +61,11 @@ export function entryOccasions(input: Json): Map<Json, Occasion> {
 }
 
 /** The bookkeeping of a launch after every rewrite; null without a review child. */
-export function reviewLaunchOf(input: Json, occasions: Map<Json, Occasion>, shadows: Map<Json, string>, o: { started: number; files: string[]; panel: ReviewLaunch["panel"] }): ReviewLaunch | null {
+export function reviewLaunchOf(input: Json, occasions: Map<Json, Occasion>, shadows: Map<Json, string>, o: { started: number; files: string[]; panel: ReviewLaunch["panel"]; climbed?: Set<Json> }): ReviewLaunch | null {
   const entries: LaunchEntry[] = [];
   for (const e of launchEntries(input)) {
     if (typeof e.agent !== "string") continue;
-    entries.push({ role: e.agent, occasion: occasions.get(e) ?? occasionOf(e.task), model: typeof e.model === "string" && e.model ? e.model : null, shadow: shadows.get(e) ?? null });
+    entries.push({ role: e.agent, occasion: occasions.get(e) ?? occasionOf(e.task), model: typeof e.model === "string" && e.model ? e.model : null, shadow: shadows.get(e) ?? null, rung: o.climbed?.has(e) ? 1 : 0 });
   }
   if (!entries.some((e) => REVIEW_ROLES.includes(e.role))) return null;
   return { entries, started: o.started, files: o.files, panel: o.panel };
@@ -81,7 +83,9 @@ export interface ReviewResult {
   occasion: Occasion;
   shadow: string | null;
   primary: boolean;
-  /** Counts for items, review gate, ReviewerFails, on-find climb and PR gate. */
+  /** The launch entry's rung (LaunchEntry.rung); 0 without bookkeeping. */
+  rung: number;
+  /** Counts for items, review gate, ReviewerFails and PR gate. */
   counts: boolean;
 }
 
@@ -104,14 +108,14 @@ export function reviewResultsOfRunEnd(data: unknown, launch?: ReviewLaunch | nul
     const occasion = entry?.occasion ?? "item";
     const shadow = entry?.shadow ?? null;
     const cwd = typeof r.cwd === "string" && r.cwd ? r.cwd : typeof data.cwd === "string" && data.cwd ? data.cwd : null;
-    out.push({ index, role, text, verdict: verdictOf(text), model: typeof r.model === "string" && r.model ? r.model : entry?.model ?? shadow, cwd, occasion, shadow, primary: shadow === null, counts: shadow === null && countsForItems(occasion) });
+    out.push({ index, role, text, verdict: verdictOf(text), model: typeof r.model === "string" && r.model ? r.model : entry?.model ?? shadow, cwd, occasion, shadow, primary: shadow === null, rung: entry?.rung ?? 0, counts: shadow === null && countsForItems(occasion) });
   });
   return out;
 }
 
 /**
- * The run-end event as the verdict consumers (item marks, review gate, ReviewerFails, on-find
- * climb, PR gate) see it: review children that do not count are dropped. With none left the
+ * The run-end event as the verdict consumers (item marks, review gate, ReviewerFails, PR gate)
+ * see it: review children that do not count are dropped. With none left the
  * event names no child at all, so no consumer falls back to the event itself.
  */
 export function countingView(data: unknown, results: readonly ReviewResult[]): unknown {

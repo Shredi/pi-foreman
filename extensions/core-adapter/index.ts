@@ -35,7 +35,7 @@ import { applyLaunchModels, applyLaunchTimeouts, roleTimeoutMs, splitLevel, STRE
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
 import { ReviewFacts } from "./diffscan.ts";
-import { applyOnFindRungs, applyReviewModelRule, applySecurityRungs, markPolicyOverrides, OnFindClimb, planReviewerClimbs, ReviewerFails, reviewerClimbConfig, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
+import { applyReviewModelRule, applySecurityRungs, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
@@ -188,8 +188,6 @@ interface Session {
   climbRefusals: number;
   /** Foreman only: per-item FAIL counts of reviewer runs (ladder.reviewerClimb, reviewerclimb.ts). */
   reviewerFails: ReviewerFails;
-  /** Foreman only: the on-find climb per ledger item (ladder.reviewerClimb.mode on-find, reviewerclimb.ts). */
-  onFind: OnFindClimb;
   /**
    * Foreman only: review launches (occasion.ts) by tool call id, then by run id; the panel block of a
    * run end; each run end's review results with their located findings (findings.ts); pending
@@ -380,7 +378,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       finishRefusals: 0,
       climbRefusals: 0,
       reviewerFails: new ReviewerFails(),
-      onFind: new OnFindClimb(),
       reviewRuns: { byCall: new Map(), byRun: new Map(), blocks: new Map(), findings: new Map(), sync: Promise.resolve() },
       reviews: [],
       reviewSync: Promise.resolve(),
@@ -941,12 +938,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /**
    * Run-end findings (findings.ts): each review result is recorded through foreman_findings.py
-   * (awaited, 10 s, fail-soft), its findings traced, the on-find climb fed; a panel run's block
+   * (awaited, 10 s, fail-soft), its findings traced; a panel run's block
    * goes to its held launch result, else to its own message. Reviewer launches wait on `sync`.
    */
   function recordRunFindings(s: Session, runId: string, results: ReturnType<typeof reviewResultsOfRunEnd>): void {
     const launch = s.reviewRuns.byRun.get(runId);
-    const rc = reviewerClimbConfig(s.config.config);
     const entry = { text: Promise.resolve(""), claimed: false };
     const work = (async (): Promise<RunEndFindings> => {
       const cwd = results.find((r) => r.cwd)?.cwd ?? s.cwd;
@@ -955,10 +951,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         {
           results,
           launch,
-          context: { session: s.usage.line.foremanSession, agentDir: s.agentDir, runId, cwd, head, rungs: s.onFind.rungs, live: s.ladder.live.get("reviewer") ?? null, now: Date.now() },
+          context: { session: s.usage.line.foremanSession, agentDir: s.agentDir, runId, cwd, head, live: s.ladder.live.get("reviewer") ?? null, now: Date.now() },
           tmpDir: s.markerDir,
-          climb: rc.enabled && rc.mode === "on-find" ? s.onFind : undefined,
-          ledger: boundLedger(s.markerDir, s.id),
           visible: panelConfig(s.config.config).visible,
         },
         (args, input) => runScript(s, "foreman_findings.py", args, RECORD_TIMEOUT_MS, input),
@@ -1164,14 +1158,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           climbs = lp.climbs;
           ladderRoles = resolution.roles;
           // ladder.reviewerClimb (reviewerclimb.ts): the reviewer's diff is taken here, before its model is picked; the facts reuse it.
-          await s.reviewRuns.sync; // the on-find climb has the findings of earlier run ends
-          const rc = await planReviewerClimbs(input, resolution.roles, { config: s.config.config, live: s.ladder.live, fails: s.reviewerFails, climb: s.onFind, diffOf: async (e) => { const d = await reviewFacts.diffOf(e, input, ctx.cwd); return d.diff || d.untracked ? (d.diff ?? "") + d.untracked : null; } });
+          await s.reviewRuns.sync; // earlier run ends' findings are recorded (and traced) first
+          const rc = await planReviewerClimbs(input, resolution.roles, { config: s.config.config, live: s.ladder.live, fails: s.reviewerFails, diffOf: async (e) => { const d = await reviewFacts.diffOf(e, input, ctx.cwd); return d.diff || d.untracked ? (d.diff ?? "") + d.untracked : null; } });
           reviewerClimbs = rc.climbs;
           reviewerTraces = rc.traces;
         }
         const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking") });
-        // on-find rungs are written over the mapped models, before the rank check (a refusal stays possible).
-        applyOnFindRungs(reviewerClimbs, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
         if (!s.isChild && actionOf(input) === null) {
           const foremanModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null;
           for (const m of launchedModels(input)) {
@@ -1250,7 +1242,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const first = launchEntries(input).find((e) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent));
           const occ = first ? occasions.get(first) : undefined;
           const files = !first ? [] : occ === "plan-review" ? planReviewFiles(String(first.task ?? ""), boundLedger(s.markerDir, s.id)) : await reviewFacts.diffOf(first, input, ctx.cwd).then((d) => filesOfDiff(`${d.diff ?? ""}\n${d.untracked}`), () => []);
-          const rl = reviewLaunchOf(input, occasions, panel?.shadows ?? new Map(), { started: Date.now(), files, panel: panel?.panel ?? null });
+          const rl = reviewLaunchOf(input, occasions, panel?.shadows ?? new Map(), { started: Date.now(), files, panel: panel?.panel ?? null, climbed: new Set(reviewerClimbs.map((c) => c.entry)) });
           if (rl) capSet(s.reviewRuns.byCall, event.toolCallId, rl);
         }
         const planLedger = boundLedger(s.markerDir, s.id);
