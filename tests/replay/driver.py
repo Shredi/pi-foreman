@@ -13,7 +13,7 @@ Environment knobs:
   FOREMAN_PI_CLI         path to Pi's cli.js (default: <npm root -g>/@earendil-works/pi-coding-agent/dist/bundle/cli.js)
   FOREMAN_PI_SUBAGENTS   path to an installed pi-subagents package dir (skips the npm install)
   FOREMAN_PI_INTERCOM    path to an installed pi-intercom package dir (intercom rigs only)
-  FOREMAN_REPLAY_CACHE   npm prefix used to install pi-subagents once (default: <tempdir>/pi-foreman-replay-cache)
+  FOREMAN_REPLAY_CACHE   npm prefix used to install pi-subagents once (default: <agentDir>/pi-foreman/state/cache/replay, shared and reused across runs)
   FOREMAN_REPLAY_KEEP=1  keep temp roots for inspection
 """
 from __future__ import annotations
@@ -71,11 +71,21 @@ def pi_cli():
     return cli
 
 
+def replay_cache():
+    """npm prefix shared by every run. Default: <agentDir>/pi-foreman/state/cache/replay, where agentDir is the
+    invoking env's PI_CODING_AGENT_DIR or ~/.pi/agent (as foreman_config.resolve_agent_dir). Only npm installs go there."""
+    env = os.environ.get("FOREMAN_REPLAY_CACHE")
+    if env:
+        return Path(env)
+    agent = os.environ.get("PI_CODING_AGENT_DIR") or str(Path.home() / ".pi" / "agent")
+    return Path(agent) / "pi-foreman" / "state" / "cache" / "replay"
+
+
 def pi_subagents_dir():
     env = os.environ.get("FOREMAN_PI_SUBAGENTS")
     if env:
         return Path(env).resolve()
-    cache = Path(os.environ.get("FOREMAN_REPLAY_CACHE") or Path(tempfile.gettempdir()) / "pi-foreman-replay-cache")
+    cache = replay_cache()
     pkg = cache / "node_modules" / "pi-subagents"
     manifest = pkg / "package.json"
     if not manifest.is_file() or json.loads(manifest.read_text("utf-8")).get("version") != PI_SUBAGENTS_VERSION:
@@ -91,7 +101,7 @@ def permission_system_dir():
     env = os.environ.get("FOREMAN_PERMISSION_SYSTEM")
     if env:
         return Path(env).resolve()
-    cache = Path(os.environ.get("FOREMAN_REPLAY_CACHE") or Path(tempfile.gettempdir()) / "pi-foreman-replay-cache")
+    cache = replay_cache()
     pkg = cache / "node_modules" / "@gotgenes" / "pi-permission-system"
     manifest = pkg / "package.json"
     if not manifest.is_file() or json.loads(manifest.read_text("utf-8")).get("version") != PERMISSION_SYSTEM_VERSION:
@@ -107,7 +117,7 @@ def pi_intercom_dir():
     env = os.environ.get("FOREMAN_PI_INTERCOM")
     if env:
         return Path(env).resolve()
-    cache = Path(os.environ.get("FOREMAN_REPLAY_CACHE") or Path(tempfile.gettempdir()) / "pi-foreman-replay-cache")
+    cache = replay_cache()
     pkg = cache / "node_modules" / "pi-intercom"
     manifest = pkg / "package.json"
     if not manifest.is_file() or json.loads(manifest.read_text("utf-8")).get("version") != PI_INTERCOM_VERSION:

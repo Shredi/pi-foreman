@@ -49,13 +49,12 @@ class ReplayCase(unittest.TestCase):
         self.rigs = []
 
     def tearDown(self):
-        for r in self.rigs:
-            r.close()
         sys.stderr.write("[replay] %s: %.1fs\n" % (self.id().rsplit(".", 1)[-1], time.time() - self.t0))
 
     def rig(self, name, script, **kw):
         r = Rig(name, script, **kw)
         self.rigs.append(r)
+        self.addCleanup(r.close)  # runs after errors and failures too
         return r
 
     def golden(self, name, actual):

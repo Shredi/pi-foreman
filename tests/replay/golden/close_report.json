@@ -1,0 +1,27 @@
+{
+ "session": [
+  {
+   "event": "close",
+   "decision": "accepted"
+  },
+  {
+   "event": "close",
+   "decision": "turn"
+  },
+  {
+   "event": "close",
+   "decision": "synced"
+  },
+  {
+   "event": "close",
+   "decision": "report",
+   "ready": false,
+   "removed": 0,
+   "handover": 0
+  },
+  {
+   "event": "close",
+   "decision": "shutdown"
+  }
+ ]
+}
