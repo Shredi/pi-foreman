@@ -248,6 +248,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   herdrEvents = pi.events as EventBus | undefined;
   // Herdr blocked shim (herdr.ts); `blockedShim.onChange((active) => ...)` can feed other consumers.
   const blockedShim = installBlockedShim(pi, { enabled: () => [...sessions.values()].every((x) => get(x.config.config, "herdr.blockedShim") !== false) });
+  // Own asks hold each session's presence blocked directly (Pi can suppress ui_prompt_start, see herdr.ts).
+  blockedShim.onOwn(() => {
+    const holds = [...sessions.values()].map((s) => s.live?.hold());
+    return () => holds.forEach((release) => release?.());
+  });
   const herdrMeta = installHerdrMeta(pi); // group tag (herdrmeta.ts), started at the end of session_start
   pi.events?.on("permissions:ready", (payload: unknown) => review.onReady(payload));
   // Radar: forwarded permission prompts put a child run in "ask" (childwidget.ts); blocked/working feed the presence file.

@@ -77,7 +77,9 @@ export class LiveState {
   private readonly startedMs = Date.now();
   private lastEventMs = this.startedMs;
   private working = false;
-  private blocked = false;
+  /** Open blocking sources: "ui" (Pi's ui_prompt_start..end, released by typed input) and own:<n> (own asks). */
+  private readonly blockers = new Set<string>();
+  private holds = 0;
   private done = false;
   private lastWrite = 0;
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -135,9 +137,23 @@ export class LiveState {
     this.touch();
   }
 
-  setBlocked(active: boolean): void {
-    this.blocked = active;
+  /** One source on or off; the session is blocked while any source is open, so sources never clear each other. */
+  setBlocked(active: boolean, source = "ui"): void {
+    if (active) this.blockers.add(source);
+    else this.blockers.delete(source);
     this.touch();
+  }
+
+  /** An own ask: blocked until the returned release runs (idempotent), whatever Pi's prompt events do. */
+  hold(): () => void {
+    const key = `own:${++this.holds}`;
+    this.setBlocked(true, key);
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      this.setBlocked(false, key);
+    };
   }
 
   snapshot(now = Date.now()): LiveFile {
@@ -155,7 +171,7 @@ export class LiveState {
     } catch {
       // runs are best effort
     }
-    const state: LiveStateName = this.done ? "done" : this.blocked ? "blocked" : this.working ? "working" : "idle";
+    const state: LiveStateName = this.done ? "done" : this.blockers.size > 0 ? "blocked" : this.working ? "working" : "idle";
     return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs };
   }
 

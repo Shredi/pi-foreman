@@ -8,6 +8,10 @@
   "g2": [
    {"tools": [{"name": "bash", "arguments": {"command": "git status --porcelain"}}]},
    {"text": "Status asked."}
+  ],
+  "g3": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:idle]] do nothing"}}]},
+   {"text": "Second launch asked."}
   ]
  },
  "builder": {

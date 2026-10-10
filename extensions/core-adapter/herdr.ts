@@ -6,6 +6,8 @@
 //                delivers both via microtask, so ui_prompt_end may arrive before permissions:decision)
 //   perm:<id>    pi-permission-system `permissions:ui_prompt` .. `permissions:decision` with the same requestId
 //   own:<n>      pi-foreman's own asks (`withBlocked` / `blockedConfirm`)
+// Own asks also reach `onOwn` hooks (the radar presence file), with or without Herdr: Pi suppresses
+// ui_prompt_start while an earlier dialog is still unsettled (uiPromptDepth > 0, e.g. an orphaned one).
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -80,6 +82,7 @@ type Rank = keyof typeof RANK;
 export class BlockedTracker {
   private readonly open = new Map<string, { label: string; rank: Rank }>();
   private readonly listeners = new Set<(active: boolean, label?: string) => void>();
+  private readonly ownHooks = new Set<(label: string) => (() => void) | void>();
   private seq = 0;
   private readonly events: EventBus | undefined;
   private readonly enabled: () => boolean;
@@ -118,11 +121,38 @@ export class BlockedTracker {
     if (this.open.size === 0) this.signal(false);
   }
 
-  /** Open an own-ask source; returns its release. */
+  /** Called on every own ask, enabled or not; the hook's return value is that ask's release. Returns an unsubscribe. */
+  onOwn(fn: (label: string) => (() => void) | void): () => void {
+    this.ownHooks.add(fn);
+    return () => void this.ownHooks.delete(fn);
+  }
+
+  /** Open an own-ask source (Herdr when enabled, plus every `onOwn` hook); returns its release (idempotent). */
   own(label: string): () => void {
     const key = `own:${++this.seq}`;
     this.add(key, label, "own");
-    return () => this.remove(key);
+    const releases: (() => void)[] = [];
+    for (const fn of this.ownHooks) {
+      try {
+        const r = fn(label);
+        if (r) releases.push(r);
+      } catch {
+        // a hook never breaks the ask
+      }
+    }
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      this.remove(key);
+      for (const r of releases) {
+        try {
+          r();
+        } catch {
+          // as above
+        }
+      }
+    };
   }
 
   private label(): string {
@@ -182,8 +212,9 @@ export function installBlockedShim(pi: Pick<ExtensionAPI, "on" | "events">, opts
   const agentDir = opts.agentDir ?? piAgentDir(env, os.homedir());
   const live = env.HERDR_ENV === "1" && !!events && herdrIntegrationVersion(agentDir) < HERDR_NATIVE_PROMPT_VERSION;
   const tracker = new BlockedTracker(live ? events : undefined, live ? opts.enabled : () => false);
+  // Registered even when Herdr is off, so `withBlocked` still reaches the `onOwn` hooks.
+  if (events) trackers.set(events, tracker);
   if (!live || !events) return tracker;
-  trackers.set(events, tracker);
   pi.on("ui_prompt_start", async (e) => {
     const title = str(e.title);
     tracker.add("ui", title || e.kind, title ? "title" : "kind");

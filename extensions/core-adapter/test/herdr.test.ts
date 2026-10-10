@@ -154,6 +154,20 @@ test("no emits without HERDR_ENV=1 or with herdr.blockedShim false", async () =>
   }
 });
 
+test("own asks reach onOwn hooks with or without Herdr; Herdr emits stay gated", async () => {
+  for (const [opts, emits] of [[{ env: {}, agentDir: ON.agentDir }, 0], [ON, 2]] as const) {
+    const { events, sent, tracker } = install(opts);
+    const log: string[] = [];
+    tracker.onOwn((label) => {
+      log.push(`open ${label}`);
+      return () => log.push("release");
+    });
+    await blockedConfirm(events, async () => true)("pi-foreman: git config changed", "m");
+    assert.deepEqual(log, ["open pi-foreman: git config changed", "release"]);
+    assert.equal(sent.length, emits);
+  }
+});
+
 test("the permission label never carries the full command", () => {
   const label = permissionLabel({ requestId: "r", surface: "bash", value: "rm -rf /secret/x", agentName: null, request: { toolName: "bash" }, forwarding: null });
   assert.equal(label, "bash rm");

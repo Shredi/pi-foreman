@@ -53,6 +53,31 @@ test("file shape, atomic write (no temp left), state transitions and done on sto
   assert.deepEqual(fs.readdirSync(liveDir(d)), ["sess1.json"]);
 });
 
+test("an own ask holds blocked while Pi sends no ui_prompt_start (prompt depth stuck)", () => {
+  const l = LiveState.start({ agentDir: tmp(), sessionId: "s", cwd: "/w", mode: "rpc", env: {} }, () => [])!;
+  l.onAgentStart();
+  const release = l.hold();
+  assert.equal(l.snapshot().state, "blocked");
+  release();
+  release();
+  assert.equal(l.snapshot().state, "working");
+  l.stop();
+});
+
+test("own ask and Pi prompt overlap: neither end nor typed-input release clears the other", () => {
+  const l = LiveState.start({ agentDir: tmp(), sessionId: "s", cwd: "/w", mode: "rpc", env: {} }, () => [])!;
+  l.setBlocked(true);
+  const release = l.hold();
+  l.setBlocked(false); // ui_prompt_end, or the interactive `input` release of an orphaned dialog
+  assert.equal(l.snapshot().state, "blocked");
+  l.setBlocked(true);
+  release();
+  assert.equal(l.snapshot().state, "blocked");
+  l.setBlocked(false);
+  assert.equal(l.snapshot().state, "idle");
+  l.stop();
+});
+
 test("print and json mode write nothing; runs are capped at 20", () => {
   const d = tmp();
   assert.equal(LiveState.start({ agentDir: d, sessionId: "p", cwd: "/w", mode: "print", env: {} }, () => []), null);
