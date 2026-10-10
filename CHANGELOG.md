@@ -11,7 +11,8 @@
 - Plan review: `ceremony.planReview.<tier>` (heavy on; a project can only tighten) makes `foreman_checkpoint` wait for a
   `[plan-review]` verdict on the current plan (`plan_review_required`, `plan_revision_required`; trace `plan_review`).
 - Review panel: `ladder.reviewPanel` `{shadows, gates, visible}` runs shadow models beside the primary; their findings
-  are attributed, deduplicated, never block (trace `panel`).
+  are attributed, deduplicated, never block (trace `panel`). With the pinned pi-subagents 0.75.0 no panel launch
+  shape runs, so the panel degrades: the launch stays unchanged and the trace says `panel {decision: unsupported}`.
 - Findings store `<agent dir>/pi-foreman/state/findings/<session>.jsonl` (trace `finding`, basenames only) and
   `foreman findings list|dismiss|export`; export writes an unconfirmed bench task that `foreman bench review` skips.
   `foreman retro models` (per model and rung: findings, accepted, rejected, unique, late misses, USD, median and p90

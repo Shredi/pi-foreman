@@ -80,6 +80,11 @@ On a gate occasion a `reviewer` launch becomes a parallel group: the primary plu
 text, `policy_override: true` (the shadows are explicit config, like the security rung). A shadow equal to the primary
 or the foreman model is left out. Trace `panel {role, gate, models, primary}`.
 
+**Pinned pi-subagents 0.75.0 runs no panel launch.** It refuses top-level `tasks` and `chain` (removed legacy
+inputs), and with `disabledFeatures: ["workflow-scripts"]` a `tasks` entry takes no `model`. Until a supported shape
+is wired in, the panel degrades: the launch stays unchanged, the primary review runs as asked, and the trace says
+`panel {role, gate, models, primary, decision: unsupported}`. No shadow runs and no shadow finding is recorded.
+
 Only the primary's verdict counts: shadows set no marks and no PR gate, and never block. The run end appends an
 attributed block to the result: the primary's findings, then "Shadow findings (do not block)" grouped by model. A
 finding several models located (same file and class, lines within 3) is listed once under the first model, tagged

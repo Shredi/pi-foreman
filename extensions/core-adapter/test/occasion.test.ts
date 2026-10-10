@@ -13,7 +13,7 @@ import { reviewsOfRunEnd } from "../reviews.ts";
 import { reviewerPassOfRunEnd } from "../reviewmarks.ts";
 
 const PANEL = { ladder: { reviewPanel: { shadows: ["p/m-a:high", "p/m-b"], gates: ["pre-pr"], visible: true } } };
-const panelOpts = (config: Record<string, unknown> = PANEL) => ({ config, foreman: "p/m-opus", maxThinking: "medium", childMaxThinking: undefined, refused: (m: string) => m.startsWith("p/m-b") });
+const panelOpts = (config: Record<string, unknown> = PANEL, rewrite = true) => ({ config, foreman: "p/m-opus", maxThinking: "medium", childMaxThinking: undefined, refused: (m: string) => m.startsWith("p/m-b"), rewrite });
 const ok = (agent: string, output: string, model?: string) => ({ agent, status: "completed", success: true, output, ...(model ? { model } : {}) });
 
 test("occasionOf: markers select the occasion; second-opinion wins; none is item", () => {
@@ -101,6 +101,18 @@ test("panel: a single pre-pr reviewer launch becomes 3 parallel entries; shadows
   assert.deepEqual(tasks.map((t) => [t.agent, t.task, t.model, t.policy_override]), [["reviewer", "branch [pre-pr]", "p/m-haiku", undefined], ["reviewer", "branch [pre-pr]", "p/m-a:medium", true], ["reviewer", "branch [pre-pr]", "p/m-b", true]]);
   assert.deepEqual(p.traces, [{ event: "panel", role: "reviewer", gate: "pre-pr", models: "p/m-a,p/m-b", primary: "p/m-haiku", policy_override: true }]);
   assert.deepEqual(p.panel, { gate: "pre-pr", primary: "p/m-haiku", shadows: ["p/m-a", "p/m-b"] });
+});
+
+test("panel unsupported (pinned pi-subagents, the default): the launch stays unchanged, traced decision unsupported", () => {
+  const input: Record<string, unknown> = { agent: "reviewer", task: "branch [pre-pr]", model: "p/m-haiku" };
+  const occ = entryOccasions(input);
+  const { rewrite: _, ...opts } = panelOpts();
+  const p = applyPanel(input, occ, opts);
+  assert.deepEqual(input, { agent: "reviewer", task: "branch [pre-pr]", model: "p/m-haiku" });
+  assert.deepEqual(p.traces, [{ event: "panel", role: "reviewer", gate: "pre-pr", models: "p/m-a,p/m-b", primary: "p/m-haiku", policy_override: true, decision: "unsupported" }]);
+  assert.equal(p.panel, null);
+  assert.equal(p.shadows.size, 0);
+  assert.deepEqual(reviewLaunchOf(input, occ, p.shadows, { started: 0, files: [], panel: p.panel })!.entries.map((e) => [e.model, e.shadow]), [["p/m-haiku", null]]);
 });
 
 test("panel off: no shadows, or the occasion is not a gate", () => {

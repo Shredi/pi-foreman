@@ -4,6 +4,12 @@
 // shadows are explicit user or overlay config, written after the rank check like the security
 // rung). Only the primary's verdict counts; the shadows' findings are recorded (source panel) and
 // shown in an attributed block that never blocks (hidden with visible:false).
+//
+// pi-subagents 0.75.0 (the pinned version) accepts none of these shapes: top-level `tasks`/`chain`
+// are refused as removed legacy inputs, and with `disabledFeatures: ["workflow-scripts"]` an entry
+// may carry only agent and task, so no per-shadow model. Until a supported shape exists the panel
+// degrades: the launch stays unchanged (the primary review runs as asked) and the trace says
+// `panel {..., decision: "unsupported"}`. PANEL_REWRITE_SUPPORTED switches the rewrite back on.
 import { get, type Json } from "./config.ts";
 import { splitLevel } from "./launchmodel.ts";
 import { cappedRung } from "./reviewerclimb.ts";
@@ -28,6 +34,9 @@ export function panelConfig(config: Json | undefined): PanelConfig {
   };
 }
 
+/** Whether the pinned pi-subagents runs a panel rewrite (see the header); false for 0.75.0. */
+export const PANEL_REWRITE_SUPPORTED = false;
+
 export interface PanelOptions {
   config: Json | undefined;
   /** The foreman's model (`<provider>/<id>`), never a shadow; null when unknown. */
@@ -36,6 +45,8 @@ export interface PanelOptions {
   childMaxThinking: unknown;
   /** The child rank policy would refuse this model (the trace then carries policy_override). */
   refused?: (model: string) => boolean;
+  /** Rewrite the launch (default PANEL_REWRITE_SUPPORTED); false traces `decision: "unsupported"` and leaves it unchanged. */
+  rewrite?: boolean;
 }
 
 export interface PanelRewrite {
@@ -62,14 +73,18 @@ export function applyPanel(input: Json, occasions: Map<Json, Occasion>, o: Panel
     const primary = baseOf(e.model);
     const models = cfg.shadows.filter((m) => baseOf(m) !== primary && baseOf(m) !== foreman);
     if (models.length === 0) return null;
+    const rec: Record<string, unknown> = { event: "panel", role: "reviewer", gate: occ, models: models.map(baseOf).join(","), primary };
+    if (models.some((m) => o.refused?.(m))) rec.policy_override = true;
+    if (!(o.rewrite ?? PANEL_REWRITE_SUPPORTED)) {
+      out.traces.push({ ...rec, decision: "unsupported" });
+      return null;
+    }
     const entries = models.map((m) => {
       const s: Json = { ...e, model: cappedRung(m, o.maxThinking, o.childMaxThinking), policy_override: true };
       out.shadows.set(s, m);
       occasions.set(s, occ);
       return s;
     });
-    const rec: Record<string, unknown> = { event: "panel", role: "reviewer", gate: occ, models: models.map(baseOf).join(","), primary };
-    if (models.some((m) => o.refused?.(m))) rec.policy_override = true;
     out.traces.push(rec);
     out.panel ??= { gate: occ, primary, shadows: models.map(baseOf) };
     return entries;
