@@ -35,7 +35,7 @@ import { applyLaunchModels, applyLaunchTimeouts, roleTimeoutMs, splitLevel, STRE
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
 import { ReviewFacts } from "./diffscan.ts";
-import { applyReviewModelRule, applySecurityRungs, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
+import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
@@ -1165,6 +1165,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking") });
         if (!s.isChild && actionOf(input) === null) {
+          // ceremony.reviewByOccasion (reviewerclimb.ts): over the mapped models, before the rank check and the different-model rule.
+          const occ = applyOccasionOverrides(input, occasions, reviewerClimbs, { config: s.config.config, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking") });
+          reviewerTraces.push(...occ.traces);
           const foremanModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null;
           for (const m of launchedModels(input)) {
             const no = rankRefusal(s.config.config, foremanModel, m);
@@ -1177,7 +1180,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           applySecurityRungs(reviewerClimbs, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
           // Different-model rule (every reviewer launch): after the security rung, so it sees the final model; traced with policy_override.
           const refusedBy = (m: string): boolean => rankRefusal(s.config.config, foremanModel, m) !== null;
-          reviewerTraces.push(...applyReviewModelRule(input, resolution.roles, { config: s.config.config, foreman: foremanModel, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: refusedBy }));
+          reviewerTraces.push(...applyReviewModelRule(input, resolution.roles, { config: s.config.config, foreman: foremanModel, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: refusedBy, thinking: occ.thinking }));
           // Review panel (panel.ts): gate-occasion reviewer entries get their shadow entries, after every model rule.
           panel = applyPanel(input, occasions, { config: s.config.config, foreman: foremanModel, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: refusedBy });
           reviewerTraces.push(...panel.traces);

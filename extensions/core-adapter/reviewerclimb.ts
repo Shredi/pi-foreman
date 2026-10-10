@@ -8,8 +8,10 @@
 // Only `reviewer` launches the foreman passed no model for; `senior-reviewer` never climbs here.
 // Off unless ladder.reviewerClimb.enabled is true (the generic default is false).
 // The different-model rule (applyReviewModelRule) applies to every `reviewer` launch, climb or not.
+// Per-occasion overrides (ceremony.reviewByOccasion, applyOccasionOverrides) come before the rank check.
 import { get, type Json } from "./config.ts";
-import { clampLevel, splitLevel } from "./launchmodel.ts";
+import { clampLevel, splitLevel, type Thinking } from "./launchmodel.ts";
+import { OCCASIONS, type Occasion } from "./occasion.ts";
 import { ranksOf, tierOf } from "./ranks.ts";
 import { hasStrongRung, launchEntries } from "./ladder.ts";
 import { securityScan } from "./diffscan.ts";
@@ -193,6 +195,72 @@ export function applySecurityRungs(climbs: ReviewerClimb[], maxThinking: unknown
   for (const c of climbs) if (c.reason === "security") c.entry.model = cappedRung(c.model, maxThinking, childMaxThinking);
 }
 
+/** One occasion's ceremony.reviewByOccasion entry: a thinking level and/or a model for its reviewer launches. */
+export interface OccasionOverride {
+  thinking: Thinking | null;
+  model: string | null;
+}
+
+const OVERRIDE_LEVELS: readonly string[] = ["low", "medium", "high"];
+
+/** ceremony.reviewByOccasion of the merged config: known occasions with a valid thinking or model; anything else is ignored. */
+export function reviewByOccasion(config: Json | undefined): Map<Occasion, OccasionOverride> {
+  const raw = get(config, "ceremony.reviewByOccasion");
+  const out = new Map<Occasion, OccasionOverride>();
+  if (!isObj(raw)) return out;
+  for (const occ of OCCASIONS) {
+    const v = raw[occ];
+    if (!isObj(v)) continue;
+    const thinking = typeof v.thinking === "string" && OVERRIDE_LEVELS.includes(v.thinking) ? (v.thinking as Thinking) : null;
+    const model = typeof v.model === "string" && v.model.trim() ? v.model.trim() : null;
+    if (thinking || model) out.set(occ, { thinking, model });
+  }
+  return out;
+}
+
+export interface OccasionOverrideInput {
+  config: Json | undefined;
+  maxThinking: unknown;
+  childMaxThinking: unknown;
+}
+
+/**
+ * After the models are written, before the rank check: ceremony.reviewByOccasion on each primary
+ * `reviewer` entry of an occasion with an override (panel shadows come later and keep theirs). The
+ * model replaces the mapped one unless a repeat-fail or security climb raised the entry (the climb
+ * wins); thinking replaces the level (also a security climb's rung, written after the rank check),
+ * capped by maxThinking and childMaxThinking. Returns `review_occasion {occasion, thinking,
+ * model_overridden}` records and the applied level per entry (for the different-model rule).
+ */
+export function applyOccasionOverrides(input: Json, occasions: Map<Json, Occasion>, climbs: ReviewerClimb[], o: OccasionOverrideInput): { traces: Record<string, unknown>[]; thinking: Map<Json, Thinking> } {
+  const table = reviewByOccasion(o.config);
+  const traces: Record<string, unknown>[] = [];
+  const thinking = new Map<Json, Thinking>();
+  if (table.size === 0) return { traces, thinking };
+  for (const e of launchEntries(input)) {
+    const occ = e.agent === "reviewer" ? occasions.get(e) : undefined;
+    const ov = occ ? table.get(occ) : undefined;
+    if (!occ || !ov) continue;
+    const climb = climbs.find((c) => c.entry === e);
+    const overridden = ov.model !== null && !climb;
+    if (overridden) {
+      const own = typeof e.model === "string" ? splitLevel(e.model).level : null;
+      const m = splitLevel(ov.model as string);
+      // the override's own level, else the mapped rung's
+      e.model = cappedRung(m.level || !own ? (ov.model as string) : `${m.base}:${own}`, o.maxThinking, o.childMaxThinking);
+    }
+    let level: Thinking | null = null;
+    if (ov.thinking) {
+      level = clampLevel(clampLevel(ov.thinking, o.maxThinking), o.childMaxThinking);
+      if (typeof e.model === "string" && e.model) e.model = `${baseOf(e.model)}:${level}`;
+      if (climb?.reason === "security") climb.model = `${baseOf(climb.model)}:${level}`;
+      thinking.set(e, level);
+    }
+    traces.push({ event: "review_occasion", role: "reviewer", occasion: occ, thinking: level, model_overridden: overridden });
+  }
+  return { traces, thinking };
+}
+
 export interface ReviewModelInput {
   config: Json | undefined;
   /** The foreman's model, `<provider>/<id>` (ctx.model), or null when unknown. */
@@ -201,13 +269,16 @@ export interface ReviewModelInput {
   childMaxThinking: unknown;
   /** The child rank policy would refuse this model (marks policy_override on the trace). */
   refused?: (model: string) => boolean;
+  /** Per-entry occasion thinking (applyOccasionOverrides): replaces the level of the model moved to. */
+  thinking?: Map<Json, Thinking>;
 }
 
 /**
  * The different-model rule, after every model is written (climbs and security rungs included):
  * a `reviewer` entry whose model is the foreman's (base ids, the level ignored) moves to the next
  * rung of [roles.reviewer, roles.reviewer.strong] after its own that differs, else to
- * ceremony.reviewModel; traced `review_model {from, to, reason: same_as_foreman}` (policy_override when the rank policy would refuse it). With
+ * ceremony.reviewModel (an occasion's thinking override, `thinking`, replaces its level); traced `review_model
+ * {from, to, reason: same_as_foreman}` (policy_override when the rank policy would refuse it). With
  * neither, the launch stays (ASSUMPTION B): `review_model {from, to: from, reason: no_alternative}`.
  * Written after the rank check like the security rung: both are explicit user or overlay config.
  */
@@ -227,7 +298,8 @@ export function applyReviewModelRule(input: Json, roles: Record<string, Json>, o
       out.push({ event: "review_model", role: "reviewer", from, to: from, reason: "no_alternative" });
       continue;
     }
-    const to = cappedRung(pick, o.maxThinking, o.childMaxThinking);
+    const lvl = o.thinking?.get(e);
+    const to = cappedRung(lvl ? `${baseOf(pick)}:${lvl}` : pick, o.maxThinking, o.childMaxThinking);
     e.model = to;
     const rec: Record<string, unknown> = { event: "review_model", role: "reviewer", from, to: baseOf(pick), reason: "same_as_foreman" };
     if (o.refused?.(to)) rec.policy_override = true;

@@ -2,7 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { applyLaunchModels } from "../launchmodel.ts";
 import { rankRefusal } from "../ranks.ts";
-import { applyReviewModelRule, applySecurityRungs, defaultSecurityRung, failItemsOf, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd } from "../reviewerclimb.ts";
+import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, defaultSecurityRung, failItemsOf, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd } from "../reviewerclimb.ts";
+import { entryOccasions } from "../occasion.ts";
+import { sanitizeTrace } from "../trace.ts";
 
 const ROLES = {
   foreman: { model: "p/m-opus", thinking: "high" },
@@ -102,6 +104,63 @@ test("security rung over the child rank policy: the trace carries policy_overrid
   const within = await run(cfg, { agent: "reviewer", task: "t" }, new ReviewerFails(), AUTH_DIFF);
   markPolicyOverrides(within.climbs, refused);
   assert.deepEqual([within.climbs[0].trace.event, "policy_override" in within.climbs[0].trace], ["rung_up", false]);
+});
+
+const byOcc = (table: Record<string, unknown>, climb: Record<string, unknown> = { enabled: true }) => ({ ladder: { reviewerClimb: climb }, ceremony: { reviewByOccasion: table } });
+/** One launch in index.ts order: climbs, mapped models, occasion overrides, security rung, different-model rule. */
+async function occLaunch(config: Record<string, unknown>, input: Record<string, unknown>, o: { maxThinking?: string; childMaxThinking?: string; fails?: ReviewerFails; diff?: string | null } = {}) {
+  const occasions = entryOccasions(input);
+  const max = o.maxThinking ?? "high";
+  const r = await planReviewerClimbs(input, ROLES, { config, live: new Map(), fails: o.fails ?? new ReviewerFails(), diffOf: async () => o.diff ?? PLAIN_DIFF });
+  applyLaunchModels(input, ROLES, max, { childMaxThinking: o.childMaxThinking });
+  const occ = applyOccasionOverrides(input, occasions, r.climbs, { config, maxThinking: max, childMaxThinking: o.childMaxThinking });
+  applySecurityRungs(r.climbs, max, o.childMaxThinking);
+  const rule = applyReviewModelRule(input, ROLES, { config, foreman: "p/m-opus", maxThinking: max, childMaxThinking: o.childMaxThinking, thinking: occ.thinking });
+  return { traces: occ.traces, rule };
+}
+
+test("reviewByOccasion: a pre-pr launch gets high thinking while an item launch stays medium; traced review_occasion", async () => {
+  const input: Record<string, unknown> = { tasks: [{ agent: "reviewer", task: "items 1" }, { agent: "reviewer", task: "branch [pre-pr]" }] };
+  const { traces } = await occLaunch(byOcc({ "pre-pr": { thinking: "high" } }), input);
+  assert.deepEqual((input.tasks as Record<string, unknown>[]).map((e) => e.model), ["p/m-haiku:medium", "p/m-haiku:high"]);
+  assert.deepEqual(traces.map(sanitizeTrace), [{ event: "review_occasion", role: "reviewer", occasion: "pre-pr", thinking: "high", model_overridden: false }]);
+});
+
+test("reviewByOccasion: a model override equal to the foreman's is moved by the different-model rule; its thinking stays", async () => {
+  const input: Record<string, unknown> = { agent: "reviewer", task: "items 1" };
+  const { traces, rule } = await occLaunch(byOcc({ item: { model: "p/m-opus", thinking: "high" } }), input);
+  assert.deepEqual(traces.map((t) => [t.occasion, t.thinking, t.model_overridden]), [["item", "high", true]]);
+  assert.deepEqual(rule.map((t) => [t.from, t.to, t.reason]), [["p/m-opus", "p/m-haiku", "same_as_foreman"]]);
+  assert.equal(input.model, "p/m-haiku:high");
+});
+
+test("reviewByOccasion: the thinking override is capped by maxThinking and childMaxThinking", async () => {
+  const one: Record<string, unknown> = { agent: "reviewer", task: "[pre-pr]" };
+  const capped = await occLaunch(byOcc({ "pre-pr": { thinking: "high" } }), one, { maxThinking: "medium" });
+  assert.deepEqual([one.model, capped.traces[0].thinking], ["p/m-haiku:medium", "medium"]);
+  const two: Record<string, unknown> = { agent: "reviewer", task: "[pre-pr]" };
+  await occLaunch(byOcc({ "pre-pr": { thinking: "high" } }), two, { childMaxThinking: "low" });
+  assert.equal(two.model, "p/m-haiku:low");
+});
+
+test("reviewByOccasion: a repeat-fail or security climb beats the model override; the thinking override still applies", async () => {
+  const fails = new ReviewerFails();
+  fails.onRun("a", ["1. FAIL"], null);
+  fails.onRun("b", ["1. FAIL"], null);
+  const table = { item: { model: "q/other", thinking: "high" } };
+  const rep: Record<string, unknown> = { agent: "reviewer", task: "items 1" };
+  const r = await occLaunch(byOcc(table), rep, { fails });
+  assert.deepEqual([rep.model, r.traces[0].model_overridden], ["p/m-sonnet:high", false]);
+  const sec: Record<string, unknown> = { agent: "reviewer", task: "items 1" };
+  await occLaunch(byOcc({ item: { model: "q/other", thinking: "low" } }, { enabled: true, securityRung: "p/m-sonnet:max" }), sec, { diff: AUTH_DIFF });
+  assert.equal(sec.model, "p/m-sonnet:low");
+});
+
+test("reviewByOccasion: unknown occasion keys and invalid values are ignored", async () => {
+  const input: Record<string, unknown> = { agent: "reviewer", task: "items 1" };
+  const { traces } = await occLaunch(byOcc({ plan: { thinking: "high" }, item: { thinking: "max", model: 3 }, "pre-pr": "high" }), input);
+  assert.deepEqual([input.model, traces], ["p/m-haiku:medium", []]);
+  assert.deepEqual(applyOccasionOverrides(input, entryOccasions(input), [], { config: { ceremony: {} }, maxThinking: "high", childMaxThinking: undefined }).traces, []);
 });
 
 test("different-model rule: same as the foreman moves to the next differing rung, else reviewModel, else stays", () => {
