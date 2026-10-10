@@ -84,7 +84,7 @@ class TestSessionClose(ReplayCase):
         self.assertIn("foreman:closed %s" % result, json.dumps(seen).replace("\\\\", "\\"))
         safe = "".join(c for c in sid if c.isalnum() or c in "-_")
         trace = rig.traces()["trace-" + safe]
-        self.assertEqual([r["decision"] for r in trace if r.get("event") == "close"], ["refused", "accepted", "turn", "synced", "shutdown"])
+        self.assertEqual([r["decision"] for r in trace if r.get("event") == "close"], ["refused", "accepted", "turn", "synced", "report", "shutdown"])
         deadline = time.time() + 15
         while time.time() < deadline:
             entry = json.loads((rig.state_dir / "sessions.json").read_text("utf-8"))["sessions"][0]

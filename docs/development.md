@@ -28,9 +28,11 @@ node setup.mjs --dry-run                          # installer preview, writes no
 
 ## Replay rig
 
-`FOREMAN_REPLAY_CACHE=<fresh temp dir> python -m unittest discover -s tests/replay -v` starts `pi --mode rpc` with
+`python -m unittest discover -s tests/replay -v` starts `pi --mode rpc` with
 a temp `PI_CODING_AGENT_DIR` and temp project against a scripted fake provider and compares the trace to golden
-sequences. No real model calls. Design: `design/architecture.md`
+sequences. No real model calls. The npm prefix with pi-subagents and friends defaults to the shared
+`<agentDir>/pi-foreman/state/cache/replay` (agentDir is your `PI_CODING_AGENT_DIR` or `~/.pi/agent`) and is reused across
+runs; set `FOREMAN_REPLAY_CACHE` only when you need another location, not a fresh dir per run. Design: `design/architecture.md`
 [section 10](../design/architecture.md#10-replay-rig-and-tests), installer: [section 11](../design/architecture.md#11-installer).
 
 ## CI

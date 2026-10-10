@@ -124,8 +124,9 @@ Commands (run from the worktree root):
 - `node --test "extensions/core-adapter/test/*.test.ts"`
 - `node --test "tests/installer/*.test.mjs"`
 - `npm run typecheck` (tsc --noEmit)
-- replay: `FOREMAN_REPLAY_CACHE=<fresh temp dir> python -m unittest discover -s tests/replay -v`
-  (uses a temp `PI_CODING_AGENT_DIR`)
+- replay: `python -m unittest discover -s tests/replay -v`
+  (uses a temp `PI_CODING_AGENT_DIR`; the npm cache is shared and reused at
+  `<agentDir>/pi-foreman/state/cache/replay`; set `FOREMAN_REPLAY_CACHE` only when needed, never a fresh dir per run)
 - installer preview: `node setup.mjs --dry-run` (writes nothing)
 
 Run the parts your change touches while working; run the FULL suite (all of the

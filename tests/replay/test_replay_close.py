@@ -16,12 +16,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import REPO, load_fixture, shape, tool_results  # noqa: E402
+from driver import load_fixture, shape, tool_results  # noqa: E402
 from test_replay import REASON, ReplayCase  # noqa: E402
 
 CLOSE_KEYS = ("event", "role", "toolFamily", "guard", "decision", "model", "tier", "exit", "ready", "removed", "handover")
-# Session-close wave A ships the report script; until it is merged the report test is pending.
-HAVE_CLOSE = (REPO / "scripts" / "foreman_close.py").is_file()
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
@@ -45,10 +43,9 @@ class TestRemoteClose(ReplayCase):
         self.assertIn("replay close", (rig.project / ".workflow" / "result-close.md").read_text())
         safe = "".join(c for c in sid if c.isalnum() or c in "-_")
         trace = rig.traces()["trace-" + safe]
-        self.assertEqual([r["decision"] for r in trace if r.get("event") == "close"], ["accepted", "turn", "synced", "shutdown"])
+        self.assertEqual([r["decision"] for r in trace if r.get("event") == "close"], ["accepted", "turn", "synced", "report", "shutdown"])
         self.assertEqual([r["cause"] for r in trace if r.get("event") == "turn"], ["user", "close"])
 
-    @unittest.skipUnless(HAVE_CLOSE, "scripts/foreman_close.py not present yet (session-close wave A)")
     def test_close_removes_the_worktree_the_session_added(self):
         """A bash `git worktree add` is recorded silently in the manifest; the close report removes it."""
         rig = self.rig("closewt", load_fixture("close"), config={"sync": {"runRetro": False}})
@@ -105,7 +102,7 @@ class TestRemoteClose(ReplayCase):
         self.assertIn("replay close", (rig.project / ".workflow" / "result-close.md").read_text())
         safe = "".join(c for c in sid if c.isalnum() or c in "-_")
         trace = rig.traces()["trace-" + safe]
-        self.assertEqual([r["decision"] for r in trace if r.get("event") == "close"], ["accepted", "turn", "synced", "shutdown"])
+        self.assertEqual([r["decision"] for r in trace if r.get("event") == "close"], ["accepted", "turn", "synced", "report", "shutdown"])
         self.assertEqual([r["cause"] for r in trace if r.get("event") == "turn"], ["user", "close"])
 
 
