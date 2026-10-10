@@ -1,6 +1,6 @@
 # Benchmark (`foreman bench`)
 
-> Covers the Harbor-based benchmark runner, its trace-derived columns, post steps and price tiers.
+> Covers the Harbor-based benchmark runner, its trace-derived columns, post steps, price tiers and the review bench.
 > Read it when you measure a change to the harness; ordinary users do not need it.
 > Needs `uv tool install harbor` and local Docker; Harbor telemetry is always switched off.
 
@@ -31,5 +31,97 @@ Cost uses `bench/prices.json`; Haiku 5.5's long-context tier (prompts above 100k
 Known limits: the post-step retro (`/retro --model`) adds `--known-limits <file>` when the file exists in the container: the row's `bench.known_limits` path, else `/opt/known-limits.md` (task images `COPY` it from the task's environment dir). The foreman's retro prompt then carries the first 2000 characters under "Known environment limits (rig facts, not harness gaps; do not list them under Missing:)". A missing file adds nothing. Generic Rust and Go task image recipes are in `bench/images/` (`Dockerfile.rust` takes `--build-arg PREBUILD_PKG=<crate>`; rustfmt, clippy and a world-readable vendor dir for the non-root agent user; Go's gofmt and go vet work as that user).
 
 Install: the in-container Node and pi installs (`npm install -g` for pi, the `/opt/pf-npm` packages) run inside a retry loop (`retry_sh`, 3 tries, 20 s apart) because a freshly published transitive dependency can 404 transiently; `pi --version` runs after the loop. A row can set `"bench": {"pi_prebaked": true}` (default off) to install pi with `npm ci` from the committed `bench/pi-lock/` lockfile (uploaded to `/opt/pf-pi`, linked into `/usr/local/bin/pi`) instead of a live `npm install -g`. The lock pins the whole transitive tree but still installs over the network. When `PI_VERSION` in `bench/harbor_agent.py` changes, update the pin in `bench/pi-lock/package.json` and regenerate the lock (a test checks both match): `cd bench/pi-lock && npm install --package-lock-only --ignore-scripts --no-audit --no-fund`.
+
+## Review bench
+
+`foreman bench review` (`scripts/foreman_review_bench.py`, no Harbor, no Docker) measures reviewer models: each cell is
+one reviewer launch over a builder diff with planted defects, scored for catches and false alarms.
+
+    foreman bench review --tasks DIR [--models id[,id]] [--repeats 2] [--out DIR] [--jobs 3]
+                         [--token-cap N] [--timeout 900] [--dry-run] [--prices FILE]
+    foreman bench review-table --out DIR
+
+Task dir (`--tasks` names one, or a folder of them; three synthetic samples are in `bench/review-samples/`):
+
+- `base/` the repo before the change, plain files (or `base.tar.gz`, members relative to the repo root; a single
+  top-level `base/` folder is stripped);
+- `diff.patch` the builder's change, `git apply`-able onto the base;
+- `prompt.md` the owner's task text the builder was given;
+- `ground_truth.json` `{"clean": false, "defects": [{"id", "file", "lines": [first, last], "class", "description"}]}`,
+  or `{"clean": true, "defects": []}` for a clean control. Classes: `auth`, `shell-injection`, `path-traversal`,
+  `secret-log`, `off-by-one`, `resource-leak`, `race`, `swallowed-error`, `insecure-default`.
+
+Launch, one per cell, through the harness's own review path: the base is committed in a fresh git repo and the diff
+applied uncommitted (new files intent-to-add). `bench/review_facts.mjs` runs `collectFacts` and `ownerBlock` from
+`extensions/core-adapter/diffscan.ts` and the child scratch line from `childscratch.ts`, so the task is composed as a
+session composes it: `Task: ` + a fixed neutral foreman task (three ledger items, then `prompt.md`), the facts block and
+owner block only when the scan found a fact, then the scratch line. Pi runs `-p --mode json --no-session
+--no-context-files --no-skills -e extensions/core-adapter/index.ts --model <id> --tools
+read,ls,grep,find,bash,foreman_ledger --system-prompt <reviewer>`, where the system prompt is `<active_agent
+name="reviewer"/>` plus the body of `agents/reviewer.md`. The extension runs as a reviewer child (`PI_SUBAGENT_CHILD=1`
+and a launch binding with role `reviewer`), so its `before_agent_start` hook adds `instructions/reviewer.md` and
+`foreman_ledger` is registered, as in a session. A replay-provider probe showed this changes nothing else besides
+files in the cell's own temp agent dir (usage log, session marker). The permission system (`@gotgenes/pi-permission-system`) is not loaded.
+Models default to the claude-bridge reviewer rungs `claude-haiku-5-5`, `claude-sonnet-5-5` and `claude-opus-5-5`, all
+at `:medium`. Order: repeat outermost, then task, then model.
+
+Blindness: the reviewer's repo, agent dir and scratch dir live in a work dir under the system temp dir
+(`pf-rb-work/<hash>/<cell hash>/`), not under `--out`, so cell results and ground truth are out of reach. Before each
+launch the runner refuses the cell when the system prompt, task, cwd or any env value it sets contains `seeded`,
+`ground_truth` or the task dir path, or when a file name in the tree or the diff contains either word. The contents of
+base files are not scanned.
+
+Auth and config isolation: the child env drops inherited `PI_*`, `FOREMAN_*`, `CLAUDE_*` and `ANTHROPIC_*` variables,
+sets `PI_CODING_AGENT_DIR` to the cell's temp agent dir (its `settings.json` lists only the bridge package), and
+`CLAUDE_CONFIG_DIR` to an empty folder inside it, so no host Claude Code settings, hooks or plugins load. The bridge is
+installed once into `<tempdir>/pi-foreman-review-bench-cache` (`FOREMAN_REVIEW_BENCH_CACHE`), or taken from
+`FOREMAN_REVIEW_BENCH_BRIDGE`; the user's Pi agent dir is never read. The token comes from the file named by
+`FOREMAN_BENCH_OAUTH_TOKEN_FILE` (else `FOREMAN_BENCH_OAUTH_TOKEN`) and reaches Pi only as `CLAUDE_CODE_OAUTH_TOKEN`
+in its env; it is never printed or written, and every file the runner writes is redacted. Cells name the env keys
+they set, never the values. `FOREMAN_PI_CLI` points at another Pi `cli.js`; `FOREMAN_REVIEW_BENCH_FAKE_SCRIPT` feeds
+the replay fake provider (`foreman-fake/<model>`, tests only).
+
+Scoring (deterministic, recomputed by `review-table` from each cell's raw text):
+
+- Verdict: a twin of `verdictOf` (`rounds.ts`); any FAIL or BLOCK wins. An overall PASS scores no catch and no false
+  alarm.
+- FAIL evidence lines: `N. FAIL` item lines (bullets and bold allowed), every other line citing `path:line` (not a
+  `N. PASS` or verdict line), and a `Missing:` line that cites a path.
+- A defect is caught when one evidence line names its file (repo path or basename) and either a word of its class
+  (table below, matched at a word start, case-insensitive) or a line number within its `lines` range +-3
+  (`file:N`, `file:N-M`, `line N`).
+- False alarm: an evidence line that catches nothing counts once per distinct repo file it names that holds no planted
+  defect; on a clean control such a line naming no repo file counts once as `(no file)`.
+
+| class | words |
+|---|---|
+| auth | auth, permission, access control, privilege, bypass, unauthorized |
+| shell-injection | shell, inject, unquoted, unescaped, quote/quoting, metachar, execsync, sh -c, command line |
+| path-traversal | travers, `../`, `..\`, escape, outside the/of, symlink, canonical, absolute path, sanitiz |
+| secret-log | secret, token, credential, password, bearer, authorization header, api key, leak, redact, sensitive |
+| off-by-one | off-by-one, fencepost, boundar, inclusive, exclusive, one too, out of range/bounds, last/first element |
+| resource-leak | leak, not/never closed, unclosed, close, defer, handle, descriptor, not released, dispose |
+| race | race, racy, lock, mutex, concurren, thread-safe, atomic, synchroni, toctou, goroutine, simultaneous |
+| swallowed-error | swallow, ignor, discard, silent, unchecked, not checked, error handling, lost error, unwrap_or, suppress |
+| insecure-default | insecure, default, tls, verif, permissive, world-, 0777, 0666, plaintext, debug |
+
+The source of truth is `CLASS_SYNONYMS` in the script.
+
+Output in `--out` (default `~/.pi-foreman/review-bench/<timestamp>`): `cells/<task>__<model>__r<n>.json` (final text,
+items, evidence, score, ground truth, usage per request, USD, seconds, the composed prompt, the env keys set, the work
+dir with `events.jsonl`, the raw Pi event stream) and `review-bench-<run>.md`. The table has one row per model:
+catches/total over planted defects, false alarms over seeded and over clean cells, clean controls with an overall PASS,
+USD, $ per caught defect, median seconds and failed launches. A per-class catch matrix and a per-task line follow.
+A cell whose json exists is skipped, so a second run resumes. A failed launch (timeout, provider error, no answer) is
+written as `<cell>.error.json`, listed in the table and retried by the next run. `--token-cap N` stops before the next
+cell once finished cells (failed ones included) used N tokens (exit 4); Ctrl-C kills the running launches (exit 6).
+`--dry-run` validates the tasks, prepares one workspace per task in a temp dir (facts, composed task, blindness check),
+prints the cell plan and launches nothing.
+
+Cost: list-price equivalent from `bench/prices.json` per request (`foreman_bench.cost_of`). When the bridge reports no
+usage for a request, its tokens are a chars/4 estimate priced as uncached input, so USD is flagged `~est` and is an
+upper bound. Reviewers run on the host, not in Docker: a reviewer that runs Go or Rust tests may fail or fetch
+dependencies; `--timeout` bounds each launch and the work dirs stay in the temp dir for audit (delete
+`pf-rb-work/` when done).
 
 Design record: `design/architecture.md` [section 12](../design/architecture.md#12-benchmark-design-design-only-no-runs).
