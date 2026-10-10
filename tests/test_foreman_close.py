@@ -209,14 +209,23 @@ class HandoverTest(Base):
         m = fcl.load_manifest(str(self.state), SID)
         self.assertEqual((m["dropped"], m["entries"][0]["kind"], m["entries"][0]["branch"]), ([], "worktree", "x"))
 
-    def test_sync_shows_close_block_first(self):
+    def test_sync_cleans_shows_close_block_first_and_reruns_idempotently(self):
         (self.agent / "foreman.json").write_text(json.dumps({"sync": {"repos": [], "runRetro": False}}))
+        (self.repo / ".pi").mkdir()  # untrusted project layer: not read, the user default autoClean=true holds
+        (self.repo / ".pi" / "foreman.json").write_text(json.dumps({"close": {"autoClean": False}}))
+        g(self.repo, "add", ".pi")
+        g(self.repo, "commit", "-q", "-m", "pi")
+        wt = self.worktree("merged")
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             code = fsync.main(["--cwd", str(self.repo), "--state", str(self.state), "--session", SID])
         lines = out.getvalue().splitlines()
-        self.assertEqual((code, lines[:2]), (0, ["pi-foreman sync", "CLOSE: ready"]))
+        self.assertEqual((code, lines[:3]), (0, ["pi-foreman sync", "CLOSE: ready", "removed: %s" % wt]))
+        self.assertFalse(wt.exists())
         self.assertTrue((self.state / "sessions" / SID / "close.json").is_file())
+        code, rep = self.report("--result", str(self.tmp / "result.md"))  # close.ts re-runs after sync
+        self.assertEqual((code, rep["lines"], rep["handovers"]), (0, ["CLOSE: ready"], []))
+        self.assertIn("## Close\n\nCLOSE: ready\n", (self.tmp / "result.md").read_text())
 
 
 if __name__ == "__main__":

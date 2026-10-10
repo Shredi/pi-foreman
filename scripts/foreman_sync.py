@@ -52,7 +52,7 @@ A sync.repos entry matching a retro.repoBacklog entry {path, commit}: commit tru
 `.workflow/retro-backlog.md` to that repo's commit even when ignored (`git update-index --add`, same
 secret check); commit false appends `/.workflow/retro-backlog.md` once to the repo's info/exclude. A
 commit:true repoBacklog entry that matches no sync.repos entry only gets a warning line. After the repo pushes the
-CLOSE report of scripts/foreman_close.py (report only, it removes nothing; writes close.json unless --dry-run) heads the
+CLOSE report and cleanup of scripts/foreman_close.py (as `foreman close`; --dry-run removes and writes nothing) heads the
 output, at most 15 lines (JSON key `close`). Output is at most 40 lines (text or JSON). Exit 0 when every repo is clean, committed
 or pushed; 1 when any repo was skipped or refused; 2 on a usage or config error.
 """
@@ -560,11 +560,12 @@ def run_retro(args, agent_dir):
 
 
 def close_block(state, session, cwd, cfg, dry_run):
-    """CLOSE report lines (scripts/foreman_close.py, report only: nothing is removed here), capped at
-    CLOSE_LINES with an overflow line pointing at close.json. A failure is one line, never an exit code."""
+    """CLOSE report plus cleanup (scripts/foreman_close.py, the same path as `foreman close`: removes manifest
+    entries when close.autoClean is on and not --dry-run), capped at CLOSE_LINES with an overflow line pointing
+    at close.json. A failure is one line, never an exit code."""
     import foreman_close as fcl  # lazy: foreman_close imports this module
     try:
-        rep = fcl.run(state, session, cwd, cfg, clean=False, dry_run=dry_run)
+        rep = fcl.run(state, session, cwd, cfg, clean=True, dry_run=dry_run)
     except Exception as exc:  # the report must not break the sync
         return ["CLOSE: unknown (%s)" % first_line(str(exc))]
     return fcl.capped(rep["lines"], CLOSE_LINES, fcl.close_path(state, session))

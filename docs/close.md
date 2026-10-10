@@ -18,7 +18,8 @@ A directory `<state>/scratch/<session>/` counts as a scratch entry without being
 `CLOSE: ready|open` and the lines `uncommitted:`, `unmerged:`, `open item:`, `pending child:`,
 `removed:` (`would remove:` with `--dry-run`), `kept:`, `handover:` and `child handover:`, writes
 `close.json` next to the manifest and appends `## Close` to `--result`. Exit 0 ready, 3 open, 2 usage.
-`foreman sync` shows the same block at the top of its output (report only, nothing removed).
+`foreman sync` runs the same report and cleanup and shows the block at the top of its output.
+A second run re-reports: entries whose path is already gone are skipped.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
