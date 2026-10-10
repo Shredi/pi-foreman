@@ -11,8 +11,18 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "cw-"));
 
 test("row formatting: role, rung, state, tokens, cost", () => {
   const r = { launchId: "l", role: "builder", rung: "model" as const, state: "working" as const, tokensIn: 12345, tokensOut: 900, cost: 0.126, startedAt: 0, endedAt: null };
-  assert.equal(runLine(r), "builder · model · working · ↑12.3k ↓900 · $0.13");
-  assert.equal(runLine({ ...r, rung: null, state: "done" }), "builder · done · ↑12.3k ↓900 · $0.13");
+  assert.equal(runLine(r), "⏳ builder · model · working · ↑12.3k ↓900 · $0.13");
+  assert.equal(runLine({ ...r, rung: null, state: "done" }), "✓ builder · done · ↑12.3k ↓900 · $0.13");
+});
+
+test("run lines carry the state glyph of the active set; unknown value falls back to unicode; fitLine counts wide glyphs as 2", () => {
+  const r = { launchId: "l", role: "b", rung: null, state: "working" as const, tokensIn: 0, tokensOut: 0, cost: 0, startedAt: 0, endedAt: null };
+  assert.ok(runLine(r, "nerd").startsWith("\uf252 b"));
+  assert.ok(runLine({ ...r, state: "ask" }, "nerd").startsWith("\uf128 b"));
+  assert.ok(runLine({ ...r, state: "ask" }).startsWith("? b"));
+  assert.ok(runLine({ ...r, state: "done" }, "nerd").startsWith("\uf00c b"));
+  assert.ok(runLine(r, "bogus").startsWith("⏳ b"));
+  assert.equal(fitLine("⏳ abcdef", 6), "⏳ ab…");
 });
 
 test("usage tail sums per launch id incrementally and waits for a full line", () => {
@@ -58,7 +68,7 @@ test("finished runs of the batch fold into one summary line; rows are capped at 
   const mk = (n: number, state: "working" | "done", endedAt: number | null) => ({ launchId: `l${n}`, role: `r${n}`, rung: null, state, tokensIn: 1000, tokensOut: 10, cost: 0.5, startedAt: n, endedAt });
   const now = 20 * 60 * 1000;
   const lines = widgetLines([mk(1, "done", 0), mk(2, "done", now - 1000), mk(3, "working", null), mk(4, "done", now - 500)], [], now);
-  assert.deepEqual(lines, ["r3 · working · ↑1.0k ↓10 · $0.50", "2 done · ↑2.0k ↓20 · $1.00"]); // r1 ended before the batch began
+  assert.deepEqual(lines, ["⏳ r3 · working · ↑1.0k ↓10 · $0.50", "2 done · ↑2.0k ↓20 · $1.00"]); // r1 ended before the batch began
   assert.deepEqual(widgetLines([mk(1, "done", now)], [], now), []);
   const many = Array.from({ length: 12 }, (_, i) => mk(i, "working", null));
   const out = widgetLines(many, [{ label: "sess", status: "open", at: now - 90_000 }], now);
@@ -103,7 +113,7 @@ test("widget renders only in tui when enabled, throttles, clears when empty", ()
   assert.equal(st.sets, 0);
   w.runs.onLaunched("c", "run1", ["builder"], 10_000);
   w.request({ mode: "tui", ui }, opts, 10_000);
-  assert.deepEqual(st.rows?.render(80), [" builder · working · ↑0 ↓0 · $0.00"]);
+  assert.deepEqual(st.rows?.render(80), [" ⏳ builder · working · ↑0 ↓0 · $0.00"]);
   w.runs.onRunEnd("run1", 10_001);
   w.request({ mode: "tui", ui }, opts, 10_200); // within a second: deferred, not rendered now
   assert.equal(st.sets, 1);
@@ -143,7 +153,7 @@ test("height never shrinks while a run is active, updates in place, clears after
   assert.deepEqual(heights, [1, 2, 3, 3, 3, 3, 3]);
   assert.equal(st.sets, 1); // one component for the whole batch, lines swapped in place
   assert.ok(st.renders >= 5);
-  assert.deepEqual(st.rows?.render(60), [" reviewer · working · ↑0 ↓0 · $0.00", " 2 done · ↑0 ↓0 · $0.00", ""]);
+  assert.deepEqual(st.rows?.render(60), [" ⏳ reviewer · working · ↑0 ↓0 · $0.00", " 2 done · ↑0 ↓0 · $0.00", ""]);
   step(() => w.runs.onRunEnd("r2", t));
   assert.equal(height(), 0);
   assert.equal(st.sets, 2); // cleared at the end of the last run

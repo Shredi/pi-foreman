@@ -101,6 +101,12 @@ export class UsageFooter {
     }
   }
 
+  /** The footer's own numbers (in = input + cache read + cache write, out = output) and list-price cost; null before any message. */
+  totalsOf(sessionId: string): { tokensIn: number; tokensOut: number; cost: number } | null {
+    const t = this.totals.get(sessionId);
+    return t ? { tokensIn: t.input + t.cacheRead + t.cacheWrite, tokensOut: t.output, cost: t.cost } : null;
+  }
+
   drop(sessionId: string): void {
     this.totals.delete(sessionId);
   }

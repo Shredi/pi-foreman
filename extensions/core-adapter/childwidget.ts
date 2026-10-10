@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { abbrev } from "./footer.ts";
 import { parseLines } from "./usage.ts";
+import { cellWidth, runSymbol, symbolSet } from "./symbols.ts";
 
 export const WIDGET_KEY = "foreman-children";
 export const MAX_ROWS = 8;
@@ -191,8 +192,9 @@ export class ChildRuns {
 
 const usd = (v: number): string => `$${v.toFixed(2)}`;
 
-export function runLine(r: RunView): string {
-  return [r.role, ...(r.rung ? [r.rung] : []), r.state, `↑${abbrev(r.tokensIn)} ↓${abbrev(r.tokensOut)}`, usd(r.cost)].join(" · ");
+/** State glyph (ui.symbols set) + the run's fields. */
+export function runLine(r: RunView, symbols?: unknown): string {
+  return symbolSet(symbols)[runSymbol(r.state)] + " " + [r.role, ...(r.rung ? [r.rung] : []), r.state, `↑${abbrev(r.tokensIn)} ↓${abbrev(r.tokensOut)}`, usd(r.cost)].join(" · ");
 }
 
 export function ageText(ms: number): string {
@@ -238,20 +240,29 @@ export function doneLine(done: RunView[]): string {
  * (ended at or after `since`, the start of the oldest active run); at most 8 lines. With no active run
  * only the opened sessions remain.
  */
-export function widgetLines(runs: RunView[], sessions: SessionRow[], now: number, since: number | null = null): string[] {
+export function widgetLines(runs: RunView[], sessions: SessionRow[], now: number, since: number | null = null, symbols?: unknown): string[] {
   const active = runs.filter((r) => r.state !== "done");
   const opened = [...sessions].sort((a, b) => (b.at || 0) - (a.at || 0)).map((s) => sessionLine(s, now));
   if (!active.length) return opened.slice(0, MAX_ROWS);
   const from = since ?? Math.min(...active.map((r) => r.startedAt));
   const done = runs.filter((r) => r.state === "done" && r.endedAt !== null && r.endedAt >= from);
-  return [...active.map(runLine), ...opened, ...(done.length ? [doneLine(done)] : [])].slice(0, MAX_ROWS);
+  return [...active.map((r) => runLine(r, symbols)), ...opened, ...(done.length ? [doneLine(done)] : [])].slice(0, MAX_ROWS);
 }
 
 /** Cut a line to the terminal width so a row never wraps (one widget line = one screen row). */
 export function fitLine(s: string, width: number): string {
-  const cps = [...s];
   if (width <= 0) return "";
-  return cps.length <= width ? s : cps.slice(0, Math.max(0, width - 1)).join("") + "…";
+  const cps = [...s];
+  const w = (c: string): number => cellWidth(c.codePointAt(0) ?? 0);
+  if (cps.reduce((a, c) => a + w(c), 0) <= width) return s;
+  let used = 0;
+  let out = "";
+  for (const c of cps) {
+    if (used + w(c) > width - 1) break;
+    used += w(c);
+    out += c;
+  }
+  return out + "…";
 }
 
 // ------------------------------------------------------------------ widget
@@ -294,14 +305,14 @@ export class ChildWidget {
   private tui: { requestRender(): void } | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private ctx: WidgetCtx | null = null;
-  private opts: { enabled: boolean; agentDir: string; intercomId: string | null } | null = null;
+  private opts: { enabled: boolean; agentDir: string; intercomId: string | null; symbols?: unknown } | null = null;
 
   constructor(usageFile: string) {
     this.runs = new ChildRuns(new UsageTail(usageFile));
   }
 
   /** Render now or, within a second of the last render, once at the end of that second. Never throws. */
-  request(ctx: WidgetCtx, opts: { enabled: boolean; agentDir: string; intercomId: string | null }, now = Date.now()): void {
+  request(ctx: WidgetCtx, opts: { enabled: boolean; agentDir: string; intercomId: string | null; symbols?: unknown }, now = Date.now()): void {
     this.ctx = ctx;
     this.opts = opts;
     if (!opts.enabled || ctx.mode !== "tui") return;
@@ -325,7 +336,7 @@ export class ChildWidget {
     try {
       if (!this.ctx || !this.opts) return;
       const views = this.runs.views();
-      const lines = widgetLines(views, readOpened(this.opts.agentDir, this.opts.intercomId), now);
+      const lines = widgetLines(views, readOpened(this.opts.agentDir, this.opts.intercomId), now, null, this.opts.symbols);
       if (views.some((r) => r.state !== "done")) {
         this.reserved = Math.max(this.reserved, lines.length);
         while (lines.length < this.reserved) lines.push("");

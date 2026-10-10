@@ -32,7 +32,7 @@ test("file shape, atomic write (no temp left), state transitions and done on sto
   const l = LiveState.start({ agentDir: d, sessionId: "sess1", cwd: "/w", mode: "rpc", env, pid: 42 }, () => [run]);
   assert.ok(l);
   const a = read(d, "sess1");
-  assert.deepEqual(Object.keys(a), ["v", "sessionId", "intercomId", "parentIntercom", "handoff", "label", "cwd", "pid", "mode", "startedAt", "heartbeatAt", "lastEventAt", "state", "runs"]);
+  assert.deepEqual(Object.keys(a), ["v", "sessionId", "intercomId", "parentIntercom", "handoff", "label", "cwd", "pid", "mode", "startedAt", "paneId", "heartbeatAt", "lastEventAt", "state", "runs", "tokensIn", "tokensOut", "cost", "blockedSince"]);
   assert.equal(a.v, 1);
   assert.equal(a.parentIntercom, "par");
   assert.equal(a.label, "job");
@@ -87,4 +87,26 @@ test("print and json mode write nothing; runs are capped at 20", () => {
   assert.equal(read(d, "c").runs.length, 20);
   assert.equal(read(d, "c").runs[19].launchId, "L29");
   l?.stop();
+});
+
+test("paneId from HERDR_PANE_ID, else null; session totals from the getter; blockedSince set on empty -> blocked and cleared", () => {
+  const d = tmp();
+  const l = LiveState.start({ agentDir: d, sessionId: "p1", cwd: "/w", mode: "rpc", env: { HERDR_PANE_ID: "w1:p2" } }, () => [], () => ({ tokensIn: 1500.4, tokensOut: 20, cost: 0.123456 }))!;
+  const a = read(d, "p1");
+  assert.equal(a.paneId, "w1:p2");
+  assert.deepEqual([a.tokensIn, a.tokensOut, a.cost, a.blockedSince], [1500, 20, 0.1235, null]);
+  const n = LiveState.start({ agentDir: d, sessionId: "p2", cwd: "/w", mode: "rpc", env: { HERDR_PANE_ID: " " } }, () => [])!;
+  assert.equal(read(d, "p2").paneId, null);
+  assert.deepEqual([read(d, "p2").tokensIn, read(d, "p2").cost], [0, 0]);
+  l.setBlocked(true);
+  const since = l.snapshot().blockedSince;
+  assert.ok(since && !Number.isNaN(Date.parse(since)));
+  const release = l.hold(); // second source: the stamp stays
+  assert.equal(l.snapshot().blockedSince, since);
+  l.setBlocked(false);
+  assert.equal(l.snapshot().blockedSince, since);
+  release();
+  assert.equal(l.snapshot().blockedSince, null);
+  l.stop();
+  n.stop();
 });
