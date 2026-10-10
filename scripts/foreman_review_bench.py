@@ -85,7 +85,8 @@ TASK_TEMPLATE = (
 # Class words (regex, case-insensitive, matched at a word start): a FAIL unit naming the defect's file and one of
 # its class's words locates it, and diagnoses it when the word is not negated (see judge).
 CLASS_SYNONYMS = {
-    "auth": [r"auth", r"permission", r"access control", r"privilege", r"bypass", r"unauthori[sz]ed"],
+    "auth": [r"auth", r"permission", r"access control", r"privilege", r"bypass", r"unauthori[sz]ed",
+             r"pass(?:es|ed)? (?:the )?(?:validation|check)", r"accepts? (?:\w+ ){0,2}characters?"],
     "shell-injection": [r"shell", r"inject", r"unquoted", r"unescaped", r"quot(?:e|ing)", r"metachar",
                         r"execsync", r"sh -c", r"command line"],
     "path-traversal": [r"travers", r"\.\./", r"\.\.\\", r"escape", r"outside (?:the|of)(?! ledger)", r"symlink",
@@ -93,20 +94,26 @@ CLASS_SYNONYMS = {
     "secret-log": [r"secret", r"token", r"credential", r"password", r"bearer", r"authorization header",
                    r"api key", r"leak", r"redact", r"sensitive"],
     "off-by-one": [r"off[- ]by[- ]one", r"fencepost", r"boundar", r"inclusive", r"exclusive", r"one too",
-                   r"out of (?:range|bounds)", r"last (?:element|item|byte|line)", r"first (?:element|item)"],
+                   r"out of (?:range|bounds)", r"last (?:element|item|byte|line)", r"first (?:element|item)",
+                   r"one (?:\w+ )?too (?:far|short|early|late|many|few|high|low)", r"one[- ]\w+ (?:gap|short)",
+                   r"one \w+ short", r"[a-z_]\w*\)? ?[-+] ?1(?![\w.])"],
     "resource-leak": [r"leak", r"not closed", r"never closed", r"unclosed", r"close", r"defer", r"handle",
                       r"descriptor", r"not released", r"dispose", r"unbounded", r"grows? without (?:bound|limit)",
-                      r"never (?:freed|cleared|drained|trimmed|stop)"],
+                      r"never (?:freed|cleared|drained|trimmed|stop)",
+                      r"stale(?! (?:comments?|docs?|documentation|readme|todos?|links?|branch(?:es)?)\b)",
+                      r"(?:never|not) (?:\w+ )?(?:clear(?:s|ed)?|reset)\b", r"keeps? its (?:old|last|previous)"],
     "race": [r"race", r"racy", r"lock", r"mutex", r"concurren", r"thread[- ]safe", r"atomic", r"synchroni",
              r"toctou", r"goroutine", r"simultaneous"],
     "swallowed-error": [r"swallow", r"ignor", r"discard", r"silent", r"unchecked", r"not checked",
-                        r"error handling", r"lost error", r"unwrap_or", r"except(?:ion)?: pass", r"suppress"],
+                        r"error handling", r"lost error", r"unwrap_or", r"except(?:ion)?: pass", r"suppress",
+                        r"nothing (?:is |gets )?logged", r"(?:deletes?|removes?|drops?) the (?:\w+ ){0,2}error log",
+                        r"error log (?:\w+ ){0,2}(?:was |is )?(?:removed|deleted|dropped|gone)"],
     "insecure-default": [r"insecure", r"default", r"tls", r"verif", r"permissive", r"world[- ]", r"0o?777",
                          r"0o?666", r"plaintext", r"debug"],
 }
 _SYN = {c: re.compile(r"(?<![\w])(?:%s)" % "|".join(v), re.I) for c, v in CLASS_SYNONYMS.items()}
 
-SCORER_VERSION = 2
+SCORER_VERSION = 3
 VERDICT_RE = re.compile(r"\b(?:overall\s+)?verdict\s*\**\s*:\s*\**\s*(pass|fail|approve|block)\b", re.I)
 ITEM_RE = re.compile(r"^\s*(?:[-*]\s+)?\**\s*(\d+)\.\s*(?:\d+\.\s*)?\**\s*(PASS|FAIL)\b\**[.:]?\s*(.*)", re.M)
 MISSING_RE = re.compile(r"^\W*(?:\d+\.\s*)?\W*missing\s*\**\s*:\s*(.*)", re.I)

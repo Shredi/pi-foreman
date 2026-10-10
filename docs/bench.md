@@ -91,7 +91,7 @@ in its env; it is never printed or written, and every file the runner writes is 
 they set, never the values. `FOREMAN_PI_CLI` points at another Pi `cli.js`; `FOREMAN_REVIEW_BENCH_FAKE_SCRIPT` feeds
 the replay fake provider (`foreman-fake/<model>`, tests only).
 
-Scoring (deterministic; scorer version 2, recorded as `scorer` in every score). `review-table` rescores every cell
+Scoring (deterministic; scorer version 3, recorded as `scorer` in every score). `review-table` rescores every cell
 from its stored final text with the current scorer, never from the stored score, so an old run is rescored without a
 launch; `--tasks` supplies each task's `diff.patch` file list for cells recorded before cells kept `diff_files`.
 
@@ -116,14 +116,14 @@ launch; `--tasks` supplies each task's `diff.patch` file list for cells recorded
 
 | class | words |
 |---|---|
-| auth | auth, permission, access control, privilege, bypass, unauthorized |
+| auth | auth, permission, access control, privilege, bypass, unauthorized, passes the validation/check, accepts ... characters |
 | shell-injection | shell, inject, unquoted, unescaped, quote/quoting, metachar, execsync, sh -c, command line |
 | path-traversal | travers, `../`, `..\`, escape, outside the/of (not "outside the ledger"), symlink, canonical, absolute path, sanitiz |
 | secret-log | secret, token, credential, password, bearer, authorization header, api key, leak, redact, sensitive |
-| off-by-one | off-by-one, fencepost, boundar, inclusive, exclusive, one too, out of range/bounds, last/first element |
-| resource-leak | leak, not/never closed, unclosed, close, defer, handle, descriptor, not released, dispose, unbounded, grows without bound/limit, never freed/cleared/drained/trimmed/stop |
+| off-by-one | off-by-one, fencepost, boundar, inclusive, exclusive, one too, out of range/bounds, last/first element, one ... too far/short/many, one-X gap/short, an explicit `x - 1` / `x + 1` |
+| resource-leak | leak, not/never closed, unclosed, close, defer, handle, descriptor, not released, dispose, unbounded, grows without bound/limit, never freed/cleared/drained/trimmed/stop, stale (not before comment/doc/readme/todo/link/branch), never/not clear(s/ed)/reset, keeps its old/last/previous |
 | race | race, racy, lock, mutex, concurren, thread-safe, atomic, synchroni, toctou, goroutine, simultaneous |
-| swallowed-error | swallow, ignor, discard, silent, unchecked, not checked, error handling, lost error, unwrap_or, suppress |
+| swallowed-error | swallow, ignor, discard, silent, unchecked, not checked, error handling, lost error, unwrap_or, suppress, nothing is logged, removes/deletes the error log, error log removed/gone |
 | insecure-default | insecure, default, tls, verif, permissive, world-, 0777, 0666, plaintext, debug |
 
 The source of truth is `CLASS_SYNONYMS` in the script.

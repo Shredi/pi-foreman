@@ -75,6 +75,35 @@ class Score(unittest.TestCase):
         r = self.s("VERDICT: FAIL\n2. FAIL app/counter.go:63 bumps a counter: a data race", race, ["app/counter.go"])
         self.assertEqual(r["diagnosed"], ["d1"])
 
+    def sym(self, cls, phrase):
+        t = {"clean": False, "defects": [{"id": "d1", "file": "app/x.py", "lines": [10, 10], "class": cls,
+                                          "description": "y"}]}
+        r = rb.score("VERDICT: FAIL\n2. FAIL app/x.py:90 " + phrase, t, ["app/x.py"])
+        return r["diagnosed"] == ["d1"]
+
+    def test_symptom_phrases_diagnose(self):  # scorer v3
+        cases = [("auth", "ids with bad chars still pass validation"), ("auth", "the check accepts forbidden characters"),
+                 ("swallowed-error", "if the read fails, nothing is logged now"),
+                 ("swallowed-error", "the patch removes the initial error log"),
+                 ("swallowed-error", "the read error log was removed"),
+                 ("resource-leak", "a stale value survives"), ("resource-leak", "it never clears the field"),
+                 ("resource-leak", "it keeps its old value"),
+                 ("off-by-one", "starts one tile too far east"), ("off-by-one", "a one-tile gap in the lane"),
+                 ("off-by-one", "the lane is one tile short"), ("off-by-one", "should be anchor.y - 1")]
+        for cls, phrase in cases:
+            self.assertTrue(self.sym(cls, phrase), phrase)
+
+    def test_symptom_phrases_negated_or_near_miss_do_not_diagnose(self):  # scorer v3
+        cases = [("auth", "does not pass validation here"), ("auth", "it accepts the request"),
+                 ("swallowed-error", "no error log was removed"), ("swallowed-error", "nothing else is printed"),
+                 ("resource-leak", "a stale comment above"), ("resource-leak", "a stale readme"),
+                 ("resource-leak", "this is not clearly a problem"), ("resource-leak", "keeps its shape"),
+                 ("off-by-one", "one tile is fine"), ("off-by-one", "not one tile too far"),
+                 ("off-by-one", "bumps the version to 1.4 + 1.5"), ("off-by-one", "total is 3 + 1 lines"),
+                 ("off-by-one", "adds v2 + 10")]
+        for cls, phrase in cases:
+            self.assertFalse(self.sym(cls, phrase), phrase)
+
     def test_approximate_lines_and_file_only_bullets_locate(self):  # bug 2
         for ref in ("app/client.py:~38", "client.py ~40", "app/client.py:~L39", "app/client.py:L36", "app/client.py lines 30-36"):
             self.assertEqual(self.s("VERDICT: FAIL\n2. FAIL odd write at %s" % ref)["located"], ["d1"], ref)
