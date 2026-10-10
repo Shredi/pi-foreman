@@ -272,6 +272,29 @@ export async function diffWithFacts(cwd: string, base: string | null): Promise<{
 
 // ------------------------------------------------------------------ security scan (ladder.reviewerClimb)
 
+const MAX_UNTRACKED_BYTES = 256 * 1024;
+
+/** Untracked, non-ignored new files as a synthetic diff (whole content as added lines) for the security scan. Skips files over 256 KB and binary files. */
+export async function untrackedDiff(cwd: string): Promise<string> {
+  const list = await git(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]);
+  if (!list) return "";
+  let out = "";
+  for (const f of list.split("\0").filter(Boolean).slice(0, 200)) {
+    try {
+      const full = path.join(cwd, f);
+      const st = fs.statSync(full);
+      if (!st.isFile() || st.size > MAX_UNTRACKED_BYTES) continue;
+      const buf = fs.readFileSync(full);
+      if (buf.includes(0)) continue;
+      const rel = f.replace(/\\/g, "/");
+      out += `diff --git a/${rel} b/${rel}\nnew file mode 100644\n--- /dev/null\n+++ b/${rel}\n` + buf.toString("utf8").split(/\r?\n/).map((l) => `+${l}`).join("\n") + "\n";
+    } catch {
+      // unreadable: skip
+    }
+  }
+  return out;
+}
+
 // Path words (a path segment or a `-`/`_`/`.` separated part of one) that make a change security-shaped.
 const SECURITY_PATH = /^(?:o?auth\w*|crypto\w*|crypt|cipher\w*|security|secur\w*|secrets?|exec\w*|shell\w*|net|network\w*|listen\w*|sockets?|sandbox\w*|permissions?)$/i;
 // Call shapes on added lines: [label, pattern]. A floor, line-based like the facts scan.
@@ -357,7 +380,7 @@ function steps(input: Json): Json[] {
 export class ReviewFacts {
   private readonly bases = new Map<string, string>();
   /** Diffs taken early for a reviewer step (before its model is picked); augment reuses them. */
-  private readonly early = new WeakMap<Json, Promise<{ diff: string | null; facts: DiffFact[]; base: string }>>();
+  private readonly early = new WeakMap<Json, Promise<{ diff: string | null; facts: DiffFact[]; base: string; untracked: string }>>();
   /** The owner's prompt that started this round (appended to a reviewer's task with the facts). */
   private owner = "";
 
@@ -389,11 +412,11 @@ export class ReviewFacts {
   }
 
   /** The work diff of one reviewer step, taken once per launch: augment reuses it (ladder.reviewerClimb security scan). */
-  diffOf(step: Json, input: Json, cwd: string): Promise<{ diff: string | null; facts: DiffFact[]; base: string }> {
+  diffOf(step: Json, input: Json, cwd: string): Promise<{ diff: string | null; facts: DiffFact[]; base: string; untracked: string }> {
     let p = this.early.get(step);
     if (!p) {
       const dir = this.cwdOf(step, input, cwd);
-      p = diffWithFacts(dir, this.bases.get(dir) ?? null);
+      p = diffWithFacts(dir, this.bases.get(dir) ?? null).then(async (r) => ({ ...r, untracked: await untrackedDiff(dir) }));
       this.early.set(step, p);
     }
     return p;

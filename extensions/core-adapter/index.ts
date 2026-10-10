@@ -1059,7 +1059,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           climbs = lp.climbs;
           ladderRoles = resolution.roles;
           // ladder.reviewerClimb (reviewerclimb.ts): the reviewer's diff is taken here, before its model is picked; the facts reuse it.
-          const rc = await planReviewerClimbs(input, resolution.roles, { config: s.config.config, live: s.ladder.live, fails: s.reviewerFails, diffOf: async (e) => (await reviewFacts.diffOf(e, input, ctx.cwd)).diff });
+          const rc = await planReviewerClimbs(input, resolution.roles, { config: s.config.config, live: s.ladder.live, fails: s.reviewerFails, diffOf: async (e) => { const d = await reviewFacts.diffOf(e, input, ctx.cwd); return d.diff || d.untracked ? (d.diff ?? "") + d.untracked : null; } });
           reviewerClimbs = rc.climbs;
           reviewerTraces = rc.traces;
         }

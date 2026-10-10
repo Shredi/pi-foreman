@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { collectFacts, diffWithFacts, factsBlock, isTestPath, OWNER_TEXT_MAX, ownerBlock, scanDiff, securityScan } from "../diffscan.ts";
+import { collectFacts, diffWithFacts, factsBlock, isTestPath, OWNER_TEXT_MAX, ownerBlock, scanDiff, securityScan, untrackedDiff } from "../diffscan.ts";
 
 const diff = (file: string, removed: string[], added: string[], extra = ""): string =>
   `diff --git a/${file} b/${file}\n${extra}--- a/${file}\n+++ b/${file}\n@@ -1,${removed.length} +1,${added.length} @@\n${removed.map((l) => `-${l}`).join("\n")}\n${added.map((l) => `+${l}`).join("\n")}\n`;
@@ -109,4 +109,21 @@ test("securityScan: path words and call shapes on added lines, labels only", () 
   // removed lines, prose and look-alikes do not count; no diff, no hits
   assert.deepEqual(securityScan(diff("src/view.ts", ["spawn(cmd)"], ["const re = /x/; re.exec(s); f.bind(this); network_view(); // executes later"])), []);
   assert.deepEqual(securityScan(null), []);
+});
+
+test("untrackedDiff: untracked new files become added lines for the security scan; ignored and binary files do not", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "untracked-"));
+  try {
+    const g = (...a: string[]) => execFileSync("git", a, { cwd: dir, stdio: "ignore" });
+    g("init", "-q");
+    fs.mkdirSync(path.join(dir, "auth"));
+    fs.writeFileSync(path.join(dir, "auth", "token.ts"), "const x = 1;\n");
+    fs.writeFileSync(path.join(dir, "run.ts"), "exec(cmd);\n");
+    fs.writeFileSync(path.join(dir, "blob.bin"), Buffer.from([0, 1, 2]));
+    fs.writeFileSync(path.join(dir, ".gitignore"), "ignored.ts\n");
+    fs.writeFileSync(path.join(dir, "ignored.ts"), "spawn(x);\n");
+    assert.deepEqual(securityScan(await untrackedDiff(dir)), ["path:auth", "exec("]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

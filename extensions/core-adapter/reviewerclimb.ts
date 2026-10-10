@@ -12,6 +12,7 @@ import { clampLevel, splitLevel } from "./launchmodel.ts";
 import { ranksOf, tierOf } from "./ranks.ts";
 import { hasStrongRung, launchEntries } from "./ladder.ts";
 import { securityScan } from "./diffscan.ts";
+import { verdictItemsOf } from "./reviewmarks.ts";
 
 const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
 
@@ -30,24 +31,7 @@ export function reviewerClimbConfig(config: Json | undefined): ReviewerClimbConf
  * marker (`-`, `*`), backticks or `**` around the number or the line, `N.` or `N)`, and the doubled
  * form "1. `1. FAIL`". Lines inside ``` fences are skipped.
  */
-export function failItemsOf(text: string): string[] {
-  const out: string[] = [];
-  let fenced = false;
-  const re = /^(?:[-*]\s+)?(?:`+|\*\*)?\s*(\d+)[.)]\s*(?:`+|\*\*)?\s*(?:\d+[.)]\s*)?(?:`+|\*\*)?\s*FAIL\b/;
-  for (const line of text.split(/\r?\n/)) {
-    const t = line.trim();
-    if (t.startsWith("```")) {
-      fenced = !fenced;
-      continue;
-    }
-    const m = fenced ? null : re.exec(t);
-    if (m) {
-      const n = String(Number(m[1]));
-      if (!out.includes(n)) out.push(n);
-    }
-  }
-  return out;
-}
+export const failItemsOf = (text: string): string[] => verdictItemsOf(text, "FAIL");
 
 /** Completed `reviewer` children's texts of a run-end event. */
 export function reviewerTextsOfRunEnd(data: unknown): string[] {
