@@ -66,7 +66,7 @@ Models default to the claude-bridge reviewer rungs `claude-haiku-5-5`, `claude-s
 at `:medium`. Order: repeat outermost, then task, then model.
 
 Blindness: the reviewer's repo, agent dir and scratch dir live in a work dir under the system temp dir
-(`pf-rb-work/<hash>/<cell hash>/`), not under `--out`, so cell results and ground truth are out of reach. Before each
+(`pf-rb-work/<hash>/<cell hash>/`), not under `--out`, so cell results and ground truth are not exposed in the reviewer's tree, prompt or env (the reviewer has bash on the host, so this is not a sandbox). Before each
 launch the runner refuses the cell when the system prompt, task, cwd or any env value it sets contains `seeded`,
 `ground_truth` or the task dir path, or when a file name in the tree or the diff contains either word. The contents of
 base files are not scanned.
