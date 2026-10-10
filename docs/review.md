@@ -65,8 +65,8 @@ config only (a project layer's value is dropped with a warning). Default `{}`: n
 override applies after the role map and before the different-model rule, so an overridden model takes part in that
 rule. The thinking level is clamped by `maxThinking` and `childMaxThinking`. A model chosen by the repeat-fail or
 security climb wins over an occasion model; the thinking override still applies. An occasion model is
-written before the rank check, like the role map: with `ranks` set, a model ranked above the foreman refuses the
-launch. Trace `review_occasion {occasion,
+written before the rank check, like the role map: with `ranks` set, a model the rank policy refuses (by default
+one not ranked below the foreman) refuses the launch. Trace `review_occasion {occasion,
 thinking, model_overridden}`.
 
 ## Review panel
