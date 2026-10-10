@@ -194,6 +194,15 @@
   models) with claude-agent-sdk 0.3.293.
 
 ### Fixed
+- Herdr sidebar (`docs/herdr.md`): the daemon spawns radar through the posix_spawn path before its event thread starts
+  (no fork of a threaded process), restarts a radar child that prints no line for three intervals (stack dump in the
+  log), dumps its stacks on `SIGUSR1` and logs the first radar line and each change of the joined pane count with a
+  reason. One state folder whoever starts it (`HERDR_PLUGIN_STATE_DIR`, else Herdr's plugin state path when present,
+  else the temp folder); `status` prints it. `run --once` reports with a 60 s TTL and prints `ok`/`error` per pane;
+  `run --dry-run` only composes. `fm_pre` is gone: the tree prefix starts `fm_l1`, `fm_sym` is the bare glyph (the
+  rows snippet changed; shutdown also clears an old `fm_pre`). Width follows Herdr: default 26, ` · ` (3 columns)
+  between cells, one leading user cell reserved (`--lead-cells`, `HERDR_SIDEBAR_LEAD`), line 1 two columns short of
+  its budget and cut in the label, never the age.
 - Children widget: the TUI view no longer jumps while children run. The widget keeps its height during a batch (rows
   reserved, finished runs fold into one `<n> done` line, lines cut to one row each, same component updated in place)
   and clears when the last active run ends; unchanged content makes no UI call (`childwidget.ts`).

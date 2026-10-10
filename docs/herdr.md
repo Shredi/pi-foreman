@@ -10,12 +10,12 @@ pane a state glyph, the label, age or blocked timer, the children (subagent runs
 [sessions](sessions.md#herdr).
 
 ```text
-⏳ › pi-foreman 01a1253f      12s
-⏳ builder strong  ? reviewer
-↑341k ↓2.3k $0.47          ✓1
-├─ ✋ › ladder-polish       6m
+⏳ · › pi-foreman 01a1…  12s
+⏳ builder strong · ? reviewer
+↑341k ↓2.3k · $0.47     ✓1
+✋ · ├─ › ladder-polish   6m
 │⠀ ⏳ explorer
-│⠀ ↑64k ↓0.7k $0.12
+│⠀ ↑64k ↓0.7k · $0.12
 ```
 
 ## Install
@@ -35,7 +35,30 @@ pane a state glyph, the label, age or blocked timer, the children (subagent runs
 The daemon starts with Herdr (`[[startup]]`); the `pane.agent_detected` hook restarts it if it died. Actions: `start`,
 `stop`, `configure`. It finds `foreman` in this order: `--foreman PATH` or `PI_FOREMAN_BIN`, then `bin/foreman` of the
 checkout the plugin is linked from, then `foreman` on `PATH`. If none is found it logs one line and exits with status
-2\. Log and pid file are in Herdr's plugin state folder.
+2\. Log (`sidebar.log`) and pid file live in one state folder, whoever starts the daemon:
+`HERDR_PLUGIN_STATE_DIR` (set by Herdr for its hooks and actions), else
+`${XDG_STATE_HOME:-~/.local/state}/herdr/plugins/pi-foreman.sidebar` when its `herdr/plugins` folder exists, else
+`pi-foreman.sidebar` in the system temp folder. `python3 sidebar.py status` prints the folder it uses, so `status`
+and `stop` by hand reach the daemon Herdr started.
+
+The daemon logs its start, the first radar line, every change of the joined pane count (`joined N of S sessions
+(A agents listed)`, with a short reason when none joined) and every failed report; a steady state logs nothing. A
+radar child that prints no line for three intervals (plus a startup grace) is killed with a stack dump in the log and
+restarted. On Linux and macOS `kill -USR1 <pid>` writes the daemon's thread stacks to the log.
+
+### Hand smoke
+
+In the plugin folder, inside a Herdr pane:
+
+```sh
+python3 sidebar.py run --dry-run   # compose only: prints the tokens per pane, reports nothing
+python3 sidebar.py run --once      # publish once, 60 s TTL: "<pane> ok" or "<pane> error: ..." per pane, then the tokens
+herdr agent list                   # within 60 s the pi pane carries the fm_* tokens
+```
+
+`--dry-run` joins through `agent.list` when the socket answers, else by the presence `paneId` alone. `--once` never
+touches the Agents view and exits 1 when a report failed. When nothing joined, the `joined 0 of …` line on stderr says
+why.
 
 ## Rows
 
@@ -45,19 +68,19 @@ agents keep your default rows. Herdr allows one rows table per key: if you alrea
 or ship row templates for `pi`; two owners of the view replace each other's sort.
 
 Colour rules test only the cell's own value, so the state colour sits on the glyph cell: one `equals` rule per glyph of
-both symbol sets. A session blocked for more than 15 minutes gets a `!` after its glyph (`✋!`), which the first rules
+both symbol sets. A nested session's tree prefix (`├─`, `└─`) starts its `fm_l1`, so the glyph cell holds the glyph
+alone. A session blocked for more than 15 minutes gets a `!` after its glyph (`✋!`), which the first rules
 colour red; the `!` also reads without colour. The colours in the snippet are placeholders.
 
 ## Tokens
 
-All tokens come from the source `plugin:pi-foreman.sidebar`, with a 15 s TTL, refreshed every 5 s; values are at most
-80 characters.
+All tokens come from the source `plugin:pi-foreman.sidebar`, with a 15 s TTL (60 s for `run --once`), refreshed
+every 5 s; values are at most 80 characters.
 
 | Token | Value |
 |---|---|
-| `fm_pre` | tree prefix of a nested session (`├─`, `└─`), empty for a root |
 | `fm_sym` | state glyph, plus `!` when blocked longer than 15 minutes |
-| `fm_l1` | `› label` and the age or blocked timer, right-aligned to the sidebar width |
+| `fm_l1` | tree prefix of a nested session (`├─`, `└─`), `› label`, the age or blocked timer right-aligned to the width |
 | `fm_l2` | children: glyph, role and rung per active run (`×n` for repeats); `no children`, `no active children`, `done · n children` or `lost`; the base rung `model` is not shown |
 | `fm_l3` | `↑in ↓out` of the session and its children |
 | `fm_cost` | `$cost` and `✓n` finished children |
@@ -65,8 +88,13 @@ All tokens come from the source `plugin:pi-foreman.sidebar`, with a 15 s TTL, re
 | `fm_block_s` | seconds blocked, set only while blocked, for your own `gt`/`lt` rules |
 | `fm_sort` | parent-first sort key (`r001`, `r001.c001`) |
 
-Width: `--width`, else `HERDR_SIDEBAR_WIDTH`, else `ui.sidebar_width` from Herdr's `config.toml` (read only), else 34.
-Below 34 columns `fm_l3` drops the token counts; below 28 `fm_l3` and `fm_cost` are cleared.
+Width: `--width`, else `HERDR_SIDEBAR_WIDTH`, else `ui.sidebar_width` from Herdr's `config.toml` (read only), else 26
+(Herdr's default). Herdr may auto-scale the panel between `ui.sidebar_min_width` and `ui.sidebar_max_width`; set the
+width you see when it differs. Below 34 columns `fm_l3` drops the token counts; below 28 `fm_l3` and `fm_cost` are
+cleared. The layout counts 2 columns of panel frame and Herdr's ` · ` separator (3 columns) between two cells of a row.
+Row 1 also reserves the cells you put before `$fm_sym` (an icon token, say): one by default, each counted 1 column
+plus a separator; set `--lead-cells N` or `HERDR_SIDEBAR_LEAD` to the number you use (0 for none). Line 1 stops
+2 columns short of its budget; when it is short of room the label is cut (`…`), never the age.
 
 A session is joined to its pane by the presence file's `paneId` (pi-foreman writes `HERDR_PANE_ID` there), else by the
 pane's foreground pid, else by a working directory only one Pi pane has. When several presence files name the same pane
@@ -85,8 +113,11 @@ folder and reapplied at startup, because Herdr forgets the view on a server rest
 ## Symbols
 
 `ui.symbols` in `foreman.json` picks the glyph set for radar, the children widget and this plugin (via
-`foreman radar --json`): `unicode` (default) or `nerd` (a Nerd Font in the terminal). See
-[sessions](sessions.md#further-session-keys).
+`foreman radar --json`): `unicode` (default) or `nerd`. See [sessions](sessions.md#further-session-keys).
+
+`nerd` needs a terminal font that contains the Nerd Font symbols (a patched Nerd Font, or the symbols-only font as a
+fallback); otherwise the glyphs render blank. Test the terminal Herdr runs in with `printf '\uf252\n'` (zsh,
+bash 4.2+): an hourglass means `nerd` works. `unicode` is the safe default. The plugin installs no fonts.
 
 | State | `unicode` | `nerd` |
 |---|---|---|
