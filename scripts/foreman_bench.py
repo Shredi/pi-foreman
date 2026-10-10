@@ -5,6 +5,8 @@
     python scripts/foreman_bench.py run   --preset bench/presets/smoke.json [--tasks DIR] [--jobs-dir DIR]
                                           [--token-cap N] [--dry-run] [--setup-only]
     python scripts/foreman_bench.py table --preset bench/presets/smoke.json [--jobs-dir DIR] [--json] [--cost]
+    python scripts/foreman_bench.py review --tasks DIR [--models ...] [--dry-run]   (scripts/foreman_review_bench.py)
+    python scripts/foreman_bench.py review-table --out DIR
 
 Preset (JSON):
     {"bench": {"tasks_dir": "<dir, relative to the preset file>", "repeats": 3, "jobs_dir": "<optional>",
@@ -961,9 +963,17 @@ def main(argv=None):
     sub.choices["table"].add_argument("--cost", action="store_true",
                                       help="add the list-price-equivalent cost block (prices from bench/prices.json)")
     sub.choices["table"].add_argument("--prices", default=None, help="price file (default: bench/prices.json)")
+    # Review bench (scripts/foreman_review_bench.py): its own flags, no --preset.
+    import foreman_review_bench as frb
+    frb.add_arguments(sub.add_parser("review", help="score reviewer models on diffs with planted defects"))
+    frb.add_table_arguments(sub.add_parser("review-table", help="table of a review bench run dir"))
     args = ap.parse_args(argv)
     if args.cmd == "run":
         return run(args)
+    elif args.cmd == "review":
+        return frb.run_args(args)
+    elif args.cmd == "review-table":
+        return frb.table_args(args)
     preset = load_preset(args.preset)
     tdir, jdir = tasks_dir(preset, args.tasks), jobs_dir(preset, args.jobs_dir)
     prices = load_prices(args.prices) if args.cost else None

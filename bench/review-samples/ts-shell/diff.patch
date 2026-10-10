@@ -1,0 +1,65 @@
+diff --git a/src/release.ts b/src/release.ts
+index d676bbf..96c69bd 100644
+--- a/src/release.ts
++++ b/src/release.ts
+@@ -1,4 +1,4 @@
+-import { execFileSync } from "node:child_process";
++import { execFileSync, execSync } from "node:child_process";
+ 
+ export type Bump = "major" | "minor" | "patch";
+ 
+@@ -16,3 +16,15 @@ export function nextVersion(current: string, bump: Bump): string {
+   if (bump === "minor") return `${prefix}${major}.${minor + 1}.0`;
+   return `${prefix}${major}.${minor}.${patch + 1}`;
+ }
++
++/** Tags of `repoDir` matching the git glob `pattern`, oldest version first. */
++export function tagsMatching(repoDir: string, pattern: string): string[] {
++  const out = execSync(`git -C "${repoDir}" tag --list --sort=v:refname ${pattern}`, { encoding: "utf8" });
++  return out.split("\n").map((t) => t.trim()).filter(Boolean);
++}
++
++/** The newest tag starting with `prefix`, or null. */
++export function latestTag(repoDir: string, prefix: string): string | null {
++  const tags = tagsMatching(repoDir, `${prefix}*`);
++  return tags.length > 0 ? tags[tags.length - 1] : null;
++}
+diff --git a/test/tags.test.ts b/test/tags.test.ts
+new file mode 100644
+index 0000000..b390e05
+--- /dev/null
++++ b/test/tags.test.ts
+@@ -0,0 +1,33 @@
++import { after, test } from "node:test";
++import assert from "node:assert/strict";
++import { execFileSync } from "node:child_process";
++import { mkdtempSync, rmSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { latestTag, tagsMatching } from "../src/release.ts";
++
++const made: string[] = [];
++after(() => {
++  for (const d of made) rmSync(d, { recursive: true, force: true });
++});
++
++function repoWithTags(tags: string[]): string {
++  const dir = mkdtempSync(join(tmpdir(), "release-tags-"));
++  made.push(dir);
++  const git = (...args: string[]) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
++  git("init", "-q");
++  git("-c", "user.email=t@example.test", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init");
++  for (const t of tags) git("tag", t);
++  return dir;
++}
++
++test("tagsMatching lists matching tags in version order", () => {
++  const dir = repoWithTags(["v1.2.0", "v1.10.0", "v1.9.1", "cli-v0.1.0"]);
++  assert.deepEqual(tagsMatching(dir, "v1.*"), ["v1.2.0", "v1.9.1", "v1.10.0"]);
++});
++
++test("latestTag picks the newest tag for a prefix", () => {
++  const dir = repoWithTags(["cli-v0.1.0", "cli-v0.2.0", "v3.0.0"]);
++  assert.equal(latestTag(dir, "cli-v"), "cli-v0.2.0");
++  assert.equal(latestTag(dir, "api/"), null);
++});

@@ -1,5 +1,5 @@
 #!/bin/sh
-# pi-foreman: `foreman update-check|retro|sync|session|radar|config [args]` -> scripts/foreman_<name>.py.
+# pi-foreman: `foreman update-check|retro|sync|session|radar|config|bench [args]` -> scripts/foreman_<name>.py.
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 sub="${1:-}"
 case "$sub" in
@@ -9,7 +9,8 @@ case "$sub" in
     session) script="$here/../scripts/foreman_session.py" ;;
     radar) script="$here/../scripts/foreman_radar.py" ;;
     config) script="$here/../scripts/foreman_config.py" ;;
-    *) echo "usage: foreman update-check|retro|sync|session|radar|config [args]" >&2; exit 2 ;;
+    bench) script="$here/../scripts/foreman_bench.py" ;;
+    *) echo "usage: foreman update-check|retro|sync|session|radar|config|bench [args]" >&2; exit 2 ;;
 esac
 shift
 py="${PI_FOREMAN_PYTHON:-}"

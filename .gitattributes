@@ -1,2 +1,3 @@
 core/** -text
 banner.svg -text
+bench/review-samples/** -text

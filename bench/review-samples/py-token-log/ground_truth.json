@@ -1,0 +1,4 @@
+{"clean": false, "defects": [
+ {"id": "d1", "file": "apiclient/client.py", "lines": [38, 39], "class": "secret-log",
+  "description": "The retry warning logs the full request headers, including the Authorization bearer token."}
+]}

@@ -1,0 +1,51 @@
+diff --git a/tests/test_words.py b/tests/test_words.py
+index c037f90..d3cf667 100644
+--- a/tests/test_words.py
++++ b/tests/test_words.py
+@@ -1,6 +1,6 @@
+ import unittest
+ 
+-from textstats.words import word_count, words
++from textstats.words import top_words, word_count, words
+ 
+ 
+ class WordsTest(unittest.TestCase):
+@@ -11,6 +11,17 @@ class WordsTest(unittest.TestCase):
+         self.assertEqual(word_count(""), 0)
+         self.assertEqual(word_count("one two  three"), 3)
+ 
++    def test_top_words_orders_by_count_then_word(self):
++        text = "b a c b a b d"
++        self.assertEqual(top_words(text, 2), [("b", 3), ("a", 2)])
++        self.assertEqual(top_words(text, 4), [("b", 3), ("a", 2), ("c", 1), ("d", 1)])
++
++    def test_top_words_edges(self):
++        self.assertEqual(top_words("", 3), [])
++        self.assertEqual(top_words("a a b", 0), [])
++        self.assertEqual(top_words("a a b", -1), [])
++        self.assertEqual(top_words("A a b", 10), [("a", 2), ("b", 1)])
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/textstats/words.py b/textstats/words.py
+index 3945ae2..835afaf 100644
+--- a/textstats/words.py
++++ b/textstats/words.py
+@@ -1,3 +1,4 @@
++from collections import Counter
+ import re
+ 
+ WORD = re.compile(r"[a-z0-9]+(?:'[a-z0-9]+)*")
+@@ -10,3 +11,11 @@ def words(text):
+ 
+ def word_count(text):
+     return len(words(text))
++
++
++def top_words(text, n):
++    """The `n` most frequent words as (word, count), most frequent first, ties alphabetical."""
++    if n <= 0:
++        return []
++    counts = Counter(words(text))
++    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:n]
