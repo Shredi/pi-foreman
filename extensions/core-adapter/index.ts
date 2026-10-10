@@ -21,7 +21,7 @@ import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefu
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
-import { firstRunNotice, presetNames } from "./firstrun.ts";
+import { firstRunNotice, presetNames, presetProviders, providerGapNotice } from "./firstrun.ts";
 import { collectOrientation } from "./orient.ts";
 import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits } from "./childreads.ts";
@@ -421,6 +421,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const w of config.warnings) ctx.ui.notify(`pi-foreman config: ${w}`, "warning");
     const firstRun = firstRunNotice({ mode: ctx.mode, isChild: s.isChild, config: config.config, presets: presetNames(PKG_ROOT) });
     if (firstRun) ctx.ui.notify(firstRun, "info");
+    const gap = providerGapNotice({ provider, config: config.config, presets: presetProviders(PKG_ROOT), mode: ctx.mode, isChild: s.isChild });
+    if (gap) notifyOnce(s, ctx, "provider-gap", gap, "warning");
     if (!s.isChild) for (const sh of shadowedRoles(cwd, childRoleIds(get(config.config, "roles")), home)) ctx.ui.notify(`pi-foreman: project agent shadows a role (${sh}); ${SHADOW_FIX}`, "warning");
     return s;
   }
