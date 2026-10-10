@@ -437,11 +437,153 @@ def write_proposals(path, proposals, min_reviews, source):
     p.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
 
 
-def emit_backlog(args, report):
-    """File this session's findings in the retro backlog (scripts/foreman_backlog.py). Stub: the
-    candidate classes come in a later change; --no-backlog, --backlog-workspace, --workspace-key
-    and --backlog-session are accepted now. Never changes the report."""
-    return []
+# ------------------------------------------------------------------ backlog candidates
+
+FRICTION_KINDS = ("agent", "routing", "skill", "rule", "permission", "prompt", "harness-bug")
+DEFAULT_ASK_THRESHOLD = 2
+OUTLIER_FACTOR = 2
+OUTLIER_MIN_RUNS = 3
+REPEAT_MIN = 3
+
+
+def _tag(value, default="session"):
+    """A role/reason word safe for a stable candidate string (no ids, paths or spaces)."""
+    s = re.sub(r"[^A-Za-z0-9_-]", "", str(value or ""))[:30]
+    return s or default
+
+
+def _median(vals):
+    vals = sorted(vals)
+    n = len(vals)
+    return vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2
+
+
+def candidates(report, trace_events, usage_lines, session_tools, ask_threshold=DEFAULT_ASK_THRESHOLD):
+    """Backlog candidates [{kind, candidate, evidence}] from the retro inputs (pure).
+
+    `candidate` is stable across sessions (role and family names only; no run ids, times or paths),
+    so the same finding in a later session bumps one entry. Trace events used: ask, read_budget,
+    recheck_budget, child_read_budget, rereview, rung_up, friction. No source signal today (so
+    nothing is derived): bulk reads (the trace and the session file carry no per-call file lists,
+    only child_read_budget counts), and the command family behind an ask (the trace `ask` event
+    has toolFamily, not the command; families come only from the review log via `proposals`).
+    Today's `ask` event has no role/runId; when absent the asks count as one `session` bucket."""
+    out = []
+    report = report or {}
+    threshold = ask_threshold if isinstance(ask_threshold, int) and ask_threshold > 0 else DEFAULT_ASK_THRESHOLD
+    events = [e for e in (trace_events or []) if isinstance(e, dict)]
+
+    # per-run asks
+    runs = {}
+    for e in events:
+        if e.get("event") == "ask":
+            r = runs.setdefault((_tag(e.get("role")), str(e.get("runId") or "")), collections.Counter())
+            r[_tag(e.get("toolFamily"), "?")] += 1
+    per_role = collections.defaultdict(lambda: [0, 0, collections.Counter()])  # runs over threshold, max asks, families
+    for (role, _rid), fams in runs.items():
+        n = sum(fams.values())
+        if n >= threshold:
+            slot = per_role[role]
+            slot[0] += 1
+            slot[1] = max(slot[1], n)
+            slot[2].update(fams)
+    for role, (nruns, mx, fams) in sorted(per_role.items()):
+        top = ", ".join("%s=%d" % kv_ for kv_ in fams.most_common(3))
+        out.append({"kind": "permission", "candidate": "%s runs hit >=%d permission asks" % (role, threshold),
+                    "evidence": "%d run(s) over the threshold, most asks in one run: %d; top tools: %s" % (nruns, mx, top)})
+
+    # denials later overridden by an approve of the same family
+    rv = report.get("review") or {}
+    if rv.get("denials_overridden"):
+        out.append({"kind": "permission", "candidate": "denied permission asks were later approved for the same command family",
+                    "evidence": "%d overridden denial(s)" % rv["denials_overridden"]})
+
+    # read budgets (agent), rereviews (agent), rung-ups (routing)
+    by = collections.defaultdict(collections.Counter)
+    for e in events:
+        ev = e.get("event")
+        if ev == "child_read_budget" and e.get("action") in ("warn", "deny"):
+            by["child_read_budget"][_tag(e.get("role"))] += 1
+        elif ev in ("read_budget", "recheck_budget") and e.get("action") == "deny":
+            by[ev]["session"] += 1
+        elif ev == "rereview":
+            by["rereview"][_tag(e.get("role"))] += 1
+        elif ev == "rung_up":
+            by["rung_up"]["%s|%s" % (_tag(e.get("role")), _tag(e.get("reason"), "unspecified"))] += 1
+    for role, n in sorted(by["child_read_budget"].items()):
+        out.append({"kind": "agent", "candidate": "%s runs hit the child read budget" % role, "evidence": "%d hit(s)" % n})
+    for ev, label in (("read_budget", "read budget"), ("recheck_budget", "recheck budget")):
+        if by[ev]["session"]:
+            out.append({"kind": "agent", "candidate": "the %s was exceeded and blocked a read" % label,
+                        "evidence": "%d denial(s)" % by[ev]["session"]})
+    for role, n in sorted(by["rereview"].items()):
+        out.append({"kind": "agent", "candidate": "%s needed a rereview after changes" % role, "evidence": "%d rereview(s)" % n})
+    for key, n in sorted(by["rung_up"].items()):
+        role, reason = key.split("|", 1)
+        out.append({"kind": "routing", "candidate": "%s climbed a model rung (%s)" % (role, reason), "evidence": "%d climb(s)" % n})
+
+    # per-role cost outliers (usage lines grouped by launch; retro lines are not spawn cost)
+    costs = collections.defaultdict(lambda: collections.defaultdict(float))
+    for r in usage_lines or []:
+        if not isinstance(r, dict) or r.get("kind") == "retro" or not r.get("launchId"):
+            continue
+        c = r.get("cost")
+        costs[_tag(r.get("role"), "?")][str(r["launchId"])] += num(c.get("total")) if isinstance(c, dict) else 0
+    for role, runs_ in sorted(costs.items()):
+        vals = list(runs_.values())
+        med = _median(vals) if len(vals) >= OUTLIER_MIN_RUNS else 0
+        big = [v for v in vals if med > 0 and v > OUTLIER_FACTOR * med]
+        if big:
+            out.append({"kind": "routing", "candidate": "%s run cost over %dx the role median" % (role, OUTLIER_FACTOR),
+                        "evidence": "%d of %d run(s); worst %.1fx the median" % (len(big), len(vals), max(big) / med)})
+
+    # repeated bash families and permission proposals
+    proposals = report.get("proposals") or []
+    proposed = {p.get("example_family") for p in proposals if isinstance(p, dict)}
+    for fam, n in sorted(((session_tools or {}).get("repeated_bash_families") or {}).items()):
+        if n >= REPEAT_MIN:
+            out.append({"kind": "permission" if fam in proposed else "rule", "candidate": "repeated bash family: %s" % fam,
+                        "evidence": "ran %d times in one session" % n})
+    for p in proposals:
+        if isinstance(p, dict) and p.get("pattern"):
+            out.append({"kind": "permission", "candidate": "allow bash pattern %s" % p["pattern"],
+                        "evidence": "approved %s time(s) in %s session(s), never denied" % (p.get("approvals"), p.get("sessions"))})
+
+    # friction events (the Friction: tail of child reports)
+    for e in events:
+        if e.get("event") == "friction" and str(e.get("note") or "").strip():
+            kind = e.get("kind") if e.get("kind") in FRICTION_KINDS else "prompt"
+            role = _tag(e.get("role"), "agent")
+            import foreman_backlog as bl
+            out.append({"kind": kind, "candidate": bl.scrub("%s: %s" % (role, e["note"])), "evidence": "Friction line reported by a %s run" % role})
+    return out
+
+
+def emit_backlog(args, report, trace=None, usage=None):
+    """File this session's findings in the retro backlog (scripts/foreman_backlog.py). Never fails
+    the retro and never changes the report. Returns [(id, created|bumped|seen)]."""
+    if getattr(args, "no_backlog", False):
+        return []
+    try:
+        import foreman_backlog as bl
+        cwd = args.backlog_workspace or os.getcwd()
+        cfg = pg.fc.load_config(args.agent_dir, cwd)["config"]
+        rc = cfg.get("retro") if isinstance(cfg.get("retro"), dict) else {}
+        if rc.get("enabled") is False:
+            return []
+        thr = rc.get("askThreshold")
+        cands = candidates(report, trace, usage, report.get("session_tools"),
+                           thr if isinstance(thr, int) and not isinstance(thr, bool) else DEFAULT_ASK_THRESHOLD)
+        sid = args.backlog_session or report.get("session") or re.sub(r"^trace-|\.jsonl$", "", os.path.basename(args.trace or "")) or None
+        res = bl.record(cands, workspace_root=cwd, key=args.workspace_key, session=sid, cfg=cfg, agent_dir=args.agent_dir)
+        if res:
+            kind = next((c["kind"] for c in cands if c.get("kind")), "agent")
+            args.backlog_origin = os.path.basename(bl.store_path_for(kind, workspace_root=cwd, key=args.workspace_key,
+                                                                     cfg=cfg, agent_dir=args.agent_dir)[0])
+        return res
+    except Exception as exc:  # noqa: BLE001 - the retro report matters more than the backlog
+        print("retro backlog: %s" % exc, file=sys.stderr)
+        return []
 
 
 def run(args):
@@ -461,9 +603,9 @@ def run(args):
                 rates = json.load(fh)
         except (OSError, ValueError):
             pass
-    rep = build(read_jsonl(args.session), read_jsonl(args.trace), read_jsonl(args.usage),
-                read_jsonl(args.review_log), min_reviews, args.agent_dir, rates)
-    emit_backlog(args, rep)
+    trace, usage = read_jsonl(args.trace), read_jsonl(args.usage)
+    rep = build(read_jsonl(args.session), trace, usage, read_jsonl(args.review_log), min_reviews, args.agent_dir, rates)
+    filed = emit_backlog(args, rep, trace, usage)
     note = None
     if args.proposals_out and rep["proposals"] is not None:
         try:
@@ -475,6 +617,10 @@ def run(args):
         print(json.dumps(rep, indent=2, sort_keys=True))
     else:
         print(render_text(rep, note))
+        if filed:
+            print("backlog: %d new, %d bumped (%s)" % (sum(1 for _i, st in filed if st == "created"),
+                                                       sum(1 for _i, st in filed if st == "bumped"),
+                                                       getattr(args, "backlog_origin", "backlog")))
     return 0
 
 

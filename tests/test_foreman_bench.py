@@ -621,6 +621,21 @@ class BenchTest(unittest.TestCase):
         self.assertAlmostEqual(cost["retro_usd"], 40 * 0.10 / 1e6 + 7 * 0.125 / 1e6)
         self.assertAlmostEqual(cost["usd"], 100 * 0.10 / 1e6 + 7 * 0.125 / 1e6)
 
+    def test_kind_retro_usage_lines_change_no_column(self):
+        line = {"ts": "2026-10-09T09:59:00.000Z", "role": "foreman", "model": "claude-haiku-5-5", "kind": "foreman", "foremanSession": "s",
+                "input": 100, "cacheRead": 0, "cacheWrite": 7, "output": 3, "cost": {"total": 1.0}}
+        extra = dict(line, kind="retro", input=9000, output=900, cost={"total": 5.0}, ts="2026-10-09T10:05:00.000Z")
+        marker = {"state__bench-post-marker.json": [{"ms": 1791540000000}]}
+        base = self.logs(**dict(marker, **{"state__usage__s.jsonl": [line]}))
+        both = self.logs(**dict(marker, **{"state__usage__s.jsonl": [line, extra, dict(extra, ts="2026-10-09T09:58:00.000Z")]}))
+        self.assertEqual(ha.usage_by_role_model(both), ha.usage_by_role_model(base))
+        self.assertEqual(ha.usage_requests(both), ha.usage_requests(base))
+        self.assertEqual(ha.usage_log_cost(both), ha.usage_log_cost(base))
+        cb, cx = ha.summarize_logs(base), ha.summarize_logs(both)
+        self.assertEqual(ha.settled_cost(both, cx), ha.settled_cost(base, cb))
+        self.assertEqual(cx["usage_by_role_model"], cb["usage_by_role_model"])
+        self.assertNotIn("retro", cx)
+
     def test_wall_split_comes_from_the_waiter_times_and_the_post_marker(self):
         rec = trial()
         rec["agent_result"]["metadata"]["bench"].update({"waiter_start_ms": 1_000_000, "waiter_end_ms": 1_090_000})

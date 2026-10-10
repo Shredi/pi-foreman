@@ -395,7 +395,7 @@ def _usage_lines(logs, post):
                 rec = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(rec, dict) and after_marker(marker, rec.get("ts")) == post:
+            if isinstance(rec, dict) and rec.get("kind") != "retro" and after_marker(marker, rec.get("ts")) == post:  # retro lines are not cell cost
                 yield rec
 
 
@@ -584,10 +584,17 @@ class _BenchPi(BaseInstalledAgent):
             p.write_text(data if isinstance(data, str) else json.dumps(data, indent=1), "utf-8")
             await environment.upload_file(p, remote)
 
+    def task_id(self):
+        """The Harbor trial dir name (the logs dir's parent when it is `agent`), sanitised; keys the bench's retro backlog."""
+        p = Path(self.logs_dir)
+        name = p.parent.name if p.name == "agent" and p.parent.name else p.name
+        return re.sub(r"[^A-Za-z0-9._-]", "_", name).strip(".") or "trial"
+
     async def run(self, instruction: str, environment: BaseEnvironment, context: AgentContext) -> None:
         row = dict(self.row)
         row["_packages"] = self.packages()
         row["_fake"] = self.fake
+        row["_task_id"] = self.task_id()
         row["_permission_system"] = self.KIND == "foreman"
         if not self.fake:
             row["_version_packages"] = [R_NPM + "/node_modules/@anthropic-ai/claude-agent-sdk"]

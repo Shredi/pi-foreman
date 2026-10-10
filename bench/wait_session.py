@@ -136,6 +136,42 @@ def ask_role(rec):
     return hit.group(1).lower() if hit else None
 
 
+def bench_key(row):
+    """Retro backlog key of a cell: bench/<task id> (the Harbor trial dir name), else bench/<row id>."""
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", str(row.get("_task_id") or row.get("id") or "row")).strip(".")
+    return "bench/" + (name or "row")
+
+
+def run_bench_retro(args, row, agent, status, runner=subprocess.run):
+    """After the session: file the cell's friction in the bench backlog with scripts/foreman_retro.py (stdlib, no
+    model, never --model). Skipped for rows whose post steps already run /retro. Failures are logged, never raised."""
+    if not row.get("_permission_system") or "retro" in post_steps_of(row):
+        return
+    try:
+        state = agent / "pi-foreman" / "state"
+        sessions = [f for f in (Path(args.work) / "sessions").rglob("*.jsonl") if "subagent-artifacts" not in f.parts]
+        cmd = [sys.executable, str(Path(__file__).resolve().parent.parent / "scripts" / "foreman_retro.py"),
+               "--agent-dir", str(agent), "--backlog-workspace", str(args.cwd), "--workspace-key", bench_key(row),
+               "--backlog-session", re.sub(r"[^A-Za-z0-9._-]", "_", str(row.get("id") or "row"))]
+        with tempfile.TemporaryDirectory(prefix="pf-retro-") as tmp:
+            for flag, name, files in (("--trace", "trace.jsonl", sorted(state.glob("trace-*.jsonl"))),
+                                      ("--usage", "usage.jsonl", sorted((state / "usage").glob("*.jsonl")))):
+                if files:
+                    joined = Path(tmp) / name
+                    joined.write_text("".join(f.read_text("utf-8", "replace").rstrip("\n") + "\n" for f in files), "utf-8")
+                    cmd += [flag, str(joined)]
+            if sessions:
+                cmd += ["--session", str(max(sessions, key=lambda f: f.stat().st_size))]
+            r = runner(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+            status["bench_retro"] = r.returncode
+            if r.returncode:
+                print("WARNING bench retro exit %s: %s" % (r.returncode, r.stderr.decode("utf-8", "replace")[-300:]),
+                      file=sys.stderr, flush=True)
+    except Exception as exc:  # noqa: BLE001 - never fails the bench step
+        status["bench_retro"] = "error"
+        print("WARNING bench retro failed: %s" % exc, file=sys.stderr, flush=True)
+
+
 def foreman_config(row):
     """The user-layer foreman.json for a foreman row: the row's roles (incl. builder.strong),
     the review model (the row's review_model; the fake provider's non-allowing review model for
@@ -150,7 +186,8 @@ def foreman_config(row):
     block = {"roles": roles}
     if review:
         block["review"] = {"model": review}
-    l2 = {"version": 1, "providers": {provider: block}, "trace": {"enabled": True}}
+    l2 = {"version": 1, "providers": {provider: block}, "trace": {"enabled": True},
+          "retro": {"enabled": True, "workspaceKey": bench_key(row)}}
     if row.get("_required_child_extensions"):
         l2["safety"] = {"requiredChildExtensions": row["_required_child_extensions"]}
     if row.get("foreman_edits"):
@@ -661,6 +698,7 @@ def main(argv=None):
         status["error"] = "CLAUDE_CONFIG_DIR is not a fresh empty dir"
     else:
         (drive_rpc if args.driver == "rpc" else drive_print)(args, row, env, status)
+        run_bench_retro(args, row, agent, status)
         collect(args, agent, status)
     write_json(Path(args.out) / "bench-run.json", status)
     print(json.dumps({k: status.get(k) for k in ("status", "infra_error", "pi_seconds")}))

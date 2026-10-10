@@ -105,6 +105,12 @@ class BuildWorldTest(unittest.TestCase):
                                 "--agent-dir", tmp, "--project-dir", tmp], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(r.returncode, 0, r.stdout.decode() + r.stderr.decode())
 
+    def test_retro_block_uses_the_task_id_else_the_row_id(self):
+        self.assertEqual(ws.foreman_config(row(_task_id="fix-bug__ab12"))["retro"], {"enabled": True, "workspaceKey": "bench/fix-bug__ab12"})
+        self.assertEqual(ws.foreman_config(row())["retro"]["workspaceKey"], "bench/r")
+        self.assertEqual(ws.foreman_config(row(user_config={"retro": {"enabled": False}}))["retro"],
+                         {"enabled": False, "workspaceKey": "bench/r"})
+
     def test_project_commands_reach_the_permission_config(self):
         cfg = ws.foreman_config(row(project_commands=["cargo test *"]))
         self.assertEqual(cfg["safety"]["permissions"]["projectCommands"], ["cargo test *"])
@@ -114,6 +120,41 @@ class BuildWorldTest(unittest.TestCase):
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(r.returncode, 0, r.stderr.decode())
             self.assertIn('"cargo test *"', r.stdout.decode())
+
+
+class BenchRetroTest(unittest.TestCase):
+    def test_runs_the_retro_script_with_the_bench_key_and_never_a_model(self):
+        calls = []
+
+        def runner(cmd, **kw):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, b"", b"")
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Path(tmp) / "agent"
+            (agent / "pi-foreman" / "state" / "usage").mkdir(parents=True)
+            (agent / "pi-foreman" / "state" / "trace-a.jsonl").write_text('{"event":"ask"}\n')
+            (Path(tmp) / "sessions").mkdir()
+            args = type("A", (), {"work": tmp, "cwd": tmp})()
+            status = {}
+            ws.run_bench_retro(args, row(_task_id="t1", _permission_system=True), agent, status, runner)
+            self.assertEqual(len(calls), 1)
+            cmd = calls[0]
+            self.assertTrue(cmd[1].endswith("foreman_retro.py"))
+            self.assertEqual(cmd[cmd.index("--workspace-key") + 1], "bench/t1")
+            self.assertEqual(cmd[cmd.index("--backlog-session") + 1], "r")
+            self.assertIn("--trace", cmd)
+            self.assertNotIn("--model", cmd)
+            self.assertEqual(status["bench_retro"], 0)
+            # a failing runner is logged, never raised
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                ws.run_bench_retro(args, row(_permission_system=True), agent, status, lambda *a, **k: 1 / 0)
+            self.assertEqual(status["bench_retro"], "error")
+            # non-foreman rows and rows whose post steps already run /retro are skipped
+            calls.clear()
+            ws.run_bench_retro(args, row(), agent, {}, runner)
+            ws.run_bench_retro(args, row(_permission_system=True, bench={"post_steps": ["retro"]}), agent, {}, runner)
+            self.assertEqual(calls, [])
 
 
 class FakePi:

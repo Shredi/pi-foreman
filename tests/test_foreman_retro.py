@@ -191,6 +191,63 @@ class RetroTest(unittest.TestCase):
             for fam in ("vim ~/.gitconfig", "vim ~\\.gitconfig", "vim C:\\Users\\T\\.gitconfig"):
                 self.assertTrue(fr.touches_protected(fam, wprot), fam)
 
+    def backlog_run(self, session, *extra):
+        trace = self.write("trace.jsonl", [
+            {"event": "ask", "role": "builder", "runId": "run-%s" % session, "toolFamily": "bash", "decision": "child"},
+            {"event": "ask", "role": "builder", "runId": "run-%s" % session, "toolFamily": "bash", "decision": "child"},
+            {"event": "friction", "role": "builder", "runId": "run-%s" % session, "kind": "rule",
+             "note": "the test command was missing from /tmp/%s/notes.md" % session},
+        ])
+        agent = self.tmp / "agent"
+        return self.run_cli("--trace", trace, "--agent-dir", str(agent), "--backlog-workspace", str(self.tmp / "ws"),
+                            "--workspace-key", "proj", "--backlog-session", session, *extra)
+
+    def entries(self):
+        import foreman_backlog as bl
+        return bl.load(str(self.tmp / "agent" / "pi-foreman" / "state" / "retro" / "backlog" / "proj.md"))
+
+    def test_backlog_two_candidates_bump_on_a_second_session_and_stay_stable(self):
+        out = self.backlog_run("s1")
+        self.assertIn("backlog: 2 new, 0 bumped (proj.md)", out)
+        first = self.entries()
+        self.assertEqual(len(first), 2)
+        self.assertEqual({e["kind"] for e in first}, {"permission", "rule"})
+        self.assertIn("backlog: 0 new, 2 bumped (proj.md)", self.backlog_run("s2"))
+        second = self.entries()
+        self.assertEqual(sorted(e["id"] for e in second), sorted(e["id"] for e in first))
+        self.assertEqual([e["count"] for e in second], [2, 2])
+        self.assertGreaterEqual(second[0]["last_seen"], first[0]["last_seen"])
+        text = json.dumps(second)
+        self.assertNotIn("/tmp", text)
+        self.assertNotIn(str(self.tmp), text)
+        self.assertNotIn("run-s1", text)
+
+    def test_no_backlog_and_retro_disabled_write_nothing(self):
+        out = self.backlog_run("s1", "--no-backlog")
+        self.assertNotIn("backlog:", out)
+        self.assertFalse((self.tmp / "agent" / "pi-foreman").exists())
+        (self.tmp / "agent").mkdir()
+        (self.tmp / "agent" / "foreman.json").write_text(json.dumps({"version": 1, "retro": {"enabled": False}}))
+        self.backlog_run("s2")
+        self.assertFalse((self.tmp / "agent" / "pi-foreman").exists())
+
+    def test_candidate_classes_from_trace_usage_and_session_tools(self):
+        trace = [{"event": "child_read_budget", "role": "explorer", "action": "deny"},
+                 {"event": "rereview", "role": "reviewer"}, {"event": "rung_up", "role": "builder", "reason": "context"},
+                 {"event": "ask", "toolFamily": "bash"}, {"event": "ask", "toolFamily": "bash"}]
+        usage = [{"role": "builder", "launchId": "l%d" % i, "cost": {"total": c}} for i, c in enumerate((1, 1, 1, 9))]
+        usage.append({"role": "builder", "launchId": "x", "kind": "retro", "cost": {"total": 99}})
+        rep = {"review": {"denials_overridden": 1}, "proposals": [{"pattern": "git fetch *", "example_family": "git fetch", "approvals": 5, "sessions": 2}]}
+        got = {c["candidate"]: c["kind"] for c in fr.candidates(rep, trace, usage, {"repeated_bash_families": {"git fetch": 3, "make test": 4}})}
+        self.assertEqual(got["session runs hit >=2 permission asks"], "permission")
+        self.assertEqual(got["explorer runs hit the child read budget"], "agent")
+        self.assertEqual(got["reviewer needed a rereview after changes"], "agent")
+        self.assertEqual(got["builder climbed a model rung (context)"], "routing")
+        self.assertEqual(got["builder run cost over 2x the role median"], "routing")
+        self.assertEqual((got["repeated bash family: git fetch"], got["repeated bash family: make test"]), ("permission", "rule"))
+        self.assertEqual(got["allow bash pattern git fetch *"], "permission")
+        self.assertEqual(got["denied permission asks were later approved for the same command family"], "permission")
+
     def test_selftest(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
