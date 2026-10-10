@@ -12,6 +12,7 @@ from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+import _isolation  # noqa: E402,F401  (agent dir -> temp)
 import foreman_retro as fr  # noqa: E402
 
 SECRET = "super-secret-token-xyz"
@@ -152,7 +153,7 @@ class RetroTest(unittest.TestCase):
         self.assertIn("proposals", j)
 
     def test_missing_files_say_no_data(self):
-        text = self.run_cli("--session", str(self.tmp / "nope.jsonl"))
+        text = self.run_cli("--session", str(self.tmp / "nope.jsonl"), "--agent-dir", str(self.tmp / "agent"))
         self.assertIn("approvals: no data", text)
         self.assertIn("spawn cost: no data", text)
 
@@ -270,6 +271,20 @@ class RetroTest(unittest.TestCase):
         self.assertEqual(got["repeated reads of big.py"][0], "agent")
         self.assertEqual(got["bulk reads: >=50 read calls in one session"], ("agent", "50 read calls"))
         self.assertEqual(fr.candidates({}, [], [], fr.session_metrics(sess[:0])), [])
+
+    def test_default_agent_dir_is_the_suite_temp_dir(self):
+        import os
+        import _isolation
+        self.assertEqual(os.environ["PI_CODING_AGENT_DIR"], _isolation.AGENT_DIR)
+        self.assertNotEqual(Path(_isolation.AGENT_DIR), Path.home() / ".pi" / "agent")
+        trace = self.write("trace.jsonl", [{"event": "ask", "role": "builder", "runId": "r", "toolFamily": "bash", "decision": "child"}] * 2)
+        home = self.tmp / "home"
+        home.mkdir()
+        with mock.patch.dict(os.environ, {"HOME": str(home), "USERPROFILE": str(home)}):
+            self.run_cli("--trace", trace, "--backlog-workspace", str(self.tmp / "ws"), "--workspace-key", "iso",
+                         "--backlog-session", "iso1")
+        self.assertEqual(list(home.rglob("*")), [])
+        self.assertTrue((Path(_isolation.AGENT_DIR) / "pi-foreman" / "state" / "retro" / "backlog" / "iso.md").exists())
 
     def test_selftest(self):
         out = io.StringIO()

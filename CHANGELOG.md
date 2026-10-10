@@ -234,6 +234,7 @@
   models) with claude-agent-sdk 0.3.293.
 
 ### Fixed
+- Tests no longer write fixture retro backlog entries into the real `~/.pi/agent`: `tests/_isolation.py` points `PI_CODING_AGENT_DIR` at a per-run temp dir, plus a regression test.
 - Herdr sidebar (`docs/herdr.md`): the daemon spawns radar through the posix_spawn path before its event thread starts
   (no fork of a threaded process), restarts a radar child that prints no line for three intervals (stack dump in the
   log), dumps its stacks on `SIGUSR1` and logs the first radar line and each change of the joined pane count with a

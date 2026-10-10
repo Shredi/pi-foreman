@@ -16,6 +16,7 @@ from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
+import _isolation  # noqa: E402,F401  (agent dir -> temp)
 import foreman_session as fsn  # noqa: E402
 
 FAKE = r'''

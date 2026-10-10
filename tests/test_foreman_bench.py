@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+import _isolation  # noqa: E402,F401  (agent dir -> temp)
 sys.path.insert(0, str(ROOT / "bench"))
 import foreman_bench as fb  # noqa: E402
 import types  # noqa: E402

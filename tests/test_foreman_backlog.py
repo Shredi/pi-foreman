@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+import _isolation  # noqa: E402,F401  (agent dir -> temp)
 import foreman_backlog as fb  # noqa: E402
 
 T0 = "2026-01-01T00:00:00Z"
