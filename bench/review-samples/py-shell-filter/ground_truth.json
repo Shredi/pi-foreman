@@ -1,0 +1,4 @@
+{"clean": false, "defects": [
+ {"id": "d1", "file": "filelist/cli.py", "lines": [18, 19], "class": "shell-injection",
+  "description": "find_files builds the find command by string formatting the user-given root and name pattern into a shell=True command without quoting, so a value such as '; rm -rf ~' or '$(cmd)' runs arbitrary shell commands."}
+]}

@@ -108,7 +108,7 @@ class Score(unittest.TestCase):
 class TaskDirs(unittest.TestCase):
     def test_samples_are_valid(self):
         tasks = rb.find_tasks(SAMPLES)
-        self.assertEqual([t.name for t in tasks], ["py-clean", "py-token-log", "ts-shell"])
+        self.assertEqual([t.name for t in tasks], ["py-clean", "py-path-serve", "py-shell-filter", "py-token-log", "ts-shell"])
         self.assertEqual({t.name: rb.validate_task(t) for t in tasks}, {t.name: [] for t in tasks})
 
     def test_invalid_task_dirs(self):
@@ -182,7 +182,7 @@ class ResumeAndDryRun(unittest.TestCase):
                             "--out", str(out), "--dry-run"])
         self.assertEqual(code, 0, buf.getvalue())
         self.assertFalse(out.exists())
-        self.assertEqual(buf.getvalue().count("blind ok"), 3)
+        self.assertEqual(buf.getvalue().count("blind ok"), 5)
 
 
 @unittest.skipUnless(HAVE_TOOLS and pi_cli(), "needs node, git and the Pi CLI")

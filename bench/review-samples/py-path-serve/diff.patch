@@ -1,0 +1,50 @@
+diff --git a/reports/store.py b/reports/store.py
+index 13413e0..82244d6 100644
+--- a/reports/store.py
++++ b/reports/store.py
+@@ -19,3 +19,11 @@ class ReportStore:
+                 rel = os.path.relpath(os.path.join(dirpath, f), self.root)
+                 found.append(rel.replace(os.sep, "/"))
+         return sorted(found)
++
++    def read(self, subpath):
++        """Content of the report at subpath (relative, / separators) as bytes."""
++        path = os.path.join(self.root, subpath)
++        if not os.path.isfile(path):
++            raise ReportNotFound(subpath)
++        with open(path, "rb") as fh:
++            return fh.read()
+diff --git a/tests/test_store.py b/tests/test_store.py
+index f59fb5e..8c5fa4b 100644
+--- a/tests/test_store.py
++++ b/tests/test_store.py
+@@ -2,7 +2,7 @@ import os
+ import tempfile
+ import unittest
+ 
+-from reports.store import ReportStore
++from reports.store import ReportNotFound, ReportStore
+ 
+ 
+ class NamesTest(unittest.TestCase):
+@@ -15,5 +15,20 @@ class NamesTest(unittest.TestCase):
+             self.assertEqual(ReportStore(root).names(), ["2026/q1.txt", "b.txt"])
+ 
+ 
++class ReadTest(unittest.TestCase):
++    def test_read_returns_bytes_of_nested_report(self):
++        with tempfile.TemporaryDirectory() as root:
++            os.makedirs(os.path.join(root, "2026"))
++            with open(os.path.join(root, "2026", "q1.txt"), "wb") as fh:
++                fh.write(b"revenue")
++            self.assertEqual(ReportStore(root).read("2026/q1.txt"), b"revenue")
++
++    def test_read_missing_raises_with_subpath(self):
++        with tempfile.TemporaryDirectory() as root:
++            with self.assertRaises(ReportNotFound) as cm:
++                ReportStore(root).read("2026/none.txt")
++            self.assertEqual(str(cm.exception), "2026/none.txt")
++
++
+ if __name__ == "__main__":
+     unittest.main()

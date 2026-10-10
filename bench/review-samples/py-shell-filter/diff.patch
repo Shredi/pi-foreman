@@ -1,0 +1,93 @@
+diff --git a/filelist/cli.py b/filelist/cli.py
+index ef0c946..d7ee376 100644
+--- a/filelist/cli.py
++++ b/filelist/cli.py
+@@ -1,5 +1,6 @@
+ import argparse
+ import os
++import subprocess
+ import sys
+ 
+ 
+@@ -12,11 +13,21 @@ def list_files(root):
+     return sorted(names)
+ 
+ 
++def find_files(root, name):
++    """Like list_files, but only file names matching the glob 'name', matched by find."""
++    proc = subprocess.run("find %s -type f -name %s" % (root, name), shell=True,
++                          capture_output=True, text=True)
++    if proc.returncode != 0:
++        raise RuntimeError(proc.stderr.strip())
++    return sorted(os.path.relpath(p, root) for p in proc.stdout.splitlines())
++
++
+ def build_parser():
+     p = argparse.ArgumentParser(prog="filelist")
+     sub = p.add_subparsers(dest="command", required=True)
+     ls = sub.add_parser("list", help="list files under a directory")
+     ls.add_argument("root", nargs="?", default=".")
++    ls.add_argument("--name", help="only file names matching this glob")
+     return p
+ 
+ 
+@@ -24,7 +35,8 @@ def main(argv=None, out=None):
+     out = out or sys.stdout
+     args = build_parser().parse_args(argv)
+     if args.command == "list":
+-        for name in list_files(args.root):
++        names = find_files(args.root, args.name) if args.name else list_files(args.root)
++        for name in names:
+             out.write(name + "\n")
+     return 0
+ 
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index 826f530..686e117 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -1,9 +1,13 @@
+ import io
+ import os
++import shutil
++import sys
+ import tempfile
+ import unittest
+ 
+-from filelist.cli import main
++from filelist.cli import find_files, main
++
++HAVE_FIND = sys.platform != "win32" and shutil.which("find") is not None
+ 
+ 
+ class ListTest(unittest.TestCase):
+@@ -17,5 +21,30 @@ class ListTest(unittest.TestCase):
+             self.assertEqual(out.getvalue().split(), ["a.txt", "b.md", os.path.join("sub", "c.txt")])
+ 
+ 
++@unittest.skipUnless(HAVE_FIND, "needs a POSIX find")
++class NameFilterTest(unittest.TestCase):
++    def make_tree(self, root):
++        os.makedirs(os.path.join(root, "sub"))
++        for rel in ("app.log", "a.txt", os.path.join("sub", "old.log")):
++            open(os.path.join(root, rel), "w").close()
++
++    def test_name_filter_prints_matching_files_only(self):
++        with tempfile.TemporaryDirectory() as root:
++            self.make_tree(root)
++            out = io.StringIO()
++            self.assertEqual(main(["list", root, "--name", "*.log"], out), 0)
++            self.assertEqual(out.getvalue().split(), ["app.log", os.path.join("sub", "old.log")])
++
++    def test_name_filter_without_match_prints_nothing(self):
++        with tempfile.TemporaryDirectory() as root:
++            self.make_tree(root)
++            self.assertEqual(find_files(root, "*.md"), [])
++
++    def test_find_failure_raises_runtime_error(self):
++        with tempfile.TemporaryDirectory() as root:
++            with self.assertRaises(RuntimeError):
++                find_files(os.path.join(root, "missing"), "*.log")
++
++
+ if __name__ == "__main__":
+     unittest.main()

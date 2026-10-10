@@ -41,7 +41,7 @@ one reviewer launch over a builder diff with planted defects, scored for catches
                          [--token-cap N] [--timeout 900] [--dry-run] [--prices FILE]
     foreman bench review-table --out DIR [--tasks DIR]
 
-Task dir (`--tasks` names one, or a folder of them; three synthetic samples are in `bench/review-samples/`):
+Task dir (`--tasks` names one, or a folder of them; five synthetic samples (clean, secret-log, shell-injection in TypeScript and Python, path-traversal) are in `bench/review-samples/`):
 
 - `base/` the repo before the change, plain files (or `base.tar.gz`, members relative to the repo root; a single
   top-level `base/` folder is stripped);

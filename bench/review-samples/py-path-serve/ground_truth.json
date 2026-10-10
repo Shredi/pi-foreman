@@ -1,0 +1,4 @@
+{"clean": false, "defects": [
+ {"id": "d1", "file": "reports/store.py", "lines": [25, 25], "class": "path-traversal",
+  "description": "ReportStore.read joins the client-given subpath onto the root with os.path.join and never checks containment, so '../' segments or an absolute path read files outside the root."}
+]}
