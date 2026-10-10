@@ -9,10 +9,14 @@
 # Rules test the glyph cell's own value; the first match wins. "…!" marks a
 # session blocked for more than 15 minutes, so those rules come first.
 # Glyphs: unicode set as characters, nerd set as \u escapes (ui.symbols).
+# Nested sessions carry their tree prefix (├─ / └─) at the start of $fm_l1.
+# Width: each cell you add before $fm_sym (an icon token, say) costs its
+# width plus Herdr's " · " separator. The plugin reserves one such cell; set
+# HERDR_SIDEBAR_LEAD (or --lead-cells) to the number you really use.
 
 [ui.sidebar.agents.rows_by_agent]
 pi = [
-  [{ token = "$fm_pre", dim = true }, { token = "$fm_sym", rules = [
+  [{ token = "$fm_sym", rules = [
       { equals = "✋!", fg = "#d9534f", bold = true },
       { equals = "?!", fg = "#d9534f", bold = true },
       { equals = "\uf256!", fg = "#d9534f", bold = true },

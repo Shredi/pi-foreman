@@ -11,6 +11,7 @@ Subcommands: start | stop | run | status | configure.
 """
 
 import argparse
+import faulthandler
 import json
 import os
 import queue
@@ -28,21 +29,38 @@ import unicodedata
 PLUGIN_ID = "pi-foreman.sidebar"
 SOURCE = "plugin:" + PLUGIN_ID
 TTL_MS = 15000
+ONCE_TTL_MS = 60000  # `run --once`: long enough to inspect by hand
 INTERVAL_S = 5
-DEFAULT_WIDTH = 34
+# Watchdog: a radar child that prints no line for 3 intervals (plus a startup
+# grace for its first line) is killed and restarted.
+STARTUP_GRACE_S = 10
+WATCHDOG_ENV = "PI_FOREMAN_SIDEBAR_WATCHDOG_S"  # hidden override (tests)
+# Herdr config reference: "`ui.sidebar_width` integer default `26`".
+DEFAULT_WIDTH = 26
 NARROW_COUNTS = 34   # below: drop token counts from fm_l3
 NARROW_COST = 28     # below: clear fm_l3 and fm_cost
 LATE_S = 900         # blocked longer than this: glyph gets a "!"
 MAX_VALUE = 80
 # Columns the Agents panel takes from `ui.sidebar_width` for its frame and
-# padding, and the gap Herdr puts between two non-empty cells of a row.
+# padding.
 INSET = 2
-GAP = 1
+# Herdr configuration docs: "Herdr normally separates adjacent values with
+# ` · ` and uses a single space after `state_icon`." Custom cells are not
+# state_icon, so two non-empty cells of a row cost 3 columns between them.
+GAP = 3
+# Cells the user puts before $fm_sym on row 1 (an icon token, say), each
+# assumed 1 column wide plus its separator; --lead-cells / HERDR_SIDEBAR_LEAD.
+DEFAULT_LEAD = 1
+LEAD_CELL_W = 1
+# Line 1 stops this many columns short of its budget, so a misjudged frame
+# or glyph width does not push the age into Herdr's ellipsis.
+L1_MARGIN = 2
 # Herdr trims token values at both ends, so a leading blank indent uses
 # U+2800 (renders blank, is not whitespace) instead of spaces.
 BLANK = "⠀"
-KEYS = ("fm_pre", "fm_sym", "fm_l1", "fm_l2", "fm_l3", "fm_cost",
+KEYS = ("fm_sym", "fm_l1", "fm_l2", "fm_l3", "fm_cost",
         "fm_state", "fm_block_s", "fm_sort")
+STALE_KEYS = ("fm_pre",)  # published by older versions; nulled at shutdown
 SOCKET_FAILURES_MAX = 40
 VIEW_RETRY_S = 60
 VIEW_REFRESH_S = 60
@@ -172,11 +190,12 @@ def _children_text(node, joins):
     return " · ".join(g if counts[g] == 1 else "%s ×%d" % (g, counts[g]) for g in groups)
 
 
-def compose(snapshot, width, joins=None):
+def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD):
     """Snapshot (radar --json) -> {paneId: {fm_key: value or None}}.
 
     `joins` maps node key -> paneId; without it each node's own `paneId` is
-    used. None values clear the token.
+    used. `lead` counts the user's cells before $fm_sym on row 1. None values
+    clear the token.
     """
     if joins is None:
         joins = {}
@@ -185,6 +204,7 @@ def compose(snapshot, width, joins=None):
                 joins[n["key"]] = n["paneId"]
     roots, joins = dedupe_panes(snapshot.get("roots") or [], joins)
     width = int(width)
+    lead = max(0, int(lead))
     out = {}
 
     def emit(node, sort, pre, cont):
@@ -194,10 +214,11 @@ def compose(snapshot, width, joins=None):
         sym = glyph
         if blocked_s is not None and blocked_s > LATE_S:
             sym = glyph + "!"
-        # row 1: [pre][sym][l1]
-        used = INSET + (cell_width(pre) + GAP if pre else 0) + cell_width(sym) + GAP
+        # row 1: [lead cells][sym][l1], l1 = [tree prefix ]› name ... age
+        used = INSET + lead * (LEAD_CELL_W + GAP) + (cell_width(sym) + GAP if sym else 0)
         right = fmt_age(blocked_s if blocked_s is not None else node.get("age_s"))
-        l1 = spread("› " + (node.get("name") or "?"), right, width - used)
+        left = (pre + " " if pre else "") + "› " + (node.get("name") or "?")
+        l1 = spread(left, right, width - used - L1_MARGIN)
         # rows 2 and 3 indent under the glyph with the tree continuation
         indent = (cont + " ") if cont else ""
         room = width - INSET - cell_width(indent)
@@ -210,10 +231,9 @@ def compose(snapshot, width, joins=None):
                 counts = "↑%s ↓%s" % (fmt_tok(tot.get("in")), fmt_tok(tot.get("out")))
             l3 = indent + counts if counts else (indent or None)
             done = node.get("done_children") or 0
-            cost_room = room - (cell_width(counts) + GAP if counts else 0)
+            cost_room = width - INSET - (cell_width(l3) + GAP if l3 else 0)
             cost = spread(fmt_cost(tot.get("cost")), "✓%d" % done if done else "", cost_room)
         tokens = {
-            "fm_pre": pre or None,
             "fm_sym": sym or None,
             "fm_l1": l1,
             "fm_l2": l2,
@@ -376,7 +396,7 @@ def _config_width(path):
 
 
 def read_width(args, env, herdr_config_path):
-    """--width > HERDR_SIDEBAR_WIDTH > ui.sidebar_width in Herdr's config > 34."""
+    """--width > HERDR_SIDEBAR_WIDTH > ui.sidebar_width in Herdr's config > 26."""
     w = getattr(args, "width", None) if args is not None else None
     if w:
         return int(w)
@@ -388,6 +408,17 @@ def read_width(args, env, herdr_config_path):
         if w:
             return w
     return DEFAULT_WIDTH
+
+
+def read_lead(args, env):
+    """--lead-cells > HERDR_SIDEBAR_LEAD > 1."""
+    n = getattr(args, "lead_cells", None) if args is not None else None
+    if n is not None and n >= 0:
+        return int(n)
+    raw = (env or {}).get("HERDR_SIDEBAR_LEAD", "").strip()
+    if raw.isdigit():
+        return int(raw)
+    return DEFAULT_LEAD
 
 
 # ---------------------------------------------------------------- herdr socket
@@ -480,9 +511,20 @@ def log(msg):
     sys.stderr.flush()
 
 
-def state_dir(env=None):
+def state_dir(env=None, home=None, tmp=None):
+    """HERDR_PLUGIN_STATE_DIR (set by Herdr for its hooks and actions), else
+    Herdr's plugin state path when its `herdr/plugins` folder exists (so a
+    daemon started by hand shares pid and log with Herdr's), else TMPDIR."""
     env = os.environ if env is None else env
-    d = env.get("HERDR_PLUGIN_STATE_DIR") or os.path.join(tempfile.gettempdir(), PLUGIN_ID)
+    d = env.get("HERDR_PLUGIN_STATE_DIR")
+    if not d:
+        base = env.get("XDG_STATE_HOME") or os.path.join(
+            home or os.path.expanduser("~"), ".local", "state")
+        plugins = os.path.join(base, "herdr", "plugins")
+        if os.path.isdir(plugins):
+            d = os.path.join(plugins, PLUGIN_ID)
+        else:
+            d = os.path.join(tmp or tempfile.gettempdir(), PLUGIN_ID)
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -540,9 +582,14 @@ class Publisher:
         self.view_failed_at = None
         self.view_set_at = None
         self.view_errors = set()
+        self.ttl_ms = TTL_MS
+        self.joined_logged = None
 
     def width(self):
         return read_width(self.args, os.environ, os.path.join(herdr_config_dir(), "config.toml"))
+
+    def lead(self):
+        return read_lead(self.args, os.environ)
 
     def _call(self, method, params):
         try:
@@ -598,7 +645,8 @@ class Publisher:
         if wanted:
             self.view("set")
 
-    def publish(self, snapshot):
+    def joins_for(self, snapshot):
+        """agent.list (+ process_info for pid joins) -> (joins, agents)."""
         agents = self._call("agent.list", {}).get("agents") or []
         roots = snapshot.get("roots") or []
         joins = join(roots, agents)
@@ -618,24 +666,52 @@ class Publisher:
                 except HerdrError:
                     continue
             joins = join(roots, agents, procinfo)
-        now = compose(snapshot, self.width(), joins)
+        return joins, agents
+
+    def log_joined(self, snapshot, agents, joined):
+        """One log line whenever the joined pane count changes."""
+        if joined == self.joined_logged:
+            return
+        self.joined_logged = joined
+        sessions = [n for n in walk(snapshot.get("roots") or []) if n.get("kind") == "session"]
+        msg = "joined %d of %d sessions (%d agents listed)" % (joined, len(sessions), len(agents))
+        if joined == 0 and sessions:
+            live = {a.get("pane_id") for a in agents}
+            stale = sorted({n["paneId"] for n in sessions if n.get("paneId")} - live)
+            if stale:
+                msg += "; presence paneIds not in agent.list: %s" % ", ".join(stale[:4])
+            elif not any(a.get("agent") == "pi" for a in agents):
+                msg += "; no pi pane in agent.list"
+            else:
+                msg += "; no pi pane matches a session pid or cwd"
+        log(msg)
+
+    def publish(self, snapshot):
+        """Join, compose and report; returns {paneId: "ok" or "error: ..."}."""
+        joins, agents = self.joins_for(snapshot)
+        now = compose(snapshot, self.width(), joins, self.lead())
+        self.log_joined(snapshot, agents, len(now))
         patches = dict(now)
         patches.update(clears(self.published, now))
+        results = {}
         for pane, tokens in patches.items():
             try:
                 self._call("pane.report_metadata", {"pane_id": pane, "source": SOURCE,
-                                                    "tokens": tokens, "ttl_ms": TTL_MS})
+                                                    "tokens": tokens, "ttl_ms": self.ttl_ms})
+                results[pane] = "ok"
             except HerdrError as exc:
+                results[pane] = "error: %s" % exc
                 log("report %s failed: %s" % (pane, exc))
         self.published = now
         since = None if self.view_set_at is None else time.monotonic() - self.view_set_at
         self.view(view_decision(self.view_active, len(now), since))
+        return results
 
     def shutdown(self):
         for pane in list(self.published):
             try:
                 call("pane.report_metadata", {"pane_id": pane, "source": SOURCE,
-                                              "tokens": {k: None for k in KEYS}})
+                                              "tokens": {k: None for k in KEYS + STALE_KEYS}})
             except (OSError, ValueError, HerdrError):
                 pass
         self.published = {}
@@ -674,6 +750,9 @@ def _parse_line(line):
 
 
 def run_once(args, foreman):
+    """One snapshot. Publishes with a 60 s TTL and prints one `<pane> ok` or
+    `<pane> error: ...` line per report, then the tokens; `--dry-run` only
+    composes (agent.list when the socket answers, else presence paneIds)."""
     try:
         out = subprocess.run(_radar_cmd(foreman, args, False), stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, timeout=60)
@@ -686,19 +765,77 @@ def run_once(args, foreman):
         return 1
     args.no_view = True  # --once never touches the Agents view
     pub = Publisher(args, state_dir())
+    if args.dry_run:
+        try:
+            joins, agents = pub.joins_for(snap)
+            tokens = compose(snap, pub.width(), joins, pub.lead())
+            pub.log_joined(snap, agents, len(tokens))
+        except HerdrError as exc:
+            log("agent.list failed (%s); joining by presence paneId only" % exc)
+            tokens = compose(snap, pub.width(), None, pub.lead())
+        print(json.dumps(tokens, ensure_ascii=False))
+        return 0
+    pub.ttl_ms = ONCE_TTL_MS
     try:
-        pub.publish(snap)
+        results = pub.publish(snap)
     except HerdrError as exc:
         log("publish failed: %s" % exc)
         return 1
+    for pane in sorted(results):
+        print("%s %s" % (pane, results[pane]))
     print(json.dumps(pub.published, ensure_ascii=False))
-    return 0
+    return 0 if all(r == "ok" for r in results.values()) else 1
 
 
 def _reader(proc, q):
     for raw in proc.stdout:
         q.put(raw)
     q.put(None)
+
+
+def _executable(path):
+    """Absolute path of the radar executable (posix_spawn needs one)."""
+    if os.path.dirname(path):
+        return os.path.abspath(path)
+    return shutil.which(path) or path
+
+
+def _watchdog_s(env=None):
+    env = os.environ if env is None else env
+    try:
+        v = float(env.get(WATCHDOG_ENV, ""))
+        if v > 0:
+            return v, v
+    except ValueError:
+        pass
+    return 3 * INTERVAL_S + STARTUP_GRACE_S, 3 * INTERVAL_S
+
+
+def _spawn_radar(foreman, args):
+    # close_fds=False, an absolute executable, no cwd and no new session keep
+    # CPython on its posix_spawn path: no fork of this threaded process, no
+    # pre-exec code in the child. Python fds are non-inheritable by default.
+    cmd = _radar_cmd(_executable(foreman), args, True)
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                            close_fds=False, encoding="utf-8", errors="replace")
+
+
+def _dump_stacks():
+    try:
+        faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
+    except (OSError, ValueError, AttributeError, RuntimeError):
+        pass
+
+
+def _end_child(proc):
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
 
 
 def run_daemon(args, foreman):
@@ -714,26 +851,46 @@ def run_daemon(args, foreman):
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, on_term)
+    if hasattr(faulthandler, "register") and hasattr(signal, "SIGUSR1"):
+        faulthandler.register(signal.SIGUSR1, file=sys.stderr, all_threads=True)
     pub = Publisher(args, sdir)
     wake, stop = threading.Event(), threading.Event()
-    threading.Thread(target=subscribe_loop, args=(wake, stop), daemon=True).start()
+    subscriber = None
     proc = None
     last = None
     backoff = 1.0
-    log("started, foreman %s" % foreman)
+    first_wait, line_wait = _watchdog_s()
+    log("started, foreman %s, state dir %s" % (foreman, sdir))
     try:
         pub.reapply_view()
         while True:
             q = queue.Queue()
-            proc = subprocess.Popen(_radar_cmd(foreman, args, True), stdout=subprocess.PIPE,
-                                    stdin=subprocess.DEVNULL, encoding="utf-8", errors="replace")
+            proc = _spawn_radar(foreman, args)
             threading.Thread(target=_reader, args=(proc, q), daemon=True).start()
+            if subscriber is None:  # after the first spawn, never before it
+                subscriber = threading.Thread(target=subscribe_loop, args=(wake, stop), daemon=True)
+                subscriber.start()
+            spawned = last_line = time.monotonic()
+            got_line = False
+            stalled = False
             while True:
                 try:
                     raw = q.get(timeout=1.0)
                 except queue.Empty:
                     raw = ""
                 if raw is None:
+                    break
+                now = time.monotonic()
+                if raw:
+                    last_line = now
+                    if not got_line:
+                        got_line = True
+                        log("first radar line after %.1fs" % (now - spawned))
+                elif now - last_line > (line_wait if got_line else first_wait):
+                    log("watchdog: no radar line for %.0fs, killing pid %d; stacks follow"
+                        % (now - last_line, proc.pid))
+                    _dump_stacks()
+                    stalled = True
                     break
                 snap = _parse_line(raw) if raw else None
                 if snap is not None:
@@ -746,8 +903,9 @@ def run_daemon(args, foreman):
                     pub.publish(last)
                 except HerdrError as exc:
                     log("publish failed: %s" % exc)
-            proc.wait()
-            log("foreman radar exited (%s), restarting in %.0fs" % (proc.returncode, backoff))
+            _end_child(proc)
+            log("foreman radar %s (%s), restarting in %.0fs"
+                % ("stalled" if stalled else "exited", proc.returncode, backoff))
             time.sleep(backoff)
             backoff = min(30.0, backoff * 2)
     finally:
@@ -793,7 +951,9 @@ def cmd_stop():
 
 
 def cmd_status():
-    pid = _read_pid(os.path.join(state_dir(), "sidebar.pid"))
+    sdir = state_dir()
+    pid = _read_pid(os.path.join(sdir, "sidebar.pid"))
+    print("state dir %s" % sdir)
     if pid and _pid_alive(pid):
         print("running pid %d" % pid)
         return 0
@@ -812,7 +972,9 @@ def main(argv=None):
     ap.add_argument("command", choices=("start", "stop", "run", "status", "configure"))
     ap.add_argument("--width", type=int)
     ap.add_argument("--no-view", action="store_true")
+    ap.add_argument("--lead-cells", type=int)
     ap.add_argument("--once", action="store_true")
+    ap.add_argument("--dry-run", action="store_true", help="with run: compose once, report nothing")
     ap.add_argument("--foreman")
     ap.add_argument("--agent-dir")
     argv = sys.argv[1:] if argv is None else argv
@@ -829,7 +991,7 @@ def main(argv=None):
     if not foreman:
         log("foreman not found (set --foreman or PI_FOREMAN_BIN, or put foreman on PATH)")
         return 2
-    if args.once:
+    if args.once or args.dry_run:
         return run_once(args, foreman)
     return run_daemon(args, foreman)
 
