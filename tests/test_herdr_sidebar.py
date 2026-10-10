@@ -644,6 +644,14 @@ class PushTest(unittest.TestCase):
         self.assertEqual(last, {k: None for k in sidebar.SESSION_KEYS})
         self.assertFalse(os.path.exists(self.stamp))
 
+    def test_final_publishes_row_and_drops_only_the_stamp(self):
+        self.push()
+        res = self.push("--final")
+        self.assertEqual((res.returncode, res.stdout), (0, b""))
+        last = self.herdr.reports()[-1]["tokens"]
+        self.assertTrue(last["fm_l1"].startswith("› demo"))
+        self.assertFalse(os.path.exists(self.stamp))
+
     def test_unreachable_herdr_is_quiet_and_dry_run_prints(self):
         res = self.push(sock="missing.sock")
         self.assertEqual((res.returncode, res.stdout, res.stderr), (0, b"", b""))

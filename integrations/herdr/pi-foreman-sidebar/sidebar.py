@@ -1185,7 +1185,12 @@ def cmd_push(args):
                                       "tokens": patch[args.pane], "ttl_ms": TTL_MS}, timeout=2.0)
     except (OSError, ValueError, HerdrError):
         return 0
-    if not args.clear:
+    if args.final:
+        try:
+            os.remove(stamp)  # the daemon takes the keys over at its next tick; the usage cache stays
+        except OSError:
+            pass
+    elif not args.clear:
         try:
             os.makedirs(os.path.dirname(stamp), exist_ok=True)
         except OSError:
@@ -1214,6 +1219,7 @@ def main(argv=None):
     ap.add_argument("--pane", help="with push: the session's Herdr pane id")
     ap.add_argument("--symbols", choices=("unicode", "nerd"), help="with push: glyph set; default ui.symbols")
     ap.add_argument("--clear", action="store_true", help="with push: clear the session's keys")
+    ap.add_argument("--final", action="store_true", help="with push: publish the final row, then drop only the stamp")
     argv = sys.argv[1:] if argv is None else argv
     args = ap.parse_args(argv)
     if args.command == "start":

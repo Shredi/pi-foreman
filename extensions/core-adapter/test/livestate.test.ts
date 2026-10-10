@@ -38,7 +38,7 @@ test("file shape, atomic write (no temp left), state transitions and done on sto
   assert.equal(a.label, "job");
   assert.equal(a.pid, 42);
   assert.equal(a.state, "idle");
-  assert.deepEqual(a.runs, [{ launchId: "L1", role: "builder", rung: "model", state: "ask", tokensIn: 5, tokensOut: 2, cost: 0.1235 }]);
+  assert.deepEqual(a.runs, [{ launchId: "L1", role: "builder", rung: "model", state: "ask", tokensIn: 5, tokensOut: 2, cost: 0.1235, endedAt: null }]);
   l.onAgentStart();
   assert.equal(l.snapshot().state, "working");
   l.setBlocked(true);
@@ -109,4 +109,20 @@ test("paneId from HERDR_PANE_ID, else null; session totals from the getter; bloc
   assert.equal(l.snapshot().blockedSince, null);
   l.stop();
   n.stop();
+});
+
+test("run end time is ISO; onChange fires on events; flush writes at once", () => {
+  const d = tmp();
+  const l = LiveState.start({ agentDir: d, sessionId: "e1", cwd: "/w", mode: "rpc", env: {} }, () => [{ ...run, endedAt: 5000 }])!;
+  assert.equal(read(d, "e1").runs[0].endedAt, "1970-01-01T00:00:05.000Z");
+  let n = 0;
+  const off = l.onChange(() => n++);
+  l.onAgentStart();
+  l.flush();
+  assert.equal(n, 1);
+  assert.equal(read(d, "e1").state, "working");
+  off();
+  l.touch();
+  assert.equal(n, 1);
+  l.stop();
 });

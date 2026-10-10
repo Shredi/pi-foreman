@@ -66,6 +66,7 @@ import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } 
 import { workspaceOf } from "./python.ts";
 import { ChildWidget, rungOf } from "./childwidget.ts";
 import { LiveState } from "./livestate.ts";
+import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate } from "./compaction.ts";
 import { applyLedgerItems } from "./ledgerblock.ts";
 import { citedItems, ledgerHint, writeHint } from "./hints.ts";
@@ -254,6 +255,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return () => holds.forEach((release) => release?.());
   });
   const herdrMeta = installHerdrMeta(pi); // group tag (herdrmeta.ts), started at the end of session_start
+  const sidebarLive = installSidebarLive(pi); // session-owned Herdr sidebar row (sidebarlive.ts), same place
   pi.events?.on("permissions:ready", (payload: unknown) => review.onReady(payload));
   // Radar: forwarded permission prompts put a child run in "ask" (childwidget.ts); blocked/working feed the presence file.
   const radarEvent = (fn: (s: Session) => void): void => {
@@ -589,6 +591,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       notifyOnce(s, ctx, "ps-project-file", `pi-foreman: ${psProjectConfigPath(s.cwd)} exists. A project permission file can loosen the permission system's rules (it applies once the project is trusted). pi-foreman still enforces its deny rules itself, but put your rules in foreman.json and remove this file. /foreman doctor fails while it exists.`);
     }
     herdrMeta.start(ctx, get(s.config.config, "herdr.groupTag") !== false);
+    sidebarLive.start(ctx, { python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, sessionId: s.id, symbols: get(s.config.config, "ui.symbols"), spinner: get(s.config.config, "ui.spinner"), live: s.live });
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {

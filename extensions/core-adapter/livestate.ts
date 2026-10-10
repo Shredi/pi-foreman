@@ -21,6 +21,8 @@ export interface LiveRun {
   tokensIn: number;
   tokensOut: number;
   cost: number;
+  /** ISO time the run ended; null while it runs. */
+  endedAt: string | null;
 }
 
 export interface LiveFile {
@@ -142,6 +144,32 @@ export class LiveState {
   touch(): void {
     this.lastEventMs = Date.now();
     this.schedule();
+    for (const cb of [...this.observers]) {
+      try {
+        cb();
+      } catch {
+        // observers are best effort
+      }
+    }
+  }
+
+  private readonly observers = new Set<() => void>();
+  /** Called after every event LiveState handles (touch and everything built on it). Returns the unsubscribe. */
+  onChange(cb: () => void): () => void {
+    this.observers.add(cb);
+    return () => void this.observers.delete(cb);
+  }
+
+  /** The current state name without building a snapshot. */
+  get stateName(): LiveStateName {
+    return this.done ? "done" : this.blockers.size > 0 ? "blocked" : this.working ? "working" : "idle";
+  }
+
+  /** Write the presence file now, bypassing the 1 s throttle. */
+  flush(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.write();
   }
 
   onAgentStart(): void {
@@ -188,6 +216,7 @@ export class LiveState {
         tokensIn: Math.round(r.tokensIn),
         tokensOut: Math.round(r.tokensOut),
         cost: Math.round(r.cost * 10000) / 10000,
+        endedAt: r.endedAt === null ? null : new Date(r.endedAt).toISOString(),
       }));
     } catch {
       // runs are best effort
@@ -198,7 +227,7 @@ export class LiveState {
     } catch {
       // totals are best effort
     }
-    const state: LiveStateName = this.done ? "done" : this.blockers.size > 0 ? "blocked" : this.working ? "working" : "idle";
+    const state = this.stateName;
     return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString() };
   }
 
