@@ -51,6 +51,7 @@ import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
 import { runGuard } from "./runguard.ts";
+import { applyGitPack, gitPackOn, registerGitPack } from "./gitpack.ts";
 import { registerSafeOps } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
 import type { Spawner } from "./spawn.ts";
@@ -157,6 +158,8 @@ interface Session {
   supervisor: SupervisorWindow;
   /** Git config/hooks snapshot taken at child launches, checked before foreman git (gitdrift.ts). */
   gitDrift: GitDriftWatch;
+  /** The git tool pack is on for this session (gitpack.ts). */
+  gitPack: boolean;
   /** Project Claude Code config snapshot, checked before claude-bridge prompts (claudedrift.ts). */
   claudeCfg: ClaudeConfigWatch;
   /** Usage log (usage.ts): file and the fields every line of this session carries. */
@@ -371,6 +374,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchNotices: new Map(),
       supervisor: new SupervisorWindow(),
       gitDrift: new GitDriftWatch(),
+      gitPack: false,
       claudeCfg: new ClaudeConfigWatch(),
       trace: ((t) => openTrace({ enabled: t.enabled, dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: t.id, base: t.base }))(sessionTrace(get(config.config, "trace.enabled"), get(config.config, "retro.enabled"), ctx.mode, id, b)),
       usage: { file: usageFile(agentDir, foremanSession), line },
@@ -445,6 +449,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const active = pi.getActiveTools();
       if (!active.includes(LEDGER_TOOL)) pi.setActiveTools([...active, LEDGER_TOOL]);
     }
+    s.gitPack = gitPackOn({ config: config.config, isChild: s.isChild, env: process.env });
+    applyGitPack(pi, s.gitPack, s.isChild, process.env);
     if (!s.isChild) {
       const gitLines = s.gitDrift.bind(markerDir, cwd, home);
       if (gitLines.length) ctx.ui.notify(`pi-foreman: the repository's git config or hooks changed since the last session; the next foreman git run or child launch asks.\n${gitLines.join("\n")}`, "warning");
@@ -1876,12 +1882,25 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     isChild: process.env.PI_SUBAGENT_CHILD === "1",
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { python: pyPath(s), isChild: s.isChild, opsConfig: get(s.config.config, "safety.ops"), trace: (r) => s.trace?.emit(r) };
+      return { python: pyPath(s), isChild: s.isChild, opsConfig: get(s.config.config, "safety.ops"), packOn: s.gitPack, trace: (r) => s.trace?.emit(r) };
     },
     script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
     preflight: async (ctx, op, callId) => {
       const s = await ensureSession(ctx);
       return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), op, driftAsk(ctx), (r) => s.trace?.emit(r), callId);
+    },
+    spawner,
+    env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
+  });
+  registerGitPack(pi, {
+    session: async (ctx) => {
+      const s = await ensureSession(ctx);
+      return { python: pyPath(s), isChild: s.isChild, packOn: s.gitPack, opsConfig: get(s.config.config, "safety.ops"), trace: (r) => s.trace?.emit(r) };
+    },
+    script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
+    preflight: async (ctx, op, callId) => {
+      const s = await ensureSession(ctx);
+      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), "git_" + op, driftAsk(ctx), (r) => s.trace?.emit(r), callId);
     },
     spawner,
     env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),

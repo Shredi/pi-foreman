@@ -148,6 +148,13 @@ class LayerRulesTest(unittest.TestCase):
         self.assertIn("project providers.p1.roles.builder.strong ignored", joined)
         self.assertIn("session providers.p1.roles.builder.strong ignored", joined)
 
+    def test_tools_git_project_true_dropped_false_kept(self):
+        res = self.load(l2={"tools": {"git": True}}, proj={"tools": {"git": False}})
+        self.assertIs(res["config"]["tools"]["git"], False)
+        res = self.load(l2={}, proj={"tools": {"git": True}})
+        self.assertIs(res["config"]["tools"]["git"], False)
+        self.assertIn("project tools.git ignored", "\n".join(res["warnings"]))
+
     def test_strong_on_revision_false_only(self):
         res = self.load(proj={"providers": {"p1": {"strongOnRevision": True}}})
         self.assertNotIn("strongOnRevision", res["config"]["providers"]["p1"])

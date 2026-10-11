@@ -107,6 +107,20 @@ class RetroTest(unittest.TestCase):
         self.assertIsNone(fr.explorer_metrics(trace, usage, "s1")["topShare"])
         self.assertIn("; fact-critical 1", fr.render_explorer(fr.explorer_metrics(trace, usage, "s1")))
 
+    def test_git_pack_line_compares_pack_and_bash_git(self):
+        trace = [{"event": "tool_pack", "pack": "git", "op": o} for o in ("status", "status", "log", "move")]
+        trace.append({"event": "tool_pack", "pack": "other", "op": "log"})
+        cmds = ["cd x && git status", "git log -3", "gitleaks detect", "ls"]
+        sess = [{"type": "message", "message": {"role": "assistant", "content": [
+            {"type": "toolCall", "name": "bash", "arguments": {"command": c}} for c in cmds]}}]
+        rep = fr.build(sess, trace, None, None, 5, str(self.tmp))
+        self.assertEqual(rep["trace"]["git_pack"], {"status": 2, "log": 1, "move": 1})
+        self.assertEqual(rep["session_tools"]["bash_git_calls"], 2)
+        self.assertEqual(fr.git_pack_line(rep), "git: pack 4 calls (status 2, log 1, move 1) vs bash git 2")
+        self.assertIn(fr.git_pack_line(rep), fr.render_text(rep).splitlines()[:10])
+        self.assertEqual(fr.git_pack_line(fr.build(None, None, None, None, 5, str(self.tmp))), None)
+        self.assertEqual(fr.git_pack_line(fr.build(None, [], None, None, 5, str(self.tmp))), None)
+
     def test_zero_logged_cost_is_priced_from_rates(self):
         rec = {"foremanSession": "s1", "role": "builder", "provider": "claude-bridge", "model": "m1", "input": 1000000,
                "output": 100000, "cacheRead": 2000000, "cacheWrite": 0, "cost": {"total": 0}}

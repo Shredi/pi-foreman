@@ -294,6 +294,20 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(fc.generate_subagents(cfg)["subagents"]["agentOverrides"]["reviewer"]["tools"],
                          ["read", "ls", "grep", "find", "bash"])
 
+    def test_git_pack_tools_for_bash_roles_only_when_on(self):
+        self.l2({"providers": PROV, "tools": {"git": True}})
+        cfg = self.load()["config"]
+        sub = fc.generate_subagents(cfg)["subagents"]["agentOverrides"]
+        for role in fc.CHILD_ROLES:
+            has = "bash" in cfg["roles"][role]["tools"]
+            self.assertEqual(all(t in sub[role]["tools"] for t in fc.GIT_PACK_TOOLS), has, role)
+            self.assertEqual("git_log" in fc.resolve_role(cfg, role, "p1")["tools"], has, role)
+        self.assertNotIn("git_status", fc.resolve_role(cfg, "foreman", "p1")["tools"])
+        cfg["tools"]["git"] = False
+        sub = fc.generate_subagents(cfg)["subagents"]["agentOverrides"]
+        self.assertFalse(any(t in sub[r]["tools"] for r in sub for t in fc.GIT_PACK_TOOLS))
+        self.assertNotIn("git_status", fc.resolve_role(cfg, "builder", "p1")["tools"])
+
     def test_provider_codemode_override_writes_provider_tools(self):
         prov = json.loads(json.dumps(PROV))
         prov["p1"]["roles"]["builder"]["codemode"] = True

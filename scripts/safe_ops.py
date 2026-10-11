@@ -3,7 +3,8 @@
 
 CLI: one JSON request on stdin, one JSON answer on stdout, exit 0.
 
-    request  {"op": "worktree_remove" | "move" | "copy", "args": {...}, "cwd": "<dir>",
+    request  {"op": "worktree_remove" | "move" | "copy" | "status" | "log" | "diff_stat" |
+              "branch_state" (the last four are read-only, capped to 200 entries / 16 KB), "args": {...}, "cwd": "<dir>",
               "config": {"copyMaxBytes": ..., "worktreeDisposable": [...], "baseBranch": ...}}
     answer   {"ok": true, "action": "<what was done>", ...}
           or {"ok": false, "precondition": "<name>", "message": "precondition failed: <name> (<detail>)"}
@@ -494,7 +495,243 @@ def op_worktree_remove(req):
     return remove_worktree(check_worktree(req.get("cwd"), args.get("path"), ops_config(req.get("config"))))
 
 
-OPS = {"move": op_move, "copy": op_copy, "worktree_remove": op_worktree_remove}
+# ------------------------------------------------------------ git read ops
+
+MAX_ENTRIES = 200
+MAX_BYTES = 16 * 1024
+RANGE_RE = re.compile(r"^[A-Za-z0-9._/@^~-]+(?:\.\.\.?[A-Za-z0-9._/@^~-]+)?$")
+BRANCH_RE = re.compile(r"^(?!-)[A-Za-z0-9._/-]+$")
+
+
+def git_read(args, root):
+    return git(["--no-pager", "--no-optional-locks"] + list(args), root)
+
+
+def _bad(detail):
+    return Precondition("bad_request", detail)
+
+
+def read_args(req, allowed):
+    args = req.get("args")
+    if args is None:
+        args = {}
+    if not isinstance(args, dict):
+        raise _bad("args must be an object")
+    for k in args:
+        if k not in allowed:
+            raise _bad("unknown arg %s" % k)
+    return args
+
+
+def arg_n(args):
+    n = args.get("n", 20)
+    if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 200:
+        raise _bad("n must be an integer from 1 to 200")
+    return n
+
+
+def arg_rev(args, key, root):
+    """A validated rev or range string (every part must verify as a commit), or None when absent."""
+    v = args.get(key)
+    if v is None:
+        return None
+    if not isinstance(v, str) or not 1 <= len(v) <= 200 or not RANGE_RE.match(v):
+        raise _bad("%s must be a revision or range of plain ref characters" % key)
+    parts = re.split(r"\.\.\.?", v)
+    if any(not x or x.startswith("-") for x in parts):
+        raise _bad("%s has an empty or option-like part" % key)
+    for part in parts:
+        if git_read(["rev-parse", "--verify", "--quiet", part + "^{commit}"], root)[0] != 0:
+            raise Precondition("unknown_revision", "%s does not resolve to a commit" % part)
+    return v
+
+
+def arg_path(args, cwd, root):
+    v = args.get("path")
+    if v is None:
+        return None
+    if not isinstance(v, str) or not v or len(v) > 1024 or "\0" in v or v.startswith("-"):
+        raise _bad("path must be a non-empty path of at most 1024 characters, not starting with -")
+    if has_git_component(v):
+        raise Precondition("inside_git_dir", "the path may not be inside .git")
+    full = os.path.realpath(os.path.join(cwd, v))
+    if not is_inside(root, full, allow_equal=True):
+        raise Precondition("outside_workspace", "path resolves outside the workspace root")
+    return os.path.relpath(full, root).replace(os.sep, "/")
+
+
+def cap(result, key):
+    items = result[key]
+    total = len(items)
+    kept = items[:MAX_ENTRIES]
+    result[key] = kept
+    result["truncated"], result["total"] = False, total
+    while kept and len(json.dumps(result)) > MAX_BYTES:
+        kept.pop()
+    result["truncated"] = len(kept) < total
+    return result
+
+
+def _has_head(root):
+    return git_read(["rev-parse", "--verify", "--quiet", "HEAD"], root)[0] == 0
+
+
+def op_status(req):
+    read_args(req, ())
+    root = workspace_root(req.get("cwd"))
+    code, out, err = git_read(["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=normal"], root)
+    if code != 0:
+        raise ActionError("git_failed", "git status: %s" % err.strip())
+    res = {"action": "status", "branch": None, "head": None, "upstream": None, "ahead": None, "behind": None}
+    counts = {"staged": 0, "unstaged": 0, "untracked": 0, "conflicted": 0}
+    files = []
+    recs = out.split("\0")
+    i = 0
+    while i < len(recs):
+        rec = recs[i]
+        i += 1
+        if not rec:
+            continue
+        if rec.startswith("# branch.oid "):
+            oid = rec[len("# branch.oid "):]
+            res["head"] = None if oid == "(initial)" else oid
+        elif rec.startswith("# branch.head "):
+            b = rec[len("# branch.head "):]
+            if b == "(detached)":
+                res["detached"] = True
+            else:
+                res["branch"] = b
+        elif rec.startswith("# branch.upstream "):
+            res["upstream"] = rec[len("# branch.upstream "):]
+        elif rec.startswith("# branch.ab "):
+            m = re.match(r"# branch\.ab \+(\d+) -(\d+)", rec)
+            if m:
+                res["ahead"], res["behind"] = int(m.group(1)), int(m.group(2))
+        elif rec[0] == "1" and len(rec.split(" ", 8)) == 9:
+            f = rec.split(" ", 8)
+            xy = f[1]
+            counts["staged"] += xy[0] != "."
+            counts["unstaged"] += xy[1] != "."
+            files.append({"path": f[8], "xy": xy})
+        elif rec[0] == "2" and len(rec.split(" ", 9)) == 10:
+            f = rec.split(" ", 9)
+            xy = f[1]
+            counts["staged"] += xy[0] != "."
+            counts["unstaged"] += xy[1] != "."
+            orig = recs[i] if i < len(recs) else ""
+            i += 1
+            files.append({"path": f[9], "xy": xy, "orig": orig})
+        elif rec[0] == "u" and len(rec.split(" ", 10)) == 11:
+            counts["conflicted"] += 1
+            files.append({"path": rec.split(" ", 10)[10], "xy": rec.split(" ", 10)[1]})
+        elif rec[0] == "?":
+            counts["untracked"] += 1
+            files.append({"path": rec[2:], "xy": "??"})
+    res["counts"] = counts
+    res["files"] = files
+    return cap(res, "files")
+
+
+def op_log(req):
+    args = read_args(req, ("n", "rev", "path"))
+    root = workspace_root(req.get("cwd"))
+    n = arg_n(args)
+    path = arg_path(args, req.get("cwd"), root)
+    rev = arg_rev(args, "rev", root)
+    res = {"action": "log"}
+    if rev is None and not _has_head(root):
+        res["commits"] = []
+        return cap(res, "commits")
+    argv = ["log", "-z", "--no-color", "--no-ext-diff", "--no-textconv", "--format=%H%x1f%h%x1f%aI%x1f%an%x1f%s",
+            "-n", str(n), "--end-of-options", rev or "HEAD", "--"]
+    if path:
+        argv.append(path)
+    code, out, err = git_read(argv, root)
+    if code != 0:
+        raise ActionError("git_failed", "git log: %s" % err.strip())
+    commits = []
+    for rec in out.split("\0"):
+        f = rec.strip("\n").split("\x1f")
+        if len(f) == 5:
+            commits.append({"sha": f[0], "short": f[1], "date": f[2], "author": f[3], "subject": f[4]})
+    res["commits"] = commits
+    return cap(res, "commits")
+
+
+def op_diff_stat(req):
+    args = read_args(req, ("range", "path"))
+    root = workspace_root(req.get("cwd"))
+    path = arg_path(args, req.get("cwd"), root)
+    rng = arg_rev(args, "range", root)
+    if rng is None and not _has_head(root):
+        raise Precondition("no_commits", "the repository has no commits")
+    argv = ["diff", "--numstat", "-z", "--no-renames", "--no-color", "--no-ext-diff", "--no-textconv",
+            "--end-of-options", rng or "HEAD", "--"]
+    if path:
+        argv.append(path)
+    code, out, err = git_read(argv, root)
+    if code != 0:
+        raise ActionError("git_failed", "git diff: %s" % err.strip())
+    files, added, deleted = [], 0, 0
+    for rec in out.split("\0"):
+        f = rec.lstrip("\n").split("\t", 2)
+        if len(f) != 3:
+            continue
+        binary = f[0] == "-" and f[1] == "-"
+        a, d = (0, 0) if binary else (int(f[0]), int(f[1]))
+        added += a
+        deleted += d
+        files.append({"path": f[2], "added": a, "deleted": d, "binary": binary})
+    res = {"action": "diff_stat", "files": files, "totals": {"files": len(files), "added": added, "deleted": deleted}}
+    return cap(res, "files")
+
+
+def _counts(root, left, right):
+    code, out, _ = git_read(["rev-list", "--left-right", "--count", "%s...%s" % (left, right)], root)
+    f = out.split()
+    if code != 0 or len(f) != 2:
+        raise ActionError("git_failed", "git rev-list failed")
+    return int(f[0]), int(f[1])
+
+
+def op_branch_state(req):
+    args = read_args(req, ("branch",))
+    root = workspace_root(req.get("cwd"))
+    b = args.get("branch")
+    if b is not None:
+        if not isinstance(b, str) or not 1 <= len(b) <= 200 or not BRANCH_RE.match(b) \
+                or git_read(["check-ref-format", "--branch", b], root)[0] != 0:
+            raise _bad("branch must be a plain branch name")
+        if git_read(["rev-parse", "--verify", "--quiet", "refs/heads/%s^{commit}" % b], root)[0] != 0:
+            raise Precondition("unknown_branch", "%s is not a local branch" % b)
+        ref = "refs/heads/" + b
+    else:
+        code, out, _ = git_read(["symbolic-ref", "--quiet", "--short", "HEAD"], root)
+        b = out.strip() if code == 0 and out.strip() else None
+        ref = "HEAD"
+    code, out, _ = git_read(["rev-parse", "--verify", "--quiet", ref + "^{commit}"], root)
+    if code != 0:
+        raise Precondition("no_commits", "the branch has no commits")
+    head = out.strip()
+    res = {"action": "branch_state", "branch": b, "head": head, "upstream": None, "ahead": None, "behind": None,
+           "base": None, "mergedIntoBase": None, "baseAhead": None, "baseBehind": None}
+    if b:
+        code, out, _ = git_read(["rev-parse", "--abbrev-ref", "--symbolic-full-name", b + "@{upstream}"], root)
+        if code == 0 and out.strip():
+            res["upstream"] = out.strip()
+            res["ahead"], res["behind"] = _counts(root, head, res["upstream"])
+    try:
+        base, base_sha = resolve_base(root, ops_config(req.get("config"))["baseBranch"])
+    except Precondition:
+        return res
+    res["base"] = base
+    res["mergedIntoBase"] = git_read(["merge-base", "--is-ancestor", head, base_sha], root)[0] == 0
+    res["baseAhead"], res["baseBehind"] = _counts(root, head, base_sha)
+    return res
+
+
+OPS = {"move": op_move, "copy": op_copy, "worktree_remove": op_worktree_remove, "status": op_status,
+       "log": op_log, "diff_stat": op_diff_stat, "branch_state": op_branch_state}
 
 
 def handle(req):

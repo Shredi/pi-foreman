@@ -23,7 +23,7 @@ test("trace: non-allowlisted keys and non-primitive values are dropped", () => {
     cost: Number.NaN,
   });
   assert.deepEqual(out, { event: "guard", guard: "destructive_guard", decision: "deny", latencyMs: 41 });
-  assert.deepEqual([...TRACE_FIELDS], ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by", "phase", "count", "action", "runId", "outcome", "ms", "codemode", "after", "allowed", "items", "attested", "agent", "signals", "policy", "foreman", "turns", "rung", "cmd", "chars", "cut", "climb_available", "trimmed_lines", "skipped", "bytes", "segments", "class", "item", "hits", "policy_override", "note", "findingId", "gate", "file", "line", "primary", "models", "ready", "removed", "handover", "occasion", "thinking", "model_overridden", "marker"]);
+  assert.deepEqual([...TRACE_FIELDS], ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by", "phase", "count", "action", "runId", "outcome", "ms", "codemode", "after", "allowed", "items", "attested", "agent", "signals", "policy", "foreman", "turns", "rung", "cmd", "chars", "cut", "climb_available", "trimmed_lines", "skipped", "bytes", "segments", "class", "item", "hits", "policy_override", "note", "findingId", "gate", "file", "line", "primary", "models", "ready", "removed", "handover", "occasion", "thinking", "model_overridden", "marker", "pack", "op"]);
 });
 
 test("trace: ask and overlay events carry no command text", () => {
@@ -82,4 +82,8 @@ test("trace: a bound child traces when the parent's retro is on, to trace-<launc
     { ts: "1970-01-01T00:00:00.000Z", role: "builder", runId: "L1-ab", event: "ask", guard: "destructive_guard", toolFamily: "Bash", decision: "no-ui" },
     { ts: "1970-01-01T00:00:00.000Z", role: "child", runId: "L1-ab", event: "session_start" },
   ]);
+});
+
+test("trace: pack and op survive sanitizeTrace", () => {
+  assert.deepEqual(sanitizeTrace({ event: "tool_pack", pack: "git", op: "status", command: "x" }), { event: "tool_pack", pack: "git", op: "status" });
 });

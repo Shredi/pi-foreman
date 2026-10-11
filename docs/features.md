@@ -66,6 +66,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [auto-review](#auto-review) | on | A review model decides permission asks (children's included) before they reach you; unset, it picks the cheapest mapped model, and with none the asks go to you. | on by default | [roles](roles.md#auto-review-model) |
 | [headless-review](#headless-review) | off | Treats the session as headless for forwarded child asks: one the review model would defer to you is denied with a text naming the allowed forms. | `{"review": {"headless": true}}` | [safety](safety.md#permission-baseline-and-auto-review) |
 | [git-guard](#git-guard) | on | Lints the foreman's commits and pushes (protected branches, message pattern, trailers, an optional check command) and refuses a PR without a reviewer PASS on the current head. | on by default | [safety](safety.md#git-guard-and-pr-gate) |
+| [git-tools](#git-tools) | off | Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace. | `{"tools": {"git": true}}` | [tools](tools.md#git-tool-pack) |
 | [children-may-push](#children-may-push) | off | Lets subagent children push; by default they may commit but never push, and they never open PRs. | `{"safety": {"children": {"mayPush": true}}}` | [safety](safety.md#git-guard-and-pr-gate) |
 | [review-required](#review-required) | off | Requires a review before close-out in every session. | `{"safety": {"review": {"required": true}}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [workflow-scripts](#workflow-scripts) | off | Lets the foreman run pi-subagents workflow scripts and `schedule.*` calls, which can launch any agent outside the role map; they stay refused at tier heavy. | `{"safety": {"subagents": {"allowWorkflow": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
@@ -386,6 +387,16 @@ Switch: `review.headless` is true.
 | `safety.git.commit.requiredTrailers` | `[]` | tighten-only (entries are added, never removed) |
 | `safety.git.commit.forbiddenTrailers` | `[]` | tighten-only (entries are added, never removed) |
 | `safety.git.commit.checkCommand` | `null` | not in project/session (no tighten rule for this safety key) |
+
+### git-tools
+
+**Git tool pack.** Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace.
+
+Switch: `tools.git` is true.
+
+| Key | Default | Layer |
+|---|---|---|
+| `tools.git` | `false` | tighten-only (only false is accepted) |
 
 ### children-may-push
 
