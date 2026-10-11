@@ -100,7 +100,7 @@ the command in its pane. Without Herdr, or if it fails, it prints the command, f
 
 ### Opener intercom id
 
-The id written to `parent` is, in order: `PI_INTERCOM_SESSION_ID` (the id pi-intercom 0.16.1 resolved and
+The id written to `parent` is, in order: `PI_INTERCOM_SESSION_ID` (the id pi-intercom 0.17.0 resolved and
 published, which also covers an id claimed through `intercom:session-identity`), `PI_INTERCOM_STABLE_ID`,
 `stableId` in `<agent dir>/intercom/config.json`, then the Pi session id. The CLI cannot know the Pi session id
 and takes `--parent-id` instead.

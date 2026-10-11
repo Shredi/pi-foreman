@@ -46,7 +46,7 @@ test("sender label: name, else id prefix; cross-machine marked; newest since the
 
 test("doctor: install state, trusted overrides in the intercom config, Herdr hint", () => {
   const agent = fs.mkdtempSync(path.join(os.tmpdir(), "pf-intercom-"));
-  let lines = intercomDoctor(agent, [["npm:pi-intercom@0.16.1"]], {});
+  let lines = intercomDoctor(agent, [["npm:pi-intercom@0.17.0"]], {});
   assert.ok(lines.some((l) => l.startsWith("OK") && l.includes("pi-intercom")), lines.join("\n"));
   assert.ok(!lines.some((l) => l.startsWith("WARN") || l.includes("Herdr")));
   fs.mkdirSync(path.join(agent, "intercom"));
