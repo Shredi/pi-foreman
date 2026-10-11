@@ -170,6 +170,7 @@ claude setup-token                                                 # then export
 ## Checks inside Pi
 
 - `/foreman doctor` checks Python, that the generated block is in sync, required child extensions and auth per
-  provider, and reports permission-config drift and the bridge folder state.
+  provider, and reports permission-config drift and the bridge folder state. Its last lines include
+  `INFO dormant: <ids>`, the features whose switch is off in the merged config (see [features](features.md)).
 - `/foreman update-check` lists newer versions of the pinned packages with release-note links. It changes nothing.
   Outside Pi: `bin/foreman update-check` (see [sessions](sessions.md)).
