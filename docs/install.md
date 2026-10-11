@@ -2,9 +2,7 @@
 
 > Covers installing pi-foreman as a Pi package, `foreman setup`, what setup writes, the `foreman.json` provider map, config layers, updating and removing, developing from a checkout, Windows notes and the Claude bridge login.
 > Read it when you set up pi-foreman, change models, or after pulling a pin change.
-> Run `foreman setup --dry-run` first; a second run changes nothing and says "up to date". `foreman setup` on this page
-> means `/foreman setup` inside Pi, or `bin/foreman setup` (`node setup.mjs`) in a checkout; a package install puts no
-> `foreman` on `PATH`.
+> Run `foreman setup --dry-run` first; a second run changes nothing and says "up to date". `foreman setup` here means `/foreman setup` in Pi, or `bin/foreman setup` in a checkout.
 
 ## Install
 
