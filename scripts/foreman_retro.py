@@ -278,8 +278,11 @@ def trace_metrics(records):
          "safe_op_ran": 0, "safe_op_precondition_failed": 0, "supervisor_requests": 0, "turn_causes": {},
          "rereviews": 0, "budget_hits": 0, "rung_up": 0, "child_read_budget": 0, "review_defer_headless": 0, "turns": 0}
     causes = collections.Counter()
+    pack = collections.Counter()
     for r in records:
         ev, dec = r.get("event"), r.get("decision")
+        if ev == "tool_pack" and r.get("pack") == "git":
+            pack[str(r.get("op") or "?")] += 1
         if ev == "guard" and dec in ("block", "deny"):
             guards[str(r.get("guard") or "?")] += 1
         elif ev == "overlay" and dec in ("deny", "ask-denied"):
@@ -312,6 +315,7 @@ def trace_metrics(records):
     m["turn_causes"] = dict(causes)
     ran, bad = m["safe_op_ran"], m["safe_op_precondition_failed"]
     m["precondition_hit_rate"] = round(bad / (ran + bad), 3) if ran + bad else None
+    m["git_pack"] = dict(pack)
     return m
 
 
@@ -350,6 +354,7 @@ def session_metrics(records):
     fams = collections.Counter()
     reads = collections.Counter()
     nreads = 0
+    bash_git = 0
     for r in records:
         msg = r.get("message") if r.get("type") == "message" else None
         if not isinstance(msg, dict) or msg.get("role") != "assistant" or not isinstance(msg.get("content"), list):
@@ -360,7 +365,9 @@ def session_metrics(records):
                 tools[name] += 1
                 args = b.get("arguments")
                 if name in ("bash", "powershell") and isinstance(args, dict) and isinstance(args.get("command"), str):
-                    fams[bash_family(args["command"])] += 1
+                    fam = bash_family(args["command"])
+                    fams[fam] += 1
+                    bash_git += fam == "git" or fam.startswith("git ")
                 elif name == "read":
                     nreads += 1
                     f = args.get("path") or args.get("file_path") if isinstance(args, dict) else None
@@ -368,6 +375,7 @@ def session_metrics(records):
                         reads[f.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]] += 1
     return {"top_tools": dict(tools.most_common(10)),
             "repeated_bash_families": {k: v for k, v in fams.most_common(6) if v >= 3},
+            "bash_git_calls": bash_git,
             "read_calls": nreads,
             "repeated_reads": {k: v for k, v in reads.most_common(6) if v >= 3}}
 
@@ -399,6 +407,24 @@ def kv(d):
     return ", ".join("%s=%s" % (k, v) for k, v in d.items()) or "none"
 
 
+PACK_OPS = ("status", "log", "diff_stat", "branch_state", "move", "copy", "worktree_remove")
+
+
+def git_pack_line(rep):
+    """`git: pack N calls (...) vs bash git M`, or None when there is nothing to compare."""
+    t, s = rep.get("trace"), rep.get("session_tools")
+    if t is None and s is None:
+        return None
+    pack = (t or {}).get("git_pack") or {}
+    n = sum(pack.values()) if t is not None else None
+    m = s.get("bash_git_calls", 0) if s is not None else None
+    if not n and not m:
+        return None
+    ops = [o for o in PACK_OPS if pack.get(o)] + sorted(o for o in pack if o not in PACK_OPS and pack[o])
+    detail = " (%s)" % ", ".join("%s %d" % (o, pack[o]) for o in ops) if n else ""
+    return "git: pack %s calls%s vs bash git %s" % ("n/a" if n is None else n, detail, "n/a" if m is None else m)
+
+
 def render_text(rep, proposals_path=None):
     L = ["pi-foreman retro" + (" (session %s)" % rep["session"] if rep["session"] else "")]
     r = rep["review"]
@@ -413,6 +439,9 @@ def render_text(rep, proposals_path=None):
     t = rep["trace"]
     if t is None:
         L.append("trace: no data")
+        gl = git_pack_line(rep)
+        if gl:
+            L.append(gl)
     else:
         L.append("guard blocks: " + kv(t["guard_blocks"]) + "; overlay blocks=%d; triage-gate blocks=%d"
                  % (t["overlay_blocks"], t["triage_gate_blocks"]))
@@ -424,6 +453,9 @@ def render_text(rep, proposals_path=None):
         L.append("friction: rereviews=%d budget_hits=%d rung_up=%d child_read_budget=%d review_defer_headless=%d turns=%d"
                  % (t["rereviews"], t["budget_hits"], t["rung_up"], t["child_read_budget"], t["review_defer_headless"],
                     t["turns"]))
+        gl = git_pack_line(rep)
+        if gl:
+            L.append(gl)
     u = rep["usage"]
     if u is None:
         L.append("spawn cost: no data")
