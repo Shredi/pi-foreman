@@ -58,7 +58,7 @@ Notes and ledgers live in `.workflow/` (gitignored).
 
 Repo layout and test commands: `docs/development.md`. Read the page for the area you touch, on demand:
 
-- `docs/install.md`: installer flags, what setup writes, config layers, updating Pi, Claude bridge login.
+- `docs/install.md`: package install, `foreman setup`, what setup writes, developing and the double-load rule, update/remove, config layers, updating Pi, Claude bridge login.
 - `docs/roles.md`: roles, display-name presets, model ladder, rank policy, presets.
 - `docs/ladder.md`: ladder rungs, live rung, context and failure climbs, `rung_top`, reviewer climb, traces.
 - `docs/review.md`: review occasions, different-model rule, plan review, per-occasion overrides, review panel, findings store, `foreman findings`, `retro models`.

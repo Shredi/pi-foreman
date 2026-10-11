@@ -56,7 +56,7 @@ class UpdateCheckTest(unittest.TestCase):
         self.assertIn("pi-subagents: pinned 0.75.0, latest 0.77.0", text)
         self.assertIn("pi-missing: could not check (HTTP 404)", text)
         self.assertIn("pi-claude-bridge", text)  # not pinned, listed
-        self.assertTrue(text.rstrip().endswith("Nothing was changed. To update, re-run the installer (setup.mjs) after raising the pin."))
+        self.assertTrue(text.rstrip().endswith("Nothing was changed. To update, update the package (pi update git:github.com/Shredi/pi-foreman) and run foreman setup."))
         rc, js = self.run_main("--json")
         self.assertEqual(json.loads(js)["packages"][1]["latest"], "0.77.0")
 

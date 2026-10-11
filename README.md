@@ -20,11 +20,12 @@ Node 22+, Pi 1.1.x on your `PATH`, Python 3.9+. Linux, macOS and Windows.
 ## Install
 
 ```sh
-git clone https://github.com/Shredi/pi-foreman.git && cd pi-foreman && node setup.mjs
+pi install git:github.com/Shredi/pi-foreman
 ```
 
-`node setup.mjs --dry-run` shows what it would change and writes nothing. Map your models in
-`foreman.json`: see [install](docs/install.md).
+Then start `pi` and run `/foreman setup` once (`/foreman setup --dry-run` shows what it would change and writes
+nothing). Map your models in `foreman.json`: see [install](docs/install.md). To work on pi-foreman itself, see
+[Developing](docs/install.md#developing).
 
 ## First session
 
@@ -38,7 +39,7 @@ git clone https://github.com/Shredi/pi-foreman.git && cd pi-foreman && node setu
 
 | Page | What is in it |
 |---|---|
-| [docs/install.md](docs/install.md) | Installer flags, config layers, updating Pi, Claude bridge login |
+| [docs/install.md](docs/install.md) | Package install, `foreman setup`, developing, update and remove, config layers, Claude bridge login |
 | [docs/roles.md](docs/roles.md) | Roles, model ladder, rank policy, presets |
 | [docs/ceremony.md](docs/ceremony.md) | Tiers, review and finish gates, planning, budgets |
 | [docs/safety.md](docs/safety.md) | Shell and git guards, PR gate, permissions, known limits |
