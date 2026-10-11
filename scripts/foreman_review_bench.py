@@ -458,12 +458,14 @@ class Bench:
     """One review-bench run: tasks x models x repeats into `out`."""
 
     def __init__(self, out, tasks, models, repeats=2, jobs=3, token_cap=None, timeout=900, work=None,
-                 pi_cli=None, bridge=None, token=None, fake_script=None, prices=None, log=None, mode="single"):
+                 pi_cli=None, bridge=None, token=None, fake_script=None, prices=None, log=None, mode="single",
+                 keep_work=False):
         self.out = Path(out)
         self.tasks = {Path(t).name: Path(t).resolve() for t in tasks}
         self.models, self.repeats, self.jobs = list(models), repeats, max(1, jobs)
         self.mode = mode  # "climb": `models` are the rungs
         self.token_cap, self.timeout = token_cap, timeout
+        self.keep_work, self.work_user = keep_work, bool(work)
         self.work = Path(work) if work else Path(tempfile.gettempdir()) / "pf-rb-work" / hashlib.sha1(
             str(self.out.resolve()).encode()).hexdigest()[:10]
         self.pi_cli, self.bridge, self.token, self.fake_script = pi_cli, bridge, token, fake_script
@@ -577,7 +579,26 @@ class Bench:
         err_file = self.cells_dir / (name + ".error.json")
         if err_file.exists():
             os.replace(str(err_file), str(self.cells_dir / (name + ".error.prev.json")))
+        if not self.keep_work and not self.work_user:  # the record is on disk; resume reads `out`, never the clone
+            try:
+                _prune_work(prep["root"])
+            except OSError as e:
+                self.log("%s: work dir not removed: %s" % (name, e))
         return rec
+
+    def finish_work(self, code):
+        """End of a run: drop the work dir unless interrupted (code 6, resumable), --keep-work or a user --work path."""
+        if code == 6:
+            self.log("work dir kept (interrupted, rerun resumes): %s" % self.work)
+        elif self.keep_work or self.work_user:
+            self.log("work dir kept: %s" % self.work)
+        elif self.work.exists():
+            try:
+                gb = _tree_gb(self.work)
+                if _prune_work(self.work):
+                    self.log("work dir removed: %s (%s)" % (self.work, "%.1f GB" % gb if gb is not None else "size skipped"))
+            except OSError as e:
+                self.log("work dir not removed: %s (%s)" % (self.work, e))
 
     def used_tokens(self):
         n = 0
@@ -636,6 +657,7 @@ class Bench:
         text = render_table(self.out, self.prices)
         (self.out / ("review-bench-%s.md" % self.out.name)).write_text(text, "utf-8")
         self.log(text)
+        self.finish_work(code)
         return code
 
     # ---- climb policy: rung cells are ordinary single cells; a policy record composes them
@@ -706,6 +728,7 @@ class Bench:
         text = render_table(self.out, self.prices)
         (self.out / ("review-bench-%s.md" % self.out.name)).write_text(text, "utf-8")
         self.log(text)
+        self.finish_work(code)
         return code
 
     def dry_run(self):
@@ -741,6 +764,37 @@ class Bench:
         self.log("launch: node <pi cli> -p --mode json --no-session --no-context-files --no-skills -e %s --model <model> "
                  "--tools %s --system-prompt <reviewer> <task>" % (Path(ADAPTER).relative_to(REPO).as_posix(), TOOLS))
         return 1 if problems else 0
+
+
+def _tree_gb(path, budget=1.0):
+    """Size of a tree in GB via an os.scandir walk; None when the walk takes longer than `budget` seconds."""
+    t0, total, stack = time.time(), 0, [str(path)]
+    while stack:
+        if time.time() - t0 > budget:
+            return None
+        try:
+            with os.scandir(stack.pop()) as it:
+                for e in it:
+                    if e.is_dir(follow_symlinks=False):
+                        stack.append(e.path)
+                    else:
+                        total += e.stat(follow_symlinks=False).st_size
+        except OSError:
+            pass
+    return total / 1e9
+
+
+def _prune_work(path):
+    """Remove `path` only when its realpath lies under <tempdir>/pf-rb-work/ (never a user path); True when removed."""
+    base = Path(os.path.realpath(Path(tempfile.gettempdir()) / "pf-rb-work"))
+    real = Path(os.path.realpath(path))
+    if real == base or base not in real.parents:
+        return False
+    def onerror(func, p, _exc):  # read-only git objects (Windows)
+        os.chmod(p, 0o700)
+        func(p)
+    shutil.rmtree(str(real), onerror=onerror)
+    return True
 
 
 def _remove_tree(path):
@@ -831,11 +885,28 @@ def load_policy_units(out, cells):
     return found
 
 
-def render_policies(out, cells):
-    """The Policies section: one row per single model and per climb policy found under `<out>/policies/`."""
-    rows = [("single:" + m, "run", [{"cells": [c], "stop": None} for c in cells if c["model"] == m])
+def expected_units(out, cells, errors):
+    """(units per policy row, single rows comparable): tasks x repeats from run.json, else from the cells seen."""
+    try:
+        run = json.loads((Path(out) / "run.json").read_text("utf-8"))
+        return len(run["tasks"]) * int(run["repeats"]), run.get("mode") != "climb"
+    except (OSError, ValueError, KeyError, TypeError):
+        seen = [*cells, *errors]
+        return len({c.get("task") for c in seen}) * max([c.get("repeat") or 0 for c in seen] or [0]), True
+
+
+def render_policies(out, cells, errors=()):
+    """The Policies section: one row per single model and per climb policy found under `<out>/policies/`. A row whose
+    cells are missing or errored (against run.json's tasks x repeats) is marked `(partial: k/n cells)`."""
+    want, singles = expected_units(out, cells, errors)
+    composed = load_policy_units(out, cells)
+    if composed and not (Path(out) / "run.json").is_file():
+        singles = False  # rungs of a climb legitimately run on fewer cells
+    mark = lambda n, k: " (partial: %d/%d cells)" % (k, n) if n and k < n else ""  # noqa: E731
+    rows = [("single:" + m + (mark(want, sum(1 for c in cells if c["model"] == m)) if singles else ""), "run",
+             [{"cells": [c], "stop": None} for c in cells if c["model"] == m])
             for m in sorted({c["model"] for c in cells})]
-    rows += [(name, "composed from cached rungs", units) for name, units in sorted(load_policy_units(out, cells).items())]
+    rows += [(name + mark(want, len(units)), "composed from cached rungs", units) for name, units in sorted(composed.items())]
     pct = lambda n, tot: " (%.0f%%)" % (100.0 * n / tot) if tot else ""  # noqa: E731
     secs = lambda x: "-" if x is None else "%.0f" % x  # noqa: E731
     lines = ["", "## Policies", "",
@@ -926,7 +997,7 @@ def render_table(out, prices=None, tasks_root=None):
                     len(c["score"]["diagnosed"]), c["score"]["defects"], len(c["score"]["false_alarms"]),
                     c["score"]["process"]) for c in tc)))
     if cells:
-        lines += render_policies(out, cells)
+        lines += render_policies(out, cells, errors)
     if errors:
         lines += ["", "## Failed launches", ""] + ["- %s %s r%s: %s" % (e.get("task"), e.get("model"), e.get("repeat"),
                                                                        str(e.get("error"))[:200]) for e in errors]
@@ -987,6 +1058,7 @@ def add_arguments(p):
     p.add_argument("--jobs", type=int, default=3, help="parallel launches")
     p.add_argument("--token-cap", type=int, default=None, help="stop before the next cell once finished cells used N tokens")
     p.add_argument("--timeout", type=int, default=900, help="seconds per launch")
+    p.add_argument("--keep-work", action="store_true", help="keep the per-cell work dirs (repo clones) after the run")
     p.add_argument("--dry-run", action="store_true", help="validate tasks, prepare one workspace each, launch nothing")
     p.add_argument("--prices", default=None, help="price file (default: bench/prices.json)")
 
@@ -1034,7 +1106,7 @@ def run_args(args):
         return 2
     prices = foreman_bench.load_prices(args.prices)
     bench = Bench(out, tasks, models, repeats=args.repeats, jobs=args.jobs, token_cap=args.token_cap,
-                  timeout=args.timeout, prices=prices, mode=args.mode, fake_script=os.environ.get("FOREMAN_REVIEW_BENCH_FAKE_SCRIPT"))
+                  timeout=args.timeout, prices=prices, mode=args.mode, keep_work=args.keep_work, fake_script=os.environ.get("FOREMAN_REVIEW_BENCH_FAKE_SCRIPT"))
     bridged = any(provider_of(m) == BRIDGE_PROVIDER for m in models)
     if args.dry_run:
         print("review bench (dry run): %d task(s), %s %s, %d repeat(s), out %s; token source: %s" % (

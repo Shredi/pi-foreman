@@ -279,6 +279,103 @@ class Policies(unittest.TestCase):
         self.assertIn("--rungs", err.getvalue())
 
 
+class WorkDirLifecycle(unittest.TestCase):
+    """The work dir (repo clones) is removed after a run, only ever under <tempdir>/pf-rb-work/."""
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, str(self.tmp), True)
+        old = tempfile.tempdir
+        tempfile.tempdir = str(self.tmp / "tmpdir")  # the guard's base; the real temp dir is never touched
+        (self.tmp / "tmpdir").mkdir()
+        self.addCleanup(setattr, tempfile, "tempdir", old)
+        self.logs = []
+
+    def bench(self, **kw):
+        return rb.Bench(self.tmp / "out", [SAMPLES / "py-token-log"], ["foreman-fake/reviewer"], repeats=1, timeout=120,
+                        log=self.logs.append, **kw)
+
+    def fake_run(self, **kw):
+        script = self.tmp / "script.json"
+        answer = "VERDICT: FAIL\n1. FAIL apiclient/client.py:38 the warning logs the bearer token"
+        script.write_text(json.dumps({"*": {"review-bench": [{"text": answer}]}}), "utf-8")
+        b = self.bench(pi_cli=pi_cli(), fake_script=script, prices=fb.load_prices(), **kw)
+        return b, b.run()
+
+    def seeded(self, b):
+        (b.work / "cell").mkdir(parents=True)
+        (b.work / "cell" / "f.txt").write_text("x", "utf-8")
+
+    def test_finish_removes_managed_dir_and_logs_size(self):
+        b = self.bench()
+        self.seeded(b)
+        b.finish_work(0)
+        self.assertFalse(b.work.exists())
+        self.assertTrue(any(l.startswith("work dir removed: %s (" % b.work) for l in self.logs), self.logs)
+
+    def test_keep_work_and_interrupt_keep_the_dir(self):
+        b = self.bench(keep_work=True)
+        self.seeded(b)
+        b.finish_work(0)
+        self.assertTrue(b.work.exists())
+        self.assertIn("work dir kept: %s" % b.work, self.logs)
+        b2 = self.bench()
+        b2.finish_work(6)
+        self.assertTrue(b2.work.exists())
+        self.assertTrue(any("interrupted" in l for l in self.logs))
+
+    def test_user_work_path_is_kept_even_under_pf_rb_work(self):
+        for w in (self.tmp / "mine", self.tmp / "tmpdir" / "pf-rb-work" / "mine"):
+            b = self.bench(work=w)
+            self.seeded(b)
+            b.finish_work(0)
+            self.assertTrue(w.exists(), w)
+            self.assertIn("work dir kept: %s" % w, self.logs)
+
+    def test_prune_refuses_paths_outside_pf_rb_work(self):
+        base = self.tmp / "tmpdir" / "pf-rb-work"
+        outside = self.tmp / "outside"
+        (outside / "d").mkdir(parents=True)
+        base.mkdir()
+        (base / "link").symlink_to(outside, target_is_directory=True)
+        self.assertFalse(rb._prune_work(outside))
+        self.assertFalse(rb._prune_work(base))  # the base itself stays
+        self.assertFalse(rb._prune_work(base / "link"))  # a symlink out resolves outside
+        self.assertTrue((outside / "d").exists())
+        (base / "abc").mkdir()
+        self.assertTrue(rb._prune_work(base / "abc"))
+        self.assertFalse((base / "abc").exists())
+
+    @unittest.skipUnless(HAVE_TOOLS and pi_cli(), "needs node, git and the Pi CLI")
+    def test_fake_run_prunes_cell_dirs_and_work_dir(self):
+        b, code = self.fake_run()
+        self.assertEqual(code, 0)
+        self.assertFalse(b.work.exists())
+        self.assertTrue(b.cell_path("py-token-log", "foreman-fake/reviewer", 1).is_file())
+        self.assertIn("py-token-log", (b.out / ("review-bench-%s.md" % b.out.name)).read_text("utf-8"))
+
+    @unittest.skipUnless(HAVE_TOOLS and pi_cli(), "needs node, git and the Pi CLI")
+    def test_fake_run_keep_work(self):
+        b, code = self.fake_run(keep_work=True)
+        self.assertEqual(code, 0)
+        self.assertTrue(any(b.work.iterdir()))
+
+    def test_partial_policy_rows_are_marked(self):
+        out = self.tmp / "run"
+        (out / "cells").mkdir(parents=True)
+        (out / "run.json").write_text(json.dumps({"tasks": ["t", "u"], "models": ["p/a"], "repeats": 1, "mode": "single"}), "utf-8")
+        rec = {"task": "t", "model": "p/a", "repeat": 1, "status": "ok", "secs": 5, "usd": 0.25,
+               "final_text": "VERDICT: PASS", "ground_truth": {"clean": True, "defects": []}, "files": FILES}
+        (out / "cells" / (rb.cell_name("t", "p/a", 1) + ".json")).write_text(json.dumps(rec), "utf-8")
+        (out / "cells" / (rb.cell_name("u", "p/a", 1) + ".error.json")).write_text(
+            json.dumps({"task": "u", "model": "p/a", "repeat": 1, "status": "error", "error": "boom"}), "utf-8")
+        self.assertIn("| single:p/a (partial: 1/2 cells) | run |", rb.render_table(out))
+        (out / "cells" / (rb.cell_name("u", "p/a", 1) + ".error.json")).unlink()
+        (out / "cells" / (rb.cell_name("u", "p/a", 1) + ".json")).write_text(json.dumps(dict(rec, task="u")), "utf-8")
+        table = rb.render_table(out)
+        self.assertIn("| single:p/a | run | 2 |", table)
+        self.assertNotIn("partial", table)
+
+
 @unittest.skipUnless(HAVE_TOOLS and pi_cli(), "needs node, git and the Pi CLI")
 class FakeClimb(unittest.TestCase):
     RUNGS = ["foreman-fake/reviewer", "foreman-fake/senior-reviewer"]

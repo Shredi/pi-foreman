@@ -40,7 +40,7 @@ Install: the in-container Node and pi installs (`npm install -g` for pi, the `/o
 one reviewer launch over a builder diff with planted defects, scored for catches and false alarms.
 
     foreman bench review --tasks DIR [--models id[,id]] [--repeats 2] [--out DIR] [--jobs 3]
-                         [--token-cap N] [--timeout 900] [--dry-run] [--prices FILE]
+                         [--token-cap N] [--timeout 900] [--keep-work] [--dry-run] [--prices FILE]
                          [--mode single|climb] [--rungs id,id,...]   (climb: offline policy exploration, no runtime climb)
     foreman bench review-table --out DIR [--tasks DIR]
 
@@ -146,8 +146,13 @@ prints the cell plan and launches nothing.
 Cost: list-price equivalent from `bench/prices.json` per request (`foreman_bench.cost_of`). When the bridge reports no
 usage for a request, its tokens are a chars/4 estimate priced as uncached input, so USD is flagged `~est` and is an
 upper bound. Reviewers run on the host, not in Docker: a reviewer that runs Go or Rust tests may fail or fetch
-dependencies; `--timeout` bounds each launch and the work dirs stay in the temp dir for audit (delete
-`pf-rb-work/` when done).
+dependencies; `--timeout` bounds each launch.
+
+Work dir lifecycle: each cell's repo clone lives in `<tempdir>/pf-rb-work/<hash>/` only while the cell runs and is
+removed as soon as the cell is recorded, so disk peaks at `--jobs` clones. At the end of a run the whole work dir is
+removed too (log line `work dir removed: <path> (<N> GB)`). An interrupted run (exit 6) keeps it, and `--keep-work`
+keeps everything for audit. Only dirs under `<tempdir>/pf-rb-work/` are ever removed. Resume reads the cells under `--out`, never the work dir.
+A result row with missing or failed cells is marked `(partial: k/n cells)` in the Policies table.
 
 Policies: `--mode climb --rungs m1,m2,...` (offline policy exploration only: the runtime has no climb on find; at least two; `--rungs` is an error with `--mode single`, the default)
 measures a reviewer ladder. For each task and repeat, rung 1 runs as a normal single cell
