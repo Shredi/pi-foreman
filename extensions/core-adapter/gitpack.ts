@@ -2,6 +2,8 @@
 // of scripts/safe_ops.py. Registered always with defaultActive false; the foreman activates them
 // when tools.git is true, a child keeps them only when the foreman said so (PI_FOREMAN_TOOL_PACKS)
 // and its own config agrees.
+import fs from "node:fs";
+import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { get } from "./config.ts";
 import type { Env } from "./env.ts";
@@ -274,14 +276,25 @@ export interface PrPackDeps {
 const DEFAULT_WATCH_SECONDS = 3600;
 
 /**
- * True when the registered tool `name` comes from the same extension source as another tool this
- * pack registered (the tool_call event carries only the name; the registry keeps one tool per name,
- * so a foreign `pr_create` has a different source). Unknown or unmatched: false (stays gated).
+ * True when the registered tool `name` comes from this extension itself: its `sourceInfo.path`
+ * (resolved against `baseDir` when relative) or its `baseDir` is one of `ownPaths` (the adapter's
+ * entry file and directory). The tool_call event carries only the name and the registry keeps the
+ * first tool per name, so a foreign `pr_create` has another source, even when that package also
+ * registers other pack names. Unknown or unmatched: false (stays gated).
  */
-export function isOwnTool(all: { name: string; sourceInfo?: { path?: string } }[], name: string, packNames: readonly string[]): boolean {
-  const src = all.find((t) => t.name === name)?.sourceInfo?.path;
-  if (!src) return false;
-  return all.some((t) => t.name !== name && packNames.includes(t.name) && t.sourceInfo?.path === src);
+export function isOwnTool(all: { name: string; sourceInfo?: { path?: string; baseDir?: string } }[], name: string, ownPaths: readonly string[]): boolean {
+  const info = all.find((t) => t.name === name)?.sourceInfo;
+  if (!info?.path || ownPaths.length === 0) return false;
+  const norm = (p: string) => {
+    try {
+      return fs.realpathSync.native(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  const own = new Set(ownPaths.map(norm));
+  const cands = [path.isAbsolute(info.path) ? info.path : info.baseDir ? path.resolve(info.baseDir, info.path) : null, info.baseDir ?? null];
+  return cands.some((c) => c !== null && own.has(norm(c)));
 }
 
 export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrPackDeps): string[] {

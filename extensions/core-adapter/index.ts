@@ -1993,9 +1993,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
   });
 
-  // pr_create is gated inside the pack's own execute; only that registration skips the hook (the registry keeps one tool per name).
+  // pr_create is gated inside the pack's own execute; only this extension's own registration skips the hook (the registry keeps the first tool per name).
   function isPackPrCreate(name: string): boolean {
-    return name === "pr_create" && isOwnTool(pi.getAllTools(), "pr_create", prPackNames);
+    return name === "pr_create" && prPackNames.includes("pr_create") && isOwnTool(pi.getAllTools(), "pr_create", [ENTRY, HERE]);
   }
 
   // D9 long wait (wait.ts): foreman only; the wake is an ordinary custom message (no gate bypass).

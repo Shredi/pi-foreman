@@ -121,14 +121,15 @@ test("prpack: two same-turn pr_watch calls for one PR give one watch and one ref
   assert.equal(h.watches.has(7), false);
 });
 
-test("isOwnTool: only a pr_create from the pack's own source skips the hook gate", () => {
-  const mine = { path: "/ext/foreman" };
-  const pack = ["pr_create", "pr_status"];
-  const own = [{ name: "pr_create", sourceInfo: mine }, { name: "pr_status", sourceInfo: mine }];
-  assert.equal(isOwnTool(own, "pr_create", pack), true);
-  const foreign = [{ name: "pr_create", sourceInfo: { path: "/ext/other" } }, { name: "pr_status", sourceInfo: mine }];
-  assert.equal(isOwnTool(foreign, "pr_create", pack), false);
-  assert.equal(isOwnTool([{ name: "pr_create", sourceInfo: { path: "/ext/other" } }], "pr_create", pack), false);
-  assert.equal(isOwnTool([], "pr_create", pack), false);
-  assert.equal(isOwnTool(own, "pr_create", []), false);
+test("isOwnTool: only a pr_create from this extension's own path skips the hook gate", () => {
+  const own = ["/pkg/extensions/core-adapter/index.ts", "/pkg/extensions/core-adapter"];
+  const mine = { path: "/pkg/extensions/core-adapter/index.ts", baseDir: "/pkg/extensions/core-adapter" };
+  assert.equal(isOwnTool([{ name: "pr_create", sourceInfo: mine }, { name: "pr_status", sourceInfo: mine }], "pr_create", own), true);
+  assert.equal(isOwnTool([{ name: "pr_create", sourceInfo: { path: "index.ts", baseDir: "/pkg/extensions/core-adapter" } }], "pr_create", own), true);
+  // A foreign package that loads first and registers two pack names keeps pr_create gated.
+  const other = { path: "/ext/other/index.ts", baseDir: "/ext/other" };
+  assert.equal(isOwnTool([{ name: "pr_create", sourceInfo: other }, { name: "pr_status", sourceInfo: other }, { name: "pr_checks", sourceInfo: mine }], "pr_create", own), false);
+  assert.equal(isOwnTool([{ name: "pr_create", sourceInfo: { path: "<inline:x>" } }], "pr_create", own), false);
+  assert.equal(isOwnTool([], "pr_create", own), false);
+  assert.equal(isOwnTool([{ name: "pr_create", sourceInfo: mine }], "pr_create", []), false);
 });
