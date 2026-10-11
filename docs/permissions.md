@@ -156,7 +156,7 @@ The foreman session owns a few places outside the workspace. Access to them is g
 The write-only protect rules (package root, `protect.ask`) are skipped for a shell command only when every unit is a
 pure read-only verb and the command has no write redirect at all (any target but `/dev/null` and fd dups, so `> $f`
 counts): a protected path named in an assignment (`f=...`) or a `for`/`select`/`case` list is still scanned and
-protected as soon as a redirect could write through it; the skip covers only the minimal reader set `cat head tail wc grep egrep fgrep rg ls stat file diff cmp md5sum sha1sum sha256sum shasum` (plus `cd`, and `sed` with only `-n -E -r -s` and a read-only script), so awk/gawk, sort, uniq, less, find, xargs, tee and interpreters keep full protection on protected operands whatever their flags; so a read of a protected file combined with any write redirect (e.g. `cat config/foreman.defaults.json > out.txt`) stays protected for children.
+protected as soon as a redirect could write through it; the skip covers only the minimal reader set `cat head tail wc grep egrep fgrep rg ls stat file diff cmp md5sum sha1sum sha256sum shasum` (plus `cd`; `sed` is not in the set, so sed on a protected file asks: use the read tool), and a `$`, `${` or backtick in any argument of the unit (any quoting) loses the skip, so awk/gawk, sort, uniq, less, find, xargs, tee and interpreters keep full protection on protected operands whatever their flags; so a read of a protected file combined with any write redirect (e.g. `cat config/foreman.defaults.json > out.txt`) stays protected for children.
 
 Heredoc bodies are scanned like any shell text (a `.pi` or `$x` in prose heredocs still trips the guards; write such text with the write tool).
 

@@ -884,7 +884,8 @@ function protectedReader(core: string[], skip: Set<number>): boolean {
   const verb = baseName(core[0]);
   const args = core.map((x, i) => (i > 0 && !skip.has(i) ? x : "")).slice(1);
   const has = (re: RegExp): boolean => args.some((x) => re.test(x));
-  if (verb === "sed") return !has(/^--/) && args.every((x) => !/^-/.test(x) || /^-[nErs]*$/.test(x)) && unitReadOnly(core, skip);
+  // an unresolved expansion in any quoting may supply an option or script (`I=-i; sed $I p D`, `P=--pre=x; rg $P p D`)
+  if (has(/[$`]/)) return false;
   if (!PROTECTED_READERS.has(verb)) return false;
   if (verb === "file") return !has(/^-[A-Za-z]*C|^--compile/);
   if (GREP_FAMILY.has(verb)) return !has(/^-[A-Za-z]*f|^--(pre|pre-glob|file|ignore-file|hostname-bin)/) && unitReadOnly(core, skip);

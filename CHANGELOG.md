@@ -321,9 +321,9 @@
 ### Fixed
 - Harness-friction round:
   - (14) Read-only bash naming protected files is no longer write-protected, but only for a minimal reader set
-    (`cat head tail wc grep egrep fgrep rg ls stat file diff cmp md5sum sha1sum sha256sum shasum`, `cd`, and `sed` with
-    only `-n -E -r -s` and a read-only script), no write redirect at all; awk/gawk, sort, uniq, less, find, xargs,
-    tee, interpreters and every other verb keep full protection on protected operands, whatever their flags; `--flag=value`
+    (`cat head tail wc grep egrep fgrep rg ls stat file diff cmp md5sum sha1sum sha256sum shasum`, and `cd`), no write redirect
+    at all and no `$`, `${` or backtick in any argument (a variable could supply an option or script); sed, awk/gawk,
+    sort, uniq, less, find, xargs, tee, interpreters and every other verb keep full protection on protected operands, whatever their flags; `--flag=value`
     and grep patterns are not paths; `cd` is allowed inside the workspace root and the child's scratch dir.
   - (17) Foreman reads of its own config no longer raise the protected-config dialog. Heredoc part not done: bodies are
     scanned as before; four reviews showed no safe reader-only skip (design in the round's result).

@@ -230,13 +230,15 @@ const tool = (r: OverlayRules, c: MatchCtx, name: string, input: Record<string, 
 test("literal rows 1-5: read-only commands naming config/foreman.defaults.json pass for a child (selfHost)", () => {
   const r = rules2(true);
   const c = world(ws, "child");
-  for (const cmd of [
+  // documented limit: sed on a protected file asks, use the read tool (rows 2, 3 and 5 hold a sed next to a protected word)
+  const sedLimit = new Set([1, 2, 4]);
+  [
     String.raw`cd ${ws}; grep -n "usage" tests/replay/fake_provider.ts | head -20; grep -n '"compaction"' -A25 config/foreman.schema.json | head -40; grep -n '"compaction"' -A6 config/foreman.defaults.json; grep -n "PROVIDERS\s*=" tests/replay/fake_provider.ts; grep -n "cacheWarming" node_modules/@earendil-works/pi-coding-agent/docs/settings.md`,
     String.raw`cd ${ws} && grep -n -A12 '"compaction"' config/foreman.defaults.json; sed -n 330,365p config/foreman.schema.json; grep -n '"minimum": 0.3' config/foreman.schema.json`,
     String.raw`cd ${ws}; grep -n "compaction" -A12 config/foreman.defaults.json | head -30; sed -n 335,360p config/foreman.schema.json; D=node_modules/@earendil-works/pi-coding-agent; grep -n "function estimateProjectedContextTokens" -A30 $D/dist/core/*.js $D/dist/core/compaction/*.js | head -40`,
     "cat config/foreman.defaults.json | head -60; grep -n \"compact\" docs/sessions.md | head -20",
     String.raw`cd ${ws}; sed -n 1,60p extensions/core-adapter/compaction.ts; grep -n '"threshold"' -A12 config/foreman.defaults.json | head -20; sed -n 800,812p extensions/core-adapter/index.ts`,
-  ]) assert.equal(sh(r, c, cmd), "pass", cmd);
+  ].forEach((cmd, i) => assert.equal(sh(r, c, cmd), sedLimit.has(i) ? "deny" : "pass", cmd));
 });
 
 test("literal rows 6-11: node_modules reads pass for a child when the package root is writeAsk (not self-host)", () => {
@@ -304,8 +306,9 @@ test("literal rows 15, 21, 22: the foreman reads foreman.json and settings.json 
   const c = world(ws, "main");
   assert.equal(sh(r, c, `cat ${ag2}/foreman.json`), "pass");
   assert.equal(sh(r, c, "cat ~/.pi/agent/foreman.json"), "pass");
-  assert.equal(sh(r, c, `for f in ${ag2}/foreman.json ${ag2}/settings.json; do cat "$f"; done`), "pass");
-  assert.equal(sh(r, c, "for f in ~/.pi/agent/foreman.json ~/.pi/agent/settings.json; do cat \"$f\"; done"), "pass");
+  // a variable in an argument loses the read-only skip (review 9): these ask
+  assert.equal(sh(r, c, `for f in ${ag2}/foreman.json ${ag2}/settings.json; do cat "$f"; done`), "ask");
+  assert.equal(sh(r, c, "for f in ~/.pi/agent/foreman.json ~/.pi/agent/settings.json; do cat \"$f\"; done"), "ask");
   assert.equal(sh(r, c, `grep -n x ${ag2}/settings.json | head`), "pass");
   assert.equal(sh(r, c, `echo x > ${ag2}/foreman.json`), "ask");
   assert.equal(sh(r, c, `for f in a; do echo x > ${ag2}/foreman.json; done`), "ask");
@@ -316,7 +319,9 @@ test("literal rows 15, 21, 22: the foreman reads foreman.json and settings.json 
 test("literal row 17: package.json and config/permissions*.json reads pass for a child (selfHost)", () => {
   const r = rules2(true);
   const c = world(ws, "child");
-  for (const cmd of ["cat package.json", "cat config/permissions.baseline.json", "sed -n 1,40p config/permissions.baseline.json"]) assert.equal(sh(r, c, cmd), "pass", cmd);
+  for (const cmd of ["cat package.json", "cat config/permissions.baseline.json"]) assert.equal(sh(r, c, cmd), "pass", cmd);
+  // documented limit: sed on a protected file asks, use the read tool
+  assert.equal(sh(r, c, "sed -n 1,40p config/permissions.baseline.json"), "deny");
 });
 
 test("literal rows 19, 20: env | grep and a branch listing next to inline python", () => {
@@ -482,13 +487,15 @@ test("revision B1: a protected path reaching a write redirect through a variable
       `cat ${D} > out.txt`,
     ]) assert.notEqual(sh(r, c, cmd), "pass", `child selfHost=${selfHost}: ${cmd}`);
     // the pure reads of the same words stay open
-    for (const cmd of [`cat ${D}`, `f=${D}; cat $f`, `for f in ${D}; do cat "$f"; done`, `cat ${D} 2>&1 | head`]) assert.equal(sh(r, c, cmd), "pass", `child selfHost=${selfHost}: ${cmd}`);
+    for (const cmd of [`cat ${D}`, `cat ${D} 2>&1 | head`]) assert.equal(sh(r, c, cmd), "pass", `child selfHost=${selfHost}: ${cmd}`);
+    // a variable in an argument loses the read-only skip (review 9)
+    for (const cmd of [`f=${D}; cat $f`, `for f in ${D}; do cat "$f"; done`]) assert.equal(sh(r, c, cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);
   }
   const r = rules2(false);
   const main = world(ws, "main");
   const AF = `${ag2}/foreman.json`;
   for (const cmd of [`f=${AF}; echo x > $f`, `F=${AF} && echo x > $F`, `for f in ${AF}; do echo x >> "$f"; done`, `select f in ${AF}; do echo x >> "$f"; done`, `case ${AF} in *) echo x > ${AF};; esac`]) assert.equal(sh(r, main, cmd), "ask", `main: ${cmd}`);
-  assert.equal(sh(r, main, `f=${AF}; cat $f`), "pass");
+  assert.equal(sh(r, main, `f=${AF}; cat $f`), "ask");
 });
 
 test("revision 2 F1-F2: a heredoc body is stripped only when every heredoc of the line belongs to a reader; continuation lines join", () => {
@@ -659,7 +666,7 @@ test("review 5 F1: abbreviated long options, a stdin operand and exec flags are 
   for (const selfHost of [true, false]) {
     const r = rules2(selfHost);
     for (const cmd of bad) assert.equal(sh(r, world(ws, "child"), cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);
-    for (const cmd of ["grep -rn p", "sed -n 1,5p"]) {
+    for (const cmd of ["grep -rn p"]) {
       assert.notEqual(sh(r, world(ws, "child"), `${cmd} ${D}`), "deny", `child selfHost=${selfHost}: ${cmd}`);
     }
     // programmable readers keep full protection on a protected operand (review 8)
@@ -685,8 +692,9 @@ test("review 7: BSD sed -I/-l and attached output values are not read-only", () 
   for (const selfHost of [true, false]) {
     const r = rules2(selfHost);
     for (const cmd of bad) assert.equal(sh(r, world(ws, "child"), cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);
+    // sed on a protected file asks or denies (review 9)
     for (const cmd of ["sed -n 1,5p", "sed -E 's/a/b/'", "sed -s -n p"]) {
-      assert.notEqual(sh(r, world(ws, "child"), `${cmd} ${D}`), "deny", `child selfHost=${selfHost}: ${cmd}`);
+      assert.equal(sh(r, world(ws, "child"), `${cmd} ${D}`), "deny", `child selfHost=${selfHost}: ${cmd}`);
     }
   }
 });
@@ -713,21 +721,43 @@ test("review 8: protected operands are skipped only for a minimal reader set", (
   ];
   const good = [
     `cd ${ws}; grep -n "usage" tests/replay/fake_provider.ts | head -20; grep -n '"compaction"' -A6 ${D}; grep -n "cacheWarming" node_modules/@earendil-works/pi-coding-agent/docs/settings.md`,
-    `cd ${ws} && grep -n -A12 '"compaction"' ${D}; sed -n 330,365p config/foreman.schema.json`,
-    `grep -n "compaction" -A12 ${D} | head -30; D=node_modules/@earendil-works/pi-coding-agent; grep -n "function x" -A30 $D/dist/core/*.js | head -40`,
     `cat ${D} | head -60; grep -n "compact" docs/sessions.md | head -20`,
-    `sed -n 1,60p extensions/core-adapter/compaction.ts; grep -n '"threshold"' -A12 ${D} | head -20`,
     `ls node_modules | head -3; ls node_modules/.bin | head -3; cat extensions/core-adapter/cachepolicy.ts`,
     `grep -rln "symbols.json" --exclude-dir=node_modules --exclude-dir=.git . | head`,
     `grep -rn "process.env" node_modules/@gotgenes/pi-permission-system/src | head`,
-    `sed -n 1,5p ${D}`,
-    `sed -E 's/a/b/' ${D}`,
     `grep -rn p ${D}`,
     `cat ${D} | head`,
     `wc -l ${D}`,
     `diff ${D} ${D}`,
     `ls -l node_modules`,
   ];
+  for (const selfHost of [true, false]) {
+    const r = rules2(selfHost);
+    for (const cmd of bad) assert.equal(sh(r, world(ws, "child"), cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);
+    for (const cmd of good) assert.notEqual(sh(r, world(ws, "child"), cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);
+  }
+});
+
+test("review 9: a variable in any argument loses the read-only skip; sed is no protected reader", () => {
+  const D = "config/foreman.defaults.json";
+  const bad = [
+    `I=-i; sed $I -n p ${D}`,
+    `I=-i; sed -n $I p ${D}`,
+    `A=config/foreman.defaults; S="w $A.json"; sed -n "$S" ${D}`,
+    `sed -n "$S" ${D}`,
+    `sed $N "$S" ${D}`,
+    `sed -n "\${S}" ${D}`,
+    `sed -n "$1" ${D}`,
+    `P=--pre=./evil; rg $P p ${D}`,
+    `P=--pre; rg $P ./evil p ${D}`,
+    `O=--pr; rg \${O}e=./evil p ${D}`,
+    `sed -n 1,5p ${D}`,
+    `sed -E 's/a/b/' ${D}`,
+    `grep -rn $PAT ${D}`,
+    `grep -rn '$p' ${D}`,
+    `grep -rn \`echo p\` ${D}`,
+  ];
+  const good = [`cat ${D}`, `head ${D}`, `wc -l ${D}`, `grep -rn p ${D}`, `diff ${D} ${D}`, `ls -l node_modules`, `cat ${D} | head`];
   for (const selfHost of [true, false]) {
     const r = rules2(selfHost);
     for (const cmd of bad) assert.equal(sh(r, world(ws, "child"), cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);
