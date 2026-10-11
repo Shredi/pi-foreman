@@ -333,6 +333,8 @@ def usage_metrics(records, sid, rates=None):
     for r in records:
         if sid and r.get("foremanSession") not in (None, sid):
             continue
+        if r.get("kind") == "keepalive":  # cache keep-alive spend has its own line (cache_metrics)
+            continue
         row = roles.setdefault(str(r.get("role", "?")), {"children": set(), "launches": collections.Counter(),
                                                          "in": 0, "out": 0, "cacheRead": 0, "cacheWrite": 0, "cost": 0.0})
         if r.get("launchId"):
@@ -350,6 +352,80 @@ def usage_metrics(records, sid, rates=None):
     return {k: {"children": len(v["children"]), "launches": dict(v["launches"]), "tokensIn": v["in"],
                 "tokensOut": v["out"], "cacheRead": v["cacheRead"], "cacheWrite": v["cacheWrite"],
                 "cost": round(v["cost"], 4)} for k, v in sorted(roles.items())}
+
+
+def _ts(r):
+    """Epoch seconds of a usage line's `ts` (ISO 8601), or None."""
+    v = r.get("ts", r.get("timestamp"))
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return v / 1000.0 if v > 1e11 else float(v)
+    if isinstance(v, str):
+        try:
+            d = datetime.datetime.fromisoformat(v.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=datetime.timezone.utc)
+        return d.timestamp()
+    return None
+
+
+def _line_cost(r):
+    return num((r.get("cost") or {}).get("total")) if isinstance(r.get("cost"), dict) else 0
+
+
+def _line_provider(r):
+    prov = r.get("provider")
+    if isinstance(prov, str) and prov:
+        return prov
+    model = r.get("model")
+    if isinstance(model, str) and "/" in model:
+        return model.split("/", 1)[0]
+    return None
+
+
+def cache_metrics(trace, usage, sid, config=None):
+    """Keep-alive count and cost, warm-idle compactions and (approximate) cold resumes.
+    A cold resume is a non-keep-alive foreman line after a gap above the provider TTL whose cacheRead is below half
+    of the previous foreman line's prompt (input + cacheRead + cacheWrite). Without a TTL the count is 0.
+    Returns None when there is no usage or trace, or nothing to report (no policy and all counts 0)."""
+    if trace is None and usage is None:
+        return None
+    lines = [r for r in usage or [] if isinstance(r, dict) and not (sid and r.get("foremanSession") not in (None, sid))]
+    ka = [r for r in lines if r.get("kind") == "keepalive"]
+    warm = sum(1 for e in trace or [] if isinstance(e, dict) and e.get("event") == "compaction"
+               and e.get("reason") == "warm_idle")
+    fore = [(t, r) for r in lines if str(r.get("role", "?")) == "foreman" for t in [_ts(r)] if t is not None]
+    fore.sort(key=lambda x: x[0])
+    session_prov = next((p for p in (_line_provider(r) for _t, r in fore) if p), None)
+
+    def policy(r):
+        try:
+            return pg.fc.cache_policy(config or {}, _line_provider(r) or session_prov)
+        except Exception:  # noqa: BLE001 - the line is optional
+            return None
+    cold, ttl = 0, None
+    for (t0, a), (t1, b) in zip(fore, fore[1:]):
+        pol = policy(b)
+        if pol and pol.get("ttlSeconds"):
+            ttl = pol["ttlSeconds"]
+        if b.get("kind") == "keepalive" or not pol or not pol.get("ttlSeconds"):
+            continue
+        prompt = num(a.get("input")) + num(a.get("cacheRead")) + num(a.get("cacheWrite"))
+        if t1 - t0 > pol["ttlSeconds"] and num(b.get("cacheRead")) < 0.5 * prompt:
+            cold += 1
+    pol = policy(fore[0][1]) if fore else (pg.fc.cache_policy(config or {}, session_prov) if session_prov else None)
+    if ttl is None and pol:
+        ttl = pol.get("ttlSeconds")
+    if not (pol or ka or warm or cold):
+        return None
+    return {"keepalives": len(ka), "keepaliveCost": round(sum(_line_cost(r) for r in ka), 4),
+            "warmCompactions": warm, "coldResumes": cold, "ttlSeconds": ttl}
+
+
+def cache_line(c):
+    return "cache: keepalives %d ($%s), warm compactions %d, cold resumes %d" % (
+        c["keepalives"], "%.2f" % c["keepaliveCost"], c["warmCompactions"], c["coldResumes"])
 
 
 def _rank_tier(ranks, model):
@@ -479,10 +555,11 @@ def session_id_of(records):
 
 def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
     sid = session_id_of(session)
-    ranks = None
+    ranks = config = None
     if trace is not None or usage is not None:
         try:
-            ranks = ranks_of(pg.fc.load_config(agent_dir)["config"])
+            config = pg.fc.load_config(agent_dir)["config"]
+            ranks = ranks_of(config)
         except Exception:  # noqa: BLE001 - the share is optional
             ranks = None
     asks = collect_asks(review) if review is not None else None
@@ -493,6 +570,7 @@ def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
         "trace": trace_metrics(trace) if trace is not None else None,
         "usage": usage_metrics(usage, sid, rates) if usage is not None else None,
         "explorer": explorer_metrics(trace, usage, sid, ranks),
+        "cache": cache_metrics(trace, usage, sid, config),
         "session_tools": session_metrics(session) if session is not None else None,
         "proposals": propose(asks, min_reviews, rules, load_protect_patterns(agent_dir)) if asks is not None else None,
     }
@@ -583,6 +661,8 @@ def render_text(rep, proposals_path=None):
             L.append("  %s: children=%d launches{%s} in=%d out=%d cacheRead=%d cacheWrite=%d cost=%s"
                      % (role, v["children"], kv(v["launches"]), v["tokensIn"], v["tokensOut"], v["cacheRead"],
                         v["cacheWrite"], v["cost"]))
+    if rep.get("cache"):
+        L.append(cache_line(rep["cache"]))
     s = rep["session_tools"]
     if s is None:
         L.append("session tools: no data")

@@ -1,0 +1,3 @@
+{"ts":"2026-01-01T10:00:00Z","foremanSession":"s1","role":"foreman","provider":"claude-bridge","model":"claude-bridge/m","kind":"first","input":10,"cacheRead":9000,"cacheWrite":500,"output":50,"cost":{"total":0.10}}
+{"ts":"2026-01-01T10:10:00Z","foremanSession":"s1","role":"foreman","provider":"claude-bridge","model":"claude-bridge/m","kind":"first","input":10,"cacheRead":0,"cacheWrite":9600,"output":50,"cost":{"total":0.30}}
+{"ts":"2026-01-01T10:20:00Z","foremanSession":"s1","role":"builder","provider":"claude-bridge","model":"claude-bridge/m","launchId":"L1","kind":"first","input":5,"cacheRead":0,"cacheWrite":100,"output":5,"cost":{"total":0.01}}
