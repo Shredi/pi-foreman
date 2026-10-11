@@ -323,7 +323,9 @@
   - (14) Read-only bash naming protected files is no longer write-protected (allowlist of pure verbs, no write
     redirect at all; with a write redirect or any non-pure verb the protected paths stay protected); `--flag=value`
     and grep patterns are not paths; heredoc bodies are skipped by the overlay and the
-    destructive guard; `cd` is allowed inside the workspace root and the child's scratch dir.
+    destructive guard only when every command of the whole text is a plain reader (`cat`, `grep`, `tee` to a plain
+    file, ...; any other command, path or quoted verb, process substitution or dotfile redirect keeps the bodies
+    scanned), and `<<` inside `$[...]`/`${...}` or an unclosed heredoc is no heredoc; `cd` is allowed inside the workspace root and the child's scratch dir.
   - (17) Foreman reads of its own config no longer raise the protected-config dialog.
   - (19) Documented limit: stale needs-attention notices cannot be withdrawn (Pi has no pre-turn hook for queued
     custom messages); the needed upstream change is described in `docs/safety.md`.

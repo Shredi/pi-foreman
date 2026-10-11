@@ -65,5 +65,68 @@ class HeredocTest(unittest.TestCase):
         self.assertIsNone(self.verdict("cat <<'EOT'\nnotes: the .pi dir and $x are prose\nEOT"))
 
 
+class WholeTextPurityTest(unittest.TestCase):
+    """Revision 3: a body is skipped only when every command of the whole text is a plain reader."""
+
+    def verdict(self, command):
+        return dg._check_command(command, tempfile.gettempdir())
+
+    BODY = 'rm -rf "$x"/*'
+
+    def test_any_other_command_in_the_text_keeps_the_body_scanned(self):
+        b = self.BODY
+        for cmd in ('cat <<A > x.sh; /tmp/x.sh\n%s\nA' % b,
+                    'cat <<A > x.sh; timeout 5 bash x.sh\n%s\nA' % b,
+                    'cat <<A > x.sh; env bash x.sh\n%s\nA' % b,
+                    'cat <<A > x.sh; command bash x.sh\n%s\nA' % b,
+                    'cat <<A > x.sh; nohup bash x.sh\n%s\nA' % b,
+                    'cat <<A > x.sh; sudo bash x.sh\n%s\nA' % b,
+                    'cat <<A > x.sh; echo x.sh | xargs -I{} bash {}\n%s\nA' % b,
+                    'cat <<A > x.sh; python3 -c "import os; os.system(\'sh x.sh\')"\n%s\nA' % b,
+                    'cat <<A > x.sh; perl -e \'system("sh x.sh")\'\n%s\nA' % b,
+                    'cat <<A > x.sh; find . -exec bash x.sh \\;\n%s\nA' % b,
+                    'cat <<A > x.sh; make -f x.sh\n%s\nA' % b,
+                    'cat <<A > x.sh; at -f x.sh now\n%s\nA' % b,
+                    'cat <<A > x.sh; watch bash x.sh\n%s\nA' % b,
+                    'cat <<A > x.sh; crontab x.sh\n%s\nA' % b,
+                    'cat <<A > x.sh; s""h x.sh\n%s\nA' % b,
+                    'cat <<A > x.sh; b\\ash x.sh\n%s\nA' % b,
+                    'cat <<A > x.sh; $SHELL x.sh\n%s\nA' % b,
+                    'for i in 1 2; do bash x.sh; cat <<A > x.sh; done\n%s\nA' % b,
+                    'cat <<A > x.sh\n%s\nA\nbash x.sh' % b,
+                    'cat <<A >> ~/.bashrc\n%s\nA' % b,
+                    'cat <<A > .hidden\n%s\nA' % b,
+                    'tee -a ~/.bashrc <<A\n%s\nA' % b,
+                    'cat <<A; (bash x.sh)\n%s\nA' % b,
+                    'cat <<A; echo $(bash x.sh)\n%s\nA' % b,
+                    'cat <<A; x=1 cat y\n%s\nA' % b,
+                    'cat <<A; sort -o x y\n%s\nA' % b):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.verdict(cmd)[0], "deny")
+
+    def test_dollar_bracket_and_brace_are_no_heredoc(self):
+        for cmd in ('cat $[1<<2] 2>/dev/null; true\nrm -rf "$x"/*\n2]',
+                    'cat ${x-<<A} 2>/dev/null; true\nrm -rf "$x"/*\nA}'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.verdict(cmd)[0], "deny")
+
+    def test_unclosed_heredoc_skips_nothing(self):
+        self.assertEqual(self.verdict('cat <<A\nrm -rf "$x"/*')[0], "deny")
+        self.assertEqual(self.verdict('cat <<A <<B\nx\nA\nrm -rf "$x"/*')[0], "deny")
+
+    def test_pure_reader_texts_keep_the_prose_skip(self):
+        b = self.BODY
+        for cmd in ("cat <<'EOT'\nnotes: the .pi dir and $x are prose\nEOT",
+                    'cat > docs/x.md <<EOT\n%s\nEOT\ncat docs/x.md' % b,
+                    'tee docs/x.md <<EOT\n%s\nEOT' % b,
+                    'cat <<A && cat <<B\n%s\nA\n%s\nB' % (b, b),
+                    'if cat <<A | grep x; then echo ok; fi\n%s\nA' % b,
+                    '{ cat <<A; echo done; } 2>&1\n%s\nA' % b,
+                    'for f in a b; do cat <<A; done\n%s\nA' % b,
+                    'cat <<"A" >> out.txt 2>/dev/null\n%s\nA' % b):
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(self.verdict(cmd))
+
+
 if __name__ == "__main__":
     unittest.main()

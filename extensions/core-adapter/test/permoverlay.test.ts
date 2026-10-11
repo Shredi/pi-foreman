@@ -575,6 +575,58 @@ test("revision B3: a child stays out of sibling worktrees, other scratch dirs, r
   for (const cmd of [`echo x > ${other}`, `echo x > ${alien}`, `echo x > ${ruling}`, `cat ${cc}`]) assert.equal(sh(r, main, cmd), "pass", `main: ${cmd}`);
 });
 
+test("revision 3: a heredoc body is stripped only when the whole text is plain readers (no executor list)", () => {
+  const D = "config/foreman.defaults.json";
+  const AF = `${ag2}/foreman.json`;
+  const probes = (body: string): string[] => [
+    `cat <<A > x.sh; /bin/bash x.sh\n${body}\nA`,
+    `cat <<A > /tmp/x.sh; /tmp/x.sh\n${body}\nA`,
+    `cat <<A > x.sh; chmod +x x.sh; ./x.sh\n${body}\nA`,
+    `cat <<A > x.sh; "bash" x.sh\n${body}\nA`,
+    `cat <<A > x.sh; b\\ash x.sh\n${body}\nA`,
+    `cat <<A > x.sh; $SHELL x.sh\n${body}\nA`,
+    `cat <<A > x.sh; python3 x.sh\n${body}\nA`,
+    `cat <<A > x.sh; perl x.sh\n${body}\nA`,
+    `cat <<A > x.sh; fish x.sh\n${body}\nA`,
+    `cat <<A > x.sh; make -f x.sh\n${body}\nA`,
+    `for i in 1 2; do bash x.sh; cat <<A > x.sh; done\n${body}\nA`,
+    `cat <<A > x.sh\n${body}\nA\nbash x.sh`,
+    `cat <<A >> ~/.bashrc\n${body}\nA`,
+    `cat <<A > .hidden; cat <<B\n${body}\nA\nB`,
+    `tee -a ~/.bashrc <<A\n${body}\nA`,
+    `cat <<A | python3\n${body}\nA`,
+    `cat <<A; (bash x.sh)\n${body}\nA`,
+    `cat <<A; sed -i s/a/b/ x\n${body}\nA`,
+    `cat <<A; x=1 cat y\n${body}\nA`,
+    `cat <<A; echo $(bash x.sh)\n${body}\nA`,
+  ];
+  for (const selfHost of [true, false]) {
+    const r = rules2(selfHost);
+    for (const cmd of [...probes(`echo x > ${D}`), ...probes(`cat ${AF}`)]) assert.equal(sh(r, world(ws, "child"), cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);
+  }
+  const r = rules2(false);
+  for (const cmd of probes(`echo x > ${AF}`)) assert.equal(sh(r, world(ws, "main"), cmd), "ask", `main: ${cmd}`);
+  // `<<` inside $[...] or ${...} is no heredoc: the lines after it are commands
+  for (const cmd of [`cat $[1<<2] 2>/dev/null; true\necho x > ${D}\n2]`, `cat \${x-<<A} 2>/dev/null; true\necho x > ${D}\nA}`]) {
+    for (const selfHost of [true, false]) assert.equal(sh(rules2(selfHost), world(ws, "child"), cmd), "deny", cmd);
+  }
+  assert.equal(sh(r, world(ws, "main"), `cat \${x-<<A} 2>/dev/null; true\necho x > ${AF}\nA}`), "ask");
+  assert.equal(sh(r, world(ws, "main"), `cat $[1<<2] 2>/dev/null; true\necho x > ${AF}\n2]`), "ask");
+  assert.equal(sh(r, world(ws, "main"), `cat <<A\necho x > ${AF}`), "ask", "unclosed heredoc: nothing stripped");
+  assert.equal(sh(r, world(ws, "main"), `cat <<A <<B\nx\nA\necho x > ${AF}`), "ask", "second delimiter never appears: nothing stripped");
+  // all-reader texts keep their prose body
+  const c = world(wt, "child");
+  for (const cmd of [
+    "cat <<'EOT'\nnotes: the .pi dir and $x are prose\nEOT",
+    "cat > docs/x.md <<EOT\nthe .pi dir and $x\nEOT\ncat docs/x.md",
+    "tee docs/x.md <<EOT\nthe .pi dir and $x\nEOT",
+    "tee -a docs/x.md <<EOT\nthe .pi dir\nEOT\ngrep -n x docs/x.md | head",
+    "if cat <<A | grep x; then echo ok; fi\nthe .pi dir\nA",
+    "{ cat <<A; echo done; } 2>&1\nthe .pi dir\nA",
+    "for f in a b; do cat <<A; done\nthe .pi dir and $x\nA",
+  ]) assert.equal(sh(r, c, cmd), "pass", cmd);
+});
+
 test("cleanup of the second world", () => {
   fs.rmSync(w2, { recursive: true, force: true });
 });
