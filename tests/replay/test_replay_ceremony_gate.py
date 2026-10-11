@@ -127,15 +127,19 @@ class TestRequiredSteps(ReplayCase):
 class TestWaitingForParent(ReplayCase):
     """harness-friction item 4: a handoff wait lets a heavy turn end with the ceremony incomplete."""
 
-    def handoff(self, rig):
+    ME = "fm-me-abc123"
+
+    def handoff(self, rig, child=ME):
         d = rig.agent / "pi-foreman" / "handoffs" / "h1"
         d.mkdir(parents=True)
         (d / "plan.md").write_text("# plan\n", "utf-8")
+        (d / "parent").write_text("boss\n", "utf-8")
+        (d / "child").write_text(child + "\n", "utf-8")
 
     def test_handoff_timer_wait_waives_the_gate_until_the_next_input(self):
         rig = self.rig("cg-parent", script(), config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")
         self.handoff(rig)
-        pi = rig.start()
+        pi = rig.start(env={"PI_INTERCOM_STABLE_ID": self.ME})
         sid = pi.session_id()
         recs = pi.prompt("[[replay:handoff]] hand off", timeout=90)
         self.assertEqual([(n, e) for n, e, _ in tool_results(recs)], [("foreman_triage", False), ("foreman_wait", False)], tool_results(recs))
@@ -148,6 +152,16 @@ class TestWaitingForParent(ReplayCase):
         pi.close()
         self.assertTrue(gate_messages(again), "the gate must refuse again after the next input")
         self.assertTrue(events(rig, sid, "finish_refused"))
+
+    def test_another_sessions_handoff_does_not_waive_the_gate(self):
+        rig = self.rig("cg-other", script(), config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")
+        self.handoff(rig, child="fm-someone-else-111111")
+        pi = rig.start(env={"PI_INTERCOM_STABLE_ID": self.ME})
+        sid = pi.session_id()
+        recs = pi.prompt("[[replay:handoff]] hand off", timeout=90)
+        pi.close()
+        self.assertTrue(gate_messages(recs), "a handoff dir of another session does not waive the gate")
+        self.assertEqual(events(rig, sid, "waiting_for_parent"), [])
 
     def test_plain_timer_wait_without_handoff_context_is_refused(self):
         rig = self.rig("cg-plain", script(), config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")

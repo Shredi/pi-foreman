@@ -119,7 +119,7 @@ Login steps are in [install](install.md). Rationale: `design/architecture.md`
 
 ## Known limit: stale "needs attention" notices
 
-pi-subagents delivers `subagent_control_notice` custom messages with `pi.sendMessage` (`triggerTurn` for async runs), and a queued message cannot be withdrawn. Pi's extension hooks (`context`, `message_end`, `before_agent_start`) can reshape what the model sees or replace a finalized message, but none can cancel a queued custom message before it starts a turn, and pi-subagents' `notifyOn` has no per-run form: excluding `needs_attention` there would suppress the events entirely. A notice for a run that ended meanwhile can therefore still arrive. `notices.ts` holds the dedupe state (once per run and state, none after the run's end event) for a drop hook; see `docs/UPSTREAM-NOTICES.md` for the upstream request.
+pi-subagents delivers `subagent_control_notice` custom messages with `pi.sendMessage` (`triggerTurn` for async runs), and a queued message cannot be withdrawn. Pi's extension hooks (`context`, `message_end`, `before_agent_start`) can reshape what the model sees or replace a finalized message, but none can cancel a queued custom message before it starts a turn, and pi-subagents' `notifyOn` has no per-run form: excluding `needs_attention` there would suppress the events entirely. A notice for a run that ended meanwhile can therefore still arrive. `notices.ts` holds the dedupe state (once per run and state, none after the run's end event) for a drop hook. Fixing it needs either a hook in Pi to withdraw a queued custom message (for example a `message_start` handler that can cancel it), or a run-end check in pi-subagents' `control-notices.js` before it calls `sendMessage`.
 
 ## Known limit: `/sync`
 

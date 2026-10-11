@@ -427,7 +427,9 @@ export interface WaitSession {
   /** ownedRoots(...).readWrite, read at each use (the foreman only). */
   owned?: () => string[];
   /** Called with a started wait's spec (the finish gate's waiting_for_parent state). */
-  onStart?: (spec: ValidSpec) => void;
+  onStart?: (spec: ValidSpec, id: string) => void;
+  /** Called after a wait was cancelled (the finish gate may leave waiting_for_parent). */
+  onCancel?: (id: string) => void;
 }
 
 const PARAMS = {
@@ -507,6 +509,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       if (params.action === "cancel") {
         const id = typeof params.id === "string" ? params.id : "";
         if (!slot?.rt.cancel(id)) return refuse(`${WAIT_TOOL}: no active wait '${oneLine(id, 40)}'.`);
+        s.onCancel?.(id);
         return text(`Wait ${id} cancelled.`, { decision: "cancelled", id });
       }
       if (params.action !== "start") return refuse(`${WAIT_TOOL}: action must be start, list or cancel.`);
@@ -515,7 +518,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       if ("error" in spec) return refuse(spec.error, params.kind);
       const r = ensure().start(spec);
       if ("error" in r) return text(r.error, { decision: "refused" }, true);
-      s.onStart?.(spec);
+      s.onStart?.(spec, r.id);
       const win = l.batchWindowSeconds;
       return text(`Wait ${r.id} (${spec.kind}) started; times out after ${l.maxSeconds}s. End your turn: you will be woken by one message${win > 0 ? ` (outcomes within ${win}s are batched)` : ""}.`, { decision: "start", id: r.id, kind: spec.kind });
     },

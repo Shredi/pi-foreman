@@ -1,11 +1,11 @@
 // Recheck-budget exemptions (ceremony.recheckBudget, harness-friction ledger item 4): a handoff poll
-// (ruling.md, a read of the owned dirs from owned.ts) and a worktree creation/listing are not
-// re-checks of the reviewed work. Pure: index.ts readBudgetCheck calls `recheckExempt`.
-// A call is exempt only when every path operand it names is under an owned root or is a file named
-// ruling.md (and at least one is), or when it is `git worktree add|list|prune`; anything it cannot
-// read with certainty (command substitution, an unknown variable) counts as before.
+// (a read of the handoffs dir `<agentDir>/pi-foreman/handoffs`, ruling.md included) and a worktree
+// creation/listing are not re-checks of the reviewed work. Pure: index.ts readBudgetCheck calls `recheckExempt`.
+// A call is exempt only when every path operand it names is under the handoffs dir (and at least one is),
+// or when it is `git worktree add|list|prune`; anything it cannot read with certainty (command
+// substitution, an unknown variable) counts as before. Builders' worktrees and a ruling.md elsewhere count.
 import * as path from "node:path";
-import { underOwned } from "./owned.ts";
+import { handoffsRootOf, underOwned } from "./owned.ts";
 import type { OwnedRoots } from "./owned.ts";
 
 export interface ExemptCtx {
@@ -19,8 +19,6 @@ const PATH_FIELDS = ["path", "file", "dir", "directory", "cwd"] as const;
 const NEUTRAL_VERBS = new Set(["sleep", "echo", "true", ":", "printf", "date"]);
 const WORKTREE = /^(?:git\s+(?:-C\s+\S+\s+)?worktree\s+(?:add|list|prune)(?:\s|$))/;
 
-const isRuling = (p: string): boolean => path.basename(p).toLowerCase() === "ruling.md";
-
 function expand(w: string, c: ExemptCtx): string | null {
   let x = w;
   if (x === "~" || x.startsWith("~/")) x = path.join(c.home, x.slice(1));
@@ -31,12 +29,12 @@ function expand(w: string, c: ExemptCtx): string | null {
 }
 
 function ownedOrRuling(p: string, c: ExemptCtx): boolean {
-  if (isRuling(p)) return true;
-  return [...c.owned.readWrite, ...c.owned.readOnly].some((r) => underOwned(r, p, c.platform));
+  const root = handoffsRootOf(c.owned.readWrite);
+  return !!root && underOwned(root, p, c.platform);
 }
 
-/** Path-like words: contain a separator, start with `~`, or are named ruling.md. */
-const pathLike = (w: string): boolean => /[\\/]/.test(w) || w.startsWith("~") || isRuling(w);
+/** Path-like words: contain a separator or start with `~`. */
+const pathLike = (w: string): boolean => /[\\/]/.test(w) || w.startsWith("~");
 
 /** Words of a shell segment without quotes; null when it holds a substitution or a redirect target we cannot judge. */
 function words(seg: string): string[] | null {

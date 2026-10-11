@@ -12,7 +12,7 @@ import type { Json, MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
 import { buildOverlayRules, checkToolCall, isOverlayTool, isSelfHost,OVERLAY_UNAVAILABLE, readBaseline, resolveDecision } from "./permoverlay.ts";
 import type { OverlayRules } from "./permoverlay.ts";
-import { ownedRoots, resolveNpmRoot, underOwned } from "./owned.ts";
+import { ownedRoots, ownHandoffDirs, resolveNpmRoot, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
 import { permFileState, PS_CHILD_ID, PS_PACKAGE, psProjectConfigPath, renderPermissions, resolvePermissionSystem } from "./permsys.ts";
@@ -74,7 +74,7 @@ import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, WAKE_M
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { ChildWidget, rungOf } from "./childwidget.ts";
-import { LiveState } from "./livestate.ts";
+import { LiveState, intercomIdOf } from "./livestate.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate } from "./compaction.ts";
 import { resolveCachePolicy } from "./cachepolicy.ts";
@@ -210,6 +210,8 @@ interface Session {
   finishRefusals: number;
   /** Foreman only: a handoff wait or a pending checkpoint waits for the parent/owner; the finish gate lets the turn end. Cleared by the next user/parent input. */
   waitingForParent: boolean;
+  /** Foreman only: ids of the active waits that set waitingForParent (cleared with it). */
+  handoffWaits: Set<string>;
   /** Uncounted finish refusals that ask for the builder's review_fail climb, since the last user prompt (at most 2). */
   climbRefusals: number;
   /** Foreman only: per-item FAIL counts of reviewer runs (ladder.reviewerClimb, reviewerclimb.ts). */
@@ -432,6 +434,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       triageHint: "",
       finishRefusals: 0,
       waitingForParent: false,
+      handoffWaits: new Set(),
       climbRefusals: 0,
       reviewerFails: new ReviewerFails(),
       reviewRuns: { byCall: new Map(), byRun: new Map(), blocks: new Map(), findings: new Map(), sync: Promise.resolve() },
@@ -1554,7 +1557,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (s && !s.isChild && cause) s.idleCache.onActivity();
       if (s && !s.isChild && cause === "wake") s.turn.wakeKinds = [...new Set((event.message as { details?: { kinds?: unknown[] } }).details?.kinds ?? [])].map(String).join(",");
       // An inbound intercom message or a foreman_wait wake is the parent answering: the finish gate is active again.
-      if (s && !s.isChild && (m.customType === INTERCOM_MESSAGE_TYPE || m.customType === WAKE_MESSAGE_TYPE)) s.waitingForParent = false;
+      if (s && !s.isChild && (m.customType === INTERCOM_MESSAGE_TYPE || m.customType === WAKE_MESSAGE_TYPE)) (s.waitingForParent = false), s.handoffWaits.clear();
       if (s && !s.isChild && m.customType === INTERCOM_MESSAGE_TYPE) s.turn.intercomFrom = intercomSender((event.message as { details?: unknown }).details);
       if (s && !s.isChild && m.customType === NOTIFY_TYPE) onCompletionNotice(s, (event.message as { content?: unknown }).content);
     }
@@ -1600,9 +1603,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // D3: the owner is back in the loop, so revision rounds count from zero again.
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.rounds = initialRounds();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
-    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.waitingForParent = false;
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.waitingForParent = false), s.handoffWaits.clear();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.climbRefusals = 0;
-    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset(); // the owner's task text for the reviewer (diffscan.ts ownerBlock)
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset(); // a new piece of work: the next builder launch records a new diff base (diffscan.ts ReviewFacts)
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
       resetRecheck(s, "user");
       const was = s.budget.phase;
@@ -1804,38 +1807,41 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** The owned handoffs root (`<agentDir>/pi-foreman/handoffs`). */
   const handoffsRoot = (s: Session): string | undefined => s.owned.readWrite.find((r) => path.basename(r) === "handoffs");
 
-  /** A handoff dir of this user holds a plan.md or result.md written in the last day (a round is waiting on its parent). */
+  /** One of this session's own handoff dirs (owned.ts ownHandoffDirs) holds a plan.md or result.md written in the last day (a round is waiting on its parent). */
   function handoffContext(s: Session): boolean {
-    const root = handoffsRoot(s);
-    if (!root) return false;
-    try {
-      for (const e of fs.readdirSync(root, { withFileTypes: true })) {
-        if (!e.isDirectory()) continue;
-        for (const f of ["plan.md", "result.md"]) {
-          try {
-            if (Date.now() - fs.statSync(path.join(root, e.name, f)).mtimeMs <= 86_400_000) return true;
-          } catch {
-            // absent
-          }
+    for (const dir of ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id))) {
+      for (const f of ["plan.md", "result.md"]) {
+        try {
+          if (Date.now() - fs.statSync(path.join(dir, f)).mtimeMs <= 86_400_000) return true;
+        } catch {
+          // absent
         }
       }
-    } catch {
-      // no handoffs dir
     }
     return false;
   }
 
   /**
    * waiting_for_parent (finish gate): set by a file wait on a path under the handoffs root, or a timer wait while
-   * a handoff dir holds plan.md or result.md. A plain timer wait does not set it.
+   * one of this session's own handoff dirs holds plan.md or result.md. A plain timer wait does not set it.
    */
-  function markHandoffWait(s: Session, spec: { kind: string; path?: string }): void {
+  function markHandoffWait(s: Session, spec: { kind: string; path?: string }, id: string): void {
     if (s.isChild) return;
     const root = handoffsRoot(s);
     const hit = spec.kind === "file" && !!root && typeof spec.path === "string" && underOwned(root, spec.path, platform);
     if (hit || (spec.kind === "timer" && handoffContext(s))) {
       s.waitingForParent = true;
+      s.handoffWaits.add(id);
       s.trace?.emit({ event: "waiting_for_parent", decision: "set", toolFamily: spec.kind });
+    }
+  }
+
+  /** A cancelled wait leaves waiting_for_parent when no other handoff wait and no pending checkpoint remains. */
+  function cancelHandoffWait(s: Session, id: string): void {
+    if (s.isChild || !s.handoffWaits.delete(id)) return;
+    if (s.handoffWaits.size === 0 && s.plan?.status !== "pending" && s.waitingForParent) {
+      s.waitingForParent = false;
+      s.trace?.emit({ event: "waiting_for_parent", decision: "cleared", toolFamily: "cancel" });
     }
   }
 
@@ -2200,7 +2206,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     platform,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, onStart: (spec) => markHandoffWait(s, spec) };
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, onStart: (spec, id) => markHandoffWait(s, spec, id), onCancel: (id) => cancelHandoffWait(s, id) };
     },
   });
 
