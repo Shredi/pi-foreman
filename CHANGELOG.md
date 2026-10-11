@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- Optional git tool pack (`tools.git`, off by default; `docs/tools.md`): `git_status`, `git_log`, `git_diff_stat` and
+  `git_branch_state`, capped read-only tools for the foreman and for children whose role has bash. A `tool_pack` trace
+  event and a `git:` retro line compare pack calls with bash git. Re-run `foreman setup` after enabling.
 - Generated feature overview (`docs/features.md`) for agents setting pi-foreman up: install lines, config layers,
   every feature with its fresh-install state (on, off, opt-in), keys with defaults and layer rules, enable snippets,
   commands, overlay quick start and invariants. Built by `scripts/foreman_docs.py features` from the curated

@@ -296,6 +296,17 @@
       "enable": ""
     },
     {
+      "id": "git-tools",
+      "title": "Git tool pack",
+      "purpose": "Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace.",
+      "doc": "docs/tools.md#git-tool-pack",
+      "keys": ["tools.git"],
+      "commands": [],
+      "switch": {"key": "tools.git", "on": "true"},
+      "state": "off",
+      "enable": "{\"tools\": {\"git\": true}}"
+    },
+    {
       "id": "children-may-push",
       "title": "Children may push",
       "purpose": "Lets subagent children push; by default they may commit but never push, and they never open PRs.",
