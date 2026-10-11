@@ -54,3 +54,9 @@ This repo is public: nothing private in files, commit messages or issues. See `A
 
 `tests/test_docs.py` checks that config schema keys, registered commands and relative links appear in these pages.
 When you add a key or command, document it in the page for its area.
+
+`docs/features.md` is generated: `python scripts/foreman_docs.py features` writes it from `config/features.json`
+(the only hand-kept part), the defaults and the layer rules in `scripts/foreman_config.py`; `--check` exits 1 on
+drift. Add every new key or command to one feature in `config/features.json`; `tests/test_features_doc.py` fails
+otherwise and on a stale file. `FOREMAN_DOCS_UPDATE=1 python -m unittest discover -s tests -p "test_features_doc.py"`
+rewrites it.
