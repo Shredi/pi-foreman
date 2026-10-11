@@ -25,7 +25,7 @@ python -m unittest discover -s tests -v          # npm test
 node --test "extensions/core-adapter/test/*.test.ts"   # npm run test:node
 node --test "tests/installer/*.test.mjs"          # npm run test:installer
 npm run typecheck                                 # tsc --noEmit
-node setup.mjs --dry-run                          # installer preview, writes nothing
+node setup.mjs --dry-run                          # installer preview, writes nothing (exits 1 until pi-foreman is installed as a package; see install.md#developing)
 ```
 
 ## Replay rig

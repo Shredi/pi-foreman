@@ -489,7 +489,9 @@ function main(argv) {
 
     // packages: pi-foreman installs itself (and bundles its dependencies); here we migrate and filter
     const list0 = Array.isArray(settings.packages) ? settings.packages : [];
-    const hasRemote = list0.some(isRemoteForeman);
+    // A --develop override ({source, extensions: []}) silences the installed copy; it does not make ".." stale.
+    const isOverride = (e) => !!e && typeof e === "object" && Array.isArray(e.extensions) && e.extensions.length === 0;
+    const hasRemote = list0.some((e) => isRemoteForeman(e) && !isOverride(e));
     // Leftover top-level copies of the bundled packages (or an old local-path entry next to the git/npm one)
     // would load a second time, and a duplicate tool name stops Pi at start: remove them.
     const stale = list0.filter((e) => isBundledEntry(e) || (hasRemote && isLocalForeman(e, baseDir)));

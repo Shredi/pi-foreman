@@ -1,6 +1,7 @@
 @echo off
 rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree [args]` for cmd.
 setlocal
+set "PF_HERE=%~dp0"
 if /i "%~1"=="setup" goto setup
 set "PF_PY=%PI_FOREMAN_PYTHON%"
 set "PF_PYARGS="
@@ -38,8 +39,8 @@ set PF_ARGS=%PF_ARGS% %1
 shift
 goto collects
 :runsetup
-node "%~dp0..\setup.mjs" %PF_ARGS%
+node "%PF_HERE%..\setup.mjs" %PF_ARGS%
 exit /b %ERRORLEVEL%
 :run
-"%PF_PY%" %PF_PYARGS% -E -s "%~dp0..\scripts\%PF_SCRIPT%" %PF_ARGS%
+"%PF_PY%" %PF_PYARGS% -E -s "%PF_HERE%..\scripts\%PF_SCRIPT%" %PF_ARGS%
 exit /b %ERRORLEVEL%

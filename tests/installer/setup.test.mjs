@@ -401,6 +401,10 @@ test("--develop writes <checkout>/.pi/settings.json (override of the installed p
   const text = fs.readFileSync(file, "utf8");
   assert.match(go(["--develop"]).out, /already loads this checkout/);
   assert.equal(fs.readFileSync(file, "utf8"), text);
+  const proj = spawnSync(process.execPath, [path.join(checkout, "setup.mjs"), "--project", "--dry-run", "--agent-dir", env.agentDir], {
+    cwd: checkout, encoding: "utf8", env: { ...process.env, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log },
+  });
+  assert.doesNotMatch(`${proj.stdout}${proj.stderr}`, /package \.\.: would remove/, "the override does not make \"..\" stale");
 });
 
 test("packages.lock.json bundled pins equal the package.json dependencies", () => {

@@ -2,7 +2,9 @@
 
 > Covers installing pi-foreman as a Pi package, `foreman setup`, what setup writes, the `foreman.json` provider map, config layers, updating and removing, developing from a checkout, Windows notes and the Claude bridge login.
 > Read it when you set up pi-foreman, change models, or after pulling a pin change.
-> Run `foreman setup --dry-run` first; a second run changes nothing and says "up to date".
+> Run `foreman setup --dry-run` first; a second run changes nothing and says "up to date". `foreman setup` on this page
+> means `/foreman setup` inside Pi, or `bin/foreman setup` (`node setup.mjs`) in a checkout; a package install puts no
+> `foreman` on `PATH`.
 
 ## Install
 
@@ -17,7 +19,8 @@ pi install -l git:github.com/Shredi/pi-foreman         # project scope (.pi/sett
 `<agentDir>/git/github.com/Shredi/pi-foreman` (`<agentDir>` is `$PI_CODING_AGENT_DIR`, default `~/.pi/agent`) and runs
 `npm install --omit=dev --legacy-peer-deps` there. That brings the bundled `pi-subagents`, `pi-permission-system` and
 `pi-intercom`, pinned in `package.json` and `package-lock.json` and loaded through `node_modules` resource paths (the
-meta-package pattern Pi's docs prescribe). Pi runs lifecycle scripts; pi-foreman has none on purpose. Project packages
+meta-package pattern Pi's docs prescribe). The manifest is the `pi` key of `package.json`: Pi reads `extensions`,
+`skills`, `prompts` and `themes`; `pi.subagents.agents` (the `agents/` folder) is read by pi-subagents. Pi runs lifecycle scripts; pi-foreman has none on purpose. Project packages
 load only after the project is trusted; headless runs need `pi --approve` (`-a`).
 
 Then run setup once:
@@ -27,6 +30,10 @@ Then run setup once:
 /foreman setup             # inside Pi: apply
 bin/foreman setup          # from a checkout (or: node setup.mjs)
 ```
+
+Upgrading from a setup that installed `pi-subagents`, `pi-permission-system` or `pi-intercom` as top-level `npm:`
+packages: Pi stops at start with a tool conflict until setup has removed them, so `/foreman setup` cannot run yet. Run
+setup from the clone once: `node <agentDir>/git/github.com/Shredi/pi-foreman/setup.mjs`.
 
 Flags: `--dry-run`, `--project` (project-local settings), `--overlay npm:<pkg>@<exact-version>` (organisation overlay;
 ranges are refused, see [overlays](overlays.md)), `--no-intercom` (see below), `--develop` (see
