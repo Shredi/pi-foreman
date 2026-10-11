@@ -2,6 +2,7 @@
 
 FOREMAN_DOCS_UPDATE=1 rewrites docs/features.md from the generator instead of failing.
 """
+import json
 import os
 import sys
 import unittest
@@ -10,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import foreman_config as fc  # noqa: E402
 import foreman_docs as fd  # noqa: E402
 from test_docs import anchors  # noqa: E402
 
@@ -89,6 +91,24 @@ class FeatureMap(unittest.TestCase):
         self.assertEqual(fd.layer_rule(("safety", "children", "mayPush")), "tighten-only (only false is accepted)")
         self.assertTrue(fd.layer_rule(("retro", "repoBacklog")).startswith("not in project/session"))
         self.assertEqual(fd.layer_rule(("quiet",)), "any layer")
+
+    def test_json_enable_snippets_validate_and_flip_the_switch(self):
+        schema = json.loads(fd.read(fc.SCHEMA_PATH))
+        bad = []
+        for f in self.features:
+            try:
+                snippet = json.loads(f.get("enable") or "")
+            except ValueError:
+                continue
+            merged = fc.deep_merge(self.defaults, snippet)
+            issues = []
+            fc.validate_schema(merged, schema, "", issues)
+            errors = [i for i in issues if i[0] == "error"]
+            if errors:
+                bad.append((f["id"], errors))
+            if fd.switch_on(f, merged) is False:
+                bad.append((f["id"], "switch not satisfied"))
+        self.assertEqual(bad, [])
 
     def test_generated_file_current(self):
         path = ROOT / "docs" / "features.md"

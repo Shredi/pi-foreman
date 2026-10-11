@@ -381,7 +381,7 @@
       "commands": ["/sync", "foreman sync"],
       "switch": {"key": "sync.repos", "on": "nonempty"},
       "state": "opt-in",
-      "enable": "{\"sync\": {\"repos\": [\"<absolute path of a repository you trust>\"]}}"
+      "enable": "{\"sync\": {\"repos\": [{\"path\": \"<absolute path of a repository you trust>\", \"branch\": \"main\", \"paths\": [\"<glob of paths to sync>\"]}]}}"
     },
     {
       "id": "retro",
