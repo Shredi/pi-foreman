@@ -119,3 +119,20 @@ test("safeops: tool_pack is traced per call only while the git pack is on", asyn
   await off.call("foreman_move", { src: "a", dst: "b" });
   assert.deepEqual(off.traces, [{ event: "safe_op", toolFamily: "move", decision: "ran" }]);
 });
+
+test("safeops: a preflight block means no tool_pack trace (L8)", async () => {
+  const tools = new Map<string, Tool>();
+  const traces: Record<string, unknown>[] = [];
+  const session: SafeOpsSession = { python: "/py", isChild: false, packOn: true, opsConfig: {}, trace: (r) => void traces.push(r) };
+  registerSafeOps({ registerTool: (t: unknown) => void tools.set((t as Tool).name, t as Tool) } as never, {
+    isChild: false,
+    session: async () => session,
+    script: SCRIPT,
+    spawner: async () => ({ code: 0, stdout: "", stderr: "", timedOut: false }),
+    env: () => ({}),
+    preflight: async () => ({ block: true as const, reason: "git config changed." }),
+  });
+  const r = await tools.get("foreman_move")!.execute("id1", { src: "a", dst: "b" }, undefined, undefined, { cwd: "/ws" });
+  assert.equal(r.details.decision, "blocked");
+  assert.deepEqual(traces, [{ event: "safe_op", toolFamily: "move", decision: "blocked" }]);
+});

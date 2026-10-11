@@ -20,6 +20,8 @@ import { workspaceOf } from "./python.ts";
 
 export const TRIAGE_TOOL = "foreman_triage";
 export const GATED_TOOLS = new Set(["write", "edit", "foreman_move", "foreman_copy"]);
+/** Tools that act outward (no workspace path): refused untriaged. */
+export const OUTWARD_TOOLS = new Set(["pr_create"]);
 const RANK: Record<Tier, number> = { trivial: 0, standard: 1, heavy: 2 };
 
 /** A tier counts as triaged once the foreman, the user or a ledger header recorded one (a later escalation keeps it). */
@@ -137,6 +139,7 @@ export function workspaceTargets(toolName: string, input: Record<string, unknown
 
 /** Block reason for a foreman file-tool call, or undefined. */
 export function triageGateBlock(toolName: string, input: Record<string, unknown>, c: CeremonyState, opts: { cwd: string; home: string; platform: string }): string | undefined {
+  if (OUTWARD_TOOLS.has(toolName)) return isTriaged(c) ? undefined : `pi-foreman: ${toolName} refused: no tier recorded yet. Call ${TRIAGE_TOOL}({tier, reason}) first.`;
   if (!GATED_TOOLS.has(toolName)) return undefined;
   const triaged = isTriaged(c);
   if (triaged && c.tier === "trivial") return undefined;

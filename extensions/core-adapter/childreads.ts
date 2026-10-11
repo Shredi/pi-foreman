@@ -7,6 +7,7 @@
 // (`STATUS: stuck` if it cannot finish: ladder trigger b). A role without limits has no budget:
 // the coded defaults apply only when `ceremony.childReads` is absent from the config altogether.
 import { get, type Json } from "./config.ts";
+import { PACK_READ_TOOL_NAMES } from "./gitpack.ts";
 import { topLevelId } from "./budget.ts";
 import { isReadOnlySed } from "./sedread.ts";
 
@@ -16,7 +17,7 @@ export interface ChildLimits {
 }
 
 export const DEFAULT_CHILD_READS: Record<string, ChildLimits> = { builder: { warn: 20, deny: 40 }, reviewer: { warn: 15, deny: 30 } };
-export const CHILD_READ_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "find", "ls", "bash"]);
+export const CHILD_READ_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "find", "ls", "bash", ...PACK_READ_TOOL_NAMES]);
 
 const posInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 1;
 

@@ -346,20 +346,20 @@ export function wakeMessage(outcomes: Outcome[]): { customType: string; content:
 }
 
 /**
- * Absolute path of `gh` from PATH entries that are absolute and outside the workspace (S8): an empty,
- * `.` or relative entry, or one inside the workspace, is skipped, so a planted gh is never run.
+ * Absolute path of `name` from PATH entries that are absolute and outside the workspace (S8): an empty,
+ * `.` or relative entry, or one inside the workspace, is skipped, so a planted binary is never run.
  */
-export function resolveGh(workspace: string, env: NodeJS.ProcessEnv = process.env, platform: string = process.platform): string | null {
+export function resolveBin(name: string, workspace: string, env: NodeJS.ProcessEnv = process.env, platform: string = process.platform, pathExt?: string): string | null {
   const win = platform === "win32";
   const pathVar = (win ? Object.entries(env).find(([k]) => k.toLowerCase() === "path")?.[1] : env.PATH) ?? "";
-  const exts = win ? (env.PATHEXT || ".COM;.EXE").split(";").filter(Boolean) : [""];
+  const exts = win ? (pathExt ?? (env.PATHEXT || ".COM;.EXE")).split(";").filter(Boolean) : [""];
   const ws = realDeep(workspace);
   for (const entry of pathVar.split(win ? ";" : ":")) {
     const dir = entry.trim().replace(/^"(.*)"$/, "$1");
     if (!dir || dir === "." || !path.isAbsolute(dir)) continue;
     if (under(ws, realDeep(dir), platform)) continue;
     for (const ext of exts) {
-      const cand = path.join(dir, `gh${ext}`);
+      const cand = path.join(dir, `${name}${ext}`);
       try {
         if (fs.statSync(cand).isFile()) return cand;
       } catch {
@@ -369,6 +369,8 @@ export function resolveGh(workspace: string, env: NodeJS.ProcessEnv = process.en
   }
   return null;
 }
+
+export const resolveGh = (workspace: string, env: NodeJS.ProcessEnv = process.env, platform: string = process.platform): string | null => resolveBin("gh", workspace, env, platform);
 
 /** `gh run view <id> --json status,conclusion,url` (no shell; gh resolved by resolveGh, cwd = workspace). */
 export function ghRunView(runId: string, cwd: string): Promise<CiStatus> {

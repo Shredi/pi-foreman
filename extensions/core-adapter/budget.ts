@@ -9,6 +9,8 @@
 // then only the user's `/foreman budget lift`. Knob 2: after a reviewer PASS the foreman gets
 // `recheckBudget` read-class calls, then is told to finish (the read budget does not apply).
 
+import { PACK_READ_TOOL_NAMES } from "./gitpack.ts";
+
 export type Phase = "before" | "after";
 export interface PhaseLimits {
   warn: number;
@@ -16,7 +18,7 @@ export interface PhaseLimits {
 }
 export type ReadLimits = Record<Phase, PhaseLimits>;
 
-export const READ_CLASS: ReadonlySet<string> = new Set(["bash", "read", "grep", "find", "ls", "codemode"]);
+export const READ_CLASS: ReadonlySet<string> = new Set(["bash", "read", "grep", "find", "ls", "codemode", ...PACK_READ_TOOL_NAMES]);
 export const DEFAULT_READ_LIMITS: ReadLimits = { before: { warn: 4, deny: 8 }, after: { warn: 4, deny: 8 } };
 export const DEFAULT_RECHECK = 3;
 const MAX_FILES = 200;

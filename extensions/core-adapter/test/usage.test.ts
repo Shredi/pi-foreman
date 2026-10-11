@@ -129,3 +129,7 @@ test("keepSection puts the cached section back when a compacted head lacks it (r
   assert.deepEqual(nulled[1].sections, {});
   assert.equal(keepSection([head, user], "pi-foreman"), null, "no cached text: unchanged");
 });
+
+test("causeOfCustom: a pi-foreman-pr message is a wake", () => {
+  assert.equal(causeOfCustom("pi-foreman-pr"), "wake");
+});

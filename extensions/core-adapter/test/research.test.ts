@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { applyLaunchModels } from "../launchmodel.ts";
-import { applyFactCriticalRungs, applyResearchFloor, factCriticalRung, markedEntries, researchMarkerOf, researchTraces } from "../research.ts";
+import { applyFactCriticalRungs, applyResearchFloor, entryTraces, factCriticalRung, floorMarker, markedEntries, researchMarkerOf, researchTraces } from "../research.ts";
 import { sanitizeTrace } from "../trace.ts";
 
 const ROLES = {
@@ -65,4 +65,20 @@ test("research_rung trace carries role, marker and the final model; marker is a 
   const marked = launch(input, { ladder: { research: { factCriticalRung: "p/m-opus:high" } } });
   const rec = researchTraces(marked);
   assert.deepEqual(sanitizeTrace(rec[0]), { event: "research_rung", role: "explorer", marker: "fact-critical", kind: "single", model: "p/m-opus" });
+});
+
+test("floorMarker names the marker that raised the entry the rank policy refuses (L18)", () => {
+  const input: Record<string, unknown> = { agent: "explorer", task: "[fact-critical] check" };
+  applyLaunchModels(input, ROLES, "high");
+  const marked = markedEntries(input);
+  const raised = applyResearchFloor(marked, ROLES, RANKS, "high", undefined);
+  assert.equal(floorMarker(raised, input.model as string), "fact-critical");
+  assert.equal(floorMarker(raised, "p/other"), null);
+});
+
+test("entryTraces: only unmarked agent entries of a tasks/chain launch (L19)", () => {
+  const input = { tasks: [{ agent: "explorer", task: "plain", model: "p/m-haiku:low" }, { agent: "explorer", task: "[research] x" }] };
+  const marked = markedEntries(input);
+  assert.deepEqual(entryTraces(input, marked), [{ event: "launch_entry", role: "explorer", kind: "entry", model: "p/m-haiku" }]);
+  assert.deepEqual(entryTraces({ agent: "explorer", task: "plain" }, []), []);
 });

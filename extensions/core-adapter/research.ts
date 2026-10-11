@@ -44,8 +44,9 @@ export function markedEntries(input: Json): MarkedEntry[] {
 }
 
 /** `[research]` and `[fact-critical]` floor: an entry weaker than its role's strong rung (or any, without ranks) gets that rung. */
-export function applyResearchFloor(marked: MarkedEntry[], roles: Record<string, Json>, config: Json | undefined, maxThinking: unknown, childMaxThinking: unknown): void {
+export function applyResearchFloor(marked: MarkedEntry[], roles: Record<string, Json>, config: Json | undefined, maxThinking: unknown, childMaxThinking: unknown): MarkedEntry[] {
   const ranks = ranksOf(config);
+  const raised: MarkedEntry[] = [];
   for (const m of marked) {
     const strong = launchModel(m.role, roles, "strong", maxThinking, { childMaxThinking });
     const r = roles[m.role];
@@ -57,7 +58,14 @@ export function applyResearchFloor(marked: MarkedEntry[], roles: Record<string, 
     const b = tierOf(ranks, want);
     if (ranks.size > 0 && a !== null && b !== null && a <= b) continue; // already as strong or stronger
     m.entry.model = strong.model;
+    raised.push(m);
   }
+  return raised;
+}
+
+/** The marker of the first entry the floor raised onto `model` (a rank refusal of that model names it), else null. */
+export function floorMarker(raised: readonly MarkedEntry[], model: string): ResearchMarker | null {
+  return raised.find((m) => m.entry.model === model)?.marker ?? null;
 }
 
 /** The rung of a `[fact-critical]` entry of `role`: factCriticalRung, else the security rung, else the role's strong rung; null when none. */
@@ -82,4 +90,15 @@ export function applyFactCriticalRungs(marked: MarkedEntry[], roles: Record<stri
 /** One `research_rung` trace record per marked entry, with the model it launches on; `kind` tells retro a single launch (counted by its usage line) from a tasks/chain entry. */
 export function researchTraces(marked: MarkedEntry[]): Record<string, unknown>[] {
   return marked.map((m) => ({ event: "research_rung", role: m.role, marker: m.marker, kind: m.composite ? "entry" : "single", model: typeof m.entry.model === "string" ? splitLevel(m.entry.model).base : null }));
+}
+
+/** One `launch_entry` record per unmarked agent entry of a tasks/chain launch (retro counts explorer entries without a marker). */
+export function entryTraces(input: Json, marked: readonly MarkedEntry[]): Record<string, unknown>[] {
+  if (!Array.isArray(input.tasks) && !Array.isArray(input.chain)) return [];
+  const out: Record<string, unknown>[] = [];
+  for (const e of launchEntries(input)) {
+    if (typeof e.agent !== "string" || e.agent === "" || marked.some((m) => m.entry === e)) continue;
+    out.push({ event: "launch_entry", role: e.agent, kind: "entry", model: typeof e.model === "string" && e.model ? splitLevel(e.model).base : null });
+  }
+  return out;
 }

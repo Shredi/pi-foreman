@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import { mainNeedsGitGuard } from "../gitguard.ts";
-import { appendReview, headOf, headsAt, isPrToolName, launchCwds, MAX_REVIEWS, passHeads, prToolRefusal, reviewedHead, reviewsOfRunEnd } from "../reviews.ts";
+import { appendReview, headOf, headsAt, isPrToolName, launchCwds, MAX_REVIEWS, passHeads, prGateRefusal, prToolRefusal, checksLine, reviewedHead, reviewsOfRunEnd } from "../reviews.ts";
 import type { ReviewRecord } from "../reviews.ts";
 
 test("reviewsOfRunEnd: completed reviewer results with a verdict and their cwd", () => {
@@ -86,4 +86,36 @@ test("reviewedHead keeps a head only when HEAD at launch equals HEAD at run end 
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("prGateRefusal: child, gate off, and a pushed upstream that was not reviewed", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-reviews-"));
+  try {
+    assert.equal((await prGateRefusal({ tool: "pr_create", isChild: true, gateOn: false, reviewed: [], cwd: dir }))?.reason, "child");
+    assert.equal(await prGateRefusal({ tool: "pr_create", isChild: false, gateOn: false, reviewed: [], cwd: dir }), null);
+    const g = (...a: string[]) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" }).trim();
+    g("init", "-q");
+    const commit = (m: string) => g("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", m);
+    commit("chore: a");
+    const first = g("rev-parse", "HEAD");
+    const branch = g("symbolic-ref", "--short", "HEAD");
+    g("update-ref", "refs/remotes/origin/" + branch, first);
+    g("config", "remote.origin.url", "https://h.invalid/r.git");
+    g("config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*");
+    g("config", "branch." + branch + ".remote", "origin");
+    g("config", "branch." + branch + ".merge", "refs/heads/" + branch);
+    commit("chore: b");
+    const second = g("rev-parse", "HEAD");
+    const gate = (reviewed: string[]) => prGateRefusal({ tool: "pr_create", isChild: false, gateOn: true, reviewed, cwd: dir });
+    assert.equal((await gate([second]))?.reason, "stale_review");
+    assert.equal(await gate([second, first]), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("checksLine: one line only when a check failed", () => {
+  assert.equal(checksLine(null), "");
+  assert.equal(checksLine({ failed: [], pending: [], summary: "1 passed" }), "");
+  assert.match(checksLine({ failed: [{ name: "ci" }], pending: [], summary: "0 passed, 1 failed (ci), 0 pending" }), /^PR checks: 0 passed, 1 failed \(ci\), 0 pending\. Failed checks block a merge/);
 });

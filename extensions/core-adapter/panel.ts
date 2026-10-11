@@ -166,6 +166,8 @@ export interface PendingPanelsDeps {
   /** Send the composed block (once per panel; never called with ""). */
   send: (text: string) => void;
   trace: (rec: Record<string, unknown>) => void;
+  /** Extra text appended to the composed block (failed PR checks); a failure adds nothing. */
+  extra?: () => Promise<string>;
 }
 
 /**
@@ -228,7 +230,8 @@ export class PendingPanels {
     }
     const order = new Map(panel.expected.map((m, i) => [m, i]));
     notRun.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
-    const text = composePanelBlock({ model: panel.primary, findings: primary }, shadows, panel.visible, notRun);
+    const add = await (this.deps.extra?.() ?? Promise.resolve("")).catch(() => "");
+    const text = [composePanelBlock({ model: panel.primary, findings: primary }, shadows, panel.visible, notRun), add].filter(Boolean).join("\n");
     if (text) this.deps.send(text);
   }
 }

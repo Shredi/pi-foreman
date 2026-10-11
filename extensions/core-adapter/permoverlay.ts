@@ -1153,7 +1153,7 @@ function protectDecision(hit: ProtectHit, word: string, what: string): Decision 
     : { kind: "ask", reason: `pi-foreman: this changes protected configuration (rule '${hit.rule.pattern}' ${how} in a ${what}) and needs approval.` };
 }
 
-const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls", "foreman_move", "foreman_copy"]);
+const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls", "foreman_move", "foreman_copy", "git_log", "git_diff_stat"]);
 
 export function isOverlayTool(toolName: string): boolean {
   return toolName === "bash" || toolName === "powershell" || PATH_TOOLS.has(toolName);

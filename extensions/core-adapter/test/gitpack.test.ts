@@ -42,7 +42,11 @@ test("gitpack: the foreman activates the tools and exports the env, off clears i
   const { pi, state } = fakePi(["read"]);
   applyGitPack(pi, true, false, env);
   assert.deepEqual(state.active, ["read", ...GIT_PACK_TOOL_NAMES]);
-  assert.equal(env[PACK_ENV], "git");
+  assert.equal(env[PACK_ENV], "stale,git");
+  applyGitPack(pi, false, false, env);
+  assert.equal(env[PACK_ENV], "stale");
+  delete env[PACK_ENV];
+  applyGitPack(pi, true, false, env);
   applyGitPack(pi, false, false, env);
   assert.equal(env[PACK_ENV], undefined);
 });
@@ -91,9 +95,10 @@ test("gitpack: a precondition failure is a tool error", async () => {
   assert.equal(r.details.precondition, "bad_request");
 });
 
-test("gitpack: a preflight block refuses before the script runs", async () => {
+test("gitpack: a preflight block refuses before the script runs and is not counted as tool_pack", async () => {
   const h = setup({ block: true });
   const r = await h.call("git_diff_stat");
   assert.equal(r.details.decision, "blocked");
   assert.equal(h.calls.length, 0);
+  assert.deepEqual(h.traces, []);
 });

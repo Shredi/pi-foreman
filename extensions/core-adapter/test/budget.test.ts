@@ -2,6 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { bgWaitLocations, detailLocations, inRecorded, noticeLocations, ReadBudget, readLimits, recheckLimit, recordFiles, topLevelId } from "../budget.ts";
 import { finishLine } from "../bound.ts";
+import { CHILD_READ_TOOLS } from "../childreads.ts";
+import { READ_CLASS } from "../budget.ts";
+import { PACK_READ_TOOL_NAMES } from "../gitpack.ts";
 
 const L = readLimits({ before: { warn: 2, deny: 3 }, after: { warn: 1, deny: 2 } });
 const kinds = (b: ReadBudget, ids: string[], tool = "read") => ids.map((id) => b.check(tool, id, L, 3, false).kind);
@@ -106,4 +109,13 @@ test("budget: child result locations come from structured places only, and the f
   assert.equal(inRecorded(files, "/repo/src/a.ts"), false);
   assert.equal(finishLine({ standard: ["builder", "reviewer"] }, "standard"), "Before you finish: a builder run must complete, a reviewer must pass.");
   assert.equal(finishLine({ standard: ["builder"] }, "trivial"), "");
+});
+
+test("git and PR read tools count as reads for the foreman and the children", () => {
+  for (const n of ["git_status", "git_log", "pr_status", "pr_checks", "pr_comments"]) {
+    assert.equal(READ_CLASS.has(n), true, n);
+    assert.equal(CHILD_READ_TOOLS.has(n), true, n);
+  }
+  for (const n of ["pr_create", "pr_watch"]) assert.equal(READ_CLASS.has(n), false, n);
+  assert.equal(PACK_READ_TOOL_NAMES.length, 7);
 });

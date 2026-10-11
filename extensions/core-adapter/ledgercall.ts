@@ -246,7 +246,7 @@ export function rewriteItemText(file: string, id: string, text: string): { error
 // removed) when the session's value of `key` is one of the listed values, else dropped with its
 // line break. Untagged lines are kept as they are, so a file without tags is returned unchanged.
 
-const TAG = /^<!--([A-Za-z][A-Za-z0-9]*)=([A-Za-z0-9|_-]+)-->/;
+const TAG = /^<!--([A-Za-z][A-Za-z0-9.]*)=([A-Za-z0-9|_-]+)-->/;
 
 export function applyVariants(text: string, values: Readonly<Record<string, string>>): string {
   const lines = text.split(/(?<=\n)/);
