@@ -852,6 +852,9 @@ const REMOVERS = new Set(["rm", "rmdir", "unlink", "trash", "trash-put", "gio", 
 
 const MAX_DEPTH = 4;
 
+/** Builtins that assign their words to a variable. */
+const ASSIGNERS = new Set(["read", "declare", "typeset", "export", "local", "readonly", "mapfile", "readarray"]);
+
 /** Reserved words that precede a command (`do cat x`, `then grep y`, `! find`). */
 const LEAD_KEYWORDS = new Set(["do", "then", "else", "elif", "if", "while", "until", "!", "{", "}"]);
 /** Units that only steer control flow: `for f in a b`, `case x in`, a lone `done`/`fi`/`esac`. */
@@ -898,6 +901,8 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
       // control-flow words (`for f in a b`, `done`) neither read nor write
       const neutral = !unitWords.length || NEUTRAL_UNITS.has(unitWords[0]) || (unitWords.length === 1 && NEUTRAL_END.has(unitWords[0]));
       const raw = unitWords.find((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
+      // `printf -v f %s PATH`, `read f`, `declare f=PATH`, `mapfile f`: the words become a variable a later redirect may use
+      if (ASSIGNERS.has(verb0) || (verb0 === "printf" && v.core.includes("-v"))) out.pure = false;
       if (!neutral && raw !== undefined) {
         if (!PURE_VERBS.has(baseName(raw)) || !v.core.length || !PURE_VERBS.has(baseName(v.core[0]))) out.pure = false;
         else if (!unitReadOnly(v.core, skip)) out.ro = false;
@@ -965,11 +970,16 @@ export function stripHeredocs(src: string): string {
   if (!src.includes("<<")) return src;
   let out = "";
   let lineStart = 0;
-  const pending: { delim: string; dash: boolean; quoted: boolean }[] = [];
+  // one entry per `<<` operator of the line, in order; `reader` is false when the body may run (nothing of the line is stripped then)
+  const pending: { delim: string; dash: boolean; quoted: boolean; reader: boolean }[] = [];
   let i = 0;
   while (i < src.length) {
     const c = src[i];
-    if (c === "\\") {
+    if (c === "\\" && src[i + 1] === "\n") {
+      // line continuation: the next line belongs to the current command
+      out += " ";
+      i += 2;
+    } else if (c === "\\") {
       out += src.slice(i, i + 2);
       i += 2;
     } else if (c === "'" || c === '"') {
@@ -990,7 +1000,8 @@ export function stripHeredocs(src: string): string {
       out += c;
       i++;
       if (pending.length) {
-        for (const h of pending) {
+        // strip only when every heredoc of the line belongs to a plain reader (a shell body elsewhere on the line may run)
+        for (const h of pending.every((p) => p.reader) ? pending : []) {
           let pos = i;
           let end = -1;
           while (pos <= src.length) {
@@ -1015,15 +1026,18 @@ export function stripHeredocs(src: string): string {
     } else if (c === "<" && src[i + 1] === "<" && src[i + 2] !== "<" && src[i - 1] !== "<") {
       const m = /^<<(-?)[ \t]*((?:[^\s;&|<>()'"\\]|'[^']*'|"[^"]*"|\\.)+)/.exec(src.slice(i));
       const prefix = out.slice(lineStart);
-      const nl = src.indexOf("\n", i);
-      const rest = src.slice(i + (m ? m[0].length : 2), nl < 0 ? src.length : nl);
-      if (m && !/\(\(|\$\(|`|<\(|>\(/.test(prefix) && !/[|`]|\$\(|<\(|>\(/.test(rest)) {
+      let nl = src.indexOf("\n", i);
+      while (nl > 0 && src[nl - 1] === "\\") nl = src.indexOf("\n", nl + 1); // the logical line runs over continuations
+      const rest = src.slice(i + (m ? m[0].length : 2), nl < 0 ? src.length : nl).replace(/\\\n/g, " ");
+      let reader = false;
+      if (m && !/\(\(|\$\(|`|<\(|>\(/.test(prefix) && !/[|`]|\$\(|<\(|>\(/.test(rest) && !/(^|[\s;&(])(bash|sh|zsh|dash|ksh|source|exec|eval)(\s|$)|[;&]\s*\.\s/.test(rest)) {
         const unit = parseShell(prefix).pipelines.at(-1)?.at(-1);
         const core = unit ? variants(unit).core : [];
-        if (core.length && HEREDOC_READERS.has(baseName(core[0]))) {
-          pending.push({ delim: m[2].replace(/'([^']*)'|"([^"]*)"|\\(.)/g, (_x, a, b, d) => a ?? b ?? d), dash: m[1] === "-", quoted: /['"\\]/.test(m[2]) });
-        }
+        reader = core.length > 0 && HEREDOC_READERS.has(baseName(core[0]));
       }
+      pending.push(m
+        ? { delim: m[2].replace(/'([^']*)'|"([^"]*)"|\\(.)/g, (_x, a, b, d) => a ?? b ?? d), dash: m[1] === "-", quoted: /['"\\]/.test(m[2]), reader }
+        : { delim: "", dash: false, quoted: false, reader: false });
       out += "<<";
       i += 2;
     } else {

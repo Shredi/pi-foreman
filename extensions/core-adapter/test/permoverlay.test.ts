@@ -492,6 +492,51 @@ test("revision B1: a protected path reaching a write redirect through a variable
   assert.equal(sh(r, main, `f=${AF}; cat $f`), "pass");
 });
 
+test("revision 2 F1-F2: a heredoc body is stripped only when every heredoc of the line belongs to a reader; continuation lines join", () => {
+  const D = "config/foreman.defaults.json";
+  const AF = `${ag2}/foreman.json`;
+  const probes = (target: string, w: string): string[] => [
+    `bash <<A && cat <<B\necho x > ${target}\nA\nB`,
+    `sh <<A; cat <<B\necho x > ${target}\nA\nB`,
+    `cat <<B && bash <<A\nB\necho x > ${target}\nA`,
+    `cat <<A \\\n| bash\necho x > ${target}\nA`,
+    `cat <<A | \\\nbash\necho x > ${target}\nA`,
+    `env bash <<A && cat <<B\necho x > ${target}\nA\nB`,
+    `cat <<A > ${w}.sh; bash ${w}.sh\necho x > ${target}\nA`,
+  ];
+  for (const selfHost of [true, false]) {
+    const r = rules2(selfHost);
+    for (const cmd of probes(D, "t")) assert.equal(sh(r, world(ws, "child"), cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);
+  }
+  const r = rules2(false);
+  for (const cmd of probes(AF, "t")) assert.equal(sh(r, world(ws, "main"), cmd), "ask", `main: ${cmd}`);
+  // all readers on the line: both bodies are prose
+  const c = world(wt, "child");
+  assert.equal(sh(r, c, `cat <<A && cat <<B\necho x > ${D}\nA\nthe .pi dir\nB`), "pass");
+  assert.equal(sh(r, c, `cat <<'EOT' \\\n  > docs/n.md\nnotes: the .pi dir and $x are prose\nEOT`), "pass");
+});
+
+test("revision 2: variable-assigning builtins keep a protected path protected when a write redirect follows", () => {
+  const D = "config/foreman.defaults.json";
+  const AF = `${ag2}/foreman.json`;
+  const forms = (p: string, t: string): string[] => [
+    `printf -v f %s ${p}; cat x > ${t}`,
+    `read f <<< ${p}; cat x > ${t}`,
+    `read -r f <<< ${p}; cat x > ${t}`,
+    `declare f=${p}; cat x > ${t}`,
+    `typeset f=${p}; cat x > ${t}`,
+    `export f=${p}; cat x > ${t}`,
+    `local f=${p}; cat x > ${t}`,
+    `mapfile -t f <<< ${p}; cat x > ${t}`,
+    `readarray f <<< ${p}; cat x > ${t}`,
+  ];
+  for (const selfHost of [true, false]) {
+    const r = rules2(selfHost);
+    for (const cmd of forms(D, "$f")) assert.notEqual(sh(r, world(ws, "child"), cmd), "pass", `child selfHost=${selfHost}: ${cmd}`);
+  }
+  for (const cmd of forms(AF, "$f")) assert.equal(sh(rules2(false), world(ws, "main"), cmd), "ask", `main: ${cmd}`);
+});
+
 test("revision B3: a child stays out of sibling worktrees, other scratch dirs, ruling.md and claude-config; the foreman keeps its grants", () => {
   const scratchRoot = path.join(w2, "tmp", "pi-foreman-scratch");
   const owned = { readWrite: [], readOnly: [], childScratchRoot: scratchRoot };

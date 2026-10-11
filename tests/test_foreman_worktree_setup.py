@@ -50,6 +50,25 @@ class WorktreeSetupTest(unittest.TestCase):
         (nm / "pkg" / "index.js").write_text("changed\n")
         self.assertEqual((self.main / "node_modules" / "pkg" / "index.js").read_text(), "x\n")
 
+    def test_failed_copy_keeps_the_link_and_leaves_no_partial_directory(self):
+        (self.wt / "package-lock.json").write_text("{}\n")
+        real = shutil.copytree
+
+        def boom(src, dst, *a, **kw):
+            os.makedirs(dst)
+            (Path(dst) / "half").write_text("x")
+            raise OSError("disk full")
+
+        shutil.copytree = boom
+        try:
+            code, out, err = self.run_hook([str(self.wt)])
+        finally:
+            shutil.copytree = real
+        self.assertEqual(code, 0)
+        self.assertIn("failed", err)
+        self.assertTrue((self.wt / "node_modules").is_symlink())
+        self.assertEqual(sorted(p.name for p in self.wt.iterdir()), ["node_modules", "package-lock.json"])
+
     def test_shrinkwrap_counts_as_lockfile(self):
         (self.wt / "npm-shrinkwrap.json").write_text("{}\n")
         self.run_hook([str(self.wt)])

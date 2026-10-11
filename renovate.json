@@ -20,7 +20,7 @@
       "groupName": "npm devDependencies",
       "matchManagers": ["npm"],
       "matchDepTypes": ["devDependencies"],
-      "excludePackageNames": ["@earendil-works/*"],
+      "matchPackageNames": ["*", "!@earendil-works/*"],
       "automerge": false
     }
   ],

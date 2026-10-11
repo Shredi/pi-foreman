@@ -50,6 +50,17 @@ class HeredocTest(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertEqual(self.verdict(cmd)[0], "deny")
 
+    def test_process_substitution_and_later_executors_keep_the_body_scanned(self):
+        for cmd in ('cat <<A > >(bash)\nrm -rf "$x"/*\nA',
+                    'cat <<A | tee >(sh)\nrm -rf "$x"/*\nA',
+                    'tee <<A x.sh; bash x.sh\nrm -rf "$x"/*\nA',
+                    'cat <<A > x.sh && sh x.sh\nrm -rf "$x"/*\nA',
+                    'cat <<A > x.sh; source x.sh\nrm -rf "$x"/*\nA',
+                    'cat <<A > x.sh; . x.sh\nrm -rf "$x"/*\nA',
+                    'cat <<A > x.sh; exec x.sh\nrm -rf "$x"/*\nA'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.verdict(cmd)[0], "deny")
+
     def test_row_13_prose_heredoc_still_passes(self):
         self.assertIsNone(self.verdict("cat <<'EOT'\nnotes: the .pi dir and $x are prose\nEOT"))
 

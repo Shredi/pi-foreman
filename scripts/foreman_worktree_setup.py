@@ -54,13 +54,25 @@ def materialise(worktree, repo_root=None):
     target = os.path.realpath(nm)
     if not os.path.isdir(target) and repo_root:
         target = os.path.join(repo_root, "node_modules")
+    if os.path.isdir(target):
+        # copy beside the link first and rename into place: a failed copy leaves the link, never a partial directory
+        tmp = nm + ".foreman-tmp"
+        shutil.rmtree(tmp, ignore_errors=True)
+        try:
+            shutil.copytree(target, tmp, symlinks=True)
+        except BaseException:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
+        if os.path.islink(nm):
+            os.unlink(nm)
+        else:
+            os.rmdir(nm)  # junction
+        os.rename(tmp, nm)
+        return "node_modules copied from %s into %s" % (target, worktree)
     if os.path.islink(nm):
         os.unlink(nm)
     else:
         os.rmdir(nm)  # junction
-    if os.path.isdir(target):
-        shutil.copytree(target, nm, symlinks=True)
-        return "node_modules copied from %s into %s" % (target, worktree)
     npm = shutil.which("npm")
     if not npm:
         return "node_modules link removed in %s but the target has none and npm is missing" % worktree

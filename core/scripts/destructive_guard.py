@@ -264,9 +264,20 @@ def _segment_verb(seg):
     return ""
 
 
+# Verbs that run a file or a string as commands: a later one on the heredoc's line may execute the body.
+_HEREDOC_EXECUTORS = frozenset(("bash", "sh", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "source", ".", "exec", "eval"))
+
+
 def _heredoc_is_prose(segs, seps, start):
     """True when the heredoc opened in segs[start] reaches only stdin readers: its own command and
-    every command it is piped into (`|`) on the same line."""
+    every command it is piped into (`|`) on the same line, with no process substitution
+    (`cat <<A > >(bash)`) and no executor later on the line (`tee <<A x.sh; bash x.sh`)."""
+    for seg in segs[start:]:
+        if "<(" in seg or ">(" in seg:
+            return False
+    for seg in segs[start + 1:]:
+        if _segment_verb(seg) in _HEREDOC_EXECUTORS or re.match(r"\s*\./", seg):
+            return False
     k = start
     while k < len(segs):
         if _segment_verb(segs[k]) not in _HEREDOC_READERS:

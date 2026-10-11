@@ -156,7 +156,7 @@ The foreman session owns a few places outside the workspace. Access to them is g
 The write-only protect rules (package root, `protect.ask`) are skipped for a shell command only when every unit is a
 pure read-only verb and the command has no write redirect at all (any target but `/dev/null` and fd dups, so `> $f`
 counts): a protected path named in an assignment (`f=...`) or a `for`/`select`/`case` list is still scanned and
-protected as soon as a redirect could write through it.
+protected as soon as a redirect could write through it; so a read of a protected file combined with any write redirect (e.g. `cat config/foreman.defaults.json > out.txt`) stays protected for children.
 
 | Pattern (`external_directory`, read and write) | Why |
 |---|---|
