@@ -87,14 +87,13 @@ OK_STATUSES = ("clean", "committed", "pushed", "dry-run")
 
 SECRET_NAMES = [".env*", "*.pem", "*.key", "*.p12", "id_rsa*", "id_ed25519*", "*credential*", "*secret*", "*token*",
                 ".npmrc", ".netrc", ".pypirc", ".git-credentials", "*.kdbx", "*.jks", "*.pfx", "id_ecdsa*"]
-TOKEN_RX = r"(?<![A-Za-z0-9_])(?:ghp_|gho_|ghs_|ghu_|ghr_|AIza|github_pat_|npm_|glpat-|sk-ant-|xox[bap]-|xoxe[.-])[A-Za-z0-9_\-]{16,}"
+TOKEN_RX = safe_ops.TOKEN_RX
 SECRET_CONTENT = [
     ("private key header", re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----")),
     ("token prefix", re.compile(TOKEN_RX.encode("ascii"))),
     ("AWS access key id", re.compile(rb"(?<![A-Z0-9])AKIA[0-9A-Z]{16}(?![A-Z0-9])")),
 ]
-REDACT = [(re.compile(r"(\w[\w+.\-]*://)[^/@\s]+@"), r"\1***@"), (re.compile(TOKEN_RX), "***"),
-          (re.compile(r"(?<![A-Z0-9])AKIA[0-9A-Z]{16}(?![A-Z0-9])"), "***")]
+REDACT = safe_ops.REDACT
 # Repo-local, worktree and included config keys sync accepts (security re-review N1: a deny list
 # missed keys twice). Any other key refuses the repo; only its key class (`section.<x>.name`, the
 # subsection masked) or a rule label is reported, never a value. `<x>` = any subsection name.
@@ -160,10 +159,7 @@ def git(args, cwd, stdin=None):
     return r.returncode, r.stdout.decode("utf-8", "surrogateescape"), r.stderr.decode("utf-8", "replace")
 
 
-def redact(text):
-    for rx, sub in REDACT:
-        text = rx.sub(sub, text)
-    return text
+redact = safe_ops.redact
 
 
 def first_line(text):
