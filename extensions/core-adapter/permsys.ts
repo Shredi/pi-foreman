@@ -52,12 +52,14 @@ function localPackageDirs(settingsFile: string): string[] {
 }
 
 /**
- * Where PS is installed, as the entry file every child must load. Looks in: the agent dir's
+ * Where PS is installed, as the entry file every child must load. Looks in: the copy bundled under
+ * the package's own node_modules (the one Pi loads through the package manifest), the agent dir's
  * npm install (`pi install npm:...`), the project's `.pi/npm`, a node_modules above the
  * pi-foreman package, and local-path package entries of the user and project settings.
  */
 export function resolvePermissionSystem(input: { agentDir: string; cwd: string; pkgRoot: string }): string | null {
   const dirs = [
+    path.join(input.pkgRoot, "node_modules", PS_PACKAGE),
     path.join(input.agentDir, "npm", "node_modules", PS_PACKAGE),
     path.join(input.cwd, ".pi", "npm", "node_modules", PS_PACKAGE),
   ];
