@@ -2390,7 +2390,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const keys = ["agentOverridesByProvider", "agentOverrides", "forceTopLevelAsync"];
       const same = keys.every((k) => canonical(have[k] ?? null) === canonical((generated as Record<string, unknown>)[k] ?? null));
       if (same) ok("generated subagents block in settings.json is in sync");
-      else fail("subagents block in settings.json differs from generate-subagents", "run /foreman apply or the installer to regenerate it.");
+      else fail("subagents block in settings.json differs from generate-subagents", "run /foreman setup or the installer to regenerate it.");
     }
 
     for (const e of s.childExtensions) {
