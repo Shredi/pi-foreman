@@ -981,8 +981,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
 
     s.reviewRuns.sync = s.reviewRuns.sync.then(() => work.then(() => undefined));
+    // the shadow instruction must reach the foreman now: a steer mid-turn, else a new turn (a deferred message would wait for the owner)
     void entry.text.then((text) => {
-      if (text && !entry.claimed) pi.sendMessage({ customType: "pi-foreman-panel", content: text, display: true }, { triggerTurn: false });
+      if (text && !entry.claimed) pi.sendMessage({ customType: "pi-foreman-panel", content: text, display: true }, { triggerTurn: true });
     });
   }
 
