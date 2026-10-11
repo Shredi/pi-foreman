@@ -61,10 +61,10 @@
 //     The pattern of grep/rg and their --include/--exclude/--exclude-dir/--glob values are never path words.
 //     Heredoc bodies read by cat/tee/grep/... are dropped before scanning (stripHeredocs; kept when piped on,
 //     substituted, or without a delimiter line). A command of read-only verbs only (no in-place sed, `sort -o`,
-//     `find -exec`, tee, xargs, PowerShell) and no write redirect naming the path skips the write-only rules:
+//     `find -exec`, tee, xargs, PowerShell) and no write redirect at all (any target) skips the write-only rules:
 //     writeAsk/writeAskSelfHost for children, the ask list for the foreman; deny and childDeny never skip.
-//     Children may not touch childBlock paths (handoffs except plan/result/ruling.md, subagent artifacts,
-//     foreman.json) nor run `git worktree` beyond list/remove; a child may cd inside its workspace root and scratch dir.
+//     Children may not touch childBlock paths (handoffs except plan/result.md, subagent artifacts,
+//     foreman.json, pi-foreman/claude-config, sibling round worktrees, other children's scratch dirs) nor run `git worktree` beyond list/remove; a child may cd inside its workspace root and scratch dir.
 //     grep's `glob` and find's `pattern` are checked joined to the tool's `path`.
 //     removeAsk (`<agentDir>`, its parent (`~/.pi` by default) and `<agentDir>/pi-foreman`, the
 //     ancestors of the state folder):
@@ -107,6 +107,8 @@ export interface OwnedRoots {
   readOnly: string[];
   /** The child's own scratch dir (the `$FOREMAN_SCRATCH` subtree). */
   childScratch?: string;
+  /** `<tmp>/pi-foreman-scratch`: a child may use only its own subdir (`childScratch` / `ctx.scratch`). */
+  childScratchRoot?: string;
 }
 
 export interface OverlayRules {
@@ -119,6 +121,8 @@ export interface OverlayRules {
   childBlock?: string[];
   /** Paths below childBlock that stay open to children. */
   childBlockExcept?: string[];
+  /** childBlock patterns that stay open below the child's own workspace root (its round worktree). */
+  childBlockInWorkspace?: string[];
   owned?: OwnedRoots;
 }
 
@@ -173,10 +177,13 @@ export function readBaseline(pkgRoot: string): Baseline | null {
 }
 
 /** Foreman-owned paths a child never touches, on path tools and shell operands (the child's own scratch dir stays its own). */
-const CHILD_BLOCK = ["{agentDir}/pi-foreman/handoffs", "{agentDir}/pi-foreman/handoffs/*", "{agentDir}/sessions/*/subagent-artifacts", "{agentDir}/sessions/*/subagent-artifacts/*", "{agentDir}/foreman.json"];
+const CHILD_BLOCK = ["{agentDir}/pi-foreman/handoffs", "{agentDir}/pi-foreman/handoffs/*", "{agentDir}/sessions/*/subagent-artifacts", "{agentDir}/sessions/*/subagent-artifacts/*", "{agentDir}/foreman.json", "{agentDir}/pi-foreman/claude-config", "{agentDir}/pi-foreman/claude-config/*"];
+
+/** Round worktrees (`../<repo>.worktrees/*`): a child's own workspace root subtree stays open, siblings are the foreman's. */
+const CHILD_BLOCK_WORKTREES = ["*.worktrees/*"];
 
 /** Files of a handoff dir a child still writes and reads (the plan it was given, the report it hands back); everything else there stays the foreman's. */
-const CHILD_BLOCK_EXCEPT = ["plan.md", "result.md", "ruling.md"].map((f) => `{agentDir}/pi-foreman/handoffs/*/${f}`);
+const CHILD_BLOCK_EXCEPT = ["plan.md", "result.md"].map((f) => `{agentDir}/pi-foreman/handoffs/*/${f}`);
 
 function without(list: string[], base: string[]): string[] {
   return list.filter((x) => !base.includes(x));
@@ -235,8 +242,9 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
     ],
     pathAsk: hasBase ? without(strs(mp.ask), strs(bp.ask)) : [],
     protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true, { readOk: "main" }), ...prot(pb?.childDeny, null, true), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false, { readOk: "child", fromWriteAsk: true }), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true }))],
-    childBlock: CHILD_BLOCK.map(sub),
+    childBlock: [...CHILD_BLOCK.map(sub), ...CHILD_BLOCK_WORKTREES, ...(owned?.childScratchRoot ? [slash(owned.childScratchRoot), `${slash(owned.childScratchRoot)}/*`] : [])],
     childBlockExcept: CHILD_BLOCK_EXCEPT.map(sub),
+    childBlockInWorkspace: CHILD_BLOCK_WORKTREES,
     ...(owned ? { owned } : {}),
   };
 }
@@ -699,6 +707,8 @@ interface Collected {
   writeTargets?: Set<string>;
   /** The first `git worktree` subcommand found that is neither `list` nor `remove` (children may not run it). */
   worktreeOp?: string;
+  /** Operands of `git worktree remove`: the permission system asks for it, so the worktree block leaves them to it. */
+  worktreeRemoveWords?: Set<string>;
 }
 
 /**
@@ -881,6 +891,7 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
       if (v.core[k] === "worktree" && k + 1 < v.core.length) {
         const op = v.core[k + 1];
         if (!WORKTREE_OK.has(op)) out.worktreeOp = op;
+        else if (op === "remove") for (const x of v.core.slice(k + 2)) out.worktreeRemoveWords?.add(x);
       }
     }
     if (out.protWords) {
@@ -1325,7 +1336,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     const cd = childCdDeny(command, ctx);
     if (cd) return cd;
   }
-  const c: Collected = { unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, writeTargets: new Set() };
+  const c: Collected = { unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, writeTargets: new Set(), worktreeRemoveWords: new Set() };
   collect(command, shell, 0, c);
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
@@ -1346,8 +1357,9 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   // text into a path (no substitution, process substitution or non-pure command), and bash words
   // follow bash globbing (item 4: `grep "x\|register\b" *.go` named /app/.git/... before).
   const pure = c.pure === true && !/\$\(|`|[<>]\(/.test(command);
-  // Only read-only verbs, no write redirect (checked per word below), no PowerShell: write-only protect rules do not fire
-  const readOnly = pure && c.ro === true && shell === "posix";
+  // Only read-only verbs, no write redirect anywhere (any target: a literal, `$f`, a quoted loop variable), no PowerShell: write-only protect rules do not fire.
+  // A protected path in an assignment (`f=...`) or a `for`/`select`/`case` word list stays scanned; without a write redirect nothing writes to it.
+  const readOnly = pure && c.ro === true && shell === "posix" && c.writeTargets!.size === 0;
   const pwords = pure ? [...new Set(c.protWords!.flatMap((w) => [w, ...expandBraces(w)]))] : words;
   const pctx: MatchCtx = shell === "posix" ? { ...ctx, bashWords: true, dotGlob: /dotglob|globignore|glob_?dots/i.test(command) } : ctx;
   const removed = new Set(c.removeWords!.flatMap((w) => [w, ...expandBraces(w)]));
@@ -1361,11 +1373,12 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   }
   if (ctx.role === "child") {
     for (const w of pwords) {
+      if (c.worktreeRemoveWords!.has(w)) continue;
       const hit = childBlockHit(rules, w, pctx);
       if (hit) return childBlockDecision(hit, w);
     }
   }
-  const prot = pwords.map((w) => ({ w, hit: protectHit(rules.protect, w, pctx, true, removed.has(w), readOnly && !c.writeTargets!.has(w)) })).filter((x) => x.hit);
+  const prot = pwords.map((w) => ({ w, hit: protectHit(rules.protect, w, pctx, true, removed.has(w), readOnly) })).filter((x) => x.hit);
   const pd = prot.find((x) => x.hit!.kind === "deny");
   if (pd) return protectDecision(pd.hit!, pd.w, "shell command");
   for (const pat of rules.bashAsk) {
@@ -1420,7 +1433,11 @@ function childBlockHit(rules: OverlayRules, word: string, ctx: MatchCtx): string
   for (const cand of pathCandidates(word, ctx)) {
     if (scratch && insideDir(scratch, cand, ctx)) continue;
     if (rules.childBlockExcept?.some((pat) => pathMatches(pat, cand, ctx))) continue;
-    for (const pat of patterns) if (pathMatches(pat, cand, ctx)) return pat;
+    for (const pat of patterns) {
+      if (!pathMatches(pat, cand, ctx)) continue;
+      if (rules.childBlockInWorkspace?.includes(pat) && [ctx.cwd, workspaceOf(ctx.cwd).root].some((root) => insideDir(root, cand, ctx))) continue;
+      return pat;
+    }
   }
   return null;
 }

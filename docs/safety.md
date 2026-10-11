@@ -82,7 +82,8 @@ The generated permission policy allows the foreman's own artifacts outside the w
 dirs, the session's `subagent-artifacts`, the `../<repo>.worktrees` round dir, the children's scratch root, reads of
 `foreman.json`, `settings.json`, `<agentDir>/pi-foreman` and the global npm root, and `git worktree add|list|prune|lock|unlock|move|repair`
 (`remove` still asks). The grants are per user, not per session, and children's write permissions are unchanged: the
-overlay and the git guard keep children out of the foreman-only dirs and off `git worktree`, and the `parent` and
+overlay and the git guard keep children out of the foreman-only dirs (handoffs except `plan.md`/`result.md`, sibling
+worktrees, other children's scratch dirs, `pi-foreman/claude-config`) and off `git worktree`, and the `parent` and
 `child` handoff files still ask. The list and the reasons are in [permissions](permissions.md#owned-paths).
 
 ## Child scratch

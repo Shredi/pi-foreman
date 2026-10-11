@@ -249,6 +249,34 @@ def _metric(event, session_id=None, **extra):
 _HEREDOC_OPEN = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]+)'|\"([^\"\n]+)\"|\\?([A-Za-z0-9_]+))")
 
 
+# Commands that only read their stdin (never run it). A heredoc body fed to anything else, or
+# piped on into anything else, is executable text (`bash <<EOF`, `cat <<EOF | sh`) and stays scanned.
+_HEREDOC_READERS = frozenset(("cat", "tee", "grep", "egrep", "fgrep", "rg", "head", "tail", "wc", "sort",
+                             "uniq", "less", "more", "cut", "tr", "nl", "column", "diff"))
+
+
+def _segment_verb(seg):
+    """Command word of one segment (leading `VAR=x` assignments skipped), lower-cased basename."""
+    for w in seg.split():
+        if re.match(r"[A-Za-z_][A-Za-z0-9_]*=", w):
+            continue
+        return posixpath.basename(w.strip("'\"")).lower()
+    return ""
+
+
+def _heredoc_is_prose(segs, seps, start):
+    """True when the heredoc opened in segs[start] reaches only stdin readers: its own command and
+    every command it is piped into (`|`) on the same line."""
+    k = start
+    while k < len(segs):
+        if _segment_verb(segs[k]) not in _HEREDOC_READERS:
+            return False
+        if k >= len(seps) or seps[k] != "|":
+            break
+        k += 1
+    return True
+
+
 def _skip_heredoc_bodies(text, i, heredocs):
     """Index after the bodies of the heredocs opened on the line just ended: text fed to a command
     on stdin is prose, not commands (`cat <<'EOT'` with a dot-pi dir or `$x` in it). A body that
@@ -269,7 +297,7 @@ def _split_segments(text):
     `||`, `&&`, `&` and newlines. Quote-aware by hand rather than by
     regex: the whole point is that `echo "a; rm -rf /"` is ONE segment
     (an echo) while `a; rm -rf /` is two."""
-    segs, buf = [], []
+    segs, buf, seps = [], [], []
     quote = None
     heredocs = []
     i, n = 0, len(text)
@@ -299,23 +327,38 @@ def _split_segments(text):
             buf.append("<<<")
             i += 3
             continue
+        if text[i:i + 3] == "$((" or (text[i:i + 2] == "((" and not "".join(buf).strip()):
+            # arithmetic: its `<<` is a shift, not a heredoc
+            j, depth = i + (1 if c == "$" else 0), 0
+            while j < n:
+                depth += (text[j] == "(") - (text[j] == ")")
+                j += 1
+                if depth == 0:
+                    break
+            buf.append(text[i:j])
+            i = j
+            continue
         if text[i:i + 2] == "<<":
             m = _HEREDOC_OPEN.match(text, i)
             if m:
-                heredocs.append((m.group(2) or m.group(3) or m.group(4), bool(m.group(1))))
+                heredocs.append((m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), len(segs)))
                 buf.append(text[i:m.end()])
                 i = m.end()
                 continue
         if c in ";\n":
             segs.append("".join(buf))
+            seps.append(c)
             buf = []
             i += 1
             if c == "\n" and heredocs:
-                i = _skip_heredoc_bodies(text, i, heredocs)
+                prose = [(d, t) for d, t, at in heredocs if _heredoc_is_prose(segs, seps, at)]
+                if len(prose) == len(heredocs):
+                    i = _skip_heredoc_bodies(text, i, prose)
                 heredocs = []
             continue
         if c in "&|":
             segs.append("".join(buf))
+            seps.append("|" if c == "|" and text[i:i + 2] != "||" else "&")
             buf = []
             i += 2 if text[i:i + 2] in ("&&", "||") else 1
             continue

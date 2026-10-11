@@ -34,6 +34,25 @@ class HeredocTest(unittest.TestCase):
     def test_unterminated_heredoc_hides_nothing_before_it(self):
         self.assertEqual(self.verdict("rm -rf $x\ncat <<'EOT'\nprose")[0], "deny")
 
+    def test_a_heredoc_fed_to_a_shell_is_executed_text(self):
+        for open_ in ("bash <<'EOF'", "sh <<EOF", "bash -s <<'EOF'", "cat <<EOF | bash", "cat <<'EOF' | sh -s",
+                      "cat <<EOF | xargs rm", "python3 - <<'EOF'", "cat <<EOF |& bash", "FOO=1 bash <<EOF"):
+            with self.subTest(open=open_):
+                self.assertEqual(self.verdict('%s\nrm -rf "$x"/*\nEOF' % open_)[0], "deny")
+
+    def test_a_reader_pipeline_keeps_the_prose_skip(self):
+        for open_ in ("cat <<'EOF' | grep x", "cat <<EOF | tee out.txt | head", "grep -c x <<'EOF'", "sort <<EOF"):
+            with self.subTest(open=open_):
+                self.assertIsNone(self.verdict('%s\nrm -rf "$x"/*\nEOF' % open_))
+
+    def test_arithmetic_shift_is_not_a_heredoc(self):
+        for cmd in ('echo $((1<<2))\nrm -rf "$x"/*', 'x=$((1 << EOF))\nrm -rf "$x"/*', '((y=1<<2))\nrm -rf "$x"/*'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.verdict(cmd)[0], "deny")
+
+    def test_row_13_prose_heredoc_still_passes(self):
+        self.assertIsNone(self.verdict("cat <<'EOT'\nnotes: the .pi dir and $x are prose\nEOT"))
+
 
 if __name__ == "__main__":
     unittest.main()

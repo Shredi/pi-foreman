@@ -145,16 +145,25 @@ The foreman session owns a few places outside the workspace. Access to them is g
    the same generator and reports drift. PS has no per-session or per-role scope, so these grants hold for every role
    of the user's pi processes. A review-link answer cannot grant them: PS turns an `allow` on the `external_directory`
    family into `defer`.
-2. **Overlay narrowing** (adapter). The overlay can only block. It keeps children out of the main-only dirs and
-   keeps the `parent` and `child` handoff files and all write-protect rules asking or denied. A child's write
-   permissions are unchanged by this section.
+2. **Overlay narrowing** (adapter). The overlay can only block. For a child (path tools and shell operands alike) it
+   denies: `handoffs/**` except `plan.md` and `result.md` (so `ruling.md` at any depth is the foreman's), the session's
+   `subagent-artifacts`, `<agentDir>/foreman.json`, `<agentDir>/pi-foreman/claude-config/**` (credentials, also for
+   reads), `*.worktrees/*` except below the child's own workspace root (sibling round worktrees), and
+   `<tmp>/pi-foreman-scratch/**` except the asking child's own `$FOREMAN_SCRATCH` subtree (another child's dir). The
+   operands of `git worktree remove` are left to PS, which asks. The `parent` and `child` handoff files and all
+   write-protect rules keep asking or denying. A child's write permissions are therefore unchanged by this section.
+
+The write-only protect rules (package root, `protect.ask`) are skipped for a shell command only when every unit is a
+pure read-only verb and the command has no write redirect at all (any target but `/dev/null` and fd dups, so `> $f`
+counts): a protected path named in an assignment (`f=...`) or a `for`/`select`/`case` list is still scanned and
+protected as soon as a redirect could write through it.
 
 | Pattern (`external_directory`, read and write) | Why |
 |---|---|
 | `<agentDir>/pi-foreman/handoffs/*` | the session's handoff dirs (plan, ruling, result) |
 | `<agentDir>/sessions/*/subagent-artifacts[/*]` | child run artifacts |
 | `*.worktrees[/*]` | the round worktree convention dir `../<repo>.worktrees/<branch>`. PS has no workspace-relative token, so the pattern is broader than one repo: any dir named `*.worktrees` |
-| `<tmp>/pi-foreman-scratch[/*]` | the children's scratch root (`<realpath tmpdir>/pi-foreman-scratch`, as `childscratch.ts`). Per user: every child's dir, not only one's own; the overlay lets a child use only its own `$FOREMAN_SCRATCH` |
+| `<tmp>/pi-foreman-scratch[/*]` | the children's scratch root (`<realpath tmpdir>/pi-foreman-scratch`, as `childscratch.ts`). Per user: every child's dir, not only one's own; the overlay lets a child use only its own `$FOREMAN_SCRATCH` and denies the rest of the root |
 | `<agentDir>/foreman.json`, `<agentDir>/settings.json` (bare keys) | reads, including a word in a `for f in ...; do cat "$f"; done` list (PS checks it in both directions). Writes still hit `protect.ask` |
 
 | Pattern (`external_directory_read`) | Why |

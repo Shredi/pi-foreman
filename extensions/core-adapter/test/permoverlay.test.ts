@@ -421,7 +421,8 @@ test("child blocks: handoffs, subagent artifacts and foreman.json are the forema
   const child = world(wt, "child");
   const main = world(wt, "main");
   const plan = path.join(ag2, "pi-foreman", "handoffs", "s1", "notes.md");
-  for (const f of ["plan.md", "result.md", "ruling.md"]) assert.equal(tool(r, child, "write", { path: path.join(ag2, "pi-foreman", "handoffs", "s1", f) }), "pass", `${f} stays the hand-over file`);
+  for (const f of ["plan.md", "result.md"]) assert.equal(tool(r, child, "write", { path: path.join(ag2, "pi-foreman", "handoffs", "s1", f) }), "pass", `${f} stays the hand-over file`);
+  assert.equal(tool(r, child, "write", { path: path.join(ag2, "pi-foreman", "handoffs", "s1", "ruling.md") }), "deny", "ruling.md is the foreman's");
   assert.equal(tool(r, child, "write", { path: path.join(ag2, "pi-foreman", "handoffs", "s1", "parent") }), "deny");
   const art = path.join(ag2, "sessions", "x", "subagent-artifacts", "a.md");
   for (const t of ["read", "write", "edit", "ls", "grep", "find"]) {
@@ -465,6 +466,68 @@ test("owned roots: the foreman's writeAsk (package root) does not ask below its 
   assert.equal(tool(withOwned, main, "write", { path: path.join(ag2, "pi-foreman", "handoffs", "s1", "child") }), "ask");
   // children are unchanged
   assert.equal(tool(withOwned, world(ws, "child"), "write", { path: f }), "deny");
+});
+
+test("revision B1: a protected path reaching a write redirect through a variable keeps its protection", () => {
+  const D = "config/foreman.defaults.json";
+  for (const selfHost of [true, false]) {
+    const r = rules2(selfHost);
+    const c = world(ws, "child");
+    for (const cmd of [
+      `f=${D}; cat x > $f`,
+      `F=${D} && cat x > $F`,
+      `for f in ${D}; do cat x >> "$f"; done`,
+      `select f in ${D}; do cat x >> "$f"; done`,
+      `case ${D} in *) cat x > ${D};; esac`,
+      `case x in x) f=${D}; cat x > "$f";; esac`,
+      `cat ${D} > out.txt`,
+    ]) assert.notEqual(sh(r, c, cmd), "pass", `child selfHost=${selfHost}: ${cmd}`);
+    // the pure reads of the same words stay open
+    for (const cmd of [`cat ${D}`, `f=${D}; cat $f`, `for f in ${D}; do cat "$f"; done`, `cat ${D} 2>&1 | head`]) assert.equal(sh(r, c, cmd), "pass", `child selfHost=${selfHost}: ${cmd}`);
+  }
+  const r = rules2(false);
+  const main = world(ws, "main");
+  const AF = `${ag2}/foreman.json`;
+  for (const cmd of [`f=${AF}; echo x > $f`, `F=${AF} && echo x > $F`, `for f in ${AF}; do echo x >> "$f"; done`, `select f in ${AF}; do echo x >> "$f"; done`, `case ${AF} in *) echo x > ${AF};; esac`]) assert.equal(sh(r, main, cmd), "ask", `main: ${cmd}`);
+  assert.equal(sh(r, main, `f=${AF}; cat $f`), "pass");
+});
+
+test("revision B3: a child stays out of sibling worktrees, other scratch dirs, ruling.md and claude-config; the foreman keeps its grants", () => {
+  const scratchRoot = path.join(w2, "tmp", "pi-foreman-scratch");
+  const owned = { readWrite: [], readOnly: [], childScratchRoot: scratchRoot };
+  const r = rules2(false, ws, owned);
+  const child = world(wt, "child", { scratch });
+  const main = world(ws, "main");
+  const other = path.join(w2, "ws.worktrees", "other", "f.txt");
+  const mine = path.join(wt, "sub", "f.txt");
+  const alien = path.join(scratchRoot, "s1", "L2", "f.txt");
+  const own = path.join(scratch, "f.txt");
+  const ruling = path.join(ag2, "pi-foreman", "handoffs", "s1", "deep", "ruling.md");
+  const cc = path.join(ag2, "pi-foreman", "claude-config", ".credentials.json");
+  for (const t of ["write", "edit"]) {
+    assert.equal(tool(r, child, t, { path: other }), "deny", `${t} sibling worktree`);
+    assert.equal(tool(r, child, t, { path: alien }), "deny", `${t} other child's scratch`);
+    assert.equal(tool(r, child, t, { path: ruling }), "deny", `${t} ruling.md`);
+    assert.equal(tool(r, child, t, { path: mine }), "pass", `${t} own worktree`);
+    assert.equal(tool(r, child, t, { path: own }), "pass", `${t} own scratch`);
+    assert.equal(tool(r, main, t, { path: other }), "pass", `main ${t} sibling worktree`);
+    assert.equal(tool(r, main, t, { path: alien }), "pass", `main ${t} scratch`);
+  }
+  for (const t of ["read", "ls", "grep", "find"]) {
+    assert.equal(tool(r, child, t, { path: cc }), "deny", `child ${t} claude-config`);
+    assert.equal(tool(r, child, t, { path: path.dirname(cc) }), "deny", `child ${t} claude-config dir`);
+    assert.equal(tool(r, main, t, { path: cc }), "pass", `main ${t} claude-config`);
+  }
+  assert.equal(tool(r, child, "read", { path: own }), "pass");
+  assert.equal(tool(r, child, "read", { path: other }), "deny");
+  assert.equal(tool(r, child, "read", { path: alien }), "deny");
+  for (const cmd of [`echo x > ${other}`, `echo x > ${alien}`, `echo x > ${ruling}`, `cat ${cc}`, `ls ${path.dirname(cc)}`, `cp x ${other}`, `cd ${path.dirname(other)} && ls`]) {
+    assert.equal(sh(r, child, cmd), "deny", `child: ${cmd}`);
+  }
+  for (const cmd of [`echo x > ${mine}`, `echo x > ${own}`, `echo x > $FOREMAN_SCRATCH/g.txt`, `node ${own}`, `cat ${cc.replace("claude-config", "nothing")}`]) {
+    assert.notEqual(sh(r, child, cmd), "deny", `child: ${cmd}`);
+  }
+  for (const cmd of [`echo x > ${other}`, `echo x > ${alien}`, `echo x > ${ruling}`, `cat ${cc}`]) assert.equal(sh(r, main, cmd), "pass", `main: ${cmd}`);
 });
 
 test("cleanup of the second world", () => {
