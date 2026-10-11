@@ -10,13 +10,22 @@ const owned = ownedRoots({ agentDir, workspaceRoot: cwd, tmpRoot: path.resolve("
 const ctx = { cwd, home: path.resolve("/t/home"), platform: process.platform, owned };
 const handoff = path.join(agentDir, "pi-foreman", "handoffs", "r1", "result.md");
 
-test("recheckexempt: reads under owned roots and ruling.md are exempt", () => {
+test("recheckexempt: reads under the handoffs dir are exempt", () => {
   assert.equal(recheckExempt("read", { path: handoff }, ctx), true);
   assert.equal(recheckExempt("ls", { path: path.join(agentDir, "pi-foreman", "handoffs") }, ctx), true);
-  assert.equal(recheckExempt("read", { path: "ruling.md" }, ctx), true);
-  assert.equal(recheckExempt("read", { path: "docs/ruling.md" }, ctx), true);
+  assert.equal(recheckExempt("read", { path: path.join(agentDir, "pi-foreman", "handoffs", "r1", "ruling.md") }, ctx), true);
   assert.equal(recheckExempt("bash", { command: `cat ${handoff}` }, ctx), true);
-  assert.equal(recheckExempt("bash", { command: `ls ${path.resolve("/t/work/repo.worktrees")}` }, ctx), true);
+});
+
+test("recheckexempt: worktree reads, a ruling.md elsewhere and other pi-foreman dirs count", () => {
+  assert.equal(recheckExempt("read", { path: "ruling.md" }, ctx), false);
+  assert.equal(recheckExempt("read", { path: "docs/ruling.md" }, ctx), false);
+  assert.equal(recheckExempt("bash", { command: "cat ruling.md" }, ctx), false);
+  assert.equal(recheckExempt("read", { path: path.join(agentDir, "pi-foreman", "ruling.md") }, ctx), false);
+  assert.equal(recheckExempt("read", { path: path.join(agentDir, "pi-foreman", "state", "sessions.json") }, ctx), false);
+  assert.equal(recheckExempt("read", { path: path.resolve("/t/work/repo.worktrees/b1/src/a.ts") }, ctx), false);
+  assert.equal(recheckExempt("bash", { command: `ls ${path.resolve("/t/work/repo.worktrees")}` }, ctx), false);
+  assert.equal(recheckExempt("bash", { command: `cat ${path.join(agentDir, "pi-foreman", "handoffs", "..", "state", "x")}` }, ctx), false);
 });
 
 test("recheckexempt: git worktree add|list|prune are exempt, other git is not", () => {

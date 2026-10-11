@@ -3,6 +3,7 @@
 // (children are kept out), the shell write guard (`--allow-dir`), `foreman_wait` file paths and
 // the recheck exemptions. The permission-system policy that grants the same dirs is rendered
 // from config/permissions.baseline.json (scripts/permissions_gen.py); keep the two in step.
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { SCRATCH_DIR_NAME } from "./childscratch.ts";
 import type { Spawner } from "./spawn.ts";
@@ -35,6 +36,38 @@ export function ownedRoots(i: OwnedInput): OwnedRoots {
   const readOnly = [path.join(i.agentDir, "pi-foreman"), path.join(i.agentDir, "foreman.json"), path.join(i.agentDir, "settings.json")];
   if (i.npmRoot) readOnly.push(path.resolve(i.npmRoot));
   return { readWrite, readOnly, childScratchRoot: path.join(i.tmpRoot, SCRATCH_DIR_NAME) };
+}
+
+/** The handoffs root (`<agentDir>/pi-foreman/handoffs`) among the read-write roots, if any. */
+export const handoffsRootOf = (readWrite: string[]): string | undefined => readWrite.find((r) => path.basename(r) === "handoffs");
+
+/**
+ * The handoff dirs under `root` that belong to the session with intercom id `id`: the `parent` file (the
+ * opener's id) or the `child` file (the opened session's id) of the dir holds it (scripts/foreman_session.py).
+ * Empty without an id or a root.
+ */
+export function ownHandoffDirs(root: string | undefined, id: string | null | undefined): string[] {
+  if (!root || !id) return [];
+  const out: string[] = [];
+  try {
+    for (const e of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!e.isDirectory()) continue;
+      const dir = path.join(root, e.name);
+      for (const f of ["parent", "child"]) {
+        try {
+          if (fs.readFileSync(path.join(dir, f), "utf8").split(/\r?\n/)[0].trim() === id) {
+            out.push(dir);
+            break;
+          }
+        } catch {
+          // absent
+        }
+      }
+    }
+  } catch {
+    // no handoffs dir
+  }
+  return out;
 }
 
 /** `p` is `root` or below it; `root` may carry `*` segments (matching one path segment). */
