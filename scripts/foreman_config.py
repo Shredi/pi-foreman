@@ -49,6 +49,8 @@ Keys outside safety that the project and session layers cannot loosen either
     providers.*.strongOnRevision     only false is accepted (true relaunches on the strong model)
     ladder.strongOnRevision, roles.*.strongOnRevision   only false is accepted (true climbs after a FAIL)
     tools.git                        only false is accepted (true adds tools)
+    tools.pr                         only false is accepted (true adds tools)
+    tools.prHost                     ignored (it picks the program the PR tools run)
     childMaxThinking                 lower only (off < ... < max)
     ladder.* (but strongOnRevision), providers.*.ranks   ignored (the ladder and the child rank policy: L1/L3/L2 only)
     providers.*.strongAbove / childMaxTurns, roles.*.strongAbove / childMaxTurns   ignored (ladder)
@@ -133,6 +135,7 @@ import datetime
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -142,7 +145,7 @@ SCHEMA_PATH = ROOT / "config" / "foreman.schema.json"
 CHILD_ROLES = ["planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
 # Tools a child never gets, whatever roles.<id>.tools says: children reach the foreman through
 # contact_supervisor, never through pi-intercom (the adapter also refuses the tool in children).
-CHILD_DENIED_TOOLS = ("intercom",)
+CHILD_DENIED_TOOLS = ("intercom", "pr_create", "pr_watch")
 THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 # project-layer tightening of safety.* (see module docstring)
@@ -175,6 +178,7 @@ IGNORED_KEYS = [
     (("roles", "*", "launch"), "the launch mode comes from the user or overlay config"),
     (("roles", "*", "file"), "a role file replaces the prompt: user or overlay config only"),
     (("providers", "*", "roles", "*", "strong"), "the strong model is picked in the user or overlay config"),
+    (("tools", "prHost"), "the PR host program comes from the user or overlay config"),
     (("sync", "repos"), "the repository list comes from the user or overlay config"),
     (("retro", "proposalMinReviews"), "the proposal threshold comes from the user or overlay config"),
     (("retro", "backlogDir"), "the backlog location comes from the user or overlay config"),
@@ -235,6 +239,7 @@ LAYER_TIGHTEN = [
     (("wait", "maxActive"), "lower_only"),
     (("childMaxThinking",), ("ordered", tuple(THINKING))),
     (("tools", "git"), "false_only"),
+    (("tools", "pr"), "false_only"),
 ]
 LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
                  "threshold": 0.3, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0}
@@ -611,6 +616,51 @@ def semantic_issues(cfg):
                     except re.error as exc:
                         path = "safety.git.commit." + key
                         issues.append(("error", path, "%s: invalid regular expression %r (%s)" % (path, pat, exc)))
+    issues.extend(pr_host_issues((cfg.get("tools") or {}).get("prHost")))
+    return issues
+
+
+PR_HOST_KEYS = ("create", "status", "checks", "comments")
+PR_PLACEHOLDERS = ("{repo}", "{number}", "{since}", "{base}", "{head}", "{title}", "{bodyFile}", "{draft}")
+
+
+def pr_host_issues(host):
+    """tools.prHost checks the schema cannot express (design/pr-ops.md section 1)."""
+    issues = []
+
+    def bad(path, why):
+        issues.append(("error", path, "%s: %s" % (path, why)))
+
+    if host is None:
+        return issues
+    if isinstance(host, str):
+        if host not in ("auto", "gh", "glab"):
+            bad("tools.prHost", "must be auto, gh, glab or an object of command templates")
+        return issues
+    if not isinstance(host, dict):
+        return issues
+    for key, val in host.items():
+        path = "tools.prHost." + str(key)
+        if key not in PR_HOST_KEYS:
+            bad(path, "unknown template key (allowed: %s)" % ", ".join(PR_HOST_KEYS))
+            continue
+        if not isinstance(val, str) or not val.strip() or len(val) > 1024:
+            bad(path, "must be a non-empty command line of at most 1024 characters")
+            continue
+        try:
+            words = shlex.split(val, posix=True)
+        except ValueError as exc:
+            bad(path, "cannot be split into words (%s)" % exc)
+            continue
+        if not words:
+            bad(path, "must be a non-empty command line of at most 1024 characters")
+            continue
+        for w in words:
+            if ("{" in w or "}" in w) and w not in PR_PLACEHOLDERS:
+                bad(path, "%r is not a placeholder (allowed: %s, each as a whole word)" % (w, " ".join(PR_PLACEHOLDERS)))
+                break
+        if words[0] in PR_PLACEHOLDERS:
+            bad(path, "the first word must be the program, not a placeholder")
     return issues
 
 
@@ -867,6 +917,17 @@ def with_git_pack(cfg, role, tools):
     return tools
 
 
+# tools.pr (default on): roles whose tool list has bash get the PR read tools (docs/tools.md).
+PR_READ_TOOLS = ("pr_status", "pr_checks", "pr_comments")
+PR_ROLE_TOOLS = {"reviewer": ("pr_status", "pr_comments"), "senior-reviewer": ("pr_status", "pr_comments")}
+
+
+def with_pr_pack(cfg, role, tools):
+    if (cfg.get("tools") or {}).get("pr") is True and "bash" in tools:
+        tools.extend(t for t in PR_ROLE_TOOLS.get(role, PR_READ_TOOLS) if t not in tools)
+    return tools
+
+
 def resolve_role(cfg, role, provider):
     """Return {model, thinking, codemode, tools[, strong]}; raise ConfigError if unresolvable.
 
@@ -888,7 +949,7 @@ def resolve_role(cfg, role, provider):
     codemode = effective_codemode(cfg, provider, role)
     tools = list((cfg.get("roles") or {}).get(role, {}).get("tools", []))
     if role != "foreman":
-        tools = with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in tools if t not in CHILD_DENIED_TOOLS]))
+        tools = with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in tools if t not in CHILD_DENIED_TOOLS])))
     if codemode and "codemode" not in tools:
         tools.append("codemode")
     out = {"model": model, "thinking": cap_thinking(thinking, cfg.get("maxThinking")),
@@ -926,7 +987,7 @@ def generate_subagents(cfg):
     """
     by_provider, overrides, errors = {}, {}, []
     for role in CHILD_ROLES:
-        tools = with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in (cfg.get("roles") or {}).get(role, {}).get("tools", []) if t not in CHILD_DENIED_TOOLS]))
+        tools = with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in (cfg.get("roles") or {}).get(role, {}).get("tools", []) if t not in CHILD_DENIED_TOOLS])))
         if cfg.get("roles", {}).get(role, {}).get("codemode") and "codemode" not in tools:
             tools.append("codemode")
         overrides[role] = {"tools": tools}

@@ -4,7 +4,8 @@
 CLI: one JSON request on stdin, one JSON answer on stdout, exit 0.
 
     request  {"op": "worktree_remove" | "move" | "copy" | "status" | "log" | "diff_stat" |
-              "branch_state" (the last four are read-only, capped to 200 entries / 16 KB), "args": {...}, "cwd": "<dir>",
+              "branch_state" (the last four are read-only, capped to 200 entries / 16 KB),
+              "pr_create" | "pr_status" | "pr_checks" | "pr_comments" (scripts/pr_ops.py, run a host CLI), "args": {...}, "cwd": "<dir>",
               "config": {"copyMaxBytes": ..., "worktreeDisposable": [...], "baseBranch": ...}}
     answer   {"ok": true, "action": "<what was done>", ...}
           or {"ok": false, "precondition": "<name>", "message": "precondition failed: <name> (<detail>)"}
@@ -45,6 +46,16 @@ DEFAULT_DISPOSABLE = ["node_modules/", "target/", "dist/", "build/", "__pycache_
 GIT_TIMEOUT = 60
 CASE_INSENSITIVE = sys.platform in ("win32", "darwin")
 _REPARSE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+
+TOKEN_RX = r"(?<![A-Za-z0-9_])(?:ghp_|gho_|ghs_|ghu_|ghr_|AIza|github_pat_|npm_|glpat-|sk-ant-|xox[bap]-|xoxe[.-])[A-Za-z0-9_\-]{16,}"
+REDACT = [(re.compile(r"(\w[\w+.\-]*://)[^/@\s]+@"), r"\1***@"), (re.compile(TOKEN_RX), "***"),
+          (re.compile(r"(?<![A-Z0-9])AKIA[0-9A-Z]{16}(?![A-Z0-9])"), "***")]
+
+
+def redact(text):
+    for rx, sub in REDACT:
+        text = rx.sub(sub, text)
+    return text
 
 
 class Precondition(Exception):
@@ -734,11 +745,20 @@ OPS = {"move": op_move, "copy": op_copy, "worktree_remove": op_worktree_remove, 
        "log": op_log, "diff_stat": op_diff_stat, "branch_state": op_branch_state}
 
 
+PR_OPS = ("pr_create", "pr_status", "pr_checks", "pr_comments")
+
+
 def handle(req):
-    if not isinstance(req, dict) or req.get("op") not in OPS:
+    op = req.get("op") if isinstance(req, dict) else None
+    if op not in OPS and op not in PR_OPS:
         return {"ok": False, "precondition": "bad_request", "message": "precondition failed: bad_request (unknown op)"}
     try:
-        out = OPS[req["op"]](req)
+        if op in PR_OPS:
+            import pr_ops  # late: pr_ops imports safe_ops
+            fn = pr_ops.OPS[op]
+        else:
+            fn = OPS[op]
+        out = fn(req)
         out["ok"] = True
         return out
     except Precondition as exc:
@@ -753,6 +773,7 @@ def handle(req):
 
 
 def main():
+    sys.modules.setdefault("safe_ops", sys.modules[__name__])  # pr_ops must share this module's Precondition
     try:
         req = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     except ValueError:

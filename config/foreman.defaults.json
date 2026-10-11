@@ -101,5 +101,5 @@
   "bridge": { "isolateClaudeConfig": "auto" },
   "python": { "path": null },
   "trace": { "enabled": null, "dir": null },
-  "tools": { "git": false }
+  "tools": { "git": false, "pr": true, "prHost": "auto", "prWatchSeconds": 60 }
 }

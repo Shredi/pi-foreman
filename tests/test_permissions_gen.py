@@ -36,6 +36,8 @@ class GeneratorTest(unittest.TestCase):
         self.assertEqual(p["read"], "allow")
         self.assertEqual(p["foreman_move"], "allow")
         self.assertEqual(p["git_status"], "allow")
+        self.assertEqual([p[t] for t in ("pr_status", "pr_checks", "pr_comments", "pr_watch")], ["allow"] * 4)
+        self.assertNotIn("pr_create", p)
         self.assertEqual(p["external_directory"], "ask")
         self.assertEqual(out["shellTools"]["powershell"]["commandArgument"], "command")
         self.assertEqual(p["bash"]["Remove-Item * -R*"], "ask")
