@@ -633,6 +633,30 @@ test("review 4: heredoc bodies stay scanned for reader programs with script/outp
   for (const cmd of probes(`echo x > ${AF}`)) assert.equal(sh(rules2(false), world(ws, "main"), cmd), "ask", `main: ${cmd}`);
 });
 
+test("review 5 F1: abbreviated long options, a stdin operand and exec flags are not read-only", () => {
+  const D = "config/foreman.defaults.json";
+  const bad = [
+    `sort --o=${D} x`,
+    `sort --out=${D} ${D}`,
+    `uniq - ${D}`,
+    `uniq -- - ${D}`,
+    `uniq -c - ${D}`,
+    `sed --in-pl s/a/b/ ${D}`,
+    `awk -E p.awk ${D}`,
+    `awk --exec p.awk ${D}`,
+    `sort --compress-prog=sh ${D}`,
+    `rg --pr=sh x ${D}`,
+    `grep --pre=sh x ${D}`,
+  ];
+  for (const selfHost of [true, false]) {
+    const r = rules2(selfHost);
+    for (const cmd of bad) assert.equal(sh(r, world(ws, "child"), cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);
+    for (const cmd of ["sort", "uniq", "grep -rn p", "sed -n 1,5p", "awk '{print}'"]) {
+      assert.notEqual(sh(r, world(ws, "child"), `${cmd} ${D}`), "deny", `child selfHost=${selfHost}: ${cmd}`);
+    }
+  }
+});
+
 test("cleanup of the second world", () => {
   fs.rmSync(w2, { recursive: true, force: true });
 });

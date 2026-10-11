@@ -824,14 +824,36 @@ function scriptOperands(core: string[], skip: Set<number>): number[] {
 /** Words that can never name a file to change in a redirect. */
 const DEV_TARGET = /^(\/dev\/(null|stdout|stderr|tty)|\d+|-)$/;
 
+/**
+ * Long options each read command may carry and stay read-only. Anything else (an abbreviation such as
+ * `--o=` for `--output`, `--in-pl`, `--pr=sh`, or an unknown option) makes the unit not read-only.
+ */
+const READ_LONG: Record<string, string[]> = {
+  sort: "reverse numeric-sort unique ignore-case key field-separator human-numeric-sort month-sort version-sort general-numeric-sort ignore-leading-blanks dictionary-order ignore-nonprinting stable check merge zero-terminated parallel buffer-size temporary-directory random-sort help version".split(" "),
+  uniq: "count repeated unique ignore-case skip-fields skip-chars check-chars all-repeated group zero-terminated help version".split(" "),
+  sed: "quiet silent expression regexp-extended separate null-data line-length posix debug sandbox unbuffered binary help version".split(" "),
+  awk: "assign field-separator posix traditional re-interval sandbox help version".split(" "),
+  grep: "recursive dereference-recursive line-number ignore-case no-ignore-case invert-match count files-with-matches files-without-match include exclude exclude-dir regexp fixed-strings extended-regexp basic-regexp perl-regexp word-regexp line-regexp no-filename with-filename only-matching quiet silent max-count context after-context before-context color colour binary-files null text no-messages byte-offset initial-tab binary directories devices help version".split(" "),
+  rg: "glob iglob type type-not files files-with-matches files-without-match count count-matches line-number no-line-number ignore-case smart-case case-sensitive hidden no-ignore fixed-strings word-regexp line-regexp invert-match only-matching max-count max-depth context after-context before-context regexp heading no-heading with-filename no-filename follow multiline color json sort sortr threads type-list column pretty vimgrep null text quiet stats no-messages unrestricted glob-case-insensitive pcre2 engine replace trim help version".split(" "),
+  find: ["help", "version"],
+  diff: "unified context brief recursive ignore-case ignore-space-change ignore-all-space ignore-blank-lines side-by-side new-file text color report-identical-files minimal show-c-function label exclude help version".split(" "),
+};
+
 /** Whether one command (wrappers stripped) can only read: no in-place edit, output file, exec or script file. */
 function unitReadOnly(core: string[], skip: Set<number>): boolean {
   const verb = baseName(core[0]);
   const args = core.map((x, i) => (i > 0 && !skip.has(i) ? x : "")).slice(1);
   const has = (re: RegExp): boolean => args.some((x) => re.test(x));
+  const longs = READ_LONG[verb.endsWith("awk") ? "awk" : verb];
+  if (longs) {
+    const end = args.indexOf("--");
+    for (const x of end < 0 ? args : args.slice(0, end)) {
+      if (/^--./.test(x) && !longs.includes(x.slice(2).split("=")[0])) return false;
+    }
+  }
   if (verb === "sort") return !has(/^-[A-Za-z]*o|^--(output|compress-program)\b/);
   if (verb === "find") return !has(/^-(exec|execdir|ok|okdir|delete|fprint0?|fprintf|fls)$/);
-  if (verb === "uniq") return args.filter((x) => x && !x.startsWith("-")).length <= 1;
+  if (verb === "uniq") return args.filter((x) => x && (x === "-" || !x.startsWith("-"))).length <= 1;
   if (verb === "rg") return !has(/^--(pre|hostname-bin)\b/);
   if (verb === "sed") {
     if (has(/^-[A-Za-z]*[if]|^--(in-place|file)\b/)) return false;
@@ -839,7 +861,7 @@ function unitReadOnly(core: string[], skip: Set<number>): boolean {
     return scripts.length > 0 && scripts.every((i) => sedReadOnly(core[i]));
   }
   if (verb.endsWith("awk")) {
-    if (has(/^-[A-Za-z]*[fil]|^--(file|include|load)\b/)) return false;
+    if (has(/^-[A-Za-z]*[fEil]|^--(file|exec|include|load)\b/)) return false;
     const scripts = scriptOperands(core, skip);
     return scripts.length > 0 && scripts.every((i) => awkReadOnly(core[i]));
   }
