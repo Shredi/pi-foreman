@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Env } from "./env.ts";
+import { PR_MESSAGE_TYPE } from "./prwatch.ts";
 
 export const BINDING_NS = "pi-foreman/1";
 export const BINDINGS_ENV = "PI_SUBAGENT_EXTENSION_BINDINGS";
@@ -370,7 +371,7 @@ export function causeOfCustom(customType: unknown): TurnCause | null {
   if (typeof customType !== "string") return null;
   if (CHILD_MESSAGE_TYPES.includes(customType)) return "child";
   if (INTERCOM_MESSAGE_TYPES.includes(customType)) return "intercom";
-  if (customType === WAKE_MESSAGE_TYPE) return "wake";
+  if (customType === WAKE_MESSAGE_TYPE || customType === PR_MESSAGE_TYPE) return "wake";
   return null;
 }
 

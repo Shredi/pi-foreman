@@ -10,7 +10,7 @@ import { changedFileOf, escalate, initialCeremony, onFileChanged, userOverride }
 import { roundSteps } from "../actions.ts";
 import { checkLaunch, completedAgents, initialRounds, launchSteps, onReviewDone, onTierChange, revisionLimit, verdictOf } from "../rounds.ts";
 import type { RoundState } from "../rounds.ts";
-import { foremanTriage, isTriaged, stripVerbatim, triageGateBlock, workspaceTarget } from "../triage.ts";
+import { foremanTriage, isTriaged, stripVerbatim, triageGateBlock, workspaceTarget, OUTWARD_TOOLS } from "../triage.ts";
 import { familyWarnings, modelFamily, modelGaps } from "../modelcheck.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -200,4 +200,14 @@ test("H4 pin: the reviewer roles are read-only with a shell", () => {
     const front = fs.readFileSync(path.join(PKG, "agents", `${role}.md`), "utf8").split(/^---$/m)[1];
     assert.deepEqual(/^tools:\s*(.*)$/m.exec(front)?.[1].split(/,\s*/), want, role);
   }
+});
+
+test("pr_create is refused until a tier is recorded (outward tool)", () => {
+  assert.equal(OUTWARD_TOOLS.has("pr_create"), true);
+  const opts = { cwd: "/ws", home: "/h", platform: "linux" };
+  const d = initialCeremony("standard");
+  assert.match(triageGateBlock("pr_create", {}, d, opts) ?? "", /^pi-foreman: pr_create refused: no tier recorded yet\. Call foreman_triage/);
+  const t = foremanTriage(d, "standard", "ok");
+  assert.ok("state" in t);
+  if ("state" in t) assert.equal(triageGateBlock("pr_create", {}, t.state, opts), undefined);
 });

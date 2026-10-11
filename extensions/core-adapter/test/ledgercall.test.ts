@@ -113,3 +113,9 @@ test("ledgercall: upsert plan and line rewrite keep state, EOL and skip fences",
   assert.equal(findItemByText(f, "b"), "2");
   assert.equal(findItemByText(f, "fenced"), null);
 });
+
+test("applyVariants: a dotted key in the tag", () => {
+  const text = "<!--tools.pr=off-->old\n<!--tools.pr=on-->new\nplain\n";
+  assert.equal(applyVariants(text, { "tools.pr": "on" }), "new\nplain\n");
+  assert.equal(applyVariants(text, { "tools.pr": "off" }), "old\nplain\n");
+});

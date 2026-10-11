@@ -185,3 +185,19 @@ test("pending panel timeout: composes without the missing shadow, traced decisio
   await settle();
   assert.equal(sent.length, 1);
 });
+
+test("panel: extra text (failed PR checks) is appended to the composed block, and a failing extra adds nothing", async () => {
+  const sent: string[] = [];
+  const open = (extra: () => Promise<string>) => {
+    const panels = new PendingPanels({ send: (t) => sent.push(t), trace: () => {}, extra });
+    panels.open({ id: "r1", gate: "pre-pr", primary: "p/m-haiku", task: "t", expected: ["p/m-a"], primaryFindings: Promise.resolve([]), visible: true, waitMs: 5 });
+  };
+  open(async () => "PR checks: 1 failed.");
+  await settle();
+  assert.match(sent[0], /\nPR checks: 1 failed\.$/);
+  open(async () => {
+    throw new Error("x");
+  });
+  await settle();
+  assert.doesNotMatch(sent[1], /PR checks/);
+});

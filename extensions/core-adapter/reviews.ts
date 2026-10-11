@@ -108,7 +108,7 @@ export function passHeads(list: readonly ReviewRecord[]): string[] {
 }
 
 /** Every `[pr_refused:<reason>]` the git guard (scripts/git_guard.py) and the PR tool gate emit. */
-export const PR_REFUSALS = ["no_review", "stale_review", "head_unknown", "child", "pr_alias", "pr_compound", "pr_config"] as const;
+export const PR_REFUSALS = ["no_review", "stale_review", "head_unknown", "child", "pr_alias", "pr_compound", "pr_config", "checks_failed"] as const;
 export type PrRefusal = "no_review" | "stale_review" | "head_unknown";
 
 /** Arguments of a package PR tool that name the branch the pull request opens from (B-M7). */
@@ -121,10 +121,18 @@ export const PR_BRANCH_ARGS = ["head", "source_branch", "sourceBranch", "branch"
  */
 export async function prToolRefusal(cwd: string, reviewed: readonly string[], input: Record<string, unknown> = {}): Promise<{ reason: PrRefusal; message: string } | null> {
   const named = PR_BRANCH_ARGS.filter((k) => input[k] !== undefined && input[k] !== null && input[k] !== "").map((k) => input[k]);
-  const heads = named.length === 0 ? [await headOf(cwd)] : await Promise.all(named.map((v) => (typeof v === "string" ? commitOf(cwd, v.split(":").pop() ?? "") : Promise.resolve(null))));
+  const refs = named.length === 0 ? ["HEAD"] : named.map((v) => (typeof v === "string" ? v.split(":").pop() ?? "" : ""));
+  const heads = await Promise.all(refs.map((r) => commitOf(cwd, r)));
   let reason: PrRefusal | null = null;
-  for (const head of heads) {
-    if (head && reviewed.includes(head)) continue;
+  for (let i = 0; i < heads.length; i++) {
+    const head = heads[i];
+    if (head && reviewed.includes(head)) {
+      // B-M3: a pushed upstream that differs from the reviewed head is another commit than the one reviewed.
+      const up = await commitOf(cwd, (refs[i] === "HEAD" ? "" : refs[i]) + "@{upstream}");
+      if (!up || reviewed.includes(up)) continue;
+      reason = "stale_review";
+      break;
+    }
     reason = !head ? "head_unknown" : reviewed.length === 0 ? "no_review" : "stale_review";
     break;
   }
@@ -137,4 +145,17 @@ export async function prToolRefusal(cwd: string, reviewed: readonly string[], in
 export function isPrToolName(name: string): boolean {
   const words = name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).join("_");
   return /(^|_)(pr|mr|pull_?request|merge_?request)(_|$)/.test(words) && /(create|open)/.test(words);
+}
+
+/** The PR gate for a PR-creating tool call: children never, the review test when ceremony.reviewBeforePr is on. */
+export async function prGateRefusal(g: { tool: string; isChild: boolean; gateOn: boolean; reviewed: readonly string[]; cwd: string; input?: Record<string, unknown> }): Promise<{ reason: string; message: string } | null> {
+  if (g.isChild) return { reason: "child", message: `pi-foreman: ${g.tool} refused [pr_refused:child]: children may not create pull requests. Report back and let the foreman do it after a review.` };
+  if (!g.gateOn) return null;
+  return prToolRefusal(g.cwd, g.reviewed, g.input ?? {});
+}
+
+/** One line for the review panel block when the PR's checks failed ("" otherwise). */
+export function checksLine(c: { failed: { name: string }[]; pending: unknown[]; summary: string } | null): string {
+  if (!c || !Array.isArray(c.failed) || c.failed.length === 0) return "";
+  return `PR checks: ${c.summary}. Failed checks block a merge; fix them before asking for review again.`;
 }

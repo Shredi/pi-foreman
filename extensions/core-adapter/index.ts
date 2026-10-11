@@ -36,7 +36,7 @@ import { applyLaunchModels, applyLaunchTimeouts, roleTimeoutMs, splitLevel, STRE
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
 import { ReviewFacts } from "./diffscan.ts";
-import { applyFactCriticalRungs, applyResearchFloor, markedEntries, researchTraces } from "./research.ts";
+import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
@@ -51,14 +51,15 @@ import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
 import { runGuard } from "./runguard.ts";
-import { applyGitPack, gitPackOn, registerGitPack } from "./gitpack.ts";
-import { registerSafeOps } from "./safeops.ts";
+import { applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, registerGitPack, registerPrPack } from "./gitpack.ts";
+import { PrWatches, pollSnapshot } from "./prwatch.ts";
+import { registerSafeOps, runSafeOp } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
 import type { Spawner } from "./spawn.ts";
 import { mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
-import { appendReview, capSet, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prToolRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
+import { appendReview, capSet, checksLine, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prGateRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
 import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
 import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts";
@@ -94,7 +95,7 @@ import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCo
 import type { CloseReport } from "./close.ts";
 import { registerSession } from "./session.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
-import { foremanTriage, GATED_TOOLS, isTriaged, triageAdvice, triageGateBlock, TRIAGE_RULES, TRIAGE_TOOL, trivialPathAdvice, workspaceTargets } from "./triage.ts";
+import { foremanTriage, GATED_TOOLS, isTriaged, OUTWARD_TOOLS, triageAdvice, triageGateBlock, TRIAGE_RULES, TRIAGE_TOOL, trivialPathAdvice, workspaceTargets } from "./triage.ts";
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
@@ -160,6 +161,10 @@ interface Session {
   gitDrift: GitDriftWatch;
   /** The git tool pack is on for this session (gitpack.ts). */
   gitPack: boolean;
+  /** The PR tools are on for this session (gitpack.ts), their watches, and the context of the latest pr_watch call (for idle). */
+  prPack: boolean;
+  prWatches: PrWatches;
+  prCtx: ExtensionContext | null;
   /** Project Claude Code config snapshot, checked before claude-bridge prompts (claudedrift.ts). */
   claudeCfg: ClaudeConfigWatch;
   /** Usage log (usage.ts): file and the fields every line of this session carries. */
@@ -375,6 +380,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       supervisor: new SupervisorWindow(),
       gitDrift: new GitDriftWatch(),
       gitPack: false,
+      prPack: false,
+      prCtx: null,
+      prWatches: new PrWatches({
+        poll: (n, until) => pollSnapshot((op, args) => prRun(s, s.prCtx?.cwd ?? s.cwd, op, { ...args, number: n }), n, until),
+        send: (msg, idle) => pi.sendMessage(msg, idle ? { triggerTurn: true } : { deliverAs: "followUp" }),
+        idle: () => s.prCtx?.isIdle() ?? true,
+        trace: (r) => s.trace?.emit(r),
+        intervalMs: () => (typeof get(s.config.config, "tools.prWatchSeconds") === "number" ? (get(s.config.config, "tools.prWatchSeconds") as number) : 60) * 1000,
+        now: () => Date.now(),
+      }),
       claudeCfg: new ClaudeConfigWatch(),
       trace: ((t) => openTrace({ enabled: t.enabled, dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: t.id, base: t.base }))(sessionTrace(get(config.config, "trace.enabled"), get(config.config, "retro.enabled"), ctx.mode, id, b)),
       usage: { file: usageFile(agentDir, foremanSession), line },
@@ -391,7 +406,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       climbRefusals: 0,
       reviewerFails: new ReviewerFails(),
       reviewRuns: { byCall: new Map(), byRun: new Map(), blocks: new Map(), findings: new Map(), sync: Promise.resolve() },
-      panels: new PendingPanels({ send: (text) => pi.sendMessage({ customType: "pi-foreman-panel", content: text, display: true }, { triggerTurn: false }), trace: (r) => s.trace?.emit(r) }),
+      panels: new PendingPanels({ send: (text) => pi.sendMessage({ customType: "pi-foreman-panel", content: text, display: true }, { triggerTurn: false }), trace: (r) => s.trace?.emit(r), extra: () => prChecksLine(s) }),
       reviews: [],
       reviewSync: Promise.resolve(),
       reviewMarked: new Set(),
@@ -451,6 +466,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     s.gitPack = gitPackOn({ config: config.config, isChild: s.isChild, env: process.env });
     applyGitPack(pi, s.gitPack, s.isChild, process.env);
+    s.prPack = prPackOn({ config: config.config, isChild: s.isChild, env: process.env });
+    applyPrPack(pi, s.prPack, s.isChild, process.env);
     if (!s.isChild) {
       const gitLines = s.gitDrift.bind(markerDir, cwd, home);
       if (gitLines.length) ctx.ui.notify(`pi-foreman: the repository's git config or hooks changed since the last session; the next foreman git run or child launch asks.\n${gitLines.join("\n")}`, "warning");
@@ -605,6 +622,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return outcome;
   }
 
+  /** The config the PR ops get: the merged safety.ops plus the effective tools.prHost. */
+  function prOpsConfig(s: Session): Record<string, unknown> {
+    const ops = get(s.config.config, "safety.ops");
+    return { ...(ops && typeof ops === "object" ? (ops as Record<string, unknown>) : {}), prHost: get(s.config.config, "tools.prHost") ?? "auto" };
+  }
+
+  function prRun(s: Session, cwd: string, op: "pr_status" | "pr_checks" | "pr_comments", args: Record<string, unknown>, timeoutMs?: number) {
+    return runSafeOp({ python: pyPath(s), script: path.join(PKG_ROOT, "scripts", "safe_ops.py"), op, args, cwd, config: prOpsConfig(s), env: Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")), spawner, timeoutMs });
+  }
+
+  /** Failed PR checks as one line for the review panel block ("" when none, off, or on any failure). */
+  async function prChecksLine(s: Session): Promise<string> {
+    if (!s.prPack || s.isChild) return "";
+    const r = await prRun(s, s.cwd, "pr_checks", {}, 30_000);
+    return r.kind === "ran" ? checksLine(r.result as never) : "";
+  }
+
   // ------------------------------------------------------------------ events
 
   pi.on("session_start", async (event, ctx) => {
@@ -638,6 +672,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     s.registration = undefined;
     s.panels.clear();
+    s.prWatches.clear();
     sweepScratch(s);
     review.drop(s.id);
     s.live?.stop();
@@ -813,6 +848,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewPerRevision: get(s.config.config, "ceremony.reviewPerRevision") === false ? "off" : "on",
       trivialPath: trivialBuilderPath(get(s.config.config, "ceremony.required")) ? "builder" : "off",
       ladder: "on",
+      "tools.pr": s.prPack ? "on" : "off",
       // Foreman rulings never put a diff fact in scope (review rule; "off" only renders the eee843d baseline).
       factRulings: "on",
       // Launch skeletons and tier rules (retro-harvest; "off" only renders the eee843d baseline).
@@ -1081,16 +1117,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const shellWrite = await shellWriteBlock(ctx, event.toolName, event.input as Record<string, unknown>);
       if (shellWrite) return shellWrite;
     }
-    if (isPrToolName(event.toolName) && mapTool(event.toolName).pre.length === 0) {
+    if (OUTWARD_TOOLS.has(event.toolName)) {
+      const triage = await triageBlock(ctx, event.toolName, event.input as Record<string, unknown>, event.toolCallId);
+      if (triage) return triage;
+    }
+    if (isPrToolName(event.toolName) && event.toolName !== "pr_create" && mapTool(event.toolName).pre.length === 0) {
       // A package tool that creates a pull request: the same review test as the git guard, against workspace HEAD.
       try {
         const s = await ensureSession(ctx);
-        let refusal: { reason: string; message: string } | null = null;
-        if (s.isChild) refusal = { reason: "child", message: `pi-foreman: ${event.toolName} refused [pr_refused:child]: children may not create pull requests. Report back and let the foreman do it after a review.` };
-        else if (get(s.config.config, "ceremony.reviewBeforePr") !== false) {
-          await s.reviewSync;
-          refusal = await prToolRefusal(ctx.cwd, passHeads(s.reviews), event.input as Record<string, unknown>);
-        }
+        if (!s.isChild) await s.reviewSync;
+        const refusal = await prGateRefusal({ tool: event.toolName, isChild: s.isChild, gateOn: get(s.config.config, "ceremony.reviewBeforePr") !== false, reviewed: passHeads(s.reviews), cwd: ctx.cwd, input: event.input as Record<string, unknown> });
         if (refusal) {
           s.trace?.emit({ event: "pr_refused", reason: refusal.reason, toolFamily: event.toolName });
           return { block: true, reason: refusal.message };
@@ -1220,19 +1256,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           reviewerTraces.push(...occ.traces);
           // [research] / [fact-critical] markers (research.ts): the floor is written before the rank check.
           const marked = markedEntries(input);
-          applyResearchFloor(marked, resolution.roles, s.config.config, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
+          const raised = applyResearchFloor(marked, resolution.roles, s.config.config, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
           const foremanModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null;
           for (const m of launchedModels(input)) {
             const no = rankRefusal(s.config.config, foremanModel, m);
             if (!no) continue;
-            s.trace?.emit({ event: "launch_refused", reason: "rank_policy", policy: no.policy, foreman: no.foreman, requested: no.requested });
-            return { block: true, reason: no.message };
+            const marker = floorMarker(raised, m);
+            s.trace?.emit({ event: "launch_refused", reason: "rank_policy", policy: no.policy, foreman: no.foreman, requested: no.requested, ...(marker ? { marker } : {}) });
+            return { block: true, reason: marker ? `${no.message} The [${marker}] marker raised this entry to its role's strong rung, which the rank policy refuses; drop the marker or map a strong rung the policy allows.` : no.message };
           }
           // The security rung is explicit config: written after the rank check (docs/ladder.md); traced when it overrides the policy.
           markPolicyOverrides(reviewerClimbs, (m) => rankRefusal(s.config.config, foremanModel, m) !== null);
           applySecurityRungs(reviewerClimbs, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
           applyFactCriticalRungs(marked, resolution.roles, s.config.config, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
           for (const r of researchTraces(marked)) s.trace?.emit(r);
+          for (const r of entryTraces(input, marked)) s.trace?.emit(r);
           // Different-model rule (every reviewer launch): after the security rung, so it sees the final model; traced with policy_override.
           const refusedBy = (m: string): boolean => rankRefusal(s.config.config, foremanModel, m) !== null;
           reviewerTraces.push(...applyReviewModelRule(input, resolution.roles, { config: s.config.config, foreman: foremanModel, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: refusedBy, thinking: occ.thinking }));
@@ -1906,6 +1944,40 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
   });
 
+  registerPrPack(pi, {
+    isChild: process.env.PI_SUBAGENT_CHILD === "1",
+    session: async (ctx) => {
+      const s = await ensureSession(ctx);
+      s.prCtx = ctx;
+      return {
+        python: pyPath(s),
+        isChild: s.isChild,
+        packOn: s.prPack,
+        config: prOpsConfig(s),
+        gateOn: get(s.config.config, "ceremony.reviewBeforePr") !== false,
+        reviewed: async () => {
+          await s.reviewSync;
+          return passHeads(s.reviews);
+        },
+        watches: s.prWatches,
+        trace: (r) => s.trace?.emit(r),
+      };
+    },
+    script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
+    preflight: async (ctx, op, callId) => {
+      const s = await ensureSession(ctx);
+      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), "foreman_" + op, driftAsk(ctx), (r) => s.trace?.emit(r), callId);
+    },
+    pushRefusal: async (ctx) => {
+      const s = await ensureSession(ctx);
+      const out = await run(s, ctx, "git_guard", gitGuardPayload("bash", { command: "git push" }, payloadCtx(s, ctx), get(s.config.config, "safety.git"), { enabled: false, reviewed_heads: [] }), "pr_create");
+      if (out.kind === "failure") return out.message;
+      return out.d.decision === "deny" || out.d.decision === "ask" ? String(out.d.reason ?? out.d.decision) : null;
+    },
+    spawner,
+    env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
+  });
+
   // D9 long wait (wait.ts): foreman only; the wake is an ordinary custom message (no gate bypass).
   const waits = registerWait(pi, {
     home: os.homedir(),
@@ -2492,6 +2564,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (fs.existsSync(markerPath(s.markerDir, s.id))) ok(`session marker in ${s.markerDir}`);
     else fail("session marker missing", `make ${s.markerDir} writable and restart the session.`);
     out.push(`INFO ceremony: ${tierLine(s.ceremony)}`);
+    out.push(`INFO PR tools: ${s.prPack ? prHostLabel(get(s.config.config, "tools.prHost") ?? "auto", workspaceOf(s.cwd).root, process.env, platform) : "off (tools.pr)"}`);
     out.push(dormantDoctorLine(PKG_ROOT, s.config.config));
     return out;
   }

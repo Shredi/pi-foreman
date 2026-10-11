@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOverlayRules, readBaseline } from "../permoverlay.ts";
 import { causeOfCustom } from "../usage.ts";
-import { checkRunId, checkWaitPath, Governor, parseStart, resolveGh, WaitRuntime, wakeMessage } from "../wait.ts";
+import { checkRunId, checkWaitPath, Governor, parseStart, resolveBin, resolveGh, WaitRuntime, wakeMessage } from "../wait.ts";
 import type { Outcome, Timers, WaitLimits } from "../wait.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -186,4 +186,19 @@ test("resolveGh: skips empty, relative and workspace PATH entries, so a planted 
   assert.equal(resolveGh(ws, env(""), "linux"), null);
   fs.unlinkSync(path.join(bin, "gh"));
   assert.equal(resolveGh(ws, env([ws, bin].join(":")), "linux"), null);
+});
+
+test("resolveBin: glab and gh are found outside the workspace only, with explicit extensions on win32", { skip: process.platform === "win32" }, () => {
+  const ws = fs.mkdtempSync(path.join(os.tmpdir(), "pf-bin-ws-"));
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "pf-bin-"));
+  try {
+    for (const d of [ws, bin]) fs.writeFileSync(path.join(d, "glab"), "#!/bin/sh\n");
+    assert.equal(resolveBin("glab", ws, { PATH: [ws, bin].join(":") }, "linux"), path.join(bin, "glab"));
+    assert.equal(resolveBin("glab", ws, { PATH: ws }, "linux"), null);
+    fs.writeFileSync(path.join(bin, "gh.cmd"), "");
+    assert.equal(resolveBin("gh", ws, { PATH: bin }, "linux"), null);
+  } finally {
+    fs.rmSync(ws, { recursive: true, force: true });
+    fs.rmSync(bin, { recursive: true, force: true });
+  }
 });
