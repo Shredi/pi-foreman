@@ -257,6 +257,8 @@
           "description": "Per tier: the checkpoint needs a [plan-review] verdict for the current plan first (L1: heavy only). A project or session can only set true.",
           "properties": { "trivial": { "type": "boolean" }, "standard": { "type": "boolean" }, "heavy": { "type": "boolean" } }
         },
+        "planReviewRounds": { "type": "integer", "minimum": 1, "description": "Plan-review rounds per plan before the checkpoint opens with the open findings visible (a FAIL below the cap goes back to the planner; a FAIL at the cap opens the checkpoint). Default 2. Free per layer." },
+        "childTimeoutSeconds": { "type": "integer", "minimum": 1, "description": "Per-tool-call timeout of planner, builder, reviewer, senior-reviewer and finalizer runs (pi-subagents toolTimeoutMs); a run deadline timeoutMs below it is raised to it. Default 1800. A project or session can only lower it." },
         "heavyThreshold": { "type": "string", "enum": ["strict", "eee843d"], "description": "strict = heavy is for multi-component or risky changes (prompt criteria); heavySignals keyword hits in a request are only a hint to the foreman; heavyFileCount still escalates. eee843d = the old prompt line and keyword auto-escalation. A project or session can only move toward eee843d." }
       }
     },

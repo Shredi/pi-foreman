@@ -60,6 +60,8 @@
     "reviewModel": null,
     "reviewByOccasion": {},
     "planReview": { "trivial": false, "standard": false, "heavy": true },
+    "planReviewRounds": 2,
+    "childTimeoutSeconds": 1800,
     "heavyThreshold": "strict"
   },
   "review": { "headless": false },

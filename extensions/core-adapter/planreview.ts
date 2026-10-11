@@ -5,6 +5,9 @@
 // the planner once (`plan_revision_required`); after the revised plan (a new hash) is reviewed again,
 // the checkpoint opens whatever that verdict says, and the owner sees it in the dialog. The lineage
 // is the real plan path, in memory for the session: a new plan path starts a new one.
+// `ceremony.planReviewRounds` (default 2) generalises that: each recorded verdict is a round of its
+// lineage; a FAIL before the cap goes back to the planner, a FAIL at the cap opens the checkpoint
+// with `capped: true` so the dialog lists the open findings.
 // Plan reviews never mark items or feed gates (occasion.ts countsForItems).
 import * as crypto from "node:crypto";
 import * as path from "node:path";
@@ -13,6 +16,12 @@ import { ledgerLines } from "./ladder.ts";
 import type { PanelFinding } from "./panel.ts";
 import type { ReviewResult } from "./occasion.ts";
 import type { Verdict } from "./rounds.ts";
+
+/** `ceremony.planReviewRounds`: a positive integer, else 2. */
+export const DEFAULT_PLAN_REVIEW_ROUNDS = 2;
+export function planReviewRounds(v: unknown): number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 1 ? v : DEFAULT_PLAN_REVIEW_ROUNDS;
+}
 
 export type PlanReviewRefusal = "plan_review_required" | "plan_revision_required";
 
@@ -49,19 +58,25 @@ export function planPathsOf(files: readonly string[], scratchDir: string): strin
 
 /** Plan-review verdicts per plan lineage (real plan path). */
 export class PlanReviews {
-  private readonly byPath = new Map<string, { latest: PlanVerdict; firstFail: string | null }>();
+  private readonly byPath = new Map<string, { latest: PlanVerdict; rounds: number }>();
 
+  /** Each recorded verdict is one round of the plan's lineage (a revision keeps the count). */
   record(planPath: string, v: PlanVerdict): void {
     const l = this.byPath.get(planPath);
-    const firstFail = l?.firstFail ?? (v.verdict === "fail" ? v.hash : null);
-    this.byPath.set(planPath, { latest: v, firstFail });
+    this.byPath.set(planPath, { latest: v, rounds: (l?.rounds ?? 0) + 1 });
   }
 
-  /** The verdict that lets the checkpoint open, or why it is refused. */
-  gate(planPath: string, hash: string): { verdict: PlanVerdict } | { refusal: PlanReviewRefusal; stale: boolean } {
+  /**
+   * The verdict that lets the checkpoint open, or why it is refused. A FAIL below `cap` rounds goes back
+   * to the planner; a FAIL at the cap opens it with `capped` (and the round count).
+   */
+  gate(planPath: string, hash: string, cap: number = DEFAULT_PLAN_REVIEW_ROUNDS): { verdict: PlanVerdict; capped?: true; rounds?: number } | { refusal: PlanReviewRefusal; stale: boolean } {
     const l = this.byPath.get(planPath);
     if (!l || l.latest.hash !== hash) return { refusal: "plan_review_required", stale: !!l };
-    if (l.latest.verdict === "fail" && l.firstFail === hash) return { refusal: "plan_revision_required", stale: false };
+    if (l.latest.verdict === "fail") {
+      if (l.rounds < cap) return { refusal: "plan_revision_required", stale: false };
+      return { verdict: l.latest, capped: true, rounds: l.rounds };
+    }
     return { verdict: l.latest };
   }
 }
@@ -79,8 +94,8 @@ export function planReviewRefusalText(reason: PlanReviewRefusal, rel: string, ti
 const one = (s: string): string => s.replace(/[\u0000-\u001f\u007f\u0080-\u009f]+/g, " ").trim().slice(0, 120);
 
 /** The dialog section: verdict, reviewer model and the findings (file:line class note, at most PLAN_REVIEW_FINDINGS_MAX lines). */
-export function planReviewSection(v: PlanVerdict, findings: readonly PanelFinding[]): string {
-  const out = [`Plan review: ${v.verdict.toUpperCase()} (reviewer ${v.model ?? "unknown model"})`];
+export function planReviewSection(v: PlanVerdict, findings: readonly PanelFinding[], capped?: { rounds: number; cap: number }): string {
+  const out = [capped ? `Plan review: FAIL after ${Math.min(capped.rounds, capped.cap)} of ${capped.cap} rounds; open findings:` : `Plan review: ${v.verdict.toUpperCase()} (reviewer ${v.model ?? "unknown model"})`];
   for (const f of findings.slice(0, PLAN_REVIEW_FINDINGS_MAX)) out.push(`  ${one(f.file)}${f.line === null ? "" : `:${f.line}`} ${one(f.class)} ${one(f.note)}`.trimEnd());
   if (findings.length > PLAN_REVIEW_FINDINGS_MAX) out.push(`  (+${findings.length - PLAN_REVIEW_FINDINGS_MAX} more findings)`);
   if (findings.length === 0) out.push("  (no located findings)");

@@ -123,5 +123,42 @@ class TestRequiredSteps(ReplayCase):
         self.assertEqual(len(events(rig, sid, "ceremony_incomplete")), 1)
 
 
+@unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
+class TestWaitingForParent(ReplayCase):
+    """harness-friction item 4: a handoff wait lets a heavy turn end with the ceremony incomplete."""
+
+    def handoff(self, rig):
+        d = rig.agent / "pi-foreman" / "handoffs" / "h1"
+        d.mkdir(parents=True)
+        (d / "plan.md").write_text("# plan\n", "utf-8")
+
+    def test_handoff_timer_wait_waives_the_gate_until_the_next_input(self):
+        rig = self.rig("cg-parent", script(), config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")
+        self.handoff(rig)
+        pi = rig.start()
+        sid = pi.session_id()
+        recs = pi.prompt("[[replay:handoff]] hand off", timeout=90)
+        self.assertEqual([(n, e) for n, e, _ in tool_results(recs)], [("foreman_triage", False), ("foreman_wait", False)], tool_results(recs))
+        self.assertEqual(gate_messages(recs), [])
+        self.assertEqual(events(rig, sid, "finish_refused"), [])
+        self.assertEqual([r.get("reason") for r in events(rig, sid, "ceremony_gate")], ["waiting_for_parent"])
+        self.assertEqual([r["decision"] for r in events(rig, sid, "waiting_for_parent")], ["set"])
+        # Parent input: the gate is active again.
+        again = pi.prompt("[[replay:nextinput]] anything new?", timeout=90)
+        pi.close()
+        self.assertTrue(gate_messages(again), "the gate must refuse again after the next input")
+        self.assertTrue(events(rig, sid, "finish_refused"))
+
+    def test_plain_timer_wait_without_handoff_context_is_refused(self):
+        rig = self.rig("cg-plain", script(), config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")
+        pi = rig.start()
+        sid = pi.session_id()
+        recs = pi.prompt("[[replay:plainwait]] wait", timeout=90)
+        pi.close()
+        self.assertTrue(gate_messages(recs), "a plain timer wait does not waive the gate")
+        self.assertTrue(events(rig, sid, "finish_refused"))
+        self.assertEqual(events(rig, sid, "waiting_for_parent"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
