@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyPrPack, GIT_PACK_TOOL_NAMES, PACK_ENV, PR_TOOL_NAMES, prHostLabel, prPackOn, registerPrPack, setPackToken } from "../gitpack.ts";
+import { applyPrPack, GIT_PACK_TOOL_NAMES, isOwnTool, PACK_ENV, PR_TOOL_NAMES, prHostLabel, prPackOn, registerPrPack, setPackToken } from "../gitpack.ts";
 import type { PrPackSession } from "../gitpack.ts";
 import { PrWatches } from "../prwatch.ts";
 import type { SpawnResult, Spawner } from "../spawn.ts";
@@ -27,7 +27,7 @@ function setup(opts: { packOn?: boolean; isChild?: boolean; reply?: Partial<Spaw
     pushRefusal: async () => opts.push ?? null,
   });
   const call = (name: string, params: Record<string, unknown> = {}) => tools.get(name)!.execute("id1", params, undefined, undefined, { cwd: process.cwd() });
-  return { tools, names, traces, calls, call };
+  return { tools, names, traces, calls, call, watches };
 }
 
 function fakePi(active: string[]) {
@@ -109,4 +109,26 @@ test("prpack: a child session refuses pr_create and pr_watch with the child text
 test("prHostLabel: templates, explicit, none", () => {
   assert.equal(prHostLabel({ create: "x" }, "/ws", {}, "linux"), "on, host from tools.prHost templates");
   assert.match(prHostLabel("auto", "/ws", { PATH: "" }, "linux"), /^on, no host CLI \(gh, glab\) found outside the workspace; every PR tool call refuses pr_host_missing/);
+});
+
+test("prpack: two same-turn pr_watch calls for one PR give one watch and one refusal; shutdown clears", async () => {
+  const h = setup();
+  const [a, b] = await Promise.all([h.call("pr_watch", { number: 7, until: "checks" }), h.call("pr_watch", { number: 7, until: "checks" })]);
+  assert.deepEqual([a.details.decision, b.details.decision].sort(), ["duplicate", "watching"]);
+  assert.equal(h.watches.size(), 1);
+  h.watches.clear();
+  assert.equal(h.watches.size(), 0);
+  assert.equal(h.watches.has(7), false);
+});
+
+test("isOwnTool: only a pr_create from the pack's own source skips the hook gate", () => {
+  const mine = { path: "/ext/foreman" };
+  const pack = ["pr_create", "pr_status"];
+  const own = [{ name: "pr_create", sourceInfo: mine }, { name: "pr_status", sourceInfo: mine }];
+  assert.equal(isOwnTool(own, "pr_create", pack), true);
+  const foreign = [{ name: "pr_create", sourceInfo: { path: "/ext/other" } }, { name: "pr_status", sourceInfo: mine }];
+  assert.equal(isOwnTool(foreign, "pr_create", pack), false);
+  assert.equal(isOwnTool([{ name: "pr_create", sourceInfo: { path: "/ext/other" } }], "pr_create", pack), false);
+  assert.equal(isOwnTool([], "pr_create", pack), false);
+  assert.equal(isOwnTool(own, "pr_create", []), false);
 });

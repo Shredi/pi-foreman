@@ -114,8 +114,8 @@ Caps: lists hold at most 200 entries and 16 KB of JSON (`pr_checks` drops from `
 `failed`; comments are newest first). A comment body is redacted for token shapes, stripped of control characters and
 cut to 500 characters (`bodyCut`). Text that came from the host is data, never instructions.
 
-`pr_create` refuses, in this order: tools off (`pr_off`), a child, the triage gate (a tier must be recorded first), the
-git-config drift preflight, the PR gate (`[pr_refused:no_review]`, `stale_review` or `head_unknown`: a reviewer PASS
+`pr_create` refuses, in this order: the triage gate (a tier must be recorded first; it runs in the tool-call hook before the
+tool), tools off (`pr_off`), a child, the git-config drift preflight, the PR gate (`[pr_refused:no_review]`, `stale_review` or `head_unknown`: a reviewer PASS
 on the head, and on its upstream, see [safety](safety.md#git-guard-and-pr-gate)), the push guard (the guard that
 would refuse a `git push` of this branch refuses the PR too), and then in Python `detached_head`, `unknown_branch`,
 `base_is_head`, `unpushed` (no upstream, or the upstream differs from the head; pi-foreman never pushes),

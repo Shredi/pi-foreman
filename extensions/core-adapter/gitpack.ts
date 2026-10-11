@@ -273,6 +273,17 @@ export interface PrPackDeps {
 
 const DEFAULT_WATCH_SECONDS = 3600;
 
+/**
+ * True when the registered tool `name` comes from the same extension source as another tool this
+ * pack registered (the tool_call event carries only the name; the registry keeps one tool per name,
+ * so a foreign `pr_create` has a different source). Unknown or unmatched: false (stays gated).
+ */
+export function isOwnTool(all: { name: string; sourceInfo?: { path?: string } }[], name: string, packNames: readonly string[]): boolean {
+  const src = all.find((t) => t.name === name)?.sourceInfo?.path;
+  if (!src) return false;
+  return all.some((t) => t.name !== name && packNames.includes(t.name) && t.sourceInfo?.path === src);
+}
+
 export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrPackDeps): string[] {
   const names: string[] = [];
   for (const t of PR_TOOLS) {
@@ -337,9 +348,18 @@ async function watch(s: PrPackSession, params: Record<string, unknown>, run: (op
     n = typeof st.result.number === "number" ? st.result.number : undefined;
     if (n === undefined) return failure(`${tool}: the host gave no PR number; nothing was done.`, { decision: "error" });
   }
-  if (s.watches.has(n)) return failure(`pr_watch: PR #${n} is already watched; one watch per PR per session.`, { decision: "duplicate" });
-  const snap = await pollSnapshot(run, n, until);
-  if ("error" in snap) return failure(`${tool}: ${snap.error}`, { decision: "error" });
+  if (!s.watches.reserve(n)) return failure(`pr_watch: PR #${n} is already watched; one watch per PR per session.`, { decision: "duplicate" });
+  let snap: Awaited<ReturnType<typeof pollSnapshot>>;
+  try {
+    snap = await pollSnapshot(run, n, until);
+  } catch (err) {
+    s.watches.release(n);
+    throw err;
+  }
+  if ("error" in snap) {
+    s.watches.release(n);
+    return failure(`${tool}: ${snap.error}`, { decision: "error" });
+  }
   s.watches.start(n, until, baselineOf(snap), seconds * 1000);
   s.trace({ event: "pr_watch", outcome: "started" });
   const interval = s.watches.intervalSeconds();

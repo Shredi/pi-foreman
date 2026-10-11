@@ -322,6 +322,15 @@ class TemplateTest(PrCase):
         self.refused(self.pr("pr_status", host=h), "pr_repo_unknown")
         self.assertEqual([c["argv"][-1] for c in self.calls()], ["own/repo", "own/repo"])
 
+    def test_repo_with_leading_dash_is_refused(self):
+        h = self.host(status="gh pr view {repo}")
+        self.scn({"gh pr view": {"stdout": j(GH_STATUS)}})
+        self.git("remote", "add", "origin", "https://example.com/--output/x")
+        self.refused(self.pr("pr_status", host=h), "bad_request")
+        self.git("remote", "set-url", "origin", "https://example.com/own/-x")
+        self.refused(self.pr("pr_status", host=h), "bad_request")
+        self.assertEqual(self.calls(), [])
+
     def test_exit_codes_and_bad_output(self):
         h = self.host(status="gh pr view")
         self.scn({"gh pr view": {"stderr": "nothing here\n", "exit": 3}})

@@ -106,3 +106,19 @@ test("pr_watch: traces carry the outcome and never the PR number", async () => {
   assert.equal(JSON.stringify(h.traces).includes("123456"), false);
   assert.match(h.sent[0].msg.content, /- issue bob: body 9/);
 });
+
+test("pr_watch: reserve is one-per-PR until released; clear() reaches every timer and drops reservations", () => {
+  const h = harness(async () => ({}));
+  assert.equal(h.w.reserve(7), true);
+  assert.equal(h.w.reserve(7), false);
+  h.w.release(7);
+  assert.equal(h.w.reserve(7), true);
+  h.w.start(7, "any", baselineOf({}), 60_000);
+  h.w.start(8, "any", baselineOf({}), 60_000);
+  assert.equal(h.w.reserve(7), false);
+  assert.ok(h.timers.some((t) => t.live));
+  h.w.clear();
+  assert.equal(h.timers.some((t) => t.live), false);
+  assert.equal(h.w.size(), 0);
+  assert.equal(h.w.reserve(7), true);
+});

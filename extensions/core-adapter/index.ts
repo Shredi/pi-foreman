@@ -42,6 +42,8 @@ import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
 import { boundLaunchId, ChildScratch, finishScratch, launchScratch, SCRATCH_ENV, storeBrief, sweepScratch } from "./childscratch.ts";
+import { panelChecksLine } from "./panelchecks.ts";
+import type { PanelChecksCache } from "./panelchecks.ts";
 import { GitDriftWatch, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
@@ -51,7 +53,7 @@ import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
 import { runGuard } from "./runguard.ts";
-import { applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, registerGitPack, registerPrPack } from "./gitpack.ts";
+import { applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrPack } from "./gitpack.ts";
 import { PrWatches, pollSnapshot } from "./prwatch.ts";
 import { registerSafeOps, runSafeOp } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
@@ -172,6 +174,8 @@ interface Session {
   /** Launches this session recorded (launch id -> binding), for later kinds (revision, strong-relaunch). */
   launches: Map<string, LaunchBinding>;
   /** Foreman only: last trigger of the current run and its cache tokens, for the `turn` trace event. */
+  turnSeq: number;
+  checksCache: { current: PanelChecksCache | null };
   turn: { cause: TurnCause; cacheRead: number; cacheWrite: number; wakeKinds?: string; intercomFrom?: string; codemode?: boolean };
   /** Foreman only: launch calls of the current assistant message (launchwait.ts, knob 3). */
   launchBatch: LaunchBatch;
@@ -394,6 +398,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       trace: ((t) => openTrace({ enabled: t.enabled, dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: t.id, base: t.base }))(sessionTrace(get(config.config, "trace.enabled"), get(config.config, "retro.enabled"), ctx.mode, id, b)),
       usage: { file: usageFile(agentDir, foremanSession), line },
       launches: new Map(),
+      turnSeq: 0,
+      checksCache: { current: null },
       turn: { cause: "other", cacheRead: 0, cacheWrite: 0 },
       rounds: initialRounds(),
       tally: emptyTally(),
@@ -633,10 +639,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** Failed PR checks as one line for the review panel block ("" when none, off, or on any failure). */
-  async function prChecksLine(s: Session): Promise<string> {
-    if (!s.prPack || s.isChild) return "";
-    const r = await prRun(s, s.cwd, "pr_checks", {}, 30_000);
-    return r.kind === "ran" ? checksLine(r.result as never) : "";
+  function prChecksLine(s: Session): Promise<string> {
+    return panelChecksLine({
+      enabled: () => s.prPack && !s.isChild,
+      // No prompt from a panel: a drift needs the user's answer, so it blocks the line.
+      preflight: () => safeOpDriftPreflight(s.gitDrift, s.isChild, s.cwd, os.homedir(), "foreman_pr_checks", { mode: "print", hasUI: false }, (r) => s.trace?.emit(r), "panel-checks"),
+      head: () => headOf(s.cwd),
+      turn: () => s.turnSeq,
+      fetch: async () => {
+        const r = await prRun(s, s.cwd, "pr_checks", {}, 30_000);
+        return r.kind === "ran" ? checksLine(r.result as never) : "";
+      },
+    }, s.checksCache);
   }
 
   // ------------------------------------------------------------------ events
@@ -1121,7 +1135,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const triage = await triageBlock(ctx, event.toolName, event.input as Record<string, unknown>, event.toolCallId);
       if (triage) return triage;
     }
-    if (isPrToolName(event.toolName) && event.toolName !== "pr_create" && mapTool(event.toolName).pre.length === 0) {
+    if (isPrToolName(event.toolName) && !isPackPrCreate(event.toolName) && mapTool(event.toolName).pre.length === 0) {
       // A package tool that creates a pull request: the same review test as the git guard, against workspace HEAD.
       try {
         const s = await ensureSession(ctx);
@@ -1479,6 +1493,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s || s.isChild) return;
     s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite, wakeKinds: s.turn.cause === "wake" ? s.turn.wakeKinds : undefined, pollBash: s.pollBash || undefined, codemode: s.turn.codemode || undefined });
     s.pollBash = 0;
+    s.turnSeq += 1;
     s.turn = { cause: "other", cacheRead: 0, cacheWrite: 0 };
   });
 
@@ -1944,7 +1959,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
   });
 
-  registerPrPack(pi, {
+  const prPackNames = registerPrPack(pi, {
     isChild: process.env.PI_SUBAGENT_CHILD === "1",
     session: async (ctx) => {
       const s = await ensureSession(ctx);
@@ -1977,6 +1992,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     spawner,
     env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
   });
+
+  // pr_create is gated inside the pack's own execute; only that registration skips the hook (the registry keeps one tool per name).
+  function isPackPrCreate(name: string): boolean {
+    return name === "pr_create" && isOwnTool(pi.getAllTools(), "pr_create", prPackNames);
+  }
 
   // D9 long wait (wait.ts): foreman only; the wake is an ordinary custom message (no gate bypass).
   const waits = registerWait(pi, {

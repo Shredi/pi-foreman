@@ -179,6 +179,7 @@ interface Watch {
 
 export class PrWatches {
   private watches = new Map<number, Watch>();
+  private reserved = new Set<number>();
   private deps: PrWatchesDeps;
   private timers: Timers;
   constructor(deps: PrWatchesDeps) {
@@ -187,7 +188,16 @@ export class PrWatches {
   }
 
   has(n: number): boolean {
-    return this.watches.has(n);
+    return this.watches.has(n) || this.reserved.has(n);
+  }
+  /** Claim the per-PR slot synchronously (before any await); false when taken. Pair with start() or release(). */
+  reserve(n: number): boolean {
+    if (this.has(n)) return false;
+    this.reserved.add(n);
+    return true;
+  }
+  release(n: number): void {
+    this.reserved.delete(n);
   }
   intervalSeconds(): number {
     return Math.round(this.deps.intervalMs() / 1000);
@@ -198,6 +208,7 @@ export class PrWatches {
 
   start(n: number, until: WatchUntil, baseline: Baseline, timeoutMs: number): void {
     const w: Watch = { n, until, baseline, timeoutMs, deadline: this.deps.now() + timeoutMs, poller: null, stopper: null, busy: false, errors: 0, lastError: "", ended: false };
+    this.reserved.delete(n);
     this.watches.set(n, w);
     w.stopper = this.timers.set(() => this.end(w, { outcome: "timeout", detail: String(Math.round(timeoutMs / 1000)) }), timeoutMs);
     this.arm(w);
@@ -210,6 +221,7 @@ export class PrWatches {
       this.timers.clear(w.stopper);
     }
     this.watches.clear();
+    this.reserved.clear();
   }
 
   private arm(w: Watch): void {
@@ -246,7 +258,7 @@ export class PrWatches {
     w.ended = true;
     this.timers.clear(w.poller);
     this.timers.clear(w.stopper);
-    this.watches.delete(w.n);
+    if (this.watches.get(w.n) === w) this.watches.delete(w.n);
     let idle = true;
     try {
       idle = this.deps.idle();

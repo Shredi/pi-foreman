@@ -29,7 +29,7 @@ MAX_LIST = 200
 PLACEHOLDERS = ("{repo}", "{number}", "{since}", "{base}", "{head}", "{title}", "{bodyFile}", "{draft}")
 CMD_SAFE = re.compile(r"^[A-Za-z0-9 ._/:@+,=#~-]*$")
 SINCE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
-REPO_PATH_RE = re.compile(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$")
+REPO_PATH_RE = re.compile(r"^(?!-)[A-Za-z0-9._-]+(/(?!-)[A-Za-z0-9._-]+)+$")
 CONTROL_RX = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 UTC = datetime.timezone.utc
 HINT_NONE = ("no PR host CLI found: install gh or glab outside the workspace, or set tools.prHost "
@@ -537,6 +537,8 @@ def derive_repo(root, head):
     path = m.group(1).strip("/") if m else ""
     if path.endswith(".git"):
         path = path[:-4]
+    if any(seg.startswith("-") for seg in path.split("/")):
+        raise _bad("repo must not start with -")
     if not REPO_PATH_RE.match(path):
         raise Precondition("pr_repo_unknown", "cannot derive owner/name from the %s remote URL" % remote)
     return path
@@ -658,8 +660,14 @@ def _values(root, **kw):
     v = {"number": str(kw["number"]) if kw.get("number") else None, "since": kw.get("since"),
          "base": kw.get("base"), "head": kw.get("head"), "title": kw.get("title"),
          "bodyFile": kw.get("bodyFile"), "draft": kw.get("draft") or None}
-    v["repo"] = lambda: derive_repo(root, kw.get("head") or current_branch(root))
+    v["repo"] = lambda: _no_dash("repo", derive_repo(root, kw.get("head") or current_branch(root)))
     return v
+
+
+def _no_dash(key, value):
+    if value.startswith("-"):
+        raise _bad("%s must not start with -" % key)
+    return value
 
 
 def _body_file(text):
