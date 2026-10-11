@@ -647,6 +647,14 @@ test("review 5 F1: abbreviated long options, a stdin operand and exec flags are 
     `sort --compress-prog=sh ${D}`,
     `rg --pr=sh x ${D}`,
     `grep --pre=sh x ${D}`,
+    `sort -T -- --o=${D} x`,
+    `sort --temporary-directory -- --o=${D} x`,
+    `sort -T -- --compress-prog=sh ${D}`,
+    `awk -F -- --fil=p.awk ${D}`,
+    `gawk -oF ${D}`,
+    `sed --expression -- --in-pl s/a/b/ ${D}`,
+    `rg -e -- --pr=sh x ${D}`,
+    `uniq -output ${D}`,
   ];
   for (const selfHost of [true, false]) {
     const r = rules2(selfHost);

@@ -749,6 +749,8 @@ function awkReadOnly(prog: string): boolean {
 function nonPathArgs(core: string[], skip: Set<number>): number[] {
   const verb = core.length ? baseName(core[0]) : "";
   const readOnly = (s: string): boolean => (verb === "sed" ? sedReadOnly(s) : verb.endsWith("awk") ? awkReadOnly(s) : true);
+  // a script-file or output flag may mis-sort the operands (`awk -F -- --fil=p.awk f`): then every word stays a path
+  if ((verb === "sed" || verb.endsWith("awk")) && !unitReadOnly(core, skip)) return [];
   return scriptOperands(core, skip).filter((i) => readOnly(core[i]));
 }
 
@@ -846,14 +848,14 @@ function unitReadOnly(core: string[], skip: Set<number>): boolean {
   const has = (re: RegExp): boolean => args.some((x) => re.test(x));
   const longs = READ_LONG[verb.endsWith("awk") ? "awk" : verb];
   if (longs) {
-    const end = args.indexOf("--");
-    for (const x of end < 0 ? args : args.slice(0, end)) {
+    // never stop at `--`: it can be an option's value (`sort -T -- --o=FILE`)
+    for (const x of args) {
       if (/^--./.test(x) && !longs.includes(x.slice(2).split("=")[0])) return false;
     }
   }
   if (verb === "sort") return !has(/^-[A-Za-z]*o|^--(output|compress-program)\b/);
   if (verb === "find") return !has(/^-(exec|execdir|ok|okdir|delete|fprint0?|fprintf|fls)$/);
-  if (verb === "uniq") return args.filter((x) => x && (x === "-" || !x.startsWith("-"))).length <= 1;
+  if (verb === "uniq") return !has(/^-[^-]*[^-cdDfisuwz0-9]/) && args.filter((x) => x && (x === "-" || !x.startsWith("-"))).length <= 1;
   if (verb === "rg") return !has(/^--(pre|hostname-bin)\b/);
   if (verb === "sed") {
     if (has(/^-[A-Za-z]*[if]|^--(in-place|file)\b/)) return false;
@@ -861,7 +863,7 @@ function unitReadOnly(core: string[], skip: Set<number>): boolean {
     return scripts.length > 0 && scripts.every((i) => sedReadOnly(core[i]));
   }
   if (verb.endsWith("awk")) {
-    if (has(/^-[A-Za-z]*[fEil]|^--(file|exec|include|load)\b/)) return false;
+    if (has(/^-[A-Za-z]*[fEilo]|^--(f|e|include|load)/)) return false;
     const scripts = scriptOperands(core, skip);
     return scripts.length > 0 && scripts.every((i) => awkReadOnly(core[i]));
   }
