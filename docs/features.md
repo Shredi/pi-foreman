@@ -167,6 +167,7 @@ Switch: `providers.*.roles.*.strong` is set.
 | `ladder.strongAbove` | `100000` | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
 | `ladder.childMaxTurns` | `60` | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
 | `ladder.strongOnRevision` | `true` | tighten-only (only false is accepted) |
+| `ladder.research.factCriticalRung` | `null` | not in project/session (the fact-critical research rung comes from the user or overlay config) |
 
 ### rank-policy
 
@@ -614,6 +615,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `ladder.childMaxTurns` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.childPolicy` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.reviewerClimb` | the ladder and the child rank policy come from the user or overlay config |
+| `ladder.research` | the fact-critical research rung comes from the user or overlay config |
 | `ladder.reviewPanel` | the review panel's models come from the user or overlay config |
 | `providers.*.ranks` | model ranks decide which children may launch: user or overlay config only |
 | `providers.*.strongAbove` | the ladder comes from the user or overlay config |

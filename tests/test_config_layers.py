@@ -326,6 +326,13 @@ class LayerRulesTest(unittest.TestCase):
         res = self.load(l2={"ceremony": {"reviewModel": "p/x", "planReview": {"heavy": False}}, "retro": {"panelThreshold": 5}}, proj={}, session={})
         self.assertEqual((res["config"]["ceremony"]["reviewModel"], res["config"]["ceremony"]["planReview"]["heavy"], res["config"]["retro"]["panelThreshold"]), ("p/x", False, 5))
 
+    def test_fact_critical_rung_user_only(self):
+        res = self.load(proj={"ladder": {"research": {"factCriticalRung": "p/x"}}}, session={})
+        self.assertIsNone(res["config"]["ladder"]["research"]["factCriticalRung"])
+        self.assertIn("project ladder.research ignored", "\n".join(res["warnings"]))
+        res = self.load(l2={"ladder": {"research": {"factCriticalRung": "p/x"}}}, proj={}, session={})
+        self.assertEqual(res["config"]["ladder"]["research"]["factCriticalRung"], "p/x")
+
     def test_user_layer_reaches_the_eee843d_row(self):
         row = {"ledgerHelper": "off", "reviewPerRevision": False, "heavyThreshold": "eee843d"}
         res = self.load(l2={"ceremony": dict(row)}, proj={}, session={})

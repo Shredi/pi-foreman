@@ -36,6 +36,7 @@ import { applyLaunchModels, applyLaunchTimeouts, roleTimeoutMs, splitLevel, STRE
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
 import { ReviewFacts } from "./diffscan.ts";
+import { applyFactCriticalRungs, applyResearchFloor, markedEntries, researchTraces } from "./research.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
@@ -810,6 +811,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       factRulings: "on",
       // Launch skeletons and tier rules (retro-harvest; "off" only renders the eee843d baseline).
       launchBriefs: "on",
+      // Research markers (research.ts; "off" only renders the eee843d baseline).
+      research: "on",
       // A reviewer PASS marks its items (reviewmarks.ts; "off" only renders the eee843d baseline).
       reviewMarks: "on",
       // ceremony.planReview at heavy: the plan-review step before the checkpoint (planreview.ts).
@@ -1209,6 +1212,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // ceremony.reviewByOccasion (reviewerclimb.ts): over the mapped models, before the rank check and the different-model rule.
           const occ = applyOccasionOverrides(input, occasions, reviewerClimbs, { config: s.config.config, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking") });
           reviewerTraces.push(...occ.traces);
+          // [research] / [fact-critical] markers (research.ts): the floor is written before the rank check.
+          const marked = markedEntries(input);
+          applyResearchFloor(marked, resolution.roles, s.config.config, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
           const foremanModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null;
           for (const m of launchedModels(input)) {
             const no = rankRefusal(s.config.config, foremanModel, m);
@@ -1219,6 +1225,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // The security rung is explicit config: written after the rank check (docs/ladder.md); traced when it overrides the policy.
           markPolicyOverrides(reviewerClimbs, (m) => rankRefusal(s.config.config, foremanModel, m) !== null);
           applySecurityRungs(reviewerClimbs, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
+          applyFactCriticalRungs(marked, resolution.roles, s.config.config, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
+          for (const r of researchTraces(marked)) s.trace?.emit(r);
           // Different-model rule (every reviewer launch): after the security rung, so it sees the final model; traced with policy_override.
           const refusedBy = (m: string): boolean => rankRefusal(s.config.config, foremanModel, m) !== null;
           reviewerTraces.push(...applyReviewModelRule(input, resolution.roles, { config: s.config.config, foreman: foremanModel, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: refusedBy, thinking: occ.thinking }));

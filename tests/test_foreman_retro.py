@@ -93,6 +93,20 @@ class RetroTest(unittest.TestCase):
         self.assertEqual(rep["session_tools"]["top_tools"], {"bash": 3})
         self.assertEqual(rep["session_tools"]["repeated_bash_families"], {"git status": 3})
 
+    def test_explorer_line_from_usage_and_research_rung_events(self):
+        def u(lid, model, role="explorer"):
+            return {"foremanSession": "s1", "role": role, "launchId": lid, "kind": "first", "provider": "p", "model": model}
+        usage = [u("a", "m-opus"), u("a", "m-opus"), u("b", "m-sonnet"), u("c", "m-sonnet"), u("d", "m-haiku", "child"), u("e", "m-sonnet", "builder")]
+        trace = [{"event": "research_rung", "role": "explorer", "marker": "fact-critical", "kind": "single", "model": "p/m-opus"},
+                 {"event": "research_rung", "role": "explorer", "marker": "research", "kind": "entry", "model": "p/m-haiku"}]
+        ranks = {"p": [{"match": "m-opus*", "tier": 0}, {"match": "m-sonnet*", "tier": 1}, {"match": "m-haiku*", "tier": 2}]}
+        e = fr.explorer_metrics(trace, usage, "s1", ranks)
+        # singles by usage (one per launchId), tasks/chain entries by event; a single's event adds nothing
+        self.assertEqual((e["launches"], e["models"], e["factCritical"], e["topShare"]), (4, {"p/m-opus": 1, "p/m-sonnet": 2, "p/m-haiku": 1}, 1, 25))
+        self.assertEqual(fr.render_explorer(e), "explorer: 4 launches, m-opus 1 (25 %, fact-critical 1); m-sonnet 2; m-haiku 1")
+        self.assertIsNone(fr.explorer_metrics(trace, usage, "s1")["topShare"])
+        self.assertIn("; fact-critical 1", fr.render_explorer(fr.explorer_metrics(trace, usage, "s1")))
+
     def test_zero_logged_cost_is_priced_from_rates(self):
         rec = {"foremanSession": "s1", "role": "builder", "provider": "claude-bridge", "model": "m1", "input": 1000000,
                "output": 100000, "cacheRead": 2000000, "cacheWrite": 0, "cost": {"total": 0}}

@@ -64,6 +64,17 @@ applies. The security rung is explicit config: it is written after the rank chec
 refuse it. Its thinking level is capped by `maxThinking` and `childMaxThinking`.
 When the rung goes beyond what `ladder.childPolicy` would allow, its `rung_up` (or `rung_top`) record carries `policy_override: true`.
 
+## Research markers
+
+A launch entry (single, `tasks`, `chain` or `parallel`) whose task text carries a marker (case-insensitive) is routed on its own role:
+
+| Marker | Rung |
+|---|---|
+| `[research]` | At least the role's strong rung: an entry on a weaker model (by `providers.<p>.ranks`, or any model without ranks) is moved to it, one already as strong or stronger stays. Written before the rank check, so `ladder.childPolicy` still applies. With no strong rung mapped the model stays. |
+| `[fact-critical]` | Implies `[research]` and wins over it. The rung is the first of `ladder.research.factCriticalRung` (default unset; user or overlay config only), the security rung (`ladder.reviewerClimb.securityRung`, else the default security rung), the role's strong rung. Written after the rank check like the security rung, with its thinking level capped by `maxThinking` and `childMaxThinking`. |
+
+Use `[research]` on an explorer launch that reads the web or PDFs; add `[fact-critical]` only when a wrong fact is costly. Code search needs no tag. In the claude-bridge presets this moves the explorer from its bottom to its strong model, and a fact-critical one to the security rung.
+
 ## Trace records
 
 A child's records carry `role` and `runId` (the launch id) in its own `trace-<launchId>.jsonl`; see [retro](retro.md).
@@ -75,6 +86,7 @@ A child's records carry `role` and `runId` (the launch id) in its own `trace-<la
 | `review_model` | `role, from, to, reason` | The different-model rule moved a reviewer off the foreman's model (`same_as_foreman`) or found no alternative (`no_alternative`). |
 | `review_occasion` | `occasion, thinking, model_overridden` | A reviewer launch for that occasion (`item`, `plan-review`, `pre-pr`, `second-opinion`); `ceremony.reviewByOccasion` applied (see [review](review.md#per-occasion-overrides)). |
 | `panel`, `finding` | see [review](review.md) | Shadow launch; a located finding. |
+| `research_rung` | `role, marker, model` (+ `kind`: `single` or `entry`) | Once per marked launch entry, with the model it launches on. `foreman retro` counts explorer launches by model from the usage lines (single launches) and these events (`kind: entry`; tasks and chain children log role `child` in usage). |
 | `security_rung_unset` | `role, reason, hits` | A security-shaped diff found no security rung. |
 | `rung_up_steer` | `role, count, rung` | A child was steered to hand off (context or turns). |
 | `finish_refused` | `climb_available` | The uncounted refusal while the builder's failure climb is open. |
