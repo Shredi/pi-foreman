@@ -32,7 +32,7 @@ export function firstRunNotice(opts: { mode: string | undefined; isChild: boolea
   if (isObj(opts.config) && opts.config.quiet === true) return null;
   if (hasModelConfig(opts.config)) return null;
   const list = opts.presets.length ? opts.presets.join(", ") : "none found";
-  return `pi-foreman: no role models are configured, so children run on Pi's default model. Available presets: ${list}. Apply one with: foreman config apply-preset <name> [--foreman <model id>]. Set "quiet": true in foreman.json to hide this notice.`;
+  return `pi-foreman: no role models are configured, so children run on Pi's default model. Available presets: ${list}. Apply one with: foreman config apply-preset <name> [--foreman <model id>] (installed with pi install? run /foreman setup first). Set "quiet": true in foreman.json to hide this notice.`;
 }
 
 /** Each preset's name and the provider prefix of its foreman model (null when it has none). */

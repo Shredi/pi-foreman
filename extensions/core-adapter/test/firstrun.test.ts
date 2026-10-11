@@ -10,6 +10,7 @@ test("unconfigured interactive top-level session gets the notice with presets an
   assert.ok(n);
   assert.match(n, /google, openai/);
   assert.match(n, /foreman config apply-preset <name> \[--foreman <model id>\]/);
+  assert.match(n, /run \/foreman setup first/);
 });
 
 test("a role model or a review model counts as configured", () => {

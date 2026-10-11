@@ -110,6 +110,7 @@ test("adapter registers the git guard as a required child extension and package.
   assert.match(index, /\{ id: ADAPTER_ID, path: ENTRY \}, \{ id: GIT_GUARD_ID, path: GIT_GUARD_ENTRY \}/);
   assert.match(index, /guard === "git_guard" && \(s\.isChild \|\|/);
   const pkg = JSON.parse(fs.readFileSync(path.join(repo, "package.json"), "utf8"));
-  assert.deepEqual(pkg.pi.extensions, ["./extensions/core-adapter/index.ts"]);
+  assert.ok(pkg.pi.extensions.includes("./extensions/core-adapter/index.ts"));
+  assert.ok(!pkg.pi.extensions.some((e: string) => e.includes("git-guard")), "git-guard is not listed");
   assert.ok(fs.existsSync(path.join(repo, "extensions", "git-guard", "index.ts")));
 });
