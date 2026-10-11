@@ -13,9 +13,11 @@ export const SHELL_WRITE_REFUSAL = "shell write into project files refused: use 
 
 /** Core-shaped payload plus the workspace root the targets are checked against, the shell
  *  flavour (`powershell` for the foreman's opt-in powershell tool, else `bash`) and the
- *  workspace-relative dirs that stay writable (edit mode; the script defaults to `.workflow`). */
-export function shellWriteGuardPayload(input: Record<string, unknown>, pc: PayloadContext, workspace: string, piTool: "bash" | "powershell" = "bash", allowedDirs: string[] = [".workflow"]): Record<string, unknown> {
-  return { ...preToolPayload(piTool, input, pc), workspace, shell: piTool, allowed_dirs: allowedDirs };
+ *  workspace-relative dirs that stay writable (edit mode; the script defaults to `.workflow`).
+ *  `ownedDirs`: absolute dirs the foreman owns (owned.ts `allowDirs`; the script's `allow_dirs`), a write
+ *  strictly inside one never counts, so `cp -R node_modules ../<repo>.worktrees/<b>/node_modules` passes. */
+export function shellWriteGuardPayload(input: Record<string, unknown>, pc: PayloadContext, workspace: string, piTool: "bash" | "powershell" = "bash", allowedDirs: string[] = [".workflow"], ownedDirs: string[] = []): Record<string, unknown> {
+  return { ...preToolPayload(piTool, input, pc), workspace, shell: piTool, allowed_dirs: allowedDirs, ...(ownedDirs.length ? { allow_dirs: ownedDirs } : {}) };
 }
 
 export interface ShellWriteRunInput {

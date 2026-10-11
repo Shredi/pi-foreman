@@ -74,7 +74,12 @@ DEFAULT_CONFIG = {
 ALLOW, ASK, DENY = 0, 1, 2
 PREFIX = "pi-foreman git guard: "
 USE_M = "use -m or -F <file> so the message can be checked"
-GIT_WORD = re.compile(r"(?i)(?<![a-z])git(?![a-z])")
+# `git` as a word of its own: not part of a path (`/home/u/git/repo`, `git/x`, `.git/config`), not `.git`.
+GIT_WORD = re.compile(r"(?i)(?<![a-z.])git(?![a-z/\\])")
+# Subcommands that only read: inline interpreter code naming `git` is unreadable only with another one.
+GIT_READ_VERBS = frozenset("""status log diff show blame rev-parse ls-files ls-tree cat-file describe shortlog
+rev-list name-rev show-ref for-each-ref grep ls-remote version help var blame reflog""".split())
+GIT_CODE_VERB = re.compile(r"(?i)(?<![a-z0-9_-])([a-z][a-z-]*)(?![a-z0-9_-])")
 
 
 class Decision(object):
@@ -625,6 +630,8 @@ CHILD_CONFIG_DENY = re.compile(
 # an identity; neither runs a program nor changes a push target. commit.gpgsign is left out:
 # a child can pass `-c commit.gpgsign=false` per command, which persists nothing.
 CHILD_CONFIG_ALLOW = frozenset(("user.name", "user.email"))
+# `git worktree` subcommands only the foreman runs (the permission policy allows them globally; `remove` still asks).
+WORKTREE_FOREMAN_ONLY = frozenset(("add", "prune", "lock", "unlock", "move", "repair"))
 # `git remote` subcommands that change remotes (reads: -v, show, get-url, update, prune stay).
 CHILD_REMOTE_DENY = frozenset(("add", "set-url", "rename", "remove", "rm", "set-head", "set-branches"))
 # Config the main-mode push lint reads (inline `-c` values are passed to its `git config` reads).
@@ -729,6 +736,15 @@ def unreadable(ctx, what):
 
 def mentions_git(*texts):
     return any(GIT_WORD.search(t or "") for t in texts)
+
+
+def code_runs_git(*texts):
+    """Inline interpreter code names git and a git subcommand that changes something (`print("git")`
+    is prose, `os.system("git push")` is not). Conservative: any non-read subcommand word counts."""
+    code = " ".join(t or "" for t in texts)
+    if not GIT_WORD.search(code):
+        return False
+    return any(w in GIT_BUILTINS and w not in GIT_READ_VERBS for w in (m.group(1).lower() for m in GIT_CODE_VERB.finditer(code)))
 
 
 def prog_name(text):
@@ -977,7 +993,7 @@ def run_command(words, seg, flavor, ctx, depth, envs, xargs_repl=None, via_xargs
         return worst(d, run_command(rest, seg, flavor, ctx, depth, envs, xargs_repl, via_xargs))
     if name in INTERPRETERS:
         inline = any(w.text.lower() in INLINE_FLAGS for w in args) or (name == "osascript")
-        if inline and mentions_git(seg.raw(), *[w.text for w in args]):
+        if inline and code_runs_git(seg.raw(), *[w.text for w in args]):
             return unreadable(ctx, "inline %s code" % name)
         return d
     return d
@@ -1752,6 +1768,9 @@ def child_rules(s, rest, ctx, call, seg=None, via_xargs=False):
             opts, _, _, _ = parse_opts(rest[1:], known=("force",))
             if has(opts, "f", "force"):
                 return no("worktree remove --force")
+        if sub in WORKTREE_FOREMAN_ONLY:
+            return deny("children may not run `git worktree %s` (the foreman owns the round worktrees). "
+                        "`git worktree list` stays allowed." % sub)
         return OK
     if s == "update-ref":
         opts, pos, _, _ = parse_opts(rest, short_arg="m", known=("stdin", "no-deref", "create-reflog", "message"),

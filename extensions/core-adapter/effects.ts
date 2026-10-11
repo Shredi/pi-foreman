@@ -21,7 +21,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { isTestPath } from "./diffscan.ts";
 import { workspaceTop } from "./gitdrift.ts";
-import { insideScratch, expandScratchVar } from "./childscratch.ts";
+import { insideScratch, expandScratchVar, scratchScriptRun } from "./childscratch.ts";
 import { isReadOnlySed } from "./sedread.ts";
 import { splitChain } from "./shellchain.ts";
 import type { Redirect, Segment } from "./shellchain.ts";
@@ -581,6 +581,8 @@ export function segmentEffect(c: EffectCtx, cwd: string | null, seg: Segment): S
     const g = gitEffect(c, cwd, args);
     return out(g.cls, g.known, "effect-read");
   }
+  // a script the child wrote into its own scratch dir (childscratch.ts scratchScriptRun)
+  if (c.scratch?.length && scratchScriptRun(words, c.scratch, plat(c))) return out("write-in", true, "child-scratch");
   if (BUILD_TOOLS.has(prog)) {
     // a build or test run from a cwd a `cd` moved away from the worktree root: not judged by the rules either
     if (cwd !== c.cwd && (!c.root || cwd === null || !within(c, c.root, cwd, false) || !within(c, cwd, c.root, false))) return out("unknown", true);

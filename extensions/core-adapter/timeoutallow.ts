@@ -81,7 +81,7 @@ export function unwrapTimeout(unit: string): string | null {
 export type AllowLabel = "timeout-wrapper" | "test-restore" | "sed-read" | "tmp-scratch" | "child-scratch" | "effect-write-in" | "effect-build-test" | "effect-read";
 
 /** Label precedence when a chain mixes allowed segments (the first present wins). */
-const PRECEDENCE: AllowLabel[] = ["timeout-wrapper", "test-restore", "sed-read", "effect-write-in", "effect-build-test", "effect-read"];
+const PRECEDENCE: AllowLabel[] = ["timeout-wrapper", "test-restore", "sed-read", "effect-write-in", "effect-build-test", "effect-read", "child-scratch"];
 
 export interface AllowDeps extends TmpScratchDeps {
   scratchDirs?: string[];

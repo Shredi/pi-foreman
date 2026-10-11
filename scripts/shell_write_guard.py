@@ -22,6 +22,8 @@ the adapter treats as a block.
 Input fields: tool_input.command, cwd, workspace (the workspace root; defaults to cwd),
 shell ("bash" | "powershell"; the foreman's opt-in powershell tool sends "powershell"),
 allowed_dirs (workspace-relative list; missing = [".workflow"]; absolute or `..` entries are ignored),
+allow_dirs (absolute list, also the repeatable argv option `--allow-dir PATH`: the foreman's owned dirs, a write
+strictly inside one never counts even when it lies in the workspace; relative entries are ignored),
 confine (true: a write outside the workspace counts too; the adapter sets it for a planner child),
 scratch_dir (absolute: the child's scratch dir, childscratch.ts; a write strictly inside it never
 counts, and `$FOREMAN_SCRATCH` / `${FOREMAN_SCRATCH}` outside single quotes are read as it).
@@ -517,8 +519,10 @@ def _allowed_rel(d):
 
 
 class Scope(object):
-    def __init__(self, workspace, allowed_dirs=None, confine=False, scratch_dir=None):
+    def __init__(self, workspace, allowed_dirs=None, confine=False, scratch_dir=None, allow_dirs=None):
         self.confine = confine
+        self.allow_abs = [os.path.realpath(d) for d in (allow_dirs or [])
+                          if isinstance(d, str) and d.strip() and os.path.isabs(d) and os.path.normpath(d) != os.path.sep]
         self.scratch = os.path.realpath(scratch_dir) if scratch_dir else None
         self.ws = os.path.normpath(os.path.abspath(workspace))
         self.ws_real = os.path.realpath(self.ws)
@@ -534,6 +538,9 @@ class Scope(object):
         real = os.path.realpath(abs_path)
         if self.scratch and _inside(self.scratch, real) and _fold(os.path.normpath(real)) != _fold(self.scratch):
             return False
+        for owned in self.allow_abs:
+            if _inside(owned, real) and _fold(os.path.normpath(real)) != _fold(owned):
+                return False
         if self.confine and not ((_inside(self.ws, abs_path) or _inside(self.ws_real, abs_path)) and _inside(self.ws_real, real)):
             return True
         if not (_inside(self.ws, abs_path) or _inside(self.ws_real, real)):
@@ -576,7 +583,7 @@ class Found(Exception):
 
 def _show(word):
     if isinstance(word, Word):
-        return "<unresolved>" if word.unresolvable else word.text
+        return word.text if not word.unresolvable else "%s (unresolved)" % word.text
     return str(word)
 
 
@@ -1843,7 +1850,7 @@ def expand_scratch(command, scratch_dir):
     return "".join(out)
 
 
-def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, confine=False, scratch_dir=None):
+def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, confine=False, scratch_dir=None, allow_dirs=None):
     """None (no project write) or (kind, target). `shell`: "bash" or "powershell".
     `allowed_dirs`: workspace-relative dirs that stay writable (None = [".workflow"]).
     `confine`: a write outside the workspace counts as well.
@@ -1852,7 +1859,7 @@ def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, confin
         scratch_dir = None
     if scratch_dir and shell != "powershell":
         command = expand_scratch(command, scratch_dir)
-    scope = Scope(workspace or cwd, allowed_dirs, confine, scratch_dir)
+    scope = Scope(workspace or cwd, allowed_dirs, confine, scratch_dir, allow_dirs)
     try:
         a = Analyzer(scope)
         (a.ps_text if shell == "powershell" else a.text)(command, os.path.normpath(os.path.abspath(cwd)), 0)
@@ -1877,8 +1884,16 @@ def main(argv=None):
     allowed = payload.get("allowed_dirs")
     if not isinstance(allowed, list):
         allowed = None
+    owned = [d for d in (payload.get("allow_dirs") if isinstance(payload.get("allow_dirs"), list) else [])]
+    args = list(sys.argv[1:] if argv is None else argv)
+    while args:
+        if args[0] == "--allow-dir" and len(args) > 1:
+            owned.append(args[1])
+            del args[:2]
+        else:
+            del args[:1]
     hit = decide(command, cwd, ws, "powershell" if payload.get("shell") == "powershell" else "bash", allowed,
-                 payload.get("confine") is True, payload.get("scratch_dir"))
+                 payload.get("confine") is True, payload.get("scratch_dir"), owned)
     if hit is None:
         return 0
     kind, target = hit

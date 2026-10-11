@@ -246,6 +246,24 @@ def _metric(event, session_id=None, **extra):
 
 # --- text plumbing ---------------------------------------------------------
 
+_HEREDOC_OPEN = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]+)'|\"([^\"\n]+)\"|\\?([A-Za-z0-9_]+))")
+
+
+def _skip_heredoc_bodies(text, i, heredocs):
+    """Index after the bodies of the heredocs opened on the line just ended: text fed to a command
+    on stdin is prose, not commands (`cat <<'EOT'` with a dot-pi dir or `$x` in it). A body that
+    never closes runs to the end of the text."""
+    n = len(text)
+    for delim, strip_tabs in heredocs:
+        while i < n:
+            j = text.find("\n", i)
+            line = text[i:j if j >= 0 else n]
+            i = j + 1 if j >= 0 else n
+            if (line.lstrip("\t") if strip_tabs else line) == delim:
+                break
+    return i
+
+
 def _split_segments(text):
     """Split a command line into command segments on unquoted `;`, `|`,
     `||`, `&&`, `&` and newlines. Quote-aware by hand rather than by
@@ -253,6 +271,7 @@ def _split_segments(text):
     (an echo) while `a; rm -rf /` is two."""
     segs, buf = [], []
     quote = None
+    heredocs = []
     i, n = 0, len(text)
     while i < n:
         c = text[i]
@@ -276,10 +295,24 @@ def _split_segments(text):
             buf.append(text[i + 1])
             i += 2
             continue
+        if text[i:i + 3] == "<<<":
+            buf.append("<<<")
+            i += 3
+            continue
+        if text[i:i + 2] == "<<":
+            m = _HEREDOC_OPEN.match(text, i)
+            if m:
+                heredocs.append((m.group(2) or m.group(3) or m.group(4), bool(m.group(1))))
+                buf.append(text[i:m.end()])
+                i = m.end()
+                continue
         if c in ";\n":
             segs.append("".join(buf))
             buf = []
             i += 1
+            if c == "\n" and heredocs:
+                i = _skip_heredoc_bodies(text, i, heredocs)
+                heredocs = []
             continue
         if c in "&|":
             segs.append("".join(buf))

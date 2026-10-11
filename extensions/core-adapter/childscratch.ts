@@ -291,6 +291,20 @@ export function insideScratch(p: string, dirs: string[], platform: string = proc
   return false;
 }
 
+/**
+ * `node|python|python3 <script> [args]` where the script and every path-shaped argument lie inside
+ * `dirs`: the child runs code it wrote into its own scratch dir (harness-friction row 25). No
+ * interpreter option before the script (`-e`, `-c`, `-m` run other code), no option value naming a path outside.
+ */
+export function scratchScriptRun(words: string[], dirs: string[], platform: string = process.platform): boolean {
+  const [prog, script, ...rest] = words;
+  if (!prog || !/^(node|python|python3)$/.test(prog) || !script || script.startsWith("-") || !insideScratch(script, dirs, platform)) return false;
+  return rest.every((a) => {
+    const v = a.startsWith("-") && a.includes("=") ? a.slice(a.indexOf("=") + 1) : a;
+    return !/[\\/~]|^\./.test(v) || (!!v && insideScratch(v, dirs, platform));
+  });
+}
+
 const CMD_SYNTAX = /[|<>`$()\n\r]/;
 
 /**
@@ -342,6 +356,7 @@ function scratchUnit(unit: string, dirs: string[], platform: string): boolean {
     return ops.length > 0 && ops.every((o) => !!o && insideScratch(o, dirs, platform));
   }
   if (prog === "cd") return args.length === 1 && (inside(args[0]) || dirs.some((d) => d === args[0]));
+  if (prog === "node" || prog === "python" || prog === "python3") return scratchScriptRun(w, dirs, platform);
   return false;
 }
 
