@@ -34,10 +34,9 @@
    "model": "foreman-fake/foreman"
   },
   {
-   "event": "guard",
-   "toolFamily": "Bash",
-   "guard": "destructive_guard",
-   "decision": "none"
+   "event": "overlay",
+   "toolFamily": "bash",
+   "decision": "ask-denied"
   },
   {
    "event": "llm",

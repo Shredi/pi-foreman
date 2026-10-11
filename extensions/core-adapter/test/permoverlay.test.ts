@@ -264,15 +264,14 @@ test("literal row 12 and 18: a grep flag value (--exclude-dir=.git, .claude) is 
   assert.equal(sh(r, world(wt, "child"), "cat --file=.git/config"), "deny");
 });
 
-test("literal row 13: heredoc prose (.pi, $x, a cd) is no path and no command; scripts and pipes keep their body", () => {
+test("literal row 13 (documented limit, point 17): heredoc bodies are scanned like any shell text; prose with .pi is denied for a child", () => {
   const r = rules2(false);
   const doc = (head: string, body: string, delim = "'EOT'"): string => `${head} <<${delim}\n${body}\nEOT`;
+  // as at base: no heredoc body is skipped; such text is written with the write tool
+  assert.equal(sh(r, world(wt, "child"), doc("cat", "notes: the .pi dir and $x are prose")), "deny");
+  assert.equal(sh(r, world(wt, "child"), doc("cat > docs/x.md", "the .pi dir", "EOT")), "deny");
   for (const role of ["child", "main"] as const) {
     const c = world(wt, role);
-    assert.equal(sh(r, c, doc("cat", "notes: the .pi dir and $x are prose\ncd /elsewhere")), "pass", role);
-    assert.equal(sh(r, c, doc("cat > docs/x.md", "the .pi dir and $x", "EOT")), "pass", role);
-    assert.equal(sh(r, c, doc("cat >> docs/x.md", "\tthe .pi dir", "EOT") + "\ncat docs/x.md"), "pass", role);
-    // the body is kept when something else may run it
     assert.equal(sh(r, c, doc("cat", "cat .env") + " | sh"), "deny", role);
     assert.equal(sh(r, c, `bash <<EOT\ncat .env\nEOT`), "deny", role);
     assert.equal(sh(r, c, doc("cat", "cat $(cat .env)", "EOT")), "deny", `${role}: unquoted delimiter keeps substitutions`);
@@ -282,7 +281,7 @@ test("literal row 13: heredoc prose (.pi, $x, a cd) is no path and no command; s
     assert.equal(sh(r, c, `cat $((1<<2)); cat .env\n2`), "deny", `${role}: arithmetic opens no heredoc`);
     assert.equal(sh(r, c, `cat <<EOT\ncat .env`), "deny", `${role}: no delimiter line, nothing is dropped`);
   }
-  assert.equal(sh(r, world(wt, "child"), doc("cat", "cd /elsewhere\n.pi/settings.json")), "pass");
+  assert.equal(sh(r, world(wt, "child"), doc("cat", "cd /elsewhere\n.pi/settings.json")), "deny");
 });
 
 test("literal row 14: a child may cd to the workspace root (cd .. from a subdir, the worktree root) and its scratch dir", () => {
@@ -510,10 +509,9 @@ test("revision 2 F1-F2: a heredoc body is stripped only when every heredoc of th
   }
   const r = rules2(false);
   for (const cmd of probes(AF, "t")) assert.equal(sh(r, world(ws, "main"), cmd), "ask", `main: ${cmd}`);
-  // all readers on the line: both bodies are prose
+  // readers only: the bodies are scanned as well
   const c = world(wt, "child");
-  assert.equal(sh(r, c, `cat <<A && cat <<B\necho x > ${D}\nA\nthe .pi dir\nB`), "pass");
-  assert.equal(sh(r, c, `cat <<'EOT' \\\n  > docs/n.md\nnotes: the .pi dir and $x are prose\nEOT`), "pass");
+  assert.equal(sh(r, c, `cat <<A && cat <<B\necho x > ${D}\nA\nthe .pi dir\nB`), "deny");
 });
 
 test("revision 2: variable-assigning builtins keep a protected path protected when a write redirect follows", () => {
@@ -614,17 +612,25 @@ test("revision 3: a heredoc body is stripped only when the whole text is plain r
   assert.equal(sh(r, world(ws, "main"), `cat $[1<<2] 2>/dev/null; true\necho x > ${AF}\n2]`), "ask");
   assert.equal(sh(r, world(ws, "main"), `cat <<A\necho x > ${AF}`), "ask", "unclosed heredoc: nothing stripped");
   assert.equal(sh(r, world(ws, "main"), `cat <<A <<B\nx\nA\necho x > ${AF}`), "ask", "second delimiter never appears: nothing stripped");
-  // all-reader texts keep their prose body
-  const c = world(wt, "child");
-  for (const cmd of [
-    "cat <<'EOT'\nnotes: the .pi dir and $x are prose\nEOT",
-    "cat > docs/x.md <<EOT\nthe .pi dir and $x\nEOT\ncat docs/x.md",
-    "tee docs/x.md <<EOT\nthe .pi dir and $x\nEOT",
-    "tee -a docs/x.md <<EOT\nthe .pi dir\nEOT\ngrep -n x docs/x.md | head",
-    "if cat <<A | grep x; then echo ok; fi\nthe .pi dir\nA",
-    "{ cat <<A; echo done; } 2>&1\nthe .pi dir\nA",
-    "for f in a b; do cat <<A; done\nthe .pi dir and $x\nA",
-  ]) assert.equal(sh(r, c, cmd), "pass", cmd);
+});
+
+test("review 4: heredoc bodies stay scanned for reader programs with script/output flags, dotfile targets, cd before tee", () => {
+  const D = "config/foreman.defaults.json";
+  const AF = `${ag2}/foreman.json`;
+  const probes = (body: string): string[] => [
+    `awk -E /dev/stdin x <<A\n${body}\nA`,
+    `sed -n --fil=- x <<A\n${body}\nA`,
+    `sort -S 1 --compress-prog=sh <<A\n${body}\nA`,
+    `uniq - ~/.bashrc <<A\n${body}\nA`,
+    `sort --o=.bashrc <<A\n${body}\nA`,
+    `cd ~; tee bashrc <<A\n${body}\nA`,
+    `less -o .bashrc <<A\n${body}\nA`,
+  ];
+  for (const selfHost of [true, false]) {
+    const r = rules2(selfHost);
+    for (const cmd of [...probes(`echo x > ${D}`), ...probes(`cat ${AF}`)]) assert.equal(sh(r, world(ws, "child"), cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);
+  }
+  for (const cmd of probes(`echo x > ${AF}`)) assert.equal(sh(rules2(false), world(ws, "main"), cmd), "ask", `main: ${cmd}`);
 });
 
 test("cleanup of the second world", () => {

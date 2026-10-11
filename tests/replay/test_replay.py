@@ -147,13 +147,13 @@ class TestDestructiveGuard(ReplayCase):
         sid = pi.session_id()
         res = tool_results(pi.prompt("[[replay:c1]] start", timeout=60))
         # The nested call made by the codemode script is hooked and reported as its own bash call.
-        # then a heredoc that only mentions `.pi` and `$x` in prose is no destructive command and runs
-        self.assertEqual([(n, e) for n, e, _ in res], [("bash", True), ("bash", True), ("codemode", True), ("bash", False)])
+        # then a heredoc that only mentions `.pi` in prose: bodies are scanned (documented limit, point 17), so the overlay stops it
+        self.assertEqual([(n, e) for n, e, _ in res], [("bash", True), ("bash", True), ("codemode", True), ("bash", True)])
         self.assertTrue(res[0][2].startswith("DESTRUCTIVE GUARD:"), res[0][2])
         self.assertTrue(res[1][2].startswith("DESTRUCTIVE GUARD:"), res[1][2])
         self.assertIn("Script failed", res[2][2])
         self.assertIn("DESTRUCTIVE GUARD:", res[2][2])
-        self.assertIn("the .pi dir and $x are prose", res[3][2])
+        self.assertIn("protected configuration", res[3][2])
         pi.close()
         self.golden("destructive", {"session": shape(rig.traces()["trace-" + sid])})
 

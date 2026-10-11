@@ -59,8 +59,7 @@
 //     Shell words are path arguments only: the pattern/script operands of a line made of pure
 //     read commands are skipped, `*` skips dot entries and `\` is no separator off win32 (checkShell).
 //     The pattern of grep/rg and their --include/--exclude/--exclude-dir/--glob values are never path words.
-//     Heredoc bodies read by cat/tee/grep/... are dropped before scanning (stripHeredocs; kept when piped on,
-//     substituted, or without a delimiter line). A command of read-only verbs only (no in-place sed, `sort -o`,
+//     Heredoc bodies are scanned like any shell text (a `.pi` or `$x` in prose still trips the guards). A command of read-only verbs only (no in-place sed, `sort -o`,
 //     `find -exec`, tee, xargs, PowerShell) and no write redirect at all (any target) skips the write-only rules:
 //     writeAsk/writeAskSelfHost for children, the ask list for the foreman; deny and childDeny never skip.
 //     Children may not touch childBlock paths (handoffs except plan/result.md, subagent artifacts,
@@ -365,27 +364,6 @@ function matchParen(src: string, open: number): number {
     else if (c === ")" && --depth === 0) return i;
   }
   return src.length;
-}
-
-/** Index of the bracket closing the `[` or `{` at `open` (quotes and escapes skipped); the last index when it never closes. */
-function matchBracket(src: string, open: number): number {
-  const o = src[open];
-  const cl = o === "[" ? "]" : "}";
-  let depth = 0;
-  for (let i = open; i < src.length; i++) {
-    const c = src[i];
-    if (c === "\\") i++;
-    else if (c === "'") {
-      const j = src.indexOf("'", i + 1);
-      if (j < 0) return src.length - 1;
-      i = j;
-    } else if (c === '"') {
-      i++;
-      while (i < src.length && src[i] !== '"') i += src[i] === "\\" ? 2 : 1;
-    } else if (c === o) depth++;
-    else if (c === cl && --depth === 0) return i;
-  }
-  return src.length - 1;
 }
 
 /** Inner text of `$( )` and backtick substitutions, also inside double quotes (never inside single quotes). */
@@ -955,151 +933,6 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
   }
 }
 
-// ------------------------------------------------------------------ heredocs
-
-/** Commands whose heredoc body is prose: the PURE_VERBS readers plus `tee` (its file operands are checked). */
-const HEREDOC_READERS = new Set([...PURE_VERBS, "tee"]);
-
-/** A write target that stays inside the working directory and is no dotfile (`/dev/null` and fd dups excepted). */
-function plainTarget(t: string): boolean {
-  if (DEV_TARGET.test(t)) return true;
-  if (!t || /^[/\\~$]|^[A-Za-z]:|[`$]/.test(t)) return false;
-  return t.split(/[\\/]/).every((s) => s !== ".." && !(s.startsWith(".") && s !== "."));
-}
-
-/**
- * Whether EVERY command unit of the text (all lines, `{ }`, `( )`, loops and chains) is a plain reader
- * with a literal command word: no substitution or process substitution, no wrapper, path, variable,
- * assignment or quoted verb, nothing that can write (in-place sed, `sort -o`, `find -exec`), and no
- * redirect or `tee` operand that is a dotfile or outside the working directory.
- */
-function onlyReaders(text: string): boolean {
-  if (/`|\$\(|<\(|>\(/.test(text)) return false;
-  for (const pipe of parseShell(text).pipelines) {
-    for (const unit of pipe) {
-      const redir = REDIRECTS.get(unit) ?? new Set<number>();
-      for (const i of WRITE_REDIRECTS.get(unit) ?? []) if (!plainTarget(unit[i])) return false;
-      let words = unit.filter((_, i) => !redir.has(i));
-      while (words.length && LEAD_KEYWORDS.has(words[0])) words = words.slice(1);
-      if (!words.length || NEUTRAL_UNITS.has(words[0]) || (words.length === 1 && NEUTRAL_END.has(words[0]))) continue;
-      if (!HEREDOC_READERS.has(words[0]) || !unitReadOnly(words, new Set())) return false;
-      if (words[0] === "tee" && words.slice(1).some((a) => !a.startsWith("-") && !plainTarget(a))) return false;
-    }
-  }
-  return true;
-}
-
-/** `$(...)` and backtick substitutions of an unquoted heredoc body, one per `echo` line. */
-function bodySubstitutions(body: string): string[] {
-  const out: string[] = [];
-  for (let i = 0; i < body.length; i++) {
-    const c = body[i];
-    if (c === "\\") i++;
-    else if (c === "$" && body[i + 1] === "(") {
-      const end = matchParen(body, i + 1);
-      out.push(body.slice(i + 2, end));
-      i = end;
-    } else if (c === "`") {
-      const j = body.indexOf("`", i + 1);
-      const end = j < 0 ? body.length : j;
-      out.push(body.slice(i + 1, end));
-      i = end;
-    }
-  }
-  return out.map((s) => `echo $(${s.replace(/\n/g, " ")})`);
-}
-
-/**
- * Drops the bodies of heredocs (`<<`, `<<-`, quoted or bare delimiter), so prose in a document (`.pi`,
- * `$x`, `cd /tmp`) is no command and no path, but ONLY when every command unit of the whole text is a
- * plain reader (onlyReaders): a body may be executed by anything else in the text, however it is
- * spelled. Nothing is dropped when a delimiter line is missing. An unquoted delimiter keeps the
- * `$(...)` and backtick parts of the body. Quotes and comments are tracked, and `$((`, `((`, `$[`
- * and `${` regions are skipped, so a `<<` inside them opens nothing.
- */
-export function stripHeredocs(src: string): string {
-  if (!src.includes("<<")) return src;
-  const shape = stripBodies(src, false);
-  if (shape === null || shape === src || !onlyReaders(shape)) return src;
-  return stripBodies(src, true) ?? src;
-}
-
-/** The text without heredoc bodies, or null when a heredoc cannot be read (no delimiter line). */
-function stripBodies(src: string, keepSubs: boolean): string | null {
-  let out = "";
-  let lineStart = 0;
-  // one entry per `<<` operator of the line, in order
-  const pending: { delim: string; dash: boolean; quoted: boolean }[] = [];
-  let i = 0;
-  while (i < src.length) {
-    const c = src[i];
-    if (c === "\\" && src[i + 1] === "\n") {
-      // line continuation: the next line belongs to the current command
-      out += " ";
-      i += 2;
-    } else if (c === "\\") {
-      out += src.slice(i, i + 2);
-      i += 2;
-    } else if (c === "'" || c === '"') {
-      let j = i + 1;
-      while (j < src.length && src[j] !== c) j += c === '"' && src[j] === "\\" ? 2 : 1;
-      out += src.slice(i, j + 1);
-      i = j + 1;
-    } else if (c === "$" && src[i + 1] === "'") {
-      const [, end] = ansiC(src, i + 2);
-      out += src.slice(i, end + 1);
-      i = end + 1;
-    } else if (c === "#" && (i === 0 || /[\s;&|()]/.test(src[i - 1]))) {
-      let j = i;
-      while (j < src.length && src[j] !== "\n") j++;
-      out += src.slice(i, j);
-      i = j;
-    } else if ((c === "$" && (src[i + 1] === "[" || src[i + 1] === "{")) || (c === "$" && src.startsWith("((", i + 1)) || (c === "(" && src[i + 1] === "(")) {
-      // arithmetic and parameter expansion: a `<<` in them is a shift or text, no heredoc
-      const open = c === "$" ? i + 1 : i;
-      const end = src[open] === "(" ? matchParen(src, open) : matchBracket(src, open);
-      out += src.slice(i, end + 1);
-      i = end + 1;
-    } else if (c === "\n") {
-      out += c;
-      i++;
-      if (pending.length) {
-        for (const h of pending) {
-          let pos = i;
-          let end = -1;
-          while (pos <= src.length) {
-            let nl = src.indexOf("\n", pos);
-            if (nl < 0) nl = src.length;
-            const line = src.slice(pos, nl);
-            if ((h.dash ? line.replace(/^\t+/, "") : line) === h.delim) {
-              end = nl;
-              break;
-            }
-            if (nl >= src.length) break;
-            pos = nl + 1;
-          }
-          if (end < 0) return null; // no delimiter line: strip nothing
-          const kept = h.quoted || !keepSubs ? [] : bodySubstitutions(src.slice(i, pos));
-          if (kept.length) out += kept.join("\n") + "\n";
-          i = Math.min(end + 1, src.length);
-        }
-        pending.length = 0;
-      }
-      lineStart = out.length;
-    } else if (c === "<" && src[i + 1] === "<" && src[i + 2] !== "<" && src[i - 1] !== "<") {
-      const m = /^<<(-?)[ \t]*((?:[^\s;&|<>()'"\\]|'[^']*'|"[^"]*"|\\.)+)/.exec(src.slice(i));
-      if (!m) return null;
-      pending.push({ delim: m[2].replace(/'([^']*)'|"([^"]*)"|\\(.)/g, (_x, a, b, d) => a ?? b ?? d), dash: m[1] === "-", quoted: /['"\\]/.test(m[2]) });
-      out += "<<";
-      i += 2;
-    } else {
-      out += c;
-      i++;
-    }
-  }
-  return out;
-}
-
 // ---------------------------------------------------------------------- paths
 
 const GLOB = /[*?[]/;
@@ -1397,7 +1230,7 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
 export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchCtx): Decision | null {
   const shell = ctx0.shell ?? "posix";
   const ctx: MatchCtx = ctx0.owned || !rules.owned ? ctx0 : { ...ctx0, owned: rules.owned };
-  const command = shell === "posix" ? stripHeredocs(rawCommand) : rawCommand;
+  const command = rawCommand;
   if (ctx.role === "child") {
     const cd = childCdDeny(command, ctx);
     if (cd) return cd;

@@ -158,6 +158,8 @@ pure read-only verb and the command has no write redirect at all (any target but
 counts): a protected path named in an assignment (`f=...`) or a `for`/`select`/`case` list is still scanned and
 protected as soon as a redirect could write through it; so a read of a protected file combined with any write redirect (e.g. `cat config/foreman.defaults.json > out.txt`) stays protected for children.
 
+Heredoc bodies are scanned like any shell text (a `.pi` or `$x` in prose heredocs still trips the guards; write such text with the write tool).
+
 | Pattern (`external_directory`, read and write) | Why |
 |---|---|
 | `<agentDir>/pi-foreman/handoffs/*` | the session's handoff dirs (plan, ruling, result) |

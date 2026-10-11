@@ -246,120 +246,13 @@ def _metric(event, session_id=None, **extra):
 
 # --- text plumbing ---------------------------------------------------------
 
-_HEREDOC_OPEN = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]+)'|\"([^\"\n]+)\"|\\?([A-Za-z0-9_]+))")
-
-
-# Commands that only read their stdin and write nowhere but their redirects. A heredoc body is
-# skipped only when EVERY command of the whole text is one of these (see _only_readers): anything
-# else, however spelled, may execute the body (`bash x.sh`, `$SHELL`, `timeout 5 bash`, `make -f`).
-_HEREDOC_READERS = frozenset(("cat", "head", "tail", "grep", "egrep", "fgrep", "wc", "sort", "uniq", "less",
-                             "more", "tee", "printf", "echo", "true", ":"))
-_HEREDOC_LEADS = frozenset(("do", "then", "else", "elif", "if", "while", "until", "!", "{", "}"))
-_HEREDOC_NEUTRAL = frozenset(("for", "select", "case", "done", "fi", "esac"))
-_QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
-_WRITE_REDIRECT = re.compile(r"(?:\d|&)?>[>|]?&?[ \t]*([^\s;&|<>()]*)")
-_ANY_REDIRECT = re.compile(r"(?:\d|&)?(?:<<<|<<-?|>>|>\||<|>)&?[ \t]*[^\s;&|<>()]*")
-
-
-def _plain_target(t):
-    """A write target inside the working directory that is no dotfile (`/dev/null` and fd dups pass)."""
-    if t in ("/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "-") or t.isdigit():
-        return True
-    if not re.match(r"[A-Za-z0-9_][A-Za-z0-9_./+@%,=-]*$", t):
-        return False
-    return all(s != ".." and not s.startswith(".") for s in t.split("/") if s)
-
-
-def _only_readers(segs):
-    """True when every command unit of the text (all segments outside heredoc bodies, including
-    those in `{ }`, `( )`, loops and chains) is a plain reader with a literal command word: no
-    substitution or process substitution, no quoted/escaped/variable/path verb, no assignment, no
-    `sort -o`, and no redirect or `tee` operand that is a dotfile or outside the working directory."""
-    for seg in segs:
-        if re.search(r"`|\$\(|<\(|>\(", seg):
-            return False
-        s = _QUOTED.sub("\x00", seg)
-        if not all(_plain_target(t) for t in _WRITE_REDIRECT.findall(s)):
-            return False
-        words = _ANY_REDIRECT.sub(" ", s).replace("(", " ").replace(")", " ").split()
-        while words and words[0] in _HEREDOC_LEADS:
-            words = words[1:]
-        if not words or words[0] in _HEREDOC_NEUTRAL:
-            continue
-        verb, args = words[0], words[1:]
-        if verb not in _HEREDOC_READERS:
-            return False
-        if verb == "sort" and any(re.match(r"-[A-Za-z]*o|--(output|compress-program)", a) for a in args):
-            return False
-        if verb == "uniq" and len([a for a in args if not a.startswith("-")]) > 1:
-            return False
-        if verb == "tee" and not all(_plain_target(a) for a in args if not a.startswith("-")):
-            return False
-    return True
-
-
-def _skip_heredoc_bodies(text, i, heredocs):
-    """Index after the bodies of the heredocs opened on the line just ended (text fed to a command
-    on stdin is prose, not commands: `cat <<'EOT'` with a dot-pi dir or `$x` in it), or None when a
-    delimiter line never appears."""
-    n = len(text)
-    for delim, strip_tabs in heredocs:
-        while True:
-            if i >= n:
-                return None
-            j = text.find("\n", i)
-            line = text[i:j if j >= 0 else n]
-            i = j + 1 if j >= 0 else n
-            if (line.lstrip("\t") if strip_tabs else line) == delim:
-                break
-    return i
-
-
-def _balanced_end(text, i):
-    """Index after the `$[...]` / `${...}` expansion opening at text[i:i+2] (the text end if it never closes)."""
-    o = text[i + 1]
-    cl = "]" if o == "[" else "}"
-    depth, j, n = 0, i + 1, len(text)
-    while j < n:
-        c = text[j]
-        if c == "\\":
-            j += 1
-        elif c in "'\"":
-            k = text.find(c, j + 1)
-            if k < 0:
-                return n
-            j = k
-        elif c == o:
-            depth += 1
-        elif c == cl:
-            depth -= 1
-            if depth == 0:
-                return j + 1
-        j += 1
-    return n
-
-
 def _split_segments(text):
     """Split a command line into command segments on unquoted `;`, `|`,
     `||`, `&&`, `&` and newlines. Quote-aware by hand rather than by
     regex: the whole point is that `echo "a; rm -rf /"` is ONE segment
-    (an echo) while `a; rm -rf /` is two.
-
-    Heredoc bodies are left out only when every segment of the whole text is a plain reader
-    (_only_readers) and every delimiter line exists; otherwise the bodies are scanned as commands."""
-    if "<<" in text:
-        segs = _split_raw(text, True)
-        if segs is not None and _only_readers(segs):
-            return segs
-    return _split_raw(text, False)
-
-
-def _split_raw(text, skip):
-    """_split_segments with the heredoc bodies skipped (skip=True; None when a body never closes) or kept."""
+    (an echo) while `a; rm -rf /` is two. Heredoc bodies are split like any other text."""
     segs, buf = [], []
     quote = None
-    heredocs = []
-    shifted = 0  # end of the `$[...]` / `${...}` expansion the scan is in: a `<<` there is no heredoc
     i, n = 0, len(text)
     while i < n:
         c = text[i]
@@ -383,42 +276,10 @@ def _split_raw(text, skip):
             buf.append(text[i + 1])
             i += 2
             continue
-        if text[i:i + 3] == "<<<":
-            buf.append("<<<")
-            i += 3
-            continue
-        if text[i:i + 3] == "$((" or (text[i:i + 2] == "((" and not "".join(buf).strip()):
-            # arithmetic: its `<<` is a shift, not a heredoc
-            j, depth = i + (1 if c == "$" else 0), 0
-            while j < n:
-                depth += (text[j] == "(") - (text[j] == ")")
-                j += 1
-                if depth == 0:
-                    break
-            buf.append(text[i:j])
-            i = j
-            continue
-        if c == "$" and text[i + 1:i + 2] in ("[", "{") and not shifted:
-            shifted = _balanced_end(text, i)
-        if shifted and i >= shifted:
-            shifted = 0
-        if text[i:i + 2] == "<<" and not shifted:
-            m = _HEREDOC_OPEN.match(text, i)
-            if m:
-                heredocs.append((m.group(2) or m.group(3) or m.group(4), bool(m.group(1))))
-                buf.append(text[i:m.end()])
-                i = m.end()
-                continue
         if c in ";\n":
             segs.append("".join(buf))
             buf = []
             i += 1
-            if c == "\n" and heredocs:
-                if skip:
-                    i = _skip_heredoc_bodies(text, i, heredocs)
-                    if i is None:
-                        return None
-                heredocs = []
             continue
         if c == "&" and buf and buf[-1] in "<>" and re.match(r"[0-9-]", text[i + 1:i + 2]):
             buf.append(c)  # `2>&1`: an fd duplication, no command separator
