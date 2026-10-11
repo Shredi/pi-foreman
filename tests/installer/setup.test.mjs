@@ -169,7 +169,7 @@ test("without a pi-foreman package entry setup prints the install line and fails
 });
 
 test("pi-foreman package entries are recognised in git, https and npm forms", () => {
-  for (const form of ["git:github.com/someone/pi-foreman@v1.2.0", "https://github.com/someone/pi-foreman", "npm:pi-foreman@1.0.0", "git:gitlab.com/o/pi-foreman", "git:git.example.com/o/pi-foreman@v1", "https://git.example.com/o/pi-foreman.git"]) {
+  for (const form of ["git:github.com/someone/pi-foreman@v1.2.0", "github.com/someone/pi-foreman", "https://github.com/someone/pi-foreman", "npm:pi-foreman@1.0.0", "git:gitlab.com/o/pi-foreman", "git:git.example.com/o/pi-foreman@v1", "https://git.example.com/o/pi-foreman.git"]) {
     const env = fresh();
     seed(env, { packages: ["npm:pi-claude-bridge@0.9.2", form] });
     const r = run(env, ["--dry-run"]);
