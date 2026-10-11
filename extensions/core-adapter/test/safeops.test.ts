@@ -15,7 +15,7 @@ const SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", 
 
 type Tool = { name: string; parameters: { required: string[] }; execute: (...a: unknown[]) => Promise<{ content: { text: string }[]; details: Record<string, unknown>; isError?: boolean }> };
 
-function setup(opts: { isChild?: boolean; sessionChild?: boolean; python?: string | null; reply?: Partial<SpawnResult>; spawner?: Spawner }) {
+function setup(opts: { packOn?: boolean; isChild?: boolean; sessionChild?: boolean; python?: string | null; reply?: Partial<SpawnResult>; spawner?: Spawner }) {
   const tools = new Map<string, Tool>();
   const traces: Record<string, unknown>[] = [];
   const calls: { cmd: string; args: string[]; input?: string }[] = [];
@@ -23,7 +23,7 @@ function setup(opts: { isChild?: boolean; sessionChild?: boolean; python?: strin
     calls.push({ cmd, args, input: o.input });
     return { code: 0, stdout: "", stderr: "", timedOut: false, ...opts.reply };
   });
-  const session: SafeOpsSession = { python: opts.python === undefined ? "/py" : opts.python, isChild: opts.sessionChild ?? opts.isChild ?? false, opsConfig: { copyMaxBytes: 7 }, trace: (r) => void traces.push(r) };
+  const session: SafeOpsSession = { python: opts.python === undefined ? "/py" : opts.python, isChild: opts.sessionChild ?? opts.isChild ?? false, packOn: opts.packOn, opsConfig: { copyMaxBytes: 7 }, trace: (r) => void traces.push(r) };
   const names = registerSafeOps({ registerTool: (t: unknown) => void tools.set((t as Tool).name, t as Tool) } as never, {
     isChild: opts.isChild ?? false,
     session: async () => session,
@@ -108,4 +108,14 @@ test("safeops: real safe_ops.py moves once, then reports dst_exists", { skip: !p
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test("safeops: tool_pack is traced per call only while the git pack is on", async () => {
+  const reply = { stdout: JSON.stringify({ ok: true, action: "rename_file" }) + "\n" };
+  const on = setup({ packOn: true, reply });
+  await on.call("foreman_move", { src: "a", dst: "b" });
+  assert.deepEqual(on.traces, [{ event: "tool_pack", pack: "git", op: "move" }, { event: "safe_op", toolFamily: "move", decision: "ran" }]);
+  const off = setup({ reply });
+  await off.call("foreman_move", { src: "a", dst: "b" });
+  assert.deepEqual(off.traces, [{ event: "safe_op", toolFamily: "move", decision: "ran" }]);
 });

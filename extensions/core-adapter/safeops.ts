@@ -4,6 +4,7 @@
 // unreadable output is a tool error, and nothing is done either.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { asciiJson } from "./payload.ts";
+import type { GitReadOp } from "./gitpack.ts";
 import type { Spawner } from "./spawn.ts";
 
 export const SAFE_OP_TIMEOUT_MS = 120_000;
@@ -18,7 +19,7 @@ export type SafeOpOutcome =
 export interface RunSafeOpInput {
   python: string | null;
   script: string;
-  op: SafeOp;
+  op: SafeOp | GitReadOp;
   args: Record<string, unknown>;
   cwd: string;
   /** The merged `safety.ops` object. */
@@ -89,6 +90,8 @@ export const SAFE_OP_TOOLS: { name: string; op: SafeOp; label: string; descripti
 export interface SafeOpsSession {
   python: string | null;
   isChild: boolean;
+  /** The git tool pack is on: each call is traced as tool_pack (docs/tools.md). */
+  packOn?: boolean;
   /** The merged `safety.ops` object. */
   opsConfig: unknown;
   trace(rec: Record<string, unknown>): void;
@@ -128,6 +131,7 @@ export function registerSafeOps(pi: Pick<ExtensionAPI, "registerTool">, deps: Sa
           s.trace({ event: "safe_op", toolFamily: t.op, decision: "error" });
           return failure(`${t.name} is for the foreman only; nothing was done.`, { decision: "error" });
         }
+        if (s.packOn === true) s.trace({ event: "tool_pack", pack: "git", op: t.op });
         const pre = deps.preflight ? await deps.preflight(ctx, t.op, id) : undefined;
         if (pre) {
           s.trace({ event: "safe_op", toolFamily: t.op, decision: "blocked" });
