@@ -39,14 +39,11 @@ jobs:
         run: |
           npm install --no-package-lock
           npx tsc --noEmit -p tsconfig.json
-      - uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/pi-foreman-replay-cache
-          key: pi-subagents-0.75.0-${{ runner.os }}
+      - name: install bundled packages (pi-subagents, permission system, intercom)
+        run: npm install --no-package-lock --no-audit --no-fund
       - name: replay scenarios (fake provider only, no secrets)
         env:
           FOREMAN_REPLAY_REQUIRED: "1"
-          FOREMAN_REPLAY_CACHE: ${{ runner.temp }}/pi-foreman-replay-cache
         run: python -m unittest discover -s tests/replay -v
       - name: ledger shims on Windows (cmd and PowerShell)
         if: runner.os == 'Windows'
