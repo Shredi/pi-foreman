@@ -1,0 +1,4 @@
+{"event":"keepalive","outcome":"fired"}
+{"event":"compaction","reason":"warm_idle","tier":"standard","model":"claude-bridge/m"}
+{"event":"compaction","reason":"warm_idle","tier":"heavy","model":"claude-bridge/m"}
+{"event":"compaction","reason":"threshold","tier":"standard","model":"claude-bridge/m"}

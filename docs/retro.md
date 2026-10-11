@@ -57,6 +57,14 @@ Besides the approval and trace lines, the report carries these lines when there 
 - `pr: 4 calls (create 1, checks 2, watch 1)`: PR tool calls from `tool_pack` events, listing counts of at least 1 in
   the order create, status, checks, comments, watch. The JSON report has `trace.pr_pack`.
 
+- `cache: keepalives 3 ($0.07), warm compactions 2, cold resumes 1`: cache keep-alive usage lines (`kind: "keepalive"`,
+  count and summed cost; left out of the per-role rows), `compaction` trace events with reason `warm_idle`, and
+  cold resumes. A cold resume is approximate: the first foreman turn after a gap longer than the provider's cache TTL
+  (`providers.<p>.cache.ttlSeconds` or the built-in one) whose `cacheRead` is under 50 % of the previous foreman
+  line's prompt (input + cacheRead + cacheWrite); keep-alive lines count as the previous line, so a bridged gap is
+  not cold. Without a TTL the count is 0. The line shows when a cache policy applies or any count is above 0; the JSON
+  report has `cache` (`keepalives`, `keepaliveCost`, `warmCompactions`, `coldResumes`, `ttlSeconds`).
+
 ## Child traces
 
 When the foreman's retro is on, a child traces too. A single-launch child (the `agent` launch of one role) writes its
