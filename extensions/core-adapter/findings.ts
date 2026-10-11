@@ -3,11 +3,11 @@
 // which appends the review and its located findings to the session's findings store and prints
 // them. Fail-soft: a failed, slow or unparsable call counts as zero findings and traces nothing.
 // The located findings feed the `finding` trace (file basename only) and the panel's attributed
-// block (panel.ts).
+// block (panel.ts PendingPanels).
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { splitLevel } from "./launchmodel.ts";
-import { composePanelBlock, type PanelFinding } from "./panel.ts";
+import type { PanelFinding } from "./panel.ts";
 import type { ReviewLaunch, ReviewResult } from "./occasion.ts";
 
 export interface Finding extends PanelFinding {
@@ -101,8 +101,6 @@ export async function recordReview(r: ReviewResult, launch: ReviewLaunch | null 
 export interface RunEndFindings {
   /** Trace records: `finding` per located finding. */
   traces: Record<string, unknown>[];
-  /** The panel's attributed block ("" when the launch was no panel or nothing was located). */
-  block: string;
   byResult: { result: ReviewResult; findings: Finding[] }[];
 }
 
@@ -111,27 +109,18 @@ export interface RunEndInput {
   launch: ReviewLaunch | null | undefined;
   context: RecordContext;
   tmpDir: string;
-  /** ladder.reviewPanel.visible. */
-  visible: boolean;
 }
 
 /**
- * Record every review result of a run end (awaited one after the other), trace its findings and
- * compose the panel block.
+ * Record every review result of a run end (awaited one after the other) and trace its findings.
  */
 export async function onReviewRunEnd(o: RunEndInput, run: RecordRunner): Promise<RunEndFindings> {
-  const out: RunEndFindings = { traces: [], block: "", byResult: [] };
+  const out: RunEndFindings = { traces: [], byResult: [] };
   for (const r of o.results) {
     const findings = await recordReview(r, o.launch, o.context, o.tmpDir, run);
     out.byResult.push({ result: r, findings });
     const model = r.model ?? o.context.live ?? "unknown";
     for (const f of findings) out.traces.push({ event: "finding", role: r.role, findingId: f.id, model: splitLevel(model).base, gate: r.occasion, class: f.class, file: traceFile(f.file), line: f.line, primary: r.primary });
-  }
-  if (o.launch?.panel) {
-    const name = (x: { result: ReviewResult }): string => splitLevel(x.result.model ?? x.result.shadow ?? o.context.live ?? "primary").base;
-    const primary = out.byResult.find((x) => x.result.primary && x.result.role === "reviewer");
-    const shadows = out.byResult.filter((x) => !x.result.primary).map((x) => ({ model: name(x), findings: x.findings }));
-    out.block = composePanelBlock({ model: primary ? name(primary) : o.launch.panel.primary, findings: primary?.findings ?? [] }, shadows, o.visible);
   }
   return out;
 }
