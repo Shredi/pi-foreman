@@ -1,0 +1,18 @@
+{
+ "session": [
+  {
+   "event": "tool_pack",
+   "pack": "git",
+   "op": "pr_checks"
+  },
+  {
+   "event": "tool_pack",
+   "pack": "git",
+   "op": "pr_watch"
+  },
+  {
+   "event": "pr_watch",
+   "outcome": "started"
+  }
+ ]
+}

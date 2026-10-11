@@ -71,6 +71,6 @@ Repo layout and test commands: `docs/development.md`. Read the page for the area
 - `docs/retro.md`: retro sources, friction classes, `Friction:` line and trace event, backlog store and CLI, lessons brief.
 - `docs/herdr.md`: Herdr sidebar plugin `pi-foreman.sidebar`, rows snippet, tokens, Agents view, symbols.
 - `docs/bench.md`: `foreman bench`, columns, price tiers.
-- `docs/tools.md`: optional git tool pack (`tools.git`), read tools, caps, guards, child inheritance, trace.
+- `docs/tools.md`: optional git tool pack (`tools.git`), PR tools (`tools.pr`, `tools.prHost`), read tools, caps, guards, child inheritance, trace.
 - `docs/overlays.md`: private and organisation overlays, one-way flow, extension points.
 - `docs/development.md`: layout, tests, replay rig, CI, Windows notes, keeping docs current.

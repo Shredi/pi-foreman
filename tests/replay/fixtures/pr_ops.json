@@ -1,0 +1,9 @@
+{
+ "foreman": {
+  "p1": [
+   {"tools": [{"name": "pr_checks", "arguments": {"number": 7}}]},
+   {"tools": [{"name": "pr_watch", "arguments": {"number": 7, "until": "checks"}}]},
+   {"text": "Checks read and a watch started."}
+  ]
+ }
+}

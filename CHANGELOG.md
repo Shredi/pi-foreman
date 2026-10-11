@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Added
+- PR tools (`tools.pr`, on by default; `docs/tools.md#pr-tools`): `pr_create`, `pr_status`, `pr_checks`, `pr_comments`
+  and `pr_watch`, host-neutral through `tools.prHost` (built-in `gh` and `glab`, or command templates). `pr_watch` wakes
+  the foreman when checks finish or a comment lands (`tools.prWatchSeconds`). A `pr:` retro line counts the calls.
+  Re-run `foreman setup` so children get the read tools.
 - Optional git tool pack (`tools.git`, off by default; `docs/tools.md`): `git_status`, `git_log`, `git_diff_stat` and
   `git_branch_state`, capped read-only tools for the foreman and for children whose role has bash. A `tool_pack` trace
   event and a `git:` retro line compare pack calls with bash git. Re-run `foreman setup` after enabling.
@@ -276,6 +280,7 @@
   stays, as offline exploration.
 
 ### Fixed
+- `tool_pack` is no longer counted for calls the git-config drift preflight blocked.
 - Review bench: removes each cell's work dir once the cell is recorded and the whole `pf-rb-work/<hash>` dir after a run
   (kept on interrupt, with `--keep-work`, or for a user work path), so a run no longer leaves tens of GB of clones;
   Policies rows with missing or failed cells are marked `(partial: k/n cells)`.

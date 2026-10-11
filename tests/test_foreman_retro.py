@@ -121,6 +121,24 @@ class RetroTest(unittest.TestCase):
         self.assertEqual(fr.git_pack_line(fr.build(None, None, None, None, 5, str(self.tmp))), None)
         self.assertEqual(fr.git_pack_line(fr.build(None, [], None, None, 5, str(self.tmp))), None)
 
+    def test_pr_line_and_git_line_split_pr_ops(self):
+        ops = ("pr_checks", "pr_checks", "pr_create", "pr_watch", "status")
+        trace = [{"event": "tool_pack", "pack": "git", "op": o} for o in ops]
+        rep = fr.build(None, trace, None, None, 5, str(self.tmp))
+        self.assertEqual(rep["trace"]["pr_pack"], {"pr_checks": 2, "pr_create": 1, "pr_watch": 1})
+        self.assertEqual(rep["trace"]["git_pack"], {"status": 1})
+        self.assertEqual(fr.pr_pack_line(rep), "pr: 4 calls (create 1, checks 2, watch 1)")
+        self.assertIn(fr.pr_pack_line(rep), fr.render_text(rep).splitlines())
+        self.assertIsNone(fr.pr_pack_line(fr.build(None, [], None, None, 5, str(self.tmp))))
+        self.assertIsNone(fr.pr_pack_line(fr.build(None, None, None, None, 5, str(self.tmp))))
+
+    def test_explorer_counts_unmarked_launch_entries(self):
+        trace = [{"event": "launch_entry", "role": "explorer", "kind": "entry", "model": "p/m-haiku"},
+                 {"event": "launch_entry", "role": "builder", "kind": "entry", "model": "p/m-haiku"},
+                 {"event": "launch_entry", "role": "explorer", "kind": "entry", "model": None}]
+        e = fr.explorer_metrics(trace, [], "s1")
+        self.assertEqual((e["launches"], e["models"]), (2, {"p/m-haiku": 1, "?": 1}))
+
     def test_zero_logged_cost_is_priced_from_rates(self):
         rec = {"foremanSession": "s1", "role": "builder", "provider": "claude-bridge", "model": "m1", "input": 1000000,
                "output": 100000, "cacheRead": 2000000, "cacheWrite": 0, "cost": {"total": 0}}
