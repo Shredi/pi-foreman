@@ -89,6 +89,26 @@ export function rankRefusal(config: Json | undefined, foremanModel: string | nul
   return ok ? null : refuse(`child model ${requested} (tier ${cTier}) is not ${policy === "below" ? "below" : "at or below"} the foreman model ${foreman} (tier ${fTier}).`);
 }
 
+/** Agents (roles) of the `subagent` call's entries whose launch model is `model`. */
+export function rolesOfModel(input: Json, model: string): string[] {
+  const out: string[] = [];
+  const visit = (list: unknown): void => {
+    if (!Array.isArray(list)) return;
+    for (const e of list) {
+      if (!isObj(e)) continue;
+      if (typeof e.agent === "string" && e.model === model) out.push(e.agent);
+      visit(e.parallel);
+    }
+  };
+  if (typeof input.agent === "string" && input.model === model) out.push(input.agent);
+  visit(input.tasks);
+  visit(input.chain);
+  return out;
+}
+
+/** Added to the rank-policy refusal of a planner launch (the role sits on the foreman's own rung). */
+export const PLANNER_OWN_RUNG_HINT = "The planner role sits on the foreman's own rung: plan it yourself (write .workflow/scratch/plan-<topic>.md) or map the role to a lower rung.";
+
 /** Every model a `subagent` call launches (after applyLaunchModels wrote them): top level and each entry. */
 export function launchedModels(input: Json): string[] {
   const out: string[] = [];

@@ -12,6 +12,9 @@ import type { Json, MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
 import { buildOverlayRules, checkToolCall, isOverlayTool, isSelfHost,OVERLAY_UNAVAILABLE, readBaseline, resolveDecision } from "./permoverlay.ts";
 import type { OverlayRules } from "./permoverlay.ts";
+import { ownedRoots, resolveNpmRoot, underOwned } from "./owned.ts";
+import { recheckExempt } from "./recheckexempt.ts";
+import type { OwnedRoots } from "./owned.ts";
 import { permFileState, PS_CHILD_ID, PS_PACKAGE, psProjectConfigPath, renderPermissions, resolvePermissionSystem } from "./permsys.ts";
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
@@ -41,7 +44,7 @@ import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, markP
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
-import { boundLaunchId, ChildScratch, finishScratch, launchScratch, SCRATCH_ENV, storeBrief, sweepScratch } from "./childscratch.ts";
+import { boundLaunchId, ChildScratch, finishScratch, launchScratch, SCRATCH_ENV, scratchRoot, storeBrief, sweepScratch } from "./childscratch.ts";
 import { panelChecksLine } from "./panelchecks.ts";
 import type { PanelChecksCache } from "./panelchecks.ts";
 import { GitDriftWatch, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
@@ -67,7 +70,7 @@ import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } 
 import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts";
 import { openTrace, traceFile } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
-import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
+import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { ChildWidget, rungOf } from "./childwidget.ts";
@@ -106,12 +109,12 @@ import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectCha
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
-import { launchedModels, rankRefusal } from "./ranks.ts";
+import { launchedModels, PLANNER_OWN_RUNG_HINT, rankRefusal, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
-import { PlanReviews, planFactsBlock, planPathsOf, planReviewHash, planReviewOn, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
+import { PlanReviews, planFactsBlock, planPathsOf, planReviewHash, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { launchEntries } from "./ladder.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
@@ -144,6 +147,8 @@ interface Session {
   permissionSystemError?: string;
   /** Deny/ask rules enforced before the permission system; null = baseline unreadable (fail closed). */
   overlay: OverlayRules | null;
+  /** Dirs the foreman owns outside the workspace (owned.ts); the npm root joins once `npm root -g` resolved. */
+  owned: OwnedRoots;
   registrationVia?: string;
   childExtensions: { id: string; path: string }[];
   stopContinued: boolean;
@@ -203,6 +208,8 @@ interface Session {
   triageHint: string;
   /** Finish refusals since the last user prompt (at most 2, then a forced pass). */
   finishRefusals: number;
+  /** Foreman only: a handoff wait or a pending checkpoint waits for the parent/owner; the finish gate lets the turn end. Cleared by the next user/parent input. */
+  waitingForParent: boolean;
   /** Uncounted finish refusals that ask for the builder's review_fail climb, since the last user prompt (at most 2). */
   climbRefusals: number;
   /** Foreman only: per-item FAIL counts of reviewer runs (ladder.reviewerClimb, reviewerclimb.ts). */
@@ -372,6 +379,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const foremanSession = isChild ? b?.foremanSession ?? process.env[PARENT_SESSION_ENV] ?? id : id;
     const line: LineContext = { workspace: b?.workspace || workspaceOf(cwd).root, foremanSession, role: isChild ? b?.role ?? "child" : "foreman", launchId: b?.launchId ?? null, kind: isChild ? b?.kind ?? "first" : "foreman" };
     const selfHost = isSelfHost(cwd, PKG_ROOT);
+    // Owned dirs (owned.ts): the npm root resolves in the background and rebuilds the overlay once known.
+    const tmpRoot = path.dirname(scratchRoot() ?? path.join(os.tmpdir(), "pi-foreman-scratch"));
+    const computeOwned = (npmRoot: string | null): OwnedRoots => ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot });
+    const owned = computeOwned(null);
+    const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o) : null);
     const s: Session = {
       id,
       cwd,
@@ -381,7 +393,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       python,
       config,
       configProvider: provider,
-      overlay: baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost) : null,
+      overlay: buildOverlay(owned),
+      owned,
       ceremony: initialCeremony(get(config.config, "ceremony.default")),
       childExtensions: [],
       stopContinued: false,
@@ -418,6 +431,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewGate: initialReviewGate(),
       triageHint: "",
       finishRefusals: 0,
+      waitingForParent: false,
       climbRefusals: 0,
       reviewerFails: new ReviewerFails(),
       reviewRuns: { byCall: new Map(), byRun: new Map(), blocks: new Map(), findings: new Map(), sync: Promise.resolve() },
@@ -467,6 +481,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       live: null,
     };
     sessions.set(id, s);
+    // `npm root -g` once per session, never awaited on the hot path; the overlay is rebuilt with the root when it resolves.
+    void resolveNpmRoot({ spawn: defaultSpawner, env: process.env, platform, execPath: process.execPath })
+      .then((npmRoot) => {
+        if (!npmRoot) return;
+        s.owned = computeOwned(npmRoot);
+        s.overlay = buildOverlay(s.owned);
+      })
+      .catch(() => undefined);
     if (!isChild) s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id));
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
     try {
@@ -1022,7 +1044,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const file = toolName === "read" ? resolveToolPath(inp.path, ctx.cwd, os.homedir()) : null;
     // ceremony.ledgerHelper tool/bash: a pure-ledger shell command is not a re-check (ledgercall.ts).
     const ledgerOnly = toolName === "bash" && ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper")) !== "off" && isLedgerOnlyCommand(inp.command);
-    const exempt = ledgerOnly || s.supervisor.open.size > 0 || (file !== null && inRecorded(s.childFiles, normFile(file)));
+    // harness-friction: a handoff poll (ruling.md, owned dirs) or a git worktree add|list|prune is no re-check (recheckexempt.ts).
+    const handoff = recheckExempt(toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, owned: s.owned });
+    const exempt = ledgerOnly || handoff || s.supervisor.open.size > 0 || (file !== null && inRecorded(s.childFiles, normFile(file)));
     const d = s.budget.check(toolName, callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt);
     if (d.kind === "warn") {
       s.readNotices.set(callId, d.text);
@@ -1378,7 +1402,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             if (!no) continue;
             const marker = floorMarker(raised, m);
             s.trace?.emit({ event: "launch_refused", reason: "rank_policy", policy: no.policy, foreman: no.foreman, requested: no.requested, ...(marker ? { marker } : {}) });
-            return { block: true, reason: marker ? `${no.message} The [${marker}] marker raised this entry to its role's strong rung, which the rank policy refuses; drop the marker or map a strong rung the policy allows.` : no.message };
+            const hint = rolesOfModel(input, m).includes("planner") ? ` ${PLANNER_OWN_RUNG_HINT}` : "";
+            return { block: true, reason: (marker ? `${no.message} The [${marker}] marker raised this entry to its role's strong rung, which the rank policy refuses; drop the marker or map a strong rung the policy allows.` : no.message) + hint };
           }
           // The security rung is explicit config: written after the rank check (docs/ladder.md); traced when it overrides the policy.
           markPolicyOverrides(reviewerClimbs, (m) => rankRefusal(s.config.config, foremanModel, m) !== null);
@@ -1395,7 +1420,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         for (const o of launched.overrides) s.trace?.emit({ event: "model_override", role: o.role, model: o.model, requested: o.requested });
         for (const n of launched.notices) s.trace?.emit({ event: "strong_unmapped", role: n.role, model: n.model, tier: s.ceremony.tier });
         notices = launched.notices.map((n) => n.text);
-        applyLaunchTimeouts(input, get(s.config.config, "roles"));
+        applyLaunchTimeouts(input, get(s.config.config, "roles"), get(s.config.config, "ceremony.childTimeoutSeconds"));
       }
       const pc = payloadCtx(s, ctx);
       for (const guard of mapping.pre) {
@@ -1528,6 +1553,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (s && !s.isChild && cause) s.turn.cause = cause;
       if (s && !s.isChild && cause) s.idleCache.onActivity();
       if (s && !s.isChild && cause === "wake") s.turn.wakeKinds = [...new Set((event.message as { details?: { kinds?: unknown[] } }).details?.kinds ?? [])].map(String).join(",");
+      // An inbound intercom message or a foreman_wait wake is the parent answering: the finish gate is active again.
+      if (s && !s.isChild && (m.customType === INTERCOM_MESSAGE_TYPE || m.customType === WAKE_MESSAGE_TYPE)) s.waitingForParent = false;
       if (s && !s.isChild && m.customType === INTERCOM_MESSAGE_TYPE) s.turn.intercomFrom = intercomSender((event.message as { details?: unknown }).details);
       if (s && !s.isChild && m.customType === NOTIFY_TYPE) onCompletionNotice(s, (event.message as { content?: unknown }).content);
     }
@@ -1573,6 +1600,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // D3: the owner is back in the loop, so revision rounds count from zero again.
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.rounds = initialRounds();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.waitingForParent = false;
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.climbRefusals = 0;
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset(typeof event.text === "string" ? event.text : ""); // the owner's task text for the reviewer (diffscan.ts ownerBlock)
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
@@ -1753,6 +1781,64 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { block: true, reason: boundRefusal(toolName, targets[0].raw, next, bound) };
   }
 
+  /** The owned read-write roots as literal dirs: the `*` segment (one dir per session) is expanded from disk. */
+  function literalOwnedDirs(roots: string[]): string[] {
+    const out: string[] = [];
+    for (const r of roots) {
+      const i = r.split(path.sep).indexOf("*");
+      if (i < 0) {
+        out.push(r);
+        continue;
+      }
+      const parts = r.split(path.sep);
+      const parent = parts.slice(0, i).join(path.sep) || path.sep;
+      try {
+        for (const e of fs.readdirSync(parent, { withFileTypes: true })) if (e.isDirectory()) out.push(path.join(parent, e.name, ...parts.slice(i + 1)));
+      } catch {
+        // the parent does not exist yet: nothing to allow
+      }
+    }
+    return out;
+  }
+
+  /** The owned handoffs root (`<agentDir>/pi-foreman/handoffs`). */
+  const handoffsRoot = (s: Session): string | undefined => s.owned.readWrite.find((r) => path.basename(r) === "handoffs");
+
+  /** A handoff dir of this user holds a plan.md or result.md written in the last day (a round is waiting on its parent). */
+  function handoffContext(s: Session): boolean {
+    const root = handoffsRoot(s);
+    if (!root) return false;
+    try {
+      for (const e of fs.readdirSync(root, { withFileTypes: true })) {
+        if (!e.isDirectory()) continue;
+        for (const f of ["plan.md", "result.md"]) {
+          try {
+            if (Date.now() - fs.statSync(path.join(root, e.name, f)).mtimeMs <= 86_400_000) return true;
+          } catch {
+            // absent
+          }
+        }
+      }
+    } catch {
+      // no handoffs dir
+    }
+    return false;
+  }
+
+  /**
+   * waiting_for_parent (finish gate): set by a file wait on a path under the handoffs root, or a timer wait while
+   * a handoff dir holds plan.md or result.md. A plain timer wait does not set it.
+   */
+  function markHandoffWait(s: Session, spec: { kind: string; path?: string }): void {
+    if (s.isChild) return;
+    const root = handoffsRoot(s);
+    const hit = spec.kind === "file" && !!root && typeof spec.path === "string" && underOwned(root, spec.path, platform);
+    if (hit || (spec.kind === "timer" && handoffContext(s))) {
+      s.waitingForParent = true;
+      s.trace?.emit({ event: "waiting_for_parent", decision: "set", toolFamily: spec.kind });
+    }
+  }
+
   /** Plan D3: the foreman's bash/powershell may not write project files, at any tier (children are not checked). */
   async function shellWriteBlock(ctx: ExtensionContext, toolName: "bash" | "powershell", input: Record<string, unknown>): Promise<{ block: true; reason: string } | undefined> {
     try {
@@ -1762,7 +1848,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const env = buildGuardEnv({ base: process.env, coreDir: CORE_DIR, sessionId: s.id, guard: "shell_write_guard", markerDir: s.markerDir });
       const { mode: foremanMode, scratchDir } = editModeOfSession(s);
       const mode: EditMode = planner ? "scratchpad" : foremanMode;
-      const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root, toolName, allowedShellDirs(mode, scratchDir, ctx.cwd, platform));
+      const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root, toolName, allowedShellDirs(mode, scratchDir, ctx.cwd, platform), s.isChild ? [] : literalOwnedDirs(s.owned.readWrite));
       // A planner writes nowhere outside the allowed dirs, outside the workspace included.
       if (planner) payload.confine = true;
       if (planner && launchBinding?.scratch) payload.scratch_dir = launchBinding.scratch;
@@ -1981,6 +2067,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    */
   async function ceremonyFinishGate<E>(s: Session, ctx: ExtensionContext, entries: E[]) {
     if (s.isChild || !isTriaged(s.ceremony) || s.activeRuns.size > 0) return undefined;
+    // A handoff wait or a pending checkpoint waits for the parent/owner: the turn may end; the next user/parent input clears it.
+    if (s.waitingForParent) {
+      s.trace?.emit({ event: "ceremony_gate", reason: "waiting_for_parent", tier: s.ceremony.tier });
+      return undefined;
+    }
     const escalated = await trivialFinishCheck(s, ctx);
     const gateMode = reviewGateMode(get(s.config.config, "ceremony.reviewGate"));
     const missing: string[] = openSteps(s.steps, requiredOf(s, s.ceremony.tier), gateMode, s.reviewGate);
@@ -2109,7 +2200,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     platform,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r) };
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, onStart: (spec) => markHandoffWait(s, spec) };
     },
   });
 
@@ -2328,9 +2419,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // ceremony.planReview (planreview.ts): a [plan-review] verdict on these bytes first; a first FAIL goes back to the planner.
         let reviewed: string | null = null;
         if (planReviewOn(s.config.config, tier)) {
-          const g = s.planReviews.gate(plan.path, planReviewHash(plan.bytes));
+          const cap = planReviewRounds(get(s.config.config, "ceremony.planReviewRounds"));
+          const g = s.planReviews.gate(plan.path, planReviewHash(plan.bytes), cap);
           if ("refusal" in g) return done("refused", null, planReviewRefusalText(g.refusal, plan.rel, tier, g.stale), true, g.refusal);
-          reviewed = planReviewSection(g.verdict, await g.verdict.findings);
+          // Capped: the checkpoint opens on a FAIL with the open findings visible.
+          reviewed = planReviewSection(g.verdict, await g.verdict.findings, g.capped ? { rounds: g.rounds ?? cap, cap } : undefined);
         }
         if (s.plan && s.plan.status === "approved" && s.plan.hash === plan.hash && s.plan.path === plan.path) {
           // No dialog ran: the trace carries by: null so a re-check never counts as another approval.
@@ -2339,6 +2432,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // Pending first: a crash, an abort or no answer leaves it pending, never approved.
         const rec: PlanRecord = { topic: plan.topic, path: plan.path, hash: plan.hash, status: "pending", approvedAt: null, by: null };
         s.plan = rec;
+        s.waitingForParent = true; // pending: the owner/parent answers; the finish gate lets the turn end until the next input
         const pendingText = `No answer from the owner; the checkpoint of ${name} (${hash8}) stays pending — ask the owner in your reply. Builders stay refused at tier heavy until the owner approves (call ${CHECKPOINT_TOOL} again).`;
         if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return done("pending", null, pendingText);
         const title = `pi-foreman checkpoint: ${name} (${hash8})`;
@@ -2351,6 +2445,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         // A newer checkpoint replaced this one while the dialog was open: this answer is not applied.
         if (s.plan !== rec || answer === undefined || !(CHECKPOINT_CHOICES as readonly string[]).includes(answer)) return done("pending", null, pendingText);
+        s.waitingForParent = false; // the owner answered
         if (answer === "approve") {
           // The owner approved what was on disk during the dialog: approve only if those are still the bytes hashed above.
           if (currentPlanHash(rec, planOpts(s, ctx)) !== rec.hash) {

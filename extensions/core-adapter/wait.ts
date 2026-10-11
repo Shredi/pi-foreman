@@ -424,6 +424,10 @@ export interface WaitSession {
   /** The merged config (read at each use, so a reload applies). */
   config: () => unknown;
   trace: (rec: Record<string, unknown>) => void;
+  /** ownedRoots(...).readWrite, read at each use (the foreman only). */
+  owned?: () => string[];
+  /** Called with a started wait's spec (the finish gate's waiting_for_parent state). */
+  onStart?: (spec: ValidSpec) => void;
 }
 
 const PARAMS = {
@@ -507,10 +511,11 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       }
       if (params.action !== "start") return refuse(`${WAIT_TOOL}: action must be start, list or cancel.`);
       const l = limits();
-      const spec = parseStart(params, l, { cwd: ctx.cwd, home: deps.home, agentDir: s.agentDir, platform: deps.platform, overlay: s.overlay });
+      const spec = parseStart(params, l, { cwd: ctx.cwd, home: deps.home, agentDir: s.agentDir, platform: deps.platform, overlay: s.overlay, owned: s.owned?.() });
       if ("error" in spec) return refuse(spec.error, params.kind);
       const r = ensure().start(spec);
       if ("error" in r) return text(r.error, { decision: "refused" }, true);
+      s.onStart?.(spec);
       const win = l.batchWindowSeconds;
       return text(`Wait ${r.id} (${spec.kind}) started; times out after ${l.maxSeconds}s. End your turn: you will be woken by one message${win > 0 ? ` (outcomes within ${win}s are batched)` : ""}.`, { decision: "start", id: r.id, kind: spec.kind });
     },

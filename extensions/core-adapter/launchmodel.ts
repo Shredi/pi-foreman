@@ -163,8 +163,45 @@ export function roleTimeoutMs(configRoles: unknown, role: string): number | unde
  * of its steps (a parallel step counts its highest entry). When an entry has no limit, a foreman
  * value is capped at the largest configured role limit; with no foreman value nothing is written.
  */
-export function applyLaunchTimeouts(input: Json, configRoles: unknown): void {
+export function applyLaunchTimeouts(input: Json, configRoles: unknown, childTimeoutSeconds?: unknown): void {
   if (!isObj(input) || isActionCall(input)) return;
+  applyRoleTimeouts(input, configRoles);
+  applyChildTimeout(input, childTimeoutSeconds);
+}
+
+/** Roles whose runs get `ceremony.childTimeoutSeconds` as their tool-call timeout. */
+export const CHILD_TIMEOUT_ROLES: readonly string[] = ["planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
+
+/** `ceremony.childTimeoutSeconds` (default 1800): a positive integer, else the default. */
+export function childTimeoutSeconds(v: unknown): number {
+  return posInt(v) ? v : 1800;
+}
+
+/**
+ * `ceremony.childTimeoutSeconds`: a launch of a planner, builder, reviewer, senior-reviewer or finalizer gets
+ * `toolTimeoutMs` (pi-subagents' per-tool-call limit) unless the foreman set one, and a run deadline
+ * `timeoutMs` that is set is raised to at least the same value.
+ */
+function applyChildTimeout(input: Json, seconds: unknown): void {
+  const ms = childTimeoutSeconds(seconds) * 1000;
+  let hit = false;
+  const visit = (list: unknown): void => {
+    if (!Array.isArray(list)) return;
+    for (const e of list) {
+      if (!isObj(e)) continue;
+      if (typeof e.agent === "string" && CHILD_TIMEOUT_ROLES.includes(e.agent)) hit = true;
+      visit(e.parallel);
+    }
+  };
+  if (typeof input.agent === "string" && CHILD_TIMEOUT_ROLES.includes(input.agent)) hit = true;
+  visit(input.tasks);
+  visit(input.chain);
+  if (!hit) return;
+  input.toolTimeoutMs ??= ms;
+  if (posInt(input.timeoutMs) && input.timeoutMs < ms) input.timeoutMs = ms;
+}
+
+function applyRoleTimeouts(input: Json, configRoles: unknown): void {
   const limitOf = (o: unknown): number | undefined => (isObj(o) && typeof o.agent === "string" ? roleTimeoutMs(configRoles, o.agent) : undefined);
   const maxOf = (list: unknown[]): number | undefined => {
     const ms = list.map(limitOf);

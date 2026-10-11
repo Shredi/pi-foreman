@@ -83,6 +83,8 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.reviewModel             ignored (the fallback reviewer model: L1/L3/L2 only)
     ceremony.reviewByOccasion        ignored (per-occasion reviewer thinking/model: L1/L3/L2 only)
     ceremony.planReview.<tier>       only true is accepted (false skips the plan review)
+    ceremony.planReviewRounds        free per layer (no tighten rule)
+    ceremony.childTimeoutSeconds     lower only, minimum 1 (a higher limit lets a child tool call run longer)
     ceremony.heavyThreshold          tighten only, eee843d < strict (may only move toward eee843d, which escalates more)
     ceremony.trivialBound.<field>    lower only, minimum 0 (a higher bound lets the foreman edit more)
     ceremony.trivialBound            not an object: ignored
@@ -231,6 +233,7 @@ LAYER_TIGHTEN = [
     (("ceremony", "childReads", "*", "*"), "lower_only"),
     # ceremony.childScratch.keep has no rule: any layer may set it, it only retains temp data.
     (("ceremony", "recheckBudget"), "lower_only"),
+    (("ceremony", "childTimeoutSeconds"), "lower_only"),
     (("ceremony", "launchWait"), ("ordered", ("block", "detach"))),
     (("ceremony", "dedupeNotify"), "true_only"),
     (("ceremony", "reviewGate"), ("ordered", ("pass", "verdict"))),
@@ -254,7 +257,7 @@ LAYER_TIGHTEN = [
 ]
 LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
                  "threshold": 0.3, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0,
-                 "windowMinutes": 1}
+                 "windowMinutes": 1, "childTimeoutSeconds": 1}
 # lower_only values with no earlier layer value may not exceed this (the built-in default).
 LAYER_CAP = {"windowMinutes": 45}
 # Built-in cache policy per provider (mirrors BUILTIN_CACHE in extensions/core-adapter/cachepolicy.ts).

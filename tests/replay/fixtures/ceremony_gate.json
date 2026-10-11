@@ -35,7 +35,20 @@
    {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] build item 1"}}]},
    {"text": "Builder launched."},
    {"text": "The builder failed; done."}
-  ]
+  ],
+  "handoff": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a big feature"}}]},
+   {"tools": [{"name": "foreman_wait", "arguments": {"action": "start", "kind": "timer", "seconds": 60, "note": "handoff result"}}]},
+   {"text": "Waiting for the parent."}
+  ],
+  "plainwait": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a big feature"}}]},
+   {"tools": [{"name": "foreman_wait", "arguments": {"action": "start", "kind": "timer", "seconds": 60, "note": "just a timer"}}]},
+   {"text": "Waiting."},
+   {"text": "Still waiting."},
+   {"text": "Done."}
+  ],
+  "nextinput": [{"text": "Done."}, {"text": "Done again."}, {"text": "Done once more."}]
  },
  "*": {
   "quiet": [{"text": "child: nothing to report"}],

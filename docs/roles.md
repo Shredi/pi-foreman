@@ -48,7 +48,7 @@ The live rung, `rung_top`, the reviewer's own climb (`ladder.reviewerClimb`) and
 `ladder.childPolicy` (one value for all providers) is `below` (default: children strictly below the foreman's
 tier), `at-or-below`, or `any`. Tiers are compared across providers, so a foreman on one provider may launch
 rank-compatible children on another. Once any ranks exist, a model in no list is allowed only under `any`. With
-no ranks anywhere the policy does nothing. A refused launch is traced `launch_refused {policy, foreman, requested}`.
+no ranks anywhere the policy does nothing. A refused launch is traced `launch_refused {policy, foreman, requested}`. When the refused role is `planner`, the message adds that the role sits on the foreman's own rung: plan it yourself (write `.workflow/scratch/plan-<topic>.md`) or map the role to a lower rung (no automatic climb).
 
 **Presets** under `config/presets/` are opt-in overlay files, never merged by default. Apply one with
 `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` (merges into `<agent dir>/foreman.json`,
