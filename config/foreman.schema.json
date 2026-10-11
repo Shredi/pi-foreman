@@ -128,6 +128,14 @@
             "securityRung": { "type": "string", "minLength": 1, "description": "Model of a reviewer launch on a security-shaped diff, <provider>/<model>[:<level>]. Unset: the mapped model in the next rank above the reviewer's strong rung (providers.<p>.ranks), else no extra climb. Not subject to ladder.childPolicy." }
           }
         },
+        "research": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Research launches (docs/ladder.md; L1: factCriticalRung null). User or overlay config only.",
+          "properties": {
+            "factCriticalRung": { "type": ["string", "null"], "minLength": 1, "description": "Model of an explorer launch tagged [fact-critical], <provider>/<model>[:<level>]. Unset: the security rung (ladder.reviewerClimb.securityRung, else the default security rung), else the role's strong rung. Not subject to ladder.childPolicy." }
+          }
+        },
         "reviewPanel": {
           "type": "object",
           "additionalProperties": false,

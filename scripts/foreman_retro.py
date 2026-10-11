@@ -345,6 +345,87 @@ def usage_metrics(records, sid, rates=None):
                 "cost": round(v["cost"], 4)} for k, v in sorted(roles.items())}
 
 
+def _rank_tier(ranks, model):
+    """Tier of "provider/id" by providers.<p>.ranks (same matching as ranks.ts tierOf), or None."""
+    provider, _, ident = model.rpartition("/")
+    order = ([provider] if provider in ranks else []) + [p for p in ranks if p != provider]
+    for p in order:
+        for r in ranks[p]:
+            glob = r["match"]
+            rx = "".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in glob)
+            if re.fullmatch(rx, model if "/" in glob else ident):
+                return r["tier"]
+    return None
+
+
+def ranks_of(cfg):
+    out = {}
+    for p, entry in ((cfg or {}).get("providers") or {}).items():
+        lst = [r for r in (entry.get("ranks") if isinstance(entry, dict) else None) or []
+               if isinstance(r, dict) and isinstance(r.get("match"), str) and r["match"]
+               and isinstance(r.get("tier"), int) and not isinstance(r.get("tier"), bool) and r["tier"] >= 0]
+        if lst:
+            out[p] = lst
+    return out
+
+
+def explorer_metrics(trace, usage, sid, ranks=None):
+    """Explorer launches by model. Single launches come from usage lines of role "explorer" (one per launchId);
+    tasks/chain entries log role "child" there, so they come from research_rung trace events of kind "entry".
+    A single marked launch is therefore counted once (its usage line), never again through its event.
+    Fact-critical = research_rung events with that marker. Top-rank share = launches on the models of the
+    best tier in providers.<p>.ranks (None without ranks)."""
+    by_model = collections.Counter()
+    seen = set()
+    for r in usage or []:
+        if r.get("role") != "explorer" or (sid and r.get("foremanSession") not in (None, sid)):
+            continue
+        lid = r.get("launchId")
+        if lid:
+            if lid in seen:
+                continue
+            seen.add(lid)
+        by_model["%s/%s" % (r.get("provider"), r.get("model")) if r.get("provider") else str(r.get("model") or "?")] += 1
+    fact = 0
+    for r in trace or []:
+        if r.get("event") != "research_rung" or r.get("role") != "explorer":
+            continue
+        if r.get("marker") == "fact-critical":
+            fact += 1
+        if r.get("kind") == "entry":
+            by_model[str(r.get("model") or "?")] += 1
+    total = sum(by_model.values())
+    if not total:
+        return None
+    ranks = ranks or {}
+    tiers = {m: _rank_tier(ranks, m) for m in by_model} if ranks else {}
+    best = min(t["tier"] for lst in ranks.values() for t in lst) if ranks else None
+    top = sum(n for m, n in by_model.items() if best is not None and tiers[m] == best)
+    return {"launches": total, "models": dict(by_model), "factCritical": fact,
+            "topShare": round(100.0 * top / total) if best is not None else None,
+            "topModels": sorted(m for m in by_model if best is not None and tiers[m] == best),
+            "tiers": {m: t for m, t in tiers.items()}}
+
+
+def render_explorer(e):
+    short = lambda m: m.rsplit("/", 1)[-1]
+    order = sorted(e["models"], key=lambda m: (e["tiers"].get(m) is None, e["tiers"].get(m) or 0, m))
+    items, inline = [], False
+    for m in order:
+        s = "%s %d" % (short(m), e["models"][m])
+        if m in e["topModels"]:
+            extra = ["%d %%" % round(100.0 * e["models"][m] / e["launches"])]
+            if e["factCritical"] and not inline:
+                extra.append("fact-critical %d" % e["factCritical"])
+                inline = True
+            s += " (%s)" % ", ".join(extra)
+        items.append(s)
+    line = "explorer: %d launches, %s" % (e["launches"], "; ".join(items))
+    if e["factCritical"] and not inline:
+        line += "; fact-critical %d" % e["factCritical"]
+    return line
+
+
 def session_metrics(records):
     tools = collections.Counter()
     fams = collections.Counter()
@@ -383,6 +464,12 @@ def session_id_of(records):
 
 def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
     sid = session_id_of(session)
+    ranks = None
+    if trace is not None or usage is not None:
+        try:
+            ranks = ranks_of(pg.fc.load_config(agent_dir)["config"])
+        except Exception:  # noqa: BLE001 - the share is optional
+            ranks = None
     asks = collect_asks(review) if review is not None else None
     rules = load_deny_ask_rules(agent_dir) if asks is not None else []
     return {
@@ -390,6 +477,7 @@ def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
         "review": review_metrics(asks, sid) if asks is not None else None,
         "trace": trace_metrics(trace) if trace is not None else None,
         "usage": usage_metrics(usage, sid, rates) if usage is not None else None,
+        "explorer": explorer_metrics(trace, usage, sid, ranks),
         "session_tools": session_metrics(session) if session is not None else None,
         "proposals": propose(asks, min_reviews, rules, load_protect_patterns(agent_dir)) if asks is not None else None,
     }
@@ -424,6 +512,8 @@ def render_text(rep, proposals_path=None):
         L.append("friction: rereviews=%d budget_hits=%d rung_up=%d child_read_budget=%d review_defer_headless=%d turns=%d"
                  % (t["rereviews"], t["budget_hits"], t["rung_up"], t["child_read_budget"], t["review_defer_headless"],
                     t["turns"]))
+    if rep.get("explorer"):
+        L.append(render_explorer(rep["explorer"]))
     u = rep["usage"]
     if u is None:
         L.append("spawn cost: no data")

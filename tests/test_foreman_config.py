@@ -89,7 +89,7 @@ class ConfigTest(unittest.TestCase):
         res = self.load(trusted_project=True)
         self.assertEqual(res["errors"], [])
         cfg = res["config"]
-        self.assertEqual(cfg["ladder"], {"childPolicy": "at-or-below", "strongAbove": 5000, "childMaxTurns": 9, "strongOnRevision": True, "reviewerClimb": {"enabled": False}, "reviewPanel": {"shadows": [], "gates": ["pre-pr"], "visible": True, "waitSeconds": 600}})
+        self.assertEqual(cfg["ladder"], {"childPolicy": "at-or-below", "strongAbove": 5000, "childMaxTurns": 9, "strongOnRevision": True, "reviewerClimb": {"enabled": False}, "research": {"factCriticalRung": None}, "reviewPanel": {"shadows": [], "gates": ["pre-pr"], "visible": True, "waitSeconds": 600}})
         self.assertEqual((cfg["providers"]["p1"]["ranks"], cfg["providers"]["p1"]["strongAbove"]), (p1["ranks"], 6000))
         self.assertEqual(cfg["roles"]["builder"]["childMaxTurns"], 4)
         self.assertIn("project ladder.childPolicy ignored", "\n".join(res["warnings"]))
@@ -101,7 +101,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(self.load(trusted_project=True)["config"]["childMaxThinking"], "low")
         self.l2({})
         self.assertNotIn("childMaxThinking", self.load()["config"])
-        self.assertEqual(self.load()["config"]["ladder"], {"strongAbove": 100000, "childMaxTurns": 60, "strongOnRevision": True, "reviewerClimb": {"enabled": False}, "reviewPanel": {"shadows": [], "gates": ["pre-pr"], "visible": True, "waitSeconds": 600}})
+        self.assertEqual(self.load()["config"]["ladder"], {"strongAbove": 100000, "childMaxTurns": 60, "strongOnRevision": True, "reviewerClimb": {"enabled": False}, "research": {"factCriticalRung": None}, "reviewPanel": {"shadows": [], "gates": ["pre-pr"], "visible": True, "waitSeconds": 600}})
         self.l2({"ladder": {"childPolicy": "sometimes"}})
         self.assertTrue(self.load()["errors"])
         presets = sorted((ROOT / "config" / "presets").glob("*.json"))
@@ -411,6 +411,13 @@ class PackageFilesTest(unittest.TestCase):
             self.assertIn("## Output contract", text, name)
             self.assertLessEqual(len(text.splitlines()), 30, name)
 
+    def test_research_lines_in_explorer_and_foreman_prompts(self):
+        explorer = (ROOT / "agents" / "explorer.md").read_text()
+        self.assertIn("reported as missing under Gaps", explorer)
+        self.assertNotIn("no network task", explorer.lower())
+        kept = render_prompt((ROOT / "instructions" / "foreman.md").read_text(), {"research": "on"})
+        self.assertIn("tag the explorer launch `[research]`", kept)
+
     def test_foreman_instructions_neutral(self):
         text = (ROOT / "instructions" / "foreman.md").read_text().lower()
         # tagged variant lines (<!--key=a|b-->, ledgercall.ts applyVariants): each rendering counts
@@ -419,7 +426,7 @@ class PackageFilesTest(unittest.TestCase):
                 for review in ("on", "off"):
                     for trivial in ("builder", "off"):
                         kept = render_prompt(text, {"ledgerhelper": mode, "heavythreshold": heavy, "reviewperrevision": review,
-                                                    "trivialpath": trivial, "ladder": "on", "factrulings": "on", "launchbriefs": "on", "reviewmarks": "on",
+                                                    "trivialpath": trivial, "ladder": "on", "factrulings": "on", "launchbriefs": "on", "reviewmarks": "on", "research": "on",
                                                     "planreview": "on"})
                         self.assertLessEqual(len(kept.splitlines()), 70, (mode, heavy, review, trivial))
         for word in ("claude", "sonnet", "opus", "fable", "gpt", "gemini", "copilot", "openrouter"):
@@ -432,7 +439,7 @@ class PackageFilesTest(unittest.TestCase):
         text = (ROOT / "instructions" / "foreman.md").read_text()
         # trivialPath "off" = ceremony.required.trivial without builder; ladder "off" = the pre-ladder model line
         # (the adapter always renders ladder "on"); factRulings "off" = no rule on foreman rulings, reviewMarks "off" = no harness marks after a PASS (both always "on" too).
-        knobs = {"ledgerHelper": "off", "heavyThreshold": "eee843d", "reviewPerRevision": "off", "trivialPath": "off", "ladder": "off", "factRulings": "off", "launchBriefs": "off", "reviewMarks": "off"}
+        knobs = {"ledgerHelper": "off", "heavyThreshold": "eee843d", "reviewPerRevision": "off", "trivialPath": "off", "ladder": "off", "factRulings": "off", "launchBriefs": "off", "reviewMarks": "off", "research": "off"}
         self.assertEqual(render_prompt(text, knobs), old.stdout.decode("utf-8"))
 
     def test_defaults_validate(self):
