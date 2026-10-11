@@ -3,6 +3,24 @@
 ## [Unreleased]
 
 ### Added
+- Harness-friction round (numbers are the round's ledger items):
+  - (2, 3, 5, 6, 18) Owned dirs: `external_directory` patterns in the permission policy for the handoffs dir,
+    `sessions/*/subagent-artifacts`, `*.worktrees`, the children's scratch root, bare `foreman.json`/`settings.json`,
+    and read for `<agentDir>/pi-foreman` and the global npm root. `git worktree add|list|prune|lock|unlock|move|repair`
+    is allowed for the foreman (`remove` asks). `foreman_wait kind:file` accepts owned paths; the shell write guard
+    takes `--allow-dir`.
+  - (4) The npm root is readable for every role, resolved with `npm root -g`.
+  - (7) The `waiting_for_parent` state is honoured by the finish gate.
+  - (10, 13) Hook `foreman-worktree-setup` copies a real `node_modules` into managed worktrees that have a lockfile
+    (never a symlink); `foreman setup` registers it on Linux/macOS. `/foreman doctor` WARNs on a symlinked
+    `node_modules` in a live worktree and on a missing hook; launch-wait prints the worktree path; both worktree
+    roots (launch result path, `../<repo>.worktrees/<branch>`) are documented.
+  - (16) Review tasks carry the ledger (the cited items or the whole ledger) and no owner prompt; reviewers quote the
+    ledger item.
+  - (20) `ceremony.childTimeoutSeconds` (default 1800) sets the child tool timeout.
+  - (21) pi-intercom 0.17.0 (idle-wake, steer delivery, `IntercomSessionHeldError`, `acknowledgesReceipts`; no
+    upstream changelog), `renovate.json` (pinned, grouped weekly, no automerge), and the full `promptCache` snippet in
+    doctor and `docs/cache.md`.
 - Idle prompt cache (`providers.<p>.cache`, `docs/cache.md`): a per-provider TTL and billing policy. For
   `claude-bridge` (on by default through the built-in provider defaults) pi-foreman lets Pi's cache warmer keep an idle session warm for up to 30 minutes
   (`cache_warming_decision` hook), spends the last warm read on one compaction above half the tier threshold, tags the
@@ -250,6 +268,16 @@
   or after `ladder.reviewPanel.waitSeconds` (default 600, `decision: timeout`); missing shadows are listed as "not run".
 
 ### Changed
+- Harness-friction round:
+  - (1, 15) Setup keeps top-level bundled copies when a manifest entry is missing and prints the `npm ci` hint;
+    doctor FAILs on a missing bundled entry; the developing docs use `npm ci`.
+  - (8) The recheck budget exempts handoff polls (`ruling.md`, owned dirs) and `git worktree add|list|prune`.
+  - (9) `ceremony.planReviewRounds` defaults to 2; the capped checkpoint shows open findings.
+  - (11) Builder prompt: edit tools only, no `npm ci` where `node_modules` is a symlink; planner and explorer use
+    `npm ls -g` instead of `find` over the global npm root.
+  - (12) The git guard treats `git` as a command word only; inline interpreters are classified by their own command.
+  - (23) The planner rank refusal says "plan it yourself".
+  - (24, 25, 26) Regression rows; child scratch `node <script>` is allowed.
 - `foreman setup` recognises a pi-foreman package entry from any git host (`git:<host>/<owner>/pi-foreman`, https),
   not only github.com. `design/architecture.md` §11 describes the package install path.
 - README quick start is the package install plus `/foreman setup`; `docs/install.md` covers update (`pi update`),
@@ -286,6 +314,18 @@
   stays, as offline exploration.
 
 ### Fixed
+- Harness-friction round:
+  - (14) Read-only bash naming protected files is no longer write-protected (allowlist of pure verbs, no write
+    redirect); `--flag=value` and grep patterns are not paths; heredoc bodies are skipped by the overlay and the
+    destructive guard; `cd` is allowed inside the workspace root and the child's scratch dir.
+  - (17) Foreman reads of its own config no longer raise the protected-config dialog.
+  - (19) Documented limit: stale needs-attention notices cannot be withdrawn (Pi has no pre-turn hook for queued
+    custom messages); an upstream draft is in the docs.
+  - (22) Documented limit: a session pattern grant on a not-yet-existing dir does not cover a later `cd <dir>`
+    (permission-system `deriveApprovalPatterns`); workaround in `docs/permissions.md`.
+  - (27) Procedure note: handoff-dir `plan.md`/`result.md` are written in full, fallback `cp`.
+  - (28) Known issue: a ruling appended to an approved plan changes its hash and forces a re-review; the cap should
+    count hash re-reviews, or decision appends must keep the verdict.
 - `tool_pack` is no longer counted for calls the git-config drift preflight blocked.
 - Review bench: removes each cell's work dir once the cell is recorded and the whole `pf-rb-work/<hash>` dir after a run
   (kept on interrupt, with `--keep-work`, or for a user work path), so a run no longer leaves tens of GB of clones;

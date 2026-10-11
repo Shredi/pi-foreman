@@ -82,3 +82,17 @@ test("missingBundled names the bundled packages without a package.json under nod
   }
   assert.deepEqual(missingBundled(root), ["pi-intercom"]);
 });
+
+test("missingBundled also checks every ./node_modules manifest entry", () => {
+  const root = path.join(tmp, "manifest");
+  for (const name of ["pi-subagents", "@gotgenes/pi-permission-system", "pi-intercom"]) {
+    fs.mkdirSync(path.join(root, "node_modules", ...name.split("/")), { recursive: true });
+    fs.writeFileSync(path.join(root, "node_modules", ...name.split("/"), "package.json"), "{}");
+  }
+  fs.writeFileSync(path.join(root, "node_modules", "pi-subagents", "index.js"), "");
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ pi: { extensions: ["./extensions/core-adapter/index.ts", "./node_modules/pi-subagents/index.js", "./node_modules/pi-intercom/index.ts"], subagents: { agents: ["./agents"] }, skills: ["./node_modules/pi-subagents/skills"] } }),
+  );
+  assert.deepEqual(missingBundled(root), ["./node_modules/pi-intercom/index.ts", "./node_modules/pi-subagents/skills"]);
+});

@@ -1,0 +1,8 @@
+#!/bin/sh
+# pi-foreman: pi-subagents worktreeSetupHook (POSIX only) -> scripts/foreman_worktree_setup.py.
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+py="${PI_FOREMAN_PYTHON:-}"
+if [ -z "$py" ]; then
+    if command -v python3 >/dev/null 2>&1; then py=python3; else py=python; fi
+fi
+exec "$py" -E -s "$here/../scripts/foreman_worktree_setup.py" "$@"

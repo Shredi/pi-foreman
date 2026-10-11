@@ -24,6 +24,8 @@
 // "Retention-managed async directory:" line (asyncDir = <async root>/<run id>). Pure function of the history: the same history gives
 // the same request, so the provider cache prefix stays stable from the first call that sees it.
 
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { NOTIFY_TYPE } from "./rounds.ts";
 
 export type LaunchWaitMode = "block" | "detach";
@@ -213,24 +215,46 @@ const fmtSeconds = (ms: number): string => `${Math.max(0, Math.round(ms / 1000))
 const DONE_PREFIX = "pi-foreman launch-wait: run ";
 const DONE_RE = /^pi-foreman launch-wait: run (\S+) \(([^)\n]*)\) ended /;
 
+/**
+ * The worktree a `worktree: true` / `isolation: "worktree"` run works in, from the run's status.json in its async dir
+ * (pi-subagents writes `steps[].worktreePath` and `steps[].branch` at setup); null for a run without one.
+ */
+export function worktreeOfRun(asyncDir: string | null | undefined): { path: string; branch: string | null } | null {
+  if (!asyncDir) return null;
+  try {
+    const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8")) as unknown;
+    const steps = isObj(status) && Array.isArray(status.steps) ? status.steps : [status];
+    for (const step of steps) {
+      const wt = isObj(step) ? str(step.worktreePath) : undefined;
+      if (wt) return { path: wt, branch: isObj(step) ? (str(step.branch) ?? null) : null };
+    }
+  } catch {
+    // no status yet, or not readable: no worktree line
+  }
+  return null;
+}
+
 /** The text appended to a held launch result. `capBy` names the hold limit of a timeout (default wait.maxSeconds). */
 export function launchWaitText(o: { outcome: WaitOutcome; runId: string; role: string; ms: number; maxSeconds: number; capBy?: string; by?: string; end?: RunEnd; asyncDir?: string | null }): string {
-  const path = o.end?.resultPath ?? o.asyncDir ?? null;
-  const where = path ? ` Result path: ${path}.` : "";
+  const dir = o.end?.resultPath ?? o.asyncDir ?? null;
+  const where = dir ? ` Result path: ${dir}.` : "";
+  const wt = worktreeOfRun(o.asyncDir ?? o.end?.resultPath);
+  const tree = wt ? `\nworktree: ${wt.path}${wt.branch ? ` (branch ${wt.branch})` : ""}` : "";
   switch (o.outcome) {
     case "done": {
       const s = o.end?.summary ?? "";
       const body = s.length > SUMMARY_MAX ? `${s.slice(0, SUMMARY_MAX)}\n[... cut at ${SUMMARY_MAX} characters; the full output is under the result path]` : s || "(no output)";
-      return `pi-foreman launch-wait: run ${o.runId} (${o.role}) ended ${o.end?.status ?? "completed"} after ${fmtSeconds(o.ms)}.${where} No bg_wait is needed for it. Child output:\n${body}`;
+      // the worktree line goes before the child's output
+      return `pi-foreman launch-wait: run ${o.runId} (${o.role}) ended ${o.end?.status ?? "completed"} after ${fmtSeconds(o.ms)}.${where} No bg_wait is needed for it.${tree ? `${tree}\n` : " "}Child output:\n${body}`;
     }
     case "supervisor":
-      return `pi-foreman launch-wait: run ${o.runId} (${o.role}) is still running and the child asks you something (the supervisor request follows). Answer it with subagent_supervisor, then bg_wait ${o.runId}.${where}`;
+      return `pi-foreman launch-wait: run ${o.runId} (${o.role}) is still running and the child asks you something (the supervisor request follows). Answer it with subagent_supervisor, then bg_wait ${o.runId}.${where}${tree}`;
     case "released":
-      return `pi-foreman launch-wait: run ${o.runId} (${o.role}) is still running; the wait ended because run ${o.by ?? "?"} asks you something (the supervisor request follows). Answer it with subagent_supervisor, then continue with bg_wait ${o.runId}.${where}`;
+      return `pi-foreman launch-wait: run ${o.runId} (${o.role}) is still running; the wait ended because run ${o.by ?? "?"} asks you something (the supervisor request follows). Answer it with subagent_supervisor, then continue with bg_wait ${o.runId}.${where}${tree}`;
     case "timeout":
-      return `pi-foreman launch-wait: run ${o.runId} (${o.role}) is still running after ${o.maxSeconds}s (${o.capBy ?? "wait.maxSeconds"}); this is not a failure. Continue with bg_wait ${o.runId}.${where}`;
+      return `pi-foreman launch-wait: run ${o.runId} (${o.role}) is still running after ${o.maxSeconds}s (${o.capBy ?? "wait.maxSeconds"}); this is not a failure. Continue with bg_wait ${o.runId}.${where}${tree}`;
     case "abort":
-      return `pi-foreman launch-wait: the wait was cancelled; run ${o.runId} (${o.role}) keeps running detached and its completion notice will follow.${where}`;
+      return `pi-foreman launch-wait: the wait was cancelled; run ${o.runId} (${o.role}) keeps running detached and its completion notice will follow.${where}${tree}`;
   }
 }
 

@@ -16,7 +16,15 @@
 
 - Worktrees: the convention is `../<repo>.worktrees/<branch>` (config `close.worktreeDir`), for example
   `../myrepo.worktrees/feature-x`. Agent worktrees under `<repo>/.claude/worktrees` also count as convention.
-  Any other linked worktree is `off-convention:` in a sweep.
+  So does pi-subagents' default root for managed worktrees (`worktree: true` launches),
+  `../worktrees/<repo>/pi-worktree-<runId>-<n>`; the launch-wait result prints the exact path
+  (`worktree: <path> (branch <b>)`). Any other linked worktree is `off-convention:` in a sweep.
+- Worktree setup hook: `foreman setup` registers `bin/foreman-worktree-setup` as pi-subagents'
+  `worktreeSetupHook` (Linux and macOS, only when unset; see [install](install.md)). pi-subagents symlinks the main
+  checkout's `node_modules` into each managed worktree before the hook runs; for a repository with a lockfile the hook
+  replaces that link with a plain copy (or runs `npm ci` when the main checkout has none), so a builder's `npm ci`
+  never rewrites the main checkout. The hook is global for the user: it runs for every pi-subagents worktree and is a
+  no-op without the symlink and lockfile. `/foreman doctor` warns about a symlinked `node_modules` in any live worktree.
 - Scratch: `<state>/scratch/<session>/` (an implicit private entry, no recording needed) and topic dirs
   `.workflow/scratch/<topic>/`. Files directly in `.workflow/scratch/` are never recorded and never removed.
 - Handoff dirs of `/foreman session open` are durable.
@@ -88,7 +96,7 @@ Cleanup runs when `close.autoClean` is on and not `--dry-run`. Per manifest entr
 - Untaken child handovers are re-listed on every run and keep the parent's report open.
 - `foreman worktree sweep [--cwd D] [--dry-run]`: removes every linked worktree of the repository that passes
   the same preconditions, listed in a manifest or not (`removed:`, `would remove:`, `skipped: <path> — <reason>`).
-  A worktree outside `close.worktreeDir` and `.claude/worktrees` also gets an `off-convention: <path>` line
+  A worktree outside `close.worktreeDir`, `.claude/worktrees` and `../worktrees/<repo>` also gets an `off-convention: <path>` line
   (information only). A branch with no commits beyond its base counts as merged, so a fresh empty worktree is swept.
   The worktree that contains `--cwd` (default: the current dir) is skipped with `in_use_by_caller`.
   Warning: sweep removes a freshly created worktree that has no commits beyond its base yet; use `--dry-run` first.

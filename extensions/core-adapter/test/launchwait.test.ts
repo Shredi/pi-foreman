@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dedupeNotices, dropAsyncGuidance, dedupeOn, holdCap, LaunchBatch, openRequestLine, launchWaitMode, launchWaitText, LaunchWaits, noticeRuns, runEndOf } from "../launchwait.ts";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { worktreeOfRun, dedupeNotices, dropAsyncGuidance, dedupeOn, holdCap, LaunchBatch, openRequestLine, launchWaitMode, launchWaitText, LaunchWaits, noticeRuns, runEndOf } from "../launchwait.ts";
 
 const DIR = "/tmp/pi-subagents-uid-1/async-subagent-runs/run-a";
 const notice = (role: string, dir: string) => `Background task completed: **${role}**\n\n${role}:\nlong child report\n\nRetention-managed async directory: ${dir}\n\nSession file: /x/session.jsonl`;
@@ -147,4 +150,32 @@ test("launchwait: a held result loses every async-started guidance line, nothing
   assert.equal(r.trimmed, 4);
   assert.equal((r.content[0] as { text: string }).text, "Async: builder [run-a]");
   assert.equal(dropAsyncGuidance([{ type: "text", text: "plain" }]).trimmed, 0);
+});
+
+test("launchwait: a worktree run's status names the worktree in the result text", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-lw-status-"));
+  try {
+    fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify({ steps: [{ agent: "builder", worktreePath: "/w/worktrees/repo/pi-worktree-r1-0", branch: "pi-subagents/r1-0" }] }));
+    assert.deepEqual(worktreeOfRun(dir), { path: "/w/worktrees/repo/pi-worktree-r1-0", branch: "pi-subagents/r1-0" });
+    const base = { runId: "r1", role: "builder", ms: 1000, maxSeconds: 900, asyncDir: dir };
+    const timeout = launchWaitText({ ...base, outcome: "timeout" });
+    assert.match(timeout, /\nworktree: \/w\/worktrees\/repo\/pi-worktree-r1-0 \(branch pi-subagents\/r1-0\)$/);
+    const done = launchWaitText({ ...base, outcome: "done", end: { runId: "r1", status: "completed", role: "builder", summary: "built\nChild output: again", resultPath: dir } });
+    assert.match(done, /No bg_wait is needed for it\.\nworktree: \/w\/worktrees\/repo\/pi-worktree-r1-0 \(branch pi-subagents\/r1-0\)\nChild output:\nbuilt/);
+    assert.match(done, /^pi-foreman launch-wait: run r1 \(builder\) ended completed after 1s\./, "the done marker stays first");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("launchwait: no worktree line without a worktree in the status", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-lw-status-"));
+  try {
+    assert.equal(worktreeOfRun(dir), null);
+    fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify({ steps: [{ agent: "builder" }] }));
+    assert.equal(worktreeOfRun(dir), null);
+    assert.doesNotMatch(launchWaitText({ outcome: "timeout", runId: "r1", role: "builder", ms: 0, maxSeconds: 9, asyncDir: dir }), /worktree:/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
