@@ -76,6 +76,15 @@ Asks go through a model review link (`foreman-review`) using `providers.<p>.revi
 Child traces: with the foreman's retro on, a bound child writes `trace-<launchId>.jsonl` and each record carries `role`
 and `runId` (the launch id); see [retro](retro.md). `tasks` and `chain` launches are not covered.
 
+## Owned paths
+
+The generated permission policy allows the foreman's own artifacts outside the workspace without a prompt: the handoff
+dirs, the session's `subagent-artifacts`, the `../<repo>.worktrees` round dir, the children's scratch root, reads of
+`foreman.json`, `settings.json`, `<agentDir>/pi-foreman` and the global npm root, and `git worktree add|list|prune|lock|unlock|move|repair`
+(`remove` still asks). The grants are per user, not per session, and children's write permissions are unchanged: the
+overlay and the git guard keep children out of the foreman-only dirs and off `git worktree`, and the `parent` and
+`child` handoff files still ask. The list and the reasons are in [permissions](permissions.md#owned-paths).
+
 ## Child scratch
 
 Each single-child launch gets a scratch dir under the OS temp dir (`$FOREMAN_SCRATCH`, see

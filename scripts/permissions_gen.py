@@ -18,7 +18,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -95,7 +99,74 @@ def without_ledger_helper(baseline):
     return out
 
 
-def render(perms, agent_dir, ledger_helper="tool"):
+SCRATCH_DIR_NAME = "pi-foreman-scratch"  # childscratch.ts SCRATCH_DIR_NAME
+NPM_TIMEOUT_S = 4
+
+
+def resolve_npm_root(run=None, env=None, platform=None, which=None):
+    """`npm root -g` (4 s cap), else <npm_config_prefix>/lib/node_modules, else the prefix of the node
+    binary, on Windows %AppData%\\npm\\node_modules. None when nothing resolves. Mirrors owned.ts."""
+    run = run or subprocess.run
+    env = os.environ if env is None else env
+    platform = platform or sys.platform
+    which = which or shutil.which
+    win = platform.startswith("win")
+    npm = which("npm")
+    if npm:
+        try:
+            r = run([npm, "root", "-g"], capture_output=True, text=True, timeout=NPM_TIMEOUT_S)
+            lines = [x.strip() for x in (r.stdout or "").splitlines() if x.strip()]
+            if r.returncode == 0 and lines and os.path.isabs(lines[-1]):
+                return Path(lines[-1]).as_posix()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    prefix = env.get("npm_config_prefix") or env.get("NPM_CONFIG_PREFIX")
+    if win:
+        if prefix:
+            return Path(prefix, "node_modules").as_posix()
+        appdata = env.get("APPDATA")
+        return Path(appdata, "npm", "node_modules").as_posix() if appdata else None
+    if not prefix:
+        node = which("node")
+        if node:
+            prefix = str(Path(os.path.realpath(node)).parent.parent)
+    return Path(prefix, "lib", "node_modules").as_posix() if prefix else None
+
+
+def default_owned():
+    """Machine-dependent tokens of the external_directory patterns."""
+    tmp = os.path.realpath(tempfile.gettempdir())
+    return {"scratchRoot": Path(tmp, SCRATCH_DIR_NAME).as_posix(), "npmRoot": resolve_npm_root()}
+
+
+def external_rules(baseline, agent_dir, owned):
+    """(bare map, read map): external_directory and external_directory_read. Last match wins, so the
+    catch-all comes first and the asks last; a pattern whose token did not resolve is dropped."""
+    ext = baseline.get("externalDirectory")
+    if not isinstance(ext, dict):  # older baseline: one state for everything
+        return ext or "ask", None
+    tokens = {"{agentDir}": Path(agent_dir).as_posix()}
+    tokens.update({"{%s}" % k: v for k, v in (owned or {}).items() if v})
+
+    def fill(patterns):
+        out = []
+        for p in strings(patterns):
+            for t, v in tokens.items():
+                p = p.replace(t, v)
+            if "{" not in p:
+                out.append(p)
+        return out
+
+    bare = {"*": "ask"}
+    for p in fill(ext.get("allow")):
+        bare[p] = "allow"
+    for p in fill(ext.get("ask")):
+        bare[p] = "ask"
+    read = {p: "allow" for p in fill(ext.get("read"))}
+    return bare, read or None
+
+
+def render(perms, agent_dir, ledger_helper="tool", owned=None):
     baseline = load_baseline()
     if ledger_helper == "off":
         baseline = without_ledger_helper(baseline)
@@ -103,7 +174,10 @@ def render(perms, agent_dir, ledger_helper="tool"):
     permission.update(baseline.get("tools") or {})
     permission["bash"] = pattern_map(bash_rules(baseline, perms), DENY_BASH_REASON, ("*", "ask"))
     permission["path"] = pattern_map(path_rules(baseline, perms, agent_dir), DENY_PATH_REASON)
-    permission["external_directory"] = baseline.get("externalDirectory", "ask")
+    bare, read = external_rules(baseline, agent_dir, default_owned() if owned is None else owned)
+    permission["external_directory"] = bare
+    if read:
+        permission["external_directory_read"] = read
     out = {"permission": permission}
     if baseline.get("shellTools"):
         out["shellTools"] = baseline["shellTools"]

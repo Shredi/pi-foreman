@@ -30,7 +30,30 @@
     "intercom": "allow",
     "codemode": "allow"
   },
-  "externalDirectory": "ask",
+  "externalDirectory": {
+    "comment": "Owned paths outside the workspace (docs/permissions.md, Owned paths). allow: bare external_directory keys (read and write); read: external_directory_read keys; ask: keys appended last so they win. Tokens: {agentDir}, {scratchRoot} (<realpath tmpdir>/pi-foreman-scratch, the children's scratch root), {npmRoot} (npm root -g, resolved when the file is rendered; the pattern is dropped when it does not resolve). The patterns are per user, not per session: the overlay keeps children out of the main-only ones.",
+    "allow": [
+      "{agentDir}/pi-foreman/handoffs/*",
+      "{agentDir}/sessions/*/subagent-artifacts",
+      "{agentDir}/sessions/*/subagent-artifacts/*",
+      "*.worktrees",
+      "*.worktrees/*",
+      "{scratchRoot}",
+      "{scratchRoot}/*",
+      "{agentDir}/foreman.json",
+      "{agentDir}/settings.json"
+    ],
+    "read": [
+      "{agentDir}/pi-foreman",
+      "{agentDir}/pi-foreman/*",
+      "{npmRoot}",
+      "{npmRoot}/*"
+    ],
+    "ask": [
+      "{agentDir}/pi-foreman/handoffs/*/parent",
+      "{agentDir}/pi-foreman/handoffs/*/child"
+    ]
+  },
   "shellTools": {
     "powershell": {
       "commandArgument": "command"
@@ -53,7 +76,13 @@
       "git branch -vv",
       "git branch --list *",
       "git branch --show-current",
+      "git worktree add *",
       "git worktree list *",
+      "git worktree prune *",
+      "git worktree lock *",
+      "git worktree unlock *",
+      "git worktree move *",
+      "git worktree repair *",
       "git stash list *",
       "ls *",
       "tree *",
@@ -84,6 +113,7 @@
       "ledger defer *"
     ],
     "ask": [
+      "git worktree remove *",
       "find * -exec*",
       "find * -execdir*",
       "find * -delete*",

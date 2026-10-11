@@ -97,7 +97,10 @@ export function permFileState(agentDir: string, wanted: Json | null): PermFileSt
   return { state: "edited", detail: typeof recorded === "string" ? `hash ${sha256(cur).slice(0, 12)} differs from the recorded ${recorded.slice(0, 12)}` : "no hash recorded by the installer" };
 }
 
-/** `permissions_gen.py render` -> the PS config object, or null. */
+/**
+ * `permissions_gen.py render` -> the PS config object, or null. The generator resolves the machine-dependent
+ * owned-path tokens (temp dir, global npm root) itself, so the drift check compares what the installer wrote.
+ */
 export async function renderPermissions(input: { python: string | null; pkgRoot: string; agentDir: string; cwd: string; spawner: Spawner }): Promise<Json | null> {
   if (!input.python) return null;
   const args = ["-E", "-s", path.join(input.pkgRoot, "scripts", "permissions_gen.py"), "render", "--agent-dir", input.agentDir];
