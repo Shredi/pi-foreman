@@ -1,0 +1,19 @@
+{
+ "events": [
+  {
+   "event": "keepalive",
+   "outcome": "fired"
+  },
+  {
+   "event": "compaction",
+   "reason": "warm_idle",
+   "tier": "cheap",
+   "model": "claude-bridge/foreman"
+  },
+  {
+   "event": "keepalive",
+   "outcome": "window_end",
+   "reason": "compact"
+  }
+ ]
+}

@@ -10,4 +10,5 @@ pi-foreman is a Pi package (extensions, agent roles, skills) with a stdlib-only 
 - [AGENTS.md](AGENTS.md): instructions for coding agents working on the repo, and the docs-by-area index
 - [Install and configure](docs/install.md): package install, `foreman setup`, config layers, update and remove
 - [Tools](docs/tools.md): optional git tool pack (`tools.git`), PR tools (`tools.pr`, `tools.prHost`), caps, guards, child inheritance, trace
+- [Idle prompt cache](docs/cache.md): per-provider cache policy, keep-alive, warm compaction, cost and privacy
 - [Overlays](docs/overlays.md): private and organisation overlays, extension points

@@ -29,6 +29,8 @@
 // FOREMAN_FAKE_SYSTEM=<dir> writes the system text of each model's first request to <dir>/<model>-<pid>.txt.
 // FOREMAN_FAKE_REQUESTS=<file> appends the request messages of each `<provider>/foreman` call as one
 // JSON line (cache-prefix tests compare earlier requests with later ones byte for byte).
+// FOREMAN_FAKE_PROMPT_CACHE=1 declares `promptCache: {short: 20}` on every fake model (idle-cache replay); a step's
+// usage may carry `totalTokens` (the context size the foreman's compaction check reads).
 import * as fs from "node:fs";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Model, SimpleStreamOptions, TranscriptContext } from "@earendil-works/pi-ai";
@@ -49,7 +51,7 @@ const TAG = /\[\[replay:([A-Za-z0-9_.-]+)\]\]/;
 
 interface Step {
   text?: string;
-  usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+  usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number };
   tools?: { name: string; arguments: Record<string, unknown> }[];
 }
 type Script = Record<string, Record<string, Step[]>>;
@@ -279,6 +281,8 @@ export default function fakeProvider(pi: ExtensionAPI): void {
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: 200000,
         maxTokens: 8192,
+        // Idle-cache replay: Pi's cache warmer only runs for a model that declares promptCache.
+        ...(process.env.FOREMAN_FAKE_PROMPT_CACHE === "1" ? { promptCache: { short: 20 } } : {}),
       })),
       streamSimple: streamFake,
     });
