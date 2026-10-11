@@ -279,10 +279,12 @@ def trace_metrics(records):
          "rereviews": 0, "budget_hits": 0, "rung_up": 0, "child_read_budget": 0, "review_defer_headless": 0, "turns": 0}
     causes = collections.Counter()
     pack = collections.Counter()
+    prpack = collections.Counter()
     for r in records:
         ev, dec = r.get("event"), r.get("decision")
         if ev == "tool_pack" and r.get("pack") == "git":
-            pack[str(r.get("op") or "?")] += 1
+            op = str(r.get("op") or "?")
+            (prpack if op.startswith("pr_") else pack)[op] += 1
         if ev == "guard" and dec in ("block", "deny"):
             guards[str(r.get("guard") or "?")] += 1
         elif ev == "overlay" and dec in ("deny", "ask-denied"):
@@ -316,6 +318,7 @@ def trace_metrics(records):
     ran, bad = m["safe_op_ran"], m["safe_op_precondition_failed"]
     m["precondition_hit_rate"] = round(bad / (ran + bad), 3) if ran + bad else None
     m["git_pack"] = dict(pack)
+    m["pr_pack"] = dict(prpack)
     return m
 
 
@@ -378,7 +381,8 @@ def explorer_metrics(trace, usage, sid, ranks=None):
     tasks/chain entries log role "child" there, so they come from research_rung trace events of kind "entry".
     A single marked launch is therefore counted once (its usage line), never again through its event.
     Fact-critical = research_rung events with that marker. Top-rank share = launches on the models of the
-    best tier in providers.<p>.ranks (None without ranks)."""
+    best tier in providers.<p>.ranks (None without ranks). Unmarked tasks/chain explorer entries come from
+    launch_entry events; marked ones emit only research_rung, so nothing is counted twice."""
     by_model = collections.Counter()
     seen = set()
     for r in usage or []:
@@ -392,6 +396,9 @@ def explorer_metrics(trace, usage, sid, ranks=None):
         by_model["%s/%s" % (r.get("provider"), r.get("model")) if r.get("provider") else str(r.get("model") or "?")] += 1
     fact = 0
     for r in trace or []:
+        if r.get("event") == "launch_entry" and r.get("role") == "explorer":
+            by_model[str(r.get("model") or "?")] += 1
+            continue
         if r.get("event") != "research_rung" or r.get("role") != "explorer":
             continue
         if r.get("marker") == "fact-critical":
@@ -513,6 +520,19 @@ def git_pack_line(rep):
     return "git: pack %s calls%s vs bash git %s" % ("n/a" if n is None else n, detail, "n/a" if m is None else m)
 
 
+PR_OPS = ("pr_create", "pr_status", "pr_checks", "pr_comments", "pr_watch")
+
+
+def pr_pack_line(rep):
+    """`pr: N calls (create a, status b, ...)`, or None without a trace or without PR calls."""
+    pack = (rep.get("trace") or {}).get("pr_pack") or {}
+    n = sum(pack.values())
+    if not n:
+        return None
+    ops = [o for o in PR_OPS if pack.get(o)] + sorted(o for o in pack if o not in PR_OPS and pack[o])
+    return "pr: %d calls (%s)" % (n, ", ".join("%s %d" % (o[3:] if o.startswith("pr_") else o, pack[o]) for o in ops))
+
+
 def render_text(rep, proposals_path=None):
     L = ["pi-foreman retro" + (" (session %s)" % rep["session"] if rep["session"] else "")]
     r = rep["review"]
@@ -530,6 +550,9 @@ def render_text(rep, proposals_path=None):
         gl = git_pack_line(rep)
         if gl:
             L.append(gl)
+        pl = pr_pack_line(rep)
+        if pl:
+            L.append(pl)
     else:
         L.append("guard blocks: " + kv(t["guard_blocks"]) + "; overlay blocks=%d; triage-gate blocks=%d"
                  % (t["overlay_blocks"], t["triage_gate_blocks"]))
@@ -544,6 +567,9 @@ def render_text(rep, proposals_path=None):
         gl = git_pack_line(rep)
         if gl:
             L.append(gl)
+        pl = pr_pack_line(rep)
+        if pl:
+            L.append(pl)
     if rep.get("explorer"):
         L.append(render_explorer(rep["explorer"]))
     u = rep["usage"]
