@@ -90,7 +90,7 @@ Roles, ladders and the opt-in presets for the model map are in [roles](roles.md)
 Config merges plain last-wins in the order: package defaults (`config/foreman.defaults.json`) -> organisation
 overlay (`pi.foreman.config` of the overlay package) -> your user file (`<agent dir>/foreman.json`, honours
 `PI_CODING_AGENT_DIR`) -> the repository's `.pi/foreman.json` (read only after Pi project trust is resolved) ->
-session (`/foreman set`, launch flags; not persisted). Maps deep-merge, leaves are last-wins.
+session (launch flags, or `foreman config ... --session-json '<json>'`; not persisted). Maps deep-merge, leaves are last-wins.
 
 **Tighten-only rule.** A project file (and the session) may only make `safety.*` and several ceremony keys
 stricter: permissive booleans can only become stricter, lists can only gain entries, nothing is removed. A cloned

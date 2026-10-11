@@ -45,6 +45,22 @@ pi.on("session_start", (_e, ctx) => {
 });
 ```
 
+## Tool or skill
+
+Build a tool when the model needs structured, guarded, frequent calls, or when the overlay must inject policy
+(auth, output caps). Build a skill when it is knowledge plus a CLI that already exists. The generic harness ships
+at most one optional tool pack, git (`tools.git`, see [tools](tools.md)). Employer-specific tools (CI, artifact
+stores, ticket or wiki systems) never go into the harness: they live in the work overlay, which lists pi-foreman
+as a prerequisite.
+
+Example work overlay, placeholders only:
+
+- `<ci-system>` status is a tool: frequent, needs auth, and its output must be capped before it reaches the model.
+- `<wiki>` lookup is a skill: it explains how to use the wiki's existing CLI.
+
+The overlay's prerequisite check is the existing [Handshake](#handshake): `globalThis[Symbol.for("pi-foreman.core.v1")]`
+and `foreman:ready`. There is no second handshake.
+
 ## Extension points
 
 | Point | How an overlay contributes |

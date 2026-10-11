@@ -58,7 +58,7 @@
 | `foreman.json` from the L3 package (`pi.foreman.config`) | L3 | The package is installed |
 | `<pi agent dir>/foreman.json` (honours `PI_CODING_AGENT_DIR`) | L2 | Always |
 | `.pi/foreman.json` | Project | Only after Pi project trust is resolved |
-| `/foreman set …`, launch flags | Session | Not persisted |
+| launch flags, `--session-json` | Session | Not persisted |
 
 | Key class | Examples | Merge (L1 → L3 → L2 → project → session) |
 |---|---|---|
@@ -73,7 +73,7 @@
 - An invalid safety key fails closed: the L1 safety values apply, and the user is notified.
 - Every role must resolve to a model for the active provider or name a `fallback`. Otherwise the result is a launch error, never a silent default.
 
-**Generation.** pi-foreman's `providers.*` block is the single source. `/foreman apply` and the installer generate pi-subagents' `subagents.agentOverridesByProvider` (and `agentOverrides.<id>.tools` as JSON arrays) into the user's Pi `settings.json`, in a managed block. A hand edit to that block is backed up and then overwritten. pi-subagents keeps resolving the map by the parent's active provider (hands-on 2026-10-03, Pi 1.0.0, pi-subagents@0.75.0: the same `/run builder` under `--provider openrouter` and `--provider claude-bridge` gave different child models). Phase 2 checks runtime agent registration as a way to avoid writing settings.
+**Generation.** pi-foreman's `providers.*` block is the single source. `/foreman setup` and the installer generate pi-subagents' `subagents.agentOverridesByProvider` (and `agentOverrides.<id>.tools` as JSON arrays) into the user's Pi `settings.json`, in a managed block. A hand edit to that block is backed up and then overwritten. pi-subagents keeps resolving the map by the parent's active provider (hands-on 2026-10-03, Pi 1.0.0, pi-subagents@0.75.0: the same `/run builder` under `--provider openrouter` and `--provider claude-bridge` gave different child models). Phase 2 checks runtime agent registration as a way to avoid writing settings.
 
 ```json
 {
