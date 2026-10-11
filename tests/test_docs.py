@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -21,31 +22,32 @@ ALLOWLIST = {
     "version": "format marker, always 1",
 }
 
-PLACEHOLDER = "<x>"
+sys.path.insert(0, str(CODE / "scripts"))
+from foreman_docs import PLACEHOLDER, schema_leaves  # noqa: E402
+import foreman_docs  # noqa: E402
+
+# Generated from the area docs' facts; the area docs must document every key and command on their own.
+GENERATED_DOCS = {"features.md"}
 
 
 def read(p):
     return Path(p).read_text(encoding="utf-8")
 
 
-def docs_text():
-    return "\n".join(read(p) for p in sorted(DOCS.glob("*.md")))
+def docs_text(exclude=()):
+    return "\n".join(read(p) for p in sorted(DOCS.glob("*.md")) if p.name not in exclude)
 
 
-def schema_leaves(node, path=()):
-    """Leaf key paths of the schema. A map (additionalProperties object schema) adds a
-    PLACEHOLDER segment; a node with no `properties` and no object-valued
-    additionalProperties with properties is a leaf."""
-    props = node.get("properties", {})
-    out = []
-    for k, v in props.items():
-        out += schema_leaves(v, path + (k,))
-    ap = node.get("additionalProperties")
-    if isinstance(ap, dict) and (ap.get("properties") or ap.get("additionalProperties")):
-        out += schema_leaves(ap, path + (PLACEHOLDER,))
-    if not props and path and not out:
-        out.append(path)
-    return out
+def command_names():
+    return foreman_docs.command_names(CODE)
+
+
+def foreman_subcommands():
+    return foreman_docs.foreman_subcommands(CODE)
+
+
+def bin_subcommands():
+    return foreman_docs.bin_subcommands(CODE)
 
 
 def is_documented(path, text):
@@ -67,26 +69,6 @@ def is_documented(path, text):
     if len(path) == 1:
         pats.append("`" + re.escape(path[0]) + "`")
     return any(re.search(p, text) for p in pats)
-
-
-def command_names():
-    names = set()
-    for p in sorted((CODE / "extensions").rglob("*.ts")):
-        if "node_modules" in p.parts or "test" in p.parts:
-            continue
-        names.update(re.findall(r'pi\.registerCommand\(\s*"([^"]+)"', read(p)))
-    return names
-
-
-def foreman_subcommands():
-    src = read(CODE / "extensions" / "core-adapter" / "index.ts")
-    start = src.index('pi.registerCommand("foreman"')
-    end = src.index("async function doctor", start)
-    return set(re.findall(r'\bsub (?:===|!==) "([a-z][a-z-]*)"', src[start:end]))
-
-
-def bin_subcommands():
-    return set(re.findall(r"^\s+([a-z][a-z-]*)\)\s+script=", read(CODE / "bin" / "foreman"), re.M))
 
 
 def slug(heading):
@@ -113,14 +95,14 @@ class DocsCurrency(unittest.TestCase):
     @needs_docs
     def test_config_keys_documented(self):
         schema = json.loads(read(CODE / "config" / "foreman.schema.json"))
-        text = docs_text()
+        text = docs_text(GENERATED_DOCS)
         missing = [".".join(p) for p in schema_leaves(schema)
                    if ".".join(p) not in ALLOWLIST and not is_documented(p, text)]
         self.assertEqual(missing, [], "config keys missing from docs/*.md")
 
     @needs_docs
     def test_commands_documented(self):
-        text = docs_text()
+        text = docs_text(GENERATED_DOCS)
         cmds, subs, bins = command_names(), foreman_subcommands(), bin_subcommands()
         self.assertTrue(cmds and subs and bins, "command parsing found nothing")
         missing = [f"/{c}" for c in sorted(cmds) if f"/{c}" not in text]
