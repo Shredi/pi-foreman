@@ -158,6 +158,12 @@ TABLE = [
     ("unzip -l /tmp/a.zip", None),
     ("awk -i inplace '{print}' src/a.py", "awk-i"),
     ("awk '{print $1}' src/a.py", None),
+    # harness-friction lane A literal rows: read-only commands (rows 12, 13, 18, 20) never count as writes
+    ("cd WS; grep -rln \"symbols.json\" --exclude-dir=node_modules --exclude-dir=.git . | head", None),
+    ("cat <<'EOT'\nnotes: the .pi dir and $x are prose\nEOT", None),
+    ("grep -rn x --exclude-dir=.claude src", None),
+    ("git branch -a && python3 -c 'print(\"git\")'", None),
+    ("env | grep PATH", None),
 ]
 
 # PowerShell (the foreman's opt-in powershell tool, security review B-M1)
@@ -218,6 +224,50 @@ class ShellWriteGuardTest(unittest.TestCase):
             with self.subTest(command=cmd):
                 self.assertIsNotNone(swg.decide(cmd, self.ws, self.ws))
         self.assertIsNone(swg.decide("cd .workflow/l/.. && echo x > a.py", self.ws, self.ws))   # logical cd
+
+    def test_allow_dir_for_the_worktree_convention_dir(self):
+        # row 16: `cp -R node_modules ../<repo>.worktrees/<b>/node_modules` writes below an owned dir
+        base = os.path.realpath(tempfile.mkdtemp(prefix="pf-swg-wt-"))
+        self.addCleanup(shutil.rmtree, base, True)
+        repo = os.path.join(base, "repo")
+        owned = os.path.join(base, "repo.worktrees")
+        for d in (repo, os.path.join(repo, "node_modules"), os.path.join(owned, "b")):
+            os.makedirs(d)
+        cmd = "git worktree add -b hf ../repo.worktrees/b origin/main; cp -R node_modules ../repo.worktrees/b/node_modules"
+        elsewhere = "cp -R node_modules ../repo.other/b/node_modules"
+        # confined (a planner child): a write outside the workspace counts, unless an owned dir covers it
+        refused = swg.decide(cmd, repo, repo, "bash", None, True)
+        self.assertIsNotNone(refused)
+        self.assertIsNone(swg.decide(cmd, repo, repo, "bash", None, True, None, [owned]))
+        self.assertIsNotNone(swg.decide(elsewhere, repo, repo, "bash", None, True, None, [owned]))
+        self.assertIsNotNone(swg.decide("cp -R node_modules ../repo.worktrees", repo, repo, "bash", None, True, None, [owned]), "the owned dir itself")
+        # relative and root entries are ignored
+        for bad in (["repo.worktrees"], ["/"], [""]):
+            with self.subTest(dirs=bad):
+                self.assertIsNotNone(swg.decide(cmd, repo, repo, "bash", None, True, None, bad))
+        # inside the workspace an owned dir lifts the project-write refusal too
+        os.makedirs(os.path.join(repo, "out"))
+        self.assertIsNotNone(swg.decide("echo x > out/f", repo, repo))
+        self.assertIsNone(swg.decide("echo x > out/f", repo, repo, "bash", None, False, None, [os.path.join(repo, "out")]))
+
+    def test_allow_dir_argv_option_and_the_raw_operand_message(self):
+        base = os.path.realpath(tempfile.mkdtemp(prefix="pf-swg-argv-"))
+        self.addCleanup(shutil.rmtree, base, True)
+        repo = os.path.join(base, "repo")
+        owned = os.path.join(base, "repo.worktrees")
+        os.makedirs(repo)
+        os.makedirs(owned)
+        payload = json.dumps({"tool_input": {"command": "cp -R node_modules ../repo.worktrees/b/node_modules"}, "cwd": repo, "workspace": repo, "confine": True})
+        def run(*args):
+            return subprocess.run([sys.executable, "-E", "-s", str(SCRIPT), *args], input=payload, capture_output=True, text=True)
+        self.assertIn("deny", run().stdout)
+        self.assertEqual(run("--allow-dir", owned).stdout, "")
+        self.assertEqual(run("--allow-dir", os.path.join(base, "x"), "--allow-dir", owned).stdout, "", "repeatable")
+        # an unresolvable target shows its operand text and says so, instead of a bare <unresolved>
+        bad = json.dumps({"tool_input": {"command": "cp a $UNKNOWN/b"}, "cwd": repo, "workspace": repo, "confine": True})
+        out = subprocess.run([sys.executable, "-E", "-s", str(SCRIPT)], input=bad, capture_output=True, text=True).stdout
+        self.assertIn("/b (unresolved)", out)
+        self.assertNotIn("<unresolved>", out)
 
     def test_allowed_dirs(self):
         # scratchpad mode: the adapter adds the scratch dir; default (missing) is .workflow only

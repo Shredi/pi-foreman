@@ -210,7 +210,21 @@ TABLE = [
     ("git push origin +HEAD:Main", "bash", D, D),
     ("git push -f origin MASTER", "bash", D, D),
     ("git send-pack origin main", "bash", D, A),
+    # harness-friction lane A literal rows: `git` is a command word only, never a path or prose
+    ("cd /w/ws.worktrees/hf; grep -rln \"symbols.json\" --exclude-dir=node_modules --exclude-dir=.git . | head", "bash", A, A),  # row 12
+    ("cat <<'EOT'\nnotes: the .pi dir and $x are prose\nEOT", "bash", A, A),  # row 13
+    ("cat <<'EOT'\ngit push origin main\nEOT", "bash", A, A),  # a document that mentions the command
+    ("grep -rn x --exclude-dir=.git src", "bash", A, A),  # row 18
+    ("git worktree add -b harness-friction ../pi-foreman.worktrees/harness-friction origin/main; cp -R node_modules ../pi-foreman.worktrees/harness-friction/node_modules", "bash", D, A),  # row 16
+    ("git worktree add x", "bash", D, A),
+    ("git worktree prune", "bash", D, A),
+    ("git worktree list", "bash", A, A),
+    ("env | grep PATH", "bash", A, A),  # row 19
+    ("git branch -a && python3 -c 'print(\"git\")'", "bash", A, A),  # row 20
 ]
+
+# row 20 runs with a cwd below a directory named `git`
+DEEP_CWD_ROWS = ("git branch -a && python3 -c 'print(\"git\")'", "cd /w/git/proj && ls")
 
 
 def decide(command, mode, flavor="bash", cwd=None, config=None):
@@ -237,6 +251,21 @@ class TableTest(unittest.TestCase):
                     self.assertEqual(got, want, reason)
                     if got != A:
                         self.assertTrue(reason.startswith(gg.PREFIX), reason)
+
+
+class DeepCwdTest(unittest.TestCase):
+    """Row 20: a `/git/` path component of the cwd is not the git command."""
+
+    def test_cwd_under_a_git_directory(self):
+        base = tempfile.mkdtemp(prefix="pf-gg-")
+        self.addCleanup(shutil.rmtree, base)
+        deep = os.path.join(base, "git", "proj")
+        os.makedirs(deep)
+        for command in DEEP_CWD_ROWS:
+            for mode in ("child", "main"):
+                with self.subTest(command=command, mode=mode):
+                    got, reason = decide(command, mode, "bash", deep)
+                    self.assertEqual(got, A, reason)
 
 
 @unittest.skipUnless(HAVE_GIT, "git not on PATH")

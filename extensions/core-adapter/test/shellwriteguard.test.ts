@@ -75,3 +75,28 @@ test("real script: project write refused, .workflow write allowed", { skip: !py.
     fs.rmSync(ws, { recursive: true, force: true });
   }
 });
+
+test("owned dirs: the payload carries allow_dirs; a write strictly below one passes, the dir itself and others do not", { skip: !py.ok ? "no Python >= 3.9" : false }, async () => {
+  const ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-swg-own-")));
+  try {
+    const owned = path.join(ws, "out");
+    fs.mkdirSync(owned);
+    fs.mkdirSync(path.join(ws, "src"));
+    assert.equal("allow_dirs" in shellWriteGuardPayload({ command: "ls" }, pc, ws), false, "no owned dirs: the field is absent");
+    assert.deepEqual(shellWriteGuardPayload({ command: "ls" }, pc, ws, "bash", [".workflow"], [owned]).allow_dirs, [owned]);
+    const python = py.ok ? py.info.executable : null;
+    const verdict = async (command: string, ownedDirs: string[]) =>
+      shellWriteVerdict(await runShellWriteGuard({ python, pkgRoot: repo, payload: shellWriteGuardPayload({ command }, { ...pc, cwd: ws }, ws, "bash", [".workflow"], ownedDirs), env: { ...process.env } as Record<string, string>, cwd: ws, spawner: defaultSpawner }), python);
+    assert.equal((await verdict("echo x > out/f", [])).decision, "refuse");
+    assert.deepEqual(await verdict("echo x > out/f", [owned]), { decision: "allow" });
+    assert.equal((await verdict("echo x > src/f", [owned])).decision, "refuse");
+    assert.equal((await verdict("echo x > out", [owned])).decision, "refuse", "the owned dir itself");
+    // an operand the guard cannot resolve is named in the refusal, with its text
+    const bad = await verdict("cp a $UNKNOWN/b", [owned]);
+    assert.equal(bad.decision, "refuse");
+    assert.match((bad as { reason: string }).reason, /\(unresolved\)/);
+    assert.doesNotMatch((bad as { reason: string }).reason, /<unresolved>/);
+  } finally {
+    fs.rmSync(ws, { recursive: true, force: true });
+  }
+});

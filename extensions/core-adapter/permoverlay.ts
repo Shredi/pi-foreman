@@ -58,6 +58,13 @@
 //     command these also block reads (`cat .git/config`); `git status` names no such path.
 //     Shell words are path arguments only: the pattern/script operands of a line made of pure
 //     read commands are skipped, `*` skips dot entries and `\` is no separator off win32 (checkShell).
+//     The pattern of grep/rg and their --include/--exclude/--exclude-dir/--glob values are never path words.
+//     Heredoc bodies read by cat/tee/grep/... are dropped before scanning (stripHeredocs; kept when piped on,
+//     substituted, or without a delimiter line). A command of read-only verbs only (no in-place sed, `sort -o`,
+//     `find -exec`, tee, xargs, PowerShell) and no write redirect naming the path skips the write-only rules:
+//     writeAsk/writeAskSelfHost for children, the ask list for the foreman; deny and childDeny never skip.
+//     Children may not touch childBlock paths (handoffs except plan/result/ruling.md, subagent artifacts,
+//     foreman.json) nor run `git worktree` beyond list/remove; a child may cd inside its workspace root and scratch dir.
 //     grep's `glob` and find's `pattern` are checked joined to the tool's `path`.
 //     removeAsk (`<agentDir>`, its parent (`~/.pi` by default) and `<agentDir>/pi-foreman`, the
 //     ancestors of the state folder):
@@ -68,6 +75,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Json } from "./config.ts";
+import { workspaceOf } from "./python.ts";
 
 export interface PathRule {
   pattern: string;
@@ -84,6 +92,21 @@ export interface ProtectRule {
   childShell?: boolean;
   /** removeAsk: only a remove or rename of the path itself (operands of rm/mv/trash/..., inline code, foreman_move src). */
   removeOnly?: boolean;
+  /**
+   * A shell command made only of read-only verbs skips this rule: `main` = the foreman (ask list),
+   * `child` = a child (writeAsk lists). deny and childDeny rules never carry it.
+   */
+  readOk?: "main" | "child";
+  /** Comes from the writeAsk lists (the foreman's owned-root skip applies to these only). */
+  fromWriteAsk?: boolean;
+}
+
+/** Roots owned by the foreman session (owned.ts provides them); optional, today's behaviour without it. */
+export interface OwnedRoots {
+  readWrite: string[];
+  readOnly: string[];
+  /** The child's own scratch dir (the `$FOREMAN_SCRATCH` subtree). */
+  childScratch?: string;
 }
 
 export interface OverlayRules {
@@ -92,6 +115,11 @@ export interface OverlayRules {
   pathRules: PathRule[];
   pathAsk: string[];
   protect: ProtectRule[];
+  /** Children only: path tools and shell operands below these are denied (the foreman's handoff, artifact and config paths). */
+  childBlock?: string[];
+  /** Paths below childBlock that stay open to children. */
+  childBlockExcept?: string[];
+  owned?: OwnedRoots;
 }
 
 export interface Baseline {
@@ -119,7 +147,11 @@ export interface MatchCtx {
   dotGlob?: boolean;
   /** Child only: its scratch dir (childscratch.ts); `$FOREMAN_SCRATCH` expands to it and cd may enter it. */
   scratch?: string;
+  /** Owned roots; `owned.childScratch` stands in for `scratch`. Defaults to the rules' own. */
+  owned?: OwnedRoots;
 }
+
+const scratchOf = (ctx: MatchCtx): string | undefined => ctx.scratch ?? ctx.owned?.childScratch;
 
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : []);
 const obj = (v: unknown): Json => (v && typeof v === "object" && !Array.isArray(v) ? (v as Json) : {});
@@ -139,6 +171,12 @@ export function readBaseline(pkgRoot: string): Baseline | null {
     return null;
   }
 }
+
+/** Foreman-owned paths a child never touches, on path tools and shell operands (the child's own scratch dir stays its own). */
+const CHILD_BLOCK = ["{agentDir}/pi-foreman/handoffs", "{agentDir}/pi-foreman/handoffs/*", "{agentDir}/sessions/*/subagent-artifacts", "{agentDir}/sessions/*/subagent-artifacts/*", "{agentDir}/foreman.json"];
+
+/** Files of a handoff dir a child still writes and reads (the plan it was given, the report it hands back); everything else there stays the foreman's. */
+const CHILD_BLOCK_EXCEPT = ["plan.md", "result.md", "ruling.md"].map((f) => `{agentDir}/pi-foreman/handoffs/*/${f}`);
 
 function without(list: string[], base: string[]): string[] {
   return list.filter((x) => !base.includes(x));
@@ -164,7 +202,7 @@ export function isSelfHost(cwd: string, pkgRoot: string, platform: string = proc
  * the project and session layers (the config CLI's `basePermissions`); asks present there are
  * PS's job, only the added ones are enforced here. Without `base` no ask is enforced.
  */
-export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unknown, agentDir: string, pkgRoot?: string, xdgConfigHome: string | undefined = process.env.XDG_CONFIG_HOME, selfHost = false): OverlayRules {
+export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unknown, agentDir: string, pkgRoot?: string, xdgConfigHome: string | undefined = process.env.XDG_CONFIG_HOME, selfHost = false, owned?: OwnedRoots): OverlayRules {
   const m = obj(merged);
   const b = obj(base);
   const slash = (d: string): string => d.split(path.sep).join("/").replace(/\/+$/, "");
@@ -172,7 +210,7 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
   const parent = slash(agentDir).replace(/[\\/][^\\/]*$/, "") || "/";
   const sub = (p: string): string => p.replace(/\{agentDirParent\}/g, parent).replace(/\{agentDir\}/g, slash(agentDir));
   const xdg = xdgConfigHome && path.isAbsolute(xdgConfigHome) ? xdgConfigHome : undefined;
-  const prot = (list: string[] | undefined, main: ProtectRule["main"], shell: boolean): ProtectRule[] =>
+  const prot = (list: string[] | undefined, main: ProtectRule["main"], shell: boolean, extra: Partial<ProtectRule> = {}): ProtectRule[] =>
     (list ?? [])
       .filter((p) => (pkgRoot !== undefined || !p.includes("{pkgRoot}")) && (xdg !== undefined || !p.includes("{xdgConfigHome}")))
       .map((p) => ({
@@ -181,6 +219,7 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
         child: "deny",
         shell,
         childShell: true,
+        ...extra,
       }));
   const pb = baseline.protect;
   const mp = obj(m.paths);
@@ -195,7 +234,10 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
       ...strs(mp.deny).map((pattern): PathRule => ({ pattern: sub(pattern), action: "deny" })),
     ],
     pathAsk: hasBase ? without(strs(mp.ask), strs(bp.ask)) : [],
-    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true), ...prot(pb?.childDeny, null, true), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true }))],
+    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true, { readOk: "main" }), ...prot(pb?.childDeny, null, true), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false, { readOk: "child", fromWriteAsk: true }), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true }))],
+    childBlock: CHILD_BLOCK.map(sub),
+    childBlockExcept: CHILD_BLOCK_EXCEPT.map(sub),
+    ...(owned ? { owned } : {}),
   };
 }
 
@@ -473,6 +515,8 @@ export function codeLiterals(code: string): string[] {
 
 /** Word indices of a parsed unit that are redirect targets (`> f`, `2>> f`, `< f`). */
 const REDIRECTS = new WeakMap<string[], Set<number>>();
+/** The subset of REDIRECTS written to (`>`, `>>`, `&>`, `>|`, `>&`), not read from. */
+const WRITE_REDIRECTS = new WeakMap<string[], Set<number>>();
 
 /** pipelines -> units -> words (quotes removed). */
 export function parseShell(src: string, shell: "posix" | "powershell" = "posix"): Parsed {
@@ -482,11 +526,17 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
   let words: string[] = [];
   let cur: string | null = null;
   let redir = new Set<number>();
+  let wredir = new Set<number>();
   let redirNext = false;
+  let writeNext = false;
   const flush = (): void => {
     if (cur !== null) {
-      if (redirNext) redir.add(words.length);
+      if (redirNext) {
+        redir.add(words.length);
+        if (writeNext) wredir.add(words.length);
+      }
       redirNext = false;
+      writeNext = false;
       words.push(cur);
     }
     cur = null;
@@ -496,10 +546,13 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
     if (words.length) {
       units.push(words);
       if (redir.size) REDIRECTS.set(words, redir);
+      if (wredir.size) WRITE_REDIRECTS.set(words, wredir);
     }
     words = [];
     redir = new Set();
+    wredir = new Set();
     redirNext = false;
+    writeNext = false;
   };
   const endPipe = (sep: string): void => {
     endUnit();
@@ -542,7 +595,14 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
       cur = cur ?? "";
     } else if (c === " " || c === "\t" || c === "\r") flush();
     else if (c === "\n" || c === ";") endPipe(";");
-    else if (c === "&") {
+    else if (c === "&" && src[i + 1] === ">" && posix) {
+      // `&>file` / `&>>file`: both streams to a file
+      flush();
+      redirNext = true;
+      writeNext = true;
+      i++;
+      while (src[i + 1] === ">") i++;
+    } else if (c === "&") {
       const and = src[i + 1] === "&";
       if (and) i++;
       endPipe(and ? "&&" : "&");
@@ -559,8 +619,9 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
       if (cur !== null && /^\d+$/.test(cur)) cur = null; // 2>file: the fd number is not a word
       flush();
       redirNext = true;
+      writeNext = c === ">";
       while (src[i + 1] === c) i++;
-      if (c === ">" && src[i + 1] === "&") i++;
+      if (c === ">" && (src[i + 1] === "&" || (posix && src[i + 1] === "|"))) i++;
     } else if (c === "#" && cur === null && (i === 0 || /\s|[;&|()]/.test(src[i - 1]))) {
       while (i < src.length && src[i] !== "\n") i++;
       i--;
@@ -632,6 +693,12 @@ interface Collected {
   protWords?: string[];
   /** Every unit's command is a read/filter command (PURE_VERBS) that cannot turn text into a path. */
   pure?: boolean;
+  /** False once a unit can write: in-place sed, `sort -o`, `find -exec`/`-delete`, `rg --pre` and the like. */
+  ro?: boolean;
+  /** Words that are the target of a write redirect (`/dev/null` and fd dups excluded). */
+  writeTargets?: Set<string>;
+  /** The first `git worktree` subcommand found that is neither `list` nor `remove` (children may not run it). */
+  worktreeOp?: string;
 }
 
 /**
@@ -642,9 +709,9 @@ interface Collected {
 const PURE_VERBS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk", "mawk", "nawk", "find", "echo", "printf", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "ls", "cd", "pwd", "nl", "column", "diff", "true", "false"]);
 
 /** Short options that take a value, and long ones that take the next word, per read command. */
-const VALUE_OPTS: Record<string, { short: string; long: string[]; pattern: string; patternLong: string[]; file: string; fileLong: string[] }> = {
-  grep: { short: "ABCDdefm", long: ["--regexp", "--file", "--after-context", "--before-context", "--context", "--max-count", "--devices", "--directories", "--label", "--binary-files", "--include", "--exclude", "--exclude-dir", "--exclude-from", "--color", "--colour"], pattern: "e", patternLong: ["--regexp"], file: "f", fileLong: ["--file"] },
-  rg: { short: "ABCEMTdefgjmrt", long: ["--regexp", "--file", "--after-context", "--before-context", "--context", "--max-count", "--max-depth", "--max-columns", "--glob", "--iglob", "--type", "--type-not", "--type-add", "--type-clear", "--replace", "--pre", "--pre-glob", "--encoding", "--threads", "--sort", "--sortr", "--max-filesize", "--colors", "--color", "--path-separator", "--engine", "--ignore-file", "--context-separator", "--field-match-separator", "--field-context-separator", "--dfa-size-limit", "--regex-size-limit", "--hyperlink-format", "--hostname-bin"], pattern: "e", patternLong: ["--regexp"], file: "f", fileLong: ["--file"] },
+const VALUE_OPTS: Record<string, { short: string; long: string[]; pattern: string; patternLong: string[]; file: string; fileLong: string[]; globLong?: string[]; globShort?: string }> = {
+  grep: { short: "ABCDdefm", long: ["--regexp", "--file", "--after-context", "--before-context", "--context", "--max-count", "--devices", "--directories", "--label", "--binary-files", "--include", "--exclude", "--exclude-dir", "--exclude-from", "--color", "--colour"], pattern: "e", patternLong: ["--regexp"], file: "f", fileLong: ["--file"], globLong: ["--include", "--exclude", "--exclude-dir", "--include-dir"] },
+  rg: { short: "ABCEMTdefgjmrt", long: ["--regexp", "--file", "--after-context", "--before-context", "--context", "--max-count", "--max-depth", "--max-columns", "--glob", "--iglob", "--type", "--type-not", "--type-add", "--type-clear", "--replace", "--pre", "--pre-glob", "--encoding", "--threads", "--sort", "--sortr", "--max-filesize", "--colors", "--color", "--path-separator", "--engine", "--ignore-file", "--context-separator", "--field-match-separator", "--field-context-separator", "--dfa-size-limit", "--regex-size-limit", "--hyperlink-format", "--hostname-bin"], pattern: "e", patternLong: ["--regexp"], file: "f", fileLong: ["--file"], globLong: ["--glob", "--iglob"], globShort: "g" },
   sed: { short: "efl", long: ["--expression", "--file", "--line-length"], pattern: "e", patternLong: ["--expression"], file: "f", fileLong: ["--file"] },
   awk: { short: "Fvfeil", long: ["--field-separator", "--assign", "--file", "--source", "--include", "--load"], pattern: "e", patternLong: ["--source"], file: "f", fileLong: ["--file"] },
 };
@@ -671,6 +738,13 @@ function awkReadOnly(prog: string): boolean {
  * every echo/printf argument. `skip` = redirect targets. Files named by `-f` stay paths.
  */
 function nonPathArgs(core: string[], skip: Set<number>): number[] {
+  const verb = core.length ? baseName(core[0]) : "";
+  const readOnly = (s: string): boolean => (verb === "sed" ? sedReadOnly(s) : verb.endsWith("awk") ? awkReadOnly(s) : true);
+  return scriptOperands(core, skip).filter((i) => readOnly(core[i]));
+}
+
+/** nonPathArgs before the read-only filter: every pattern/script operand (and, for grep and rg, the include/exclude/glob values). */
+function scriptOperands(core: string[], skip: Set<number>): number[] {
   if (!core.length) return [];
   const verb = baseName(core[0]);
   const out: number[] = [];
@@ -703,6 +777,11 @@ function nonPathArgs(core: string[], skip: Set<number>): number[] {
       const name = eq > 0 ? x.slice(0, eq) : x;
       const isPat = spec.patternLong.includes(name);
       if (isPat || spec.fileLong.includes(name)) given = true;
+      if (spec.globLong?.includes(name)) {
+        // a file-name pattern (`--exclude-dir=.git`), never a path
+        if (eq > 0) scripts.push(i);
+        else if (i + 1 < core.length && ok(i + 1)) scripts.push(i + 1);
+      }
       if (eq < 0 && spec.long.includes(name)) {
         if (isPat && i + 1 < core.length && ok(i + 1)) scripts.push(i + 1);
         i++;
@@ -714,10 +793,11 @@ function nonPathArgs(core: string[], skip: Set<number>): number[] {
         const c = x[k];
         if (!spec.short.includes(c)) continue;
         if (c === spec.pattern || c === spec.file) given = true;
+        const isGlob = c === spec.globShort;
         if (k + 1 < x.length) {
-          if (c === spec.pattern) scripts.push(i);
+          if (c === spec.pattern || isGlob) scripts.push(i);
         } else if (i + 1 < core.length) {
-          if (c === spec.pattern && ok(i + 1)) scripts.push(i + 1);
+          if ((c === spec.pattern || isGlob) && ok(i + 1)) scripts.push(i + 1);
           i++;
         }
         break;
@@ -729,8 +809,32 @@ function nonPathArgs(core: string[], skip: Set<number>): number[] {
     if (verb.endsWith("awk")) break;
   }
   if (!given && positional > 0) scripts.push(positional);
-  const readOnly = (s: string): boolean => (verb === "sed" ? sedReadOnly(s) : verb.endsWith("awk") ? awkReadOnly(s) : true);
-  return scripts.filter((i) => readOnly(core[i]));
+  return scripts;
+}
+
+/** Words that can never name a file to change in a redirect. */
+const DEV_TARGET = /^(\/dev\/(null|stdout|stderr|tty)|\d+|-)$/;
+
+/** Whether one command (wrappers stripped) can only read: no in-place edit, output file, exec or script file. */
+function unitReadOnly(core: string[], skip: Set<number>): boolean {
+  const verb = baseName(core[0]);
+  const args = core.map((x, i) => (i > 0 && !skip.has(i) ? x : "")).slice(1);
+  const has = (re: RegExp): boolean => args.some((x) => re.test(x));
+  if (verb === "sort") return !has(/^-[A-Za-z]*o|^--(output|compress-program)\b/);
+  if (verb === "find") return !has(/^-(exec|execdir|ok|okdir|delete|fprint0?|fprintf|fls)$/);
+  if (verb === "uniq") return args.filter((x) => x && !x.startsWith("-")).length <= 1;
+  if (verb === "rg") return !has(/^--(pre|hostname-bin)\b/);
+  if (verb === "sed") {
+    if (has(/^-[A-Za-z]*[if]|^--(in-place|file)\b/)) return false;
+    const scripts = scriptOperands(core, skip);
+    return scripts.length > 0 && scripts.every((i) => sedReadOnly(core[i]));
+  }
+  if (verb.endsWith("awk")) {
+    if (has(/^-[A-Za-z]*[fil]|^--(file|include|load)\b/)) return false;
+    const scripts = scriptOperands(core, skip);
+    return scripts.length > 0 && scripts.every((i) => awkReadOnly(core[i]));
+  }
+  return true;
 }
 
 /** Commands that remove or rename their operands (POSIX, Windows, PowerShell names and aliases). */
@@ -738,21 +842,58 @@ const REMOVERS = new Set(["rm", "rmdir", "unlink", "trash", "trash-put", "gio", 
 
 const MAX_DEPTH = 4;
 
+/** Reserved words that precede a command (`do cat x`, `then grep y`, `! find`). */
+const LEAD_KEYWORDS = new Set(["do", "then", "else", "elif", "if", "while", "until", "!", "{", "}"]);
+/** Units that only steer control flow: `for f in a b`, `case x in`, a lone `done`/`fi`/`esac`. */
+const NEUTRAL_UNITS = new Set(["for", "select", "case"]);
+const NEUTRAL_END = new Set(["done", "fi", "esac"]);
+const GREP_FAMILY = new Set(["grep", "egrep", "fgrep", "rg"]);
+/** `git worktree` subcommands a child may run (`remove` is ask in the permission system). */
+const WORKTREE_OK = new Set(["list", "remove"]);
+
 function collect(src: string, shell: "posix" | "powershell", depth: number, out: Collected): void {
   const parsed = parseShell(src, shell);
   for (const inner of parsed.subs) if (depth < MAX_DEPTH) collect(inner, shell, depth + 1, out);
-  const visit = (unitWords: string[]): void => {
-    out.words.push(...unitWords);
+  const visit = (allWords: string[]): void => {
+    // `do cat x`, `then grep y`, `if find ...`: the keyword is not the command
+    let lead = 0;
+    while (lead < allWords.length && LEAD_KEYWORDS.has(allWords[lead])) lead++;
+    const unitWords = lead ? allWords.slice(lead) : allWords;
+    if (lead) {
+      const r = REDIRECTS.get(allWords);
+      const w = WRITE_REDIRECTS.get(allWords);
+      if (r) REDIRECTS.set(unitWords, new Set([...r].filter((i) => i >= lead).map((i) => i - lead)));
+      if (w) WRITE_REDIRECTS.set(unitWords, new Set([...w].filter((i) => i >= lead).map((i) => i - lead)));
+      out.unitTexts.push(allWords.join(" "));
+    }
     const v = variants(unitWords);
     out.unitTexts.push(...v.texts);
+    const redir = REDIRECTS.get(unitWords) ?? new Set<number>();
+    const off = unitWords.length - v.core.length;
+    const skip = new Set([...redir].filter((i) => i >= off).map((i) => i - off));
+    // the pattern of grep/rg and their include/exclude/glob values are no paths, whatever the rest of the command does
+    const verb0 = v.core.length ? baseName(v.core[0]) : "";
+    const patt = GREP_FAMILY.has(verb0) ? new Set(nonPathArgs(v.core, skip).map((i) => i + off)) : new Set<number>();
+    out.words.push(...unitWords.filter((_, i) => !patt.has(i)));
+    if (verb0 === "git" && out.worktreeOp === undefined) {
+      let k = 1;
+      while (k < v.core.length && v.core[k].startsWith("-")) k += /^-[Cc]$/.test(v.core[k]) ? 2 : 1;
+      if (v.core[k] === "worktree" && k + 1 < v.core.length) {
+        const op = v.core[k + 1];
+        if (!WORKTREE_OK.has(op)) out.worktreeOp = op;
+      }
+    }
     if (out.protWords) {
-      const off = unitWords.length - v.core.length;
-      const redir = REDIRECTS.get(unitWords) ?? new Set<number>();
-      const skip = new Set([...redir].filter((i) => i >= off).map((i) => i - off));
+      // control-flow words (`for f in a b`, `done`) neither read nor write
+      const neutral = !unitWords.length || NEUTRAL_UNITS.has(unitWords[0]) || (unitWords.length === 1 && NEUTRAL_END.has(unitWords[0]));
       const raw = unitWords.find((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
-      if (!raw || !PURE_VERBS.has(baseName(raw)) || !v.core.length || !PURE_VERBS.has(baseName(v.core[0]))) out.pure = false;
+      if (!neutral && raw !== undefined) {
+        if (!PURE_VERBS.has(baseName(raw)) || !v.core.length || !PURE_VERBS.has(baseName(v.core[0]))) out.pure = false;
+        else if (!unitReadOnly(v.core, skip)) out.ro = false;
+      }
       const np = new Set(nonPathArgs(v.core, skip).map((i) => i + off));
       out.protWords.push(...unitWords.filter((_, i) => !np.has(i)));
+      for (const i of WRITE_REDIRECTS.get(unitWords) ?? []) if (!DEV_TARGET.test(unitWords[i])) out.writeTargets?.add(unitWords[i]);
     }
     const inner = innerScript(v.core);
     if (inner && depth < MAX_DEPTH) collect(inner.script, inner.shell, depth + 1, out);
@@ -777,6 +918,111 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
   }
 }
 
+// ------------------------------------------------------------------ heredocs
+
+/** Commands that only read their heredoc (never run it). */
+const HEREDOC_READERS = new Set(["cat", "tee", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "nl", "column", "grep", "egrep", "fgrep", "rg", "diff", "less", "more"]);
+
+/** `$(...)` and backtick substitutions of an unquoted heredoc body, one per `echo` line. */
+function bodySubstitutions(body: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c === "\\") i++;
+    else if (c === "$" && body[i + 1] === "(") {
+      const end = matchParen(body, i + 1);
+      out.push(body.slice(i + 2, end));
+      i = end;
+    } else if (c === "`") {
+      const j = body.indexOf("`", i + 1);
+      const end = j < 0 ? body.length : j;
+      out.push(body.slice(i + 1, end));
+      i = end;
+    }
+  }
+  return out.map((s) => `echo $(${s.replace(/\n/g, " ")})`);
+}
+
+/**
+ * Drops the bodies of heredocs (`<<`, `<<-`, quoted or bare delimiter) whose command only reads them
+ * (HEREDOC_READERS), so prose in a document (`.pi`, `$x`, `cd /tmp`) is no command and no path. The
+ * body stays when the line pipes on, substitutes or has arithmetic (`$((1<<2))`), when the delimiter
+ * line is missing, and an unquoted delimiter keeps the `$(...)` and backtick parts of the body.
+ * Quotes and comments are tracked, so a `<<` inside them opens nothing.
+ */
+export function stripHeredocs(src: string): string {
+  if (!src.includes("<<")) return src;
+  let out = "";
+  let lineStart = 0;
+  const pending: { delim: string; dash: boolean; quoted: boolean }[] = [];
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "\\") {
+      out += src.slice(i, i + 2);
+      i += 2;
+    } else if (c === "'" || c === '"') {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c) j += c === '"' && src[j] === "\\" ? 2 : 1;
+      out += src.slice(i, j + 1);
+      i = j + 1;
+    } else if (c === "$" && src[i + 1] === "'") {
+      const [, end] = ansiC(src, i + 2);
+      out += src.slice(i, end + 1);
+      i = end + 1;
+    } else if (c === "#" && (i === 0 || /[\s;&|()]/.test(src[i - 1]))) {
+      let j = i;
+      while (j < src.length && src[j] !== "\n") j++;
+      out += src.slice(i, j);
+      i = j;
+    } else if (c === "\n") {
+      out += c;
+      i++;
+      if (pending.length) {
+        for (const h of pending) {
+          let pos = i;
+          let end = -1;
+          while (pos <= src.length) {
+            let nl = src.indexOf("\n", pos);
+            if (nl < 0) nl = src.length;
+            const line = src.slice(pos, nl);
+            if ((h.dash ? line.replace(/^\t+/, "") : line) === h.delim) {
+              end = nl;
+              break;
+            }
+            if (nl >= src.length) break;
+            pos = nl + 1;
+          }
+          if (end < 0) break; // no delimiter line: keep everything as written
+          const kept = h.quoted ? [] : bodySubstitutions(src.slice(i, pos));
+          if (kept.length) out += kept.join("\n") + "\n";
+          i = Math.min(end + 1, src.length);
+        }
+        pending.length = 0;
+      }
+      lineStart = out.length;
+    } else if (c === "<" && src[i + 1] === "<" && src[i + 2] !== "<" && src[i - 1] !== "<") {
+      const m = /^<<(-?)[ \t]*((?:[^\s;&|<>()'"\\]|'[^']*'|"[^"]*"|\\.)+)/.exec(src.slice(i));
+      const prefix = out.slice(lineStart);
+      const nl = src.indexOf("\n", i);
+      const rest = src.slice(i + (m ? m[0].length : 2), nl < 0 ? src.length : nl);
+      if (m && !/\(\(|\$\(|`|<\(|>\(/.test(prefix) && !/[|`]|\$\(|<\(|>\(/.test(rest)) {
+        const unit = parseShell(prefix).pipelines.at(-1)?.at(-1);
+        const core = unit ? variants(unit).core : [];
+        if (core.length && HEREDOC_READERS.has(baseName(core[0]))) {
+          pending.push({ delim: m[2].replace(/'([^']*)'|"([^"]*)"|\\(.)/g, (_x, a, b, d) => a ?? b ?? d), dash: m[1] === "-", quoted: /['"\\]/.test(m[2]) });
+        }
+      }
+      out += "<<";
+      i += 2;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------- paths
 
 const GLOB = /[*?[]/;
@@ -795,7 +1041,8 @@ function expandWord(w: string, ctx: MatchCtx): string {
   if (s === "~") s = ctx.home;
   else if (s.startsWith("~/") || s.startsWith("~\\")) s = ctx.home + s.slice(1);
   s = s.replace(/^\$\{?HOME\}?(?=$|[\\/])/, ctx.home);
-  if (ctx.scratch) s = s.replace(/^\$(\{FOREMAN_SCRATCH\}|FOREMAN_SCRATCH(?![A-Za-z0-9_]))/, ctx.scratch);
+  const scratch = scratchOf(ctx);
+  if (scratch) s = s.replace(/^\$(\{FOREMAN_SCRATCH\}|FOREMAN_SCRATCH(?![A-Za-z0-9_]))/, scratch);
   // Git Bash / MSYS drive paths: /c/dir/x -> c:/dir/x
   if (ctx.platform === "win32") s = s.replace(/^\/([A-Za-z])(?=$|\/)/, "$1:");
   return s.replace(/^\$env:(USERPROFILE|HOME)(?=$|[\\/])/i, ctx.home);
@@ -965,7 +1212,9 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
   const fsx = defaults(ctx);
   const fold = (x: string): string => (win || ctx.platform === "darwin" ? x.toLowerCase() : x);
   const norm = (x: string): string => (win ? x.replace(/\\/g, "/") : x);
-  const roots = ctx.scratch && p.isAbsolute(ctx.scratch) ? [ctx.cwd, ctx.scratch] : [ctx.cwd];
+  // the allowed region: the workspace root of the cwd (the worktree root for a worktree; `cd ..` from a subdirectory) and the child's scratch dir
+  const scratch = scratchOf(ctx);
+  const roots = [ctx.cwd, workspaceOf(ctx.cwd).root, ...(scratch && p.isAbsolute(scratch) ? [scratch] : [])];
   const ws = roots.flatMap((r) => [r, fsx.realpath(r) ?? r]).map((x) => fold(p.resolve(norm(x))));
   const inside = (abs: string): boolean => ws.some((w) => {
     const rel = p.relative(w, fold(abs));
@@ -1039,7 +1288,7 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
     while (i < args.length && ["-L", "-P", "-e", "-@", "--"].includes(args[i])) i++;
     const raw = args[i];
     // the child's own scratch dir (childscratch.ts) by its env name
-    const target = raw !== undefined && ctx.scratch ? raw.replace(/^\$(\{FOREMAN_SCRATCH\}|FOREMAN_SCRATCH(?![A-Za-z0-9_]))/, ctx.scratch) : raw;
+    const target = raw !== undefined && scratch ? raw.replace(/^\$(\{FOREMAN_SCRATCH\}|FOREMAN_SCRATCH(?![A-Za-z0-9_]))/, scratch) : raw;
     // `~` expands only at the start of a word; inside one it is literal (Windows short names: RUNNER~1)
     if (target === undefined || target === "" || /^[-+]\d*$/.test(target) || /[$`*?[\]{}]/.test(target) || /^[-~]/.test(target)) return deny();
     let t = norm(target);
@@ -1068,28 +1317,37 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
   return null;
 }
 
-export function checkShell(rules: OverlayRules, command: string, ctx: MatchCtx): Decision | null {
-  const shell = ctx.shell ?? "posix";
+export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchCtx): Decision | null {
+  const shell = ctx0.shell ?? "posix";
+  const ctx: MatchCtx = ctx0.owned || !rules.owned ? ctx0 : { ...ctx0, owned: rules.owned };
+  const command = shell === "posix" ? stripHeredocs(rawCommand) : rawCommand;
   if (ctx.role === "child") {
     const cd = childCdDeny(command, ctx);
     if (cd) return cd;
   }
-  const c: Collected = { unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true };
+  const c: Collected = { unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, writeTargets: new Set() };
   collect(command, shell, 0, c);
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
-    const raw: Collected = { unitTexts: [], pipeTexts: [], words: [], removeWords: [], protWords: [], pure: true };
+    const raw: Collected = { unitTexts: [], pipeTexts: [], words: [], removeWords: [], protWords: [], pure: true, ro: true, writeTargets: new Set() };
     collect(command, "powershell", 0, raw);
     c.words.push(...raw.words);
     c.removeWords!.push(...raw.removeWords!);
     c.protWords!.push(...raw.protWords!);
     c.pure = c.pure && raw.pure;
+    c.ro = c.ro && raw.ro;
+    raw.writeTargets!.forEach((x) => c.writeTargets!.add(x));
+  }
+  if (ctx.role === "child" && c.worktreeOp !== undefined) {
+    return { kind: "deny", reason: `pi-foreman: denied by the permission policy (git worktree ${clip(c.worktreeOp)} is the foreman's; children may only list worktrees). Ask the foreman.` };
   }
   const words = [...new Set(c.words.flatMap((w) => [w, ...expandBraces(w)]))];
   // Write protection sees path arguments only: pattern/script operands drop out when no unit can turn
   // text into a path (no substitution, process substitution or non-pure command), and bash words
   // follow bash globbing (item 4: `grep "x\|register\b" *.go` named /app/.git/... before).
   const pure = c.pure === true && !/\$\(|`|[<>]\(/.test(command);
+  // Only read-only verbs, no write redirect (checked per word below), no PowerShell: write-only protect rules do not fire
+  const readOnly = pure && c.ro === true && shell === "posix";
   const pwords = pure ? [...new Set(c.protWords!.flatMap((w) => [w, ...expandBraces(w)]))] : words;
   const pctx: MatchCtx = shell === "posix" ? { ...ctx, bashWords: true, dotGlob: /dotglob|globignore|glob_?dots/i.test(command) } : ctx;
   const removed = new Set(c.removeWords!.flatMap((w) => [w, ...expandBraces(w)]));
@@ -1101,7 +1359,13 @@ export function checkShell(rules: OverlayRules, command: string, ctx: MatchCtx):
     const hit = pathDeny(rules.pathRules, w, ctx);
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(w)}'). Secret and policy paths are off limits to the agent, also through shell commands.` };
   }
-  const prot = pwords.map((w) => ({ w, hit: protectHit(rules.protect, w, pctx, true, removed.has(w)) })).filter((x) => x.hit);
+  if (ctx.role === "child") {
+    for (const w of pwords) {
+      const hit = childBlockHit(rules, w, pctx);
+      if (hit) return childBlockDecision(hit, w);
+    }
+  }
+  const prot = pwords.map((w) => ({ w, hit: protectHit(rules.protect, w, pctx, true, removed.has(w), readOnly && !c.writeTargets!.has(w)) })).filter((x) => x.hit);
   const pd = prot.find((x) => x.hit!.kind === "deny");
   if (pd) return protectDecision(pd.hit!, pd.w, "shell command");
   for (const pat of rules.bashAsk) {
@@ -1116,13 +1380,18 @@ export function checkShell(rules: OverlayRules, command: string, ctx: MatchCtx):
 }
 
 /** The strictest write-protection decision for one path word (deny before ask), or null. */
-function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: boolean, remove = false): ProtectHit | null {
+function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: boolean, remove = false, readOnly = false): ProtectHit | null {
   const child = ctx.role === "child";
   let ask: ProtectHit | null = null;
   const cands = pathCandidates(word, ctx);
   const guessed = ctx.platform === "win32" ? shortNameVariants(cands, rules.map((r) => r.pattern)) : [];
+  // the foreman's own roots (owned.ts): its writeAsk rules (the package root) do not ask below them, except the handoff files `parent`/`child`
+  const owned = !child && ctx.owned?.readWrite.length ? ctx.owned.readWrite : [];
+  const inOwned = (x: string): boolean => owned.some((o) => insideDir(o, x, ctx));
   for (const r of rules) {
     if (r.removeOnly && !remove) continue;
+    if (readOnly && r.readOk === (child ? "child" : "main")) continue;
+    if (r.fromWriteAsk && owned.length && !r.pattern.includes("/handoffs/") && cands.length && cands.every(inOwned)) continue;
     if (shell && !r.shell && !(child && r.childShell)) continue;
     const kind = child ? r.child : r.main;
     if (!kind || (kind === "ask" && ask && !ask.shortName)) continue;
@@ -1132,6 +1401,32 @@ function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: bo
     if (!ask || (ask.shortName && exact)) ask = { kind, rule: r, shortName: !exact };
   }
   return ask;
+}
+
+/** True when `p` is `dir` or below it (lexical, case folded where the file system is). */
+function insideDir(dir: string, p: string, ctx: MatchCtx): boolean {
+  const win = ctx.platform === "win32";
+  const pp = win ? path.win32 : path.posix;
+  const fold = (x: string): string => (foldsCase(ctx.platform) ? x.toLowerCase() : x);
+  const rel = pp.relative(fold(pp.resolve(dir)), fold(pp.resolve(p)));
+  return rel === "" || (rel !== ".." && !rel.startsWith(".." + pp.sep) && !pp.isAbsolute(rel));
+}
+
+/** A child touching a foreman-owned path (handoffs, artifacts, foreman.json); its own scratch dir is never one. */
+function childBlockHit(rules: OverlayRules, word: string, ctx: MatchCtx): string | null {
+  const patterns = rules.childBlock;
+  if (!patterns?.length || ctx.role !== "child") return null;
+  const scratch = scratchOf(ctx);
+  for (const cand of pathCandidates(word, ctx)) {
+    if (scratch && insideDir(scratch, cand, ctx)) continue;
+    if (rules.childBlockExcept?.some((pat) => pathMatches(pat, cand, ctx))) continue;
+    for (const pat of patterns) if (pathMatches(pat, cand, ctx)) return pat;
+  }
+  return null;
+}
+
+function childBlockDecision(pattern: string, word: string): Decision {
+  return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${pattern}' matched '${clip(word)}'). The foreman's handoff, artifact and configuration paths are not for subagents; ask the foreman.` };
 }
 
 /** Whether a path falls under any write-protection rule (either session kind); foreman_wait's file bound (A4). */
@@ -1180,12 +1475,15 @@ function toolPaths(toolName: string, input: Record<string, unknown>): { value: s
   return out;
 }
 
-export function checkPathTool(rules: OverlayRules, toolName: string, input: Record<string, unknown>, ctx: MatchCtx): Decision | null {
+export function checkPathTool(rules: OverlayRules, toolName: string, input: Record<string, unknown>, ctx0: MatchCtx): Decision | null {
   if (!PATH_TOOLS.has(toolName)) return null;
+  const ctx: MatchCtx = ctx0.owned || !rules.owned ? ctx0 : { ...ctx0, owned: rules.owned };
   const paths = toolPaths(toolName, input);
   for (const { value } of paths) {
     const hit = pathDeny(rules.pathRules, value, ctx);
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(value)}' for ${toolName}).` };
+    const blocked = childBlockHit(rules, value, ctx);
+    if (blocked) return childBlockDecision(blocked, value);
   }
   const prot = paths.filter((x) => x.write).map((x) => ({ w: x.value, hit: protectHit(rules.protect, x.value, ctx, false, x.remove === true) })).filter((x) => x.hit);
   const pd = prot.find((x) => x.hit!.kind === "deny");

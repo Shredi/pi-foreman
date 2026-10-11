@@ -141,3 +141,24 @@ test("storeBrief: the full explorer report is a file in a scratch dir every role
   finishScratch(h, "no-such-launch", deps);
   assert.ok(fs.existsSync(file));
 });
+
+test("row 25: the overlay leaves a child's own scratch dir open on every surface, and nobody else's", () => {
+  const mine = createScratch("sess-r25", "L-mine", deps)!;
+  const theirs = createScratch("sess-r25", "L-theirs", deps)!;
+  fs.mkdirSync(path.join(mine, "probe"));
+  fs.writeFileSync(path.join(mine, "probe", "probe.mjs"), "console.log(1)\n");
+  const r = buildOverlayRules(readBaseline(PKG)!, {}, {}, path.join(base, "agent"));
+  const ctx = { cwd: repo, home: base, platform: process.platform, role: "child" as const, scratch: mine };
+  const kind = (command: string): string => checkToolCall(r, "bash", { command }, ctx)?.kind ?? "pass";
+  assert.equal(kind("node $FOREMAN_SCRATCH/probe/probe.mjs"), "pass");
+  assert.equal(kind("cat $FOREMAN_SCRATCH/replay.log"), "pass");
+  assert.equal(kind(`node ${mine}/probe/probe.mjs > ${mine}/out.log 2>&1`), "pass");
+  assert.equal(kind("cd $FOREMAN_SCRATCH && ls"), "pass");
+  for (const t of ["read", "write", "edit", "ls", "grep", "find"]) assert.equal(checkToolCall(r, t, { path: path.join(mine, "probe", "probe.mjs") }, ctx), null, t);
+  // the same dir through the owned-roots parameter
+  const { scratch: _drop, ...noScratch } = ctx;
+  const owned = buildOverlayRules(readBaseline(PKG)!, {}, {}, path.join(base, "agent"), undefined, undefined, false, { readWrite: [], readOnly: [], childScratch: mine });
+  assert.equal(checkToolCall(owned, "bash", { command: "cd $FOREMAN_SCRATCH && ls" }, noScratch), null);
+  // another launch's dir is outside the workspace: cd refuses
+  assert.equal(kind(`cd ${theirs} && ls`), "deny");
+});

@@ -3,6 +3,7 @@
   "c1": [
    {"tools": [{"name": "bash", "arguments": {"command": "shred --version"}}]},
    {"tools": [{"name": "codemode", "arguments": {"code": "const r = await tools.bash({ command: \"shred --version\" });\ntext(r.output);"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "cat <<'EOT'\nnotes: the .pi dir and $x are prose\nEOT"}}]},
    {"text": "Both were refused."}
   ]
  }
