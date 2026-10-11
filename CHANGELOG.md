@@ -3,6 +3,15 @@
 ## [Unreleased]
 
 ### Added
+- Package-first install (`docs/install.md`): `pi install git:github.com/Shredi/pi-foreman` (`npm:pi-foreman` planned
+  for v0.1.0). `pi-subagents`, `pi-permission-system` and `pi-intercom` are bundled dependencies pinned in
+  `package.json` and `package-lock.json`, loaded through `node_modules` resource paths.
+- `foreman setup` (also `/foreman setup` in Pi and a `bin/foreman` arm) replaces the clone-first installer flow. It no
+  longer installs pi-foreman or its dependencies, and migrates leftover top-level `npm:` entries of the bundled
+  packages (a second copy is a fatal tool conflict). `--no-intercom` is now a package filter.
+- `foreman setup --develop` writes `.pi/settings.json` in a checkout so the checkout replaces the installed package in
+  its own tree; the core adapter has a once-guard (a second core copy registers nothing and posts one notice).
+- Overlay handshake (`docs/overlays.md`): `globalThis[Symbol.for("pi-foreman.core.v1")]` and `foreman:ready` on `pi.events`.
 - Session close (`docs/close.md`): a per-session manifest (`<state>/sessions/<session>/manifest.json`) records the
   worktrees and scratch dirs a session creates (bash `git worktree add`, `mkdir`, writes into a new scratch topic dir,
   `foreman close record`; silent, no tokens). `foreman close` prints a CLOSE report (`CLOSE: ready|open`, `uncommitted:`,
@@ -222,6 +231,9 @@
   or after `ladder.reviewPanel.waitSeconds` (default 600, `decision: timeout`); missing shadows are listed as "not run".
 
 ### Changed
+- README quick start is the package install plus `/foreman setup`; `docs/install.md` covers update (`pi update`),
+  remove, developing and Windows notes. The update-check footer says to update the package and run `foreman setup`.
+- `docs/overlays.md` no longer promises `foreman:*` role and ledger events; only `foreman:ready` is emitted.
 - `trace.enabled` defaults to `null` (was `false`): the trace follows the effective `retro.enabled` (on in tui and rpc,
   off in json and print). An explicit `false` still turns it off.
 - `/sync` runs the retro before the repository commits; a `retro.repoBacklog` entry with `commit: true` is staged in the

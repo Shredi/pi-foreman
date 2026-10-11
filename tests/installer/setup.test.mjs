@@ -11,12 +11,15 @@ const ROOT = fs.realpathSync(path.resolve(HERE, "..", ".."));
 const SETUP = path.join(ROOT, "setup.mjs");
 const FAKE_PI = path.join(HERE, "fixtures", "fake-pi.mjs");
 
+const FOREMAN = "git:github.com/Shredi/pi-foreman";
+
 function fresh() {
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-installer-")));
   const agentDir = path.join(base, "agent");
   const cwd = path.join(base, "project");
   fs.mkdirSync(agentDir);
   fs.mkdirSync(cwd);
+  fs.writeFileSync(path.join(agentDir, "settings.json"), `${JSON.stringify({ packages: [FOREMAN] })}\n`);
   return { base, agentDir, cwd, log: `${base}-calls.jsonl` };
 }
 
@@ -53,7 +56,7 @@ function snapshot(dir) {
 
 const readSettings = (env) => JSON.parse(fs.readFileSync(path.join(env.agentDir, "settings.json"), "utf8"));
 const backups = (env) => fs.readdirSync(env.agentDir).filter((f) => f.startsWith("settings.json.bak-"));
-const SEED = { theme: "dark", packages: ["npm:some-provider@1.2.3"], defaultModel: "x/y", zeta: 1, alpha: 2 };
+const SEED = { theme: "dark", packages: ["npm:some-provider@1.2.3", FOREMAN], defaultModel: "x/y", zeta: 1, alpha: 2 };
 
 function seed(env, obj = SEED) {
   fs.writeFileSync(path.join(env.agentDir, "settings.json"), `${JSON.stringify(obj, null, 2)}\n`);
@@ -73,8 +76,8 @@ test("dry run writes nothing and runs no install", () => {
   assert.equal(r.code, 0, r.out);
   assert.deepEqual(snapshot(env.base), before);
   assert.deepEqual(installs(env), []);
-  assert.match(r.out, /would run: pi install npm:pi-subagents@0\.75\.0/);
-  assert.match(r.out, /would run: pi install /);
+  assert.doesNotMatch(r.out, /would run: pi (install|remove)/);
+  assert.match(r.out, /package pi-subagents@0\.75\.0: bundled with pi-foreman/);
   assert.match(r.out, /^\+\+\+ b\/settings\.json/m);
   assert.match(r.out, /permission-system config: absent, would write/);
   assert.equal(fs.existsSync(path.join(env.agentDir, "extensions")), false);
@@ -94,13 +97,10 @@ test("first run backs up, writes the managed block, keeps user keys in order", (
   assert.equal(s.subagents.agentOverrides.builder.tools.includes("edit"), true);
   assert.equal(s.subagents.forceTopLevelAsync, true);
   assert.ok(s.packages.includes("npm:some-provider@1.2.3"));
-  assert.ok(s.packages.includes("npm:pi-subagents@0.75.0"));
-  assert.ok(s.packages.includes("npm:@gotgenes/pi-permission-system@39.0.2"));
-  assert.equal(s.packages.some((p) => p.includes("ai-guard")), false);
+  assert.ok(s.packages.includes(FOREMAN));
   const managed = JSON.parse(fs.readFileSync(path.join(env.agentDir, "pi-foreman", "managed.json"), "utf8"));
   assert.match(Object.values(managed.entries)[0].subagentsHash, /^[0-9a-f]{64}$/);
-  const inst = installs(env).map((a) => a[1]);
-  assert.deepEqual(inst, ["npm:pi-subagents@0.75.0", "npm:@gotgenes/pi-permission-system@39.0.2", "npm:pi-intercom@0.16.1", ROOT]);
+  assert.deepEqual(installs(env), []);
   assert.match(fs.readFileSync(path.join(env.agentDir, "settings.json"), "utf8"), /^ {2}"theme"/m);
 });
 
@@ -119,18 +119,70 @@ test("second run is a no-op: no writes, no installs", () => {
 
 const intercomCfg = (env) => path.join(env.agentDir, "intercom", "config.json");
 
-test("--no-intercom skips pi-intercom and its config, and says so in the dry run", () => {
+test("--no-intercom filters pi-intercom on the pi-foreman entry (dry run shows it), skips its config, and is idempotent", () => {
   const env = fresh();
   seed(env);
   const dry = run(env, ["--dry-run", "--no-intercom"]);
   assert.equal(dry.code, 0, dry.out);
-  assert.match(dry.out, /package pi-intercom@0\.16\.1: skipped \(--no-intercom\)/);
-  assert.doesNotMatch(dry.out, /would run: pi install npm:pi-intercom/);
+  assert.match(dry.out, /would filter pi-intercom out of the pi-foreman entry/);
+  assert.match(dry.out, /^\+\s+"!node_modules\/pi-intercom\/\*\*"/m);
+  assert.equal(readSettings(env).packages[1], FOREMAN);
   const r = run(env, ["--no-intercom"]);
   assert.equal(r.code, 0, r.out);
-  assert.equal(installs(env).some((a) => a[1].includes("pi-intercom")), false);
+  const entry = readSettings(env).packages[1];
+  assert.deepEqual(entry, { source: FOREMAN, extensions: ["!node_modules/pi-intercom/**"], skills: ["!node_modules/pi-intercom/**"] });
   assert.equal(fs.existsSync(intercomCfg(env)), false);
+  const settled = snapshot(env.base);
+  const again = run(env, ["--no-intercom"]);
+  assert.match(again.out, /up to date/);
+  assert.deepEqual(snapshot(env.base), settled);
   assert.match(run(env, ["--help"]).out, /--no-intercom/);
+});
+
+test("leftover top-level bundled packages and a legacy local pi-foreman entry are removed via pi remove; dry run shows it and writes nothing", () => {
+  const env = fresh();
+  const legacy = path.join(env.base, "old-checkout");
+  fs.mkdirSync(legacy);
+  fs.writeFileSync(path.join(legacy, "package.json"), '{"name": "pi-foreman"}\n');
+  seed(env, { packages: ["npm:pi-subagents@0.75.0", "npm:@gotgenes/pi-permission-system@39.0.2", "npm:pi-intercom@0.16.1", legacy, "npm:keep-me@1.0.0", FOREMAN] });
+  const before = snapshot(env.base);
+  const dry = run(env, ["--dry-run"]);
+  assert.equal(dry.code, 0, dry.out);
+  assert.match(dry.out, /would run: pi remove npm:pi-subagents@0\.75\.0/);
+  assert.match(dry.out, /would run: pi remove npm:pi-intercom@0\.16\.1/);
+  assert.ok(dry.out.includes(`would run: pi remove ${legacy}`), dry.out);
+  assert.deepEqual(snapshot(env.base), before);
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(readSettings(env).packages, ["npm:keep-me@1.0.0", FOREMAN]);
+  assert.equal(installs(env).filter((a) => a[0] === "remove").length, 4);
+});
+
+test("without a pi-foreman package entry setup prints the install line and fails", () => {
+  const env = fresh();
+  seed(env, { packages: ["npm:some-provider@1.2.3"] });
+  const before = snapshot(env.base);
+  const r = run(env, []);
+  assert.notEqual(r.code, 0);
+  assert.match(r.out, /^pi install git:github\.com\/Shredi\/pi-foreman$/m);
+  assert.deepEqual(snapshot(env.base), before);
+});
+
+test("pi-foreman package entries are recognised in git, https and npm forms", () => {
+  for (const form of ["git:github.com/someone/pi-foreman@v1.2.0", "https://github.com/someone/pi-foreman", "npm:pi-foreman@1.0.0"]) {
+    const env = fresh();
+    seed(env, { packages: ["npm:pi-claude-bridge@0.9.2", form] });
+    const r = run(env, ["--dry-run"]);
+    assert.equal(r.code, 0, `${form}: ${r.out}`);
+    assert.match(r.out, /would move pi-foreman before pi-claude-bridge/, form);
+  }
+});
+
+test("the bridge login hint is printed when pi-claude-bridge is a package", () => {
+  const env = fresh();
+  assert.doesNotMatch(run(env, ["--dry-run"]).out, /log in once/);
+  seed(env, { packages: [FOREMAN, "npm:pi-claude-bridge@0.9.2"] });
+  assert.match(run(env, ["--dry-run"]).out, /pi-claude-bridge: log in once.*claude-config claude/);
 });
 
 test("intercom config is written once (dry run shows it), never overwritten; trusted overrides warn", () => {
@@ -199,8 +251,9 @@ test("--remove drops only managed entries", () => {
   assert.equal(after.subagents.extraUserKey, true);
   assert.equal(after.theme, "dark");
   assert.ok(after.packages.includes("npm:some-provider@1.2.3"));
-  assert.ok(after.packages.includes("npm:pi-subagents@0.75.0"));
-  assert.equal(after.packages.some((p) => p.endsWith(path.basename(ROOT)) && !p.startsWith("npm:")), false);
+  assert.ok(after.packages.includes(FOREMAN));
+  assert.deepEqual(installs(env), []);
+  assert.ok(r.out.includes(`to remove it run: pi remove ${FOREMAN}`), r.out);
   assert.equal(fs.existsSync(path.join(env.agentDir, "foreman.json")), true);
   assert.ok(backups(env).length >= 1);
   // a second remove has nothing left to do
@@ -293,7 +346,7 @@ test("--remove deletes an unchanged permission-system config (with a backup) and
 
 test("pi-foreman is placed before pi-claude-bridge in packages: dry run shows it, the run backs up and moves it, a rerun is a no-op", () => {
   const env = fresh();
-  const seeded = { theme: "dark", packages: ["npm:pi-claude-bridge@0.9.1", "npm:some-provider@1.2.3"] };
+  const seeded = { theme: "dark", packages: ["npm:pi-claude-bridge@0.9.1", "npm:some-provider@1.2.3", FOREMAN] };
   seed(env, seeded);
   const before = snapshot(env.base);
   const dry = run(env, ["--dry-run"]);
@@ -305,7 +358,7 @@ test("pi-foreman is placed before pi-claude-bridge in packages: dry run shows it
   const r = run(env, []);
   assert.equal(r.code, 0, r.out);
   const pk = readSettings(env).packages;
-  const foreman = pk.findIndex((p) => path.resolve(env.agentDir, p) === ROOT);
+  const foreman = pk.indexOf(FOREMAN);
   assert.ok(foreman >= 0 && foreman < pk.indexOf("npm:pi-claude-bridge@0.9.1"), JSON.stringify(pk));
   assert.equal(backups(env).length, 1);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(env.agentDir, backups(env)[0]), "utf8")), seeded);
@@ -317,4 +370,46 @@ test("pi-foreman is placed before pi-claude-bridge in packages: dry run shows it
   assert.doesNotMatch(again.out, /move pi-foreman/);
   assert.deepEqual(snapshot(env.base), settled);
   assert.match(again.out, /up to date/);
+});
+
+test("--develop writes <checkout>/.pi/settings.json (override of the installed package), merges, and is idempotent", () => {
+  const env = fresh();
+  const checkout = path.join(env.base, "checkout");
+  fs.mkdirSync(checkout);
+  for (const f of ["setup.mjs", "packages.lock.json", "package.json"]) fs.copyFileSync(path.join(ROOT, f), path.join(checkout, f));
+  fs.cpSync(path.join(ROOT, "scripts"), path.join(checkout, "scripts"), { recursive: true });
+  fs.cpSync(path.join(ROOT, "config"), path.join(checkout, "config"), { recursive: true });
+  const file = path.join(checkout, ".pi", "settings.json");
+  fs.mkdirSync(path.dirname(file));
+  fs.writeFileSync(file, JSON.stringify({ theme: "light", packages: [FOREMAN, "npm:keep-me@1.0.0"] }));
+  const go = (args) => {
+    const r = spawnSync(process.execPath, [path.join(checkout, "setup.mjs"), ...args, "--agent-dir", env.agentDir], {
+      cwd: env.cwd, encoding: "utf8", env: { ...process.env, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log },
+    });
+    return { code: r.status, out: `${r.stdout}${r.stderr}` };
+  };
+  const dry = go(["--develop", "--dry-run"]);
+  assert.equal(dry.code, 0, dry.out);
+  assert.match(dry.out, /develop: would write/);
+  assert.match(dry.out, /pi -a/);
+  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).packages.length, 2);
+  const r = go(["--develop"]);
+  assert.equal(r.code, 0, r.out);
+  const written = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.equal(written.theme, "light");
+  assert.deepEqual(written.packages, ["..", { source: FOREMAN, extensions: [], skills: [], prompts: [], themes: [] }, "npm:keep-me@1.0.0"]);
+  const text = fs.readFileSync(file, "utf8");
+  assert.match(go(["--develop"]).out, /already loads this checkout/);
+  assert.equal(fs.readFileSync(file, "utf8"), text);
+  const proj = spawnSync(process.execPath, [path.join(checkout, "setup.mjs"), "--project", "--dry-run", "--agent-dir", env.agentDir], {
+    cwd: checkout, encoding: "utf8", env: { ...process.env, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log },
+  });
+  assert.doesNotMatch(`${proj.stdout}${proj.stderr}`, /package \.\.: would remove/, "the override does not make \"..\" stale");
+});
+
+test("packages.lock.json bundled pins equal the package.json dependencies", () => {
+  const lock = JSON.parse(fs.readFileSync(path.join(ROOT, "packages.lock.json"), "utf8"));
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+  const bundled = Object.fromEntries(lock.packages.filter((p) => p.mode === "bundled").map((p) => [p.name, p.version]));
+  assert.deepEqual(bundled, pkg.dependencies);
 });

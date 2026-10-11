@@ -60,6 +60,17 @@ test("doctor: install state, trusted overrides in the intercom config, Herdr hin
   assert.ok(!intercomDoctor(agent, [], { HERDR_ENV: "1" }).some((l) => l.includes("Herdr")));
 });
 
+test("doctor: bundled pi-intercom under the package root, and its --no-intercom filter", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pf-intercom-root-"));
+  const agent = fs.mkdtempSync(path.join(os.tmpdir(), "pf-intercom-"));
+  assert.ok(intercomDoctor(agent, [[]], {}, root)[0].startsWith("INFO pi-intercom not installed (bundled"));
+  fs.mkdirSync(path.join(root, "node_modules", "pi-intercom"), { recursive: true });
+  fs.writeFileSync(path.join(root, "node_modules", "pi-intercom", "package.json"), "{}");
+  assert.ok(intercomDoctor(agent, [["git:github.com/x/pi-foreman"]], {}, root)[0].startsWith("OK   pi-intercom bundled"));
+  const filtered = [{ source: "git:github.com/x/pi-foreman", extensions: ["!node_modules/pi-intercom/**"] }];
+  assert.ok(intercomDoctor(agent, [filtered], {}, root)[0].includes("disabled by a package filter"));
+});
+
 test("doctor warns on a shared stableId in the intercom config (review S6)", () => {
   const agent = fs.mkdtempSync(path.join(os.tmpdir(), "pf-intercom-"));
   fs.mkdirSync(path.join(agent, "intercom"));

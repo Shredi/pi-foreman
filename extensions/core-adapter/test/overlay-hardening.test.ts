@@ -178,6 +178,7 @@ test("isSelfHost: equal, inside, sibling prefix, outside, symlinked cwd", () => 
   fs.mkdirSync(pkgRoot + "-x", { recursive: true });
   assert.equal(isSelfHost(pkgRoot + "-x", pkgRoot), false);
   assert.equal(isSelfHost(cwd, pkgRoot), false);
+  assert.equal(isSelfHost(cwd, path.join(root, "agent", "git", "github.com", "o", "pi-foreman")), false); // package-cache clone outside cwd
   const link = path.join(root, "link");
   try {
     fs.symlinkSync(path.join(pkgRoot, "sub"), link, "dir");

@@ -1,6 +1,6 @@
 """pi-intercom 0.16.1 through the real permission system and the adapter guard (Phase 4, ledger items 4, 22, 23).
 
-Run:  FOREMAN_REPLAY_CACHE=<dir> python -m unittest discover -s tests/replay -v
+Run:  python -m unittest discover -s tests/replay -v
 Installs pi-intercom into the replay cache on first use. Its broker runs in the rig's agent dir
 and stops on its own once no session is connected.
 """

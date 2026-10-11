@@ -64,11 +64,21 @@ const isIntercomEntry = (e: unknown): boolean => {
   return /(^|[/:\\])pi-intercom(@|$|[/\\])/.test(src);
 };
 
-/** Doctor lines: pi-intercom installed?, its config's trusted overrides, the Herdr pane-state hint. */
-export function intercomDoctor(agentDir: string, packageLists: unknown[], env: NodeJS.ProcessEnv = process.env): string[] {
+const filtersIntercom = (e: unknown): boolean => {
+  const ext = e && typeof e === "object" ? (e as { extensions?: unknown }).extensions : undefined;
+  return Array.isArray(ext) && ext.some((x) => typeof x === "string" && x.startsWith("!") && x.includes("node_modules/pi-intercom"));
+};
+
+/** Doctor lines: pi-intercom installed (top-level or bundled under pkgRoot)?, its config's trusted overrides, the Herdr pane-state hint. */
+export function intercomDoctor(agentDir: string, packageLists: unknown[], env: NodeJS.ProcessEnv = process.env, pkgRoot?: string): string[] {
   const out: string[] = [];
-  const installed = packageLists.some((l) => Array.isArray(l) && l.some(isIntercomEntry));
-  out.push(installed ? `OK   ${INTERCOM_PACKAGE} listed in settings.json packages` : `INFO ${INTERCOM_PACKAGE} not installed (the installer adds it unless --no-intercom)`);
+  const listed = packageLists.some((l) => Array.isArray(l) && l.some(isIntercomEntry));
+  const bundled = !!pkgRoot && fs.existsSync(path.join(pkgRoot, "node_modules", INTERCOM_PACKAGE, "package.json"));
+  const filtered = packageLists.some((l) => Array.isArray(l) && l.some(filtersIntercom));
+  if (listed) out.push(`OK   ${INTERCOM_PACKAGE} listed in settings.json packages`);
+  else if (bundled && filtered) out.push(`INFO ${INTERCOM_PACKAGE} bundled but disabled by a package filter (--no-intercom)`);
+  else if (bundled) out.push(`OK   ${INTERCOM_PACKAGE} bundled under ${path.join(pkgRoot!, "node_modules")}`);
+  else out.push(`INFO ${INTERCOM_PACKAGE} not installed (bundled with pi-foreman: pi update --extensions, or npm install in a checkout)`);
   const all = intercomConfigRisks(agentDir);
   const risks = all.filter((k) => k !== "stableId");
   // Security review S6: a shared stableId makes every session (children too) register under one id.

@@ -14,7 +14,9 @@
 - `integrations/herdr/pi-foreman-sidebar/` Herdr plugin (Python daemon, manifest, rows snippet)
 - `bench/` benchmark presets, prices and Harbor agents; `bin/` the `foreman` and `ledger` wrappers
 - `design/` architecture record; `tests/` Python tests, `tests/installer`, `tests/replay`
-- `setup.mjs` installer; `packages.lock.json` pinned Pi and packages
+- `setup.mjs` setup script (`foreman setup`); `packages.lock.json` pinned Pi and packages
+
+Running from a checkout instead of the installed package: [install](install.md#developing).
 
 ## Tests
 
@@ -23,16 +25,15 @@ python -m unittest discover -s tests -v          # npm test
 node --test "extensions/core-adapter/test/*.test.ts"   # npm run test:node
 node --test "tests/installer/*.test.mjs"          # npm run test:installer
 npm run typecheck                                 # tsc --noEmit
-node setup.mjs --dry-run                          # installer preview, writes nothing
+node setup.mjs --dry-run                          # installer preview, writes nothing (exits 1 until pi-foreman is installed as a package; see install.md#developing)
 ```
 
 ## Replay rig
 
 `python -m unittest discover -s tests/replay -v` starts `pi --mode rpc` with
 a temp `PI_CODING_AGENT_DIR` and temp project against a scripted fake provider and compares the trace to golden
-sequences. No real model calls. The npm prefix with pi-subagents and friends defaults to the shared
-`<agentDir>/pi-foreman/state/cache/replay` (agentDir is your `PI_CODING_AGENT_DIR` or `~/.pi/agent`) and is reused across
-runs; set `FOREMAN_REPLAY_CACHE` only when you need another location, not a fresh dir per run. Design: `design/architecture.md`
+sequences. No real model calls. pi-subagents, the permission system and pi-intercom come from the repo's `node_modules` (run `npm install` first); the rig
+adds only this repo as a package and filters intercom out for non-intercom rigs. Design: `design/architecture.md`
 [section 10](../design/architecture.md#10-replay-rig-and-tests), installer: [section 11](../design/architecture.md#11-installer).
 
 ## CI

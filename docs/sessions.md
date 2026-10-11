@@ -237,7 +237,7 @@ deleted; unparseable or unreadable files are skipped. `working`, `blocked`, `los
 
 ## pi-intercom
 
-The installer installs `pi-intercom` (pinned) unless `--no-intercom`, and writes
+`pi-intercom` is bundled with the package (pinned); `foreman setup` filters it out with `--no-intercom` and otherwise writes
 `<agent dir>/intercom/config.json` (`{"inboundTrigger":"always","busyDelivery":"human-first"}`) only if absent
 (see [install](install.md)). Sessions then address each other by name or id; the close request above travels over
 it as plain text `foreman:close`, accepted only from the recorded parent session.

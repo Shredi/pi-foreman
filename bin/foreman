@@ -1,7 +1,11 @@
 #!/bin/sh
-# pi-foreman: `foreman update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree [args]` -> scripts/foreman_<name>.py.
+# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree [args]` -> scripts/foreman_<name>.py.
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 sub="${1:-}"
+if [ "$sub" = "setup" ]; then
+    shift
+    exec node "$here/../setup.mjs" "$@"
+fi
 case "$sub" in
     update-check) script="$here/../scripts/foreman_update_check.py" ;;
     retro) script="$here/../scripts/foreman_retro.py" ;;
@@ -14,7 +18,7 @@ case "$sub" in
     findings) script="$here/../scripts/foreman_findings.py" ;;
     close) script="$here/../scripts/foreman_close.py" ;;
     worktree) script="$here/../scripts/foreman_worktree.py" ;;
-    *) echo "usage: foreman update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree [args]" >&2; exit 2 ;;
+    *) echo "usage: foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree [args]" >&2; exit 2 ;;
 esac
 shift
 py="${PI_FOREMAN_PYTHON:-}"

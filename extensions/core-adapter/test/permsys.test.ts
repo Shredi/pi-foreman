@@ -21,6 +21,19 @@ test("resolvePermissionSystem finds the agent-dir install, a local settings entr
   assert.equal(resolvePermissionSystem({ agentDir, cwd, pkgRoot: root }), fs.realpathSync(path.join(pkg, "src", "index.ts")));
 });
 
+test("resolvePermissionSystem prefers the copy bundled under the package's node_modules", () => {
+  const write = (dir: string): void => {
+    fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "@gotgenes/pi-permission-system", pi: { extensions: ["./src/index.ts"] } }));
+    fs.writeFileSync(path.join(dir, "src", "index.ts"), "export default () => {};\n");
+  };
+  const ag = path.join(root, "bundle", "agent");
+  const pkgRoot = path.join(root, "bundle", "pkg");
+  write(path.join(ag, "npm", "node_modules", "@gotgenes", "pi-permission-system"));
+  write(path.join(pkgRoot, "node_modules", "@gotgenes", "pi-permission-system"));
+  assert.equal(resolvePermissionSystem({ agentDir: ag, cwd, pkgRoot }), fs.realpathSync(path.join(pkgRoot, "node_modules", "@gotgenes", "pi-permission-system", "src", "index.ts")));
+});
+
 test("permFileState: missing, ok, stale (hash recorded) and edited (hash differs)", () => {
   const wanted = { permission: { "*": "ask" } };
   assert.equal(permFileState(agentDir, wanted).state, "missing");

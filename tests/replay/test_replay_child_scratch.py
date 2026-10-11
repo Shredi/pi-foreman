@@ -5,7 +5,7 @@ A builder launch gets <TMPDIR>/pi-foreman-scratch/<session>/<launch> as $FOREMAN
 allowlisted), forwarded to the foreman and allowed by the review link without a model call
 (`child-scratch`). When the run ends the foreman traces `child_scratch` and the dir is gone.
 
-Run:  FOREMAN_REPLAY_CACHE=<dir> python -m unittest discover -s tests/replay -v
+Run:  python -m unittest discover -s tests/replay -v
 """
 from __future__ import annotations
 

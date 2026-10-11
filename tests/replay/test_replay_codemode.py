@@ -5,7 +5,7 @@ secret read). The script itself needs no approval; each inner call passes throug
 guards and the permission system like a direct call: the .git and secret reads are denied by the
 overlay, the unlisted command is asked by the permission system (and denied without a UI).
 
-Run:  FOREMAN_REPLAY_CACHE=<dir> python -m unittest discover -s tests/replay -v
+Run:  python -m unittest discover -s tests/replay -v
 """
 from __future__ import annotations
 
