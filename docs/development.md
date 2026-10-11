@@ -14,7 +14,9 @@
 - `integrations/herdr/pi-foreman-sidebar/` Herdr plugin (Python daemon, manifest, rows snippet)
 - `bench/` benchmark presets, prices and Harbor agents; `bin/` the `foreman` and `ledger` wrappers
 - `design/` architecture record; `tests/` Python tests, `tests/installer`, `tests/replay`
-- `setup.mjs` installer; `packages.lock.json` pinned Pi and packages
+- `setup.mjs` setup script (`foreman setup`); `packages.lock.json` pinned Pi and packages
+
+Running from a checkout instead of the installed package: [install](install.md#developing).
 
 ## Tests
 

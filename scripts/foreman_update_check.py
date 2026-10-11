@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REGISTRY = "https://registry.npmjs.org/"
 TIMEOUT = 10
-FOOTER = "Nothing was changed. To update, re-run the installer (setup.mjs) after raising the pin."
+FOOTER = "Nothing was changed. To update, update the package (pi update git:github.com/Shredi/pi-foreman) and run foreman setup."
 
 # Packages the harness works with but does not pin in the lock.
 UNPINNED = [

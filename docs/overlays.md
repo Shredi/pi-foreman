@@ -15,10 +15,10 @@ Overlays live outside this repo and only consume released versions of it, pinned
 ## Install
 
 ```sh
-node setup.mjs --overlay npm:<pkg>@<exact-version>
+foreman setup --overlay npm:<pkg>@<exact-version>
 ```
 
-Ranges are refused. The installer never edits overlay files and refuses to merge overlay keys into pi-foreman's own files.
+Ranges are refused (from a checkout, `node setup.mjs --overlay ...` is the same command). The installer never edits overlay files and refuses to merge overlay keys into pi-foreman's own files.
 
 ## One-way flow
 
@@ -26,6 +26,24 @@ Overlays never patch the harness, and nothing from an overlay is ever copied bac
 come as public issues or PRs written from scratch. Config merges in the order package defaults -> organisation
 overlay -> user -> project -> session (see [install](install.md)); there are no organisation safety bounds, and
 only a repository's project file is held to tighten-only.
+
+## Handshake
+
+The core adapter sets `globalThis[Symbol.for("pi-foreman.core.v1")] = { version, pkgRoot, api: 1 }` (`version` from
+`package.json`) and emits `foreman:ready` with the same payload on `pi.events` at `session_start`. An overlay checks at
+its own `session_start`, not in its factory (load order between packages is not guaranteed). If the key is missing it
+posts one notify and returns without throwing:
+
+```ts
+pi.on("session_start", (_e, ctx) => {
+  const core = (globalThis as any)[Symbol.for("pi-foreman.core.v1")];
+  if (!core) {
+    ctx.ui.notify("pi-foreman core adapter not loaded; install it with pi install git:github.com/Shredi/pi-foreman", "warning");
+    return;
+  }
+  // core.api === 1; core.version and core.pkgRoot are available
+});
+```
 
 ## Extension points
 
@@ -38,7 +56,7 @@ only a repository's project file is held to tighten-only.
 | Permission rules | `safety.permissions` entries (see [safety](safety.md)) |
 | Guards and child extensions | `safety.requiredChildExtensions` |
 | MCP servers | Pi `mcp.json` or `registerMcpServer` from the overlay extension |
-| Events | Listen on `pi.events` `foreman:*` (`role_launch`, `role_result`, `ledger_phase`, `ceremony_tier`, `retro`); read-only notifications |
+| Events | `foreman:ready` on `pi.events` (see Handshake); no other `foreman:*` events are emitted |
 | Retro backlog | `retro.backlogDir` points the central backlog elsewhere; `retro.repoBacklog` and `retro.workspaceKey` pick per-workspace stores and keys (see [retro](retro.md)). User or overlay config only. |
 | Ceremony, fan-out, fallback | `ceremony.*`, `fanout.max`, `providers.<p>.fallback` |
 
