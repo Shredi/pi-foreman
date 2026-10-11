@@ -12,7 +12,8 @@ worktree that contains --cwd itself (`in_use_by_caller`). Removal is
 `git worktree remove` (never --force) and `git branch -d` (never -D). Each worktree is listed as
 `removed:` (`would remove:` with --dry-run) or `skipped: <path> — <reason>`. A worktree outside
 close.worktreeDir (`<repo>` = the main worktree's name, relative to the main worktree) and outside
-`<repo>/.claude/worktrees` also gets an `off-convention:` line (information only).
+`<repo>/.claude/worktrees` and pi-subagents' default root `../worktrees/<repo>` also gets an `off-convention:` line
+(information only).
 Exit 0 done, 2 usage, config error or not a git repository.
 """
 from __future__ import annotations
@@ -36,7 +37,9 @@ def convention_dirs(main_dir, cfg):
     raw = (cfg.get("close") or {}).get("worktreeDir")
     raw = raw if isinstance(raw, str) and raw.strip() else DEFAULT_DIR
     raw = os.path.expanduser(raw.replace("<repo>", os.path.basename(main_dir)))
-    return [os.path.realpath(os.path.join(main_dir, raw)), os.path.realpath(os.path.join(main_dir, ".claude", "worktrees"))]
+    # third root: pi-subagents' managed worktrees, `{dirname(repo)}/worktrees/<project>/pi-worktree-<run>-<n>`
+    return [os.path.realpath(os.path.join(main_dir, raw)), os.path.realpath(os.path.join(main_dir, ".claude", "worktrees")),
+            os.path.realpath(os.path.join(main_dir, "..", "worktrees", os.path.basename(main_dir)))]
 
 
 def sweep(cwd, cfg, state, sid, dry_run=False):

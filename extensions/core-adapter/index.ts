@@ -2690,8 +2690,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (fs.existsSync(path.join(CORE_DIR, "scripts", "destructive_guard.py"))) ok(`core scripts at ${CORE_DIR}`);
     else fail(`core scripts missing under ${CORE_DIR}`, "reinstall pi-foreman (core/ is vendored with the package).");
     const unbundled = missingBundled(PKG_ROOT);
-    if (unbundled.length) fail(`bundled packages missing under ${path.join(PKG_ROOT, "node_modules")}: ${unbundled.join(", ")}`, "run pi update --extensions (or npm install in a checkout), then restart.");
+    if (unbundled.length) fail(`bundled packages missing under ${path.join(PKG_ROOT, "node_modules")}: ${unbundled.join(", ")}`, "run pi update --extensions (or npm ci in a checkout), then restart.");
     else ok(`bundled packages present under ${path.join(PKG_ROOT, "node_modules")}`);
+    const reg = await import("./registry.ts"); // doctor-only helpers; keeps the top-level import line untouched
+    out.push(...reg.worktreeDoctor(s.agentDir, s.cwd, platform));
 
     if (s.config.source === "defaults") fail("config CLI did not run; L1 defaults in use", "fix Python first, then check scripts/foreman_config.py.");
     else if (s.config.errors.length) fail(`config errors: ${s.config.errors.join("; ")}`, "correct the named keys in your foreman.json.");
@@ -2790,7 +2792,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (cache.active && !s.isChild) {
       const missing: string[] = [];
       if (settings?.cacheWarming !== "idle" && !piCacheWarmingIdle()) missing.push('Pi settings.json (global): "cacheWarming": "idle"');
-      if (!ctx.model?.promptCache) missing.push(`models.json modelOverrides for ${ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "the model"}: "promptCache": { "short": ${cache.ttlSeconds ?? 300} }`);
+      if (!ctx.model?.promptCache) missing.push(`models.json (${path.join(s.agentDir, "models.json")}) for ${ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "the model"}: ${reg.promptCacheSnippet(ctx.model?.provider, ctx.model?.id, cache.ttlSeconds ?? 300)}`);
       if (missing.length) out.push(`WARN idle cache keep-alive is on by default for ${ctx.model?.provider} but inactive: add ${missing.join(" and ")}, or switch it off with providers.${ctx.model?.provider}.cache.keepalive.enabled: false (docs/cache.md)`);
       else ok(`idle cache keep-alive: Pi cacheWarming idle and promptCache declared for ${ctx.model?.provider}`);
     }

@@ -32,7 +32,7 @@ Pi's native cache warmer does the work: while a session is idle it sends a hidde
 - **Idle only.** While a turn or a tool runs, the hook does not override. On a zero-cost provider a final request that takes longer than one tick therefore loses Pi's warmer before the session settles, and the first window ends `warmer_stopped` without a keep-alive.
 - **What ends a window.** New activity (a run starts, user input, a tool result, a child or intercom message), a compaction, session shutdown, the window end, the watchdog (no warm decision for the watchdog gap), and the confirm deadline: a warm decision with no usage entry 90 s later. The 90 s margin assumes a warm request finishes within 90 s.
 - **Priced providers.** On a token provider with real prices, Pi's own economics may warm while a child runs. Those entries are synced and tagged `keepalive` too.
-- **Pi prerequisites.** `cacheWarming: "idle"` in Pi's settings and a `promptCache` entry for the model. Without them Pi never warms; `foreman doctor` reports that as WARN. `foreman setup` and `foreman config apply-preset` never write either.
+- **Pi prerequisites.** `cacheWarming: "idle"` in Pi's settings and a `promptCache` entry for the model. Without them Pi never warms; `foreman doctor` reports that as WARN. `foreman setup` and `foreman config apply-preset` never write either. The `promptCache` entry goes in `<agent dir>/models.json` (the file `foreman doctor` names): `{"providers": {"<provider>": {"modelOverrides": {"<modelId>": {"promptCache": {"short": 300}}}}}}`.
 - **Glyph.** While a window is open the footer shows a keep-alive glyph (see [sessions](sessions.md)).
 
 ## Warm compaction

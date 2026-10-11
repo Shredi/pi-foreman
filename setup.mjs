@@ -33,6 +33,9 @@ const BUNDLED_RE = /^npm:(pi-subagents|@gotgenes\/pi-permission-system|pi-interc
 const REMOTE_FOREMAN_RE = /^(npm:pi-foreman(@[^/]+)?|(github\.com\/[^/\s]+\/pi-foreman(\.git)?(@[^/]+)?\/?)|git:[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|git:https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?)$/;
 const BRIDGE_HINT = "pi-claude-bridge: log in once. Run `CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude` and enter /login, or run `claude setup-token` and export CLAUDE_CODE_OAUTH_TOKEN (docs/install.md, \"Claude bridge: log in once\").";
 const INTERCOM = "pi-intercom";
+// pi-subagents runs this after creating a managed worktree (config: <agent dir>/extensions/subagent/config.json). POSIX only:
+// pi-subagents spawns the hook without a shell, so a script cannot run on Windows (docs/safety.md, known limits).
+const WORKTREE_HOOK_TIMEOUT_MS = 600000;
 // Written once when absent (never overwritten): wake on every inbound message, the human's input first.
 const INTERCOM_CONFIG = { inboundTrigger: "always", busyDelivery: "human-first" };
 // Keys that change the program pi-intercom starts or enable sends over SSH: trusted overrides, warned about.
@@ -278,6 +281,18 @@ function runConfigCli(py, args, cwd, script = "foreman_config.py") {
 
 // ---------------------------------------------------------------- packages
 
+/** `./node_modules/...` entries of the package manifest (package.json `pi.*` arrays) that do not resolve under `root`. */
+function missingBundledEntries(root) {
+  let pi;
+  try {
+    pi = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).pi;
+  } catch {
+    return [];
+  }
+  const entries = isObj(pi) ? Object.values(pi).flatMap((v) => (Array.isArray(v) ? v : isObj(v) ? Object.values(v).flat() : [])) : [];
+  return entries.filter((e) => typeof e === "string" && e.startsWith("./node_modules/") && !fs.existsSync(path.join(root, e)));
+}
+
 function entrySource(e) {
   if (typeof e === "string") return e;
   if (isObj(e) && typeof e.source === "string") return e.source;
@@ -494,7 +509,12 @@ function main(argv) {
     const hasRemote = list0.some((e) => isRemoteForeman(e) && !isOverride(e));
     // Leftover top-level copies of the bundled packages (or an old local-path entry next to the git/npm one)
     // would load a second time, and a duplicate tool name stops Pi at start: remove them.
-    const stale = list0.filter((e) => isBundledEntry(e) || (hasRemote && isLocalForeman(e, baseDir)));
+    // ... unless the bundled copies do not resolve under this package root: then the top-level copies are the only ones that load.
+    const missing = missingBundledEntries(ROOT);
+    if (missing.length) {
+      say(`  missing bundled entries under ${ROOT}: run npm ci in the checkout (${missing.join(", ")}); keeping the top-level package copies`);
+    }
+    const stale = list0.filter((e) => (isBundledEntry(e) && !missing.length) || (hasRemote && isLocalForeman(e, baseDir)));
     const removeArgs = stale.map((e) => {
       const src = entrySource(e);
       return ["remove", isLocalSource(src) ? resolveLocal(src, baseDir) : src, ...(opts.project ? ["-l"] : [])];
@@ -606,6 +626,27 @@ function main(argv) {
     if (permNeedRecord) anyChange = true;
     for (const w of pg.data.warnings || []) say(`  warning: ${w}`);
 
+    // pi-subagents worktree setup hook: a plain node_modules copy instead of the symlink (scripts/foreman_worktree_setup.py)
+    const hookFile = path.join(agentDir, "extensions", "subagent", "config.json");
+    const hookLauncher = path.join(ROOT, "bin", "foreman-worktree-setup");
+    let hookNext = null;
+    if (WIN) say("worktree setup hook: not registered on Windows (pi-subagents cannot spawn a script hook without a shell); the builder prompt and /foreman doctor guard node_modules links instead");
+    else {
+      const hookText = readText(hookFile);
+      const hookCur = parseJsonObject(hookText, hookFile) ?? {};
+      const ours = (v) => typeof v === "string" && /[\\/]bin[\\/]foreman-worktree-setup$/.test(v);
+      const hookSet = typeof hookCur.worktreeSetupHook === "string" && hookCur.worktreeSetupHook.trim() !== "";
+      const hookStale = hookSet && ours(hookCur.worktreeSetupHook) && hookCur.worktreeSetupHook !== hookLauncher && !fs.existsSync(hookCur.worktreeSetupHook);
+      if (hookSet && !hookStale) say(`worktree setup hook: already set to ${hookCur.worktreeSetupHook}, left alone`);
+      else {
+        hookNext = { ...hookCur, worktreeSetupHook: hookLauncher };
+        if (hookCur.worktreeSetupHookTimeoutMs === undefined) hookNext.worktreeSetupHookTimeoutMs = WORKTREE_HOOK_TIMEOUT_MS;
+        anyChange = true;
+        say(`worktree setup hook: ${dry ? "would write" : "writing"} worktreeSetupHook=${hookLauncher} and worktreeSetupHookTimeoutMs=${hookNext.worktreeSetupHookTimeoutMs} to ${hookFile}`);
+        say(unifiedDiff("extensions/subagent/config.json", hookText, toJson(hookNext)));
+      }
+    }
+
     if (dry) {
       for (const a of [...removeArgs, ...installArgs]) say(`would run: pi ${a.join(" ")}`);
       if (needRecord || permNeedRecord) say(`would record the managed hash in ${managedFile}`);
@@ -631,6 +672,7 @@ function main(argv) {
         }
         writeFile(permFile, toJson(permWanted));
       }
+      if (hookNext) writeFile(hookFile, toJson(hookNext));
       if (!isObj(managed.files)) managed.files = {};
       managed.files[permFile] = permHash;
       writeFile(managedFile, toJson(managed));

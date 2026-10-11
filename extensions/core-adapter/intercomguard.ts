@@ -1,5 +1,5 @@
 // pi-intercom adoption (Phase 4, ledger items 3, 4, 22): the guard on the `intercom` tool, the
-// inbound-message turn notice and the doctor lines. Facts from pi-intercom 0.16.1 (pinned in
+// inbound-message turn notice and the doctor lines. Facts from pi-intercom 0.17.0 (pinned in
 // packages.lock.json):
 //   - tool `intercom` (index.ts:2434), params incl. action, to, cwd, openProjectPaneIfMissing;
 //     a `to` of the form name@machine is a cross-machine send over SSH (cross-machine-discovery.ts).

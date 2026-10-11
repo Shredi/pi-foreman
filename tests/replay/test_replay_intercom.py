@@ -1,4 +1,4 @@
-"""pi-intercom 0.16.1 through the real permission system and the adapter guard (Phase 4, ledger items 4, 22, 23).
+"""pi-intercom 0.17.0 through the real permission system and the adapter guard (Phase 4, ledger items 4, 22, 23).
 
 Run:  python -m unittest discover -s tests/replay -v
 Installs pi-intercom into the replay cache on first use. Its broker runs in the rig's agent dir

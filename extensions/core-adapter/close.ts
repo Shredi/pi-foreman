@@ -54,13 +54,13 @@ export function parentIntercomId(env: Record<string, string | undefined>): strin
   }
   return env[PARENT_INTERCOM_ENV] || undefined;
 }
-/** pi-intercom 0.16.1 extension-api.ts: the outbox result event. */
+/** pi-intercom 0.17.0 extension-api.ts: the outbox result event. */
 export const INTERCOM_OUTBOX_RESULT_EVENT = "intercom:outbox-result";
 /** How long an outbox send (the closed ack) waits for its result before going ahead. */
 export const OUTBOX_WAIT_MS = 5_000;
 export { INTERCOM_MESSAGE_TYPE as INTERCOM_INBOUND_TYPE } from "./intercomguard.ts";
 export { INTERCOM_WAKE_TEXT } from "./usage.ts";
-/** pi-intercom 0.16.1 extension-api.ts: outbox request event (reply to the sender). */
+/** pi-intercom 0.17.0 extension-api.ts: outbox request event (reply to the sender). */
 export const INTERCOM_OUTBOX_EVENT = "intercom:outbox-request";
 export const CLOSE_SOURCES = ["herdr", "intercom-parent"] as const;
 export type CloseSource = (typeof CLOSE_SOURCES)[number];

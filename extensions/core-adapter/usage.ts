@@ -360,12 +360,13 @@ export type TurnCause = "user" | "child" | "intercom" | "wake" | "close" | "othe
 export const CHILD_MESSAGE_TYPES = ["subagent-notify", "subagent-incremental-child-notify", "subagent-wait-subscription"];
 /**
  * Its native intercom (supervisor) channel: a child's contact_supervisor request (intercom/native-supervisor-channel.js),
- * and pi-intercom 0.16.1's inbound message (index.ts:1291).
+ * and pi-intercom 0.17.0's inbound message (index.ts:1300).
  */
 export const INTERCOM_MESSAGE_TYPES = ["subagent_supervisor_request", "intercom_message"];
 /**
- * pi-intercom 0.16.1 appends a message to an idle session without starting a run (Pi's extension
- * `message_end` does not fire for that append), then wakes it with this extension prompt (index.ts:1302).
+ * pi-intercom 0.17.0 appends a message to an idle session without starting a run (Pi's extension
+ * `message_end` does not fire for that append), then wakes it with this extension prompt (index.ts:1312,
+ * `deliverAs: "steer"`, one wake per idle session through idle-wake.ts).
  */
 export const INTERCOM_WAKE_TEXT = "New intercom message above.";
 /** pi-foreman's own long-wait wake-up (wait.ts). */

@@ -133,9 +133,12 @@ To work on pi-foreman itself, run it from a checkout instead of the installed co
 
 ```sh
 git clone https://github.com/Shredi/pi-foreman.git && cd pi-foreman
-npm install
+npm ci
 bin/foreman setup --develop
 ```
+
+After pulling a checkout that changed `package.json`, run `npm ci` again (setup keeps top-level bundled copies when a
+manifest entry is missing and prints the same hint; `/foreman doctor` FAILs on a missing bundled entry).
 
 `--develop` writes `.pi/settings.json` inside the checkout with `".."` as a package plus an empty-filter override of
 the installed pi-foreman source. Project packages load before global ones and only after project trust (`pi -a` when

@@ -422,3 +422,49 @@ test("packages.lock.json bundled pins equal the package.json dependencies", () =
   const bundled = Object.fromEntries(lock.packages.filter((p) => p.mode === "bundled").map((p) => [p.name, p.version]));
   assert.deepEqual(bundled, pkg.dependencies);
 });
+
+const hookConfig = (env) => path.join(env.agentDir, "extensions", "subagent", "config.json");
+const posix = { skip: process.platform === "win32" };
+
+test("setup registers the pi-subagents worktree setup hook when unset, keeps a hand-set one", posix, () => {
+  const env = fresh();
+  seed(env);
+  const dry = run(env, ["--dry-run"]);
+  assert.match(dry.out, /worktree setup hook: would write worktreeSetupHook=/);
+  assert.equal(fs.existsSync(hookConfig(env)), false);
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  const launcher = path.join(ROOT, "bin", "foreman-worktree-setup");
+  assert.match(r.out, new RegExp(`worktreeSetupHookTimeoutMs=600000 to ${hookConfig(env).replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}`));
+  assert.deepEqual(JSON.parse(fs.readFileSync(hookConfig(env), "utf8")), { worktreeSetupHook: launcher, worktreeSetupHookTimeoutMs: 600000 });
+  assert.ok(fs.existsSync(launcher));
+  assert.match(run(env, []).out, /up to date/);
+  // a hook somebody else set is left alone
+  fs.writeFileSync(hookConfig(env), `${JSON.stringify({ worktreeSetupHook: "/opt/own-hook.sh", other: 1 })}\n`);
+  const r2 = run(env, []);
+  assert.match(r2.out, /already set to \/opt\/own-hook\.sh, left alone/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(hookConfig(env), "utf8")), { worktreeSetupHook: "/opt/own-hook.sh", other: 1 });
+  // a stale path of our own launcher is repaired
+  fs.writeFileSync(hookConfig(env), `${JSON.stringify({ worktreeSetupHook: "/gone/bin/foreman-worktree-setup", worktreeSetupHookTimeoutMs: 5000 })}\n`);
+  run(env, []);
+  assert.deepEqual(JSON.parse(fs.readFileSync(hookConfig(env), "utf8")), { worktreeSetupHook: launcher, worktreeSetupHookTimeoutMs: 5000 });
+});
+
+test("setup keeps the top-level bundled copies when a manifest entry does not resolve under the package root", posix, () => {
+  const env = fresh();
+  const root = path.join(env.base, "pkg");
+  fs.mkdirSync(root);
+  for (const f of ["setup.mjs", "package.json", "packages.lock.json"]) fs.copyFileSync(path.join(ROOT, f), path.join(root, f));
+  for (const d of ["scripts", "config", "core", "agents"]) fs.symlinkSync(path.join(ROOT, d), path.join(root, d));
+  seed(env, { packages: ["npm:pi-subagents@0.75.0", "npm:keep-me@1.0.0", FOREMAN] });
+  const r = spawnSync(process.execPath, [path.join(root, "setup.mjs"), "--agent-dir", env.agentDir], {
+    cwd: env.cwd,
+    encoding: "utf8",
+    env: { ...process.env, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log },
+  });
+  const out = `${r.stdout}${r.stderr}`;
+  assert.equal(r.status, 0, out);
+  assert.match(out, /missing bundled entries under .*pkg: run npm ci in the checkout/);
+  assert.deepEqual(installs(env), []);
+  assert.deepEqual(readSettings(env).packages, ["npm:pi-subagents@0.75.0", "npm:keep-me@1.0.0", FOREMAN]);
+});

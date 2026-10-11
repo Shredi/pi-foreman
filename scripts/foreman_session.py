@@ -26,7 +26,7 @@ PI_FOREMAN_PARENT_LABEL=<parent-slug> so its Pi refreshes the tag. --dry-run wri
 no registry entry.
 
 Agent dir: --agent-dir, else PI_CODING_AGENT_DIR, else ~/.pi/agent. Parent id: --parent-id, else
-PI_INTERCOM_STABLE_ID, else `stableId` of <agent dir>/intercom/config.json (pi-intercom 0.16.1's
+PI_INTERCOM_STABLE_ID, else `stableId` of <agent dir>/intercom/config.json (pi-intercom 0.17.0's
 own rule; the Pi session id, its last fallback, is only known inside Pi, which passes --parent-id).
 
 Exit codes: 0 ok, 1 usage or refused, 2 Herdr failure.

@@ -77,6 +77,15 @@ class SweepTest(unittest.TestCase):
         self.assertIn("removed: %s" % self.off, lines)
         self.assertTrue(self.conv.is_dir())
 
+    def test_convention_dirs_include_pi_subagents_default_root(self):
+        dirs = fw.convention_dirs(str(self.repo), {})
+        self.assertIn(os.path.realpath(str(self.tmp / "worktrees" / "repo")), dirs)
+        self.assertIn(os.path.realpath(str(self.tmp / "repo.worktrees")), dirs)
+        managed = self.tmp / "worktrees" / "repo" / "pi-worktree-r1-0"
+        g(self.repo, "worktree", "add", "-q", "-b", "managed", str(managed))
+        _, lines = self.sweep("--dry-run")
+        self.assertNotIn("off-convention: %s" % managed, lines)
+
 
 if __name__ == "__main__":
     unittest.main()

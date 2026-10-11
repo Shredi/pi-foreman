@@ -1,0 +1,36 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "rangeStrategy": "pin",
+  "automerge": false,
+  "schedule": ["before 6am on monday"],
+  "packageRules": [
+    {
+      "groupName": "pi packages",
+      "matchPackageNames": [
+        "pi-subagents",
+        "pi-intercom",
+        "@gotgenes/pi-permission-system",
+        "@mariozechner/*",
+        "@earendil-works/*"
+      ],
+      "automerge": false
+    },
+    {
+      "groupName": "npm devDependencies",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["devDependencies"],
+      "excludePackageNames": ["@earendil-works/*"],
+      "automerge": false
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "packages.lock.json pins (bump together with package.json; installer test requires equal pins)",
+      "managerFilePatterns": ["/(^|/)packages\\.lock\\.json$/"],
+      "matchStrings": ["\"name\": \"(?<depName>[^\"]+)\",\\s*\"version\": \"(?<currentValue>[^\"]+)\""],
+      "datasourceTemplate": "npm"
+    }
+  ]
+}

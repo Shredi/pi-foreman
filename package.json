@@ -39,7 +39,7 @@
   "type": "module",
   "dependencies": {
     "@gotgenes/pi-permission-system": "39.0.2",
-    "pi-intercom": "0.16.1",
+    "pi-intercom": "0.17.0",
     "pi-subagents": "0.75.0"
   },
   "peerDependencies": {
