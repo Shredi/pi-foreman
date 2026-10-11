@@ -7,10 +7,14 @@
   - (2, 3, 5, 6, 18) Owned dirs: `external_directory` patterns in the permission policy for the handoffs dir,
     `sessions/*/subagent-artifacts`, `*.worktrees`, the children's scratch root, bare `foreman.json`/`settings.json`,
     and read for `<agentDir>/pi-foreman` and the global npm root. `git worktree add|list|prune|lock|unlock|move|repair`
-    is allowed for the foreman (`remove` asks). `foreman_wait kind:file` accepts owned paths; the shell write guard
-    takes `--allow-dir`.
+    is allowed for the foreman (`remove` asks). The grants are per user; the overlay and git guard keep children out
+    of them, except their own `$FOREMAN_SCRATCH` subtree (readWrite, `node <script>` and `cd` included) and the
+    handoff `plan.md`/`result.md`; children may only list worktrees. `foreman_wait kind:file` accepts owned paths; the
+    shell write guard takes `--allow-dir`.
   - (4) The npm root is readable for every role, resolved with `npm root -g`.
-  - (7) The `waiting_for_parent` state is honoured by the finish gate.
+  - (7) The `waiting_for_parent` state is honoured by the finish gate: set by a pending checkpoint, a `foreman_wait`
+    file wait under the handoffs dir, or a timer wait while the session's own handoff dir holds a recent
+    `plan.md`/`result.md`; cleared by the next user or parent input.
   - (10, 13) Hook `foreman-worktree-setup` copies a real `node_modules` into managed worktrees that have a lockfile
     (never a symlink); `foreman setup` registers it on Linux/macOS. `/foreman doctor` WARNs on a symlinked
     `node_modules` in a live worktree and on a missing hook; launch-wait prints the worktree path; both worktree
@@ -271,7 +275,8 @@
 - Harness-friction round:
   - (1, 15) Setup keeps top-level bundled copies when a manifest entry is missing and prints the `npm ci` hint;
     doctor FAILs on a missing bundled entry; the developing docs use `npm ci`.
-  - (8) The recheck budget exempts handoff polls (`ruling.md`, owned dirs) and `git worktree add|list|prune`.
+  - (8) The recheck budget exempts reads of the handoffs dir (`ruling.md` included) and `git worktree add|list|prune`;
+    nothing else, and anything it cannot read with certainty still counts.
   - (9) `ceremony.planReviewRounds` defaults to 2; the capped checkpoint shows open findings.
   - (11) Builder prompt: edit tools only, no `npm ci` where `node_modules` is a symlink; planner and explorer use
     `npm ls -g` instead of `find` over the global npm root.
@@ -316,11 +321,12 @@
 ### Fixed
 - Harness-friction round:
   - (14) Read-only bash naming protected files is no longer write-protected (allowlist of pure verbs, no write
-    redirect); `--flag=value` and grep patterns are not paths; heredoc bodies are skipped by the overlay and the
+    redirect at all; with a write redirect or any non-pure verb the protected paths stay protected); `--flag=value`
+    and grep patterns are not paths; heredoc bodies are skipped by the overlay and the
     destructive guard; `cd` is allowed inside the workspace root and the child's scratch dir.
   - (17) Foreman reads of its own config no longer raise the protected-config dialog.
   - (19) Documented limit: stale needs-attention notices cannot be withdrawn (Pi has no pre-turn hook for queued
-    custom messages); an upstream draft is in the docs.
+    custom messages); the needed upstream change is described in `docs/safety.md`.
   - (22) Documented limit: a session pattern grant on a not-yet-existing dir does not cover a later `cd <dir>`
     (permission-system `deriveApprovalPatterns`); workaround in `docs/permissions.md`.
   - (27) Procedure note: handoff-dir `plan.md`/`result.md` are written in full, fallback `cp`.

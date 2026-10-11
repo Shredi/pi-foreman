@@ -129,10 +129,10 @@ pi-subagents delivers `subagent_control_notice` custom messages with `pi.sendMes
 
 On Windows pi-subagents cannot spawn a script hook without a shell, so the `foreman-worktree-setup` hook does not run there. Managed worktrees keep a symlinked `node_modules`, and builders must not run `npm ci` in them (it would rewrite the main checkout's `node_modules`). `/foreman doctor` WARNs on a symlinked `node_modules` in a live worktree.
 
+## Further safety and runtime keys
+
 Key-by-key layer rules for `safety.*`: `design/architecture.md`
 [safety and loosening keys by layer](../design/architecture.md#safety-and-loosening-keys-by-layer).
-
-## Further safety and runtime keys
 
 | Key | Meaning and layer rule |
 |---|---|
