@@ -67,6 +67,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [headless-review](#headless-review) | off | Treats the session as headless for forwarded child asks: one the review model would defer to you is denied with a text naming the allowed forms. | `{"review": {"headless": true}}` | [safety](safety.md#permission-baseline-and-auto-review) |
 | [git-guard](#git-guard) | on | Lints the foreman's commits and pushes (protected branches, message pattern, trailers, an optional check command) and refuses a PR without a reviewer PASS on the current head. | on by default | [safety](safety.md#git-guard-and-pr-gate) |
 | [git-tools](#git-tools) | off | Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace. | `{"tools": {"git": true}}` | [tools](tools.md#git-tool-pack) |
+| [pr-ops](#pr-ops) | on | Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands. | `{"tools": {"pr": true}}` | [tools](tools.md#pr-tools) |
 | [children-may-push](#children-may-push) | off | Lets subagent children push; by default they may commit but never push, and they never open PRs. | `{"safety": {"children": {"mayPush": true}}}` | [safety](safety.md#git-guard-and-pr-gate) |
 | [review-required](#review-required) | off | Requires a review before close-out in every session. | `{"safety": {"review": {"required": true}}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [workflow-scripts](#workflow-scripts) | off | Lets the foreman run pi-subagents workflow scripts and `schedule.*` calls, which can launch any agent outside the role map; they stay refused at tier heavy. | `{"safety": {"subagents": {"allowWorkflow": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
@@ -398,6 +399,18 @@ Switch: `tools.git` is true.
 |---|---|---|
 | `tools.git` | `false` | tighten-only (only false is accepted) |
 
+### pr-ops
+
+**PR tools.** Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands.
+
+Switch: `tools.pr` is true.
+
+| Key | Default | Layer |
+|---|---|---|
+| `tools.pr` | `true` | tighten-only (only false is accepted) |
+| `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
+| `tools.prWatchSeconds` | `60` | any layer |
+
 ### children-may-push
 
 **Children may push.** Lets subagent children push; by default they may commit but never push, and they never open PRs.
@@ -612,6 +625,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `roles.*.launch` | the launch mode comes from the user or overlay config |
 | `roles.*.file` | a role file replaces the prompt: user or overlay config only |
 | `providers.*.roles.*.strong` | the strong model is picked in the user or overlay config |
+| `tools.prHost` | the PR host program comes from the user or overlay config |
 | `sync.repos` | the repository list comes from the user or overlay config |
 | `retro.proposalMinReviews` | the proposal threshold comes from the user or overlay config |
 | `retro.backlogDir` | the backlog location comes from the user or overlay config |

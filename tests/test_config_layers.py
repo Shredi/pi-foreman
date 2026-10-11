@@ -155,6 +155,17 @@ class LayerRulesTest(unittest.TestCase):
         self.assertIs(res["config"]["tools"]["git"], False)
         self.assertIn("project tools.git ignored", "\n".join(res["warnings"]))
 
+    def test_tools_pr_tighten_only_and_pr_host_user_layer_only(self):
+        res = self.load(l2={"tools": {"pr": False}}, proj={"tools": {"pr": True}})
+        self.assertIs(res["config"]["tools"]["pr"], False)
+        self.assertIn("project tools.pr ignored", "\n".join(res["warnings"]))
+        self.assertIs(self.load(l2={}, proj={"tools": {"pr": False}})["config"]["tools"]["pr"], False)
+        for value in ("gh", {"status": "mytool pr {number}"}):
+            res = self.load(l2={"tools": {"prHost": "glab"}}, proj={"tools": {"prHost": value}})
+            self.assertEqual(res["config"]["tools"]["prHost"], "glab")
+            self.assertIn("project tools.prHost ignored: the project may not set this key "
+                          "(the PR host program comes from the user or overlay config)", "\n".join(res["warnings"]))
+
     def test_strong_on_revision_false_only(self):
         res = self.load(proj={"providers": {"p1": {"strongOnRevision": True}}})
         self.assertNotIn("strongOnRevision", res["config"]["providers"]["p1"])

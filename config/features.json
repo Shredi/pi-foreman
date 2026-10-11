@@ -307,6 +307,17 @@
       "enable": "{\"tools\": {\"git\": true}}"
     },
     {
+      "id": "pr-ops",
+      "title": "PR tools",
+      "purpose": "Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands.",
+      "doc": "docs/tools.md#pr-tools",
+      "keys": ["tools.pr", "tools.prHost", "tools.prWatchSeconds"],
+      "commands": [],
+      "switch": {"key": "tools.pr", "on": "true"},
+      "state": "on",
+      "enable": "{\"tools\": {\"pr\": true}}"
+    },
+    {
       "id": "children-may-push",
       "title": "Children may push",
       "purpose": "Lets subagent children push; by default they may commit but never push, and they never open PRs.",

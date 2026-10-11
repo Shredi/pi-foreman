@@ -270,7 +270,7 @@ class ConfigTest(unittest.TestCase):
             self.assertIsInstance(entry["tools"], list)
             self.assertEqual("codemode" in entry["tools"], role == "explorer", role)
         self.assertEqual(sub["agentOverrides"]["finalizer"]["tools"],
-                         ["read", "ls", "grep", "find", "bash", "edit"])
+                         ["read", "ls", "grep", "find", "bash", "edit"] + list(fc.PR_READ_TOOLS))
         json.dumps(out)
 
     def test_children_never_get_the_intercom_tool(self):
@@ -292,7 +292,7 @@ class ConfigTest(unittest.TestCase):
         self.assertIn("foreman_ledger", fc.resolve_role(cfg, "reviewer", "p1")["tools"])
         cfg["ceremony"]["ledgerHelper"] = "off"
         self.assertEqual(fc.generate_subagents(cfg)["subagents"]["agentOverrides"]["reviewer"]["tools"],
-                         ["read", "ls", "grep", "find", "bash"])
+                         ["read", "ls", "grep", "find", "bash"] + list(fc.PR_ROLE_TOOLS["reviewer"]))
 
     def test_git_pack_tools_for_bash_roles_only_when_on(self):
         self.l2({"providers": PROV, "tools": {"git": True}})
@@ -307,6 +307,39 @@ class ConfigTest(unittest.TestCase):
         sub = fc.generate_subagents(cfg)["subagents"]["agentOverrides"]
         self.assertFalse(any(t in sub[r]["tools"] for r in sub for t in fc.GIT_PACK_TOOLS))
         self.assertNotIn("git_status", fc.resolve_role(cfg, "builder", "p1")["tools"])
+
+    def test_pr_pack_role_sets(self):
+        self.l2({"providers": PROV})
+        cfg = self.load()["config"]
+        sub = fc.generate_subagents(cfg)["subagents"]["agentOverrides"]
+        for role in fc.CHILD_ROLES:
+            has_bash = "bash" in cfg["roles"][role]["tools"]
+            want = (fc.PR_ROLE_TOOLS.get(role, fc.PR_READ_TOOLS)) if has_bash else ()
+            got = tuple(t for t in sub[role]["tools"] if t.startswith("pr_"))
+            self.assertEqual(got, tuple(want), role)
+            self.assertEqual(tuple(t for t in fc.resolve_role(cfg, role, "p1")["tools"] if t.startswith("pr_")), tuple(want), role)
+        self.assertEqual(fc.PR_ROLE_TOOLS["reviewer"], ("pr_status", "pr_comments"))
+        self.assertFalse([t for t in sub["planner"]["tools"] if t.startswith("pr_")])
+        cfg["roles"]["extra"] = {"tools": ["read", "bash"]}
+        self.assertEqual(fc.with_pr_pack(cfg, "extra", ["bash"]), ["bash"] + list(fc.PR_READ_TOOLS))
+        cfg["roles"]["builder"]["tools"] += ["pr_create", "pr_watch"]
+        for t in ("pr_create", "pr_watch"):
+            self.assertIn(t, fc.CHILD_DENIED_TOOLS)
+            self.assertNotIn(t, fc.generate_subagents(cfg)["subagents"]["agentOverrides"]["builder"]["tools"])
+            self.assertNotIn(t, fc.resolve_role(cfg, "builder", "p1")["tools"])
+        cfg["tools"]["pr"] = False
+        sub = fc.generate_subagents(cfg)["subagents"]["agentOverrides"]
+        self.assertFalse([t for r in sub for t in sub[r]["tools"] if t.startswith("pr_")])
+
+    def test_pr_host_semantic_issues(self):
+        def errors(host):
+            return [m for _lvl, _path, m in fc.semantic_issues({"tools": {"prHost": host}})]
+        for ok in ("auto", "gh", "glab", {"status": "gh pr view {number} --json x", "create": "my-tool --t {title} {draft}"}):
+            self.assertEqual(errors(ok), [], ok)
+        for bad in ("hub", {"merge": "gh x"}, {"status": ""}, {"status": "x" * 1025}, {"status": "gh 'unclosed"},
+                    {"status": "gh pr view {numbre}"}, {"status": "gh pr view --pr={number}"}, {"status": "{number} view"}):
+            self.assertTrue(errors(bad), bad)
+        self.assertEqual(errors(None), [])
 
     def test_provider_codemode_override_writes_provider_tools(self):
         prov = json.loads(json.dumps(PROV))
@@ -400,7 +433,7 @@ def render_prompt(text, values):
     vals = {k.lower(): v for k, v in values.items()}
     out = []
     for ln in text.splitlines(keepends=True):
-        m = re.match(r"<!--([A-Za-z][A-Za-z0-9]*)=([A-Za-z0-9|_-]+)-->", ln)
+        m = re.match(r"<!--([A-Za-z][A-Za-z0-9.]*)=([A-Za-z0-9|_-]+)-->", ln)
         if not m:
             out.append(ln)
         elif vals.get(m.group(1).lower()) in m.group(2).lower().split("|"):
@@ -441,7 +474,7 @@ class PackageFilesTest(unittest.TestCase):
                     for trivial in ("builder", "off"):
                         kept = render_prompt(text, {"ledgerhelper": mode, "heavythreshold": heavy, "reviewperrevision": review,
                                                     "trivialpath": trivial, "ladder": "on", "factrulings": "on", "launchbriefs": "on", "reviewmarks": "on", "research": "on",
-                                                    "planreview": "on"})
+                                                    "planreview": "on", "tools.pr": "on"})
                         self.assertLessEqual(len(kept.splitlines()), 70, (mode, heavy, review, trivial))
         for word in ("claude", "sonnet", "opus", "fable", "gpt", "gemini", "copilot", "openrouter"):
             self.assertNotIn(word, text)
@@ -453,7 +486,7 @@ class PackageFilesTest(unittest.TestCase):
         text = (ROOT / "instructions" / "foreman.md").read_text()
         # trivialPath "off" = ceremony.required.trivial without builder; ladder "off" = the pre-ladder model line
         # (the adapter always renders ladder "on"); factRulings "off" = no rule on foreman rulings, reviewMarks "off" = no harness marks after a PASS (both always "on" too).
-        knobs = {"ledgerHelper": "off", "heavyThreshold": "eee843d", "reviewPerRevision": "off", "trivialPath": "off", "ladder": "off", "factRulings": "off", "launchBriefs": "off", "reviewMarks": "off", "research": "off"}
+        knobs = {"ledgerHelper": "off", "heavyThreshold": "eee843d", "reviewPerRevision": "off", "trivialPath": "off", "ladder": "off", "factRulings": "off", "launchBriefs": "off", "reviewMarks": "off", "research": "off", "tools.pr": "off"}
         self.assertEqual(render_prompt(text, knobs), old.stdout.decode("utf-8"))
 
     def test_defaults_validate(self):
