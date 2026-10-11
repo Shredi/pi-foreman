@@ -2696,7 +2696,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const missing: string[] = [];
       if (settings?.cacheWarming !== "idle" && !piCacheWarmingIdle()) missing.push('Pi settings.json (global): "cacheWarming": "idle"');
       if (!ctx.model?.promptCache) missing.push(`models.json modelOverrides for ${ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "the model"}: "promptCache": { "short": ${cache.ttlSeconds ?? 300} }`);
-      if (missing.length) out.push(`WARN idle cache keep-alive is configured for ${ctx.model?.provider} but Pi will not run it; add ${missing.join(" and ")} (docs/cache.md)`);
+      if (missing.length) out.push(`WARN idle cache keep-alive is on by default for ${ctx.model?.provider} but inactive: add ${missing.join(" and ")}, or switch it off with providers.${ctx.model?.provider}.cache.keepalive.enabled: false (docs/cache.md)`);
       else ok(`idle cache keep-alive: Pi cacheWarming idle and promptCache declared for ${ctx.model?.provider}`);
     }
     out.push(dormantDoctorLine(PKG_ROOT, s.config.config));

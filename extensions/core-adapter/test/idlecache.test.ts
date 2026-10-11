@@ -153,6 +153,16 @@ test("check order: child and no_entry return silently before any busy trace", ()
   assert.equal(c.ic.state(), "off");
 });
 
+test("a child session with an active policy stays silent: no trace, no timer", () => {
+  const h = make({ isChild: true });
+  h.f.assistantAt = h.clock.t;
+  h.ic.start();
+  assert.deepEqual(h.traces, []);
+  assert.equal(h.ic.state(), "off");
+  assert.equal(h.sets(), 0);
+  assert.equal(h.live().length, 0);
+});
+
 test("skips are traced once per reason per session", () => {
   for (const skip of ["billing_request", "ttl_long", "ttl_unknown", "disabled"] as const) {
     const h = make({ policy: { ...POLICY, active: false, skip } });

@@ -135,7 +135,7 @@ the `foreman` launcher in `bin/` (`.cmd` and `.ps1` on Windows) runs the same sc
 and their layer rules are in the tables of [ceremony](ceremony.md) and [safety](safety.md) and in the schema
 `config/foreman.schema.json`.
 
-While an idle prompt-cache keep-alive window is open (`providers.<p>.cache`, on with the `claude-bridge` preset) the
+While an idle prompt-cache keep-alive window is open (`providers.<p>.cache`, on by default for `claude-bridge`) the
 status line shows a keep-alive glyph (`♨`, or a nerd-font icon with `ui.symbols`). The refresh requests are not part of the
 per-turn cost; `/foreman cost` sums them on a `keep-alive` line ([cache](cache.md)).
 

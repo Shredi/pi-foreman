@@ -3,8 +3,8 @@
 ## [Unreleased]
 
 ### Added
-- Idle prompt cache (`providers.<p>.cache`, `docs/cache.md`): a per-provider TTL and billing policy. On the
-  `claude-bridge` preset pi-foreman lets Pi's cache warmer keep an idle session warm for up to 30 minutes
+- Idle prompt cache (`providers.<p>.cache`, `docs/cache.md`): a per-provider TTL and billing policy. For
+  `claude-bridge` (on by default through the built-in provider defaults) pi-foreman lets Pi's cache warmer keep an idle session warm for up to 30 minutes
   (`cache_warming_decision` hook), spends the last warm read on one compaction above half the tier threshold, tags the
   refreshes `keepalive` in the usage log (own `/foreman cost` line, not in the footer's per-turn cost), shows a footer
   glyph and a `cache:` retro line, and `foreman doctor` warns when Pi's `cacheWarming: "idle"` or the model's

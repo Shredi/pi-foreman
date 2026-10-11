@@ -84,7 +84,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [herdr](#herdr) | on | In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes. | on by default | [sessions](sessions.md#herdr) |
 | [radar](#radar) | on | `foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files. | on by default | [sessions](sessions.md#radar) |
 | [compaction](#compaction) | on | Compacts the context earlier on dearer models: the trigger fraction depends on the model's input price tier. | on by default | [sessions](sessions.md#further-session-keys) |
-| [idle-cache](#idle-cache) | off | Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on with the claude-bridge preset, off otherwise. | `foreman config apply-preset claude-bridge --dry-run   # or: {"providers": {"<provider>": {"cache": {"ttlSeconds": 300, "billing": "token", "keepalive": {"enabled": true}}}}}` | [cache](cache.md#config) |
+| [idle-cache](#idle-cache) | off | Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the preset carries the same values); off for request-billed providers; silent without an entry. | `set providers.claude-bridge.cache.keepalive.enabled to false (off) or true (on) in user or overlay config, or foreman config apply-preset claude-bridge --dry-run   # or: {"providers": {"<provider>": {"cache": {"ttlSeconds": 300, "billing": "token", "keepalive": {"enabled": true}}}}}` | [cache](cache.md#config) |
 
 ## Feature keys
 
@@ -576,7 +576,7 @@ Switch: `retro.repoBacklog` is non-empty.
 
 ### idle-cache
 
-**Idle prompt-cache policy.** Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on with the claude-bridge preset, off otherwise.
+**Idle prompt-cache policy.** Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the preset carries the same values); off for request-billed providers; silent without an entry.
 
 Switch: `providers.*.cache.keepalive.enabled` is true.
 

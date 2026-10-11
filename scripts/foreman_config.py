@@ -1194,10 +1194,6 @@ def main(argv=None):
     return 2
 
 
-if __name__ == "__main__":
-    sys.exit(main())
-
-
 def cache_policy(config, provider):
     """Resolved cache policy of one provider (mirrors resolveCachePolicy in cachepolicy.ts).
 
@@ -1218,3 +1214,7 @@ def cache_policy(config, provider):
     if not isinstance(enabled, bool):
         enabled = billing == "token" and ttl is not None and ttl < 3600
     return {"ttlSeconds": ttl, "billing": billing, "enabled": enabled}
+
+
+if __name__ == "__main__":
+    sys.exit(main())
