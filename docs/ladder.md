@@ -41,7 +41,7 @@ climbs here), and only user or overlay config can set it.
 |---|---|---|
 | `ladder.reviewerClimb.enabled` | `false` | Turn the two triggers below on. |
 | `ladder.reviewerClimb.securityRung` | unset | Model of a reviewer launch on a security-shaped diff, `<provider>/<model>[:<level>]`. |
-| `ladder.reviewPanel.shadows`, `ladder.reviewPanel.gates`, `ladder.reviewPanel.visible` | `[]`, `[pre-pr]`, `true` | Shadow reviewer models launched beside the primary on the named occasions (`item`, `plan-review`, `pre-pr`, `second-opinion`); their findings never block. Empty `shadows` = off. Inert with the pinned pi-subagents 0.75.0 (`panel {decision: unsupported}`). User or overlay config only; see [review](review.md#review-panel). |
+| `ladder.reviewPanel.shadows`, `ladder.reviewPanel.gates`, `ladder.reviewPanel.visible`, `ladder.reviewPanel.waitSeconds` | `[]`, `[pre-pr]`, `true`, `600` | Shadow reviewer models the foreman launches after the primary ends, on the named occasions (`item`, `plan-review`, `pre-pr`, `second-opinion`); their findings never block. Empty `shadows` = off. `waitSeconds` is the wait before the block composes without late shadows. User or overlay config only; see [review](review.md#review-panel). |
 
 - **Repeated FAIL.** The harness reads each reviewer run's per-item `N. FAIL` lines (a list marker, backticks,
   `**` and `N)` are accepted; fenced blocks are skipped). When the same ledger item fails in a second reviewer run,

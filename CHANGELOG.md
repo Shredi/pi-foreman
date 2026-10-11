@@ -19,9 +19,7 @@
   reviewer on the foreman's own model moves to the next differing rung or `ceremony.reviewModel` (trace `review_model`).
 - Plan review: `ceremony.planReview.<tier>` (heavy on; a project can only tighten) makes `foreman_checkpoint` wait for a
   `[plan-review]` verdict on the current plan (`plan_review_required`, `plan_revision_required`; trace `plan_review`).
-- Review panel: `ladder.reviewPanel` `{shadows, gates, visible}` runs shadow models beside the primary; their findings
-  are attributed, deduplicated, never block (trace `panel`). With the pinned pi-subagents 0.75.0 no panel launch
-  shape runs, so the panel degrades: the launch stays unchanged and the trace says `panel {decision: unsupported}`.
+- Review panel: `ladder.reviewPanel` `{shadows, gates, visible, waitSeconds}`; see Review panel below.
 - Findings store `<agent dir>/pi-foreman/state/findings/<session>.jsonl` (trace `finding`, basenames only) and
   `foreman findings list|dismiss|export`; export writes an unconfirmed bench task that `foreman bench review` skips.
   `foreman retro models` (per model and rung: findings, accepted, rejected, unique, late misses, USD, median and p90
@@ -215,6 +213,13 @@
 - `/retro` writes `<agent dir>/pi-foreman/state/retro/retro-<session>.md`; `/retro --model` adds one foreman reply of
   at most 10 lines. The bench `retro` post-step sends `/retro --model`. `foreman_retro.py` counts rereviews, budget
   hits, rung-ups, child read-budget hits, headless defers and turns.
+
+### Review panel: foreman-launched shadows
+- The primary reviewer launch is unchanged. At its run end the harness lists the shadow launches; the foreman issues one
+  `subagent` reviewer call per shadow with the marker `[panel-shadow:<model>] [<gate>]`, and the hook reuses the primary's
+  task and sets the shadow model (rank-checked, thinking clamped). Refusals and launches trace `panel {decision}`.
+- Shadows are optional and never block, mark, count or satisfy the PR gate. The attributed block composes when all ended
+  or after `ladder.reviewPanel.waitSeconds` (default 600, `decision: timeout`); missing shadows are listed as "not run".
 
 ### Changed
 - `trace.enabled` defaults to `null` (was `false`): the trace follows the effective `retro.enabled` (on in tui and rpc,

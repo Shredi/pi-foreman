@@ -78,18 +78,23 @@ thinking, model_overridden}`.
 | `ladder.reviewPanel.shadows` | `[]` | Shadow models, `<provider>/<model>[:<level>]`. Empty = off. |
 | `ladder.reviewPanel.gates` | `[pre-pr]` | Occasions that get the panel (`item`, `plan-review`, `pre-pr`, `second-opinion`). |
 | `ladder.reviewPanel.visible` | `true` | Show the shadows' findings to the foreman. |
+| `ladder.reviewPanel.waitSeconds` | `600` | Seconds after the primary run end before the block composes with whatever shadows ended. |
 
-On a gate occasion a `reviewer` launch becomes a parallel group: the primary plus one entry per shadow, same task
-text, `policy_override: true` (the shadows are explicit config, like the security rung). A shadow equal to the primary
-or the foreman model is left out. Trace `panel {role, gate, models, primary}`.
+The primary launch is unchanged. When the primary's run ends on a gate occasion, the harness lists the shadow launches
+(shadows not equal to the primary or the foreman model). The foreman then issues one `subagent` reviewer call per
+shadow, each with only the marker line `[panel-shadow:<model>] [<gate>]`. The hook binds the call to the newest open
+pending panel of the same gate, replaces the task with the primary's stored task and facts, and sets the shadow model
+after the model rules: exempt from the role-map rule, still rank-checked by `ladder.childPolicy` and clamped by
+`maxThinking`. Shadows are optional for the verdict; the foreman may skip them when the budget is tight.
 
-**Pinned pi-subagents 0.75.0 runs no panel launch.** It refuses top-level `tasks` and `chain` (removed legacy
-inputs), and with `disabledFeatures: ["workflow-scripts"]` a `tasks` entry takes no `model`. Until a supported shape
-is wired in, the panel degrades: the launch stays unchanged, the primary review runs as asked, and the trace says
-`panel {role, gate, models, primary, decision: unsupported}`. No shadow runs and no shadow finding is recorded.
+The hook refuses a marker call (trace `panel {role, gate, models, primary, decision: refused, reason}`) when there is no
+open panel (or the call is outside a gate), the model is not configured in `shadows`, the shadow already ran for that
+panel, the occasion differs, the call is not a single `reviewer` launch, or the rank policy rejects the model.
+Otherwise the trace says `decision: launched`.
 
-Only the primary's verdict counts: shadows set no marks and no PR gate, and never block. The run end appends an
-attributed block to the result: the primary's findings, then "Shadow findings (do not block)" grouped by model. A
+Only the primary's verdict counts: shadows never block, mark, count or satisfy the PR gate. The block composes when
+all listed shadows have ended or after `waitSeconds` (trace `panel {..., decision: timeout}`); shadows missing then are
+listed as "not run". It is sent to the foreman without triggering a turn and holds the primary's findings, then "Shadow findings (do not block)" grouped by model. A
 finding several models located (same file and class, lines within 3) is listed once under the first model, tagged
 "also found by". With `visible: false` the shadow section and names are left out; the records are still written.
 
@@ -175,7 +180,8 @@ higher thinking level for the pre-PR review:
     "reviewPanel": {
       "shadows": ["<other-provider>/<other-model>"],
       "gates": ["pre-pr"],
-      "visible": true
+      "visible": true,
+      "waitSeconds": 600
     }
   },
   "ceremony": {
