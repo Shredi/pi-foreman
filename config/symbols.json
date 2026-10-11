@@ -1,4 +1,4 @@
 {
-  "unicode": {"working": "\u23f3", "waiting": "\u23f8", "asking": "?", "blocked": "\u270b", "done": "\u2713", "lost": "\u2717", "keepalive": "\u2668"},
-  "nerd":    {"working": "\uf252", "waiting": "\uf04c", "asking": "\uf128", "blocked": "\uf256", "done": "\uf00c", "lost": "\uf00d", "keepalive": "\uf06d"}
+  "unicode": {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗", "keepalive": "♨"},
+  "nerd":    {"working": "", "waiting": "", "asking": "", "blocked": "", "done": "", "lost": "", "keepalive": ""}
 }

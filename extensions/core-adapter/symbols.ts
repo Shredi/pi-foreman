@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 export type SymbolKey = "working" | "waiting" | "asking" | "blocked" | "done" | "lost" | "keepalive";
 export type SymbolSet = Record<SymbolKey, string>;
 
-const KEEPALIVE: Record<"unicode" | "nerd", string> = { unicode: "\u2668", nerd: "\uf06d" };
+const KEEPALIVE: Record<"unicode" | "nerd", string> = { unicode: "♨", nerd: "" };
 
 const FALLBACK: Record<"unicode" | "nerd", Omit<SymbolSet, "keepalive">> = {
   unicode: { working: "⏳", waiting: "⏸", asking: "?", blocked: "✋", done: "✓", lost: "✗" },
