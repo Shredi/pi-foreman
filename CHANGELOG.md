@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Added
+- Generated feature overview (`docs/features.md`) for agents setting pi-foreman up: install lines, config layers,
+  every feature with its fresh-install state (on, off, opt-in), keys with defaults and layer rules, enable snippets,
+  commands, overlay quick start and invariants. Built by `scripts/foreman_docs.py features` from the curated
+  `config/features.json` plus schema, defaults and `foreman_config.py` layer rules; tests fail on drift, on a schema
+  key or command no feature claims, and `FOREMAN_DOCS_UPDATE=1` regenerates. `llms.txt` points agents at it.
+- `/foreman doctor` prints `dormant: <feature ids>`, the features switched off in the live config.
 - Package-first install (`docs/install.md`): `pi install git:github.com/Shredi/pi-foreman` (`npm:pi-foreman` planned
   for v0.1.0). `pi-subagents`, `pi-permission-system` and `pi-intercom` are bundled dependencies pinned in
   `package.json` and `package-lock.json`, loaded through `node_modules` resource paths.
@@ -231,6 +237,8 @@
   or after `ladder.reviewPanel.waitSeconds` (default 600, `decision: timeout`); missing shadows are listed as "not run".
 
 ### Changed
+- `foreman setup` recognises a pi-foreman package entry from any git host (`git:<host>/<owner>/pi-foreman`, https),
+  not only github.com. `design/architecture.md` §11 describes the package install path.
 - README quick start is the package install plus `/foreman setup`; `docs/install.md` covers update (`pi update`),
   remove, developing and Windows notes. The update-check footer says to update the package and run `foreman setup`.
 - `docs/overlays.md` no longer promises `foreman:*` role and ledger events; only `foreman:ready` is emitted.
