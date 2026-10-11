@@ -22,6 +22,7 @@ import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { firstRunNotice, presetNames, presetProviders, providerGapNotice } from "./firstrun.ts";
+import { dormantDoctorLine } from "./features.ts";
 import { collectOrientation } from "./orient.ts";
 import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits } from "./childreads.ts";
@@ -2464,6 +2465,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (fs.existsSync(markerPath(s.markerDir, s.id))) ok(`session marker in ${s.markerDir}`);
     else fail("session marker missing", `make ${s.markerDir} writable and restart the session.`);
     out.push(`INFO ceremony: ${tierLine(s.ceremony)}`);
+    out.push(dormantDoctorLine(PKG_ROOT, s.config.config));
     return out;
   }
 }
