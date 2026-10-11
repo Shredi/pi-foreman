@@ -135,7 +135,8 @@
           "properties": {
             "shadows": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Shadow reviewer models, <provider>/<model>[:<level>]. Empty = panel off." },
             "gates": { "type": "array", "items": { "type": "string", "enum": ["item", "plan-review", "pre-pr", "second-opinion"] }, "description": "Review occasions that get the panel (L1: [pre-pr])." },
-            "visible": { "type": "boolean", "description": "Show the shadow findings block to the foreman (L1: true)." }
+            "visible": { "type": "boolean", "description": "Show the shadow findings block to the foreman (L1: true)." },
+            "waitSeconds": { "type": "integer", "minimum": 1, "description": "Seconds a gate's panel waits for its shadow reviews after the primary review ended; then it composes without the missing ones (L1: 600)." }
           }
         }
       }

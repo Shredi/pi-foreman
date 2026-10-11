@@ -85,7 +85,7 @@ let herdrEvents: EventBus | undefined;
 import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait, waitLimits } from "./wait.ts";
-import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
+import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import type { CloseReport } from "./close.ts";
 import { registerSession } from "./session.ts";
@@ -98,7 +98,7 @@ import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledg
 import { launchedModels, rankRefusal } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch } from "./occasion.ts";
-import { applyPanel, panelConfig } from "./panel.ts";
+import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewHash, planReviewOn, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { launchEntries } from "./ladder.ts";
@@ -189,11 +189,13 @@ interface Session {
   /** Foreman only: per-item FAIL counts of reviewer runs (ladder.reviewerClimb, reviewerclimb.ts). */
   reviewerFails: ReviewerFails;
   /**
-   * Foreman only: review launches (occasion.ts) by tool call id, then by run id; the panel block of a
-   * run end; each run end's review results with their located findings (findings.ts); pending
+   * Foreman only: review launches (occasion.ts) by tool call id, then by run id; the panel's shadow
+   * instruction of a run end; each run end's review results with their located findings (findings.ts); pending
    * findings records (the climb waits for them).
    */
   reviewRuns: { byCall: Map<string, ReviewLaunch>; byRun: Map<string, ReviewLaunch>; blocks: Map<string, { text: Promise<string>; claimed: boolean }>; findings: Map<string, Promise<RunEndFindings["byResult"]>>; sync: Promise<void> };
+  /** Foreman only: review panels waiting for their shadow launches, by primary run id (panel.ts). */
+  panels: PendingPanels;
   /** Foreman only: reviewer verdicts with the HEAD they covered, newest last, at most 50 (reviews.ts; the PR gate reads it). */
   reviews: ReviewRecord[];
   /** Pending HEAD reads of `reviews`; the PR gate waits for it. */
@@ -379,6 +381,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       climbRefusals: 0,
       reviewerFails: new ReviewerFails(),
       reviewRuns: { byCall: new Map(), byRun: new Map(), blocks: new Map(), findings: new Map(), sync: Promise.resolve() },
+      panels: new PendingPanels({ send: (text) => pi.sendMessage({ customType: "pi-foreman-panel", content: text, display: true }, { triggerTurn: false }), trace: (r) => s.trace?.emit(r) }),
       reviews: [],
       reviewSync: Promise.resolve(),
       reviewMarked: new Set(),
@@ -621,6 +624,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // already gone
     }
     s.registration = undefined;
+    s.panels.clear();
     sweepScratch(s);
     review.drop(s.id);
     s.live?.stop();
@@ -804,6 +808,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewMarks: "on",
       // ceremony.planReview at heavy: the plan-review step before the checkpoint (planreview.ts).
       planReview: planReviewOn(s.config.config, "heavy") ? "on" : "off",
+      // ladder.reviewPanel with shadow models: the foreman issues the listed shadow launches (panel.ts).
+      reviewPanel: panelConfig(s.config.config).shadows.length > 0 ? "on" : "off",
     };
   }
   /** ceremony.heavyThreshold: anything but "eee843d" is the default strict. */
@@ -902,13 +908,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
           s.ladder.onRunEnd(runEndOf(data));
           // Review results with their occasion (occasion.ts); the verdict consumers see only the counting ones.
-          const reviewResults = s.isChild ? [] : reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId));
+          const reviewLaunch = s.isChild ? undefined : s.reviewRuns.byRun.get(runId);
+          const reviewResults = s.isChild ? [] : reviewResultsOfRunEnd(data, reviewLaunch);
           const counted = s.isChild ? data : countingView(data, reviewResults);
           if (!s.isChild) s.reviewerFails.onRun(runId, reviewerTextsOfRunEnd(counted), boundLedger(s.markerDir, s.id));
           if (reviewResults.length > 0) recordRunFindings(s, runId, reviewResults);
+          // A panel shadow (panel.ts) reports to its pending panel, also without a result (null: not run).
+          if (reviewLaunch?.bind) s.panels.ended(reviewLaunch.bind, reviewLaunch.panel?.shadows[0] ?? "", reviewResults.length > 0 ? (s.reviewRuns.findings.get(runId) ?? Promise.resolve([])).then((b) => b.find((x) => !x.result.primary)?.findings ?? null) : Promise.resolve(null));
           if (!s.isChild) recordPlanReviews(s, runId, reviewResults);
           if (!s.isChild) s.brief.onRunEnd(runEndOf(data), s.launchedRoles.get(runId), (id, text) => storeBrief(s, id, text));
-          for (const step of stepsOfRunEnd(data)) s.steps[step]++;
+          if (!shadowRun(reviewLaunch)) for (const step of stepsOfRunEnd(data)) s.steps[step]++;
           for (const f of frictionOfRunEnd(data)) s.trace?.emit({ event: "friction", role: f.role, runId: f.runId, kind: f.kind, note: f.note });
           const verdicts = reviewVerdictsOfRunEnd(counted);
           s.reviewGate = onReviewVerdicts(s.reviewGate, verdicts);
@@ -938,8 +947,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /**
    * Run-end findings (findings.ts): each review result is recorded through foreman_findings.py
-   * (awaited, 10 s, fail-soft), its findings traced; a panel run's block
-   * goes to its held launch result, else to its own message. Reviewer launches wait on `sync`.
+   * (awaited, 10 s, fail-soft), its findings traced. A completed gate primary of a panel opens a
+   * pending panel; its shadow instruction goes to the held launch result, else to its own message.
+   * Reviewer launches wait on `sync`.
    */
   function recordRunFindings(s: Session, runId: string, results: ReturnType<typeof reviewResultsOfRunEnd>): void {
     const launch = s.reviewRuns.byRun.get(runId);
@@ -953,23 +963,36 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           launch,
           context: { session: s.usage.line.foremanSession, agentDir: s.agentDir, runId, cwd, head, live: s.ladder.live.get("reviewer") ?? null, now: Date.now() },
           tmpDir: s.markerDir,
-          visible: panelConfig(s.config.config).visible,
         },
         (args, input) => runScript(s, "foreman_findings.py", args, RECORD_TIMEOUT_MS, input),
       );
       for (const rec of out.traces) s.trace?.emit(rec);
       return out;
-    })().catch((): RunEndFindings => ({ traces: [], block: "", byResult: [] }));
-    entry.text = work.then((o) => o.block);
-    if (launch?.panel) capSet(s.reviewRuns.blocks, runId, entry);
+    })().catch((): RunEndFindings => ({ traces: [], byResult: [] }));
     capSet(s.reviewRuns.findings, runId, work.then((o) => o.byResult));
+    const primary = launch?.panel && !launch.bind ? results.find((r) => r.primary && r.role === "reviewer") : undefined;
+    if (launch?.panel && primary) {
+      const cfg = panelConfig(s.config.config);
+      const primaryFindings = work.then((o) => o.byResult.find((x) => x.result.index === primary.index)?.findings ?? []);
+      s.panels.open({ id: runId, gate: launch.panel.gate, primary: launch.panel.primary, task: launch.task ?? "", expected: launch.panel.shadows, primaryFindings, visible: cfg.visible, waitMs: cfg.waitSeconds * 1000 });
+      const text = shadowInstruction(launch.panel.gate, launch.panel.shadows, cfg.waitSeconds);
+      entry.text = work.then(() => text);
+      capSet(s.reviewRuns.blocks, runId, entry);
+    }
+
     s.reviewRuns.sync = s.reviewRuns.sync.then(() => work.then(() => undefined));
     void entry.text.then((text) => {
       if (text && !entry.claimed) pi.sendMessage({ customType: "pi-foreman-panel", content: text, display: true }, { triggerTurn: false });
     });
   }
 
-  /** Plan review (planreview.ts): each primary `[plan-review]` verdict is kept for the plan bytes on disk now; traced `plan_review`. */
+  /** A panel shadow launch (panel.ts): it never counts for steps, rounds, review_done or the recheck budget. */
+  function shadowRun(launch: ReviewLaunch | undefined): boolean {
+    return !!launch?.bind;
+  }
+
+  /** Plan review (planreview.ts): each primary
+ `[plan-review]` verdict is kept for the plan bytes on disk now; traced `plan_review`. */
   function recordPlanReviews(s: Session, runId: string, results: ReturnType<typeof reviewResultsOfRunEnd>): void {
     const opts = { cwd: s.cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir };
     const plans = planPathsOf(s.reviewRuns.byRun.get(runId)?.files ?? [], opts.scratchDir);
@@ -1076,7 +1099,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let reviewerClimbs: ReviewerClimb[] = [];
       let reviewerTraces: Record<string, unknown>[] = [];
       let occasions = new Map<Record<string, unknown>, Occasion>();
-      let panel: ReturnType<typeof applyPanel> | null = null;
+      let panel: ReturnType<typeof primaryPanel> = null;
+      let shadow: ShadowDecision = { kind: "none" };
       if (event.toolName === "subagent") {
         // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
         stripBinding(input);
@@ -1116,9 +1140,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (noPlan) return { block: true, reason: noPlan };
         // Review occasions (occasion.ts) from the task markers, before any rewrite or facts block.
         if (!s.isChild && actionOf(input) === null) occasions = entryOccasions(input);
+        // Review panel (panel.ts): a `[panel-shadow:<model>]` launch binds to a pending panel and gets the primary's task, or is refused.
+        const foremanAt = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null;
+        shadow = shadowLaunch(input, s.panels.views(), { config: s.config.config, isChild: s.isChild, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: (m) => rankRefusal(s.config.config, foremanAt, m)?.message ?? null });
+        if (shadow.kind === "refused") {
+          s.trace?.emit(shadow.trace);
+          return { block: true, reason: shadow.message };
+        }
+        if (shadow.kind === "launch") input.task = shadow.task;
         // ceremony.reviewPerRevision (D5): a second review of unchanged, already passed work is refused (a pre-pr or plan review is no repeat).
         const ownOccasion = [...occasions.values()].some((o) => o === "pre-pr" || o === "plan-review");
-        const dup = !s.isChild && !ownOccasion && get(s.config.config, "ceremony.reviewPerRevision") !== false ? dupReview(s.reviewGate, launchRoles(s, input), input) : null;
+        const dup = !s.isChild && !ownOccasion && shadow.kind !== "launch" && get(s.config.config, "ceremony.reviewPerRevision") !== false ? dupReview(s.reviewGate, launchRoles(s, input), input) : null;
         if (dup) {
           const agent = [...new Set(launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)))].join(",");
           if (dup === "second-opinion") s.trace?.emit({ event: "review_second_opinion", agent });
@@ -1149,7 +1181,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           kind = revision ? (preferStrong ? "strong-relaunch" : "revision") : undefined;
         }
         // Ladder (ladder.ts): a strong launch needs a reason or a trigger; rank policy (ranks.ts) after the models are written.
-        if (!s.isChild && actionOf(input) === null) {
+        // A panel shadow skips it: no climb, no live rung.
+        if (!s.isChild && actionOf(input) === null && shadow.kind !== "launch") {
           const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined });
           if (lp.block) {
             s.trace?.emit({ event: "launch_refused", reason: "strong_no_reason", tier: s.ceremony.tier });
@@ -1164,7 +1197,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           reviewerTraces = rc.traces;
         }
         const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking") });
-        if (!s.isChild && actionOf(input) === null) {
+        // A panel shadow runs on its own model (rank-checked in shadowLaunch): no occasion override, rank loop or different-model rule.
+        if (shadow.kind === "launch") input.model = shadow.model;
+        else if (!s.isChild && actionOf(input) === null) {
           // ceremony.reviewByOccasion (reviewerclimb.ts): over the mapped models, before the rank check and the different-model rule.
           const occ = applyOccasionOverrides(input, occasions, reviewerClimbs, { config: s.config.config, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking") });
           reviewerTraces.push(...occ.traces);
@@ -1181,9 +1216,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // Different-model rule (every reviewer launch): after the security rung, so it sees the final model; traced with policy_override.
           const refusedBy = (m: string): boolean => rankRefusal(s.config.config, foremanModel, m) !== null;
           reviewerTraces.push(...applyReviewModelRule(input, resolution.roles, { config: s.config.config, foreman: foremanModel, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: refusedBy, thinking: occ.thinking }));
-          // Review panel (panel.ts): gate-occasion reviewer entries get their shadow entries, after every model rule.
-          panel = applyPanel(input, occasions, { config: s.config.config, foreman: foremanModel, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: refusedBy });
-          reviewerTraces.push(...panel.traces);
+          // Review panel (panel.ts): a gate-occasion reviewer is the primary; its shadows come after its run end.
+          panel = primaryPanel(input, occasions, s.config.config, foremanModel);
         }
         for (const o of launched.overrides) s.trace?.emit({ event: "model_override", role: o.role, model: o.model, requested: o.requested });
         for (const n of launched.notices) s.trace?.emit({ event: "strong_unmapped", role: n.role, model: n.model, tier: s.ceremony.tier });
@@ -1245,7 +1279,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const first = launchEntries(input).find((e) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent));
           const occ = first ? occasions.get(first) : undefined;
           const files = !first ? [] : occ === "plan-review" ? planReviewFiles(String(first.task ?? ""), boundLedger(s.markerDir, s.id)) : await reviewFacts.diffOf(first, input, ctx.cwd).then((d) => filesOfDiff(`${d.diff ?? ""}\n${d.untracked}`), () => []);
-          const rl = reviewLaunchOf(input, occasions, panel?.shadows ?? new Map(), { started: Date.now(), files, panel: panel?.panel ?? null, climbed: new Set(reviewerClimbs.map((c) => c.entry)) });
+          const sh = shadow.kind === "launch" ? shadow : null;
+          const rl = reviewLaunchOf(input, occasions, new Map(sh ? [[input, sh.base]] : []), { started: Date.now(), files, panel: sh ? { gate: sh.pending.gate, primary: sh.pending.primary, shadows: [sh.base] } : panel?.panel ?? null, climbed: new Set(reviewerClimbs.map((c) => c.entry)) });
+          if (rl && panel) rl.task = panel.task;
+          if (rl && sh) rl.bind = sh.pending.id;
           if (rl) capSet(s.reviewRuns.byCall, event.toolCallId, rl);
         }
         const planLedger = boundLedger(s.markerDir, s.id);
@@ -1283,13 +1320,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (s.ceremony.tier !== was) s.trace?.emit({ event: "triage_escalated", from: was, to: s.ceremony.tier, reason: "strong" });
       }
       if (event.toolName === "subagent") for (const r of [...reviewerTraces, ...reviewerClimbs.map((c) => c.trace)]) s.trace?.emit(r);
+      if (shadow.kind === "launch") {
+        s.panels.launched(shadow.pending.id, shadow.base);
+        s.trace?.emit(shadow.trace);
+      }
       // The live rung of every launched role (ladder.ts LadderState.live): single, tasks, chain and parallel.
       if (event.toolName === "subagent" && ladderRoles) s.ladder.noteLaunched(input);
-      if (event.toolName === "subagent" && panel?.panel) {
-        // the reviewer's live rung is the primary's, never a shadow's
-        const primary = launchEntries(input).find((e) => e.agent === "reviewer" && !panel?.shadows.has(e));
-        if (primary && typeof primary.model === "string") s.ladder.live.set("reviewer", primary.model);
-      }
       let limits: LadderLimits | undefined;
       const single = event.toolName === "subagent" && !s.isChild ? singleLaunchRole(input) : null;
       if (single && ladderRoles) {
@@ -1394,6 +1430,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     recordChild(s, noticeLocations(text, knownRun(s)));
     const reviews = completedAgents(text).filter((a) => REVIEW_ROLES.includes(a));
     if (reviews.length === 0) return;
+    // panel shadows only (panel.ts): no marks, rounds, review_done or recheck budget
+    const ids = noticeRuns(text)?.ids ?? [];
+    if (ids.length > 0 && ids.every((id) => shadowRun(s.reviewRuns.byRun.get(id)))) return;
     const verdict = verdictOf(text);
     const passed = reviewerPassOfNotice(text);
     // a second opinion, plan review or panel never marks items (occasion.ts); the run end marks the counting primary

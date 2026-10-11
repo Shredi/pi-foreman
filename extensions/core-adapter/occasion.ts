@@ -49,8 +49,12 @@ export interface ReviewLaunch {
   started: number;
   /** Changed files the review covers (the facts diff; plan + ledger for a plan review). */
   files: string[];
-  /** Panel launch: the gate and the models (panel.ts). */
+  /** Panel launch: the gate and the models (panel.ts); set on a gate primary and on a shadow launch. */
   panel: { gate: Occasion; primary: string; shadows: string[] } | null;
+  /** Gate primary of a panel: its task text before the facts block (a shadow launch gets the same). */
+  task?: string;
+  /** Shadow launch: the primary's run id (the pending panel it reports to). */
+  bind?: string;
 }
 
 /** The occasion of every agent entry of a launch, keyed by entry object (taken before any rewrite). */

@@ -21,7 +21,13 @@
    {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-p2]] [pre-pr] review the branch, item 1"}}]},
    {"text": "Panel launched."}
   ],
-  "p2": [{"text": "Reviewed."}, {"text": "Still reviewed."}, {"text": "Done."}],
+  "p2": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[panel-shadow:foreman-fake/senior-reviewer] [pre-pr]"}}]},
+   {"text": "Shadow launched."},
+   {"text": "Reviewed."},
+   {"text": "Still reviewed."},
+   {"text": "Done."}
+  ],
   "pr-gh": [{"tools": [{"name": "bash", "arguments": {"command": "gh pr create --title t --body b"}}]}, {"text": "PR attempt done."}],
   "q1": [
    {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a large change"}}]},
