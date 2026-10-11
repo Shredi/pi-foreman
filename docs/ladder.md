@@ -87,6 +87,7 @@ A child's records carry `role` and `runId` (the launch id) in its own `trace-<la
 | `review_occasion` | `occasion, thinking, model_overridden` | A reviewer launch for that occasion (`item`, `plan-review`, `pre-pr`, `second-opinion`); `ceremony.reviewByOccasion` applied (see [review](review.md#per-occasion-overrides)). |
 | `panel`, `finding` | see [review](review.md) | Shadow launch; a located finding. |
 | `research_rung` | `role, marker, model` (+ `kind`: `single` or `entry`) | Once per marked launch entry, with the model it launches on. `foreman retro` counts explorer launches by model from the usage lines (single launches) and these events (`kind: entry`; tasks and chain children log role `child` in usage). |
+| `launch_entry` | `role, kind, model` | Once per agent entry of a tasks or chain launch that carries no research marker (`kind: entry`; `model` is the entry's base model or null). `foreman retro` counts the `explorer` ones into the explorer line; marked entries emit only `research_rung`, so nothing is counted twice. |
 | `security_rung_unset` | `role, reason, hits` | A security-shaped diff found no security rung. |
 | `rung_up_steer` | `role, count, rung` | A child was steered to hand off (context or turns). |
 | `finish_refused` | `climb_available` | The uncounted refusal while the builder's failure climb is open. |

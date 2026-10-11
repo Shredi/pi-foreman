@@ -76,5 +76,11 @@ and `foreman:ready`. There is no second handshake.
 | Retro backlog | `retro.backlogDir` points the central backlog elsewhere; `retro.repoBacklog` and `retro.workspaceKey` pick per-workspace stores and keys (see [retro](retro.md)). User or overlay config only. |
 | Ceremony, fan-out, fallback | `ceremony.*`, `fanout.max`, `providers.<p>.fallback` |
 
+### Own host CLI
+
+To use a PR host other than gh or glab, set `tools.prHost` to a templates object in the overlay config (see
+[tools](tools.md#host-templates)). Point the templates at a wrapper script that prints the documented JSON, and keep
+that script outside the workspace. Project configs cannot change `tools.prHost`.
+
 Conflict rules and rationale: `design/architecture.md`
 [section 2](../design/architecture.md#2-layers-and-the-overlay-contract).

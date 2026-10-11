@@ -45,6 +45,18 @@ basename before it is filed.
 
 The report `/retro` prints is unchanged; the backlog is an extra output.
 
+## Report lines
+
+Besides the approval and trace lines, the report carries these lines when there is data:
+
+- `git: pack 4 calls (status 2, log 1, move 1) vs bash git 2`: git tool pack calls from the trace against bash `git`
+  commands from the session (see [tools](tools.md#trace-and-retro)). PR ops are not counted here.
+- `explorer: 4 launches, m-opus 1 (25 %, fact-critical 1); m-sonnet 2; m-haiku 1`: explorer launches by model, the share
+  on the top-rank models, and the `fact-critical` marker count. Sources: usage lines (single launches), `research_rung`
+  events and `launch_entry` events (tasks and chain entries without a marker; see [ladder](ladder.md#trace-records)).
+- `pr: 4 calls (create 1, checks 2, watch 1)`: PR tool calls from `tool_pack` events, listing counts of at least 1 in
+  the order create, status, checks, comments, watch. The JSON report has `trace.pr_pack`.
+
 ## Child traces
 
 When the foreman's retro is on, a child traces too. A single-launch child (the `agent` launch of one role) writes its
