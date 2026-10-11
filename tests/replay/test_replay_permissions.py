@@ -1,6 +1,6 @@
 """Permission layers on the fake provider (safety wave, ledger items 1-4, 27, 29, 35).
 
-Run:  FOREMAN_REPLAY_CACHE=<dir> python -m unittest discover -s tests/replay -v
+Run:  python -m unittest discover -s tests/replay -v
 Needs the permission system (@gotgenes/pi-permission-system 39.0.2), installed on first use
 into the replay cache next to pi-subagents. The rigs here use the baseline the installer writes.
 """

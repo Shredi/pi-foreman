@@ -1,7 +1,7 @@
 """Replay driver for pi-foreman (design section 10). Standard library only, Python 3.9+.
 
 Each Rig owns a fresh temp root with:
-  agent/    PI_CODING_AGENT_DIR: settings.json (packages: pi-subagents + this repo, the
+  agent/    PI_CODING_AGENT_DIR: settings.json (packages: this repo, which bundles pi-subagents, the permission system and pi-intercom; the
             generated subagents block) and the L2 foreman.json (fake providers, trace on,
             the fake provider as a required child extension)
   project/  a throwaway git repo, the cwd of every Pi process
@@ -11,9 +11,6 @@ into the temp root, and inherited PI_* / FOREMAN_* variables are dropped.
 
 Environment knobs:
   FOREMAN_PI_CLI         path to Pi's cli.js (default: <npm root -g>/@earendil-works/pi-coding-agent/dist/bundle/cli.js)
-  FOREMAN_PI_SUBAGENTS   path to an installed pi-subagents package dir (skips the npm install)
-  FOREMAN_PI_INTERCOM    path to an installed pi-intercom package dir (intercom rigs only)
-  FOREMAN_REPLAY_CACHE   npm prefix used to install pi-subagents once (default: <agentDir>/pi-foreman/state/cache/replay, shared and reused across runs)
   FOREMAN_REPLAY_KEEP=1  keep temp roots for inspection
 """
 from __future__ import annotations
@@ -32,10 +29,6 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 FAKE_PROVIDER = HERE / "fake_provider.ts"
-PI_SUBAGENTS_VERSION = "0.75.0"
-PERMISSION_SYSTEM = "@gotgenes/pi-permission-system"
-PERMISSION_SYSTEM_VERSION = "39.0.2"
-PI_INTERCOM_VERSION = "0.16.1"
 PROVIDER_A = "foreman-fake"
 PROVIDER_B = "foreman-fake-b"
 ROLES = ["foreman", "planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
@@ -71,61 +64,11 @@ def pi_cli():
     return cli
 
 
-def replay_cache():
-    """npm prefix shared by every run. Default: <agentDir>/pi-foreman/state/cache/replay, where agentDir is the
-    invoking env's PI_CODING_AGENT_DIR or ~/.pi/agent (as foreman_config.resolve_agent_dir). Only npm installs go there."""
-    env = os.environ.get("FOREMAN_REPLAY_CACHE")
-    if env:
-        return Path(env)
-    agent = os.environ.get("PI_CODING_AGENT_DIR") or str(Path.home() / ".pi" / "agent")
-    return Path(agent) / "pi-foreman" / "state" / "cache" / "replay"
-
-
-def pi_subagents_dir():
-    env = os.environ.get("FOREMAN_PI_SUBAGENTS")
-    if env:
-        return Path(env).resolve()
-    cache = replay_cache()
-    pkg = cache / "node_modules" / "pi-subagents"
-    manifest = pkg / "package.json"
-    if not manifest.is_file() or json.loads(manifest.read_text("utf-8")).get("version") != PI_SUBAGENTS_VERSION:
-        cache.mkdir(parents=True, exist_ok=True)
-        r = _run([_tool("npm"), "install", "--no-audit", "--no-fund", "--prefix", str(cache), "pi-subagents@" + PI_SUBAGENTS_VERSION], 600)
-        if r.returncode != 0:
-            raise RuntimeError("npm install pi-subagents failed: %s" % r.stderr.decode()[-500:])
-    return pkg.resolve()
-
-
-def permission_system_dir():
-    """Installed @gotgenes/pi-permission-system (same cache prefix as pi-subagents); required in every child."""
-    env = os.environ.get("FOREMAN_PERMISSION_SYSTEM")
-    if env:
-        return Path(env).resolve()
-    cache = replay_cache()
-    pkg = cache / "node_modules" / "@gotgenes" / "pi-permission-system"
-    manifest = pkg / "package.json"
-    if not manifest.is_file() or json.loads(manifest.read_text("utf-8")).get("version") != PERMISSION_SYSTEM_VERSION:
-        cache.mkdir(parents=True, exist_ok=True)
-        r = _run([_tool("npm"), "install", "--no-audit", "--no-fund", "--prefix", str(cache), "%s@%s" % (PERMISSION_SYSTEM, PERMISSION_SYSTEM_VERSION)], 600)
-        if r.returncode != 0:
-            raise RuntimeError("npm install %s failed: %s" % (PERMISSION_SYSTEM, r.stderr.decode()[-500:]))
-    return pkg.resolve()
-
-
-def pi_intercom_dir():
-    """Installed pi-intercom (same cache prefix); loaded only by rigs made with intercom=True."""
-    env = os.environ.get("FOREMAN_PI_INTERCOM")
-    if env:
-        return Path(env).resolve()
-    cache = replay_cache()
-    pkg = cache / "node_modules" / "pi-intercom"
-    manifest = pkg / "package.json"
-    if not manifest.is_file() or json.loads(manifest.read_text("utf-8")).get("version") != PI_INTERCOM_VERSION:
-        cache.mkdir(parents=True, exist_ok=True)
-        r = _run([_tool("npm"), "install", "--no-audit", "--no-fund", "--prefix", str(cache), "pi-intercom@" + PI_INTERCOM_VERSION], 600)
-        if r.returncode != 0:
-            raise RuntimeError("npm install pi-intercom failed: %s" % r.stderr.decode()[-500:])
-    return pkg.resolve()
+def bundled_check():
+    """The repo package entry brings pi-subagents, the permission system and pi-intercom from <repo>/node_modules."""
+    for rel in ("pi-subagents", "@gotgenes/pi-permission-system", "pi-intercom"):
+        if not (REPO / "node_modules" / rel / "package.json").is_file():
+            raise RuntimeError("%s missing under %s (run npm install in the repo)" % (rel, REPO / "node_modules"))
 
 
 # permissions="open" keeps the older scenarios unchanged; "baseline" is what the installer writes.
@@ -187,9 +130,10 @@ class Rig:
         if gen.returncode != 0 and not ((unmapped or not l2_providers) and gen.returncode == 3):
             raise RuntimeError("generate-subagents failed: %s" % gen.stderr.decode())
         block = json.loads(gen.stdout.decode())["subagents"]
-        st = {"packages": [str(pi_subagents_dir()), str(REPO), str(permission_system_dir())], "subagents": block}
-        if intercom:
-            st["packages"].append(str(pi_intercom_dir()))
+        bundled_check()
+        # one package entry: the repo brings pi-subagents, permission system and intercom; non-intercom rigs filter intercom out
+        entry = str(REPO) if intercom else {"source": str(REPO), "extensions": ["!node_modules/pi-intercom/**"]}
+        st = {"packages": [entry], "subagents": block}
         if settings:
             st = deep_merge(st, settings)
         (self.agent / "settings.json").write_text(json.dumps(st, indent=1), "utf-8")

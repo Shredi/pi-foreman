@@ -1,8 +1,8 @@
 """Golden replay scenarios on the fake provider (design section 10, ledger items 43, 60, 69).
 
 Run:  python -m unittest discover -s tests/replay -v
-Needs node, Pi 1.1.0 (global npm install) and pi-subagents 0.75.0 (installed on first use
-into FOREMAN_REPLAY_CACHE, or FOREMAN_PI_SUBAGENTS). Without Pi the tests skip, unless
+Needs node, Pi 1.1.0 (global npm install) and the repo's node_modules (npm install: pi-subagents,
+permission system, intercom). Without Pi the tests skip, unless
 FOREMAN_REPLAY_REQUIRED=1 (CI), where a missing Pi is a failure.
 FOREMAN_REPLAY_UPDATE_GOLDEN=1 rewrites the golden files from the current run.
 """
@@ -26,8 +26,7 @@ def _unavailable():
         return "node not on PATH"
     try:
         driver.pi_cli()
-        driver.pi_subagents_dir()
-        driver.permission_system_dir()
+        driver.bundled_check()
     except Exception as exc:  # noqa: BLE001 - any setup failure means "cannot replay here"
         return str(exc)
     return None
@@ -229,7 +228,7 @@ class TestRequiredChildExtension(ReplayCase):
         doctor = "\n".join(notifications(pi.prompt("/foreman doctor", timeout=30)))
         pi.close()
         self.assertIn("required child extension pi-foreman-core-adapter:", doctor)
-        expected = os.environ.get("FOREMAN_REPLAY_REGISTRATION", "global-symbol registry")
+        expected = os.environ.get("FOREMAN_REPLAY_REGISTRATION", "package import (pi-subagents/required-child-extensions)")  # pi-subagents is bundled, so it resolves from the repo
         self.assertIn("INFO required child extension registration path: " + expected, doctor)
         child = trace_of(rig.traces(), "child")
         self.assertIsNotNone(child, "adapter did not load in the child")

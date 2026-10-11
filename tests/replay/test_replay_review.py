@@ -1,6 +1,6 @@
 """Model review of asks, link foreman-review (safety wave, ledger items 7-9, decision D3).
 
-Run:  FOREMAN_REPLAY_CACHE=<dir> python -m unittest discover -s tests/replay -v
+Run:  python -m unittest discover -s tests/replay -v
 The reviewer is a fake model on the fake provider (`review-<kind>`, see fake_provider.ts) that
 answers every review with a fixed verdict. The command `uname -s` hits the baseline `*: ask`.
 Expected: allow -> no prompt; hard deny -> denied; everything else -> the human prompt.
