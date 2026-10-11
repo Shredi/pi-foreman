@@ -90,6 +90,6 @@ test("plan review: the facts block carries the plan path and the open ledger ite
   const input = { agent: "reviewer", task: "[plan-review] plan-x.md" };
   await new ReviewFacts().augment(input, process.cwd(), (task) => (task.includes("[plan-review]") ? block : null));
   assert.ok(input.task.startsWith(`[plan-review] plan-x.md\n${block}\n`), input.task);
-  assert.match(input.task, /## Owner task text/);
+  assert.doesNotMatch(input.task, /Owner task text/);
   assert.doesNotMatch(input.task, /diff --git/);
 });

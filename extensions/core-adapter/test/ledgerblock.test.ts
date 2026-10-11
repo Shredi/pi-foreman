@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { applyLedgerItems, ledgerItemsBlock } from "../ledgerblock.ts";
 
 const LEDGER = "# L\n\nTier: standard\n\n- [ ] 1. add the parser\n- [x] 2. wire the flag\n- [ ] 3. docs\n- [ ] V. fresh-eyes verification passed\n";
@@ -31,4 +34,22 @@ test("ledgerblock: builder steps only, resume and skipped entries untouched", ()
   const resume = { action: "resume", agent: "builder", task: "item 1" };
   assert.deepEqual(applyLedgerItems(resume, LEDGER), []);
   assert.equal(resume.task, "item 1");
+});
+
+test("ledgerblock: reviewers get the cited items, else the whole ledger; cwd = a worktree does not matter", () => {
+  const wt = fs.mkdtempSync(path.join(os.tmpdir(), "fm-wt-"));
+  try {
+    const cited = { agent: "reviewer", task: "review item 1", cwd: wt };
+    const whole = { agent: "senior-reviewer", task: "review the diff", cwd: wt };
+    const recs = applyLedgerItems({ tasks: [cited, whole] }, LEDGER);
+    assert.deepEqual(recs.map((r) => r.role), ["reviewer", "senior-reviewer"]);
+    assert.match(cited.task, /^\[pi-foreman ledger items\][\s\S]*1\. add the parser[\s\S]*\nreview item 1$/);
+    assert.doesNotMatch(cited.task, /wire the flag/);
+    assert.match(whole.task, /^\[pi-foreman ledger\][\s\S]*# L\n\nTier: standard\n\n- \[ \] 1\. add the parser\n- \[x\] 2\. wire the flag[\s\S]*\[end of ledger\]\nreview the diff$/);
+    const none = { agent: "reviewer", task: "review" };
+    assert.deepEqual(applyLedgerItems(none, null), []);
+    assert.equal(none.task, "review");
+  } finally {
+    fs.rmSync(wt, { recursive: true, force: true });
+  }
 });

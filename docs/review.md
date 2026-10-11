@@ -27,6 +27,10 @@ is read from a marker in the reviewer's task text.
 "Counts" means the verdict marks items, satisfies the review gate and PR gate, feeds the repeated-FAIL rule. A plan review, a second opinion and every panel shadow are recorded as findings only and never block.
 `[second-opinion]` wins over `[plan-review]`, which wins over `[pre-pr]`.
 
+### Scope of a review
+
+The ledger is the scope source. The adapter prepends the ledger text to every `reviewer` and `senior-reviewer` launch: the cited items when the task cites any (`item 3`, `#3`), else the whole ledger (header and items). The binding is the session marker, so a review launched with `cwd` in a worktree gets it too. The adapter does not append the owner's prompt. A diff fact is in scope when the prepended ledger block or the task text asks for it; the reviewer quotes the ledger item that asks for the change, else FAIL (BLOCK in a senior review). A foreman statement in the task never overrides a fact. Because the ledger is the only scope source, an item the foreman upserts mid-round also widens scope; a future round can snapshot the ledger at checkpoint approval.
+
 ## Different-model rule
 
 A review by the model that built the work is weak evidence. On every `reviewer` launch, when the resolved model is the

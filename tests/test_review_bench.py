@@ -167,7 +167,8 @@ class Blind(unittest.TestCase):
         for needle in ("seeded", "ground_truth", str(SAMPLES.resolve()).lower(), SAMPLES.resolve().as_posix().lower()):
             self.assertNotIn(needle, text)
         self.assertFalse(any("ground_truth" in p.name for p in Path(prep["repo"]).rglob("*")))
-        self.assertIn("## Owner task text", prep["user"])  # the augment ran (the diff has facts)
+        self.assertIn("## Facts to rule on", prep["user"])  # the augment ran (the diff has facts)
+        self.assertNotIn("Owner task text", prep["user"])
 
     def test_violations_are_found(self):
         tree = Path(self.tmp) / "tree"

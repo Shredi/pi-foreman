@@ -17,6 +17,6 @@
    {"tools": [{"name": "edit", "arguments": {"path": "hub.go", "edits": [{"oldText": "broadcast(msg []byte)", "newText": "broadcast(seq uint64, msg []byte)"}]}}]},
    {"text": "[[replay:g2]] built"}
   ],
-  "r-g3": [{"text": "[[replay:g3]] VERDICT: FAIL\n1. FAIL hub.go:5 broadcast signature changed; no owner task line asks for it\nOverall verdict: FAIL"}]
+  "r-g3": [{"text": "[[replay:g3]] VERDICT: FAIL\n1. FAIL hub.go:5 broadcast signature changed; no ledger item asks for it\nOverall verdict: FAIL"}]
  }
 }

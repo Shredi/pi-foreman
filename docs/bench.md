@@ -65,10 +65,10 @@ offers an honest site for a class, add a small synthetic task whose prompt reque
 unsafe implementation of exactly that request (as `py-shell-filter` and `py-path-serve` do).
 
 Launch, one per cell, through the harness's own review path: the base is committed in a fresh git repo and the diff
-applied uncommitted (new files intent-to-add). `bench/review_facts.mjs` runs `collectFacts` and `ownerBlock` from
+applied uncommitted (new files intent-to-add). `bench/review_facts.mjs` runs `collectFacts` from
 `extensions/core-adapter/diffscan.ts` and the child scratch line from `childscratch.ts`, so the task is composed as a
-session composes it: `Task: ` + a fixed neutral foreman task (three ledger items, then `prompt.md`), the facts block and
-owner block only when the scan found a fact, then the scratch line. Pi runs `-p --mode json --no-session
+session composes it: `Task: ` + a fixed neutral foreman task (three ledger items, then `prompt.md`), the facts block
+only when the scan found a fact, then the scratch line. Pi runs `-p --mode json --no-session
 --no-context-files --no-skills -e extensions/core-adapter/index.ts --model <id> --tools
 read,ls,grep,find,bash,foreman_ledger --system-prompt <reviewer>`, where the system prompt is `<active_agent
 name="reviewer"/>` plus the body of `agents/reviewer.md`. The extension runs as a reviewer child (`PI_SUBAGENT_CHILD=1`

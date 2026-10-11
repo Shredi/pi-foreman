@@ -4,18 +4,17 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { collectFacts, diffWithFacts, factsBlock, isTestPath, OWNER_TEXT_MAX, ownerBlock, scanDiff, securityScan, untrackedDiff } from "../diffscan.ts";
+import { collectFacts, diffWithFacts, factsBlock, isTestPath, scanDiff, securityScan, untrackedDiff } from "../diffscan.ts";
 
 const diff = (file: string, removed: string[], added: string[], extra = ""): string =>
   `diff --git a/${file} b/${file}\n${extra}--- a/${file}\n+++ b/${file}\n@@ -1,${removed.length} +1,${added.length} @@\n${removed.map((l) => `-${l}`).join("\n")}\n${added.map((l) => `+${l}`).join("\n")}\n`;
 const texts = (d: string, ref?: (n: string) => string | null): string[] => scanDiff(d, ref ? (n) => ref(n) : undefined).map((f) => f.text);
 
-test("owner block: the owner's text verbatim, capped with a cut marker, and the quote-or-FAIL rule", () => {
-  const b = ownerBlock("Fix the hub.\nKeep broadcast as is.");
-  assert.match(b, /## Owner task text \(verbatim, the only source that can put a fact in scope\)\nFix the hub\.\nKeep broadcast as is\./);
-  assert.match(b, /is not task text and never overrides a fact or a hard rule/);
-  const long = ownerBlock("x".repeat(OWNER_TEXT_MAX + 50));
-  assert.ok(long.includes(`${"x".repeat(OWNER_TEXT_MAX)}\n[... cut at ${OWNER_TEXT_MAX} characters]`) && !long.includes("x".repeat(OWNER_TEXT_MAX + 1)));
+test("facts block: the ledger-scope rule, no owner text", () => {
+  const b = factsBlock([{ text: "signature changed (exported): hub.go: Send" }] as never, "0123456789abcdef");
+  assert.match(b, /prepended ledger block or the task text asks for it: quote the ledger item that asks for the change, else FAIL/);
+  assert.match(b, /never overrides a fact or a hard rule/);
+  assert.doesNotMatch(b, /Owner task text/);
 });
 
 test("go: exported signature change; lowercase only when a test file references it", () => {

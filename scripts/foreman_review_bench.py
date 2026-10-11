@@ -14,7 +14,7 @@ Task dir (one per task; --tasks names one task dir or a folder of them):
 
 One cell = one task x one model x one repeat = one reviewer launch through the harness's own
 review path: the base is committed in a fresh git repo, the diff applied uncommitted, the diff
-facts and owner block come from extensions/core-adapter/diffscan.ts (bench/review_facts.mjs),
+facts block comes from extensions/core-adapter/diffscan.ts (bench/review_facts.mjs),
 and Pi runs the reviewer role prompt with the core-adapter extension loaded as a reviewer child
 (PI_SUBAGENT_CHILD=1, a launch binding with role reviewer), which adds instructions/reviewer.md
 and foreman_ledger exactly as in a session. Cells run in a work dir outside --out (the reviewer
@@ -311,11 +311,11 @@ def reviewer_system_prompt():
     return '<active_agent name="reviewer"/>\n\n' + (text[m.end():] if m else text).strip()
 
 
-def facts_for(repo, base, owner_file, scratch, timeout=120):
+def facts_for(repo, base, scratch, timeout=120):
     node = shutil.which("node")
     if not node:
         raise RuntimeError("node not found on PATH (needed for bench/review_facts.mjs)")
-    r = subprocess.run([node, str(FACTS_SHIM), str(repo), base, str(owner_file), str(scratch)], cwd=str(REPO),
+    r = subprocess.run([node, str(FACTS_SHIM), str(repo), base, str(scratch)], cwd=str(REPO),
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=timeout)
     if r.returncode != 0:
         raise RuntimeError("review_facts.mjs failed: %s" % r.stderr.decode("utf-8", "replace").strip()[-400:])
@@ -323,11 +323,11 @@ def facts_for(repo, base, owner_file, scratch, timeout=120):
 
 
 def compose_task(base, prompt, facts, fake=False):
-    """The reviewer's user message: `Task: ` + the foreman task, the diffscan augment (facts block + owner block,
+    """The reviewer's user message: `Task: ` + the foreman task, the diffscan augment (facts block,
     only when there is a fact), then the scratch line (childscratch.ts launchScratch)."""
     msg = "Task: " + TASK_TEMPLATE.format(base=base, prompt=prompt.strip())
     if facts.get("count", 0) > 0 and facts.get("block"):
-        msg += "\n" + facts["block"] + "\n" + facts["owner"]
+        msg += "\n" + facts["block"]
     if facts.get("scratch"):
         msg += "\n\n" + facts["scratch"]
     if fake:
@@ -498,7 +498,7 @@ class Bench:
         (agent / "settings.json").write_text(json.dumps({"packages": pkgs}, indent=1), "utf-8")
         tdir = self.tasks[task]
         base = build_repo(tdir, repo)
-        facts = facts_for(repo, base, tdir / "prompt.md", scratch)
+        facts = facts_for(repo, base, scratch)
         system = reviewer_system_prompt()
         user = compose_task(base, (tdir / "prompt.md").read_text("utf-8"), facts, fake=fake)
         env = child_env(agent, tmp, scratch, repo, "rb-" + uniq, fake_script=self.fake_script if fake else None)

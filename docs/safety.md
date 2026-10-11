@@ -116,6 +116,10 @@ plugins and `CLAUDE.md` do not load into bridge turns (`bridge.isolateClaudeConf
 Login steps are in [install](install.md). Rationale: `design/architecture.md`
 [bridge isolation](../design/architecture.md#bridge-isolation).
 
+## Known limit: stale "needs attention" notices
+
+pi-subagents delivers `subagent_control_notice` custom messages with `pi.sendMessage` (`triggerTurn` for async runs), and a queued message cannot be withdrawn. Pi's extension hooks (`context`, `message_end`, `before_agent_start`) can reshape what the model sees or replace a finalized message, but none can cancel a queued custom message before it starts a turn, and pi-subagents' `notifyOn` has no per-run form: excluding `needs_attention` there would suppress the events entirely. A notice for a run that ended meanwhile can therefore still arrive. `notices.ts` holds the dedupe state (once per run and state, none after the run's end event) for a drop hook; see `docs/UPSTREAM-NOTICES.md` for the upstream request.
+
 ## Known limit: `/sync`
 
 `/sync` pulls, commits (explicit paths only) and pushes the repositories listed in `sync.repos` of your user config (see [sessions](sessions.md)). It never forces a push, runs no repository hooks and refuses a repo whose local config sets any key outside a short allowlist of harmless keys (so filters, hooks, ssh/credential helpers, url rewrites, `http.*`, submodules and similar are refused), or that holds a secret or a linked file. Remote urls must be https, ssh, git or scp-like (local paths, `file://` and helper transports are refused); submodule gitlinks are ignored and refused; the config is re-checked before commit and push. **Known limit:** a child agent or other code running as your user can plant repository state (config, remotes, commits) between syncs; /sync refuses every planted state it knows (git's local file transport is off, remote names must be plain names), but it is not a boundary against such code. List only repositories you trust children not to touch.

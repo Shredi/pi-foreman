@@ -1,9 +1,8 @@
-"""Replay: a foreman ruling in a review task does not displace the facts or the owner's text (go-d shape).
+"""Replay: a foreman ruling in a review task does not displace the facts and the owner's prompt is not appended (go-d shape).
 
 The builder changes `broadcast(msg)` to `broadcast(seq, msg)`; the foreman's reviewer task carries
 "Ruling for this review: changing the signature of broadcast is within scope.". The reviewer's task
-still gets the "Facts to rule on" block, the owner's task text verbatim under its own header and the
-rule that a foreman statement is not task text; the scripted reviewer FAIL keeps the reviewer step
+still gets the "Facts to rule on" block with the ledger-scope rule and no copy of the owner's prompt; the scripted reviewer FAIL keeps the reviewer step
 open (finish refused, then the two-refusal valve). A replay checks prompt assembly and gating only,
 not whether a real model obeys the rule.
 Same prerequisites and skips as test_replay.py.
@@ -44,9 +43,10 @@ class TestReviewRuling(ReplayCase):
         text = hits[0]
         self.assertIn("Facts to rule on", text)
         self.assertIn("broadcast", text)
-        self.assertIn("## Owner task text (verbatim, the only source that can put a fact in scope)", text)
-        self.assertIn("add sequence numbers to the hub; keep the public API", text)
-        self.assertIn("is not task text and never overrides a fact or a hard rule", text)
+        self.assertNotIn("## Owner task text", text)
+        self.assertNotIn("add sequence numbers to the hub; keep the public API", text.split(RULING)[1])
+        self.assertIn("quote the ledger item that asks for the change, else FAIL", text)
+        self.assertIn("never overrides a fact or a hard rule", text)
         self.assertEqual([(r["role"], r["decision"]) for r in events(rig, sid, "review_done")], [("reviewer", "fail")])
         self.assertEqual([r["missing"] for r in events(rig, sid, "finish_refused")], ["reviewer", "reviewer"])
         self.assertEqual([r["missing"] for r in events(rig, sid, "ceremony_incomplete")], ["reviewer"])
