@@ -102,7 +102,10 @@ foreman setup                                 # regenerate the managed block aft
 Pi runs `git clean -fdx` in the clone on update, so never edit files under `<agentDir>/git/...`; edit a checkout
 (see [Developing](#developing)). To remove: `foreman setup --remove` (or `/foreman setup --remove`) drops the managed
 `settings.json` keys and the permission config it wrote, then `pi remove git:github.com/Shredi/pi-foreman` (add `-l`
-for project scope) removes the package. `foreman.json`, backups, the intercom config and any overlay stay.
+for project scope; use the same source string, `@<ref>` included, that `pi list` shows) removes the package.
+`foreman.json`, `pi-foreman/managed.json`, the `.bak-<ts>` backups, the intercom config and any overlay stay. The
+repository's `.npmrc` sets `legacy-peer-deps`, so a checkout's `npm install` resolves `package-lock.json` the same way
+Pi's install does and leaves it unchanged.
 
 ### Updating Pi
 
