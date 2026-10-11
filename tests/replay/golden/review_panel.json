@@ -5,9 +5,18 @@
    "role": "reviewer"
   },
   {
+   "event": "role_launch",
+   "role": "reviewer"
+  },
+  {
    "event": "panel",
    "role": "reviewer",
-   "decision": "unsupported"
+   "decision": "launched"
+  },
+  {
+   "event": "finding",
+   "role": "reviewer",
+   "model": "foreman-fake/senior-reviewer"
   }
  ]
 }

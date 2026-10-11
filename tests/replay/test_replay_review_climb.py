@@ -3,9 +3,10 @@
 Repeat-fail: `ladder.reviewerClimb` enabled with reviewer.strong = senior-reviewer; the reviewer FAILs
 item 1 twice with a located `calc.py:2` finding, so the third reviewer launch goes to the strong rung
 (`rung_up` review_fail_repeat), whose PASS ends the round.
-Panel: `ladder.reviewPanel` with a senior-reviewer shadow on `pre-pr`. The pinned pi-subagents 0.75.0 runs no
-panel launch shape, so the panel degrades: `panel {decision: unsupported}`, the launch stays one primary
-reviewer whose PASS marks the item and lets `gh pr create` through; no shadow child runs.
+Panel: `ladder.reviewPanel` with a senior-reviewer shadow on `pre-pr`. The primary reviewer runs alone; its run end
+lists the shadow launch, the foreman issues `[panel-shadow:<strong>] [pre-pr]` (`panel {decision: launched}`), the
+shadow child runs on the strong model and its FAIL finding is recorded as `primary: false`. Only the primary PASS
+marks the item and lets `gh pr create` through; the composed panel block arrives once the shadow ended.
 Plan review: at heavy with `ceremony.planReview.heavy` on, the checkpoint is refused
 (`plan_review_required`) until a `[plan-review]` reviewer (a model other than the foreman's) gave a
 verdict; then the dialog opens with the verdict line.
@@ -13,6 +14,7 @@ Goldens keep the review events only. Same prerequisites and skips as test_replay
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import unittest
@@ -64,21 +66,27 @@ class TestReviewClimb(ReplayCase):
         self.assertIsNotNone(trace_of(rig.traces(), "child", STRONG), "the third review ran on the strong rung")
         self.golden("review_climb_repeat_fail", {"foreman": review_shape(rig, sid)})
 
-    def test_panel_degrades_and_never_blocks(self):
+    def test_panel_shadow_launch_never_blocks(self):
         cfg = {"ladder": {"reviewPanel": {"shadows": [STRONG], "gates": ["pre-pr"]}}}
         rig = self.rig("rc-panel", load_fixture("review_climb"), config=cfg)
         changed_calc(rig)
         bindir, marker = fake_gh(rig)
         pi = rig.start(env={"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")})
         sid = pi.session_id()
-        pi.prompt("[[replay:p1]] fix add", timeout=60)
-        pi.wait_child_notify(timeout=180)
+        recs = pi.prompt("[[replay:p1]] fix add", timeout=60)
+        for _ in range(2):
+            recs += pi.wait_child_notify(timeout=180)[1]
+        recs += pi.drain(3)
         [pr] = tool_results(pi.prompt("[[replay:pr-gh]] open the PR", timeout=60))
         pi.close()
-        self.assertEqual([(r["gate"], r["models"], r["primary"], r["decision"]) for r in events(rig, sid, "panel")], [("pre-pr", STRONG, CHEAP, "unsupported")])
-        self.assertEqual([r["role"] for r in events(rig, sid, "role_launch")], ["reviewer"])
-        self.assertIsNone(trace_of(rig.traces(), "child", STRONG), "no shadow child ran")
-        self.assertEqual([r for r in events(rig, sid, "finding") if not r["primary"]], [])
+        self.assertEqual([(r["gate"], r["models"], r["primary"], r["decision"]) for r in events(rig, sid, "panel")], [("pre-pr", STRONG, CHEAP, "launched")])
+        self.assertEqual([r["role"] for r in events(rig, sid, "role_launch")], ["reviewer", "reviewer"])
+        self.assertIsNotNone(trace_of(rig.traces(), "child", STRONG), "the shadow child ran on the strong model")
+        self.assertEqual([(r["model"], r["file"]) for r in events(rig, sid, "finding") if not r["primary"]], [(STRONG, "calc.py")])
+        self.assertEqual([r["decision"] for r in events(rig, sid, "review_done")], ["pass"], "the shadow's FAIL notice counts for nothing")
+        dumps = [json.dumps(r) for r in recs]
+        self.assertTrue(any("[panel-shadow:%s] [pre-pr]" % STRONG in d and "issue these shadow reviews" in d for d in dumps), "the shadow instruction reached the foreman")
+        self.assertTrue(any("pi-foreman-panel" in d and "Shadow findings (do not block)" in d for d in dumps), "the composed panel block was delivered")
         ledger = (rig.project / ".workflow" / "LEDGER-rp.md").read_text("utf-8")
         self.assertIn("- [x] 1. fix add — verified by reviewer PASS", ledger)
         self.assertFalse(pr[1], pr)
