@@ -47,6 +47,8 @@ nothing). Map your models in `foreman.json`: see [install](docs/install.md). To 
 | [docs/bench.md](docs/bench.md) | Measuring the harness with `foreman bench` |
 | [docs/overlays.md](docs/overlays.md) | Private and organisation overlays |
 | [docs/development.md](docs/development.md) | Layout, tests, CI, working on pi-foreman |
+
+Setting up with an agent: point it at [docs/features.md](docs/features.md).
 | [design/architecture.md](design/architecture.md) | The design record and rationale |
 | [CHANGELOG.md](CHANGELOG.md) | What changed |
 

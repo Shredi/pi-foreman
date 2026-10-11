@@ -30,7 +30,7 @@ const USAGE = [
 ].join("\n");
 const NO_INTERCOM_GLOB = "!node_modules/pi-intercom/**";
 const BUNDLED_RE = /^npm:(pi-subagents|@gotgenes\/pi-permission-system|pi-intercom)(@.*)?$/;
-const REMOTE_FOREMAN_RE = /^(npm:pi-foreman(@[^/]+)?|(git:)?(https?:\/\/)?github\.com[/:][^/]+\/pi-foreman(\.git)?(@[^/]+)?\/?)$/;
+const REMOTE_FOREMAN_RE = /^(npm:pi-foreman(@[^/]+)?|git:[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|git:https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?)$/;
 const BRIDGE_HINT = "pi-claude-bridge: log in once. Run `CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude` and enter /login, or run `claude setup-token` and export CLAUDE_CODE_OAUTH_TOKEN (docs/install.md, \"Claude bridge: log in once\").";
 const INTERCOM = "pi-intercom";
 // Written once when absent (never overwritten): wake on every inbound message, the human's input first.

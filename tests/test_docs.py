@@ -131,7 +131,7 @@ class DocsCurrency(unittest.TestCase):
 
     @needs_docs
     def test_relative_links_resolve(self):
-        files = [REPO / "README.md", REPO / "AGENTS.md"] + sorted(DOCS.glob("*.md"))
+        files = [REPO / "README.md", REPO / "AGENTS.md", REPO / "llms.txt"] + sorted(DOCS.glob("*.md"))
         bad = []
         for f in files:
             body = re.sub(r"```.*?```", "", read(f), flags=re.S)
