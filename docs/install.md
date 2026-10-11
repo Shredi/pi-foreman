@@ -6,6 +6,8 @@
 
 ## Install
 
+Setting up with an agent: point it at [features.md](features.md).
+
 Needs Node 22+, Pi 1.1.x on `PATH` and Python 3.9+. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
 
 ```sh

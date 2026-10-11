@@ -569,21 +569,19 @@ Results return through pi-subagents' async notifications. The foreman waits, bou
 
 ## 11. Installer
 
-`node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--remove]`
+pi-foreman installs as a Pi package; details in `docs/install.md`.
 
 | Step | Behaviour |
 |---|---|
-| 1. Check | Node and Pi versions. Pi must match the pinned range (1.1.x). |
-| 2. Python | Same resolution as §7. If no Python ≥ 3.9 is found, the installer stops with OS-specific instructions. |
-| 3. Packages | `pi install npm:<pkg>@<exact>` for pi-foreman and each pinned package from `packages.lock.json`. Pi and pi-permission-system are pinned in lockstep, because a PS major tracks Pi majors. `--project` uses `-l` and notes that project packages load only after trust; headless runs need `--approve`. |
-| 4. Settings merge | User `settings.json`: add or update only the entries pi-foreman manages, and write the generated `subagents` block (§3). Never remove or reorder user keys. Back up to `settings.json.bak-<timestamp>` before the first change. |
-| 5. Policy | Generate the permission-system global file from the L1 → L3 → L2 rules. The installer owns it: a hand edit is backed up and overwritten, and user rules go into `foreman.json`. `authorizerChain` is `["foreman-review"]`. `/foreman doctor` reports drift. |
-| 6. Config | Write a commented `foreman.json` template only if it is absent |
-| 7. Doctor | `/foreman doctor` checks: Python, the generated block in sync, required child extensions resolvable, auth per provider in the map |
+| 1. Install | `pi install git:github.com/Shredi/pi-foreman` (global) or `pi install -l ...` (project scope, loads after trust). Pi clones the repo and runs `npm install --omit=dev --legacy-peer-deps`, which brings the pinned bundled packages (`pi-subagents`, `pi-permission-system`, `pi-intercom`). The `pi` key of `package.json` is the manifest. |
+| 2. Setup | `/foreman setup [--dry-run]` in Pi, `bin/foreman setup` or `node setup.mjs` from a checkout. Flags: `--project`, `--overlay npm:<pkg>@<exact>`, `--no-intercom`, `--develop`, `--remove`, `--agent-dir`. Checks the Pi range from `packages.lock.json` and Python (§7). |
+| 3. What setup writes | The generated `subagents` block in `settings.json` (backup first, user keys never removed or reordered), the permission-system config generated from the L1 → L3 → L2 rules (installer-owned; user rules go into `foreman.json`), a commented `foreman.json` only if absent, the intercom config only if absent. It also removes legacy top-level `npm:` entries of the bundled packages. |
+| 4. Develop mode | `setup --develop` writes `.pi/settings.json` in the checkout with `".."` as a package and an override of the installed source. Double-load guard: the checkout wins in its own tree; the core adapter registers once and posts a notice on a second copy. |
+| 5. Update, remove | `pi update`, then `foreman setup` to regenerate. `foreman setup --remove` drops managed keys, then `pi remove` removes the package. |
 
-- `--dry-run` prints the planned changes as a diff and writes nothing.
-- A second run is a no-op. CI asserts that on all three OSes.
+- `--dry-run` prints the planned changes and writes nothing. A second run is a no-op ("up to date"); CI asserts that on all three OSes.
 - Overlays install with `--overlay`, pinned exactly. The installer never edits overlay files.
+- `/foreman doctor` checks Python, the generated block in sync, required child extensions and auth per provider.
 
 ## 12. Benchmark design (design only, no runs)
 
