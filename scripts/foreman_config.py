@@ -48,6 +48,7 @@ Keys outside safety that the project and session layers cannot loosen either
     providers.*.roles.*.strong       ignored (picks a stronger, costlier model; L1/L3/L2 only)
     providers.*.strongOnRevision     only false is accepted (true relaunches on the strong model)
     ladder.strongOnRevision, roles.*.strongOnRevision   only false is accepted (true climbs after a FAIL)
+    tools.git                        only false is accepted (true adds tools)
     childMaxThinking                 lower only (off < ... < max)
     ladder.* (but strongOnRevision), providers.*.ranks   ignored (the ladder and the child rank policy: L1/L3/L2 only)
     providers.*.strongAbove / childMaxTurns, roles.*.strongAbove / childMaxTurns   ignored (ladder)
@@ -232,6 +233,7 @@ LAYER_TIGHTEN = [
     (("wait", "maxSeconds"), "lower_only"),
     (("wait", "maxActive"), "lower_only"),
     (("childMaxThinking",), ("ordered", tuple(THINKING))),
+    (("tools", "git"), "false_only"),
 ]
 LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
                  "threshold": 0.3, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0}
@@ -854,6 +856,16 @@ def with_ledger_tool(cfg, role, tools):
     return tools
 
 
+# tools.git: roles whose tool list has bash also get the git read tools (docs/tools.md).
+GIT_PACK_TOOLS = ("git_status", "git_log", "git_diff_stat", "git_branch_state")
+
+
+def with_git_pack(cfg, role, tools):
+    if (cfg.get("tools") or {}).get("git") is True and "bash" in tools:
+        tools.extend(t for t in GIT_PACK_TOOLS if t not in tools)
+    return tools
+
+
 def resolve_role(cfg, role, provider):
     """Return {model, thinking, codemode, tools[, strong]}; raise ConfigError if unresolvable.
 
@@ -875,7 +887,7 @@ def resolve_role(cfg, role, provider):
     codemode = effective_codemode(cfg, provider, role)
     tools = list((cfg.get("roles") or {}).get(role, {}).get("tools", []))
     if role != "foreman":
-        tools = with_ledger_tool(cfg, role, [t for t in tools if t not in CHILD_DENIED_TOOLS])
+        tools = with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in tools if t not in CHILD_DENIED_TOOLS]))
     if codemode and "codemode" not in tools:
         tools.append("codemode")
     out = {"model": model, "thinking": cap_thinking(thinking, cfg.get("maxThinking")),
@@ -913,7 +925,7 @@ def generate_subagents(cfg):
     """
     by_provider, overrides, errors = {}, {}, []
     for role in CHILD_ROLES:
-        tools = with_ledger_tool(cfg, role, [t for t in (cfg.get("roles") or {}).get(role, {}).get("tools", []) if t not in CHILD_DENIED_TOOLS])
+        tools = with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in (cfg.get("roles") or {}).get(role, {}).get("tools", []) if t not in CHILD_DENIED_TOOLS]))
         if cfg.get("roles", {}).get(role, {}).get("codemode") and "codemode" not in tools:
             tools.append("codemode")
         overrides[role] = {"tools": tools}

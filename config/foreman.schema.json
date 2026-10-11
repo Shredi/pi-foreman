@@ -442,6 +442,14 @@
         "enabled": { "type": ["boolean", "null"], "description": "Write the allowlisted trace. null means it follows the effective retro.enabled; false always turns it off." },
         "dir": { "type": ["string", "null"], "description": "Trace directory. null means the state dir. A project or session value must resolve inside the workspace, else it is ignored." }
       }
+    },
+    "tools": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional built-in tool packs (docs/tools.md).",
+      "properties": {
+        "git": { "type": "boolean", "description": "true = the git tool pack: git_status, git_log, git_diff_stat, git_branch_state for the foreman and for children whose role has bash. User or overlay config; the project and session layers may only set false. Re-run foreman setup after a change." }
+      }
     }
   }
 }

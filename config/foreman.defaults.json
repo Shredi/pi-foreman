@@ -100,5 +100,6 @@
   },
   "bridge": { "isolateClaudeConfig": "auto" },
   "python": { "path": null },
-  "trace": { "enabled": null, "dir": null }
+  "trace": { "enabled": null, "dir": null },
+  "tools": { "git": false }
 }

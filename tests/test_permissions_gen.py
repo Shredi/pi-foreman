@@ -35,6 +35,7 @@ class GeneratorTest(unittest.TestCase):
         self.assertEqual(p["bash"]["sudo *"]["action"], "deny")
         self.assertEqual(p["read"], "allow")
         self.assertEqual(p["foreman_move"], "allow")
+        self.assertEqual(p["git_status"], "allow")
         self.assertEqual(p["external_directory"], "ask")
         self.assertEqual(out["shellTools"]["powershell"]["commandArgument"], "command")
         self.assertEqual(p["bash"]["Remove-Item * -R*"], "ask")
