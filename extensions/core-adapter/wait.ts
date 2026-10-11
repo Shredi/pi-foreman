@@ -11,12 +11,14 @@
 //
 // File bound (item 39): the path (as given and with symlinks resolved, triage.ts realDeep) must
 // sit inside the workspace (its .workflow/ included) or `<agentDir>/pi-foreman/state/wait/`;
-// inside the workspace the overlay's write protection set refuses it too.
+// inside the workspace the overlay's write protection set refuses it too. Owned dirs (owned.ts readWrite:
+// the handoff dirs, subagent-artifacts, the round worktree dir) are accepted when the caller passes them.
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { get } from "./config.ts";
+import { underOwned } from "./owned.ts";
 import { isProtectedPath } from "./permoverlay.ts";
 import type { OverlayRules } from "./permoverlay.ts";
 import { resolveToolPath } from "./payload.ts";
@@ -65,6 +67,8 @@ export interface PathBoundOpts {
   platform: string;
   /** Overlay rules (write protection); null = baseline unreadable, workspace paths are refused. */
   overlay: OverlayRules | null;
+  /** ownedRoots(...).readWrite: a file wait may also watch a path under these (default: none). */
+  owned?: string[];
 }
 
 /** One line, control characters dropped, capped. */
@@ -89,6 +93,11 @@ export function checkWaitPath(raw: unknown, o: PathBoundOpts): { path: string } 
   const inside = (roots: string[]): boolean => roots.some((r) => under(r, abs, o.platform)) && roots.some((r) => under(r, real, o.platform));
   const shown = oneLine(raw, 160);
   if (inside(rootsOf(path.join(o.agentDir, "pi-foreman", "state", "wait")))) return { path: abs };
+  const ownedHit = (r: string): boolean => {
+    const roots = rootsOf(r);
+    return roots.some((x) => underOwned(x, abs, o.platform)) && roots.some((x) => underOwned(x, real, o.platform));
+  };
+  if ((o.owned ?? []).some(ownedHit)) return { path: abs };
   if (inside(rootsOf(workspaceOf(o.cwd).root))) {
     if (!o.overlay) return { error: `pi-foreman: ${WAIT_TOOL} on '${shown}' refused: the permission baseline is unreadable, so the write protection cannot be checked. Run /foreman doctor.` };
     const ctx = { cwd: o.cwd, home: o.home, platform: o.platform };

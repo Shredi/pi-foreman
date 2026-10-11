@@ -10,6 +10,9 @@ import foreman_config as fc  # noqa: E402
 import permissions_gen as pg  # noqa: E402
 
 
+OWNED = {"scratchRoot": "/tmpx/pi-foreman-scratch", "npmRoot": "/opt/npm/lib/node_modules"}
+
+
 class GeneratorTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -23,7 +26,7 @@ class GeneratorTest(unittest.TestCase):
         (self.agent / "foreman.json").write_text(json.dumps(data))
 
     def render(self, perms=None):
-        return pg.render(perms or {}, self.agent)
+        return pg.render(perms or {}, self.agent, owned=OWNED)
 
     def test_baseline_shape(self):
         out = self.render()
@@ -38,10 +41,56 @@ class GeneratorTest(unittest.TestCase):
         self.assertEqual(p["git_status"], "allow")
         self.assertEqual([p[t] for t in ("pr_status", "pr_checks", "pr_comments", "pr_watch")], ["allow"] * 4)
         self.assertNotIn("pr_create", p)
-        self.assertEqual(p["external_directory"], "ask")
+        self.assertEqual(p["external_directory"]["*"], "ask")
         self.assertEqual(out["shellTools"]["powershell"]["commandArgument"], "command")
         self.assertEqual(p["bash"]["Remove-Item * -R*"], "ask")
         self.assertEqual(p["bash"]["rd /s*"], "ask")
+
+    def test_external_directory_owned_paths(self):
+        a = self.agent.as_posix()
+        p = self.render()["permission"]
+        ext = p["external_directory"]
+        self.assertEqual(list(ext)[0], "*")
+        for pat in (a + "/pi-foreman/handoffs/*", a + "/sessions/*/subagent-artifacts/*", "*.worktrees/*",
+                    "/tmpx/pi-foreman-scratch/*", a + "/foreman.json", a + "/settings.json"):
+            self.assertEqual(ext[pat], "allow", pat)
+        keys = list(ext)
+        for tail in ("/parent", "/child"):
+            pat = a + "/pi-foreman/handoffs/*" + tail
+            self.assertEqual(ext[pat], "ask")
+            self.assertLess(keys.index(a + "/pi-foreman/handoffs/*"), keys.index(pat))
+        self.assertEqual(keys[-2:], [a + "/pi-foreman/handoffs/*/parent", a + "/pi-foreman/handoffs/*/child"])
+        read = p["external_directory_read"]
+        for pat in (a + "/pi-foreman/*", "/opt/npm/lib/node_modules", "/opt/npm/lib/node_modules/*"):
+            self.assertEqual(read[pat], "allow", pat)
+        self.assertNotIn(a + "/pi-foreman/*", ext)
+
+    def test_unresolved_npm_root_drops_its_patterns(self):
+        p = pg.render({}, self.agent, owned={"scratchRoot": "/t/pi-foreman-scratch", "npmRoot": None})["permission"]
+        self.assertEqual([k for k in p["external_directory_read"] if "node_modules" in k], [])
+        self.assertNotIn("{npmRoot}/*", p["external_directory_read"])
+
+    def test_git_worktree_subcommands(self):
+        bash = self.render()["permission"]["bash"]
+        for sub in ("add", "list", "prune", "lock", "unlock", "move", "repair"):
+            self.assertEqual(bash["git worktree %s *" % sub], "allow", sub)
+        self.assertEqual(bash["git worktree remove *"], "ask")
+
+    def test_default_owned_uses_realpath_tmpdir(self):
+        owned = pg.default_owned()
+        self.assertTrue(owned["scratchRoot"].endswith("/pi-foreman-scratch"))
+
+    def test_resolve_npm_root_paths(self):
+        class R:
+            def __init__(self, code, out):
+                self.returncode, self.stdout = code, out
+        which = lambda n: "/usr/local/bin/" + n
+        self.assertEqual(pg.resolve_npm_root(run=lambda *a, **k: R(0, "/x/lib/node_modules\n"), env={}, platform="linux", which=which), "/x/lib/node_modules")
+        fail = lambda *a, **k: R(1, "")
+        self.assertEqual(pg.resolve_npm_root(run=fail, env={"npm_config_prefix": "/p"}, platform="linux", which=which), "/p/lib/node_modules")
+        self.assertEqual(pg.resolve_npm_root(run=fail, env={"APPDATA": "C:/Roam"}, platform="win32", which=which),
+                         "C:/Roam/npm/node_modules")
+        self.assertIsNone(pg.resolve_npm_root(run=fail, env={}, platform="win32", which=which))
 
     def test_no_sed_glob_so_every_sed_asks(self):
         # sed takes w, e, r with no blank before the file or command: no glob can allow only prints

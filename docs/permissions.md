@@ -135,6 +135,57 @@ guard still decides `git restore`/`git checkout` first (tracked, modified test f
 - `chain_allow {segments, decision, role}`: a chain of two or more segments was allowed without the model.
 - `review_defer_headless {role, cmd}`: a forwarded ask deferred with no human to ask and was denied.
 
+## Owned paths
+
+The foreman session owns a few places outside the workspace. Access to them is granted by default, in two layers:
+
+1. **Policy grants** (permission system, "PS"). `foreman setup` renders `external_directory` (and
+   `external_directory_read`) from the `externalDirectory` block of `config/permissions.baseline.json` into the one
+   global policy file `<agentDir>/extensions/pi-permission-system/config.json`. `/foreman doctor` re-renders it with
+   the same generator and reports drift. PS has no per-session or per-role scope, so these grants hold for every role
+   of the user's pi processes. A review-link answer cannot grant them: PS turns an `allow` on the `external_directory`
+   family into `defer`.
+2. **Overlay narrowing** (adapter). The overlay can only block. It keeps children out of the main-only dirs and
+   keeps the `parent` and `child` handoff files and all write-protect rules asking or denied. A child's write
+   permissions are unchanged by this section.
+
+| Pattern (`external_directory`, read and write) | Why |
+|---|---|
+| `<agentDir>/pi-foreman/handoffs/*` | the session's handoff dirs (plan, ruling, result) |
+| `<agentDir>/sessions/*/subagent-artifacts[/*]` | child run artifacts |
+| `*.worktrees[/*]` | the round worktree convention dir `../<repo>.worktrees/<branch>`. PS has no workspace-relative token, so the pattern is broader than one repo: any dir named `*.worktrees` |
+| `<tmp>/pi-foreman-scratch[/*]` | the children's scratch root (`<realpath tmpdir>/pi-foreman-scratch`, as `childscratch.ts`). Per user: every child's dir, not only one's own; the overlay lets a child use only its own `$FOREMAN_SCRATCH` |
+| `<agentDir>/foreman.json`, `<agentDir>/settings.json` (bare keys) | reads, including a word in a `for f in ...; do cat "$f"; done` list (PS checks it in both directions). Writes still hit `protect.ask` |
+
+| Pattern (`external_directory_read`) | Why |
+|---|---|
+| `<agentDir>/pi-foreman[/*]` | reads of the handoff, state and config files of pi-foreman |
+| `<npm root -g>[/*]` | global packages, for bash reads (PS already allows the read tools there) |
+
+Last: `ask` for `<agentDir>/pi-foreman/handoffs/*/parent` and `.../child` stay on the write side (`protect.writeAsk`
+asks too). Reads of those two files are allowed by the read pattern above.
+
+`git worktree add|list|prune|lock|unlock|move|repair *` are in the global bash allow. PS has no main-session scope
+(the main session has no agent file, and agent frontmatter overrides only apply to agents), so children are kept off
+them by the git guard and the overlay, not by the policy. `git worktree remove *` asks.
+
+**Global npm root, resolution order** (generator at setup time; `owned.ts` `resolveNpmRoot` in the adapter):
+`npm root -g` (4 s cap), else `npm_config_prefix` (POSIX `<prefix>/lib/node_modules`, Windows
+`<prefix>\node_modules`), else the prefix of the running node binary (POSIX) or `%AppData%\npm\node_modules`
+(Windows). There is no environment override of the result; a root that does not resolve drops its patterns.
+The policy is rendered when `foreman setup` runs: change the npm prefix, then run it again.
+
+**Trade-off.** The patterns are static and per user, not per session. A second pi session of the same user can read
+and write the first one's handoff dirs. Narrower grants would need PS to take the session id as a token.
+
+**Session grants (`b`/`s` on an ask) and a directory that did not exist.** PS derives the session pattern from the
+asked path (`deriveApprovalPatterns`, `src/path/approval-pattern.ts`): an existing directory yields `D` and `D/*`;
+anything else (a file, or a path that does not exist when asked) yields its parent's `<parent>/*`. `D/*` does not match
+the bare `D`. So a grant answered on a read of `<dir>/file` while `<dir>` did not exist is `<dir>/*`, and a later
+`cd <dir> && npm ci` (token `<dir>`, no trailing slash) or a `ls <dir>` asks again. This lives inside PS; the adapter
+records and compares no grants. Workaround: create the directory first, or answer the grant on the bash ask for the
+directory itself. Owned paths above are not affected: the policy patterns carry the bare directory form too.
+
 ## Developing pi-foreman itself
 
 When the session's working directory is the package root or inside it (symlinks resolved; case-insensitive on
