@@ -83,6 +83,26 @@
             }
           },
           "strongOnRevision": { "type": "boolean", "description": "true: relaunch the builder on its strong model for every revision round (rung_up reason revision); false: no climb, also not after a reviewer FAIL. Unset: ladder.strongOnRevision decides. Wins over ladder.strongOnRevision. A project or session can only set false." },
+          "cache": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Prompt-cache policy of this provider (idle-cache): TTL, billing and the keep-alive that stops an idle session resuming cold. Built-in values exist for known providers; a key set here wins. User or overlay config sets everything; a project or session can only switch keepalive.enabled off or shorten keepalive.windowMinutes.",
+            "properties": {
+              "ttlSeconds": { "type": ["integer", "null"], "minimum": 1, "description": "Prompt-cache time to live in seconds; null = unknown (the policy stays off). Built-in: 300 for claude-bridge. User or overlay config only." },
+              "billing": { "type": "string", "enum": ["token", "request"], "description": "How the provider bills: per token (a cold cache costs tokens) or per request (the keep-alive is never used). Built-in: token for claude-bridge, request for github-copilot. User or overlay config only." },
+              "keepalive": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Keep-alive pings that renew the cache while the session is idle.",
+                "properties": {
+                  "enabled": { "type": "boolean", "description": "Default true iff billing is token and ttlSeconds is below 3600. A project or session can only set false." },
+                  "intervalSeconds": { "type": "integer", "minimum": 30, "maximum": 3600, "description": "Seconds between pings. Default 90% of ttlSeconds, at least 30. User or overlay config only." },
+                  "windowMinutes": { "type": "integer", "minimum": 1, "maximum": 60, "description": "Minutes of idleness after which the pings stop (default 45; Pi's own idle cap is 30). A project or session can only shorten it." }
+                }
+              },
+              "warmCompact": { "type": "boolean", "description": "Warm the cache after a compaction (default true). User or overlay config only." }
+            }
+          },
           "review": {
             "type": "object",
             "additionalProperties": false,

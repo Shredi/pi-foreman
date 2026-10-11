@@ -84,6 +84,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [herdr](#herdr) | on | In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes. | on by default | [sessions](sessions.md#herdr) |
 | [radar](#radar) | on | `foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files. | on by default | [sessions](sessions.md#radar) |
 | [compaction](#compaction) | on | Compacts the context earlier on dearer models: the trigger fraction depends on the model's input price tier. | on by default | [sessions](sessions.md#further-session-keys) |
+| [idle-cache](#idle-cache) | off | Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on with the claude-bridge preset, off otherwise. | `foreman config apply-preset claude-bridge --dry-run   # or: {"providers": {"<provider>": {"cache": {"ttlSeconds": 300, "billing": "token", "keepalive": {"enabled": true}}}}}` | [cache](cache.md#config) |
 
 ## Feature keys
 
@@ -573,6 +574,21 @@ Switch: `retro.repoBacklog` is non-empty.
 | `compaction.threshold.standard` | `0.75` | tighten-only (lower only, minimum 0.3) |
 | `compaction.threshold.premium` | `0.6` | tighten-only (lower only, minimum 0.3) |
 
+### idle-cache
+
+**Idle prompt-cache policy.** Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on with the claude-bridge preset, off otherwise.
+
+Switch: `providers.*.cache.keepalive.enabled` is true.
+
+| Key | Default | Layer |
+|---|---|---|
+| `providers.<x>.cache.ttlSeconds` | unset | not in project/session (the cache policy comes from the user or overlay config) |
+| `providers.<x>.cache.billing` | unset | not in project/session (the cache policy comes from the user or overlay config) |
+| `providers.<x>.cache.keepalive.enabled` | unset | tighten-only (only false is accepted) |
+| `providers.<x>.cache.keepalive.intervalSeconds` | unset | not in project/session (the cache policy comes from the user or overlay config) |
+| `providers.<x>.cache.keepalive.windowMinutes` | unset | tighten-only (lower only, minimum 1, at most 45 without an earlier value) |
+| `providers.<x>.cache.warmCompact` | unset | not in project/session (the cache policy comes from the user or overlay config) |
+
 ## Commands by feature
 
 | Feature | Commands |
@@ -620,6 +636,10 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 |---|---|
 | `bridge.isolateClaudeConfig` | it loosens the host config isolation |
 | `providers.*.review` | it loosens: a review model approves asks |
+| `providers.*.cache.ttlSeconds` | the cache policy comes from the user or overlay config |
+| `providers.*.cache.billing` | the cache policy comes from the user or overlay config |
+| `providers.*.cache.keepalive.intervalSeconds` | the cache policy comes from the user or overlay config |
+| `providers.*.cache.warmCompact` | the cache policy comes from the user or overlay config |
 | `python.path` | it chooses the executable that runs every guard |
 | `python.*` | interpreter settings come from the user or overlay config |
 | `roles.*.launch` | the launch mode comes from the user or overlay config |

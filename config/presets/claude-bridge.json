@@ -5,6 +5,7 @@
   "providers": {
     "claude-bridge": {
       "strongAbove": 100000,
+      "cache": { "ttlSeconds": 300, "billing": "token", "keepalive": { "enabled": true } },
       "ranks": [
         { "match": "claude-fable-*", "tier": 0 },
         { "match": "claude-opus-*", "tier": 1 },

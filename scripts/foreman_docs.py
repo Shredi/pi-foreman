@@ -206,6 +206,9 @@ def _rule_text(rule, keys):
         minimum = next((fc.LAYER_MINIMUM[k] for k in keys if k in fc.LAYER_MINIMUM), None)
         if minimum is not None:
             text += ", minimum %g" % minimum
+        cap = next((fc.LAYER_CAP[k] for k in keys if k in fc.LAYER_CAP), None)
+        if cap is not None:
+            text += ", at most %g without an earlier value" % cap
     return text
 
 

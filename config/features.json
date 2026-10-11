@@ -492,6 +492,17 @@
       "switch": null,
       "state": "on",
       "enable": ""
+    },
+    {
+      "id": "idle-cache",
+      "title": "Idle prompt-cache policy",
+      "purpose": "Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on with the claude-bridge preset, off otherwise.",
+      "doc": "docs/cache.md#config",
+      "keys": ["providers.<x>.cache", "providers.<x>.cache.ttlSeconds", "providers.<x>.cache.billing", "providers.<x>.cache.keepalive.enabled", "providers.<x>.cache.keepalive.intervalSeconds", "providers.<x>.cache.keepalive.windowMinutes", "providers.<x>.cache.warmCompact"],
+      "commands": [],
+      "switch": {"key": "providers.*.cache.keepalive.enabled", "on": "true"},
+      "state": "off",
+      "enable": "foreman config apply-preset claude-bridge --dry-run   # or: {\"providers\": {\"<provider>\": {\"cache\": {\"ttlSeconds\": 300, \"billing\": \"token\", \"keepalive\": {\"enabled\": true}}}}}"
     }
   ],
   "overlayQuickStart": [

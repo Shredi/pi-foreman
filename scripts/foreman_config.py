@@ -47,6 +47,11 @@ Keys outside safety that the project and session layers cannot loosen either
     providers.*.review               ignored (a review model approves asks)
     providers.*.roles.*.strong       ignored (picks a stronger, costlier model; L1/L3/L2 only)
     providers.*.strongOnRevision     only false is accepted (true relaunches on the strong model)
+    providers.*.cache.ttlSeconds / billing / warmCompact   ignored (the cache policy: L1/L3/L2 only)
+    providers.*.cache.keepalive.intervalSeconds   ignored (L1/L3/L2 only)
+    providers.*.cache.keepalive.enabled   only false is accepted (true keeps the session warm at a cost)
+    providers.*.cache.keepalive.windowMinutes   lower only, minimum 1; without an earlier value at most 45
+    providers.*.cache (or .keepalive)   not an object: ignored
     ladder.strongOnRevision, roles.*.strongOnRevision   only false is accepted (true climbs after a FAIL)
     tools.git                        only false is accepted (true adds tools)
     tools.pr                         only false is accepted (true adds tools)
@@ -173,6 +178,10 @@ LOOSEN_ONLY = [("subagents", "allowWorkflow")]
 IGNORED_KEYS = [
     (("bridge", "isolateClaudeConfig"), "it loosens the host config isolation"),
     (("providers", "*", "review"), "it loosens: a review model approves asks"),
+    (("providers", "*", "cache", "ttlSeconds"), "the cache policy comes from the user or overlay config"),
+    (("providers", "*", "cache", "billing"), "the cache policy comes from the user or overlay config"),
+    (("providers", "*", "cache", "keepalive", "intervalSeconds"), "the cache policy comes from the user or overlay config"),
+    (("providers", "*", "cache", "warmCompact"), "the cache policy comes from the user or overlay config"),
     (("python", "path"), "it chooses the executable that runs every guard"),
     (("python", "*"), "interpreter settings come from the user or overlay config"),
     (("roles", "*", "launch"), "the launch mode comes from the user or overlay config"),
@@ -208,6 +217,8 @@ IGNORED_KEYS = [
 FOREMAN_EDITS = ("readonly", "scratchpad", "bounded")
 LAYER_TIGHTEN = [
     (("providers", "*", "strongOnRevision"), "false_only"),
+    (("providers", "*", "cache", "keepalive", "enabled"), "false_only"),
+    (("providers", "*", "cache", "keepalive", "windowMinutes"), "lower_only"),
     (("ladder", "strongOnRevision"), "false_only"),
     (("roles", "*", "strongOnRevision"), "false_only"),
     (("ceremony", "revisionRounds", "*"), "lower_only"),
@@ -242,7 +253,15 @@ LAYER_TIGHTEN = [
     (("tools", "pr"), "false_only"),
 ]
 LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
-                 "threshold": 0.3, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0}
+                 "threshold": 0.3, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0,
+                 "windowMinutes": 1}
+# lower_only values with no earlier layer value may not exceed this (the built-in default).
+LAYER_CAP = {"windowMinutes": 45}
+# Built-in cache policy per provider (mirrors BUILTIN_CACHE in extensions/core-adapter/cachepolicy.ts).
+BUILTIN_CACHE = {
+    "claude-bridge": {"ttlSeconds": 300, "billing": "token"},
+    "github-copilot": {"ttlSeconds": None, "billing": "request"},
+}
 TIERS = ["trivial", "standard", "heavy"]
 # Steps ceremony.required.<tier> may name (the adapter counts each per session).
 REQUIRED_STEPS = ["planner", "builder", "reviewer", "finalizer"]
@@ -256,6 +275,15 @@ NEW_ROLE_IDS = "ignore"
 TRACE_DIR_IN_WORKSPACE = True
 
 
+def _non_dict_cache(node, name, path, who, warnings):
+    """True (and the node dropped with a warning) when a providers.*.cache rule path crosses a non-object."""
+    if isinstance(node[name], dict) or len(path) < 3 or path[0] != "providers" or path[2] != "cache":
+        return False
+    del node[name]
+    warnings.append("%s %s ignored: expected an object" % (who, ".".join(path)))
+    return True
+
+
 def _drop_pattern(node, keys, done, who, why, warnings):
     if not isinstance(node, dict):
         return
@@ -266,7 +294,7 @@ def _drop_pattern(node, keys, done, who, why, warnings):
         if len(keys) == 1:
             del node[name]
             warnings.append("%s %s ignored: the %s may not set this key (%s)" % (who, ".".join(path), who, why))
-        else:
+        elif not _non_dict_cache(node, name, path, who, warnings):
             _drop_pattern(node[name], keys[1:], path, who, why, warnings)
 
 
@@ -280,7 +308,8 @@ def _tighten_pattern(node, base, keys, rule, done, who, warnings, minimum=0):
         path = done + (name,)
         have = base.get(name) if isinstance(base, dict) else None
         if len(keys) > 1:
-            _tighten_pattern(node[name], have, keys[1:], rule, path, who, warnings, minimum)
+            if not _non_dict_cache(node, name, path, who, warnings):
+                _tighten_pattern(node[name], have, keys[1:], rule, path, who, warnings, minimum)
             continue
         val, label = node[name], who + " " + ".".join(path)
         if isinstance(rule, tuple) and rule[0] == "ordered":
@@ -329,6 +358,8 @@ def _tighten_pattern(node, base, keys, rule, done, who, warnings, minimum=0):
                 why = "below the minimum %g" % minimum
             elif isnum(have) and val > have:
                 why = "it would loosen the policy"
+            elif not isnum(have) and val > LAYER_CAP.get(name, val):
+                why = "above the default %g" % LAYER_CAP[name]
             else:
                 continue
         del node[name]
@@ -1165,3 +1196,25 @@ def main(argv=None):
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def cache_policy(config, provider):
+    """Resolved cache policy of one provider (mirrors resolveCachePolicy in cachepolicy.ts).
+
+    -> {"ttlSeconds", "billing", "enabled"} or None when neither the config nor BUILTIN_CACHE has an entry.
+    """
+    provs = config.get("providers") if isinstance(config, dict) else None
+    raw = provs.get(provider) if isinstance(provs, dict) else None
+    cfg = raw.get("cache") if isinstance(raw, dict) else None
+    cfg = cfg if isinstance(cfg, dict) else {}
+    built = BUILTIN_CACHE.get(provider) or {}
+    if not cfg and not built:
+        return None
+    ttl = cfg["ttlSeconds"] if "ttlSeconds" in cfg else built.get("ttlSeconds")
+    ttl = ttl if isinstance(ttl, int) and not isinstance(ttl, bool) and ttl >= 1 else None
+    billing = cfg.get("billing") if cfg.get("billing") in ("token", "request") else built.get("billing")
+    ka = cfg.get("keepalive") if isinstance(cfg.get("keepalive"), dict) else {}
+    enabled = ka.get("enabled")
+    if not isinstance(enabled, bool):
+        enabled = billing == "token" and ttl is not None and ttl < 3600
+    return {"ttlSeconds": ttl, "billing": billing, "enabled": enabled}
