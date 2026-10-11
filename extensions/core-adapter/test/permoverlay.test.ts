@@ -665,6 +665,28 @@ test("review 5 F1: abbreviated long options, a stdin operand and exec flags are 
   }
 });
 
+test("review 7: BSD sed -I/-l and attached output values are not read-only", () => {
+  const D = "config/foreman.defaults.json";
+  const bad = [
+    `sed -I '' s/a/b/ ${D}`,
+    `sed -I.bak s/a/b/ ${D}`,
+    `sed -nI '' s/a/b/ ${D}`,
+    `sed -l 'w ${D}' x`,
+    `sed -nl 'w ${D}' x`,
+    `gawk -o${D} x`,
+    `gawk -d${D} x`,
+    `gawk -p${D} x`,
+    `sort -k1 -o${D} x`,
+  ];
+  for (const selfHost of [true, false]) {
+    const r = rules2(selfHost);
+    for (const cmd of bad) assert.equal(sh(r, world(ws, "child"), cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);
+    for (const cmd of ["sed -n 1,5p", "sed -E 's/a/b/'", "sed -e 's/a/b/'", "sed -s -n p"]) {
+      assert.notEqual(sh(r, world(ws, "child"), `${cmd} ${D}`), "deny", `child selfHost=${selfHost}: ${cmd}`);
+    }
+  }
+});
+
 test("cleanup of the second world", () => {
   fs.rmSync(w2, { recursive: true, force: true });
 });

@@ -721,7 +721,7 @@ const PURE_VERBS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk"
 const VALUE_OPTS: Record<string, { short: string; long: string[]; pattern: string; patternLong: string[]; file: string; fileLong: string[]; globLong?: string[]; globShort?: string }> = {
   grep: { short: "ABCDdefm", long: ["--regexp", "--file", "--after-context", "--before-context", "--context", "--max-count", "--devices", "--directories", "--label", "--binary-files", "--include", "--exclude", "--exclude-dir", "--exclude-from", "--color", "--colour"], pattern: "e", patternLong: ["--regexp"], file: "f", fileLong: ["--file"], globLong: ["--include", "--exclude", "--exclude-dir", "--include-dir"] },
   rg: { short: "ABCEMTdefgjmrt", long: ["--regexp", "--file", "--after-context", "--before-context", "--context", "--max-count", "--max-depth", "--max-columns", "--glob", "--iglob", "--type", "--type-not", "--type-add", "--type-clear", "--replace", "--pre", "--pre-glob", "--encoding", "--threads", "--sort", "--sortr", "--max-filesize", "--colors", "--color", "--path-separator", "--engine", "--ignore-file", "--context-separator", "--field-match-separator", "--field-context-separator", "--dfa-size-limit", "--regex-size-limit", "--hyperlink-format", "--hostname-bin"], pattern: "e", patternLong: ["--regexp"], file: "f", fileLong: ["--file"], globLong: ["--glob", "--iglob"], globShort: "g" },
-  sed: { short: "efl", long: ["--expression", "--file", "--line-length"], pattern: "e", patternLong: ["--expression"], file: "f", fileLong: ["--file"] },
+  sed: { short: "ef", long: ["--expression", "--file", "--line-length"], pattern: "e", patternLong: ["--expression"], file: "f", fileLong: ["--file"] },
   awk: { short: "Fvfeil", long: ["--field-separator", "--assign", "--file", "--source", "--include", "--load"], pattern: "e", patternLong: ["--source"], file: "f", fileLong: ["--file"] },
 };
 for (const k of ["egrep", "fgrep"]) VALUE_OPTS[k] = VALUE_OPTS.grep;
@@ -858,12 +858,13 @@ function unitReadOnly(core: string[], skip: Set<number>): boolean {
   if (verb === "uniq") return !has(/^-[^-]*[^-cdDfisuwz0-9]/) && args.filter((x) => x && (x === "-" || !x.startsWith("-"))).length <= 1;
   if (verb === "rg") return !has(/^--(pre|hostname-bin)\b/);
   if (verb === "sed") {
-    if (has(/^-[A-Za-z]*[if]|^--(in-place|file)\b/)) return false;
+    // only flag letters and `-e` (BSD `-I`/`-l`, `-i`, `-f` write or take a file); `-l` is no value option, so its script is still checked
+    if (args.some((x) => /^-[^-]/.test(x) && !/^-[nErsuze]*$/.test(x))) return false;
     const scripts = scriptOperands(core, skip);
     return scripts.length > 0 && scripts.every((i) => sedReadOnly(core[i]));
   }
   if (verb.endsWith("awk")) {
-    if (has(/^-[A-Za-z]*[fEilo]|^--(f|e|include|load)/)) return false;
+    if (has(/^-[A-Za-z]*[fEdilop]|^--(f|e|include|load)/)) return false;
     const scripts = scriptOperands(core, skip);
     return scripts.length > 0 && scripts.every((i) => awkReadOnly(core[i]));
   }
@@ -928,7 +929,14 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
       if (ASSIGNERS.has(verb0) || (verb0 === "printf" && v.core.includes("-v"))) out.pure = false;
       if (!neutral && raw !== undefined) {
         if (!PURE_VERBS.has(baseName(raw)) || !v.core.length || !PURE_VERBS.has(baseName(v.core[0]))) out.pure = false;
-        else if (!unitReadOnly(v.core, skip)) out.ro = false;
+        else if (!unitReadOnly(v.core, skip)) {
+          out.ro = false;
+          // an output flag may carry its path attached (`gawk -oFILE`, `sort -k1 -oFILE`, `--output=FILE`): scan every tail of an option word
+          for (const x of v.core.slice(1)) {
+            if (/^-[^-]/.test(x)) for (let k = 2; k < x.length; k++) out.protWords.push(x.slice(k));
+            else if (/^--[^=]+=/.test(x)) out.protWords.push(x.slice(x.indexOf("=") + 1));
+          }
+        }
       }
       const np = new Set(nonPathArgs(v.core, skip).map((i) => i + off));
       out.protWords.push(...unitWords.filter((_, i) => !np.has(i)));
