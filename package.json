@@ -12,13 +12,23 @@
   },
   "pi": {
     "extensions": [
-      "./extensions/core-adapter/index.ts"
+      "./extensions/core-adapter/index.ts",
+      "./node_modules/pi-subagents/index.js",
+      "./node_modules/@gotgenes/pi-permission-system/src/index.ts",
+      "./node_modules/pi-intercom/index.ts"
     ],
     "subagents": {
       "agents": [
         "./agents"
       ]
-    }
+    },
+    "skills": [
+      "./node_modules/pi-subagents/skills",
+      "./node_modules/pi-intercom/skills"
+    ],
+    "prompts": [
+      "./node_modules/pi-subagents/prompts"
+    ]
   },
   "scripts": {
     "test": "python -m unittest discover -s tests -v",
@@ -27,6 +37,14 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "type": "module",
+  "dependencies": {
+    "@gotgenes/pi-permission-system": "39.0.2",
+    "pi-intercom": "0.16.1",
+    "pi-subagents": "0.75.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "1.1.0",
     "@types/node": "^22.0.0",

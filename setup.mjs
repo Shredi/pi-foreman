@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // pi-foreman installer (design section 11). Plain Node >= 22 ESM, no dependencies.
-//   node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--remove] [--agent-dir <dir>]
+//   node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--develop] [--remove] [--agent-dir <dir>]
+// pi-foreman itself is installed with `pi install git:github.com/Shredi/pi-foreman` (it bundles pi-subagents,
+// the permission system and pi-intercom as dependencies); this script writes the config around it.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -14,7 +16,22 @@ const MANAGED_KEYS = ["agentOverridesByProvider", "agentOverrides", "forceTopLev
 const MIN_PY = [3, 9];
 const PROBE_CODE = "import sys;print('%d.%d' % sys.version_info[:2]);print(sys.executable)";
 const OVERLAY_RE = /^npm:(@[a-z0-9~][a-z0-9._~-]*\/)?[a-z0-9~][a-z0-9._~-]*@\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
-const USAGE = "Usage: node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--remove] [--agent-dir <dir>]\n  --no-intercom  do not install pi-intercom (installed by default) and do not write its config";
+const FOREMAN_INSTALL = "pi install git:github.com/Shredi/pi-foreman";
+const FOREMAN_SOURCE = "git:github.com/Shredi/pi-foreman";
+const USAGE = [
+  "Usage: node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--develop] [--remove] [--agent-dir <dir>]",
+  `  Install pi-foreman first: ${FOREMAN_INSTALL}  (this script is also reachable as \`foreman setup\`).`,
+  "  --no-intercom  filter pi-intercom out of the pi-foreman package entry and do not write its config",
+  "                 (adds the filter only; delete the \"!node_modules/pi-intercom/**\" lines from settings.json to undo)",
+  "  --develop      run from a checkout: write <checkout>/.pi/settings.json so the checkout replaces the installed",
+  "                 package in that directory (project packages load only after Pi's trust prompt, or `pi -a`)",
+  "  --remove       drop the managed settings keys and config; then run `pi remove <pi-foreman source>` yourself",
+  "  --dry-run      show what would change, write nothing",
+].join("\n");
+const NO_INTERCOM_GLOB = "!node_modules/pi-intercom/**";
+const BUNDLED_RE = /^npm:(pi-subagents|@gotgenes\/pi-permission-system|pi-intercom)(@.*)?$/;
+const REMOTE_FOREMAN_RE = /^(npm:pi-foreman(@[^/]+)?|(git:)?(https?:\/\/)?github\.com[/:][^/]+\/pi-foreman(\.git)?(@[^/]+)?\/?)$/;
+const BRIDGE_HINT = "pi-claude-bridge: log in once. Run `CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude` and enter /login, or run `claude setup-token` and export CLAUDE_CODE_OAUTH_TOKEN (docs/install.md, \"Claude bridge: log in once\").";
 const INTERCOM = "pi-intercom";
 // Written once when absent (never overwritten): wake on every inbound message, the human's input first.
 const INTERCOM_CONFIG = { inboundTrigger: "always", busyDelivery: "human-first" };
@@ -33,7 +50,7 @@ const say = (s = "") => console.log(s);
 // ---------------------------------------------------------------- helpers
 
 function parseArgs(argv) {
-  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false };
+  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false, develop: false };
   for (let i = 0; i < argv.length; i++) {
     const eq = argv[i].startsWith("--") ? argv[i].indexOf("=") : -1;
     const flag = eq >= 0 ? argv[i].slice(0, eq) : argv[i];
@@ -47,6 +64,7 @@ function parseArgs(argv) {
     else if (flag === "--project") o.project = true;
     else if (flag === "--remove") o.remove = true;
     else if (flag === "--no-intercom") o.noIntercom = true;
+    else if (flag === "--develop") o.develop = true;
     else if (flag === "--overlay") o.overlay = value();
     else if (flag === "--agent-dir") o.agentDir = value();
     else if (flag === "--help" || flag === "-h") throw new Fatal(USAGE, 0);
@@ -56,6 +74,7 @@ function parseArgs(argv) {
     throw new Fatal(`--overlay needs an exact version, e.g. npm:@scope/pkg@1.2.3 (got "${o.overlay}"). Ranges and tags are refused.`, 2);
   }
   if (o.overlay && o.remove) throw new Fatal("--overlay and --remove cannot be combined.", 2);
+  if (o.develop && (o.remove || o.project)) throw new Fatal("--develop cannot be combined with --remove or --project.", 2);
   return o;
 }
 
@@ -265,36 +284,45 @@ function entrySource(e) {
   return null;
 }
 
-/** Is `spec` (an exact npm pin, or the local checkout path) recorded in settings.packages? */
-function isRecorded(settings, spec, baseDir) {
+/** Is the exact npm pin `spec` recorded in settings.packages? */
+function isRecorded(settings, spec) {
   const list = settings && Array.isArray(settings.packages) ? settings.packages : [];
-  const norm = (p) => (WIN ? p.toLowerCase() : p);
-  for (const e of list) {
-    const src = entrySource(e);
-    if (!src) continue;
-    if (spec.startsWith("npm:")) {
-      if (src === spec) return true;
-      continue;
-    }
-    if (/^(npm|git|https?|ssh):/.test(src) || src.startsWith("git@")) continue;
-    let resolved = path.resolve(baseDir, src);
-    try {
-      resolved = fs.realpathSync(resolved);
-    } catch {
-      /* dangling entry: compare unresolved */
-    }
-    if (norm(resolved) === norm(spec)) return true;
-  }
-  return false;
+  return list.some((e) => entrySource(e) === spec);
 }
 
+const isLocalSource = (src) => !/^(npm|git|https?|ssh):/.test(src) && !src.startsWith("git@");
 const isBridgeEntry = (e) => /(^|[/:@])pi-claude-bridge(@|$|\/)/.test(entrySource(e) ?? "");
-const isForemanEntry = (e, baseDir) => {
-  const src = entrySource(e);
-  if (!src) return false;
-  if (/^npm:pi-foreman(@|$)/.test(src)) return true;
-  return isRecorded({ packages: [e] }, ROOT, baseDir);
+const isBundledEntry = (e) => BUNDLED_RE.test(entrySource(e) ?? "");
+const isRemoteForeman = (e) => REMOTE_FOREMAN_RE.test(entrySource(e) ?? "");
+const resolveLocal = (src, baseDir) => {
+  const r = path.resolve(baseDir, src);
+  try {
+    return fs.realpathSync(r);
+  } catch {
+    return r;
+  }
 };
+/** A local-path entry whose package.json says it is pi-foreman. */
+function isLocalForeman(e, baseDir) {
+  const src = entrySource(e);
+  if (!src || !isLocalSource(src)) return false;
+  try {
+    return JSON.parse(fs.readFileSync(path.join(resolveLocal(src, baseDir), "package.json"), "utf8")).name === "pi-foreman";
+  } catch {
+    return false;
+  }
+}
+const isForemanEntry = (e, baseDir) => isRemoteForeman(e) || isLocalForeman(e, baseDir);
+
+/** The pi-foreman entry with the pi-intercom exclusion added (object form), or the same entry when already filtered. */
+function withoutIntercom(e) {
+  const o = isObj(e) ? structuredClone(e) : { source: e };
+  for (const k of ["extensions", "skills"]) {
+    const cur = Array.isArray(o[k]) ? o[k] : [];
+    o[k] = cur.includes(NO_INTERCOM_GLOB) ? cur : [...cur, NO_INTERCOM_GLOB];
+  }
+  return canonical(o) === canonical(e) ? e : o;
+}
 
 /**
  * `packages` with the pi-foreman entry moved right before the first pi-claude-bridge entry, or
@@ -367,8 +395,8 @@ function main(argv) {
 
   // ------------------------------------------------------------ remove
   function removeAll() {
-    const cmds = [];
-    if (isRecorded(settings, ROOT, baseDir)) cmds.push(["remove", ROOT, ...(opts.project ? ["-l"] : [])]);
+    const installed = (Array.isArray(settings.packages) ? settings.packages : []).find((e) => isForemanEntry(e, baseDir));
+    const removeLine = `pi remove ${(installed && entrySource(installed)) || FOREMAN_SOURCE}${opts.project ? " -l" : ""}`;
     const cur = isObj(settings.subagents) ? pick(settings.subagents) : {};
     const dropManaged = (obj) => {
       if (!isObj(obj.subagents)) return;
@@ -391,15 +419,14 @@ function main(argv) {
       dropPerm = true;
       say(`permission-system config: unchanged since written, removing ${permFile}`);
     } else say("permission-system config: not ours or edited by hand, kept");
-    for (const c of cmds) say(`${dry ? "would run" : "will run"}: pi ${c.join(" ")}`);
-    if (!cmds.length && !next && !dropPerm) {
+    if (!next && !dropPerm) {
       say("pi-foreman: up to date, nothing to remove.");
+      say(`The package itself stays installed; to remove it run: ${removeLine}`);
       return;
     }
-    say("kept: foreman.json, backups, pi-subagents, pi-intercom and its config, and any overlay (use `pi remove <source>` for those).");
+    say("kept: foreman.json, backups, intercom config, and any overlay (use `pi remove <source>` for the overlay).");
     if (dry) return;
     backup();
-    for (const c of cmds) runOrDie(c);
     if (next) {
       const fresh = parseJsonObject(readText(settingsFile), settingsFile) ?? {};
       dropManaged(fresh);
@@ -415,10 +442,38 @@ function main(argv) {
     }
     if (managedText !== null) writeFile(managedFile, toJson(managed));
     say("pi-foreman: removed managed entries.");
+    say(`The package itself stays installed; to remove it run: ${removeLine}`);
+  }
+
+  // ------------------------------------------------------------ develop
+  /** <checkout>/.pi/settings.json: load this checkout and switch the installed pi-foreman package off in this directory. */
+  function developSettings() {
+    const file = path.join(ROOT, ".pi", "settings.json");
+    const globalFile = path.join(agentDir, "settings.json");
+    const globalPk = (parseJsonObject(readText(globalFile), globalFile) ?? {}).packages;
+    const inst = (Array.isArray(globalPk) ? globalPk : []).find(isRemoteForeman);
+    const text = readText(file);
+    const cur = parseJsonObject(text, file) ?? {};
+    const others = (Array.isArray(cur.packages) ? cur.packages : []).filter((e) => !isForemanEntry(e, path.dirname(file)));
+    const override = inst ? [{ source: entrySource(inst), extensions: [], skills: [], prompts: [], themes: [] }] : [];
+    const next = { ...cur, packages: ["..", ...override, ...others] };
+    let changed = false;
+    if (text !== null && canonical(next) === canonical(cur)) say(`develop: ${file} already loads this checkout`);
+    else {
+      changed = true;
+      say(`develop: ${dry ? "would write" : "writing"} ${file}${inst ? ` (overrides the installed ${entrySource(inst)} here)` : ""}`);
+      say(unifiedDiff(".pi/settings.json", text, toJson(next)));
+      if (!dry) writeFile(file, toJson(next));
+    }
+    say("  note: project packages load only after the project is trusted: answer Pi's trust prompt, or run `pi -a` (--approve) headless. Run `npm install` in the checkout once so the bundled packages load.");
+    return changed;
   }
 
   // ------------------------------------------------------------ install
   function install() {
+    if (!(Array.isArray(settings.packages) ? settings.packages : []).some((e) => isForemanEntry(e, baseDir)) && !opts.develop) {
+      throw new Fatal(`pi-foreman is not installed as a Pi package. Run:\n${FOREMAN_INSTALL}${opts.project ? " -l" : ""}`);
+    }
     const py = resolvePython(agentDir);
     say(`  python ${py.version.join(".")} via ${py.source}: ${py.executable}`);
     let anyChange = false;
@@ -432,27 +487,43 @@ function main(argv) {
       else writeFile(foremanFile, template);
     } else say("foreman.json: present, left alone");
 
-    // packages
+    // packages: pi-foreman installs itself (and bundles its dependencies); here we migrate and filter
+    const list0 = Array.isArray(settings.packages) ? settings.packages : [];
+    const hasRemote = list0.some(isRemoteForeman);
+    // Leftover top-level copies of the bundled packages (or an old local-path entry next to the git/npm one)
+    // would load a second time, and a duplicate tool name stops Pi at start: remove them.
+    const stale = list0.filter((e) => isBundledEntry(e) || (hasRemote && isLocalForeman(e, baseDir)));
+    const removeArgs = stale.map((e) => {
+      const src = entrySource(e);
+      return ["remove", isLocalSource(src) ? resolveLocal(src, baseDir) : src, ...(opts.project ? ["-l"] : [])];
+    });
+    for (const e of stale) say(`  package ${entrySource(e)}: ${dry ? "would remove" : "removing"} (bundled with pi-foreman now; a second copy stops Pi at start)`);
+    if (removeArgs.length) anyChange = true;
     const want = [];
-    for (const p of lock.packages) {
-      if (p.name === INTERCOM && opts.noIntercom) say(`  package ${p.name}@${p.version}: skipped (--no-intercom)`);
-      else if (p.mode === "install") want.push({ spec: `npm:${p.name}@${p.version}`, label: `${p.name}@${p.version}` });
-      else if (p.mode === "local") want.push({ spec: ROOT, label: `${p.name} (local checkout ${ROOT})` });
-      else if (p.mode === "phase3") say(`  pinned, installed from Phase 3: ${p.name}@${p.version}`);
-    }
+    for (const p of lock.packages) if (p.mode === "bundled") say(`  package ${p.name}@${p.version}: bundled with pi-foreman${p.name === INTERCOM && opts.noIntercom ? " (filtered out, --no-intercom)" : ""}`);
     if (opts.overlay) want.push({ spec: opts.overlay, label: `overlay ${opts.overlay}` });
-    const todo = want.filter((w) => !isRecorded(settings, w.spec, baseDir));
+    const todo = want.filter((w) => !isRecorded(settings, w.spec));
     for (const w of want) say(`  package ${w.label}: ${todo.includes(w) ? "to install" : "already recorded"}`);
     const installArgs = todo.map((w) => ["install", w.spec, ...(opts.project ? ["-l"] : [])]);
     if (installArgs.length) anyChange = true;
-    // load order: pi-foreman before pi-claude-bridge (after `pi install` appended what was missing)
-    const plannedPackages = [...(Array.isArray(settings.packages) ? settings.packages : []), ...todo.map((w) => (w.spec === ROOT ? path.relative(baseDir, ROOT) : w.spec))];
-    const reordered = foremanBeforeBridge(plannedPackages, baseDir);
+    const planned = [...list0.filter((e) => !stale.includes(e)), ...todo.map((w) => w.spec)];
+    // --no-intercom: filter on the pi-foreman entry
+    const applyFilter = (pk) => (Array.isArray(pk) && opts.noIntercom ? pk.map((e) => (isForemanEntry(e, baseDir) ? withoutIntercom(e) : e)) : pk);
+    const filtered = canonical(applyFilter(planned)) !== canonical(planned) ? applyFilter(planned) : null;
+    if (filtered) {
+      anyChange = true;
+      say(`packages: ${dry ? "would filter" : "filtering"} pi-intercom out of the pi-foreman entry (--no-intercom)`);
+      say(unifiedDiff(path.basename(settingsFile), toJson({ ...settings, packages: planned }), toJson({ ...settings, packages: filtered })));
+    }
+    // load order: pi-foreman before pi-claude-bridge
+    const afterFilter = filtered ?? planned;
+    const reordered = foremanBeforeBridge(afterFilter, baseDir);
     if (reordered) {
       anyChange = true;
       say(`packages: ${dry ? "would move" : "moving"} pi-foreman before pi-claude-bridge, so its config-drift check runs before the bridge's compaction and branch summaries`);
-      say(unifiedDiff(path.basename(settingsFile), toJson({ ...settings, packages: plannedPackages }), toJson({ ...settings, packages: reordered })));
+      say(unifiedDiff(path.basename(settingsFile), toJson({ ...settings, packages: afterFilter }), toJson({ ...settings, packages: reordered })));
     }
+    const finalPackages = reordered ?? afterFilter;
     if (!opts.noIntercom) {
       const icFile = path.join(agentDir, "intercom", "config.json");
       const icText = readText(icFile);
@@ -534,18 +605,18 @@ function main(argv) {
     for (const w of pg.data.warnings || []) say(`  warning: ${w}`);
 
     if (dry) {
-      for (const a of installArgs) say(`would run: pi ${a.join(" ")}`);
+      for (const a of [...removeArgs, ...installArgs]) say(`would run: pi ${a.join(" ")}`);
       if (needRecord || permNeedRecord) say(`would record the managed hash in ${managedFile}`);
     } else if (anyChange) {
-      if (installArgs.length || !same || reordered) backup();
-      for (const a of installArgs) runOrDie(a);
+      if (removeArgs.length || installArgs.length || !same || filtered || reordered) backup();
+      for (const a of [...removeArgs, ...installArgs]) runOrDie(a);
       let finalBlock = pick(next.subagents);
-      if (!same || reordered) {
+      if (!same || filtered || reordered) {
         // pi edits `packages` in the same file, so merge into what is on disk now
         const fresh = parseJsonObject(readText(settingsFile), settingsFile) ?? {};
         if (!same) applyWanted(fresh);
-        const order = foremanBeforeBridge(fresh.packages, baseDir);
-        if (order) fresh.packages = order;
+        const filteredNow = applyFilter(fresh.packages);
+        fresh.packages = foremanBeforeBridge(filteredNow, baseDir) ?? filteredNow;
         writeFile(settingsFile, toJson(fresh));
         if (!same) finalBlock = pick(fresh.subagents);
       }
@@ -575,6 +646,8 @@ function main(argv) {
     }
     if (errors.length) say(`  some roles are unresolved; only the resolvable part was written. Edit ${foremanFile}.`);
 
+    if (finalPackages.some(isBridgeEntry)) say(BRIDGE_HINT.replace("<agent dir>", agentDir));
+    if (opts.develop && developSettings()) anyChange = true;
     if (!anyChange) say("pi-foreman: up to date, nothing to change.");
     else if (dry) say("pi-foreman: dry run complete, nothing written.");
     else say("pi-foreman: done. Run /foreman doctor inside pi to check the setup.");
