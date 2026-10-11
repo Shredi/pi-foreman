@@ -992,8 +992,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return !!launch?.bind;
   }
 
-  /** Plan review (planreview.ts): each primary
- `[plan-review]` verdict is kept for the plan bytes on disk now; traced `plan_review`. */
+  /** Plan review (planreview.ts): each primary `[plan-review]` verdict is kept for the plan bytes on disk now; traced `plan_review`. */
   function recordPlanReviews(s: Session, runId: string, results: ReturnType<typeof reviewResultsOfRunEnd>): void {
     const opts = { cwd: s.cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir };
     const plans = planPathsOf(s.reviewRuns.byRun.get(runId)?.files ?? [], opts.scratchDir);
@@ -1751,6 +1750,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const runId = launchId(input, details, isError);
     const run = runId ? s.runs.get(runId) : undefined;
     if (!runId || !run || !s.launchBatch.mayHold(callId)) return null;
+    // a panel shadow is optional and never blocks: its launch returns at once
+    if (shadowRun(s.reviewRuns.byRun.get(runId))) return null;
     const open = openRequestLine(s.supervisor.open.size, runId);
     if (open) return { text: open, path: null, plain: true };
     const cap = holdCap(waitLimits((k) => get(s.config.config, `wait.${k}`)).maxSeconds, roleTimeoutMs(get(s.config.config, "roles"), run.role));

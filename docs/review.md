@@ -85,10 +85,13 @@ The primary launch is unchanged. When the primary's run ends on a gate occasion,
 shadow, each with only the marker line `[panel-shadow:<model>] [<gate>]`. The hook binds the call to the newest open
 pending panel of the same gate, replaces the task with the primary's stored task and facts, and sets the shadow model
 after the model rules: exempt from the role-map rule, still rank-checked by `ladder.childPolicy` and clamped by
-`maxThinking`. Shadows are optional for the verdict; the foreman may skip them when the budget is tight.
+`maxThinking`. Shadows are optional for the verdict; the foreman may skip them when the budget is tight. The list
+reaches the foreman with the primary's held result, else as its own message that steers into the running turn or
+starts one. With shadows configured the foreman prompt carries the matching rule. A shadow launch is never held by
+`ceremony.launchWait`.
 
-The hook refuses a marker call (trace `panel {role, gate, models, primary, decision: refused, reason}`) when there is no
-open panel (or the call is outside a gate), the model is not configured in `shadows`, the shadow already ran for that
+The hook refuses a marker call (trace `panel {role, gate, models, primary, decision: refused, reason}`) when the panel is off
+or the caller is a child, there is no open panel (or the call is outside a gate), the model is not configured in `shadows`, the shadow already ran for that
 panel, the occasion differs, the call is not a single `reviewer` launch, or the rank policy rejects the model.
 Otherwise the trace says `decision: launched`.
 
