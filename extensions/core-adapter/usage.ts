@@ -69,7 +69,8 @@ export interface UsageLine {
   provider: string | null;
   model: string | null;
   launchId: string | null;
-  kind: LaunchKind;
+  /** `keepalive`: a Pi cache-warming refresh (keepalive.ts), not a model turn. */
+  kind: LaunchKind | "keepalive";
   stopReason: string | null;
   input: number;
   cacheRead: number;
@@ -78,6 +79,8 @@ export interface UsageLine {
   cost: UsageCost;
   /** Set only when the token counts are a character-based estimate (the provider reported zero usage). */
   estimated?: true;
+  /** Keep-alive lines only: id of the Pi session entry (dedupe on resume). */
+  entryId?: string;
 }
 
 export function usageDir(agentDir: string): string {
@@ -271,6 +274,8 @@ export interface UsageSummary {
   total: Totals;
   /** Per kind: distinct launches (foreman: distinct foreman sessions) and model calls. */
   byKind: Map<LaunchKind, { launches: number; calls: number }>;
+  /** Keep-alive lines (kind "keepalive"), which are not part of the totals above. */
+  keepalive: Totals;
 }
 
 const zero = (): Totals => ({ calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
@@ -295,7 +300,12 @@ export function aggregate(lines: UsageLine[]): UsageSummary {
   const total = zero();
   const launches = new Map<LaunchKind, Set<string>>();
   const byKind = new Map<LaunchKind, { launches: number; calls: number }>();
+  const keepalive = zero();
   for (const l of lines) {
+    if (l.kind === "keepalive") {
+      add(keepalive, l);
+      continue;
+    }
     const model = l.provider && l.model ? `${l.provider}/${l.model}` : l.model ?? "(unknown)";
     for (const [map, key] of [[byRole, l.role], [byModel, model]] as const) {
       const t = map.get(key) ?? zero();
@@ -303,7 +313,7 @@ export function aggregate(lines: UsageLine[]): UsageSummary {
       map.set(key, t);
     }
     add(total, l);
-    const kind = l.kind;
+    const kind: LaunchKind = l.kind;
     const k = byKind.get(kind) ?? { launches: 0, calls: 0 };
     k.calls += 1;
     byKind.set(kind, k);
@@ -312,7 +322,7 @@ export function aggregate(lines: UsageLine[]): UsageSummary {
     launches.set(kind, ids);
   }
   for (const [kind, ids] of launches) byKind.get(kind)!.launches = ids.size;
-  return { byRole, byModel, total, byKind };
+  return { byRole, byModel, total, byKind, keepalive };
 }
 
 function cell(v: number, money = false): string {
@@ -330,7 +340,8 @@ export function formatSummary(sum: UsageSummary, title: string): string {
   };
   const sorted = (m: Map<string, Totals>): string[][] => [...m.keys()].sort().map((k) => row(k, m.get(k)!));
   const out = [title];
-  if (sum.total.calls === 0) return [...out, "no usage recorded"].join("\n");
+  const ka = sum.keepalive.calls > 0 ? ["", `keep-alive: ${sum.keepalive.calls} call(s), $${sum.keepalive.cost.total.toFixed(4)}`] : [];
+  if (sum.total.calls === 0) return [...out, "no usage recorded", ...ka].join("\n");
   out.push("", ...table("role", [...sorted(sum.byRole), row("total", sum.total)]));
   out.push("", ...table("model", sorted(sum.byModel)));
   out.push("", "launches by kind:");
@@ -338,7 +349,7 @@ export function formatSummary(sum: UsageSummary, title: string): string {
     const k = sum.byKind.get(kind);
     if (k) out.push(`  ${kind.padEnd(16)} ${String(k.launches).padStart(4)} launch(es), ${k.calls} call(s)`);
   }
-  return out.join("\n");
+  return [...out, ...ka].join("\n");
 }
 
 // ------------------------------------------------------------- turn cause (D9)

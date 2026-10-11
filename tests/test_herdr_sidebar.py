@@ -24,9 +24,9 @@ except ImportError:  # Python < 3.11
     tomllib = None
 
 SYMS = {
-    "unicode": {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗"},
+    "unicode": {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗", "keepalive": "♨"},
     "nerd": {"working": "\uf252", "waiting": "\uf04c", "asking": "\uf128", "blocked": "\uf256",
-             "done": "\uf00c", "lost": "\uf00d"},
+             "done": "\uf00c", "lost": "\uf00d", "keepalive": "\uf06d"},
 }
 
 
@@ -379,7 +379,7 @@ class SnippetTest(unittest.TestCase):
         self.assertLessEqual(len(rows), 16)
         glyphs = set()
         for s in SYMS.values():
-            glyphs.update(s.values())
+            glyphs.update(v for k, v in s.items() if k != "keepalive")  # footer glyph, not a sidebar state
         for row in rows:
             self.assertLessEqual(len(row), 16)
             for cell in row:

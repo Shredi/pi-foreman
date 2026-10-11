@@ -4,10 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type SymbolKey = "working" | "waiting" | "asking" | "blocked" | "done" | "lost";
+export type SymbolKey = "working" | "waiting" | "asking" | "blocked" | "done" | "lost" | "keepalive";
 export type SymbolSet = Record<SymbolKey, string>;
 
-const FALLBACK: Record<"unicode" | "nerd", SymbolSet> = {
+const KEEPALIVE: Record<"unicode" | "nerd", string> = { unicode: "\u2668", nerd: "\uf06d" };
+
+const FALLBACK: Record<"unicode" | "nerd", Omit<SymbolSet, "keepalive">> = {
   unicode: { working: "⏳", waiting: "⏸", asking: "?", blocked: "✋", done: "✓", lost: "✗" },
   nerd: { working: "", waiting: "", asking: "", blocked: "", done: "", lost: "" },
 };
@@ -29,7 +31,7 @@ function table(): Record<string, Partial<SymbolSet>> {
 /** The glyph set for a `ui.symbols` value; a missing glyph falls back to the built-in one. */
 export function symbolSet(name: unknown): SymbolSet {
   const which = name === "nerd" ? "nerd" : "unicode";
-  return { ...FALLBACK[which], ...(table()[which] ?? {}) };
+  return { ...FALLBACK[which], keepalive: KEEPALIVE[which], ...(table()[which] ?? {}) };
 }
 
 /** Run state (childwidget RunState) -> symbol key. */

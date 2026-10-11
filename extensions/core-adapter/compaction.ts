@@ -23,6 +23,14 @@ export function overThreshold(u: ContextUsageLike | null | undefined, fraction: 
   return !!u && isNum(u.tokens) && isNum(u.contextWindow) && u.contextWindow > 0 && isNum(fraction) && u.tokens > fraction * u.contextWindow;
 }
 
+/** Idle-cache warm compaction compacts from this share of the configured threshold (no second knob). */
+export const IDLE_FLOOR_FACTOR = 0.5;
+
+/** True when usage is known and above `fraction * IDLE_FLOOR_FACTOR` of the window. */
+export function overIdleFloor(u: ContextUsageLike | null | undefined, fraction: unknown): boolean {
+  return isNum(fraction) && overThreshold(u, fraction * IDLE_FLOOR_FACTOR);
+}
+
 /** Once-per-crossing latch per session: reset on session_compact / session_compact_failed. */
 export class CompactionGate {
   private requested = new Set<string>();
@@ -33,6 +41,16 @@ export class CompactionGate {
     const cls = priceClass(model, config.tiers);
     const th = (config.thresholds && typeof config.thresholds === "object" ? config.thresholds : {}) as Record<string, unknown>;
     if (!overThreshold(usage, th[cls])) return null;
+    this.requested.add(sessionId);
+    return cls;
+  }
+
+  /** Like decide() but against the idle floor; shares the latch (null when latched or below the floor). */
+  decideIdle(sessionId: string, model: { cost?: { input?: unknown } } | null | undefined, usage: ContextUsageLike | null | undefined, config: { tiers: unknown; thresholds: unknown }): PriceClass | null {
+    if (this.requested.has(sessionId)) return null;
+    const cls = priceClass(model, config.tiers);
+    const th = (config.thresholds && typeof config.thresholds === "object" ? config.thresholds : {}) as Record<string, unknown>;
+    if (!overIdleFloor(usage, th[cls])) return null;
     this.requested.add(sessionId);
     return cls;
   }

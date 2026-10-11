@@ -35,6 +35,7 @@ export const zeroTotals = (): FooterTotals => ({ input: 0, cacheRead: 0, cacheWr
 /** Add one assistant message's usage to the totals. */
 export function addMessage(t: FooterTotals, message: unknown, registry?: PriceRegistry): void {
   const m = (message && typeof message === "object" ? message : {}) as Json;
+  if (m.kind === "keepalive") return; // keep-alive refreshes are summed by /foreman cost, not per turn
   const u = (m.usage && typeof m.usage === "object" ? m.usage : {}) as Json;
   const c = (u.cost && typeof u.cost === "object" ? u.cost : {}) as Json;
   t.input += num(u.input);
@@ -77,6 +78,18 @@ export function footerText(t: FooterTotals, children: number | null): string {
   const up = t.input + t.cacheRead + t.cacheWrite;
   const base = `↑${abbrev(up)} ↓${abbrev(t.output)} tok · ${money(t.cost, t.unpriced)} list (warm ${money(t.costCacheRead, t.unpriced)} / cold ${money(t.costCold, t.unpriced)})`;
   return children === null ? base : `${base} · children ${children}`;
+}
+
+export const CACHE_STATUS_KEY = "foreman-cache";
+
+/** The keep-alive glyph while the idle window runs (undefined clears it); tui/rpc only, never throws. */
+export function cacheStatus(ctx: Pick<FooterCtx, "mode" | "ui">, active: boolean, glyph: string): void {
+  try {
+    if (ctx.mode !== "tui" && ctx.mode !== "rpc") return;
+    ctx.ui.setStatus(CACHE_STATUS_KEY, active ? glyph : undefined);
+  } catch {
+    // the footer is cosmetic
+  }
 }
 
 export interface FooterCtx {
