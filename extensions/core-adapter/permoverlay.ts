@@ -702,6 +702,8 @@ interface Collected {
   pure?: boolean;
   /** False once a unit can write: in-place sed, `sort -o`, `find -exec`/`-delete`, `rg --pre` and the like. */
   ro?: boolean;
+  /** False once a unit is not a PROTECTED_READERS command: only then may a protected operand be skipped as a read. */
+  rdr?: boolean;
   /** Words that are the target of a write redirect (`/dev/null` and fd dups excluded). */
   writeTargets?: Set<string>;
   /** The first `git worktree` subcommand found that is neither `list` nor `remove` (children may not run it). */
@@ -716,6 +718,12 @@ interface Collected {
  * skipped by the write protection; otherwise a pattern could become a path (`echo .git | xargs rm`).
  */
 const PURE_VERBS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk", "mawk", "nawk", "find", "echo", "printf", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "ls", "cd", "pwd", "nl", "column", "diff", "true", "false"]);
+
+/**
+ * The only verbs whose protected operands count as a read (write-only protect rules skip them). Programmable or
+ * option-rich readers (awk, sort, uniq, less, find, xargs, tee, ...) keep full protection whatever their flags.
+ */
+const PROTECTED_READERS = new Set(["cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "ls", "stat", "file", "diff", "cmp", "md5sum", "sha1sum", "sha256sum", "shasum", "cd"]);
 
 /** Short options that take a value, and long ones that take the next word, per read command. */
 const VALUE_OPTS: Record<string, { short: string; long: string[]; pattern: string; patternLong: string[]; file: string; fileLong: string[]; globLong?: string[]; globShort?: string }> = {
@@ -871,6 +879,18 @@ function unitReadOnly(core: string[], skip: Set<number>): boolean {
   return true;
 }
 
+/** Whether one unit (wrappers stripped) may have its protected operands skipped as a read: see PROTECTED_READERS. */
+function protectedReader(core: string[], skip: Set<number>): boolean {
+  const verb = baseName(core[0]);
+  const args = core.map((x, i) => (i > 0 && !skip.has(i) ? x : "")).slice(1);
+  const has = (re: RegExp): boolean => args.some((x) => re.test(x));
+  if (verb === "sed") return !has(/^--/) && args.every((x) => !/^-/.test(x) || /^-[nErs]*$/.test(x)) && unitReadOnly(core, skip);
+  if (!PROTECTED_READERS.has(verb)) return false;
+  if (verb === "file") return !has(/^-[A-Za-z]*C|^--compile/);
+  if (GREP_FAMILY.has(verb)) return !has(/^-[A-Za-z]*f|^--(pre|pre-glob|file|ignore-file|hostname-bin)/) && unitReadOnly(core, skip);
+  return unitReadOnly(core, skip);
+}
+
 /** Commands that remove or rename their operands (POSIX, Windows, PowerShell names and aliases). */
 const REMOVERS = new Set(["rm", "rmdir", "unlink", "trash", "trash-put", "gio", "mv", "rename", "ren", "move", "del", "erase", "rd", "srm", "shred", "remove-item", "ri", "rni", "rename-item", "move-item", "mi"]);
 
@@ -928,13 +948,15 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
       // `printf -v f %s PATH`, `read f`, `declare f=PATH`, `mapfile f`: the words become a variable a later redirect may use
       if (ASSIGNERS.has(verb0) || (verb0 === "printf" && v.core.includes("-v"))) out.pure = false;
       if (!neutral && raw !== undefined) {
+        const reader = v.core.length > 0 && protectedReader(v.core, skip);
+        if (!reader) out.rdr = false;
         if (!PURE_VERBS.has(baseName(raw)) || !v.core.length || !PURE_VERBS.has(baseName(v.core[0]))) out.pure = false;
-        else if (!unitReadOnly(v.core, skip)) {
-          out.ro = false;
-          // an output flag may carry its path attached (`gawk -oFILE`, `sort -k1 -oFILE`, `--output=FILE`): scan every tail of an option word
+        else if (!reader || !unitReadOnly(v.core, skip)) {
+          if (!unitReadOnly(v.core, skip)) out.ro = false;
+          // an output flag may carry its path attached (`gawk -oFILE`, `sort -k1 -oFILE`, `--output=FILE`, `-W dump-variables=FILE`): scan every tail of an option word
           for (const x of v.core.slice(1)) {
             if (/^-[^-]/.test(x)) for (let k = 2; k < x.length; k++) out.protWords.push(x.slice(k));
-            else if (/^--[^=]+=/.test(x)) out.protWords.push(x.slice(x.indexOf("=") + 1));
+            else if (x.indexOf("=") > 0) out.protWords.push(x.slice(x.indexOf("=") + 1));
           }
         }
       }
@@ -1267,17 +1289,18 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     const cd = childCdDeny(command, ctx);
     if (cd) return cd;
   }
-  const c: Collected = { unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, writeTargets: new Set(), worktreeRemoveWords: new Set() };
+  const c: Collected = { unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), worktreeRemoveWords: new Set() };
   collect(command, shell, 0, c);
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
-    const raw: Collected = { unitTexts: [], pipeTexts: [], words: [], removeWords: [], protWords: [], pure: true, ro: true, writeTargets: new Set() };
+    const raw: Collected = { unitTexts: [], pipeTexts: [], words: [], removeWords: [], protWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set() };
     collect(command, "powershell", 0, raw);
     c.words.push(...raw.words);
     c.removeWords!.push(...raw.removeWords!);
     c.protWords!.push(...raw.protWords!);
     c.pure = c.pure && raw.pure;
     c.ro = c.ro && raw.ro;
+    c.rdr = c.rdr && raw.rdr;
     raw.writeTargets!.forEach((x) => c.writeTargets!.add(x));
   }
   if (ctx.role === "child" && c.worktreeOp !== undefined) {
@@ -1290,7 +1313,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const pure = c.pure === true && !/\$\(|`|[<>]\(/.test(command);
   // Only read-only verbs, no write redirect anywhere (any target: a literal, `$f`, a quoted loop variable), no PowerShell: write-only protect rules do not fire.
   // A protected path in an assignment (`f=...`) or a `for`/`select`/`case` word list stays scanned; without a write redirect nothing writes to it.
-  const readOnly = pure && c.ro === true && shell === "posix" && c.writeTargets!.size === 0;
+  const readOnly = pure && c.ro === true && c.rdr === true && shell === "posix" && c.writeTargets!.size === 0;
   const pwords = pure ? [...new Set(c.protWords!.flatMap((w) => [w, ...expandBraces(w)]))] : words;
   const pctx: MatchCtx = shell === "posix" ? { ...ctx, bashWords: true, dotGlob: /dotglob|globignore|glob_?dots/i.test(command) } : ctx;
   const removed = new Set(c.removeWords!.flatMap((w) => [w, ...expandBraces(w)]));

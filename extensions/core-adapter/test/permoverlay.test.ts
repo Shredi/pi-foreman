@@ -659,8 +659,12 @@ test("review 5 F1: abbreviated long options, a stdin operand and exec flags are 
   for (const selfHost of [true, false]) {
     const r = rules2(selfHost);
     for (const cmd of bad) assert.equal(sh(r, world(ws, "child"), cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);
-    for (const cmd of ["sort", "uniq", "grep -rn p", "sed -n 1,5p", "awk '{print}'"]) {
+    for (const cmd of ["grep -rn p", "sed -n 1,5p"]) {
       assert.notEqual(sh(r, world(ws, "child"), `${cmd} ${D}`), "deny", `child selfHost=${selfHost}: ${cmd}`);
+    }
+    // programmable readers keep full protection on a protected operand (review 8)
+    for (const cmd of ["sort", "uniq", "awk '{print}'"]) {
+      assert.equal(sh(r, world(ws, "child"), `${cmd} ${D}`), "deny", `child selfHost=${selfHost}: ${cmd}`);
     }
   }
 });
@@ -681,9 +685,53 @@ test("review 7: BSD sed -I/-l and attached output values are not read-only", () 
   for (const selfHost of [true, false]) {
     const r = rules2(selfHost);
     for (const cmd of bad) assert.equal(sh(r, world(ws, "child"), cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);
-    for (const cmd of ["sed -n 1,5p", "sed -E 's/a/b/'", "sed -e 's/a/b/'", "sed -s -n p"]) {
+    for (const cmd of ["sed -n 1,5p", "sed -E 's/a/b/'", "sed -s -n p"]) {
       assert.notEqual(sh(r, world(ws, "child"), `${cmd} ${D}`), "deny", `child selfHost=${selfHost}: ${cmd}`);
     }
+  }
+});
+
+test("review 8: protected operands are skipped only for a minimal reader set", () => {
+  const D = "config/foreman.defaults.json";
+  const bad = [
+    `gawk '@include "inplace"; {print}' ${D}`,
+    `gawk '@load "rwarray"; {writea(FILENAME, a)}' ${D}`,
+    `gawk '@load "./evil"; {print}' ${D}`,
+    `gawk -W include=inplace '{print}' ${D}`,
+    `gawk -W exec=x ${D}`,
+    `gawk -W file=x ${D}`,
+    `gawk -W load=rwarray '{writea(FILENAME,a)}' ${D}`,
+    `gawk -D 'BEGIN{x=1}' ${D}`,
+    `awk '{print}' ${D}`,
+    `sort ${D}`,
+    `uniq ${D}`,
+    `less ${D}`,
+    `gawk -W dump-variables=${D} 'BEGIN{x=1}'`,
+    `grep -f ${D} x`,
+    `sed -e p ${D}`,
+    `echo x | tee ${D}`,
+  ];
+  const good = [
+    `cd ${ws}; grep -n "usage" tests/replay/fake_provider.ts | head -20; grep -n '"compaction"' -A6 ${D}; grep -n "cacheWarming" node_modules/@earendil-works/pi-coding-agent/docs/settings.md`,
+    `cd ${ws} && grep -n -A12 '"compaction"' ${D}; sed -n 330,365p config/foreman.schema.json`,
+    `grep -n "compaction" -A12 ${D} | head -30; D=node_modules/@earendil-works/pi-coding-agent; grep -n "function x" -A30 $D/dist/core/*.js | head -40`,
+    `cat ${D} | head -60; grep -n "compact" docs/sessions.md | head -20`,
+    `sed -n 1,60p extensions/core-adapter/compaction.ts; grep -n '"threshold"' -A12 ${D} | head -20`,
+    `ls node_modules | head -3; ls node_modules/.bin | head -3; cat extensions/core-adapter/cachepolicy.ts`,
+    `grep -rln "symbols.json" --exclude-dir=node_modules --exclude-dir=.git . | head`,
+    `grep -rn "process.env" node_modules/@gotgenes/pi-permission-system/src | head`,
+    `sed -n 1,5p ${D}`,
+    `sed -E 's/a/b/' ${D}`,
+    `grep -rn p ${D}`,
+    `cat ${D} | head`,
+    `wc -l ${D}`,
+    `diff ${D} ${D}`,
+    `ls -l node_modules`,
+  ];
+  for (const selfHost of [true, false]) {
+    const r = rules2(selfHost);
+    for (const cmd of bad) assert.equal(sh(r, world(ws, "child"), cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);
+    for (const cmd of good) assert.notEqual(sh(r, world(ws, "child"), cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);
   }
 });
 
