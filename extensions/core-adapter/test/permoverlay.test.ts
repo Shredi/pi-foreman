@@ -203,3 +203,10 @@ test("rules need a baseline, and deny is independent of the permission system's 
   assert.ok(r.pathRules.some((x) => x.pattern.endsWith("/auth.json") && x.action === "deny"));
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test("git_log and git_diff_stat path arguments are checked like read", () => {
+  const r = rules();
+  assert.equal(decide(r, "git_log", { path: path.join(cwd, ".env") })?.kind, "deny");
+  assert.equal(decide(r, "git_diff_stat", { path: "~/.ssh/id_ed25519" })?.kind, "deny");
+  assert.equal(decide(r, "git_log", { path: "notes.txt" }), null);
+});

@@ -16,12 +16,14 @@
 // prompt rules in instructions/foreman.md are the only guard there. Requests that do not
 // expect a reply (progress updates) never reach the foreman and open no window.
 
+import { PACK_READ_TOOL_NAMES } from "./gitpack.ts";
+
 export const SUPERVISOR_REQUEST_TYPE = "subagent_supervisor_request";
 export const SUPERVISOR_TOOL = "subagent_supervisor";
 export const RUN_END_EVENTS = ["subagent:async-complete", "subagent:foreground-complete"];
 
 /** Tools that never act for the child: answering, reading, and run status. */
-const EXEMPT_TOOLS = new Set([SUPERVISOR_TOOL, "read", "ls", "grep", "find"]);
+const EXEMPT_TOOLS = new Set([SUPERVISOR_TOOL, "read", "ls", "grep", "find", ...PACK_READ_TOOL_NAMES]);
 const EXEMPT_SUBAGENT_ACTIONS = new Set(["status", "list"]);
 
 type Json = Record<string, unknown>;
