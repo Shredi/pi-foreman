@@ -80,6 +80,13 @@ GIT_WORD = re.compile(r"(?i)(?<![a-z.])git(?![a-z/\\])")
 GIT_READ_VERBS = frozenset("""status log diff show blame rev-parse ls-files ls-tree cat-file describe shortlog
 rev-list name-rev show-ref for-each-ref grep ls-remote version help var blame reflog""".split())
 GIT_CODE_VERB = re.compile(r"(?i)(?<![a-z0-9_-])([a-z][a-z-]*)(?![a-z0-9_-])")
+# A path component that is or aliases `.git` (`.git`, `.git.`, 8.3 `GIT~1`), case-insensitive.
+GUARDED_PART = re.compile(r"(?i)(?:^|[/\\])(?:\.git\.?|git~\d+)(?=$|[/\\])")
+GUARDED_RAW = re.compile(r"(?i)\.git\.?|git~\d+")
+SPLIT_LITERAL = "split literal reassembles a guarded token"
+_LIT = r"""(?:"(?:[^"\\\n]|\\.)*"|'[^'\n]*')"""
+LITERAL_CHAIN = re.compile(_LIT + r"(?:\s*\+\s*" + _LIT + r")+")
+LITERAL_PIECE = re.compile(r""""((?:[^"\\\n]|\\.)*)"|'([^'\n]*)'""")
 
 
 class Decision(object):
@@ -742,6 +749,18 @@ def unreadable(ctx, what):
     return ask("cannot tell what this command runs (%s) and it involves git. Write the git command out plainly." % what)
 
 
+def split_literal(texts, words=()):
+    """True when quoted / ANSI-C / escaped pieces of one word, or a `"a"+"b"+...` literal chain anywhere in
+    `texts` (inline code, heredoc bodies, the line itself), spell a guarded path component that no single
+    piece or plain stretch of the source spells. Plain `.git` is not this."""
+    for t in texts:
+        for m in LITERAL_CHAIN.finditer(t or ""):
+            pieces = [a if a else b for a, b in LITERAL_PIECE.findall(m.group(0))]
+            if GUARDED_PART.search("".join(pieces)) and not any(GUARDED_PART.search(p) for p in pieces):
+                return True
+    return any(len(GUARDED_PART.findall(w.text)) > len(GUARDED_RAW.findall(w.raw)) for w in words)
+
+
 def mentions_git(*texts):
     return any(GIT_WORD.search(t or "") for t in texts)
 
@@ -784,9 +803,14 @@ def analyze_text(text, flavor, ctx, depth):
     try:
         lx = lex(text, flavor)
     except LexError as exc:
+        if split_literal([text]):
+            return deny(SPLIT_LITERAL)
         if mentions_git(text):
             return unreadable(ctx, str(exc))
         return OK
+    words = [w for seg in lx.segs for w in seg.words + seg.herestrings]
+    if split_literal([text] + [w.text for w in words] + [h for seg in lx.segs for h in seg.heredocs], words):
+        return deny(SPLIT_LITERAL)
     d = OK
     for sub in lx.subs:
         d = worst(d, analyze_text(sub, flavor, ctx, depth + 1))

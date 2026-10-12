@@ -18,8 +18,11 @@ export const CHILD_TRACE_EVENT = "pi-foreman:child-trace";
  * obfuscated forms (g"i"t, `$a$b push`) need the full parse there.
  */
 export function mainNeedsGitGuard(command: unknown): boolean {
-  return typeof command === "string" && (/git/i.test(command) || /\b(gh|glab|hub|tea)\b/i.test(command));
+  return typeof command === "string" && (/git/i.test(command) || /\b(gh|glab|hub|tea)\b/i.test(command) || SPLIT_TOKEN.test(command));
 }
+
+/** A line that may spell `.git` / `GIT~1` from pieces (`'.g''it'`, `".g"+"it"`): the guard denies it (item 7f). */
+const SPLIT_TOKEN = /\.[\s'"\\$+]*g|g[\s'"\\$+]*i[\s'"\\$+]*t[\s'"\\$+]*~|~[\s'"\\+]*\d/i;
 
 /** Core-shaped payload plus the shell flavour, the merged `safety.git` config and the PR gate state. */
 export function gitGuardPayload(piTool: string, input: Record<string, unknown>, pc: PayloadContext, gitConfig?: unknown, prGate?: { enabled: boolean; reviewed_heads: string[] }): Record<string, unknown> {
