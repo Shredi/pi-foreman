@@ -75,6 +75,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Json } from "./config.ts";
 import { workspaceOf } from "./python.ts";
+import { resolveVars } from "./shellvars.ts";
 
 export interface PathRule {
   pattern: string;
@@ -691,6 +692,8 @@ function innerScript(core: string[]): { script: string; shell: "posix" | "powers
 }
 
 interface Collected {
+  /** Harness-set variables a same-line `$NAME` may resolve to (shellvars.ts); unset below the top level. */
+  vars?: Record<string, string>;
   unitTexts: string[];
   pipeTexts: string[];
   words: string[];
@@ -911,6 +914,9 @@ const WORKTREE_OK = new Set(["list", "remove"]);
 
 function collect(src: string, shell: "posix" | "powershell", depth: number, out: Collected): void {
   const parsed = parseShell(src, shell);
+  // same-line variables (shellvars.ts): the expanded words and texts are checked next to the line as written
+  const resolved = depth === 0 && shell === "posix" && out.vars ? resolveVars(parsed.pipelines, parsed.seps, out.vars, (u) => REDIRECTS.has(u)) : new Map<string[], string[]>();
+  for (const pipe of parsed.pipelines) if (pipe.some((u) => resolved.has(u))) out.pipeTexts.push(pipe.map((u) => (resolved.get(u) ?? u).join(" ")).join(" | "));
   for (const inner of parsed.subs) if (depth < MAX_DEPTH) collect(inner, shell, depth + 1, out);
   const visit = (allWords: string[]): void => {
     // `do cat x`, `then grep y`, `if find ...`: the keyword is not the command
@@ -933,6 +939,14 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
     const verb0 = v.core.length ? baseName(v.core[0]) : "";
     const patt = GREP_FAMILY.has(verb0) ? new Set(nonPathArgs(v.core, skip).map((i) => i + off)) : new Set<number>();
     out.words.push(...unitWords.filter((_, i) => !patt.has(i)));
+    const rw = resolved.get(allWords);
+    if (rw) {
+      const rest = lead ? rw.slice(lead) : rw;
+      const extra = rest.filter((w, i) => w !== unitWords[i] && !patt.has(i));
+      out.words.push(...extra);
+      out.protWords?.push(...extra);
+      out.unitTexts.push(rest.join(" "));
+    }
     if (verb0 === "git" && out.worktreeOp === undefined) {
       let k = 1;
       while (k < v.core.length && v.core[k].startsWith("-")) k += /^-[Cc]$/.test(v.core[k]) ? 2 : 1;
@@ -1290,7 +1304,8 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     const cd = childCdDeny(command, ctx);
     if (cd) return cd;
   }
-  const c: Collected = { unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), worktreeRemoveWords: new Set() };
+  const scratch0 = scratchOf(ctx);
+  const c: Collected = { vars: scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}, unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), worktreeRemoveWords: new Set() };
   collect(command, shell, 0, c);
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
