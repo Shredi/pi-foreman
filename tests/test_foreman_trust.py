@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import io
 import json
 import os
@@ -26,7 +27,9 @@ def g(cwd, *args):
                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 
 
+@functools.lru_cache(maxsize=1)
 def pi_package():
+    """The installed pi-coding-agent entry (`npm root -g`, run once and only by the test that needs it)."""
     try:
         root = subprocess.run(["npm", "root", "-g"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=60,
                               check=True).stdout.decode().strip()
@@ -125,12 +128,14 @@ class TrustTest(unittest.TestCase):
         self.assertEqual(self.store(), {"/keep": True})
         self.assertNotIn("trusted", fsn.read_registry(self.agent)["sessions"][0])
 
-    @unittest.skipUnless(pi_package(), "pi-coding-agent is not installed")
     def test_pi_trust_store_sees_the_worktree_as_trusted(self):
+        pkg = pi_package()
+        if pkg is None:
+            self.skipTest("pi-coding-agent is not installed")
         self.open(self.wt)
         js = ("import {ProjectTrustStore} from %s; const s = new ProjectTrustStore(process.argv[1]);"
               "console.log(JSON.stringify([s.get(process.argv[2]), s.get(process.argv[3])]));"
-              % json.dumps(pi_package().as_uri()))
+              % json.dumps(pkg.as_uri()))
         r = subprocess.run(["node", "--input-type=module", "-e", js, str(self.agent), str(self.wt / "sub"),
                             str(self.other)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
         self.assertEqual(json.loads(r.stdout.decode()), [True, None], r.stderr.decode())
