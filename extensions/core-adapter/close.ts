@@ -158,6 +158,8 @@ export interface CloseDeps {
   markClosed?: () => void;
   /** Close this session's own child sessions (bounded wait); one report line per child. Never fails the close. */
   closeChildren?: () => Promise<string[]>;
+  /** What the parent would have to rule when the ceremony is incomplete ("" = complete). */
+  ceremonyNote?: () => string;
   /** Timer for the start deadline (default: an unref'd setTimeout). */
   setTimer?: (fn: () => void, ms: number) => () => void;
 }
@@ -271,6 +273,8 @@ export class CloseFlow {
     this.wakePending = viaIntercomWake;
     this.d.trace({ event: "close", cause: req.source, decision: "accepted" });
     this.d.notify(`pi-foreman: closing this session (result file ${req.file}).`, "info");
+    const open = this.d.ceremonyNote?.() ?? "";
+    if (open) this.d.notify(`pi-foreman: ceremony incomplete. ${open}`, "warning");
     if (ctx.isIdle()) this.closeTurn();
     else this.phase = "idle-wait";
   }
@@ -427,6 +431,8 @@ export interface CloseSession {
   markClosed?: () => void;
   /** Close the session's own child sessions; `send` delivers `foreman:close` over the intercom outbox. */
   closeChildren?: (send: (to: string, text: string) => Promise<string>) => Promise<string[]>;
+  /** What the parent would have to rule when the ceremony is incomplete ("" = complete). */
+  ceremonyNote?: () => string;
 }
 
 type Bus = { emit(channel: string, data: unknown): void; on?(channel: string, handler: (data: unknown) => void): (() => void) | void } | undefined;
@@ -481,6 +487,7 @@ export function registerClose(
       runSync: () => s.runSync(holder.ctx),
       report: s.report ? (file) => s.report!(holder.ctx, file) : undefined,
       markClosed: s.markClosed ? () => s.markClosed!() : undefined,
+      ceremonyNote: s.ceremonyNote,
       closeChildren: s.closeChildren ? () => s.closeChildren!((to, text) => outboxSend(pi.events, to, text, "close", SEND_WAIT_MS)) : undefined,
       retro: () => (get(s.config(), "sync.runRetro") === false ? s.retro(holder.ctx) : Promise.resolve("")),
       reply: (to, text) => outboxSend(pi.events, to, text, "close"),

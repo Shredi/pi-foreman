@@ -21,7 +21,8 @@ import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
-import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
+import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, withParentRuling, type ReviewGate } from "./bound.ts";
+import { rulingNeeded } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -1197,7 +1198,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (!shadowRun(reviewLaunch)) for (const step of stepsOfRunEnd(data)) s.steps[step]++;
           for (const f of frictionOfRunEnd(data)) s.trace?.emit({ event: "friction", role: f.role, runId: f.runId, kind: f.kind, note: f.note });
           const verdicts = reviewVerdictsOfRunEnd(counted);
-          s.reviewGate = onReviewVerdicts(s.reviewGate, verdicts);
+          s.reviewGate = onReviewVerdicts(s.reviewGate, verdicts, Date.now());
           if (!s.isChild) onRunEndReview(s, runId, counted, verdicts.length > 0);
           const cited = s.retro.launchItems.get(runId) ?? [];
           s.retro.launchItems.delete(runId);
@@ -2061,6 +2062,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const given = (event.input as Record<string, unknown>).path;
       if (typeof given === "string") askContractFor(owner).onFileWritten(path.resolve(ctx.cwd, given));
     }
+    // A `.seen` written by a shell command ends the ask too: the blocked state is recomputed from the files (R6 lane 4a).
+    if (owner && !owner.isChild && event.toolName === "bash") askContractFor(owner).recheck();
     const pending = owner?.pendingChanges.get(event.toolCallId);
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit") && isPlanPath((event.input as Record<string, unknown>).path, planOpts(owner, ctx))) {
       owner.trace?.emit({ event: "plan_written", tier: owner.ceremony.tier, by: "foreman" });
@@ -2238,18 +2241,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const escalated = await trivialFinishCheck(s, ctx);
     const gateMode = reviewGateMode(get(s.config.config, "ceremony.reviewGate"));
-    const missing: string[] = openSteps(s.steps, requiredOf(s, s.ceremony.tier), gateMode, s.reviewGate);
+    // A parent ruling (APPROVED / SHIP, newer than the last FAIL) in an own handoff dir counts as the verdict (R6 lane 4c).
+    const gate = withParentRuling(s.reviewGate, ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)));
+    const missing: string[] = openSteps(s.steps, requiredOf(s, s.ceremony.tier), gateMode, gate);
     // A rejected plan blocks the heavy finish until a new approval or the user lowers the tier (/ceremony).
     const rejected = s.ceremony.tier === "heavy" && s.plan?.status === "rejected";
     if (rejected) missing.push("plan");
     if (missing.length === 0) return undefined;
     // Ladder (e): after a FAIL with the builder still on its bottom rung, the revision climbs; this
     // refusal does not count toward the two-refusal valve (at most 2 per user prompt).
-    if (missing.includes("reviewer") && s.reviewGate.last === "fail" && s.climbRefusals < 2 && (await builderClimbOpen(s, ctx))) {
+    if (missing.includes("reviewer") && gate.last === "fail" && s.climbRefusals < 2 && (await builderClimbOpen(s, ctx))) {
       s.climbRefusals++;
       s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(","), climb_available: true });
       return {
-        entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], reviewHint(s.reviewGate)) + " Relaunch the builder for the revision; it climbs to its strong rung.", display: true }],
+        entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], reviewHint(gate)) + " Relaunch the builder for the revision; it climbs to its strong rung.", display: true }],
         continue: true,
       };
     }
@@ -2261,7 +2266,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.finishRefusals++;
     s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(",") });
     return {
-      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? reviewHint(s.reviewGate) : "") + escalated + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
+      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? reviewHint(gate) : "") + escalated + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
       continue: true,
     };
   }
@@ -2275,6 +2280,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** ceremony.required.<tier> as it applies to this session (trivial.ts effectiveRequired). */
+  /** `/foreman close`: the required steps still open and what the parent would have to rule ("" = none). */
+  function closeCeremonyNote(s: Session): string {
+    if (s.isChild || !isTriaged(s.ceremony)) return "";
+    const gate = withParentRuling(s.reviewGate, ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)));
+    return rulingNeeded(openSteps(s.steps, requiredOf(s, s.ceremony.tier), reviewGateMode(get(s.config.config, "ceremony.reviewGate")), gate));
+  }
+
   function requiredOf(s: Session, tier: string): Step[] {
     const steps = effectiveRequired(requiredSteps(get(s.config.config, "ceremony.required"), tier), tier, { bounded: editModeOfSession(s).mode === "bounded", ledger: boundLedger(s.markerDir, s.id) !== null });
     return selfPlanRequired(steps, effectivePlannerMode(s.config.config, s.plannerSelf), s.plan);
@@ -2365,7 +2377,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     platform,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, onStart: (spec, id) => markHandoffWait(s, spec, id), onCancel: (id) => cancelHandoffWait(s, id) };
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, onStart: (spec, id) => markHandoffWait(s, spec, id), onCancel: (id) => cancelHandoffWait(s, id), onRulingWake: (file) => void askContractFor(s).onRulingWake(file) };
     },
   });
 
@@ -2382,7 +2394,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     activeRuns: (id) => sessions.get(id)?.activeRuns.size ?? 0,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), runSync: (c) => runSync(s, c), report: (c, file) => closeReport(s, c, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text, markClosed: () => void markOwnClosed(s.agentDir, process.env), closeChildren: (send) => closeChildren({ agentDir: s.agentDir, opener: openerIntercomId(process.env, s.agentDir, s.id), send, waitMs: Math.max(0, Number(get(s.config.config, "close.childWaitMs") ?? 60_000) || 0), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) }) };
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), ceremonyNote: () => closeCeremonyNote(s), runSync: (c) => runSync(s, c), report: (c, file) => closeReport(s, c, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text, markClosed: () => void markOwnClosed(s.agentDir, process.env), closeChildren: (send) => closeChildren({ agentDir: s.agentDir, opener: openerIntercomId(process.env, s.agentDir, s.id), send, waitMs: Math.max(0, Number(get(s.config.config, "close.childWaitMs") ?? 60_000) || 0), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) }) };
     },
   });
 

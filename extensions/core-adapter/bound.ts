@@ -19,6 +19,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { verdictOf, REVIEW_ROLES, type Verdict } from "./rounds.ts";
+import { parentApproval } from "./ruling.ts";
 
 export interface TrivialBound {
   files: number;
@@ -251,6 +252,14 @@ export interface ReviewGate {
   last: Verdict | "none" | null;
   /** A revision happened after `last`. */
   revised: boolean;
+  /** When `last` became FAIL (ms); a parent ruling must be newer (R6 lane 4c). */
+  failAt?: number;
+}
+
+/** The gate with a parent ruling (APPROVED / SHIP, newer than the last FAIL) counted as the verdict. */
+export function withParentRuling(g: ReviewGate, handoffDirs: string[]): ReviewGate {
+  if (g.last !== "fail") return g;
+  return parentApproval(handoffDirs, g.failAt ?? 0) ? { last: "pass", revised: false } : g;
 }
 
 export function reviewGateMode(v: unknown): ReviewGateMode {
@@ -262,10 +271,10 @@ export function initialReviewGate(): ReviewGate {
 }
 
 /** Reviews ended: a single non-pass among them wins (like verdictOf). */
-export function onReviewVerdicts(g: ReviewGate, verdicts: (Verdict | null)[]): ReviewGate {
+export function onReviewVerdicts(g: ReviewGate, verdicts: (Verdict | null)[], now?: number): ReviewGate {
   if (verdicts.length === 0) return g;
   const last = verdicts.includes("fail") ? "fail" : verdicts.includes(null) ? "none" : "pass";
-  return { last, revised: false };
+  return last === "fail" && now !== undefined ? { last, revised: false, failAt: now } : { last, revised: false };
 }
 
 export function onRevision(g: ReviewGate): ReviewGate {
