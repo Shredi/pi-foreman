@@ -197,6 +197,43 @@ the bare `D`. So a grant answered on a read of `<dir>/file` while `<dir>` did no
 records and compares no grants. Workaround: create the directory first, or answer the grant on the bash ask for the
 directory itself. Owned paths above are not affected: the policy patterns carry the bare directory form too.
 
+### Variables in bash lines
+
+A session grant for a directory covers a bash line that names a path under it through a variable
+(`D=<dir>/x; mkdir -p $D`, `mkdir -p $FOREMAN_SCRATCH/x`). The adapter (`extensions/core-adapter/shellvars.ts`
+`resolveVars`, used by the path collection in `permoverlay.ts`) replaces `$NAME` / `${NAME}` in a word by its value
+only when the value is certain:
+
+- Only a standalone `NAME=/abs/literal` statement before the use resolves it, joined to the use by `;`, `&&` or `||`
+  (`&&` only after another such assignment). A prefix assignment of the same command (`D=/x cmd $D`) never resolves.
+- A value with `$`, a backtick, `$(`, a glob character or whitespace, or a relative path, stays unresolved.
+- The last assignment before the use wins.
+- `FOREMAN_SCRATCH` (and any `FOREMAN_*` name) comes from the harness env, never from the line; an assignment to it
+  on the line is ignored.
+- Any other form that sets the name (`export`, `read`, `for`, a conditional assignment, a subshell, group or loop)
+  leaves it unresolved.
+- An unresolved variable keeps the previous classification: the word is checked as written.
+
+The foreman's shell write guard (`scripts/shell_write_guard.py`, Lexer `_track_assignment`) applies the same rules.
+
+### Search patterns are not paths
+
+The patterns of `grep`, `egrep`, `fgrep`, `rg` and `git grep` are never path operands, in any role (read, write,
+external directory): `-e <re>`, the word after `--` when no `-e` is given, the bare first operand, the pattern in a
+cluster such as `-nE "<re>"`, and the separate values of their other options (`-A 3`, `-m 5`, `--glob <g>`, `-t <type>`).
+A regex that looks like an absolute path therefore raises no external-path ask. Options that read a file keep their
+value as a path word: `-f`, `--file`, `--exclude-from`, `--ignore-file`, `--pre`. The remaining operands are paths
+as before.
+
+### Known limit: the permission system package
+
+The permission system package (`node_modules/@gotgenes/pi-permission-system`) runs its own path extraction before the
+adapter. Its `shell-variable-expansion.ts` resolves only `HOME` and `PWD`, so `D=<dir>/x; mkdir -p $D` can still raise
+an `external_directory` ask there even when the adapter resolved the variable. Its `token-collection.ts` has
+pattern-first handling for `grep`/`egrep`/`fgrep`/`rg` but not for `git grep`, so a `git grep` pattern that looks like
+a path can still ask. A review-link answer cannot grant external-directory asks (see "Policy grants" above). A
+change on the package side is a separate round.
+
 ## Developing pi-foreman itself
 
 When the session's working directory is the package root or inside it (symlinks resolved; case-insensitive on
