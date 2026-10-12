@@ -104,6 +104,7 @@ Each single-child launch gets a scratch dir under the OS temp dir (`$FOREMAN_SCR
 outside it:
 
 - Overlay: a child may `cd` into its own scratch dir (literal or `$FOREMAN_SCRATCH`); every other rule applies there too.
+- Overlay: a child with a bound scratch dir is denied, not asked, any write below `/tmp` or the resolved OS temp dir outside that scratch dir and its own workspace: a write or edit tool path, a shell redirect (`> /tmp/out.txt`), and the targets of `tee`, `touch`, `mkdir`, `mv`, `cp` (last operand), `install` and `ln`. The reason names the path and the scratch dir (`write to /tmp/out.txt denied for a child: use FOREMAN_SCRATCH (<scratch dir>)`). Reads from `/tmp` and the foreman's own `/tmp` rules are unchanged.
 - Shell-write guard: a planner child, which may write nowhere outside its allowed dirs, may also write inside its own
   scratch dir.
 - Review link (label `child-scratch`): a forwarded child ask is allowed without the model when every unit of the

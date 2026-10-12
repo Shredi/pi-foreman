@@ -72,6 +72,7 @@
 //     -delete, a literal in inline code (`python -c`), or foreman_move's source. Reads and
 //     listings of those folders stay allowed; `cd` + a relative operand is not seen (item 4).
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { Json } from "./config.ts";
 import { workspaceOf } from "./python.ts";
@@ -648,6 +649,9 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
 const WRAPPERS = new Set(["sudo", "doas", "env", "command", "builtin", "exec", "nohup", "time", "nice", "ionice", "timeout", "stdbuf", "setsid", "xargs", "watch", "chroot"]);
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "ash"]);
 
+/** Verbs whose operands (all, or the last one) are written; with the redirects they feed a child's /tmp deny. */
+const TMP_WRITERS = new Map<string, "all" | "last">([["tee", "all"], ["touch", "all"], ["mkdir", "all"], ["mv", "all"], ["cp", "last"], ["install", "last"], ["ln", "last"]]);
+
 function baseName(w: string): string {
   const b = w.split(/[\\/]/).pop() ?? w;
   return b.toLowerCase().replace(/\.(exe|cmd|bat)$/, "");
@@ -713,6 +717,8 @@ interface Collected {
   rdr?: boolean;
   /** Words that are the target of a write redirect (`/dev/null` and fd dups excluded). */
   writeTargets?: Set<string>;
+  /** Write targets of redirects and of the writing verbs `TMP_WRITERS` (a child's /tmp deny). */
+  tmpTargets?: Set<string>;
   /** The first `git worktree` subcommand found that is neither `list` nor `remove` (children may not run it). */
   worktreeOp?: string;
   /** `git fetch`, `npm ci`, `npm install` found: the foreman's baseline rows allow them, a child still asks. */
@@ -1003,7 +1009,15 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
       }
       const np = new Set(nonPathArgs(v.core, skip).map((i) => i + off));
       out.protWords.push(...unitWords.filter((_, i) => !np.has(i)));
-      for (const i of WRITE_REDIRECTS.get(unitWords) ?? []) if (!DEV_TARGET.test(unitWords[i])) out.writeTargets?.add(unitWords[i]);
+      for (const i of WRITE_REDIRECTS.get(unitWords) ?? []) if (!DEV_TARGET.test(unitWords[i])) {
+        out.writeTargets?.add(unitWords[i]);
+        out.tmpTargets?.add(unitWords[i]);
+      }
+      const writer = v.core.length ? TMP_WRITERS.get(baseName(v.core[0])) : undefined;
+      if (writer && out.tmpTargets) {
+        const operands = v.core.slice(1).filter((x) => !x.startsWith("-"));
+        for (const x of writer === "last" ? operands.slice(-1) : operands) out.tmpTargets.add(x);
+      }
     }
     const inner = innerScript(v.core);
     if (inner && depth < MAX_DEPTH) collect(inner.script, inner.shell, depth + 1, out);
@@ -1331,7 +1345,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (cd) return cd;
   }
   const scratch0 = scratchOf(ctx);
-  const c: Collected = { vars: scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}, unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), worktreeRemoveWords: new Set() };
+  const c: Collected = { vars: scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}, unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), worktreeRemoveWords: new Set() };
   collect(command, shell, 0, c);
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
@@ -1375,6 +1389,12 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
       if (c.worktreeRemoveWords!.has(w)) continue;
       const hit = childBlockHit(rules, w, pctx);
       if (hit) return childBlockDecision(hit, w);
+    }
+  }
+  if (ctx.role === "child") {
+    for (const w of c.tmpTargets!) {
+      const hit = childTmpWriteDeny(w, pctx);
+      if (hit) return hit;
     }
   }
   const prot = pwords.map((w) => ({ w, hit: protectHit(rules.protect, w, pctx, true, removed.has(w), readOnly) })).filter((x) => x.hit);
@@ -1422,6 +1442,30 @@ function insideDir(dir: string, p: string, ctx: MatchCtx): boolean {
   const fold = (x: string): string => (foldsCase(ctx.platform) ? x.toLowerCase() : x);
   const rel = pp.relative(fold(pp.resolve(dir)), fold(pp.resolve(p)));
   return rel === "" || (rel !== ".." && !rel.startsWith(".." + pp.sep) && !pp.isAbsolute(rel));
+}
+
+/** The temp roots a child may not write below: realpath(os.tmpdir()) and /tmp (not on win32). */
+function tmpRoots(ctx: MatchCtx): string[] {
+  const fsx = defaults(ctx);
+  const raw = [os.tmpdir(), ...(ctx.platform === "win32" ? [] : ["/tmp"])];
+  return [...new Set(raw.flatMap((r) => [r, fsx.realpath(r)]).filter((x): x is string => !!x))];
+}
+
+/**
+ * Child with a bound scratch dir: a write below the temp dir or /tmp outside that scratch and the child's own
+ * workspace is denied (not asked), naming FOREMAN_SCRATCH. The foreman's own /tmp rules are unchanged.
+ */
+function childTmpWriteDeny(word: string, ctx: MatchCtx): Decision | null {
+  const scratch = scratchOf(ctx);
+  if (ctx.role !== "child" || !scratch) return null;
+  const roots = tmpRoots(ctx);
+  const own = [scratch, ctx.cwd, workspaceOf(ctx.cwd).root];
+  for (const cand of pathCandidates(word, ctx)) {
+    if (!roots.some((r) => insideDir(r, cand, ctx))) continue;
+    if (own.some((o) => insideDir(o, cand, ctx))) continue;
+    return { kind: "deny", reason: `pi-foreman: write to ${clip(word)} denied for a child: use FOREMAN_SCRATCH (${scratch}), not /tmp.` };
+  }
+  return null;
 }
 
 /** A child touching a foreman-owned path (handoffs, artifacts, foreman.json); its own scratch dir is never one. */
@@ -1500,6 +1544,10 @@ export function checkPathTool(rules: OverlayRules, toolName: string, input: Reco
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(value)}' for ${toolName}).` };
     const blocked = childBlockHit(rules, value, ctx);
     if (blocked) return childBlockDecision(blocked, value);
+  }
+  for (const { value } of paths.filter((x) => x.write)) {
+    const hit = childTmpWriteDeny(value, ctx);
+    if (hit) return hit;
   }
   const prot = paths.filter((x) => x.write).map((x) => ({ w: x.value, hit: protectHit(rules.protect, x.value, ctx, false, x.remove === true) })).filter((x) => x.hit);
   const pd = prot.find((x) => x.hit!.kind === "deny");
