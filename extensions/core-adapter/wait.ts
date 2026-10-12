@@ -584,7 +584,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
     runtimes.set(s.id, holder);
     return holder.rt;
   };
-  pi.registerTool({
+  const waitTool = {
     name: WAIT_TOOL,
     label: "Long wait",
     description:
@@ -627,7 +627,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       const win = l.batchWindowSeconds;
       return text(`Wait ${r.id} (${spec.kind}) started; times out after ${l.maxSeconds}s. End your turn: you will be woken by one message${win > 0 ? ` (outcomes within ${win}s are batched)` : ""}.`, { decision: "start", id: r.id, kind: spec.kind });
     },
-  } as never);
+  } as never;
   // foreman_bg (bg.ts): the tool_call hook has already run every bash guard on `command` (index.ts); this only spawns.
   pi.registerTool({
     name: BG_TOOL,
@@ -675,5 +675,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       return text(`Background run ${r.id} (pid ${run.pid}) started; log ${log}. End your turn: you will be woken by one message when it has exited (exit code not knowable; read the log).`, { decision: "start", id: r.id, kind: "pid", pid: run.pid, log });
     },
   } as never);
+  // foreman_wait stays the last tool this module registers (a host that keeps only the last one keeps the long-standing tool).
+  pi.registerTool(waitTool);
   return handle;
 }
