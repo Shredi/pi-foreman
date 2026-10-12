@@ -25,10 +25,11 @@ fs.writeFileSync(path.join(rt, "package.json"), "{}\n");
 fs.writeFileSync(path.join(rt, "Makefile"), "test:\n\t@true\n");
 fs.writeFileSync(path.join(rt, "tests", "t.test.mjs"), "\n");
 fs.writeFileSync(path.join(rt, "tests", "test_x.py"), "\n");
+fs.writeFileSync(path.join(rt, "tests", "committed-evil.test.mjs"), CASES.probeDeny[0] + "\n");
 if (posix) {
   const git = (...a: string[]): void => void execFileSync("git", ["-C", rt, "-c", "user.name=t", "-c", "user.email=t@example.invalid", ...a], { stdio: "ignore" });
   git("init", "-q");
-  git("add", "package.json", "Makefile", "tests/t.test.mjs", "tests/test_x.py");
+  git("add", "package.json", "Makefile", "tests/t.test.mjs", "tests/test_x.py", "tests/committed-evil.test.mjs");
   git("commit", "-q", "-m", "init");
   // untracked: a builder's own new test, one with a reassembled token
   fs.writeFileSync(path.join(rt, "tests", "new.test.mjs"), "const names = ['a', 'b'].join(', ');\n");
@@ -152,12 +153,117 @@ test("scratch scripts without a reassembled token keep running", { skip: !posix 
   }
 });
 
-test("tracked files of the round worktree are not scanned", { skip: !posix }, () => {
-  fs.writeFileSync(path.join(rt, "tests", "t.test.mjs"), CASES.probeDeny[0] + "\n");
-  try {
-    assert.equal(run("node --test tests/t.test.mjs", "builder"), "pass");
-    assert.equal(run("node --test tests/t.test.mjs"), "pass");
-  } finally {
-    fs.writeFileSync(path.join(rt, "tests", "t.test.mjs"), "\n");
+test("tracked, unmodified files of the round worktree are not scanned", { skip: !posix }, () => {
+  assert.equal(run("node --test tests/committed-evil.test.mjs", "builder"), "pass");
+  assert.equal(run("node --test tests/committed-evil.test.mjs"), "pass");
+});
+
+// ---- R6 lane 1, review fixes ----
+const denies = (cmds: string[], role = "reviewer", cwd = rt): void => cmds.forEach((c) => assert.equal(run(c, role, cwd), "deny", c));
+const passes = (cmds: string[], role = "reviewer", cwd = rt): void => cmds.forEach((c) => assert.equal(run(c, role, cwd), "pass", c));
+
+test("finding 1: module-loading option values are operands (reporter, global setup, require, import, loader)", { skip: !posix }, () => {
+  denies([
+    "node --test --test-reporter=$FOREMAN_SCRATCH/r.mjs tests/t.test.mjs",
+    "node --test --test-reporter $FOREMAN_SCRATCH/r.mjs tests/t.test.mjs",
+    "npm run test:node -- --test-reporter=$FOREMAN_SCRATCH/r.mjs",
+    "node --test --test-reporter=spec --test-reporter-destination=$FOREMAN_SCRATCH/out.txt tests/t.test.mjs",
+    "node --test --test-global-setup=$FOREMAN_SCRATCH/g.mjs",
+    "node --test --require $FOREMAN_SCRATCH/plain.mjs",
+    "node --test -r $FOREMAN_SCRATCH/plain.mjs",
+    "node --test --import=$FOREMAN_SCRATCH/plain.mjs",
+    "node --test --loader $FOREMAN_SCRATCH/plain.mjs",
+    "node --test --experimental-loader=$FOREMAN_SCRATCH/plain.mjs",
+  ]);
+  passes([
+    "node --test --test-reporter=spec tests/t.test.mjs",
+    "node --test --test-reporter dot --test-reporter-destination stdout tests/t.test.mjs",
+    "node --test --test-reporter=junit --test-reporter-destination=stderr",
+    "node --test --import ./tests/t.test.mjs",
+  ]);
+});
+
+test("finding 2: npm positionals are operands", { skip: !posix }, () => {
+  denies([
+    "npm run test:node $FOREMAN_SCRATCH/evil.test.mjs",
+    "npm test $FOREMAN_SCRATCH/evil.test.mjs",
+    "npm run test:node --silent tests/new.test.mjs",
+    "npm run-script test:node $FOREMAN_SCRATCH/evil.test.mjs",
+  ]);
+  passes(["npm test tests/t.test.mjs", "npm run test:node tests/t.test.mjs", "npm run test:node --silent", "npm test"]);
+});
+
+test("finding 3: attached make options are resolved", { skip: !posix }, () => {
+  denies([
+    `make test -C${scratch}`,
+    `make test -f${scratch}/mk`,
+    `make test -I${scratch}`,
+    `make test --directory=${scratch}`,
+    `make test --file=${scratch}/mk`,
+    `make test --makefile=${scratch}/mk`,
+    `make test --directory ${scratch}`,
+  ]);
+  passes(["make test -C.", "make test -f Makefile"]);
+});
+
+test("finding 4: npx interpreters are scanned and value-taking flags are not the script", { skip: !posix }, () => {
+  for (const role of ["builder", "reviewer"]) {
+    denies([
+      "npx tsx $FOREMAN_SCRATCH/evil0.mjs",
+      "npx node $FOREMAN_SCRATCH/evil0.mjs",
+      "npx ts-node $FOREMAN_SCRATCH/evil0.mjs",
+      "npx --yes tsx $FOREMAN_SCRATCH/evil0.mjs",
+      "tsx $FOREMAN_SCRATCH/evil0.mjs",
+      "python3 -X dev $FOREMAN_SCRATCH/evil.py",
+      "python3 -W ignore $FOREMAN_SCRATCH/evil.py",
+      "bash -o pipefail $FOREMAN_SCRATCH/evil.sh",
+      "node --import $FOREMAN_SCRATCH/plain.mjs $FOREMAN_SCRATCH/evil0.mjs",
+      "node --conditions dev $FOREMAN_SCRATCH/evil0.mjs",
+      "node --test-reporter=$FOREMAN_SCRATCH/evil0.mjs plain.mjs",
+    ], role, scratch);
   }
+  passes(["python3 -X dev plain.mjs", "node --import ./plain.mjs plain.mjs", "npx tsx plain.mjs"], "builder", scratch);
+});
+
+test("finding 5: staged or modified tracked probes are scanned; stdin files too", { skip: !posix }, () => {
+  const file = path.join(rt, "tests", "t.test.mjs");
+  const git = (...a: string[]): void => void execFileSync("git", ["-C", rt, ...a], { stdio: "ignore" });
+  try {
+    fs.writeFileSync(file, CASES.probeDeny[0] + "\n");
+    assert.equal(run("node --test tests/t.test.mjs", "builder"), "deny", "modified");
+    git("add", "tests/t.test.mjs");
+    assert.equal(run("node --test tests/t.test.mjs", "builder"), "deny", "staged");
+  } finally {
+    git("reset", "-q", "HEAD", "--", "tests/t.test.mjs");
+    git("checkout", "--", "tests/t.test.mjs");
+  }
+  assert.equal(run("node --test tests/t.test.mjs", "builder"), "pass", "restored");
+  for (const role of ["builder", "reviewer"]) {
+    denies(["node < $FOREMAN_SCRATCH/evil0.mjs", `python3 < ${scratch}/evil.py`, `bash < ${scratch}/evil.sh`, "node - < $FOREMAN_SCRATCH/evil0.mjs"], role, scratch);
+  }
+});
+
+test("finding 6: plugin names and make K=V words are no paths", { skip: !posix }, () => {
+  passes(["pytest -p no:cacheprovider tests/test_x.py", "pytest -p no:cacheprovider", "pytest -sv tests/test_x.py", "pytest -rA tests/test_x.py", "make test PYTHON=python3", "make test PYTHON=python3 V=1"]);
+  denies([`make test PYTHON=${scratch}/py`, "pytest -c $FOREMAN_SCRATCH/pytest.ini", `pytest -c${scratch}/pytest.ini`]);
+});
+
+test("finding 7: a git config write is denied for a read-only child whatever repository it names", { skip: !posix }, () => {
+  denies([
+    "git --git-dir=$FOREMAN_SCRATCH/g config a.b c",
+    "git --work-tree=$FOREMAN_SCRATCH config a.b c",
+    "git --git-dir $FOREMAN_SCRATCH/g config a.b c",
+    "git -C $FOREMAN_SCRATCH config a.b c",
+    "GIT_DIR=$FOREMAN_SCRATCH/g git config a.b c",
+    "git -C $FOREMAN_SCRATCH config --add a.b c",
+    "git -C $FOREMAN_SCRATCH config --unset a.b",
+  ]);
+  passes(["git -C . config --list"]);
+});
+
+test("finding 8: a copy of a tracked test in scratch is an untracked operand", { skip: !posix }, () => {
+  const copy = path.join(scratch, "probe.mts");
+  fs.copyFileSync(path.join(rt, "tests", "t.test.mjs"), copy);
+  denies(["node --test $FOREMAN_SCRATCH/probe.mts", `node --test ${copy}`, "npm run test:node -- $FOREMAN_SCRATCH/probe.mts"]);
+  passes(["node --test tests/t.test.mjs"]);
 });
