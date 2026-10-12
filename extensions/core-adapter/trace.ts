@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-export const TRACE_FIELDS = ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by", "phase", "count", "action", "runId", "outcome", "ms", "codemode", "after", "allowed", "items", "attested", "agent", "signals", "policy", "foreman", "turns", "rung", "cmd", "chars", "cut", "climb_available", "trimmed_lines", "skipped", "bytes", "segments", "class", "item", "hits", "policy_override", "note", "findingId", "gate", "file", "line", "primary", "models", "ready", "removed", "handover", "occasion", "thinking", "model_overridden", "marker", "pack", "op", "limit", "command"] as const;
+export const TRACE_FIELDS = ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by", "phase", "count", "action", "runId", "outcome", "ms", "codemode", "after", "allowed", "items", "attested", "agent", "signals", "policy", "foreman", "turns", "rung", "cmd", "chars", "cut", "climb_available", "trimmed_lines", "skipped", "bytes", "segments", "class", "item", "hits", "policy_override", "note", "findingId", "gate", "file", "line", "primary", "models", "ready", "removed", "handover", "occasion", "thinking", "model_overridden", "marker", "pack", "op", "limit", "command", "tool", "message"] as const;
 export type TraceField = (typeof TRACE_FIELDS)[number];
 export type TraceRecord = Partial<Record<TraceField, string | number | boolean | null>>;
 
@@ -14,6 +14,7 @@ const MAX_STRING = 120;
 const MAX_COMMAND = 200; // a denied command (lane 3h)
 /** `command` is kept only on a deny trace: a refused launch, a read/recheck budget deny, an overlay deny. */
 const DENY_EVENTS = new Set(["read_budget", "recheck_budget", "child_read_budget", "overlay", "launch_refused"]);
+const MAX_MESSAGE = 200; // a tool_error message (lane 7f)
 const isDeny = (rec: Record<string, unknown>): boolean => DENY_EVENTS.has(String(rec.event)) && (rec.event === "launch_refused" || rec.action === "deny" || rec.decision === "deny");
 
 /**
@@ -44,6 +45,11 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
   for (const [k, v] of Object.entries(rec)) {
     if (!ALLOWED.has(k)) continue;
     if (k === "command" && !isDeny(rec)) continue; // never a command outside a deny
+    if (k === "message" && (rec.event !== "tool_error" || typeof v !== "string")) continue; // free text: only a tool_error's redacted message
+    if (k === "message") {
+      out[k] = redactCommand(String(v)).slice(0, MAX_MESSAGE);
+      continue;
+    }
     if (k === "note" && rec.event !== "friction") continue; // free text: only the scrubbed friction note
     if (k === "file" && rec.event !== "finding") continue; // a path: only a finding's file, as its base name
     if (k === "file" && typeof v === "string") {
@@ -57,6 +63,12 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
     else if (typeof v === "string") out[k] = v.length > (k === "command" ? MAX_COMMAND : MAX_STRING) ? v.slice(0, k === "command" ? MAX_COMMAND : MAX_STRING) : v;
   }
   return out as TraceRecord;
+}
+
+/** The `tool_error` record of a tool result with `isError`: tool name and the redacted first 200 characters of its text. */
+export function toolErrorRecord(tool: string, content: { type?: string; text?: string }[] | undefined): Record<string, unknown> {
+  const text = (content ?? []).map((c) => (c && c.type === "text" ? c.text ?? "" : "")).join("\n").trim();
+  return { event: "tool_error", tool, message: redactCommand(text).slice(0, MAX_MESSAGE) };
 }
 
 export interface TraceWriter {
