@@ -6,10 +6,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { AskContract } from "../askcontract.ts";
-import { initialReviewGate, onReviewVerdicts, withParentRuling } from "../bound.ts";
+import { initialReviewGate, onReviewVerdicts } from "../bound.ts";
 import { BlockedTracker } from "../herdr.ts";
 import { childHandoffDirs, ownHandoffDirs } from "../owned.ts";
-import { SelfRulings, snapshotRulings } from "../ruling.ts";
+import { parentApproval, SelfRulings, snapshotRulings } from "../ruling.ts";
 import { redactCommand, sanitizeTrace } from "../trace.ts";
 
 const FAIL_AT = 5_000_000_000;
@@ -42,41 +42,32 @@ test("sec 1: childHandoffDirs lists only dirs whose child file names this sessio
   assert.deepEqual(ownHandoffDirs(r.handoffs, "me").sort(), [r.down, r.up].sort());
 });
 
-test("sec 1: APPROVED in a parent-side dir is not a verdict", () => {
+test("sec 1: APPROVED in a parent-side dir is not named", () => {
   const r = rig();
   approve(r.down);
-  assert.equal(withParentRuling(failed, childHandoffDirs(r.handoffs, "me")).last, "fail");
+  assert.equal(parentApproval(childHandoffDirs(r.handoffs, "me"), FAIL_AT), null);
 });
 
-test("sec 1: child-side dir, parent-written ruling newer than FAIL is a verdict", () => {
+test("sec 1: child-side dir, parent-written ruling newer than FAIL is named", () => {
   const r = rig();
-  approve(r.up);
-  assert.equal(withParentRuling(failed, childHandoffDirs(r.handoffs, "me"), new SelfRulings()).last, "pass");
+  const f = approve(r.up);
+  assert.equal(parentApproval(childHandoffDirs(r.handoffs, "me"), FAIL_AT, new SelfRulings()), f);
 });
 
-test("sec 1: a ruling this session wrote (write or shell) is not a verdict; a later parent write is", () => {
+test("sec 1: a ruling this session wrote (write or shell) is not named; a later parent write is", () => {
   const r = rig();
   const self = new SelfRulings();
   const dirs = childHandoffDirs(r.handoffs, "me");
   const f = approve(r.up);
   self.mark(f);
-  assert.equal(withParentRuling(failed, dirs, self).last, "fail", "write/edit");
+  assert.equal(parentApproval(dirs, FAIL_AT, self), null, "write/edit");
   fs.rmSync(f);
   const before = snapshotRulings(dirs);
   const g = approve(r.up, "ruling-2.md");
   self.markChanged(before, dirs);
-  assert.equal(withParentRuling(failed, dirs, self).last, "fail", "shell redirect");
+  assert.equal(parentApproval(dirs, FAIL_AT, self), null, "shell redirect");
   approve(r.up, "ruling-2.md", FAIL_AT / 1000 + 500); // the parent overwrites it later
-  assert.equal(withParentRuling(failed, dirs, self).last, "pass");
-  assert.ok(g);
-});
-
-test("sec 2: a FAIL without a timestamp is overridden by no ruling", () => {
-  const r = rig();
-  approve(r.up);
-  const noStamp = onReviewVerdicts(initialReviewGate(), ["fail"]);
-  assert.equal(noStamp.failAt, undefined);
-  assert.equal(withParentRuling(noStamp, childHandoffDirs(r.handoffs, "me")).last, "fail");
+  assert.equal(parentApproval(dirs, FAIL_AT, self), g);
 });
 
 test("sec 3: a parent-side dir with .ask and no .seen does not block this session", () => {

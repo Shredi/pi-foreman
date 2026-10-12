@@ -1,6 +1,7 @@
 // Ruling files of the ask contract (R6 lane 4): `ruling-<n>.md` / `ruling.md` next to an `ask.md` in a handoff dir.
 // Pure file-state helpers: the harness writes `.seen` when a ruling wait wakes, the blocked state is recomputed from
-// the files, a ruling older than its ask is ignored, and a parent ruling `APPROVED` / `SHIP` counts as a verdict.
+// the files, a ruling older than its ask is ignored. A parent ruling never satisfies the finish gate (the chair runs
+// /ceremony); after a FAIL the refusal only names it.
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -102,8 +103,9 @@ export class SelfRulings {
 
 /**
  * A parent ruling in `dirs` (`ruling.md` / `ruling-<n>.md`, first line `APPROVED` or `SHIP`) whose mtime is newer than
- * `afterMs` (the last FAIL verdict) counts as a verdict for the finish gate. Returns its path, or null. `dirs` must be
- * the dirs where this session is the child (owned.ts childHandoffDirs); `self` skips rulings this session wrote.
+ * `afterMs` (the last FAIL verdict). Returns its path, or null. Only for naming it in the finish refusal: it is never a
+ * verdict. `dirs` must be the dirs where this session is the child (owned.ts childHandoffDirs); `self` skips rulings
+ * this session wrote.
  */
 export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulings): string | null {
   for (const dir of dirs) {
@@ -174,9 +176,14 @@ export function selfRulingRefusal(toolName: string, input: Record<string, unknow
   return undefined;
 }
 
-/** What `/foreman close` adds when the ceremony is incomplete: what the parent would have to rule. */
+/** What `/foreman close` adds when the ceremony is incomplete: what the parent must still rule. */
 export function rulingNeeded(missing: string[]): string {
   return missing.length === 0
     ? ""
-    : `Missing: ${missing.join(", ")}. The parent can rule it done with ruling.md (or ruling-<n>.md) in the handoff dir whose first line is APPROVED or SHIP, newer than the last FAIL; the owner/chair override is /ceremony <tier>.`;
+    : `Missing: ${missing.join(", ")}. The parent must still rule on it; a ruling file never satisfies the finish gate, the owner/chair runs /ceremony <tier>.`;
+}
+
+/** Refusal addendum when a parent ruling file is newer than the last FAIL verdict: it is named, and does not lift the gate. */
+export function rulingOverrideNote(ruling: string, failAt: number): string {
+  return ` A parent ruling ${ruling} is newer than the last FAIL verdict (${new Date(failAt).toISOString()}), but a parent ruling never satisfies the finish gate; the owner/chair runs: /ceremony <tier>`;
 }

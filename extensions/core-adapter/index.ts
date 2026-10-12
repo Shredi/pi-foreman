@@ -21,8 +21,8 @@ import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
-import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, withParentRuling, type ReviewGate } from "./bound.ts";
-import { isRulingName, rulingNeeded, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
+import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
+import { isRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -2296,8 +2296,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const escalated = await trivialFinishCheck(s, ctx);
     const gateMode = reviewGateMode(get(s.config.config, "ceremony.reviewGate"));
-    // A parent ruling (APPROVED / SHIP, newer than the last FAIL) in an own handoff dir counts as the verdict (R6 lane 4c).
-    const gate = withParentRuling(s.reviewGate, childDirsOf(s), selfRulingsFor(s));
+    // A parent ruling never satisfies the gate (R6 lane 4c, ruling 3); after a FAIL the refusal names it.
+    const gate = s.reviewGate;
     const missing: string[] = openSteps(s.steps, requiredOf(s, s.ceremony.tier), gateMode, gate);
     // A rejected plan blocks the heavy finish until a new approval or the user lowers the tier (/ceremony).
     const rejected = s.ceremony.tier === "heavy" && s.plan?.status === "rejected";
@@ -2321,7 +2321,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.finishRefusals++;
     s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(",") });
     return {
-      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? reviewHint(gate) : "") + escalated + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
+      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? reviewHint(gate) : "") + escalated + (missing.includes("reviewer") && gate.last === "fail" && gate.failAt !== undefined ? rulingNote(s, gate.failAt) : "") + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
       continue: true,
     };
   }
@@ -2338,8 +2338,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** `/foreman close`: the required steps still open and what the parent would have to rule ("" = none). */
   function closeCeremonyNote(s: Session): string {
     if (s.isChild || !isTriaged(s.ceremony)) return "";
-    const gate = withParentRuling(s.reviewGate, childDirsOf(s), selfRulingsFor(s));
-    return rulingNeeded(openSteps(s.steps, requiredOf(s, s.ceremony.tier), reviewGateMode(get(s.config.config, "ceremony.reviewGate")), gate));
+    return rulingNeeded(openSteps(s.steps, requiredOf(s, s.ceremony.tier), reviewGateMode(get(s.config.config, "ceremony.reviewGate")), s.reviewGate));
+  }
+
+  /** The parent ruling file newer than the last FAIL, named in the finish refusal ("" = none). */
+  function rulingNote(s: Session, failAt: number): string {
+    const f = parentApproval(childDirsOf(s), failAt, selfRulingsFor(s));
+    return f ? rulingOverrideNote(f, failAt) : "";
   }
 
   function requiredOf(s: Session, tier: string): Step[] {

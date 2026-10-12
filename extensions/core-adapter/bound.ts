@@ -19,8 +19,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { verdictOf, REVIEW_ROLES, type Verdict } from "./rounds.ts";
-import { parentApproval } from "./ruling.ts";
-import type { SelfRulings } from "./ruling.ts";
 
 export interface TrivialBound {
   files: number;
@@ -253,14 +251,8 @@ export interface ReviewGate {
   last: Verdict | "none" | null;
   /** A revision happened after `last`. */
   revised: boolean;
-  /** When `last` became FAIL (ms); a parent ruling must be newer (R6 lane 4c). */
+  /** When `last` became FAIL (ms); a newer parent ruling is named in the refusal (R6 lane 4c), it never satisfies the gate. */
   failAt?: number;
-}
-
-/** The gate with a parent ruling (APPROVED / SHIP, newer than the last FAIL) counted as the verdict. */
-export function withParentRuling(g: ReviewGate, handoffDirs: string[], self?: SelfRulings): ReviewGate {
-  if (g.last !== "fail" || g.failAt === undefined) return g; // a FAIL without a timestamp is overridden by no ruling
-  return parentApproval(handoffDirs, g.failAt, self) ? { last: "pass", revised: false } : g;
 }
 
 export function reviewGateMode(v: unknown): ReviewGateMode {

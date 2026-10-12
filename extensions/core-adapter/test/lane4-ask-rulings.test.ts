@@ -6,9 +6,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { AskContract } from "../askcontract.ts";
-import { emptySteps, finishRefusal, initialReviewGate, onReviewVerdicts, openSteps, reviewHint, withParentRuling } from "../bound.ts";
+import { emptySteps, finishRefusal, initialReviewGate, onReviewVerdicts, openSteps, reviewHint } from "../bound.ts";
 import { BlockedTracker } from "../herdr.ts";
-import { askOpen, parentApproval, rulingFresh, rulingNeeded } from "../ruling.ts";
+import { askOpen, parentApproval, rulingFresh, rulingNeeded, rulingOverrideNote } from "../ruling.ts";
 import { WaitRuntime } from "../wait.ts";
 import type { Outcome, Timers, WaitLimits } from "../wait.ts";
 
@@ -141,14 +141,14 @@ test("4b: a ruling older than ask.md is ignored (two mtimes)", () => {
   w.rt.dispose();
 });
 
-test("4c: finish gate: refused with FAIL, accepted after a newer APPROVED ruling; older / non-APPROVED do not count", () => {
+test("4c (ruling 3): a newer APPROVED ruling is named in the refusal and never lifts the gate; older / non-APPROVED are not named", () => {
   const r = rig();
   const failAt = 5_000_000_000; // ms
   const failed = onReviewVerdicts(initialReviewGate(), ["fail"], failAt);
   const refusal = (dirs: string[]) => {
-    const gate = withParentRuling(failed, dirs);
-    const missing = openSteps({ ...emptySteps(), builder: 1 }, ["builder", "reviewer"], "pass", gate);
-    return missing.length ? finishRefusal("standard", missing, reviewHint(gate)) : "";
+    const missing = openSteps({ ...emptySteps(), builder: 1 }, ["builder", "reviewer"], "pass", failed);
+    const named = parentApproval(dirs, failAt);
+    return finishRefusal("standard", missing, reviewHint(failed)) + (named ? rulingOverrideNote(named, failAt) : "");
   };
   assert.match(refusal([r.own]), /requires reviewer \(re-review needed: last verdict FAIL\)/);
   const ruling = path.join(r.own, "ruling.md");
@@ -156,22 +156,22 @@ test("4c: finish gate: refused with FAIL, accepted after a newer APPROVED ruling
   setTimes(ruling, failAt / 1000 - 100);
   assert.match(refusal([r.own]), /requires reviewer \(re-review needed: last verdict FAIL\)/, "older than the FAIL");
   setTimes(ruling, failAt / 1000 + 100);
-  assert.equal(refusal([r.own]), "");
+  assert.match(refusal([r.own]), /requires reviewer \(re-review needed: last verdict FAIL\)/, "the gate stays shut");
   assert.equal(parentApproval([r.own], failAt), ruling);
   fs.writeFileSync(ruling, "Looks fine to me\n");
   setTimes(ruling, failAt / 1000 + 100);
-  assert.match(refusal([r.own]), /re-review needed: last verdict FAIL/, "first line not APPROVED/SHIP");
+  assert.equal(parentApproval([r.own], failAt), null, "first line not APPROVED/SHIP");
   fs.rmSync(ruling);
   fs.writeFileSync(path.join(r.own, "ruling-4.md"), "SHIP\n");
   setTimes(path.join(r.own, "ruling-4.md"), failAt / 1000 + 100);
-  assert.equal(refusal([r.own]), "");
+  assert.equal(parentApproval([r.own], failAt), path.join(r.own, "ruling-4.md"));
 });
 
 test("4c: /foreman close lists what the parent would have to rule", () => {
   assert.equal(rulingNeeded([]), "");
   const t = rulingNeeded(["reviewer"]);
   assert.match(t, /Missing: reviewer/);
-  assert.match(t, /APPROVED or SHIP/);
+  assert.match(t, /parent must still rule/);
   assert.match(t, /\/ceremony <tier>/);
 });
 
@@ -187,12 +187,12 @@ test("4e: a foreman_wait pid on a pid that is already watched returns the existi
   w.rt.dispose();
 });
 
-test("4f: ask -> ruling -> .seen by the harness -> blocked cleared -> finish gate accepts the parent ruling", () => {
+test("4f: ask -> ruling -> .seen by the harness -> blocked cleared -> the finish gate stays open", () => {
   const r = rig();
   const w = clockRuntime({ onRulingWake: (f) => void r.contract.onRulingWake(f) });
   const failAt = Date.now() - 60_000;
   const failed = onReviewVerdicts(initialReviewGate(), ["fail"], failAt);
-  const open = () => openSteps({ ...emptySteps(), builder: 1 }, ["builder", "reviewer"], "pass", withParentRuling(failed, [r.own]));
+  const open = () => openSteps({ ...emptySteps(), builder: 1 }, ["builder", "reviewer"], "pass", failed);
   assert.deepEqual(open(), ["reviewer"]);
   fs.writeFileSync(path.join(r.own, "ask.md"), "# Ask 1: may I ship?\n");
   r.contract.onFileWritten(path.join(r.own, "ask.md"));
@@ -203,6 +203,6 @@ test("4f: ask -> ruling -> .seen by the harness -> blocked cleared -> finish gat
   assert.equal(w.wakes.length, 1);
   assert.equal(fs.readFileSync(path.join(r.own, ".seen"), "utf8").trim(), "ruling-1.md");
   assert.equal(r.tracker.active, false);
-  assert.deepEqual(open(), []);
+  assert.deepEqual(open(), ["reviewer"], "a parent ruling is no verdict");
   w.rt.dispose();
 });
