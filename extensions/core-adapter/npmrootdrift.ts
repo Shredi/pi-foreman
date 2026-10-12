@@ -4,10 +4,10 @@
 // and names both. It only reads the policy; the persistent re-render stays `foreman setup`.
 import * as fs from "node:fs";
 
-/** A resolved npm root the rendered policy does not grant. `rendered` null = the policy grants none. */
+/** A resolved npm root that the rendered policy grants a different root than. */
 export interface NpmRootDrift {
   resolved: string;
-  rendered: string | null;
+  rendered: string;
 }
 
 const norm = (p: string): string => p.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -34,12 +34,15 @@ export function grantedNpmRoot(config: unknown): string | null {
   return hit ?? null;
 }
 
-/** The drift to report, or null: nothing resolved, or the policy grants the resolved root. */
+/**
+ * The drift to report, or null: nothing resolved, the policy grants the resolved root, or it grants no npm
+ * root at all (an open or unrendered policy stays silent).
+ */
 export function npmRootDrift(resolved: string | null, config: unknown): NpmRootDrift | null {
   if (!resolved) return null;
   const want = norm(resolved);
   const rendered = grantedNpmRoot(config);
-  return rendered === want ? null : { resolved: want, rendered };
+  return rendered && rendered !== want ? { resolved: want, rendered } : null;
 }
 
 /**
@@ -49,5 +52,5 @@ export function npmRootDrift(resolved: string | null, config: unknown): NpmRootD
 export function npmRootDriftNotice(drift: NpmRootDrift | null, seen: Set<string>): string | null {
   if (!drift || seen.has("npm-root-drift")) return null;
   seen.add("npm-root-drift");
-  return `pi-foreman: npm root drifted: run \`foreman setup\` (resolved ${drift.resolved}; policy grants ${drift.rendered ?? "no npm root"})`;
+  return `pi-foreman: npm root drifted: run \`foreman setup\` (resolved ${drift.resolved}; policy grants ${drift.rendered})`;
 }

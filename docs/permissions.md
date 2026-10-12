@@ -192,10 +192,11 @@ them by the git guard and the overlay, not by the policy. `git worktree remove *
 (Windows). There is no environment override of the result; a root that does not resolve drops its patterns.
 The policy is rendered when `foreman setup` runs: change the npm prefix, then run it again.
 
-**Drift (R3b point 8c).** At session start the adapter compares the resolved root with the `<root>` and `<root>/*`
-read keys the rendered policy (`<agent dir>/extensions/pi-permission-system/config.json`) grants. When they differ, or
-the policy grants no npm root, the session writes one `npm_root_drift` trace event and shows one warning
-(`npm root drifted: run \`foreman setup\``, with both roots). The adapter never rewrites the policy; reads under the
+**Drift (R3b point 8c).** At session start the adapter compares the resolved root with the npm root the rendered policy
+(`<agent dir>/extensions/pi-permission-system/config.json`) grants, its `<root>` and `<root>/*` read keys. When the policy
+grants a different root, the session writes one `npm_root_drift` trace event and shows one warning
+(`npm root drifted: run \`foreman setup\``, with both roots). A policy with no npm root grant (an open or unrendered
+policy) stays silent. The adapter never rewrites the policy; reads under the
 resolved root are asked until `foreman setup` re-renders it. Pi's permission system has no session-scoped grant for
 this, so the warning is the whole mechanism. Children do not show the warning, but they write the trace event.
 

@@ -45,17 +45,19 @@ test("R3 line: warns once per session", () => {
   assert.ok(npmRootDriftNotice(drift, new Set()), "a new session warns again");
 });
 
-test("R3 line: policy without an npm root grant is drift too", () => {
+test("R3 line: policy without an npm root grant (open rig) stays silent", () => {
+  const seen = new Set<string>();
   const drift = npmRootDrift(R3_ROOT, policyFor(null));
-  assert.deepEqual(drift, { resolved: R3_ROOT, rendered: null });
-  assert.ok(npmRootDriftNotice(drift, new Set())?.includes("no npm root"));
+  assert.equal(drift, null);
+  assert.equal(npmRootDriftNotice(drift, seen), null);
+  assert.equal(seen.size, 0);
 });
 
 test("R3 line: an unresolved root, or a missing policy file, compares nothing", () => {
-  assert.equal(npmRootDrift(null, policyFor(R3_ROOT)), null);
+  assert.equal(npmRootDrift(null, policyFor("/opt/npm-old/lib/node_modules")), null);
   const missing = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "pf-npmroot-")), "config.json");
   assert.equal(readPolicy(missing), null);
-  assert.deepEqual(npmRootDrift(R3_ROOT, readPolicy(missing)), { resolved: R3_ROOT, rendered: null });
+  assert.equal(npmRootDrift(R3_ROOT, readPolicy(missing)), null);
 });
 
 test("grantedNpmRoot: the key with its /* twin ending in node_modules; trailing slashes and backslashes normalised", () => {
