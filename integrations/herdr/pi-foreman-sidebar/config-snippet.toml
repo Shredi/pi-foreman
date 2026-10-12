@@ -6,25 +6,40 @@
 # Only `pi` panes use these rows; other agents keep your default rows.
 #
 # Colours are neutral placeholders: pick the ones that suit your theme.
-# Row 1 opens with Herdr's built-in state_icon cell (a plain string, no `$`):
-# Herdr draws working/idle/blocked itself, so no spinner is pushed any more
-# (ui.spinner is deprecated and ignored). $fm_sym stays for what Herdr cannot
-# know: "!" for a session blocked for more than 15 minutes, and the done mark
-# of a finished session (the state_icon of a pi pane only ever shows
-# working/unknown). The cell is empty otherwise. Rules test the cell's own
-# value; the first match wins, so the "!" rule comes first.
+# $fm_sym is a STATIC glyph per presence state, pushed only when the state
+# changes (no timer, no frames): working and waiting (a pending foreman_wait is
+# work), idle, ask open, blocked, done, lost. "…!" marks a session blocked for
+# more than 15 minutes, so that rule comes first.
+# Rules test the glyph cell's own value; the first match wins.
 # Glyphs: unicode set as characters, nerd set as \u escapes (ui.symbols).
 # Nested sessions carry their tree prefix (├─ / └─) at the start of $fm_l1.
-# Width: state_icon costs 2 columns (the plugin reserves them). Each cell you
-# add before $fm_sym (an icon token, say) costs its width plus Herdr's " · "
-# separator; set HERDR_SIDEBAR_LEAD (or --lead-cells) to the number you add.
+# Width: each cell you add before $fm_sym (an icon token, say) costs its
+# width plus Herdr's " · " separator. The plugin reserves none by default; set
+# HERDR_SIDEBAR_LEAD (or --lead-cells) to the number you add.
+#
+# Optional variant: Herdr's built-in state_icon cell (a plain string, no `$`,
+# Herdr 0.9.3 and later) in front of $fm_sym. Herdr draws its own working/idle
+# icon, which a waiting pi pane does not always show as working; use it only if
+# you prefer that icon. It costs 2 columns: set HERDR_SIDEBAR_LEAD=2 (or
+# --lead-cells 2) when you use it.
+#   ["state_icon", { token = "$fm_sym", ... same rules ... }, "$fm_l1"],
 
 [ui.sidebar.agents.rows_by_agent]
 pi = [
-  ["state_icon", { token = "$fm_sym", fg = "#5b8def", rules = [
+  [{ token = "$fm_sym", fg = "#6aa84f", rules = [
       { contains = "!", fg = "#d9534f", bold = true },
+      { equals = "⏳", fg = "#6aa84f" },
+      { equals = "\uf252", fg = "#6aa84f" },
+      { equals = "⏸", fg = "#8a8a8a" },
+      { equals = "\uf04c", fg = "#8a8a8a" },
+      { equals = "?", fg = "#e0a030" },
+      { equals = "\uf128", fg = "#e0a030" },
+      { equals = "✋", fg = "#e0a030" },
+      { equals = "\uf256", fg = "#e0a030" },
       { equals = "✓", fg = "#5b8def" },
       { equals = "\uf00c", fg = "#5b8def" },
+      { equals = "✗", fg = "#d9534f" },
+      { equals = "\uf00d", fg = "#d9534f" },
   ] }, "$fm_l1"],
   [{ token = "$fm_l2", dim = true }],
   [{ token = "$fm_l3", dim = true }, { token = "$fm_cost", fg = "#5b8def" }],

@@ -63,9 +63,12 @@ GAP = 3
 # --lead-cells / HERDR_SIDEBAR_LEAD.
 DEFAULT_LEAD = 0
 LEAD_CELL_W = 1
-# The built-in state_icon that opens row 1 in config-snippet.toml: the icon
-# plus Herdr's single space after it.
-STATE_ICON_W = 2
+# Columns row 1 loses to a Herdr state_icon cell before $fm_sym: none, the
+# default row opens with $fm_sym (the optional variant in config-snippet.toml
+# adds 2: set --lead-cells / HERDR_SIDEBAR_LEAD for it).
+STATE_ICON_W = 0
+# An unchanged row is sent again only after this many seconds, to keep the TTL alive.
+REPUSH_S = 10
 # At this width and above the children line shows a run's model and its rung.
 WIDE_CHILDREN = 60
 # The glyph of a pending long wait on the children line, per symbol set.
@@ -302,9 +305,9 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
             out[pane] = {"fm_sort": _cap(sort)}
             return
         blocked_s = node.get("blocked_s")
-        # Herdr's state_icon shows the state; fm_sym only marks a finished session (✓)
-        # and a session blocked for too long (!)
-        sym = (node.get("glyph") or "") if node.get("sym") == "done" else ""
+        # fm_sym is the static glyph of the presence state (no frames); "!" marks a session
+        # blocked for too long
+        sym = node.get("glyph") or ""
         if blocked_s is not None and blocked_s > LATE_S:
             sym += "!"
         # row 1: [state_icon][lead cells][sym][l1], l1 = [tree prefix ]› name ... age
@@ -1267,6 +1270,17 @@ def push_tokens(radar, args, sdir, now=None):
     return {args.pane: {k: tokens.get(k) for k in SESSION_KEYS}}
 
 
+def _unchanged(tokens_file, tokens, now=None):
+    """The last report of this session carried exactly these tokens less than REPUSH_S ago."""
+    try:
+        with open(tokens_file, encoding="utf-8") as fh:
+            last = json.load(fh)
+        return (last["tokens"] == tokens
+                and 0 <= (time.time() if now is None else now) - float(last["at"]) < REPUSH_S)
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def cmd_push(args):
     """Best effort: exit 0 and quiet when Herdr is unreachable; 2 on bad usage
     or a missing radar. --dry-run prints the tokens and reports nothing."""
@@ -1275,12 +1289,13 @@ def cmd_push(args):
         return 2
     sdir = state_dir()
     stamp = os.path.join(sdir, "push", args.session + ".stamp")
+    tokens_file = os.path.join(sdir, "push", args.session + ".tokens")
     if args.clear:
         patch = {args.pane: {k: None for k in SESSION_KEYS}}
         if args.dry_run:
             print(json.dumps(patch))
             return 0
-        for path in (stamp, _cache_path(sdir, args.session)):
+        for path in (stamp, tokens_file, _cache_path(sdir, args.session)):
             try:
                 os.remove(path)
             except OSError:
@@ -1295,6 +1310,9 @@ def cmd_push(args):
             return 0
         if not patch:
             return 0
+        if not args.final and _unchanged(tokens_file, patch[args.pane]):
+            write_atomic(stamp, args.pane)  # still ours; no report
+            return 0
     try:
         call("pane.report_metadata", {"pane_id": args.pane, "source": SOURCE,
                                       "tokens": patch[args.pane], "ttl_ms": TTL_MS}, timeout=2.0)
@@ -1303,6 +1321,7 @@ def cmd_push(args):
     if args.final:
         try:
             os.remove(stamp)  # the daemon takes the keys over at its next tick; the usage cache stays
+            os.remove(tokens_file)
         except OSError:
             pass
     elif not args.clear:
@@ -1311,6 +1330,7 @@ def cmd_push(args):
         except OSError:
             return 0
         write_atomic(stamp, args.pane)
+        write_atomic(tokens_file, json.dumps({"tokens": patch[args.pane], "at": time.time()}))
     return 0
 
 

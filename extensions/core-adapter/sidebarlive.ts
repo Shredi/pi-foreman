@@ -1,8 +1,8 @@
 // Herdr sidebar row pushed by the session itself (integrations/herdr/pi-foreman-sidebar/sidebar.py push).
 // Every LiveState event flushes the presence file and runs one `push` (one in flight, 250 ms apart, one
-// trailing push when requests arrived meanwhile); a 5 s timer keeps the 15 s token TTL alive. The working
-// indicator is Herdr's own state_icon (config-snippet.toml); there is no spinner timer any more (`ui.spinner`
-// is accepted and ignored). session_shutdown stops the timers and runs `push --final` (the daemon takes the keys
+// trailing push when requests arrived meanwhile); a 5 s timer keeps the 15 s token TTL alive, and `push`
+// reports to Herdr only when the tokens changed (or 10 s passed). $fm_sym is a static glyph per state; there
+// is no spinner and no frames (`ui.spinner` is accepted and ignored). session_shutdown stops the timers and runs `push --final` (the daemon takes the keys
 // over). Only with HERDR_ENV=1, HERDR_PANE_ID, mode tui, a Python interpreter, the sidebar.py file and a
 // LiveState for the session.
 import { execFile } from "node:child_process";

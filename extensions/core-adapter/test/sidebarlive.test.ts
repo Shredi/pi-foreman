@@ -1,7 +1,5 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { SidebarLive, installSidebarLive, sidebarGate, type SidebarDeps } from "../sidebarlive.ts";
 import type { LiveStateName } from "../livestate.ts";
@@ -109,33 +107,4 @@ test("install: without HERDR_ENV nothing starts (no onChange subscription)", () 
   const sl = installSidebarLive(pi, { env: {} });
   sl.start({ mode: "tui" } as never, { python: "py", pkgRoot: path.resolve(fileURLToPathSelf(), "..", "..", "..", ".."), agentDir: "/a", sessionId: "s", live });
   assert.equal(subscribed, 0);
-});
-
-test("install with a fake herdr binary: a working session never calls herdr (no spinner frames)", { skip: process.platform === "win32" }, async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sbl-"));
-  try {
-    const log = path.join(dir, "argv.jsonl");
-    const bin = path.join(dir, "herdr");
-    fs.writeFileSync(bin, `#!${process.execPath}\nrequire("node:fs").appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + "\\n");\n`, { mode: 0o755 });
-    const script = path.join(dir, "integrations", "herdr", "pi-foreman-sidebar");
-    fs.mkdirSync(script, { recursive: true });
-    fs.writeFileSync(path.join(script, "sidebar.py"), "");
-    const py = path.join(dir, "py");
-    fs.writeFileSync(py, `#!${process.execPath}\n`, { mode: 0o755 });
-    const cbs: (() => void)[] = [];
-    const live = { onChange: (cb: () => void) => (cbs.push(cb), () => {}), flush() {}, stop() {}, stateName: "working" as LiveStateName };
-    let shutdown: () => Promise<void> = async () => {};
-    const pi = { on: (_n: string, h: () => Promise<void>) => void (shutdown = h) } as never;
-    const sl = installSidebarLive(pi, { env: { HERDR_ENV: "1", HERDR_PANE_ID: "w9:p9", HERDR_BIN: bin } });
-    sl.start({ mode: "tui" } as never, { python: py, pkgRoot: dir, agentDir: dir, sessionId: "s", live });
-    assert.equal(cbs.length, 1);
-    await sleep(1600);
-    assert.equal(fs.existsSync(log), false);
-    live.stateName = "idle";
-    cbs[0]();
-    await shutdown();
-  } finally {
-    await sleep(100);
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
 });

@@ -108,11 +108,11 @@ class ComposeTest(unittest.TestCase):
         self.assertTrue(out["w1:p1"]["fm_l1"].startswith("› refactor"))
         self.assertTrue(out["w1:p2"]["fm_l1"].startswith("├─ › fix-parser"))
         self.assertTrue(out["w1:p3"]["fm_l1"].startswith("└─ › docs-pass"))
-        self.assertIsNone(out["w1:p2"]["fm_sym"])   # Herdr's state_icon shows working
+        self.assertEqual(out["w1:p2"]["fm_sym"], "⏳")   # static glyph of the state
         self.assertEqual([out[p]["fm_sort"] for p in ("w1:p1", "w1:p2", "w1:p3", "w2:p1")],
                          ["r001", "r001.c001", "r001.c002", "r002"])
         self.assertTrue(out["w1:p2"]["fm_l2"].startswith("│"))
-        self.assertEqual(out["w1:p3"]["fm_sym"], "!")     # late blocked: only the mark
+        self.assertEqual(out["w1:p3"]["fm_sym"], "✋!")     # late blocked: glyph plus the mark
         self.assertEqual(out["w2:p1"]["fm_sym"], "✓")     # done stays ours
         self.assertEqual(out["w1:p3"]["fm_block_s"], "1000")
         self.assertEqual(out["w1:p3"]["fm_l2"].lstrip(sidebar.BLANK + " "), "no children")
@@ -120,7 +120,7 @@ class ComposeTest(unittest.TestCase):
         self.assertEqual(out["w2:p1"]["fm_l2"], "done · 1 child")
         self.assertEqual(out["w2:p1"]["fm_state"], "done")
         nerd = sidebar.compose(snapshot("nerd"), 34)
-        self.assertEqual(nerd["w1:p3"]["fm_sym"], "!")
+        self.assertEqual(nerd["w1:p3"]["fm_sym"], "\uf256!")
 
     def test_pane_collision_keeps_live_youngest(self):
         g = SYMS["unicode"]
@@ -191,9 +191,9 @@ class ComposeTest(unittest.TestCase):
                 for pane, t in out.items():
                     with self.subTest(width=width, blocked=blocked, pane=pane):
                         self.assertLessEqual(sidebar.cell_width(t["fm_l1"] or ""), width - row1_used(t, 2) - 2)
-        root = sidebar.compose(snapshot(), 17, lead=2)["w1:p1"]["fm_l1"]   # budget 3: age dropped
-        self.assertEqual(root, "› …")
-        root = sidebar.compose(snapshot(), 19, lead=2)["w1:p1"]["fm_l1"]   # budget 5: "›…" + age fit
+        root = sidebar.compose(snapshot(), 17, lead=2)["w1:p1"]["fm_l1"]   # the glyph takes 4 columns: no room
+        self.assertIsNone(root)
+        root = sidebar.compose(snapshot(), 22, lead=2)["w1:p1"]["fm_l1"]   # budget 5: "›…" + age fit
         self.assertEqual(root, "›… 6m")
 
     def test_depth2_large_totals_drop_counts_before_cost(self):
@@ -473,19 +473,22 @@ class SnippetTest(unittest.TestCase):
                 self.assertLessEqual(len(rules), 16)
                 for r in rules:
                     self.assertTrue(r.get("contains") == "!" or r["equals"] in glyphs, r)
-        self.assertEqual(rows[0][0], "state_icon")   # Herdr's built-in cell, no `$`
+        self.assertIsInstance(rows[0][0], dict)   # row 1 opens with $fm_sym (state_icon is a commented variant)
         sym_file = ROOT / "config" / "symbols.json"
         if sym_file.is_file():
             with open(sym_file, encoding="utf-8") as fh:
                 shared = json.load(fh)
             self.assertEqual(shared, SYMS)
         self.assertNotIn("$fm_pre", json.dumps(rows))
-        sym_cell = rows[0][1]
+        sym_cell = rows[0][0]
         self.assertEqual(sym_cell["token"], "$fm_sym")
         sym_rules = sym_cell["rules"]
         self.assertEqual(sym_rules[0], {"contains": "!", "fg": "#d9534f", "bold": True})  # late first
-        self.assertEqual({r["equals"] for r in sym_rules[1:]}, {s["done"] for s in SYMS.values()})  # only done
-        self.assertEqual(rows[0][2], "$fm_l1")
+        self.assertEqual(rows[0][1], "$fm_l1")
+        every = {s[k] for s in SYMS.values() for k in ("working", "waiting", "asking", "blocked", "done", "lost")}
+        self.assertEqual({r["equals"] for r in sym_rules[1:]}, every)   # one rule per state glyph, both sets
+        self.assertIn("state_icon", (PLUGIN / "config-snippet.toml").read_text(encoding="utf-8"))  # commented variant
+        self.assertNotIn("state_icon", json.dumps(rows))
         for frame in "⣾⣽⣻⢿⡿⣟⣯⣷":
             self.assertFalse(any(r.get("equals") == frame or r.get("contains", "\0") in frame
                                  for r in sym_rules), frame)
@@ -730,6 +733,30 @@ class PushTest(unittest.TestCase):
         last = self.herdr.reports()[-1]["tokens"]
         self.assertEqual(last, {k: None for k in sidebar.SESSION_KEYS})
         self.assertFalse(os.path.exists(self.stamp))
+
+    def test_static_glyph_pushed_once_per_state_change(self):
+        live = os.path.join(self.adir, "pi-foreman", "state", "live", "sid-1.json")
+
+        def set_state(state):
+            with open(live, encoding="utf-8") as fh:
+                d = json.load(fh)
+            d["state"] = state
+            with open(live, "w", encoding="utf-8") as fh:
+                json.dump(d, fh)
+
+        for _ in range(3):   # a steady state: one report, the rest are quiet (stamp still touched)
+            self.assertEqual(self.push().returncode, 0)
+        reps = self.herdr.reports()
+        self.assertEqual(len(reps), 1)
+        self.assertEqual(reps[0]["tokens"]["fm_sym"], "⏳")
+        set_state("done")
+        self.push()
+        reps = self.herdr.reports()
+        self.assertEqual((len(reps), reps[-1]["tokens"]["fm_sym"]), (2, "✓"))
+        self.push()
+        self.assertEqual(len(self.herdr.reports()), 2)
+        with open(self.stamp, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "p1")
 
     def test_final_publishes_row_and_drops_only_the_stamp(self):
         self.push()
