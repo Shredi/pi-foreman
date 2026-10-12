@@ -28,7 +28,15 @@ export interface CachePolicy {
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v);
 
-export function resolveCachePolicy(config: unknown, provider: string | undefined | null): CachePolicy {
+/** Glob (`*`, `?`) or substring match of a byModel row on the model id. */
+export function matchModel(pattern: string, model: string): boolean {
+  if (!/[*?]/.test(pattern)) return model.includes(pattern);
+  const re = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+  return new RegExp(`^${re}$`).test(model);
+}
+
+/** `model` is the bare model id or `<provider>/<id>`; the first byModel row that matches wins over the provider ttl. */
+export function resolveCachePolicy(config: unknown, provider: string | undefined | null, model?: string | null): CachePolicy {
   const provs = isObj(config) ? config.providers : undefined;
   const entry = isObj(provs) && provider ? provs[provider] : undefined;
   const raw = isObj(entry) ? entry.cache : undefined;
@@ -36,10 +44,16 @@ export function resolveCachePolicy(config: unknown, provider: string | undefined
   const built = provider && Object.prototype.hasOwnProperty.call(BUILTIN_CACHE, provider) ? BUILTIN_CACHE[provider] : undefined;
   const ka = isObj(cfg.keepalive) ? cfg.keepalive : {};
 
-  const ttlRaw = "ttlSeconds" in cfg ? cfg.ttlSeconds : built?.ttlSeconds;
+  const id = model ? (model.startsWith(`${provider}/`) ? model.slice(String(provider).length + 1) : model) : "";
+  const row = id && Array.isArray(cfg.byModel)
+    ? cfg.byModel.find((r) => isObj(r) && typeof r.match === "string" && r.match !== "" && matchModel(r.match, id))
+    : undefined;
+  const hit = isObj(row) ? row : {};
+  const ttlRaw = isInt(hit.ttlSeconds) ? hit.ttlSeconds : "ttlSeconds" in cfg ? cfg.ttlSeconds : built?.ttlSeconds;
   const ttlSeconds = isInt(ttlRaw) && ttlRaw >= 1 ? ttlRaw : null;
+  const billingRaw = hit.billing === "token" || hit.billing === "request" ? hit.billing : cfg.billing;
   const billing: CacheBilling | null =
-    cfg.billing === "token" || cfg.billing === "request" ? cfg.billing : (built?.billing ?? null);
+    billingRaw === "token" || billingRaw === "request" ? billingRaw : (built?.billing ?? null);
   const intervalSeconds = isInt(ka.intervalSeconds)
     ? Math.min(3600, Math.max(30, ka.intervalSeconds))
     : Math.max(30, Math.round((ttlSeconds ?? 0) * 0.9));

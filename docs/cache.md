@@ -12,10 +12,24 @@ Built-in values exist for `claude-bridge` (`ttlSeconds` 300, `billing` `token`) 
 |---|---|---|
 | `providers.<p>.cache.ttlSeconds` | 300 for `claude-bridge`, else null | Prompt-cache time to live in seconds (integer >= 1); null = unknown, the policy stays off. |
 | `providers.<p>.cache.billing` | `token` for `claude-bridge`, `request` for `github-copilot` | `token` or `request`. A request-billed provider never gets a keep-alive. |
+| `providers.<p>.cache.byModel` | none | Rows `{match, ttlSeconds?, billing?, note?}` layered over `ttlSeconds` and `billing`: the first row whose `match` (glob with `*`/`?`, else a substring of the model id) fits the active model wins. `billing: "request"` in a row never gets a keep-alive. User and overlay config only. |
 | `providers.<p>.cache.keepalive.enabled` | true iff `billing` is `token` and `ttlSeconds` < 3600 | Switches the keep-alive on or off. |
 | `providers.<p>.cache.keepalive.intervalSeconds` | 90% of `ttlSeconds`, at least 30 | Seconds between pings (30..3600). |
 | `providers.<p>.cache.keepalive.windowMinutes` | 45 | Minutes of idleness after which the pings stop (1..60); capped by Pi's own idle limit of 30 minutes. |
 | `providers.<p>.cache.warmCompact` | true | Warm the cache after a compaction. |
+
+### TTL by family
+
+The keep-alive interval and the on/off default follow the TTL of the matched row, so a family with a longer TTL pings less often.
+
+| family | TTL | billing | keep-alive |
+|---|---|---|---|
+| Anthropic direct | 300 s | token | on by default |
+| Claude through the `claude-bridge` preset | 600 s (`byModel` row, measured >= 10 min, 1 h plausible) | token | per `keepalive.enabled` |
+| request-billed provider, Claude-type model | 300 s | request | never |
+| request-billed provider, OpenAI-type model | 600 s | request | never |
+
+The request-billed rows only document the TTL for the retro cost report; set them with a `byModel` row such as `{"match": "gpt-*", "ttlSeconds": 600, "billing": "request"}`.
 
 ## Layers
 

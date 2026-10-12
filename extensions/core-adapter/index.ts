@@ -521,7 +521,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       scratch: new ChildScratch(),
       idleCache: new IdleCache({
         now: () => Date.now(),
-        policy: () => (s.idleCtx ? resolveCachePolicy(s.config.config, s.idleCtx.model?.provider) : null),
+        policy: () => (s.idleCtx ? resolveCachePolicy(s.config.config, s.idleCtx.model?.provider, s.idleCtx.model?.id) : null),
         piIdleMode: () => piCacheWarmingIdle(),
         hasPromptCache: () => !!s.idleCtx?.model?.promptCache,
         busy: () => idleBusy(s, s.idleCtx),
@@ -938,7 +938,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.idleCache.noteDecision("stop");
       return { action: "stop" as const };
     }
-    if (!s || s.isChild || !resolveCachePolicy(s.config.config, ctx.model?.provider).active) return undefined;
+    if (!s || s.isChild || !resolveCachePolicy(s.config.config, ctx.model?.provider, ctx.model?.id).active) return undefined;
     const action = s.idleCache.decide(idleBusy(s, ctx));
     s.idleCache.noteDecision(action);
     return action ? { action } : undefined;
@@ -3034,7 +3034,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     else fail("session marker missing", `make ${s.markerDir} writable and restart the session.`);
     out.push(`INFO ceremony: ${tierLine(s.ceremony)}`);
     out.push(`INFO PR tools: ${s.prPack ? prHostLabel(get(s.config.config, "tools.prHost") ?? "auto", workspaceOf(s.cwd).root, process.env, platform) : "off (tools.pr)"}`);
-    const cache = resolveCachePolicy(s.config.config, ctx.model?.provider);
+    const cache = resolveCachePolicy(s.config.config, ctx.model?.provider, ctx.model?.id);
     if (cache.active && !s.isChild) {
       const missing: string[] = [];
       if (settings?.cacheWarming !== "idle" && !piCacheWarmingIdle()) missing.push('Pi settings.json (global): "cacheWarming": "idle"');
