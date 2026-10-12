@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { sessionRankRefusal } from "../ranks.ts";
 import { childRoleIds, roleLaunchBlock } from "../roles.ts";
-import { runSessionCommand, sessionForemanModel } from "../session.ts";
+import { foremanModelSpec, runSessionCommand, sessionForemanModel, sessionModelOf } from "../session.ts";
 import type { SessionDeps } from "../session.ts";
 
 const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-session-foreman-")));
@@ -91,4 +91,25 @@ test("session open: a higher-ranked model is refused before spawning", async () 
   assert.equal(r.ok, false);
   assert.match(r.text, /^session open refused \[session_rank\]/);
   assert.equal(d.spawned.length, 0);
+});
+
+test("session model: the env var wins over the mapped foreman role model; unset keeps it", () => {
+  assert.equal(sessionModelOf({ PI_FOREMAN_SESSION_MODEL: " claude-bridge/claude-sonnet-5-5 " }), "claude-bridge/claude-sonnet-5-5");
+  assert.equal(sessionModelOf({}), undefined);
+  assert.equal(sessionModelOf({ PI_FOREMAN_SESSION_MODEL: "  " }), undefined);
+  assert.equal(foremanModelSpec("claude-bridge/claude-opus-5-5", "claude-bridge/claude-sonnet-5-5"), null);
+  assert.equal(foremanModelSpec("claude-bridge/claude-opus-5-5", undefined), "claude-bridge/claude-opus-5-5");
+});
+
+test("session open: passes its own model for the CLI rank check and does not repeat the model line", async () => {
+  const own = "claude-bridge/claude-opus-5-5";
+  const child = "claude-bridge/claude-sonnet-5-5";
+  const d = deps({ model: own, config, spawner: async () => ({ code: 0, stdout: `handoff: x\nsession model: ${child}`, stderr: "", timedOut: false }) });
+  const r = await runSessionCommand(d, `open demo b.md --model ${child} --dry-run`);
+  assert.equal(r.ok, true);
+  assert.equal(r.text.match(/session model:/g)?.length, 1);
+  const d2 = deps({ model: own, config });
+  await runSessionCommand(d2, `open demo b.md --model ${child}`);
+  const argv = d2.spawned[0];
+  assert.equal(argv[argv.indexOf("--own-model") + 1], own);
 });

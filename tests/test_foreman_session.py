@@ -110,7 +110,8 @@ class SessionTest(unittest.TestCase):
         self.assertTrue(handoff.parent == self.agent / "pi-foreman" / "handoffs")
         words = shlex.split(calls[2][3])
         self.assertEqual(words, ["env", "PI_FOREMAN_HANDOFF_DIR=%s" % handoff, "PI_FOREMAN_PARENT_INTERCOM=parent-1",
-                                 "PI_INTERCOM_STABLE_ID=%s" % entry["child"], "PI_FOREMAN_PARENT_LABEL=opener", "pi", "--model", "prov/model-1",
+                                 "PI_INTERCOM_STABLE_ID=%s" % entry["child"], "PI_FOREMAN_PARENT_LABEL=opener",
+                                 "PI_FOREMAN_SESSION_MODEL=prov/model-1", "pi", "--model", "prov/model-1",
                                  "Read the handoff brief at %s and proceed." % (handoff / "brief.md").as_posix()])
 
     def test_group_tag_parent_slug_from_an_opened_child_and_off_switch(self):
@@ -208,6 +209,49 @@ class SessionTest(unittest.TestCase):
         self.assertIn("handoff: ", out)
         self.assertIn("child intercom id: fm-demo-", out)
         self.assertEqual(self.calls(), [])
+
+    def write_ranks(self):
+        self.agent.mkdir(parents=True, exist_ok=True)
+        ranks = [{"match": "big-*", "tier": 0}, {"match": "mid-*", "tier": 1}, {"match": "small-*", "tier": 2}]
+        (self.agent / "foreman.json").write_text(json.dumps({"providers": {"prov": {"ranks": ranks}}}), "utf-8")
+
+    def test_model_is_exported_to_the_child_and_dry_run_prints_it(self):
+        code, out, err = self.run_main(*self.open_args("--dry-run", "--model", "prov/model-4"))
+        self.assertEqual(code, 0, err)
+        self.assertIn("session model: prov/model-4", out)
+        self.assertIn("PI_FOREMAN_SESSION_MODEL=prov/model-4", out)
+        code, out, err = self.run_main(*self.open_args("--dry-run"))
+        self.assertNotIn("PI_FOREMAN_SESSION_MODEL", out)
+        self.assertNotIn("session model:", out)
+
+    def test_rank_check_is_skipped_when_the_own_model_is_unknown(self):
+        self.write_ranks()
+        code, out, err = self.run_main(*self.open_args("--dry-run", "--model", "prov/big-1"))
+        self.assertEqual(code, 0, err)
+        self.assertIn("rank check skipped: own model unknown", out)
+
+    def test_known_own_model_refuses_a_higher_ranked_child(self):
+        self.write_ranks()
+        code, out, err = self.run_main(*self.open_args("--dry-run", "--model", "prov/big-1", "--own-model", "prov/mid-1"))
+        self.assertEqual(code, 1)
+        self.assertIn("session open refused [session_rank]", err)
+        self.assertIn("prov/big-1 is tier 0, this session is tier 1", err)
+        self.assertEqual(out, "")
+        self.assertFalse((self.agent / "pi-foreman").exists())
+        # the env var names the own model too
+        code, _, err = self.run_main(*self.open_args("--dry-run", "--model", "prov/big-1"), PI_FOREMAN_SESSION_MODEL="prov/mid-1")
+        self.assertEqual(code, 1)
+        self.assertIn("session_rank", err)
+
+    def test_known_own_model_allows_equal_and_lower_and_refuses_unranked(self):
+        self.write_ranks()
+        for child in ("prov/mid-2", "prov/small-1"):
+            code, out, err = self.run_main(*self.open_args("--dry-run", "--model", child, "--own-model", "prov/mid-1"))
+            self.assertEqual(code, 0, err)
+            self.assertNotIn("rank check skipped", out)
+        code, _, err = self.run_main(*self.open_args("--dry-run", "--model", "prov/odd", "--own-model", "prov/mid-1"))
+        self.assertEqual(code, 1)
+        self.assertIn("prov/odd is unranked", err)
 
     def test_footer_contract_and_no_home_path(self):
         code, _, _ = self.run_main(*self.open_args("--plan-first"))

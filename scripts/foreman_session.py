@@ -3,7 +3,7 @@
 
     python scripts/foreman_session.py open <label> <brief-file> [--cwd DIR] [--model ID]
                                       [--plan-first] [--focus] [--dry-run] [--print-all]
-                                      [--parent-id ID] [--agent-dir D]
+                                      [--parent-id ID] [--own-model ID] [--agent-dir D]
     python scripts/foreman_session.py list [--json] [--agent-dir D]
 
 `open` writes the handoff dir `<agent dir>/pi-foreman/handoffs/<YYYYmmdd-HHMMSS>-<slug>/`:
@@ -57,6 +57,7 @@ ENV_HANDOFF = "PI_FOREMAN_HANDOFF_DIR"
 ENV_PARENT = "PI_FOREMAN_PARENT_INTERCOM"
 ENV_STABLE = "PI_INTERCOM_STABLE_ID"
 ENV_PARENT_LABEL = "PI_FOREMAN_PARENT_LABEL"
+ENV_MODEL = "PI_FOREMAN_SESSION_MODEL"
 META_SOURCE = "user:pi-foreman"
 META_TTL_MS = 180000
 
@@ -224,8 +225,41 @@ def need_id(value, what):
     return value
 
 
-def child_env(handoff, parent, child, parent_slug):
-    return [(ENV_HANDOFF, str(handoff)), (ENV_PARENT, parent), (ENV_STABLE, child), (ENV_PARENT_LABEL, parent_slug)]
+def child_env(handoff, parent, child, parent_slug, model=None):
+    env = [(ENV_HANDOFF, str(handoff)), (ENV_PARENT, parent), (ENV_STABLE, child), (ENV_PARENT_LABEL, parent_slug)]
+    # the child's Pi keeps this model instead of applying the overlay/preset foreman role model
+    return env + [(ENV_MODEL, model)] if model else env
+
+
+def rank_refusal(adir, own_model, child_model):
+    """Mirror of ranks.ts sessionRankRefusal for a known own model; None when allowed (or no ranks configured)."""
+    try:
+        import foreman_config
+        import foreman_retro
+        ranks = foreman_retro.ranks_of(foreman_config.load_config(agent_dir=str(adir))["config"])
+    except Exception:  # noqa: BLE001 - an unreadable config never blocks the open
+        return None
+    levels = ("off", "minimal", "low", "medium", "high", "xhigh")
+
+    def base(m):
+        m = m.strip()
+        head, _, tail = m.rpartition(":")
+        return head if head and tail in levels else m
+
+    child, own = base(child_model), base(own_model)
+    if own == child or not ranks:
+        return None
+    head = "session open refused [session_rank]: cannot open a session ranked above this session:"
+    tail = "use --model with a model at or below your rank"
+    c_tier = foreman_retro._rank_tier(ranks, child)
+    o_tier = foreman_retro._rank_tier(ranks, own)
+    if c_tier is None:
+        return "%s %s is unranked; %s, or add a ranks entry for it" % (head, child, tail)
+    if o_tier is None:
+        return "%s this session's model %s is unranked; %s, or add a ranks entry for it" % (head, own, tail)
+    if c_tier < o_tier:
+        return "%s %s is tier %d, this session is tier %d (lower number = higher rank); %s" % (head, child, c_tier, o_tier, tail)
+    return None
 
 
 def opener_slug(cwd, top):
@@ -320,6 +354,13 @@ def cmd_open(a):
     cwd = cwd.resolve()
     if a.model and not VALUE_RE.match(a.model):
         raise Refused("--model may use only A-Z a-z 0-9 . _ : / @ -")
+    own_model = a.own_model or os.environ.get(ENV_MODEL, "").strip() or None
+    if own_model and not VALUE_RE.match(own_model):
+        raise Refused("--own-model may use only A-Z a-z 0-9 . _ : / @ -")
+    if a.model and own_model:
+        refused = rank_refusal(adir, own_model, a.model)
+        if refused:
+            raise Refused(refused)
     parent = a.parent_id or os.environ.get(ENV_STABLE, "").strip() or parent_from_config(adir)
     if not parent:
         raise Refused("no parent intercom id: pass --parent-id (inside Pi, /foreman session open passes it)")
@@ -340,15 +381,17 @@ def cmd_open(a):
     ws_label = (top or cwd).name
     here = Path.cwd()  # the opener runs this command from its own cwd; the child may live elsewhere (--cwd)
     parent_slug = opener_slug(here, git_top(here))
-    env = child_env(handoff, parent, child, parent_slug)
+    env = child_env(handoff, parent, child, parent_slug, a.model)
     prompt = prompt_text(handoff)
     command = posix_command(env, a.model, prompt)
     binary = herdr_bin() if os.environ.get("HERDR_PANE_ID") else None
     print("handoff: %s" % handoff)
     print("child intercom id: %s" % child)
+    if a.model:
+        print("session model: %s" % a.model)
+        if not own_model:
+            print("rank check skipped: own model unknown")
     if a.dry_run:  # writes nothing: no handoff dir, brief, parent, child or registry entry
-        if a.model:
-            print("session model: %s" % a.model)
         if binary:
             print("dry run: would open a tab %r in the Herdr workspace %r and run:\n  %s" % (a.label, ws_label, command))
         else:
@@ -407,6 +450,7 @@ def main(argv=None):
     o.add_argument("brief")
     o.add_argument("--cwd")
     o.add_argument("--model")
+    o.add_argument("--own-model")
     o.add_argument("--parent-id")
     o.add_argument("--plan-first", action="store_true")
     o.add_argument("--focus", action="store_true")

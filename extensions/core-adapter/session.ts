@@ -216,6 +216,20 @@ export function sessionForemanModel(config: Json | undefined, ownModel: string |
   return modelOf(own) ?? (fb ? modelOf(providers[fb]) : undefined);
 }
 
+/** Env var `foreman session open --model` sets in the child: the model the session was opened on. */
+export const SESSION_MODEL_ENV = "PI_FOREMAN_SESSION_MODEL";
+
+/** The model this session was opened on (`foreman session open --model`), or undefined. */
+export function sessionModelOf(env: Record<string, string | undefined>): string | undefined {
+  const v = env[SESSION_MODEL_ENV]?.trim();
+  return v ? v : undefined;
+}
+
+/** The mapped foreman role model to apply at start; null when the session was opened on its own model (Pi already runs it). */
+export function foremanModelSpec(roleModel: string, sessionModel: string | undefined): string | null {
+  return sessionModel ? null : roleModel;
+}
+
 export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>): Promise<SessionResult> {
   if (!d.python) return { text: "foreman_session.py: no usable Python (run /foreman doctor).", ok: false };
   const model = c.model ?? sessionForemanModel(d.config, d.model) ?? d.model;
@@ -225,12 +239,14 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
   }
   const opener = openerIntercomId(d.env, d.agentDir, d.piSessionId);
   const argv = [path.join(d.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", d.agentDir, "open", c.label, path.resolve(d.cwd, c.brief), "--cwd", path.resolve(d.cwd, c.cwd ?? "."), "--parent-id", opener];
+  if (d.model) argv.push("--own-model", d.model);
   if (model) argv.push("--model", model);
   if (c.planFirst) argv.push("--plan-first");
   if (c.focus) argv.push("--focus");
   if (c.dryRun) argv.push("--dry-run");
   const r = await d.spawner(d.python, ["-E", "-s", ...argv], { timeoutMs: OPEN_TIMEOUT_MS, cwd: d.cwd });
-  const text = [model ? `session model: ${model}` : "", r.stdout.trim(), r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? r.error.message : r.timedOut ? "foreman_session.py timed out" : "foreman_session.py produced no output.");
+  const out = r.stdout.trim();
+  const text = [model && !/^session model: /m.test(out) ? `session model: ${model}` : "", out, r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? r.error.message : r.timedOut ? "foreman_session.py timed out" : "foreman_session.py produced no output.");
   return { text, ok: !r.error && !r.timedOut && r.code === 0 };
 }
 

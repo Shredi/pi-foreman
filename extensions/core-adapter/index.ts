@@ -105,7 +105,7 @@ import { registerWait, waitLimits } from "./wait.ts";
 import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import type { CloseReport } from "./close.ts";
-import { registerSession } from "./session.ts";
+import { foremanModelSpec, registerSession, sessionModelOf } from "./session.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
 import { foremanTriage, GATED_TOOLS, isTriaged, OUTWARD_TOOLS, triageAdvice, triageGateBlock, TRIAGE_RULES, TRIAGE_TOOL, trivialPathAdvice, workspaceTargets } from "./triage.ts";
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
@@ -596,7 +596,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return;
     }
     if (userPickedModel) return;
-    const spec = role.model;
+    // `foreman session open --model X` wins over the overlay/preset role model (model and thinking) for this session
+    const spec = foremanModelSpec(role.model, sessionModelOf(process.env));
+    if (spec === null) return;
     const slash = spec.indexOf("/");
     const provider = slash > 0 ? spec.slice(0, slash) : ctx.model?.provider ?? "";
     const modelId = slash > 0 ? spec.slice(slash + 1) : spec;
