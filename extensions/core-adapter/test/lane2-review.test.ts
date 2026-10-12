@@ -83,7 +83,10 @@ test("2a: without owned roots, or with one non-owned path or write target, the d
 test("2a: /tmp is not an owned root: a defer for a command writing /tmp stays a defer", { skip: !posix }, async () => {
   const r = new ForemanReview();
   r.upsert("s", session(reply(DEFER)));
-  assert.deepEqual(await r.authorize("s", ask("touch /tmp/pf-lane2-x")), { kind: "defer" });
+  // non-forwarded: the pre-model tmp allows (touch/mkdir/redirect under /tmp) do not run, so only the owned-roots path can turn the defer into an allow
+  assert.deepEqual(await r.authorize("s", { ...ask("touch /tmp/pf-lane2-x"), forwarding: false }), { kind: "defer" });
+  assert.deepEqual(await r.authorize("s", { ...ask(`touch ${stateScratch}/a.txt /tmp/pf-lane2-x`), forwarding: false }), { kind: "defer" });
+  assert.deepEqual(await r.authorize("s", { ...ask(`touch ${stateScratch}/a.txt`), forwarding: false }), { kind: "allow" });
 });
 
 test("2a: a deny (hard or soft) is never turned into an allow", async () => {
