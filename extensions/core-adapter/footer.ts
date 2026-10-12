@@ -1,5 +1,7 @@
 // Usage footer (item 11): one status line per Pi process from in-memory totals, refreshed after
 // each assistant message_end. Cost is Pi's `usage.cost` (list price from Pi's model registry).
+import { tableRate } from "./cost.ts";
+import type { PriceTable } from "./cost.ts";
 type Json = Record<string, unknown>;
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
@@ -33,7 +35,7 @@ export function lookupRate(registry: PriceRegistry | undefined, provider: unknow
 export const zeroTotals = (): FooterTotals => ({ input: 0, cacheRead: 0, cacheWrite: 0, output: 0, cost: 0, costCacheRead: 0, costCold: 0, unpriced: false });
 
 /** Add one assistant message's usage to the totals. */
-export function addMessage(t: FooterTotals, message: unknown, registry?: PriceRegistry): void {
+export function addMessage(t: FooterTotals, message: unknown, registry?: PriceRegistry, table?: PriceTable | null): void {
   const m = (message && typeof message === "object" ? message : {}) as Json;
   if (m.kind === "keepalive") return; // keep-alive refreshes are summed by /foreman cost, not per turn
   const u = (m.usage && typeof m.usage === "object" ? m.usage : {}) as Json;
@@ -44,7 +46,8 @@ export function addMessage(t: FooterTotals, message: unknown, registry?: PriceRe
   t.output += num(u.output);
   if (num(c.total) === 0 && num(u.input) + num(u.output) + num(u.cacheRead) + num(u.cacheWrite) !== 0) {
     // claude-bridge (and any provider that reports no cost): list price from the registry, anthropic rates for the bridge.
-    const rate = lookupRate(registry, m.provider, m.model);
+    const reg = lookupRate(registry, m.provider, m.model);
+    const rate = reg && (num(reg.input) !== 0 || num(reg.output) !== 0) ? reg : tableRate(table, m.model, num(u.input) + num(u.cacheRead) + num(u.cacheWrite)) ?? reg; // registry first, else config/prices.json (cost.ts)
     if (!rate || (num(rate.input) === 0 && num(rate.output) === 0)) {
       t.unpriced = true;
       return;
@@ -74,10 +77,12 @@ const usd = (v: number): string => `$${v.toFixed(2)}`;
 const money = (v: number, unpriced: boolean): string => (!unpriced ? usd(v) : v !== 0 ? `${usd(v)} + n/a` : "n/a");
 
 /** `↑in ↓out tok · $total list (warm $x / cold $y)` plus ` · children n` when `children` is a number. */
-export function footerText(t: FooterTotals, children: number | null, wait: string | null = null): string {
+export function footerText(t: FooterTotals, children: number | null, wait: string | null = null, runsCost: number | null = null): string {
   const up = t.input + t.cacheRead + t.cacheWrite;
   const base = `↑${abbrev(up)} ↓${abbrev(t.output)} tok · ${money(t.cost, t.unpriced)} list (warm ${money(t.costCacheRead, t.unpriced)} / cold ${money(t.costCold, t.unpriced)})`;
-  const withKids = children === null ? base : `${base} · children ${children}`;
+  // The summed estimate: the foreman's cost plus every run's priced cost (lane 3b).
+  const all = runsCost !== null && runsCost > 0 ? `${base} · all ${usd(t.cost + runsCost)} est (runs ${usd(runsCost)})` : base;
+  const withKids = children === null ? all : `${all} · children ${children}`;
   return wait ? `${withKids} · waiting ${wait}` : withKids;
 }
 
@@ -109,14 +114,19 @@ export interface FooterCtx {
 /** Per-session totals; `update` never throws and does nothing unless enabled in a tui/rpc session. */
 export class UsageFooter {
   private totals = new Map<string, FooterTotals>();
+  private readonly prices: PriceTable | null;
 
-  update(sessionId: string, ctx: FooterCtx, message: unknown, opts: { enabled: unknown; isChild: boolean; children: number; wait?: string | null }): void {
+  constructor(prices: PriceTable | null = null) {
+    this.prices = prices;
+  }
+
+  update(sessionId: string, ctx: FooterCtx, message: unknown, opts: { enabled: unknown; isChild: boolean; children: number; wait?: string | null; runsCost?: number }): void {
     try {
       const t = this.totals.get(sessionId) ?? zeroTotals();
       this.totals.set(sessionId, t);
-      addMessage(t, message, ctx.modelRegistry);
+      addMessage(t, message, ctx.modelRegistry, this.prices);
       if (opts.enabled !== true || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return;
-      ctx.ui.setStatus(FOOTER_KEY, footerText(t, opts.isChild ? null : opts.children, opts.isChild ? null : opts.wait ?? null));
+      ctx.ui.setStatus(FOOTER_KEY, footerText(t, opts.isChild ? null : opts.children, opts.isChild ? null : opts.wait ?? null, opts.isChild ? null : opts.runsCost ?? null));
     } catch {
       // the footer is cosmetic
     }

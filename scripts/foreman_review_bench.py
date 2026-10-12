@@ -1060,7 +1060,7 @@ def add_arguments(p):
     p.add_argument("--timeout", type=int, default=900, help="seconds per launch")
     p.add_argument("--keep-work", action="store_true", help="keep the per-cell work dirs (repo clones) after the run")
     p.add_argument("--dry-run", action="store_true", help="validate tasks, prepare one workspace each, launch nothing")
-    p.add_argument("--prices", default=None, help="price file (default: bench/prices.json)")
+    p.add_argument("--prices", default=None, help="price file (default: config/prices.json)")
 
 
 def add_table_arguments(p):

@@ -324,7 +324,7 @@ def _triage(counters, bench):
 
 
 TOKEN_KINDS = ("input", "cacheRead", "cacheWrite", "output")
-PRICES_FILE = REPO / "bench" / "prices.json"
+PRICES_FILE = REPO / "config" / "prices.json"
 COST_LABEL = "list-price equivalent (runs go through the subscription)"
 
 
@@ -880,7 +880,7 @@ def _pct(s):
 def format_cost(summary, rows, prices):
     """The cost block: per row and per (row, task), dollars per tier plus the warm/cold cache split."""
     out = ["Cost, %s. Median [min-max] over counted cells (first cell excluded from the per-row block)." % COST_LABEL,
-           "Prices: %s, retrieved %s (bench/prices.json). Cache writes are priced at the 5-minute rate; the records do not "
+           "Prices: %s, retrieved %s (config/prices.json). Cache writes are priced at the 5-minute rate; the records do not "
            "tell 5-minute from 1-hour writes, so 'usd 1h' shows the same cells with every write at the 1-hour rate "
            "(upper bound). Warm = cache read / (cache read + cache write), by tokens and by cost." % (
                prices.get("source"), prices.get("retrieved"))]
@@ -961,8 +961,8 @@ def main(argv=None):
                    help="install check for the first selected cell: install, zero-model checks, no prompt")
     sub.choices["table"].add_argument("--json", action="store_true")
     sub.choices["table"].add_argument("--cost", action="store_true",
-                                      help="add the list-price-equivalent cost block (prices from bench/prices.json)")
-    sub.choices["table"].add_argument("--prices", default=None, help="price file (default: bench/prices.json)")
+                                      help="add the list-price-equivalent cost block (prices from config/prices.json)")
+    sub.choices["table"].add_argument("--prices", default=None, help="price file (default: config/prices.json)")
     # Review bench (scripts/foreman_review_bench.py): its own flags, no --preset.
     import foreman_review_bench as frb
     frb.add_arguments(sub.add_parser("review", help="score reviewer models on diffs with planted defects"))

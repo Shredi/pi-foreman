@@ -425,7 +425,7 @@ def usage_log_cost(logs):
 
 def settled_cost(logs, counters):
     """cost_usd for result.json: the usage log's cost.total sum (else the session files' sum); when that is 0 and
-    tokens exist, the tokens priced with bench/prices.json through foreman_bench.cost_of (the formatter's lookup)."""
+    tokens exist, the tokens priced with config/prices.json through foreman_bench.cost_of (the formatter's lookup)."""
     cost = usage_log_cost(logs) or counters.get("cost_usd") or 0.0
     if cost or not (counters.get("tokens") or {}).get("total"):
         return cost

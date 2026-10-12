@@ -5,6 +5,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { abbrev } from "./footer.ts";
 import { parseLines } from "./usage.ts";
+import { priceRecord } from "./cost.ts";
+import type { PriceTable } from "./cost.ts";
 import { cellWidth, runSymbol, symbolSet } from "./symbols.ts";
 
 export const WIDGET_KEY = "foreman-children";
@@ -58,8 +60,11 @@ export class UsageTail {
   readonly by = new Map<string, Sum>();
 
   private readonly file: string;
-  constructor(file: string) {
+  private readonly prices: PriceTable | null;
+  /** `prices`: a record without a reported cost is priced from it (cost.ts). */
+  constructor(file: string, prices: PriceTable | null = null) {
     this.file = file;
+    this.prices = prices;
   }
 
   refresh(): void {
@@ -90,7 +95,7 @@ export class UsageTail {
         const s = this.by.get(l.launchId) ?? { input: 0, output: 0, cost: 0 };
         s.input += (l.input || 0) + (l.cacheRead || 0) + (l.cacheWrite || 0);
         s.output += l.output || 0;
-        s.cost += l.cost?.total || 0;
+        s.cost += priceRecord(l, this.prices).cost.total;
         this.by.set(l.launchId, s);
       }
     } catch {
@@ -170,6 +175,15 @@ export class ChildRuns {
    * Matching rule: a run is in ask while an open forwarded prompt names one of its roles
    * (requesterAgentName === role id). With n open prompts for a role, its n oldest working runs ask.
    */
+  /** Duration (once ended) and priced cost of one run, by run id; null for an unknown run. */
+  info(runId: string): { ms: number | null; cost: number } | null {
+    const r = this.rows.get(runId);
+    if (!r) return null;
+    this.tail?.refresh();
+    const u = r.launchId ? this.tail?.by.get(r.launchId) : undefined;
+    return { ms: r.endedAt !== null ? r.endedAt - r.startedAt : null, cost: u?.cost ?? 0 };
+  }
+
   views(): RunView[] {
     this.tail?.refresh();
     const left = new Map<string, number>();
@@ -310,8 +324,8 @@ export class ChildWidget {
   private ctx: WidgetCtx | null = null;
   private opts: { enabled: boolean; agentDir: string; intercomId: string | null; symbols?: unknown } | null = null;
 
-  constructor(usageFile: string) {
-    this.runs = new ChildRuns(new UsageTail(usageFile));
+  constructor(usageFile: string, prices: PriceTable | null = null) {
+    this.runs = new ChildRuns(new UsageTail(usageFile, prices));
   }
 
   /** Render now or, within a second of the last render, once at the end of that second. Never throws. */

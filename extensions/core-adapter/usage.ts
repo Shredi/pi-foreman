@@ -16,6 +16,8 @@ import * as path from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Env } from "./env.ts";
 import { PR_MESSAGE_TYPE } from "./prwatch.ts";
+import { priceRecord } from "./cost.ts";
+import type { PriceTable, Rate } from "./cost.ts";
 
 export const BINDING_NS = "pi-foreman/1";
 export const BINDINGS_ENV = "PI_SUBAGENT_EXTENSION_BINDINGS";
@@ -79,6 +81,8 @@ export interface UsageLine {
   cost: UsageCost;
   /** Set only when the token counts are a character-based estimate (the provider reported zero usage). */
   estimated?: true;
+  /** The cost was priced from the registry or config/prices.json because the provider reported none (cost.ts). */
+  costEstimated?: true;
   /** Keep-alive lines only: id of the Pi session entry (dedupe on resume). */
   entryId?: string;
 }
@@ -205,6 +209,12 @@ export function usageLine(ctx: LineContext, message: unknown, now: Date = new Da
   };
 }
 
+/** The line with its cost priced (registry rate, else the table) when the provider reported none. */
+export function pricedLine(line: UsageLine, table: PriceTable | null | undefined, registryRate?: Rate | null): UsageLine {
+  const p = priceRecord(line, table, registryRate);
+  return p.estimated ? { ...line, cost: p.cost, costEstimated: true } : line;
+}
+
 /** Append one line (one write call; the directory is created on demand). Never throws; false on error. */
 export function appendUsage(file: string, line: UsageLine): boolean {
   try {
@@ -266,6 +276,8 @@ export interface Totals {
   cacheWrite: number;
   output: number;
   cost: UsageCost;
+  /** Some of the cost is priced from list prices (a record without a reported cost). */
+  estimated?: true;
 }
 
 export interface UsageSummary {
@@ -280,21 +292,23 @@ export interface UsageSummary {
 
 const zero = (): Totals => ({ calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
 
-function add(t: Totals, l: UsageLine): void {
+function add(t: Totals, l: UsageLine, prices?: PriceTable | null): void {
   t.calls += 1;
   t.input += num(l.input);
   t.cacheRead += num(l.cacheRead);
   t.cacheWrite += num(l.cacheWrite);
   t.output += num(l.output);
-  const c = isObj(l.cost) ? l.cost : ({} as Json);
-  t.cost.input += num(c.input);
-  t.cost.output += num(c.output);
-  t.cost.cacheRead += num(c.cacheRead);
-  t.cost.cacheWrite += num(c.cacheWrite);
-  t.cost.total += num(c.total);
+  const p = priceRecord(l, prices);
+  if (p.estimated || l.costEstimated === true) t.estimated = true;
+  t.cost.input += p.cost.input;
+  t.cost.output += p.cost.output;
+  t.cost.cacheRead += p.cost.cacheRead;
+  t.cost.cacheWrite += p.cost.cacheWrite;
+  t.cost.total += p.cost.total;
 }
 
-export function aggregate(lines: UsageLine[]): UsageSummary {
+/** Totals per role, model and kind; a record without a cost is priced from `prices` (cost.ts). */
+export function aggregate(lines: UsageLine[], prices?: PriceTable | null): UsageSummary {
   const byRole = new Map<string, Totals>();
   const byModel = new Map<string, Totals>();
   const total = zero();
@@ -303,16 +317,16 @@ export function aggregate(lines: UsageLine[]): UsageSummary {
   const keepalive = zero();
   for (const l of lines) {
     if (l.kind === "keepalive") {
-      add(keepalive, l);
+      add(keepalive, l, prices);
       continue;
     }
     const model = l.provider && l.model ? `${l.provider}/${l.model}` : l.model ?? "(unknown)";
     for (const [map, key] of [[byRole, l.role], [byModel, model]] as const) {
       const t = map.get(key) ?? zero();
-      add(t, l);
+      add(t, l, prices);
       map.set(key, t);
     }
-    add(total, l);
+    add(total, l, prices);
     const kind: LaunchKind = l.kind;
     const k = byKind.get(kind) ?? { launches: 0, calls: 0 };
     k.calls += 1;
@@ -332,7 +346,7 @@ function cell(v: number, money = false): string {
 /** Plain-text tables: per role, per model, totals, launches by kind. */
 export function formatSummary(sum: UsageSummary, title: string): string {
   const head = ["", "calls", "input", "cacheRead", "cacheWrite", "output", "$input", "$cacheRead", "$cacheWrite", "$output", "$total"];
-  const row = (name: string, t: Totals): string[] => [name, cell(t.calls), cell(t.input), cell(t.cacheRead), cell(t.cacheWrite), cell(t.output), cell(t.cost.input, true), cell(t.cost.cacheRead, true), cell(t.cost.cacheWrite, true), cell(t.cost.output, true), cell(t.cost.total, true)];
+  const row = (name: string, t: Totals): string[] => [name, cell(t.calls), cell(t.input), cell(t.cacheRead), cell(t.cacheWrite), cell(t.output), cell(t.cost.input, true), cell(t.cost.cacheRead, true), cell(t.cost.cacheWrite, true), cell(t.cost.output, true), cell(t.cost.total, true) + (t.estimated ? "~" : "")];
   const table = (label: string, rows: string[][]): string[] => {
     const all = [[label, ...head.slice(1)], ...rows];
     const w = head.map((_, i) => Math.max(...all.map((r) => r[i].length)));
@@ -344,6 +358,7 @@ export function formatSummary(sum: UsageSummary, title: string): string {
   if (sum.total.calls === 0) return [...out, "no usage recorded", ...ka].join("\n");
   out.push("", ...table("role", [...sorted(sum.byRole), row("total", sum.total)]));
   out.push("", ...table("model", sorted(sum.byModel)));
+  if (sum.total.estimated) out.push("", "~ = estimated from list prices (the provider reported no cost)");
   out.push("", "launches by kind:");
   for (const kind of LAUNCH_KINDS) {
     const k = sum.byKind.get(kind);

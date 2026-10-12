@@ -45,6 +45,8 @@ The savings of the warm summary call are not yet measured.
 
 ## Cost and privacy
 
+The list-price table is `config/prices.json` (also read by the bench): the status line, presence `runs[].cost` and `/foreman cost` price a usage record with it when the provider logged `cost.total: 0`, as the claude-bridge does.
+
 Keep-alive spends tokens: every tick reads the whole prefix from the cache.
 
 - Cost per keep-alive = `cacheRead` tokens x the provider's cache-read rate + 1 output token.
