@@ -483,5 +483,40 @@ class ShellVarsSecurityTest(unittest.TestCase):
         self.assertIsNone(self.kind('H=%s; cp plan.md "$H/plan.md"' % self.hand))
 
 
+class ShellVarsReviewTest(unittest.TestCase):
+    """Pre-PR review: conditional or prefixed assignments and glob values stay unresolved."""
+
+    def setUp(self):
+        self.ws = os.path.realpath(tempfile.mkdtemp(prefix="pf-swg-vrev-"))
+        self.hand = os.path.join(self.ws, ".workflow", "s1")
+        os.makedirs(self.hand)
+        os.mkdir(os.path.join(self.ws, "src"))
+        self.addCleanup(shutil.rmtree, self.ws, True)
+
+    def kind(self, cmd):
+        hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], False, None, [self.hand])
+        return hit[0] if hit else None
+
+    def test_later_assignment_in_any_other_form_poisons(self):
+        a, w = self.hand, self.ws
+        for cmd in (
+            'H=%s; if true; then H=%s/src; fi; cp f $H' % (a, w),
+            'H=%s; { H=%s/src; }; cp f $H' % (a, w),
+            'H=%s; ! H=%s/src; cp f $H' % (a, w),
+            'H=%s; time H=%s/src; cp f $H' % (a, w),
+            'H=%s; H=%s/src :; cp f $H' % (a, w),
+            'H=%s; H=%s/src set --; cp f $H' % (a, w),
+            'H=%s; true && { H=%s/src; }; cp f $H' % (a, w),
+            'H=%s; if H=%s/src; then :; fi; cp f $H' % (a, w),
+            "trap 'H=%s/src' DEBUG; H=%s; cp f $H" % (w, a),
+        ):
+            with self.subTest(command=cmd):
+                self.assertEqual(self.kind(cmd), "cp", cmd)
+
+    def test_glob_value_is_not_resolved(self):
+        cmd = "H='%s/.workflow/.?'; cp f $H" % self.ws
+        self.assertEqual(self.kind(cmd), "cp")
+
+
 if __name__ == "__main__":
     unittest.main()

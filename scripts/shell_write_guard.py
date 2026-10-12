@@ -240,7 +240,7 @@ class Lexer(object):
         # a loop, function or eval/source on the line: nothing resolves from here on. An IFS, `let` or `((..))`
         # anywhere on the line (word splitting, arithmetic assignment) poisons the whole line. Values with blanks
         # never resolve (see _track_assignment), so an unquoted `$H` is always one word.
-        self.noresolve = re.search(r"\bIFS\b|\blet\b|\(\(", text) is not None
+        self.noresolve = re.search(r"\bIFS\b|\blet\b|\btrap\b|\(\(", text) is not None
         self.paren = 0
         self.prev_assign = False
 
@@ -387,6 +387,11 @@ class Lexer(object):
                 and plain[0].text not in ("read", "declare", "typeset", "export", "local", "readonly", "mapfile",
                                           "readarray", "getopts", "unset", "for", "select"):
             self.prev_assign = False
+            # an assignment word in a keyword, `!`, `time`, `{` or prefix position may or may not run: unknown
+            for w in c.words:
+                m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)=", w.text)
+                if m:
+                    self.poisoned.add(m.group(1))
             return
         names = []
         for w in c.words:
@@ -400,7 +405,7 @@ class Lexer(object):
             name, w = names[0]
             value = w.text[len(name) + 1:]
             ok = (not name.startswith("FOREMAN_") and not w.unresolvable and "=" in w.text[:len(name) + 1]
-                  and re.match(r"(/|[A-Za-z]:/)", value) is not None and not re.search(r"[\s\\{}`$]", value))
+                  and re.match(r"(/|[A-Za-z]:/)", value) is not None and not re.search(r"[\s\\{}`$*?\[]", value))
             if ok:
                 self.vars[name] = value
         self.prev_assign = ok
