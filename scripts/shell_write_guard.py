@@ -70,6 +70,11 @@ their aliases (sc ac clc tee ni cp copy cpi mv move mi rm ri del erase rd rmdir 
 the location; a writer without a target (pipeline input) or with `$var` counts as a
 write; other programs (git, python, node, sed, ...) get the bash analysis above.
 
+Same-line variables: a plain `NAME=/abs/literal` statement before the use (joined by `;`, `&&` or `||`, outside a
+subshell, loop or function; the literal has no expansion, glob, blank or relative path) resolves a later `$NAME` /
+`${NAME}`; the last assignment wins. Prefix assignments (`D=/x cmd $D`), `FOREMAN_*` assignments and any other form
+that sets the name (`export`, `read`, `for`, a conditional assignment) stay unresolved.
+
 Conservative: a target on a write form that cannot be resolved (`$VAR`, `${..}`, globs,
 brace lists, `$(..)`, backticks, `~user`, a cwd lost through `cd $X`/`cd -`/`popd`, a
 Windows drive-relative `C:x` / `D:`, which is also what bash leaves of an unquoted
@@ -229,6 +234,12 @@ class Lexer(object):
         self.cmd = Cmd()
         self.pending = []        # (delim, strip_tabs, cmd)
         self.last_op = None
+        # same-line `NAME=/abs/literal` statements (see _track_assignment)
+        self.vars = {}
+        self.poisoned = set()
+        self.noresolve = False   # a loop, function or eval/source on the line: nothing resolves from here on
+        self.paren = 0
+        self.prev_assign = False
 
     # -- words
     def _expansion(self, w):
@@ -250,6 +261,10 @@ class Lexer(object):
                 self.i = i + 1
                 return
             self.i = m.end()
+        known = self.known_var(t[i:self.i])
+        if known is not None:
+            w.text += known
+            return
         w.text += "\x00"
         w.dynamic = True
 
@@ -345,9 +360,53 @@ class Lexer(object):
                 self.i += 1
         return w if started else None
 
+    def known_var(self, expansion):
+        """The value of a plain `$NAME` / `${NAME}` set by an earlier same-line statement, else None."""
+        m = re.match(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))$", expansion)
+        if not m or self.noresolve:
+            return None
+        name = m.group(1) or m.group(2)
+        return None if name in self.poisoned else self.vars.get(name)
+
+    def _track_assignment(self, c, op):
+        """Record `NAME=/abs/literal` when it is a statement of its own: before the use, joined by `;`, `&&` or
+        `||` (an `&&` only after another such assignment), outside a subshell, loop or function. Prefix
+        assignments, `FOREMAN_*` names, values with an expansion, glob, blank or a relative path stay unresolved;
+        any other form that sets the name (`export`, `read`, `for`, a conditional assignment) poisons it."""
+        plain = [w for w in c.words if not re.match(r"[A-Za-z_][A-Za-z0-9_]*=", w.text)]
+        sole = len(c.words) == 1 and not (c.redirs or c.subst or c.stdin)
+        if plain and not (plain[0].text == "printf" and any(w.text == "-v" for w in plain)) \
+                and plain[0].text not in ("read", "declare", "typeset", "export", "local", "readonly", "mapfile",
+                                          "readarray", "getopts", "unset", "for", "select"):
+            self.prev_assign = False
+            return
+        names = []
+        for w in c.words:
+            m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)(=|$)", w.text)
+            if m:
+                names.append((m.group(1), w))
+        ok = sole and not plain and len(names) == 1 and self.paren == 0 and not self.noresolve \
+            and op in (None, ";", "\n", "&&", "||") \
+            and (self.last_op in (None, ";", "\n") or (self.last_op == "&&" and self.prev_assign))
+        if ok:
+            name, w = names[0]
+            value = w.text[len(name) + 1:]
+            ok = (not name.startswith("FOREMAN_") and not w.unresolvable and "=" in w.text[:len(name) + 1]
+                  and re.match(r"(/|[A-Za-z]:/)", value) is not None and not re.search(r"[\s\\{}`$]", value))
+            if ok:
+                self.vars[name] = value
+        self.prev_assign = ok
+        if not ok:
+            for name, _ in names:
+                self.poisoned.add(name)
+            if plain:
+                self.poisoned.update(w.text for w in plain[1:] if re.match(r"[A-Za-z_][A-Za-z0-9_]*$", w.text))
+
     # -- structure
     def _finish_cmd(self, op):
         c = self.cmd
+        if c.words:
+            self._track_assignment(c, op)
         if c.words or c.redirs or c.subst or c.stdin:
             c.op_before = self.last_op
             c.op_after = op
@@ -423,6 +482,8 @@ class Lexer(object):
                 self._finish_cmd(c)
                 continue
             if c == "(":
+                if self.cmd.words:
+                    self.noresolve = True   # `f() { .. }`: the body runs later
                 if not self.cmd.words and t.startswith("((", self.i):
                     self.i = _balanced(t, self.i + 2, "(", ")")
                     if self.i < n and t[self.i] == ")":
@@ -430,10 +491,12 @@ class Lexer(object):
                     continue
                 self._finish_cmd(";")
                 self.items.append("(")
+                self.paren += 1
                 self.i += 1
                 continue
             if c == ")":
                 self._finish_cmd(";")
+                self.paren = max(0, self.paren - 1)
                 self.items.append(")")
                 self.i += 1
                 continue
@@ -442,6 +505,8 @@ class Lexer(object):
                 self.i += 1
                 continue
             self.cmd.words.append(w)
+            if len(self.cmd.words) == 1 and w.text in ("for", "while", "until", "select", "function", "coproc", "eval", "source", "."):
+                self.noresolve = True
         self._finish_cmd(None)
         if self.pending:
             self._heredocs()
