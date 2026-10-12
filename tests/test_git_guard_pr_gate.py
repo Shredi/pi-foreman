@@ -153,7 +153,10 @@ class PrGateTest(unittest.TestCase):
                     "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.pushOption GIT_CONFIG_VALUE_0=x git push origin main",
                     "export GIT_CONFIG_PARAMETERS=\"'core.x'='y'\"; git push origin main",
                     "env GIT_CONFIG_PARAMETERS=\"'core.x'='y'\" git push origin main"):
-            self.assertRefused(cmd, "no_review", [])
+            d = self.decide(cmd, [])
+            self.assertEqual(d.level, gg.DENY, cmd)
+            # the env-prefix refusal may fire before the review gate
+            self.assertTrue("pr_refused:no_review" in d.reason or "GIT_CONFIG_PARAMETERS= before git push" in d.reason, cmd)
         self.assertEqual(self.decide("git -c push.pushOption=ci.skip push origin HEAD:main", []).level, gg.ALLOW)
         for cmd in ("git config push.pushOption merge_request.create", "git config --add push.pushoption topic=x",
                     "git config set --global push.pushOption mr.create"):

@@ -83,8 +83,6 @@
       "git worktree unlock *",
       "git worktree move *",
       "git worktree repair *",
-      "git fetch",
-      "git fetch origin",
       "npm ci",
       "npm install",
       "git stash list *",

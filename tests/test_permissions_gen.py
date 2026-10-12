@@ -78,7 +78,7 @@ class GeneratorTest(unittest.TestCase):
 
     def test_foreman_fetch_and_install_rows(self):
         bash = self.render()["permission"]["bash"]
-        for pat in ("git fetch", "git fetch origin", "npm ci", "npm install"):
+        for pat in ("npm ci", "npm install"):
             self.assertEqual(bash[pat], "allow", pat)
         # no bare wildcard and no package-taking install (`npm install -g x`)
         self.assertEqual(bash["*"], "ask")
@@ -89,6 +89,11 @@ class GeneratorTest(unittest.TestCase):
         bash = self.render()["permission"]["bash"]
         self.assertNotIn("git fetch *", bash)
         self.assertEqual([k for k in bash if k.startswith("git fetch") and "*" in k], [])
+
+    def test_no_git_fetch_row_at_all(self):
+        bash = self.render()["permission"]["bash"]
+        self.assertEqual([k for k in bash if k.startswith("git fetch")], [])
+        self.assertEqual(bash["*"], "ask")
 
     def test_default_owned_uses_realpath_tmpdir(self):
         owned = pg.default_owned()
