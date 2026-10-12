@@ -70,10 +70,10 @@ their aliases (sc ac clc tee ni cp copy cpi mv move mi rm ri del erase rd rmdir 
 the location; a writer without a target (pipeline input) or with `$var` counts as a
 write; other programs (git, python, node, sed, ...) get the bash analysis above.
 
-Same-line variables: a plain `NAME=/abs/literal` statement before the use (joined by `;`, `&&` or `||`, outside a
-subshell, loop or function; the literal has no expansion, glob, blank or relative path) resolves a later `$NAME` /
-`${NAME}`; the last assignment wins. Prefix assignments (`D=/x cmd $D`), `FOREMAN_*` assignments and any other form
-that sets the name (`export`, `read`, `for`, a conditional assignment) stay unresolved.
+Same-line variables (closed grammar, see grammar_statements): a line resolves `$NAME` / `${NAME}` only when EVERY
+statement (split on `;`, `&&`, `||`, newline) is a sole `NAME=/abs/plain/path` or a simple command from
+GRAMMAR_COMMANDS with plain words; the last assignment wins. Any other line (a pipe, `&`, parentheses, braces,
+brackets, backticks, `#`, `<`, `$(`, `${..}` beyond a bare name, a command outside the list) resolves nothing.
 
 Conservative: a target on a write form that cannot be resolved (`$VAR`, `${..}`, globs,
 brace lists, `$(..)`, backticks, `~user`, a cwd lost through `cd $X`/`cd -`/`popd`, a
@@ -226,6 +226,83 @@ def _backtick_end(text, i):
     raise Unreadable("backtick")
 
 
+# Closed grammar for same-line variables (docs/permissions.md, tests/fixtures/shellvars-grammar.json; the TypeScript
+# mirror is extensions/core-adapter/shellvars.ts). A line resolves `$NAME` only when EVERY statement is either a sole
+# `NAME=literal` or a simple command from GRAMMAR_COMMANDS with plain words; anything else gets no resolution.
+GRAMMAR_COMMANDS = ("mkdir", "cp", "mv", "cat", "ls", "tee", "touch", "tar", "node", "npm", "npx", "python3", "git",
+                    "test", "echo", "true")
+GRAMMAR_WORD_CHARS = "A-Za-z0-9/._~=:@%+,-"
+GRAMMAR_LITERAL_CHARS = "A-Za-z0-9/._~-"
+GRAMMAR_PREFIXES = ("$FOREMAN_SCRATCH", "$HOME")
+GRAMMAR_SPLITTERS = (";", "&&", "||", "\n")
+GRAMMAR_REDIRECTS = ("2>&1", ">/dev/null")
+GRAMMAR_REDIRECT_OPS = (">", ">>")   # followed by one plain word (attached or as the next word)
+GRAMMAR_RESERVED = ("IFS", "HOME")    # names no assignment statement may set
+GRAMMAR_FORBIDDEN = ("|", "&", "(", ")", "{", "}", "[", "]", "`", "#", "<", ">", "$(", "${", "\\", "'")
+_G_NAME = r"[A-Za-z_][A-Za-z0-9_]*"
+# a value starts with `/`, `~` or a prefix: a bare word such as `IFS=Z` is no path
+GRAMMAR_ASSIGN = re.compile("(%s)=((?:%s|[/~])[%s]*)" % (_G_NAME, "|".join(re.escape(p) for p in GRAMMAR_PREFIXES),
+                                                        GRAMMAR_LITERAL_CHARS))
+_G_REF = r"\$(?:\{(%s)\}|(%s))" % (_G_NAME, _G_NAME)
+_G_WORD = re.compile(r"(?:[%s]|%s)+" % (GRAMMAR_WORD_CHARS, _G_REF))
+_G_SPLIT = re.compile("(" + "|".join(re.escape(s) for s in GRAMMAR_SPLITTERS) + ")")
+
+
+def grammar_value(raw):
+    """The certain value of an assignment literal: an absolute plain path; a prefixed (`$HOME`), relative,
+    `~` or empty value is not certain (None)."""
+    return raw if raw.startswith("/") else None
+
+
+def grammar_statements(text):
+    """The statements of `text` (a list of `(name, raw_value)` for an assignment, `None` for a command) when every
+    statement is inside the closed grammar, else None. A `$NAME` that no statement assigns stays unresolved."""
+    parts = _G_SPLIT.split(text)
+    stmts, seps = parts[0::2], parts[1::2]
+    out = []
+    prev_assign = False
+    for i, raw in enumerate(stmts):
+        before = seps[i - 1] if i > 0 else None
+        after = seps[i] if i < len(seps) else None
+        stmt = raw.strip(" \t")
+        if not stmt:
+            if 0 < i < len(stmts) - 1 and not (before in (";", "\n") and after in (";", "\n")):
+                return None
+            continue
+        words = re.split(r"[ \t]+", stmt)
+        m = GRAMMAR_ASSIGN.fullmatch(stmt)
+        if m:
+            # a conditional assignment (`test -f x && D=/a`, `cmd || D=/a`) may not run: not a statement of its own
+            if m.group(1).startswith("FOREMAN_") or m.group(1) in GRAMMAR_RESERVED or not (before in (None, ";", "\n") or (before == "&&" and prev_assign)):
+                return None
+            out.append((m.group(1), m.group(2)))
+            prev_assign = True
+            continue
+        prev_assign = False
+        if words[0] not in GRAMMAR_COMMANDS:
+            return None
+        want = False   # a lone `>` / `>>` wants its target as the next word
+        for w in words[1:]:
+            if w in GRAMMAR_REDIRECTS:
+                continue
+            if not want and w in GRAMMAR_REDIRECT_OPS:
+                want = True
+                continue
+            want = False
+            for op in (">>", ">"):
+                if w.startswith(op):
+                    w = w[len(op):]
+                    break
+            if len(w) >= 2 and w[0] == '"' and w[-1] == '"':
+                w = w[1:-1]
+            if not _G_WORD.fullmatch(w):
+                return None
+        if want:
+            return None
+        out.append(None)
+    return out
+
+
 class Lexer(object):
     def __init__(self, text):
         self.t = text
@@ -236,15 +313,8 @@ class Lexer(object):
         self.last_op = None
         # same-line `NAME=/abs/literal` statements (see _track_assignment)
         self.vars = {}
-        self.poisoned = set()
-        # a loop, function or eval/source on the line: nothing resolves from here on. An IFS, `let` or `((..))`
-        # anywhere on the line (word splitting, arithmetic assignment) poisons the whole line. Values with blanks
-        # never resolve (see _track_assignment), so an unquoted `$H` is always one word.
-        self.noresolve = re.search(r"\bIFS\b|\blet\b|\btrap\b|\bcase\b|\(\(", text) is not None
-        self.paren = 0
-        self.prev_assign = False
-        # after `then`, `else`, `elif`, `do`, `{` a following statement may or may not run: no later assignment counts
-        self.noassign = False
+        # variables resolve only on a line inside the closed grammar (see grammar_statements)
+        self.eligible = grammar_statements(text) is not None
 
     # -- words
     def _expansion(self, w):
@@ -368,60 +438,28 @@ class Lexer(object):
     def known_var(self, expansion):
         """The value of a plain `$NAME` / `${NAME}` set by an earlier same-line statement, else None."""
         m = re.match(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))$", expansion)
-        if not m or self.noresolve:
+        if not m or not self.eligible:
             return None
-        name = m.group(1) or m.group(2)
-        return None if name in self.poisoned else self.vars.get(name)
+        return self.vars.get(m.group(1) or m.group(2))
 
-    def _track_assignment(self, c, op):
-        """Record `NAME=/abs/literal` when it is a statement of its own: before the use, joined by `;`, `&&` or
-        `||` (an `&&` only after another such assignment), outside a subshell, loop or function. Prefix
-        assignments, `FOREMAN_*` names, values with an expansion, glob, blank or a relative path stay unresolved;
-        any other form that sets the name (`export`, `read`, `for`, a conditional assignment) poisons it."""
-        for w in c.words:
-            # `H+=x`, `H[0]=x`: an append or element assignment leaves the value unknown
-            m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)(\[[^\]]*\]|\+)=", w.text)
-            if m:
-                self.poisoned.add(m.group(1))
-        plain = [w for w in c.words if not re.match(r"[A-Za-z_][A-Za-z0-9_]*=", w.text)]
-        sole = len(c.words) == 1 and not (c.redirs or c.subst or c.stdin)
-        if plain and not (plain[0].text == "printf" and any(w.text == "-v" for w in plain)) \
-                and plain[0].text not in ("read", "declare", "typeset", "export", "local", "readonly", "mapfile",
-                                          "readarray", "getopts", "unset", "for", "select"):
-            self.prev_assign = False
-            # an assignment word in a keyword, `!`, `time`, `{` or prefix position may or may not run: unknown
-            for w in c.words:
-                m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)=", w.text)
-                if m:
-                    self.poisoned.add(m.group(1))
+    def _track_assignment(self, c):
+        """On an eligible line every statement is a sole `NAME=literal` or a simple command, so a one-word
+        command that matches the assignment form records (or, for an unresolvable value, forgets) the name."""
+        if not self.eligible or len(c.words) != 1 or c.redirs or c.subst or c.stdin:
             return
-        names = []
-        for w in c.words:
-            m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)(=|$)", w.text)
-            if m:
-                names.append((m.group(1), w))
-        ok = sole and not plain and len(names) == 1 and self.paren == 0 and not self.noresolve and not self.noassign \
-            and op in (None, ";", "\n", "&&", "||") \
-            and (self.last_op in (None, ";", "\n") or (self.last_op == "&&" and self.prev_assign))
-        if ok:
-            name, w = names[0]
-            value = w.text[len(name) + 1:]
-            ok = (not name.startswith("FOREMAN_") and not w.unresolvable and "=" in w.text[:len(name) + 1]
-                  and re.match(r"(/|[A-Za-z]:/)", value) is not None and not re.search(r"[\s\\{}`$*?\[]", value))
-            if ok:
-                self.vars[name] = value
-        self.prev_assign = ok
-        if not ok:
-            for name, _ in names:
-                self.poisoned.add(name)
-            if plain:
-                self.poisoned.update(w.text for w in plain[1:] if re.match(r"[A-Za-z_][A-Za-z0-9_]*$", w.text))
+        m = GRAMMAR_ASSIGN.fullmatch(c.words[0].text)
+        if m:
+            value = grammar_value(m.group(2))
+            if value is None:
+                self.vars.pop(m.group(1), None)
+            else:
+                self.vars[m.group(1)] = value
 
     # -- structure
     def _finish_cmd(self, op):
         c = self.cmd
         if c.words:
-            self._track_assignment(c, op)
+            self._track_assignment(c)
         if c.words or c.redirs or c.subst or c.stdin:
             c.op_before = self.last_op
             c.op_after = op
@@ -498,8 +536,6 @@ class Lexer(object):
                 self._finish_cmd(c)
                 continue
             if c == "(":
-                if self.cmd.words:
-                    self.noresolve = True   # `f() { .. }`: the body runs later
                 if not self.cmd.words and t.startswith("((", self.i):
                     self.i = _balanced(t, self.i + 2, "(", ")")
                     if self.i < n and t[self.i] == ")":
@@ -507,12 +543,10 @@ class Lexer(object):
                     continue
                 self._finish_cmd(";")
                 self.items.append("(")
-                self.paren += 1
                 self.i += 1
                 continue
             if c == ")":
                 self._finish_cmd(";")
-                self.paren = max(0, self.paren - 1)
                 self.items.append(")")
                 self.i += 1
                 continue
@@ -521,10 +555,6 @@ class Lexer(object):
                 self.i += 1
                 continue
             self.cmd.words.append(w)
-            if len(self.cmd.words) == 1 and w.text in ("then", "else", "elif", "do", "{", "case", "in"):
-                self.noassign = True
-            if len(self.cmd.words) == 1 and w.text in ("for", "while", "until", "select", "function", "coproc", "eval", "source", "."):
-                self.noresolve = True
         self._finish_cmd(None)
         if self.pending:
             self._heredocs()

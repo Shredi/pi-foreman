@@ -934,7 +934,7 @@ const WORKTREE_OK = new Set(["list", "remove"]);
 function collect(src: string, shell: "posix" | "powershell", depth: number, out: Collected): void {
   const parsed = parseShell(src, shell);
   // same-line variables (shellvars.ts): the expanded words and texts are checked next to the line as written
-  const resolved = depth === 0 && shell === "posix" && out.vars ? resolveVars(parsed.pipelines, parsed.seps, out.vars, (u) => REDIRECTS.has(u)) : new Map<string[], string[]>();
+  const resolved = depth === 0 && shell === "posix" && out.vars ? resolveVars(parsed.pipelines, parsed.seps, out.vars, (u) => REDIRECTS.has(u), src) : new Map<string[], string[]>();
   for (const pipe of parsed.pipelines) if (pipe.some((u) => resolved.has(u))) out.pipeTexts.push(pipe.map((u) => (resolved.get(u) ?? u).join(" ")).join(" | "));
   for (const inner of parsed.subs) if (depth < MAX_DEPTH) collect(inner, shell, depth + 1, out);
   const visit = (allWords: string[]): void => {

@@ -1,84 +1,128 @@
 /**
  * Same-line shell variables for the path checks (`D=<dir>/x; mkdir -p $D`, `mkdir -p $FOREMAN_SCRATCH/x`).
  *
- * A `$NAME` / `${NAME}` in a word is replaced by its value only when that value is certain:
- *  (a) the value comes from an assignment that is a statement of its own (`NAME=literal`) before the use, joined
- *      to it by `;`, `&&` or `||` (a prefix assignment, `D=/x cmd $D`, never reaches the same command's words);
- *  (b) the literal holds no `$`, backtick, glob character, whitespace or quote-spanning expansion;
- *  (c) the last such assignment before the use wins;
- *  (d) `FOREMAN_*` names take their value from the harness env only, never from the line;
- *  (e) anything else (an assignment after `cmd &&`, in a loop, a subshell or a `{ }` group, `export`/`read`/`for`
- *      forms, a redirect on the assignment) leaves the variable unresolved, which keeps today's classification.
+ * A CLOSED GRAMMAR, identical to scripts/shell_write_guard.py (`grammar_statements`) and pinned by
+ * tests/fixtures/shellvars-grammar.json. A line resolves `$NAME` / `${NAME}` only when EVERY statement (split on
+ * `;`, `&&`, `||`, newline) is either
+ *  (a) a sole `NAME=literal`: a plain path (GRAMMAR.literalChars) starting with `/`, `~` or a prefix
+ *      (`$FOREMAN_SCRATCH`, `$HOME`); NAME is not `FOREMAN_*` or reserved (`IFS`, `HOME`); it follows the start, `;`
+ *      or a newline, or `&&` after another assignment (a conditional assignment may not run); or
+ *  (b) a simple command whose first word is in GRAMMAR.commands and whose other words are plain words
+ *      (GRAMMAR.wordChars, `$NAME` / `"$NAME"` / `${NAME}`; a name that is not assigned stays unresolved, `2>&1`, or `>` / `>>` with one plain word).
+ * Any other line (a pipe, `&`, parentheses, braces, brackets, backtick, `#`, `<`, `$(`, `${` beyond a bare name, a
+ * command outside the list) gets NO resolution: today's classification of an unresolved variable.
+ * The last assignment wins; only a value starting with `/` (or `$FOREMAN_SCRATCH` from the harness env) is certain.
  */
 
-/** Builtins and loop heads whose words name variables they set. */
-const SETTERS = new Set(["read", "declare", "typeset", "export", "local", "readonly", "mapfile", "readarray", "getopts", "unset", "for", "select"]);
-const BODY_OPENERS = new Set(["then", "else", "elif", "do", "{", "in"]);
-const ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s;
-const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+export const GRAMMAR = {
+  commands: ["mkdir", "cp", "mv", "cat", "ls", "tee", "touch", "tar", "node", "npm", "npx", "python3", "git", "test", "echo", "true"],
+  wordChars: "A-Za-z0-9/._~=:@%+,-",
+  literalChars: "A-Za-z0-9/._~-",
+  prefixes: ["$FOREMAN_SCRATCH", "$HOME"],
+  splitters: [";", "&&", "||", "\n"],
+  redirects: ["2>&1", ">/dev/null"],
+  redirectOps: [">", ">>"],
+  reserved: ["IFS", "HOME"],
+  forbidden: ["|", "&", "(", ")", "{", "}", "[", "]", "`", "#", "<", ">", "$(", "${", "\\", "'"],
+};
 
-/** A value that is one certain literal word naming an absolute path (a relative one depends on a `cd` the line may hold). */
-function literal(v: string): boolean {
-  return /^(\/|~\/|[A-Za-z]:\/)/.test(v) && !/[$`*?[\]{}\s\\]/.test(v);
+const NAME = "[A-Za-z_][A-Za-z0-9_]*";
+const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const ASSIGN = new RegExp(`^(${NAME})=((?:${GRAMMAR.prefixes.map(esc).join("|")}|[/~])[${GRAMMAR.literalChars}]*)$`);
+const REF = `\\$(?:\\{(${NAME})\\}|(${NAME}))`;
+const WORD = new RegExp(`^(?:[${GRAMMAR.wordChars}]|${REF})+$`);
+const SPLIT = new RegExp(`(${GRAMMAR.splitters.map(esc).join("|")})`);
+
+/** The statements of `text` (`[name, rawValue]` for an assignment, null for a command) when all are inside the grammar, else null. */
+export function grammarStatements(text: string): Array<[string, string] | null> | null {
+  const parts = text.split(SPLIT);
+  const stmts = parts.filter((_, i) => i % 2 === 0);
+  const seps = parts.filter((_, i) => i % 2 === 1);
+  const out: Array<[string, string] | null> = [];
+  let prevAssign = false;
+  for (let i = 0; i < stmts.length; i++) {
+    const before = i > 0 ? seps[i - 1] : null;
+    const after = i < seps.length ? seps[i] : null;
+    const stmt = stmts[i].replace(/^[ \t]+|[ \t]+$/g, "");
+    if (!stmt) {
+      if (i > 0 && i < stmts.length - 1 && !((before === ";" || before === "\n") && (after === ";" || after === "\n"))) return null;
+      continue;
+    }
+    const words = stmt.split(/[ \t]+/);
+    const m = stmt.match(ASSIGN);
+    if (m) {
+      // a conditional assignment (`test -f x && D=/a`, `cmd || D=/a`) may not run: not a statement of its own
+      const joined = before === null || before === ";" || before === "\n" || (before === "&&" && prevAssign);
+      if (m[1].startsWith("FOREMAN_") || GRAMMAR.reserved.includes(m[1]) || !joined) return null;
+      out.push([m[1], m[2]]);
+      prevAssign = true;
+      continue;
+    }
+    prevAssign = false;
+    if (!GRAMMAR.commands.includes(words[0])) return null;
+    let want = false; // a lone `>` / `>>` wants its target as the next word
+    for (let w of words.slice(1)) {
+      if (GRAMMAR.redirects.includes(w)) continue;
+      if (!want && GRAMMAR.redirectOps.includes(w)) {
+        want = true;
+        continue;
+      }
+      want = false;
+      for (const op of [">>", ">"]) {
+        if (w.startsWith(op)) {
+          w = w.slice(op.length);
+          break;
+        }
+      }
+      if (w.length >= 2 && w.startsWith('"') && w.endsWith('"')) w = w.slice(1, -1);
+      if (!WORD.test(w)) return null;
+    }
+    if (want) return null;
+    out.push(null);
+  }
+  return out;
+}
+
+/** The certain value of an assignment literal, else undefined. */
+function certain(raw: string, env: Record<string, string>): string | undefined {
+  if (raw.startsWith("/")) return raw;
+  const p = "$FOREMAN_SCRATCH";
+  const rest = raw.slice(p.length);
+  if (raw.startsWith(p) && (rest === "" || rest.startsWith("/")) && env.FOREMAN_SCRATCH && env.FOREMAN_SCRATCH.startsWith("/")) return env.FOREMAN_SCRATCH + rest;
+  return undefined;
 }
 
 /**
  * The resolvable `$NAME` / `${NAME}` inside the words of `pipelines`, replaced by their values. Returns, for each unit
  * with a change, a same-length copy of its words (keyed by the original array, which stays untouched: the read-only
  * and redirect bookkeeping keeps seeing the variable). `seps[i]` is the operator that ended pipeline `i`;
- * `redirected(unit)` says whether a unit carries a redirect.
+ * `redirected(unit)` says whether a unit carries a redirect. `src` is the line as written; without it the line is
+ * rebuilt from the words (a unit with a redirect then gets no resolution).
  */
-export function resolveVars(pipelines: string[][][], seps: string[], env: Record<string, string>, redirected: (unit: string[]) => boolean = () => false): Map<string[], string[]> {
-  // a subshell, group or substitution may scope or hide an assignment: no assignment of the line counts
-  const scoped = seps.some((s) => s === "(" || s === ")" || s === "`" || s === "&");
-  const poisoned = new Set<string>();
-  // IFS (word splitting), `let` / `((..))` (arithmetic assignment), eval / source: nothing on the line resolves
-  const all = pipelines.flat(2);
-  // `trap` runs its text later; a `case` arm ends in `)`, which would make the arm's assignment look like a statement
-  if (all.some((w) => /\bIFS\b|\btrap\b|\bcase\b/.test(w) || w === "let" || w.startsWith("(("))) return new Map();
-  if (pipelines.some((p) => p.some((u) => ["eval", "source", "."].includes(u.find((x) => !ASSIGN.test(x)) ?? "")))) return new Map();
-  // `H+=x`, `H[0]=x`: an append or element assignment leaves the value unknown
-  for (const w of all) {
-    const a = w.match(/^([A-Za-z_][A-Za-z0-9_]*)(\[[^\]]*\]|\+)=/s);
-    if (a) poisoned.add(a[1]);
+export function resolveVars(pipelines: string[][][], seps: string[], env: Record<string, string>, redirected: (unit: string[]) => boolean = () => false, src?: string): Map<string[], string[]> {
+  const none = new Map<string[], string[]>();
+  let text = src;
+  if (text === undefined) {
+    if (pipelines.some((p) => p.some((u) => redirected(u)))) return none;
+    const sepText = (s: string): string => (s === ";" ? "; " : s === "&&" || s === "||" ? ` ${s} ` : s === "end" ? "" : s);
+    text = pipelines.map((p, i) => p.map((u) => u.join(" ")).join(" | ") + sepText(seps[i] ?? "end")).join("");
   }
-  const sole = (i: number): RegExpMatchArray | null => {
-    const p = pipelines[i];
-    return p.length === 1 && p[0].length === 1 && !redirected(p[0]) ? p[0][0].match(ASSIGN) : null;
-  };
-  // pass 1: every variable some other form may set stays unresolved for the whole line
-  const eligible: boolean[] = [];
-  // after `then`, `else`, `elif`, `do`, `{` the next statement may or may not run: no later assignment counts
-  let opened = false;
-  pipelines.forEach((pipe, i) => {
-    const m = sole(i);
-    if (pipe.some((u) => BODY_OPENERS.has(u.find((x) => !ASSIGN.test(x)) ?? ""))) opened = true;
-    const prevOk = i === 0 || seps[i - 1] === ";" || (eligible[i - 1] && seps[i - 1] === "&&");
-    eligible[i] = !!m && !scoped && !opened && prevOk && !m[1].startsWith("FOREMAN_") && literal(m[2]);
-    if (m && !eligible[i]) poisoned.add(m[1]);
-    for (const unit of m ? [] : pipe) {
-      for (const w of unit) {
-        const a = w.match(ASSIGN);
-        if (a) poisoned.add(a[1]);
-      }
-      const head = unit.find((w) => !ASSIGN.test(w));
-      if ((head !== undefined && SETTERS.has(head)) || (head === "printf" && unit.includes("-v"))) for (const w of unit) if (NAME.test(w)) poisoned.add(w);
-    }
-  });
+  const stmts = grammarStatements(text);
+  if (!stmts || stmts.length !== pipelines.length) return none;
   const values = new Map<string, string>();
   const out = new Map<string[], string[]>();
   const subst = (w: string): string =>
-    w.replace(/\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g, (m, a: string | undefined, b: string | undefined) => {
+    w.replace(new RegExp(REF, "g"), (m, a: string | undefined, b: string | undefined) => {
       const n = (a ?? b)!;
-      const v = n.startsWith("FOREMAN_") ? env[n] : poisoned.has(n) ? undefined : values.get(n);
-      if (v === undefined || v === "") return m;
-      return v;
+      const v = values.get(n) ?? (n.startsWith("FOREMAN_") ? env[n] : undefined);
+      return v === undefined || v === "" ? m : v;
     });
   pipelines.forEach((pipe, i) => {
-    if (eligible[i]) {
-      const m = sole(i)!;
-      // a value may build on an earlier one (`B=$A/x`) only through the literal rule: `$` is not literal, so no
-      values.set(m[1], m[2]);
+    const a = stmts[i];
+    if (a) {
+      const v = certain(a[1], env);
+      if (v === undefined) values.delete(a[0]);
+      else values.set(a[0], v);
       return;
     }
     for (const unit of pipe) {

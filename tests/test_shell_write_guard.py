@@ -557,5 +557,70 @@ class ShellVarsCaseNewlineTest(unittest.TestCase):
         self.assertIsNone(self.kind("H=%s\ncp plan.md $H/plan.md" % self.hand))
 
 
+class ShellVarsGrammarTest(unittest.TestCase):
+    """The closed grammar (ledger items 12, 20): a line outside it resolves nothing."""
+
+    def setUp(self):
+        self.ws = os.path.realpath(tempfile.mkdtemp(prefix="pf-swg-vgram-"))
+        self.hand = os.path.join(self.ws, ".workflow", "s1")
+        self.scratch = os.path.join(self.ws, "scr")
+        os.makedirs(self.hand)
+        os.makedirs(os.path.join(self.scratch, "probe"))
+        os.mkdir(os.path.join(self.ws, "src"))
+        self.addCleanup(shutil.rmtree, self.ws, True)
+
+    def kind(self, cmd):
+        hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], True, self.scratch, [self.hand])
+        return hit[0] if hit else None
+
+    def test_fixture_matches_the_constants(self):
+        with open(os.path.join(os.path.dirname(__file__), "fixtures", "shellvars-grammar.json")) as f:
+            fx = json.load(f)
+        self.assertEqual(list(swg.GRAMMAR_COMMANDS), fx["commands"])
+        self.assertEqual(swg.GRAMMAR_WORD_CHARS, fx["wordChars"])
+        self.assertEqual(swg.GRAMMAR_LITERAL_CHARS, fx["literalChars"])
+        self.assertEqual(list(swg.GRAMMAR_PREFIXES), fx["prefixes"])
+        self.assertEqual(list(swg.GRAMMAR_SPLITTERS), fx["splitters"])
+        self.assertEqual(list(swg.GRAMMAR_REDIRECTS), fx["redirects"])
+        self.assertEqual(list(swg.GRAMMAR_REDIRECT_OPS), fx["redirectOps"])
+        self.assertEqual(list(swg.GRAMMAR_RESERVED), fx["reserved"])
+        self.assertEqual(list(swg.GRAMMAR_FORBIDDEN), fx["forbidden"])
+
+    def test_every_forbidden_token_ends_resolution(self):
+        with open(os.path.join(os.path.dirname(__file__), "fixtures", "shellvars-grammar.json")) as f:
+            fx = json.load(f)
+        self.assertIsNotNone(swg.grammar_statements("H=/ok; cp f $H"))
+        for tok in fx["forbidden"]:
+            with self.subTest(token=tok):
+                self.assertIsNone(swg.grammar_statements("H=/ok; cp f $H x%sy" % tok))
+                self.assertIsNone(swg.grammar_statements("H=/ok; cp f $H %s" % tok))
+
+    def test_positive_rows_resolve(self):
+        self.assertIsNone(self.kind("D=%s/x; mkdir -p $D" % self.scratch))
+        self.assertIsNone(self.kind("mkdir -p $FOREMAN_SCRATCH/probe/x"))
+        self.assertIsNone(self.kind('H=%s; cp plan.md "$H/plan.md"' % self.hand))
+        self.assertIsNone(self.kind("H=%s\ncp plan.md ${H}/plan.md 2>&1" % self.hand))
+
+    def test_s1_s2_forms_are_refused(self):
+        h = self.hand
+        for cmd in (
+            "false | # c\nH=%s\ncp f $H" % h,
+            "printf -vH %s; cp f $H" % h,
+            "declare -n H=X; cp f $H",
+            "typeset -n H=X; cp f $H",
+            "H=%s; : $[H=0]; cp f $H" % h,
+            "H=%s; : ${X:H=0}; cp f $H" % h,
+            "H=%s; : ${A[H=0]}; cp f $H" % h,
+            "H=%s; exec {H}>f; cp f $H" % h,
+            "H=%s; wait -n -p H; cp f $H" % h,
+            "H=%s; coproc H { :; }; cp f $H" % h,
+            "H=%s; true | read H; cp f $H" % h,
+            "IFS=/; H=%s; cp f $H" % h,
+            "H=%s; false && H=%s/src; cp f $H" % (self.ws, h),
+        ):
+            with self.subTest(command=cmd):
+                self.assertIn(self.kind(cmd), ("cp", "redirect"), cmd)
+
+
 if __name__ == "__main__":
     unittest.main()

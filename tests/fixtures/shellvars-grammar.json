@@ -1,0 +1,11 @@
+{
+  "commands": ["mkdir", "cp", "mv", "cat", "ls", "tee", "touch", "tar", "node", "npm", "npx", "python3", "git", "test", "echo", "true"],
+  "wordChars": "A-Za-z0-9/._~=:@%+,-",
+  "literalChars": "A-Za-z0-9/._~-",
+  "prefixes": ["$FOREMAN_SCRATCH", "$HOME"],
+  "splitters": [";", "&&", "||", "\n"],
+  "redirects": ["2>&1", ">/dev/null"],
+  "redirectOps": [">", ">>"],
+  "reserved": ["IFS", "HOME"],
+  "forbidden": ["|", "&", "(", ")", "{", "}", "[", "]", "`", "#", "<", ">", "$(", "${", "\\", "'"]
+}
