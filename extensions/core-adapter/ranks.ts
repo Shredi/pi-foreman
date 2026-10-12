@@ -94,14 +94,15 @@ export function rankRefusal(config: Json | undefined, foremanModel: string | nul
  * Null when allowed, else the refusal message. Identical model strings pass; no ranks anywhere = no check;
  * an equal tier passes; a lower tier number (higher rank) is refused, as is an unranked model once ranks exist.
  */
-export function sessionRankRefusal(config: Json | undefined, ownModel: string, childModel: string): string | null {
-  const own = splitLevel(ownModel.trim()).base;
+export function sessionRankRefusal(config: Json | undefined, ownModel: string | undefined, childModel: string): string | null {
   const child = splitLevel(childModel.trim()).base;
-  if (own === child) return null;
   const ranks = ranksOf(config);
-  if (ranks.size === 0) return null;
   const head = "session open refused [session_rank]: cannot open a session ranked above this session:";
   const tail = "use --model with a model at or below your rank";
+  if (ownModel === undefined) return ranks.size === 0 ? null : `${head} own model unknown, so the rank of ${child} cannot be checked; ${tail}, once this session's model is known`;
+  const own = splitLevel(ownModel.trim()).base;
+  if (own === child) return null;
+  if (ranks.size === 0) return null;
   const cTier = tierOf(ranks, child);
   const oTier = tierOf(ranks, own);
   if (cTier === null) return `${head} ${child} is unranked; ${tail}, or add a ranks entry for it`;
