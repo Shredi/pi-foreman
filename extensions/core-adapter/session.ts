@@ -250,8 +250,18 @@ export function sessionModelOf(env: Record<string, string | undefined>): string 
 }
 
 /** The mapped foreman role model to apply at start; null when the session was opened on its own model (Pi already runs it). */
-export function foremanModelSpec(roleModel: string, sessionModel: string | undefined): string | null {
-  return sessionModel ? null : roleModel;
+export function foremanModelSpec(roleModel: string, sessionModel: string | undefined, cliModel?: string): string | null {
+  return sessionModel || cliModel ? null : roleModel;
+}
+
+/** The value of a `--model <id>` / `--model=<id>` flag in the process arguments (a model picked at startup counts as user-picked). */
+export function cliModelOf(argv: readonly string[]): string | undefined {
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--model") return argv[i + 1] && !argv[i + 1].startsWith("-") ? argv[i + 1] : undefined;
+    if (a.startsWith("--model=") && a.length > 8) return a.slice(8);
+  }
+  return undefined;
 }
 
 export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>): Promise<SessionResult> {

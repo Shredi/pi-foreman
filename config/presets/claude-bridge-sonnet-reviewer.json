@@ -1,7 +1,7 @@
 {
   "version": 1,
   "childMaxThinking": "high",
-  "ladder": { "childPolicy": "below", "strongAbove": 100000, "childMaxTurns": 60, "reviewerClimb": { "enabled": true, "securityRung": "claude-bridge/claude-opus-5-5:high" } },
+  "ladder": { "childPolicy": "below", "rolePolicy": { "reviewer": "at-or-below", "senior-reviewer": "at-or-below", "builder": "below" }, "strongAbove": 100000, "childMaxTurns": 60, "reviewerClimb": { "enabled": true, "securityRung": "claude-bridge/claude-opus-5-5:high" } },
   "providers": {
     "claude-bridge": {
       "strongAbove": 100000,
@@ -15,8 +15,8 @@
         "foreman": { "model": "claude-bridge/claude-opus-5-5", "thinking": "high" },
         "session-foreman": { "model": "claude-bridge/claude-opus-5-5", "thinking": "high" },
         "planner": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium" },
-        "explorer": { "model": "claude-bridge/claude-haiku-5-5", "thinking": "medium", "strong": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium" } },
-        "builder": { "model": "claude-bridge/claude-haiku-5-5", "thinking": "medium", "strong": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium" } },
+        "explorer": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium", "strong": { "model": "claude-bridge/claude-opus-5-5", "thinking": "medium" } },
+        "builder": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium", "strong": { "model": "claude-bridge/claude-opus-5-5", "thinking": "medium" } },
         "reviewer": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium" },
         "senior-reviewer": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "high" },
         "finalizer": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "low" }

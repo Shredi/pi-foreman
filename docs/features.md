@@ -164,7 +164,7 @@ Switch: `providers.*.roles.*.strong` is set.
 
 | Key | Default | Layer |
 |---|---|---|
-| `roles.<x>.strongAbove` | unset | not in project/session (the ladder comes from the user or overlay config) |
+| `roles.<x>.strongAbove` | `explorer`: `200000` | not in project/session (the ladder comes from the user or overlay config) |
 | `roles.<x>.childMaxTurns` | unset | not in project/session (the ladder comes from the user or overlay config) |
 | `roles.<x>.strongOnRevision` | unset | tighten-only (only false is accepted) |
 | `providers.<x>.roles.<x>.strong.model` | unset | not in project/session (the strong model is picked in the user or overlay config) |
@@ -175,6 +175,7 @@ Switch: `providers.*.roles.*.strong` is set.
 | `ladder.strongAbove` | `100000` | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
 | `ladder.childMaxTurns` | `60` | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
 | `ladder.strongOnRevision` | `true` | tighten-only (only false is accepted) |
+| `ladder.maxTurns` | `{"builder": 100}` | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
 | `ladder.research.factCriticalRung` | `null` | not in project/session (the fact-critical research rung comes from the user or overlay config) |
 
 ### rank-policy
@@ -186,6 +187,7 @@ Switch: `providers.*.ranks` is non-empty.
 | Key | Default | Layer |
 |---|---|---|
 | `providers.<x>.ranks` | unset | not in project/session (model ranks decide which children may launch: user or overlay config only) |
+| `ladder.rolePolicy` | unset | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
 | `ladder.childPolicy` | unset | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
 
 ### reviewer-climb
@@ -688,6 +690,8 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `ladder.strongAbove` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.childMaxTurns` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.childPolicy` | the ladder and the child rank policy come from the user or overlay config |
+| `ladder.rolePolicy` | the ladder and the child rank policy come from the user or overlay config |
+| `ladder.maxTurns` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.reviewerClimb` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.research` | the fact-critical research rung comes from the user or overlay config |
 | `ladder.reviewPanel` | the review panel's models come from the user or overlay config |

@@ -139,6 +139,8 @@
         "strongAbove": { "type": "integer", "minimum": 1, "description": "Default context limit of a bottom-rung child (L1: 100000)." },
         "childMaxTurns": { "type": "integer", "minimum": 1, "description": "Default assistant-turn cap of a child (L1: 60)." },
         "strongOnRevision": { "type": "boolean", "description": "A builder revision launched after a reviewer FAIL goes to the builder's strong rung (rung_up reason review_fail; L1: true). No-op without a strong rung. Overridden by providers.<p>.strongOnRevision and roles.<id>.strongOnRevision. A project or session can only set false." },
+        "maxTurns": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 }, "description": "Assistant-turn cap per role (L1: builder 100); wins over childMaxTurns, which stays the fallback for roles without an entry. A child that reaches it traces child_turn_limit. User or overlay config only." },
+        "rolePolicy": { "type": "object", "additionalProperties": { "type": "string", "enum": ["below", "at-or-below", "any"] }, "description": "Per-role override of childPolicy, e.g. {\"reviewer\": \"at-or-below\", \"builder\": \"below\"}. Unset role = childPolicy. User or overlay config only." },
         "childPolicy": { "type": "string", "enum": ["below", "at-or-below", "any"], "description": "Which child models a foreman may launch by providers.<p>.ranks: below = strictly lower tier than the foreman's model (default), at-or-below = the same tier too, any = no check. Inert while no provider has ranks." },
         "reviewerClimb": {
           "type": "object",

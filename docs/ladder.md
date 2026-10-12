@@ -22,12 +22,32 @@ to stop and return a handoff report starting `RUNG_UP: context` (also `RUNG_UP: 
 launch of that role needs no reason, gets the prior report prepended to its task, and the trace records
 `rung_up {reason: "context"}` (or `turns`, `stuck`, `checks_failed`).
 
+The foreman's own strong launch passes `reason` as an extra top-level field of the `subagent` call (the published
+schema stays unchanged; the adapter removes the field before the tool sees it). Without a reason, and without a
+climb-eligible run, the launch is refused: `strong launch of builder refused [strong_no_reason]: pass `reason` as
+an extra top-level field of the subagent call ...`.
+
+`strongAbove` is 100000 by default and 200000 for the explorer (`roles.explorer.strongAbove` in the defaults): an
+explorer's read-only map grows its context by reading, a 276 s map ended climb-eligible at the old limit, and a
+stronger model would start from the same context. Raise or lower it per role, provider or ladder.
+
+## Turn limit
+
+`ladder.maxTurns.<role>` is the assistant-turn limit of a role (default `{builder: 100}`); roles without an entry use
+`childMaxTurns` (default 60), which stays the fallback. A child past its limit is steered once; the trace records
+`child_turn_limit {role, turns, limit}` next to `child_turn_cap`.
+
 ## Failure climb
 
 A builder revision launched while the latest reviewer verdict is FAIL goes to the builder's strong rung when
 `strongOnRevision` resolves true (`rung_up {reason: "review_fail"}`; lookup in [roles](roles.md)). While the
 builder's live rung is the bottom one, the finish gate refuses once more without counting the refusal
-(`finish_refused {climb_available: true}`). On the top rung the revision is a `rung_top`, the finish gate offers no
+(`finish_refused {climb_available: true}`).
+
+`strongOnRevision` (default true) also covers a revision that answers a FAIL with a `SECURITY:` finding: it launches
+on the strong rung. The security exemption (`revision_security_exempt`) is separate: it lifts only the revision cap
+for that round and never climbs by itself; with `strongOnRevision` false the exempt revision stays on the bottom
+rung. On the top rung the revision is a `rung_top`, the finish gate offers no
 climb, and the usual two-refusal valve applies: two counted refusals, then `ceremony_incomplete`
 (see [ceremony](ceremony.md)).
 

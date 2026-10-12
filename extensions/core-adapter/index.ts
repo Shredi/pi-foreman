@@ -108,7 +108,7 @@ import { registerWait, waitLimits } from "./wait.ts";
 import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import type { CloseReport } from "./close.ts";
-import { foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, sessionModelOf } from "./session.ts";
+import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, sessionModelOf } from "./session.ts";
 import { closeChildren } from "./closechildren.ts";
 import { AskContract } from "./askcontract.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
@@ -117,7 +117,7 @@ import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectCha
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
-import { launchedModels, PLANNER_OWN_RUNG_HINT, rankRefusal, rolesOfModel } from "./ranks.ts";
+import { explicitModelAllowed, launchedModels, PLANNER_OWN_RUNG_HINT, rankRefusal, rankRefusalFor, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
@@ -613,7 +613,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (userPickedModel) return;
     // `foreman session open --model X` wins over the overlay/preset role model (model and thinking) for this session
-    const spec = foremanModelSpec(role.model, sessionModelOf(process.env));
+    const spec = foremanModelSpec(role.model, sessionModelOf(process.env), cliModelOf(process.argv));
     if (spec === null) return;
     const slash = spec.indexOf("/");
     const provider = slash > 0 ? spec.slice(0, slash) : ctx.model?.provider ?? "";
@@ -1437,7 +1437,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           reviewerClimbs = rc.climbs;
           reviewerTraces = rc.traces;
         }
-        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking") });
+        const foremanAt0 = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null;
+        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking"), explicit: (role, m) => explicitModelAllowed(s.config.config, foremanAt0, m, role) });
         // A panel shadow runs on its own model (rank-checked in shadowLaunch): no occasion override, rank loop or different-model rule.
         if (shadow.kind === "launch") input.model = shadow.model;
         else if (!s.isChild && actionOf(input) === null) {
@@ -1455,7 +1456,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               s.trace?.emit({ event: "planner_self_fallback", tier: s.ceremony.tier, model: m, foreman: foremanModel });
               return { block: true, reason: PLANNER_SELF_MESSAGE };
             }
-            const no = rankRefusal(s.config.config, foremanModel, m);
+            const no = rankRefusalFor(s.config.config, foremanModel, m, rolesOfModel(input, m));
             if (!no) continue;
             const marker = floorMarker(raised, m);
             s.trace?.emit({ event: "launch_refused", reason: "rank_policy", policy: no.policy, foreman: no.foreman, requested: no.requested, ...(marker ? { marker } : {}) });
@@ -1463,13 +1464,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return { block: true, reason: (marker ? `${no.message} The [${marker}] marker raised this entry to its role's strong rung, which the rank policy refuses; drop the marker or map a strong rung the policy allows.` : no.message) + hint };
           }
           // The security rung is explicit config: written after the rank check (docs/ladder.md); traced when it overrides the policy.
-          markPolicyOverrides(reviewerClimbs, (m) => rankRefusal(s.config.config, foremanModel, m) !== null);
+          markPolicyOverrides(reviewerClimbs, (m) => rankRefusalFor(s.config.config, foremanModel, m, ["reviewer"]) !== null);
           applySecurityRungs(reviewerClimbs, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
           applyFactCriticalRungs(marked, resolution.roles, s.config.config, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
           for (const r of researchTraces(marked)) s.trace?.emit(r);
           for (const r of entryTraces(input, marked)) s.trace?.emit(r);
           // Different-model rule (every reviewer launch): after the security rung, so it sees the final model; traced with policy_override.
-          const refusedBy = (m: string): boolean => rankRefusal(s.config.config, foremanModel, m) !== null;
+          const refusedBy = (m: string): boolean => rankRefusalFor(s.config.config, foremanModel, m, ["reviewer"]) !== null;
           reviewerTraces.push(...applyReviewModelRule(input, resolution.roles, { config: s.config.config, foreman: foremanModel, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: refusedBy, thinking: occ.thinking }));
           // Review panel (panel.ts): a gate-occasion reviewer is the primary; its shadows come after its run end.
           panel = primaryPanel(input, occasions, s.config.config, foremanModel);
@@ -1635,7 +1636,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const steer = s.isChild ? s.childLadder.onUsage(m.usage) : null;
     if (steer) {
-      if (steer.trigger === "turns") s.trace?.emit({ event: "child_turn_cap", role: s.usage.line.role, turns: steer.count, rung: steer.rung });
+      if (steer.trigger === "turns") {
+        s.trace?.emit({ event: "child_turn_cap", role: s.usage.line.role, turns: steer.count, rung: steer.rung });
+        s.trace?.emit({ event: "child_turn_limit", role: s.usage.line.role, turns: steer.count, limit: steer.limit ?? null });
+      }
       else s.trace?.emit({ event: "rung_up_steer", role: s.usage.line.role, count: steer.count, rung: steer.rung, reason: "context" });
       pi.sendUserMessage(steer.text, { deliverAs: "steer" });
     }

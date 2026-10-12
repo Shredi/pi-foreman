@@ -21,11 +21,13 @@ which relaunches it with `model: "strong"`:
 
 - **Context**: a bottom-rung child whose last call's context (input + cacheRead + cacheWrite) passes
   `strongAbove` (default 100000) is steered once to stop and return a handoff report starting `RUNG_UP: context`.
-- **Turns**: past `childMaxTurns` assistant turns (default 60) a bottom-rung child hands off (`RUNG_UP: turns`);
-  a top-rung child is told to stop and report (`child_turn_cap` trace event).
+- **Turns**: past the role's turn limit (`ladder.maxTurns.<role>`: builder 100; otherwise `childMaxTurns`, default 60)
+  a bottom-rung child hands off (`RUNG_UP: turns`); a top-rung child is told to stop and report. Trace events:
+  `child_turn_cap` and `child_turn_limit {role, turns, limit}`.
 - **Stuck**: a report with `STATUS: stuck` or "own checks failed".
-- **Foreman**: `model: "strong"` plus a `reason` on the launch. A strong launch with no reason and no trigger is
-  refused (`strong_no_reason`); a heavy-tier builder and `strongOnRevision` count as triggers.
+- **Foreman**: `model: "strong"` plus a `reason` passed as an extra top-level field of the `subagent` call (the
+  published tool schema does not list it; the adapter reads and removes it). A strong launch with no reason and no
+  trigger is refused (`strong_no_reason`); a heavy-tier builder and `strongOnRevision` count as triggers.
 - **Review FAIL**: a builder revision launched while the latest reviewer verdict is FAIL goes to the builder's
   strong rung without a keyword or reason (`rung_up` reason `review_fail`) when `strongOnRevision` resolves true:
   `roles.<id>.strongOnRevision`, else `providers.<p>.strongOnRevision`, else `ladder.strongOnRevision` (default
@@ -46,7 +48,9 @@ The live rung, `rung_top`, the reviewer's own climb (`ladder.reviewerClimb`) and
 
 **Rank policy.** `providers.<p>.ranks` lists `{match: <model-id glob>, tier: <0 = top>}` entries, highest first.
 `ladder.childPolicy` (one value for all providers) is `below` (default: children strictly below the foreman's
-tier), `at-or-below`, or `any`. Tiers are compared across providers, so a foreman on one provider may launch
+tier), `at-or-below`, or `any`; `ladder.rolePolicy.<role>` overrides it for one role (unset = `childPolicy`). An
+explicit launch `model: "<provider>/<id>"` is passed through when the rank policy allows it for that role (ranks
+configured, model ranked); otherwise the role map decides. Tiers are compared across providers, so a foreman on one provider may launch
 rank-compatible children on another. Once any ranks exist, a model in no list is allowed only under `any`. With
 no ranks anywhere the policy does nothing. A refused launch is traced `launch_refused {policy, foreman, requested}`. When the refused role is `planner`, the message adds that the role sits on the foreman's own rung: plan it yourself (write `.workflow/scratch/plan-<topic>.md`) or map the role to a lower rung (no automatic climb). With `ceremony.planner: role`, a planner whose rank tier is <= the foreman's (checked directly, whatever the policy says; unranked counts as not below) is not refused but switches the session to `self` (trace `planner_self_fallback`): the foreman plans it itself, and its approved plan satisfies the planner step.
 
@@ -57,8 +61,11 @@ no ranks anywhere the policy does nothing. A refused launch is traced `launch_re
 keeps your other keys, backs up the old file; see [install](install.md)), or copy the parts you want by hand:
 
 - `claude-bridge.json`: ranks fable > opus > sonnet > haiku; foreman Opus 5.5 (high); explorer, builder and
-  reviewer Haiku 5.5 (medium) with a strong Sonnet 5.5 rung; planner, finalizer and senior-reviewer (high) on
-  Sonnet 5.5; auto-review on Haiku 5.5; `childPolicy: below`, so no child runs on Opus; `childMaxThinking: high`.
+  reviewer Sonnet 5.5 (medium) on the bottom rung with a strong Opus 5.5 rung; planner, finalizer and senior-reviewer
+  (high) on Sonnet 5.5; auto-review on Haiku 5.5 (Haiku is an explicit opt-in: map a role to it yourself);
+  `childPolicy: below` with `rolePolicy` reviewer and senior-reviewer `at-or-below`, builder `below`, so an Opus
+  foreman launches Opus reviewers but an Opus builder or explorer strong rung needs a Fable foreman or
+  `rolePolicy.<role>: at-or-below`; `childMaxThinking: high`.
 - `claude-bridge-sonnet-reviewer.json`: the same with the reviewer on Sonnet 5.5 (medium) and no strong rung;
   explorer, builder and auto-review unchanged. Opt-in, not the default: the bench rows decide whether it pays.
 - `openai.json` (astra > sol > luna: `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-luna`) and `google.json`
@@ -91,6 +98,8 @@ Design record for the ladder: `design/architecture.md`
 | `providers.<p>.roles.<role>.model`, `providers.<p>.roles.<role>.thinking`, `providers.<p>.roles.<role>.codemode` | The provider's model for the role as `<provider>/<model>`, its thinking level (capped by `maxThinking`) and a per-provider codemode override. |
 | `providers.<p>.roles.<role>.strong.model`, `providers.<p>.roles.<role>.strong.thinking` | Stronger model for the role, picked by the strength keyword `strong` (the builder also on a heavy tier). User or overlay config only. |
 | `providers.<p>.childMaxTurns` | `childMaxTurns` for every role of this provider. User or overlay config only. |
+| `ladder.maxTurns` | Per-role turn limit, `{role: turns}` (default `{builder: 100}`); wins over `childMaxTurns`, which stays the fallback. User or overlay config only. |
+| `ladder.rolePolicy` | Per-role rank policy, `{role: below\|at-or-below\|any}`, overriding `ladder.childPolicy`. User or overlay config only. |
 | `ladder.strongOnRevision` | A builder revision after a reviewer FAIL launches on the strong rung (`rung_up` reason `review_fail`; default true); project/session can only set false. |
 | `roles.<role>.strongOnRevision` | Per-role override of `ladder.strongOnRevision`, wins over the provider key; project/session can only set false. |
 | `providers.<p>.strongOnRevision` | `true`: every revision round relaunches the builder on its strong model (reason `revision`); `false`: no climb, also not after a FAIL; unset: `ladder.strongOnRevision` decides. Project/session can only set false. |

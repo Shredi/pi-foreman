@@ -19,7 +19,7 @@
 // climb is by model.
 //
 // strongAbove / childMaxTurns: roles.<role>.<key>, else providers.<p>.<key>, else ladder.<key>,
-// else 100000 / 60.
+// else 100000 / 60; ladder.maxTurns.<role> wins over the childMaxTurns lookup (builder 100 by default).
 //
 //   (e) review_fail: a builder revision launched while the latest review verdict is FAIL goes to
 //       the strong rung when strongOnRevision resolves true (same lookup; L1 ladder.strongOnRevision
@@ -75,9 +75,10 @@ export function strongAbove(config: Json | undefined, provider: string | undefin
   return knob(config, provider, role, "strongAbove", DEFAULT_STRONG_ABOVE);
 }
 
-/** The childMaxTurns cap of `role` on `provider`. */
+/** The turn cap of `role` on `provider`: ladder.maxTurns.<role>, else the childMaxTurns lookup (the fallback). */
 export function childMaxTurns(config: Json | undefined, provider: string | undefined, role: string): number {
-  return knob(config, provider, role, "childMaxTurns", DEFAULT_CHILD_MAX_TURNS);
+  const v = get(config, `ladder.maxTurns.${role}`);
+  return posInt(v) ? v : knob(config, provider, role, "childMaxTurns", DEFAULT_CHILD_MAX_TURNS);
 }
 
 /** Context tokens of one call: input + cacheRead + cacheWrite of its usage. */
@@ -92,6 +93,8 @@ export interface ChildSteer {
   text: string;
   /** context: tokens of the call; turns: assistant turns so far. */
   count: number;
+  /** turns: the turn limit that was passed. */
+  limit?: number;
   rung: "bottom" | "top";
 }
 
@@ -122,7 +125,7 @@ export class ChildLadder {
     if (posInt(this.o.maxTurns) && this.turns > this.o.maxTurns) {
       this.steered = true;
       const why = `you have used ${this.turns} turns, above childMaxTurns ${this.o.maxTurns}`;
-      return { trigger: "turns", count: this.turns, rung, text: this.o.bottom ? steerText("turns", why) : `pi-foreman ladder: ${why}. Stop now and start no new work. Reply with your report: Done, Remaining, Files touched, and what kept you looping.` };
+      return { trigger: "turns", count: this.turns, limit: this.o.maxTurns, rung, text: this.o.bottom ? steerText("turns", why) : `pi-foreman ladder: ${why}. Stop now and start no new work. Reply with your report: Done, Remaining, Files touched, and what kept you looping.` };
     }
     return null;
   }

@@ -58,6 +58,11 @@ export interface LaunchOptions {
   provider?: string;
   /** childMaxThinking: caps every child launch's level, rungs included, on top of maxThinking. */
   childMaxThinking?: unknown;
+  /**
+   * An explicit launch `model:` (a full `<provider>/<id>`, no keyword) that this accepts for the role is
+   * passed through instead of being replaced by the role map (the rank policy decides, ranks.ts explicitModelAllowed).
+   */
+  explicit?: (role: string, model: string) => boolean;
 }
 
 export interface LaunchResult {
@@ -92,9 +97,11 @@ export function launchModel(role: string, roles: Record<string, Json>, passed: u
   const own = isLevel(pick.thinking) ? pick.thinking : mapped.level;
   const raw = own ?? (foreman.level ? clampLevel(foreman.level, maxThinking) : null);
   const level = raw ? clampLevel(raw, opts.childMaxThinking) : null;
-  const model = level ? `${mapped.base}:${level}` : mapped.base;
+  const honoured = keyword === null && foreman.base.includes("/") && foreman.base !== mapped.base && opts.explicit?.(role, foreman.base) === true;
+  const base = honoured ? foreman.base : mapped.base;
+  const model = level ? `${base}:${level}` : base;
   const out: LaunchResult = { model };
-  if (keyword === null && foreman.base !== "" && foreman.base !== mapped.base) out.override = { role, model: mapped.base, requested: foreman.base };
+  if (keyword === null && foreman.base !== "" && foreman.base !== mapped.base && !honoured) out.override = { role, model: mapped.base, requested: foreman.base };
   if (asked && !strong) out.notice = `pi-foreman: no strong model mapped for ${role} on ${opts.provider ?? "the active provider"}; launched on ${model}`;
   return out;
 }
