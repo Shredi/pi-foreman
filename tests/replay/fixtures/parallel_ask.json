@@ -1,0 +1,25 @@
+{
+ "foreman": {
+  "p1": [
+   {"tools": [
+    {"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:pa1]] first task"}},
+    {"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:pa2]] second task"}}
+   ]},
+   {"text": "Launched."},
+   {"text": "Builders reported."}
+  ],
+  "bsup": [
+   {"tools": [{"name": "subagent_supervisor", "arguments": {"action": "reply", "message": "Go on."}}]},
+   {"text": "Answered."}
+  ]
+ },
+ "builder": {
+  "pa1": [
+   {"tools": [{"name": "contact_supervisor", "arguments": {"reason": "need_decision", "message": "[[replay:bsup]] may I go on?"}}]},
+   {"text": "first child finished"}
+  ],
+  "pa2": [
+   {"text": "second child finished"}
+  ]
+ }
+}

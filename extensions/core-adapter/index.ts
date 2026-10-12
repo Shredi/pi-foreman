@@ -945,6 +945,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchBriefs: "on",
       // Research markers (research.ts; "off" only renders the eee843d baseline).
       research: "on",
+      // Sibling repos are out of scope and the orientation names the bundled package roots (orient.ts; "off" only renders the eee843d baseline).
+      orientationRoots: "on",
       // A reviewer PASS marks its items (reviewmarks.ts; "off" only renders the eee843d baseline).
       reviewMarks: "on",
       // ceremony.planReview at heavy: the plan-review step before the checkpoint (planreview.ts).
