@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 import unicodedata
@@ -215,13 +216,49 @@ def cell_width(text):
     return w
 
 
-def prune_done(path, d, now, ttl_min):
-    """Delete one presence file whose state is done and whose last activity is older than the TTL."""
+def herdr_panes():
+    """Pane ids of `herdr pane list`; None when Herdr cannot be asked (then nothing is provably gone)."""
+    try:
+        out = subprocess.run(["herdr", "pane", "list"], capture_output=True, text=True, timeout=3.0,
+                             stdin=subprocess.DEVNULL, check=True).stdout
+        panes = json.loads(out)["result"]["panes"]
+        return {p["pane_id"] for p in panes if isinstance(p, dict) and isinstance(p.get("pane_id"), str)}
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return None
+
+
+def pid_dead(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except (OSError, OverflowError, ValueError):
+        return False
+    return False
+
+
+def provably_closed(d):
+    """A session's presence file may go only when its pid is dead AND its pane is gone from `herdr pane list`."""
+    pid = d.get("pid")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0 or not pid_dead(pid):
+        return False
+    panes = herdr_panes()
+    if panes is None:
+        return False
+    pane = d.get("paneId")
+    return not (isinstance(pane, str) and pane in panes)
+
+
+def prune_done(path, d, now, ttl_min, closed=None):
+    """Delete one presence file whose state is done and whose last activity is older than the TTL; with `closed`
+    (a predicate on the file's data) only when that also holds."""
     if d.get("state") != "done":
         return False
     times = [t for t in (parse_ts(d.get("heartbeatAt")), parse_ts(d.get("lastEventAt"))) if t is not None]
     last = max(times) if times else mtime(path)
     if last is None or now - last <= ttl_min * 60:
+        return False
+    if closed is not None and not closed(d):
         return False
     try:
         os.remove(path)
@@ -230,7 +267,7 @@ def prune_done(path, d, now, ttl_min):
     return True
 
 
-def load(adir, cache=None, now=None, done_ttl=None, only=None):
+def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
     """Read every source into plain data. No clock, no printing; with now and done_ttl (minutes) it also deletes
     the presence files of sessions that finished longer ago than the TTL. With `only` (a session id) usage and
     trace files are read only for that session's subtree."""
@@ -247,7 +284,7 @@ def load(adir, cache=None, now=None, done_ttl=None, only=None):
         d = read_json(base / "state" / "live" / name)
         if not isinstance(d, dict):
             continue
-        if now is not None and done_ttl is not None and prune_done(base / "state" / "live" / name, d, now, done_ttl):
+        if now is not None and done_ttl is not None and prune_done(base / "state" / "live" / name, d, now, done_ttl, closed):
             continue
         sid = d.get("sessionId") if isinstance(d.get("sessionId"), str) and d.get("sessionId") else name[:-5]
         d["sessionId"] = sid
@@ -511,9 +548,9 @@ def finish(n, now, since_h, done_ttl=None):
     return n["last"] is None or now - n["last"] <= since_h * 3600
 
 
-def snapshot(adir, now, since_h=24.0, cache=None, done_ttl=None, only=None):
+def snapshot(adir, now, since_h=24.0, cache=None, done_ttl=None, only=None, closed=None):
     """Roots of the session tree; with `only` (a session id) just that session's subtree as the one root."""
-    roots = build(load(adir, cache, now, done_ttl, only), now)
+    roots = build(load(adir, cache, now, done_ttl, only, closed), now)
     if only is not None:
         hit = find_sid(roots, only)
         roots = [hit] if hit is not None else []
@@ -725,14 +762,14 @@ def json_line(roots, now, sym_name, symbols, recent=RECENT_RUN_SECONDS):
     return json.dumps(json_doc(roots, now, sym_name, symbols, recent), separators=(",", ":"))
 
 
-def follow(adir, interval, since_h, done_ttl, sym_name, symbols, max_ticks=None, recent=RECENT_RUN_SECONDS):
+def follow(adir, interval, since_h, done_ttl, sym_name, symbols, max_ticks=None, recent=RECENT_RUN_SECONDS, closed=None):
     """One JSON line per refresh, flushed; quiet exit 0 on a closed pipe or Ctrl-C. No TTY handling."""
     cache = UsageCache()
     tick = 0
     try:
         while max_ticks is None or tick < max_ticks:
             now = time.time()
-            print(json_line(snapshot(adir, now, since_h, cache, done_ttl), now, sym_name, symbols, recent))
+            print(json_line(snapshot(adir, now, since_h, cache, done_ttl, closed=closed), now, sym_name, symbols, recent))
             sys.stdout.flush()
             tick += 1
             if max_ticks is None or tick < max_ticks:
@@ -747,7 +784,7 @@ def follow(adir, interval, since_h, done_ttl, sym_name, symbols, max_ticks=None,
     return 0
 
 
-def loop(adir, interval, since_h, color, done_ttl=None, symbols=None):
+def loop(adir, interval, since_h, color, done_ttl=None, symbols=None, closed=None):
     if sys.platform == "win32":
         os.system("")  # enable VT escape processing in the console
     state = {"tty": False}
@@ -774,7 +811,7 @@ def loop(adir, interval, since_h, color, done_ttl=None, symbols=None):
     try:
         while True:
             ui["now"] = time.time()
-            ui["roots"] = snapshot(adir, ui["now"], since_h, cache, done_ttl)
+            ui["roots"] = snapshot(adir, ui["now"], since_h, cache, done_ttl, closed=closed)
             draw()
             end = time.time() + interval
             while time.time() < end:
@@ -828,18 +865,18 @@ def main(argv=None):
     if a.follow or a.json:
         recent = config_recent_runs(adir)
     if a.follow:
-        return follow(adir, a.interval, a.since, ttl, sym_name, symbols, a.max_ticks, recent)
+        return follow(adir, a.interval, a.since, ttl, sym_name, symbols, a.max_ticks, recent, provably_closed)
     if a.json:
         now = time.time()
-        print(json_line(snapshot(adir, now, a.since, None, ttl), now, sym_name, symbols, recent))
+        print(json_line(snapshot(adir, now, a.since, None, ttl, closed=provably_closed), now, sym_name, symbols, recent))
         return 0
     if a.once or not sys.stdout.isatty():
         now = time.time()
         width = shutil.get_terminal_size((80, 24)).columns
-        print("\n".join(render(snapshot(adir, now, a.since, None, ttl), now, width, symbols=symbols) + ["", render_footer()]))
+        print("\n".join(render(snapshot(adir, now, a.since, None, ttl, closed=provably_closed), now, width, symbols=symbols) + ["", render_footer()]))
         return 0
     color = not a.no_color and not os.environ.get("NO_COLOR")
-    return loop(adir, max(0.5, a.interval), a.since, color, ttl, symbols)
+    return loop(adir, max(0.5, a.interval), a.since, color, ttl, symbols, provably_closed)
 
 
 if __name__ == "__main__":
