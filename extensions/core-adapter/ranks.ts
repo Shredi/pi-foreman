@@ -13,6 +13,7 @@
 // With ranks configured, a model in no list is unranked: allowed only under "any"; an unranked
 // foreman can launch nothing ranked-checked either (fail closed). With no ranks anywhere the
 // policy is inert (ASSUMPTION A1), so the shipped defaults behave as before.
+// `ladder.rolePolicy.<role>` overrides the policy for one role; an explicit launch `model:` is the model checked.
 import { get, type Json } from "./config.ts";
 import { splitLevel } from "./launchmodel.ts";
 
@@ -30,6 +31,12 @@ const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.
 export function childPolicy(config: Json | undefined): ChildPolicy {
   const v = get(config, "ladder.childPolicy");
   return (CHILD_POLICIES as readonly unknown[]).includes(v) ? (v as ChildPolicy) : "below";
+}
+
+/** ladder.rolePolicy.<role> when set to a known value, else ladder.childPolicy. */
+export function rolePolicy(config: Json | undefined, role?: string): ChildPolicy {
+  const v = role ? get(config, `ladder.rolePolicy.${role}`) : undefined;
+  return (CHILD_POLICIES as readonly unknown[]).includes(v) ? (v as ChildPolicy) : childPolicy(config);
 }
 
 /** Every provider's valid ranks entries, keyed by provider (key order kept). */
@@ -73,9 +80,9 @@ export interface RankRefusal {
  * Null when the foreman (`foremanModel`, `<provider>/<id>`) may launch `childModel` under the
  * policy, else the refusal (trace fields plus the message for the foreman).
  */
-export function rankRefusal(config: Json | undefined, foremanModel: string | null, childModel: string): RankRefusal | null {
+export function rankRefusal(config: Json | undefined, foremanModel: string | null, childModel: string, role?: string): RankRefusal | null {
   const ranks = ranksOf(config);
-  const policy = childPolicy(config);
+  const policy = rolePolicy(config, role);
   if (ranks.size === 0 || policy === "any") return null;
   const requested = splitLevel(childModel.trim()).base;
   const foreman = foremanModel ?? "unknown";
@@ -87,6 +94,21 @@ export function rankRefusal(config: Json | undefined, foremanModel: string | nul
   if (fTier === null) return refuse(`the foreman model ${foreman} is unranked, so no child rank can be checked against it.`);
   const ok = policy === "below" ? cTier > fTier : cTier >= fTier;
   return ok ? null : refuse(`child model ${requested} (tier ${cTier}) is not ${policy === "below" ? "below" : "at or below"} the foreman model ${foreman} (tier ${fTier}).`);
+}
+
+/** The first refusal of `childModel` for any of `roles` (each under its own rolePolicy); no roles = ladder.childPolicy. */
+export function rankRefusalFor(config: Json | undefined, foremanModel: string | null, childModel: string, roles: readonly string[]): RankRefusal | null {
+  for (const r of roles.length ? roles : [undefined]) {
+    const no = rankRefusal(config, foremanModel, childModel, r);
+    if (no) return no;
+  }
+  return null;
+}
+
+/** An explicit launch model is honoured only with ranks configured, ranked, and allowed for `role`. */
+export function explicitModelAllowed(config: Json | undefined, foremanModel: string | null, childModel: string, role: string): boolean {
+  const ranks = ranksOf(config);
+  return ranks.size > 0 && tierOf(ranks, childModel) !== null && rankRefusal(config, foremanModel, childModel, role) === null;
 }
 
 /**
