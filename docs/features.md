@@ -304,6 +304,8 @@ No config key.
 | `ceremony.reviewGate` | `"pass"` | tighten-only (toward pass; tightest first: pass, verdict) |
 | `ceremony.ledgerHelper` | `"tool"` | tighten-only (toward off; tightest first: off, bash, tool) |
 | `ceremony.reviewPerRevision` | `true` | tighten-only (only true is accepted) |
+| `ceremony.reviewRuns` | `3` | tighten-only (lower only, minimum 1) |
+| `ceremony.budgetUsd` | `null` | tighten-only (lower only, minimum 0.01) |
 | `ceremony.heavyThreshold` | `"strict"` | tighten-only (toward eee843d; tightest first: eee843d, strict) |
 
 ### read-budgets

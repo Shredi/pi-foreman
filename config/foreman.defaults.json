@@ -58,6 +58,8 @@
     "orientation": { "enabled": true, "maxLines": 120 },
     "ledgerHelper": "tool",
     "reviewPerRevision": true,
+    "reviewRuns": 3,
+    "budgetUsd": null,
     "reviewModel": null,
     "reviewByOccasion": {},
     "planReview": { "trivial": false, "standard": false, "heavy": true },

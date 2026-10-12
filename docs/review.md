@@ -31,6 +31,10 @@ is read from a marker in the reviewer's task text.
 
 The ledger is the scope source. The adapter prepends the ledger text to every `reviewer` and `senior-reviewer` launch: the cited items when the task cites any (`item 3`, `#3`), else the whole ledger (header and items). The binding is the session marker, so a review launched with `cwd` in a worktree gets it too. The adapter does not append the owner's prompt. A diff fact is in scope when the prepended ledger block or the task text asks for it; the reviewer quotes the ledger item that asks for the change, else FAIL (BLOCK in a senior review). A foreman statement in the task never overrides a fact. Because the ledger is the only scope source, an item the foreman upserts mid-round also widens scope; a future round can snapshot the ledger at checkpoint approval.
 
+## Re-review after a FAIL
+
+A review launched after a FAIL checks only the items that failed: the harness prepends the line `[re-review items: 2, 4]` (the `N. FAIL` items of the last FAIL verdict, cleared by a PASS) to a plain `item` review task, and the verdict must list each of them as `N. PASS` or `N. FAIL`. `ceremony.reviewRuns` (default 3) caps the review runs per user prompt; the next launch is refused `[review_cap]`. Every review run, re-reviews and panel shadows included, traces `review_done` at its run end.
+
 ## Different-model rule
 
 A review by the model that built the work is weak evidence. On every `reviewer` launch, when the resolved model is the

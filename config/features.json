@@ -201,7 +201,7 @@
       "title": "Tiers and finish gates",
       "purpose": "The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met.",
       "doc": "docs/ceremony.md#triage-and-delegation",
-      "keys": ["ceremony.default", "ceremony.heavySignals", "ceremony.heavyFileCount", "ceremony.heavyThreshold", "ceremony.overrides", "ceremony.requireTriage", "ceremony.required", "ceremony.revisionRounds", "ceremony.trivialBound", "ceremony.foremanEdits", "ceremony.scratchDir", "ceremony.reviewGate", "ceremony.reviewPerRevision", "ceremony.ledgerHelper"],
+      "keys": ["ceremony.default", "ceremony.heavySignals", "ceremony.heavyFileCount", "ceremony.heavyThreshold", "ceremony.overrides", "ceremony.requireTriage", "ceremony.required", "ceremony.revisionRounds", "ceremony.trivialBound", "ceremony.foremanEdits", "ceremony.scratchDir", "ceremony.reviewGate", "ceremony.reviewPerRevision", "ceremony.ledgerHelper", "ceremony.reviewRuns", "ceremony.budgetUsd"],
       "commands": ["/ceremony"],
       "switch": null,
       "state": "on",
