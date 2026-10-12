@@ -144,7 +144,9 @@ def footer(label, plan_first):
     if plan_first:
         lines += [
             "%d. Plan first: write `plan.md` in the handoff dir, send `Plan from %s: <absolute path of plan.md>`," % (n, label),
-            "   then stop and wait until a brief or decision arrives.",
+            "   then stop and wait for the parent's ruling. The parent writes `ruling.md` in the handoff dir (first",
+            "   line `APPROVED` = go ahead; anything else = revise `plan.md` and send `Plan from %s: <path>` again)" % label,
+            "   and wakes you with a brief naming the ruling path (`foreman session brief %s <ruling path>`)." % label,
         ]
         n += 1
     lines += [

@@ -213,5 +213,14 @@ class SessionTest(unittest.TestCase):
         self.assertNotIn("Plan from", fsn.footer("demo", False))
 
 
+class PlanFirstFooterTest(unittest.TestCase):
+    def test_plan_first_footer_names_the_ruling_handoff(self):
+        text = fsn.footer("demo", True)
+        self.assertIn("ruling.md", text)
+        self.assertIn("APPROVED", text)
+        self.assertIn("foreman session brief demo", text)
+        self.assertNotIn("ruling.md", fsn.footer("demo", False))
+
+
 if __name__ == "__main__":
     unittest.main()
