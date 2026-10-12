@@ -30,11 +30,15 @@
    "decision": "deny"
   },
   {
+   "event": "tool_error"
+  },
+  {
    "event": "llm",
    "model": "foreman-fake/foreman"
   },
   {
    "event": "overlay",
+   "role": "foreman",
    "toolFamily": "bash",
    "decision": "ask-denied"
   },

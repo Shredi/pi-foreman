@@ -76,7 +76,7 @@
    "role": "explorer"
   },
   {
-   "event": "role_result",
+   "event": "role_launched",
    "role": "explorer",
    "exit": 0
   },
@@ -114,6 +114,11 @@
   {
    "event": "child_scratch",
    "role": "explorer"
+  },
+  {
+   "event": "role_result",
+   "role": "explorer",
+   "exit": 0
   },
   {
    "event": "llm",
@@ -196,6 +201,9 @@
    "toolFamily": "Bash",
    "guard": "destructive_guard",
    "decision": "none"
+  },
+  {
+   "event": "tool_error"
   },
   {
    "event": "ledger_call"

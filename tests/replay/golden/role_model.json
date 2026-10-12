@@ -41,7 +41,7 @@
    "role": "explorer"
   },
   {
-   "event": "role_result",
+   "event": "role_launched",
    "role": "explorer",
    "exit": 0
   },
@@ -61,6 +61,11 @@
   {
    "event": "child_scratch",
    "role": "explorer"
+  },
+  {
+   "event": "role_result",
+   "role": "explorer",
+   "exit": 0
   },
   {
    "event": "llm",

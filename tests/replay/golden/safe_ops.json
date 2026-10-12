@@ -74,6 +74,9 @@
    "precondition": "dst_exists"
   },
   {
+   "event": "tool_error"
+  },
+  {
    "event": "llm",
    "model": "foreman-fake/foreman"
   },

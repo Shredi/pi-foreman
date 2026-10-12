@@ -41,7 +41,7 @@
    "role": "builder"
   },
   {
-   "event": "role_result",
+   "event": "role_launched",
    "role": "builder",
    "exit": 0
   },
@@ -61,6 +61,11 @@
   {
    "event": "child_scratch",
    "role": "builder"
+  },
+  {
+   "event": "role_result",
+   "role": "builder",
+   "exit": 0
   },
   {
    "event": "friction",

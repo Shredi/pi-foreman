@@ -1488,7 +1488,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             budgetNotes = [bd.text];
             pendingWarn = { event: "budget_warn", cost: Math.round(cost.total * 10000) / 10000, limit: budgetCap(get(s.config.config, "ceremony.budgetUsd")) };
           }
-          const reviewCount = launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)).length;
+          const reviewCount = subagentAgents(input).filter((r) => REVIEW_ROLES.includes(r)).length;
           const cap = reviewRunsCap(get(s.config.config, "ceremony.reviewRuns"));
           const rc = reviewCapCheck(s.reviewCount, reviewCount, cap);
           if (rc) {
