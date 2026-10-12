@@ -74,7 +74,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [workflow-scripts](#workflow-scripts) | off | Lets the foreman run pi-subagents workflow scripts and `schedule.*` calls, which can launch any agent outside the role map; they stay refused at tier heavy. | `{"safety": {"subagents": {"allowWorkflow": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
 | [guards](#guards) | on | Loads the guard extensions into every child, sets the limits of the precondition-checked copy and worktree-remove tools, and picks the Python that runs every guard. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
 | [bridge-isolation](#bridge-isolation) | on | With the Claude bridge, points `CLAUDE_CONFIG_DIR` at an empty folder so the host's Claude Code settings, hooks and plugins do not load into bridge turns. | on by default | [safety](safety.md#bridge-isolation) |
-| [sessions](#sessions) | on | `/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom. | on by default | [sessions](sessions.md#session-commands) |
+| [sessions](#sessions) | on | `/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom. The session runs on the `session-foreman` role's model (default: the opening session's own model) and never on a higher rank. | on by default | [sessions](sessions.md#session-commands) |
 | [remote-intercom](#remote-intercom) | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [sync](#sync) | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
 | [retro](#retro) | on | `/retro` prints the session's friction metrics, writes permission-allow proposals and files findings to a local backlog read with `foreman backlog`. | on by default | [retro](retro.md#switches) |
@@ -128,7 +128,7 @@ No config key.
 |---|---|---|
 | `roles.<x>.file` | unset | not in project/session (a role file replaces the prompt: user or overlay config only) |
 | `roles.<x>.promptAppend` | unset | any layer |
-| `roles.<x>.tools` | `foreman`: `[]`, `planner`: `["read", "ls", "grep", "find", "write", "edit"]`, `explorer`: `["read", "ls", "grep", "find", "bash"]`, `builder`: `["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_move", "foreman_copy"]`, ... (see `config/foreman.defaults.json`) | tighten-only (can only narrow the list) |
+| `roles.<x>.tools` | `foreman`: `[]`, `session-foreman`: `[]`, `planner`: `["read", "ls", "grep", "find", "write", "edit"]`, `explorer`: `["read", "ls", "grep", "find", "bash"]`, ... (see `config/foreman.defaults.json`) | tighten-only (can only narrow the list) |
 | `roles.<x>.launch` | `planner`: `"detached"`, `explorer`: `"detached"`, `builder`: `"detached"`, `reviewer`: `"detached"`, `senior-reviewer`: `"detached"`, `finalizer`: `"detached"` | not in project/session (the launch mode comes from the user or overlay config) |
 | `roles.<x>.timeoutMinutes` | `planner`: `20`, `explorer`: `20`, `builder`: `60`, `reviewer`: `30`, `senior-reviewer`: `45`, `finalizer`: `30` | tighten-only (lower only, minimum 1) |
 | `ceremony.childTimeoutSeconds` | `1800` | tighten-only (lower only, minimum 1) |
@@ -150,7 +150,7 @@ Switch: `roles.foreman.codemode` is true.
 
 | Key | Default | Layer |
 |---|---|---|
-| `roles.<x>.codemode` | `foreman`: `true`, `planner`: `false`, `explorer`: `true`, `builder`: `false`, `reviewer`: `false`, `senior-reviewer`: `false`, `finalizer`: `false` | tighten-only (only false is accepted) |
+| `roles.<x>.codemode` | `foreman`: `true`, `session-foreman`: `false`, `planner`: `false`, `explorer`: `true`, `builder`: `false`, `reviewer`: `false`, `senior-reviewer`: `false`, `finalizer`: `false` | tighten-only (only false is accepted) |
 | `providers.<x>.roles.<x>.codemode` | unset | tighten-only (only false is accepted) |
 
 ### ladder
@@ -476,7 +476,7 @@ Switch: `safety.subagents.allowWorkflow` is true.
 
 ### sessions
 
-**Opened sessions over pi-intercom.** `/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom.
+**Opened sessions over pi-intercom.** `/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom. The session runs on the `session-foreman` role's model (default: the opening session's own model) and never on a higher rank.
 
 No config key.
 

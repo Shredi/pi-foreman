@@ -19,7 +19,7 @@
     },
     "roles": {
       "type": "object",
-      "description": "Per-role settings keyed by neutral role id (planner, explorer, builder, reviewer, senior-reviewer, finalizer, foreman, or an overlay role).",
+      "description": "Per-role settings keyed by neutral role id (planner, explorer, builder, reviewer, senior-reviewer, finalizer, foreman, or an overlay role). `session-foreman` is not a launchable role: providers.<p>.roles.session-foreman.model is the model of sessions opened by `foreman session open` (default: the opening session's own model; `--model` overrides).",
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,

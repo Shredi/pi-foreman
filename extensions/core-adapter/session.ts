@@ -15,7 +15,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { CLOSE_TEXT, CLOSED_TEXT, outboxSend, validResultPathText } from "./close.ts";
+import type { Json } from "./config.ts";
 import { INTERCOM_MESSAGE_TYPE, intercomConfigPath, lastIntercomDetails } from "./intercomguard.ts";
+import { sessionRankRefusal } from "./ranks.ts";
+import { SESSION_FOREMAN } from "./roles.ts";
 import type { Spawner } from "./spawn.ts";
 import { INTERCOM_WAKE_TEXT } from "./usage.ts";
 
@@ -185,20 +188,46 @@ export interface SessionDeps {
   python: string | null;
   spawner: Spawner;
   send: (to: string, text: string) => Promise<string>;
+  /** This session's own model, `<provider>/<id>`; with `config` it enables the session-foreman model and the rank check. */
+  model?: string;
+  /** Merged config (providers.<p>.roles.session-foreman.model, ranks, ladder.childPolicy). */
+  config?: Json;
 }
 
 export type SessionResult = { text: string; ok: boolean };
 
+const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
+
+/** The mapped session-foreman model: the own provider's map first, then its fallback provider's. */
+export function sessionForemanModel(config: Json | undefined, ownModel: string | undefined): string | undefined {
+  const providers = config?.providers;
+  const slash = ownModel ? ownModel.indexOf("/") : -1;
+  if (!isObj(providers) || slash <= 0) return undefined;
+  const modelOf = (p: unknown): string | undefined => {
+    const roles = isObj(p) && isObj(p.roles) ? p.roles : undefined;
+    const e = roles?.[SESSION_FOREMAN];
+    return isObj(e) && typeof e.model === "string" && e.model !== "" ? e.model : undefined;
+  };
+  const own = providers[ownModel!.slice(0, slash)];
+  const fb = isObj(own) && isObj(own.fallback) && typeof own.fallback.provider === "string" ? own.fallback.provider : undefined;
+  return modelOf(own) ?? (fb ? modelOf(providers[fb]) : undefined);
+}
+
 export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>): Promise<SessionResult> {
   if (!d.python) return { text: "foreman_session.py: no usable Python (run /foreman doctor).", ok: false };
+  const model = c.model ?? sessionForemanModel(d.config, d.model) ?? d.model;
+  if (model && d.model && d.config) {
+    const refused = sessionRankRefusal(d.config, d.model, model);
+    if (refused) return { text: refused, ok: false };
+  }
   const opener = openerIntercomId(d.env, d.agentDir, d.piSessionId);
   const argv = [path.join(d.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", d.agentDir, "open", c.label, path.resolve(d.cwd, c.brief), "--cwd", path.resolve(d.cwd, c.cwd ?? "."), "--parent-id", opener];
-  if (c.model) argv.push("--model", c.model);
+  if (model) argv.push("--model", model);
   if (c.planFirst) argv.push("--plan-first");
   if (c.focus) argv.push("--focus");
   if (c.dryRun) argv.push("--dry-run");
   const r = await d.spawner(d.python, ["-E", "-s", ...argv], { timeoutMs: OPEN_TIMEOUT_MS, cwd: d.cwd });
-  const text = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? r.error.message : r.timedOut ? "foreman_session.py timed out" : "foreman_session.py produced no output.");
+  const text = [model ? `session model: ${model}` : "", r.stdout.trim(), r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? r.error.message : r.timedOut ? "foreman_session.py timed out" : "foreman_session.py produced no output.");
   return { text, ok: !r.error && !r.timedOut && r.code === 0 };
 }
 
@@ -251,6 +280,8 @@ export interface SessionHost {
   cwd: string;
   agentDir: string;
   python: string | null;
+  model?: string;
+  config?: Json;
 }
 
 /** Inbound report recognition plus the `/foreman session` handler. */
@@ -307,6 +338,8 @@ export function registerSession(
           python: s.python,
           spawner: deps.spawner,
           send: (to, text) => outboxSend(pi.events, to, text, "session", SEND_WAIT_MS),
+          model: s.model,
+          config: s.config,
         },
         args,
       );

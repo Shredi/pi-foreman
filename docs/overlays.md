@@ -84,3 +84,14 @@ that script outside the workspace. Project configs cannot change `tools.prHost`.
 
 Conflict rules and rationale: `design/architecture.md`
 [section 2](../design/architecture.md#2-layers-and-the-overlay-contract).
+
+### Session model example
+
+Sessions opened by `foreman session open` run on the `session-foreman` role's model. An overlay for a request-billed provider such as `github-copilot` keeps child sessions on the foreman's own model by mapping both roles to it:
+
+```json
+{ "providers": { "github-copilot": { "roles": {
+  "foreman": { "model": "github-copilot/<foreman model id>", "thinking": "high" },
+  "session-foreman": { "model": "github-copilot/<foreman model id>", "thinking": "high" }
+} } } }
+```
