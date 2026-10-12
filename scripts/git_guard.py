@@ -617,6 +617,10 @@ NET_EXEC_KEY = re.compile(r"^(core\.(sshcommand|gitproxy)|remote\..+\.(receivepa
 # Options of a network subcommand that name a program for git to run, in any role.
 NET_SUBS = ("fetch", "pull", "clone", "push", "ls-remote")
 NET_EXEC_LONG = ("--upload-pack", "--receive-pack", "--exec", "--config")
+# Leading env assignments that make a network command run a program or load other configuration.
+NET_EXEC_ENV = frozenset(("GIT_SSH", "GIT_SSH_COMMAND", "GIT_PROXY_COMMAND", "GIT_EXEC_PATH", "GIT_CONFIG_PARAMETERS",
+                          "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_EDITOR", "GIT_PAGER",
+                          "GIT_EXTERNAL_DIFF", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES"))
 EXEC_KEY = re.compile(
     r"^(core\.(pager|editor|sshcommand|fsmonitor|askpass|gitproxy)|sequence\.editor|pager\..+|"
     r"diff\.external|diff\..+\.(command|textconv)|merge\..+\.driver|filter\..+\.(clean|smudge|process)|"
@@ -643,7 +647,7 @@ PUSH_CONFIG = re.compile(r"^(remote\..+\.(push|mirror)|remote\.pushdefault|push\
                          r"branch\..+\.(pushremote|remote|merge))$")
 # Environment variables whose value git runs as a command.
 EXEC_ENV = {"GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_PAGER", "GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF",
-            "GIT_ASKPASS", "EDITOR", "VISUAL", "PAGER"}
+            "GIT_ASKPASS", "GIT_SSH", "GIT_PROXY_COMMAND", "EDITOR", "VISUAL", "PAGER"}
 ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
 GIT_CONFIG_ENV = re.compile(r"^GIT_CONFIG", re.I)
 
@@ -1455,6 +1459,17 @@ RISKY_DYNAMIC = {"reset", "checkout", "switch", "clean", "stash", "branch", "wor
                  "gc", "prune", "config", "submodule", "rebase", "bisect"}
 
 
+def net_env_refusal(s, rest, envs):
+    """A leading `GIT_SSH=x` style assignment before a git network command: refused in every role."""
+    first = rest[0].text.lower() if rest else ""
+    if s in NET_SUBS or (s == "remote" and first == "update") or \
+            (s == "submodule" and any(w.text == "update" for w in rest)):
+        for k in envs:
+            if k.upper() in NET_EXEC_ENV:
+                return deny("%s= before git %s makes git run a program or read other configuration; refused." % (k, s))
+    return OK
+
+
 def net_exec_refusal(s, rest, call):
     """`git fetch|pull|clone|push` with an option that makes git run a program (`--upload-pack=<cmd>`, `-u <cmd>`
     of fetch/pull/clone, `-c core.sshCommand=`, `--config k=v`): refused in every role."""
@@ -1500,6 +1515,9 @@ def git_sub(sub, rest, seg, flavor, ctx, depth, envs, via_xargs, xargs_repl, cal
                 d = Decision(d.level, d.reason + " (through git alias %s = %s)" % (sub, value[:120]))
             return d
         return OK
+    d = net_env_refusal(s, rest, envs)
+    if d.level > ALLOW:
+        return d
     if s in NET_SUBS:
         d = net_exec_refusal(s, rest, call)
         if d.level > ALLOW:

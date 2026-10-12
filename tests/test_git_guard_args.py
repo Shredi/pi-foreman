@@ -71,5 +71,23 @@ class NetworkExecOptionTest(unittest.TestCase):
                 self.assertEqual(gg.decide(cmd, "main").level, gg.ALLOW)
 
 
+class NetworkExecEnvTest(unittest.TestCase):
+    """A leading env assignment that runs a program is refused before a git network command."""
+
+    def test_exec_env_before_network_command_is_refused(self):
+        for var in ("GIT_SSH=/tmp/x", "GIT_SSH_COMMAND=x", "GIT_PROXY_COMMAND=x", "GIT_EXEC_PATH=/tmp/x",
+                    "GIT_ASKPASS=x", "SSH_ASKPASS=x", "GIT_CONFIG_GLOBAL=/tmp/x", "LD_PRELOAD=/tmp/x.so",
+                    "DYLD_INSERT_LIBRARIES=/tmp/x"):
+            for sub in ("fetch origin", "pull", "clone /x y", "push origin main", "ls-remote origin",
+                        "submodule update", "remote update"):
+                cmd = "%s git %s" % (var, sub)
+                with self.subTest(cmd=cmd):
+                    self.assertGreater(gg.decide(cmd, "main").level, gg.ALLOW)
+                    self.assertEqual(gg.decide(cmd, "child").level, gg.DENY)
+
+    def test_plain_fetch_still_allowed(self):
+        self.assertEqual(gg.decide("git fetch origin", "main").level, gg.ALLOW)
+
+
 if __name__ == "__main__":
     unittest.main()
