@@ -15,7 +15,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "integrations" / "herdr" / "pi-foreman-sidebar"
 sys.path.insert(0, str(PLUGIN))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import _isolation  # noqa: E402,F401  (scrub leaked session env)
 import sidebar  # noqa: E402
 
 try:

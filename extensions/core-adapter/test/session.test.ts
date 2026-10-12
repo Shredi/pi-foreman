@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -7,6 +7,14 @@ import { INTERCOM_OUTBOX_EVENT, INTERCOM_OUTBOX_RESULT_EVENT } from "../close.ts
 import { INTERCOM_WAKE_TEXT } from "../usage.ts";
 import { CHILD_REFUSAL, openerIntercomId, parseInbound, parseSessionArgs, readRegistry, registerSession, runSessionCommand, writeRegistry } from "../session.ts";
 import type { SessionDeps } from "../session.ts";
+
+// These tests are parent-session tests; a child sandbox sets PI_SUBAGENT_CHILD, so clear it here and restore it after.
+const savedChild = process.env.PI_SUBAGENT_CHILD;
+delete process.env.PI_SUBAGENT_CHILD;
+after(() => {
+  if (savedChild === undefined) delete process.env.PI_SUBAGENT_CHILD;
+  else process.env.PI_SUBAGENT_CHILD = savedChild;
+});
 
 const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-session-")));
 const seed = (agentDir: string) => writeRegistry(agentDir, { version: 1, sessions: [{ label: "demo", child: "fm-demo-abc123", status: "open", handoff: "/h" }] });

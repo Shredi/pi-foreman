@@ -6,6 +6,15 @@ import os
 import shutil
 import tempfile
 
+# A child sandbox or a running session leaks its own settings into the suite (git url rewrites,
+# the session model, subagent markers); tests assume a clean environment.
+_KEEP = {"PI_FOREMAN_TEST_AGENT_DIR", "PI_FOREMAN_PYTHON"}
+for _k in list(os.environ):
+    if (_k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")) or _k == "GIT_CONFIG_COUNT"
+            or (_k.startswith("PI_FOREMAN_") and _k not in _KEEP)
+            or _k in ("PI_SUBAGENT_CHILD", "PI_SUBAGENT_PARENT_SESSION")):
+        del os.environ[_k]
+
 if not os.environ.get("PI_FOREMAN_TEST_AGENT_DIR"):
     _dir = tempfile.mkdtemp(prefix="pi_foreman_test_agent_")
     os.environ["PI_FOREMAN_TEST_AGENT_DIR"] = _dir
