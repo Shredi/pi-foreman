@@ -219,8 +219,8 @@ export function sessionForemanModel(config: Json | undefined, ownModel: string |
 export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>): Promise<SessionResult> {
   if (!d.python) return { text: "foreman_session.py: no usable Python (run /foreman doctor).", ok: false };
   const model = c.model ?? sessionForemanModel(d.config, d.model) ?? d.model;
-  if (model && d.config) {
-    const refused = sessionRankRefusal(d.config, d.model, model);
+  if (d.config && (model || d.model === undefined)) {
+    const refused = sessionRankRefusal(d.config, d.model, model ?? "the new session's default model");
     if (refused) return { text: refused, ok: false };
   }
   const opener = openerIntercomId(d.env, d.agentDir, d.piSessionId);

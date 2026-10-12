@@ -155,7 +155,8 @@ The foreman session owns a few places outside the workspace. Access to them is g
    The baseline rows `git fetch`, `git fetch origin`, `npm ci` and `npm install` (fixed forms: a `git fetch *` row would
    let `--upload-pack=<cmd>` run code) are per user like every policy grant, so PS would allow
    them to children too; the child layer narrows them: a child's `git fetch`, `npm ci`, `npm install` and `npm i` ask
-   (`npm install` rewrites `package-lock.json` and `node_modules`), the foreman keeps the rows.
+   (`npm install` rewrites `package-lock.json` and `node_modules`), the foreman keeps the rows. `npm ci` and `npm install`
+   run the project's lifecycle scripts without a prompt for the foreman.
 
 The write-only protect rules (package root, `protect.ask`) are skipped for a shell command only when every unit is a
 pure read-only verb and the command has no write redirect at all (any target but `/dev/null` and fd dups, so `> $f`

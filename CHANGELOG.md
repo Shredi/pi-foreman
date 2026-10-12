@@ -25,6 +25,9 @@
   - (106, ruling 3d) The orientation names the bundled package roots.
   - (106, ruling 3e) The foreman never lists the checkout's parent directory. Documented limit: a reader chained with `find` loses the reader skip on a protected file.
   - Documented limit: the permission system's own extractor resolves only HOME/PWD and has no `git grep` pattern handling (docs/permissions.md).
+  - Security (pre-PR review): the shell write guard marks an assignment word in any non-sole-statement form (`if … then H=…`, `{ H=…; }`, `! H=…`, `time H=…`, `H=… :`) unknown, stops resolving on a line with `trap`, and rejects `* ? [` in values.
+  - Security (pre-PR review): the `git fetch *` policy row is replaced by the fixed rows `git fetch` and `git fetch origin` (`--upload-pack=<cmd>` ran code unasked).
+  - Security (pre-PR review): the git guard refuses `fetch`/`pull`/`clone`/`push` with `--upload-pack`, `--receive-pack`, `--exec`, `--config`, `-u` (fetch/pull/clone) or `-c core.sshCommand=`/`core.gitProxy=` in every role.
 - Harness-friction round (numbers are the round's ledger items):
   - (2, 3, 5, 6, 18) Owned dirs: `external_directory` patterns in the permission policy for the handoffs dir,
     `sessions/*/subagent-artifacts`, `*.worktrees`, the children's scratch root, bare `foreman.json`/`settings.json`,
