@@ -1,4 +1,5 @@
 """Ledger item 7f: a split / concatenated literal that reassembles a guarded token is denied (never asked)."""
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -50,6 +51,27 @@ class SplitLiteralTest(unittest.TestCase):
     def test_an_unterminated_quote_with_a_chain_is_denied_too(self):
         d = gg.decide("python3 -c '\".g\" + \"it\"' 'x", "main")
         self.assertEqual(d.level, gg.DENY)
+
+
+class ReassembledTokenTest(unittest.TestCase):
+    """R6 lane 1c: fragments joined by + .. concat join replace that spell a guarded command token (child mode)."""
+
+    CASES = json.loads((ROOT / "tests" / "fixtures" / "split-literal-cases.json").read_text(encoding="utf-8"))
+
+    def test_fixture_deny_list_is_denied_with_the_reason(self):
+        for cmd in self.CASES["deny"]:
+            with self.subTest(cmd=cmd):
+                d = gg.decide(cmd, "child")
+                self.assertEqual(d.level, gg.DENY)
+                self.assertEqual(d.reason, gg.PREFIX + REASON)
+
+    def test_fixture_allow_list_is_not_this_rule(self):
+        for cmd in self.CASES["allow"]:
+            with self.subTest(cmd=cmd):
+                self.assertNotEqual(gg.decide(cmd, "child").reason, gg.PREFIX + REASON)
+
+    def test_main_mode_keeps_its_old_behaviour(self):
+        self.assertNotEqual(gg.decide('"c"+"d"', "main").reason, gg.PREFIX + REASON)
 
 
 if __name__ == "__main__":

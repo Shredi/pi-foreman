@@ -78,6 +78,7 @@ import * as path from "node:path";
 import type { Json } from "./config.ts";
 import { workspaceOf } from "./python.ts";
 import { resolveVars } from "./shellvars.ts";
+import { probeFileHit } from "./splitliteral.ts";
 
 export interface PathRule {
   pattern: string;
@@ -673,8 +674,8 @@ const RO_WRITERS = new Map<string, "all" | "last" | "mode">([
 /** Read-only verbs (with unitReadOnly) and shell builtins that never write a path by themselves. */
 const RO_READERS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk", "mawk", "nawk", "find", "echo", "printf", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "ls", "cd", "pwd", "nl", "column", "diff", "true", "false", "stat", "file", "tree", "cmp", "md5sum", "sha1sum", "sha256sum", "shasum", "date", "which", "basename", "dirname", "realpath", "readlink", "jq", "test", "[", "[[", ":", "sleep", "uname", "whoami", "id", "export", "local", "declare", "typeset", "readonly", "read", "set", "unset", "shift", "return", "exit", "break", "continue", "wait", "type"]);
 
-/** Read-only git subcommands, and the ones that touch only .git (branch/tag/remote/config list and edit refs, never the worktree). */
-const GIT_RO_SUBS = new Set(["status", "log", "diff", "show", "blame", "rev-parse", "ls-files", "ls-tree", "describe", "grep", "shortlog", "cat-file", "rev-list", "for-each-ref", "show-ref", "name-rev", "merge-base", "diff-tree", "diff-files", "diff-index", "count-objects", "branch", "tag", "remote", "config", "worktree", "fetch", "version", "help"]);
+/** Read-only git subcommands, and the ones that touch only .git (branch/tag/remote list and edit refs, never the worktree). `config` is a read only in the forms of gitConfigRead. */
+const GIT_RO_SUBS = new Set(["status", "log", "diff", "show", "blame", "rev-parse", "ls-files", "ls-tree", "describe", "grep", "shortlog", "cat-file", "rev-list", "for-each-ref", "show-ref", "name-rev", "merge-base", "diff-tree", "diff-files", "diff-index", "count-objects", "branch", "tag", "remote", "worktree", "fetch", "version", "help"]);
 
 /** Options of a build/test run that name an output path, a cache, a log or a program. */
 const BUILD_OUT_OPT = /^--?(o\b|[\w-]*(out|dir|file|log|xml|report|exec|command|cache|profile|prefix|script-shell)[\w-]*(=|$))/;
@@ -696,6 +697,94 @@ function repoScriptWord(verb: string, args: string[]): string | null {
   const s = args[i];
   if (s === undefined || s === "" || /^[-~$\\/]|^[A-Za-z]:|(^|\/)\.\.(\/|$)|[`$*?[\]{}]/.test(s)) return null;
   return (verb === "node" ? /\.(mjs|cjs|js)$/.test(s) : /\.py$/.test(s)) ? s : null;
+}
+
+const CONFIG_MODES = new Set(["--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l"]);
+const CONFIG_MODS = new Set(["--local", "--worktree", "--global", "--system", "--includes", "--no-includes", "-z", "--null", "--show-origin", "--show-scope", "--name-only", "--bool", "--int", "--bool-or-int", "--path", "--expiry-date"]);
+
+/**
+ * `git config` args (after the subcommand) that only read: `<key>`, `get <key> [<re>]`, `list`, `--get|--get-all|--get-regexp <key> [<re>]`,
+ * `--get-urlmatch <name> <url>`, `--list`, with the modifiers above and `--default <v>` / `--type=<t>`. `--file`, `--blob`, `set`, `unset`,
+ * `--add`, `--replace-all`, `--edit`, any other flag, or a second operand without a --get mode is a write.
+ */
+function gitConfigRead(rest: string[]): boolean {
+  let mode: string | undefined;
+  const ops: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === "--default") {
+      if (++i >= rest.length) return false;
+    } else if (a.startsWith("--type=") || CONFIG_MODS.has(a)) {
+      continue;
+    } else if (CONFIG_MODES.has(a)) {
+      if (mode !== undefined) return false;
+      mode = a === "-l" ? "--list" : a;
+    } else if (a.startsWith("-")) {
+      return false;
+    } else ops.push(a);
+  }
+  if (mode === undefined && (ops[0] === "get" || ops[0] === "list")) mode = `--${ops.shift()}`;
+  if (mode === "--list") return ops.length === 0;
+  if (mode === "--get-urlmatch") return ops.length === 2;
+  if (mode === undefined) return ops.length === 1;
+  return ops.length >= 1 && ops.length <= 2;
+}
+
+/** Options of a test runner whose next word (or `=value`) is a program or path it loads, and ones whose value is no path. */
+const RUN_PATH_OPTS = new Set(["-r", "--require", "--import", "--loader", "--experimental-loader", "-c", "--config", "-C", "--directory", "-I", "-f", "--file", "-s", "-t", "--start-directory", "--top-level-directory", "--env-file"]);
+const RUN_VALUE_OPTS = new Set(["-k", "-m", "--test-name-pattern", "--test-skip-pattern", "--test-reporter", "--maxfail", "--tb", "--durations", "-W", "-n", "--timeout", "--test-concurrency", "--test-timeout", "--color", "-j", "--jobs"]);
+
+/**
+ * The path operands of a test run: `node --test <p>`, `npm run test:x -- <p>`, `pytest <p>`, `python -m pytest|unittest <p>`, `make test -C <p>`
+ * (a dotted unittest module is `\0a.b`; `make` variable assignments count too, they can name a program). Flags are skipped, except the
+ * values of the options that load code. A read-only child may run only git-tracked ones inside the round worktree.
+ */
+function runOperands(verb: string, args: string[]): string[] {
+  let rest: string[];
+  let kind: "node" | "pytest" | "unittest" | "make" = "node";
+  if (verb === "npm") {
+    const d = args.indexOf("--");
+    rest = d < 0 ? [] : args.slice(d + 1);
+  } else if (verb === "node") {
+    if (args[0] !== "--test") return [];
+    rest = args.slice(1);
+  }
+  else if (verb === "pytest") {
+    rest = args;
+    kind = "pytest";
+  } else if (verb === "python" || verb === "python3") {
+    if (args[0] !== "-m") return [];
+    rest = args.slice(2);
+    kind = args[1] === "unittest" ? "unittest" : "pytest";
+  } else if (verb === "make") {
+    rest = args;
+    kind = "make";
+  } else return [];
+  const out: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === "--") continue;
+    if (a.startsWith("-")) {
+      const eq = a.indexOf("=");
+      const name = eq > 0 ? a.slice(0, eq) : a;
+      const pathy = RUN_PATH_OPTS.has(name) || (name === "-p" && kind === "pytest");
+      if (!pathy && !RUN_VALUE_OPTS.has(name) && !(name === "-p" && kind === "unittest")) continue;
+      if (eq > 0) {
+        if (pathy) out.push(a.slice(eq + 1));
+      } else if (i + 1 < rest.length) {
+        i++;
+        if (pathy) out.push(rest[i]);
+      }
+      continue;
+    }
+    if (kind === "make") {
+      if (a.includes("=")) out.push(a);
+    } else if (kind === "unittest") {
+      if (a === "discover") continue;
+      out.push(/^[A-Za-z_][\w.]*$/.test(a) && !a.endsWith(".py") && a.includes(".") ? `\0${a}` : a);
+    } else out.push(kind === "pytest" ? a.replace(/::.*$/, "") : a);
+  }
+  return out;
 }
 
 function repoScriptRun(verb: string, args: string[]): boolean {
@@ -721,7 +810,7 @@ function buildTestRun(verb: string, args: string[]): boolean {
  * (a relative one resolves against the cwd; `.` stands for the cwd itself), or `unknown` when it is neither a known reader,
  * a test run nor a known writer. `inner` = a shell whose -c script is collected separately.
  */
-function roEffect(core: string[], skip: Set<number>, inner: boolean): { targets: string[]; unknown?: string; run?: boolean; script?: string } {
+function roEffect(core: string[], skip: Set<number>, inner: boolean): { targets: string[]; unknown?: string; run?: boolean; script?: string; operands?: string[] } {
   if (!core.length) return { targets: [] };
   const verb = baseName(core[0]);
   const args = core.slice(1);
@@ -759,6 +848,7 @@ function roEffect(core: string[], skip: Set<number>, inner: boolean): { targets:
     if (!sub) return { targets: [] };
     const rest = core.slice(k + 1);
     const outs = rest.filter((a) => /^--output=./.test(a)).map((a) => a.slice(a.indexOf("=") + 1));
+    if (sub === "config") return { targets: gitConfigRead(rest) ? outs : [dir ?? ".", ...outs] };
     if (GIT_RO_SUBS.has(sub)) return { targets: outs };
     if (sub === "stash" && (rest[0] === "list" || rest[0] === "show")) return { targets: outs };
     if (sub === "apply" && rest.some((a) => /^--(check|stat|numstat|summary)$/.test(a)) && !rest.includes("--apply")) return { targets: outs };
@@ -766,7 +856,7 @@ function roEffect(core: string[], skip: Set<number>, inner: boolean): { targets:
   }
   if (RO_READERS.has(verb)) return unitReadOnly(core, skip) ? { targets: [] } : { targets: [], unknown: verb };
   if (SHELLS.has(verb) && inner) return { targets: [] };
-  if (buildTestRun(verb, args)) return { targets: [], run: true, script: repoScriptWord(verb, args) ?? undefined };
+  if (buildTestRun(verb, args)) return { targets: [], run: true, script: repoScriptWord(verb, args) ?? undefined, operands: runOperands(verb, args) };
   return { targets: [], unknown: verb };
 }
 
@@ -852,6 +942,10 @@ interface Collected {
   /** A test run / repo script run was found; its script words (a read-only child may run only git-tracked ones inside the round worktree). */
   roRun?: boolean;
   roScripts?: string[];
+  /** Path operands of those test runs (runOperands), same rule as the scripts. */
+  roOperands?: string[];
+  /** Script files named to node/python/python3/bash/sh/npx (any child role): read and scanned when they lie outside git (probeScripts). */
+  probeFiles?: string[];
   /** A `cd`/`pushd`/`export`/`env` command or an env assignment prefix was found (refused next to a run for a read-only child). */
   roCdEnv?: boolean;
 }
@@ -1156,6 +1250,7 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
         if (e.run) {
           out.roRun = true;
           if (e.script !== undefined) (out.roScripts ??= []).push(e.script);
+          if (e.operands?.length) (out.roOperands ??= []).push(...e.operands);
         }
         if (/^(cd|pushd|export)$/.test(baseName(v.core[0])) || unitWords.slice(0, off).some((w) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(w) || baseName(w) === "env")) out.roCdEnv = true;
         // a bare name that does not exist yet is not path-shaped to pathCandidates: `./` makes it a path against the cwd
@@ -1166,6 +1261,7 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
         }
       }
     }
+    if (out.probeFiles && v.core.length) out.probeFiles.push(...probeScripts(verb0, v.core.slice(1)));
     const inner = innerScript(v.core);
     if (inner && depth < MAX_DEPTH) collect(inner.script, inner.shell, depth + 1, out);
     const code = inlineCode(v.core);
@@ -1492,7 +1588,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (cd) return cd;
   }
   const scratch0 = scratchOf(ctx);
-  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set() };
+  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [] };
   collect(command, shell, 0, c);
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
@@ -1543,6 +1639,10 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
       const hit = childReadOnlyWriteDeny(w, pctx) ?? childTmpWriteDeny(w, pctx);
       if (hit) return hit;
     }
+  }
+  if (ctx.role === "child" && c.probeFiles?.length) {
+    const hit = probeFileDeny(c.probeFiles, pctx);
+    if (hit) return hit;
   }
   if (ctx.role === "child" && ctx.roundReadRoots?.length) {
     for (const w of c.roTargets!) {
@@ -1649,23 +1749,84 @@ function childReadOnlyWriteDeny(word: string, ctx: MatchCtx): Decision | null {
 /** Why a test/script run by a read-only child is refused: cd/env in the line, or a script that is not a git-tracked file whose realpath lies in the round worktree. */
 function roRunRefusal(c: Collected, command: string, ctx: MatchCtx): string | null {
   if (c.roCdEnv || /(^|[;&|(){\n`]|\$\()\s*(builtin\s+|command\s+)?(cd|pushd|env|export)(\s|$)|(^|[;&|(){\n`]|\$\()\s*[A-Za-z_][A-Za-z0-9_]*=|\benv\s/.test(command)) return "cd, pushd, env or an environment assignment in the line";
-  const scripts = c.roScripts ?? [];
+  const scripts = [...(c.roScripts ?? []), ...(c.roOperands ?? [])];
   if (!scripts.length) return null;
   const fsx = defaults(ctx);
   const cwd = ctx.cwd ? fsx.realpath(ctx.cwd) : undefined;
   const root = cwd ? (ctx.roundReadRoots ?? []).map((o) => fsx.realpath(o)).find((o): o is string => !!o && insideDir(o, cwd, ctx)) : undefined;
   if (!cwd || !root) return "the script's worktree cannot be resolved";
   const tracked = new Map<string, boolean>();
-  for (const s of scripts) {
-    const real = fsx.realpath(path.resolve(cwd, s));
-    if (!real || !insideDir(root, real, ctx)) return `script '${clip(s)}' does not resolve inside the round worktree`;
-    const rel = path.relative(root, real);
+  const trackedIn = (rel: string): boolean => {
     let ok = tracked.get(rel);
     if (ok === undefined) {
-      ok = gitTracked(root, rel);
+      ok = rel === "" || gitTracked(root, rel);
       tracked.set(rel, ok);
     }
-    if (!ok) return `script '${clip(s)}' is not tracked by git`;
+    return ok;
+  };
+  for (const s0 of scripts) {
+    // a dotted unittest module (`\0a.b.C`) is its longest prefix that is a tracked .py file
+    const dotted = s0.startsWith("\0");
+    const s = dotted ? s0.slice(1) : s0;
+    const parts = s.split(".");
+    const cands = dotted ? parts.map((_, k) => `${parts.slice(0, k + 1).join("/")}.py`).reverse() : [s];
+    let why: string | null = null;
+    for (const cand of cands) {
+      const real = fsx.realpath(path.resolve(cwd, cand));
+      if (!real || !insideDir(root, real, ctx)) why = `'${clip(s)}' does not resolve inside the round worktree`;
+      else if (!trackedIn(path.relative(root, real))) why = `'${clip(s)}' is not tracked by git`;
+      else {
+        why = null;
+        break;
+      }
+    }
+    if (why) return `script or operand ${why}`;
+  }
+  return null;
+}
+
+const PROBE_RUNNERS = new Set(["node", "python", "python3", "bash", "sh", "npx"]);
+
+/** The script files a node/python/bash/sh/npx command runs or loads: the first positional (every positional after `node --test`) and `--require`/`--import` values. */
+function probeScripts(verb: string, args: string[]): string[] {
+  if (!PROBE_RUNNERS.has(verb)) return [];
+  const inline = verb === "node" ? /^(-e|-p|--eval|--print)$/ : verb === "python" || verb === "python3" ? /^(-c|-m)$/ : /^(-c|--call)$/;
+  const all = verb === "node" && args[0] === "--test";
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (inline.test(a)) return out;
+    if (/^(-r|--require|--import|--loader|--experimental-loader)$/.test(a)) {
+      if (i + 1 < args.length) out.push(args[++i]);
+    } else if (/^--(require|import|loader|experimental-loader)=./.test(a)) out.push(a.slice(a.indexOf("=") + 1));
+    else if (!a.startsWith("-") && a !== "") {
+      if (verb === "npx" && !/[\\/]|\.(m?js|cjs|py|sh)$/.test(a)) return out;
+      out.push(a);
+      if (!all) return out;
+    }
+  }
+  return out;
+}
+
+/** A script outside git (scratch, tmp, an untracked file) that spells a guarded token from pieces is not run, in any child role. Tracked files of a round worktree are not read. */
+function probeFileDeny(files: string[], ctx: MatchCtx): Decision | null {
+  const fsx = defaults(ctx);
+  const roots = [...(ctx.roundRoots ?? []), ...(ctx.roundReadRoots ?? [])].map((r) => fsx.realpath(r)).filter((x): x is string => !!x);
+  for (const w of files) {
+    const word = expandWord(w, ctx);
+    if (/[$`*?[\]{}]/.test(word)) continue;
+    const real = fsx.realpath(path.resolve(ctx.cwd ?? ".", word));
+    if (!real) continue;
+    const root = roots.find((o) => insideDir(o, real, ctx));
+    if (root && gitTracked(root, path.relative(root, real))) continue;
+    let text: string;
+    try {
+      if (!fs.statSync(real).isFile() || fs.statSync(real).size > 2_000_000) continue;
+      text = fs.readFileSync(real, "utf8");
+    } catch {
+      continue;
+    }
+    if (probeFileHit(text)) return { kind: "deny", reason: `pi-foreman: '${clip(w)}' denied for a child: the script spells a guarded token from pieces (split literal reassembles a guarded token). No split, concatenated or encoded guarded tokens; a probe that needs one runs through the test suite's fixtures.` };
   }
   return null;
 }

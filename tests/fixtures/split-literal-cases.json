@@ -1,0 +1,54 @@
+{
+  "_comment": "R6 lane 1c: lines whose string fragments (+, .., concat, join, replace) reassemble a guarded command token. Read by tests/test_git_guard_split_literal.py (git_guard.py, child mode) and extensions/core-adapter/test/gitguard-split.test.ts (splitliteral.ts).",
+  "deny": [
+    "\"r\"+\"m -rf\"",
+    "\".\"..\"gi\"..\"t\"",
+    "x.replaceAll(\"GIT\",\"gi\"+\"t\")",
+    "\"c\"+\"d\"",
+    "node -e \"run('r' + 'm -rf x')\"",
+    "node -e 'run([\"r\",\"m\"].join(\"\"))'",
+    "node -e 'run([ \"g\", \"it\" ].join(''))'",
+    "python3 -c 'run(\"\".join([\"tr\",\"uncate\"]))'",
+    "node -e 'run(\"r\".concat(\"m\"))'",
+    "node -e 'run(\"gXit\".replaceAll(\"X\",\"\"))'",
+    "node -e 'run(\"git re\"+\"set --hard\")'",
+    "node -e 'run(\"git push\"+\" --force\")'",
+    "node -e 'run(\"ch\"+\"eckout --\")'",
+    "python3 -c 'run(\"mk\" + \"fs\")'",
+    "python3 -c 'run(\"s\" + \"hred\")'",
+    "python3 -c 'run(\"d\" + \"d\")'"
+  ],
+  "allow": [
+    "echo \"format\"+\"ted\"",
+    "python3 -c 'a = \"perm\" + \"ission\"'",
+    "python3 -c 'a = \"ad\" + \"d\"'",
+    "git add -A",
+    "git add file.txt",
+    "echo rm -rf scratch",
+    "rm $FOREMAN_SCRATCH/x.tmp",
+    "node -e 'run(\"echo \" + \"rm\")'",
+    "node -e 'run(\"Run \" + \"cd\" + \" first\")'",
+    "node -e 'run(\"a\" + \"b\")'",
+    "node -e 'run([\"a\",\"b\"].join(\"-\"))'",
+    "node -e 'run(\"a-b\".replaceAll(\"-\",\"_\"))'",
+    "node -e 'run(\"git \" + \"status\")'",
+    "echo cd"
+  ],
+  "probeDeny": [
+    "const t = String.fromCharCode(114, 109);",
+    "const t = String.fromCharCode(103) + String.fromCharCode(105, 116);",
+    "const t = atob(\"cm0gLXJm\");",
+    "x = base64.b64decode(\"Z2l0IHB1c2ggLS1mb3JjZQ==\")",
+    "const t = ['r','m'].join('');",
+    "const t = 'r' + 'm';"
+  ],
+  "probeAllow": [
+    "const s = String.fromCharCode(72, 105);",
+    "const name = 'file' + '-' + 'name';",
+    "const s = 'hello world'.replaceAll('o', '0');",
+    "const x = Buffer.from('aGVsbG8gd29ybGQ=', 'base64');",
+    "const id = 'abcd1234';",
+    "const names = ['a', 'b'].join(', ');",
+    "const read = fs.readFileSync(p, 'utf8');"
+  ]
+}

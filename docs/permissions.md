@@ -262,6 +262,33 @@ escaped pieces of one word (`'.g''it'`, `$'.'"git"`) or whose `"a"+"b"+…` lite
 spells; the reason is `split literal reassembles a guarded token`. A plain `.git`, `.github`, `'.gi'` alone and
 `"a"+"b"` are not affected. The adapter starts the guard in the main role for such lines too (`mainNeedsGitGuard`).
 
+For a child (R6 lane 1c) the guard also denies string-literal fragments joined by `+`, `..`, `.concat(…)`, `[…].join(…)`
+or `.replace(All)` whose reassembly is a whole guarded command token that no single fragment spells: `rm`, `dd`,
+`truncate`, `mkfs`, `shred`, `cd`, `git` (so `git clean`), `push --force`, `reset --hard`, `checkout --`; same reason text.
+Words that merely contain them (`format`, `perm`, `add`), `git add`, a token written whole in one literal and unsplit
+`echo rm …` are not affected. `>` of a tracked file stays on the redirect guard. Cases: `tests/fixtures/split-literal-cases.json`,
+read by `tests/test_git_guard_split_literal.py` and `gitguard-split.test.ts` (`splitliteral.ts` mirrors the Python).
+
+### Read-only children run only tracked code (R6 lane 1)
+
+Besides the script rule above, a test run of a child that may only read its cwd (round worktree) names only operands
+that resolve, symlinks followed, inside the round worktree and are git-tracked: positional paths of `node --test`,
+`pytest`, `python3 -m pytest|unittest` (a dotted module is its tracked `.py`), words after `--` of `npm run test:x`,
+values of `--require`/`--import`/`-p`/`-C`/`-s` and similar, and `make` variable assignments. Globs, `$VAR` words and
+untracked paths are denied with a reason. A builder in its own worktree may run its own new untracked test.
+
+`git config` is a read only as `git config <key>`, `get`/`list`, `--get|--get-all|--get-regexp <key> [<re>]`,
+`--get-urlmatch <name> <url>` or `--list`/`-l`, with `--local --worktree --global --system --includes --no-includes -z
+--null --show-origin --show-scope --name-only --type=<t> --bool --int --bool-or-int --path --expiry-date --default <v>`.
+`--file`/`-f`, `--blob`, `set`, `unset`, `--add`, `--unset*`, `--replace-all`, `--rename-section`, `--remove-section`,
+`--edit` and two operands without a `--get*` mode are writes and are denied for a read-only child.
+
+Probe-file scan: for a child of any role, a script run with `node`, `python`, `python3`, `bash`, `sh` or `npx` from a path
+that is not git-tracked in a round worktree (scratch, `$FOREMAN_SCRATCH`, tmp, an untracked file) is read before it
+runs; one that reassembles a guarded token from fragments (above), `String.fromCharCode(…)` or a base64 literal that
+decodes to one is denied. Tracked files of the round worktree are not read. A script path held in a variable other than
+`$FOREMAN_SCRATCH` is not resolved.
+
 ### Round surfaces
 
 What the foreman session owns for the length of a round is one shared set (`roundsurface.ts`, ledger items 7c, 7e),

@@ -89,6 +89,18 @@ LITERAL_CHAIN = re.compile(_LIT + r"(?:\s*\+\s*" + _LIT + r")+")
 LITERAL_PIECE = re.compile(r""""((?:[^"\\\n]|\\.)*)"|'([^'\n]*)'""")
 
 
+# A whole guarded command token (not part of a longer word) that string fragments may spell together.
+TOKEN_WORD = re.compile(r"(?<![A-Za-z0-9_])(?:rm|dd|truncate|mkfs|shred|cd|git|push\s+--force|reset\s+--hard|checkout\s+--)(?![A-Za-z0-9_])")
+_PLUS = r"\s*(?:\+|\.\.)\s*" + _LIT
+_CONCAT = r"\s*\.concat\(\s*" + _LIT + r"(?:\s*,\s*" + _LIT + r")*\s*\)"
+FRAGMENT_CHAIN = re.compile(_LIT + "(?:" + _PLUS + "|" + _CONCAT + ")+")
+_LIST = _LIT + r"(?:\s*,\s*" + _LIT + r")*"
+# `["r","m"].join("")` (JS) and `"".join(["r","m"])` (Python)
+JOIN_JS = re.compile(r"\[\s*(?P<items>" + _LIST + r")\s*,?\s*\]\s*\.join\(\s*(?P<sep>" + _LIT + r")?\s*\)")
+JOIN_PY = re.compile(r"(?P<sep>" + _LIT + r")\s*\.join\(\s*[\[(]\s*(?P<items>" + _LIST + r")\s*,?\s*[\])]\s*\)")
+REPLACE_CALL = re.compile(r"(?P<base>" + _LIT + r")\s*\.replace(?:All)?\(\s*(?P<old>" + _LIT + r")\s*,\s*(?P<new>" + _LIT + r"(?:\s*\+\s*" + _LIT + r")*)\s*\)")
+
+
 class Decision(object):
     __slots__ = ("level", "reason")
 
@@ -761,6 +773,49 @@ def split_literal(texts, words=()):
     return any(len(GUARDED_PART.findall(w.text)) > len(GUARDED_RAW.findall(w.raw)) for w in words)
 
 
+def _pieces(src):
+    return [a if a else b for a, b in LITERAL_PIECE.findall(src)]
+
+
+def _crosses(pieces):
+    """A guarded token of the joined pieces that no single piece holds whole (it spans a join)."""
+    joined = "".join(pieces)
+    bounds = []
+    n = 0
+    for p in pieces[:-1]:
+        n += len(p)
+        bounds.append(n)
+    return any(m.start() < b < m.end() for m in TOKEN_WORD.finditer(joined) for b in bounds)
+
+
+def reassembles_token(texts):
+    """True when string-literal fragments joined by `+`, `..`, `.concat(...)`, `.join(...)` or `.replace(All)`
+    spell a whole guarded command token (rm, dd, git, cd, truncate, mkfs, shred, push --force, reset --hard,
+    checkout --) that no single fragment spells. A token written whole in one literal is not this."""
+    for t in texts:
+        t = t or ""
+        for m in FRAGMENT_CHAIN.finditer(t):
+            if _crosses(_pieces(m.group(0))):
+                return True
+        for rx in (JOIN_JS, JOIN_PY):
+            for m in rx.finditer(t):
+                items = _pieces(m.group("items"))
+                sep = _pieces(m.group("sep"))[0] if m.group("sep") else ("," if rx is JOIN_JS else "")
+                parts = []
+                for i, item in enumerate(items):
+                    if i and sep:
+                        parts.append(sep)
+                    parts.append(item)
+                if _crosses(parts):
+                    return True
+        for m in REPLACE_CALL.finditer(t):
+            base = _pieces(m.group("base"))[0]
+            out = base.replace(_pieces(m.group("old"))[0], "".join(_pieces(m.group("new"))))
+            if len(TOKEN_WORD.findall(out)) > len(TOKEN_WORD.findall(base)):
+                return True
+    return False
+
+
 def mentions_git(*texts):
     return any(GIT_WORD.search(t or "") for t in texts)
 
@@ -803,13 +858,14 @@ def analyze_text(text, flavor, ctx, depth):
     try:
         lx = lex(text, flavor)
     except LexError as exc:
-        if split_literal([text]):
+        if split_literal([text]) or (ctx.mode == "child" and reassembles_token([text])):
             return deny(SPLIT_LITERAL)
         if mentions_git(text):
             return unreadable(ctx, str(exc))
         return OK
     words = [w for seg in lx.segs for w in seg.words + seg.herestrings]
-    if split_literal([text] + [w.text for w in words] + [h for seg in lx.segs for h in seg.heredocs], words):
+    pieces = [text] + [w.text for w in words] + [h for seg in lx.segs for h in seg.heredocs]
+    if split_literal(pieces, words) or (ctx.mode == "child" and reassembles_token(pieces)):
         return deny(SPLIT_LITERAL)
     d = OK
     for sub in lx.subs:
