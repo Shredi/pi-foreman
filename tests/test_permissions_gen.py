@@ -76,6 +76,15 @@ class GeneratorTest(unittest.TestCase):
             self.assertEqual(bash["git worktree %s *" % sub], "allow", sub)
         self.assertEqual(bash["git worktree remove *"], "ask")
 
+    def test_foreman_fetch_and_install_rows(self):
+        bash = self.render()["permission"]["bash"]
+        for pat in ("git fetch *", "npm ci", "npm install"):
+            self.assertEqual(bash[pat], "allow", pat)
+        # no bare wildcard and no package-taking install (`npm install -g x`)
+        self.assertEqual(bash["*"], "ask")
+        self.assertNotIn("npm install *", bash)
+        self.assertNotIn("npm ci *", bash)
+
     def test_default_owned_uses_realpath_tmpdir(self):
         owned = pg.default_owned()
         self.assertTrue(owned["scratchRoot"].endswith("/pi-foreman-scratch"))

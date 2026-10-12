@@ -23,6 +23,9 @@ export interface OrientInput {
   maxLines: number;
 }
 
+/** Bundled packages under the pi-foreman package root (package.json dependencies). */
+export const BUNDLED_PACKAGE_ROOTS = ["node_modules/@gotgenes/pi-permission-system", "node_modules/pi-subagents", "node_modules/pi-intercom"];
+
 const byteOrder = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 function treeLines(files: string[]): string[] {
@@ -76,7 +79,7 @@ export function buildOrientation(inp: OrientInput): string {
   const doc = inp.agentsMd !== null ? { name: "AGENTS.md", text: inp.agentsMd } : inp.readmeMd !== null ? { name: "README.md", text: inp.readmeMd } : null;
   const head = ["# Orientation (not a tool call; it does not count against your read budget)", "", "## Tracked files (dir, count; depth 2)"];
   const tool = toolchainLines(files, inp.packageJson);
-  const tail = [...(tool.length ? ["", "## Toolchain", ...tool.map((t) => `- ${t}`)] : []), "", `Deeper exploration: launch the explorer. Your read budget before the first launch is ${inp.reads.warn}/${inp.reads.deny} (warn/deny).`];
+  const tail = [...(tool.length ? ["", "## Toolchain", ...tool.map((t) => `- ${t}`)] : []), "", `Deeper exploration: launch the explorer. Your read budget before the first launch is ${inp.reads.warn}/${inp.reads.deny} (warn/deny).`, `Bundled package roots (pi-foreman package root, not this repo; read there, never \`find\` over the agent dir): ${BUNDLED_PACKAGE_ROOTS.map((r) => `\`${r}\``).join(", ")}.`];
   const tree = treeLines(files);
   let docBlock: string[] = [];
   if (doc) {

@@ -869,7 +869,9 @@ def run_command(words, seg, flavor, ctx, depth, envs, xargs_repl=None, via_xargs
     if not words:
         return OK
     cmd = words[0]
-    if cmd.dynamic or cmd.glob:
+    # `[` / `[[` is the test builtin; its glob flag does not make the program name computed.
+    test_builtin = not cmd.dynamic and cmd.text in ("[", "[[")
+    if (cmd.dynamic or cmd.glob) and not test_builtin:
         # Read the arguments as if the program were git, under the child rules.
         probe = Ctx("child", ctx.cwd, ctx.cfg, ctx.env)
         probe._alias_cache = ctx._alias_cache

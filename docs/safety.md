@@ -117,6 +117,10 @@ plugins and `CLAUDE.md` do not load into bridge turns (`bridge.isolateClaudeConf
 Login steps are in [install](install.md). Rationale: `design/architecture.md`
 [bridge isolation](../design/architecture.md#bridge-isolation).
 
+## Known limit: a reader chained with `find`
+
+The reader skip for protected operands (see Owned paths) covers a command whose every unit is a minimal reader. A read-only line chained with `find` (`cat protected/file; find . -name x`) loses the skip for the protected file, because `find` is not in the reader set. The set is not widened; split the line or use the read tool.
+
 ## Known limit: stale "needs attention" notices
 
 pi-subagents delivers `subagent_control_notice` custom messages with `pi.sendMessage` (`triggerTurn` for async runs), and a queued message cannot be withdrawn. Pi's extension hooks (`context`, `message_end`, `before_agent_start`) can reshape what the model sees or replace a finalized message, but none can cancel a queued custom message before it starts a turn, and pi-subagents' `notifyOn` has no per-run form: excluding `needs_attention` there would suppress the events entirely. A notice for a run that ended meanwhile can therefore still arrive. `notices.ts` holds the dedupe state (once per run and state, none after the run's end event) for a drop hook. Fixing it needs either a hook in Pi to withdraw a queued custom message (for example a `message_start` handler that can cancel it), or a run-end check in pi-subagents' `control-notices.js` before it calls `sendMessage`.

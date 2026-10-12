@@ -1,0 +1,155 @@
+{
+ "foreman": [
+  {
+   "event": "session_start",
+   "role": "foreman",
+   "model": "foreman-fake/foreman",
+   "tier": "standard"
+  },
+  {
+   "event": "orientation"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Agent",
+   "guard": "ledger_guard_spawn",
+   "decision": "none"
+  },
+  {
+   "event": "role_launch",
+   "role": "builder"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Agent",
+   "guard": "ledger_guard_spawn",
+   "decision": "none"
+  },
+  {
+   "event": "role_launch",
+   "role": "builder"
+  },
+  {
+   "event": "role_result",
+   "role": "builder",
+   "exit": 0
+  },
+  {
+   "event": "role_result",
+   "role": "builder",
+   "exit": 0
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "turn"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  },
+  {
+   "event": "supervisor_request",
+   "role": "builder",
+   "decision": "open"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "supervisor_request",
+   "role": "builder",
+   "decision": "replied"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "turn"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  },
+  {
+   "event": "child_scratch",
+   "role": "builder"
+  },
+  {
+   "event": "child_scratch",
+   "role": "builder"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "turn"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
+  }
+ ],
+ "children": [
+  [
+   {
+    "event": "session_start",
+    "role": "child",
+    "model": "foreman-fake/builder",
+    "tier": "standard"
+   },
+   {
+    "event": "llm",
+    "role": "builder",
+    "model": "foreman-fake/builder"
+   },
+   {
+    "event": "guard",
+    "role": "builder",
+    "toolFamily": "Stop",
+    "guard": "ledger_guard_stop",
+    "decision": "none"
+   }
+  ],
+  [
+   {
+    "event": "session_start",
+    "role": "child",
+    "model": "foreman-fake/builder",
+    "tier": "standard"
+   },
+   {
+    "event": "llm",
+    "role": "builder",
+    "model": "foreman-fake/builder"
+   },
+   {
+    "event": "llm",
+    "role": "builder",
+    "model": "foreman-fake/builder"
+   },
+   {
+    "event": "guard",
+    "role": "builder",
+    "toolFamily": "Stop",
+    "guard": "ledger_guard_stop",
+    "decision": "none"
+   }
+  ]
+ ]
+}
