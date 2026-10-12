@@ -277,18 +277,24 @@ that resolve, symlinks followed, inside the round worktree and are git-tracked: 
 without `--`), values of the module-loading options `--require`/`-r`/`--import`/`--loader`/`--test-reporter`/
 `--test-reporter-destination`/`--test-global-setup` (built-in reporter names and `stdout`/`stderr` stay allowed) and of
 `-C`/`-f`/`-I`/`-s`/`-t`/`-c` and similar, also attached (`make test -C/x`, `--directory=`, `--file=`). A `make` `K=V`
-word is no operand; its value is checked only when it contains a `/`. A pytest `-p` value is a plugin name, not a path. Globs, `$VAR` words and
-untracked paths are denied with a reason. A builder in its own worktree may run its own new untracked test.
+word is no operand; its value is checked only when it contains a `/`. A pytest `-p` value is a plugin name, not a path. A glob is
+allowed iff every file it matches is tracked inside the worktree (`**` and `{}` are denied). A word with `$VAR`, `${VAR}`, `$(…)`, a
+backtick or a leading `~` is expanded (`$FOREMAN_SCRATCH`, `$HOME`, `~`) and then checked like any path operand; one that cannot be
+expanded is denied (a plain unknown word such as a test name is fine). Only the `make` long options `--keep-going`, `--jobs[=N]`,
+`--silent`, `--quiet`, `--always-make`, `--print-directory`, `--no-print-directory`, `--dry-run`, `--ignore-errors` and similar pass;
+any other (or abbreviated) one is denied. Untracked paths are denied with a reason. A builder in its own worktree may run its own new untracked test.
 
 `git config` is a read only as `git config <key>`, `get`/`list`, `--get|--get-all|--get-regexp <key> [<re>]`,
 `--get-urlmatch <name> <url>` or `--list`/`-l`, with `--local --worktree --global --system --includes --no-includes -z
 --null --show-origin --show-scope --name-only --type=<t> --bool --int --bool-or-int --path --expiry-date --default <v>`.
 `--file`/`-f`, `--blob`, `set`, `unset`, `--add`, `--unset*`, `--replace-all`, `--rename-section`, `--remove-section`,
-`--edit` and two operands without a `--get*` mode are writes and are denied for a read-only child.
+`--edit` and two operands without a `--get*` mode are writes and are denied for a role without write roots (also with `--global`/`--system`, from any cwd).
 
 Probe-file scan: for a child of any role, a script run with `node`, `python`, `python3`, `bash`, `sh` or `npx` from a path
 that is not git-tracked in a round worktree (scratch, `$FOREMAN_SCRATCH`, tmp, an untracked file) is read before it
-runs; one that reassembles a guarded token from fragments (above), `String.fromCharCode(…)` or a base64 literal that
+runs (every word of the command is looked at, not only the first positional); a directory operand there (`node $FOREMAN_SCRATCH`,
+`python3 <dir>`, `python3 -m pkg`) would run `index.js`, the `package.json` main or `__main__.py` unscanned and is denied
+(`runs an untracked directory`) unless it is inside a round worktree and tracked-clean; one that reassembles a guarded token from fragments (above), `String.fromCharCode(…)` or a base64 literal that
 decodes to one is denied. Files of the round worktree that are tracked in HEAD and unmodified against it (a staged or
 modified one is scanned) are not read. `npx tsx|node|ts-node|python3|bash <file>` and `<interp> < file` stdin files are scanned
 like a named script. Known limit: modules a scanned script imports are not read. A script path held in a variable other than

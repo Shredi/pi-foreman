@@ -328,3 +328,37 @@ test("fix 2C: git config in a write form is denied for a read-only child whateve
   denies(["git config --global user.name x"]);
   passes(["git config --global --list", "git config --global user.name"], "reviewer", scratch);
 });
+
+test("fix 3A: test-runner words with $VAR, ~ or command substitution are expanded and checked, unexpandable ones denied", { skip: !posix }, () => {
+  denies([
+    "pytest $FOREMAN_SCRATCH",
+    "pytest ~",
+    "pytest $HOME",
+    "pytest ${HOME}",
+    "node --test $FOREMAN_SCRATCH",
+    "pytest --rootdir $HOME tests/test_x.py",
+    "node --test --test-name-pattern=zzznomatch $FOREMAN_SCRATCH",
+    "pytest $(pwd)/../x",
+    "pytest `pwd`",
+    "pytest $UNKNOWN_VAR",
+  ]);
+  passes([
+    "npm run test:node",
+    'node --test "extensions/core-adapter/test/*.test.ts"',
+    "python3 -m unittest discover -s tests",
+    "python3 scripts/foreman_docs.py features --check",
+    "pytest -k name tests/test_x.py",
+    "pytest -k name",
+  ]);
+});
+
+test("fix 3B: a directory operand outside git is an untracked directory run, denied for every role", { skip: !posix }, () => {
+  fs.mkdirSync(path.join(scratch, "pkg"), { recursive: true });
+  fs.writeFileSync(path.join(scratch, "pkg", "index.js"), "console.log(1);\n");
+  fs.writeFileSync(path.join(scratch, "pkg", "__main__.py"), "print(1)\n");
+  for (const role of ["builder", "reviewer"]) {
+    denies(["node $FOREMAN_SCRATCH", "python3 $FOREMAN_SCRATCH", `node ${scratch}/pkg`], role, scratch);
+    denies(["python3 -m pkg"], role, scratch);
+  }
+  passes(["node ."], "builder");
+});

@@ -1805,6 +1805,7 @@ function childReadOnlyWriteDeny(word: string, ctx: MatchCtx): Decision | null {
 /** Why a test/script run by a read-only child is refused: cd/env in the line, or a script that is not a git-tracked file whose realpath lies in the round worktree. */
 function roRunRefusal(c: Collected, command: string, ctx: MatchCtx): string | null {
   if (c.roCdEnv || /(^|[;&|(){\n`]|\$\()\s*(builtin\s+|command\s+)?(cd|pushd|env|export)(\s|$)|(^|[;&|(){\n`]|\$\()\s*[A-Za-z_][A-Za-z0-9_]*=|\benv\s/.test(command)) return "cd, pushd, env or an environment assignment in the line";
+  if (command.includes("`")) return "a backtick command substitution in the line (its output cannot be checked)";
   const scripts = [...(c.roScripts ?? []), ...(c.roOperands ?? [])];
   if (!scripts.length) return null;
   const fsx = defaults(ctx);
@@ -1820,9 +1821,16 @@ function roRunRefusal(c: Collected, command: string, ctx: MatchCtx): string | nu
     }
     return ok;
   };
-  for (const s0 of scripts) {
+  for (let s0 of scripts) {
     // a dotted unittest module (`\0a.b.C`) is its longest prefix that is a tracked .py file
     if (s0.startsWith("\x01")) return `option '${clip(s0.slice(1))}' is not an allowed make option`;
+    // a word with `$`, a backtick or a leading `~` is expanded (known variables, `~`) and checked as a path; one that cannot be expanded is refused
+    const raw0 = s0.startsWith("\x02") ? s0.slice(1) : s0;
+    if (!s0.startsWith("\0") && /[$`]|^~/.test(raw0)) {
+      const ex = expandWord(raw0, ctx);
+      if (/[$`]|^~/.test(ex)) return `operand '${clip(raw0)}' cannot be expanded; a read-only child may run only git-tracked paths inside the round worktree`;
+      s0 = ex;
+    }
     // `\x02`: a bare word, a path only when it names an existing file or directory
     const optional = s0.startsWith("\x02");
     if (optional && !fsx.realpath(path.resolve(cwd, s0.slice(1)))) continue;
@@ -1869,7 +1877,12 @@ function probeScripts(verb: string, args: string[]): string[] {
   const inline = verb === "node" || verb === "tsx" || verb === "ts-node" ? /^(-e|-p|--eval|--print)$/ : verb === "python" || verb === "python3" ? /^(-c|-m)$/ : /^(-c|--call)$/;
   const out: string[] = [];
   for (const a of args) {
-    if (inline.test(a) && verb !== "npx") return out;
+    if (inline.test(a) && verb !== "npx") {
+      // `python -m pkg` runs pkg/__main__.py: the package (or dotted path) is a candidate directory / file
+      const mod = a === "-m" ? args[args.indexOf(a) + 1] : undefined;
+      if (mod && /^[A-Za-z_][\w.]*$/.test(mod)) out.push(mod.replace(/\./g, "/"), `${mod.replace(/\./g, "/")}.py`);
+      return out;
+    }
     if (a === "") continue;
     out.push(a);
     if (a.startsWith("-")) {
@@ -1890,7 +1903,9 @@ function probeFileDeny(files: string[], ctx: MatchCtx): Decision | null {
     const real = fsx.realpath(path.resolve(ctx.cwd ?? ".", word));
     if (!real) continue;
     const root = roots.find((o) => insideDir(o, real, ctx));
-    if (root && gitCleanTracked(root, path.relative(root, real))) continue;
+    if (root && (real === root ? fsx.isDir(real) : gitCleanTracked(root, path.relative(root, real)))) continue;
+    // a directory runs its index.js / package.json main / __main__.py, which is not scanned here
+    if (fsx.isDir(real)) return { kind: "deny", reason: `pi-foreman: '${clip(w)}' denied for a child: it runs an untracked directory (outside the round worktree or not tracked by git); run a git-tracked file instead.` };
     let text: string;
     try {
       if (!fs.statSync(real).isFile() || fs.statSync(real).size > 2_000_000) continue;
