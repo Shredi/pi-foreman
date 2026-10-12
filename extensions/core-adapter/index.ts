@@ -89,14 +89,15 @@ import { UsageFooter, cacheStatus, lookupRate } from "./footer.ts";
 import { symbolSet } from "./symbols.ts";
 import { blockedConfirm, installBlockedShim, PERMISSIONS_DECISION, PERMISSIONS_UI_PROMPT, withBlocked } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
-import { builderLaunchRefusal, changedPlans, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, planSnapshot, planSummary, readPlan } from "./checkpoint.ts";
+import { builderLaunchRefusal, changedPlans, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, planSnapshot, planSummary, planVersionHash, readPlan, sha256 } from "./checkpoint.ts";
+import { effectivePlannerMode, PLANNER_SELF_MESSAGE, plannerNotBelow, selfPlanRequired } from "./plannerself.ts";
 import type { PlanRecord } from "./checkpoint.ts";
 import type { EventBus } from "./herdr.ts";
 import { claimCore, emitReady, installInert, missingBundled, setupInvocation } from "./registry.ts";
 
 /** pi.events of the loaded extension, for the Herdr blocked signal (set in the factory). */
 let herdrEvents: EventBus | undefined;
-import { checkLaunch, completedAgents, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
+import { checkLaunch, completedAgents, hasSecurityFinding, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
@@ -114,7 +115,7 @@ import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
-import { PlanReviews, planFactsBlock, planPathsOf, planReviewHash, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
+import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { launchEntries } from "./ladder.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
@@ -240,6 +241,8 @@ interface Session {
   launchHeads: Map<string, Map<string, string | null>>;
   /** Foreman only: the latest plan checkpoint (checkpoint.ts; in memory, a restart checkpoints again). */
   plan: PlanRecord | null;
+  /** Foreman only: a planner on the foreman's own rung switched the session to ceremony.planner self (plannerself.ts). */
+  plannerSelf: boolean;
   /** Foreman only: `[plan-review]` verdicts per plan lineage (planreview.ts; ceremony.planReview gates the checkpoint). */
   planReviews: PlanReviews;
   /** Foreman only: plan-*.md snapshots at a planner launch, by tool call id, then by run id until its run end. */
@@ -447,6 +450,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchHeadsByCall: new Map(),
       launchHeads: new Map(),
       plan: null,
+      plannerSelf: false,
       planReviews: new PlanReviews(),
       planSnaps: { byCall: new Map(), byRun: new Map() },
       budget: new ReadBudget(),
@@ -949,6 +953,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewMarks: "on",
       // ceremony.planReview at heavy: the plan-review step before the checkpoint (planreview.ts).
       planReview: planReviewOn(s.config.config, "heavy") ? "on" : "off",
+      // ceremony.planner: who writes the heavy plan (plannerself.ts).
+      planner: effectivePlannerMode(s.config.config, s.plannerSelf),
       // ladder.reviewPanel with shadow models: the foreman issues the listed shadow launches (panel.ts).
       reviewPanel: panelConfig(s.config.config).shadows.length > 0 ? "on" : "off",
     };
@@ -1194,7 +1200,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const findings = (s.reviewRuns.findings.get(runId) ?? Promise.resolve([])).then((b) => b.find((x) => x.result.index === r.index)?.findings ?? [], () => []);
       for (const p of plans) {
         const rp = readPlan(p, opts);
-        if ("plan" in rp) s.planReviews.record(rp.plan.path, { hash: planReviewHash(rp.plan.bytes), verdict: r.verdict, model: r.model, findings });
+        if ("plan" in rp) s.planReviews.record(rp.plan.path, { hash: planVersionHash(rp.plan.bytes), verdict: r.verdict, model: r.model, findings });
       }
     }
   }
@@ -1401,6 +1407,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const raised = applyResearchFloor(marked, resolution.roles, s.config.config, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
           const foremanModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null;
           for (const m of launchedModels(input)) {
+            // ceremony.planner role: a planner on the foreman's own rung (or above) switches the session to self; no launch.
+            if (!s.plannerSelf && effectivePlannerMode(s.config.config, false) === "role" && rolesOfModel(input, m).includes("planner") && plannerNotBelow(s.config.config, foremanModel, m)) {
+              s.plannerSelf = true;
+              s.trace?.emit({ event: "planner_self_fallback", tier: s.ceremony.tier, model: m, foreman: foremanModel });
+              return { block: true, reason: PLANNER_SELF_MESSAGE };
+            }
             const no = rankRefusal(s.config.config, foremanModel, m);
             if (!no) continue;
             const marker = floorMarker(raised, m);
@@ -1504,6 +1516,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (rounds) {
         s.rounds = rounds.next;
         for (let i = 0; i < rounds.revisions; i++) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: kind });
+        if (rounds.exempt) s.trace?.emit({ event: "revision_security_exempt", role: "builder", tier: s.ceremony.tier, count: rounds.exempt, after: s.rounds.exempt ?? 0 });
       }
       if (event.toolName === "subagent" && !s.isChild) {
         const lf = boundLedger(s.markerDir, s.id);
@@ -1646,7 +1659,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // a second opinion, plan review or panel never marks items (occasion.ts); the run end marks the counting primary
     const launch = passed ? s.reviewRuns.byRun.get(passed.runId) : undefined;
     if (passed && !(launch && (launch.panel || launch.entries.some((e) => REVIEW_ROLES.includes(e.role) && (e.occasion === "second-opinion" || e.occasion === "plan-review"))))) markByReview(s, passed.runId, passed.text);
-    s.rounds = onReviewDone(s.rounds, verdict);
+    s.rounds = onReviewDone(s.rounds, verdict, verdict === "fail" && hasSecurityFinding(text));
     for (const role of reviews) s.trace?.emit({ event: "review_done", role, decision: verdict ?? "no-verdict" });
     if (verdict === "pass") {
       s.budget.enterPost();
@@ -2118,7 +2131,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** ceremony.required.<tier> as it applies to this session (trivial.ts effectiveRequired). */
   function requiredOf(s: Session, tier: string): Step[] {
-    return effectiveRequired(requiredSteps(get(s.config.config, "ceremony.required"), tier), tier, { bounded: editModeOfSession(s).mode === "bounded", ledger: boundLedger(s.markerDir, s.id) !== null });
+    const steps = effectiveRequired(requiredSteps(get(s.config.config, "ceremony.required"), tier), tier, { bounded: editModeOfSession(s).mode === "bounded", ledger: boundLedger(s.markerDir, s.id) !== null });
+    return selfPlanRequired(steps, effectivePlannerMode(s.config.config, s.plannerSelf), s.plan);
   }
 
   /** Trivial builder path (trivial.ts): at finish the builder's diff decides; a failed check escalates to standard. The refusal note, or "". */
@@ -2422,11 +2436,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const plan = r.plan;
         const name = `plan-${plan.topic}.md`;
         const hash8 = plan.hash.slice(0, 8);
+        s.trace?.emit({ event: "plan_version", tier, from: sha256(plan.bytes).slice(0, 16), to: plan.hash.slice(0, 16) }); // from = hash of the file bytes, to = version (body) hash
         // ceremony.planReview (planreview.ts): a [plan-review] verdict on these bytes first; a first FAIL goes back to the planner.
         let reviewed: string | null = null;
         if (planReviewOn(s.config.config, tier)) {
           const cap = planReviewRounds(get(s.config.config, "ceremony.planReviewRounds"));
-          const g = s.planReviews.gate(plan.path, planReviewHash(plan.bytes), cap);
+          const g = s.planReviews.gate(plan.path, planVersionHash(plan.bytes), cap);
           if ("refusal" in g) return done("refused", null, planReviewRefusalText(g.refusal, plan.rel, tier, g.stale), true, g.refusal);
           // Capped: the checkpoint opens on a FAIL with the open findings visible.
           reviewed = planReviewSection(g.verdict, await g.verdict.findings, g.capped ? { rounds: g.rounds ?? cap, cap } : undefined);

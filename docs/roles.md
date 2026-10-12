@@ -7,7 +7,7 @@
 ## Roles
 
 Role ids are neutral: `foreman` (the main session: triage, plan, ledger, delegate, integrate), `explorer`
-(read-only search), `planner` (heavy tasks: writes the plan for the owner checkpoint), `builder` (one scoped
+(read-only search), `planner` (heavy tasks with `ceremony.planner: role`; by default `self`, the foreman writes the plan for the owner checkpoint itself and the planner is not launched), `builder` (one scoped
 change), `reviewer` (diff review against ledger items), `senior-reviewer` (plan or security review), `finalizer`
 (verification and close-out). Role files are in `agents/`. Display names come only from config: the preset
 `classic` shows personal names, `plain` shows the ids; no code compares a display name. Models are mapped per
@@ -48,7 +48,7 @@ The live rung, `rung_top`, the reviewer's own climb (`ladder.reviewerClimb`) and
 `ladder.childPolicy` (one value for all providers) is `below` (default: children strictly below the foreman's
 tier), `at-or-below`, or `any`. Tiers are compared across providers, so a foreman on one provider may launch
 rank-compatible children on another. Once any ranks exist, a model in no list is allowed only under `any`. With
-no ranks anywhere the policy does nothing. A refused launch is traced `launch_refused {policy, foreman, requested}`. When the refused role is `planner`, the message adds that the role sits on the foreman's own rung: plan it yourself (write `.workflow/scratch/plan-<topic>.md`) or map the role to a lower rung (no automatic climb).
+no ranks anywhere the policy does nothing. A refused launch is traced `launch_refused {policy, foreman, requested}`. When the refused role is `planner`, the message adds that the role sits on the foreman's own rung: plan it yourself (write `.workflow/scratch/plan-<topic>.md`) or map the role to a lower rung (no automatic climb). With `ceremony.planner: role`, a planner whose rank tier is <= the foreman's (checked directly, whatever the policy says; unranked counts as not below) is not refused but switches the session to `self` (trace `planner_self_fallback`): the foreman plans it itself, and its approved plan satisfies the planner step.
 
 **Presets** under `config/presets/` are opt-in overlay files, never merged by default. Apply one with
 `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` (merges into `<agent dir>/foreman.json`,

@@ -61,6 +61,7 @@
     "reviewByOccasion": {},
     "planReview": { "trivial": false, "standard": false, "heavy": true },
     "planReviewRounds": 2,
+    "planner": "self",
     "childTimeoutSeconds": 1800,
     "heavyThreshold": "strict"
   },

@@ -52,7 +52,8 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [review-panel](#review-panel) | opt-in | Adds shadow reviewer models beside the primary on the named occasions; their findings are reported but never block, mark items or satisfy the PR gate. | `{"ladder": {"reviewPanel": {"shadows": ["<other-provider>/<other-model>"], "gates": ["pre-pr"]}}}` | [review](review.md#review-panel) |
 | [different-model-rule](#different-model-rule) | on | Moves a reviewer launch off the foreman's own model to the next differing rung, else to `ceremony.reviewModel`. | on by default | [review](review.md#different-model-rule) |
 | [review-overrides](#review-overrides) | opt-in | Sets the thinking level and/or model of a reviewer launch per occasion (`item`, `plan-review`, `pre-pr`, `second-opinion`). | `{"ceremony": {"reviewByOccasion": {"pre-pr": {"thinking": "high"}}}}` | [review](review.md#per-occasion-overrides) |
-| [plan-review](#plan-review) | off | Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan; on for heavy by default, opt-in for trivial and standard. | `{"ceremony": {"planReview": {"standard": true}}}` | [review](review.md#plan-review) |
+| [self-planning](#self-planning) | on | `ceremony.planner: self` (default): the foreman writes the heavy plan itself and its approved checkpoint satisfies the planner step; `role` keeps the planner launch and falls back to `self` when the planner's rank is not below the foreman's. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
+| [plan-review](#plan-review) | off | Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan version (the body above any ruling, decision-log or addendum appendix, so an appended ruling needs no new review); on for heavy by default, opt-in for trivial and standard. | `{"ceremony": {"planReview": {"standard": true}}}` | [review](review.md#plan-review) |
 | [findings](#findings) | on | Records every reviewer run's located findings locally, with `foreman findings` to list, dismiss or export them and `foreman retro models` to compare reviewer models. | on by default | [review](review.md#findings-store) |
 | [bench](#bench) | opt-in | Measures harness changes over Harbor tasks in local Docker, and reviewer models over planted-defect diffs with `foreman bench review`. | `foreman bench review --tasks bench/review-samples --dry-run` | [bench](bench.md#running) |
 | [bench-climb](#bench-climb) | opt-in | Explores cheap-to-strong reviewer climb policies offline over review-bench cells; the runtime has no climb on a finding. | `foreman bench review --tasks bench/review-samples --mode climb --rungs <cheap-model>,<strong-model> --dry-run` | [bench](bench.md#review-bench) |
@@ -233,9 +234,17 @@ Switch: `ceremony.reviewByOccasion` is non-empty.
 | `ceremony.reviewByOccasion.second-opinion.thinking` | unset | not in project/session (the per-occasion reviewer overrides come from the user or overlay config) |
 | `ceremony.reviewByOccasion.second-opinion.model` | unset | not in project/session (the per-occasion reviewer overrides come from the user or overlay config) |
 
+### self-planning
+
+**Self-planning at heavy.** `ceremony.planner: self` (default): the foreman writes the heavy plan itself and its approved checkpoint satisfies the planner step; `role` keeps the planner launch and falls back to `self` when the planner's rank is not below the foreman's.
+
+| Key | Default | Layer |
+|---|---|---|
+| `ceremony.planner` | `"self"` | any layer |
+
 ### plan-review
 
-**Plan review below heavy.** Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan; on for heavy by default, opt-in for trivial and standard.
+**Plan review below heavy.** Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan version (the body above any ruling, decision-log or addendum appendix, so an appended ruling needs no new review); on for heavy by default, opt-in for trivial and standard.
 
 Switch: `ceremony.planReview.standard` is true.
 

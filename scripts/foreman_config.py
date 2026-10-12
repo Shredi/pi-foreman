@@ -84,6 +84,7 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.reviewByOccasion        ignored (per-occasion reviewer thinking/model: L1/L3/L2 only)
     ceremony.planReview.<tier>       only true is accepted (false skips the plan review)
     ceremony.planReviewRounds        free per layer (no tighten rule)
+    ceremony.planner                 free per layer (self | role; no tighten rule)
     ceremony.childTimeoutSeconds     lower only, minimum 1 (a higher limit lets a child tool call run longer)
     ceremony.heavyThreshold          tighten only, eee843d < strict (may only move toward eee843d, which escalates more)
     ceremony.trivialBound.<field>    lower only, minimum 0 (a higher bound lets the foreman edit more)

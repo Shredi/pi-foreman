@@ -17,6 +17,10 @@
 // builder launched while that review is still running is a revision round too. A `resume` of a
 // builder run counts like a builder launch (index.ts). Rounds reset on a user prompt and on a
 // tier change by the user (`/ceremony`), not on a raise by the foreman, a ledger or a signal.
+//
+// Security exemption: a reviewer FAIL whose report has a finding line starting `SECURITY:` makes the
+// builder launches that answer it (after that FAIL, up to the next review verdict) exempt from the
+// limit. They still count toward a ceiling: exempt + counted revisions never exceed 2 x the limit.
 
 import type { Tier } from "./ceremony.ts";
 
@@ -31,6 +35,10 @@ export interface RoundState {
   reviewOpen: boolean;
   /** Revision rounds launched since the last reset. */
   used: number;
+  /** The latest review verdict is a FAIL with a `SECURITY:` finding (cleared by the next verdict). Absent = false. */
+  secOpen?: boolean;
+  /** Security-exempt revision rounds launched since the last reset. Absent = 0. */
+  exempt?: number;
 }
 
 export type Verdict = "pass" | "fail";
@@ -56,10 +64,16 @@ export function verdictOf(text: string): Verdict | null {
   return all.length > 0 ? "pass" : null;
 }
 
-/** A review run finished. Only a review after a builder launch can open a round. */
-export function onReviewDone(s: RoundState, verdict: Verdict | null): RoundState {
+/** True when a review text has a finding line starting `SECURITY:` (after an optional list marker or bold). */
+export function hasSecurityFinding(text: string): boolean {
+  return /^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?\**SECURITY:/m.test(text);
+}
+
+/** A review run finished. Only a review after a builder launch can open a round. `security`: the text carries a `SECURITY:` finding. */
+export function onReviewDone(s: RoundState, verdict: Verdict | null, security = false): RoundState {
   if (!s.built) return s;
-  return { ...s, reviewOpen: verdict !== "pass" };
+  const secOpen = verdict === "fail" && security;
+  return { ...s, reviewOpen: verdict !== "pass", ...(secOpen || s.secOpen ? { secOpen } : {}) };
 }
 
 export function revisionLimit(configured: unknown, tier: Tier): number {
@@ -87,8 +101,10 @@ export function launchSteps(input: Json): string[][] {
 }
 
 export interface LaunchRounds {
-  /** Builder runs in this call that are revision rounds. */
+  /** Builder runs in this call that are revision rounds (security-exempt ones included). */
   revisions: number;
+  /** Of those, the ones that answer a `SECURITY:` finding and so do not count toward the limit. */
+  exempt?: number;
   block?: string;
   /** Round state once the call is allowed. */
   next: RoundState;
@@ -100,25 +116,35 @@ export interface LaunchRounds {
  */
 export function checkLaunch(s: RoundState, steps: string[][], tier: Tier, configured: unknown): LaunchRounds {
   let { built, reviewOpen } = s;
-  let revisions = 0;
+  let secOpen = s.secOpen === true;
+  let counted = 0;
+  let exempt = 0;
   for (const group of steps) {
     const builders = group.filter((a) => a === "builder").length;
     if (builders > 0) {
-      if (reviewOpen) revisions += builders;
+      if (reviewOpen) {
+        if (secOpen) exempt += builders;
+        else counted += builders;
+      }
       built = true;
       reviewOpen = false;
     }
-    if (built && group.some((a) => REVIEW_ROLES.includes(a))) reviewOpen = true;
+    if (built && group.some((a) => REVIEW_ROLES.includes(a))) {
+      reviewOpen = true;
+      secOpen = false; // the next verdict is another review's
+    }
   }
-  const next = { built, reviewOpen, used: s.used + revisions };
-  if (revisions === 0) return { revisions, next };
+  const revisions = counted + exempt;
+  const usedExempt = (s.exempt ?? 0) + exempt;
+  const next: RoundState = { built, reviewOpen, used: s.used + counted, ...(secOpen ? { secOpen } : {}), ...(usedExempt > 0 ? { exempt: usedExempt } : {}) };
+  const out = (block?: string): LaunchRounds => ({ revisions, ...(exempt > 0 ? { exempt } : {}), next, ...(block ? { block } : {}) });
+  if (revisions === 0) return out();
   const limit = revisionLimit(configured, tier);
-  if (next.used <= limit) return { revisions, next };
-  return {
-    revisions,
-    next,
-    block: `pi-foreman: revision limit for ${tier} reached (${limit}): this launch would bring the revision rounds to ${next.used} (a builder run after a review, also one in the same chain or while a review is still running). Report the open findings to the owner and ask how to go on; the owner can raise the tier with /ceremony. A new user prompt starts the count again.`,
-  };
+  const ceiling = 2 * limit;
+  if (next.used <= limit && next.used + usedExempt <= ceiling) return out();
+  const over = next.used <= limit;
+  const note = usedExempt > 0 ? ` ${usedExempt} revision(s) answering a SECURITY finding were exempt from the limit but count toward the ceiling of ${ceiling} (2 x revisionRounds).` : "";
+  return out(`pi-foreman: revision ${over ? "ceiling" : "limit"} for ${tier} reached (${over ? ceiling : limit}): this launch would bring the revision rounds to ${over ? next.used + usedExempt : next.used} (a builder run after a review, also one in the same chain or while a review is still running).${note} Report the open findings to the owner and ask how to go on; the owner can raise the tier with /ceremony. A new user prompt starts the count again.`);
 }
 
 /** A tier change: only the user's own (`/ceremony`) starts the count again; a raise by the foreman, a ledger header or a signal does not. */

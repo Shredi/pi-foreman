@@ -494,5 +494,35 @@ class PackageFilesTest(unittest.TestCase):
         self.assertEqual((res["warnings"], res["errors"]), ([], []))
 
 
+class CeremonyPlannerKeyTest(unittest.TestCase):
+    """ceremony.planner: self | role, default self, free per layer (no tighten rule)."""
+
+    setUp = ConfigTest.setUp
+    _restore_env = ConfigTest._restore_env
+    l2 = ConfigTest.l2
+    proj = ConfigTest.proj
+    load = ConfigTest.load
+
+    def test_default_is_self_and_validates(self):
+        res = self.load()
+        self.assertEqual(res["config"]["ceremony"]["planner"], "self")
+        self.assertEqual((res["warnings"], res["errors"]), ([], []))
+
+    def test_every_layer_may_set_either_value(self):
+        self.l2({"ceremony": {"planner": "role"}})
+        res = self.load()
+        self.assertEqual((res["config"]["ceremony"]["planner"], res["errors"]), ("role", []))
+        self.proj({"ceremony": {"planner": "self"}})
+        res = self.load(trusted_project=True)
+        self.assertEqual((res["config"]["ceremony"]["planner"], res["errors"]), ("self", []))
+        res = self.load(trusted_project=True, session_json='{"ceremony": {"planner": "role"}}')
+        self.assertEqual((res["config"]["ceremony"]["planner"], res["errors"]), ("role", []))
+
+    def test_unknown_value_is_a_schema_error(self):
+        self.l2({"ceremony": {"planner": "bogus"}})
+        res = self.load()
+        self.assertTrue(any("planner" in e for e in res["errors"]), res["errors"])
+
+
 if __name__ == "__main__":
     unittest.main()

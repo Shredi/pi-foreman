@@ -142,9 +142,20 @@
       "enable": "{\"ceremony\": {\"reviewByOccasion\": {\"pre-pr\": {\"thinking\": \"high\"}}}}"
     },
     {
+      "id": "self-planning",
+      "title": "Self-planning at heavy",
+      "purpose": "`ceremony.planner: self` (default): the foreman writes the heavy plan itself and its approved checkpoint satisfies the planner step; `role` keeps the planner launch and falls back to `self` when the planner's rank is not below the foreman's.",
+      "doc": "docs/ceremony.md#triage-and-delegation",
+      "keys": ["ceremony.planner"],
+      "commands": [],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "plan-review",
       "title": "Plan review below heavy",
-      "purpose": "Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan; on for heavy by default, opt-in for trivial and standard.",
+      "purpose": "Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan version (the body above any ruling, decision-log or addendum appendix, so an appended ruling needs no new review); on for heavy by default, opt-in for trivial and standard.",
       "doc": "docs/review.md#plan-review",
       "keys": ["ceremony.planReview", "ceremony.planReviewRounds"],
       "commands": [],

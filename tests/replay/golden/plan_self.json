@@ -1,0 +1,44 @@
+{
+ "foreman": [
+  {
+   "event": "plan_version",
+   "tier": "heavy"
+  },
+  {
+   "event": "checkpoint",
+   "decision": "refused",
+   "tier": "heavy"
+  },
+  {
+   "event": "role_launch",
+   "role": "reviewer"
+  },
+  {
+   "event": "plan_review",
+   "decision": "pass",
+   "model": "foreman-fake/reviewer"
+  },
+  {
+   "event": "plan_version",
+   "tier": "heavy"
+  },
+  {
+   "event": "checkpoint",
+   "decision": "approve",
+   "tier": "heavy"
+  },
+  {
+   "event": "plan_version",
+   "tier": "heavy"
+  },
+  {
+   "event": "checkpoint",
+   "decision": "approve",
+   "tier": "heavy"
+  },
+  {
+   "event": "role_launch",
+   "role": "builder"
+  }
+ ]
+}

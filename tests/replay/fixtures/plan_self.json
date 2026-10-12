@@ -1,0 +1,47 @@
+{
+ "foreman": {
+  "s1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a large change"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-ps.md", "content": "# Requirements Ledger: ps\nTier: heavy\n\n- [ ] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/plan-ps.md", "content": "# Widget\n\n## Goal\nShip the widget.\n\n## Approach\nOne builder.\n\n## Verification\nTests.\n"}}]},
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-ps.md"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-s2]] [plan-review] review .workflow/scratch/plan-ps.md against the ledger"}}]},
+   {"text": "Plan reviewer launched."}
+  ],
+  "s2": [
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-ps.md"}}]},
+   {"tools": [{"name": "edit", "arguments": {"path": ".workflow/scratch/plan-ps.md", "edits": [{"oldText": "Tests.\n", "newText": "Tests.\n\n## Ruling\nOwner: keep the first variant.\n"}]}}]},
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-ps.md"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:quiet]] build item 1"}}]},
+   {"text": "Builder launched."},
+   {"text": "Still waiting."},
+   {"text": "Done."}
+  ],
+  "k1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a large change"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-ps.md", "content": "# Requirements Ledger: ps\nTier: heavy\n\n- [ ] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/plan-ps.md", "content": "# Widget\n\n## Goal\nShip the widget.\n\n## Approach\nOne builder.\n\n## Verification\nTests.\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-k2]] [plan-review] review .workflow/scratch/plan-ps.md against the ledger"}}]},
+   {"text": "Plan reviewer launched."}
+  ],
+  "k2": [
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-ps.md"}}]},
+   {"tools": [{"name": "edit", "arguments": {"path": ".workflow/scratch/plan-ps.md", "edits": [{"oldText": "One builder.", "newText": "Two builders."}]}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-k3]] [plan-review] review .workflow/scratch/plan-ps.md against the ledger"}}]},
+   {"text": "Revised plan reviewer launched."}
+  ],
+  "k3": [
+   {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-ps.md"}}]},
+   {"text": "Checkpoint answered."},
+   {"text": "Done."}
+  ]
+ },
+ "reviewer": {
+  "r-s2": [{"text": "[[replay:s2]] VERDICT: PASS\n1. PASS the plan covers item 1\nOverall verdict: PASS"}],
+  "r-k2": [{"text": "[[replay:k2]] VERDICT: FAIL\n1. FAIL the plan skips item 1\nOverall verdict: FAIL"}],
+  "r-k3": [{"text": "[[replay:k3]] VERDICT: FAIL\n1. FAIL the plan still skips item 1\nOverall verdict: FAIL"}]
+ },
+ "*": {
+  "quiet": [{"text": "child: nothing to report"}]
+ }
+}

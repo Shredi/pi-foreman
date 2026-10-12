@@ -44,12 +44,23 @@ not the repeat-fail climb is enabled.
 
 With `ceremony.planReview.<tier>` on (heavy by default, see [ceremony](ceremony.md)), `foreman_checkpoint` refuses
 with `plan_review_required` until a `[plan-review]` reviewer run ended with a verdict for the current plan, keyed by
-the SHA-1 of the plan file's bytes. Verdicts are kept per plan path (in memory, for the session); a new plan path
+the plan version hash (sha256 of the plan body above any `## Ruling`, `## Rulings`, `## Parent ruling`,
+`## Decision log`, `## Addendum…` heading or `<!-- plan-appendix -->` line; see [ceremony](ceremony.md)). A ruling appended
+below such a heading neither needs a new review nor resets the checkpoint; a body edit is a new version. Verdicts are kept per plan path (in memory, for the session); a new plan path
 starts a new lineage. The first FAIL of a lineage refuses once with `plan_revision_required`, so the planner revises
 before the owner sees it; once the revised plan (new bytes) has a verdict, the checkpoint opens whatever it says. The
 owner's dialog shows `Plan review: PASS|FAIL (reviewer <model>)` and up to 8 located findings (`file:line class note`).
 Trace `plan_review {model, decision}`. The foreman's instructions carry the plan-review step only while it is on
 (`<!--planReview=on-->` variant). Plan review uses the model rule like any other occasion.
+
+## Security findings and the revision cap
+
+A reviewer or senior-reviewer FAIL (BLOCK) whose report has a finding line starting `SECURITY:` (the agent files tell
+them to prefix security findings so) makes the builder launches that answer it exempt from `ceremony.revisionRounds`:
+the builder launches after that FAIL, up to the next review verdict (trace `revision_security_exempt`). Every other
+revision counts as before. A hard ceiling stays: exempt and counted revisions together never exceed 2 x
+`ceremony.revisionRounds` per prompt (heavy: 4); past it the launch is refused as usual, and the refusal text names the
+exempt count.
 
 ## Per-occasion overrides
 
