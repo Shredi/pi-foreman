@@ -145,6 +145,8 @@ export interface MatchCtx {
   role?: "main" | "child";
   /** Child only: the round worktree the child's cwd lies in, or its own isolation worktree under a round (roundsurface.ts roundRoots); never a sibling isolation worktree, so `*.worktrees/*` stays closed around them. */
   roundRoots?: string[];
+  /** Child only: round worktrees the child may read but not write (roundsurface.ts childSurface); a write below one outside `roundRoots` and the scratch dir is denied. */
+  roundReadRoots?: string[];
   exists?: (p: string) => boolean;
   isDir?: (p: string) => boolean;
   realpath?: (p: string) => string | null;
@@ -1395,7 +1397,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   }
   if (ctx.role === "child") {
     for (const w of c.tmpTargets!) {
-      const hit = childTmpWriteDeny(w, pctx);
+      const hit = childReadOnlyWriteDeny(w, pctx) ?? childTmpWriteDeny(w, pctx);
       if (hit) return hit;
     }
   }
@@ -1470,6 +1472,18 @@ function childTmpWriteDeny(word: string, ctx: MatchCtx): Decision | null {
   return null;
 }
 
+/** A child writing below a round worktree it may only read (reviewer, explorer, ... in the round worktree; any child in an isolation worktree). */
+function childReadOnlyWriteDeny(word: string, ctx: MatchCtx): Decision | null {
+  if (ctx.role !== "child" || !ctx.roundReadRoots?.length) return null;
+  const scratch = scratchOf(ctx);
+  for (const cand of pathCandidates(word, ctx)) {
+    if (scratch && insideDir(scratch, cand, ctx)) continue;
+    if ((ctx.roundRoots ?? []).some((o) => insideDir(o, cand, ctx))) continue;
+    if (ctx.roundReadRoots.some((o) => insideDir(o, cand, ctx))) return { kind: "deny", reason: `pi-foreman: write to ${clip(word)} denied for a child: the round worktree is read-only except for its builder.` };
+  }
+  return null;
+}
+
 /** A child touching a foreman-owned path (handoffs, artifacts, foreman.json); its own scratch dir is never one. */
 function childBlockHit(rules: OverlayRules, word: string, ctx: MatchCtx): string | null {
   const patterns = rules.childBlock;
@@ -1480,7 +1494,7 @@ function childBlockHit(rules: OverlayRules, word: string, ctx: MatchCtx): string
     if (rules.childBlockExcept?.some((pat) => pathMatches(pat, cand, ctx))) continue;
     for (const pat of patterns) {
       if (!pathMatches(pat, cand, ctx)) continue;
-      if (rules.childBlockInWorkspace?.includes(pat) && [ctx.cwd, workspaceOf(ctx.cwd).root, ...(ctx.roundRoots ?? [])].some((root) => insideDir(root, cand, ctx))) continue;
+      if (rules.childBlockInWorkspace?.includes(pat) && [ctx.cwd, workspaceOf(ctx.cwd).root, ...(ctx.roundRoots ?? []), ...(ctx.roundReadRoots ?? [])].some((root) => insideDir(root, cand, ctx))) continue;
       return pat;
     }
   }
@@ -1548,7 +1562,7 @@ export function checkPathTool(rules: OverlayRules, toolName: string, input: Reco
     if (blocked) return childBlockDecision(blocked, value);
   }
   for (const { value } of paths.filter((x) => x.write)) {
-    const hit = childTmpWriteDeny(value, ctx);
+    const hit = childReadOnlyWriteDeny(value, ctx) ?? childTmpWriteDeny(value, ctx);
     if (hit) return hit;
   }
   const prot = paths.filter((x) => x.write).map((x) => ({ w: x.value, hit: protectHit(rules.protect, x.value, ctx, false, x.remove === true) })).filter((x) => x.hit);

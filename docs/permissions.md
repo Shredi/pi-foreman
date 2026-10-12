@@ -270,12 +270,15 @@ the same for the foreman and every child it launches, and nothing else is inheri
 - **Handoff dir.** The session's own handoff dirs (`ownHandoffDirs`), as before; the `own-handoff` deterministic allow
   and the child overlay use them.
 - **Round worktree, from the manifest.** The unremoved `worktree` entries the foreman session itself recorded in its
-  manifest (`<agentDir>/pi-foreman/state/sessions/<id>/manifest.json`, owner = the session id, never a child's). A child
-  whose cwd is in a round worktree may work there; the round worktree is a root only for that child, and other round
-  worktrees stay denied.
+  manifest (`<agentDir>/pi-foreman/state/sessions/<id>/manifest.json`, owner = the session id, never a child's). Every
+  child of the round may read it; only the foreman and the `builder` child whose cwd is in it write it. A child of any
+  other role (explorer, reviewer, senior-reviewer, finalizer, planner) gets it read-only: reads pass, writes are denied
+  (path tools, bash redirects, `mkdir`, `cp`), and a forwarded ask of such a child gets no own-dir allow there. A child in
+  an isolation worktree of the round may read the round worktree and never writes it. Other round worktrees stay denied.
+  The child's scratch dir stays writable.
 - **Own isolation worktree only.** The isolation worktrees pi-subagents makes under
   `<repo>.worktrees/worktrees/<round>/pi-worktree-*` are not a root as a set. A child whose cwd is in one of them owns
-  that isolation worktree (its git top level) and nothing else of the dir; a sibling child's `pi-worktree-*` stays denied
+  that isolation worktree (its git top level), whatever its role, and nothing else of the dir; a sibling child's `pi-worktree-*` stays denied
   for the path tools and bash redirects (`*.worktrees/*`), and a child in the round worktree cannot reach them at all.
 - **Bound ledger as read root.** The ledger file bound to the session is a read root for every forwarded ask, and
   `LEDGER-*.md` in its dir is a readable glob. Read only.

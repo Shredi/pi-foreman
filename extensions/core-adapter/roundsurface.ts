@@ -60,6 +60,23 @@ export function roundRoots(worktrees: string[], cwd: string, platform: string = 
   return [];
 }
 
+/**
+ * The roots a child of `role` gets on the round surfaces (owner ruling, ledger 7c): `write` are its write roots (its own
+ * isolation worktree, and the round worktree only for a `builder` child whose cwd lies in it); `read` are the round
+ * worktrees it may read but not write (every other role in the round worktree, and any child in an isolation worktree of that round).
+ */
+export function childSurface(worktrees: string[], cwd: string, role: string | undefined, platform: string = process.platform, top: (dir: string) => string | null = workspaceTop): { write: string[]; read: string[] } {
+  const x = px(platform);
+  const within = (dir: string): boolean => {
+    const rel = x.relative(x.resolve(dir), x.resolve(cwd));
+    return rel === "" || (rel !== ".." && !rel.startsWith(".." + x.sep) && !x.isAbsolute(rel));
+  };
+  const roots = roundRoots(worktrees, cwd, platform, top);
+  const rounds = worktrees.map((w) => x.resolve(w));
+  const read = rounds.filter((w) => within(w) || within(isolationDir(w, platform)));
+  return { write: role === "builder" ? roots : roots.filter((r) => !rounds.includes(r)), read };
+}
+
 const PLAIN = /^[A-Za-z0-9_./@+=,:%-]+$/;
 
 /**

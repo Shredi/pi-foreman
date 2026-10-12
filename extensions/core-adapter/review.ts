@@ -189,6 +189,8 @@ export interface ReviewSession {
   scratchDirs?: (role: string | null) => string[];
   /** This session's own handoff dirs (owned.ts ownHandoffDirs): the "own-handoff" allow (ownhandoff.ts). */
   ownDirs?: () => string[];
+  /** The round worktrees among `ownDirs`: a forwarded ask of a child other than the builder gets them as no own dir (read-only for it). */
+  roundDirs?: () => string[];
   /** The ledger file bound to this session (roundsurface.ts): a read root for every forwarded ask, `LEDGER-*.md` in its dir a readable glob. */
   ledgerFile?: () => string | null;
 }
@@ -365,7 +367,7 @@ export class ForemanReview {
       const unit = unitValue(d);
       const full = reviewValue(d);
       const ledger = this.ledgerOf(s);
-      const deps = { scratchDirs: this.scratchOf(s, d), ownDirs: this.ownDirsOf(s), ...(ledger ? { ledger } : {}), ...(cls ? { effects: cls.ctx } : {}) };
+      const deps = { scratchDirs: this.scratchOf(s, d), ownDirs: this.ownDirsOf(s, d), ...(ledger ? { ledger } : {}), ...(cls ? { effects: cls.ctx } : {}) };
       // the session's own asks (not forwarded from a child) get only the own-handoff allow without the model
       if (only && (deterministicAllow(rules, unit, deps) !== only || deterministicAllow(rules, full, deps) !== only)) return null;
       if (!deterministicAllow(rules, unit, deps)) return null;
@@ -397,9 +399,12 @@ export class ForemanReview {
     }
   }
 
-  private ownDirsOf(s: ReviewSession): string[] {
+  private ownDirsOf(s: ReviewSession, d?: AskDetails): string[] {
     try {
-      return s.ownDirs?.() ?? [];
+      const own = s.ownDirs?.() ?? [];
+      if (!d?.forwarding || d.agentName === "builder") return own;
+      const rounds = new Set(s.roundDirs?.() ?? []);
+      return own.filter((o) => !rounds.has(o));
     } catch {
       return [];
     }
