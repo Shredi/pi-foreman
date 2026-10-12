@@ -166,7 +166,7 @@ export async function translateToolCall(t: TranslateInput): Promise<ToolCallTran
  */
 export function applyUpdatedInput(piTool: string, input: Record<string, unknown>, updated?: Record<string, unknown>): void {
   if (!updated) return;
-  if ((piTool === "bash" || piTool === "foreman_bg") && typeof updated.command === "string") input.command = updated.command;
+  if ((piTool === "bash" || piTool === "foreman_bg" || piTool === "bg_run") && typeof updated.command === "string") input.command = updated.command;
 }
 
 /** Stop gate: hold the settle (continue + reason) or let it settle. */

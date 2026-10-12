@@ -10,6 +10,7 @@ import { addonPresent, bgLogPath, formatWaits, lastLines, readAddonTasks, shellF
 import { checkLogPath, parseStart, registerWait } from "../wait.ts";
 import { mapTool, isShellTool } from "../toolmap.ts";
 import { isOverlayTool } from "../permoverlay.ts";
+import { LiveState, liveDir } from "../livestate.ts";
 
 const PKG = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "..");
 const tmp = (t: { after(fn: () => void): void }, prefix: string): string => {
@@ -323,4 +324,79 @@ test("/foreman waits without the add-on ignores .pi/tasks; doctor prints INFO ba
   t.after(async () => present.handlers.get("session_shutdown")?.({}, present.ctx));
   await present.commands.get("foreman")!.handler("doctor", present.ctx);
   assert.match(present.notes.pop()!, /\nINFO background-tasks: present\n/);
+});
+
+// -- item 6 guard gap: the add-on's bg_run runs shell commands, so it is guarded like bash --------------------
+
+test("guard parity: the add-on's bg_run gets exactly the verdict a bash call gets; a non-string command is denied", async (t) => {
+  const a = adapter(t, { toolNames: ["bash", "bg_run"] });
+  await a.handlers.get("session_start")!({ reason: "startup" }, a.ctx);
+  t.after(async () => a.handlers.get("session_shutdown")?.({}, a.ctx));
+  const parent = path.dirname(a.agentDir);
+  const cases: [string, string][] = [
+    ["shell write into a project file", "echo x > src/a.txt"],
+    ["write into .git", "echo x > .git/config"],
+    ["destructive", 'rm -rf -- "$1"/*'],
+    ["git guard", "git push --force origin main"],
+    ["empty command", " "],
+    ["ask: agent dir parent", `trash ${parent}`],
+    ["allow", "echo hi"],
+  ];
+  let denied = 0;
+  let asked = 0;
+  for (const [what, command] of cases) {
+    const before = a.confirms.length;
+    const viaBash = await a.handlers.get("tool_call")!({ toolName: "bash", toolCallId: "b", input: { command } }, a.ctx);
+    const bashConfirms = a.confirms.length - before;
+    const viaRun = await a.handlers.get("tool_call")!({ toolName: "bg_run", toolCallId: "r", input: { command, label: "n" } }, a.ctx);
+    const runConfirms = a.confirms.length - before - bashConfirms;
+    const named = viaRun && typeof (viaRun as { reason?: unknown }).reason === "string" ? { ...(viaRun as object), reason: (viaRun as { reason: string }).reason.replace("the bg_run call", "the bash call") } : viaRun;
+    assert.deepEqual(named, viaBash, `${what}: ${command}`);
+    assert.equal(runConfirms, bashConfirms, `${what}: asks`);
+    if (what.startsWith("ask")) assert.ok(bashConfirms > 0, "the ask case really asks");
+    if (viaBash) denied++;
+    asked += bashConfirms;
+  }
+  assert.ok(denied >= 5, `denials seen: ${denied}`);
+  assert.ok(asked >= 1);
+  for (const command of [undefined, 42, ["echo", "hi"]]) {
+    const d = (await a.handlers.get("tool_call")!({ toolName: "bg_run", toolCallId: "r", input: { command } }, a.ctx)) as { block?: boolean; reason?: string };
+    assert.equal(d?.block, true, `command ${JSON.stringify(command)}`);
+    assert.match(d.reason!, /bg_run call has .*cannot check it/);
+  }
+  assert.equal(await a.handlers.get("tool_call")!({ toolName: "bg_run", toolCallId: "r", input: { command: "echo hi" } }, a.ctx), undefined);
+});
+
+test("bg_run is guarded by every shell tool table; the baseline aliases it to the bash rules", () => {
+  assert.deepEqual(mapTool("bg_run"), mapTool("bash"));
+  assert.equal(isShellTool("bg_run"), true);
+  assert.equal(isOverlayTool("bg_run"), true);
+  const base = JSON.parse(fs.readFileSync(path.join(PKG, "config", "permissions.baseline.json"), "utf8")) as { shellTools: Record<string, { commandArgument: string }>; tools: Record<string, string> };
+  assert.deepEqual(base.shellTools.bg_run, { commandArgument: "command" });
+  assert.equal(base.tools.bg_run, undefined);
+});
+
+test("foreman_wait tool: a log outside the bound or of the wrong type is rejected, no wait is registered", async (t) => {
+  const h = waitHarness(t);
+  const wait = h.tools.get("foreman_wait")!;
+  for (const log of [path.join(os.tmpdir(), "elsewhere.log"), 42]) {
+    const r = await wait.execute("c", { action: "start", kind: "pid", pid: process.pid, note: "x", log }, undefined, undefined, h.ctx);
+    assert.equal(r.isError, true, JSON.stringify(log));
+    assert.match(r.content[0].text, /foreman_wait:? log/);
+  }
+  assert.equal(h.handle.active("s1").length, 0);
+});
+
+test("sidebar: a foreman_bg pid wait with note `suites` shows up in the presence waits[] with that note", async (t) => {
+  const h = waitHarness(t);
+  const r = await h.tools.get("foreman_bg")!.execute("c", { command: `node -e "setTimeout(()=>{},3000)"`, note: "suites" }, undefined, undefined, h.ctx);
+  assert.ok(!r.isError, r.content[0].text);
+  const live = LiveState.start({ agentDir: h.agentDir, sessionId: "s1", cwd: h.cwd, mode: "rpc", env: {} }, () => [], undefined, () => h.handle.active("s1"));
+  assert.ok(live);
+  t.after(() => live.stop());
+  const file = JSON.parse(fs.readFileSync(path.join(liveDir(h.agentDir), "s1.json"), "utf8"));
+  assert.equal(file.state, "waiting");
+  assert.equal(file.waits.length, 1);
+  assert.deepEqual([file.waits[0].id, file.waits[0].kind, file.waits[0].note], [String(r.details.id), "pid", "suites"]);
+  process.kill(Number(r.details.pid), "SIGTERM");
 });

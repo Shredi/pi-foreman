@@ -64,7 +64,7 @@ import { PrWatches, pollSnapshot } from "./prwatch.ts";
 import { registerSafeOps, runSafeOp } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
 import type { Spawner } from "./spawn.ts";
-import { FOREMAN_BG_TOOL, mapTool } from "./toolmap.ts";
+import { ADDON_BG_TOOL, FOREMAN_BG_TOOL, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
 import { appendReview, capSet, checksLine, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prGateRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
@@ -1302,8 +1302,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (triage) return triage;
       }
     }
-    if (event.toolName === "bash" || event.toolName === "powershell" || event.toolName === FOREMAN_BG_TOOL) {
-      // foreman_bg is checked as a bash call: the same script, the same verdicts.
+    if (event.toolName === "bash" || event.toolName === "powershell" || event.toolName === FOREMAN_BG_TOOL || event.toolName === ADDON_BG_TOOL) {
+      // foreman_bg and the add-on's bg_run are checked as a bash call: the same script, the same verdicts.
       const shellWrite = await shellWriteBlock(ctx, event.toolName === "powershell" ? "powershell" : "bash", event.input as Record<string, unknown>);
       if (shellWrite) return shellWrite;
     }
