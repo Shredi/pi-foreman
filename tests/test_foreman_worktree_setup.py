@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -97,6 +98,21 @@ class WorktreeSetupTest(unittest.TestCase):
         code, out, _ = self.run_hook([str(self.tmp / "nope")])
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out), {})
+
+    def test_missing_worktree_exits_zero(self):
+        code, out, _ = self.run_hook([str(self.tmp / "nope")])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), {})
+
+    @unittest.skipIf(os.name == "nt", "select on a pipe: POSIX only")
+    def test_open_stdin_with_no_data_finishes(self):
+        # the caller keeps the hook's stdin open and writes nothing: read_input must not wait for EOF
+        proc = subprocess.Popen([sys.executable, str(ROOT / "scripts" / "foreman_worktree_setup.py"), str(self.wt)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # communicate() would close stdin and hide a read that waits for EOF, so the pipes are closed here
+        self.addCleanup(lambda: [p.close() for p in (proc.stdin, proc.stdout, proc.stderr)])
+        self.assertEqual(proc.wait(timeout=30), 0)
+        self.assertEqual(json.loads(proc.stdout.read()), {})
+        self.assertIn(b"node_modules link kept", proc.stderr.read())
 
 
 if __name__ == "__main__":

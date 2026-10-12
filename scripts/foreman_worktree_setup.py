@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import shutil
+import stat
 import subprocess
 import sys
 
@@ -34,12 +36,34 @@ def is_link(path):
     return bool(isj and isj(path))
 
 
+def _available(fd):
+    """Bytes can be read from `fd` now, without waiting. POSIX: select with a zero timeout (a pipe that is
+    open but empty is not ready). Windows: select does not take pipes, so only a regular file counts."""
+    if os.name == "nt":
+        return stat.S_ISREG(os.fstat(fd).st_mode)
+    try:
+        return bool(select.select([fd], [], [], 0)[0])
+    except (OSError, ValueError):
+        return False
+
+
 def read_input():
-    if sys.stdin is None or sys.stdin.isatty():
+    """The JSON object pi-subagents writes on stdin, read only when data is ready: an open pipe with
+    nothing written (a caller that keeps stdin open) or a tty yields {} at once instead of blocking."""
+    if sys.stdin is None:
         return {}
     try:
-        data = json.loads(sys.stdin.read() or "{}")
-    except (ValueError, OSError):
+        if sys.stdin.isatty():
+            return {}
+        fd = sys.stdin.fileno()
+        chunks = []
+        while _available(fd):
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        data = json.loads(b"".join(chunks).decode("utf-8") or "{}")
+    except (ValueError, OSError, AttributeError):
         return {}
     return data if isinstance(data, dict) else {}
 
