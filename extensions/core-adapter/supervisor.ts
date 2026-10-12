@@ -22,8 +22,8 @@ export const SUPERVISOR_REQUEST_TYPE = "subagent_supervisor_request";
 export const SUPERVISOR_TOOL = "subagent_supervisor";
 export const RUN_END_EVENTS = ["subagent:async-complete", "subagent:foreground-complete"];
 
-/** Tools that never act for the child: answering, reading, and run status. */
-const EXEMPT_TOOLS = new Set([SUPERVISOR_TOOL, "read", "ls", "grep", "find", ...PACK_READ_TOOL_NAMES]);
+/** Tools that never act for the child: answering, reading, run status and waiting (`bg_wait` only waits for a background job; ledger item 8). */
+const EXEMPT_TOOLS = new Set([SUPERVISOR_TOOL, "bg_wait", "read", "ls", "grep", "find", ...PACK_READ_TOOL_NAMES]);
 const EXEMPT_SUBAGENT_ACTIONS = new Set(["status", "list"]);
 
 type Json = Record<string, unknown>;
