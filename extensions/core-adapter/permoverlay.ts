@@ -1903,19 +1903,44 @@ function probeFileDeny(files: string[], ctx: MatchCtx): Decision | null {
     const real = fsx.realpath(path.resolve(ctx.cwd ?? ".", word));
     if (!real) continue;
     const root = roots.find((o) => insideDir(o, real, ctx));
-    if (root && (real === root ? fsx.isDir(real) : gitCleanTracked(root, path.relative(root, real)))) continue;
-    // a directory runs its index.js / package.json main / __main__.py, which is not scanned here
-    if (fsx.isDir(real)) return { kind: "deny", reason: `pi-foreman: '${clip(w)}' denied for a child: it runs an untracked directory (outside the round worktree or not tracked by git); run a git-tracked file instead.` };
-    let text: string;
-    try {
-      if (!fs.statSync(real).isFile() || fs.statSync(real).size > 2_000_000) continue;
-      text = fs.readFileSync(real, "utf8");
-    } catch {
+    if (root && real === root && fsx.isDir(real)) continue; // a bare `node --test` / `node --test .` runs unscanned (CHANGELOG, Known gaps)
+    if (root && !fsx.isDir(real) && gitCleanTracked(root, path.relative(root, real))) continue;
+    if (fsx.isDir(real)) {
+      // inside a round root: each modified or untracked file below the directory is scanned like a single file; elsewhere a directory runs its index.js / package.json main / __main__.py unscanned
+      if (!root) return { kind: "deny", reason: `pi-foreman: '${clip(w)}' denied for a child: it runs an untracked directory (outside the round worktree or not tracked by git); run a git-tracked file instead.` };
+      for (const rel of changedFiles(root, path.relative(root, real))) {
+        const hit = probeFileScan(path.join(root, rel), w);
+        if (hit) return hit;
+      }
       continue;
     }
-    if (probeFileHit(text)) return { kind: "deny", reason: `pi-foreman: '${clip(w)}' denied for a child: the script spells a guarded token from pieces (split literal reassembles a guarded token). No split, concatenated or encoded guarded tokens; a probe that needs one runs through the test suite's fixtures.` };
+    const hit = probeFileScan(real, w);
+    if (hit) return hit;
   }
   return null;
+}
+
+/** The deny for one script file that reassembles a guarded token, or null (unreadable, too large and non-files pass). */
+function probeFileScan(real: string, shown: string): Decision | null {
+  let text: string;
+  try {
+    if (!fs.statSync(real).isFile() || fs.statSync(real).size > 2_000_000) return null;
+    text = fs.readFileSync(real, "utf8");
+  } catch {
+    return null;
+  }
+  return probeFileHit(text) ? { kind: "deny", reason: `pi-foreman: '${clip(shown)}' denied for a child: the script spells a guarded token from pieces (split literal reassembles a guarded token). No split, concatenated or encoded guarded tokens; a probe that needs one runs through the test suite's fixtures.` } : null;
+}
+
+/** Files below `rel` of worktree `root` that are modified (worktree or index, against HEAD) or untracked and not ignored. */
+function changedFiles(root: string, rel: string): string[] {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  const list = (args: string[]): string[] => {
+    const r = spawnSync("git", ["-C", root, ...args, "--", rel === "" ? "." : rel], { env, timeout: 10000, encoding: "utf8", maxBuffer: 8_000_000 });
+    return r.status === 0 ? r.stdout.split("\0").filter(Boolean) : [];
+  };
+  return [...new Set([...list(["ls-files", "-z", "-m", "-o", "--exclude-standard"]), ...list(["diff", "-z", "--name-only", "HEAD"])])].slice(0, 500);
 }
 
 /** Tracked in HEAD and equal to HEAD in the index and the worktree (a staged or modified file is not). */

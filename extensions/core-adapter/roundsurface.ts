@@ -49,6 +49,10 @@ export function roundRoots(worktrees: string[], cwd: string, platform: string = 
     return rel !== "" && rel !== ".." && !rel.startsWith(".." + x.sep) && !x.isAbsolute(rel);
   };
   const within = (dir: string): boolean => x.resolve(dir) === x.resolve(cwd) || below(dir, cwd);
+  // ownership is the INNERMOST git worktree of the cwd, never a prefix match on the round worktree: an isolation worktree nested below a round
+  // worktree (or in its isolation dir) is its own root, the round worktree is not
+  const inner = worktrees.some((w) => within(w) || within(isolationDir(w, platform))) ? top(cwd) : null;
+  if (inner && !worktrees.some((w) => x.resolve(w) === x.resolve(inner)) && worktrees.some((w) => below(w, inner) || below(isolationDir(w, platform), inner))) return [x.resolve(inner)];
   const round = worktrees.find((w) => within(w));
   if (round) return [x.resolve(round)];
   for (const w of worktrees) {
