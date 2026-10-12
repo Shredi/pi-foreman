@@ -66,7 +66,7 @@ and `foreman:ready`. There is no second handshake.
 | Point | How an overlay contributes |
 |---|---|
 | Roles | Role files in its package via `pi.subagents.agents`, listed in `roles.<id>.file`; `promptAppend` adds text to an existing role. Ids stay neutral. |
-| Providers and models | A `providers.<p>` block; the provider itself as a Pi extension (`registerProvider`) |
+| Providers and models | A `providers.<p>` block; the provider itself as a Pi extension (`registerProvider`); [presets](presets.md) resolve role models from its `ranks` |
 | Display names | `displayNames` preset or per-id map |
 | Skills | `skills/` in the overlay package (Pi skills format) |
 | Permission rules | `safety.permissions` entries (see [safety](safety.md)) |

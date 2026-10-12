@@ -566,7 +566,7 @@ class SessionForemanRoleTest(unittest.TestCase):
         presets = sorted((ROOT / "config" / "presets").glob("*.json"))
         self.assertTrue(presets)
         for preset in presets:
-            providers = json.loads(preset.read_text())["providers"]
+            providers = json.loads(preset.read_text()).get("providers", {})  # rank-tier templates carry none
             for name in providers:
                 res = fc.resolve_session_foreman({"providers": providers}, name)
                 self.assertTrue(res and res["model"], "%s/%s" % (preset.name, name))

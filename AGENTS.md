@@ -62,6 +62,7 @@ Repo layout and test commands: `docs/development.md`. Read the page for the area
 - `docs/features.md`: generated feature inventory (fresh-install state, keys, enable snippets, commands), overlay quick start, invariants; regenerate with `python scripts/foreman_docs.py features`.
 - `docs/install.md`: package install, `foreman setup`, what setup writes, developing and the double-load rule, update/remove, config layers, updating Pi, Claude bridge login.
 - `docs/roles.md`: roles, display-name presets, model ladder, rank policy, presets.
+- `docs/presets.md`: `foreman config apply-preset`, the rank-tier `inexpensive` preset, `--dry-run`, overlay on top.
 - `docs/ladder.md`: ladder rungs, live rung, context and failure climbs, `rung_top`, reviewer climb, traces.
 - `docs/review.md`: review occasions, different-model rule, plan review, per-occasion overrides, review panel, findings store, `foreman findings`, `retro models`.
 - `docs/ceremony.md`: tiers, finish gates, planner and checkpoint, budgets, key table.

@@ -58,7 +58,7 @@ no ranks anywhere the policy does nothing. A refused launch is traced `launch_re
 
 **Presets** under `config/presets/` are opt-in overlay files, never merged by default. Apply one with
 `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` (merges into `<agent dir>/foreman.json`,
-keeps your other keys, backs up the old file; see [install](install.md)), or copy the parts you want by hand:
+keeps your other keys, backs up the old file; see [install](install.md)), or copy the parts you want by hand. The rank-tier `inexpensive` preset is in [presets](presets.md):
 
 - `claude-bridge.json`: ranks fable > opus > sonnet > haiku; foreman Opus 5.5 (high); explorer, builder and
   reviewer Sonnet 5.5 (medium) on the bottom rung with a strong Opus 5.5 rung; planner, finalizer and senior-reviewer
