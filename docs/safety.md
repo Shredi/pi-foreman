@@ -87,6 +87,8 @@ overlay and the git guard keep children out of the foreman-only dirs (handoffs e
 worktrees, other children's scratch dirs, `pi-foreman/claude-config`) and off `git worktree`, and the `parent` and
 `child` handoff files still ask. The list and the reasons are in [permissions](permissions.md#owned-paths).
 
+The git guard also denies a bash line whose quoted, escaped or `"a"+"b"` pieces spell a guarded path component (`.git`) that no single piece spells (`split literal reassembles a guarded token`; see [permissions](permissions.md#split-literals)).
+
 There is no `git fetch` allow row (`--upload-pack=<cmd>` runs code): it asks for every role; `npm ci` and `npm install`
 are allowed for the foreman only.
 

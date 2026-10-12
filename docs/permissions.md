@@ -224,7 +224,7 @@ only when the whole line is inside a CLOSED GRAMMAR (the same in both implementa
   the rest stays unresolved). `NAME` is not `IFS`, `HOME` or `FOREMAN_*` (a `FOREMAN_*` name comes from the harness
   env, never from the line). It stands at the start of the line or after `;` / a newline, or after `&&` that follows
   another assignment: a conditional assignment (`cmd && D=/a`, `cmd || D=/a`) makes the line ineligible.
-- (b) a simple command whose first word is one of `mkdir cp mv cat ls tee touch tar node npm npx python3 git test echo
+- (b) a simple command whose first word is one of `cd mkdir cp mv cat ls tee touch tar node npm npx python3 git test echo
   true` and whose other words are plain words (letters, digits and `/ . _ ~ = : @ % + , -`), `$NAME`, `"$NAME"` or
   `${NAME}` (also inside a word), `2>&1`, `>/dev/null`, or `>` / `>>` with one such plain word.
 
@@ -235,7 +235,44 @@ or a single quote is ineligible, as is any statement outside (a) and (b) (`expor
 assignment before it; a name nothing assigns stays as written. An ineligible line resolves nothing and everything
 asks as before: the word is checked as written.
 
+Two forms extend this (ledger item 7d). `cd <literal>` (one plain operand, no option) updates the tracked cwd, which
+starts as the directory the line runs in; `NAME=$PWD` / `NAME=$PWD/sub` takes it (an unknown cwd leaves `NAME`
+unresolved, and `$PWD` anywhere but an assignment value keeps the line ineligible). `NAME=$FOREMAN_SCRATCH[/sub]` and
+`NAME=<literal under an owned dir>` resolve for every later `$NAME` / `"$NAME/…"` operand and redirect in the line, so
+`cd <round worktree>; S=$FOREMAN_SCRATCH; mkdir -p $S; npm test > $S/tc.txt` never asks. A heredoc opener (`<<EOF`,
+unquoted, a word of its own) ends the checked text at its line: `S=$FOREMAN_SCRATCH; python3 - "$S/probe.test.ts" <<EOF`
+resolves `$S`, but the line keeps its class (an interpreter reading a heredoc is still reviewed or asked as before);
+the body and what follows the heredoc resolve nothing. Cases in `tests/fixtures/shellvars-cases.json`, read by both
+implementations.
+
 The foreman's shell write guard (`scripts/shell_write_guard.py`, `grammar_statements`) applies the same grammar.
+
+### Split literals
+
+The git guard (`scripts/git_guard.py`, also for the main role) denies, never asks, a bash line whose quoted, ANSI-C or
+escaped pieces of one word (`'.g''it'`, `$'.'"git"`) or whose `"a"+"b"+…` literal chain (also inside `python3 -c`, `node
+-e` code or a heredoc body) spell a guarded path component (`.git`, `.git.`, `GIT~1`, any case) that no single piece
+spells; the reason is `split literal reassembles a guarded token`. A plain `.git`, `.github`, `'.gi'` alone and
+`"a"+"b"` are not affected. The adapter starts the guard in the main role for such lines too (`mainNeedsGitGuard`).
+
+### Round surfaces
+
+What the foreman session owns for the length of a round is one shared set (`roundsurface.ts`, ledger items 7c, 7e),
+the same for the foreman and every child it launches, and nothing else is inherited session-wide:
+
+- **Handoff dir.** The session's own handoff dirs (`ownHandoffDirs`), as before; the `own-handoff` deterministic allow
+  and the child overlay use them.
+- **Round worktree, from the manifest.** The unremoved `worktree` entries the foreman session itself recorded in its
+  manifest (`<agentDir>/pi-foreman/state/sessions/<id>/manifest.json`, owner = the session id, never a child's). A child
+  may work there and the sibling-worktree deny (`*.worktrees/*`) stays open below it; other round worktrees stay denied.
+- **Bound ledger as read root.** The ledger file bound to the session is a read root for every forwarded ask, and
+  `LEDGER-*.md` in its dir is a readable glob. Read only.
+- **Round worktree add by the foreman.** The foreman's own `git [-C <main>] worktree add <repo>.worktrees/<round> [-b
+  <round>] [<base>]` is allowed without a question (label `round-worktree`); a child's `git worktree` stays denied, and
+  `git worktree remove` still asks.
+- **Isolation worktree as the child's own root.** The worktree pi-subagents makes for a child
+  (`<repo>.worktrees/worktrees/<round>/pi-worktree-*`) is that child's own workspace root; its writes there follow the
+  normal child rules.
 
 ### Search patterns are not paths
 
