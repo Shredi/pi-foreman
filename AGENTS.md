@@ -19,6 +19,7 @@ overlays never patch the harness, and nothing from an overlay is ever copied bac
 
 - Must run on Linux, macOS and Windows.
 - Python (standard library only, 3.9+) for all scripts. TypeScript only for Pi extensions.
+- No new Python outside `core/guards`; new harness code is TypeScript. The Python half is ported module by module later.
 - Pi's file formats are the single source: `AGENTS.md`, skills under `.agents/skills/`,
   role definitions in the package's `agents/` folder. `.claude/agents/` exists only for the
   Claude Code sessions that build this repo. Checked 2026-10-03 (Claude Code 2.1.288): Claude

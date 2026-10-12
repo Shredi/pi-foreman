@@ -3,6 +3,28 @@
 ## [Unreleased]
 
 ### Added
+- Self-planning-roles round (numbers are the brief's points):
+  - (102) `ceremony.planner: self|role` (default `self`): under `self` the foreman writes the heavy plan itself and its approved checkpoint satisfies the planner step; under `role` a planner on the foreman's own rung or above switches the session to `self` (trace `planner_self_fallback`); `[plan-review]` stays mandatory.
+  - (102) Plan versions: the body above `## Ruling`, `## Rulings`, `## Parent ruling`, `## Decision log`, `## Addendum…` or `<!-- plan-appendix -->` is hashed (`planVersionHash`); review rounds, checkpoint approval and the `plan_changed` gate use it, so an appended ruling needs no new review.
+  - (103) `session-foreman` role: model of sessions opened by `foreman session open` (`--model` > provider mapping > own model; only the mapping's model is used); claude-bridge presets map Opus, openai and google their foreman model; not launchable.
+  - (103) A session never opens one ranked above its own: `session open refused [session_rank]`; fails closed when ranks exist and the own model is unknown.
+  - (103) `foreman:plan` / `foreman:result` intercom aliases; `foreman_wait kind:child` (label or any) wakes on a child's plan, result, update or close notice; heavy instruction for multi-session plans with `ruling.md` and `foreman session brief`; replay `session_tree`.
+  - (47) `roles.<role>.denyTools` (globs, layers only add): `mcp__*` denied, never asked, for planner, explorer, reviewer, senior-reviewer; applies to codemode inner calls.
+  - (54b) The foreman read budget counts `mcp__*` calls and `subagent get|guide`; the supervisor exemption ends at the reply or run end.
+  - (54c) Replay `parallel_ask`: two parallel child launches, one asks the supervisor.
+  - (54d) A child's `rm` of editor backups (`*~ *.bak *.orig *.swp .#*`, also via `/bin/rm`, `command rm`, `sudo rm`, `unlink`) is denied (`editor_backup`); builder and finalizer wording forbids shell edits.
+  - (97/30) A standalone same-line `NAME=/abs/literal` statement resolves a later `$NAME` in the overlay path checks and the shell write guard; `+=`, `let`, `declare`/`typeset`/`export`/`read`/`unset`, element and arithmetic assignments, `eval`/`source` and any IFS assignment keep the variable unresolved (security hardening after review).
+  - (97/31) grep, egrep, fgrep, rg and `git grep` patterns and option values are never path operands.
+  - (97/32) `/foreman close` cancels the session's own pending waits; an active child run still refuses.
+  - (97/33) The finish gate accepts a self-plan plus reviewer verdicts as a complete heavy ceremony.
+  - (97/34) A reviewer FAIL with a `SECURITY:` finding line exempts the answering builder revisions from `ceremony.revisionRounds`, ceiling 2x the limit (`revision_security_exempt`).
+  - (106) AGENTS.md: no new Python outside core/guards.
+  - (106, ruling 3a) The git guard no longer treats the `[`/`[[` builtin as a computed program; command substitutions in argument positions of reader commands stay allowed.
+  - (106, ruling 3b) Foreman policy rows allow `git fetch`, `npm ci`, `npm install`; a child's `git fetch`/`npm ci`/`npm install` ask.
+  - (106, ruling 3c) Reading `parent`/`child` of the session's own handoff dir is allowed for the foreman, writes ask.
+  - (106, ruling 3d) The orientation names the bundled package roots.
+  - (106, ruling 3e) The foreman never lists the checkout's parent directory. Documented limit: a reader chained with `find` loses the reader skip on a protected file.
+  - Documented limit: the permission system's own extractor resolves only HOME/PWD and has no `git grep` pattern handling (docs/permissions.md).
 - Harness-friction round (numbers are the round's ledger items):
   - (2, 3, 5, 6, 18) Owned dirs: `external_directory` patterns in the permission policy for the handoffs dir,
     `sessions/*/subagent-artifacts`, `*.worktrees`, the children's scratch root, bare `foreman.json`/`settings.json`,
