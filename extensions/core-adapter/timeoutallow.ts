@@ -19,6 +19,7 @@ import type { TmpScratchDeps } from "./tmpscratch.ts";
 import { ChainWrites, contained, redirectOk, refusedProgram, SAFE_CLASSES, scratchExpansions, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
 import { splitChain } from "./shellchain.ts";
+import { hasGlobSentinel, ownHandoffSegment, withGlobSentinel } from "./ownhandoff.ts";
 
 export interface BashRules {
   allow: string[];
@@ -78,15 +79,17 @@ export function unwrapTimeout(unit: string): string | null {
   }
 }
 
-export type AllowLabel = "timeout-wrapper" | "test-restore" | "sed-read" | "tmp-scratch" | "child-scratch" | "effect-write-in" | "effect-build-test" | "effect-read";
+export type AllowLabel = "timeout-wrapper" | "test-restore" | "sed-read" | "tmp-scratch" | "child-scratch" | "own-handoff" | "effect-write-in" | "effect-build-test" | "effect-read";
 
 /** Label precedence when a chain mixes allowed segments (the first present wins). */
-const PRECEDENCE: AllowLabel[] = ["timeout-wrapper", "test-restore", "sed-read", "effect-write-in", "effect-build-test", "effect-read", "child-scratch"];
+const PRECEDENCE: AllowLabel[] = ["timeout-wrapper", "test-restore", "sed-read", "own-handoff", "effect-write-in", "effect-build-test", "effect-read", "child-scratch"];
 
 export interface AllowDeps extends TmpScratchDeps {
   scratchDirs?: string[];
   /** The effect context (effects.ts); without it only the rules, sed-read and timeout-wrapper apply per segment. */
   effects?: EffectCtx;
+  /** The session's own handoff dirs (owned.ts ownHandoffDirs); with an effect context, `cp`/`mkdir`/`cat`/`ls` below them or the worktree pass as "own-handoff" (ownhandoff.ts). */
+  ownDirs?: string[];
 }
 
 /**
@@ -130,7 +133,7 @@ export function deterministicAllowInfo(rules: BashRules, command: string, deps: 
 }
 
 function compose(rules: BashRules, text: string, deps: AllowDeps): { label: AllowLabel; segments: number } | null {
-  const chain = splitChain(text);
+  const chain = splitChain(deps.ownDirs?.length && deps.effects ? withGlobSentinel(text) : text);
   if (!chain) return null;
   const c = deps.effects ?? null;
   const scratch = c?.scratch ?? deps.scratchDirs ?? [];
@@ -143,6 +146,11 @@ function compose(rules: BashRules, text: string, deps: AllowDeps): { label: Allo
     if (!seg.redirects.every((r) => redirectOk(r, c, cwd, scratch, platform))) return null;
     if (c) {
       if (!writes!.pass(cwd, seg)) return null; // a path under an earlier segment's write (effects.ts ChainWrites)
+      if (deps.ownDirs?.length && ownHandoffSegment(c, deps.ownDirs, cwd, seg)) {
+        labels.add("own-handoff");
+        continue;
+      }
+      if (hasGlobSentinel(seg.text)) return null; // the swapped glob is meaningful to the own-handoff rule only
       const e = segmentEffect(c, cwd, seg);
       if (e.unit !== seg.text && (hits(rules.ask, e.unit, "") || hits(rules.deny, e.unit, ""))) return null;
       if (e.label && SAFE_CLASSES.includes(e.cls)) labels.add(e.label);

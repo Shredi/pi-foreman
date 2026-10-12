@@ -186,6 +186,8 @@ export interface ReviewSession {
   bashRules?: () => BashRules | null;
   /** Live child scratch dirs of this session, of one role when given (childscratch.ts). */
   scratchDirs?: (role: string | null) => string[];
+  /** This session's own handoff dirs (owned.ts ownHandoffDirs): the "own-handoff" allow (ownhandoff.ts). */
+  ownDirs?: () => string[];
 }
 
 /** Deny text for a forwarded child ask that deferred with no human to ask: names what runs without approval. */
@@ -315,6 +317,7 @@ export class ForemanReview {
       else if (d.forwarding && surface.startsWith("external_directory") && (fixed = this.scratchPathAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (!REVIEW_SURFACES.includes(surface)) out = { verdict: { kind: "defer" }, label: "surface" };
       else if (surface === "bash" && d.forwarding && (fixed = this.fixedAllow(s, d, cls))) out = { verdict: { kind: "allow" }, label: fixed };
+      else if (surface === "bash" && !d.forwarding && (fixed = this.fixedAllow(s, d, cls, "own-handoff"))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (!target) out ={ verdict: { kind: "defer" }, label: "no-model" };
       else if (reviewValue(d).length > MAX_VALUE) out = { verdict: { kind: "defer" }, label: "truncated" };
       else {
@@ -348,20 +351,30 @@ export class ForemanReview {
   }
 
   /** A deterministic label (timeoutallow.ts) when the forwarded command is allowed without the model; traces `chain_allow {segments}` for a chain. */
-  private fixedAllow(s: ReviewSession, d: AskDetails, cls: { ctx: EffectCtx } | null): string | null {
+  private fixedAllow(s: ReviewSession, d: AskDetails, cls: { ctx: EffectCtx } | null, only?: string): string | null {
     try {
       const rules = s.bashRules?.();
       if (!rules) return null;
       // PS forwards only the first most-restrictive unit; the allow must also hold for the full command.
       const unit = unitValue(d);
       const full = reviewValue(d);
-      const deps = { scratchDirs: this.scratchOf(s, d), ...(cls ? { effects: cls.ctx } : {}) };
+      const deps = { scratchDirs: this.scratchOf(s, d), ownDirs: this.ownDirsOf(s), ...(cls ? { effects: cls.ctx } : {}) };
+      // the session's own asks (not forwarded from a child) get only the own-handoff allow without the model
+      if (only && (deterministicAllow(rules, unit, deps) !== only || deterministicAllow(rules, full, deps) !== only)) return null;
       if (!deterministicAllow(rules, unit, deps)) return null;
       const info = deterministicAllowInfo(rules, full, deps);
       if (info && info.segments >= 2) s.trace?.({ event: "chain_allow", segments: info.segments, decision: info.label, role: d.agentName ?? "?" });
       return info?.label ?? null;
     } catch {
       return null;
+    }
+  }
+
+  private ownDirsOf(s: ReviewSession): string[] {
+    try {
+      return s.ownDirs?.() ?? [];
+    } catch {
+      return [];
     }
   }
 
