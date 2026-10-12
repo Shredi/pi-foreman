@@ -273,8 +273,11 @@ read by `tests/test_git_guard_split_literal.py` and `gitguard-split.test.ts` (`s
 
 Besides the script rule above, a test run of a child that may only read its cwd (round worktree) names only operands
 that resolve, symlinks followed, inside the round worktree and are git-tracked: positional paths of `node --test`,
-`pytest`, `python3 -m pytest|unittest` (a dotted module is its tracked `.py`), words after `--` of `npm run test:x`,
-values of `--require`/`--import`/`-p`/`-C`/`-s` and similar, and `make` variable assignments. Globs, `$VAR` words and
+`pytest`, `python3 -m pytest|unittest` (a dotted module is its tracked `.py`), every positional of `npm test|run <script>` (with or
+without `--`), values of the module-loading options `--require`/`-r`/`--import`/`--loader`/`--test-reporter`/
+`--test-reporter-destination`/`--test-global-setup` (built-in reporter names and `stdout`/`stderr` stay allowed) and of
+`-C`/`-f`/`-I`/`-s`/`-t`/`-c` and similar, also attached (`make test -C/x`, `--directory=`, `--file=`). A `make` `K=V`
+word is no operand; its value is checked only when it contains a `/`. A pytest `-p` value is a plugin name, not a path. Globs, `$VAR` words and
 untracked paths are denied with a reason. A builder in its own worktree may run its own new untracked test.
 
 `git config` is a read only as `git config <key>`, `get`/`list`, `--get|--get-all|--get-regexp <key> [<re>]`,
@@ -286,7 +289,9 @@ untracked paths are denied with a reason. A builder in its own worktree may run 
 Probe-file scan: for a child of any role, a script run with `node`, `python`, `python3`, `bash`, `sh` or `npx` from a path
 that is not git-tracked in a round worktree (scratch, `$FOREMAN_SCRATCH`, tmp, an untracked file) is read before it
 runs; one that reassembles a guarded token from fragments (above), `String.fromCharCode(…)` or a base64 literal that
-decodes to one is denied. Tracked files of the round worktree are not read. A script path held in a variable other than
+decodes to one is denied. Files of the round worktree that are tracked in HEAD and unmodified against it (a staged or
+modified one is scanned) are not read. `npx tsx|node|ts-node|python3|bash <file>` and `<interp> < file` stdin files are scanned
+like a named script. Known limit: modules a scanned script imports are not read. A script path held in a variable other than
 `$FOREMAN_SCRATCH` is not resolved.
 
 ### Round surfaces
