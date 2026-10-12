@@ -518,5 +518,44 @@ class ShellVarsReviewTest(unittest.TestCase):
         self.assertEqual(self.kind(cmd), "cp")
 
 
+class ShellVarsCaseNewlineTest(unittest.TestCase):
+    """`case` arms and a newline after a reserved word or control operator never make an assignment a sole statement."""
+
+    def setUp(self):
+        self.ws = os.path.realpath(tempfile.mkdtemp(prefix="pf-swg-vcase-"))
+        self.hand = os.path.join(self.ws, ".workflow", "s1")
+        os.makedirs(self.hand)
+        os.mkdir(os.path.join(self.ws, "src"))
+        self.addCleanup(shutil.rmtree, self.ws, True)
+
+    def kind(self, cmd):
+        hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], False, None, [self.hand])
+        return hit[0] if hit else None
+
+    def test_case_arm_assignment_is_refused(self):
+        a, w = self.hand, self.ws
+        for arm in ("y) H=%s;; esac", "y) H=%s ;; esac", "y) :;; z) H=%s;; esac", "y) true; H=%s;; esac"):
+            cmd = "H=%s/src; case x in %s; cp f $H" % (w, arm % a)
+            with self.subTest(command=cmd):
+                self.assertEqual(self.kind(cmd), "cp", cmd)
+
+    def test_newline_after_control_word_is_refused(self):
+        a, w = self.hand, self.ws
+        for head, tail in (
+            ("false &&", "\ncp f $H"),
+            ("if false; then", "\nfi; cp f $H"),
+            ("false ||", "\ncp f $H"),
+            ("false |", "\ncp f $H"),
+            ("{", "\n} </dev/null; cp f $H"),
+            ("if false; then :\nelse", "\nfi; cp f $H"),
+        ):
+            cmd = "H=%s/src; %s\nH=%s%s" % (w, head, a, tail)
+            with self.subTest(command=cmd):
+                self.assertEqual(self.kind(cmd), "cp", cmd)
+
+    def test_plain_newline_assignment_still_resolves(self):
+        self.assertIsNone(self.kind("H=%s\ncp plan.md $H/plan.md" % self.hand))
+
+
 if __name__ == "__main__":
     unittest.main()

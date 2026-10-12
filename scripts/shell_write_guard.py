@@ -240,9 +240,11 @@ class Lexer(object):
         # a loop, function or eval/source on the line: nothing resolves from here on. An IFS, `let` or `((..))`
         # anywhere on the line (word splitting, arithmetic assignment) poisons the whole line. Values with blanks
         # never resolve (see _track_assignment), so an unquoted `$H` is always one word.
-        self.noresolve = re.search(r"\bIFS\b|\blet\b|\btrap\b|\(\(", text) is not None
+        self.noresolve = re.search(r"\bIFS\b|\blet\b|\btrap\b|\bcase\b|\(\(", text) is not None
         self.paren = 0
         self.prev_assign = False
+        # after `then`, `else`, `elif`, `do`, `{` a following statement may or may not run: no later assignment counts
+        self.noassign = False
 
     # -- words
     def _expansion(self, w):
@@ -398,7 +400,7 @@ class Lexer(object):
             m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)(=|$)", w.text)
             if m:
                 names.append((m.group(1), w))
-        ok = sole and not plain and len(names) == 1 and self.paren == 0 and not self.noresolve \
+        ok = sole and not plain and len(names) == 1 and self.paren == 0 and not self.noresolve and not self.noassign \
             and op in (None, ";", "\n", "&&", "||") \
             and (self.last_op in (None, ";", "\n") or (self.last_op == "&&" and self.prev_assign))
         if ok:
@@ -424,7 +426,8 @@ class Lexer(object):
             c.op_before = self.last_op
             c.op_after = op
             self.items.append(c)
-        self.last_op = op
+        if not (op == "\n" and not c.words and not c.redirs and self.last_op in ("&&", "||", "|", "|&")):
+            self.last_op = op   # a newline after a control operator continues the same list
         self.cmd = Cmd()
 
     def _heredocs(self):
@@ -518,6 +521,8 @@ class Lexer(object):
                 self.i += 1
                 continue
             self.cmd.words.append(w)
+            if len(self.cmd.words) == 1 and w.text in ("then", "else", "elif", "do", "{", "case", "in"):
+                self.noassign = True
             if len(self.cmd.words) == 1 and w.text in ("for", "while", "until", "select", "function", "coproc", "eval", "source", "."):
                 self.noresolve = True
         self._finish_cmd(None)
