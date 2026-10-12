@@ -349,6 +349,7 @@
   stays, as offline exploration.
 
 ### Fixed
+- Bench waiter: generate-subagents and permissions_gen failures now report the return code, stdout and stderr tails.
 - Harness-friction round:
   - (14) Read-only bash naming protected files is no longer write-protected, but only for a minimal reader set
     (`cat head tail wc grep egrep fgrep rg ls stat file diff cmp md5sum sha1sum sha256sum shasum`, and `cd`), no write redirect

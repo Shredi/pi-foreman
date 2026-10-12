@@ -384,6 +384,14 @@ def read_secret(path):
             pass
 
 
+def _subprocess_failure(label, proc):
+    """Failure message for a helper subprocess: return code plus the last 800 chars of each stream
+    (foreman_config.py and permissions_gen.py print their errors as JSON on stdout)."""
+    def tail(stream):
+        return (stream or b"").decode("utf-8", "replace")[-800:]
+    return "%s failed (rc=%s): stdout: %s stderr: %s" % (label, proc.returncode, tail(proc.stdout), tail(proc.stderr))
+
+
 def build_world(args, row):
     """Agent dir with foreman.json + settings.json (foreman rows) or settings.json only (plain)."""
     root = Path(args.work)
@@ -398,13 +406,13 @@ def build_world(args, row):
                               "--agent-dir", str(agent), "--project-dir", args.cwd],
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
         if gen.returncode != 0:
-            raise RuntimeError("generate-subagents failed: %s" % gen.stderr.decode("utf-8", "replace")[-800:])
+            raise RuntimeError(_subprocess_failure("generate-subagents", gen))
         settings["subagents"] = json.loads(gen.stdout.decode("utf-8"))["subagents"]
         if row.get("_permission_system"):  # same render the installer runs (setup.mjs)
             pg = subprocess.run([sys.executable, str(REPO / "scripts" / "permissions_gen.py"), "render", "--agent-dir", str(agent)],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
             if pg.returncode != 0:
-                raise RuntimeError("permissions_gen failed: %s" % pg.stderr.decode("utf-8", "replace")[-800:])
+                raise RuntimeError(_subprocess_failure("permissions_gen", pg))
             cfg = agent / "extensions" / "pi-permission-system" / "config.json"
             cfg.parent.mkdir(parents=True, exist_ok=True)
             rendered = json.loads(pg.stdout.decode("utf-8"))["config"]
