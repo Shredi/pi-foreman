@@ -23,13 +23,14 @@ test("trace: non-allowlisted keys and non-primitive values are dropped", () => {
     cost: Number.NaN,
   });
   assert.deepEqual(out, { event: "guard", guard: "destructive_guard", decision: "deny", latencyMs: 41 });
-  assert.deepEqual([...TRACE_FIELDS], ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by", "phase", "count", "action", "runId", "outcome", "ms", "codemode", "after", "allowed", "items", "attested", "agent", "signals", "policy", "foreman", "turns", "rung", "cmd", "chars", "cut", "climb_available", "trimmed_lines", "skipped", "bytes", "segments", "class", "item", "hits", "policy_override", "note", "findingId", "gate", "file", "line", "primary", "models", "ready", "removed", "handover", "occasion", "thinking", "model_overridden", "marker", "pack", "op", "limit"]);
+  assert.deepEqual([...TRACE_FIELDS], ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by", "phase", "count", "action", "runId", "outcome", "ms", "codemode", "after", "allowed", "items", "attested", "agent", "signals", "policy", "foreman", "turns", "rung", "cmd", "chars", "cut", "climb_available", "trimmed_lines", "skipped", "bytes", "segments", "class", "item", "hits", "policy_override", "note", "findingId", "gate", "file", "line", "primary", "models", "ready", "removed", "handover", "occasion", "thinking", "model_overridden", "marker", "pack", "op", "limit", "command"]);
 });
 
 test("trace: ask and overlay events carry no command text", () => {
   for (const event of ["ask", "overlay"]) {
     const out = sanitizeTrace({ event, toolFamily: "bash", decision: "deny", command: "curl http://x/secret", title: "t", message: "m", permissionDecisionReason: "r", input: { command: "x" } });
-    assert.deepEqual(out, { event, toolFamily: "bash", decision: "deny" });
+    // lane 3h: an overlay deny (and only a deny) carries its command; the ask event still carries none
+    assert.deepEqual(out, { event, toolFamily: "bash", decision: "deny", ...(event === "overlay" ? { command: "curl http://x/secret" } : {}) });
   }
   // shell write refusals carry the write form only, never the command
   assert.deepEqual(sanitizeTrace({ event: "shell_write_refused", kind: "redirect", command: "echo x > src/a.go" }), { event: "shell_write_refused", kind: "redirect" });

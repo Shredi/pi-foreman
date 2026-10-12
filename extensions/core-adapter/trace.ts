@@ -4,18 +4,23 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-export const TRACE_FIELDS = ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by", "phase", "count", "action", "runId", "outcome", "ms", "codemode", "after", "allowed", "items", "attested", "agent", "signals", "policy", "foreman", "turns", "rung", "cmd", "chars", "cut", "climb_available", "trimmed_lines", "skipped", "bytes", "segments", "class", "item", "hits", "policy_override", "note", "findingId", "gate", "file", "line", "primary", "models", "ready", "removed", "handover", "occasion", "thinking", "model_overridden", "marker", "pack", "op", "limit"] as const;
+export const TRACE_FIELDS = ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by", "phase", "count", "action", "runId", "outcome", "ms", "codemode", "after", "allowed", "items", "attested", "agent", "signals", "policy", "foreman", "turns", "rung", "cmd", "chars", "cut", "climb_available", "trimmed_lines", "skipped", "bytes", "segments", "class", "item", "hits", "policy_override", "note", "findingId", "gate", "file", "line", "primary", "models", "ready", "removed", "handover", "occasion", "thinking", "model_overridden", "marker", "pack", "op", "limit", "command"] as const;
 export type TraceField = (typeof TRACE_FIELDS)[number];
 export type TraceRecord = Partial<Record<TraceField, string | number | boolean | null>>;
 
 const ALLOWED = new Set<string>(TRACE_FIELDS);
 const MAX_STRING = 120;
+const MAX_COMMAND = 200; // a denied command (lane 3h)
+/** `command` is kept only on a deny trace: a refused launch, a read/recheck budget deny, an overlay deny. */
+const DENY_EVENTS = new Set(["read_budget", "recheck_budget", "child_read_budget", "overlay", "launch_refused"]);
+const isDeny = (rec: Record<string, unknown>): boolean => DENY_EVENTS.has(String(rec.event)) && (rec.event === "launch_refused" || rec.action === "deny" || rec.decision === "deny");
 
 /** Keep allowlisted keys whose value is a primitive; cap string length. */
 export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
   const out: Record<string, string | number | boolean | null> = {};
   for (const [k, v] of Object.entries(rec)) {
     if (!ALLOWED.has(k)) continue;
+    if (k === "command" && !isDeny(rec)) continue; // never a command outside a deny
     if (k === "note" && rec.event !== "friction") continue; // free text: only the scrubbed friction note
     if (k === "file" && rec.event !== "finding") continue; // a path: only a finding's file, as its base name
     if (k === "file" && typeof v === "string") {
@@ -25,7 +30,7 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
     if (v === null || typeof v === "boolean") out[k] = v as null | boolean;
     else if (typeof v === "number") {
       if (Number.isFinite(v)) out[k] = v;
-    } else if (typeof v === "string") out[k] = v.length > MAX_STRING ? v.slice(0, MAX_STRING) : v;
+    } else if (typeof v === "string") out[k] = v.length > (k === "command" ? MAX_COMMAND : MAX_STRING) ? v.slice(0, k === "command" ? MAX_COMMAND : MAX_STRING) : v;
   }
   return out as TraceRecord;
 }

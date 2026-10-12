@@ -74,7 +74,9 @@ import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } 
 import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts";
 import { openTrace, traceFile } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
-import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
+import { loadPrices } from "./cost.ts";
+import { budgetCap, budgetCheck, failedItemsOf, prependReReview, reviewCapCheck, reviewRunsCap } from "./costguard.ts";
+import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { ChildWidget, rungOf } from "./childwidget.ts";
@@ -133,6 +135,18 @@ const ENTRY = fileURLToPath(import.meta.url);
 const PKG_ROOT = path.resolve(HERE, "..", "..");
 const CORE_DIR = path.join(PKG_ROOT, "core");
 const BIN_DIR = path.join(PKG_ROOT, "bin");
+
+/** Deny trace fields (lane 3h): the reason, the command (a bash command, else the tool name; 200 chars at the writer) and the role. */
+function denyFields(reason: unknown, toolName: string, input: unknown, role: string): { reason: string; command: string; role: string } {
+  const c = input && typeof input === "object" ? (input as { command?: unknown }).command : undefined;
+  return { reason: typeof reason === "string" ? reason : "", command: typeof c === "string" && c ? c : toolName, role };
+}
+
+/** Launch refusal trace fields: the roles launched and the call as `subagent <roles>`. */
+function launchDeny(input: Record<string, unknown>): { role: string; command: string } {
+  const roles = subagentAgents(input).join("+");
+  return { role: roles, command: `subagent ${roles}`.trim() };
+}
 const ADAPTER_ID = "pi-foreman-core-adapter";
 const GIT_GUARD_ID = "pi-foreman-git-guard";
 const GIT_GUARD_ENTRY = path.join(PKG_ROOT, "extensions", "git-guard", "index.ts");
@@ -225,6 +239,12 @@ interface Session {
   climbRefusals: number;
   /** Foreman only: per-item FAIL counts of reviewer runs (ladder.reviewerClimb, reviewerclimb.ts). */
   reviewerFails: ReviewerFails;
+  /** Foreman only: review launches since the last user prompt (ceremony.reviewRuns). */
+  reviewCount: number;
+  /** Foreman only: item numbers of the last FAIL verdict, until a review passes (item-only re-review). */
+  failItems: string[];
+  /** Foreman only: the 80 % budget warning was given (ceremony.budgetUsd). */
+  budgetWarned: boolean;
   /**
    * Foreman only: review launches (occasion.ts) by tool call id, then by run id; the panel's shadow
    * instruction of a run end; each run end's review results with their located findings (findings.ts); pending
@@ -309,7 +329,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const bridgeIso = new BridgeIsolation();
   const review = new ForemanReview();
   const reviewFacts = new ReviewFacts();
-  const usageFooter = new UsageFooter();
+  const usageFooter = new UsageFooter(loadPrices(PKG_ROOT));
+  /** The summed estimate (lane 3b): the foreman's own list-price cost plus every run's priced cost. */
+  function summedCost(s: Session): { foreman: number; runs: number; total: number } {
+    const foreman = usageFooter.totalsOf(s.id)?.cost ?? 0;
+    let runs = 0;
+    try {
+      runs = s.widget.runs.views().reduce((a, r) => a + r.cost, 0);
+    } catch {
+      // runs are best effort
+    }
+    return { foreman, runs, total: foreman + runs };
+  }
   const compactionGate = new CompactionGate();
   herdrEvents = pi.events as EventBus | undefined;
   // Herdr blocked shim (herdr.ts); `blockedShim.onChange((active) => ...)` can feed other consumers.
@@ -448,6 +479,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       handoffWaits: new Set(),
       climbRefusals: 0,
       reviewerFails: new ReviewerFails(),
+      reviewCount: 0,
+      failItems: [],
+      budgetWarned: false,
       reviewRuns: { byCall: new Map(), byRun: new Map(), blocks: new Map(), findings: new Map(), sync: Promise.resolve() },
       panels: new PendingPanels({ send: (text) => pi.sendMessage({ customType: "pi-foreman-panel", content: text, display: true }, { triggerTurn: false }), trace: (r) => s.trace?.emit(r), extra: () => prChecksLine(s) }),
       reviews: [],
@@ -492,7 +526,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       keepalive: new KeepaliveLog(),
       idleCtx: null,
       lastAssistantAt: null,
-      widget: new ChildWidget(usageFile(agentDir, foremanSession)),
+      widget: new ChildWidget(usageFile(agentDir, foremanSession), loadPrices(PKG_ROOT)),
       live: null,
     };
     sessions.set(id, s);
@@ -1088,7 +1122,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.readNotices.set(callId, d.text);
       s.trace?.emit({ event: "read_budget", phase: d.phase, count: d.count, action: "warn" });
     } else if (d.kind === "deny") {
-      s.trace?.emit(d.event === "read_budget" ? { event: "read_budget", phase: d.phase, count: d.count, action: "deny" } : { event: "recheck_budget", count: d.count, action: "deny" });
+      const deny = denyFields(d.reason, toolName, input, "foreman");
+      s.trace?.emit(d.event === "read_budget" ? { event: "read_budget", phase: d.phase, count: d.count, action: "deny", ...deny } : { event: "recheck_budget", count: d.count, action: "deny", ...deny });
       return { block: true as const, reason: d.reason };
     }
     return undefined;
@@ -1103,7 +1138,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.readNotices.set(callId, d.text);
       s.trace?.emit({ event: "child_read_budget", role, count: d.count, action: "warn" });
     } else if (d.kind === "deny") {
-      s.trace?.emit({ event: "child_read_budget", role, count: d.count, action: "deny" });
+      s.trace?.emit({ event: "child_read_budget", count: d.count, action: "deny", ...denyFields(d.reason, toolName, input, role) });
       return { block: true as const, reason: d.reason };
     }
     return undefined;
@@ -1139,6 +1174,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const counted = s.isChild ? data : countingView(data, reviewResults);
           if (!s.isChild) s.reviewerFails.onRun(runId, reviewerTextsOfRunEnd(counted), boundLedger(s.markerDir, s.id));
           if (reviewResults.length > 0) recordRunFindings(s, runId, reviewResults);
+          if (!s.isChild) {
+            const roles = s.launchedRoles.get(runId) ?? [];
+            // Lane 3f: review_done for every review run (re-reviews and panel shadows too, kind shadow); a review that ended without a result is a no-verdict.
+            const done = reviewResults.length > 0 ? reviewResults.map((r) => ({ role: r.role, decision: r.verdict ?? "no-verdict", shadow: r.shadow !== null })) : roles.filter((r) => REVIEW_ROLES.includes(r)).map((role) => ({ role, decision: "no-verdict", shadow: shadowRun(reviewLaunch) }));
+            for (const d of done) s.trace?.emit({ event: "review_done", role: d.role, decision: d.decision, runId, ...(d.shadow ? { kind: "shadow" } : {}) });
+            // Item-only re-review: the failed items of the latest FAIL verdict, cleared by a pass.
+            for (const r of reviewResults) if (r.counts) {
+              const items = failedItemsOf(r.text);
+              if (items.length > 0) s.failItems = items;
+              else if (r.verdict === "pass") s.failItems = [];
+            }
+            // Lane 3g: the real end of each role of the run, with the run's priced cost and duration from the presence row.
+            const info = s.widget.runs.info(runId);
+            const status = runEndOf(data)?.status;
+            for (const role of roles) s.trace?.emit({ event: "role_result", role, runId, exit: status === "completed" ? 0 : 1, ...(info?.ms != null ? { ms: info.ms } : {}), ...(info ? { cost: Math.round(info.cost * 10000) / 10000 } : {}) });
+          }
           // A panel shadow (panel.ts) reports to its pending panel, also without a result (null: not run).
           if (reviewLaunch?.bind) s.panels.ended(reviewLaunch.bind, reviewLaunch.panel?.shadows[0] ?? "", reviewResults.length > 0 ? (s.reviewRuns.findings.get(runId) ?? Promise.resolve([])).then((b) => b.find((x) => !x.result.primary)?.findings ?? null) : Promise.resolve(null));
           if (!s.isChild) recordPlanReviews(s, runId, reviewResults);
@@ -1237,7 +1288,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s.overlay) return { block: true as const, reason: OVERLAY_UNAVAILABLE };
     const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, readable: childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform) }; })() : {}) });
     const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) });
-    if (d) s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: r ? (d.kind === "deny" ? "deny" : "ask-denied") : "ask-approved" });
+    if (d) s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: r ? (d.kind === "deny" ? "deny" : "ask-denied") : "ask-approved", ...(r ? denyFields((d as { reason?: unknown }).reason, toolName, input, s.isChild ? s.usage.line.role : "foreman") : {}) });
     return r;
   }
 
@@ -1333,6 +1384,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const blocked = childLaunchBlock(s, event.toolName);
       if (blocked) return { block: true, reason: blocked };
       let notices: string[] = [];
+      let budgetNotes: string[] = [];
       let rounds: LaunchRounds | undefined;
       let kind: LaunchKind | undefined;
       let climbs: Climb[] = [];
@@ -1351,12 +1403,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (act.block) return { block: true, reason: act.block };
         const outPath = outputPathBlock(input);
         if (outPath) {
-          s.trace?.emit({ event: "launch_refused", reason: "output_path", tier: s.ceremony.tier });
+          s.trace?.emit({ event: "launch_refused", reason: "output_path", tier: s.ceremony.tier, ...launchDeny(input) });
           return { block: true, reason: outPath };
         }
         const heavyUnchecked = uncheckedHeavyBlock(act.unchecked, s.ceremony.tier);
         if (heavyUnchecked) {
-          s.trace?.emit({ event: "launch_refused", reason: "unchecked_heavy", tier: s.ceremony.tier });
+          s.trace?.emit({ event: "launch_refused", reason: "unchecked_heavy", tier: s.ceremony.tier, ...launchDeny(input) });
           return { block: true, reason: heavyUnchecked };
         }
         if (act.unchecked) notifyOnce(s, ctx, `workflow:${act.unchecked}`, `pi-foreman: safety.subagents.allowWorkflow is on; '${act.unchecked}' launches are not checked against the role allowlist or the role map.`);
@@ -1371,7 +1423,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (refused) return { block: true, reason: refused };
         const notSingle = plannerLaunchBlock(input, s.runs);
         if (notSingle) {
-          s.trace?.emit({ event: "launch_refused", reason: "planner_single", tier: s.ceremony.tier });
+          s.trace?.emit({ event: "launch_refused", reason: "planner_single", tier: s.ceremony.tier, ...launchDeny(input) });
           return { block: true, reason: notSingle };
         }
         const resolution = await currentRoles(s, ctx);
@@ -1400,6 +1452,29 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return { block: true, reason: `pi-foreman: the last review passed and nothing changed — finish, or revise first. Ask for a second review only when warranted: put "[${SECOND_OPINION}]" in the reviewer task text.` };
           }
         }
+        // Lane 3c: budget guard on the summed estimate (foreman + all runs); 3e: review cap and item-only re-review.
+        if (!s.isChild && actionOf(input) === null && shadow.kind !== "launch") {
+          const cost = summedCost(s);
+          const bd = budgetCheck(cost.foreman, cost.runs, budgetCap(get(s.config.config, "ceremony.budgetUsd")), s.budgetWarned);
+          if (bd?.kind === "refuse") {
+            s.trace?.emit({ event: "launch_refused", reason: bd.reason, tier: s.ceremony.tier, cost: Math.round(cost.total * 10000) / 10000, limit: budgetCap(get(s.config.config, "ceremony.budgetUsd")), ...launchDeny(input) });
+            return { block: true, reason: bd.text };
+          }
+          if (bd?.kind === "warn") {
+            s.budgetWarned = true;
+            budgetNotes = [bd.text];
+            s.trace?.emit({ event: "budget_warn", cost: Math.round(cost.total * 10000) / 10000, limit: budgetCap(get(s.config.config, "ceremony.budgetUsd")) });
+          }
+          const reviewCount = launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)).length;
+          const cap = reviewRunsCap(get(s.config.config, "ceremony.reviewRuns"));
+          const rc = reviewCapCheck(s.reviewCount, reviewCount, cap);
+          if (rc) {
+            s.trace?.emit({ event: "launch_refused", reason: rc.reason, tier: s.ceremony.tier, count: s.reviewCount, limit: cap, ...launchDeny(input) });
+            return { block: true, reason: rc.text };
+          }
+          if (s.failItems.length > 0) for (const [e, occ] of occasions) if (occ === "item" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependReReview(e.task, s.failItems);
+          s.reviewCount += reviewCount;
+        }
         // D3/D4: builder runs after a review of built work are revision rounds: every step of a
         // tasks/chain call, and a resume of a builder run (its model stays, so never a strong
         // relaunch). Checked here, on the guarded path; a refused launch counts and records nothing.
@@ -1426,7 +1501,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (!s.isChild && actionOf(input) === null && shadow.kind !== "launch") {
           const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined });
           if (lp.block) {
-            s.trace?.emit({ event: "launch_refused", reason: "strong_no_reason", tier: s.ceremony.tier });
+            s.trace?.emit({ event: "launch_refused", reason: "strong_no_reason", tier: s.ceremony.tier, ...launchDeny(input) });
             return { block: true, reason: lp.block };
           }
           climbs = lp.climbs;
@@ -1459,7 +1534,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const no = rankRefusalFor(s.config.config, foremanModel, m, rolesOfModel(input, m));
             if (!no) continue;
             const marker = floorMarker(raised, m);
-            s.trace?.emit({ event: "launch_refused", reason: "rank_policy", policy: no.policy, foreman: no.foreman, requested: no.requested, ...(marker ? { marker } : {}) });
+            s.trace?.emit({ event: "launch_refused", reason: "rank_policy", ...launchDeny(input), policy: no.policy, foreman: no.foreman, requested: no.requested, ...(marker ? { marker } : {}) });
             const hint = rolesOfModel(input, m).includes("planner") ? ` ${PLANNER_OWN_RUNG_HINT}` : "";
             return { block: true, reason: (marker ? `${no.message} The [${marker}] marker raised this entry to its role's strong rung, which the rank policy refuses; drop the marker or map a strong rung the policy allows.` : no.message) + hint };
           }
@@ -1555,7 +1630,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
       }
       // Kept for the tool result only once the launch passed every check.
-      if (notices.length > 0) s.launchNotices.set(event.toolCallId, notices);
+      if (notices.length + budgetNotes.length > 0) s.launchNotices.set(event.toolCallId, [...notices, ...budgetNotes]);
       if (rounds) {
         s.rounds = rounds.next;
         for (let i = 0; i < rounds.revisions; i++) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: kind });
@@ -1643,13 +1718,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       else s.trace?.emit({ event: "rung_up_steer", role: s.usage.line.role, count: steer.count, rung: steer.rung, reason: "context" });
       pi.sendUserMessage(steer.text, { deliverAs: "steer" });
     }
-    if (!appendUsage(s.usage.file, usageLine(s.usage.line, event.message))) notifyOnce(s, ctx, "usage", `pi-foreman: could not append to the usage log ${s.usage.file}; /foreman cost will be incomplete.`);
+    const usageRecord = usageLine(s.usage.line, event.message);
+    if (!appendUsage(s.usage.file, pricedLine(usageRecord, loadPrices(PKG_ROOT), lookupRate(ctx.modelRegistry as never, usageRecord.provider, usageRecord.model)))) notifyOnce(s, ctx, "usage", `pi-foreman: could not append to the usage log ${s.usage.file}; /foreman cost will be incomplete.`);
     if (!s.isChild) {
       s.turn.cacheRead += Number(m.usage?.cacheRead) || 0;
       s.turn.cacheWrite += Number(m.usage?.cacheWrite) || 0;
     }
     radarTouch(s, ctx);
-    usageFooter.update(s.id, ctx, event.message, { enabled: get(s.config.config, "footer.usage"), isChild: s.isChild, children: s.launches.size, wait: waitNote(waits.active(s.id)) });
+    usageFooter.update(s.id, ctx, event.message, { enabled: get(s.config.config, "footer.usage"), isChild: s.isChild, children: s.launches.size, wait: waitNote(waits.active(s.id)), runsCost: s.isChild ? undefined : summedCost(s).runs });
     return undefined;
   });
 
@@ -1663,7 +1739,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.rounds = initialRounds();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.waitingForParent = false), s.handoffWaits.clear();
-    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.climbRefusals = 0;
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.climbRefusals = 0), (s.reviewCount = 0);
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset(); // a new piece of work: the next builder launch records a new diff base (diffscan.ts ReviewFacts)
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
       resetRecheck(s, "user");
@@ -1706,7 +1782,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const launch = passed ? s.reviewRuns.byRun.get(passed.runId) : undefined;
     if (passed && !(launch && (launch.panel || launch.entries.some((e) => REVIEW_ROLES.includes(e.role) && (e.occasion === "second-opinion" || e.occasion === "plan-review"))))) markByReview(s, passed.runId, passed.text);
     s.rounds = onReviewDone(s.rounds, verdict, verdict === "fail" && hasSecurityFinding(text));
-    for (const role of reviews) s.trace?.emit({ event: "review_done", role, decision: verdict ?? "no-verdict" });
     if (verdict === "pass") {
       s.budget.enterPost();
       s.trace?.emit({ event: "recheck_budget", count: 0, action: "start" });
@@ -1767,7 +1842,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const o = planOpts(s, ctx);
     const reason = builderLaunchRefusal(s.plan, tier, s.plan ? currentPlanHash(s.plan, o) : null);
     if (!reason) return undefined;
-    s.trace?.emit({ event: "launch_refused", reason, tier });
+    s.trace?.emit({ event: "launch_refused", reason, tier, ...launchDeny(input) });
     return launchRefusalText(reason, s.plan, o.scratchDir);
   }
 
@@ -2052,7 +2127,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           }
         }
       }
-      for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_result", role, exit: event.isError ? 1 : 0, pollBash: s.pollBash || undefined });
+      for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_launched", role, exit: event.isError ? 1 : 0, pollBash: s.pollBash || undefined });
       if (s) s.pollBash = 0;
       const notices = s?.launchNotices.get(event.toolCallId);
       if (s && notices) s.launchNotices.delete(event.toolCallId);
@@ -2749,7 +2824,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         syncKeepalives(s, ctx);
         const lines = ws ? readUsage(s.agentDir, { workspace: wsPath }) : readUsage(s.agentDir, { session: s.usage.line.foremanSession });
         const title = ws ? `pi-foreman cost: all sessions in ${wsPath}` : `pi-foreman cost: session ${s.usage.line.foremanSession}`;
-        ctx.ui.notify(formatSummary(aggregate(lines), title), "info");
+        ctx.ui.notify(formatSummary(aggregate(lines, loadPrices(PKG_ROOT)), title), "info");
         return;
       }
       if (sub === "update-check") {

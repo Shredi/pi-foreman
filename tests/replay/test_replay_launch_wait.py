@@ -123,9 +123,9 @@ class TestLaunchWait(ReplayCase):
         pi = rig.start()
         sid = pi.session_id()
         pi.send({"id": pi.next_id(), "type": "prompt", "message": "[[replay:slow]] build it"})
-        # The launch result is held once role_result is traced (it is emitted just before the hold).
+        # The launch result is held once role_launched is traced (it is emitted just before the hold).
         recs = collect(pi, lambda r: r.get("type") == "tool_execution_start" and r.get("toolName") == "subagent", 60)
-        rig.wait_trace(lambda t: any(r.get("event") == "role_result" for r in t.get("trace-" + sid, [])), timeout=30)
+        rig.wait_trace(lambda t: any(r.get("event") == "role_launched" for r in t.get("trace-" + sid, [])), timeout=30)
         time.sleep(0.5)
         t0 = time.time()
         pi.send({"id": pi.next_id(), "type": "abort"})

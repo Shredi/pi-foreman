@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+- Cost lane 3 (R6 lane 3a): `bench/prices.json` moved to `config/prices.json`; a usage record with `cost.total` 0 is priced from the registry rate, else the table (Haiku 5.5 long-context tier per request), marked estimated.
+- Cost lane 3 (R6 lane 3b, 3d): per-run priced cost in presence `runs[].cost`; the status line shows the summed estimate (`all $X est (runs $Y)`); `/foreman cost` lists every role with priced totals (`~` = estimated).
+- Cost lane 3 (R6 lane 3c): `ceremony.budgetUsd` (default unset) refuses a launch `[budget_exceeded]` on the summed estimate, warning at 80 %.
+- Cost lane 3 (R6 lane 3e): `ceremony.reviewRuns` (default 3) caps review runs per user prompt (`[review_cap]`); a re-review after FAIL gets `[re-review items: N, M]`.
+- Cost lane 3 (R6 lane 3f, 3g, 3h): `review_done` traced at the run end of every review (shadows `kind: shadow`); the launch trace `role_result` is now `role_launched` and `role_result` is logged at the real run end; deny traces carry `reason`, `role` and `command` (TRACE_FIELDS gains `command`, kept only on denies).
+
 ### Fixed
 - Ladder lane 5 (R6 lane 5d): an explicit launch `model: "claude-bridge/claude-sonnet-5-5"` was silently overwritten by the role map (`claude-haiku-5-5`). An explicit `<provider>/<id>` model is now passed through when the rank policy allows it for the role. A model picked with `--model` at startup counts as user-picked, so it wins over the overlay foreman model also outside `foreman session open`. Tests in `r6-lane5.test.ts`.
 - Ladder lane 5 (R6 lane 5a, 5b, 5c, 5e, 5f, 6b): `reason` is documented as an extra top-level field of a strong launch (tested, schema unchanged); a revision answering a `SECURITY:` FAIL climbs under `strongOnRevision` while `revision_security_exempt` only lifts the cap; both `claude-bridge` presets put Sonnet 5.5 on the explorer, builder and reviewer bottom rung (Opus 5.5 strong; Haiku only as an explicit opt-in); the explorer's default `strongAbove` is 200000; `ladder.maxTurns.<role>` (builder 100) with `childMaxTurns` as fallback and a `child_turn_limit {role, turns, limit}` trace event; `ladder.rolePolicy.<role>` overrides `ladder.childPolicy` per role (presets: reviewer and senior-reviewer `at-or-below`, builder `below`).

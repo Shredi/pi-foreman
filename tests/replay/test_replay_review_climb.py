@@ -83,7 +83,7 @@ class TestReviewClimb(ReplayCase):
         self.assertEqual([r["role"] for r in events(rig, sid, "role_launch")], ["reviewer", "reviewer"])
         self.assertIsNotNone(trace_of(rig.traces(), "child", STRONG), "the shadow child ran on the strong model")
         self.assertEqual([(r["model"], r["file"]) for r in events(rig, sid, "finding") if not r["primary"]], [(STRONG, "calc.py")])
-        self.assertEqual([r["decision"] for r in events(rig, sid, "review_done")], ["pass"], "the shadow's FAIL notice counts for nothing")
+        self.assertEqual([r["decision"] for r in events(rig, sid, "review_done") if r.get("kind") != "shadow"], ["pass"], "the shadow's FAIL notice counts for nothing (its review_done carries kind shadow)")
         dumps = [json.dumps(r) for r in recs]
         self.assertTrue(any("[panel-shadow:%s] [pre-pr]" % STRONG in d and "issue these shadow reviews" in d for d in dumps), "the shadow instruction reached the foreman")
         self.assertTrue(any("pi-foreman-panel" in d and "Shadow findings (do not block)" in d for d in dumps), "the composed panel block was delivered")
