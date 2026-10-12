@@ -408,6 +408,17 @@ def _norm(path):
     return os.path.normcase(os.path.normpath(path)).rstrip("/\\") or "/"
 
 
+def session_names(agent_session, sid):
+    """Whether Herdr's agent_session (a session file path) names exactly session `sid`: the file's basename without
+    `.jsonl`, or the id after its last `_` (`<timestamp>_<id>.jsonl`). `s-1` does not match `s-10.jsonl`."""
+    if not isinstance(agent_session, str) or not sid:
+        return False
+    base = re.split(r"[\\/]", agent_session)[-1]
+    if base.endswith(".jsonl"):
+        base = base[:-6]
+    return sid in (base, base.rsplit("_", 1)[-1])
+
+
 def join(nodes, agents, procinfo=None):
     """Session nodes -> paneId. Presence paneId first (only while that pane is
     in `agents`, i.e. still open), then the node pid as a
@@ -434,7 +445,7 @@ def join(nodes, agents, procinfo=None):
         if a.get("agent") != "pi":
             return True
         sid = n.get("sid")
-        return bool(sid) and sid in (a.get("agent_session") or "")
+        return bool(sid) and session_names(a.get("agent_session"), sid)
 
     by_pid = {}
     for pane, pid in procinfo.items():
