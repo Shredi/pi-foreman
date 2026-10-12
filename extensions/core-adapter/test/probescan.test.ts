@@ -267,3 +267,64 @@ test("finding 8: a copy of a tracked test in scratch is an untracked operand", {
   denies(["node --test $FOREMAN_SCRATCH/probe.mts", `node --test ${copy}`, "npm run test:node -- $FOREMAN_SCRATCH/probe.mts"]);
   passes(["node --test tests/t.test.mjs"]);
 });
+
+// ---- R6 lane 1, review fixes 2: fail-closed operands and probe words ----
+if (posix) {
+  fs.mkdirSync(path.join(rt, "scripts"), { recursive: true });
+  fs.mkdirSync(path.join(rt, "extensions", "core-adapter", "test"), { recursive: true });
+  fs.writeFileSync(path.join(rt, "scripts", "foreman_docs.py"), "\n");
+  fs.writeFileSync(path.join(rt, "extensions", "core-adapter", "test", "a.test.ts"), "\n");
+  execFileSync("git", ["-C", rt, "add", "scripts/foreman_docs.py", "extensions/core-adapter/test/a.test.ts"], { stdio: "ignore" });
+  execFileSync("git", ["-C", rt, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "more"], { stdio: "ignore" });
+}
+
+test("fix 2A: attached short-option groups and abbreviated make long options are denied", { skip: !posix }, () => {
+  denies([
+    "make test -sC$FOREMAN_SCRATCH",
+    "make test -kf$FOREMAN_SCRATCH/mk",
+    "pytest -sc$FOREMAN_SCRATCH/pytest.ini tests/test_x.py",
+    "make test --di=$FOREMAN_SCRATCH",
+    "make test --fi=$FOREMAN_SCRATCH/mk",
+    "make test --direct=$FOREMAN_SCRATCH",
+    "make test --jobs=$FOREMAN_SCRATCH/x",
+    "node --test tests/t.test.mjs --some-option=$FOREMAN_SCRATCH/x.mjs",
+    "node --test -xy/$FOREMAN_SCRATCH/x.mjs",
+    `pytest -p ${scratch}/plug.py tests/test_x.py`,
+    "node --test --test-reporter=./tests/new.test.mjs",
+  ]);
+});
+
+test("fix 2A: ordinary test runs are not over-blocked", { skip: !posix }, () => {
+  passes([
+    "npm run test:node",
+    'node --test "extensions/core-adapter/test/*.test.ts"',
+    "python3 -m unittest discover -s tests",
+    "pytest -k name -p no:cacheprovider tests/test_x.py",
+    "pytest -kname -pno:cacheprovider tests/test_x.py",
+    "make test -j4 --keep-going",
+    "make test -j 4 --jobs=2 --silent --always-make --no-print-directory --dry-run",
+    "python3 scripts/foreman_docs.py features --check",
+    "node --test --test-reporter=spec tests/t.test.mjs",
+    "node --test --test-reporter=some-npm-reporter tests/t.test.mjs",
+  ]);
+  denies(['node --test "tests/*.mjs"']);
+});
+
+test("fix 2B: every word of an interpreter command is scanned, not only the first positional", { skip: !posix }, () => {
+  for (const role of ["builder", "reviewer"]) {
+    denies([
+      "node --unhandled-rejections strict $FOREMAN_SCRATCH/evil0.mjs",
+      `bash -eo pipefail ${scratch}/evil.sh`,
+      "node --watch-path . evil0.mjs",
+      "node --some-flag value --other=1 $FOREMAN_SCRATCH/evil0.mjs",
+      `node -r${scratch}/evil0.mjs plain.mjs`,
+    ], role, scratch);
+  }
+  passes(["node --unhandled-rejections strict plain.mjs", "bash -eo pipefail -c true"], "builder", scratch);
+});
+
+test("fix 2C: git config in a write form is denied for a read-only child whatever the target and cwd", { skip: !posix }, () => {
+  denies(["git config --global user.name x", "git config --system a.b c", "git config --global --unset a.b"], "reviewer", scratch);
+  denies(["git config --global user.name x"]);
+  passes(["git config --global --list", "git config --global user.name"], "reviewer", scratch);
+});

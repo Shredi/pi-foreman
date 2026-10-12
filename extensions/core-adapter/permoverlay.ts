@@ -733,10 +733,22 @@ function gitConfigRead(rest: string[]): boolean {
 /** Options of a test runner whose next word (or `=value`) is a program or path it loads, and ones whose value is no path. */
 const RUN_PATH_OPTS = new Set(["--require", "--import", "--loader", "--experimental-loader", "--test-reporter", "--test-reporter-destination", "--test-global-setup", "--config", "--directory", "--include-dir", "--file", "--makefile", "--start-directory", "--top-level-directory", "--env-file"]);
 /** The short path options of each runner (`-sv` of pytest is no `-s` path). */
-const RUN_SHORT_PATH_OPTS: Record<string, string> = { node: "r", pytest: "c", unittest: "st", make: "CfI" };
+const RUN_SHORT_PATH_OPTS: Record<string, string> = { node: "r", pytest: "c", unittest: "st", make: "CfIoW" };
+/** The short options whose value is a selection expression, plugin name or number (never a path): the rest of the group, or the next word. */
+const RUN_SHORT_VALUE_OPTS: Record<string, string> = { node: "", pytest: "kmpWnr", unittest: "kp", make: "jlO" };
+/** The long options a `make test` run may carry; any other (so any abbreviation of `--directory`, `--file`, ...) is refused. */
+const MAKE_LONG_OPTS = new Set(["--keep-going", "--no-keep-going", "--jobs", "--silent", "--quiet", "--always-make", "--no-print-directory", "--print-directory", "--dry-run", "--just-print", "--recon", "--ignore-errors", "--warn-undefined-variables"]);
+/** A word that names a path by its shape: a `/`, a file suffix, `.` or `..`. Other words are paths only when they name an existing file or directory (the `\x02` marker). */
+function pathShaped(w: string): boolean {
+  return w.includes("/") || /\.[A-Za-z_]\w*$/.test(w) || w === "." || w === "..";
+}
+/** An operand word: path-shaped ones are checked as paths, others only when they exist (`\x02`). */
+function operandWord(w: string): string {
+  return pathShaped(w) ? w : `\x02${w}`;
+}
 /** Values of `--test-reporter` and `--test-reporter-destination` that name no file. */
 const BUILTIN_REPORTERS = new Set(["spec", "tap", "dot", "junit", "lcov", "stdout", "stderr"]);
-const RUN_VALUE_OPTS = new Set(["-k", "-m", "--test-name-pattern", "--test-skip-pattern", "--maxfail", "--tb", "--durations", "-W", "-n", "--timeout", "--test-concurrency", "--test-timeout", "--color", "-j", "--jobs"]);
+const RUN_VALUE_OPTS = new Set(["--test-name-pattern", "--test-skip-pattern", "--maxfail", "--tb", "--durations", "--timeout", "--test-concurrency", "--test-timeout", "--color"]);
 
 /**
  * The path operands of a test run: `node --test <p>`, `npm run test:x -- <p>`, `pytest <p>`, `python -m pytest|unittest <p>`, `make test -C <p>`
@@ -771,28 +783,50 @@ function runOperands(verb: string, args: string[]): string[] {
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === "--") continue;
-    if (a.startsWith("-")) {
+    if (a.startsWith("--")) {
       const eq = a.indexOf("=");
       const name = eq > 0 ? a.slice(0, eq) : a;
-      // `-r` loads a module for node only (pytest `-r` takes report letters); pytest `-p` names a plugin
-      const short = a[1] !== "-" && RUN_SHORT_PATH_OPTS[kind].includes(a[1]);
-      if (short && a.length > 2 && eq !== 2) {
-        out.push(a.slice(2));
+      if (kind === "make") {
+        // fail closed: only the listed make options pass, so no abbreviation of --directory/--file/--include-dir/--eval can
+        if (!MAKE_LONG_OPTS.has(name) || (name === "--jobs" && eq > 0 && !/^\d*$/.test(a.slice(eq + 1)))) out.push(`\x01${a}`);
         continue;
       }
-      const pathy = RUN_PATH_OPTS.has(name) || (short && name.length === 2);
-      if (!pathy && !RUN_VALUE_OPTS.has(name) && name !== "-p") continue;
-      const value = eq > 0 ? a.slice(eq + 1) : i + 1 < rest.length ? rest[++i] : undefined;
-      if (pathy && value !== undefined && !((name === "--test-reporter" || name === "--test-reporter-destination") && BUILTIN_REPORTERS.has(value))) out.push(value);
+      const reporter = name === "--test-reporter";
+      const takesValue = RUN_PATH_OPTS.has(name) || RUN_VALUE_OPTS.has(name);
+      const value = eq > 0 ? a.slice(eq + 1) : takesValue && i + 1 < rest.length ? rest[++i] : undefined;
+      if (value === undefined || RUN_VALUE_OPTS.has(name)) continue;
+      if ((reporter || name === "--test-reporter-destination") && BUILTIN_REPORTERS.has(value)) continue;
+      // a reporter may be an npm package (a bare name that is no file); other values are paths, or path-shaped / existing words
+      out.push(RUN_PATH_OPTS.has(name) && !(reporter && !value.includes("/")) ? value : operandWord(value));
+      continue;
+    }
+    if (a.startsWith("-") && a.length > 1) {
+      // a short option group: the rest after the first value-taking character is its value (a path, or an exempt expression / plugin / number)
+      let handled = false;
+      for (let j = 1; j < a.length && !handled; j++) {
+        const rem = a.slice(j + 1);
+        if (RUN_SHORT_PATH_OPTS[kind].includes(a[j])) {
+          const v = rem !== "" ? rem : rest[++i];
+          if (v !== undefined) out.push(v);
+          handled = true;
+        } else if (RUN_SHORT_VALUE_OPTS[kind].includes(a[j])) {
+          const v = rem !== "" ? rem : a[j] === "j" && /^\d+$/.test(rest[i + 1] ?? "") || a[j] !== "j" ? rest[++i] : undefined;
+          if (v !== undefined && a[j] === "p" && kind === "pytest") out.push(operandWord(v));
+          handled = true;
+        }
+      }
+      // any other group with a path-shaped remainder (`-xy/z`) is a path operand
+      if (!handled) for (let j = 1; j < a.length; j++) if (pathShaped(a.slice(j))) out.push(a.slice(j));
       continue;
     }
     if (kind === "make") {
-      // a `K=V` word is no operand; its value counts only when it is path-shaped (it can name a program)
-      if (a.includes("=") && a.slice(a.indexOf("=") + 1).includes("/")) out.push(a.slice(a.indexOf("=") + 1));
+      // a `K=V` value is exempt unless it has a `/` (it can name a program); a target is a path only when it exists
+      const k = a.indexOf("=");
+      out.push(k > 0 && a.slice(k + 1).includes("/") ? a.slice(k + 1) : `\x02${k > 0 ? a.slice(k + 1) : a}`);
     } else if (kind === "unittest") {
       if (a === "discover") continue;
-      out.push(/^[A-Za-z_][\w.]*$/.test(a) && !a.endsWith(".py") && a.includes(".") ? `\0${a}` : a);
-    } else out.push(kind === "pytest" ? a.replace(/::.*$/, "") : a);
+      out.push(/^[A-Za-z_][\w.]*$/.test(a) && !a.endsWith(".py") && a.includes(".") ? `\0${a}` : operandWord(a));
+    } else out.push(operandWord(kind === "pytest" ? a.replace(/::.*$/, "") : a));
   }
   return out;
 }
@@ -804,7 +838,7 @@ function repoScriptRun(verb: string, args: string[]): boolean {
 function buildTestRun(verb: string, args: string[]): boolean {
   if (repoScriptRun(verb, args)) return true;
   // `--test-reporter[-destination]` is checked as a module/path operand by runOperands, not refused here
-  if (args.some((a) => BUILD_OUT_OPT.test(a) && !/^--test-reporter(-destination)?(=|$)/.test(a))) return false;
+  if (args.some((a) => BUILD_OUT_OPT.test(a) && !/^--(test-reporter(-destination)?(=|$)|(no-)?print-directory$)/.test(a))) return false;
   const [sub, next] = args;
   if (verb === "npm") return sub === "test" || ((sub === "run" || sub === "run-script") && /^(test|lint|typecheck|check)(:|$)/.test(next ?? ""));
   if (verb === "node") return sub === "--test";
@@ -821,7 +855,7 @@ function buildTestRun(verb: string, args: string[]): boolean {
  * (a relative one resolves against the cwd; `.` stands for the cwd itself), or `unknown` when it is neither a known reader,
  * a test run nor a known writer. `inner` = a shell whose -c script is collected separately.
  */
-function roEffect(core: string[], skip: Set<number>, inner: boolean): { targets: string[]; unknown?: string; run?: boolean; script?: string; operands?: string[] } {
+function roEffect(core: string[], skip: Set<number>, inner: boolean): { targets: string[]; unknown?: string; deny?: string; run?: boolean; script?: string; operands?: string[] } {
   if (!core.length) return { targets: [] };
   const verb = baseName(core[0]);
   const args = core.slice(1);
@@ -863,7 +897,8 @@ function roEffect(core: string[], skip: Set<number>, inner: boolean): { targets:
     const rest = core.slice(k + 1);
     const outs = rest.filter((a) => /^--output=./.test(a)).map((a) => a.slice(a.indexOf("=") + 1));
     // a config write is denied whatever repository it names: the cwd (the round worktree) is always a target, next to -C, --git-dir and --work-tree
-    if (sub === "config") return { targets: gitConfigRead(rest) ? outs : [".", ...(dir ? [dir] : []), ...repoOpts, ...outs] };
+    // (a write also names `--global`/`--system` files, so a read-only child is denied it from any cwd: `deny`)
+    if (sub === "config") return gitConfigRead(rest) ? { targets: outs } : { targets: [".", ...(dir ? [dir] : []), ...repoOpts, ...outs], deny: "git config" };
     if (GIT_RO_SUBS.has(sub)) return { targets: outs };
     if (sub === "stash" && (rest[0] === "list" || rest[0] === "show")) return { targets: outs };
     if (sub === "apply" && rest.some((a) => /^--(check|stat|numstat|summary)$/.test(a)) && !rest.includes("--apply")) return { targets: outs };
@@ -954,6 +989,8 @@ interface Collected {
   roUnknown?: string;
   /** The words of that command: a path among them in a read-only root is denied whatever the cwd. */
   roUnknownWords?: string[];
+  /** A command a read-only child (no write root) may not run from any cwd (`git config` in a write form). */
+  roDeny?: string;
   /** A test run / repo script run was found; its script words (a read-only child may run only git-tracked ones inside the round worktree). */
   roRun?: boolean;
   roScripts?: string[];
@@ -1270,6 +1307,7 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
         if (/^(cd|pushd|export)$/.test(baseName(v.core[0])) || unitWords.slice(0, off).some((w) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(w) || baseName(w) === "env")) out.roCdEnv = true;
         // a bare name that does not exist yet is not path-shaped to pathCandidates: `./` makes it a path against the cwd
         for (const t of e.targets) out.roTargets.add(asPathWord(t));
+        if (e.deny !== undefined) out.roDeny ??= e.deny;
         if (e.unknown !== undefined && shell === "posix" && out.roUnknown === undefined) {
           out.roUnknown = e.unknown;
           out.roUnknownWords = v.core.slice(1);
@@ -1670,6 +1708,9 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
         if (hit) return hit;
       }
     }
+    if (c.roDeny !== undefined && !pctx.roundRoots?.length) {
+      return { kind: "deny", reason: `pi-foreman: '${clip(c.roDeny)}' in a write form is denied for a read-only child (also with --global, --system or --file, from any directory). Read forms (--get, --list, <key>) are allowed.` };
+    }
     if (c.roRun && childCwdReadOnly(pctx)) {
       const bad = roRunRefusal(c, command, pctx);
       if (bad) return { kind: "deny", reason: `pi-foreman: this run is denied for a child: ${bad}. The round worktree is read-only except for its builder; a test run or repo script there must not change directory or environment (cd, pushd, env, VAR=...) and a script must be git-tracked inside the round worktree.` };
@@ -1781,8 +1822,24 @@ function roRunRefusal(c: Collected, command: string, ctx: MatchCtx): string | nu
   };
   for (const s0 of scripts) {
     // a dotted unittest module (`\0a.b.C`) is its longest prefix that is a tracked .py file
+    if (s0.startsWith("\x01")) return `option '${clip(s0.slice(1))}' is not an allowed make option`;
+    // `\x02`: a bare word, a path only when it names an existing file or directory
+    const optional = s0.startsWith("\x02");
+    if (optional && !fsx.realpath(path.resolve(cwd, s0.slice(1)))) continue;
+    // a glob the runner expands: every file it matches must be tracked inside the worktree (`**` is not followed)
+    const globbed = s0.slice(optional ? 1 : 0);
+    if (!optional && GLOB.test(globbed) && !/[$`\\{]|^[/~]|(^|\/)\.\.(\/|$)|\*\*/.test(globbed)) {
+      const hits = expandGlob(path.resolve(cwd, globbed), path.posix, fsx, { ...ctx, bashWords: true });
+      for (const h of hits) {
+        const real = fsx.realpath(h);
+        if (!real || !insideDir(root, real, ctx)) return `script or operand '${clip(globbed)}' matches '${clip(h)}', which does not resolve inside the round worktree`;
+        if (fsx.isDir(real)) continue;
+        if (!trackedIn(path.relative(root, real))) return `script or operand '${clip(globbed)}' matches '${clip(path.relative(root, real))}', which is not tracked by git`;
+      }
+      continue;
+    }
     const dotted = s0.startsWith("\0");
-    const s = dotted ? s0.slice(1) : s0;
+    const s = dotted ? s0.slice(1) : optional ? s0.slice(1) : s0;
     const parts = s.split(".");
     const cands = dotted ? parts.map((_, k) => `${parts.slice(0, k + 1).join("/")}.py`).reverse() : [s];
     let why: string | null = null;
@@ -1801,30 +1858,23 @@ function roRunRefusal(c: Collected, command: string, ctx: MatchCtx): string | nu
 }
 
 const PROBE_RUNNERS = new Set(["node", "python", "python3", "bash", "sh", "npx", "tsx", "ts-node"]);
-/** Options of each interpreter that take the next word as a value (never the script), and the ones whose value is a module it loads. */
-const NODE_VALUE_OPTS = /^(-C|--conditions|--input-type|--title|--stack-size|--inspect-port|--env-file|--disable-warning|--test-name-pattern|--test-skip-pattern|--test-concurrency|--test-timeout|--test-reporter-destination|--experimental-default-type|--redirect-warnings|--diagnostic-dir|--tsconfig|-P|--project|--cwd|--compiler|--cache-directory)$/;
-const PROBE_VALUE_OPTS: Record<string, RegExp> = { node: NODE_VALUE_OPTS, tsx: NODE_VALUE_OPTS, "ts-node": NODE_VALUE_OPTS, python: /^(-X|-W|--check-hash-based-pycs)$/, python3: /^(-X|-W|--check-hash-based-pycs)$/, bash: /^([-+][oO]|--rcfile|--init-file)$/, sh: /^([-+][oO]|--rcfile|--init-file)$/, npx: /^(-p|--package|-c|--call)$/ };
-const PROBE_MODULE_OPTS = /^(-r|--require|--import|--loader|--experimental-loader|--test-reporter|--test-global-setup)$/;
 
-/** The script files a node/python/bash/sh/npx command runs or loads: the first positional (every positional after `node --test`) and `--require`/`--import` values. */
+/**
+ * Every word of a node/python/bash/sh/npx command that can name a file it runs or loads: each argument, the value after `=` of an option and
+ * the rest of a short-option group. No option table is consulted (an unlisted value-taking flag cannot hide the script); probeFileDeny reads
+ * the words that resolve to an existing file outside git, and ignores the rest.
+ */
 function probeScripts(verb: string, args: string[]): string[] {
   if (!PROBE_RUNNERS.has(verb)) return [];
   const inline = verb === "node" || verb === "tsx" || verb === "ts-node" ? /^(-e|-p|--eval|--print)$/ : verb === "python" || verb === "python3" ? /^(-c|-m)$/ : /^(-c|--call)$/;
-  const all = verb === "node" && args[0] === "--test";
   const out: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
+  for (const a of args) {
     if (inline.test(a) && verb !== "npx") return out;
-    if (PROBE_MODULE_OPTS.test(a)) {
-      if (i + 1 < args.length) out.push(args[++i]);
-    } else if (/^--(require|import|loader|experimental-loader|test-reporter|test-global-setup)=./.test(a)) out.push(a.slice(a.indexOf("=") + 1));
-    else if (PROBE_VALUE_OPTS[verb].test(a)) i++;
-    else if (!a.startsWith("-") && a !== "") {
-      // `npx tsx f.ts`, `npx node f.mjs`: the package word is the interpreter, its own options follow
-      if (verb === "npx" && /^(node|tsx|ts-node|python3?|bash|sh)$/.test(baseName(a))) return [...out, ...probeScripts(baseName(a), args.slice(i + 1))];
-      if (verb === "npx" && !/[\\/]|\.(m?js|cjs|py|sh)$/.test(a)) return out;
-      out.push(a);
-      if (!all) return out;
+    if (a === "") continue;
+    out.push(a);
+    if (a.startsWith("-")) {
+      if (a.includes("=")) out.push(a.slice(a.indexOf("=") + 1));
+      if (a[1] !== "-" && a.length > 2) out.push(a.slice(2));
     }
   }
   return out;
