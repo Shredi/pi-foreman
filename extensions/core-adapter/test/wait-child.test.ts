@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseStart, WaitRuntime, wakeMessage } from "../wait.ts";
+import { applyInbound, parseInbound } from "../session.ts";
+import type { Registry } from "../session.ts";
 import type { Outcome, Timers, WaitLimits } from "../wait.ts";
 
 const LIMITS: WaitLimits = { batchWindowSeconds: 0, maxSeconds: 86400, maxActive: 4, ci: true };
@@ -41,4 +43,18 @@ test("wait child: label any takes the next notice of any child; a named wait win
   assert.equal(rt.childNotice("zed", "closed", "/c.md"), true);
   assert.equal(wakes[1][0].outcome, "child zed: closed /c.md");
   assert.equal(rt.active, 0);
+});
+
+test("wait child: a refused close notice from the child wakes the wait with the refusal reason", () => {
+  const { rt, wakes } = runtime();
+  rt.start({ kind: "child", label: "phase1", note: "p1" });
+  const reg: Registry = { version: 1, sessions: [{ label: "phase1", child: "fm-phase1-abc123", status: "closing" }] };
+  const msg = parseInbound("pi-foreman: close refused: 1 child run(s) still active");
+  assert.deepEqual(msg, { kind: "refused", path: "1 child run(s) still active" });
+  const entry = applyInbound(reg, "fm-phase1-abc123", msg!, new Date(0));
+  assert.equal(entry?.status, "open");
+  assert.equal(rt.childNotice(entry!.label, msg!.kind, msg!.path), true);
+  assert.equal(rt.active, 0);
+  assert.equal(wakes[0][0].outcome, "child phase1: refused 1 child run(s) still active");
+  assert.match(wakeMessage(wakes[0]).content, /\(child\) "p1": child phase1: refused 1 child run\(s\) still active$/);
 });
