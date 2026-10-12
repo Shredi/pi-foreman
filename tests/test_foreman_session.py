@@ -194,6 +194,11 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(len(dirs), 1)
         self.assertTrue((dirs[0] / "brief.md").is_file())
 
+    def test_dry_run_prints_the_requested_model_in_the_command(self):
+        code, out, err = self.run_main(*self.open_args("--dry-run", "--print-all", "--model", "prov/model-2"))
+        self.assertEqual(code, 0, err)
+        self.assertIn("--model prov/model-2", out)
+
     def test_footer_contract_and_no_home_path(self):
         code, _, _ = self.run_main(*self.open_args("--plan-first", "--dry-run"))
         self.assertEqual(code, 0)

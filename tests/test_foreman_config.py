@@ -533,5 +533,37 @@ class CeremonyPlannerKeyTest(unittest.TestCase):
         self.assertTrue(any("planner" in e for e in res["errors"]), res["errors"])
 
 
+class SessionForemanRoleTest(unittest.TestCase):
+    def test_excluded_from_child_roles_and_subagents(self):
+        cfg = fc.load_config(agent_dir=tempfile.mkdtemp(), project_dir=tempfile.mkdtemp())["config"]
+        cfg["providers"] = PROV
+        self.assertIn(fc.SESSION_FOREMAN, cfg["roles"])
+        self.assertNotIn(fc.SESSION_FOREMAN, fc.child_roles(cfg))
+        cfg["roles"]["extra-role"] = dict(cfg["roles"]["builder"])
+        self.assertIn("extra-role", fc.child_roles(cfg))
+        self.assertNotIn(fc.SESSION_FOREMAN, fc.child_roles(cfg))
+        sub = fc.generate_subagents(cfg)["subagents"]
+        self.assertNotIn(fc.SESSION_FOREMAN, sub["agentOverrides"])
+        for entries in sub["agentOverridesByProvider"].values():
+            self.assertNotIn(fc.SESSION_FOREMAN, entries)
+
+    def test_resolve_maps_for_claude_bridge_and_is_none_when_unmapped(self):
+        preset = json.loads((ROOT / "config" / "presets" / "claude-bridge.json").read_text())
+        res = fc.resolve_session_foreman({"providers": preset["providers"]}, "claude-bridge")
+        self.assertEqual(res["model"], "claude-bridge/claude-opus-5-5")
+        # unmapped: None means the session keeps its own (foreman) model
+        self.assertIsNone(fc.resolve_session_foreman({"providers": PROV}, "p1"))
+        self.assertIsNone(fc.resolve_session_foreman({}, "p1"))
+
+    def test_every_preset_carries_the_mapping(self):
+        presets = sorted((ROOT / "config" / "presets").glob("*.json"))
+        self.assertTrue(presets)
+        for preset in presets:
+            providers = json.loads(preset.read_text())["providers"]
+            for name in providers:
+                res = fc.resolve_session_foreman({"providers": providers}, name)
+                self.assertTrue(res and res["model"], "%s/%s" % (preset.name, name))
+
+
 if __name__ == "__main__":
     unittest.main()
