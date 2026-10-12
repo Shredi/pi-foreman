@@ -93,12 +93,29 @@ A parent without a pi-intercom connection (for example a Claude session) cannot 
 | `ask.md` | the child | first line `# Ask <n>: <topic>` (n = 1, 2, …), then the question and options |
 | `.ask` | pi-foreman | marker, `ask-<n>`, touched when `ask.md` is written in the session's own handoff dir |
 | `ruling-<n>.md` | the parent | the answer to ask n |
-| `.seen` | the child | the ruling file name, written after it read the ruling |
+| `.seen` | pi-foreman (the child may write it too) | the ruling file name, written when the ruling wait wakes |
 
 When the child writes `ask.md` (a `write` or `edit` that succeeds, only under one of its own handoff dirs), pi-foreman
 touches `.ask` and shows the session as blocked in Herdr (`herdr:blocked`, label `ask <n>: <topic>`); it never uses
-`herdr agent prompt`. The signal ends when the child writes `.seen` or the session shuts down. The parent polls the
-handoff dir for `*.md` and `.ask`; the child waits with `foreman_wait({action: "start", kind: "file", path: "<handoff dir>/ruling-<n>.md"})`.
+`herdr agent prompt`. The parent polls the handoff dir for `*.md` and `.ask`; the child waits with
+`foreman_wait({action: "start", kind: "file", path: "<handoff dir>/ruling-<n>.md"})`.
+
+- **`.seen` by the harness.** When a file wait on `ruling-<n>.md` (or `ruling.md`) in an own handoff dir wakes, pi-foreman
+  writes `.seen` (the ruling file name) itself; no tool call or dialog. A `.seen` the child writes by hand is harmless
+  (idempotent), also one made by `bash`.
+- **Blocked is recomputed from the files**, never a sticky flag: blocked while `.ask` is present and no `.seen` names the
+  ruling of that ask (`ruling-<n>.md`, or `ruling.md`). Any `.seen` write (write/edit tool, or a `bash` result) and the
+  session shutdown recompute it.
+- **A stale ruling is ignored.** A `ruling-<n>.md` whose mtime is older than `ask.md` does not wake the wait (it keeps waiting).
+- **A parent ruling counts as a verdict.** A `ruling.md` or `ruling-<n>.md` in the session's handoff dir whose first line is
+  `APPROVED` or `SHIP` and that is newer than the last FAIL verdict satisfies the reviewer step of the finish gate. The
+  gate then no longer refuses "requires reviewer (re-review needed: last verdict FAIL)". `/foreman close` lists what is
+  still open and what the parent would have to rule; the owner/chair override is `/ceremony <tier>`.
+- **`bg_wait` during a builder's supervisor ask.** pi-foreman does not refuse it (`bg_wait` is exempt from the supervisor window).
+  The pi-subagents package (node_modules, not editable here) ends the wait with "Wait yielded for a pending supervisor
+  request"; background work continues, so answer with `subagent_supervisor` and call `bg_wait` again.
+- **`foreman_bg` and `foreman_wait {kind: pid}`.** `foreman_bg` returns the wait id; an explicit `foreman_wait` on the same pid
+  returns that id (no second wait).
 
 Worked example:
 
@@ -110,7 +127,7 @@ Worked example:
    ```
    pi-foreman writes `<handoff dir>/.ask` (`ask-1`) and Herdr shows `blocked`; the child starts the file wait on `ruling-1.md`.
 2. The parent sees `.ask`, reads `ask.md` and writes `<handoff dir>/ruling-1.md`: `A, flat CSV.`
-3. The wait wakes; the child reads `ruling-1.md`, writes `<handoff dir>/.seen` containing `ruling-1.md`, and continues.
+3. The wait wakes; pi-foreman writes `<handoff dir>/.seen` containing `ruling-1.md` and Herdr leaves `blocked`; the child reads `ruling-1.md` and continues.
    The next question is `# Ask 2: …` answered by `ruling-2.md`.
 
 ### Child orchestrator sessions

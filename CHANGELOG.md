@@ -8,6 +8,9 @@
 - Cost lane 3 (R6 lane 3c): `ceremony.budgetUsd` (default unset) refuses a launch `[budget_exceeded]` on the summed estimate, warning at 80 %.
 - Cost lane 3 (R6 lane 3e): `ceremony.reviewRuns` (default 3) caps review runs per user prompt (`[review_cap]`); a re-review after FAIL gets `[re-review items: N, M]`.
 - Cost lane 3 (R6 lane 3f, 3g, 3h): `review_done` traced at the run end of every review (shadows `kind: shadow`); the launch trace `role_result` is now `role_launched` and `role_result` is logged at the real run end; deny traces carry `reason`, `role` and `command` (TRACE_FIELDS gains `command`, kept only on denies).
+- Ask lane 4 (R6 lane 4a, 4b): a `foreman_wait` file wait on `ruling-<n>.md` / `ruling.md` in an own handoff dir writes `.seen` itself when it wakes; the Herdr blocked state is recomputed from the files (`.ask` present and no `.seen` naming the ruling) on any `.seen` write, also by bash; a ruling older than `ask.md` does not wake the wait.
+- Ask lane 4 (R6 lane 4c): a parent `ruling.md` / `ruling-<n>.md` whose first line is `APPROVED` or `SHIP`, newer than the last FAIL, counts as the verdict for the finish gate; `/foreman close` lists what the parent would have to rule (override: `/ceremony <tier>`).
+- Ask lane 4 (R6 lane 4d, 4e, 4f): `bg_wait` during a builder's supervisor ask is documented (the yield comes from pi-subagents); `foreman_wait {kind: pid}` on a pid that `foreman_bg` already watches returns the existing wait id; integration test for ask, ruling, `.seen`, finish gate.
 
 ### Fixed
 - Ladder lane 5 (R6 lane 5d): an explicit launch `model: "claude-bridge/claude-sonnet-5-5"` was silently overwritten by the role map (`claude-haiku-5-5`). An explicit `<provider>/<id>` model is now passed through when the rank policy allows it for the role. A model picked with `--model` at startup counts as user-picked, so it wins over the overlay foreman model also outside `foreman session open`. Tests in `r6-lane5.test.ts`.
