@@ -306,6 +306,26 @@ def group_tag_on(adir):
     return not (isinstance(herdr_cfg, dict) and herdr_cfg.get("groupTag") is False)
 
 
+def managed_worktree(cwd, adir):
+    """True when cwd is the root of a linked git worktree under the managed root (`close.worktreeDir`)."""
+    try:
+        import foreman_config
+        import foreman_worktree
+        r = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir"],
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30)
+        top, gdir, common = r.stdout.decode("utf-8", "replace").splitlines()[:3]
+        if r.returncode != 0 or os.path.realpath(top) != os.path.realpath(str(cwd)):
+            return False
+        gdir, common = (os.path.realpath(os.path.join(str(cwd), p)) for p in (gdir, common))
+        if gdir == common:  # the main worktree
+            return False
+        cfg = foreman_config.load_config(agent_dir=str(adir))["config"]
+        root = foreman_worktree.convention_dirs(os.path.dirname(common), cfg)[0]
+        return os.path.realpath(str(cwd)) != root and os.path.realpath(str(cwd)).startswith(root + os.sep)
+    except Exception:  # noqa: BLE001 - trust is a convenience, never blocks the open
+        return False
+
+
 def report_group_tag(binary, pane, text):
     """Best effort: display-only Herdr metadata on the child pane; failures are ignored."""
     try:
@@ -424,6 +444,10 @@ def cmd_open(a):
     (handoff / "child").write_text(child + "\n", "utf-8")
     entry = {"label": a.label, "child": child, "parent": parent, "handoff": str(handoff), "cwd": str(cwd),
              "model": a.model or None, "opened": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": "pending", "last": None}
+    if managed_worktree(cwd, adir):  # Pi would ask "Trust project folder?" for a fresh worktree
+        import foreman_trust
+        if foreman_trust.grant(adir, cwd):
+            entry["trusted"] = os.path.realpath(str(cwd))
     code = 0
     if binary:
         try:

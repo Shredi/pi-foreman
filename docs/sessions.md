@@ -126,6 +126,14 @@ A heavy task with several phases may run as a multi-session plan: one child sess
 
 Every orchestrator session works in its own worktree (`git worktree add …`) and never switches the shared main checkout. Merges happen from the session's worktree, so two sessions running in parallel cannot move each other's branch or working tree.
 
+### Trust dialog for a fresh worktree
+
+Pi asks `Trust project folder?` (`<cwd>`, "This allows pi to load .pi settings and resources, install missing project packages, and execute project extensions.") when the cwd has project resources (`.pi/settings.json`, `extensions`, `skills`, … or a `.agents/skills` directory in the cwd or an ancestor) and `<agent dir>/trust.json` holds no decision for it or a parent. A new round worktree has none, so every `foreman session open` into one would stop at the dialog.
+
+When the `--cwd` of `open` (not `--dry-run`) is the root of a linked git worktree under the managed root (`close.worktreeDir`, default `../<repo>.worktrees`), `open` writes `{"<realpath of cwd>": true}` into `<agent dir>/trust.json`: an atomic read-modify-write under Pi's own lock directory that keeps every other entry, for that exact path only (never a parent folder), and not when the store already has an exact entry for it or cannot be parsed. The registry entry records `trusted: <path>`; whenever pi-foreman removes the worktree (session close cleanup, `foreman worktree sweep`, the `foreman_worktree_remove` tool) it deletes that entry again, and only entries it recorded, so your own trust decisions stay. Builder worktrees from pi-subagents run headless: Pi only shows the dialog in an interactive run and treats an undecided folder as untrusted without asking otherwise, so nothing is written for them.
+
+Alternatives: start `pi` with `--approve`, or set `defaultProjectTrust` to `always` in your Pi settings (every folder, so broader than the entry above).
+
 ### Safety
 
 - Only you start these: they are user commands, children refuse them, and no model tool exists in v1.

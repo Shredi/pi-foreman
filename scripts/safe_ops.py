@@ -492,6 +492,11 @@ def remove_worktree(chk):
     """`git worktree remove` (never --force) and `branch -d` (never -D) after check_worktree."""
     target, main_dir, branch = chk["target"], chk["main_dir"], chk["branch"]
     git(["worktree", "remove", target], main_dir, check=True)  # never --force
+    try:
+        import foreman_trust
+        foreman_trust.release(target)  # drop the Pi trust entry pi-foreman added for this worktree
+    except Exception:  # noqa: BLE001 - best effort
+        pass
     result = {"action": "worktree_remove", "path": target, "branch": branch, "branchDeleted": False}
     if branch:
         code, _, err = git(["branch", "-d", branch], main_dir)  # never -D
