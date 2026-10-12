@@ -12,7 +12,9 @@
 // then wakes the session with INTERCOM_WAKE_TEXT): the `input` hook reads the newest intercom
 // entry from the branch then (review S1). Children swallow that wake (review S6).
 //
-// Sequence: refuse while any foreman_wait is active (never cancels one); wait until the agent is
+// Sequence: refuse while a child run is active (never cancelled); the session's own pending foreman_waits are
+// cancelled (trace `waits_cancelled`; a session that closes has nothing left to wake for), and only a wait that
+// cannot be cancelled refuses; wait until the agent is
 // idle (agent_settled + ctx.isIdle(); an open dialog just keeps the session busy, nothing answers
 // it); one ordinary close turn asks the model to write the result file; on the next agent_settled
 // run foreman_sync.py, write a stub result when the file is still missing, then ctx.shutdown().
@@ -134,6 +136,8 @@ export interface CloseDeps {
   activeWaits: () => { id: string; kind: string; note: string }[];
   /** Detached child runs of this foreman that have not ended. */
   activeRuns: () => number;
+  /** Cancel this session's own pending waits; the cancelled ids. Absent: pending waits refuse the close. */
+  cancelWaits?: () => string[];
   sendUserMessage: (text: string) => void;
   runSync: () => Promise<{ text: string; ok: boolean }>;
   /** Retro numbers for a stub ("" when the sync output already carries them). */
@@ -240,7 +244,14 @@ export class CloseFlow {
       this.refuse(`${runs} child run(s) still active; let them finish (a close never cancels them), then close again`, source, replyTo);
       return true;
     }
-    const waits = this.d.activeWaits();
+    let waits = this.d.activeWaits();
+    if (waits.length > 0 && this.d.cancelWaits) {
+      const note = waits.map((w) => `${w.id} ${w.kind}${w.note ? ` "${w.note}"` : ""}`).join(", ");
+      const ids = this.d.cancelWaits();
+      this.d.trace({ event: "waits_cancelled", cause: source, count: ids.length, note });
+      this.d.notify(`pi-foreman: closing; cancelled waits: ${ids.join(", ")}`, "info");
+      waits = this.d.activeWaits();
+    }
     if (waits.length === 0) return false;
     this.refuse(`${waits.length} foreman_wait pending (${waits.map((w) => `${w.id} ${w.kind}${w.note ? ` "${w.note}"` : ""}`).join(", ")}); cancel or let them finish, then close again`, source, replyTo);
     return true;
@@ -430,7 +441,7 @@ export function outboxSend(events: Bus, to: string, message: string, kind: strin
 /** Wire the intercom trigger and the sequence events; returns the `/foreman close` handler. */
 export function registerClose(
   pi: ExtensionAPI,
-  deps: { session: (ctx: ExtensionContext) => Promise<CloseSession>; activeWaits: (sessionId: string) => { id: string; kind: string; note: string }[]; activeRuns: (sessionId: string) => number; platform: string },
+  deps: { session: (ctx: ExtensionContext) => Promise<CloseSession>; activeWaits: (sessionId: string) => { id: string; kind: string; note: string }[]; activeRuns: (sessionId: string) => number; cancelWaits?: (sessionId: string) => string[]; platform: string },
 ): { command: (args: string, ctx: ExtensionContext) => Promise<void> } {
   const flows = new Map<string, { flow: CloseFlow; ctx: ExtensionContext }>();
   const flowFor = (s: CloseSession, ctx: ExtensionContext): CloseFlow => {
@@ -443,6 +454,7 @@ export function registerClose(
     holder.flow = new CloseFlow({
       activeWaits: () => deps.activeWaits(s.id),
       activeRuns: () => deps.activeRuns(s.id),
+      cancelWaits: deps.cancelWaits ? () => deps.cancelWaits!(s.id) : undefined,
       sendUserMessage: (text) => pi.sendUserMessage(text),
       runSync: () => s.runSync(holder.ctx),
       report: s.report ? (file) => s.report!(holder.ctx, file) : undefined,

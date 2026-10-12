@@ -353,6 +353,11 @@ export class WaitRuntime {
     return true;
   }
 
+  /** Cancels every active wait (a close of the session); the cancelled ids. */
+  cancelAll(): string[] {
+    return [...this.waits.keys()].filter((id) => this.cancel(id));
+  }
+
   list(): { id: string; kind: WaitKind; note: string; ageSeconds: number; leftSeconds: number }[] {
     const now = this.d.now();
     return [...this.waits.values()].map((e) => ({ id: e.id, kind: e.kind, note: e.note, ageSeconds: Math.round((now - e.started) / 1000), leftSeconds: Math.max(0, Math.round((e.deadline - now) / 1000)) }));
@@ -474,11 +479,12 @@ const PARAMS = {
 };
 
 /** Register `foreman_wait` (foreman sessions only) and its shutdown cleanup. */
-export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]>; childNotice: (sessionId: string, label: string, kind: string, notePath: string) => boolean } {
+export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]>; childNotice: (sessionId: string, label: string, kind: string, notePath: string) => boolean; cancelAll: (sessionId: string) => string[] } {
   const runtimes = new Map<string, { rt: WaitRuntime; ctx: ExtensionContext }>();
   const handle = {
     active: (sessionId: string) => runtimes.get(sessionId)?.rt.list() ?? [],
     childNotice: (sessionId: string, label: string, kind: string, notePath: string) => runtimes.get(sessionId)?.rt.childNotice(label, kind, notePath) ?? false,
+    cancelAll: (sessionId: string) => runtimes.get(sessionId)?.rt.cancelAll() ?? [],
   };
   pi.on("session_shutdown", async (_event, ctx) => {
     const id = ctx.sessionManager.getSessionId();

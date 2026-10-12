@@ -2232,6 +2232,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const close = registerClose(pi, {
     platform,
     activeWaits: (id) => waits.active(id),
+    cancelWaits: (id) => {
+      const ids = waits.cancelAll(id);
+      const s = sessions.get(id);
+      if (s) for (const w of ids) cancelHandoffWait(s, w);
+      return ids;
+    },
     activeRuns: (id) => sessions.get(id)?.activeRuns.size ?? 0,
     session: async (ctx) => {
       const s = await ensureSession(ctx);

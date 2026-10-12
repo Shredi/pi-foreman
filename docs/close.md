@@ -4,6 +4,8 @@
 > Read it when a session ends, when `/sync` reports `CLOSE: open`, or when a parent has to take or drop a child's leftovers.
 > Cleanup removes only paths the manifest lists and only when every precondition passes; anything else is handed over.
 
+A close cancels the session's own pending `foreman_wait`s (trace `waits_cancelled {count, note}`, notice `cancelled waits: <ids>`); it is refused only while a child run is still active.
+
 ## Artifact classes
 
 | Class | Examples | Owner | Lifetime |

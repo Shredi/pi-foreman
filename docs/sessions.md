@@ -2,7 +2,7 @@
 
 > Covers `/sync`, `/retro`, `/foreman close`, `/foreman session` (open, brief, close, list), the usage footer, `bin/foreman`, pi-intercom setup and the Herdr blocked state.
 > Read it when you end, hand over or wrap up a session, or script one from outside Pi.
-> `/foreman close` is refused while a long wait is pending or a child run is still active; nothing is cancelled.
+> `/foreman close` is refused while a child run is still active (never cancelled); the session's own pending long waits are cancelled.
 
 ## Session commands
 
@@ -64,7 +64,7 @@ Plain pi-intercom text, one line each:
   entry becomes `closed` with that result path. A close that is refused is answered with
   `pi-foreman: close refused: <reason>`, for example `the sender is not the parent recorded at spawn`,
   `N child run(s) still active; let them finish (a close never cancels them), then close again` or
-  `N foreman_wait pending (…)`.
+  `N foreman_wait pending (…)` (only when a wait cannot be cancelled).
 - The child's brief footer tells it to re-read `parent` before each message (the parent can change).
 
 ### Child orchestrator sessions
@@ -87,7 +87,7 @@ Every orchestrator session works in its own worktree (`git worktree add …`) an
   contents of `$PI_FOREMAN_HANDOFF_DIR/parent`, read at check time (no `PI_FOREMAN_HANDOFF_DIR` or no such file:
   `PI_FOREMAN_PARENT_INTERCOM`; a file with no valid id refuses). Re-pointing the parent is a one-file change.
   `close.from` must include `intercom-parent` (default), and cross-machine messages are refused.
-- A close is refused while a child run is active or a `foreman_wait` is pending, and nothing is cancelled.
+- A close is refused while a child run is active; the session's own pending `foreman_wait`s are cancelled instead (trace `waits_cancelled`).
 - The `parent` and `child` files of every handoff dir are write-protected (baseline `protect.writeAsk`): a child
   agent of either session is denied any write to them and any shell command naming them, and a foreman's
   write or edit tool asks; a foreman's shell may still read them. `brief.md`, `result.md` and `plan.md` stay
