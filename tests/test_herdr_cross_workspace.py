@@ -71,6 +71,35 @@ class CrossWorkspaceChildRowTest(unittest.TestCase):
         self.assertEqual(child["fm_state"], "working")
         self.assertIsNone(child["fm_sym"])
 
+    def _stale_setup(self, kid_pane):
+        # an ended session of an earlier round left its presence file (pid gone, state done, hours old: inside the radar window) naming the pane id
+        # Herdr has since handed to the live child
+        gone = presence("s-old", "round-old", "fm-old", "w7:p2", parent="fm-top", cwd="/work/proj.worktrees/round-x", pid=999)
+        gone.update({"state": "done", "heartbeatAt": iso(2 * 3600), "lastEventAt": iso(2 * 3600), "startedAt": iso(5 * 3600)})
+        self.put_live(gone)
+        self.put_live(presence("s-top", "refactor", "fm-top", "w3:p1"))
+        self.put_live(presence("s-kid", "round-x", "fm-kid", kid_pane, parent="fm-top", cwd="/work/proj.worktrees/round-x", pid=202))
+        agents = [
+            {"pane_id": "w3:p1", "workspace_id": "w3", "agent": "claude", "display_agent": "claude", "cwd": "/work/proj"},
+            {"pane_id": "w7:p2", "workspace_id": "w7", "agent": "pi", "display_agent": "claude › round-x", "cwd": "/work/proj.worktrees/round-x"},
+        ]
+        snap = json.loads(json.dumps(fr.json_doc(fr.snapshot(self.adir, NOW, 24.0), NOW, "unicode", fr.load_symbols("unicode"))))
+        return snap, agents
+
+    def test_stale_presence_with_reused_pane_id_does_not_blank_child_row(self):
+        # the live child's presence file has no pane id yet; its pid is the pane's foreground pid
+        snap, agents = self._stale_setup(None)
+        joins = sidebar.join(snap["roots"], agents, {"w7:p2": 202})
+        out = sidebar.compose(snap, WIDTH, joins)
+        child = out["w7:p2"]
+        self.assertIn("› round-x", child["fm_l1"] or "")
+        self.assertEqual(child["fm_state"], "working")
+        # the live file also wins when both name the pane
+        snap, agents = self._stale_setup("w7:p2")
+        out = sidebar.compose(snap, WIDTH, sidebar.join(snap["roots"], agents))
+        self.assertIn("› round-x", out["w7:p2"]["fm_l1"] or "")
+        self.assertEqual(out["w7:p2"]["fm_state"], "working")
+
 
 if __name__ == "__main__":
     unittest.main()

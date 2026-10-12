@@ -414,26 +414,32 @@ def join(nodes, agents, procinfo=None):
     pane's foreground pid (`procinfo` = {paneId: pid}), then a cwd that
     matches exactly one unclaimed pi pane (and one unjoined node). A finished,
     stale or lost session never joins by cwd: its pane is gone, and a new pi pane
-    in the same folder would show its tokens."""
+    in the same folder would show its tokens. Herdr reuses pane ids, so a finished,
+    stale or lost session's presence file may name a pane a live session now
+    owns: the live sessions join first (paneId, then pid), the others only take
+    a pane no live session claimed."""
     procinfo = procinfo or {}
     sessions = [n for n in walk(nodes) if n.get("kind") == "session"]
     joins, claimed = {}, set()
     live = {a.get("pane_id") for a in agents or [] if a.get("pane_id")}
-    for n in sessions:
-        if n.get("paneId") and n["paneId"] in live:
-            joins[n["key"]] = n["paneId"]
-            claimed.add(n["paneId"])
     by_pid = {}
     for pane, pid in procinfo.items():
         if pid is not None:
             by_pid.setdefault(int(pid), pane)
-    for n in sessions:
-        if n["key"] in joins or n.get("pid") is None:
-            continue
-        pane = by_pid.get(int(n["pid"]))
-        if pane and pane not in claimed:
-            joins[n["key"]] = pane
-            claimed.add(pane)
+    for group in ([n for n in sessions if n.get("state") not in NOT_SELF_STATES],
+                  [n for n in sessions if n.get("state") in NOT_SELF_STATES]):
+        taken = set(claimed)
+        for n in group:
+            if n.get("paneId") and n["paneId"] in live and n["paneId"] not in taken:
+                joins[n["key"]] = n["paneId"]
+                claimed.add(n["paneId"])
+        for n in group:
+            if n["key"] in joins or n.get("pid") is None:
+                continue
+            pane = by_pid.get(int(n["pid"]))
+            if pane and pane not in claimed:
+                joins[n["key"]] = pane
+                claimed.add(pane)
     pi_panes = [a for a in agents or [] if a.get("agent") == "pi" and a.get("pane_id")]
     rest = [n for n in sessions if n["key"] not in joins and _norm(n.get("cwd"))
             and n.get("state") not in NOT_SELF_STATES]
