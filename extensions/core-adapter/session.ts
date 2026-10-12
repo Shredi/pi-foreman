@@ -172,6 +172,25 @@ export function applyInbound(reg: Registry, sender: string, msg: Inbound, now: D
   return entry;
 }
 
+/**
+ * A child's own close: its registry entry (matched by its handoff dir, the one `foreman session open` sets for it)
+ * becomes `closed` before the parent's `foreman:closed` arrives. True when the registry changed.
+ */
+export function markOwnClosed(agentDir: string, env: Record<string, string | undefined>): boolean {
+  const handoff = env.PI_FOREMAN_HANDOFF_DIR?.trim();
+  if (!handoff) return false;
+  const reg = readRegistry(agentDir);
+  let changed = false;
+  for (const s of reg.sessions) {
+    if (s.handoff && path.basename(s.handoff) === path.basename(handoff) && s.status !== "closed") {
+      s.status = "closed";
+      changed = true;
+    }
+  }
+  if (changed) writeRegistry(agentDir, reg);
+  return changed;
+}
+
 export function formatList(reg: Registry): string {
   if (!reg.sessions.length) return "pi-foreman sessions: none opened yet.";
   const rows = reg.sessions.map((s) => {

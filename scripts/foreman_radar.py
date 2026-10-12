@@ -326,11 +326,13 @@ def live_glyph(d, now):
     return "idle", "done" if state == "done" else "idle"
 
 
-def reg_glyph(status, opened, now):
+def reg_glyph(status, opened, now, has_result=False):
     young = opened is not None and now - opened < STARTING_WINDOW
     if status == "pending":
         return "starting", "pending"
     if status == "open":
+        if has_result:  # no live file, but the child has reported: idle, not lost
+            return "idle", "idle"
         return ("starting", "starting") if young else ("lost", "lost")
     if status == "failed":
         return "lost", "failed"
@@ -339,7 +341,7 @@ def reg_glyph(status, opened, now):
 
 def build(data, now):
     """Join live files, registry entries and handoff dirs into session nodes; return the list of roots."""
-    nodes, by_sid = {}, {}
+    nodes, by_sid, by_handoff = {}, {}, {}
     handoff_by_leaf = data["handoffs"]
     for d in data["live"]:
         sid = d["sessionId"]
@@ -397,15 +399,26 @@ def build(data, now):
                                                   sum(c["own"][2] for c in n["children"]), None]
         nodes[key] = n
         by_sid[sid] = n
+        if leaf(d.get("handoff")):
+            by_handoff[leaf(d.get("handoff"))] = n
+    merged = set()
     for e in data["registry"]:
         key = e.get("child") if isinstance(e.get("child"), str) and e.get("child") else None
         if not key:
             continue
         n = nodes.get(key)
         opened = parse_ts(e.get("opened"))
+        if n is None and leaf(e.get("handoff")) in by_handoff:
+            # the child's live file carries its own published id, not the registry child id: same session, one node
+            live = by_handoff[leaf(e.get("handoff"))]
+            if not live["parent"] and isinstance(e.get("parent"), str) and e["parent"]:
+                live["parent"] = e["parent"]
+            merged.add(key)
+            continue
+        ho = handoff_by_leaf.get(leaf(e.get("handoff")))
         if n is None:
             n = new_node("session", key, e.get("label") if isinstance(e.get("label"), str) and e.get("label") else key)
-            n["glyph"], n["state"] = reg_glyph(e.get("status"), opened, now)
+            n["glyph"], n["state"] = reg_glyph(e.get("status"), opened, now, bool(ho and "result.md" in ho["has"]))
             last = e.get("last")
             n["last"] = parse_ts(last.get("at")) if isinstance(last, dict) else None
             n["last"] = n["last"] or opened
@@ -416,10 +429,9 @@ def build(data, now):
             n["parent"] = e["parent"]
         if n["started"] is None:
             n["started"] = opened
-        ho = handoff_by_leaf.get(leaf(e.get("handoff")))
         if ho and not n["parent"] and ho["parent"]:
             n["parent"] = ho["parent"]
-    reg_keys = {k for k in nodes}
+    reg_keys = set(nodes) | merged
     for dn, ho in handoff_by_leaf.items():
         key = ho["child"]
         if not key or key in reg_keys:
@@ -433,7 +445,7 @@ def build(data, now):
             except (ValueError, OverflowError):
                 opened = None
         opened = opened or ho["mtime"]
-        n["glyph"], n["state"] = reg_glyph("open", opened, now)
+        n["glyph"], n["state"] = reg_glyph("open", opened, now, "result.md" in ho["has"])
         n["last"], n["started"], n["parent"] = opened, opened, ho["parent"] or None
         n["path"] = ho.get("path") or ""
         nodes[key] = n

@@ -32,8 +32,9 @@ PI_FOREMAN_PARENT_LABEL=<parent-slug> so its Pi refreshes the tag. --dry-run wri
 child id and command; no Herdr call, no registry entry.
 
 Agent dir: --agent-dir, else PI_CODING_AGENT_DIR, else ~/.pi/agent. Parent id: --parent-id, else
-PI_INTERCOM_STABLE_ID, else `stableId` of <agent dir>/intercom/config.json (pi-intercom 0.17.0's
-own rule; the Pi session id, its last fallback, is only known inside Pi, which passes --parent-id).
+PI_INTERCOM_SESSION_ID (the id pi-intercom publishes), else PI_INTERCOM_STABLE_ID, else `stableId` of
+<agent dir>/intercom/config.json (the same order as the Pi side, livestate.ts; the Pi session id, its last
+fallback, is only known inside Pi, which passes --parent-id).
 
 Exit codes: 0 ok, 1 usage or refused, 2 Herdr failure.
 """
@@ -64,6 +65,7 @@ ENV_PARENT = "PI_FOREMAN_PARENT_INTERCOM"
 ENV_STABLE = "PI_INTERCOM_STABLE_ID"
 ENV_PARENT_LABEL = "PI_FOREMAN_PARENT_LABEL"
 ENV_MODEL = "PI_FOREMAN_SESSION_MODEL"
+ENV_PUBLISHED = "PI_INTERCOM_SESSION_ID"
 META_SOURCE = "user:pi-foreman"
 META_TTL_MS = 180000
 
@@ -132,6 +134,13 @@ def parent_from_config(adir):
         return None
     v = cfg.get("stableId") if isinstance(cfg, dict) else None
     return v.strip() if isinstance(v, str) and v.strip() else None
+
+
+def opener_id(given, adir, env=None):
+    """The opener's intercom id: --parent-id, PI_INTERCOM_SESSION_ID, PI_INTERCOM_STABLE_ID, then `stableId`
+    (the order livestate.ts intercomIdOf and session.ts openerIntercomId use, so the parent's live key matches)."""
+    env = os.environ if env is None else env
+    return given or env.get(ENV_PUBLISHED, "").strip() or env.get(ENV_STABLE, "").strip() or parent_from_config(adir)
 
 
 def footer(label, plan_first):
@@ -367,7 +376,7 @@ def cmd_open(a):
         refused = rank_refusal(adir, own_model, a.model)
         if refused:
             raise Refused(refused)
-    parent = a.parent_id or os.environ.get(ENV_STABLE, "").strip() or parent_from_config(adir)
+    parent = opener_id(a.parent_id, adir)
     if not parent:
         raise Refused("no parent intercom id: pass --parent-id (inside Pi, /foreman session open passes it)")
     if not VALUE_RE.match(parent):
@@ -488,7 +497,7 @@ def send_intercom(to, text):
 def cmd_brief(a):
     adir = agent_dir(a.agent_dir)
     to = resolve_child(adir, a.target)
-    opener = a.parent_id or os.environ.get(ENV_STABLE, "").strip() or parent_from_config(adir)
+    opener = opener_id(a.parent_id, adir)
     if not opener or not VALUE_RE.match(opener):
         raise Refused("no opener intercom id: pass --parent-id")
     given = Path(a.text)

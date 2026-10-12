@@ -105,7 +105,7 @@ import { registerWait, waitLimits } from "./wait.ts";
 import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import type { CloseReport } from "./close.ts";
-import { foremanModelSpec, registerSession, sessionModelOf } from "./session.ts";
+import { foremanModelSpec, markOwnClosed, registerSession, sessionModelOf } from "./session.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
 import { foremanTriage, GATED_TOOLS, isTriaged, OUTWARD_TOOLS, triageAdvice, triageGateBlock, TRIAGE_RULES, TRIAGE_TOOL, trivialPathAdvice, workspaceTargets } from "./triage.ts";
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
@@ -2260,7 +2260,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     activeRuns: (id) => sessions.get(id)?.activeRuns.size ?? 0,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), runSync: (c) => runSync(s, c), report: (c, file) => closeReport(s, c, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text };
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), runSync: (c) => runSync(s, c), report: (c, file) => closeReport(s, c, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text, markClosed: () => void markOwnClosed(s.agentDir, process.env) };
     },
   });
 

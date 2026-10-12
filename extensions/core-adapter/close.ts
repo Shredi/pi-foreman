@@ -152,6 +152,8 @@ export interface CloseDeps {
   exists: (file: string) => boolean;
   /** Close report after the sync (foreman_close.py, cleanup + `## Close` into `file`); null = none. */
   report?: (file: string) => Promise<CloseReport | null>;
+  /** Mark this session's own registry entry closed (a child; before the `foreman:closed` ack). */
+  markClosed?: () => void;
   /** Timer for the start deadline (default: an unref'd setTimeout). */
   setTimer?: (fn: () => void, ms: number) => () => void;
 }
@@ -362,6 +364,11 @@ export class CloseFlow {
     if (report) this.d.trace({ event: "close", cause: req.source, decision: "report", ready: report.ready, removed: report.removed, handover: report.handover.length });
     const head = `pi-foreman: close: ${sync.text.split("\n").slice(0, 3).join(" | ")}`;
     this.d.notify(report ? [head, ...closeReportLines(report)].join("\n") : head, sync.ok && report?.ready !== false ? "info" : "warning");
+    try {
+      this.d.markClosed?.();
+    } catch (err) {
+      this.d.notify(`pi-foreman: could not mark the registry entry closed: ${(err as Error).message}`, "warning");
+    }
     if (req.replyTo) {
       try {
         await this.d.reply(req.replyTo, `${CLOSED_TEXT} ${req.file}${report ? ` ${report.closeLine}` : ""}`);
@@ -405,6 +412,8 @@ export interface CloseSession {
   /** Close report with `--result file` (scripts/foreman_close.py); null = none. */
   report?: (ctx: ExtensionContext, file: string) => Promise<CloseReport | null>;
   retro: (ctx: ExtensionContext) => Promise<string>;
+  /** Mark this session's own registry entry closed (session.ts markOwnClosed). */
+  markClosed?: () => void;
 }
 
 type Bus = { emit(channel: string, data: unknown): void; on?(channel: string, handler: (data: unknown) => void): (() => void) | void } | undefined;
@@ -458,6 +467,7 @@ export function registerClose(
       sendUserMessage: (text) => pi.sendUserMessage(text),
       runSync: () => s.runSync(holder.ctx),
       report: s.report ? (file) => s.report!(holder.ctx, file) : undefined,
+      markClosed: s.markClosed ? () => s.markClosed!() : undefined,
       retro: () => (get(s.config(), "sync.runRetro") === false ? s.retro(holder.ctx) : Promise.resolve("")),
       reply: (to, text) => outboxSend(pi.events, to, text, "close"),
       notify: (text, level) => {

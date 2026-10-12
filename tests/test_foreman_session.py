@@ -62,7 +62,7 @@ class SessionTest(unittest.TestCase):
         self.log = self.tmp / "herdr.log"
         self.env = {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""), "FAKE_HERDR_LOG": str(self.log),
                     "HERDR_PANE_ID": "w1:p1", "PI_CODING_AGENT_DIR": str(self.agent)}
-        for k in ("HERDR_BIN", "PI_INTERCOM_STABLE_ID", "PI_FOREMAN_HANDOFF_DIR", "FAKE_HERDR_FAIL", "FAKE_HERDR_WORKSPACES"):
+        for k in ("HERDR_BIN", "PI_INTERCOM_STABLE_ID", "PI_INTERCOM_SESSION_ID", "PI_FOREMAN_HANDOFF_DIR", "FAKE_HERDR_FAIL", "FAKE_HERDR_WORKSPACES"):
             self.env[k] = ""
 
     def run_main(self, *argv, **env):
@@ -326,6 +326,16 @@ class SessionTest(unittest.TestCase):
         self.assertNotIn("shell", run.call_args[1])
         with mock.patch.object(fsn, "intercom_cli", return_value=None):
             self.assertFalse(fsn.send_intercom("fm-x-abc123", "hi")[0])
+
+
+class OpenerIdTest(unittest.TestCase):
+    def test_precedence_given_published_stable_config(self):
+        env = {fsn.ENV_PUBLISHED: "pub", fsn.ENV_STABLE: "stable"}
+        with mock.patch.object(fsn, "parent_from_config", return_value="cfg"):
+            self.assertEqual(fsn.opener_id("given", Path("."), env), "given")
+            self.assertEqual(fsn.opener_id(None, Path("."), env), "pub")
+            self.assertEqual(fsn.opener_id(None, Path("."), {fsn.ENV_STABLE: " stable "}), "stable")
+            self.assertEqual(fsn.opener_id(None, Path("."), {}), "cfg")
 
 
 class PlanFirstFooterTest(unittest.TestCase):

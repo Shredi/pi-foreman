@@ -131,6 +131,11 @@ snippet again and run `herdr server reload-config`, else the frames render uncol
 Recent runs: a run that ended shows as `✓ role` on line 2 for `radar.recentRunSeconds` (default 8), then moves into
 the `✓n` count. Tokens: line 3 counts uncached input (see `fm_l3`); radar's TUI and JSON keep the raw totals.
 
+Opened sessions: a registry entry (`sessions.json`) whose handoff dir matches a live session is merged into that node, so
+a working child shows once under its parent, never as a second `✗ lost` row. An `open` entry with a `result.md` and no
+live file shows as idle. The opener id is `--parent-id`, `PI_INTERCOM_SESSION_ID`, `PI_INTERCOM_STABLE_ID`, then the
+config `stableId`; a child that closes marks its own entry `closed`.
+
 ## Agents view
 
 While at least one foreman session is joined, the daemon sets the Agents view (`agent.view.set`, label `pi-foreman`)
