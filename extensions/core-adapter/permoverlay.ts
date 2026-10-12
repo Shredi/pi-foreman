@@ -143,7 +143,7 @@ export interface MatchCtx {
   shell?: "posix" | "powershell";
   /** Session kind for the write protection (default main). */
   role?: "main" | "child";
-  /** Child only: the session's round worktrees and their isolation dirs (roundsurface.ts roundRoots); shared by every child, so `*.worktrees/*` stays open below them. */
+  /** Child only: the round worktree the child's cwd lies in, or its own isolation worktree under a round (roundsurface.ts roundRoots); never a sibling isolation worktree, so `*.worktrees/*` stays closed around them. */
   roundRoots?: string[];
   exists?: (p: string) => boolean;
   isDir?: (p: string) => boolean;

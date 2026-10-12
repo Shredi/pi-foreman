@@ -1,8 +1,9 @@
 // Round surfaces (ledger items 7c, 7e; docs/permissions.md, "Round surfaces"): what the foreman session owns for
 // the length of a round, one shared set for the foreman and every child of the session:
 //   - its own handoff dirs (owned.ts ownHandoffDirs),
-//   - the round worktrees recorded in the session manifest (the foreman's `git worktree add`, manifest.ts) and the
-//     isolation worktrees pi-subagents makes for them (`<repo>.worktrees/worktrees/<round>/pi-worktree-*`),
+//   - the round worktrees recorded in the session manifest (the foreman's `git worktree add`, manifest.ts), and for a
+//     child inside an isolation worktree pi-subagents makes for a round (`<repo>.worktrees/worktrees/<round>/pi-worktree-*`)
+//     that isolation worktree itself, never the dir as a whole (roundRoots),
 //   - the ledger file bound to the session (a read root only).
 // Nothing else is inherited session-wide.
 import * as fs from "node:fs";
@@ -35,9 +36,28 @@ export function isolationDir(round: string, platform: string = process.platform)
   return x.join(x.dirname(round), "worktrees", x.basename(round));
 }
 
-/** Every dir the round surfaces own: the round worktrees and their isolation dirs. */
-export function roundRoots(worktrees: string[], platform: string = process.platform): string[] {
-  return worktrees.flatMap((w) => [w, isolationDir(w, platform)]);
+/**
+ * The round roots of a child whose cwd is `cwd` (ledger 7c, security fix): the round worktree the cwd lies in, or, for a
+ * child in an isolation worktree under a round's isolation dir, that isolation worktree itself (its git top level).
+ * Never the isolation dir as a whole, so the sibling `pi-worktree-*` of another child stays denied. `top` resolves the git
+ * top level (injectable).
+ */
+export function roundRoots(worktrees: string[], cwd: string, platform: string = process.platform, top: (dir: string) => string | null = workspaceTop): string[] {
+  const x = px(platform);
+  const below = (dir: string, p: string): boolean => {
+    const rel = x.relative(x.resolve(dir), x.resolve(p));
+    return rel !== "" && rel !== ".." && !rel.startsWith(".." + x.sep) && !x.isAbsolute(rel);
+  };
+  const within = (dir: string): boolean => x.resolve(dir) === x.resolve(cwd) || below(dir, cwd);
+  const round = worktrees.find((w) => within(w));
+  if (round) return [x.resolve(round)];
+  for (const w of worktrees) {
+    const iso = isolationDir(w, platform);
+    if (!within(iso)) continue;
+    const own = top(cwd);
+    return own && below(iso, own) ? [x.resolve(own)] : [];
+  }
+  return [];
 }
 
 const PLAIN = /^[A-Za-z0-9_./@+=,:%-]+$/;

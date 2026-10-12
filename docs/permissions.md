@@ -271,7 +271,12 @@ the same for the foreman and every child it launches, and nothing else is inheri
   and the child overlay use them.
 - **Round worktree, from the manifest.** The unremoved `worktree` entries the foreman session itself recorded in its
   manifest (`<agentDir>/pi-foreman/state/sessions/<id>/manifest.json`, owner = the session id, never a child's). A child
-  may work there and the sibling-worktree deny (`*.worktrees/*`) stays open below it; other round worktrees stay denied.
+  whose cwd is in a round worktree may work there; the round worktree is a root only for that child, and other round
+  worktrees stay denied.
+- **Own isolation worktree only.** The isolation worktrees pi-subagents makes under
+  `<repo>.worktrees/worktrees/<round>/pi-worktree-*` are not a root as a set. A child whose cwd is in one of them owns
+  that isolation worktree (its git top level) and nothing else of the dir; a sibling child's `pi-worktree-*` stays denied
+  for the path tools and bash redirects (`*.worktrees/*`), and a child in the round worktree cannot reach them at all.
 - **Bound ledger as read root.** The ledger file bound to the session is a read root for every forwarded ask, and
   `LEDGER-*.md` in its dir is a readable glob. Read only.
 - **Round worktree add by the foreman.** The foreman's own `git [-C <main>] worktree add <repo>.worktrees/<round> [-b

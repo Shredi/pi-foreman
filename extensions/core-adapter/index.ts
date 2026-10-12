@@ -1235,7 +1235,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Overlay check (see permoverlay.ts); undefined = let the call go on. */
   async function overlayBlock(s: Session, ctx: ExtensionContext, toolName: string, input: Record<string, unknown>) {
     if (!s.overlay) return { block: true as const, reason: OVERLAY_UNAVAILABLE };
-    const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ...(s.isChild ? { roundRoots: roundRoots(roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform), platform) } : {}) });
+    const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ...(s.isChild ? { roundRoots: roundRoots(roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform), ctx.cwd, platform) } : {}) });
     const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) });
     if (d) s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: r ? (d.kind === "deny" ? "deny" : "ask-denied") : "ask-approved" });
     return r;
