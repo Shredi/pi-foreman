@@ -17,6 +17,7 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { isRulingName, rulingFresh } from "./ruling.ts";
 import { BG_PARAMS, BG_TOOL, ADDON_REFUSAL, addonPresent, bgLogPath, spawnDetached } from "./bg.ts";
 import { get } from "./config.ts";
 import { underOwned } from "./owned.ts";
@@ -253,6 +254,10 @@ export interface RuntimeDeps {
   trace: (rec: Record<string, unknown>) => void;
   /** Called after the set of active waits changed (a wait started, resolved or cancelled). */
   changed?: () => void;
+  /** Modification time (ms) of a file, else null; lets a ruling wait ignore a ruling older than its ask.md. */
+  mtime?: (p: string) => number | null;
+  /** A file wait on a ruling file woke (the harness writes `.seen`; ask contract). */
+  onRulingWake?: (file: string) => void;
 }
 
 interface Entry {
@@ -263,6 +268,8 @@ interface Entry {
   label?: string;
   /** pid and ci waits: a log file shown by `/foreman waits` and named in the wake line. */
   log?: string;
+  /** pid waits: the watched process (a second wait on it dedupes). */
+  pid?: number;
   started: number;
   deadline: number;
   handles: unknown[];
@@ -300,7 +307,11 @@ export class WaitRuntime {
     return this.waits.size >= limits.maxActive ? `${WAIT_TOOL}: ${this.waits.size} waits are active (wait.maxActive ${limits.maxActive}); cancel one first.` : null;
   }
 
-  start(spec: ValidSpec): { id: string } | { error: string } {
+  start(spec: ValidSpec): { id: string; deduped?: true } | { error: string } {
+    if (spec.kind === "pid") {
+      const same = [...this.waits.values()].find((w) => w.kind === "pid" && w.pid === spec.pid);
+      if (same) return { id: same.id, deduped: true };
+    }
     const limits = this.d.limits();
     const full = this.capacityError();
     if (full) {
@@ -317,6 +328,7 @@ export class WaitRuntime {
     const e: Entry = { id, kind: spec.kind, note: spec.note, started: now, deadline: now + limits.maxSeconds * 1000, handles: [], ghErrors: 0, ghFirstError: "" };
     if (spec.kind === "child") e.label = spec.label;
     else if ((spec.kind === "pid" || spec.kind === "ci") && spec.log) e.log = spec.log;
+    if (spec.kind === "pid") e.pid = spec.pid;
     this.waits.set(id, e);
     e.handles.push(this.d.timers.set(() => this.resolve(id, "timeout"), limits.maxSeconds * 1000));
     if (spec.kind === "timer") e.handles.push(this.d.timers.set(() => this.resolve(id, "elapsed"), spec.seconds * 1000));
@@ -331,7 +343,10 @@ export class WaitRuntime {
         if (!this.waits.has(e.id)) return;
         if (spec.kind === "file") {
           const size = this.d.stat(spec.path);
-          if (size !== null) return this.resolve(e.id, `exists, ${size} bytes`);
+          if (size !== null && (!this.d.mtime || rulingFresh(spec.path, this.d.mtime))) {
+            if (isRulingName(path.basename(spec.path))) this.d.onRulingWake?.(spec.path);
+            return this.resolve(e.id, `exists, ${size} bytes`);
+          }
         } else if (spec.kind === "pid") {
           if (!this.d.alive(spec.pid)) return this.resolve(e.id, "exited (exit code not knowable)");
         } else if (spec.kind === "ci") {
@@ -485,6 +500,14 @@ export function processAlive(pid: number): boolean {
   }
 }
 
+function fileMtime(p: string): number | null {
+  try {
+    return fs.statSync(p).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 function fileSize(p: string): number | null {
   try {
     return fs.statSync(p).size;
@@ -508,6 +531,8 @@ export interface WaitSession {
   onStart?: (spec: ValidSpec, id: string) => void;
   /** Called after a wait was cancelled (the finish gate may leave waiting_for_parent). */
   onCancel?: (id: string) => void;
+  /** Called when a file wait on a ruling file woke (the harness writes `.seen`; askcontract.ts). */
+  onRulingWake?: (file: string) => void;
 }
 
 const PARAMS = {
@@ -564,6 +589,8 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       now: () => Date.now(),
       limits: limitsOf(s),
       stat: fileSize,
+      mtime: fileMtime,
+      onRulingWake: (file) => s.onRulingWake?.(file),
       alive: processAlive,
       gh: (runId) => ghRunView(runId, workspaceOf(s.cwd).root),
       ghRefusal: () => (resolveGh(workspaceOf(s.cwd).root) ? null : `ci waits are refused: ${GH_MISSING}`),
@@ -623,6 +650,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       if ("error" in spec) return refuse(spec.error, params.kind);
       const r = ensure().start(spec);
       if ("error" in r) return text(r.error, { decision: "refused" }, true);
+      if ("deduped" in r) return text(`Wait ${r.id} (${spec.kind}) already watches this pid; no second wait started. End your turn: you will be woken by one message.`, { decision: "start", id: r.id, kind: spec.kind, deduped: true });
       s.onStart?.(spec, r.id);
       const win = l.batchWindowSeconds;
       return text(`Wait ${r.id} (${spec.kind}) started; times out after ${l.maxSeconds}s. End your turn: you will be woken by one message${win > 0 ? ` (outcomes within ${win}s are batched)` : ""}.`, { decision: "start", id: r.id, kind: spec.kind });
