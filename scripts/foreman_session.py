@@ -5,6 +5,7 @@
                                       [--plan-first] [--focus] [--dry-run] [--print-all]
                                       [--parent-id ID] [--own-model ID] [--agent-dir D]
     python scripts/foreman_session.py list [--json] [--agent-dir D]
+    python scripts/foreman_session.py brief <handoff dir|label|child id> <text|file> [--parent-id ID] [--agent-dir D]
 
 `open` writes the handoff dir `<agent dir>/pi-foreman/handoffs/<YYYYmmdd-HHMMSS>-<slug>/`:
   brief.md  the brief file's text plus the report-back footer (message contract below)
@@ -12,6 +13,11 @@
             is a one-file change)
   child     the child's intercom id `fm-<slug>-<6 hex>`
 and records the session in `<agent dir>/pi-foreman/state/sessions.json` (atomic write).
+
+`brief` resolves its target (a handoff dir with a `child` file, or a registry label / child id; the newest
+entry wins) and sends the text through pi-intercom's `cli.mjs send` (argv list, no shell). A single word that
+names a file is sent as `Brief from <opener id>: read <abs path> and act on it`. When node or the module is
+missing, or the broker refuses, it prints the manual message and exits 1; it never falls back to Herdr.
 
 Herdr (HERDR_PANE_ID set and `herdr` on PATH, or HERDR_BIN): the workspace whose label is the
 basename of the git top level of --cwd (default: the current dir), else `workspace create`
@@ -402,7 +408,7 @@ def cmd_open(a):
     (handoff / "parent").write_text(parent + "\n", "utf-8")
     (handoff / "child").write_text(child + "\n", "utf-8")
     entry = {"label": a.label, "child": child, "parent": parent, "handoff": str(handoff), "cwd": str(cwd),
-             "opened": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": "pending", "last": None}
+             "model": a.model or None, "opened": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": "pending", "last": None}
     code = 0
     if binary:
         try:
@@ -437,8 +443,66 @@ def cmd_list(a):
     for s in rows:
         last = s.get("last") if isinstance(s.get("last"), dict) else None
         tail = " last: %s %s" % (last.get("kind"), last.get("path") or "") if last else ""
-        print("  %s  %s  %s  %s%s" % (s.get("label"), s.get("child"), s.get("status"), s.get("handoff"), tail))
+        print("  %s  %s  %s  %s  %s%s" % (s.get("label"), s.get("model") or "-", s.get("status"), s.get("handoff"),
+                                       s.get("child"), tail))
     return 0
+
+
+def resolve_child(adir, target):
+    """A handoff dir (its `child` file) or a registry label / child id (newest entry wins) -> the child's intercom id."""
+    p = Path(target)
+    if p.is_dir() and (p / "child").is_file():
+        child = (p / "child").read_text("utf-8").strip()
+        if VALUE_RE.match(child):
+            return child
+        raise Refused("%s has no usable child id" % (p / "child"))
+    for s in reversed(read_registry(adir)["sessions"]):
+        if isinstance(s, dict) and target in (s.get("label"), s.get("child")) and VALUE_RE.match(str(s.get("child"))):
+            return s["child"]
+    raise Refused("no session with handoff dir, label or child id %r (see: foreman session list)" % target)
+
+
+def intercom_cli():
+    """pi-intercom's cli.mjs from this package's node_modules (or the Pi agent's npm dir), else None."""
+    for root in (Path(__file__).resolve().parent.parent / "node_modules", agent_dir() / "npm" / "node_modules"):
+        cli = root / "pi-intercom" / "cli.mjs"
+        if cli.is_file():
+            return cli
+    return None
+
+
+def send_intercom(to, text):
+    """Send `text` to the intercom id `to` through pi-intercom's CLI (argv list, no shell); (ok, detail)."""
+    cli, node = intercom_cli(), shutil.which("node")
+    if not cli or not node:
+        return False, "pi-intercom's cli.mjs or node was not found"
+    try:
+        r = subprocess.run([node, str(cli), "send", "--to", to, "--text", text], stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=HERDR_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+    detail = (r.stderr.decode("utf-8", "replace").strip() or r.stdout.decode("utf-8", "replace").strip())[:300]
+    return r.returncode == 0, detail
+
+
+def cmd_brief(a):
+    adir = agent_dir(a.agent_dir)
+    to = resolve_child(adir, a.target)
+    opener = a.parent_id or os.environ.get(ENV_STABLE, "").strip() or parent_from_config(adir)
+    if not opener or not VALUE_RE.match(opener):
+        raise Refused("no opener intercom id: pass --parent-id")
+    given = Path(a.text)
+    if not re.search(r"\s", a.text) and given.is_file():  # same wording as /foreman session brief
+        message = "Brief from %s: read %s and act on it" % (opener, given.resolve())
+    else:
+        message = a.text
+    ok, detail = send_intercom(to, message)
+    if ok:
+        print("pi-foreman session: brief sent to %s." % to)
+        return 0
+    sys.stderr.write("pi-foreman session: brief to %s not sent (%s).\n" % (to, detail))
+    print("Not sent. Send it yourself with the intercom tool (`send`) to %s:\n  %s" % (to, message))
+    return 1
 
 
 def main(argv=None):
@@ -457,6 +521,11 @@ def main(argv=None):
     o.add_argument("--dry-run", action="store_true")
     o.add_argument("--print-all", action="store_true")
     o.add_argument("--agent-dir", dest="agent_dir_sub")
+    b = sub.add_parser("brief")
+    b.add_argument("target")
+    b.add_argument("text")
+    b.add_argument("--parent-id")
+    b.add_argument("--agent-dir", dest="agent_dir_sub")
     ls = sub.add_parser("list")
     ls.add_argument("--json", action="store_true")
     ls.add_argument("--agent-dir", dest="agent_dir_sub")
@@ -470,6 +539,8 @@ def main(argv=None):
             return cmd_open(a)
         if a.cmd == "list":
             return cmd_list(a)
+        if a.cmd == "brief":
+            return cmd_brief(a)
     except Refused as e:
         sys.stderr.write("pi-foreman session: refused: %s\n" % e)
         return 1

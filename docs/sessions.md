@@ -22,7 +22,7 @@ again. All four subcommands are yours to type; a subagent child refuses every on
 - `/foreman session close <target> [result-path]` sends `foreman:close [result-path]` (see the contract below)
   and marks the registry entry `closing` once the send went out. The result path may use only `A-Z a-z 0-9 . _ / -`,
   at most 200 characters, and must end in `.md`. Example: `/foreman session close docs .workflow/result-docs.md`
-- `/foreman session list` prints the registry: label, child id, status, handoff dir and the last report.
+- `/foreman session list` prints the registry: label, model, status, handoff dir, child id and the last report.
 
 `<target>` is a registry label (the newest entry of that name) or a child id; any other text is passed to
 pi-intercom as the address. Spaces in a brief path or `--cwd` do not survive the command line; use the CLI for those.
@@ -34,7 +34,12 @@ pi-intercom as the address. Spaces in a brief path or `--cwd` do not survive the
 - `foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--focus] [--dry-run] [--print-all] [--parent-id ID] [--own-model ID] [--agent-dir DIR]`.
   `--print-all` prints both the POSIX and the PowerShell command. The parent id is `--parent-id`, else
   `PI_INTERCOM_STABLE_ID`, else `stableId` in `<agent dir>/intercom/config.json`; without any, `open` is refused.
-- `foreman session list [--json] [--agent-dir DIR]`.
+- `foreman session list [--json] [--agent-dir DIR]` prints label, model (`-` when none was given), state, handoff dir and child id.
+- `foreman session brief <handoff dir|label|child id> <text|file> [--parent-id ID] [--agent-dir DIR]` delivers a brief to the
+  child through pi-intercom (`cli.mjs send`, run without a shell). A handoff dir resolves through its `child` file, a label
+  to the newest registry entry. A single word naming a file is sent as `Brief from <opener id>: read <abs path> and act on it`
+  (the opener id as for `open`), anything else as is. If node or pi-intercom is missing, or the broker refuses, the message
+  is printed for you to send by hand and the exit code is 1; it never falls back to `herdr agent prompt`.
 - The agent dir is `--agent-dir`, else `PI_CODING_AGENT_DIR`, else `~/.pi/agent`.
 - Exit codes: 0 ok, 1 usage error or refused, 2 Herdr failure (the command is then printed and the entry marked `failed`).
 

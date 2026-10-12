@@ -97,6 +97,7 @@ export interface SessionEntry {
   parent?: string;
   handoff?: string;
   cwd?: string;
+  model?: string | null;
   status?: string;
   opened?: string;
   result?: string;
@@ -175,9 +176,9 @@ export function formatList(reg: Registry): string {
   if (!reg.sessions.length) return "pi-foreman sessions: none opened yet.";
   const rows = reg.sessions.map((s) => {
     const last = s.last ? ` · last: ${s.last.kind}${s.last.path ? ` ${s.last.path}` : ""} (${s.last.at})` : "";
-    return `${s.label}  ${s.child}  ${s.status ?? "?"}  ${s.handoff ?? ""}${last}`;
+    return `${s.label}  ${typeof s.model === "string" && s.model ? s.model : "-"}  ${s.status ?? "?"}  ${s.handoff ?? ""}  ${s.child}${last}`;
   });
-  return ["pi-foreman sessions (label, child id, status, handoff dir):", ...rows].join("\n");
+  return ["pi-foreman sessions (label, model, status, handoff dir, child id):", ...rows].join("\n");
 }
 
 /** What the session functions need; plain values, so a later model tool can supply them too. */

@@ -4,6 +4,7 @@
 
 ### Fixed
 - R3b point 1: `foreman session open --model <id>` wins over the overlay/preset foreman role model for that session (model and thinking): the child gets `PI_FOREMAN_SESSION_MODEL` and `applyForemanModel` leaves the model alone when it is set. The CLI now runs the session rank rule too when the own model is known (`--own-model`, `PI_FOREMAN_SESSION_MODEL`, or the in-Pi open); an unknown own model (non-Pi parent) skips it and prints `rank check skipped: own model unknown`. `open` and `--dry-run` print `session model: <id>`. Tests: Python (env, dry-run line, rank refusal/skip), TS (resolver with env set and unset, `--own-model` passed).
+- R3b point 6: `foreman session brief <handoff dir|label|child id> <text|file>` delivers a brief through pi-intercom's CLI (no shell; manual fallback printed with exit 1, never `herdr agent prompt`). Registry entries record the session `model`; `foreman session list` and `/foreman session list` show label, model, state, handoff dir and child id. Tests with a stubbed sender.
 - R3b point 5: `foreman session open --dry-run` writes nothing (no handoff dir, brief, parent, child or registry entry); it prints the would-be handoff path, child id and command. Regression test.
 - radar: a child session known only from its handoff dir (no registry entry yet) crashed `build()` with a NameError; the sidebar then showed no `fm_*` tokens and a blank tree row. Regression test.
 

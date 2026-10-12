@@ -266,6 +266,67 @@ class SessionTest(unittest.TestCase):
             self.assertNotIn(private, tail)
         self.assertNotIn("Plan from", fsn.footer("demo", False))
 
+    def open_one(self, *extra):
+        code, _, err = self.run_main(*self.open_args(*extra))
+        self.assertEqual(code, 0, err)
+        return self.registry()[-1]
+
+    def test_list_shows_label_model_state_and_handoff(self):
+        entry = self.open_one("--model", "prov/model-5")
+        self.assertEqual(entry["model"], "prov/model-5")
+        code, out, _ = self.run_main("list")
+        self.assertEqual(code, 0)
+        row = [l for l in out.splitlines() if l.startswith("  demo")][0].split()
+        self.assertEqual(row[:4], ["demo", "prov/model-5", "open", entry["handoff"].split()[0]])
+        self.assertIn(entry["handoff"], out)
+
+    def test_brief_by_label_and_by_handoff_dir_sends_to_the_child(self):
+        entry = self.open_one()
+        sent = []
+        with mock.patch.object(fsn, "send_intercom", side_effect=lambda to, text: (sent.append((to, text)), (True, ""))[1]):
+            code, out, err = self.run_main("brief", "demo", "go ahead with B", "--parent-id", "parent-1")
+            self.assertEqual(code, 0, err)
+            code, _, err = self.run_main("brief", entry["handoff"], "second", "--parent-id", "parent-1")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sent, [(entry["child"], "go ahead with B"), (entry["child"], "second")])
+        self.assertIn("brief sent to %s" % entry["child"], out)
+
+    def test_brief_with_a_file_uses_the_brief_from_wording(self):
+        entry = self.open_one()
+        note = self.tmp / "ruling.md"
+        note.write_text("APPROVED\n", "utf-8")
+        sent = []
+        with mock.patch.object(fsn, "send_intercom", side_effect=lambda to, text: (sent.append((to, text)), (True, ""))[1]):
+            code, _, err = self.run_main("brief", "demo", str(note), "--parent-id", "parent-1")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sent, [(entry["child"], "Brief from parent-1: read %s and act on it" % note.resolve())])
+
+    def test_brief_failure_prints_the_manual_fallback_and_never_calls_herdr(self):
+        entry = self.open_one()
+        self.log.unlink()
+        with mock.patch.object(fsn, "send_intercom", return_value=(False, "broker down")):
+            code, out, err = self.run_main("brief", "demo", "hello", "--parent-id", "parent-1")
+        self.assertEqual(code, 1)
+        self.assertIn("not sent (broker down)", err)
+        self.assertIn("Not sent. Send it yourself", out)
+        self.assertIn(entry["child"], out)
+        self.assertEqual(self.calls(), [])
+
+    def test_brief_unknown_target_is_refused_and_send_uses_an_argv_list(self):
+        code, _, err = self.run_main("brief", "nope", "x", "--parent-id", "parent-1")
+        self.assertEqual(code, 1)
+        self.assertIn("no session with", err)
+        cli = self.tmp / "cli.mjs"
+        cli.write_text("", "utf-8")
+        done = mock.Mock(returncode=0, stdout=b"", stderr=b"")
+        with mock.patch.object(fsn, "intercom_cli", return_value=cli), mock.patch.object(fsn.shutil, "which", return_value="/bin/node"), \
+                mock.patch.object(fsn.subprocess, "run", return_value=done) as run:
+            self.assertEqual(fsn.send_intercom("fm-x-abc123", "hi there"), (True, ""))
+        self.assertEqual(run.call_args[0][0], ["/bin/node", str(cli), "send", "--to", "fm-x-abc123", "--text", "hi there"])
+        self.assertNotIn("shell", run.call_args[1])
+        with mock.patch.object(fsn, "intercom_cli", return_value=None):
+            self.assertFalse(fsn.send_intercom("fm-x-abc123", "hi")[0])
+
 
 class PlanFirstFooterTest(unittest.TestCase):
     def test_plan_first_footer_names_the_ruling_handoff(self):

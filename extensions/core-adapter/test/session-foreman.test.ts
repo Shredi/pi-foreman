@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { sessionRankRefusal } from "../ranks.ts";
 import { childRoleIds, roleLaunchBlock } from "../roles.ts";
-import { foremanModelSpec, runSessionCommand, sessionForemanModel, sessionModelOf } from "../session.ts";
+import { foremanModelSpec, formatList, runSessionCommand, sessionForemanModel, sessionModelOf } from "../session.ts";
 import type { SessionDeps } from "../session.ts";
 
 const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-session-foreman-")));
@@ -91,6 +91,14 @@ test("session open: a higher-ranked model is refused before spawning", async () 
   assert.equal(r.ok, false);
   assert.match(r.text, /^session open refused \[session_rank\]/);
   assert.equal(d.spawned.length, 0);
+});
+
+test("session list: shows label, model, status, handoff dir and child id", () => {
+  const text = formatList({ version: 1, sessions: [{ label: "demo", child: "fm-demo-abc123", status: "open", handoff: "/h/x", model: "p/m" }, { label: "old", child: "fm-old-000000", status: "closed", handoff: "/h/y" }] });
+  const lines = text.split("\n");
+  assert.match(lines[0], /label, model, status, handoff dir, child id/);
+  assert.equal(lines[1], "demo  p/m  open  /h/x  fm-demo-abc123");
+  assert.equal(lines[2], "old  -  closed  /h/y  fm-old-000000");
 });
 
 test("session model: the env var wins over the mapped foreman role model; unset keeps it", () => {
