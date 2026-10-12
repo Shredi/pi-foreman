@@ -574,8 +574,10 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
     cur = (cur ?? "") + s;
   };
   const posix = shell === "posix";
+  let pipeOpen = false;
   for (let i = 0; i < src.length; i++) {
     const c = src[i];
+    if (c !== " " && c !== "\t" && c !== "\r" && c !== "\n" && c !== "|") pipeOpen = false;
     if (c === (posix ? "\\" : "`")) {
       if (src[i + 1] === "\n") i++;
       else if (i + 1 < src.length) add(src[++i]);
@@ -602,6 +604,7 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
       i = j;
       cur = cur ?? "";
     } else if (c === " " || c === "\t" || c === "\r") flush();
+    else if (c === "\n" && pipeOpen && cur === null && words.length === 0) continue; // `a |\nb`: one pipeline
     else if (c === "\n" || c === ";") endPipe(";");
     else if (c === "&" && src[i + 1] === ">" && posix) {
       // `&>file` / `&>>file`: both streams to a file
@@ -621,6 +624,7 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
       } else {
         if (src[i + 1] === "&") i++;
         endUnit();
+        pipeOpen = true;
       }
     } else if (c === "(" || c === ")" || (posix && c === "`") || (!posix && (c === "{" || c === "}"))) endPipe(c);
     else if (c === "<" || c === ">") {

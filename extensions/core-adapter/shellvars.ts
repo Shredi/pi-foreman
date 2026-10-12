@@ -13,6 +13,7 @@
 
 /** Builtins and loop heads whose words name variables they set. */
 const SETTERS = new Set(["read", "declare", "typeset", "export", "local", "readonly", "mapfile", "readarray", "getopts", "unset", "for", "select"]);
+const BODY_OPENERS = new Set(["then", "else", "elif", "do", "{", "in"]);
 const ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s;
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -33,7 +34,8 @@ export function resolveVars(pipelines: string[][][], seps: string[], env: Record
   const poisoned = new Set<string>();
   // IFS (word splitting), `let` / `((..))` (arithmetic assignment), eval / source: nothing on the line resolves
   const all = pipelines.flat(2);
-  if (all.some((w) => /\bIFS\b/.test(w) || w === "let" || w.startsWith("(("))) return new Map();
+  // `trap` runs its text later; a `case` arm ends in `)`, which would make the arm's assignment look like a statement
+  if (all.some((w) => /\bIFS\b|\btrap\b|\bcase\b/.test(w) || w === "let" || w.startsWith("(("))) return new Map();
   if (pipelines.some((p) => p.some((u) => ["eval", "source", "."].includes(u.find((x) => !ASSIGN.test(x)) ?? "")))) return new Map();
   // `H+=x`, `H[0]=x`: an append or element assignment leaves the value unknown
   for (const w of all) {
@@ -46,10 +48,13 @@ export function resolveVars(pipelines: string[][][], seps: string[], env: Record
   };
   // pass 1: every variable some other form may set stays unresolved for the whole line
   const eligible: boolean[] = [];
+  // after `then`, `else`, `elif`, `do`, `{` the next statement may or may not run: no later assignment counts
+  let opened = false;
   pipelines.forEach((pipe, i) => {
     const m = sole(i);
+    if (pipe.some((u) => BODY_OPENERS.has(u.find((x) => !ASSIGN.test(x)) ?? ""))) opened = true;
     const prevOk = i === 0 || seps[i - 1] === ";" || (eligible[i - 1] && seps[i - 1] === "&&");
-    eligible[i] = !!m && !scoped && prevOk && !m[1].startsWith("FOREMAN_") && literal(m[2]);
+    eligible[i] = !!m && !scoped && !opened && prevOk && !m[1].startsWith("FOREMAN_") && literal(m[2]);
     if (m && !eligible[i]) poisoned.add(m[1]);
     for (const unit of m ? [] : pipe) {
       for (const w of unit) {
