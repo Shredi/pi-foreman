@@ -8,11 +8,14 @@ import tempfile
 
 # A child sandbox or a running session leaks its own settings into the suite (git url rewrites,
 # the session model, subagent markers); tests assume a clean environment.
-_KEEP = {"PI_FOREMAN_TEST_AGENT_DIR", "PI_FOREMAN_PYTHON"}
+# Only the variables a running session sets are scrubbed; test switches (PI_FOREMAN_LIVE_SMOKE,
+# PI_FOREMAN_DOCS_ROOT, PI_FOREMAN_PYTHON, ...) survive.
+SESSION_VARS = ("PI_FOREMAN_HANDOFF_DIR", "PI_FOREMAN_STATE_DIR", "PI_FOREMAN_PARENT_INTERCOM",
+                "PI_FOREMAN_PARENT_LABEL", "PI_FOREMAN_SESSION_MODEL", "PI_SUBAGENT_CHILD",
+                "PI_SUBAGENT_PARENT_SESSION")
 for _k in list(os.environ):
     if (_k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")) or _k == "GIT_CONFIG_COUNT"
-            or (_k.startswith("PI_FOREMAN_") and _k not in _KEEP)
-            or _k in ("PI_SUBAGENT_CHILD", "PI_SUBAGENT_PARENT_SESSION")):
+            or _k in SESSION_VARS):
         del os.environ[_k]
 
 if not os.environ.get("PI_FOREMAN_TEST_AGENT_DIR"):

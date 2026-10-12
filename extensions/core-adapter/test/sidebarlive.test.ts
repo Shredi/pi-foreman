@@ -99,6 +99,23 @@ function fileURLToPathSelf(): string {
   return new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 }
 
+test("one push per state change, none in a steady state apart from the refresh interval", (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const pushes_: string[][] = [];
+  const { s } = rig({ gapMs: 0, refreshMs: 10_000, push: (args, done) => (pushes_.push(args), done()) });
+  s.start();
+  assert.equal(pushes_.length, 1, "start: one initial push");
+  for (let i = 1; i <= 3; i++) {
+    s.request(); // a state change
+    assert.equal(pushes_.length, 1 + i, "each change pushes once");
+  }
+  t.mock.timers.tick(9_999);
+  assert.equal(pushes_.length, 4, "a steady state pushes nothing before the refresh interval");
+  t.mock.timers.tick(1);
+  assert.equal(pushes_.length, 5, "the documented refresh keeps the token TTL alive");
+  s.stop();
+});
+
 test("install: without HERDR_ENV nothing starts (no onChange subscription)", () => {
   let subscribed = 0;
   const handlers: Record<string, () => Promise<void>> = {};

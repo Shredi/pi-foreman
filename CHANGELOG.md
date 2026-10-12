@@ -36,9 +36,9 @@
 - 6c: `providers.<p>.cache.byModel` rows `{match, ttlSeconds, billing?}` layered over the provider cache policy (first match wins; request billing never keeps alive); the `claude-bridge` preset has ttl 600 s for `claude-*` and keep-alive off; `docs/cache.md` table per family.
 - 6e: `docs/presets.md`.
 - 7a: a pending `foreman_wait` / `foreman_bg` wait keeps the session state `working` (presence `waits[]` still lists the waits); Herdr and the sidebar show it as working.
-- 7e: the Python and node test suites no longer depend on the caller's environment: `tests/_isolation.py` drops `GIT_CONFIG_*` and the `PI_FOREMAN_*` / `PI_SUBAGENT_*` session variables, and the `session:` node tests clear and restore `PI_SUBAGENT_CHILD`, so every suite is green inside a child sandbox.
+- 7e: the Python and node test suites no longer depend on the caller's environment: `tests/_isolation.py` drops `GIT_CONFIG_*` and an explicit list of running-session variables (`PI_FOREMAN_HANDOFF_DIR`, `_STATE_DIR`, `_PARENT_INTERCOM`, `_PARENT_LABEL`, `_SESSION_MODEL`, `PI_SUBAGENT_CHILD`, `PI_SUBAGENT_PARENT_SESSION`; test switches such as `PI_FOREMAN_LIVE_SMOKE` and `PI_FOREMAN_DOCS_ROOT` survive), and the `session:` node tests clear and restore `PI_SUBAGENT_CHILD`, so every suite is green inside a child sandbox.
 - 7f: `tool_error {tool, message}` is traced for a tool result with `isError` (message cut to 200 characters).
-- 7g: the sidebar shows a static state glyph in `fm_sym` (⏳ working or waiting, ⏸ idle, ? ask open, ✋ blocked, ✓ done, ✗ lost, `!` blocked over 15 minutes), pushed when the state changes; no timer, no frames; the config snippet row 1 opens with `fm_sym` again. See docs/herdr.md.
+- 7g: the sidebar shows a static state glyph in `fm_sym` (⏳ working or waiting, ⏸ idle, ? ask open, ✋ blocked, ✓ done, ✗ lost, `!` blocked over 15 minutes), pushed when the state changes; no spinner, no frames, and an unchanged row is re-sent only every 10 s, before the 15 s token TTL expires; the config snippet row 1 opens with `fm_sym` again. See docs/herdr.md.
 
 ### Known gaps
 - Modules imported by a scanned script are not scanned (1d scans the script file only).
@@ -46,12 +46,14 @@
 - 2d: inline python over the state dir still asks (fail closed).
 - 2g: the external package's "approve for this session" is subagent-scoped.
 - 4d: `bg_wait` yielding during a supervisor ask is upstream in pi-subagents.
+- 6a: the option "`review.model` of another family when ranked" is not built.
 
 ### Deferred / dropped
 - 6d (background model): deferred to a follow-up round.
 - 7b, 7c, 7d: dropped for budget.
 
 ### Fixed
+- Review fixes, ruling 4: a single-agent review launch counted twice against `ceremony.reviewRuns` (3f), so the default cap of 3 refused the second review of a prompt; it now counts once. Replay goldens changed only for 3f (`role_launched` at launch and `role_result` at the run end, `role` on an overlay deny) and 7f (`tool_error`): destructive, detach, launch_model_switch, ledger_flow, parallel_ask, provider_switch, role_allowlist, role_model, safe_ops.
 - Ledger 7c: the session's round surfaces (own handoff dirs, round worktrees recorded in the session manifest, isolation worktrees below them) are owned by the foreman; the bound ledger is a read root. A child writes only its own worktree: the round worktree is written by the foreman and the `builder` child whose cwd is in it, every other child role (and any isolation child) reads it but cannot write it; an isolation child writes only its own isolation worktree, never a sibling's. See docs/permissions.md, "Round surfaces". Tests: `roundsurface.test.ts`.
 - Ledger 7d: the closed shell-variable grammar takes `cd <literal>`, `NAME=$PWD[/sub]`, `NAME=$FOREMAN_SCRATCH[/sub]` and `NAME=<literal under an owned dir>`; a heredoc opener ends the checked text at its line and an interpreter reading a heredoc keeps its class (still reviewed or asked). Cases in `tests/fixtures/shellvars-cases.json`, read by both implementations.
 - Ledger 7e: the foreman's own `git worktree add <repo>.worktrees/<round>` needs no ask (label `round-worktree`); a child's `git worktree` stays denied.

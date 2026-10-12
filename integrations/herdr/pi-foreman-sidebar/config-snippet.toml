@@ -7,7 +7,8 @@
 #
 # Colours are neutral placeholders: pick the ones that suit your theme.
 # $fm_sym is a STATIC glyph per presence state, pushed only when the state
-# changes (no timer, no frames): working and waiting (a pending foreman_wait is
+# changes (no spinner, no frames; an unchanged row is re-sent every 10 s, before
+# the 15 s token TTL): working and waiting (a pending foreman_wait is
 # work), idle, ask open, blocked, done, lost. "…!" marks a session blocked for
 # more than 15 minutes, so that rule comes first.
 # Rules test the glyph cell's own value; the first match wins.

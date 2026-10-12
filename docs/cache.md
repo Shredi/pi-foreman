@@ -24,12 +24,12 @@ The keep-alive interval and the on/off default follow the TTL of the matched row
 
 | family | TTL | billing | keep-alive |
 |---|---|---|---|
-| Anthropic direct | 300 s | token | on by default |
+| Anthropic direct | none built in (`no_entry`; 300 s is the provider's own TTL) | none until set | off until you set `cache.ttlSeconds` and `cache.billing` |
 | Claude through the `claude-bridge` preset | 600 s (`byModel` row, measured >= 10 min, 1 h plausible) | token | per `keepalive.enabled` |
 | request-billed provider, Claude-type model | 300 s | request | never |
 | request-billed provider, OpenAI-type model | 600 s | request | never |
 
-The request-billed rows only document the TTL for the retro cost report; set them with a `byModel` row such as `{"match": "gpt-*", "ttlSeconds": 600, "billing": "request"}`.
+The request-billed rows document the TTL a `byModel` row such as `{"match": "gpt-*", "ttlSeconds": 600, "billing": "request"}` sets for the live policy. They do not apply to the retro cost report: retro passes no model, so only the provider-level cache values (built-in entry and `cache.ttlSeconds` / `cache.billing`) count there, never a `byModel` row.
 
 ## Layers
 
