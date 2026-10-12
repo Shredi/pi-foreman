@@ -60,6 +60,8 @@ export function parentIntercomId(env: Record<string, string | undefined>): strin
 export const INTERCOM_OUTBOX_RESULT_EVENT = "intercom:outbox-result";
 /** How long an outbox send (the closed ack) waits for its result before going ahead. */
 export const OUTBOX_WAIT_MS = 5_000;
+/** How long the send of a `foreman:close` to a child session waits for its outbox result. */
+const SEND_WAIT_MS = 15_000;
 export { INTERCOM_MESSAGE_TYPE as INTERCOM_INBOUND_TYPE } from "./intercomguard.ts";
 export { INTERCOM_WAKE_TEXT } from "./usage.ts";
 /** pi-intercom 0.17.0 extension-api.ts: outbox request event (reply to the sender). */
@@ -154,6 +156,8 @@ export interface CloseDeps {
   report?: (file: string) => Promise<CloseReport | null>;
   /** Mark this session's own registry entry closed (a child; before the `foreman:closed` ack). */
   markClosed?: () => void;
+  /** Close this session's own child sessions (bounded wait); one report line per child. Never fails the close. */
+  closeChildren?: () => Promise<string[]>;
   /** Timer for the start deadline (default: an unref'd setTimeout). */
   setTimer?: (fn: () => void, ms: number) => () => void;
 }
@@ -342,6 +346,13 @@ export class CloseFlow {
     this.phase = "finishing";
     const req = this.req;
     if (this.waitsBlock(req.source, req.replyTo)) return this.reset();
+    let childLines: string[] = [];
+    try {
+      childLines = this.d.closeChildren ? await this.d.closeChildren() : [];
+    } catch (err) {
+      childLines = [`child sessions: could not be closed (${(err as Error).message})`];
+    }
+    if (childLines.length > 0) this.d.trace({ event: "close", cause: req.source, decision: "children", count: childLines.length, note: childLines.join("; ") });
     const sync = await this.d.runSync();
     this.d.trace({ event: "close", cause: req.source, decision: sync.ok ? "synced" : "sync-incomplete" });
     if (!this.d.exists(req.file)) {
@@ -363,7 +374,7 @@ export class CloseFlow {
     }
     if (report) this.d.trace({ event: "close", cause: req.source, decision: "report", ready: report.ready, removed: report.removed, handover: report.handover.length });
     const head = `pi-foreman: close: ${sync.text.split("\n").slice(0, 3).join(" | ")}`;
-    this.d.notify(report ? [head, ...closeReportLines(report)].join("\n") : head, sync.ok && report?.ready !== false ? "info" : "warning");
+    this.d.notify([head, ...(report ? closeReportLines(report) : []), ...childLines].join("\n"), sync.ok && report?.ready !== false ? "info" : "warning");
     try {
       this.d.markClosed?.();
     } catch (err) {
@@ -414,6 +425,8 @@ export interface CloseSession {
   retro: (ctx: ExtensionContext) => Promise<string>;
   /** Mark this session's own registry entry closed (session.ts markOwnClosed). */
   markClosed?: () => void;
+  /** Close the session's own child sessions; `send` delivers `foreman:close` over the intercom outbox. */
+  closeChildren?: (send: (to: string, text: string) => Promise<string>) => Promise<string[]>;
 }
 
 type Bus = { emit(channel: string, data: unknown): void; on?(channel: string, handler: (data: unknown) => void): (() => void) | void } | undefined;
@@ -468,6 +481,7 @@ export function registerClose(
       runSync: () => s.runSync(holder.ctx),
       report: s.report ? (file) => s.report!(holder.ctx, file) : undefined,
       markClosed: s.markClosed ? () => s.markClosed!() : undefined,
+      closeChildren: s.closeChildren ? () => s.closeChildren!((to, text) => outboxSend(pi.events, to, text, "close", SEND_WAIT_MS)) : undefined,
       retro: () => (get(s.config(), "sync.runRetro") === false ? s.retro(holder.ctx) : Promise.resolve("")),
       reply: (to, text) => outboxSend(pi.events, to, text, "close"),
       notify: (text, level) => {

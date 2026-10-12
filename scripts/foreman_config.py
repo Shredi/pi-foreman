@@ -97,6 +97,7 @@ Keys outside safety that the project and session layers cannot loosen either
     close.from                       intersect (a project can only narrow the allowed sources)
     close.autoClean                  only false is accepted (true removes worktrees and scratch at close)
     close.worktreeDir                ignored (the worktree convention: L1/L3/L2 only)
+    close.childWaitMs                ignored (how long a close waits for child sessions: L1/L3/L2 only)
     compaction.threshold.<tier>      lower only, minimum 0.3 (a higher threshold compacts later)
     wait.maxSeconds, wait.maxActive  lower only, minimum 1
     roles.*.timeoutMinutes           lower only (a higher limit lets a child run longer)
@@ -200,6 +201,7 @@ IGNORED_KEYS = [
     (("retro", "workspaceKey"), "the backlog key comes from the user or overlay config"),
     (("retro", "panelThreshold"), "the panel threshold comes from the user or overlay config"),
     (("close", "worktreeDir"), "the worktree convention comes from the user or overlay config"),
+    (("close", "childWaitMs"), "the child close wait comes from the user or overlay config"),
     (("ceremony", "reviewModel"), "the fallback reviewer model comes from the user or overlay config"),
     (("ceremony", "reviewByOccasion"), "the per-occasion reviewer overrides come from the user or overlay config"),
     (("compaction", "priceTiers"), "the price tiers come from the user or overlay config"),

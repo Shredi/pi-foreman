@@ -25,7 +25,7 @@ const BUILTIN_DEFAULTS: Json = {
   safety: { requiredChildExtensions: [] },
   python: { path: null },
   ui: { symbols: "unicode" },
-  close: { autoClean: true, worktreeDir: "../<repo>.worktrees" },
+  close: { autoClean: true, worktreeDir: "../<repo>.worktrees", childWaitMs: 60000 },
 };
 
 function readJsonFile(file: string): Json | null {

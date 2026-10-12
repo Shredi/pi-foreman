@@ -535,6 +535,7 @@ Switch: `retro.repoBacklog` is non-empty.
 | `close.from` | `["herdr", "intercom-parent"]` | tighten-only (can only narrow the list) |
 | `close.autoClean` | `true` | tighten-only (only false is accepted) |
 | `close.worktreeDir` | `"../<repo>.worktrees"` | not in project/session (the worktree convention comes from the user or overlay config) |
+| `close.childWaitMs` | `60000` | not in project/session (the child close wait comes from the user or overlay config) |
 
 ### trace
 
@@ -665,6 +666,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `retro.workspaceKey` | the backlog key comes from the user or overlay config |
 | `retro.panelThreshold` | the panel threshold comes from the user or overlay config |
 | `close.worktreeDir` | the worktree convention comes from the user or overlay config |
+| `close.childWaitMs` | the child close wait comes from the user or overlay config |
 | `ceremony.reviewModel` | the fallback reviewer model comes from the user or overlay config |
 | `ceremony.reviewByOccasion` | the per-occasion reviewer overrides come from the user or overlay config |
 | `compaction.priceTiers` | the price tiers come from the user or overlay config |

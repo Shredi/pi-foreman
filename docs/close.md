@@ -75,6 +75,13 @@ nothing. `--result PATH` appends `## Close` with the lines to that file. Exit 0 
 A removed entry is marked `removed: <ts>` in the manifest, so a second run of the same session lists it as
 `removed:` again (never as a handover); other entries whose path is already gone are skipped.
 
+## Child sessions
+
+`/foreman close` first asks the session's own child sessions (registry entries opened with `foreman session open`, status
+`open` or `pending`) to close, waits up to `close.childWaitMs`, and prints one line per child (`closed`, `refused`,
+`timeout`, `not sent`) under the CLOSE report. This never fails the parent's close. See
+[sessions](sessions.md#closing-the-children-with-the-parent).
+
 ## Cleanup preconditions
 
 Cleanup runs when `close.autoClean` is on and not `--dry-run`. Per manifest entry:
@@ -115,6 +122,7 @@ failure of the block is one line, never an exit code.
 | --- | --- | --- |
 | `close.autoClean` | `true` | Remove manifest worktrees and scratch at close when the preconditions pass. A project or session may only set `false`; then every entry is a handover with reason `autoClean off`. |
 | `close.worktreeDir` | `../<repo>.worktrees` | Worktree convention directory. User or overlay config only. |
+| `close.childWaitMs` | `60000` | How long `/foreman close` waits for the session's own child sessions to close (see Child sessions). `0` sends and does not wait. User or overlay config only. |
 
 ## Known gaps
 

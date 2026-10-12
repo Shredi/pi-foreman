@@ -142,7 +142,7 @@ export function resolveTarget(reg: Registry, target: string): string {
 export const briefText = (opener: string, file: string): string => `Brief from ${opener}: read ${file} and act on it`;
 export const closeText = (resultPath?: string): string => (resultPath ? `${CLOSE_TEXT} ${resultPath}` : CLOSE_TEXT);
 
-export type Inbound = { kind: "plan" | "result" | "update"; label: string; path: string } | { kind: "closed"; path: string };
+export type Inbound = { kind: "plan" | "result" | "update"; label: string; path: string } | { kind: "closed"; path: string } | { kind: "refused"; path: string };
 
 /** The message contract's report lines (one line each); null = any other message. */
 export function parseInbound(text: unknown): Inbound | null {
@@ -154,7 +154,9 @@ export function parseInbound(text: unknown): Inbound | null {
   const a = /^foreman:(plan|result) (\S.*)$/.exec(t); // intra-Pi aliases: the child label comes from the registry sender
   if (a) return { kind: a[1] as "plan" | "result", label: "", path: a[2].trim() };
   const c = new RegExp(`^${CLOSED_TEXT} (\\S.*?)(?: CLOSE: (?:ready|open))?$`).exec(t); // optional CLOSE tail (close.md)
-  return c ? { kind: "closed", path: c[1].trim() } : null;
+  if (c) return { kind: "closed", path: c[1].trim() };
+  const r = /^pi-foreman: close refused: (\S.*)$/.exec(t); // a child's refusal of our close; `path` carries the reason
+  return r ? { kind: "refused", path: r[1].trim() } : null;
 }
 
 /** Record an inbound report from a registry child (matched by sender id); the updated entry or null. */
@@ -165,6 +167,8 @@ export function applyInbound(reg: Registry, sender: string, msg: Inbound, now: D
   if (msg.kind === "closed") {
     entry.status = "closed";
     entry.result = msg.path;
+  } else if (msg.kind === "refused") {
+    if (entry.status === "closing") entry.status = "open";
   } else {
     if (msg.kind === "result" || msg.kind === "update") entry.result = msg.path;
     if (entry.status === "pending") entry.status = "open";

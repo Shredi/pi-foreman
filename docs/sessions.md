@@ -73,6 +73,16 @@ Plain pi-intercom text, one line each:
   `N foreman_wait pending (…)` (only when a wait cannot be cancelled).
 - The child's brief footer tells it to re-read `parent` before each message (the parent can change).
 
+### Closing the children with the parent
+
+`/foreman close` also closes the session's own child sessions: after the result turn and before the sync, every
+registry entry whose `parent` is this session's opener id and whose status is `open` or `pending` gets
+`foreman:close` over pi-intercom and turns `closing`. The registry is then polled (every second) for up to
+`close.childWaitMs` (default 60000; `0` = send and do not wait). The close notice lists one line per child:
+`closed`, `refused (<reason>)` (the child answered `pi-foreman: close refused: …`; the entry goes back to `open`),
+`timeout after <n> ms` (the child may still close later) or `not sent (<status>)`. A child that does not close never
+fails or delays the parent's close beyond that bound.
+
 ### Child orchestrator sessions
 
 A heavy task with several phases may run as a multi-session plan: one child session per phase, each in its own worktree, opened with `foreman session open <label> <brief> --plan-first`. The parent reviews each phase before the next.
