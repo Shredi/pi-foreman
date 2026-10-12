@@ -31,6 +31,15 @@ export function resolveVars(pipelines: string[][][], seps: string[], env: Record
   // a subshell, group or substitution may scope or hide an assignment: no assignment of the line counts
   const scoped = seps.some((s) => s === "(" || s === ")" || s === "`" || s === "&");
   const poisoned = new Set<string>();
+  // IFS (word splitting), `let` / `((..))` (arithmetic assignment), eval / source: nothing on the line resolves
+  const all = pipelines.flat(2);
+  if (all.some((w) => /\bIFS\b/.test(w) || w === "let" || w.startsWith("(("))) return new Map();
+  if (pipelines.some((p) => p.some((u) => ["eval", "source", "."].includes(u.find((x) => !ASSIGN.test(x)) ?? "")))) return new Map();
+  // `H+=x`, `H[0]=x`: an append or element assignment leaves the value unknown
+  for (const w of all) {
+    const a = w.match(/^([A-Za-z_][A-Za-z0-9_]*)(\[[^\]]*\]|\+)=/s);
+    if (a) poisoned.add(a[1]);
+  }
   const sole = (i: number): RegExpMatchArray | null => {
     const p = pipelines[i];
     return p.length === 1 && p[0].length === 1 && !redirected(p[0]) ? p[0][0].match(ASSIGN) : null;

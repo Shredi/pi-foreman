@@ -237,7 +237,10 @@ class Lexer(object):
         # same-line `NAME=/abs/literal` statements (see _track_assignment)
         self.vars = {}
         self.poisoned = set()
-        self.noresolve = False   # a loop, function or eval/source on the line: nothing resolves from here on
+        # a loop, function or eval/source on the line: nothing resolves from here on. An IFS, `let` or `((..))`
+        # anywhere on the line (word splitting, arithmetic assignment) poisons the whole line. Values with blanks
+        # never resolve (see _track_assignment), so an unquoted `$H` is always one word.
+        self.noresolve = re.search(r"\bIFS\b|\blet\b|\(\(", text) is not None
         self.paren = 0
         self.prev_assign = False
 
@@ -373,6 +376,11 @@ class Lexer(object):
         `||` (an `&&` only after another such assignment), outside a subshell, loop or function. Prefix
         assignments, `FOREMAN_*` names, values with an expansion, glob, blank or a relative path stay unresolved;
         any other form that sets the name (`export`, `read`, `for`, a conditional assignment) poisons it."""
+        for w in c.words:
+            # `H+=x`, `H[0]=x`: an append or element assignment leaves the value unknown
+            m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)(\[[^\]]*\]|\+)=", w.text)
+            if m:
+                self.poisoned.add(m.group(1))
         plain = [w for w in c.words if not re.match(r"[A-Za-z_][A-Za-z0-9_]*=", w.text)]
         sole = len(c.words) == 1 and not (c.redirs or c.subst or c.stdin)
         if plain and not (plain[0].text == "printf" and any(w.text == "-v" for w in plain)) \

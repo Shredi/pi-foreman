@@ -444,5 +444,44 @@ class ShellVarsTest(unittest.TestCase):
         self.assertEqual(self.kind('FOREMAN_X=%s; echo x > $FOREMAN_X/f' % self.hand), "redirect")
 
 
+class ShellVarsSecurityTest(unittest.TestCase):
+    """Forms that set or split a variable keep it unresolved (reviewer findings on ledger item 12)."""
+
+    def setUp(self):
+        self.ws = os.path.realpath(tempfile.mkdtemp(prefix="pf-swg-vsec-"))
+        self.hand = os.path.join(self.ws, "handoffs", "s1")
+        os.makedirs(self.hand)
+        os.mkdir(os.path.join(self.ws, "src"))
+        self.addCleanup(shutil.rmtree, self.ws, True)
+
+    def kind(self, cmd):
+        hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], False, None, [self.hand])
+        return hit[0] if hit else None
+
+    def test_append_assignment_is_refused(self):
+        h = self.hand
+        self.assertEqual(self.kind('H=%s; H+=/../../src/f; cp plan.md "$H/plan.md"' % h), "cp")
+        self.assertEqual(self.kind('H=%s; H+=/x; cp plan.md "$H/plan.md"' % h), "cp")
+
+    def test_other_setting_forms_are_refused(self):
+        h = self.hand
+        for setter in ('let H=1', 'H[0]=/x', '((H=1))', 'declare H=/x', 'typeset H=/x', 'export H=/x',
+                       'read H', 'unset H', 'eval H=/x', 'source f', '. f'):
+            cmd = 'H=%s; %s; cp plan.md "$H/plan.md"' % (h, setter)
+            with self.subTest(command=cmd):
+                self.assertEqual(self.kind(cmd), "cp", cmd)
+
+    def test_ifs_poisons_the_line(self):
+        h = self.hand
+        attack = 'IFS=Z; H=%s/aZ\t%s/src/f; cp plan.md $H' % (h, self.ws)
+        self.assertEqual(self.kind(attack), "cp")
+        self.assertEqual(self.kind('IFS=Z; H=%s; cp plan.md "$H/plan.md"' % h), "cp")
+        self.assertEqual(self.kind('H=%s; IFS=Z; cp plan.md "$H/plan.md"' % h), "cp")
+        self.assertEqual(self.kind('H="%s/a %s/src/f"; cp plan.md $H' % (h, self.ws)), "cp")
+
+    def test_control_plain_assignment_still_resolves(self):
+        self.assertIsNone(self.kind('H=%s; cp plan.md "$H/plan.md"' % self.hand))
+
+
 if __name__ == "__main__":
     unittest.main()
