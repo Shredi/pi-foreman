@@ -27,6 +27,7 @@
   - Documented limit: the permission system's own extractor resolves only HOME/PWD and has no `git grep` pattern handling (docs/permissions.md).
   - Security (ruling 12:05): variable resolution is a closed grammar in both implementations instead of form blacklists, so `case` arms, newlines after control words, comments after a pipe, `printf -v`, `declare -n`, `$[..]`, `${X:H=0}`, `exec {H}>`, `wait -p`, `coproc`, `IFS`/`HOME` assignments and conditional assignments all leave the line unresolved.
   - Security (ruling 12:05): the `git fetch` policy rows are dropped (`--upload-pack=<cmd>` ran code unasked); a `git fetch` asks for every role.
+  - Security (ruling 12:50): the variable grammar refuses special, readonly and sensitive names (`_ RANDOM PPID PATH IFS HOME`, `BASH_*`, `FOREMAN_*`, `GIT_*`, `NODE_*`, `NPM_*`, `LD_*`, `DYLD_*`, `SSH_*`) in assignments and references, and `~` anywhere in a word (`H=/x; cp f "~$H"`); `GIT_ALLOW_PROTOCOL` before a git network command is refused. Single-letter names other than `_` stay allowed.
   - Security (delta review): `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_PROXY_COMMAND`, `GIT_EXEC_PATH`, `GIT_ASKPASS` and similar leading env assignments before a git network command are refused in every role.
   - Security (pre-PR review): the git guard refuses `fetch`/`pull`/`clone`/`push` with `--upload-pack`, `--receive-pack`, `--exec`, `--config`, `-u` (fetch/pull/clone) or `-c core.sshCommand=`/`core.gitProxy=` in every role.
 - Harness-friction round (numbers are the round's ledger items):

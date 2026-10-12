@@ -17,6 +17,23 @@ test("the grammar constants equal the shared fixture", () => {
   assert.deepEqual(GRAMMAR, fixture);
 });
 
+test("S4/S5: special names and a tilde resolve nothing", () => {
+  for (const cmd of [
+    "_=/x; cp f $_",
+    "RANDOM=/x; cp f $RANDOM",
+    "PPID=/x; cp f $PPID",
+    "PATH=/x; cp f $PATH",
+    "H=/x; cp f ~$H",
+    'H=/x; cp f "~$H"',
+    "H=/x; cp f $H/~",
+    "H=/x; cp f ${PATH}",
+    "GIT_DIR=/x; cp f $GIT_DIR",
+    "H=/x~; cp f $H",
+  ]) assert.equal(grammarStatements(cmd), null, cmd);
+  assert.notEqual(grammarStatements("H=/x; cp f $H"), null);
+  assert.notEqual(grammarStatements("cp f $FOREMAN_SCRATCH/x"), null);
+});
+
 test("every forbidden token ends resolution", () => {
   assert.notEqual(grammarStatements("H=/ok; cp f $H"), null);
   for (const tok of fixture.forbidden as string[]) {

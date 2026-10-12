@@ -4,8 +4,8 @@
  * A CLOSED GRAMMAR, identical to scripts/shell_write_guard.py (`grammar_statements`) and pinned by
  * tests/fixtures/shellvars-grammar.json. A line resolves `$NAME` / `${NAME}` only when EVERY statement (split on
  * `;`, `&&`, `||`, newline) is either
- *  (a) a sole `NAME=literal`: a plain path (GRAMMAR.literalChars) starting with `/`, `~` or a prefix
- *      (`$FOREMAN_SCRATCH`, `$HOME`); NAME is not `FOREMAN_*` or reserved (`IFS`, `HOME`); it follows the start, `;`
+ *  (a) a sole `NAME=literal`: a plain path (GRAMMAR.literalChars) starting with `/` or a prefix
+ *      (`$FOREMAN_SCRATCH`, `$HOME`); NAME (also in a ref) is not reserved (GRAMMAR.reserved / reservedPrefixes); it follows the start, `;`
  *      or a newline, or `&&` after another assignment (a conditional assignment may not run); or
  *  (b) a simple command whose first word is in GRAMMAR.commands and whose other words are plain words
  *      (GRAMMAR.wordChars, `$NAME` / `"$NAME"` / `${NAME}`; a name that is not assigned stays unresolved, `2>&1`, or `>` / `>>` with one plain word).
@@ -16,22 +16,31 @@
 
 export const GRAMMAR = {
   commands: ["mkdir", "cp", "mv", "cat", "ls", "tee", "touch", "tar", "node", "npm", "npx", "python3", "git", "test", "echo", "true"],
-  wordChars: "A-Za-z0-9/._~=:@%+,-",
-  literalChars: "A-Za-z0-9/._~-",
+  wordChars: "A-Za-z0-9/._=:@%+,-", // no `~`: bash never expands a tilde in front of an expansion
+  literalChars: "A-Za-z0-9/._-",
   prefixes: ["$FOREMAN_SCRATCH", "$HOME"],
   splitters: [";", "&&", "||", "\n"],
   redirects: ["2>&1", ">/dev/null"],
   redirectOps: [">", ">>"],
-  reserved: ["IFS", "HOME"],
+  // names (assigned or referenced) that make the whole line resolve nothing; `$FOREMAN_SCRATCH` is the one harness ref
+  reserved: ["_", "RANDOM", "SRANDOM", "SECONDS", "LINENO", "PPID", "UID", "EUID", "BASHPID", "GROUPS", "OPTIND", "OPTARG", "PWD", "OLDPWD", "SHLVL", "REPLY", "IFS", "HOME", "PATH", "CDPATH", "ENV", "BASH_ENV"],
+  reservedPrefixes: ["BASH_", "FOREMAN_", "GIT_", "NODE_", "NPM_", "LD_", "DYLD_", "SSH_"],
+  harnessRefs: ["FOREMAN_SCRATCH"],
   forbidden: ["|", "&", "(", ")", "{", "}", "[", "]", "`", "#", "<", ">", "$(", "${", "\\", "'"],
 };
 
 const NAME = "[A-Za-z_][A-Za-z0-9_]*";
 const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const ASSIGN = new RegExp(`^(${NAME})=((?:${GRAMMAR.prefixes.map(esc).join("|")}|[/~])[${GRAMMAR.literalChars}]*)$`);
+const ASSIGN = new RegExp(`^(${NAME})=((?:${GRAMMAR.prefixes.map(esc).join("|")}|/)[${GRAMMAR.literalChars}]*)$`);
 const REF = `\\$(?:\\{(${NAME})\\}|(${NAME}))`;
 const WORD = new RegExp(`^(?:[${GRAMMAR.wordChars}]|${REF})+$`);
 const SPLIT = new RegExp(`(${GRAMMAR.splitters.map(esc).join("|")})`);
+
+/** False for a special, readonly or sensitive variable name (a ref may name the harness's FOREMAN_SCRATCH). */
+function nameOk(name: string, ref = false): boolean {
+  if (ref && GRAMMAR.harnessRefs.includes(name)) return true;
+  return !GRAMMAR.reserved.includes(name) && !GRAMMAR.reservedPrefixes.some((p) => name.startsWith(p));
+}
 
 /** The statements of `text` (`[name, rawValue]` for an assignment, null for a command) when all are inside the grammar, else null. */
 export function grammarStatements(text: string): Array<[string, string] | null> | null {
@@ -53,7 +62,7 @@ export function grammarStatements(text: string): Array<[string, string] | null> 
     if (m) {
       // a conditional assignment (`test -f x && D=/a`, `cmd || D=/a`) may not run: not a statement of its own
       const joined = before === null || before === ";" || before === "\n" || (before === "&&" && prevAssign);
-      if (m[1].startsWith("FOREMAN_") || GRAMMAR.reserved.includes(m[1]) || !joined) return null;
+      if (!nameOk(m[1]) || !joined) return null;
       out.push([m[1], m[2]]);
       prevAssign = true;
       continue;
@@ -76,6 +85,7 @@ export function grammarStatements(text: string): Array<[string, string] | null> 
       }
       if (w.length >= 2 && w.startsWith('"') && w.endsWith('"')) w = w.slice(1, -1);
       if (!WORD.test(w)) return null;
+      for (const r of w.matchAll(new RegExp(REF, "g"))) if (!nameOk((r[1] ?? r[2])!, true)) return null;
     }
     if (want) return null;
     out.push(null);

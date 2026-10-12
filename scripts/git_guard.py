@@ -620,7 +620,7 @@ NET_EXEC_LONG = ("--upload-pack", "--receive-pack", "--exec", "--config")
 # Leading env assignments that make a network command run a program or load other configuration.
 NET_EXEC_ENV = frozenset(("GIT_SSH", "GIT_SSH_COMMAND", "GIT_PROXY_COMMAND", "GIT_EXEC_PATH", "GIT_CONFIG_PARAMETERS",
                           "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_EDITOR", "GIT_PAGER",
-                          "GIT_EXTERNAL_DIFF", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES"))
+                          "GIT_EXTERNAL_DIFF", "GIT_ALLOW_PROTOCOL", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES"))
 EXEC_KEY = re.compile(
     r"^(core\.(pager|editor|sshcommand|fsmonitor|askpass|gitproxy)|sequence\.editor|pager\..+|"
     r"diff\.external|diff\..+\.(command|textconv)|merge\..+\.driver|filter\..+\.(clean|smudge|process)|"

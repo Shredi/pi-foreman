@@ -85,6 +85,11 @@ class NetworkExecEnvTest(unittest.TestCase):
                     self.assertGreater(gg.decide(cmd, "main").level, gg.ALLOW)
                     self.assertEqual(gg.decide(cmd, "child").level, gg.DENY)
 
+    def test_allow_protocol_env_is_refused(self):
+        cmd = "GIT_ALLOW_PROTOCOL=ext git fetch origin"
+        self.assertGreater(gg.decide(cmd, "main").level, gg.ALLOW)
+        self.assertEqual(gg.decide(cmd, "child").level, gg.DENY)
+
     def test_plain_fetch_still_allowed(self):
         self.assertEqual(gg.decide("git fetch origin", "main").level, gg.ALLOW)
 

@@ -231,21 +231,32 @@ def _backtick_end(text, i):
 # `NAME=literal` or a simple command from GRAMMAR_COMMANDS with plain words; anything else gets no resolution.
 GRAMMAR_COMMANDS = ("mkdir", "cp", "mv", "cat", "ls", "tee", "touch", "tar", "node", "npm", "npx", "python3", "git",
                     "test", "echo", "true")
-GRAMMAR_WORD_CHARS = "A-Za-z0-9/._~=:@%+,-"
-GRAMMAR_LITERAL_CHARS = "A-Za-z0-9/._~-"
+GRAMMAR_WORD_CHARS = "A-Za-z0-9/._=:@%+,-"   # no `~`: bash never expands a tilde in front of an expansion
+GRAMMAR_LITERAL_CHARS = "A-Za-z0-9/._-"
 GRAMMAR_PREFIXES = ("$FOREMAN_SCRATCH", "$HOME")
 GRAMMAR_SPLITTERS = (";", "&&", "||", "\n")
 GRAMMAR_REDIRECTS = ("2>&1", ">/dev/null")
 GRAMMAR_REDIRECT_OPS = (">", ">>")   # followed by one plain word (attached or as the next word)
-GRAMMAR_RESERVED = ("IFS", "HOME")    # names no assignment statement may set
+# names (assigned or referenced) that make the whole line resolve nothing; `$FOREMAN_SCRATCH` is the one harness ref
+GRAMMAR_RESERVED = ("_", "RANDOM", "SRANDOM", "SECONDS", "LINENO", "PPID", "UID", "EUID", "BASHPID", "GROUPS", "OPTIND",
+                    "OPTARG", "PWD", "OLDPWD", "SHLVL", "REPLY", "IFS", "HOME", "PATH", "CDPATH", "ENV", "BASH_ENV")
+GRAMMAR_RESERVED_PREFIXES = ("BASH_", "FOREMAN_", "GIT_", "NODE_", "NPM_", "LD_", "DYLD_", "SSH_")
+GRAMMAR_HARNESS_REFS = ("FOREMAN_SCRATCH",)
 GRAMMAR_FORBIDDEN = ("|", "&", "(", ")", "{", "}", "[", "]", "`", "#", "<", ">", "$(", "${", "\\", "'")
 _G_NAME = r"[A-Za-z_][A-Za-z0-9_]*"
-# a value starts with `/`, `~` or a prefix: a bare word such as `IFS=Z` is no path
-GRAMMAR_ASSIGN = re.compile("(%s)=((?:%s|[/~])[%s]*)" % (_G_NAME, "|".join(re.escape(p) for p in GRAMMAR_PREFIXES),
+# a value starts with `/` or a prefix: a bare word such as `IFS=Z` is no path
+GRAMMAR_ASSIGN = re.compile("(%s)=((?:%s|/)[%s]*)" % (_G_NAME, "|".join(re.escape(p) for p in GRAMMAR_PREFIXES),
                                                         GRAMMAR_LITERAL_CHARS))
 _G_REF = r"\$(?:\{(%s)\}|(%s))" % (_G_NAME, _G_NAME)
 _G_WORD = re.compile(r"(?:[%s]|%s)+" % (GRAMMAR_WORD_CHARS, _G_REF))
 _G_SPLIT = re.compile("(" + "|".join(re.escape(s) for s in GRAMMAR_SPLITTERS) + ")")
+
+
+def grammar_name_ok(name, ref=False):
+    """False for a special, readonly or sensitive variable name (a ref may name the harness's FOREMAN_SCRATCH)."""
+    if ref and name in GRAMMAR_HARNESS_REFS:
+        return True
+    return name not in GRAMMAR_RESERVED and not name.startswith(GRAMMAR_RESERVED_PREFIXES)
 
 
 def grammar_value(raw):
@@ -273,7 +284,7 @@ def grammar_statements(text):
         m = GRAMMAR_ASSIGN.fullmatch(stmt)
         if m:
             # a conditional assignment (`test -f x && D=/a`, `cmd || D=/a`) may not run: not a statement of its own
-            if m.group(1).startswith("FOREMAN_") or m.group(1) in GRAMMAR_RESERVED or not (before in (None, ";", "\n") or (before == "&&" and prev_assign)):
+            if not grammar_name_ok(m.group(1)) or not (before in (None, ";", "\n") or (before == "&&" and prev_assign)):
                 return None
             out.append((m.group(1), m.group(2)))
             prev_assign = True
@@ -296,6 +307,8 @@ def grammar_statements(text):
             if len(w) >= 2 and w[0] == '"' and w[-1] == '"':
                 w = w[1:-1]
             if not _G_WORD.fullmatch(w):
+                return None
+            if not all(grammar_name_ok(a or b, True) for a, b in re.findall(_G_REF, w)):
                 return None
         if want:
             return None

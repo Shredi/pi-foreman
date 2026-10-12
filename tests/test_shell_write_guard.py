@@ -586,6 +586,19 @@ class ShellVarsGrammarTest(unittest.TestCase):
         self.assertEqual(list(swg.GRAMMAR_RESERVED), fx["reserved"])
         self.assertEqual(list(swg.GRAMMAR_FORBIDDEN), fx["forbidden"])
 
+    def test_s4_s5_names_and_tilde_resolve_nothing(self):
+        with open(os.path.join(os.path.dirname(__file__), "fixtures", "shellvars-grammar.json")) as f:
+            fx = json.load(f)
+        self.assertEqual(list(swg.GRAMMAR_RESERVED_PREFIXES), fx["reservedPrefixes"])
+        self.assertEqual(list(swg.GRAMMAR_HARNESS_REFS), fx["harnessRefs"])
+        for cmd in ("_=/x; cp f $_", "RANDOM=/x; cp f $RANDOM", "PPID=/x; cp f $PPID", "PATH=/x; cp f $PATH",
+                    "H=/x; cp f ~$H", 'H=/x; cp f "~$H"', "H=/x; cp f $H/~", "H=/x; cp f ${PATH}",
+                    "GIT_DIR=/x; cp f $GIT_DIR", "H=/x~; cp f $H"):
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(swg.grammar_statements(cmd))
+        self.assertIsNotNone(swg.grammar_statements("H=/x; cp f $H"))
+        self.assertIsNotNone(swg.grammar_statements("cp f $FOREMAN_SCRATCH/x"))
+
     def test_every_forbidden_token_ends_resolution(self):
         with open(os.path.join(os.path.dirname(__file__), "fixtures", "shellvars-grammar.json")) as f:
             fx = json.load(f)
