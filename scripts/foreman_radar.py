@@ -310,7 +310,7 @@ def new_node(kind, key, name):
     # own/tot: [in, out, cost, uncached]; uncached None = unknown (no usage file with the cache split)
     return {"kind": kind, "key": key, "name": name, "glyph": "idle", "state": "", "last": None, "started": None,
             "own": [0, 0, 0.0, 0], "children": [], "tot": [0, 0, 0.0, 0], "parent": None, "path": "",
-            "role": None, "rung": None, "pane": None, "pid": None, "cwd": None, "blockedSince": None,
+            "role": None, "rung": None, "model": None, "waits": [], "pane": None, "pid": None, "cwd": None, "blockedSince": None,
             "sid": None, "ended": None, "unc_self": 0}
 
 
@@ -323,6 +323,8 @@ def live_glyph(d, now):
         return "blocked", "blocked"
     if state == "working":
         return "working", "working"
+    if state == "waiting":  # a long wait is pending; Herdr's own status stays working
+        return "working", "waiting"
     return "idle", "done" if state == "done" else "idle"
 
 
@@ -364,6 +366,14 @@ def build(data, now):
         ho = handoff_by_leaf.get(leaf(d.get("handoff")))
         if ho and not n["parent"] and ho["parent"]:
             n["parent"] = ho["parent"]
+        hb = parse_ts(d.get("heartbeatAt"))
+        since_hb = max(0.0, now - hb) if hb is not None else 0.0
+        for w in d.get("waits") or []:
+            if isinstance(w, dict):  # ageSeconds is as of the heartbeat
+                n["waits"].append({"id": str(w.get("id") or ""), "kind": str(w.get("kind") or ""),
+                                   "note": str(w.get("note") or ""),
+                                   "age_s": int(num(w.get("ageSeconds")) + since_hb),
+                                   "left_s": max(0, int(num(w.get("leftSeconds")) - since_hb))})
         u = data["usage"].get(sid)
         runs = [r for r in (d.get("runs") or []) if isinstance(r, dict)]
         for r in runs:
@@ -374,6 +384,7 @@ def build(data, now):
             rn["state"] = rs if isinstance(rs, str) else ""
             rn["role"] = role
             rn["rung"] = r["rung"] if isinstance(r.get("rung"), str) and r["rung"] else None
+            rn["model"] = r["model"] if isinstance(r.get("model"), str) and r["model"] else None
             rn["glyph"] = "blocked" if rs == "ask" else "working" if rs == "working" else "idle"
             if rn["glyph"] != "idle" and n["glyph"] == "lost":
                 rn["glyph"] = "lost"
@@ -645,10 +656,16 @@ def render(roots, now, width=80, color=False, show_cost=True, selected=None, sym
             usage = ""
         row = "%s%s %s%s  %s %s" % (d(prefix), glyph_c, name_c, pad, state_c, age_c)
         row = (row + "  " + usage) if usage else row
+        wait_txt = ""
+        if n["waits"]:  # wait column: first wait's note (else kind), its age, +n for the others
+            w0 = n["waits"][0]
+            wait_txt = "wait %s %s%s" % (w0["note"] or w0["kind"], fmt_age(w0["age_s"]),
+                                       " +%d" % (len(n["waits"]) - 1) if len(n["waits"]) > 1 else "")
+            row += "  " + sgr("36", wait_txt, color)
         if not color:
             row = row.rstrip()
         if color and i == selected:
-            vis = cell_width(prefix) + gw + 1 + cell_width(name) + len(pad) + 2 + 9 + 1 + 4 + (2 + cell_width(re.sub(r"\x1b\[[0-9;]*m", "", usage)) if usage else 0)
+            vis = cell_width(prefix) + gw + 1 + cell_width(name) + len(pad) + 2 + 9 + 1 + 4 + (2 + cell_width(re.sub(r"\x1b\[[0-9;]*m", "", usage)) if usage else 0) + (2 + cell_width(wait_txt) if wait_txt else 0)
             row = "\x1b[7m" + row.replace("\x1b[0m", "\x1b[0m\x1b[7m") + " " * max(0, width - vis) + "\x1b[0m"
         lines.append(row)
     return lines
@@ -691,7 +708,9 @@ def to_json_node(n, now, symbols):
             "done_children": sum(1 for c in n["children"] if c["state"] == "done"), "children": kids}
     if n["kind"] == "session":
         out["sid"] = n["sid"]
+        out["waits"] = n["waits"]
     else:
+        out["model"] = n["model"]
         out["ended_s"] = None if n["ended"] is None else max(0, int(now - n["ended"]))
     return out
 

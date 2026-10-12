@@ -58,10 +58,18 @@ INSET = 2
 # ` · ` and uses a single space after `state_icon`." Custom cells are not
 # state_icon, so two non-empty cells of a row cost 3 columns between them.
 GAP = 3
-# Cells the user puts before $fm_sym on row 1 (an icon token, say), each
-# assumed 1 column wide plus its separator; --lead-cells / HERDR_SIDEBAR_LEAD.
+# Cells the user puts before $fm_sym on row 1 besides Herdr's state_icon (an
+# icon token, say), each assumed 1 column wide plus its separator;
+# --lead-cells / HERDR_SIDEBAR_LEAD.
 DEFAULT_LEAD = 0
 LEAD_CELL_W = 1
+# The built-in state_icon that opens row 1 in config-snippet.toml: the icon
+# plus Herdr's single space after it.
+STATE_ICON_W = 2
+# At this width and above the children line shows a run's model and its rung.
+WIDE_CHILDREN = 60
+# The glyph of a pending long wait on the children line, per symbol set.
+WAIT_GLYPH = {"unicode": "⏳", "nerd": "\uf252"}
 # Line 1 stops this many columns short of its budget, so a misjudged frame
 # or glyph width does not push the age into Herdr's ellipsis.
 L1_MARGIN = 2
@@ -200,7 +208,42 @@ def fmt_counts(tot):
     return "↑%s ↓%s" % (fmt_tok(unc), fmt_tok(tot.get("out")))
 
 
-def _children_text(node, joins, recent=None):
+def short_model(model):
+    """`claude-bridge/claude-sonnet-5-5` -> `sonnet-5.5`: no provider, no `claude-`
+    prefix, no date suffix, a trailing `-N-M` version as `N.M`; None for no model."""
+    if not isinstance(model, str):
+        return None
+    m = model.strip().split("/")[-1]
+    m = re.sub(r"[-@]\d{8}$|-\d{4}-\d{2}-\d{2}$", "", m)
+    m = re.sub(r"^claude-", "", m)
+    m = re.sub(r"-(\d+)-(\d{1,2})$", r"-\1.\2", m)
+    return m or None
+
+
+def _run_label(k, width):
+    """Role, then its short model, then its rung: the rung only while no model is
+    shown (the base rung is implied), or on a wide panel."""
+    label = k.get("role") or k.get("name") or "?"
+    model = short_model(k.get("model"))
+    if model:
+        label += " " + model
+    rung = k.get("rung")
+    if rung and rung != "model" and (not model or (width or 0) >= WIDE_CHILDREN):
+        label += " " + rung
+    return label
+
+
+def _wait_text(node, symbols):
+    waits = node.get("waits") or []
+    if not waits:
+        return None
+    w = waits[0]
+    text = "%s %s %s" % (WAIT_GLYPH.get(symbols, WAIT_GLYPH["unicode"]),
+                         w.get("note") or w.get("kind") or "wait", fmt_age(w.get("age_s")))
+    return text + (" +%d" % (len(waits) - 1) if len(waits) > 1 else "")
+
+
+def _children_text(node, joins, recent=None, width=None, symbols=None):
     state = node.get("state")
     kids = node.get("children") or []
     if state == "lost":
@@ -214,15 +257,16 @@ def _children_text(node, joins, recent=None):
     for k in kids:
         if _is_row(k, joins) or (k.get("state") == "done" and not _recent_run(k, recent)):
             continue
-        label = k.get("role") or k.get("name") or "?"
-        if k.get("rung") and k["rung"] != "model":  # the base rung is implied
-            label += " " + k["rung"]
+        label = _run_label(k, width)
         item = (k.get("glyph") or "") + " " + label
         if item not in counts:
             groups.append(item)
             counts[item] = 0
         counts[item] += 1
     if not groups:
+        waiting = _wait_text(node, symbols)
+        if waiting:
+            return waiting
         return "no active children" if kids else "no children"
     return " · ".join(g if counts[g] == 1 else "%s ×%d" % (g, counts[g]) for g in groups)
 
@@ -246,6 +290,7 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
     width = int(width)
     lead = max(0, int(lead))
     recent = snapshot.get("recentRunSeconds")
+    symbols = snapshot.get("symbols")
     self_panes = self_panes or ()
     out = {}
 
@@ -256,20 +301,22 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
         if pane in self_panes:
             out[pane] = {"fm_sort": _cap(sort)}
             return
-        glyph = node.get("glyph") or ""
         blocked_s = node.get("blocked_s")
-        sym = glyph
+        # Herdr's state_icon shows the state; fm_sym only marks a finished session (✓)
+        # and a session blocked for too long (!)
+        sym = (node.get("glyph") or "") if node.get("sym") == "done" else ""
         if blocked_s is not None and blocked_s > LATE_S:
-            sym = glyph + "!"
-        # row 1: [lead cells][sym][l1], l1 = [tree prefix ]› name ... age
-        used = INSET + lead * (LEAD_CELL_W + GAP) + (cell_width(sym) + GAP if sym else 0)
+            sym += "!"
+        # row 1: [state_icon][lead cells][sym][l1], l1 = [tree prefix ]› name ... age
+        used = (INSET + STATE_ICON_W + lead * (LEAD_CELL_W + GAP)
+                + (cell_width(sym) + GAP if sym else 0))
         right = fmt_age(blocked_s if blocked_s is not None else node.get("age_s"))
         left = (pre + " " if pre else "") + "› " + (node.get("name") or "?")
         l1 = spread(left, right, width - used - L1_MARGIN)
         # rows 2 and 3 indent under the glyph with the tree continuation
         indent = (cont + " ") if cont else ""
         room = width - INSET - cell_width(indent)
-        l2 = indent + truncate(_children_text(node, joins, recent), room)
+        l2 = indent + truncate(_children_text(node, joins, recent, width, symbols), room)
         tot = node.get("tot") or {}
         l3 = cost = None
         if width >= NARROW_COST:
@@ -365,7 +412,9 @@ def join(nodes, agents, procinfo=None):
     """Session nodes -> paneId. Presence paneId first (only while that pane is
     in `agents`, i.e. still open), then the node pid as a
     pane's foreground pid (`procinfo` = {paneId: pid}), then a cwd that
-    matches exactly one unclaimed pi pane (and one unjoined node)."""
+    matches exactly one unclaimed pi pane (and one unjoined node). A finished,
+    stale or lost session never joins by cwd: its pane is gone, and a new pi pane
+    in the same folder would show its tokens."""
     procinfo = procinfo or {}
     sessions = [n for n in walk(nodes) if n.get("kind") == "session"]
     joins, claimed = {}, set()
@@ -386,7 +435,8 @@ def join(nodes, agents, procinfo=None):
             joins[n["key"]] = pane
             claimed.add(pane)
     pi_panes = [a for a in agents or [] if a.get("agent") == "pi" and a.get("pane_id")]
-    rest = [n for n in sessions if n["key"] not in joins and _norm(n.get("cwd"))]
+    rest = [n for n in sessions if n["key"] not in joins and _norm(n.get("cwd"))
+            and n.get("state") not in NOT_SELF_STATES]
     for n in rest:
         cwd = _norm(n.get("cwd"))
         if sum(1 for m in rest if _norm(m.get("cwd")) == cwd) != 1:
@@ -431,16 +481,46 @@ def fresh_stamps(sdir, now=None):
     return out
 
 
-def self_panes_for(roots, joins, fresh):
+def self_panes_for(roots, joins, fresh, shown=None):
     """Panes whose session pushes its own tokens: fresh stamp naming the pane
-    the session is joined to, and the session neither lost, stale nor done."""
+    the session is joined to, and the session neither lost, stale nor done.
+    `shown` ({paneId: tokens} from agent.list) lets the daemon see a pane whose
+    stamp is fresh but that carries no session row (no fm_l1): the daemon
+    composes that one itself instead of leaving it blank."""
     out = set()
     for n in walk(roots):
         pane = joins.get(n.get("key"))
         sid = n.get("sid")
         if (n.get("kind") == "session" and pane and sid and fresh.get(sid) == pane
                 and n.get("state") not in NOT_SELF_STATES):
+            if shown is not None and pane in shown and not (shown[pane] or {}).get("fm_l1"):
+                continue
             out.add(pane)
+    return out
+
+
+def shown_tokens(agents):
+    """{paneId: tokens} of the agents that report a tokens object."""
+    return {a["pane_id"]: a.get("tokens") or {} for a in agents or []
+            if a.get("pane_id") and isinstance(a.get("tokens"), dict)}
+
+
+def blanks(agents, now, fresh_panes, done):
+    """Null patches for pi panes no session is joined to (and that no session
+    pushes for): whatever an earlier session of the folder left there goes. Each
+    pane once (`done`: panes blanked already; a joined pane leaves it), and only
+    when its tokens (if agent.list reports them) still hold an fm_* key."""
+    done.difference_update(now)
+    out = {}
+    for a in agents or []:
+        pane = a.get("pane_id")
+        if a.get("agent") != "pi" or not pane or pane in now or pane in fresh_panes or pane in done:
+            continue
+        tokens = a.get("tokens")
+        if isinstance(tokens, dict) and not any(k in tokens for k in KEYS):
+            continue
+        done.add(pane)
+        out[pane] = {k: None for k in KEYS}
     return out
 
 
@@ -703,6 +783,7 @@ class Publisher:
         self.ttl_ms = TTL_MS
         self.joined_logged = None
         self.self_panes = set()
+        self.blanked = set()
         self.report_failed = set()
 
     def width(self):
@@ -810,13 +891,16 @@ class Publisher:
         """Join, compose and report; returns {paneId: "ok" or "error: ..."}."""
         joins, agents = self.joins_for(snapshot)
         fresh = fresh_stamps(self.sdir)
-        self.self_panes = self_panes_for(snapshot.get("roots") or [], joins, fresh)
+        self.self_panes = self_panes_for(snapshot.get("roots") or [], joins, fresh,
+                                         shown_tokens(agents))
         layout = {}
         now = compose(snapshot, self.width(), joins, self.lead(), self.self_panes, layout_out=layout)
         write_atomic(os.path.join(self.sdir, "layout.json"), json.dumps(layout, ensure_ascii=False))
         self.log_joined(snapshot, agents, len(now))
         patches = dict(now)
         patches.update(clears(self.published, now, set(fresh.values())))
+        for pane, tokens in blanks(agents, now, set(fresh.values()), self.blanked).items():
+            patches.setdefault(pane, tokens)
         results = {}
         for pane, tokens in patches.items():
             try:

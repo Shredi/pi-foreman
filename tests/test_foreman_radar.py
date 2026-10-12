@@ -375,7 +375,19 @@ class JsonTests(Fixture):
         api = top["children"][3]["children"][1]
         self.assertEqual((api["blocked_s"], api["tot"]), (12, {"in": 600, "out": 20, "cost": 0.25, "uncached": 300}))
         self.assertEqual(set(api), {"key", "kind", "name", "role", "rung", "state", "sym", "glyph", "paneId", "pid",
-                                    "cwd", "age_s", "blocked_s", "own", "tot", "done_children", "children", "sid"})
+                                    "cwd", "age_s", "blocked_s", "own", "tot", "done_children", "children", "sid", "waits"})
+
+    def test_models_and_waits_in_json(self):
+        top = live("s-w", "waiter", "fm-w", state="waiting", hb=0, runs=[
+            dict(run("L1", "builder"), model="claude-bridge/claude-opus-5-5"), run("L2", "builder")])
+        top["waits"] = [{"id": "w1", "kind": "pid", "note": "suites", "ageSeconds": 240, "leftSeconds": 600}]
+        self.put_live(top)
+        d = json.loads(self.cli("--json"))
+        node = next(r for r in d["roots"] if r["key"] == "fm-w")
+        self.assertEqual(node["sym"], "waiting")
+        self.assertEqual(node["waits"], [{"id": "w1", "kind": "pid", "note": "suites", "age_s": 240, "left_s": 600}])
+        self.assertEqual([c["model"] for c in node["children"]], ["claude-bridge/claude-opus-5-5", None])
+        self.assertTrue(any("wait suites 4m" in line for line in fr.render(self.snap(), NOW, width=120)))
 
     def test_presence_tot_adds_runs_and_subsessions(self):
         top = live("s-p", "p", "fm-p", runs=[run("L1", "builder", tin=10, tout=5, cost=0.5)])

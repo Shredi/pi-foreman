@@ -198,6 +198,13 @@ class ConfigTest(unittest.TestCase):
         self.l2({"ceremony": {"reviewByOccasion": {"item": {"thinking": "max"}}}})
         self.assertTrue(self.load()["errors"])
 
+    def test_deprecated_ui_spinner_is_still_accepted(self):
+        self.l2({"ui": {"symbols": "nerd", "spinner": False}})
+        res = self.load()
+        self.assertEqual(res["errors"], [])
+        self.assertNotIn("unknown key ui.spinner", res["warnings"])
+        self.assertIs(res["config"]["ui"]["spinner"], False)
+
     def test_invalid_safety_drops_only_that_entry(self):
         self.l2({"safety": {"children": {"mayPush": "yes"}, "git": {"protectedBranches": ["dev"]}}})
         res = self.load()

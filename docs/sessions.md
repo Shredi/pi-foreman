@@ -188,7 +188,7 @@ In a Pi session (the foreman, not children):
 - `/foreman cost [workspace]` prints the usage summary (tokens, list-price cost, child launches) of this session, or of all sessions in the given workspace.
 - `/foreman update-check` lists newer versions of the pinned packages with release-note links. It changes nothing.
 
-The usage footer (tokens, list-price cost, child launches) is on by default (`footer.usage`). Below the editor, the children
+The usage footer (tokens, list-price cost, child launches, and `waiting <note>` while a `foreman_wait` is pending) is on by default (`footer.usage`). Below the editor, the children
 widget (`widget.children`, on by default, TUI only) lists this session's subagent runs as `role · rung · state · ↑in ↓out · $cost`
 (state `working`, or `ask` while a forwarded permission ask of that role waits) and its opened sessions as
 `label · status · age`; runs that finished during the batch fold into one `<n> done` line. While any run is active the
@@ -241,6 +241,7 @@ Glyphs come from the `ui.symbols` set (`unicode` shown; `nerd` uses Nerd Font ic
 | --- | --- |
 | `⏳` | working, or starting: registry entry `pending`, or `open` with no presence file yet and opened under 2 minutes ago |
 | `⏸` | waiting: idle, or `stale` (no heartbeat for 15 minutes) |
+| `⏳ <note> 4m` | on a Herdr line 2: no child runs and a `foreman_wait` is pending (state `waiting`); radar adds a `wait <note> 4m` column |
 | `?` | asking: a run waits on an ask |
 | `✋` | blocked: the session waits on a prompt |
 | `✓` | done (also a closed session, a finished run) |
@@ -287,10 +288,11 @@ state change and on a 30 second heartbeat, and a final `state: "done"` at shutdo
 | `mode` | `tui` or `rpc` (print and json runs write no presence file; bench runs in rpc and does) |
 | `startedAt`, `heartbeatAt`, `lastEventAt` | ISO timestamps: start, last write by the heartbeat, last session event |
 | `paneId` | Herdr pane id from `HERDR_PANE_ID`, or `null` outside Herdr |
-| `state` | `working`, `blocked`, `idle` or `done` |
+| `state` | `working`, `blocked`, `waiting` (idle with a `foreman_wait` pending; Herdr's own status stays working), `idle` or `done` |
+| `waits` | pending `foreman_wait`s: `id`, `kind`, `note`, `ageSeconds` (as of `heartbeatAt`), `leftSeconds` |
 | `blockedSince` | ISO time the session became blocked, or `null` when it is not blocked |
 | `tokensIn`, `tokensOut`, `cost` | the session's own model usage as its footer shows it (`↑` in incl. cache reads and writes, `↓` out, list cost); runs are not included |
-| `runs` | subagent runs: `launchId`, `role`, `rung` (`model`, `strong` or `null`), `state` (`working`, `ask`, `done`), `tokensIn`, `tokensOut`, `cost` (used when the usage file has no line for that `launchId`) |
+| `runs` | subagent runs: `launchId`, `role`, `rung` (`model`, `strong` or `null`), `state` (`working`, `ask`, `done`), `tokensIn`, `tokensOut`, `cost` (used when the usage file has no line for that `launchId`), `model` (the launch's explicit model as given, else `null`) |
 
 Rows of finished or lost sessions disappear from radar after `--since` hours; those files are not deleted.
 
@@ -314,7 +316,7 @@ it as plain text `foreman:close`, accepted only from the recorded parent session
 Herdr's Pi integration (`herdr integration install pi`, installed by you, never by the installer) shows a session
 as working, idle or blocked. pi-foreman emits `herdr:blocked` on `pi.events` while any dialog waits for you, so
 the pane reads blocked ("?") instead of working. The foreman tree in Herdr's Agents panel is a separate plugin:
-[Herdr sidebar](herdr.md). In a Herdr pane the session also pushes its own sidebar tokens (`sidebar.py push`, on every state change and every 5 s, spinner while working; `ui.spinner: false` turns the spinner off); see [who publishes what](herdr.md#who-publishes-what). Design record: `design/architecture.md`
+[Herdr sidebar](herdr.md). In a Herdr pane the session also pushes its own sidebar tokens (`sidebar.py push`, on every state change and every 5 s; Herdr's own `state_icon` shows the working state, `ui.spinner` is deprecated and ignored); see [who publishes what](herdr.md#who-publishes-what). Design record: `design/architecture.md`
 [session features](../design/architecture.md#session-features-phase-4).
 
 ### Blocked shim

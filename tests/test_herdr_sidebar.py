@@ -61,6 +61,13 @@ def snapshot(symbols="unicode"):
     return {"v": 1, "now": "2026-10-10T12:00:00Z", "symbols": symbols, "roots": [root, done]}
 
 
+def row1_used(t, lead=0):
+    """Columns before l1 on row 1: inset, state_icon, lead cells, then fm_sym when set."""
+    sym = t["fm_sym"]
+    return (sidebar.INSET + sidebar.STATE_ICON_W + lead * (sidebar.LEAD_CELL_W + sidebar.GAP)
+            + (sidebar.cell_width(sym) + sidebar.GAP if sym else 0))
+
+
 class ComposeTest(unittest.TestCase):
     def test_widths_and_symbol_sets(self):
         for symbols in ("unicode", "nerd"):
@@ -76,8 +83,7 @@ class ComposeTest(unittest.TestCase):
                     root = out["w1:p1"]
                     self.assertTrue(root["fm_l1"].startswith("› "))
                     self.assertTrue(root["fm_l1"].endswith("6m"))
-                    used = sidebar.INSET + sidebar.cell_width(root["fm_sym"]) + sidebar.GAP  # lead 0
-                    self.assertEqual(sidebar.cell_width(root["fm_l1"]), width - used - 2)
+                    self.assertEqual(sidebar.cell_width(root["fm_l1"]), width - row1_used(root) - 2)
                     self.assertIn("builder" if width < 26 else "builder strong ×2", root["fm_l2"])
                     self.assertNotIn("explorer", root["fm_l2"])
                     if width < sidebar.NARROW_COST:
@@ -102,18 +108,19 @@ class ComposeTest(unittest.TestCase):
         self.assertTrue(out["w1:p1"]["fm_l1"].startswith("› refactor"))
         self.assertTrue(out["w1:p2"]["fm_l1"].startswith("├─ › fix-parser"))
         self.assertTrue(out["w1:p3"]["fm_l1"].startswith("└─ › docs-pass"))
-        self.assertEqual(out["w1:p2"]["fm_sym"], "⏳")
+        self.assertIsNone(out["w1:p2"]["fm_sym"])   # Herdr's state_icon shows working
         self.assertEqual([out[p]["fm_sort"] for p in ("w1:p1", "w1:p2", "w1:p3", "w2:p1")],
                          ["r001", "r001.c001", "r001.c002", "r002"])
         self.assertTrue(out["w1:p2"]["fm_l2"].startswith("│"))
-        self.assertEqual(out["w1:p3"]["fm_sym"], "✋!")
+        self.assertEqual(out["w1:p3"]["fm_sym"], "!")     # late blocked: only the mark
+        self.assertEqual(out["w2:p1"]["fm_sym"], "✓")     # done stays ours
         self.assertEqual(out["w1:p3"]["fm_block_s"], "1000")
         self.assertEqual(out["w1:p3"]["fm_l2"].lstrip(sidebar.BLANK + " "), "no children")
         self.assertIsNone(out["w1:p2"]["fm_block_s"])
         self.assertEqual(out["w2:p1"]["fm_l2"], "done · 1 child")
         self.assertEqual(out["w2:p1"]["fm_state"], "done")
         nerd = sidebar.compose(snapshot("nerd"), 34)
-        self.assertEqual(nerd["w1:p3"]["fm_sym"], "\uf256!")
+        self.assertEqual(nerd["w1:p3"]["fm_sym"], "!")
 
     def test_pane_collision_keeps_live_youngest(self):
         g = SYMS["unicode"]
@@ -152,9 +159,7 @@ class ComposeTest(unittest.TestCase):
                 out = sidebar.compose(snapshot(), width, lead=lead)
                 for pane, t in out.items():
                     with self.subTest(lead=lead, width=width, pane=pane):
-                        row1 = (inset + lead * (sidebar.LEAD_CELL_W + gap)
-                                + sidebar.cell_width(t["fm_sym"]) + gap)
-                        self.assertLessEqual(sidebar.cell_width(t["fm_l1"]), width - row1 - 2)
+                        self.assertLessEqual(sidebar.cell_width(t["fm_l1"]), width - row1_used(t, lead) - 2)
                         self.assertRegex(t["fm_l1"], r" \d+[smhd]$")
                         self.assertLessEqual(sidebar.cell_width(t["fm_l2"]), width - inset)
                         row3 = [v for v in (t["fm_l3"], t["fm_cost"]) if v]
@@ -185,12 +190,10 @@ class ComposeTest(unittest.TestCase):
                 out = sidebar.compose(snap, width, lead=2)
                 for pane, t in out.items():
                     with self.subTest(width=width, blocked=blocked, pane=pane):
-                        used = (sidebar.INSET + 2 * (sidebar.LEAD_CELL_W + sidebar.GAP)
-                                + sidebar.cell_width(t["fm_sym"]) + sidebar.GAP)
-                        self.assertLessEqual(sidebar.cell_width(t["fm_l1"] or ""), width - used - 2)
-        root = sidebar.compose(snapshot(), 20, lead=2)["w1:p1"]["fm_l1"]   # budget 3: age dropped
+                        self.assertLessEqual(sidebar.cell_width(t["fm_l1"] or ""), width - row1_used(t, 2) - 2)
+        root = sidebar.compose(snapshot(), 17, lead=2)["w1:p1"]["fm_l1"]   # budget 3: age dropped
         self.assertEqual(root, "› …")
-        root = sidebar.compose(snapshot(), 22, lead=2)["w1:p1"]["fm_l1"]   # budget 5: "›…" + age fit
+        root = sidebar.compose(snapshot(), 19, lead=2)["w1:p1"]["fm_l1"]   # budget 5: "›…" + age fit
         self.assertEqual(root, "›… 6m")
 
     def test_depth2_large_totals_drop_counts_before_cost(self):
@@ -286,6 +289,89 @@ class JoinTest(unittest.TestCase):
         self.assertNotIn("d", joins)                # two pi panes share the cwd
         self.assertNotIn("e", joins)                # only a non-pi pane matches
         self.assertEqual(joins["f"], "w1:p10")      # closed presence pane falls through to cwd
+
+
+class ChildrenLineTest(unittest.TestCase):
+    def kids_session(self, kids, **extra):
+        g = SYMS["unicode"]
+        sess = dict(node("s", "session", "s", "working", "working", g, pane="w1:p1", children=kids), **extra)
+        return {"roots": [sess]}
+
+    def builder(self, key, model, rung=None):
+        g = SYMS["unicode"]
+        return dict(node(key, "run", "builder", "working", "working", g, role="builder", rung=rung), model=model)
+
+    def test_short_model(self):
+        for raw, want in ("claude-bridge/claude-sonnet-5-5", "sonnet-5.5"), ("anthropic/claude-opus-5-5", "opus-5.5"), \
+                ("openai/gpt-5.2", "gpt-5.2"), ("claude-sonnet-4-5-20250929", "sonnet-4.5"), ("", None), (None, None):
+            self.assertEqual(sidebar.short_model(raw), want, raw)
+
+    def test_model_follows_role_and_replaces_rung(self):
+        g = SYMS["unicode"]["working"]
+        same = self.kids_session([self.builder("a", "claude-bridge/claude-sonnet-5-5", "strong"),
+                                  self.builder("b", "claude-bridge/claude-sonnet-5-5", "strong")])
+        self.assertEqual(sidebar.compose(same, 34)["w1:p1"]["fm_l2"], g + " builder sonnet-5.5 ×2")
+        mixed = self.kids_session([self.builder("a", "anthropic/claude-opus-5-5", "strong"),
+                                   self.builder("b", "claude-bridge/claude-sonnet-5-5", "strong")])
+        self.assertEqual(sidebar.compose(mixed, 60)["w1:p1"]["fm_l2"],
+                         "%s builder opus-5.5 strong · %s builder sonnet-5.5 strong" % (g, g))
+        narrow = sidebar.compose(mixed, 50)["w1:p1"]["fm_l2"]
+        self.assertIn(g + " builder opus-5.5 · " + g + " builder sonnet-5.5", narrow)
+        self.assertNotIn("strong", narrow)
+        nomodel = self.kids_session([self.builder("a", None, "strong")])
+        self.assertEqual(sidebar.compose(nomodel, 34)["w1:p1"]["fm_l2"], g + " builder strong")
+
+    def test_pending_wait_shows_when_no_child_runs(self):
+        wait = {"id": "w1", "kind": "pid", "note": "suites", "age_s": 240, "left_s": 600}
+        snap = self.kids_session([], waits=[wait])
+        self.assertEqual(sidebar.compose(snap, 34)["w1:p1"]["fm_l2"], "⏳ suites 4m")
+        snap = self.kids_session([], waits=[wait, dict(wait, id="w2")])
+        self.assertEqual(sidebar.compose(snap, 34)["w1:p1"]["fm_l2"], "⏳ suites 4m +1")
+        snap = self.kids_session([self.builder("a", None)], waits=[wait])
+        self.assertNotIn("suites", sidebar.compose(snap, 34)["w1:p1"]["fm_l2"])
+
+
+class StaleTokensTest(unittest.TestCase):
+    """Ledger 12: a new pane must not show the previous session's tokens."""
+    def test_finished_presence_never_joins_a_new_pane_by_cwd(self):
+        g = SYMS["unicode"]
+        for state in ("done", "stale", "lost"):
+            old = node("old", "session", "old", "done", state, g, cwd="/proj")
+            agents = [{"pane_id": "w1:p7", "agent": "pi", "cwd": "/proj"}]
+            self.assertEqual(sidebar.join([old], agents), {}, state)
+        live_ = node("cur", "session", "cur", "working", "working", g, cwd="/proj")
+        self.assertEqual(sidebar.join([live_], agents), {"cur": "w1:p7"})
+
+    def test_unmatched_pi_pane_is_blanked_once(self):
+        agents = [{"pane_id": "w1:p7", "agent": "pi", "tokens": {"fm_l1": "› old", "fm_cost": "$1"}},
+                  {"pane_id": "w1:p8", "agent": "pi", "tokens": {}},
+                  {"pane_id": "w1:p9", "agent": "claude", "tokens": {"fm_l1": "x"}},
+                  {"pane_id": "w1:p3", "agent": "pi", "tokens": {"fm_l1": "mine"}}]
+        done = set()
+        out = sidebar.blanks(agents, {"w1:p1": {}}, {"w1:p3"}, done)
+        self.assertEqual(set(out), {"w1:p7"})
+        self.assertEqual(out["w1:p7"], {k: None for k in sidebar.KEYS})
+        self.assertEqual(sidebar.blanks(agents, {"w1:p1": {}}, {"w1:p3"}, done), {})   # once
+        sidebar.blanks(agents, {"w1:p7": {}}, set(), done)                          # joined later: forgotten
+        self.assertEqual(set(sidebar.blanks(agents, {}, {"w1:p3"}, done)), {"w1:p7"})
+
+    def test_defensive_self_pane_without_session_row_is_composed_by_the_daemon(self):
+        g = SYMS["unicode"]
+        tmp = tempfile.mkdtemp()
+        try:
+            os.mkdir(os.path.join(tmp, "push"))
+            with open(os.path.join(tmp, "push", "sid-1.stamp"), "w", encoding="utf-8") as fh:
+                fh.write("w2:p1")
+            roots = [node("k1", "session", "a", "working", "working", g, pane="w2:p1", sid="sid-1")]
+            fresh = sidebar.fresh_stamps(tmp)
+            joins = {"k1": "w2:p1"}
+            self.assertEqual(sidebar.self_panes_for(roots, joins, fresh), {"w2:p1"})
+            self.assertEqual(sidebar.self_panes_for(roots, joins, fresh, {"w2:p1": {"fm_l1": "› a"}}), {"w2:p1"})
+            self.assertEqual(sidebar.self_panes_for(roots, joins, fresh, {"w2:p1": {"fm_sort": "r001"}}), set())
+            self.assertEqual(sidebar.shown_tokens([{"pane_id": "w2:p1", "tokens": {"fm_sort": "r001"}}, {"pane_id": "x"}]),
+                             {"w2:p1": {"fm_sort": "r001"}})
+        finally:
+            shutil.rmtree(tmp)
 
 
 class DecisionTest(unittest.TestCase):
@@ -387,18 +473,19 @@ class SnippetTest(unittest.TestCase):
                 self.assertLessEqual(len(rules), 16)
                 for r in rules:
                     self.assertTrue(r.get("contains") == "!" or r["equals"] in glyphs, r)
+        self.assertEqual(rows[0][0], "state_icon")   # Herdr's built-in cell, no `$`
         sym_file = ROOT / "config" / "symbols.json"
         if sym_file.is_file():
             with open(sym_file, encoding="utf-8") as fh:
                 shared = json.load(fh)
             self.assertEqual(shared, SYMS)
         self.assertNotIn("$fm_pre", json.dumps(rows))
-        sym_cell = rows[0][0]
+        sym_cell = rows[0][1]
+        self.assertEqual(sym_cell["token"], "$fm_sym")
         sym_rules = sym_cell["rules"]
         self.assertEqual(sym_rules[0], {"contains": "!", "fg": "#d9534f", "bold": True})  # late first
-        self.assertEqual({r["equals"] for r in sym_rules[1:]}, glyphs)
-        working = next(r["fg"] for r in sym_rules if r.get("equals") == "⏳")
-        self.assertEqual(sym_cell["fg"], working)   # spinner frames match no rule: working colour
+        self.assertEqual({r["equals"] for r in sym_rules[1:]}, {s["done"] for s in SYMS.values()})  # only done
+        self.assertEqual(rows[0][2], "$fm_l1")
         for frame in "⣾⣽⣻⢿⡿⣟⣯⣷":
             self.assertFalse(any(r.get("equals") == frame or r.get("contains", "\0") in frame
                                  for r in sym_rules), frame)

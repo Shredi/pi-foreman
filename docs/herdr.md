@@ -68,10 +68,14 @@ agents keep your default rows. Herdr allows one rows table per key: if you alrea
 `[ui.sidebar.agents.rows_by_agent]`, add the `pi = [...]` entry to it. Disable other plugins that set the Agents view
 or ship row templates for `pi`; two owners of the view replace each other's sort.
 
-Colour rules test only the cell's own value, so the state colour sits on the glyph cell: one `equals` rule per state glyph of
-both symbol sets, and the cell's own `fg` (the working colour) for anything no rule matches, such as the spinner frames. A nested session's tree prefix (`├─`, `└─`) starts its `fm_l1`, so the glyph cell holds the glyph
-alone. A session blocked for more than 15 minutes gets a `!` after its glyph (`✋!`), which the first rule (`contains = "!"`)
-colours red; the `!` also reads without colour. The colours in the snippet are placeholders.
+Row 1 opens with Herdr's built-in `state_icon` cell (the plain string `"state_icon"`, no `$`, Herdr 0.9.3 and later). Herdr
+draws the working and idle icon itself, so the sidebar sends no per-frame spinner any more: that took a metadata call a
+second per working session. What Herdr cannot know stays ours in `$fm_sym`: `!` for a session blocked for more than
+15 minutes (`contains = "!"`, red) and `✓` for a finished one. The cell is empty otherwise. Herdr's status for a pi pane was
+only ever seen as working or unknown, so the done and blocked marks cannot come from `state_icon`. While a `foreman_wait`
+is pending Herdr's status stays working; the wait shows on line 2 (below). A nested session's tree prefix (`├─`, `└─`)
+starts its `fm_l1`. The colours in the snippet are placeholders. After updating, merge the new snippet again and run
+`herdr server reload-config`; your own `config.toml` is never edited by pi-foreman.
 
 ## Tokens
 
@@ -80,9 +84,9 @@ every 5 s by the session or, for a pane it does not push, the daemon; values are
 
 | Token | Value |
 |---|---|
-| `fm_sym` | state glyph, plus `!` when blocked longer than 15 minutes |
+| `fm_sym` | `✓` for a finished session, `!` when blocked longer than 15 minutes, else empty (Herdr's `state_icon` shows the state) |
 | `fm_l1` | tree prefix of a nested session (`├─`, `└─`), `› label`, the age or blocked timer right-aligned to the width |
-| `fm_l2` | children: glyph, role and rung per active run (`×n` for repeats), a finished run as `✓ role` for `radar.recentRunSeconds` (default 8) before it joins the `✓n` count; `no children`, `no active children`, `done · n children` or `lost`; the base rung `model` is not shown |
+| `fm_l2` | children: glyph, role and short model per active run (`builder sonnet-5.5 ×2`; the rung is shown only when no model is, or on panels 60 columns or wider; the base rung `model` never), a finished run as `✓ role` for `radar.recentRunSeconds` (default 8) before it joins the `✓n` count; with no active run and a pending `foreman_wait`: `⏳ <note> 4m` (`+n` for more waits); else `no children`, `no active children`, `done · n children` or `lost` |
 | `fm_l3` | `↑in ↓out` of the session and its children; `in` counts uncached input only (fresh input plus cache writes, from the usage file), `↑~n` marks the raw total incl. cache reads when no usage file has the split; radar and its JSON keep the raw total. Dropped before the cost when the row is too narrow |
 | `fm_cost` | `$cost` and `✓n` finished children |
 | `fm_state` | `working`, `waiting`, `asking`, `blocked`, `done` or `lost`, for your own rules |
@@ -93,15 +97,20 @@ Width: `--width`, else `HERDR_SIDEBAR_WIDTH`, else `ui.sidebar_width` from Herdr
 (Herdr's default). Herdr may auto-scale the panel between `ui.sidebar_min_width` and `ui.sidebar_max_width`; set the
 width you see when it differs. Below 24 columns `fm_l3` drops the token counts; below 20 `fm_l3` and `fm_cost` are
 cleared. The layout counts 2 columns of panel frame and Herdr's ` · ` separator (3 columns) between two cells of a row.
-Row 1 also reserves the cells you put before `$fm_sym` (an icon token, say): none by default, each counted 1 column
+Row 1 reserves 2 columns for `state_icon` and also the cells you put before `$fm_sym` (an icon token, say): none by default, each counted 1 column
 plus a separator; set `--lead-cells N` or `HERDR_SIDEBAR_LEAD` to the number you add. Line 1 stops
 2 columns short of its budget; when it is short of room the label is cut (`…`), down to `›…`, and only then the age is
 dropped.
 
 A session is joined to its pane by the presence file's `paneId` (pi-foreman writes `HERDR_PANE_ID` there), else by the
 pane's foreground pid, else by a working directory only one Pi pane has. When several presence files name the same pane
-(sessions restarted in it), the live one wins. When a session leaves radar its tokens are cleared at once; if the
+(sessions restarted in it), the live one wins. A finished, stale or lost session never joins by working directory, and the
+daemon clears the `fm_*` keys of a Pi pane no session is joined to (once), so a new pane in the folder of an earlier
+session does not show that session's row. When a session leaves radar its tokens are cleared at once; if the
 daemon dies they expire with the TTL.
+
+A pane whose push stamp is fresh but that carries no `fm_l1` (agent.list shows none) is composed by the daemon instead
+of staying blank.
 
 ## Who publishes what
 
@@ -122,11 +131,7 @@ per key (15 s here), so each publisher owns fixed keys and omits the others.
 The push stamp is `push/<session id>.stamp` in the state folder; the daemon takes a pane over within one tick when it
 goes stale. A usage byte-offset cache (`push/<session id>.usage.json`) keeps the push short on long sessions.
 
-Spinner: while a session works, it cycles `⣾⣽⣻⢿⡿⣟⣯⣷` in `fm_sym` about once a second, sending only that token. It
-stops at idle, blocked and done. `ui.spinner: false` keeps the static hourglass; radar's own screen always shows the
-hourglass. The glyph cell's `fg` in the snippet is the working colour and the frames inherit it (Herdr caps a cell at
-16 rules, so there are no per-frame rules; the blocked `!` is one `contains = "!"` rule). After updating, merge the new
-snippet again and run `herdr server reload-config`, else the frames render uncoloured.
+Spinner: removed. `ui.spinner` is deprecated, still accepted and ignored; Herdr's `state_icon` shows the working state.
 
 Recent runs: a run that ended shows as `✓ role` on line 2 for `radar.recentRunSeconds` (default 8), then moves into
 the `✓n` count. Tokens: line 3 counts uncached input (see `fm_l3`); radar's TUI and JSON keep the raw totals.
