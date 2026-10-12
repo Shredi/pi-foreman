@@ -70,6 +70,18 @@ class SessionTreeTest(unittest.TestCase):
         self.assertEqual([r["name"] for r in roots], ["top"])
         self.assertEqual([c["name"] for c in roots[0]["children"]], ["kid"])
 
+    def test_handoff_only_child_gets_its_handoff_path(self):
+        # child known only from its handoff dir (no registry entry): radar must not crash (NameError on `base`, 12.10.)
+        self.put_parent()
+        h = self.base / "handoffs" / "20261009-115900-orphan"
+        h.mkdir(parents=True)
+        (h / "parent").write_text("top\n")
+        (h / "child").write_text("orphan\n")
+        roots = fr.snapshot(self.adir, NOW, 24.0)
+        (kid,) = roots[0]["children"]
+        self.assertEqual(kid["name"], "orphan")
+        self.assertEqual(kid["path"], str(h))
+
 
 if __name__ == "__main__":
     unittest.main()

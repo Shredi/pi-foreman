@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- radar: a child session known only from its handoff dir (no registry entry yet) crashed `build()` with a NameError; the sidebar then showed no `fm_*` tokens and a blank tree row. Regression test.
+
 ### Added
 - Self-planning-roles round (numbers are the brief's points):
   - (102) `ceremony.planner: self|role` (default `self`): under `self` the foreman writes the heavy plan itself and its approved checkpoint satisfies the planner step; under `role` a planner on the foreman's own rung or above switches the session to `self` (trace `planner_self_fallback`); `[plan-review]` stays mandatory.

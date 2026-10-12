@@ -264,6 +264,7 @@ def load(adir, cache=None, now=None, done_ttl=None, only=None):
         if not p.is_dir():
             continue
         handoffs[dn] = {"parent": read_line(p / "parent"), "child": read_line(p / "child"), "mtime": mtime(p),
+                        "path": str(p),
                         "has": [f for f in ("result.md", "plan.md", "brief.md") if (p / f).exists()]}
     data = {"live": live, "registry": reg, "handoffs": handoffs, "usage": usage, "trace": trace}
     keep = None if only is None else subtree_sids(data, only)
@@ -434,7 +435,7 @@ def build(data, now):
         opened = opened or ho["mtime"]
         n["glyph"], n["state"] = reg_glyph("open", opened, now)
         n["last"], n["started"], n["parent"] = opened, opened, ho["parent"] or None
-        n["path"] = str(base / "handoffs" / dn)
+        n["path"] = ho.get("path") or ""
         nodes[key] = n
     roots, seen = [], set()
     for n in nodes.values():
