@@ -21,3 +21,25 @@ export class AttentionNotices {
     return true;
   }
 }
+
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+/**
+ * Model-context filter: of several `subagent_control_notice` messages for one open tool call
+ * ("bash open for 240s", same run + toolCallId + reason) only the first stays. Notices without a
+ * toolCallId, and every other message, pass untouched. Null when nothing was dropped.
+ */
+export function dedupeToolCallNotices<M>(messages: readonly M[]): { messages: M[]; dropped: number } | null {
+  const seen = new Set<string>();
+  const out: M[] = [];
+  for (const m of messages) {
+    const ev = isObj(m) && m.role === "custom" && m.customType === "subagent_control_notice" && isObj(m.details) && isObj(m.details.event) ? m.details.event : null;
+    if (ev && typeof ev.runId === "string" && typeof ev.toolCallId === "string" && ev.toolCallId) {
+      const key = `${ev.runId}:${ev.reason ?? ""}:${ev.toolCallId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    out.push(m);
+  }
+  return out.length === messages.length ? null : { messages: out, dropped: messages.length - out.length };
+}

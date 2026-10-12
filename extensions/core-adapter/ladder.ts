@@ -291,7 +291,7 @@ export class LadderState {
       }
       const h = this.eligible.get(role);
       const why = h ? h.cause : typeof reason === "string" && reason.trim() ? "foreman" : role === "builder" && opts.tier === "heavy" ? "heavy" : role === "builder" && opts.preferStrong ? (opts.revisionReason ?? "revision") : null;
-      if (!why) return { block: `pi-foreman: strong launch of ${role} refused [strong_no_reason]: pass a "reason" with model "strong" (why the bottom rung ${bottom} cannot do it), or launch on the default model; a climb-eligible run of ${role} (context, STATUS: stuck, own checks failed) also allows it.`, climbs: [] };
+      if (!why) return { block: `pi-foreman: strong launch of ${role} refused [strong_no_reason]: pass \`reason\` as an extra top-level field of the subagent call (the tool schema does not list it) with model "strong", saying why the bottom rung ${bottom} cannot do it, or launch on the default model; a climb-eligible run of ${role} (context, STATUS: stuck, own checks failed) also allows it.`, climbs: [] };
       climbs.push({ entry: e, role, from, to, reason: why, handoff: h, top });
     }
     return { climbs };
