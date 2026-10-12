@@ -1345,7 +1345,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (cd) return cd;
   }
   const scratch0 = scratchOf(ctx);
-  const c: Collected = { vars: scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}, unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), worktreeRemoveWords: new Set() };
+  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), worktreeRemoveWords: new Set() };
   collect(command, shell, 0, c);
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal

@@ -229,11 +229,11 @@ def _backtick_end(text, i):
 # Closed grammar for same-line variables (docs/permissions.md, tests/fixtures/shellvars-grammar.json; the TypeScript
 # mirror is extensions/core-adapter/shellvars.ts). A line resolves `$NAME` only when EVERY statement is either a sole
 # `NAME=literal` or a simple command from GRAMMAR_COMMANDS with plain words; anything else gets no resolution.
-GRAMMAR_COMMANDS = ("mkdir", "cp", "mv", "cat", "ls", "tee", "touch", "tar", "node", "npm", "npx", "python3", "git",
+GRAMMAR_COMMANDS = ("cd", "mkdir", "cp", "mv", "cat", "ls", "tee", "touch", "tar", "node", "npm", "npx", "python3", "git",
                     "test", "echo", "true")
 GRAMMAR_WORD_CHARS = "A-Za-z0-9/._=:@%+,-"   # no `~`: bash never expands a tilde in front of an expansion
 GRAMMAR_LITERAL_CHARS = "A-Za-z0-9/._-"
-GRAMMAR_PREFIXES = ("$FOREMAN_SCRATCH", "$HOME")
+GRAMMAR_PREFIXES = ("$FOREMAN_SCRATCH", "$PWD", "$HOME")
 GRAMMAR_SPLITTERS = (";", "&&", "||", "\n")
 GRAMMAR_REDIRECTS = ("2>&1", ">/dev/null")
 GRAMMAR_REDIRECT_OPS = (">", ">>")   # followed by one plain word (attached or as the next word)
@@ -249,6 +249,7 @@ GRAMMAR_ASSIGN = re.compile("(%s)=((?:%s|/)[%s]*)" % (_G_NAME, "|".join(re.escap
                                                         GRAMMAR_LITERAL_CHARS))
 _G_REF = r"\$(?:\{(%s)\}|(%s))" % (_G_NAME, _G_NAME)
 _G_WORD = re.compile(r"(?:[%s]|%s)+" % (GRAMMAR_WORD_CHARS, _G_REF))
+_G_HEREDOC = re.compile(r"<<[A-Za-z_][A-Za-z0-9_]*")   # an unquoted opener, a word of its own
 _G_SPLIT = re.compile("(" + "|".join(re.escape(s) for s in GRAMMAR_SPLITTERS) + ")")
 
 
@@ -259,10 +260,27 @@ def grammar_name_ok(name, ref=False):
     return name not in GRAMMAR_RESERVED and not name.startswith(GRAMMAR_RESERVED_PREFIXES)
 
 
-def grammar_value(raw):
-    """The certain value of an assignment literal: an absolute plain path; a prefixed (`$HOME`), relative,
-    `~` or empty value is not certain (None)."""
-    return raw if raw.startswith("/") else None
+def grammar_value(raw, cwd=None, scratch=None):
+    """The certain value of an assignment literal: an absolute plain path, `$FOREMAN_SCRATCH` (the harness scratch
+    dir) or `$PWD` (the tracked cwd) plus an optional `/rest`; a `$HOME`, relative, `~` or empty value is not
+    certain (None). Same as `certain()` in shellvars.ts."""
+    if raw.startswith("/"):
+        return raw
+    for prefix, base in (("$FOREMAN_SCRATCH", scratch), ("$PWD", cwd)):
+        rest = raw[len(prefix):]
+        if raw.startswith(prefix) and rest[:1] in ("", "/") and base and base.startswith("/"):
+            return base + rest
+    return None
+
+
+def grammar_header(text):
+    """`text` up to the end of the line holding the first heredoc opener (all of it without one): only that part
+    is checked and resolved, the body and what follows stay unresolved."""
+    at = text.find("<<")
+    if at < 0:
+        return text
+    nl = text.find("\n", at)
+    return text if nl < 0 else text[:nl]
 
 
 def grammar_statements(text):
@@ -294,7 +312,7 @@ def grammar_statements(text):
             return None
         want = False   # a lone `>` / `>>` wants its target as the next word
         for w in words[1:]:
-            if w in GRAMMAR_REDIRECTS:
+            if w in GRAMMAR_REDIRECTS or _G_HEREDOC.fullmatch(w):
                 continue
             if not want and w in GRAMMAR_REDIRECT_OPS:
                 want = True
@@ -317,9 +335,11 @@ def grammar_statements(text):
 
 
 class Lexer(object):
-    def __init__(self, text):
+    def __init__(self, text, cwd=None, scratch=None):
         self.t = text
         self.i = 0
+        self.cwd = cwd           # tracked through `cd <literal>` on an eligible line (`NAME=$PWD`)
+        self.scratch = scratch
         self.items = []          # Cmd | "(" | ")"
         self.cmd = Cmd()
         self.pending = []        # (delim, strip_tabs, cmd)
@@ -327,7 +347,8 @@ class Lexer(object):
         # same-line `NAME=/abs/literal` statements (see _track_assignment)
         self.vars = {}
         # variables resolve only on a line inside the closed grammar (see grammar_statements)
-        self.eligible = grammar_statements(text) is not None
+        self.header_end = len(grammar_header(text))
+        self.eligible = grammar_statements(text[:self.header_end]) is not None
 
     # -- words
     def _expansion(self, w):
@@ -451,18 +472,30 @@ class Lexer(object):
     def known_var(self, expansion):
         """The value of a plain `$NAME` / `${NAME}` set by an earlier same-line statement, else None."""
         m = re.match(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))$", expansion)
-        if not m or not self.eligible:
+        if not m or not self.eligible or self.i > self.header_end:
             return None
-        return self.vars.get(m.group(1) or m.group(2))
+        name = m.group(1) or m.group(2)
+        if name == "PWD":   # only an assignment value `NAME=$PWD` is inside the grammar
+            return self.cwd
+        if name == "FOREMAN_SCRATCH":
+            return self.scratch
+        return self.vars.get(name)
 
     def _track_assignment(self, c):
         """On an eligible line every statement is a sole `NAME=literal` or a simple command, so a one-word
         command that matches the assignment form records (or, for an unresolvable value, forgets) the name."""
-        if not self.eligible or len(c.words) != 1 or c.redirs or c.subst or c.stdin:
+        if not self.eligible or self.i > self.header_end or c.redirs or c.subst or c.stdin:
+            return
+        if c.words[0].text == "cd":   # one literal operand; any other form loses the tracked cwd
+            a = c.words[1] if len(c.words) == 2 else None
+            ok = a is not None and not a.unresolvable and not a.text.startswith("-") and "\x00" not in a.text
+            self.cwd = absolute(a.text, self.cwd) if ok else None
+            return
+        if len(c.words) != 1:
             return
         m = GRAMMAR_ASSIGN.fullmatch(c.words[0].text)
         if m:
-            value = grammar_value(m.group(2))
+            value = grammar_value(m.group(2), self.cwd, self.scratch)
             if value is None:
                 self.vars.pop(m.group(1), None)
             else:
@@ -574,8 +607,8 @@ class Lexer(object):
         return self.items
 
 
-def tokenize(text):
-    return Lexer(text).run()
+def tokenize(text, cwd=None, scratch=None):
+    return Lexer(text, cwd, scratch).run()
 
 
 # --------------------------------------------------------------------------- paths
@@ -832,7 +865,7 @@ class Analyzer(object):
     def text(self, text, cwd, depth):
         if depth > MAX_DEPTH:
             raise Found("unreadable", "<nested too deep>")
-        items = tokenize(text)
+        items = tokenize(text, cwd, self.scope.scratch)
         stack = []
         prev = None
         for it in items:

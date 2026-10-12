@@ -1,0 +1,66 @@
+{
+  "cwd": "/repo.worktrees/round",
+  "scratch": "/tmp/pf-scratch/s1",
+  "cases": [
+    {
+      "line": "cd /repo.worktrees/round; S=$FOREMAN_SCRATCH; mkdir -p $S; npm test > $S/tc.txt",
+      "inGrammar": true,
+      "lastWord": "/tmp/pf-scratch/s1/tc.txt"
+    },
+    {
+      "line": "S=$FOREMAN_SCRATCH; python3 - \"$S/probe.test.ts\" <<EOF\nprint(1)\nEOF",
+      "inGrammar": true,
+      "lastWord": "/tmp/pf-scratch/s1/probe.test.ts"
+    },
+    {
+      "line": "S=$PWD; npm test > $S/tc.txt",
+      "inGrammar": true,
+      "lastWord": "/repo.worktrees/round/tc.txt"
+    },
+    {
+      "line": "cd /repo.worktrees/round/sub; S=$PWD; npm test > $S/tc.txt",
+      "inGrammar": true,
+      "lastWord": "/repo.worktrees/round/sub/tc.txt"
+    },
+    {
+      "line": "cd sub; S=$PWD/out; npm test > $S/tc.txt",
+      "inGrammar": true,
+      "lastWord": "/repo.worktrees/round/sub/out/tc.txt"
+    },
+    {
+      "line": "S=/repo.worktrees/round/out; mkdir -p $S; npm test > \"$S/tc.txt\"",
+      "inGrammar": true,
+      "lastWord": "/repo.worktrees/round/out/tc.txt"
+    },
+    {
+      "line": "S=$HOME/out; npm test > $S/tc.txt",
+      "inGrammar": true,
+      "lastWord": null
+    },
+    {
+      "line": "cd $X; S=$PWD; npm test > $S/tc.txt",
+      "inGrammar": true,
+      "lastWord": null
+    },
+    {
+      "line": "cd -P sub; S=$PWD; npm test > $S/tc.txt",
+      "inGrammar": true,
+      "lastWord": null
+    },
+    {
+      "line": "echo $PWD > $FOREMAN_SCRATCH/x",
+      "inGrammar": false,
+      "lastWord": null
+    },
+    {
+      "line": "S=$FOREMAN_SCRATCH; python3 - <<'EOF'\nprint(1)\nEOF",
+      "inGrammar": false,
+      "lastWord": null
+    },
+    {
+      "line": "S=$FOREMAN_SCRATCH; python3 - <<EOF\nprint(1)\nEOF\nmkdir -p $S",
+      "inGrammar": true,
+      "lastWord": null
+    }
+  ]
+}
