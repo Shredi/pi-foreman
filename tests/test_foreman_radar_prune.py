@@ -105,9 +105,35 @@ class PresenceTestsUseTempDirs(unittest.TestCase):
             if f.exists():
                 self.assertIsNone(bad.search(f.read_text("utf-8")), f.name)
 
-    def test_radar_has_no_unguarded_default_for_the_cli(self):
-        src = (HERE.parent / "scripts" / "foreman_radar.py").read_text("utf-8")
-        self.assertEqual(src.count("provably_closed"), 5)  # def + 4 call sites in main()
+    def test_every_cli_mode_passes_a_closed_predicate(self):
+        # replaces a source-text count of "provably_closed": check the behaviour of each mode instead
+        seen = {}
+        adir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, adir, True)
+
+        def snap(*a, **kw):
+            seen.setdefault("snapshot", []).append(kw.get("closed"))
+            return {}
+
+        def follow(*a, **kw):
+            seen["follow"] = kw.get("closed", a[8] if len(a) > 8 else None)
+
+        def loop(*a, **kw):
+            seen["loop"] = kw.get("closed", a[6] if len(a) > 6 else None)
+
+        tty = mock.MagicMock()
+        tty.isatty.return_value = True
+        for argv, tty_out in ((["--json"], False), (["--once"], False), ([], False), (["--follow"], False), ([], True)):
+            seen.clear()
+            with mock.patch.object(fr, "snapshot", snap), mock.patch.object(fr, "follow", follow), \
+                    mock.patch.object(fr, "loop", loop), mock.patch.object(fr, "json_line", return_value=""), \
+                    mock.patch.object(fr, "render", return_value=[]), mock.patch.object(fr, "render_footer", return_value=""), \
+                    mock.patch("sys.stdout", tty if tty_out else mock.MagicMock(**{"isatty.return_value": False})):
+                fr.main(argv + ["--agent-dir", adir])
+            got = seen.get("snapshot", []) + [seen[k] for k in ("follow", "loop") if k in seen]
+            self.assertTrue(got, argv)
+            for closed in got:
+                self.assertIsNotNone(closed, "%s tty=%s" % (argv, tty_out))
 
 
 if __name__ == "__main__":

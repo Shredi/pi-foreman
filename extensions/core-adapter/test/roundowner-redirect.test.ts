@@ -2,6 +2,7 @@
 // runs tracked repo scripts as test runs, and an unclassifiable command naming a read-only path is denied from any cwd.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -19,6 +20,14 @@ const scratch = path.join(base, "scratch");
 fs.mkdirSync(path.join(rt, "scripts"), { recursive: true });
 fs.mkdirSync(scratch, { recursive: true });
 fs.writeFileSync(path.join(rt, "f"), "x\n");
+// scripts run by a read-only child must be git-tracked (roundowner-script.test.ts)
+if (posix) {
+  for (const s of ["foreman_docs.py", "check.mjs"]) fs.writeFileSync(path.join(rt, "scripts", s), "\n");
+  const git = (...a: string[]): void => void execFileSync("git", ["-C", rt, "-c", "user.name=t", "-c", "user.email=t@example.invalid", ...a], { stdio: "ignore" });
+  git("init", "-q");
+  git("add", "scripts");
+  git("commit", "-q", "-m", "init");
+}
 const top = (d: string): string | null => (d.startsWith(rt) ? rt : null);
 const r = buildOverlayRules(baseline, {}, {}, path.join(base, "agent"), pkgRoot, undefined, false);
 

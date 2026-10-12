@@ -71,6 +71,7 @@
 //     unlink, trash, mv, rename, del/rd, Remove-Item/Move-Item/Rename-Item and aliases, find
 //     -delete, a literal in inline code (`python -c`), or foreman_move's source. Reads and
 //     listings of those folders stay allowed; `cd` + a relative operand is not seen (item 4).
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -688,13 +689,17 @@ const BUILD_OUT_OPT = /^--?(o\b|[\w-]*(out|dir|file|log|xml|report|exec|command|
  * (so it lies under the cwd, in a read-only child the round worktree). It runs as a test run: caches and scratch writes are
  * allowed like for other test runs, but what the script itself writes is not classified. `-c`/`-e`/`-` and stdin forms are not scripts.
  */
-function repoScriptRun(verb: string, args: string[]): boolean {
-  if (verb !== "python" && verb !== "python3" && verb !== "node") return false;
+function repoScriptWord(verb: string, args: string[]): string | null {
+  if (verb !== "python" && verb !== "python3" && verb !== "node") return null;
   let i = 0;
   if (verb !== "node") while (i < args.length && /^-[IBEsSu]+$/.test(args[i])) i++;
   const s = args[i];
-  if (s === undefined || s === "" || /^[-~$\\/]|^[A-Za-z]:|(^|\/)\.\.(\/|$)|[`$*?[\]{}]/.test(s)) return false;
-  return verb === "node" ? /\.(mjs|cjs|js)$/.test(s) : /\.py$/.test(s);
+  if (s === undefined || s === "" || /^[-~$\\/]|^[A-Za-z]:|(^|\/)\.\.(\/|$)|[`$*?[\]{}]/.test(s)) return null;
+  return (verb === "node" ? /\.(mjs|cjs|js)$/.test(s) : /\.py$/.test(s)) ? s : null;
+}
+
+function repoScriptRun(verb: string, args: string[]): boolean {
+  return repoScriptWord(verb, args) !== null;
 }
 
 function buildTestRun(verb: string, args: string[]): boolean {
@@ -716,7 +721,7 @@ function buildTestRun(verb: string, args: string[]): boolean {
  * (a relative one resolves against the cwd; `.` stands for the cwd itself), or `unknown` when it is neither a known reader,
  * a test run nor a known writer. `inner` = a shell whose -c script is collected separately.
  */
-function roEffect(core: string[], skip: Set<number>, inner: boolean): { targets: string[]; unknown?: string } {
+function roEffect(core: string[], skip: Set<number>, inner: boolean): { targets: string[]; unknown?: string; run?: boolean; script?: string } {
   if (!core.length) return { targets: [] };
   const verb = baseName(core[0]);
   const args = core.slice(1);
@@ -761,7 +766,7 @@ function roEffect(core: string[], skip: Set<number>, inner: boolean): { targets:
   }
   if (RO_READERS.has(verb)) return unitReadOnly(core, skip) ? { targets: [] } : { targets: [], unknown: verb };
   if (SHELLS.has(verb) && inner) return { targets: [] };
-  if (buildTestRun(verb, args)) return { targets: [] };
+  if (buildTestRun(verb, args)) return { targets: [], run: true, script: repoScriptWord(verb, args) ?? undefined };
   return { targets: [], unknown: verb };
 }
 
@@ -844,6 +849,11 @@ interface Collected {
   roUnknown?: string;
   /** The words of that command: a path among them in a read-only root is denied whatever the cwd. */
   roUnknownWords?: string[];
+  /** A test run / repo script run was found; its script words (a read-only child may run only git-tracked ones inside the round worktree). */
+  roRun?: boolean;
+  roScripts?: string[];
+  /** A `cd`/`pushd`/`export`/`env` command or an env assignment prefix was found (refused next to a run for a read-only child). */
+  roCdEnv?: boolean;
 }
 
 /**
@@ -1143,6 +1153,11 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
       }
       if (out.roTargets && !neutral && v.core.length) {
         const e = roEffect(v.core, skip, innerScript(v.core) !== null);
+        if (e.run) {
+          out.roRun = true;
+          if (e.script !== undefined) (out.roScripts ??= []).push(e.script);
+        }
+        if (/^(cd|pushd|export)$/.test(baseName(v.core[0])) || unitWords.slice(0, off).some((w) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(w) || baseName(w) === "env")) out.roCdEnv = true;
         // a bare name that does not exist yet is not path-shaped to pathCandidates: `./` makes it a path against the cwd
         for (const t of e.targets) out.roTargets.add(asPathWord(t));
         if (e.unknown !== undefined && shell === "posix" && out.roUnknown === undefined) {
@@ -1540,6 +1555,10 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
         if (hit) return hit;
       }
     }
+    if (c.roRun && childCwdReadOnly(pctx)) {
+      const bad = roRunRefusal(c, command, pctx);
+      if (bad) return { kind: "deny", reason: `pi-foreman: this run is denied for a child: ${bad}. The round worktree is read-only except for its builder; a test run or repo script there must not change directory or environment (cd, pushd, env, VAR=...) and a script must be git-tracked inside the round worktree.` };
+    }
     if (c.roUnknown !== undefined && childCwdReadOnly(pctx)) {
       return { kind: "deny", reason: `pi-foreman: '${clip(c.roUnknown)}' denied for a child: the round worktree is read-only except for its builder, and this command is neither a known reader nor a test run, so it may write there. Use a read command or ask the foreman.` };
     }
@@ -1625,6 +1644,37 @@ function childReadOnlyWriteDeny(word: string, ctx: MatchCtx): Decision | null {
     if (ctx.roundReadRoots.some((o) => insideDir(o, cand, ctx))) return { kind: "deny", reason: `pi-foreman: write to ${clip(word)} denied for a child: the round worktree is read-only except for its builder.` };
   }
   return null;
+}
+
+/** Why a test/script run by a read-only child is refused: cd/env in the line, or a script that is not a git-tracked file whose realpath lies in the round worktree. */
+function roRunRefusal(c: Collected, command: string, ctx: MatchCtx): string | null {
+  if (c.roCdEnv || /(^|[;&|(){\n`]|\$\()\s*(builtin\s+|command\s+)?(cd|pushd|env|export)(\s|$)|(^|[;&|(){\n`]|\$\()\s*[A-Za-z_][A-Za-z0-9_]*=|\benv\s/.test(command)) return "cd, pushd, env or an environment assignment in the line";
+  const scripts = c.roScripts ?? [];
+  if (!scripts.length) return null;
+  const fsx = defaults(ctx);
+  const cwd = ctx.cwd ? fsx.realpath(ctx.cwd) : undefined;
+  const root = cwd ? (ctx.roundReadRoots ?? []).map((o) => fsx.realpath(o)).find((o): o is string => !!o && insideDir(o, cwd, ctx)) : undefined;
+  if (!cwd || !root) return "the script's worktree cannot be resolved";
+  const tracked = new Map<string, boolean>();
+  for (const s of scripts) {
+    const real = fsx.realpath(path.resolve(cwd, s));
+    if (!real || !insideDir(root, real, ctx)) return `script '${clip(s)}' does not resolve inside the round worktree`;
+    const rel = path.relative(root, real);
+    let ok = tracked.get(rel);
+    if (ok === undefined) {
+      ok = gitTracked(root, rel);
+      tracked.set(rel, ok);
+    }
+    if (!ok) return `script '${clip(s)}' is not tracked by git`;
+  }
+  return null;
+}
+
+/** `git ls-files --error-unmatch` of one path from the worktree root (false on any failure). */
+function gitTracked(root: string, rel: string): boolean {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  return spawnSync("git", ["-C", root, "ls-files", "--error-unmatch", "--", rel], { stdio: "ignore", env, timeout: 10000 }).status === 0;
 }
 
 /** The child's cwd lies in a worktree it may only read (and in none it may write, nor in its scratch dir). */
