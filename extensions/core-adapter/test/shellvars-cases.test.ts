@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { buildOverlayRules, checkToolCall, parseShell, readBaseline } from "../permoverlay.ts";
 import type { MatchCtx } from "../permoverlay.ts";
 import { GRAMMAR, resolveVars } from "../shellvars.ts";
+import { effectCtx } from "../effects.ts";
+import { bashRules, deterministicAllow } from "../timeoutallow.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const fx = JSON.parse(fs.readFileSync(path.join(PKG, "tests", "fixtures", "shellvars-cases.json"), "utf8")) as {
@@ -53,6 +55,16 @@ test("a heredoc line keeps its class: the $S line is decided like the same line 
   for (const role of ["child", "main"] as const) {
     assert.equal(sh(role, `S=$FOREMAN_SCRATCH; python3 - "$S/probe.test.ts" <<EOF${body}`), sh(role, `python3 - "${scratch}/probe.test.ts" <<EOF${body}`), role);
   }
+});
+
+// owner ruling (7d): the $S heredoc line still asks; the resolved variable buys no deterministic allow
+test("a heredoc line with a $S operand gets no deterministic allow, as its literal-path line does", () => {
+  const body = "\nprint(1)\nEOF";
+  const bash = bashRules(readBaseline(PKG)!, {});
+  const allow = (command: string): string | null => deterministicAllow(bash, command, { effects: effectCtx(wt, [scratch], process.platform), scratchDirs: [scratch], platform: process.platform });
+  const viaVar = `S=$FOREMAN_SCRATCH; python3 - "$S/probe.test.ts" <<EOF${body}`;
+  assert.equal(allow(viaVar), null);
+  assert.equal(allow(`python3 - "${scratch}/probe.test.ts" <<EOF${body}`), null);
 });
 
 test("cd <literal> and NAME=$PWD make a later protected path visible to the rules", () => {
