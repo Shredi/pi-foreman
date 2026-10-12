@@ -13,6 +13,7 @@
       ],
       "roles": {
         "foreman": { "model": "claude-bridge/claude-opus-5-5", "thinking": "high" },
+        "session-foreman": { "model": "claude-bridge/claude-opus-5-5", "thinking": "high" },
         "planner": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium" },
         "explorer": { "model": "claude-bridge/claude-haiku-5-5", "thinking": "medium", "strong": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium" } },
         "builder": { "model": "claude-bridge/claude-haiku-5-5", "thinking": "medium", "strong": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium" } },

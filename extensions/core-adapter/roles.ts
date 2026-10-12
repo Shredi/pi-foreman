@@ -7,10 +7,13 @@ import { subagentAgents } from "./payload.ts";
 
 type Json = Record<string, unknown>;
 
-/** Child role ids from the merged config `roles` object (everything but `foreman`). */
+/** The role whose mapped model is the model of sessions opened by `foreman session open`; never launched as a child. */
+export const SESSION_FOREMAN = "session-foreman";
+
+/** Child role ids from the merged config `roles` object (everything but `foreman` and `session-foreman`). */
 export function childRoleIds(roles: unknown): string[] {
   if (!roles || typeof roles !== "object" || Array.isArray(roles)) return [];
-  return Object.keys(roles).filter((id) => id !== "foreman");
+  return Object.keys(roles).filter((id) => id !== "foreman" && id !== SESSION_FOREMAN);
 }
 
 /**
@@ -23,6 +26,7 @@ export function roleLaunchBlock(input: Json, allowed: readonly string[]): string
   if (isManagementCall(input)) return undefined;
   const refused = subagentAgents(input).find((a) => !allowed.includes(a));
   if (refused === undefined) return undefined;
+  if (refused === SESSION_FOREMAN) return "pi-foreman: session-foreman is the model of sessions opened by `foreman session open`, not a launchable role";
   const list = allowed.length ? allowed.join(", ") : "(none configured)";
   return `pi-foreman: agent '${refused}' is not a pi-foreman role; launch one of: ${list}`;
 }

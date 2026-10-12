@@ -2,7 +2,7 @@
 
 > Covers `/sync`, `/retro`, `/foreman close`, `/foreman session` (open, brief, close, list), the usage footer, `bin/foreman`, pi-intercom setup and the Herdr blocked state.
 > Read it when you end, hand over or wrap up a session, or script one from outside Pi.
-> `/foreman close` is refused while a long wait is pending or a child run is still active; nothing is cancelled.
+> `/foreman close` is refused while a child run is still active (never cancelled); the session's own pending long waits are cancelled.
 
 ## Session commands
 
@@ -64,8 +64,17 @@ Plain pi-intercom text, one line each:
   entry becomes `closed` with that result path. A close that is refused is answered with
   `pi-foreman: close refused: <reason>`, for example `the sender is not the parent recorded at spawn`,
   `N child run(s) still active; let them finish (a close never cancels them), then close again` or
-  `N foreman_wait pending (…)`.
+  `N foreman_wait pending (…)` (only when a wait cannot be cancelled).
 - The child's brief footer tells it to re-read `parent` before each message (the parent can change).
+
+### Child orchestrator sessions
+
+A heavy task with several phases may run as a multi-session plan: one child session per phase, each in its own worktree, opened with `foreman session open <label> <brief> --plan-first`. The parent reviews each phase before the next.
+
+- **Model.** The session runs on `--model`, else the mapped `session-foreman` model (`providers.<p>.roles.session-foreman.model`, the own provider then its fallback), else the opener's own model; `open` prints `session model: <model>`. A child never opens a session ranked above its own: the open is refused (`session open refused [session_rank]`, nothing spawned). See [roles](roles.md).
+- **Plan review.** The child writes `plan.md` and stops. The parent answers in `<handoff dir>/ruling.md`: first line `APPROVED`, else a revision note. The child works only after an `APPROVED` ruling. The parent reviews `result.md` before it opens the next phase, then closes the child with `foreman:close`.
+- **Message contract.** Besides `Plan from|Result from|Update from <label>: <path>`, a registry child may send the aliases `foreman:plan <path>` and `foreman:result <path>`; the label is taken from the registry entry of the sender. `foreman:closed <path>` is as before.
+- **Waiting.** `foreman_wait({action: "start", kind: "child", label})` resolves on the next plan, result, update or closed notice of the registry child `label` (or of any child with `label: any`; a wait naming the label wins over `any`). The wake line is `child <label>: plan|result|update|closed <path>`. Race: a notice that arrives before the wait starts is not replayed; check `/foreman session list` (the registry's `last`) first.
 
 ### Parallel rounds
 
@@ -78,7 +87,7 @@ Every orchestrator session works in its own worktree (`git worktree add …`) an
   contents of `$PI_FOREMAN_HANDOFF_DIR/parent`, read at check time (no `PI_FOREMAN_HANDOFF_DIR` or no such file:
   `PI_FOREMAN_PARENT_INTERCOM`; a file with no valid id refuses). Re-pointing the parent is a one-file change.
   `close.from` must include `intercom-parent` (default), and cross-machine messages are refused.
-- A close is refused while a child run is active or a `foreman_wait` is pending, and nothing is cancelled.
+- A close is refused while a child run is active; the session's own pending `foreman_wait`s are cancelled instead (trace `waits_cancelled`).
 - The `parent` and `child` files of every handoff dir are write-protected (baseline `protect.writeAsk`): a child
   agent of either session is denied any write to them and any shell command naming them, and a foreman's
   write or edit tool asks; a foreman's shell may still read them. `brief.md`, `result.md` and `plan.md` stay

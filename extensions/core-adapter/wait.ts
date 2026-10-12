@@ -27,11 +27,11 @@ import { realDeep, under } from "./triage.ts";
 import { WAKE_MESSAGE_TYPE } from "./usage.ts";
 
 export const WAIT_TOOL = "foreman_wait";
-export const WAIT_KINDS = ["timer", "file", "pid", "ci"] as const;
+export const WAIT_KINDS = ["timer", "file", "pid", "ci", "child"] as const;
 export type WaitKind = (typeof WAIT_KINDS)[number];
 export const RUN_ID = /^\d{1,20}$/;
 export const NOTE_MAX = 200;
-export const POLL_MS: Record<WaitKind, number> = { timer: 0, file: 2000, pid: 2000, ci: 60_000 };
+export const POLL_MS: Record<WaitKind, number> = { timer: 0, file: 2000, pid: 2000, ci: 60_000, child: 0 };
 export const CI_TIMEOUT_MS = 30_000;
 const GH_MISSING = "gh was not found on PATH outside the workspace (empty, relative and workspace PATH entries are skipped).";
 const MAX_TIMER_MS = 2 ** 31 - 1;
@@ -58,7 +58,11 @@ export type ValidSpec =
   | { kind: "timer"; seconds: number; note: string }
   | { kind: "file"; path: string; note: string }
   | { kind: "pid"; pid: number; note: string }
-  | { kind: "ci"; runId: string; note: string };
+  | { kind: "ci"; runId: string; note: string }
+  | { kind: "child"; label: string; note: string };
+
+/** Registry child label (or `any`) a `child` wait names. */
+export const CHILD_LABEL = /^[A-Za-z0-9._-]{1,40}$/;
 
 export interface PathBoundOpts {
   cwd: string;
@@ -132,8 +136,13 @@ export function parseStart(params: Record<string, unknown>, limits: WaitLimits, 
       const r = checkRunId(params.runId);
       return "error" in r ? r : { kind: "ci", runId: r.runId, note };
     }
+    case "child": {
+      const label = oneLine(params.label, 40);
+      if (!CHILD_LABEL.test(label)) return { error: `${WAIT_TOOL}: child needs a label (a registry session label, or any).` };
+      return { kind: "child", label, note };
+    }
     default:
-      return { error: `${WAIT_TOOL}: kind must be timer, file, pid or ci.` };
+      return { error: `${WAIT_TOOL}: kind must be timer, file, pid, ci or child.` };
   }
 }
 
@@ -227,6 +236,8 @@ interface Entry {
   id: string;
   kind: WaitKind;
   note: string;
+  /** child waits: the registry label to wake on, or `any`. */
+  label?: string;
   started: number;
   deadline: number;
   handles: unknown[];
@@ -267,15 +278,16 @@ export class WaitRuntime {
     const id = `w${++this.seq}`;
     const now = this.d.now();
     const e: Entry = { id, kind: spec.kind, note: spec.note, started: now, deadline: now + limits.maxSeconds * 1000, handles: [], ghErrors: 0, ghFirstError: "" };
+    if (spec.kind === "child") e.label = spec.label;
     this.waits.set(id, e);
     e.handles.push(this.d.timers.set(() => this.resolve(id, "timeout"), limits.maxSeconds * 1000));
     if (spec.kind === "timer") e.handles.push(this.d.timers.set(() => this.resolve(id, "elapsed"), spec.seconds * 1000));
-    else this.poll(e, spec, 0);
+    else if (spec.kind !== "child") this.poll(e, spec, 0);
     this.d.trace({ event: "wait", decision: "start", toolFamily: spec.kind });
     return { id };
   }
 
-  private poll(e: Entry, spec: ValidSpec, delay: number): void {
+  private poll(e: Entry, spec: Exclude<ValidSpec, { kind: "child" }>, delay: number): void {
     e.pollHandle = this.d.timers.set(() => {
         if (!this.waits.has(e.id)) return;
         if (spec.kind === "file") {
@@ -327,6 +339,23 @@ export class WaitRuntime {
     this.d.trace({ event: "wait", decision: "cancelled", toolFamily: e.kind });
     this.governor.check();
     return true;
+  }
+
+  /**
+   * A plan, result, update or closed notice of the registry child `label`: resolves the first child wait
+   * naming that label (else the first naming `any`). A notice before the wait starts is not replayed.
+   */
+  childNotice(label: string, kind: string, notePath: string): boolean {
+    const waits = [...this.waits.values()].filter((e) => e.kind === "child");
+    const hit = waits.find((e) => e.label === label) ?? waits.find((e) => e.label === "any");
+    if (!hit) return false;
+    this.resolve(hit.id, `child ${label}: ${kind} ${oneLine(notePath, 300)}`);
+    return true;
+  }
+
+  /** Cancels every active wait (a close of the session); the cancelled ids. */
+  cancelAll(): string[] {
+    return [...this.waits.keys()].filter((id) => this.cancel(id));
   }
 
   list(): { id: string; kind: WaitKind; note: string; ageSeconds: number; leftSeconds: number }[] {
@@ -441,6 +470,7 @@ const PARAMS = {
     path: { type: "string", description: "file: resolves when this file exists (inside the workspace, its .workflow/ or <agentDir>/pi-foreman/state/wait/)." },
     pid: { type: "integer", minimum: 2, description: "pid: resolves when this process has exited." },
     runId: { type: "string", description: "ci: GitHub Actions run id (digits); resolves when the run completes." },
+    label: { type: "string", description: "child: the label of a session opened by `foreman session open`, or any; resolves on its next plan, result, update or closed notice (a notice that came before the wait started is not replayed)." },
     note: { type: "string", maxLength: NOTE_MAX, description: "start: shown back in the wake message." },
     id: { type: "string", description: "cancel: the wait id." },
   },
@@ -449,9 +479,13 @@ const PARAMS = {
 };
 
 /** Register `foreman_wait` (foreman sessions only) and its shutdown cleanup. */
-export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]> } {
+export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]>; childNotice: (sessionId: string, label: string, kind: string, notePath: string) => boolean; cancelAll: (sessionId: string) => string[] } {
   const runtimes = new Map<string, { rt: WaitRuntime; ctx: ExtensionContext }>();
-  const handle = { active: (sessionId: string) => runtimes.get(sessionId)?.rt.list() ?? [] };
+  const handle = {
+    active: (sessionId: string) => runtimes.get(sessionId)?.rt.list() ?? [],
+    childNotice: (sessionId: string, label: string, kind: string, notePath: string) => runtimes.get(sessionId)?.rt.childNotice(label, kind, notePath) ?? false,
+    cancelAll: (sessionId: string) => runtimes.get(sessionId)?.rt.cancelAll() ?? [],
+  };
   pi.on("session_shutdown", async (_event, ctx) => {
     const id = ctx.sessionManager.getSessionId();
     runtimes.get(id)?.rt.dispose();
@@ -462,7 +496,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
     name: WAIT_TOOL,
     label: "Long wait",
     description:
-      "Wait without model turns for a timer, a file to appear, a process to exit or a GitHub Actions run to complete. Returns at once with a wait id; you are woken later by ONE message listing every outcome (triggers that resolve close together are batched). action start (kind + its argument, optional note), list, or cancel {id}.",
+      "Wait without model turns for a timer, a file to appear, a process to exit, a GitHub Actions run to complete or a child session to report (kind child + label). Returns at once with a wait id; you are woken later by ONE message listing every outcome (triggers that resolve close together are batched). action start (kind + its argument, optional note), list, or cancel {id}.",
     parameters: PARAMS as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await deps.session(ctx);

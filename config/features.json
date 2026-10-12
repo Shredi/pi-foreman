@@ -386,7 +386,7 @@
     {
       "id": "sessions",
       "title": "Opened sessions over pi-intercom",
-      "purpose": "`/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom.",
+      "purpose": "`/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom. The session runs on the `session-foreman` role's model (default: the opening session's own model) and never on a higher rank.",
       "doc": "docs/sessions.md#session-commands",
       "keys": [],
       "commands": ["/foreman session", "foreman session"],

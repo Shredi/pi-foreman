@@ -23,6 +23,7 @@
   },
   "roles": {
     "foreman": { "tools": [], "codemode": true },
+    "session-foreman": { "tools": [], "codemode": false },
     "planner": { "tools": ["read", "ls", "grep", "find", "write", "edit"], "denyTools": ["mcp__*"], "codemode": false, "launch": "detached", "timeoutMinutes": 20 },
     "explorer": { "tools": ["read", "ls", "grep", "find", "bash"], "denyTools": ["mcp__*"], "codemode": true, "launch": "detached", "timeoutMinutes": 20 },
     "builder": { "tools": ["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_move", "foreman_copy"], "codemode": false, "launch": "detached", "timeoutMinutes": 60 },

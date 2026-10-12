@@ -151,6 +151,8 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULTS_PATH = ROOT / "config" / "foreman.defaults.json"
 SCHEMA_PATH = ROOT / "config" / "foreman.schema.json"
 CHILD_ROLES = ["planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
+# Role whose mapped model is the model of sessions opened by `foreman session open`; never a launchable child.
+SESSION_FOREMAN = "session-foreman"
 # Tools a child never gets, whatever roles.<id>.tools says: children reach the foreman through
 # contact_supervisor, never through pi-intercom (the adapter also refuses the tool in children).
 CHILD_DENIED_TOOLS = ("intercom", "pr_create", "pr_watch")
@@ -1001,8 +1003,19 @@ def resolve_role(cfg, role, provider):
 
 def child_roles(cfg):
     """The built-in child roles, then every other role id of the merged `roles` (not foreman)."""
-    extra = sorted(r for r in (cfg.get("roles") or {}) if r != "foreman" and r not in CHILD_ROLES)
+    extra = sorted(r for r in (cfg.get("roles") or {}) if r not in ("foreman", SESSION_FOREMAN) and r not in CHILD_ROLES)
     return list(CHILD_ROLES) + extra
+
+
+def resolve_session_foreman(cfg, provider):
+    """{model, thinking} mapped for session-foreman (own provider, then its fallback), or None: the session uses its own model."""
+    providers = cfg.get("providers") or {}
+    fb = ((providers.get(provider) or {}).get("fallback") or {}).get("provider")
+    for p in (provider, fb):
+        entry = ((providers.get(p) or {}).get("roles") or {}).get(SESSION_FOREMAN) if p else None
+        if isinstance(entry, dict) and entry.get("model"):
+            return {"model": entry["model"], "thinking": cap_thinking(entry.get("thinking"), cfg.get("maxThinking"))}
+    return None
 
 
 def resolve_all(cfg, provider):
