@@ -109,12 +109,28 @@ test("2c: `../x` after cd resolves from the cd'd directory", { skip: !posix }, (
 
 test("2d: only reads of the state dir lose the protected-configuration ask", { skip: !posix }, () => {
   const st = path.join(stateDir, "usage");
-  for (const cmd of [`ls ${st}`, `cat ${st}/a.jsonl`, `cd ${st} && ls`, `cd ${st} && cat *.jsonl`, `cat ${st}/*.jsonl | head -3`, `ls ${stateDir}`, `head -5 ${st}/a.jsonl | sed -n 1,2p`, `python3 -c "import json,glob; print(len(glob.glob('${st}/*.jsonl')))"`]) {
+  for (const cmd of [`ls ${st}`, `cat ${st}/a.jsonl`, `cd ${st} && ls`, `cd ${st} && cat *.jsonl`, `cat ${st}/*.jsonl | head -3`, `ls ${stateDir}`, `head -5 ${st}/a.jsonl | sed -n 1,2p`]) {
     assert.equal(foreman(cmd), "pass", cmd);
   }
   for (const cmd of [`echo x > ${st}/a.jsonl`, `rm ${st}/a.jsonl`, `touch ${stateDir}/new`, `sed -i 1d ${st}/a.jsonl`, `python3 -c "open('${st}/a.jsonl','w').write('')"`, `python3 -c "import os; os.remove('${st}/a.jsonl')"`, `cp x ${stateDir}/foreman.json`, `echo x > ${agentDir}/foreman.json`, `echo x > ${agentDir}/auth.json`, `echo x > ${agentDir}/extensions/x.ts`]) {
     assert.notEqual(foreman(cmd), "pass", cmd);
   }
+});
+
+test("2d: inline python over the state dir is never a reader and still asks (fail closed)", { skip: !posix }, () => {
+  const st = path.join(stateDir, "usage");
+  for (const cmd of [
+    `python3 -c "import pathlib; print('', file=pathlib.Path('${st}/a.jsonl').open('w'))"`,
+    `python3 -c "import os; os.posix_spawn('/bin/sh', ['sh','-c','true'], {}); print(open('${st}/a.jsonl').read())"`,
+    `python3 -c "import pathlib; pathlib.Path('${st}/l').symlink_to('/x')"`,
+    `python3 -c "print(open('${st}/a.jsonl').read())"`,
+    `python3 -c "import json,glob; print(len(glob.glob('${st}/*.jsonl')))"`,
+    `python3 -I -c "print(open('${st}/a.jsonl').read())"`,
+  ]) {
+    assert.notEqual(foreman(cmd), "pass", cmd);
+  }
+  // a plain reader of the same file still passes
+  assert.equal(foreman(`cat ${st}/a.jsonl`), "pass");
 });
 
 test("2f: the round ledger and the session's handoff dir are readable for a child; writes stay closed", { skip: !posix }, () => {

@@ -495,7 +495,14 @@ function inlineCode(core: string[]): string | null {
   if (!core.length) return null;
   const it = INTERPRETERS.find((x) => x.re.test(baseName(core[0])));
   if (!it) return null;
+  const py = /^(python|pypy)/.test(baseName(core[0]));
   for (let k = 1; k < core.length; k++) {
+    // python option parsing ends at `-m` and at the script name: a later `-c` is the script's argument
+    if (py && (/^-[A-Za-z]*m$/.test(core[k]) || !core[k].startsWith("-"))) return null;
+    if (py && /^-[WX]$/.test(core[k]) && !it.flag.test(core[k])) {
+      k++;
+      continue;
+    }
     const eq = /^--(eval|print)=(.*)$/s.exec(core[k]);
     if (eq && it.flag.test(`--${eq[1]}`)) return eq[2];
     if (it.flag.test(core[k])) return core[k + 1] ?? null;
@@ -1189,29 +1196,6 @@ function unitReadOnly(core: string[], skip: Set<number>): boolean {
   return true;
 }
 
-const isPython = (verb: string): boolean => /^python[0-9.]*$/.test(verb);
-
-const PY_MODULES = new Set(["json", "sys", "glob", "collections", "datetime", "re", "itertools", "statistics", "csv", "time", "math", "functools", "operator", "os", "pathlib", "heapq", "bisect", "textwrap"]);
-const PY_WRITES = /\b(write\w*|touch|unlink|rmdir|rmtree|remove\w*|rename\w*|replace|mkdir|makedirs|chmod|chown|chdir|truncate|symlink|link|system|popen|spawn\w*|exec\w*|fork\w*|kill\w*|subprocess|shutil|tempfile|socket|urllib|requests|http|ctypes|importlib|eval|compile|builtins|globals|locals|getattr|setattr|delattr|input|breakpoint|pickle|marshal|environ\s*\[[^\]]*\]\s*=|putenv|dump|copy\w*|move|print_exc)\b|__/;
-
-/**
- * Inline python that can only read: imports from a small read-only module list, no write/remove/rename/exec/network name, no dunder, and every
- * `open(...)` either has one argument or a literal read mode. Conservative: anything it cannot parse is not read-only.
- */
-export function pythonReadOnly(code: string): boolean {
-  if (PY_WRITES.test(code)) return false;
-  for (const m of code.matchAll(/\b(?:import|from)\s+([A-Za-z_][\w]*)((?:\s*,\s*[A-Za-z_]\w*)*)/g)) {
-    const mods = [m[1], ...m[2].split(",").map((x) => x.trim()).filter(Boolean)];
-    if (!mods.every((x) => PY_MODULES.has(x))) return false;
-  }
-  if (/\b(?:import|from)\s*$/.test(code)) return false;
-  for (const m of code.matchAll(/\bopen\s*\(([^)]*)\)/g)) {
-    const args = m[1].split(",").map((x) => x.trim());
-    if (args.length > 1 && !(args.length === 2 && /^(?:mode\s*=\s*)?['"]r[bt]?['"]$/.test(args[1]))) return false;
-  }
-  return !/\bopen\s*\((?![^)]*\))/.test(code);
-}
-
 /** Whether one unit (wrappers stripped) may have its protected operands skipped as a read: see PROTECTED_READERS. */
 function protectedReader(core: string[], skip: Set<number>): boolean {
   const verb = baseName(core[0]);
@@ -1219,10 +1203,6 @@ function protectedReader(core: string[], skip: Set<number>): boolean {
   const has = (re: RegExp): boolean => args.some((x) => re.test(x));
   // an unresolved expansion in any quoting may supply an option or script (`I=-i; sed $I p D`, `P=--pre=x; rg $P p D`)
   if (has(/[$`]/)) return false;
-  if (isPython(verb)) {
-    const code = inlineCode(core);
-    return code !== null && pythonReadOnly(code);
-  }
   if (!PROTECTED_READERS.has(verb)) return false;
   if (verb === "file") return !has(/^-[A-Za-z]*C|^--compile/);
   if (GREP_FAMILY.has(verb)) return !has(/^-[A-Za-z]*f|^--(pre|pre-glob|file|ignore-file|hostname-bin)/) && unitReadOnly(core, skip);
@@ -1306,11 +1286,7 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
       if (!neutral && raw !== undefined) {
         const reader = v.core.length > 0 && protectedReader(v.core, skip);
         if (!reader) out.rdr = false;
-        // inline python that provably only reads (pythonReadOnly) counts as a pure reader of its literal paths
-        const pyRead = reader && v.core.length > 0 && baseName(raw) === baseName(v.core[0]) && isPython(baseName(v.core[0]));
-        if (pyRead) {
-          // its path literals are scanned below (codeLiterals)
-        } else if (!PURE_VERBS.has(baseName(raw)) || !v.core.length || !PURE_VERBS.has(baseName(v.core[0]))) out.pure = false;
+        if (!PURE_VERBS.has(baseName(raw)) || !v.core.length || !PURE_VERBS.has(baseName(v.core[0]))) out.pure = false;
         else if (!reader || !unitReadOnly(v.core, skip)) {
           if (!unitReadOnly(v.core, skip)) out.ro = false;
           // an output flag may carry its path attached (`gawk -oFILE`, `sort -k1 -oFILE`, `--output=FILE`, `-W dump-variables=FILE`): scan every tail of an option word

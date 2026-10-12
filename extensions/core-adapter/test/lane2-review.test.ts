@@ -80,6 +80,12 @@ test("2a: without owned roots, or with one non-owned path or write target, the d
   assert.deepEqual(await r.authorize("s", ask(`cat ${asyncRun}/status.json > ${nonOwned}`)), { kind: "defer" });
 });
 
+test("2a: /tmp is not an owned root: a defer for a command writing /tmp stays a defer", { skip: !posix }, async () => {
+  const r = new ForemanReview();
+  r.upsert("s", session(reply(DEFER)));
+  assert.deepEqual(await r.authorize("s", ask("touch /tmp/pf-lane2-x")), { kind: "defer" });
+});
+
 test("2a: a deny (hard or soft) is never turned into an allow", async () => {
   const r = new ForemanReview();
   r.upsert("s", session(reply('{"verdict":"deny","reason":"x","riskLevel":"high"}')));

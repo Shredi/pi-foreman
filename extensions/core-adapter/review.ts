@@ -426,7 +426,7 @@ export class ForemanReview {
       if (!owned.length || !rules) return null;
       const roots = get(s.config(), "safety.permissions.readRoots");
       const ledger = this.ledgerOf(s);
-      const ctx = effectCtx(s.cwd, [...this.scratchOf(s, d), ...owned], process.platform, ledger ? [...(Array.isArray(roots) ? roots : []), ledger] : roots);
+      const ctx = { ...effectCtx(s.cwd, [...this.scratchOf(s, d), ...owned], process.platform, ledger ? [...(Array.isArray(roots) ? roots : []), ledger] : roots), noTmp: true };
       const full = reviewValue(d);
       const deps = { effects: ctx };
       return deterministicAllow(rules, unitValue(d), deps) && deterministicAllow(rules, full, deps) ? "owned-roots" : null;

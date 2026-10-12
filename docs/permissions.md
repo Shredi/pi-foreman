@@ -334,15 +334,15 @@ the same for the foreman and every child it launches, and nothing else is inheri
   handoff dirs, the global npm root, `state/scratch/<session>` and the pi-subagents async run dirs of its OWN child runs
   (`roundsurface.ts` `sessionOwnedRoots`). A model `defer` (never a deny, never a soft-deny) for a bash command is turned into an
   allow (label `owned-roots`) only when the effect layer, with those roots added as scratch dirs, finds EVERY path operand and write
-  target inside the workspace, /tmp-style scratch or an owned root, and no ask or deny rule catches the command. One non-owned write
-  target keeps the defer.
+  target inside the workspace, scratch or an owned root, and no ask or deny rule catches the command. /tmp does not count as owned here;
+  one non-owned write target (also under /tmp) keeps the defer.
 - **The `*` path rule matches path operands only (2b).** A catch-all `*` deny does not fire on a word of command prose or on a sed
   expression (`sed 's/=.*//'`), and never denies a READ below an owned root (the scratch dir, the round roots, the ledger and handoff
   read roots). A more specific rule (a secret inside an owned root) still denies, and writes are unchanged.
-- **sed and inline python as readers (2b).** `sed` skips the protected-file write ask only without `-i`/`--in-place`, `-f`/`--file`,
-  and with a script that has no `w`/`W`/`r`/`R`/`e`/`a`/`i`/`c` command and no `s///w` or `s///e` flag. Inline `python -c` does so only
-  when it imports from a small read-only module list, names no write, exec, network or dunder, and every `open()` reads. awk is not a
-  protected reader.
+- **sed as a reader (2b).** `sed` skips the protected-file write ask only without `-i`/`--in-place`, `-f`/`--file`,
+  and with a script that has no `w`/`W`/`r`/`R`/`e`/`a`/`i`/`c` command and no `s///w` or `s///e` flag. Inline `python -c` is never a
+  reader: a blocklist cannot classify python as read-only, so inline python over the state dir or any protected file still asks (fail
+  closed). awk is not a protected reader.
 - **`../x` after `cd` (2c).** A relative word with `..` that follows `cd <dir> &&` (or `;`) resolves from the cd'd directory, not the
   session cwd. A cd that may not run first (`||`, a missing directory, a `$` or glob in the target) does not move the base.
 - **State dir reads (2d).** Only reads of `<agent dir>/pi-foreman/state` lose the protected-configuration ask; writes there still ask.

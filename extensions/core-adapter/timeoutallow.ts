@@ -119,7 +119,7 @@ export function deterministicAllowInfo(rules: BashRules, command: string, deps: 
   // tmp-scratch cp sources: a contained read (no `cp -R ~/.ssh /tmp/x` then `cat /tmp/x/..`), a tree from the worktree only
   const c = deps.effects;
   const source = deps.source ?? (c ? (s: string, rec: boolean) => contained(c, c.cwd, s, false) && (!rec || (c.root !== null && contained(c, c.cwd, s, false, [c.root]))) : undefined);
-  if (isTmpScratch(command, { ...deps, source })) return { label: "tmp-scratch", segments: 1 };
+  if (!c?.noTmp && isTmpScratch(command, { ...deps, source })) return { label: "tmp-scratch", segments: 1 };
   if (deps.scratchDirs?.length && deps.effects) {
     // child-scratch needs the composer as well: every segment a deterministic allow, cp sources checked as reads, ChainWrites
     for (const d of deps.scratchDirs) {

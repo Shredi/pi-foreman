@@ -36,6 +36,8 @@ export interface EffectCtx {
   /** Git top level of the cwd; null outside a repo (then only scratch and /tmp count). */
   root: string | null;
   scratch?: string[];
+  /** /tmp is not a write target here (the owned-roots path: every write target must be an owned root). */
+  noTmp?: boolean;
   /** safety.permissions.readRoots as real absolute dirs (readRootsOf): extra places for reads only. */
   readRoots?: string[];
   platform?: string;
@@ -155,7 +157,7 @@ function resolveWord(c: EffectCtx, cwd: string | null, word: string): string | n
 }
 
 function bases(c: EffectCtx, write: boolean): string[] {
-  return [...(c.root ? [c.root] : []), ...(c.scratch ?? []), ...(write && plat(c) !== "win32" ? ["/tmp"] : []), ...(write ? [] : (c.readRoots ?? []))];
+  return [...(c.root ? [c.root] : []), ...(c.scratch ?? []), ...(write && !c.noTmp && plat(c) !== "win32" ? ["/tmp"] : []), ...(write ? [] : (c.readRoots ?? []))];
 }
 
 /** A read (`write` false) or write path inside the worktree or a scratch dir; writes also under /tmp, reads also under read roots (see the header). */
@@ -536,7 +538,7 @@ export function redirectOk(r: Redirect, c: EffectCtx | null, cwd: string | null,
   if (r.target === "/dev/null") return true;
   if (r.op === "<") return c !== null && contained(c, cwd, r.target, false);
   if (scratch.length && insideScratch(r.target, scratch, platform)) return true;
-  return platform !== "win32" && tmpDest(r.target);
+  return platform !== "win32" && !c?.noTmp && tmpDest(r.target);
 }
 
 /** True for an operand naming an editor backup: `*~`, `*.bak`, `*.orig`, `*.swp` or `.#*` (by its last path part). */
