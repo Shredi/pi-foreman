@@ -47,7 +47,7 @@ Keys outside safety that the project and session layers cannot loosen either
     providers.*.review               ignored (a review model approves asks)
     providers.*.roles.*.strong       ignored (picks a stronger, costlier model; L1/L3/L2 only)
     providers.*.strongOnRevision     only false is accepted (true relaunches on the strong model)
-    providers.*.cache.ttlSeconds / billing / warmCompact   ignored (the cache policy: L1/L3/L2 only)
+    providers.*.cache.ttlSeconds / billing / warmCompact / byModel   ignored (the cache policy: L1/L3/L2 only)
     providers.*.cache.keepalive.intervalSeconds   ignored (L1/L3/L2 only)
     providers.*.cache.keepalive.enabled   only false is accepted (true keeps the session warm at a cost)
     providers.*.cache.keepalive.windowMinutes   lower only, minimum 1; without an earlier value at most 45
@@ -190,6 +190,7 @@ IGNORED_KEYS = [
     (("providers", "*", "cache", "billing"), "the cache policy comes from the user or overlay config"),
     (("providers", "*", "cache", "keepalive", "intervalSeconds"), "the cache policy comes from the user or overlay config"),
     (("providers", "*", "cache", "warmCompact"), "the cache policy comes from the user or overlay config"),
+    (("providers", "*", "cache", "byModel"), "the cache policy comes from the user or overlay config"),
     (("python", "path"), "it chooses the executable that runs every guard"),
     (("python", "*"), "interpreter settings come from the user or overlay config"),
     (("roles", "*", "launch"), "the launch mode comes from the user or overlay config"),
@@ -1133,6 +1134,114 @@ def backup_path(target, now):
     return bak
 
 
+class PresetError(Exception):
+    pass
+
+
+def rank_tier_of(ranks, model_id):
+    """Tier of a bare model id from providers.<p>.ranks (first matching row), or None."""
+    for r in ranks:
+        if isinstance(r, dict) and isinstance(r.get("match"), str) and isinstance(r.get("tier"), int):
+            if re.fullmatch(re.escape(r["match"]).replace(r"\*", ".*").replace(r"\?", "."), model_id):
+                return r["tier"]
+    return None
+
+
+def _candidate_models(entry):
+    """Bare model ids known for one provider: literal ranks matches, then role, strong and review models."""
+    out = []
+    for r in entry.get("ranks") or []:
+        if isinstance(r, dict) and isinstance(r.get("match"), str) and not re.search(r"[*?]", r["match"]):
+            out.append(r["match"])
+    refs = []
+    for role in (entry.get("roles") or {}).values():
+        if isinstance(role, dict):
+            refs.append(role.get("model"))
+            refs.append((role.get("strong") or {}).get("model") if isinstance(role.get("strong"), dict) else None)
+    refs.append((entry.get("review") or {}).get("model"))
+    for ref in refs:
+        if isinstance(ref, str) and ref:
+            out.append(ref.split("/", 1)[1] if "/" in ref else ref)
+    return list(dict.fromkeys(out))
+
+
+def resolve_rank_tiers(template, existing, foreman_model=None):
+    """Resolve a preset's `rankTiers` against providers.<p>.ranks of the active provider.
+
+    Tier numbers are ordinals over the distinct ranked tiers (0 = best). With a foreman model the
+    foreman sits at that model's own tier and a child tier counts from it; otherwise the foreman is at
+    ordinal 1. Returns (provider, {role: (model ref, thinking, ordinal)}); raises PresetError.
+    """
+    merged = deep_merge(read_json(DEFAULTS_PATH), existing)
+    provs = merged.get("providers") or {}
+    if foreman_model:
+        provider = foreman_model.split("/", 1)[0] if "/" in foreman_model else None
+        if provider is None:
+            raise PresetError("--foreman needs <provider>/<model id>")
+    else:
+        ranked = [p for p, e in provs.items() if isinstance(e, dict) and e.get("ranks")]
+        if len(ranked) != 1:
+            raise PresetError("cannot pick the active provider (%s ranks); pass --foreman <provider>/<model id>"
+                              % ("no provider has" if not ranked else "several providers have"))
+        provider = ranked[0]
+    entry = provs.get(provider)
+    ranks = entry.get("ranks") if isinstance(entry, dict) else None
+    if not isinstance(ranks, list) or not ranks:
+        raise PresetError("providers.%s.ranks is missing: the inexpensive preset resolves roles by rank tier, "
+                          "add ranks (see docs/presets.md)" % provider)
+    tiers = sorted({r["tier"] for r in ranks if isinstance(r, dict) and isinstance(r.get("tier"), int)})
+    if not tiers:
+        raise PresetError("providers.%s.ranks has no valid {match, tier} row" % provider)
+    cands = _candidate_models(entry)
+    base = 1
+    if foreman_model:
+        ftier = rank_tier_of(ranks, foreman_model.split("/", 1)[1])
+        if ftier is None:
+            raise PresetError("%s matches no providers.%s.ranks row" % (foreman_model, provider))
+        base = tiers.index(ftier)
+
+    def model_at(ordinal):
+        idx = min(ordinal, len(tiers) - 1)
+        for c in cands:
+            if rank_tier_of(ranks, c) == tiers[idx]:
+                return provider + "/" + c, idx
+        raise PresetError("no model id known for tier %d of providers.%s.ranks; add a literal ranks match "
+                          "(no wildcard) for that tier" % (tiers[idx], provider))
+
+    out = {}
+    foreman_ref = None
+    for role, spec in template.items():
+        if spec.get("sameAs"):
+            continue
+        t = spec.get("tier")
+        if t == "lowest":
+            ref, idx = model_at(len(tiers) - 1)
+        elif role in ("foreman", "session-foreman") and foreman_model:
+            ref, idx = foreman_model, base
+        else:
+            ref, idx = model_at(base + t - 1 if foreman_model else t)
+        out[role] = (ref, spec.get("thinking"), idx)
+    for role, spec in template.items():
+        if spec.get("sameAs"):
+            ref, _t, idx = out[spec["sameAs"]]
+            out[role] = (ref, spec.get("thinking"), idx)
+    return provider, out
+
+
+def expand_rank_tiers(preset, existing, foreman_model):
+    """preset without `rankTiers`, plus the resolved provider roles and review model; also the role map."""
+    preset = copy.deepcopy(preset)
+    template = preset.pop("rankTiers")
+    provider, resolved = resolve_rank_tiers(template, existing, foreman_model)
+    entry = preset.setdefault("providers", {}).setdefault(provider, {})
+    for role, (ref, thinking, _i) in resolved.items():
+        if role == "auto-review":
+            entry["review"] = {"model": ref}
+        else:
+            entry.setdefault("roles", {})[role] = {"model": ref, **({"thinking": thinking} if thinking else {})}
+    return preset, resolved
+
+
 def apply_preset(args):
     """Merge config/presets/<name>.json into <agent dir>/foreman.json (preset wins)."""
     name = args.name
@@ -1149,6 +1258,14 @@ def apply_preset(args):
     except (OSError, ValueError) as exc:
         print("cannot read %s: %s" % (target, exc), file=sys.stderr)
         return 1
+    resolved = None
+    if "rankTiers" in preset:
+        try:
+            preset, resolved = expand_rank_tiers(preset, existing, args.foreman)
+        except PresetError as exc:
+            print("error: %s" % exc, file=sys.stderr)
+            print("nothing written", file=sys.stderr)
+            return 1
     merged = deep_merge(existing, preset)
     if args.foreman:
         for prov in (preset.get("providers") or {}):
@@ -1165,7 +1282,12 @@ def apply_preset(args):
         return 1
     text = json.dumps(merged, indent=2) + "\n"
     if args.dry_run:
-        sys.stdout.write(text)
+        if resolved is not None:
+            for role, (ref, _th, idx) in resolved.items():
+                print("%s -> %s (tier %d)" % (role, ref, idx))
+            print("dry run: nothing written")
+        else:
+            sys.stdout.write(text)
         return 0
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.is_file():
@@ -1223,7 +1345,13 @@ def main(argv=None):
     return 2
 
 
-def cache_policy(config, provider):
+def _model_matches(pattern, model):
+    if not re.search(r"[*?]", pattern):
+        return pattern in model
+    return re.fullmatch(re.escape(pattern).replace(r"\*", ".*").replace(r"\?", "."), model) is not None
+
+
+def cache_policy(config, provider, model=None):
     """Resolved cache policy of one provider (mirrors resolveCachePolicy in cachepolicy.ts).
 
     -> {"ttlSeconds", "billing", "enabled"} or None when neither the config nor BUILTIN_CACHE has an entry.
@@ -1235,13 +1363,25 @@ def cache_policy(config, provider):
     built = BUILTIN_CACHE.get(provider) or {}
     if not cfg and not built:
         return None
-    ttl = cfg["ttlSeconds"] if "ttlSeconds" in cfg else built.get("ttlSeconds")
+    hit = {}
+    if model and isinstance(cfg.get("byModel"), list):
+        mid = model[len(provider) + 1:] if model.startswith(str(provider) + "/") else model
+        for row in cfg["byModel"]:
+            if isinstance(row, dict) and isinstance(row.get("match"), str) and row["match"] \
+                    and _model_matches(row["match"], mid):
+                hit = row
+                break
+    ttl = hit["ttlSeconds"] if isinstance(hit.get("ttlSeconds"), int) else (
+        cfg["ttlSeconds"] if "ttlSeconds" in cfg else built.get("ttlSeconds"))
     ttl = ttl if isinstance(ttl, int) and not isinstance(ttl, bool) and ttl >= 1 else None
-    billing = cfg.get("billing") if cfg.get("billing") in ("token", "request") else built.get("billing")
+    braw = hit.get("billing") if hit.get("billing") in ("token", "request") else cfg.get("billing")
+    billing = braw if braw in ("token", "request") else built.get("billing")
     ka = cfg.get("keepalive") if isinstance(cfg.get("keepalive"), dict) else {}
     enabled = ka.get("enabled")
     if not isinstance(enabled, bool):
         enabled = billing == "token" and ttl is not None and ttl < 3600
+    if billing == "request":
+        enabled = False
     return {"ttlSeconds": ttl, "billing": billing, "enabled": enabled}
 
 

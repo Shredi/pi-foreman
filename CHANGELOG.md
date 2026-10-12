@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Added
+- Preset lane 6 (R6 lane 6a): `config/presets/inexpensive.json` applied with `foreman config apply-preset inexpensive [--foreman <model>] [--dry-run]`; roles are named by rank tier and resolved from `providers.<p>.ranks`; `--dry-run` prints the role map. See `docs/presets.md`.
+- Preset lane 6 (R6 lane 6c): `providers.<p>.cache.byModel` rows `{match, ttlSeconds, billing?}` layered over the provider cache policy (first match wins; request billing never keeps alive); `claude-bridge` preset row 600 s; `docs/cache.md` table per family.
+- Preset lane 6 (R6 lane 6e): `docs/presets.md`.
+- 6d background model: deferred to a follow-up round.
 - Cost lane 3 (R6 lane 3a): `bench/prices.json` moved to `config/prices.json`; a usage record with `cost.total` 0 is priced from the registry rate, else the table (Haiku 5.5 long-context tier per request), marked estimated.
 - Cost lane 3 (R6 lane 3b, 3d): per-run priced cost in presence `runs[].cost`; the status line shows the summed estimate (`all $X est (runs $Y)`); `/foreman cost` lists every role with priced totals (`~` = estimated).
 - Cost lane 3 (R6 lane 3c): `ceremony.budgetUsd` (default unset) refuses a launch `[budget_exceeded]` on the summed estimate, warning at 80 %.

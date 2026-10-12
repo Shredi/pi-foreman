@@ -7,6 +7,7 @@
   "additionalProperties": false,
   "properties": {
     "version": { "type": "integer", "minimum": 1, "maximum": 1, "description": "Config format version." },
+    "rankTiers": { "type": "object", "description": "Preset template only (config/presets/inexpensive.json): roles named by rank tier, resolved to models by `foreman config apply-preset` and removed from the written file. The runtime never reads it." },
     "displayNames": {
       "type": ["string", "object"],
       "description": "A preset name from displayPresets (\"classic\" or \"plain\" ship in L1) or a per-id map {role id: display name}. Display names are cosmetic; no code compares them.",
@@ -91,6 +92,21 @@
             "properties": {
               "ttlSeconds": { "type": ["integer", "null"], "minimum": 1, "description": "Prompt-cache time to live in seconds; null = unknown (the policy stays off). Built-in: 300 for claude-bridge. User or overlay config only." },
               "billing": { "type": "string", "enum": ["token", "request"], "description": "How the provider bills: per token (a cold cache costs tokens) or per request (the keep-alive is never used). Built-in: token for claude-bridge, request for github-copilot. User or overlay config only." },
+              "byModel": {
+                "type": "array",
+                "description": "Per-model rows layered over ttlSeconds and billing: the first row whose match (glob with * or ?, else a substring of the model id) fits the active model wins. A row with billing request never gets a keep-alive. User or overlay config only.",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["match"],
+                  "properties": {
+                    "match": { "type": "string", "minLength": 1 },
+                    "ttlSeconds": { "type": "integer", "minimum": 1 },
+                    "billing": { "type": "string", "enum": ["token", "request"] },
+                    "note": { "type": "string" }
+                  }
+                }
+              },
               "keepalive": {
                 "type": "object",
                 "additionalProperties": false,

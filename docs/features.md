@@ -42,7 +42,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 |---|---|---|---|---|
 | [setup](#setup) | on | `foreman setup` writes the permission config, the generated `subagents` block and a starter `foreman.json`; `/foreman doctor` checks the result and `update-check` lists newer pinned packages. | on by default | [install](install.md#install) |
 | [model-map](#model-map) | opt-in | Maps each role to a model and thinking level per provider; until a model is mapped, children run on Pi's default model and an interactive session shows one notice. | `{"providers": {"<provider>": {"roles": {"foreman": {"model": "<provider>/<big-model>"}, "builder": {"model": "<provider>/<mid-model>"}}}}}` | [install](install.md#what-setup-writes) |
-| [presets](#presets) | opt-in | Opt-in model maps under `config/presets/` (role models, ranks, strong rungs, reviewer climb) merged into your `foreman.json` on request, never by default. | `foreman config apply-preset claude-bridge --dry-run` | [roles](roles.md#role-ladder-rank-policy-and-presets) |
+| [presets](#presets) | opt-in | Opt-in model maps under `config/presets/` (role models, ranks, strong rungs, reviewer climb) merged into your `foreman.json` on request, never by default. The `inexpensive` preset names roles by rank tier and resolves them from your `providers.<x>.ranks` at apply time (docs/presets.md). | `foreman config apply-preset claude-bridge --dry-run` | [presets](presets.md) |
 | [roles](#roles) | on | Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time limit of the neutral roles. | on by default | [roles](roles.md#further-role-and-provider-keys) |
 | [display-names](#display-names) | on | Shows roles under a display-name preset (`classic` personal names, `plain` ids) or your own map; no code compares a display name. | on by default | [roles](roles.md#roles) |
 | [codemode](#codemode) | on | Gives a role the `codemode` tool, whose script calls each pass the guards and permissions on their own (on for the foreman and explorer by default). | `{"roles": {"builder": {"codemode": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
@@ -118,9 +118,11 @@ Switch: `providers` is non-empty.
 
 ### presets
 
-**Model presets.** Opt-in model maps under `config/presets/` (role models, ranks, strong rungs, reviewer climb) merged into your `foreman.json` on request, never by default.
+**Model presets.** Opt-in model maps under `config/presets/` (role models, ranks, strong rungs, reviewer climb) merged into your `foreman.json` on request, never by default. The `inexpensive` preset names roles by rank tier and resolves them from your `providers.<x>.ranks` at apply time (docs/presets.md).
 
-No config key.
+| Key | Default | Layer |
+|---|---|---|
+| `rankTiers` | unset | any layer |
 
 ### roles
 
@@ -615,6 +617,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 |---|---|---|
 | `providers.<x>.cache.ttlSeconds` | unset | not in project/session (the cache policy comes from the user or overlay config) |
 | `providers.<x>.cache.billing` | unset | not in project/session (the cache policy comes from the user or overlay config) |
+| `providers.<x>.cache.byModel` | unset | not in project/session (the cache policy comes from the user or overlay config) |
 | `providers.<x>.cache.keepalive.enabled` | unset | tighten-only (only false is accepted) |
 | `providers.<x>.cache.keepalive.intervalSeconds` | unset | not in project/session (the cache policy comes from the user or overlay config) |
 | `providers.<x>.cache.keepalive.windowMinutes` | unset | tighten-only (lower only, minimum 1, at most 45 without an earlier value) |
@@ -672,6 +675,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `providers.*.cache.billing` | the cache policy comes from the user or overlay config |
 | `providers.*.cache.keepalive.intervalSeconds` | the cache policy comes from the user or overlay config |
 | `providers.*.cache.warmCompact` | the cache policy comes from the user or overlay config |
+| `providers.*.cache.byModel` | the cache policy comes from the user or overlay config |
 | `python.path` | it chooses the executable that runs every guard |
 | `python.*` | interpreter settings come from the user or overlay config |
 | `roles.*.launch` | the launch mode comes from the user or overlay config |
