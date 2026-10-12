@@ -55,6 +55,8 @@ Reviewer rules: a changed exported signature, a weakened or removed test or asse
 unless asked for (callers are grepped). A "Facts to rule on" block from `git diff` (against the HEAD at the first
 builder launch) is appended to a reviewer's launch task (`diffscan.ts`; trace `review_facts {count}`).
 
+Multi-session plans: a heavy task with several phases may run one child session per phase instead of builders in one session. The foreman opens each with `--plan-first`, waits with `foreman_wait kind:child`, approves the child's `plan.md` through `ruling.md` and reviews its `result.md` before the next phase (see [sessions](sessions.md#child-orchestrator-sessions)).
+
 Design record: `design/architecture.md`
 [section 6](../design/architecture.md#6-ledger-gates-and-proportional-ceremony).
 

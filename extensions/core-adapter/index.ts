@@ -942,6 +942,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewPerRevision: get(s.config.config, "ceremony.reviewPerRevision") === false ? "off" : "on",
       trivialPath: trivialBuilderPath(get(s.config.config, "ceremony.required")) ? "builder" : "off",
       ladder: "on",
+      // Multi-session plan for a heavy task with several phases (sessions.md; "off" only renders the eee843d baseline).
+      multiSession: "on",
       "tools.pr": s.prPack ? "on" : "off",
       // Foreman rulings never put a diff fact in scope (review rule; "off" only renders the eee843d baseline).
       factRulings: "on",
@@ -2241,6 +2243,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const sessionCmd = registerSession(pi, {
     spawner,
     pkgRoot: PKG_ROOT,
+    onChildNotice: (sessionId, label, kind, notePath) => void waits.childNotice(sessionId, label, kind, notePath),
     session: async (ctx) => {
       const s = await ensureSession(ctx);
       return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined, config: s.config.config };

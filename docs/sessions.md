@@ -67,6 +67,15 @@ Plain pi-intercom text, one line each:
   `N foreman_wait pending (…)`.
 - The child's brief footer tells it to re-read `parent` before each message (the parent can change).
 
+### Child orchestrator sessions
+
+A heavy task with several phases may run as a multi-session plan: one child session per phase, each in its own worktree, opened with `foreman session open <label> <brief> --plan-first`. The parent reviews each phase before the next.
+
+- **Model.** The session runs on `--model`, else the mapped `session-foreman` model (`providers.<p>.roles.session-foreman.model`, the own provider then its fallback), else the opener's own model; `open` prints `session model: <model>`. A child never opens a session ranked above its own: the open is refused (`session open refused [session_rank]`, nothing spawned). See [roles](roles.md).
+- **Plan review.** The child writes `plan.md` and stops. The parent answers in `<handoff dir>/ruling.md`: first line `APPROVED`, else a revision note. The child works only after an `APPROVED` ruling. The parent reviews `result.md` before it opens the next phase, then closes the child with `foreman:close`.
+- **Message contract.** Besides `Plan from|Result from|Update from <label>: <path>`, a registry child may send the aliases `foreman:plan <path>` and `foreman:result <path>`; the label is taken from the registry entry of the sender. `foreman:closed <path>` is as before.
+- **Waiting.** `foreman_wait({action: "start", kind: "child", label})` resolves on the next plan, result, update or closed notice of the registry child `label` (or of any child with `label: any`; a wait naming the label wins over `any`). The wake line is `child <label>: plan|result|update|closed <path>`. Race: a notice that arrives before the wait starts is not replayed; check `/foreman session list` (the registry's `last`) first.
+
 ### Parallel rounds
 
 Every orchestrator session works in its own worktree (`git worktree add …`) and never switches the shared main checkout. Merges happen from the session's worktree, so two sessions running in parallel cannot move each other's branch or working tree.
