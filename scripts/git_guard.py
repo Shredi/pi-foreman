@@ -613,6 +613,10 @@ KEYWORDS = {
     "cmd": {"@echo", "call"},
 }
 HEADER_KEYWORDS = {"for", "select", "case"}
+NET_EXEC_KEY = re.compile(r"^(core\.(sshcommand|gitproxy)|remote\..+\.(receivepack|uploadpack)|uploadpack\.packobjectshook)$")
+# Options of a network subcommand that name a program for git to run, in any role.
+NET_SUBS = ("fetch", "pull", "clone", "push", "ls-remote")
+NET_EXEC_LONG = ("--upload-pack", "--receive-pack", "--exec", "--config")
 EXEC_KEY = re.compile(
     r"^(core\.(pager|editor|sshcommand|fsmonitor|askpass|gitproxy)|sequence\.editor|pager\..+|"
     r"diff\.external|diff\..+\.(command|textconv)|merge\..+\.driver|filter\..+\.(clean|smudge|process)|"
@@ -1235,6 +1239,7 @@ class GitCall(object):
         self.cfg_aliases = {}      # -c alias.x=... (value None = unknown)
         self.pr_config = False     # --config-env push.pushOption=... (value unknown)
         self.globals = []          # global options seen before the subcommand (alias expansions included)
+        self.exec_cfg = []         # -c / --config-env keys that name a program git would run (ssh, proxy, pack)
 
 
 def git_args(args, seg, flavor, ctx, depth, envs, via_xargs=False, xargs_repl=None, guessing=False, call=None, hops=0):
@@ -1285,6 +1290,8 @@ def git_args(args, seg, flavor, ctx, depth, envs, via_xargs=False, xargs_repl=No
                     return d
             elif key == "--config-env":
                 ck = val.split("=", 1)[0].lower()
+                if NET_EXEC_KEY.match(ck):
+                    call.exec_cfg.append(ck)
                 if ck.startswith("alias.") or EXEC_KEY.match(ck) or CHILD_CONFIG_DENY.match(ck):
                     if ctx.mode == "child":
                         return deny("children may not set %s through --config-env." % ck)
@@ -1323,6 +1330,8 @@ def git_config_override(kv, call, ctx, depth):
         return deny("children may not include other git config files (-c %s)." % key)
     if PUSH_CONFIG.match(k) or k == "push.pushoption":
         call.passthrough.extend(["-c", kv])  # the push lint and the PR gate read it back with `git config`
+    if NET_EXEC_KEY.match(k):
+        call.exec_cfg.append(key)
     if EXEC_KEY.match(k):
         if k == "core.hookspath":
             if ctx.mode == "child":
@@ -1446,6 +1455,24 @@ RISKY_DYNAMIC = {"reset", "checkout", "switch", "clean", "stash", "branch", "wor
                  "gc", "prune", "config", "submodule", "rebase", "bisect"}
 
 
+def net_exec_refusal(s, rest, call):
+    """`git fetch|pull|clone|push` with an option that makes git run a program (`--upload-pack=<cmd>`, `-u <cmd>`
+    of fetch/pull/clone, `-c core.sshCommand=`, `--config k=v`): refused in every role."""
+    if call.exec_cfg:
+        return deny("git %s with %s makes git run a program; refused." % (s, call.exec_cfg[0]))
+    for w in rest:
+        t = w.text
+        if t == "--":
+            break
+        key = t.split("=", 1)[0]
+        short_u = s != "push" and re.match(r"^-[A-Za-z]*u", t) is not None and not t.startswith("--")
+        if t.startswith("--") and any(n.startswith(key) and len(key) >= 4 for n in NET_EXEC_LONG) or short_u:
+            return deny("git %s %s makes git run a program; refused." % (s, key))
+        if t.startswith("-c") and not t.startswith("--") and s == "clone":
+            return deny("git clone -c sets configuration before the first fetch; refused.")
+    return OK
+
+
 def git_sub(sub, rest, seg, flavor, ctx, depth, envs, via_xargs, xargs_repl, call, hops):
     s = sub.lower() if ctx.mode == "child" else sub
     if s not in GIT_BUILTINS and sub.lower() not in GIT_BUILTINS:
@@ -1473,6 +1500,10 @@ def git_sub(sub, rest, seg, flavor, ctx, depth, envs, via_xargs, xargs_repl, cal
                 d = Decision(d.level, d.reason + " (through git alias %s = %s)" % (sub, value[:120]))
             return d
         return OK
+    if s in NET_SUBS:
+        d = net_exec_refusal(s, rest, call)
+        if d.level > ALLOW:
+            return d
     if sub.lower() in GIT_STATE or (sub.lower() == "branch" and branch_changes(rest)):
         ctx.state_segs.add(seg)
     if sub.lower() == "config":

@@ -41,5 +41,35 @@ class ArgumentPositionTest(unittest.TestCase):
         self.assertEqual(gg.decide("[ -d x ] && git push", "child").level, gg.DENY)
 
 
+class NetworkExecOptionTest(unittest.TestCase):
+    """fetch/pull/clone/push options that make git run a program are refused in every role."""
+
+    BAD = [
+        "git fetch --upload-pack='true' /x",
+        "git fetch --upload-pack true /x",
+        "git pull --upload-pack=true /x",
+        "git clone --upload-pack=true /x y",
+        "git clone -u true /x y",
+        "git fetch -u true /x",
+        "git push --receive-pack=true /x main",
+        "git push --exec=true /x main",
+        "git -c core.sshCommand=true fetch origin",
+        "git -c core.gitProxy=true fetch origin",
+        "git clone --config core.sshCommand=true /x y",
+        "git -C . fetch --upload-pack=true /x",
+    ]
+
+    def test_refused_in_foreman_and_child(self):
+        for cmd in self.BAD:
+            with self.subTest(cmd=cmd):
+                self.assertGreater(gg.decide(cmd, "main").level, gg.ALLOW)
+                self.assertEqual(gg.decide(cmd, "child").level, gg.DENY)
+
+    def test_plain_fetch_is_still_allowed_for_the_foreman(self):
+        for cmd in ("git fetch origin", "git fetch", "git fetch --prune", "git push -u origin main"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(gg.decide(cmd, "main").level, gg.ALLOW)
+
+
 if __name__ == "__main__":
     unittest.main()
