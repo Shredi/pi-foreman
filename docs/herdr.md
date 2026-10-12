@@ -174,6 +174,25 @@ bash 4.2+): an hourglass means `nerd` works. `unicode` is the safe default. The 
 | done | ✓ | U+F00C |
 | lost | ✗ | U+F00D |
 
+## Optional add-on: background tasks
+
+Nothing in pi-foreman requires it. `pi-background-tasks` runs shell commands in the background with status, logs and kill (`bg_run`). Install it with
+
+    PI_BG_FEATURES=process pi install npm:pi-background-tasks
+
+`PI_BG_FEATURES=process` installs the process features only. Its other feature, an attribution hook, overrides the provider
+named `anthropic` and decides by provider name (`model.provider === 'anthropic'`). A `claude-bridge` provider serving `claude-*` ids is not
+treated as an Anthropic route by that check, but the override takes over the global `anthropic` provider slot, so keep attribution off.
+`foreman setup` prints this install line.
+
+What pi-foreman does when the add-on is present (detected by its `bg_run` tool or its package directory; `/foreman doctor` prints
+`INFO background-tasks: present` or `absent`):
+
+- `foreman_bg` is not used: it refuses with a pointer to `bg_run`, so detached tasks have one owner;
+- `/foreman waits` also lists the add-on's running tasks (read from `.pi/tasks/*/*.json`, with the last 5 lines of each output);
+- `bg_run` passes the same bash guards as `bash` (overlay rules, shell-write, destructive and git guards), reading the command from its
+  `command` field; a missing or non-string `command` is denied.
+
 ## Known limits
 
 - Subagent runs inside a Pi session are text on that session's row, not rows: Herdr has rows only for real panes.

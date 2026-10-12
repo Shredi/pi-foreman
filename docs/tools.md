@@ -180,4 +180,7 @@ session (`duplicate` otherwise). Watches are cleared at session shutdown.
 
 ## Other tools
 
+`foreman_wait` (timers, files, processes, CI runs, children) and `foreman_bg` (a detached shell run with a pid wait) are foreman-only; see
+[sessions](sessions.md#background-runs). `foreman_bg` and the optional add-on's `bg_run` are guarded like `bash`.
+
 Anything beyond git belongs in an overlay; see [overlays](overlays.md).

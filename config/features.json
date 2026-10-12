@@ -235,10 +235,32 @@
       "purpose": "The foreman-only `foreman_wait` tool waits on timers, files, processes and CI runs within a duration and concurrency limit, batching its notices.",
       "doc": "docs/sessions.md#further-session-keys",
       "keys": ["wait"],
-      "commands": [],
+      "commands": ["/foreman waits"],
       "switch": null,
       "state": "on",
       "enable": ""
+    },
+    {
+      "id": "foreman-bg",
+      "title": "Background shell runs",
+      "purpose": "The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool.",
+      "doc": "docs/sessions.md#background-runs",
+      "keys": [],
+      "commands": ["/foreman waits"],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
+      "id": "background-tasks-addon",
+      "title": "Background-tasks add-on detection",
+      "purpose": "Optional pi-background-tasks add-on: `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it.",
+      "doc": "docs/herdr.md#optional-add-on-background-tasks",
+      "keys": [],
+      "commands": ["/foreman doctor"],
+      "switch": null,
+      "state": "off",
+      "enable": "PI_BG_FEATURES=process pi install npm:pi-background-tasks"
     },
     {
       "id": "orientation",

@@ -14,6 +14,13 @@ cwd, so relative paths resolve there.
 The permission system forwards one unit of a chained command with the whole command as evidence. Every
 deterministic allow must hold for that unit and for the full command.
 
+## Shell tools that count as bash
+
+`foreman_bg` (the foreman's detached run) and the optional background-tasks add-on's `bg_run` are shell tools: every overlay
+deny/ask rule, the shell-write guard, the destructive guard and the git guard see their `command` as a bash command, and
+`shellTools` in `config/permissions.baseline.json` maps both to the bash rules for the permission system (`commandArgument: command`,
+the same alias `powershell` has). A missing or non-string `command` is denied.
+
 ## Effect classes
 
 `extensions/core-adapter/effects.ts` sorts a command by what it does:

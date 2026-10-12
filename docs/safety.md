@@ -6,7 +6,7 @@
 
 ## Shell-write guard
 
-Shell writes into project files (redirects, `tee`, `sed -i`, writing scripts) are refused for the foreman at every tier; `.workflow/` (and the scratch dir in `scratchpad` mode) stays open. The scanner works on the command string and is not a sandbox; known blind spots are listed in `design/architecture.md` [section 5](../design/architecture.md#5-safety-policy). The destructive and secret guard runs on `bash`/`powershell` for the foreman and its children.
+Shell writes into project files (redirects, `tee`, `sed -i`, writing scripts) are refused for the foreman at every tier; `.workflow/` (and the scratch dir in `scratchpad` mode) stays open. The scanner works on the command string and is not a sandbox; known blind spots are listed in `design/architecture.md` [section 5](../design/architecture.md#5-safety-policy). The destructive and secret guard runs on `bash`/`powershell` for the foreman and its children. `foreman_bg` and the optional background-tasks add-on's `bg_run` count as `bash` for every shell guard and for the permission baseline (`shellTools`); a missing or non-string `command` is refused ([sessions](sessions.md#background-runs)).
 
 ## Git guard and PR gate
 

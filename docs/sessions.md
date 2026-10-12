@@ -369,6 +369,23 @@ The tag is text only. Real grouping needs Herdr itself:
 - collapsible groups in the agents view;
 - a child's blocked state rolling up to its parent's row.
 
+## Background runs
+
+The foreman-only `foreman_bg({command, note})` runs one shell command detached (its own process group; stdout and stderr go to
+`<agent dir>/pi-foreman/state/scratch/<session>/wait-<id>.log`) and registers a `pid` wait with your `note`. It returns the wait
+id and the log path at once; you end the turn and one message wakes you when the process has exited (the exit code is not
+known: read the log). The command passes the same guards as a bash call, with no bypass: the overlay deny and ask rules, the
+shell-write guard, the destructive guard and the git guard. A command that is empty or not a string is refused.
+
+`foreman_wait` `pid` and `ci` waits take an optional `log`: a file inside the workspace, its `.workflow/`, `<agent dir>/pi-foreman/state/wait/`
+or the session scratch dir. A path outside those, or one that is not a string, is refused and no wait is registered. The log is named in the wake line.
+
+`/foreman waits` lists the session's pending waits: id, kind, note, age, time left and the last 5 lines of the log. The note is also what
+the footer (`waiting <note>`), the presence file (`waits[].note`) and the Herdr sidebar line 2 show.
+
+With the optional [background-tasks add-on](herdr.md#optional-add-on-background-tasks) installed, `foreman_bg` refuses and points at that
+add-on's `bg_run` tool; `/foreman waits` then also lists its running tasks, and `bg_run` passes the same guards as bash.
+
 ## Further session keys
 
 | Key | Meaning and layer rule |
