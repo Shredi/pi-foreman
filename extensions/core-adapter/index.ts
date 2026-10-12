@@ -69,6 +69,7 @@ import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
 import { appendReview, capSet, checksLine, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prGateRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
+import { dedupeToolCallNotices } from "./notices.ts";
 import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
 import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts";
 import { openTrace, traceFile } from "./trace.ts";
@@ -2107,8 +2108,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("context", async (event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild || !dedupeOn(get(s.config.config, "ceremony.dedupeNotify"))) return undefined;
-    const r = dedupeNotices(event.messages);
-    if (!r) return undefined;
+    const calls = dedupeToolCallNotices(event.messages);
+    const r = dedupeNotices(calls?.messages ?? event.messages);
+    if (!r) return calls ? { messages: calls.messages } : undefined;
     for (const runId of r.deduped) {
       if (s.dedupeTraced.has(runId)) continue;
       s.dedupeTraced.add(runId);
