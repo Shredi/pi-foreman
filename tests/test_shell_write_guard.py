@@ -386,5 +386,63 @@ class ShellWriteGuardTest(unittest.TestCase):
         self.assertIn(b"internal error", broken.stderr)
 
 
+class ShellVarsTest(unittest.TestCase):
+    """Same-line `NAME=/abs/literal` statements resolve a later `$NAME` (ledger item 12)."""
+
+    def setUp(self):
+        self.ws = os.path.realpath(tempfile.mkdtemp(prefix="pf-swg-vars-"))
+        self.hand = os.path.join(self.ws, "handoffs", "s1")
+        os.makedirs(self.hand)
+        os.mkdir(os.path.join(self.ws, "src"))
+        self.addCleanup(shutil.rmtree, self.ws, True)
+
+    def kind(self, cmd, scratch=None):
+        hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], False, scratch, [self.hand])
+        return hit[0] if hit else None
+
+    def test_assignment_statement_resolves_the_use(self):
+        h = self.hand
+        self.assertIsNone(self.kind('cp plan.md %s/plan.md' % h))
+        self.assertIsNone(self.kind('H=%s; cp plan.md "$H/plan.md"' % h))
+        self.assertIsNone(self.kind('H=%s && mkdir -p ${H}/x' % h))
+        self.assertIsNone(self.kind('H=%s || true; echo x > $H/n.md' % h))
+        # the last assignment wins
+        self.assertEqual(self.kind('H=%s; H=%s/src; echo x > $H/f' % (h, self.ws)), "redirect")
+        self.assertIsNone(self.kind('H=%s/src; H=%s; echo x > $H/f' % (self.ws, h)))
+        # the resolved path is checked like the literal: outside the allowed dir it is refused
+        self.assertEqual(self.kind('H=%s/src; echo x > $H/f' % self.ws), "redirect")
+
+    def test_unresolved_forms_keep_the_conservative_verdict(self):
+        h = self.hand
+        unknown = self.kind('cp plan.md "$H/plan.md"')
+        self.assertEqual(unknown, "cp")
+        for cmd in (
+            'H=%s cp plan.md "$H/plan.md"' % h,                      # prefix assignment
+            'true && H=%s; cp plan.md "$H/plan.md"' % h,            # after a non-assignment &&
+            '(H=%s); cp plan.md "$H/plan.md"' % h,                  # subshell
+            'for H in a; do cp plan.md "$H/plan.md"; done',
+            'H=%s; export H=x; cp plan.md "$H/plan.md"' % h,
+            'H=%s; read H; cp plan.md "$H/plan.md"' % h,
+            'H=%s; while true; do cp plan.md "$H/plan.md"; done' % h,
+            'H=%s; f() { cp plan.md "$H/plan.md"; }; f' % h,
+            'H=%s/*; cp plan.md "$H/plan.md"' % h,                  # glob
+            'H=$(pwd); cp plan.md "$H/plan.md"',
+            'H=handoffs/s1; cp plan.md "$H/plan.md"',               # relative
+            'H=%s & cp plan.md "$H/plan.md"' % h,
+        ):
+            with self.subTest(command=cmd):
+                self.assertEqual(self.kind(cmd), "cp", cmd)
+
+    def test_foreman_names_come_from_the_harness_only(self):
+        root = tempfile.mkdtemp(prefix="pf-swg-vscratch-")
+        self.addCleanup(shutil.rmtree, root, True)
+        scratch = os.path.join(os.path.realpath(root), "L1")
+        os.mkdir(scratch)
+        self.assertIsNone(self.kind('mkdir -p $FOREMAN_SCRATCH/probe/x', scratch))
+        # a line assignment never replaces the harness value: the write still lands in the scratch dir
+        self.assertIsNone(self.kind('FOREMAN_SCRATCH=%s/src; echo x > $FOREMAN_SCRATCH/f' % self.ws, scratch))
+        self.assertEqual(self.kind('FOREMAN_X=%s; echo x > $FOREMAN_X/f' % self.hand), "redirect")
+
+
 if __name__ == "__main__":
     unittest.main()
