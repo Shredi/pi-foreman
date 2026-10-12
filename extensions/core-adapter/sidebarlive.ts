@@ -1,10 +1,10 @@
 // Herdr sidebar row pushed by the session itself (integrations/herdr/pi-foreman-sidebar/sidebar.py push).
 // Every LiveState event flushes the presence file and runs one `push` (one in flight, 250 ms apart, one
-// trailing push when requests arrived meanwhile); a 5 s timer keeps the 15 s token TTL alive. While the session
-// works a 1 s timer cycles a braille spinner into fm_sym (herdr only, no Python); after every full push the
-// current frame is re-published at once, so the glyph never shows between frames. session_shutdown stops the
-// timers and runs `push --final` (the daemon takes the keys over). Only with HERDR_ENV=1, HERDR_PANE_ID, mode
-// tui, a Python interpreter, the sidebar.py file and a LiveState for the session.
+// trailing push when requests arrived meanwhile); a 5 s timer keeps the 15 s token TTL alive. The working
+// indicator is Herdr's own state_icon (config-snippet.toml); there is no spinner timer any more (`ui.spinner`
+// is accepted and ignored). session_shutdown stops the timers and runs `push --final` (the daemon takes the keys
+// over). Only with HERDR_ENV=1, HERDR_PANE_ID, mode tui, a Python interpreter, the sidebar.py file and a
+// LiveState for the session.
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -12,11 +12,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { LiveStateName } from "./livestate.ts";
 
 export const SIDEBAR_SOURCE = "plugin:pi-foreman.sidebar";
-export const SPINNER_FRAMES = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"];
 export const PUSH_GAP_MS = 250;
 export const REFRESH_MS = 5000;
-export const SPIN_MS = 1000;
-export const SPIN_TTL_MS = 15_000;
 
 type Env = Record<string, string | undefined>;
 
@@ -26,26 +23,19 @@ export function sidebarGate(env: Env, mode: string | undefined, python: string |
   return env.HERDR_ENV === "1" && !!env.HERDR_PANE_ID?.trim() && mode === "tui" && !!python && fs.existsSync(script);
 }
 
-export const frameArgv = (pane: string, frame: string): string[] => ["pane", "report-metadata", pane, "--source", SIDEBAR_SOURCE, "--token", `fm_sym=${frame}`, "--ttl-ms", String(SPIN_TTL_MS)];
-
 export interface SidebarDeps {
   pane: string;
   sessionId: string;
   agentDir: string;
   symbols?: string;
-  spinner: boolean;
   /** Runs sidebar.py with these args (starting with "push"); calls done when the process ended. */
   push: (args: string[], done: () => void) => void;
-  /** Runs herdr with this argv, fire and forget. */
-  herdr: (argv: string[]) => void;
   /** Writes the presence file now. */
   flush: () => void;
-  state: () => LiveStateName;
   /** Marks the session done in the presence file (LiveState.stop, idempotent). */
   finish: () => void;
   gapMs?: number;
   refreshMs?: number;
-  spinMs?: number;
 }
 
 export class SidebarLive {
@@ -56,8 +46,6 @@ export class SidebarLive {
   private lastStart = 0;
   private gapTimer: ReturnType<typeof setTimeout> | null = null;
   private refresh: ReturnType<typeof setInterval> | null = null;
-  private spin: ReturnType<typeof setInterval> | null = null;
-  private frame = 0;
 
   constructor(d: SidebarDeps) {
     this.d = d;
@@ -74,10 +62,9 @@ export class SidebarLive {
     this.request();
   }
 
-  /** Any trigger: sync the spinner, then push now, or after the gap / the push in flight. */
+  /** Any trigger: push now, or after the gap / the push in flight. */
   request(): void {
     if (this.stopped) return;
-    this.syncSpinner();
     if (this.inflight) {
       this.pending = true;
       return;
@@ -114,7 +101,6 @@ export class SidebarLive {
       ended = true;
       this.inflight = false;
       if (this.stopped) return;
-      if (this.spin) this.publishFrame();
       if (this.pending) this.request();
     };
     try {
@@ -124,36 +110,13 @@ export class SidebarLive {
     }
   }
 
-  private syncSpinner(): void {
-    const want = this.d.spinner && this.d.state() === "working";
-    if (want && !this.spin) {
-      this.spin = setInterval(() => {
-        this.frame = (this.frame + 1) % SPINNER_FRAMES.length;
-        this.publishFrame();
-      }, this.d.spinMs ?? SPIN_MS);
-      this.spin.unref?.();
-    } else if (!want && this.spin) {
-      clearInterval(this.spin);
-      this.spin = null;
-      this.frame = 0;
-    }
-  }
-
-  private publishFrame(): void {
-    try {
-      this.d.herdr(frameArgv(this.d.pane, SPINNER_FRAMES[this.frame]));
-    } catch {
-      // best effort
-    }
-  }
-
   /** Shutdown: timers off, presence marked done, then `push --final` (again after a push still in flight). */
   stop(): void {
     if (this.stopped) return;
     this.stopped = true;
-    for (const t of [this.refresh, this.spin]) if (t) clearInterval(t);
+    if (this.refresh) clearInterval(this.refresh);
     if (this.gapTimer) clearTimeout(this.gapTimer);
-    this.refresh = this.spin = this.gapTimer = null;
+    this.refresh = this.gapTimer = null;
     try {
       this.d.finish();
       this.d.flush();
@@ -191,7 +154,6 @@ export interface SidebarStart {
   agentDir: string;
   sessionId: string;
   symbols?: unknown;
-  spinner?: unknown;
   live: { onChange: (cb: () => void) => () => void; flush: () => void; stop: () => void; stateName: LiveStateName } | null;
 }
 
@@ -213,17 +175,13 @@ export function installSidebarLive(pi: Pick<ExtensionAPI, "on">, opts: { env?: E
     if (!cfg.live || !cfg.python || !sidebarGate(env, ctx.mode, cfg.python, script)) return;
     const python = cfg.python;
     const live = cfg.live;
-    const herdrBin = env.HERDR_BIN?.trim() || "herdr";
     side = new SidebarLive({
       pane: env.HERDR_PANE_ID!.trim(),
       sessionId: cfg.sessionId,
       agentDir: cfg.agentDir,
       symbols: typeof cfg.symbols === "string" ? cfg.symbols : undefined,
-      spinner: cfg.spinner !== false,
       push: (args, done) => execQuiet(python, ["-E", "-s", script, ...args], 10_000, done),
-      herdr: (argv) => execQuiet(herdrBin, argv, 5000),
       flush: () => live.flush(),
-      state: () => live.stateName,
       finish: () => live.stop(),
     });
     const s = side;

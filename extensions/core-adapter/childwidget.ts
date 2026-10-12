@@ -18,6 +18,8 @@ export interface RunView {
   launchId: string;
   role: string;
   rung: Rung;
+  /** The launch's explicit `model` (as given, e.g. `provider/id`); null when the role's own model runs. */
+  model: string | null;
   state: RunState;
   tokensIn: number;
   tokensOut: number;
@@ -104,6 +106,7 @@ interface Row {
   launchId: string | null;
   roles: string[];
   rung: Rung;
+  model: string | null;
   startedAt: number;
   endedAt: number | null;
 }
@@ -111,7 +114,7 @@ interface Row {
 const text = (v: unknown): string => (typeof v === "string" ? v : "");
 
 export class ChildRuns {
-  private pending = new Map<string, { launchId: string | null; role: string; rung: Rung }>();
+  private pending = new Map<string, { launchId: string | null; role: string; rung: Rung; model?: string | null }>();
   private rows = new Map<string, Row>();
   private ended = new Map<string, number>();
   private prompts = new Map<string, string>();
@@ -122,7 +125,7 @@ export class ChildRuns {
   }
 
   /** tool_call of a subagent launch (single launches carry a usage launch id). */
-  onLaunchCall(callId: string, p: { launchId: string | null; role: string; rung: Rung }): void {
+  onLaunchCall(callId: string, p: { launchId: string | null; role: string; rung: Rung; model?: string | null }): void {
     this.pending.set(callId, p);
     if (this.pending.size > 64) this.pending.delete(this.pending.keys().next().value as string);
   }
@@ -132,7 +135,7 @@ export class ChildRuns {
     const p = this.pending.get(callId);
     this.pending.delete(callId);
     const list = p?.role ? [p.role] : [...roles];
-    this.rows.set(runId, { runId, launchId: p?.launchId ?? null, roles: list, rung: p?.rung ?? null, startedAt: now, endedAt: this.ended.get(runId) ?? null });
+    this.rows.set(runId, { runId, launchId: p?.launchId ?? null, roles: list, rung: p?.rung ?? null, model: p?.model ?? null, startedAt: now, endedAt: this.ended.get(runId) ?? null });
     if (this.rows.size > 64) this.rows.delete(this.rows.keys().next().value as string);
   }
 
@@ -182,7 +185,7 @@ export class ChildRuns {
         }
       }
       const u = r.launchId ? this.tail?.by.get(r.launchId) : undefined;
-      out.push({ launchId: r.launchId ?? r.runId, role: r.roles.join("+") || "child", rung: r.rung, state, tokensIn: u?.input ?? 0, tokensOut: u?.output ?? 0, cost: u?.cost ?? 0, startedAt: r.startedAt, endedAt: r.endedAt });
+      out.push({ launchId: r.launchId ?? r.runId, role: r.roles.join("+") || "child", rung: r.rung, model: r.model, state, tokensIn: u?.input ?? 0, tokensOut: u?.output ?? 0, cost: u?.cost ?? 0, startedAt: r.startedAt, endedAt: r.endedAt });
     }
     return out;
   }

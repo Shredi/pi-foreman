@@ -202,3 +202,16 @@ test("resolveBin: glab and gh are found outside the workspace only, with explici
     fs.rmSync(bin, { recursive: true, force: true });
   }
 });
+
+test("wait: changed hook fires on start and on resolve", () => {
+  const clock = fakeClock();
+  let n = 0;
+  const rt = new WaitRuntime({ timers: clock.timers, now: clock.now, limits: () => LIMITS, stat: () => null, alive: () => true, gh: () => Promise.reject(new Error("unused")), wake: () => {}, trace: () => {}, changed: () => n++ });
+  rt.start({ kind: "timer", seconds: 10, note: "t" });
+  assert.equal(n, 1);
+  assert.equal(rt.list()[0].note, "t");
+  clock.advance(11_000);
+  assert.equal(n, 2);
+  assert.equal(rt.list().length, 0);
+  rt.dispose();
+});

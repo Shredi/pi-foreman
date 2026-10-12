@@ -7,7 +7,7 @@ import { LiveState, intercomIdOf, labelOfHandoff, liveDir } from "../livestate.t
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "ls-"));
 const read = (d: string, id: string) => JSON.parse(fs.readFileSync(path.join(liveDir(d), `${id}.json`), "utf8"));
-const run = { launchId: "L1", role: "builder", rung: "model" as const, state: "ask" as const, tokensIn: 5, tokensOut: 2, cost: 0.12345678, startedAt: 0, endedAt: null };
+const run = { launchId: "L1", role: "builder", rung: "model" as const, model: null, state: "ask" as const, tokensIn: 5, tokensOut: 2, cost: 0.12345678, startedAt: 0, endedAt: null };
 
 test("label is the slug of the handoff dir name", () => {
   assert.equal(labelOfHandoff("/x/handoffs/20260101-120000-fix-login"), "fix-login");
@@ -32,13 +32,13 @@ test("file shape, atomic write (no temp left), state transitions and done on sto
   const l = LiveState.start({ agentDir: d, sessionId: "sess1", cwd: "/w", mode: "rpc", env, pid: 42 }, () => [run]);
   assert.ok(l);
   const a = read(d, "sess1");
-  assert.deepEqual(Object.keys(a), ["v", "sessionId", "intercomId", "parentIntercom", "handoff", "label", "cwd", "pid", "mode", "startedAt", "paneId", "heartbeatAt", "lastEventAt", "state", "runs", "tokensIn", "tokensOut", "cost", "blockedSince"]);
+  assert.deepEqual(Object.keys(a), ["v", "sessionId", "intercomId", "parentIntercom", "handoff", "label", "cwd", "pid", "mode", "startedAt", "paneId", "heartbeatAt", "lastEventAt", "state", "runs", "waits", "tokensIn", "tokensOut", "cost", "blockedSince"]);
   assert.equal(a.v, 1);
   assert.equal(a.parentIntercom, "par");
   assert.equal(a.label, "job");
   assert.equal(a.pid, 42);
   assert.equal(a.state, "idle");
-  assert.deepEqual(a.runs, [{ launchId: "L1", role: "builder", rung: "model", state: "ask", tokensIn: 5, tokensOut: 2, cost: 0.1235, endedAt: null }]);
+  assert.deepEqual(a.runs, [{ launchId: "L1", role: "builder", rung: "model", model: null, state: "ask", tokensIn: 5, tokensOut: 2, cost: 0.1235, endedAt: null }]);
   l.onAgentStart();
   assert.equal(l.snapshot().state, "working");
   l.setBlocked(true);
@@ -75,6 +75,25 @@ test("own ask and Pi prompt overlap: neither end nor typed-input release clears 
   assert.equal(l.snapshot().state, "blocked");
   l.setBlocked(false);
   assert.equal(l.snapshot().state, "idle");
+  l.stop();
+});
+
+test("waits[] from the wait runtime, state waiting (working wins), model carried", () => {
+  const d = tmp();
+  let waits = [{ id: "w1", kind: "pid", note: "suites", ageSeconds: 240.4, leftSeconds: 100 }];
+  const l = LiveState.start({ agentDir: d, sessionId: "w", cwd: "/w", mode: "rpc", env: {} }, () => [{ ...run, model: "anthropic/claude-opus-5-5" }], undefined, () => waits);
+  assert.ok(l);
+  const a = read(d, "w");
+  assert.equal(a.state, "waiting");
+  assert.deepEqual(a.waits, [{ id: "w1", kind: "pid", note: "suites", ageSeconds: 240, leftSeconds: 100 }]);
+  assert.equal(a.runs[0].model, "anthropic/claude-opus-5-5");
+  l.onAgentStart();
+  assert.equal(l.snapshot().state, "working");
+  l.onSettled(true);
+  assert.equal(l.snapshot().state, "waiting");
+  waits = [];
+  assert.equal(l.snapshot().state, "idle");
+  assert.deepEqual(l.snapshot().waits, []);
   l.stop();
 });
 

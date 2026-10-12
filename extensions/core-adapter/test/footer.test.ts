@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { abbrev, footerText, UsageFooter, zeroTotals, addMessage } from "../footer.ts";
+import { abbrev, footerText, UsageFooter, waitNote, zeroTotals, addMessage } from "../footer.ts";
 
 const MSG = { role: "assistant", usage: { input: 10000, output: 2300, cacheRead: 1_000_000, cacheWrite: 200_000, cost: { input: 0.05, output: 0.1, cacheRead: 0.5, cacheWrite: 0.25, total: 0.9 } } };
 
@@ -53,4 +53,17 @@ test("totals accumulate across messages even while the footer is off", () => {
   f.update("s", ctx, MSG, { enabled: false, isChild: true, children: 0 });
   f.update("s", ctx, MSG, { enabled: true, isChild: true, children: 0 });
   assert.match(calls[0], /\$1\.80 list/);
+});
+
+test("an active wait adds `waiting <note>` to the foreman text, never to a child's", () => {
+  const t = zeroTotals();
+  assert.equal(waitNote([]), null);
+  assert.equal(waitNote([{ kind: "pid", note: "suites" }]), "suites");
+  assert.equal(waitNote([{ kind: "timer", note: " " }, { kind: "pid", note: "x" }]), "timer +1");
+  assert.match(footerText(t, 0, "suites"), / · children 0 · waiting suites$/);
+  assert.match(footerText(t, null, "suites"), /\(warm \$0\.00 \/ cold \$0\.00\) · waiting suites$/);
+  const calls: string[] = [];
+  const ctx = { mode: "tui", ui: { setStatus: (_k: string, v: string | undefined) => calls.push(String(v)) } };
+  new UsageFooter().update("s", ctx, { role: "assistant" }, { enabled: true, isChild: true, children: 0, wait: "suites" });
+  assert.ok(!calls[0].includes("waiting"));
 });

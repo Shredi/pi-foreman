@@ -74,10 +74,18 @@ const usd = (v: number): string => `$${v.toFixed(2)}`;
 const money = (v: number, unpriced: boolean): string => (!unpriced ? usd(v) : v !== 0 ? `${usd(v)} + n/a` : "n/a");
 
 /** `↑in ↓out tok · $total list (warm $x / cold $y)` plus ` · children n` when `children` is a number. */
-export function footerText(t: FooterTotals, children: number | null): string {
+export function footerText(t: FooterTotals, children: number | null, wait: string | null = null): string {
   const up = t.input + t.cacheRead + t.cacheWrite;
   const base = `↑${abbrev(up)} ↓${abbrev(t.output)} tok · ${money(t.cost, t.unpriced)} list (warm ${money(t.costCacheRead, t.unpriced)} / cold ${money(t.costCold, t.unpriced)})`;
-  return children === null ? base : `${base} · children ${children}`;
+  const withKids = children === null ? base : `${base} · children ${children}`;
+  return wait ? `${withKids} · waiting ${wait}` : withKids;
+}
+
+/** The note of the oldest active wait (its kind when it has none), `+n` for the others; null with no waits. */
+export function waitNote(waits: readonly { kind: string; note: string }[]): string | null {
+  if (waits.length === 0) return null;
+  const first = waits[0].note.trim() || waits[0].kind;
+  return waits.length > 1 ? `${first} +${waits.length - 1}` : first;
 }
 
 export const CACHE_STATUS_KEY = "foreman-cache";
@@ -102,13 +110,13 @@ export interface FooterCtx {
 export class UsageFooter {
   private totals = new Map<string, FooterTotals>();
 
-  update(sessionId: string, ctx: FooterCtx, message: unknown, opts: { enabled: unknown; isChild: boolean; children: number }): void {
+  update(sessionId: string, ctx: FooterCtx, message: unknown, opts: { enabled: unknown; isChild: boolean; children: number; wait?: string | null }): void {
     try {
       const t = this.totals.get(sessionId) ?? zeroTotals();
       this.totals.set(sessionId, t);
       addMessage(t, message, ctx.modelRegistry);
       if (opts.enabled !== true || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return;
-      ctx.ui.setStatus(FOOTER_KEY, footerText(t, opts.isChild ? null : opts.children));
+      ctx.ui.setStatus(FOOTER_KEY, footerText(t, opts.isChild ? null : opts.children, opts.isChild ? null : opts.wait ?? null));
     } catch {
       // the footer is cosmetic
     }

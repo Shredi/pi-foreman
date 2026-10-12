@@ -230,6 +230,8 @@ export interface RuntimeDeps {
   ghRefusal?: () => string | null;
   wake: (outcomes: Outcome[]) => void;
   trace: (rec: Record<string, unknown>) => void;
+  /** Called after the set of active waits changed (a wait started, resolved or cancelled). */
+  changed?: () => void;
 }
 
 interface Entry {
@@ -284,6 +286,7 @@ export class WaitRuntime {
     if (spec.kind === "timer") e.handles.push(this.d.timers.set(() => this.resolve(id, "elapsed"), spec.seconds * 1000));
     else if (spec.kind !== "child") this.poll(e, spec, 0);
     this.d.trace({ event: "wait", decision: "start", toolFamily: spec.kind });
+    this.notify();
     return { id };
   }
 
@@ -322,7 +325,17 @@ export class WaitRuntime {
     for (const h of e.handles) this.d.timers.clear(h);
     if (e.pollHandle !== undefined) this.d.timers.clear(e.pollHandle);
     this.waits.delete(id);
+    this.notify();
     return e;
+  }
+
+  private notify(): void {
+    if (this.disposed) return;
+    try {
+      this.d.changed?.();
+    } catch {
+      // observers are best effort
+    }
   }
 
   resolve(id: string, outcome: string): void {
@@ -479,9 +492,16 @@ const PARAMS = {
 };
 
 /** Register `foreman_wait` (foreman sessions only) and its shutdown cleanup. */
-export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]>; childNotice: (sessionId: string, label: string, kind: string, notePath: string) => boolean; cancelAll: (sessionId: string) => string[] } {
+export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]>; childNotice: (sessionId: string, label: string, kind: string, notePath: string) => boolean; cancelAll: (sessionId: string) => string[]; onChange: (sessionId: string, cb: () => void) => () => void } {
   const runtimes = new Map<string, { rt: WaitRuntime; ctx: ExtensionContext }>();
+  const listeners = new Map<string, Set<() => void>>();
   const handle = {
+    onChange: (sessionId: string, cb: () => void) => {
+      const set = listeners.get(sessionId) ?? new Set<() => void>();
+      listeners.set(sessionId, set);
+      set.add(cb);
+      return () => void set.delete(cb);
+    },
     active: (sessionId: string) => runtimes.get(sessionId)?.rt.list() ?? [],
     childNotice: (sessionId: string, label: string, kind: string, notePath: string) => runtimes.get(sessionId)?.rt.childNotice(label, kind, notePath) ?? false,
     cancelAll: (sessionId: string) => runtimes.get(sessionId)?.rt.cancelAll() ?? [],
@@ -490,6 +510,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
     const id = ctx.sessionManager.getSessionId();
     runtimes.get(id)?.rt.dispose();
     runtimes.delete(id);
+    listeners.delete(id);
   });
   if (process.env.PI_SUBAGENT_CHILD === "1") return handle;
   pi.registerTool({
@@ -522,6 +543,9 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
           gh: (runId) => ghRunView(runId, workspaceOf(s.cwd).root),
           ghRefusal: () => (resolveGh(workspaceOf(s.cwd).root) ? null : `ci waits are refused: ${GH_MISSING}`),
           trace: s.trace,
+          changed: () => {
+            for (const cb of [...(listeners.get(s.id) ?? [])]) cb();
+          },
           wake: (outcomes) => {
             let idle = true;
             try {

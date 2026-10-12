@@ -9,14 +9,26 @@ import { openerIntercomId } from "./session.ts";
 export const HEARTBEAT_MS = 30_000;
 const WRITE_GAP_MS = 1000;
 const MAX_RUNS = 20;
+const MAX_WAITS = 20;
 
 export type LiveMode = "tui" | "rpc" | "json" | "print";
-export type LiveStateName = "working" | "blocked" | "idle" | "done";
+export type LiveStateName = "working" | "blocked" | "waiting" | "idle" | "done";
+
+/** One active foreman_wait (WaitRuntime.list()); Herdr's own status for the pane stays working. */
+export interface LiveWait {
+  id: string;
+  kind: string;
+  note: string;
+  ageSeconds: number;
+  leftSeconds: number;
+}
 
 export interface LiveRun {
   launchId: string;
   role: string;
   rung: Rung;
+  /** The launch's explicit model as given (`provider/id`), else null. */
+  model: string | null;
   state: RunState;
   tokensIn: number;
   tokensOut: number;
@@ -40,6 +52,8 @@ export interface LiveFile {
   lastEventAt: string;
   state: LiveStateName;
   runs: LiveRun[];
+  /** Active long waits; ageSeconds is as of heartbeatAt. */
+  waits: LiveWait[];
   /** env HERDR_PANE_ID, else null. */
   paneId: string | null;
   /** The session's own usage as the footer shows it: in = input + cache read + cache write, out = output; cost = list price. */
@@ -88,7 +102,7 @@ export interface LiveInit {
 
 export class LiveState {
   private readonly file: string;
-  private readonly base: Omit<LiveFile, "heartbeatAt" | "lastEventAt" | "state" | "runs" | "intercomId" | "tokensIn" | "tokensOut" | "cost" | "blockedSince">;
+  private readonly base: Omit<LiveFile, "heartbeatAt" | "lastEventAt" | "state" | "runs" | "waits" | "intercomId" | "tokensIn" | "tokensOut" | "cost" | "blockedSince">;
   private readonly idOf: () => string;
   private readonly startedMs = Date.now();
   private lastEventMs = this.startedMs;
@@ -103,10 +117,10 @@ export class LiveState {
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   /** Null when the mode writes no file (print, json, or unknown). */
-  static start(init: LiveInit, runs: () => RunView[], totals?: () => SessionTotals | null): LiveState | null {
+  static start(init: LiveInit, runs: () => RunView[], totals?: () => SessionTotals | null, waits?: () => LiveWait[]): LiveState | null {
     const mode = init.mode;
     if (mode !== "tui" && mode !== "rpc") return null;
-    const l = new LiveState(init, mode, runs, totals);
+    const l = new LiveState(init, mode, runs, totals, waits);
     l.write();
     l.interval = setInterval(() => l.write(), HEARTBEAT_MS);
     l.interval.unref?.();
@@ -115,9 +129,11 @@ export class LiveState {
 
   private readonly runs: () => RunView[];
   private readonly totals: (() => SessionTotals | null) | undefined;
-  private constructor(init: LiveInit, mode: LiveMode, runs: () => RunView[], totals?: () => SessionTotals | null) {
+  private readonly waits: (() => LiveWait[]) | undefined;
+  private constructor(init: LiveInit, mode: LiveMode, runs: () => RunView[], totals?: () => SessionTotals | null, waits?: () => LiveWait[]) {
     this.runs = runs;
     this.totals = totals;
+    this.waits = waits;
     this.file = path.join(liveDir(init.agentDir), `${init.sessionId}.json`);
     const handoff = (init.env.PI_FOREMAN_HANDOFF_DIR ?? "").trim() || null;
     // Re-read on each write: pi-intercom publishes PI_INTERCOM_SESSION_ID after session_start.
@@ -162,7 +178,15 @@ export class LiveState {
 
   /** The current state name without building a snapshot. */
   get stateName(): LiveStateName {
-    return this.done ? "done" : this.blockers.size > 0 ? "blocked" : this.working ? "working" : "idle";
+    return this.done ? "done" : this.blockers.size > 0 ? "blocked" : this.working ? "working" : this.waitList().length > 0 ? "waiting" : "idle";
+  }
+
+  private waitList(): LiveWait[] {
+    try {
+      return (this.waits?.() ?? []).slice(0, MAX_WAITS).map((w) => ({ id: short(w.id, 40), kind: short(w.kind, 20), note: short(w.note, 80), ageSeconds: Math.round(w.ageSeconds), leftSeconds: Math.round(w.leftSeconds) }));
+    } catch {
+      return []; // waits are best effort
+    }
   }
 
   /** Write the presence file now, bypassing the 1 s throttle. */
@@ -212,6 +236,7 @@ export class LiveState {
         launchId: short(r.launchId, 40),
         role: short(r.role, 40),
         rung: r.rung,
+        model: typeof r.model === "string" && r.model ? short(r.model, 80) : null,
         state: r.state,
         tokensIn: Math.round(r.tokensIn),
         tokensOut: Math.round(r.tokensOut),
@@ -228,7 +253,7 @@ export class LiveState {
       // totals are best effort
     }
     const state = this.stateName;
-    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString() };
+    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString() };
   }
 
   private schedule(): void {

@@ -10,13 +10,13 @@ const line = (launchId: string, input: number, output: number, total: number) =>
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "cw-"));
 
 test("row formatting: role, rung, state, tokens, cost", () => {
-  const r = { launchId: "l", role: "builder", rung: "model" as const, state: "working" as const, tokensIn: 12345, tokensOut: 900, cost: 0.126, startedAt: 0, endedAt: null };
+  const r = { launchId: "l", role: "builder", rung: "model" as const, model: null, state: "working" as const, tokensIn: 12345, tokensOut: 900, cost: 0.126, startedAt: 0, endedAt: null };
   assert.equal(runLine(r), "⏳ builder · model · working · ↑12.3k ↓900 · $0.13");
   assert.equal(runLine({ ...r, rung: null, state: "done" }), "✓ builder · done · ↑12.3k ↓900 · $0.13");
 });
 
 test("run lines carry the state glyph of the active set; unknown value falls back to unicode; fitLine counts wide glyphs as 2", () => {
-  const r = { launchId: "l", role: "b", rung: null, state: "working" as const, tokensIn: 0, tokensOut: 0, cost: 0, startedAt: 0, endedAt: null };
+  const r = { launchId: "l", role: "b", rung: null, model: null, state: "working" as const, tokensIn: 0, tokensOut: 0, cost: 0, startedAt: 0, endedAt: null };
   assert.ok(runLine(r, "nerd").startsWith("\uf252 b"));
   assert.ok(runLine({ ...r, state: "ask" }, "nerd").startsWith("\uf128 b"));
   assert.ok(runLine({ ...r, state: "ask" }).startsWith("? b"));
@@ -43,8 +43,9 @@ test("state: working -> ask -> working -> done by forwarded prompt, matched on t
   const f = path.join(d, "u.jsonl");
   fs.writeFileSync(f, line("L1", 10, 2, 0.1) + "\n");
   const c = new ChildRuns(new UsageTail(f));
-  c.onLaunchCall("call1", { launchId: "L1", role: "builder", rung: "model" });
+  c.onLaunchCall("call1", { launchId: "L1", role: "builder", rung: "model", model: "anthropic/claude-sonnet-5-5" });
   c.onLaunched("call1", "run1", [], 1000);
+  assert.equal(c.views()[0].model, "anthropic/claude-sonnet-5-5");
   assert.equal(c.views()[0].state, "working");
   assert.equal(c.views()[0].tokensIn, 10);
   c.onPrompt({ requestId: "r0", forwarding: null, agentName: "builder" }); // the foreman's own prompt: not an ask
@@ -65,7 +66,7 @@ test("a foreground run that ends before its launch result is done at once", () =
 });
 
 test("finished runs of the batch fold into one summary line; rows are capped at 8 with active first", () => {
-  const mk = (n: number, state: "working" | "done", endedAt: number | null) => ({ launchId: `l${n}`, role: `r${n}`, rung: null, state, tokensIn: 1000, tokensOut: 10, cost: 0.5, startedAt: n, endedAt });
+  const mk = (n: number, state: "working" | "done", endedAt: number | null) => ({ launchId: `l${n}`, role: `r${n}`, rung: null, model: null, state, tokensIn: 1000, tokensOut: 10, cost: 0.5, startedAt: n, endedAt });
   const now = 20 * 60 * 1000;
   const lines = widgetLines([mk(1, "done", 0), mk(2, "done", now - 1000), mk(3, "working", null), mk(4, "done", now - 500)], [], now);
   assert.deepEqual(lines, ["⏳ r3 · working · ↑1.0k ↓10 · $0.50", "2 done · ↑2.0k ↓20 · $1.00"]); // r1 ended before the batch began

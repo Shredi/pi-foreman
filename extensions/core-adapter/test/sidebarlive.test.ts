@@ -3,22 +3,20 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { SPINNER_FRAMES, SidebarLive, frameArgv, installSidebarLive, sidebarGate, type SidebarDeps } from "../sidebarlive.ts";
+import { SidebarLive, installSidebarLive, sidebarGate, type SidebarDeps } from "../sidebarlive.ts";
 import type { LiveStateName } from "../livestate.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function rig(over: Partial<SidebarDeps> = {}) {
   const pushes: string[][] = [];
-  const herdr: string[][] = [];
   const order: string[] = [];
-  const st = { state: "idle" as LiveStateName, inflight: 0, maxInflight: 0, delay: 20 };
+  const st = { inflight: 0, maxInflight: 0, delay: 20 };
   const d: SidebarDeps = {
     pane: "w1:p1",
     sessionId: "sid",
     agentDir: "/a",
     symbols: "nerd",
-    spinner: true,
     push: (args, done) => {
       pushes.push(args);
       order.push("push");
@@ -29,16 +27,13 @@ function rig(over: Partial<SidebarDeps> = {}) {
         done();
       }, st.delay);
     },
-    herdr: (a) => herdr.push(a),
     flush: () => order.push("flush"),
-    state: () => st.state,
     finish: () => order.push("finish"),
     gapMs: 100,
     refreshMs: 10_000,
-    spinMs: 30,
     ...over,
   };
-  return { s: new SidebarLive(d), pushes, herdr, order, st };
+  return { s: new SidebarLive(d), pushes, order, st };
 }
 
 test("an event flushes the presence file, then pushes with the session args", () => {
@@ -91,35 +86,6 @@ test("shutdown pushes --final (not --clear) after marking the presence done, and
   assert.equal(pushes.length, n);
 });
 
-test("spinner cycles in order while working and stops at blocked and idle", async () => {
-  const { s, herdr, st } = rig({ spinMs: 25 });
-  st.state = "working";
-  s.request();
-  await sleep(140);
-  const frames = herdr.map((a) => a[a.indexOf("--token") + 1].slice("fm_sym=".length));
-  assert.ok(frames.length >= 3);
-  const idx = frames.map((f) => SPINNER_FRAMES.indexOf(f));
-  assert.ok(idx.every((i) => i >= 0));
-  for (let i = 1; i < idx.length; i++) assert.ok(idx[i] === idx[i - 1] || idx[i] === (idx[i - 1] + 1) % 8, "in order");
-  assert.deepEqual(herdr[0], frameArgv("w1:p1", frames[0]));
-  st.state = "blocked";
-  s.request();
-  await sleep(40);
-  const n = herdr.length;
-  await sleep(100);
-  assert.equal(herdr.length, n);
-  s.stop();
-});
-
-test("ui.spinner false: no frames", async () => {
-  const { s, herdr, st } = rig({ spinner: false });
-  st.state = "working";
-  s.request();
-  await sleep(150);
-  assert.equal(herdr.length, 0);
-  s.stop();
-});
-
 test("gate: needs HERDR_ENV=1, a pane, tui, python and the script", () => {
   const me = fileURLToPathSelf();
   const env = { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" };
@@ -145,7 +111,7 @@ test("install: without HERDR_ENV nothing starts (no onChange subscription)", () 
   assert.equal(subscribed, 0);
 });
 
-test("install with a fake herdr binary: the spinner runs the real herdr argv", { skip: process.platform === "win32" }, async () => {
+test("install with a fake herdr binary: a working session never calls herdr (no spinner frames)", { skip: process.platform === "win32" }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sbl-"));
   try {
     const log = path.join(dir, "argv.jsonl");
@@ -164,10 +130,7 @@ test("install with a fake herdr binary: the spinner runs the real herdr argv", {
     sl.start({ mode: "tui" } as never, { python: py, pkgRoot: dir, agentDir: dir, sessionId: "s", live });
     assert.equal(cbs.length, 1);
     await sleep(1600);
-    const lines = fs.readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l) as string[]);
-    assert.ok(lines.length >= 1);
-    assert.deepEqual(lines[0].slice(0, 5), ["pane", "report-metadata", "w9:p9", "--source", "plugin:pi-foreman.sidebar"]);
-    assert.ok(lines[0].some((a) => a.startsWith("fm_sym=")));
+    assert.equal(fs.existsSync(log), false);
     live.stateName = "idle";
     cbs[0]();
     await shutdown();
