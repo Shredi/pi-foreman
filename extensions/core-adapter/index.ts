@@ -64,7 +64,7 @@ import { PrWatches, pollSnapshot } from "./prwatch.ts";
 import { registerSafeOps, runSafeOp } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
 import type { Spawner } from "./spawn.ts";
-import { ADDON_BG_TOOL, FOREMAN_BG_TOOL, mapTool } from "./toolmap.ts";
+import { ADDON_BG_TOOL, FOREMAN_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
 import { appendReview, capSet, checksLine, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prGateRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
@@ -1263,8 +1263,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return { block: true, reason: `pi-foreman: ${msg}.` };
       }
     }
-    // A child never deletes an editor backup with rm (effects.ts); it reports it instead.
-    if (process.env.PI_SUBAGENT_CHILD === "1" && event.toolName === "bash" && editorBackupCommand((event.input as { command?: unknown }).command)) {
+    // A child never deletes an editor backup with rm (effects.ts) on any shell tool; it reports it instead.
+    if (process.env.PI_SUBAGENT_CHILD === "1" && isShellTool(event.toolName) && editorBackupCommand((event.input as { command?: unknown }).command)) {
       sessionFor(ctx)?.trace?.emit({ event: "guard", guard: "editor_backup", toolFamily: "bash", decision: "blocked", reason: "editor_backup" });
       return { block: true, reason: "pi-foreman: [editor_backup] deleting an editor backup (`*~`, `*.bak`, `*.orig`, `*.swp`, `.#*`) with rm is denied; report it in your result instead." };
     }
