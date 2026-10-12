@@ -579,6 +579,10 @@ def deep_merge(base, over):
     if isinstance(base, dict) and isinstance(over, dict):
         out = dict(base)
         for k, v in over.items():
+            if k == "denyTools" and isinstance(base.get(k), list) and isinstance(v, list):
+                # roles.<x>.denyTools only grows across layers; no layer removes an entry
+                out[k] = list(base[k]) + [x for x in v if x not in base[k]]
+                continue
             out[k] = deep_merge(base[k], v) if k in base else copy.deepcopy(v)
         return out
     return copy.deepcopy(over)

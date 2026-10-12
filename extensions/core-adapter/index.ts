@@ -30,6 +30,7 @@ import { collectOrientation } from "./orient.ts";
 import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits } from "./childreads.ts";
 import { bgWaitLocations,detailLocations, inRecorded, noticeLocations, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
+import { roleToolDenied } from "./roledeny.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { CHILD_TRACE_EVENT, gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
 import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
@@ -1228,6 +1229,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const ps = sessionFor(ctx);
       if (ps && !ps.isChild && ps.activeRuns.size > 0) ps.pollBash++;
       if (ps && !ps.isChild && mentionsLedger((event.input as { command?: unknown }).command)) ps.ledgerBash.add(event.toolCallId);
+    }
+    // Role tool denial (roledeny.ts): a child's tool matching roles.<role>.denyTools is denied, never asked.
+    if (process.env.PI_SUBAGENT_CHILD === "1") {
+      const rs = sessionFor(ctx);
+      const msg = roleToolDenied(rs ? get(rs.config.config, "roles") : undefined, launchBinding?.role, event.toolName);
+      if (msg) {
+        rs?.trace?.emit({ event: "guard", guard: "role_tool_denied", toolFamily: event.toolName, decision: "blocked", reason: "role_tool_denied" });
+        return { block: true, reason: `pi-foreman: ${msg}.` };
+      }
     }
     // First of all, before the permission system and the core guards: the overlay's deny/ask rules.
     if (isOverlayTool(event.toolName)) {
