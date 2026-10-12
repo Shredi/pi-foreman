@@ -656,6 +656,95 @@ const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "ash"]);
 /** Verbs whose operands (all, or the last one) are written; with the redirects they feed a child's /tmp deny. */
 const TMP_WRITERS = new Map<string, "all" | "last">([["tee", "all"], ["touch", "all"], ["mkdir", "all"], ["mv", "all"], ["cp", "last"], ["install", "last"], ["ln", "last"]]);
 
+/** Verbs that write, move or delete their path operands; which operands count: all, the last one, or all but the leading mode/owner word. */
+const RO_WRITERS = new Map<string, "all" | "last" | "mode">([
+  ["rm", "all"], ["rmdir", "all"], ["unlink", "all"], ["shred", "all"], ["truncate", "all"], ["touch", "all"], ["mkdir", "all"], ["mv", "all"], ["tee", "all"], ["patch", "all"],
+  ["trash", "all"], ["trash-put", "all"], ["srm", "all"], ["del", "all"], ["erase", "all"], ["rd", "all"], ["remove-item", "all"], ["ri", "all"], ["rename", "all"], ["ren", "all"], ["move", "all"], ["rni", "all"], ["rename-item", "all"], ["move-item", "all"], ["mi", "all"],
+  ["cp", "last"], ["install", "last"], ["ln", "last"], ["rsync", "last"],
+  ["chmod", "mode"], ["chown", "mode"], ["chgrp", "mode"],
+]);
+
+/** Read-only verbs (with unitReadOnly) and shell builtins that never write a path by themselves. */
+const RO_READERS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk", "mawk", "nawk", "find", "echo", "printf", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "ls", "cd", "pwd", "nl", "column", "diff", "true", "false", "stat", "file", "tree", "cmp", "md5sum", "sha1sum", "sha256sum", "shasum", "date", "which", "basename", "dirname", "realpath", "readlink", "jq", "test", "[", "[[", ":", "sleep", "uname", "whoami", "id", "export", "local", "declare", "typeset", "readonly", "read", "set", "unset", "shift", "return", "exit", "break", "continue", "wait", "type"]);
+
+/** Read-only git subcommands, and the ones that touch only .git (branch/tag/remote/config list and edit refs, never the worktree). */
+const GIT_RO_SUBS = new Set(["status", "log", "diff", "show", "blame", "rev-parse", "ls-files", "ls-tree", "describe", "grep", "shortlog", "cat-file", "rev-list", "for-each-ref", "show-ref", "name-rev", "merge-base", "diff-tree", "diff-files", "diff-index", "count-objects", "branch", "tag", "remote", "config", "worktree", "fetch", "version", "help"]);
+
+/** Options of a build/test run that name an output path, a cache, a log or a program. */
+const BUILD_OUT_OPT = /^--?(o\b|[\w-]*(out|dir|file|log|xml|report|exec|command|cache|profile|prefix|script-shell)[\w-]*(=|$))/;
+
+/**
+ * A test/lint/typecheck run: npm test / npm run test|lint|typecheck|check[:x], node --test, cargo test|check|clippy, go test|vet,
+ * pytest, python -m pytest|unittest, make test*. Such runs write only caches and build output (node_modules/.cache, dist,
+ * coverage, scratch), not sources, and a reviewer must be able to run them; options that name an output path or program are refused.
+ */
+function buildTestRun(verb: string, args: string[]): boolean {
+  if (args.some((a) => BUILD_OUT_OPT.test(a))) return false;
+  const [sub, next] = args;
+  if (verb === "npm") return sub === "test" || ((sub === "run" || sub === "run-script") && /^(test|lint|typecheck|check)(:|$)/.test(next ?? ""));
+  if (verb === "node") return sub === "--test";
+  if (verb === "cargo") return sub === "test" || sub === "check" || sub === "clippy";
+  if (verb === "go") return sub === "test" || sub === "vet";
+  if (verb === "pytest") return true;
+  if (verb === "python" || verb === "python3") return sub === "-m" && (next === "pytest" || next === "unittest");
+  if (verb === "make") return !!sub && !sub.startsWith("-") && /^test/.test(sub);
+  return false;
+}
+
+/**
+ * What one command (wrappers stripped) may do to the worktree, for a child that may only read it: the path words it writes
+ * (a relative one resolves against the cwd; `.` stands for the cwd itself), or `unknown` when it is neither a known reader,
+ * a test run nor a known writer. `inner` = a shell whose -c script is collected separately.
+ */
+function roEffect(core: string[], skip: Set<number>, inner: boolean): { targets: string[]; unknown?: string } {
+  if (!core.length) return { targets: [] };
+  const verb = baseName(core[0]);
+  const args = core.slice(1);
+  const operands = core.filter((x, i) => i > 0 && x !== "" && !x.startsWith("-") && !skip.has(i));
+  const optValues = args.filter((x) => /^--[\w-]+=./.test(x)).map((x) => x.slice(x.indexOf("=") + 1));
+  const or = (t: string[]): { targets: string[] } => ({ targets: t.length ? t : ["."] });
+  const kind = RO_WRITERS.get(verb);
+  if (kind) {
+    const intoDir = args.some((a) => /^-[A-Za-z]*t$|^--target-directory/.test(a));
+    return or([...optValues, ...(kind === "all" || intoDir ? operands : kind === "last" ? operands.slice(-1) : operands.slice(1))]);
+  }
+  if (verb === "dd") return { targets: args.filter((a) => a.startsWith("of=")).map((a) => a.slice(3)) };
+  if (verb === "find") {
+    if (!args.some((a) => /^-(delete|fprint0?|fprintf|fls)$/.test(a))) return { targets: [] };
+    const lead: string[] = [];
+    for (const a of args) {
+      if (a.startsWith("-") || a === "(" || a === "!") break;
+      lead.push(a);
+    }
+    return or([...lead, ...args.filter((a, i) => args[i - 1] === "-fprint" || args[i - 1] === "-fprint0" || args[i - 1] === "-fprintf" || args[i - 1] === "-fls")]);
+  }
+  if (verb === "sed" && !unitReadOnly(core, skip)) {
+    const scr = new Set(scriptOperands(core, skip));
+    return or(core.filter((x, i) => i > 0 && x !== "" && !x.startsWith("-") && !skip.has(i) && !scr.has(i)));
+  }
+  if (verb === "git") {
+    let k = 1;
+    let dir: string | undefined;
+    while (k < core.length && core[k].startsWith("-")) {
+      if (core[k] === "-C" && k + 1 < core.length) dir = core[k + 1];
+      else if (core[k] === "-c") return { targets: [], unknown: "git -c" };
+      k += /^-[Cc]$/.test(core[k]) ? 2 : 1;
+    }
+    const sub = core[k];
+    if (!sub) return { targets: [] };
+    const rest = core.slice(k + 1);
+    const outs = rest.filter((a) => /^--output=./.test(a)).map((a) => a.slice(a.indexOf("=") + 1));
+    if (GIT_RO_SUBS.has(sub)) return { targets: outs };
+    if (sub === "stash" && (rest[0] === "list" || rest[0] === "show")) return { targets: outs };
+    if (sub === "apply" && rest.some((a) => /^--(check|stat|numstat|summary)$/.test(a)) && !rest.includes("--apply")) return { targets: outs };
+    return { targets: [dir ?? ".", ...outs] };
+  }
+  if (RO_READERS.has(verb)) return unitReadOnly(core, skip) ? { targets: [] } : { targets: [], unknown: verb };
+  if (SHELLS.has(verb) && inner) return { targets: [] };
+  if (buildTestRun(verb, args)) return { targets: [] };
+  return { targets: [], unknown: verb };
+}
+
 function baseName(w: string): string {
   const b = w.split(/[\\/]/).pop() ?? w;
   return b.toLowerCase().replace(/\.(exe|cmd|bat)$/, "");
@@ -729,6 +818,10 @@ interface Collected {
   childAsk?: string;
   /** Operands of `git worktree remove`: the permission system asks for it, so the worktree block leaves them to it. */
   worktreeRemoveWords?: Set<string>;
+  /** Path words a unit writes, moves or deletes (RO_WRITERS, in-place sed, `dd of=`, writing git, `find -delete`): a read-only child's deny. */
+  roTargets?: Set<string>;
+  /** The first posix command that is neither a known reader, a test run nor a known writer: it may write the cwd. */
+  roUnknown?: string;
 }
 
 /**
@@ -1021,6 +1114,12 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
       if (writer && out.tmpTargets) {
         const operands = v.core.slice(1).filter((x) => !x.startsWith("-"));
         for (const x of writer === "last" ? operands.slice(-1) : operands) out.tmpTargets.add(x);
+      }
+      if (out.roTargets && !neutral && v.core.length) {
+        const e = roEffect(v.core, skip, innerScript(v.core) !== null);
+        // a bare name that does not exist yet is not path-shaped to pathCandidates: `./` makes it a path against the cwd
+        for (const t of e.targets) out.roTargets.add(/^[./~$\\]|^[A-Za-z]:/.test(t) ? t : `./${t}`);
+        if (e.unknown !== undefined && shell === "posix" && out.roUnknown === undefined) out.roUnknown = e.unknown;
       }
     }
     const inner = innerScript(v.core);
@@ -1349,7 +1448,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (cd) return cd;
   }
   const scratch0 = scratchOf(ctx);
-  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), worktreeRemoveWords: new Set() };
+  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set() };
   collect(command, shell, 0, c);
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
@@ -1399,6 +1498,15 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     for (const w of c.tmpTargets!) {
       const hit = childReadOnlyWriteDeny(w, pctx) ?? childTmpWriteDeny(w, pctx);
       if (hit) return hit;
+    }
+  }
+  if (ctx.role === "child" && ctx.roundReadRoots?.length) {
+    for (const w of c.roTargets!) {
+      const hit = childReadOnlyWriteDeny(w, pctx);
+      if (hit) return hit;
+    }
+    if (c.roUnknown !== undefined && childCwdReadOnly(pctx)) {
+      return { kind: "deny", reason: `pi-foreman: '${clip(c.roUnknown)}' denied for a child: the round worktree is read-only except for its builder, and this command is neither a known reader nor a test run, so it may write there. Use a read command or ask the foreman.` };
     }
   }
   const prot = pwords.map((w) => ({ w, hit: protectHit(rules.protect, w, pctx, true, removed.has(w), readOnly) })).filter((x) => x.hit);
@@ -1482,6 +1590,14 @@ function childReadOnlyWriteDeny(word: string, ctx: MatchCtx): Decision | null {
     if (ctx.roundReadRoots.some((o) => insideDir(o, cand, ctx))) return { kind: "deny", reason: `pi-foreman: write to ${clip(word)} denied for a child: the round worktree is read-only except for its builder.` };
   }
   return null;
+}
+
+/** The child's cwd lies in a worktree it may only read (and in none it may write, nor in its scratch dir). */
+function childCwdReadOnly(ctx: MatchCtx): boolean {
+  const scratch = scratchOf(ctx);
+  if (!ctx.cwd || (scratch && insideDir(scratch, ctx.cwd, ctx))) return false;
+  if ((ctx.roundRoots ?? []).some((o) => insideDir(o, ctx.cwd, ctx))) return false;
+  return (ctx.roundReadRoots ?? []).some((o) => insideDir(o, ctx.cwd, ctx));
 }
 
 /** A child touching a foreman-owned path (handoffs, artifacts, foreman.json); its own scratch dir is never one. */
