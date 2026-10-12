@@ -107,6 +107,7 @@ import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCo
 import type { CloseReport } from "./close.ts";
 import { foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, sessionModelOf } from "./session.ts";
 import { closeChildren } from "./closechildren.ts";
+import { AskContract } from "./askcontract.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
 import { foremanTriage, GATED_TOOLS, isTriaged, OUTWARD_TOOLS, triageAdvice, triageGateBlock, TRIAGE_RULES, TRIAGE_TOOL, trivialPathAdvice, workspaceTargets } from "./triage.ts";
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
@@ -740,6 +741,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("session_shutdown", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (!s) return;
+    asks.get(s.id)?.releaseAll();
+    asks.delete(s.id);
     try {
       s.registration?.dispose();
     } catch {
@@ -1844,6 +1847,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** The owned handoffs root (`<agentDir>/pi-foreman/handoffs`). */
   const handoffsRoot = (s: Session): string | undefined => s.owned.readWrite.find((r) => path.basename(r) === "handoffs");
 
+  /** The ask contract of a session (askcontract.ts): `ask.md` in an own handoff dir -> `.ask` marker + blocked signal. */
+  const asks = new Map<string, AskContract>();
+  function askContractFor(s: Session): AskContract {
+    let c = asks.get(s.id);
+    if (!c) {
+      c = new AskContract({ ownDirs: () => ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), block: (label) => blockedShim.own(label) });
+      asks.set(s.id, c);
+    }
+    return c;
+  }
+
   /** One of this session's own handoff dirs (owned.ts ownHandoffDirs) holds a plan.md or result.md written in the last day (a round is waiting on its parent). */
   function handoffContext(s: Session): boolean {
     for (const dir of ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id))) {
@@ -1940,6 +1954,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (owner && created.length) {
       const o = manifestOwner({ id: owner.id, isChild: owner.isChild, foremanSession: owner.usage.line.foremanSession, launchId: owner.usage.line.launchId }, process.env);
       await recordEntries(created, { ...o, stateDir: manifestCtx(owner, ctx.cwd).stateDir }, (args) => runScript(owner, "foreman_close.py", args, 15_000));
+    }
+    if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit")) {
+      const given = (event.input as Record<string, unknown>).path;
+      if (typeof given === "string") askContractFor(owner).onFileWritten(path.resolve(ctx.cwd, given));
     }
     const pending = owner?.pendingChanges.get(event.toolCallId);
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit") && isPlanPath((event.input as Record<string, unknown>).path, planOpts(owner, ctx))) {

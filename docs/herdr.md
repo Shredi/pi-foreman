@@ -136,6 +136,12 @@ a working child shows once under its parent, never as a second `✗ lost` row. A
 live file shows as idle. The opener id is `--parent-id`, `PI_INTERCOM_SESSION_ID`, `PI_INTERCOM_STABLE_ID`, then the
 config `stableId`; a child that closes marks its own entry `closed`.
 
+Ask signal: when a session opened by `foreman session open` writes `ask.md` (first line `# Ask <n>: <topic>`) in its own
+handoff dir, pi-foreman touches `<handoff>/.ask` and opens a blocked source, so Herdr shows `blocked` with the label
+`ask <n>: <topic>` (`herdr:blocked`, the same channel as a dialog; never `herdr agent prompt`). Writing `.seen` in that
+dir, or shutdown, releases it. A parent that is not a Pi session polls `*.md` and `.ask`; the file contract is in
+[sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session).
+
 ## Agents view
 
 While at least one foreman session is joined, the daemon sets the Agents view (`agent.view.set`, label `pi-foreman`)

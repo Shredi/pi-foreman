@@ -338,6 +338,15 @@ class OpenerIdTest(unittest.TestCase):
             self.assertEqual(fsn.opener_id(None, Path("."), {}), "cfg")
 
 
+class AskFooterTest(unittest.TestCase):
+    def test_footer_names_the_ask_file_contract_in_both_variants(self):
+        for plan_first in (True, False):
+            text = fsn.footer("demo", plan_first)
+            for needle in ("# Ask <n>: <topic>", "ask.md", "ruling-<n>.md", ".seen", ".ask", "foreman_wait", "Session not found"):
+                self.assertIn(needle, text)
+            self.assertIn("Never ask by `herdr agent prompt`", text)
+
+
 class PlanFirstFooterTest(unittest.TestCase):
     def test_plan_first_footer_names_the_ruling_handoff(self):
         text = fsn.footer("demo", True)

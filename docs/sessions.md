@@ -83,6 +83,36 @@ registry entry whose `parent` is this session's opener id and whose status is `o
 `timeout after <n> ms` (the child may still close later) or `not sent (<status>)`. A child that does not close never
 fails or delays the parent's close beyond that bound.
 
+### Ask by file (parent that is not a Pi session)
+
+A parent without a pi-intercom connection (for example a Claude session) cannot receive an intercom `send`; the child's
+`send` fails with `Session not found`. The brief footer then names a file contract in the handoff dir:
+
+| File | Written by | Content |
+|---|---|---|
+| `ask.md` | the child | first line `# Ask <n>: <topic>` (n = 1, 2, …), then the question and options |
+| `.ask` | pi-foreman | marker, `ask-<n>`, touched when `ask.md` is written in the session's own handoff dir |
+| `ruling-<n>.md` | the parent | the answer to ask n |
+| `.seen` | the child | the ruling file name, written after it read the ruling |
+
+When the child writes `ask.md` (a `write` or `edit` that succeeds, only under one of its own handoff dirs), pi-foreman
+touches `.ask` and shows the session as blocked in Herdr (`herdr:blocked`, label `ask <n>: <topic>`); it never uses
+`herdr agent prompt`. The signal ends when the child writes `.seen` or the session shuts down. The parent polls the
+handoff dir for `*.md` and `.ask`; the child waits with `foreman_wait({action: "start", kind: "file", path: "<handoff dir>/ruling-<n>.md"})`.
+
+Worked example:
+
+1. The child writes `<handoff dir>/ask.md`:
+   ```
+   # Ask 1: which schema for the export?
+
+   A: flat CSV. B: nested JSON. I lean to A.
+   ```
+   pi-foreman writes `<handoff dir>/.ask` (`ask-1`) and Herdr shows `blocked`; the child starts the file wait on `ruling-1.md`.
+2. The parent sees `.ask`, reads `ask.md` and writes `<handoff dir>/ruling-1.md`: `A, flat CSV.`
+3. The wait wakes; the child reads `ruling-1.md`, writes `<handoff dir>/.seen` containing `ruling-1.md`, and continues.
+   The next question is `# Ask 2: …` answered by `ruling-2.md`.
+
 ### Child orchestrator sessions
 
 A heavy task with several phases may run as a multi-session plan: one child session per phase, each in its own worktree, opened with `foreman session open <label> <brief> --plan-first`. The parent reviews each phase before the next.
