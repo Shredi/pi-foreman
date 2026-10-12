@@ -256,7 +256,8 @@ export function foremanModelSpec(roleModel: string, sessionModel: string | undef
 
 export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>): Promise<SessionResult> {
   if (!d.python) return { text: "foreman_session.py: no usable Python (run /foreman doctor).", ok: false };
-  const model = c.model ?? sessionForemanModel(d.config, d.model) ?? d.model;
+  const explicit = c.model ?? sessionForemanModel(d.config, d.model);
+  const model = explicit ?? d.model;
   if (d.config && (model || d.model === undefined)) {
     const refused = sessionRankRefusal(d.config, d.model, model ?? "the new session's default model");
     if (refused) return { text: refused, ok: false };
@@ -264,7 +265,8 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
   const opener = openerIntercomId(d.env, d.agentDir, d.piSessionId);
   const argv = [path.join(d.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", d.agentDir, "open", c.label, path.resolve(d.cwd, c.brief), "--cwd", path.resolve(d.cwd, c.cwd ?? "."), "--parent-id", opener];
   if (d.model) argv.push("--own-model", d.model);
-  if (model) argv.push("--model", model);
+  // only an explicit choice (--model or the session-foreman mapping) sets PI_FOREMAN_SESSION_MODEL in the child; the opener's own model is just displayed
+  if (explicit) argv.push("--model", explicit);
   if (c.planFirst) argv.push("--plan-first");
   if (c.focus) argv.push("--focus");
   if (c.dryRun) argv.push("--dry-run");
