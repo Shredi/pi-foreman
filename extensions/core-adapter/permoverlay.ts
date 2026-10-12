@@ -1513,7 +1513,7 @@ function protectDecision(hit: ProtectHit, word: string, what: string): Decision 
 const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls", "foreman_move", "foreman_copy", "git_log", "git_diff_stat"]);
 
 export function isOverlayTool(toolName: string): boolean {
-  return toolName === "bash" || toolName === "powershell" || PATH_TOOLS.has(toolName);
+  return toolName === "bash" || toolName === "powershell" || toolName === "foreman_bg" || PATH_TOOLS.has(toolName);
 }
 
 /** The paths one file-tool call touches; `write` = it creates, changes or removes that path; `remove` = it removes or renames it. */
@@ -1562,7 +1562,7 @@ export function checkPathTool(rules: OverlayRules, toolName: string, input: Reco
 }
 
 export function checkToolCall(rules: OverlayRules, toolName: string, input: Record<string, unknown>, ctx: MatchCtx): Decision | null {
-  if (toolName === "bash" || toolName === "powershell") {
+  if (toolName === "bash" || toolName === "powershell" || toolName === "foreman_bg") {
     const command = typeof input.command === "string" ? input.command : "";
     return command ? checkShell(rules, command, { ...ctx, shell: toolName === "powershell" ? "powershell" : "posix" }) : null;
   }

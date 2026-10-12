@@ -78,6 +78,7 @@ export function coreToolInput(piTool: string, input: Json, pc: PayloadContext): 
   switch (piTool) {
     case "bash":
     case "powershell":
+    case "foreman_bg":
       return { command: str(input.command) };
     case "write":
       return { file_path: resolveToolPath(input.path, pc.cwd, pc.home) ?? "", content: str(input.content) };

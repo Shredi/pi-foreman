@@ -64,7 +64,7 @@ import { PrWatches, pollSnapshot } from "./prwatch.ts";
 import { registerSafeOps, runSafeOp } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
 import type { Spawner } from "./spawn.ts";
-import { mapTool } from "./toolmap.ts";
+import { FOREMAN_BG_TOOL, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
 import { appendReview, capSet, checksLine, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prGateRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
@@ -103,6 +103,7 @@ import { claimCore, emitReady, installInert, missingBundled, setupInvocation } f
 let herdrEvents: EventBus | undefined;
 import { checkLaunch, completedAgents, hasSecurityFinding, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
+import { addonPresent, formatWaits, readAddonTasks } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
@@ -1301,8 +1302,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (triage) return triage;
       }
     }
-    if (event.toolName === "bash" || event.toolName === "powershell") {
-      const shellWrite = await shellWriteBlock(ctx, event.toolName, event.input as Record<string, unknown>);
+    if (event.toolName === "bash" || event.toolName === "powershell" || event.toolName === FOREMAN_BG_TOOL) {
+      // foreman_bg is checked as a bash call: the same script, the same verdicts.
+      const shellWrite = await shellWriteBlock(ctx, event.toolName === "powershell" ? "powershell" : "bash", event.input as Record<string, unknown>);
       if (shellWrite) return shellWrite;
     }
     if (OUTWARD_TOOLS.has(event.toolName)) {
@@ -2712,7 +2714,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list",
+    description: "pi-foreman commands: /foreman doctor | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
       if (sub === "close") return close.command(args.trim().slice(sub.length), ctx);
@@ -2743,6 +2745,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         ctx.ui.notify(r.text, r.ok ? "info" : "error");
         return;
       }
+      if (sub === "waits") {
+        const s = await ensureSession(ctx);
+        const addon = addonPresent(pi.getAllTools().map((t) => t.name), { agentDir: s.agentDir, cwd: ctx.cwd });
+        ctx.ui.notify(formatWaits(s.isChild ? [] : waits.active(s.id), addon ? readAddonTasks(ctx.cwd) : []), "info");
+        return;
+      }
       if (sub === "setup") {
         const s = await ensureSession(ctx);
         const inv = setupInvocation(PKG_ROOT, args.trim().slice(sub.length), s.agentDir);
@@ -2752,7 +2760,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       if (sub !== "doctor") {
-        ctx.ui.notify("Usage: /foreman doctor | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list", "warning");
+        ctx.ui.notify("Usage: /foreman doctor | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list", "warning");
         return;
       }
       const s = await ensureSession(ctx);
@@ -2880,6 +2888,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (missing.length) out.push(`WARN idle cache keep-alive is on by default for ${ctx.model?.provider} but inactive: add ${missing.join(" and ")}, or switch it off with providers.${ctx.model?.provider}.cache.keepalive.enabled: false (docs/cache.md)`);
       else ok(`idle cache keep-alive: Pi cacheWarming idle and promptCache declared for ${ctx.model?.provider}`);
     }
+    out.push(`INFO background-tasks: ${addonPresent(pi.getAllTools().map((t) => t.name), { agentDir: s.agentDir, cwd: s.cwd }) ? "present" : "absent"}`);
     out.push(dormantDoctorLine(PKG_ROOT, s.config.config));
     return out;
   }

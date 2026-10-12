@@ -57,6 +57,9 @@
   "shellTools": {
     "powershell": {
       "commandArgument": "command"
+    },
+    "foreman_bg": {
+      "commandArgument": "command"
     }
   },
   "bash": {
