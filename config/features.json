@@ -529,7 +529,7 @@
     {
       "id": "idle-cache",
       "title": "Idle prompt-cache policy",
-      "purpose": "Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the preset carries the same values); off for request-billed providers; silent without an entry.",
+      "purpose": "Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge preset sets a 600 s byModel row and turns the keep-alive off); off for request-billed providers; silent without an entry.",
       "doc": "docs/cache.md#config",
       "keys": ["providers.<x>.cache", "providers.<x>.cache.ttlSeconds", "providers.<x>.cache.billing", "providers.<x>.cache.byModel", "providers.<x>.cache.keepalive.enabled", "providers.<x>.cache.keepalive.intervalSeconds", "providers.<x>.cache.keepalive.windowMinutes", "providers.<x>.cache.warmCompact"],
       "commands": [],

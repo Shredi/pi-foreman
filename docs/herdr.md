@@ -68,12 +68,23 @@ agents keep your default rows. Herdr allows one rows table per key: if you alrea
 `[ui.sidebar.agents.rows_by_agent]`, add the `pi = [...]` entry to it. Disable other plugins that set the Agents view
 or ship row templates for `pi`; two owners of the view replace each other's sort.
 
-Row 1 opens with Herdr's built-in `state_icon` cell (the plain string `"state_icon"`, no `$`, Herdr 0.9.3 and later). Herdr
-draws the working and idle icon itself, so the sidebar sends no per-frame spinner any more: that took a metadata call a
-second per working session. What Herdr cannot know stays ours in `$fm_sym`: `!` for a session blocked for more than
-15 minutes (`contains = "!"`, red) and `✓` for a finished one. The cell is empty otherwise. Herdr's status for a pi pane was
-only ever seen as working or unknown, so the done and blocked marks cannot come from `state_icon`. While a `foreman_wait`
-is pending Herdr's status stays working; the wait shows on line 2 (below). A nested session's tree prefix (`├─`, `└─`)
+Row 1 opens with `$fm_sym`, a static glyph of the session state; there is no spinner, no timer and no frames. The sidebar
+pushes the glyph when the state changes (and re-sends an unchanged row after 10 s only because tokens expire after the
+15 s TTL). Waiting is working: while a `foreman_wait` or `foreman_bg` is pending the state stays `working` (⏳) and
+Herdr's status stays working; the wait shows on line 2 (below).
+
+| State | Glyph in `fm_sym` |
+|---|---|
+| working, or waiting on a `foreman_wait` | ⏳ |
+| idle | ⏸ |
+| ask open (a run waits for you) | ? |
+| blocked | ✋ |
+| blocked longer than 15 minutes | `!` (red, `contains = "!"`) |
+| done | ✓ |
+| lost | ✗ |
+
+With `ui.symbols: nerd` the glyphs follow the table at the end of this page. The optional variant in the snippet puts Herdr's
+`state_icon` cell in front (set `--lead-cells`). A nested session's tree prefix (`├─`, `└─`)
 starts its `fm_l1`. The colours in the snippet are placeholders. After updating, merge the new snippet again and run
 `herdr server reload-config`; your own `config.toml` is never edited by pi-foreman.
 
@@ -84,7 +95,7 @@ every 5 s by the session or, for a pane it does not push, the daemon; values are
 
 | Token | Value |
 |---|---|
-| `fm_sym` | `✓` for a finished session, `!` when blocked longer than 15 minutes, else empty (Herdr's `state_icon` shows the state) |
+| `fm_sym` | static state glyph (⏳ ⏸ ? ✋ ✓ ✗, see Rows), `!` when blocked longer than 15 minutes |
 | `fm_l1` | tree prefix of a nested session (`├─`, `└─`), `› label`, the age or blocked timer right-aligned to the width |
 | `fm_l2` | children: glyph, role and short model per active run (`builder sonnet-5.5 ×2`; the rung is shown only when no model is, or on panels 60 columns or wider; the base rung `model` never), a finished run as `✓ role` for `radar.recentRunSeconds` (default 8) before it joins the `✓n` count; with no active run and a pending `foreman_wait`: `⏳ <note> 4m` (`+n` for more waits); else `no children`, `no active children`, `done · n children` or `lost` |
 | `fm_l3` | `↑in ↓out` of the session and its children; `in` counts uncached input only (fresh input plus cache writes, from the usage file), `↑~n` marks the raw total incl. cache reads when no usage file has the split; radar and its JSON keep the raw total. Dropped before the cost when the row is too narrow |
@@ -131,7 +142,7 @@ per key (15 s here), so each publisher owns fixed keys and omits the others.
 The push stamp is `push/<session id>.stamp` in the state folder; the daemon takes a pane over within one tick when it
 goes stale. A usage byte-offset cache (`push/<session id>.usage.json`) keeps the push short on long sessions.
 
-Spinner: removed. `ui.spinner` is deprecated, still accepted and ignored; Herdr's `state_icon` shows the working state.
+Spinner: removed. `ui.spinner` is deprecated, still accepted and ignored; `fm_sym` is a static glyph.
 
 Recent runs: a run that ended shows as `✓ role` on line 2 for `radar.recentRunSeconds` (default 8), then moves into
 the `✓n` count. Tokens: line 3 counts uncached input (see `fm_l3`); radar's TUI and JSON keep the raw totals.

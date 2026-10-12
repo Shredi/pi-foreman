@@ -107,19 +107,18 @@ touches `.ask` and shows the session as blocked in Herdr (`herdr:blocked`, label
   ruling of that ask (`ruling-<n>.md`, or `ruling.md`). Any `.seen` write (write/edit tool, or a `bash` result) and the
   session shutdown recompute it.
 - **A stale ruling is ignored.** A `ruling-<n>.md` whose mtime is older than `ask.md` does not wake the wait (it keeps waiting).
-- **A parent ruling counts as a verdict.** A `ruling.md` or `ruling-<n>.md` in the session's handoff dir whose first line is
-  `APPROVED` or `SHIP` and that is newer than the last FAIL verdict satisfies the reviewer step of the finish gate. The
-  gate then no longer refuses "requires reviewer (re-review needed: last verdict FAIL)". `/foreman close` lists what is
-  still open and what the parent would have to rule; the owner/chair override is `/ceremony <tier>`.
+- **A parent ruling never satisfies the finish gate.** A `ruling.md` or `ruling-<n>.md` (first line `APPROVED` or `SHIP`)
+  from the parent does not close the reviewer step: only a reviewer verdict does. After a FAIL the finish refusal names
+  the newer ruling and says the chair runs `/ceremony <tier>` to override; `/foreman close` lists what is still open and
+  what the parent would have to rule.
   Only handoff dirs whose `child` file names this session count (for the ask state too); a dir where this session is the
   `parent` never does. **Who may write a ruling file:** only the parent. A session's write, edit, `foreman_copy` /
   `foreman_move` destination, or `bash` / `powershell` / `foreman_bg` / `bg_run` command that names `ruling*.md` in a dir
   where it is the child is refused up front ("a session cannot write its own parent's ruling"); a shell command is
   refused unless it is a pure read (`cat`, `head`, `ls`, `grep`, `wc`, `stat`), also when it only mentions such a dir
   next to a glob, variable or `cd`. Writing `ruling*.md` into a dir where it is the parent (answering its child) stays
-  allowed. As defence in depth, a ruling file this session still changed is
-  ignored until the parent writes it again (a newer mtime). A FAIL without a recorded timestamp is
-  overridden by no ruling. Self-written marks live in memory: after a restart use `/ceremony <tier>`.
+  allowed. This refusal is defence in depth, since a ruling cannot satisfy the gate anyway; a ruling file this session
+  still changed is ignored until the parent writes it again (a newer mtime). Self-written marks live in memory.
 - **`bg_wait` during a builder's supervisor ask.** pi-foreman does not refuse it (`bg_wait` is exempt from the supervisor window).
   The pi-subagents package (node_modules, not editable here) ends the wait with "Wait yielded for a pending supervisor
   request"; background work continues, so answer with `subagent_supervisor` and call `bg_wait` again.

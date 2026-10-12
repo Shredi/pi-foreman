@@ -6,7 +6,7 @@
 
 ## Config
 
-Built-in values exist for `claude-bridge` (`ttlSeconds` 300, `billing` `token`) and `github-copilot` (`ttlSeconds` null, `billing` `request`). A key set in the config wins over the built-in value. `config/foreman.defaults.json` stays `providers: {}`; the built-in table lives in code. Keep-alive is on by default for `claude-bridge` through these built-in provider defaults; the `claude-bridge` preset carries the same values explicitly. It is off for request-billed providers (`github-copilot`) and silent for providers without any cache entry.
+Built-in values exist for `claude-bridge` (`ttlSeconds` 300, `billing` `token`) and `github-copilot` (`ttlSeconds` null, `billing` `request`). A key set in the config wins over the built-in value. `config/foreman.defaults.json` stays `providers: {}`; the built-in table lives in code. Keep-alive is on by default for `claude-bridge` through these built-in provider defaults; the `claude-bridge` preset sets ttl 300 with a `byModel` row of 600 s for `claude-*` and switches the keep-alive off (`keepalive.enabled: false`). It is off for request-billed providers (`github-copilot`) and silent for providers without any cache entry.
 
 | key | default | meaning |
 |---|---|---|
@@ -67,7 +67,7 @@ Keep-alive spends tokens: every tick reads the whole prefix from the cache.
 - Sample (computed, not measured): a 100k-token prefix at $1 per million cache-read tokens (the Anthropic rate in Pi's bundled model registry at the time of writing; check your own model) is about $0.10 per keep-alive.
 - Per window: (effective window / tick) keep-alives. With the 30 minute cap and a 270 s tick that is about 6, so about $0.60 per idle window for that prefix. Compare it with the cold prompt a resume pays once the cache has expired.
 - Where it shows: the footer excludes keep-alive from the per-turn cost; `/foreman cost` has its own `keep-alive: N call(s), $x` line; `foreman retro` prints `cache: keepalives N ($x), warm compactions M, cold resumes K` (cold resumes are approximate, see [retro](retro.md)).
-- **Switch it off:** `providers.claude-bridge.cache.keepalive.enabled: false` in the user or overlay config. A project or session may only tighten (`false`, or a lower `windowMinutes`). It is on by default for `claude-bridge` through the built-in provider defaults.
+- **Switch it off:** `providers.claude-bridge.cache.keepalive.enabled: false` in the user or overlay config. A project or session may only tighten (`false`, or a lower `windowMinutes`). It is on by default for `claude-bridge` through the built-in provider defaults; applying the `claude-bridge` preset turns it off.
 - **Real cost.** The sample above is computed, not measured; the keep-alive usage line and the retro `cache:` line record the real per-session cost.
 - **Privacy.** The hidden request sends the same context to the same provider as the last real request. Nothing new leaves the machine.
 
