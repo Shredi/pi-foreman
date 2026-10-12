@@ -100,6 +100,24 @@ class CrossWorkspaceChildRowTest(unittest.TestCase):
         self.assertIn("› round-x", out["w7:p2"]["fm_l1"] or "")
         self.assertEqual(out["w7:p2"]["fm_state"], "working")
 
+    def test_finished_session_does_not_join_pi_pane_when_live_child_has_no_pane_or_pid(self):
+        # the live child has neither a pane id nor a Herdr pid (proc=None, kidpane=None): the finished session's presence
+        # still names the reused pane id, and the pane has no agent_session naming that session, so it stays unjoined
+        snap, agents = self._stale_setup(None)
+        joins = sidebar.join(snap["roots"], agents)
+        old = [n for n in sidebar.walk(snap["roots"]) if n.get("sid") == "s-old"][0]
+        kid = [n for n in sidebar.walk(snap["roots"]) if n.get("sid") == "s-kid"][0]
+        self.assertNotIn(old["key"], joins)
+        self.assertEqual(joins.get(kid["key"]), "w7:p2")
+        self.assertEqual(sidebar.compose(snap, WIDTH, joins)["w7:p2"]["fm_state"], "working")
+        # a pane whose agent_session names the finished session is its own and joins
+        agents[1]["agent_session"] = "/agents/pi/s-old.jsonl"
+        joins = sidebar.join(snap["roots"], agents)
+        self.assertEqual(joins.get(old["key"]), "w7:p2")
+        # a pane naming a different live session never takes it
+        agents[1]["agent_session"] = "/agents/pi/s-kid.jsonl"
+        self.assertNotIn(old["key"], sidebar.join(snap["roots"], agents))
+
 
 if __name__ == "__main__":
     unittest.main()

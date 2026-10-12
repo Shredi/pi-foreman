@@ -417,11 +417,25 @@ def join(nodes, agents, procinfo=None):
     in the same folder would show its tokens. Herdr reuses pane ids, so a finished,
     stale or lost session's presence file may name a pane a live session now
     owns: the live sessions join first (paneId, then pid), the others only take
-    a pane no live session claimed."""
+    a pane no live session claimed. Even then a finished, stale or lost session
+    joins a pi pane only when Herdr's `agent_session` names that session: a pi pane
+    with another (or no) agent_session may be a live child whose presence has no
+    pane id yet, so the pane stays unjoined rather than show a finished row."""
     procinfo = procinfo or {}
     sessions = [n for n in walk(nodes) if n.get("kind") == "session"]
     joins, claimed = {}, set()
     live = {a.get("pane_id") for a in agents or [] if a.get("pane_id")}
+    by_pane = {a.get("pane_id"): a for a in agents or [] if a.get("pane_id")}
+
+    def may_join(n, pane):
+        if n.get("state") not in NOT_SELF_STATES:
+            return True
+        a = by_pane.get(pane) or {}
+        if a.get("agent") != "pi":
+            return True
+        sid = n.get("sid")
+        return bool(sid) and sid in (a.get("agent_session") or "")
+
     by_pid = {}
     for pane, pid in procinfo.items():
         if pid is not None:
@@ -430,14 +444,14 @@ def join(nodes, agents, procinfo=None):
                   [n for n in sessions if n.get("state") in NOT_SELF_STATES]):
         taken = set(claimed)
         for n in group:
-            if n.get("paneId") and n["paneId"] in live and n["paneId"] not in taken:
+            if n.get("paneId") and n["paneId"] in live and n["paneId"] not in taken and may_join(n, n["paneId"]):
                 joins[n["key"]] = n["paneId"]
                 claimed.add(n["paneId"])
         for n in group:
             if n["key"] in joins or n.get("pid") is None:
                 continue
             pane = by_pid.get(int(n["pid"]))
-            if pane and pane not in claimed:
+            if pane and pane not in claimed and may_join(n, pane):
                 joins[n["key"]] = pane
                 claimed.add(pane)
     pi_panes = [a for a in agents or [] if a.get("agent") == "pi" and a.get("pane_id")]
