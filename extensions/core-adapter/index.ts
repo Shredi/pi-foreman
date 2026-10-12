@@ -22,7 +22,7 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, withParentRuling, type ReviewGate } from "./bound.ts";
-import { isRulingName, rulingNeeded, SelfRulings, snapshotRulings } from "./ruling.ts";
+import { isRulingName, rulingNeeded, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -1316,6 +1316,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (ps && !ps.isChild && ps.activeRuns.size > 0) ps.pollBash++;
       if (ps && !ps.isChild) bashRulingSnaps.set(event.toolCallId, snapshotRulings(childDirsOf(ps)));
       if (ps && !ps.isChild && mentionsLedger((event.input as { command?: unknown }).command)) ps.ledgerBash.add(event.toolCallId);
+    }
+    // A session never writes a ruling file in a handoff dir where it is the child (ruling.ts selfRulingRefusal).
+    {
+      const rs = sessionFor(ctx);
+      const why = rs && selfRulingRefusal(event.toolName, event.input as Record<string, unknown>, ctx.cwd, childDirsOf(rs));
+      if (why) {
+        rs.trace?.emit({ event: "guard", guard: "self_ruling", toolFamily: event.toolName, decision: "blocked", reason: "self_ruling" });
+        return { block: true, reason: `pi-foreman: ${why}.` };
+      }
     }
     // Role tool denial (roledeny.ts): a child's tool matching roles.<role>.denyTools is denied, never asked.
     if (process.env.PI_SUBAGENT_CHILD === "1") {

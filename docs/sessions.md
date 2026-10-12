@@ -112,8 +112,13 @@ touches `.ask` and shows the session as blocked in Herdr (`herdr:blocked`, label
   gate then no longer refuses "requires reviewer (re-review needed: last verdict FAIL)". `/foreman close` lists what is
   still open and what the parent would have to rule; the owner/chair override is `/ceremony <tier>`.
   Only handoff dirs whose `child` file names this session count (for the ask state too); a dir where this session is the
-  `parent` never does. A ruling file this session wrote itself (write/edit, or a shell command that changed it) is
-  ignored until the parent writes it again (a newer mtime); it is not refused. A FAIL without a recorded timestamp is
+  `parent` never does. **Who may write a ruling file:** only the parent. A session's write, edit, `foreman_copy` /
+  `foreman_move` destination, or `bash` / `powershell` / `foreman_bg` / `bg_run` command that names `ruling*.md` in a dir
+  where it is the child is refused up front ("a session cannot write its own parent's ruling"); a shell command is
+  refused unless it is a pure read (`cat`, `head`, `ls`, `grep`, `wc`, `stat`), also when it only mentions such a dir
+  next to a glob, variable or `cd`. Writing `ruling*.md` into a dir where it is the parent (answering its child) stays
+  allowed. As defence in depth, a ruling file this session still changed is
+  ignored until the parent writes it again (a newer mtime). A FAIL without a recorded timestamp is
   overridden by no ruling. Self-written marks live in memory: after a restart use `/ceremony <tier>`.
 - **`bg_wait` during a builder's supervisor ask.** pi-foreman does not refuse it (`bg_wait` is exempt from the supervisor window).
   The pi-subagents package (node_modules, not editable here) ends the wait with "Wait yielded for a pending supervisor

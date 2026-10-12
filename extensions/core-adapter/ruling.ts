@@ -123,6 +123,57 @@ export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulin
   return null;
 }
 
+/** The refusal reason when a session writes a ruling file in a dir where it is the child. */
+export const SELF_RULING_REASON = "a session cannot write its own parent's ruling";
+
+const REF_READ_VERBS = new Set(["cat", "head", "tail", "ls", "grep", "egrep", "fgrep", "rg", "wc", "stat", "file", "nl", "realpath"]);
+
+/** A command that only reads with a plain viewer verb (no redirect, background job, substitution, output option). */
+function pureRead(command: string): boolean {
+  if (/[`>&]|\$\(|<\(|\$\{/.test(command)) return false;
+  const parts = command.split(/&&|\|\||;|\||\n/).map((p) => p.trim()).filter(Boolean);
+  return parts.length > 0 && parts.every((p) => {
+    const w = p.split(/\s+/);
+    return REF_READ_VERBS.has(w[0]) && !w.some((x) => /^--?o(utput)?\b/.test(x));
+  });
+}
+
+const unquote = (w: string): string => w.replace(/^['"]+|['"]+$/g, "");
+const realDir = (d: string): string => path.dirname(realKey(path.join(d, "x")));
+
+/**
+ * Refusal reason when `toolName` would write a `ruling*.md` inside one of `childDirs` (the dirs where this session is
+ * the child), else undefined. write/edit `path`, foreman_copy/foreman_move `dst`; shell-like tools fail closed: any word
+ * naming such a file (or a ruling name next to a mention of a child dir) is refused unless the command is a pure read.
+ */
+export function selfRulingRefusal(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[]): string | undefined {
+  if (childDirs.length === 0) return undefined;
+  const dirs = new Set(childDirs.map(realDir));
+  const inChild = (p: string): boolean => isRulingName(path.basename(p)) && dirs.has(path.dirname(realKey(path.resolve(cwd, p))));
+  const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
+  if (toolName === "write" || toolName === "edit") {
+    const p = str(input.path);
+    return p && inChild(p) ? SELF_RULING_REASON : undefined;
+  }
+  if (toolName === "foreman_copy" || toolName === "foreman_move") {
+    const p = str(input.dst);
+    return p && inChild(p) ? SELF_RULING_REASON : undefined;
+  }
+  if (toolName === "bash" || toolName === "powershell" || toolName === "foreman_bg" || toolName === "bg_run") {
+    const cmd = str(input.command);
+    if (!cmd || pureRead(cmd)) return undefined;
+    const words = cmd.split(/[\s;&|<>()]+/).filter(Boolean).map(unquote);
+    const named = words.filter((w) => /ruling/.test(w));
+    const dynamic = words.some((w) => /[*?[$]/.test(w));
+    const mentionsDir = [...childDirs, ...dirs].some((d) => cmd.includes(d));
+    const moves = /\b(cd|pushd|Set-Location)\b/.test(cmd); // a relative word may not mean the file it seems to
+    if (named.some(inChild)) return SELF_RULING_REASON;
+    if (named.length > 0 && (mentionsDir || moves || dynamic)) return SELF_RULING_REASON;
+    return dynamic && (mentionsDir || moves) ? SELF_RULING_REASON : undefined;
+  }
+  return undefined;
+}
+
 /** What `/foreman close` adds when the ceremony is incomplete: what the parent would have to rule. */
 export function rulingNeeded(missing: string[]): string {
   return missing.length === 0
