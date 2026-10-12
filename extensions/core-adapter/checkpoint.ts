@@ -1,7 +1,8 @@
 // Plan checkpoint (heavy tier): the owner approves a plan file before any builder launches.
 // `foreman_checkpoint(path)` records the latest checkpoint of the session (in memory, like the
 // review verdicts); a builder launch at tier heavy is refused unless that record is approved and
-// the file still hashes the same. The hash is sha256 over the bytes the harness reads itself; the
+// the file still hashes the same. The hash is the plan VERSION (planVersionHash: sha256 of the body
+// above any ruling/decision-log/addendum appendix) over the bytes the harness reads itself; the
 // model never supplies one. Same bytes after a delete and re-create = same hash = still approved.
 //
 // Path rules (the edit mode's own helpers): inside the foreman's workspace, directly in the real
@@ -43,6 +44,7 @@ export interface PlanFile {
   /** Workspace-relative path, `/`-separated (for messages). */
   rel: string;
   bytes: Buffer;
+  /** Version hash (planVersionHash): the body above any appendix. */
   hash: string;
 }
 
@@ -57,6 +59,41 @@ const fold = (platform: string) => (platform === "win32" || platform === "darwin
 
 export function sha256(bytes: Buffer): string {
   return crypto.createHash("sha256").update(bytes).digest("hex");
+}
+
+/** Headings (exact line, trailing whitespace ignored) from which a plan file is appendix: rulings, not the reviewed plan. */
+const APPENDIX_LINES = new Set(["## Ruling", "## Rulings", "## Parent ruling", "## Decision log", "<!-- plan-appendix -->"]);
+const APPENDIX_PREFIX = "## Addendum";
+
+/** Start offset of the first appendix line in `text`, or -1 (no appendix). `text` must keep one char per byte (latin1) when used for offsets. */
+function appendixOffset(text: string): number {
+  let at = 0;
+  for (const line of text.split(/(?<=\n)/)) {
+    const l = line.replace(/\s+$/, "");
+    if (APPENDIX_LINES.has(l) || l.startsWith(APPENDIX_PREFIX)) return at;
+    at += line.length;
+  }
+  return -1;
+}
+
+/**
+ * The plan body: the bytes before the first appendix line. With an appendix, trailing whitespace of the
+ * body is normalised to one newline, so appending `\n## Ruling ...` to a file that ended in a newline keeps
+ * the body (and so the version) unchanged. With no appendix the body is the whole file.
+ */
+export function planBody(bytes: Buffer): Buffer {
+  const at = appendixOffset(bytes.toString("latin1"));
+  if (at < 0) return bytes;
+  return Buffer.from(bytes.subarray(0, at).toString("latin1").replace(/\s+$/, "") + "\n", "latin1");
+}
+
+/**
+ * Version hash of a plan: sha256 of the body (planBody). Rulings, decision logs and addenda appended below
+ * an appendix heading are outside review and approval; a body edit is a new version. Equals sha256(bytes)
+ * when the file has no appendix.
+ */
+export function planVersionHash(bytes: Buffer): string {
+  return sha256(planBody(bytes));
 }
 
 function refused(why: string, scratchDir: string): { error: string } {
@@ -99,7 +136,7 @@ export function readPlan(raw: unknown, o: PlanOpts): { plan: PlanFile } | { erro
     const bytes = fs.readFileSync(fd);
     if (bytes.length > PLAN_MAX_BYTES) return refused("the file is larger than 256 KiB", o.scratchDir);
     const rel = path.relative(realRoot, real).split(path.sep).join("/");
-    return { plan: { topic: m[1], path: real, rel, bytes, hash: sha256(bytes) } };
+    return { plan: { topic: m[1], path: real, rel, bytes, hash: planVersionHash(bytes) } };
   } catch {
     return refused("the file cannot be read", o.scratchDir);
   } finally {
@@ -175,7 +212,9 @@ const clean = (s: string): string => s.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, ""
 
 /** What the owner sees before the dialog: title, Goal's first lines, section headings, path, hash prefix (at most 12 lines). */
 export function planSummary(text: string, rel: string, hash: string): string {
-  const lines = text.split(/\r?\n/);
+  const all = text.split(/\r?\n/);
+  const cut = all.findIndex((l) => APPENDIX_LINES.has(l.replace(/\s+$/, "")) || l.startsWith(APPENDIX_PREFIX));
+  const lines = cut < 0 ? all : all.slice(0, cut);
   const heading = /^(#{1,6})\s+(.*)$/;
   const title = lines.map((l) => heading.exec(l)).find((h) => h && h[1] === "#")?.[2] ?? lines.find((l) => l.trim()) ?? "(untitled)";
   const sections = lines.map((l) => heading.exec(l)).filter((h): h is RegExpExecArray => !!h && h[1].length > 1).map((h) => clean(h[2]));
@@ -188,6 +227,6 @@ export function planSummary(text: string, rel: string, hash: string): string {
       if (goal.length === 4) break;
     }
   }
-  const out = [`Plan: ${clean(title)}`, ...goal.map((g, i) => (i === 0 ? `Goal: ${g}` : `  ${g}`)), `Sections: ${sections.join(" · ").slice(0, 200) || "(none)"}`, `File: ${rel}`, `sha256: ${hash.slice(0, 12)}`];
+  const out = [`Plan: ${clean(title)}`, ...goal.map((g, i) => (i === 0 ? `Goal: ${g}` : `  ${g}`)), `Sections: ${sections.join(" · ").slice(0, 200) || "(none)"}`, ...(cut < 0 ? [] : [`Appendix: from "${clean(all[cut])}" (outside review and approval)`]), `File: ${rel}`, `sha256: ${hash.slice(0, 12)}`];
   return out.slice(0, 12).join("\n");
 }

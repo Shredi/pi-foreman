@@ -1,7 +1,10 @@
 // Plan review ceremony (ceremony.planReview, docs/ceremony.md): at a tier where it is on, the plan
 // checkpoint opens only after a primary `[plan-review]` verdict exists for the current plan bytes
-// (sha1 of the file, taken when the review run ends and again when foreman_checkpoint is called).
-// An edit changes the hash, so the earlier verdict no longer counts. A FAIL sends the plan back to
+// (the plan VERSION hash, checkpoint.ts planVersionHash: sha256 of the body above any ruling /
+// decision-log / addendum appendix; taken when the review run ends and again when foreman_checkpoint
+// is called). A body edit is a new version, so the earlier verdict no longer counts; an appended
+// ruling is not and needs no new review.
+// `planReviewHash` (sha1 of the whole file) is kept for callers that want the byte hash. A FAIL sends the plan back to
 // the planner once (`plan_revision_required`); after the revised plan (a new hash) is reviewed again,
 // the checkpoint opens whatever that verdict says, and the owner sees it in the dialog. The lineage
 // is the real plan path, in memory for the session: a new plan path starts a new one.
@@ -60,10 +63,10 @@ export function planPathsOf(files: readonly string[], scratchDir: string): strin
 export class PlanReviews {
   private readonly byPath = new Map<string, { latest: PlanVerdict; rounds: number }>();
 
-  /** Each recorded verdict is one round of the plan's lineage (a revision keeps the count). */
+  /** Each recorded verdict of a new plan VERSION is one round of the plan's lineage (a revision keeps the count; a repeat review of the same version does not add one). */
   record(planPath: string, v: PlanVerdict): void {
     const l = this.byPath.get(planPath);
-    this.byPath.set(planPath, { latest: v, rounds: (l?.rounds ?? 0) + 1 });
+    this.byPath.set(planPath, { latest: v, rounds: (l?.rounds ?? 0) + (l && l.latest.hash === v.hash ? 0 : 1) });
   }
 
   /**

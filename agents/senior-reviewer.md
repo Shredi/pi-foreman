@@ -20,7 +20,7 @@ You are the senior reviewer. You are asked for a plan review or a security revie
 The first line of the final report is `VERDICT: PASS` (approve) or `VERDICT: FAIL` (block), the same as item 1.
 Return exactly:
 1. Verdict: APPROVE or BLOCK.
-2. Blockers: each with the reason and the evidence (`path:line` or plan section). Write "none" if there is none.
+2. Blockers: each with the reason and the evidence (`path:line` or plan section). Write "none" if there is none. Start the line of every security finding (injection, path traversal, authorization or secret handling) with `SECURITY:`; the harness exempts the builder revision that answers it from the revision cap.
 3. Non-blocking advice: at most five short points.
 4. Confidence: high, medium or low, with one sentence of reason.
 5. Missing: <file | allow rule | brief detail | none> — what you lacked for this task, one line.
