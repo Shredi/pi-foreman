@@ -22,8 +22,8 @@ printed (POSIX `env A=B pi ...` or PowerShell `$env:A='B'; pi ...`, both with --
 the session is recorded as `pending`. After a Herdr open the child pane gets the display-only group tag
 `report-metadata <pane> --source user:pi-foreman --display-agent "<parent-slug> › <child-slug>"`
 (best effort, skipped when `herdr.groupTag` is false in L1 -> L3 -> L2); the child gets
-PI_FOREMAN_PARENT_LABEL=<parent-slug> so its Pi refreshes the tag. --dry-run writes the handoff dir and prints; no Herdr call,
-no registry entry.
+PI_FOREMAN_PARENT_LABEL=<parent-slug> so its Pi refreshes the tag. --dry-run writes nothing and prints the handoff dir,
+child id and command; no Herdr call, no registry entry.
 
 Agent dir: --agent-dir, else PI_CODING_AGENT_DIR, else ~/.pi/agent. Parent id: --parent-id, else
 PI_INTERCOM_STABLE_ID, else `stableId` of <agent dir>/intercom/config.json (pi-intercom 0.17.0's
@@ -336,10 +336,6 @@ def cmd_open(a):
     if handoff.exists():  # a second open of the same label within one second
         handoff = handoff.with_name("%s-%s" % (handoff.name, child[-6:]))
     check_path_text(handoff, "the handoff dir")
-    handoff.mkdir(parents=True, exist_ok=False)
-    (handoff / "brief.md").write_text(text.rstrip("\n") + "\n" + footer(a.label, a.plan_first), "utf-8")
-    (handoff / "parent").write_text(parent + "\n", "utf-8")
-    (handoff / "child").write_text(child + "\n", "utf-8")
     top = git_top(cwd)
     ws_label = (top or cwd).name
     here = Path.cwd()  # the opener runs this command from its own cwd; the child may live elsewhere (--cwd)
@@ -350,12 +346,18 @@ def cmd_open(a):
     binary = herdr_bin() if os.environ.get("HERDR_PANE_ID") else None
     print("handoff: %s" % handoff)
     print("child intercom id: %s" % child)
-    if a.dry_run:
+    if a.dry_run:  # writes nothing: no handoff dir, brief, parent, child or registry entry
+        if a.model:
+            print("session model: %s" % a.model)
         if binary:
             print("dry run: would open a tab %r in the Herdr workspace %r and run:\n  %s" % (a.label, ws_label, command))
         else:
             print("dry run: " + fallback_text(env, a.model, prompt, cwd, sys.platform, a.print_all))
         return 0
+    handoff.mkdir(parents=True, exist_ok=False)
+    (handoff / "brief.md").write_text(text.rstrip("\n") + "\n" + footer(a.label, a.plan_first), "utf-8")
+    (handoff / "parent").write_text(parent + "\n", "utf-8")
+    (handoff / "child").write_text(child + "\n", "utf-8")
     entry = {"label": a.label, "child": child, "parent": parent, "handoff": str(handoff), "cwd": str(cwd),
              "opened": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": "pending", "last": None}
     code = 0

@@ -184,23 +184,33 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(("PowerShell" in out or "$env:" in out), sys.platform == "win32")
 
-    def test_dry_run_writes_the_handoff_only(self):
+    def test_dry_run_writes_nothing(self):
         code, out, err = self.run_main(*self.open_args("--dry-run"))
         self.assertEqual(code, 0, err)
         self.assertIn("dry run: would open a tab 'demo' in the Herdr workspace 'proj'", out)
         self.assertEqual(self.calls(), [])
-        self.assertFalse((self.agent / "pi-foreman" / "state" / "sessions.json").exists())
-        dirs = list((self.agent / "pi-foreman" / "handoffs").iterdir())
-        self.assertEqual(len(dirs), 1)
-        self.assertTrue((dirs[0] / "brief.md").is_file())
+        self.assertFalse((self.agent / "pi-foreman").exists())
 
     def test_dry_run_prints_the_requested_model_in_the_command(self):
         code, out, err = self.run_main(*self.open_args("--dry-run", "--print-all", "--model", "prov/model-2"))
         self.assertEqual(code, 0, err)
         self.assertIn("--model prov/model-2", out)
 
+    def test_dry_run_leaves_the_handoffs_dir_and_agent_dir_unchanged(self):
+        handoffs = self.agent / "pi-foreman" / "handoffs"
+        handoffs.mkdir(parents=True)
+        (handoffs / "20260101-000000-old").mkdir()
+        tree = sorted(str(p.relative_to(self.agent)) for p in self.agent.rglob("*"))
+        code, out, err = self.run_main(*self.open_args("--dry-run", "--model", "prov/model-3"))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sorted(p.name for p in handoffs.iterdir()), ["20260101-000000-old"])
+        self.assertEqual(sorted(str(p.relative_to(self.agent)) for p in self.agent.rglob("*")), tree)
+        self.assertIn("handoff: ", out)
+        self.assertIn("child intercom id: fm-demo-", out)
+        self.assertEqual(self.calls(), [])
+
     def test_footer_contract_and_no_home_path(self):
-        code, _, _ = self.run_main(*self.open_args("--plan-first", "--dry-run"))
+        code, _, _ = self.run_main(*self.open_args("--plan-first"))
         self.assertEqual(code, 0)
         brief = next((self.agent / "pi-foreman" / "handoffs").iterdir()) / "brief.md"
         text = brief.read_text("utf-8")

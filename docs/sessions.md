@@ -12,8 +12,9 @@ again. All four subcommands are yours to type; a subagent child refuses every on
 - `/foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--focus] [--dry-run]`
   writes a handoff dir (below), starts `pi` in a new Herdr tab (or prints the command to run in a terminal)
   and records the session. The label is 1 to 40 characters of `A-Z a-z 0-9 . _ -`. `--plan-first` makes the
-  brief ask for a `plan.md` and a stop before any work; `--focus` focuses the new tab; `--dry-run` writes the
-  handoff dir and prints what it would run, with no Herdr call and no registry entry.
+  brief ask for a `plan.md` and a stop before any work; `--focus` focuses the new tab; `--dry-run` writes nothing
+  (no handoff dir, brief, parent, child or registry entry) and prints the handoff path, the child id, the session
+  model (`session model: <id>`, when `--model` is given) and the command it would run; no Herdr call.
   Example: `/foreman session open docs ./brief-docs.md --cwd ../site --model anthropic/claude-sonnet-4-5 --plan-first`
 - `/foreman session brief <target> <file|text…>` sends a brief to a session. A single word naming an existing
   file is sent as `Brief from <your id>: read <absolute path> and act on it`; anything else is sent as typed.

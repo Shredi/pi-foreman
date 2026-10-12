@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- R3b point 5: `foreman session open --dry-run` writes nothing (no handoff dir, brief, parent, child or registry entry); it prints the would-be handoff path, child id and command. Regression test.
 - radar: a child session known only from its handoff dir (no registry entry yet) crashed `build()` with a NameError; the sidebar then showed no `fm_*` tokens and a blank tree row. Regression test.
 
 ### Added
