@@ -20,6 +20,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { verdictOf, REVIEW_ROLES, type Verdict } from "./rounds.ts";
 import { parentApproval } from "./ruling.ts";
+import type { SelfRulings } from "./ruling.ts";
 
 export interface TrivialBound {
   files: number;
@@ -257,9 +258,9 @@ export interface ReviewGate {
 }
 
 /** The gate with a parent ruling (APPROVED / SHIP, newer than the last FAIL) counted as the verdict. */
-export function withParentRuling(g: ReviewGate, handoffDirs: string[]): ReviewGate {
-  if (g.last !== "fail") return g;
-  return parentApproval(handoffDirs, g.failAt ?? 0) ? { last: "pass", revised: false } : g;
+export function withParentRuling(g: ReviewGate, handoffDirs: string[], self?: SelfRulings): ReviewGate {
+  if (g.last !== "fail" || g.failAt === undefined) return g; // a FAIL without a timestamp is overridden by no ruling
+  return parentApproval(handoffDirs, g.failAt, self) ? { last: "pass", revised: false } : g;
 }
 
 export function reviewGateMode(v: unknown): ReviewGateMode {

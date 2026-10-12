@@ -12,7 +12,7 @@ import type { Json, MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
 import { buildOverlayRules, checkToolCall, isOverlayTool, isSelfHost,OVERLAY_UNAVAILABLE, readBaseline, resolveDecision } from "./permoverlay.ts";
 import type { OverlayRules } from "./permoverlay.ts";
-import { ownedRoots, ownHandoffDirs, resolveNpmRoot, underOwned } from "./owned.ts";
+import { childHandoffDirs, ownedRoots, ownHandoffDirs, resolveNpmRoot, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
 import { permFileState, PS_CHILD_ID, PS_PACKAGE, psGlobalConfigPath, psProjectConfigPath, renderPermissions, resolvePermissionSystem } from "./permsys.ts";
@@ -22,7 +22,7 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, withParentRuling, type ReviewGate } from "./bound.ts";
-import { rulingNeeded } from "./ruling.ts";
+import { isRulingName, rulingNeeded, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -331,14 +331,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const review = new ForemanReview();
   const reviewFacts = new ReviewFacts();
   const usageFooter = new UsageFooter(loadPrices(PKG_ROOT));
-  /** The summed estimate (lane 3b): the foreman's own list-price cost plus every run's priced cost. */
+  /** Priced run cost per usage file, cached by size and mtime (the widget keeps only 64 rows and loses its total on restart). */
+  const runsCostCache = new Map<string, { sig: string; runs: number }>();
+  /** The summed estimate (lane 3b): the foreman's own list-price cost plus every run's priced cost, read from the session's usage file. */
   function summedCost(s: Session): { foreman: number; runs: number; total: number } {
     const foreman = usageFooter.totalsOf(s.id)?.cost ?? 0;
     let runs = 0;
     try {
-      runs = s.widget.runs.views().reduce((a, r) => a + r.cost, 0);
+      const st = fs.statSync(s.usage.file);
+      const sig = `${st.size}:${st.mtimeMs}`;
+      const hit = runsCostCache.get(s.usage.file);
+      if (hit && hit.sig === sig) runs = hit.runs;
+      else {
+        const lines = readUsage(s.agentDir, { session: s.usage.line.foremanSession }).filter((l) => l.kind !== "foreman");
+        runs = aggregate(lines, loadPrices(PKG_ROOT)).total.cost.total;
+        runsCostCache.set(s.usage.file, { sig, runs });
+      }
     } catch {
-      // runs are best effort
+      // no usage file yet: no run cost
     }
     return { foreman, runs, total: foreman + runs };
   }
@@ -1304,6 +1314,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (event.toolName === "bash") {
       const ps = sessionFor(ctx);
       if (ps && !ps.isChild && ps.activeRuns.size > 0) ps.pollBash++;
+      if (ps && !ps.isChild) bashRulingSnaps.set(event.toolCallId, snapshotRulings(childDirsOf(ps)));
       if (ps && !ps.isChild && mentionsLedger((event.input as { command?: unknown }).command)) ps.ledgerBash.add(event.toolCallId);
     }
     // Role tool denial (roledeny.ts): a child's tool matching roles.<role>.denyTools is denied, never asked.
@@ -1386,6 +1397,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (blocked) return { block: true, reason: blocked };
       let notices: string[] = [];
       let budgetNotes: string[] = [];
+      // Counted and warned only once the launch passed every check (set at the end of the guard path).
+      let pendingReviews = 0;
+      let pendingWarn: Record<string, unknown> | null = null;
       let rounds: LaunchRounds | undefined;
       let kind: LaunchKind | undefined;
       let climbs: Climb[] = [];
@@ -1436,7 +1450,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (!s.isChild && actionOf(input) === null) occasions = entryOccasions(input);
         // Review panel (panel.ts): a `[panel-shadow:<model>]` launch binds to a pending panel and gets the primary's task, or is refused.
         const foremanAt = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null;
-        shadow = shadowLaunch(input, s.panels.views(), { config: s.config.config, isChild: s.isChild, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: (m) => rankRefusal(s.config.config, foremanAt, m)?.message ?? null });
+        shadow = shadowLaunch(input, s.panels.views(), { config: s.config.config, isChild: s.isChild, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: (m) => rankRefusalFor(s.config.config, foremanAt, m, ["reviewer"])?.message ?? null });
         if (shadow.kind === "refused") {
           s.trace?.emit(shadow.trace);
           return { block: true, reason: shadow.message };
@@ -1462,9 +1476,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return { block: true, reason: bd.text };
           }
           if (bd?.kind === "warn") {
-            s.budgetWarned = true;
             budgetNotes = [bd.text];
-            s.trace?.emit({ event: "budget_warn", cost: Math.round(cost.total * 10000) / 10000, limit: budgetCap(get(s.config.config, "ceremony.budgetUsd")) });
+            pendingWarn = { event: "budget_warn", cost: Math.round(cost.total * 10000) / 10000, limit: budgetCap(get(s.config.config, "ceremony.budgetUsd")) };
           }
           const reviewCount = launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)).length;
           const cap = reviewRunsCap(get(s.config.config, "ceremony.reviewRuns"));
@@ -1474,7 +1487,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return { block: true, reason: rc.text };
           }
           if (s.failItems.length > 0) for (const [e, occ] of occasions) if (occ === "item" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependReReview(e.task, s.failItems);
-          s.reviewCount += reviewCount;
+          pendingReviews = reviewCount;
         }
         // D3/D4: builder runs after a review of built work are revision rounds: every step of a
         // tasks/chain call, and a resume of a builder run (its model stays, so never a strong
@@ -1631,6 +1644,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
       }
       // Kept for the tool result only once the launch passed every check.
+      s.reviewCount += pendingReviews;
+      if (pendingWarn) {
+        s.budgetWarned = true;
+        s.trace?.emit(pendingWarn);
+      }
       if (notices.length + budgetNotes.length > 0) s.launchNotices.set(event.toolCallId, [...notices, ...budgetNotes]);
       if (rounds) {
         s.rounds = rounds.next;
@@ -1955,11 +1973,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function askContractFor(s: Session): AskContract {
     let c = asks.get(s.id);
     if (!c) {
-      c = new AskContract({ ownDirs: () => ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), block: (label) => blockedShim.own(label) });
+      c = new AskContract({ ownDirs: () => childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), block: (label) => blockedShim.own(label) });
       asks.set(s.id, c);
     }
     return c;
   }
+
+  /** Rulings this session wrote itself (ruling.ts SelfRulings): never a parent verdict. */
+  const selfRulings = new Map<string, SelfRulings>();
+  const selfRulingsFor = (s: Session): SelfRulings => {
+    let r = selfRulings.get(s.id);
+    if (!r) selfRulings.set(s.id, (r = new SelfRulings()));
+    return r;
+  };
+  /** The handoff dirs where this session is the child: the only ones the ask state and the parent-ruling gate read. */
+  const childDirsOf = (s: Session): string[] => childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id));
+  const bashRulingSnaps = new Map<string, Map<string, number>>();
 
   /** One of this session's own handoff dirs (owned.ts ownHandoffDirs) holds a plan.md or result.md written in the last day (a round is waiting on its parent). */
   function handoffContext(s: Session): boolean {
@@ -2060,7 +2089,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit")) {
       const given = (event.input as Record<string, unknown>).path;
-      if (typeof given === "string") askContractFor(owner).onFileWritten(path.resolve(ctx.cwd, given));
+      if (typeof given === "string") {
+        askContractFor(owner).onFileWritten(path.resolve(ctx.cwd, given));
+        if (isRulingName(path.basename(given))) {
+          const abs = path.resolve(ctx.cwd, given);
+          let real = abs;
+          try {
+            real = path.join(fs.realpathSync.native(path.dirname(abs)), path.basename(abs));
+          } catch {
+            // keep the resolved path
+          }
+          selfRulingsFor(owner).mark(real);
+        }
+      }
+    }
+    const bashSnap = bashRulingSnaps.get(event.toolCallId);
+    if (owner && bashSnap) {
+      bashRulingSnaps.delete(event.toolCallId);
+      selfRulingsFor(owner).markChanged(bashSnap, childDirsOf(owner));
     }
     // A `.seen` written by a shell command ends the ask too: the blocked state is recomputed from the files (R6 lane 4a).
     if (owner && !owner.isChild && event.toolName === "bash") askContractFor(owner).recheck();
@@ -2242,7 +2288,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const escalated = await trivialFinishCheck(s, ctx);
     const gateMode = reviewGateMode(get(s.config.config, "ceremony.reviewGate"));
     // A parent ruling (APPROVED / SHIP, newer than the last FAIL) in an own handoff dir counts as the verdict (R6 lane 4c).
-    const gate = withParentRuling(s.reviewGate, ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)));
+    const gate = withParentRuling(s.reviewGate, childDirsOf(s), selfRulingsFor(s));
     const missing: string[] = openSteps(s.steps, requiredOf(s, s.ceremony.tier), gateMode, gate);
     // A rejected plan blocks the heavy finish until a new approval or the user lowers the tier (/ceremony).
     const rejected = s.ceremony.tier === "heavy" && s.plan?.status === "rejected";
@@ -2283,7 +2329,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** `/foreman close`: the required steps still open and what the parent would have to rule ("" = none). */
   function closeCeremonyNote(s: Session): string {
     if (s.isChild || !isTriaged(s.ceremony)) return "";
-    const gate = withParentRuling(s.reviewGate, ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)));
+    const gate = withParentRuling(s.reviewGate, childDirsOf(s), selfRulingsFor(s));
     return rulingNeeded(openSteps(s.steps, requiredOf(s, s.ceremony.tier), reviewGateMode(get(s.config.config, "ceremony.reviewGate")), gate));
   }
 

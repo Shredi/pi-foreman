@@ -111,6 +111,10 @@ touches `.ask` and shows the session as blocked in Herdr (`herdr:blocked`, label
   `APPROVED` or `SHIP` and that is newer than the last FAIL verdict satisfies the reviewer step of the finish gate. The
   gate then no longer refuses "requires reviewer (re-review needed: last verdict FAIL)". `/foreman close` lists what is
   still open and what the parent would have to rule; the owner/chair override is `/ceremony <tier>`.
+  Only handoff dirs whose `child` file names this session count (for the ask state too); a dir where this session is the
+  `parent` never does. A ruling file this session wrote itself (write/edit, or a shell command that changed it) is
+  ignored until the parent writes it again (a newer mtime); it is not refused. A FAIL without a recorded timestamp is
+  overridden by no ruling. Self-written marks live in memory: after a restart use `/ceremony <tier>`.
 - **`bg_wait` during a builder's supervisor ask.** pi-foreman does not refuse it (`bg_wait` is exempt from the supervisor window).
   The pi-subagents package (node_modules, not editable here) ends the wait with "Wait yielded for a pending supervisor
   request"; background work continues, so answer with `subagent_supervisor` and call `bg_wait` again.

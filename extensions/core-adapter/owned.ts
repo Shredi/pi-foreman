@@ -72,6 +72,29 @@ export function ownHandoffDirs(root: string | undefined, id: string | null | und
   return out;
 }
 
+/**
+ * The handoff dirs under `root` whose `child` file names session `id`: the dirs where this session is the opened
+ * (child) side. Dirs where it is the parent never count: the ask state and the parent-ruling gate read only these.
+ */
+export function childHandoffDirs(root: string | undefined, id: string | null | undefined): string[] {
+  if (!root || !id) return [];
+  const out: string[] = [];
+  try {
+    for (const e of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!e.isDirectory()) continue;
+      const dir = path.join(root, e.name);
+      try {
+        if (fs.readFileSync(path.join(dir, "child"), "utf8").split(/\r?\n/)[0].trim() === id) out.push(dir);
+      } catch {
+        // absent
+      }
+    }
+  } catch {
+    // no handoffs dir
+  }
+  return out;
+}
+
 /** `p` is `root` or below it; `root` may carry `*` segments (matching one path segment). */
 export function underOwned(root: string, p: string, platform: string = process.platform): boolean {
   const impl = platform === "win32" ? path.win32 : path.posix;

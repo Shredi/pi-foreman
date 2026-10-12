@@ -49,11 +49,63 @@ export function askOpen(dir: string): boolean {
   return !(named === `ruling-${Number(n)}.md` || named === "ruling.md");
 }
 
+const realKey = (p: string): string => {
+  try {
+    return path.join(fs.realpathSync.native(path.dirname(p)), path.basename(p));
+  } catch {
+    return path.resolve(p);
+  }
+};
+
+/** The ruling files in `dirs` with their mtimes (a snapshot before a shell command). */
+export function snapshotRulings(dirs: string[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const dir of dirs) {
+    try {
+      for (const n of fs.readdirSync(dir).filter(isRulingName)) {
+        const m = mtimeOf(path.join(dir, n));
+        if (m !== null) out.set(path.join(dir, n), m);
+      }
+    } catch {
+      // no dir
+    }
+  }
+  return out;
+}
+
+/**
+ * Ruling files this session wrote itself (write/edit, or a shell command that changed them). They never count as a
+ * parent ruling: the foreman can write its own handoff dir, and a self-written APPROVED is no parent verdict. A file
+ * is ignored while its mtime is not newer than the recorded write; a later parent write counts again.
+ */
+export class SelfRulings {
+  private readonly written = new Map<string, number>();
+
+  /** A write/edit of `file`: remember its mtime (only ruling names). */
+  mark(file: string): void {
+    if (!isRulingName(path.basename(file))) return;
+    const m = mtimeOf(file);
+    if (m !== null) this.written.set(realKey(file), m);
+  }
+
+  /** After a shell command: every ruling file in `dirs` new or changed since `before` was written by this session. */
+  markChanged(before: Map<string, number>, dirs: string[]): void {
+    for (const [f, m] of snapshotRulings(dirs)) if (before.get(f) !== m) this.written.set(realKey(f), m);
+  }
+
+  /** True when `file` (at `mtime`) is a ruling this session wrote. */
+  has(file: string, mtime: number): boolean {
+    const w = this.written.get(realKey(file));
+    return w !== undefined && mtime <= w;
+  }
+}
+
 /**
  * A parent ruling in `dirs` (`ruling.md` / `ruling-<n>.md`, first line `APPROVED` or `SHIP`) whose mtime is newer than
- * `afterMs` (the last FAIL verdict) counts as a verdict for the finish gate. Returns its path, or null.
+ * `afterMs` (the last FAIL verdict) counts as a verdict for the finish gate. Returns its path, or null. `dirs` must be
+ * the dirs where this session is the child (owned.ts childHandoffDirs); `self` skips rulings this session wrote.
  */
-export function parentApproval(dirs: string[], afterMs: number): string | null {
+export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulings): string | null {
   for (const dir of dirs) {
     let names: string[] = [];
     try {
@@ -63,7 +115,7 @@ export function parentApproval(dirs: string[], afterMs: number): string | null {
     }
     for (const n of names) {
       const m = mtimeOf(path.join(dir, n));
-      if (m === null || m <= afterMs) continue;
+      if (m === null || m <= afterMs || self?.has(path.join(dir, n), m)) continue;
       const first = (readText(path.join(dir, n)) ?? "").split(/\r?\n/, 1)[0].trim();
       if (first === "APPROVED" || first === "SHIP") return path.join(dir, n);
     }

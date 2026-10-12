@@ -2,6 +2,7 @@
 // Only allowlisted keys with primitive values are written; everything else is dropped, so a
 // prompt, a tool argument, a path or an output can never reach the file through a new caller.
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 export const TRACE_FIELDS = ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by", "phase", "count", "action", "runId", "outcome", "ms", "codemode", "after", "allowed", "items", "attested", "agent", "signals", "policy", "foreman", "turns", "rung", "cmd", "chars", "cut", "climb_available", "trimmed_lines", "skipped", "bytes", "segments", "class", "item", "hits", "policy_override", "note", "findingId", "gate", "file", "line", "primary", "models", "ready", "removed", "handover", "occasion", "thinking", "model_overridden", "marker", "pack", "op", "limit", "command"] as const;
@@ -14,6 +15,28 @@ const MAX_COMMAND = 200; // a denied command (lane 3h)
 /** `command` is kept only on a deny trace: a refused launch, a read/recheck budget deny, an overlay deny. */
 const DENY_EVENTS = new Set(["read_budget", "recheck_budget", "child_read_budget", "overlay", "launch_refused"]);
 const isDeny = (rec: Record<string, unknown>): boolean => DENY_EVENTS.has(String(rec.event)) && (rec.event === "launch_refused" || rec.action === "deny" || rec.decision === "deny");
+
+/**
+ * A denied command with secret-shaped tokens removed (before the 200-char cut):
+ * auth headers, `token=` / `key=` / `password=` / `secret=` values, URL userinfo, `AKIA…` / `ghp_` / `sk-` style keys,
+ * and base64 / hex runs of 24+ characters; the home directory becomes `~`.
+ */
+export function redactCommand(cmd: string): string {
+  const R = "[redacted]";
+  // a run of few distinct characters ("xxxx…") is padding, not a key
+  const keyish = (t: string): string => (new Set(t).size >= 6 ? R : t);
+  let out = cmd
+    .replace(/(authorization\s*[:=]\s*)(?:bearer|basic|token)?\s*[^\s'"]+/gi, `$1${R}`)
+    .replace(/\bbearer\s+[A-Za-z0-9._~+\/=-]+/gi, `Bearer ${R}`)
+    .replace(/\b((?:[A-Za-z0-9_-]*(?:token|key|password|passwd|secret|pwd))\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s'"&;]+)/gi, `$1${R}`)
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s\/@'"]+@/gi, `$1${R}@`)
+    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b/g, R)
+    .replace(/\b(?:gh[pousr]_|github_pat_|sk-|xox[abprs]-)[A-Za-z0-9_-]{6,}/g, R)
+    .replace(/\b[0-9a-fA-F]{24,}\b/g, keyish);
+  const home = os.homedir();
+  if (home && home.length > 1) out = out.split(home).join("~");
+  return out.replace(/[A-Za-z0-9+]{24,}={0,2}/g, keyish);
+}
 
 /** Keep allowlisted keys whose value is a primitive; cap string length. */
 export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
@@ -30,7 +53,8 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
     if (v === null || typeof v === "boolean") out[k] = v as null | boolean;
     else if (typeof v === "number") {
       if (Number.isFinite(v)) out[k] = v;
-    } else if (typeof v === "string") out[k] = v.length > (k === "command" ? MAX_COMMAND : MAX_STRING) ? v.slice(0, k === "command" ? MAX_COMMAND : MAX_STRING) : v;
+    } else if (typeof v === "string" && k === "command") out[k] = redactCommand(v).slice(0, MAX_COMMAND);
+    else if (typeof v === "string") out[k] = v.length > (k === "command" ? MAX_COMMAND : MAX_STRING) ? v.slice(0, k === "command" ? MAX_COMMAND : MAX_STRING) : v;
   }
   return out as TraceRecord;
 }

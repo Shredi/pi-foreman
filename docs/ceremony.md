@@ -61,7 +61,7 @@ builder launch) is appended to a reviewer's launch task (`diffscan.ts`; trace `r
 
 Multi-session plans: a heavy task with several phases may run one child session per phase instead of builders in one session. The foreman opens each with `--plan-first`, waits with `foreman_wait kind:child`, approves the child's `plan.md` through `ruling.md` and reviews its `result.md` before the next phase (see [sessions](sessions.md#child-orchestrator-sessions)).
 
-Parent ruling as verdict: a `ruling.md` or `ruling-<n>.md` in the session's own handoff dir whose first line is `APPROVED` or `SHIP`, newer than the last FAIL verdict, counts as the verdict for the finish gate (the reviewer step no longer refuses "re-review needed: last verdict FAIL"); an older ruling or another first line does not count. `/foreman close` with an incomplete ceremony lists what the parent would have to rule. The override is `/ceremony <tier>` by the owner/chair. See [sessions](sessions.md).
+Parent ruling as verdict (only dirs whose `child` file names this session; rulings the session wrote itself are ignored; a FAIL without a timestamp is never overridden): a `ruling.md` or `ruling-<n>.md` in the session's own handoff dir whose first line is `APPROVED` or `SHIP`, newer than the last FAIL verdict, counts as the verdict for the finish gate (the reviewer step no longer refuses "re-review needed: last verdict FAIL"); an older ruling or another first line does not count. `/foreman close` with an incomplete ceremony lists what the parent would have to rule. The override is `/ceremony <tier>` by the owner/chair. See [sessions](sessions.md).
 
 Design record: `design/architecture.md`
 [section 6](../design/architecture.md#6-ledger-gates-and-proportional-ceremony).
