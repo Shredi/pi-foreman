@@ -230,8 +230,8 @@ const tool = (r: OverlayRules, c: MatchCtx, name: string, input: Record<string, 
 test("literal rows 1-5: read-only commands naming config/foreman.defaults.json pass for a child (selfHost)", () => {
   const r = rules2(true);
   const c = world(ws, "child");
-  // documented limit: sed on a protected file asks, use the read tool (rows 2, 3 and 5 hold a sed next to a protected word)
-  const sedLimit = new Set([1, 2, 4]);
+  // R6 lane 2b: a read-only sed (print-only script, no -i/-f/w/e) is a protected reader; rows 2 and 5 pass now; row 3 still holds a `D=` assignment (not a sed matter)
+  const sedLimit = new Set([2]);
   [
     String.raw`cd ${ws}; grep -n "usage" tests/replay/fake_provider.ts | head -20; grep -n '"compaction"' -A25 config/foreman.schema.json | head -40; grep -n '"compaction"' -A6 config/foreman.defaults.json; grep -n "PROVIDERS\s*=" tests/replay/fake_provider.ts; grep -n "cacheWarming" node_modules/@earendil-works/pi-coding-agent/docs/settings.md`,
     String.raw`cd ${ws} && grep -n -A12 '"compaction"' config/foreman.defaults.json; sed -n 330,365p config/foreman.schema.json; grep -n '"minimum": 0.3' config/foreman.schema.json`,
@@ -320,8 +320,9 @@ test("literal row 17: package.json and config/permissions*.json reads pass for a
   const r = rules2(true);
   const c = world(ws, "child");
   for (const cmd of ["cat package.json", "cat config/permissions.baseline.json"]) assert.equal(sh(r, c, cmd), "pass", cmd);
-  // documented limit: sed on a protected file asks, use the read tool
-  assert.equal(sh(r, c, "sed -n 1,40p config/permissions.baseline.json"), "deny");
+  // R6 lane 2b: a print-only sed is a read of a protected file
+  assert.equal(sh(r, c, "sed -n 1,40p config/permissions.baseline.json"), "pass");
+  assert.equal(sh(r, c, "sed -i 1d config/permissions.baseline.json"), "deny");
 });
 
 test("literal rows 19, 20: env | grep and a branch listing next to inline python", () => {
@@ -692,9 +693,9 @@ test("review 7: BSD sed -I/-l and attached output values are not read-only", () 
   for (const selfHost of [true, false]) {
     const r = rules2(selfHost);
     for (const cmd of bad) assert.equal(sh(r, world(ws, "child"), cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);
-    // sed on a protected file asks or denies (review 9)
+    // a print-only sed on a protected file is a read (R6 lane 2b; it asked or denied under review 9)
     for (const cmd of ["sed -n 1,5p", "sed -E 's/a/b/'", "sed -s -n p"]) {
-      assert.equal(sh(r, world(ws, "child"), `${cmd} ${D}`), "deny", `child selfHost=${selfHost}: ${cmd}`);
+      assert.equal(sh(r, world(ws, "child"), `${cmd} ${D}`), "pass", `child selfHost=${selfHost}: ${cmd}`);
     }
   }
 });
@@ -716,7 +717,6 @@ test("review 8: protected operands are skipped only for a minimal reader set", (
     `less ${D}`,
     `gawk -W dump-variables=${D} 'BEGIN{x=1}'`,
     `grep -f ${D} x`,
-    `sed -e p ${D}`,
     `echo x | tee ${D}`,
   ];
   const good = [
@@ -730,6 +730,7 @@ test("review 8: protected operands are skipped only for a minimal reader set", (
     `wc -l ${D}`,
     `diff ${D} ${D}`,
     `ls -l node_modules`,
+    `sed -e p ${D}`,
   ];
   for (const selfHost of [true, false]) {
     const r = rules2(selfHost);
@@ -751,13 +752,11 @@ test("review 9: a variable in any argument loses the read-only skip; sed is no p
     `P=--pre=./evil; rg $P p ${D}`,
     `P=--pre; rg $P ./evil p ${D}`,
     `O=--pr; rg \${O}e=./evil p ${D}`,
-    `sed -n 1,5p ${D}`,
-    `sed -E 's/a/b/' ${D}`,
     `grep -rn $PAT ${D}`,
     `grep -rn '$p' ${D}`,
     `grep -rn \`echo p\` ${D}`,
   ];
-  const good = [`cat ${D}`, `head ${D}`, `wc -l ${D}`, `grep -rn p ${D}`, `diff ${D} ${D}`, `ls -l node_modules`, `cat ${D} | head`];
+  const good = [`cat ${D}`, `head ${D}`, `wc -l ${D}`, `grep -rn p ${D}`, `diff ${D} ${D}`, `ls -l node_modules`, `cat ${D} | head`, `sed -n 1,5p ${D}`, `sed -E 's/a/b/' ${D}`];
   for (const selfHost of [true, false]) {
     const r = rules2(selfHost);
     for (const cmd of bad) assert.equal(sh(r, world(ws, "child"), cmd), "deny", `child selfHost=${selfHost}: ${cmd}`);

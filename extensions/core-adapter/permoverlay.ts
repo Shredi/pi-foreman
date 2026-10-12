@@ -160,6 +160,11 @@ export interface MatchCtx {
   scratch?: string;
   /** Owned roots; `owned.childScratch` stands in for `scratch`. Defaults to the rules' own. */
   owned?: OwnedRoots;
+  /**
+   * Child only: path patterns a child may READ although the child block names them (the bound round ledger and its `LEDGER-*.md` siblings, the
+   * session's own handoff dirs, the session's round worktrees). A write there stays closed; a `*` path rule does not fire on them either.
+   */
+  readable?: string[];
 }
 
 const scratchOf = (ctx: MatchCtx): string | undefined => ctx.scratch ?? ctx.owned?.childScratch;
@@ -1000,6 +1005,8 @@ interface Collected {
   probeFiles?: string[];
   /** A `cd`/`pushd`/`export`/`env` command or an env assignment prefix was found (refused next to a run for a read-only child). */
   roCdEnv?: boolean;
+  /** Top level only: the session cwd and file probes, to resolve `..` words after a `cd` that ran first. */
+  cdBase?: { cwd: string; realpath: (p: string) => string | null; isDir: (p: string) => boolean };
 }
 
 /**
@@ -1013,7 +1020,7 @@ const PURE_VERBS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk"
  * The only verbs whose protected operands count as a read (write-only protect rules skip them). Programmable or
  * option-rich readers (awk, sort, uniq, less, find, xargs, tee, ...) keep full protection whatever their flags.
  */
-const PROTECTED_READERS = new Set(["cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "ls", "stat", "file", "diff", "cmp", "md5sum", "sha1sum", "sha256sum", "shasum", "cd"]);
+const PROTECTED_READERS = new Set(["cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "ls", "stat", "file", "diff", "cmp", "md5sum", "sha1sum", "sha256sum", "shasum", "cd", "sed"]);
 
 /** Short options that take a value, and long ones that take the next word, per read command. */
 const VALUE_OPTS: Record<string, { short: string; long: string[]; pattern: string; patternLong: string[]; file: string; fileLong: string[]; globLong?: string[]; globShort?: string }> = {
@@ -1182,6 +1189,29 @@ function unitReadOnly(core: string[], skip: Set<number>): boolean {
   return true;
 }
 
+const isPython = (verb: string): boolean => /^python[0-9.]*$/.test(verb);
+
+const PY_MODULES = new Set(["json", "sys", "glob", "collections", "datetime", "re", "itertools", "statistics", "csv", "time", "math", "functools", "operator", "os", "pathlib", "heapq", "bisect", "textwrap"]);
+const PY_WRITES = /\b(write\w*|touch|unlink|rmdir|rmtree|remove\w*|rename\w*|replace|mkdir|makedirs|chmod|chown|chdir|truncate|symlink|link|system|popen|spawn\w*|exec\w*|fork\w*|kill\w*|subprocess|shutil|tempfile|socket|urllib|requests|http|ctypes|importlib|eval|compile|builtins|globals|locals|getattr|setattr|delattr|input|breakpoint|pickle|marshal|environ\s*\[[^\]]*\]\s*=|putenv|dump|copy\w*|move|print_exc)\b|__/;
+
+/**
+ * Inline python that can only read: imports from a small read-only module list, no write/remove/rename/exec/network name, no dunder, and every
+ * `open(...)` either has one argument or a literal read mode. Conservative: anything it cannot parse is not read-only.
+ */
+export function pythonReadOnly(code: string): boolean {
+  if (PY_WRITES.test(code)) return false;
+  for (const m of code.matchAll(/\b(?:import|from)\s+([A-Za-z_][\w]*)((?:\s*,\s*[A-Za-z_]\w*)*)/g)) {
+    const mods = [m[1], ...m[2].split(",").map((x) => x.trim()).filter(Boolean)];
+    if (!mods.every((x) => PY_MODULES.has(x))) return false;
+  }
+  if (/\b(?:import|from)\s*$/.test(code)) return false;
+  for (const m of code.matchAll(/\bopen\s*\(([^)]*)\)/g)) {
+    const args = m[1].split(",").map((x) => x.trim());
+    if (args.length > 1 && !(args.length === 2 && /^(?:mode\s*=\s*)?['"]r[bt]?['"]$/.test(args[1]))) return false;
+  }
+  return !/\bopen\s*\((?![^)]*\))/.test(code);
+}
+
 /** Whether one unit (wrappers stripped) may have its protected operands skipped as a read: see PROTECTED_READERS. */
 function protectedReader(core: string[], skip: Set<number>): boolean {
   const verb = baseName(core[0]);
@@ -1189,6 +1219,10 @@ function protectedReader(core: string[], skip: Set<number>): boolean {
   const has = (re: RegExp): boolean => args.some((x) => re.test(x));
   // an unresolved expansion in any quoting may supply an option or script (`I=-i; sed $I p D`, `P=--pre=x; rg $P p D`)
   if (has(/[$`]/)) return false;
+  if (isPython(verb)) {
+    const code = inlineCode(core);
+    return code !== null && pythonReadOnly(code);
+  }
   if (!PROTECTED_READERS.has(verb)) return false;
   if (verb === "file") return !has(/^-[A-Za-z]*C|^--compile/);
   if (GREP_FAMILY.has(verb)) return !has(/^-[A-Za-z]*f|^--(pre|pre-glob|file|ignore-file|hostname-bin)/) && unitReadOnly(core, skip);
@@ -1237,7 +1271,7 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
     const skip = new Set([...redir].filter((i) => i >= off).map((i) => i - off));
     // the pattern of grep/rg and their include/exclude/glob values are no paths, whatever the rest of the command does
     const verb0 = v.core.length ? baseName(v.core[0]) : "";
-    const patt = GREP_FAMILY.has(verb0) || verb0 === "git" ? new Set(nonPathArgs(v.core, skip).map((i) => i + off)) : new Set<number>();
+    const patt = GREP_FAMILY.has(verb0) || verb0 === "git" || verb0 === "sed" || verb0.endsWith("awk") ? new Set(nonPathArgs(v.core, skip).map((i) => i + off)) : new Set<number>();
     out.words.push(...unitWords.filter((_, i) => !patt.has(i)));
     const rw = resolved.get(allWords);
     if (rw) {
@@ -1272,7 +1306,11 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
       if (!neutral && raw !== undefined) {
         const reader = v.core.length > 0 && protectedReader(v.core, skip);
         if (!reader) out.rdr = false;
-        if (!PURE_VERBS.has(baseName(raw)) || !v.core.length || !PURE_VERBS.has(baseName(v.core[0]))) out.pure = false;
+        // inline python that provably only reads (pythonReadOnly) counts as a pure reader of its literal paths
+        const pyRead = reader && v.core.length > 0 && baseName(raw) === baseName(v.core[0]) && isPython(baseName(v.core[0]));
+        if (pyRead) {
+          // its path literals are scanned below (codeLiterals)
+        } else if (!PURE_VERBS.has(baseName(raw)) || !v.core.length || !PURE_VERBS.has(baseName(v.core[0]))) out.pure = false;
         else if (!reader || !unitReadOnly(v.core, skip)) {
           if (!unitReadOnly(v.core, skip)) out.ro = false;
           // an output flag may carry its path attached (`gawk -oFILE`, `sort -k1 -oFILE`, `--output=FILE`, `-W dump-variables=FILE`): scan every tail of an option word
@@ -1332,10 +1370,36 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
       visit(end >= 0 ? rest.slice(0, end) : rest);
     }
   };
-  for (const pipe of parsed.pipelines) {
+  // `cd <dir> && cat ../x`: a relative word with a `..` after a cd that ran first resolves from the cd'd directory, not from the session cwd
+  let dir: string | null = null;
+  const cd = depth === 0 && shell === "posix" ? out.cdBase : undefined;
+  parsed.pipelines.forEach((pipe, pi) => {
     out.pipeTexts.push(pipe.map((u) => u.join(" ")).join(" | "));
+    const w0 = out.words.length;
+    const p0 = out.protWords?.length ?? 0;
+    const targets = [out.roTargets, out.tmpTargets].map((s) => (s ? new Set(s) : undefined));
     for (const u of pipe) visit(u);
-  }
+    if (!cd) return;
+    const rebase = (w: string): string => (dir !== null && !/\s/.test(w) && !/^[-/~$\\]/.test(w) && /(^|\/)\.\.(\/|$)/.test(w) ? path.resolve(dir, w) : w);
+    if (dir !== null) {
+      for (let i = w0; i < out.words.length; i++) out.words[i] = rebase(out.words[i]);
+      if (out.protWords) for (let i = p0; i < out.protWords.length; i++) out.protWords[i] = rebase(out.protWords[i]);
+      [out.roTargets, out.tmpTargets].forEach((set, k) => {
+        if (!set) return;
+        for (const t of [...set]) if (!targets[k]!.has(t) && rebase(t) !== t) { set.delete(t); set.add(rebase(t)); }
+      });
+    }
+    const sep = parsed.seps[pi];
+    const u = pipe.length === 1 ? pipe[0] : undefined;
+    if (u && u[0] === "cd" && (sep === "&&" || sep === ";")) {
+      const args = u.slice(1).filter((a, i) => !(i === 0 && (a === "-L" || a === "-P" || a === "--")));
+      const t = args.length === 1 ? args[0] : undefined;
+      if (t && !/[$`*?[\]{}\\]|^[-~]/.test(t)) {
+        const real = cd.realpath(path.resolve(dir ?? cd.cwd, t));
+        if (real && cd.isDir(real)) dir = real;
+      }
+    }
+  });
 }
 
 // ---------------------------------------------------------------------- paths
@@ -1481,12 +1545,27 @@ function tokenCandidates(word: string, ctx: MatchCtx, depth: number): string[] {
   return out;
 }
 
-function pathDeny(rules: PathRule[], word: string, ctx: MatchCtx): PathRule | null {
+const CATCH_ALL = /^\*+$/;
+
+/** The owned roots (and their subtrees) a `*` path rule never denies a read below: owned.ts roots, the scratch dir, the round roots, `ctx.readable`. */
+function ownedReadPatterns(ctx: MatchCtx): string[] {
+  const roots = [...(ctx.owned ? [...ctx.owned.readWrite, ...ctx.owned.readOnly] : []), ...[scratchOf(ctx)].filter((x): x is string => !!x), ...(ctx.roundRoots ?? []), ...(ctx.roundReadRoots ?? [])];
+  return [...roots.flatMap((r) => [r, `${r}/*`]), ...(ctx.readable ?? [])];
+}
+
+/**
+ * The path rule that denies `word`. A catch-all rule (`*`) matches path OPERANDS only: not the parts of a word with white space (command prose,
+ * an expression), and not a read (`readOnly`) below an owned root.
+ */
+function pathDeny(rules: PathRule[], word: string, ctx: MatchCtx, readOnly = false): PathRule | null {
   const cands = pathCandidates(word, ctx);
   const denyPats = rules.filter((r) => r.action === "deny").map((r) => r.pattern);
+  const prose = /\s/.test(word);
+  const ownedPats = readOnly && rules.some((r) => CATCH_ALL.test(r.pattern)) ? ownedReadPatterns(ctx) : [];
   for (const cand of ctx.platform === "win32" ? [...cands, ...shortNameVariants(cands, denyPats)] : cands) {
     let verdict: PathRule | null = null;
-    for (const r of rules) if (pathMatches(r.pattern, cand, ctx)) verdict = r;
+    const ownedRead = ownedPats.some((pat) => pathMatches(pat, cand, ctx));
+    for (const r of rules) if (pathMatches(r.pattern, cand, ctx) && !(CATCH_ALL.test(r.pattern) && (prose || ownedRead))) verdict = r;
     if (verdict && verdict.action === "deny") return verdict;
   }
   return null;
@@ -1641,7 +1720,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (cd) return cd;
   }
   const scratch0 = scratchOf(ctx);
-  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [] };
+  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
   collect(command, shell, 0, c);
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
@@ -1677,13 +1756,13 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (texts.some((t) => bashMatches(pat, t, ctx))) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (command rule '${pat}'). This cannot be approved; use another way.` };
   }
   for (const w of words) {
-    const hit = pathDeny(rules.pathRules, w, ctx);
+    const hit = pathDeny(rules.pathRules, w, ctx, readOnly);
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(w)}'). Secret and policy paths are off limits to the agent, also through shell commands.` };
   }
   if (ctx.role === "child") {
     for (const w of pwords) {
       if (c.worktreeRemoveWords!.has(w)) continue;
-      const hit = childBlockHit(rules, w, pctx);
+      const hit = childBlockHit(rules, w, pctx, readOnly);
       if (hit) return childBlockDecision(hit, w);
     }
   }
@@ -1967,16 +2046,20 @@ function childCwdReadOnly(ctx: MatchCtx): boolean {
 }
 
 /** A child touching a foreman-owned path (handoffs, artifacts, foreman.json); its own scratch dir is never one. */
-function childBlockHit(rules: OverlayRules, word: string, ctx: MatchCtx): string | null {
+function childBlockHit(rules: OverlayRules, word: string, ctx: MatchCtx, readOnly = false): string | null {
   const patterns = rules.childBlock;
   if (!patterns?.length || ctx.role !== "child") return null;
   const scratch = scratchOf(ctx);
+  const pp = ctx.platform === "win32" ? path.win32 : path.posix;
   for (const cand of pathCandidates(word, ctx)) {
-    if (scratch && insideDir(scratch, cand, ctx)) continue;
+    // the spelling as written (`../<repo>.worktrees/<round>/x`) is relative: the exemptions look at where it points
+    const abs = pp.isAbsolute(cand) ? cand : pp.resolve(ctx.cwd, cand);
+    if (scratch && insideDir(scratch, abs, ctx)) continue;
+    if (readOnly && ctx.readable?.some((pat) => pathMatches(pat, abs, ctx))) continue;
     if (rules.childBlockExcept?.some((pat) => pathMatches(pat, cand, ctx))) continue;
     for (const pat of patterns) {
       if (!pathMatches(pat, cand, ctx)) continue;
-      if (rules.childBlockInWorkspace?.includes(pat) && [ctx.cwd, workspaceOf(ctx.cwd).root, ...(ctx.roundRoots ?? []), ...(ctx.roundReadRoots ?? [])].some((root) => insideDir(root, cand, ctx))) continue;
+      if (rules.childBlockInWorkspace?.includes(pat) && [ctx.cwd, workspaceOf(ctx.cwd).root, ...(ctx.roundRoots ?? []), ...(ctx.roundReadRoots ?? [])].some((root) => insideDir(root, abs, ctx))) continue;
       return pat;
     }
   }
@@ -2037,10 +2120,10 @@ export function checkPathTool(rules: OverlayRules, toolName: string, input: Reco
   if (!PATH_TOOLS.has(toolName)) return null;
   const ctx: MatchCtx = ctx0.owned || !rules.owned ? ctx0 : { ...ctx0, owned: rules.owned };
   const paths = toolPaths(toolName, input);
-  for (const { value } of paths) {
-    const hit = pathDeny(rules.pathRules, value, ctx);
+  for (const { value, write } of paths) {
+    const hit = pathDeny(rules.pathRules, value, ctx, !write);
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(value)}' for ${toolName}).` };
-    const blocked = childBlockHit(rules, value, ctx);
+    const blocked = childBlockHit(rules, value, ctx, !write);
     if (blocked) return childBlockDecision(blocked, value);
   }
   for (const { value } of paths.filter((x) => x.write)) {
