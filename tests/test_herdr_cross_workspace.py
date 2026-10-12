@@ -67,9 +67,9 @@ class CrossWorkspaceChildRowTest(unittest.TestCase):
         self.assertIsNotNone(child["fm_l1"])
         self.assertTrue(child["fm_l1"].endswith("› round-x") or "› round-x " in child["fm_l1"], child["fm_l1"])
         self.assertLessEqual(sidebar.cell_width(child["fm_l1"]), WIDTH - sidebar.INSET - sidebar.STATE_ICON_W)
-        # the icon: a working child shows Herdr's state_icon, so fm_sym stays empty and fm_state carries the state
+        # the icon: a working child shows the static working glyph in fm_sym (lane 7g) and fm_state carries the state
         self.assertEqual(child["fm_state"], "working")
-        self.assertIsNone(child["fm_sym"])
+        self.assertEqual(child["fm_sym"], "⏳")
 
     def _stale_setup(self, kid_pane):
         # an ended session of an earlier round left its presence file (pid gone, state done, hours old: inside the radar window) naming the pane id

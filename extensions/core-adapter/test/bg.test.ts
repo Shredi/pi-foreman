@@ -395,7 +395,7 @@ test("sidebar: a foreman_bg pid wait with note `suites` shows up in the presence
   assert.ok(live);
   t.after(() => live.stop());
   const file = JSON.parse(fs.readFileSync(path.join(liveDir(h.agentDir), "s1.json"), "utf8"));
-  assert.equal(file.state, "waiting");
+  assert.equal(file.state, "working"); // a pending wait is work in progress (lane 7a)
   assert.equal(file.waits.length, 1);
   assert.deepEqual([file.waits[0].id, file.waits[0].kind, file.waits[0].note], [String(r.details.id), "pid", "suites"]);
   process.kill(Number(r.details.pid), "SIGTERM");
