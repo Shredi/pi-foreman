@@ -15,6 +15,8 @@ export interface OwnedRoots {
   readOnly: string[];
   /** `<tmpRoot>/pi-foreman-scratch`: each child owns only its own subdir (`$FOREMAN_SCRATCH`). */
   childScratchRoot: string;
+  /** The global npm root when resolved (also the last `readOnly` entry). */
+  npmRoot?: string;
 }
 
 export interface OwnedInput {
@@ -35,7 +37,7 @@ export function ownedRoots(i: OwnedInput): OwnedRoots {
   ];
   const readOnly = [path.join(i.agentDir, "pi-foreman"), path.join(i.agentDir, "foreman.json"), path.join(i.agentDir, "settings.json")];
   if (i.npmRoot) readOnly.push(path.resolve(i.npmRoot));
-  return { readWrite, readOnly, childScratchRoot: path.join(i.tmpRoot, SCRATCH_DIR_NAME) };
+  return { readWrite, readOnly, childScratchRoot: path.join(i.tmpRoot, SCRATCH_DIR_NAME), ...(i.npmRoot ? { npmRoot: path.resolve(i.npmRoot) } : {}) };
 }
 
 /** The handoffs root (`<agentDir>/pi-foreman/handoffs`) among the read-write roots, if any. */

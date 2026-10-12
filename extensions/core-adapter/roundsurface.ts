@@ -81,6 +81,26 @@ export function childSurface(worktrees: string[], cwd: string, role: string | un
   return { write: role === "builder" ? roots : roots.filter((r) => !rounds.includes(r)), read };
 }
 
+/**
+ * The path patterns a child may READ although the child block names them (permoverlay.ts `MatchCtx.readable`): the ledger bound to the session and
+ * its `LEDGER-*.md` siblings, the session's own handoff dirs and its round worktrees, each dir with its subtree. Writes stay closed.
+ */
+export function childReadable(ledger: string | null, handoffDirs: string[], worktrees: string[], platform: string = process.platform): string[] {
+  const x = px(platform);
+  const dirs = [...handoffDirs, ...worktrees].map((d) => x.resolve(d));
+  return [...(ledger ? [x.resolve(ledger), x.join(x.dirname(x.resolve(ledger)), "LEDGER-*.md")] : []), ...dirs.flatMap((d) => [d, `${d}/*`])];
+}
+
+/**
+ * Every root the foreman session owns for reads and writes, listed in the permission reviewer's prompt (review.ts): its live child scratch dirs, the
+ * round worktrees and their isolation dirs, its handoff dirs, the global npm root, `state/scratch/<session>` and the async run dirs of its own child runs.
+ */
+export function sessionOwnedRoots(i: { scratch: string[]; rounds: string[]; handoffs: string[]; npmRoot?: string | null; stateScratch?: string | null; asyncRuns?: Iterable<string> }, platform: string = process.platform): string[] {
+  const x = px(platform);
+  const all = [...i.scratch, ...i.rounds, ...i.rounds.map((r) => isolationDir(r, platform)), ...i.handoffs, ...(i.npmRoot ? [i.npmRoot] : []), ...(i.stateScratch ? [i.stateScratch] : []), ...(i.asyncRuns ?? [])];
+  return [...new Set(all.filter((p) => x.isAbsolute(p)).map((p) => x.resolve(p)))];
+}
+
 const PLAIN = /^[A-Za-z0-9_./@+=,:%-]+$/;
 
 /**
