@@ -169,7 +169,7 @@ The foreman session owns a few places outside the workspace. Access to them is g
 The write-only protect rules (package root, `protect.ask`) are skipped for a shell command only when every unit is a
 pure read-only verb and the command has no write redirect at all (any target but `/dev/null` and fd dups, so `> $f`
 counts): a protected path named in an assignment (`f=...`) or a `for`/`select`/`case` list is still scanned and
-protected as soon as a redirect could write through it; the skip covers only the minimal reader set `cat head tail wc grep egrep fgrep rg ls stat file diff cmp md5sum sha1sum sha256sum shasum` (plus `cd`; `sed` is not in the set, so sed on a protected file asks: use the read tool), and a `$`, `${` or backtick in any argument of the unit (any quoting) loses the skip, so awk/gawk, sort, uniq, less, find, xargs, tee and interpreters keep full protection on protected operands whatever their flags; so a read of a protected file combined with any write redirect (e.g. `cat config/foreman.defaults.json > out.txt`) stays protected for children.
+protected as soon as a redirect could write through it; the skip covers only the minimal reader set `cat head tail wc grep egrep fgrep rg ls stat file diff cmp md5sum sha1sum sha256sum shasum` (plus `cd`, and `sed` when it provably only reads: see "Ask families of lane 2"), and a `$`, `${` or backtick in any argument of the unit (any quoting) loses the skip, so awk/gawk, sort, uniq, less, find, xargs, tee and interpreters keep full protection on protected operands whatever their flags; so a read of a protected file combined with any write redirect (e.g. `cat config/foreman.defaults.json > out.txt`) stays protected for children.
 
 Heredoc bodies are scanned like any shell text (a `.pi` or `$x` in prose heredocs still trips the guards; write such text with the write tool).
 
@@ -326,6 +326,40 @@ the same for the foreman and every child it launches, and nothing else is inheri
 - **Isolation worktree as the child's own root.** The worktree pi-subagents makes for a child
   (`<repo>.worktrees/worktrees/<round>/pi-worktree-*`) is that child's own workspace root; its writes there follow the
   normal child rules.
+
+### Ask families of lane 2 (R6)
+
+- **Owned roots in the reviewer prompt (2a).** The permission reviewer's request lists the roots the foreman session owns under
+  "Owned roots (owned — allow reads and writes)": its live child scratch dirs, the round worktrees and their isolation dirs, its
+  handoff dirs, the global npm root, `state/scratch/<session>` and the pi-subagents async run dirs of its OWN child runs
+  (`roundsurface.ts` `sessionOwnedRoots`). A model `defer` (never a deny, never a soft-deny) for a bash command is turned into an
+  allow (label `owned-roots`) only when the effect layer, with those roots added as scratch dirs, finds EVERY path operand and write
+  target inside the workspace, /tmp-style scratch or an owned root, and no ask or deny rule catches the command. One non-owned write
+  target keeps the defer.
+- **The `*` path rule matches path operands only (2b).** A catch-all `*` deny does not fire on a word of command prose or on a sed
+  expression (`sed 's/=.*//'`), and never denies a READ below an owned root (the scratch dir, the round roots, the ledger and handoff
+  read roots). A more specific rule (a secret inside an owned root) still denies, and writes are unchanged.
+- **sed and inline python as readers (2b).** `sed` skips the protected-file write ask only without `-i`/`--in-place`, `-f`/`--file`,
+  and with a script that has no `w`/`W`/`r`/`R`/`e`/`a`/`i`/`c` command and no `s///w` or `s///e` flag. Inline `python -c` does so only
+  when it imports from a small read-only module list, names no write, exec, network or dunder, and every `open()` reads. awk is not a
+  protected reader.
+- **`../x` after `cd` (2c).** A relative word with `..` that follows `cd <dir> &&` (or `;`) resolves from the cd'd directory, not the
+  session cwd. A cd that may not run first (`||`, a missing directory, a `$` or glob in the target) does not move the base.
+- **State dir reads (2d).** Only reads of `<agent dir>/pi-foreman/state` lose the protected-configuration ask; writes there still ask.
+- **`git apply` and `patch` (2e).** They read the patch file and write the cwd worktree: a patch under `<main>/.workflow/scratch/` or
+  the child's own scratch applied inside an owned worktree does not ask; in a worktree the child does not own it is as closed as any
+  other write; for a read-only child it stays a write (denied). `git apply --check|--stat|--numstat|--summary` writes nothing.
+- **Ledger and handoff read roots (2f).** The bound round ledger, its `LEDGER-*.md` siblings, the session's own handoff dirs and its
+  round worktrees are readable for every child (`MatchCtx.readable`, `roundsurface.ts` `childReadable`); a write there stays closed.
+- **Nested worktree ownership (2-I).** Ownership is the innermost git worktree of the cwd: an isolation worktree nested below a
+  round worktree is its own root and the round worktree is not.
+- **Directory operands (2-0).** A directory operand of a test run inside the round roots is scanned file by file.
+- **Session-wide grants (2g).** The review link is keyed by the foreman session, so an answer it gives holds for every fresh reviewer
+  child of that session. A grant of the permission system itself ("approve for this session") lives in
+  `@gotgenes/pi-permission-system`, which the adapter does not own: its default scope is the asking subagent only, and the adapter
+  cannot make it session-wide. Limit: a second reviewer child is asked again unless the user chose the "whole serving session" scope.
+- **The backtick over-block is deliberate.** A backtick in a read-only child's test-run line is refused even when it would be harmless:
+  it cannot be expanded and checked, so the line fails closed.
 
 ### Search patterns are not paths
 
