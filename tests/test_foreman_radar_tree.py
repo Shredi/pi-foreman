@@ -75,7 +75,7 @@ class SessionTreeTest(unittest.TestCase):
         self.put_parent()
         h = self.base / "handoffs" / "20261009-115900-orphan"
         h.mkdir(parents=True)
-        (h / "parent").write_text("top\n")
+        (h / "parent").write_text("fm-top\n")
         (h / "child").write_text("orphan\n")
         roots = fr.snapshot(self.adir, NOW, 24.0)
         (kid,) = roots[0]["children"]
