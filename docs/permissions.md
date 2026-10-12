@@ -152,11 +152,11 @@ The foreman session owns a few places outside the workspace. Access to them is g
    `<tmp>/pi-foreman-scratch/**` except the asking child's own `$FOREMAN_SCRATCH` subtree (another child's dir). The
    operands of `git worktree remove` are left to PS, which asks. The `parent` and `child` handoff files and all
    write-protect rules keep asking or denying. A child's write permissions are therefore unchanged by this section.
-   The baseline rows `git fetch`, `git fetch origin`, `npm ci` and `npm install` (fixed forms: a `git fetch *` row would
-   let `--upload-pack=<cmd>` run code) are per user like every policy grant, so PS would allow
-   them to children too; the child layer narrows them: a child's `git fetch`, `npm ci`, `npm install` and `npm i` ask
-   (`npm install` rewrites `package-lock.json` and `node_modules`), the foreman keeps the rows. `npm ci` and `npm install`
-   run the project's lifecycle scripts without a prompt for the foreman.
+   The baseline rows `npm ci` and `npm install` are per user like every policy grant, so PS would allow them to
+   children too; the child layer narrows them: a child's `git fetch`, `npm ci`, `npm install` and `npm i` ask
+   (`npm install` rewrites `package-lock.json` and `node_modules`), the foreman keeps the two npm rows. `npm ci` and
+   `npm install` run the project's lifecycle scripts without a prompt for the foreman. There is no `git fetch` row
+   (`--upload-pack=<cmd>` runs code): a `git fetch` asks for every role.
 
 The write-only protect rules (package root, `protect.ask`) are skipped for a shell command only when every unit is a
 pure read-only verb and the command has no write redirect at all (any target but `/dev/null` and fd dups, so `> $f`
@@ -207,19 +207,26 @@ directory itself. Owned paths above are not affected: the policy patterns carry 
 A session grant for a directory covers a bash line that names a path under it through a variable
 (`D=<dir>/x; mkdir -p $D`, `mkdir -p $FOREMAN_SCRATCH/x`). The adapter (`extensions/core-adapter/shellvars.ts`
 `resolveVars`, used by the path collection in `permoverlay.ts`) replaces `$NAME` / `${NAME}` in a word by its value
-only when the value is certain:
+only when the whole line is inside a CLOSED GRAMMAR (the same in both implementations, pinned by
+`tests/fixtures/shellvars-grammar.json`). A line is eligible only if EVERY statement is one of:
 
-- Only a standalone `NAME=/abs/literal` statement before the use resolves it, joined to the use by `;`, `&&` or `||`
-  (`&&` only after another such assignment). A prefix assignment of the same command (`D=/x cmd $D`) never resolves.
-- A value with `$`, a backtick, `$(`, a glob character or whitespace, or a relative path, stays unresolved.
-- The last assignment before the use wins.
-- `FOREMAN_SCRATCH` (and any `FOREMAN_*` name) comes from the harness env, never from the line; an assignment to it
-  on the line is ignored.
-- Any other form that sets the name (`export`, `read`, `for`, a conditional assignment, a subshell, group or loop)
-  leaves it unresolved.
-- An unresolved variable keeps the previous classification: the word is checked as written.
+- (a) a sole assignment `NAME=literal`: the literal is a plain path of letters, digits and `/ . _ - ~`, starting with `/`,
+  `~` or a `$FOREMAN_SCRATCH` / `$HOME` prefix (only an absolute value, or the harness `$FOREMAN_SCRATCH`, is certain;
+  the rest stays unresolved). `NAME` is not `IFS`, `HOME` or `FOREMAN_*` (a `FOREMAN_*` name comes from the harness
+  env, never from the line). It stands at the start of the line or after `;` / a newline, or after `&&` that follows
+  another assignment: a conditional assignment (`cmd && D=/a`, `cmd || D=/a`) makes the line ineligible.
+- (b) a simple command whose first word is one of `mkdir cp mv cat ls tee touch tar node npm npx python3 git test echo
+  true` and whose other words are plain words (letters, digits and `/ . _ ~ = : @ % + , -`), `$NAME`, `"$NAME"` or
+  `${NAME}` (also inside a word), `2>&1`, `>/dev/null`, or `>` / `>>` with one such plain word.
 
-The foreman's shell write guard (`scripts/shell_write_guard.py`, Lexer `_track_assignment`) applies the same rules.
+Statements are split on `;`, `&&`, `||` and newline only. A line holding `|`, `&` (other than `&&`), `(`, `)`, `{`,
+`}`, `[`, `]`, a backtick, `#`, `<`, `>` outside those redirects, `$(`, `${` with anything but a bare name, a backslash
+or a single quote is ineligible, as is any statement outside (a) and (b) (`export`, `read`, `declare -n`, `printf -v`,
+`exec {H}>`, `coproc`, `for`, `if`, `case`, `eval`, `trap`, ...). An eligible line resolves a later `$NAME` with the last
+assignment before it; a name nothing assigns stays as written. An ineligible line resolves nothing and everything
+asks as before: the word is checked as written.
+
+The foreman's shell write guard (`scripts/shell_write_guard.py`, `grammar_statements`) applies the same grammar.
 
 ### Search patterns are not paths
 

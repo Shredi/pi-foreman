@@ -87,6 +87,16 @@ overlay and the git guard keep children out of the foreman-only dirs (handoffs e
 worktrees, other children's scratch dirs, `pi-foreman/claude-config`) and off `git worktree`, and the `parent` and
 `child` handoff files still ask. The list and the reasons are in [permissions](permissions.md#owned-paths).
 
+There is no `git fetch` allow row (`--upload-pack=<cmd>` runs code): it asks for every role; `npm ci` and `npm install`
+are allowed for the foreman only.
+
+A `$NAME` in a bash line resolves to a same-line assignment only inside a closed grammar: every statement (split on
+`;`, `&&`, `||`, newline) is a sole `NAME=<plain absolute path>` or a simple command from `mkdir cp mv cat ls tee touch
+tar node npm npx python3 git test echo true` with plain words (letters, digits, `/ . _ ~ = : @ % + , -`, `$NAME`,
+`${NAME}`, `2>&1`, `>/dev/null`, `>`/`>>` with a plain word). A pipe, `&`, parentheses, braces, brackets, backtick, `#`,
+`<`, `$(`, `${` beyond a bare name or any other statement form makes the line resolve nothing, and it asks as before. The
+exact rules are in [permissions](permissions.md#variables-in-bash-lines).
+
 ## Child scratch
 
 Each single-child launch gets a scratch dir under the OS temp dir (`$FOREMAN_SCRATCH`, see

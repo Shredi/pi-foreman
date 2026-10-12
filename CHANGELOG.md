@@ -13,21 +13,21 @@
   - (54b) The foreman read budget counts `mcp__*` calls and `subagent get|guide`; the supervisor exemption ends at the reply or run end.
   - (54c) Replay `parallel_ask`: two parallel child launches, one asks the supervisor.
   - (54d) A child's `rm` of editor backups (`*~ *.bak *.orig *.swp .#*`, also via `/bin/rm`, `command rm`, `sudo rm`, `unlink`) is denied (`editor_backup`); builder and finalizer wording forbids shell edits.
-  - (97/30) A standalone same-line `NAME=/abs/literal` statement resolves a later `$NAME` in the overlay path checks and the shell write guard; `+=`, `let`, `declare`/`typeset`/`export`/`read`/`unset`, element and arithmetic assignments, `eval`/`source` and any IFS assignment keep the variable unresolved (security hardening after review).
+  - (97/30) A line inside a closed grammar (every statement a sole `NAME=<plain absolute path>` or a simple command from `mkdir cp mv cat ls tee touch tar node npm npx python3 git test echo true` with plain words; split on `;` `&&` `||` newline only) resolves a later `$NAME` in the overlay path checks and the shell write guard, identical in TypeScript and Python (`tests/fixtures/shellvars-grammar.json`); any other line resolves nothing and asks as before. Replaces the per-form setter blacklists.
   - (97/31) grep, egrep, fgrep, rg and `git grep` patterns and option values are never path operands.
   - (97/32) `/foreman close` cancels the session's own pending waits; an active child run still refuses.
   - (97/33) The finish gate accepts a self-plan plus reviewer verdicts as a complete heavy ceremony.
   - (97/34) A reviewer FAIL with a `SECURITY:` finding line exempts the answering builder revisions from `ceremony.revisionRounds`, ceiling 2x the limit (`revision_security_exempt`).
   - (106) AGENTS.md: no new Python outside core/guards.
   - (106, ruling 3a) The git guard no longer treats the `[`/`[[` builtin as a computed program; command substitutions in argument positions of reader commands stay allowed.
-  - (106, ruling 3b) Foreman policy rows allow `git fetch`, `npm ci`, `npm install`; a child's `git fetch`/`npm ci`/`npm install` ask.
+  - (106, ruling 3b) Foreman policy rows allow `npm ci` and `npm install`; a child's `git fetch`/`npm ci`/`npm install` ask. There is no `git fetch` row (it asks for every role).
   - (106, ruling 3c) Reading `parent`/`child` of the session's own handoff dir is allowed for the foreman, writes ask.
   - (106, ruling 3d) The orientation names the bundled package roots.
   - (106, ruling 3e) The foreman never lists the checkout's parent directory. Documented limit: a reader chained with `find` loses the reader skip on a protected file.
   - Documented limit: the permission system's own extractor resolves only HOME/PWD and has no `git grep` pattern handling (docs/permissions.md).
-  - Security (pre-PR review): the shell write guard marks an assignment word in any non-sole-statement form (`if … then H=…`, `{ H=…; }`, `! H=…`, `time H=…`, `H=… :`) unknown, stops resolving on a line with `trap`, and rejects `* ? [` in values.
-  - Security (pre-PR review): the `git fetch *` policy row is replaced by the fixed rows `git fetch` and `git fetch origin` (`--upload-pack=<cmd>` ran code unasked).
-  - Security (delta review): `case` arms and a newline after `then`/`else`/`do`/`{`/`&&`/`||`/`|` no longer make an assignment a resolvable statement (shell guard and its TS mirror, which also stops at `trap`); `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_PROXY_COMMAND`, `GIT_EXEC_PATH`, `GIT_ASKPASS` and similar leading env assignments before a git network command are refused in every role.
+  - Security (ruling 12:05): variable resolution is a closed grammar in both implementations instead of form blacklists, so `case` arms, newlines after control words, comments after a pipe, `printf -v`, `declare -n`, `$[..]`, `${X:H=0}`, `exec {H}>`, `wait -p`, `coproc`, `IFS`/`HOME` assignments and conditional assignments all leave the line unresolved.
+  - Security (ruling 12:05): the `git fetch` policy rows are dropped (`--upload-pack=<cmd>` ran code unasked); a `git fetch` asks for every role.
+  - Security (delta review): `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_PROXY_COMMAND`, `GIT_EXEC_PATH`, `GIT_ASKPASS` and similar leading env assignments before a git network command are refused in every role.
   - Security (pre-PR review): the git guard refuses `fetch`/`pull`/`clone`/`push` with `--upload-pack`, `--receive-pack`, `--exec`, `--config`, `-u` (fetch/pull/clone) or `-c core.sshCommand=`/`core.gitProxy=` in every role.
 - Harness-friction round (numbers are the round's ledger items):
   - (2, 3, 5, 6, 18) Owned dirs: `external_directory` patterns in the permission policy for the handoffs dir,
