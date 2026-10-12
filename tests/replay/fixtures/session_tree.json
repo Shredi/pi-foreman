@@ -1,0 +1,22 @@
+{
+ "foreman": {
+  "w1": [{"text": "Waiting."}],
+  "p1": [
+   {"tools": [{"name": "foreman_wait", "arguments": {"action": "start", "kind": "child", "label": "demo", "note": "[[replay:p2]] child plan"}}]},
+   {"text": "Waiting for the plan."}
+  ],
+  "p2": [
+   {"tools": [{"name": "foreman_wait", "arguments": {"action": "start", "kind": "child", "label": "any", "note": "[[replay:p3]] child result"}}]},
+   {"text": "Plan seen, waiting for the result."}
+  ],
+  "p3": [{"text": "Result seen."}],
+  "c1": [
+   {"tools": [{"name": "intercom", "arguments": {"action": "send", "to": "parent-x", "message": "Plan from demo: .workflow/plan-demo.md"}}]},
+   {"text": "Plan sent."}
+  ],
+  "c2": [
+   {"tools": [{"name": "intercom", "arguments": {"action": "send", "to": "parent-x", "message": "Result from demo: .workflow/result-demo.md"}}]},
+   {"text": "Result sent."}
+  ]
+ }
+}

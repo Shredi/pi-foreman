@@ -1,0 +1,48 @@
+{
+ "parent": [
+  {
+   "event": "wait",
+   "decision": "start",
+   "toolFamily": "child"
+  },
+  {
+   "event": "turn",
+   "cause": "user"
+  },
+  {
+   "event": "wait",
+   "decision": "resolved",
+   "toolFamily": "child"
+  },
+  {
+   "event": "wait",
+   "decision": "wake",
+   "wakeKinds": "child"
+  },
+  {
+   "event": "wait",
+   "decision": "start",
+   "toolFamily": "child"
+  },
+  {
+   "event": "turn",
+   "wakeKinds": "child",
+   "cause": "wake"
+  },
+  {
+   "event": "wait",
+   "decision": "resolved",
+   "toolFamily": "child"
+  },
+  {
+   "event": "wait",
+   "decision": "wake",
+   "wakeKinds": "child"
+  },
+  {
+   "event": "turn",
+   "wakeKinds": "child",
+   "cause": "wake"
+  }
+ ]
+}
