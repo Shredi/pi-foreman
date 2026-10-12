@@ -6,6 +6,7 @@
 // Narrow on purpose: fixed flags (no recursion, no -t/-T/-L), no redirects, no `$`, `~` or `..`, a glob only as
 // a trailing `<dir>/*` on a read (the `"cp"` destination excluded), write operands contained in the two roots (symlinks resolved, never below
 // `.git`), and never a handoff dir's `parent` or `child` file (the close check and the ask contract read them).
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { contained } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
@@ -56,10 +57,42 @@ export function ownHandoffSegment(c: EffectCtx, own: string[], cwd: string | nul
   const roots = [...own, ...(c.root ? [c.root] : [])];
   const x = c.platform === "win32" ? path.win32 : path.posix;
   const fold = (s: string): string => (c.platform === "win32" || c.platform === "darwin" ? s.toLowerCase() : s);
+  const real = c.realpath ?? ((p: string): string | null => {
+    try {
+      return fs.realpathSync.native(p);
+    } catch {
+      return null;
+    }
+  });
+  const exists =
+    c.exists ??
+    ((p: string): boolean => {
+      try {
+        fs.lstatSync(p);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  const ownReal = own.flatMap((d) => [x.resolve(d), real(d)].filter((s): s is string => !!s)).map(fold);
+  const hit = (abs: string): boolean => GUARDED.has(fold(x.basename(abs))) && ownReal.includes(fold(x.dirname(abs)));
+  /** `abs` with symlinks resolved in its nearest existing ancestor (a final symlink included); null when that cannot be resolved. */
+  const resolved = (abs: string): string | null => {
+    let e = abs;
+    while (!exists(e)) {
+      const up = x.dirname(e);
+      if (up === e) return null;
+      e = up;
+    }
+    const r = real(e);
+    return r === null ? null : x.join(r, x.relative(e, abs));
+  };
   const guarded = (w: string): boolean => {
     if (cwd === null) return true;
     const abs = x.resolve(cwd, w);
-    return GUARDED.has(fold(x.basename(abs))) && own.some((d) => fold(x.resolve(d)) === fold(x.dirname(abs)));
+    if (hit(abs)) return true;
+    const r = resolved(abs);
+    return r === null || hit(r);
   };
   const writeOk = (w: string): boolean => plainWord(w) && !w.endsWith(GLOB) && !guarded(w) && contained(c, cwd, w, true, roots);
   const readOk = (w: string): boolean => {
