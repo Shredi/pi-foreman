@@ -656,6 +656,11 @@ const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "ash"]);
 /** Verbs whose operands (all, or the last one) are written; with the redirects they feed a child's /tmp deny. */
 const TMP_WRITERS = new Map<string, "all" | "last">([["tee", "all"], ["touch", "all"], ["mkdir", "all"], ["mv", "all"], ["cp", "last"], ["install", "last"], ["ln", "last"]]);
 
+/** A bare name that does not exist yet is not path-shaped to pathCandidates: `./` makes it a path against the cwd. */
+function asPathWord(t: string): string {
+  return /^[./~$\\]|^[A-Za-z]:/.test(t) ? t : `./${t}`;
+}
+
 /** Verbs that write, move or delete their path operands; which operands count: all, the last one, or all but the leading mode/owner word. */
 const RO_WRITERS = new Map<string, "all" | "last" | "mode">([
   ["rm", "all"], ["rmdir", "all"], ["unlink", "all"], ["shred", "all"], ["truncate", "all"], ["touch", "all"], ["mkdir", "all"], ["mv", "all"], ["tee", "all"], ["patch", "all"],
@@ -678,7 +683,22 @@ const BUILD_OUT_OPT = /^--?(o\b|[\w-]*(out|dir|file|log|xml|report|exec|command|
  * pytest, python -m pytest|unittest, make test*. Such runs write only caches and build output (node_modules/.cache, dist,
  * coverage, scratch), not sources, and a reviewer must be able to run them; options that name an output path or program are refused.
  */
+/**
+ * `python3 [-I] scripts/x.py ...` / `node scripts/x.mjs ...`: a script file named by a relative path with no `..`, `~` or `$`
+ * (so it lies under the cwd, in a read-only child the round worktree). It runs as a test run: caches and scratch writes are
+ * allowed like for other test runs, but what the script itself writes is not classified. `-c`/`-e`/`-` and stdin forms are not scripts.
+ */
+function repoScriptRun(verb: string, args: string[]): boolean {
+  if (verb !== "python" && verb !== "python3" && verb !== "node") return false;
+  let i = 0;
+  if (verb !== "node") while (i < args.length && /^-[IBEsSu]+$/.test(args[i])) i++;
+  const s = args[i];
+  if (s === undefined || s === "" || /^[-~$\\/]|^[A-Za-z]:|(^|\/)\.\.(\/|$)|[`$*?[\]{}]/.test(s)) return false;
+  return verb === "node" ? /\.(mjs|cjs|js)$/.test(s) : /\.py$/.test(s);
+}
+
 function buildTestRun(verb: string, args: string[]): boolean {
+  if (repoScriptRun(verb, args)) return true;
   if (args.some((a) => BUILD_OUT_OPT.test(a))) return false;
   const [sub, next] = args;
   if (verb === "npm") return sub === "test" || ((sub === "run" || sub === "run-script") && /^(test|lint|typecheck|check)(:|$)/.test(next ?? ""));
@@ -822,6 +842,8 @@ interface Collected {
   roTargets?: Set<string>;
   /** The first posix command that is neither a known reader, a test run nor a known writer: it may write the cwd. */
   roUnknown?: string;
+  /** The words of that command: a path among them in a read-only root is denied whatever the cwd. */
+  roUnknownWords?: string[];
 }
 
 /**
@@ -1109,17 +1131,24 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
       for (const i of WRITE_REDIRECTS.get(unitWords) ?? []) if (!DEV_TARGET.test(unitWords[i])) {
         out.writeTargets?.add(unitWords[i]);
         out.tmpTargets?.add(unitWords[i]);
+        out.roTargets?.add(asPathWord(unitWords[i]));
       }
       const writer = v.core.length ? TMP_WRITERS.get(baseName(v.core[0])) : undefined;
       if (writer && out.tmpTargets) {
         const operands = v.core.slice(1).filter((x) => !x.startsWith("-"));
-        for (const x of writer === "last" ? operands.slice(-1) : operands) out.tmpTargets.add(x);
+        for (const x of writer === "last" ? operands.slice(-1) : operands) {
+          out.tmpTargets.add(x);
+          out.roTargets?.add(asPathWord(x));
+        }
       }
       if (out.roTargets && !neutral && v.core.length) {
         const e = roEffect(v.core, skip, innerScript(v.core) !== null);
         // a bare name that does not exist yet is not path-shaped to pathCandidates: `./` makes it a path against the cwd
-        for (const t of e.targets) out.roTargets.add(/^[./~$\\]|^[A-Za-z]:/.test(t) ? t : `./${t}`);
-        if (e.unknown !== undefined && shell === "posix" && out.roUnknown === undefined) out.roUnknown = e.unknown;
+        for (const t of e.targets) out.roTargets.add(asPathWord(t));
+        if (e.unknown !== undefined && shell === "posix" && out.roUnknown === undefined) {
+          out.roUnknown = e.unknown;
+          out.roUnknownWords = v.core.slice(1);
+        }
       }
     }
     const inner = innerScript(v.core);
@@ -1504,6 +1533,12 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     for (const w of c.roTargets!) {
       const hit = childReadOnlyWriteDeny(w, pctx);
       if (hit) return hit;
+    }
+    if (c.roUnknown !== undefined && !childCwdReadOnly(pctx)) {
+      for (const w of c.roUnknownWords ?? []) {
+        const hit = childReadOnlyWriteDeny(w, pctx);
+        if (hit) return hit;
+      }
     }
     if (c.roUnknown !== undefined && childCwdReadOnly(pctx)) {
       return { kind: "deny", reason: `pi-foreman: '${clip(c.roUnknown)}' denied for a child: the round worktree is read-only except for its builder, and this command is neither a known reader nor a test run, so it may write there. Use a read command or ask the foreman.` };
