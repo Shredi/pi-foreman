@@ -711,6 +711,8 @@ interface Collected {
   writeTargets?: Set<string>;
   /** The first `git worktree` subcommand found that is neither `list` nor `remove` (children may not run it). */
   worktreeOp?: string;
+  /** `git fetch`, `npm ci`, `npm install` found: the foreman's baseline rows allow them, a child still asks. */
+  childAsk?: string;
   /** Operands of `git worktree remove`: the permission system asks for it, so the worktree block leaves them to it. */
   worktreeRemoveWords?: Set<string>;
 }
@@ -959,6 +961,13 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
       out.words.push(...extra);
       out.protWords?.push(...extra);
       out.unitTexts.push(rest.join(" "));
+    }
+    if (out.childAsk === undefined) {
+      let k = 1;
+      if (verb0 === "git") {
+        while (k < v.core.length && v.core[k].startsWith("-")) k += /^-[Cc]$/.test(v.core[k]) ? 2 : 1;
+        if (v.core[k] === "fetch") out.childAsk = "git fetch";
+      } else if (verb0 === "npm" && (v.core[1] === "ci" || v.core[1] === "install" || v.core[1] === "i")) out.childAsk = `npm ${v.core[1]}`;
     }
     if (verb0 === "git" && out.worktreeOp === undefined) {
       let k = 1;
@@ -1334,6 +1343,9 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   }
   if (ctx.role === "child" && c.worktreeOp !== undefined) {
     return { kind: "deny", reason: `pi-foreman: denied by the permission policy (git worktree ${clip(c.worktreeOp)} is the foreman's; children may only list worktrees). Ask the foreman.` };
+  }
+  if (ctx.role === "child" && c.childAsk !== undefined) {
+    return { kind: "ask", reason: `pi-foreman: ${c.childAsk} needs approval for a child (it writes the project or the network; the foreman may run it).` };
   }
   const words = [...new Set(c.words.flatMap((w) => [w, ...expandBraces(w)]))];
   // Write protection sees path arguments only: pattern/script operands drop out when no unit can turn

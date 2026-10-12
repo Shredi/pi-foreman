@@ -152,6 +152,9 @@ The foreman session owns a few places outside the workspace. Access to them is g
    `<tmp>/pi-foreman-scratch/**` except the asking child's own `$FOREMAN_SCRATCH` subtree (another child's dir). The
    operands of `git worktree remove` are left to PS, which asks. The `parent` and `child` handoff files and all
    write-protect rules keep asking or denying. A child's write permissions are therefore unchanged by this section.
+   The baseline rows `git fetch *`, `npm ci` and `npm install` are per user like every policy grant, so PS would allow
+   them to children too; the child layer narrows them: a child's `git fetch`, `npm ci`, `npm install` and `npm i` ask
+   (`npm install` rewrites `package-lock.json` and `node_modules`), the foreman keeps the rows.
 
 The write-only protect rules (package root, `protect.ask`) are skipped for a shell command only when every unit is a
 pure read-only verb and the command has no write redirect at all (any target but `/dev/null` and fd dups, so `> $f`
