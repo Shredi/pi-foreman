@@ -19,8 +19,9 @@ import { get } from "./config.ts";
 import { BRIDGE_PROVIDER } from "./bridgeiso.ts";
 import type { BashRules } from "./timeoutallow.ts";
 import { insideScratch } from "./childscratch.ts";
-import { deterministicAllow, deterministicAllowInfo } from "./timeoutallow.ts";
+import { deterministicAllow, deterministicAllowInfo, hits } from "./timeoutallow.ts";
 import { classify, effectCtx } from "./effects.ts";
+import { roundWorktreeAdd } from "./roundsurface.ts";
 import type { EffectClass, EffectCtx } from "./effects.ts";
 
 export const REVIEW_LINK = "foreman-review";
@@ -188,6 +189,8 @@ export interface ReviewSession {
   scratchDirs?: (role: string | null) => string[];
   /** This session's own handoff dirs (owned.ts ownHandoffDirs): the "own-handoff" allow (ownhandoff.ts). */
   ownDirs?: () => string[];
+  /** The ledger file bound to this session (roundsurface.ts): a read root for every forwarded ask, `LEDGER-*.md` in its dir a readable glob. */
+  ledgerFile?: () => string | null;
 }
 
 /** Deny text for a forwarded child ask that deferred with no human to ask: names what runs without approval. */
@@ -317,6 +320,7 @@ export class ForemanReview {
       else if (d.forwarding && surface.startsWith("external_directory") && (fixed = this.scratchPathAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (!REVIEW_SURFACES.includes(surface)) out = { verdict: { kind: "defer" }, label: "surface" };
       else if (surface === "bash" && d.forwarding && (fixed = this.fixedAllow(s, d, cls))) out = { verdict: { kind: "allow" }, label: fixed };
+      else if (surface === "bash" && !d.forwarding && (fixed = this.roundWorktreeAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (surface === "bash" && !d.forwarding && (fixed = this.fixedAllow(s, d, cls, "own-handoff"))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (!target) out ={ verdict: { kind: "defer" }, label: "no-model" };
       else if (reviewValue(d).length > MAX_VALUE) out = { verdict: { kind: "defer" }, label: "truncated" };
@@ -343,7 +347,9 @@ export class ForemanReview {
   /** The effect context and class of a forwarded bash ask's full command (effects.ts), for the allow and the `review` trace. */
   private classOf(s: ReviewSession, d: AskDetails): { ctx: EffectCtx; cls: EffectClass } | null {
     try {
-      const ctx = effectCtx(s.cwd, this.scratchOf(s, d), process.platform, get(s.config(), "safety.permissions.readRoots"));
+      const roots = get(s.config(), "safety.permissions.readRoots");
+      const ledger = this.ledgerOf(s);
+      const ctx = effectCtx(s.cwd, this.scratchOf(s, d), process.platform, ledger ? [...(Array.isArray(roots) ? roots : []), ledger] : roots);
       return { ctx, cls: classify(reviewValue(d), ctx) };
     } catch {
       return null;
@@ -358,13 +364,34 @@ export class ForemanReview {
       // PS forwards only the first most-restrictive unit; the allow must also hold for the full command.
       const unit = unitValue(d);
       const full = reviewValue(d);
-      const deps = { scratchDirs: this.scratchOf(s, d), ownDirs: this.ownDirsOf(s), ...(cls ? { effects: cls.ctx } : {}) };
+      const ledger = this.ledgerOf(s);
+      const deps = { scratchDirs: this.scratchOf(s, d), ownDirs: this.ownDirsOf(s), ...(ledger ? { ledger } : {}), ...(cls ? { effects: cls.ctx } : {}) };
       // the session's own asks (not forwarded from a child) get only the own-handoff allow without the model
       if (only && (deterministicAllow(rules, unit, deps) !== only || deterministicAllow(rules, full, deps) !== only)) return null;
       if (!deterministicAllow(rules, unit, deps)) return null;
       const info = deterministicAllowInfo(rules, full, deps);
       if (info && info.segments >= 2) s.trace?.({ event: "chain_allow", segments: info.segments, decision: info.label, role: d.agentName ?? "?" });
       return info?.label ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private ledgerOf(s: ReviewSession): string | null {
+    try {
+      return s.ledgerFile?.() ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** "round-worktree": the foreman's own `git [-C <main>] worktree add <repo>.worktrees/<round> [-b <round>] [<base>]` (roundsurface.ts), never a child's. */
+  private roundWorktreeAllow(s: ReviewSession, d: AskDetails): string | null {
+    try {
+      const rules = s.bashRules?.();
+      const full = reviewValue(d);
+      if (!rules || hits(rules.ask, full, "") || hits(rules.deny, full, "")) return null;
+      return roundWorktreeAdd(full, s.cwd) ? "round-worktree" : null;
     } catch {
       return null;
     }

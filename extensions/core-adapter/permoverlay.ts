@@ -143,6 +143,8 @@ export interface MatchCtx {
   shell?: "posix" | "powershell";
   /** Session kind for the write protection (default main). */
   role?: "main" | "child";
+  /** Child only: the session's round worktrees and their isolation dirs (roundsurface.ts roundRoots); shared by every child, so `*.worktrees/*` stays open below them. */
+  roundRoots?: string[];
   exists?: (p: string) => boolean;
   isDir?: (p: string) => boolean;
   realpath?: (p: string) => string | null;
@@ -1459,7 +1461,7 @@ function childTmpWriteDeny(word: string, ctx: MatchCtx): Decision | null {
   const scratch = scratchOf(ctx);
   if (ctx.role !== "child" || !scratch) return null;
   const roots = tmpRoots(ctx);
-  const own = [scratch, ctx.cwd, workspaceOf(ctx.cwd).root];
+  const own = [scratch, ctx.cwd, workspaceOf(ctx.cwd).root, ...(ctx.roundRoots ?? [])];
   for (const cand of pathCandidates(word, ctx)) {
     if (!roots.some((r) => insideDir(r, cand, ctx))) continue;
     if (own.some((o) => insideDir(o, cand, ctx))) continue;
@@ -1478,7 +1480,7 @@ function childBlockHit(rules: OverlayRules, word: string, ctx: MatchCtx): string
     if (rules.childBlockExcept?.some((pat) => pathMatches(pat, cand, ctx))) continue;
     for (const pat of patterns) {
       if (!pathMatches(pat, cand, ctx)) continue;
-      if (rules.childBlockInWorkspace?.includes(pat) && [ctx.cwd, workspaceOf(ctx.cwd).root].some((root) => insideDir(root, cand, ctx))) continue;
+      if (rules.childBlockInWorkspace?.includes(pat) && [ctx.cwd, workspaceOf(ctx.cwd).root, ...(ctx.roundRoots ?? [])].some((root) => insideDir(root, cand, ctx))) continue;
       return pat;
     }
   }

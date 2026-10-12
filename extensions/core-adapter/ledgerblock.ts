@@ -23,25 +23,26 @@ export function ledgerItemsBlock(ledger: string | null, task: string): string {
 const REVIEW_AGENTS = new Set(["reviewer", "senior-reviewer"]);
 
 /** The block of a review task: the cited items, else the whole ledger (header and items); "" without a ledger. */
-export function reviewLedgerBlock(ledger: string | null, task: string): string {
+export function reviewLedgerBlock(ledger: string | null, task: string, ledgerPath?: string | null): string {
+  const where = ledgerPath ? [`Ledger file (absolute path, readable from any directory): ${ledgerPath}`] : [];
   const cited = ledgerItemsBlock(ledger, task);
-  if (cited) return cited;
+  if (cited) return where.length ? cited.replace(/\n/, `\n${where[0]}\n`) : cited;
   if (!ledger || !ledger.trim()) return "";
-  return ["[pi-foreman ledger] The ledger of this round; a fact is in scope only when an item asks for it.", ledger.trim(), "[end of ledger]", ""].join("\n");
+  return ["[pi-foreman ledger] The ledger of this round; a fact is in scope only when an item asks for it.", ...where, ledger.trim(), "[end of ledger]", ""].join("\n");
 }
 
 /**
  * Prepend the block to the task of every fresh builder, reviewer and senior-reviewer step of a `subagent` input (single, tasks,
  * chain, parallel); a resume and the entries in `skip` (rung-up handoff) get none. Returns trace records.
  */
-export function applyLedgerItems(input: Record<string, unknown>, ledger: string | null, skip: ReadonlySet<unknown> = new Set()): Record<string, unknown>[] {
+export function applyLedgerItems(input: Record<string, unknown>, ledger: string | null, skip: ReadonlySet<unknown> = new Set(), ledgerPath?: string | null): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
   if (typeof input.action === "string") return out;
   const visit = (e: unknown): void => {
     if (!isObj(e)) return;
     const role = typeof e.agent === "string" && (e.agent === "builder" || REVIEW_AGENTS.has(e.agent)) ? e.agent : null;
     if (role && typeof e.task === "string" && !skip.has(e)) {
-      const block = role === "builder" ? ledgerItemsBlock(ledger, e.task) : reviewLedgerBlock(ledger, e.task);
+      const block = role === "builder" ? ledgerItemsBlock(ledger, e.task) : reviewLedgerBlock(ledger, e.task, ledgerPath);
       if (block) {
         e.task = block + e.task;
         out.push({ event: "ledger_block", role, chars: block.length });

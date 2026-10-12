@@ -26,10 +26,15 @@ const GUARDED = new Set(["parent", "child"]);
 const GLOB = "__own_glob__";
 const TRAILING_GLOB = /(^|[\s;&|])((?:\/|\.\/)?[A-Za-z0-9_.,:@%+=^/-]*[A-Za-z0-9_.-])\/\*(?=$|[\s;&|])/g;
 
-export const hasGlobSentinel = (text: string): boolean => text.includes(GLOB);
+/** `<dir>/LEDGER-*.md` is swapped the same way (a read of the bound ledger's dir, ledger item 7c). */
+const LEDGER_GLOB = "__own_ledger_glob__";
+const LEDGER_PATTERN = /(^|[\s;&|])((?:\/|\.\/)?[A-Za-z0-9_.,:@%+=^/-]*[A-Za-z0-9_.-])\/LEDGER-\*\.md(?=$|[\s;&|])/g;
 
-export function withGlobSentinel(command: string): string {
-  return command.replace(TRAILING_GLOB, (_m, lead: string, dir: string) => `${lead}${dir}/${GLOB}`);
+export const hasGlobSentinel = (text: string): boolean => text.includes(GLOB) || text.includes(LEDGER_GLOB);
+
+export function withGlobSentinel(command: string, ledgerGlob = false): string {
+  const swapped = command.replace(TRAILING_GLOB, (_m, lead: string, dir: string) => `${lead}${dir}/${GLOB}`);
+  return ledgerGlob ? swapped.replace(LEDGER_PATTERN, (_m, lead: string, dir: string) => `${lead}${dir}/${LEDGER_GLOB}`) : swapped;
 }
 
 function plainWord(w: string): boolean {
@@ -45,12 +50,15 @@ function readOperand(w: string): string | null {
   return plainWord(w) ? w : null;
 }
 
-/** True when the segment is one of the verbs above and every operand stays in `own` (handoff dirs) or the worktree root. */
-export function ownHandoffSegment(c: EffectCtx, own: string[], cwd: string | null, seg: Segment): boolean {
-  if (!own.length || seg.redirects.length) return false;
+/**
+ * True when the segment is one of the verbs above and every operand stays in `own` (handoff dirs, round worktrees) or the
+ * worktree root. `ledger` (the bound ledger file) makes `<its dir>/LEDGER-*.md` a readable glob.
+ */
+export function ownHandoffSegment(c: EffectCtx, own: string[], cwd: string | null, seg: Segment, ledger?: string): boolean {
+  if ((!own.length && !ledger) || seg.redirects.length) return false;
   const verb = seg.words[0];
   const flags = FLAGS[verb];
-  if (!flags) return false;
+  if (!flags || (!own.length && verb !== "cat" && verb !== "ls")) return false;
   const rest = seg.words.slice(1);
   const ops = rest.filter((w) => !w.startsWith("-"));
   if (!rest.filter((w) => w.startsWith("-")).every((w) => flags.test(w)) || !ops.length) return false;
@@ -94,8 +102,15 @@ export function ownHandoffSegment(c: EffectCtx, own: string[], cwd: string | nul
     const r = resolved(abs);
     return r === null || hit(r);
   };
-  const writeOk = (w: string): boolean => plainWord(w) && !w.endsWith(GLOB) && !guarded(w) && contained(c, cwd, w, true, roots);
+  const writeOk = (w: string): boolean => plainWord(w) && !w.endsWith(GLOB) && !w.endsWith(LEDGER_GLOB) && !guarded(w) && contained(c, cwd, w, true, roots);
+  const ledgerDir = ledger ? [x.dirname(ledger), real(x.dirname(ledger))].filter((s): s is string => !!s).map((s) => fold(x.resolve(s))) : [];
   const readOk = (w: string): boolean => {
+    if (w.endsWith(`/${LEDGER_GLOB}`)) {
+      const dir = w.slice(0, -LEDGER_GLOB.length - 1);
+      if (!plainWord(dir) || cwd === null || !ledgerDir.length) return false;
+      const abs = x.resolve(cwd, dir);
+      return [abs, real(abs)].some((a) => a !== null && ledgerDir.includes(fold(a)));
+    }
     const r = readOperand(w);
     return r !== null && (contained(c, cwd, r, false, roots) || contained(c, cwd, r, false));
   };

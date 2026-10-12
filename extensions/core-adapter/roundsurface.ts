@@ -1,0 +1,84 @@
+// Round surfaces (ledger items 7c, 7e; docs/permissions.md, "Round surfaces"): what the foreman session owns for
+// the length of a round, one shared set for the foreman and every child of the session:
+//   - its own handoff dirs (owned.ts ownHandoffDirs),
+//   - the round worktrees recorded in the session manifest (the foreman's `git worktree add`, manifest.ts) and the
+//     isolation worktrees pi-subagents makes for them (`<repo>.worktrees/worktrees/<round>/pi-worktree-*`),
+//   - the ledger file bound to the session (a read root only).
+// Nothing else is inherited session-wide.
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { splitChain } from "./shellchain.ts";
+import { workspaceTop } from "./gitdrift.ts";
+
+const px = (platform: string): path.PlatformPath => (platform === "win32" ? path.win32 : path.posix);
+
+/** The unremoved worktree entries the foreman session itself recorded (owner = the session id, never a child's). */
+export function roundWorktrees(stateDir: string, sessionId: string, platform: string = process.platform): string[] {
+  const sid = (sessionId || "").split("").filter((c) => /[A-Za-z0-9_-]/.test(c)).join("");
+  if (!sid) return [];
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(stateDir, "sessions", sid, "manifest.json"), "utf8")) as { entries?: unknown };
+    if (!Array.isArray(m.entries)) return [];
+    const x = px(platform);
+    return m.entries
+      .filter((e): e is { path: string; kind: string; owner?: unknown; removed?: unknown } => !!e && typeof e === "object" && typeof (e as { path?: unknown }).path === "string")
+      .filter((e) => e.kind === "worktree" && !e.removed && (e.owner === undefined || e.owner === sessionId) && x.isAbsolute(e.path))
+      .map((e) => x.resolve(e.path));
+  } catch {
+    return [];
+  }
+}
+
+/** The dir pi-subagents puts the isolation worktrees of round worktree `round` in: `<repo>.worktrees/worktrees/<round name>`. */
+export function isolationDir(round: string, platform: string = process.platform): string {
+  const x = px(platform);
+  return x.join(x.dirname(round), "worktrees", x.basename(round));
+}
+
+/** Every dir the round surfaces own: the round worktrees and their isolation dirs. */
+export function roundRoots(worktrees: string[], platform: string = process.platform): string[] {
+  return worktrees.flatMap((w) => [w, isolationDir(w, platform)]);
+}
+
+const PLAIN = /^[A-Za-z0-9_./@+=,:%-]+$/;
+
+/**
+ * The target of the foreman's `git [-C <dir>] worktree add [-b|-B <branch>] <path> [<commit-ish>]` when it is the
+ * whole line and `<path>` is a direct child of `<repo>.worktrees` beside the repository, else null. No other option,
+ * no redirect, no `$`/`~`/`..` inside a word beyond the leading `../`. `repoTop` resolves the git top level (injectable).
+ */
+export function roundWorktreeAdd(command: string, cwd: string, platform: string = process.platform, repoTop: (dir: string) => string | null = workspaceTop): string | null {
+  const chain = splitChain(command);
+  if (!chain || chain.segments.length !== 1) return null;
+  const seg = chain.segments[0];
+  if (seg.redirects.length) return null;
+  const w = seg.words;
+  const x = px(platform);
+  let k = 0;
+  if (w[k++] !== "git") return null;
+  let gitDir = x.resolve(cwd);
+  if (w[k] === "-C") {
+    if (!w[k + 1] || !PLAIN.test(w[k + 1])) return null;
+    gitDir = x.resolve(gitDir, w[k + 1]);
+    k += 2;
+  }
+  if (w[k] !== "worktree" || w[k + 1] !== "add") return null;
+  const args = w.slice(k + 2);
+  const pos: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "-b" || a === "-B") {
+      const b = args[++i];
+      if (!b || b.startsWith("-") || !PLAIN.test(b) || b.includes("..")) return null;
+    } else if (a.startsWith("-") || !PLAIN.test(a)) return null;
+    else pos.push(a);
+  }
+  if (pos.length < 1 || pos.length > 2) return null;
+  const rest = pos[0].replace(/^(\.\.\/)+/, "");
+  if (rest.split("/").includes("..") || rest === "" || pos[1]?.includes("..")) return null;
+  const target = x.resolve(gitDir, pos[0]);
+  const top = repoTop(gitDir);
+  if (!top) return null;
+  const home = x.join(x.dirname(x.resolve(top)), `${x.basename(x.resolve(top))}.worktrees`);
+  return x.dirname(target) === home && x.basename(target) !== "" ? target : null;
+}

@@ -50,7 +50,7 @@ export function sedUnitAllowed(rules: BashRules, unit: string, home = ""): boole
   return isReadOnlySed(unit) && !hits(rules.ask, unit, home) && !hits(rules.deny, unit, home);
 }
 
-function hits(list: string[], unit: string, home: string): boolean {
+export function hits(list: string[], unit: string, home: string): boolean {
   return list.some((pat) => wildcardRegExp(pat, { home, ignoreCase: false, foldSeparators: false }).test(unit));
 }
 
@@ -90,6 +90,8 @@ export interface AllowDeps extends TmpScratchDeps {
   effects?: EffectCtx;
   /** The session's own handoff dirs (owned.ts ownHandoffDirs); with an effect context, `cp`/`mkdir`/`cat`/`ls` below them or the worktree pass as "own-handoff" (ownhandoff.ts). */
   ownDirs?: string[];
+  /** The ledger file bound to the session (round surfaces, roundsurface.ts): `cat <its dir>/LEDGER-*.md` is a read. */
+  ledger?: string;
 }
 
 /**
@@ -133,7 +135,7 @@ export function deterministicAllowInfo(rules: BashRules, command: string, deps: 
 }
 
 function compose(rules: BashRules, text: string, deps: AllowDeps): { label: AllowLabel; segments: number } | null {
-  const chain = splitChain(deps.ownDirs?.length && deps.effects ? withGlobSentinel(text) : text);
+  const chain = splitChain((deps.ownDirs?.length || deps.ledger) && deps.effects ? withGlobSentinel(text, !!deps.ledger) : text);
   if (!chain) return null;
   const c = deps.effects ?? null;
   const scratch = c?.scratch ?? deps.scratchDirs ?? [];
@@ -146,7 +148,7 @@ function compose(rules: BashRules, text: string, deps: AllowDeps): { label: Allo
     if (!seg.redirects.every((r) => redirectOk(r, c, cwd, scratch, platform))) return null;
     if (c) {
       if (!writes!.pass(cwd, seg)) return null; // a path under an earlier segment's write (effects.ts ChainWrites)
-      if (deps.ownDirs?.length && ownHandoffSegment(c, deps.ownDirs, cwd, seg)) {
+      if ((deps.ownDirs?.length || deps.ledger) && ownHandoffSegment(c, deps.ownDirs ?? [], cwd, seg, deps.ledger)) {
         labels.add("own-handoff");
         continue;
       }
