@@ -15,7 +15,8 @@ import type { OverlayRules } from "./permoverlay.ts";
 import { ownedRoots, ownHandoffDirs, resolveNpmRoot, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
-import { permFileState, PS_CHILD_ID, PS_PACKAGE, psProjectConfigPath, renderPermissions, resolvePermissionSystem } from "./permsys.ts";
+import { permFileState, PS_CHILD_ID, PS_PACKAGE, psGlobalConfigPath, psProjectConfigPath, renderPermissions, resolvePermissionSystem } from "./permsys.ts";
+import { npmRootDrift, npmRootDriftNotice, readPolicy } from "./npmrootdrift.ts";
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
@@ -498,6 +499,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (!npmRoot) return;
         s.owned = computeOwned(npmRoot);
         s.overlay = buildOverlay(s.owned);
+        // R3b point 8c: the policy is not rewritten here; a root it does not grant is traced and warned once.
+        const drift = npmRootDrift(npmRoot, readPolicy(psGlobalConfigPath(agentDir)));
+        const note = npmRootDriftNotice(drift, s.notified);
+        if (!drift || !note) return;
+        s.trace?.emit({ event: "npm_root_drift", resolved: drift.resolved, rendered: drift.rendered });
+        if (!s.isChild) ctx.ui.notify(note, "warning");
       })
       .catch(() => undefined);
     if (!isChild) s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id));
