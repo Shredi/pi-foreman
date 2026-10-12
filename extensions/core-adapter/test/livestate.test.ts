@@ -78,19 +78,19 @@ test("own ask and Pi prompt overlap: neither end nor typed-input release clears 
   l.stop();
 });
 
-test("waits[] from the wait runtime, state waiting (working wins), model carried", () => {
+test("waits[] from the wait runtime: a pending wait publishes working (7a), model carried", () => {
   const d = tmp();
   let waits = [{ id: "w1", kind: "pid", note: "suites", ageSeconds: 240.4, leftSeconds: 100 }];
   const l = LiveState.start({ agentDir: d, sessionId: "w", cwd: "/w", mode: "rpc", env: {} }, () => [{ ...run, model: "anthropic/claude-opus-5-5" }], undefined, () => waits);
   assert.ok(l);
   const a = read(d, "w");
-  assert.equal(a.state, "waiting");
+  assert.equal(a.state, "working");
   assert.deepEqual(a.waits, [{ id: "w1", kind: "pid", note: "suites", ageSeconds: 240, leftSeconds: 100 }]);
   assert.equal(a.runs[0].model, "anthropic/claude-opus-5-5");
   l.onAgentStart();
   assert.equal(l.snapshot().state, "working");
   l.onSettled(true);
-  assert.equal(l.snapshot().state, "waiting");
+  assert.equal(l.snapshot().state, "working", "a waiting session is never shown idle or done");
   waits = [];
   assert.equal(l.snapshot().state, "idle");
   assert.deepEqual(l.snapshot().waits, []);

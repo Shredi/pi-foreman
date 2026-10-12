@@ -178,7 +178,7 @@ export class LiveState {
 
   /** The current state name without building a snapshot. */
   get stateName(): LiveStateName {
-    return this.done ? "done" : this.blockers.size > 0 ? "blocked" : this.working ? "working" : this.waitList().length > 0 ? "waiting" : "idle";
+    return this.done ? "done" : this.blockers.size > 0 ? "blocked" : this.working || this.waitList().length > 0 ? "working" : "idle"; // a pending wait is work: never shown idle or done (R6 lane 7a)
   }
 
   private waitList(): LiveWait[] {
