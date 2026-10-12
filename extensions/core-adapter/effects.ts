@@ -545,9 +545,15 @@ export function editorBackupOperand(word: string): boolean {
   return /(~|\.bak|\.orig|\.swp)$/.test(base) || base.startsWith(".#");
 }
 
-/** True for `rm` / `rm -f` (any flags) with an editor-backup operand. */
+/** True for `rm` / `rm -f` (any flags), `/bin/rm`, `command rm`, `sudo rm`, `unlink` with an editor-backup operand. */
 export function editorBackupDelete(words: string[]): boolean {
-  return words[0] === "rm" && words.slice(1).some((w) => !w.startsWith("-") && editorBackupOperand(w));
+  let i = 0;
+  while (i < words.length && ["command", "sudo", "env", "builtin", "exec", "nice", "nohup", "time"].includes(words[i])) {
+    i++;
+    while (i < words.length && words[i].startsWith("-")) i++;
+  }
+  const prog = (words[i] ?? "").split(/[\\/]/).pop();
+  return (prog === "rm" || prog === "unlink") && words.slice(i + 1).some((w) => !w.startsWith("-") && editorBackupOperand(w));
 }
 
 /** True when any segment of the shell command deletes an editor backup (the hook denies it for children). */
