@@ -129,6 +129,7 @@ No config key.
 | `roles.<x>.file` | unset | not in project/session (a role file replaces the prompt: user or overlay config only) |
 | `roles.<x>.promptAppend` | unset | any layer |
 | `roles.<x>.tools` | `foreman`: `[]`, `planner`: `["read", "ls", "grep", "find", "write", "edit"]`, `explorer`: `["read", "ls", "grep", "find", "bash"]`, `builder`: `["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_move", "foreman_copy"]`, ... (see `config/foreman.defaults.json`) | tighten-only (can only narrow the list) |
+| `roles.<x>.denyTools` | `planner`: `["mcp__*"]`, `explorer`: `["mcp__*"]`, `reviewer`: `["mcp__*"]`, `senior-reviewer`: `["mcp__*"]` | any layer |
 | `roles.<x>.launch` | `planner`: `"detached"`, `explorer`: `"detached"`, `builder`: `"detached"`, `reviewer`: `"detached"`, `senior-reviewer`: `"detached"`, `finalizer`: `"detached"` | not in project/session (the launch mode comes from the user or overlay config) |
 | `roles.<x>.timeoutMinutes` | `planner`: `20`, `explorer`: `20`, `builder`: `60`, `reviewer`: `30`, `senior-reviewer`: `45`, `finalizer`: `30` | tighten-only (lower only, minimum 1) |
 | `ceremony.childTimeoutSeconds` | `1800` | tighten-only (lower only, minimum 1) |

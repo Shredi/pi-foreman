@@ -19,6 +19,13 @@ export interface PhaseLimits {
 export type ReadLimits = Record<Phase, PhaseLimits>;
 
 export const READ_CLASS: ReadonlySet<string> = new Set(["bash", "read", "grep", "find", "ls", "codemode", ...PACK_READ_TOOL_NAMES]);
+/** A call that counts as a foreman read: READ_CLASS names, any MCP tool, and `subagent` get|guide (never a launch). */
+export function isReadCall(name: string, input: unknown): boolean {
+  if (READ_CLASS.has(name) || name.startsWith("mcp__")) return true;
+  if (name !== "subagent" || !input || typeof input !== "object") return false;
+  const action = (input as Record<string, unknown>).action;
+  return action === "get" || action === "guide";
+}
 export const DEFAULT_READ_LIMITS: ReadLimits = { before: { warn: 4, deny: 8 }, after: { warn: 4, deny: 8 } };
 export const DEFAULT_RECHECK = 3;
 const MAX_FILES = 200;

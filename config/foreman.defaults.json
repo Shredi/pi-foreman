@@ -23,11 +23,11 @@
   },
   "roles": {
     "foreman": { "tools": [], "codemode": true },
-    "planner": { "tools": ["read", "ls", "grep", "find", "write", "edit"], "codemode": false, "launch": "detached", "timeoutMinutes": 20 },
-    "explorer": { "tools": ["read", "ls", "grep", "find", "bash"], "codemode": true, "launch": "detached", "timeoutMinutes": 20 },
+    "planner": { "tools": ["read", "ls", "grep", "find", "write", "edit"], "denyTools": ["mcp__*"], "codemode": false, "launch": "detached", "timeoutMinutes": 20 },
+    "explorer": { "tools": ["read", "ls", "grep", "find", "bash"], "denyTools": ["mcp__*"], "codemode": true, "launch": "detached", "timeoutMinutes": 20 },
     "builder": { "tools": ["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_move", "foreman_copy"], "codemode": false, "launch": "detached", "timeoutMinutes": 60 },
-    "reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "codemode": false, "launch": "detached", "timeoutMinutes": 30 },
-    "senior-reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "codemode": false, "launch": "detached", "timeoutMinutes": 45 },
+    "reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "denyTools": ["mcp__*"], "codemode": false, "launch": "detached", "timeoutMinutes": 30 },
+    "senior-reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "denyTools": ["mcp__*"], "codemode": false, "launch": "detached", "timeoutMinutes": 45 },
     "finalizer": { "tools": ["read", "ls", "grep", "find", "bash", "edit"], "codemode": false, "launch": "detached", "timeoutMinutes": 30 }
   },
   "providers": {},

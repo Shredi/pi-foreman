@@ -110,6 +110,15 @@ class ConfigTest(unittest.TestCase):
             self.l2(json.loads(preset.read_text()))
             self.assertEqual(self.load()["errors"], [], preset.name)
 
+    def test_deny_tools_union_across_layers(self):
+        self.l2({"roles": {"explorer": {"denyTools": ["fake_*"]}}})
+        self.proj({"roles": {"explorer": {"denyTools": []}, "reviewer": {"denyTools": ["x"]}}})
+        res = self.load(trusted_project=True)
+        self.assertEqual(res["config"]["roles"]["explorer"]["denyTools"], ["mcp__*", "fake_*"])
+        self.assertEqual(res["config"]["roles"]["reviewer"]["denyTools"], ["mcp__*", "x"])
+        self.assertEqual(res["config"]["roles"]["builder"].get("denyTools"), None)
+        self.assertEqual(res["errors"], [])
+
     def test_project_ignored_without_trust(self):
         self.proj({"fanout": {"max": 9}})
         self.assertEqual(self.load()["config"]["fanout"]["max"], 3)

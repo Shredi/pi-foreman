@@ -29,7 +29,9 @@ import { dormantDoctorLine } from "./features.ts";
 import { collectOrientation } from "./orient.ts";
 import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits } from "./childreads.ts";
-import { bgWaitLocations,detailLocations, inRecorded, noticeLocations, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
+import { bgWaitLocations,detailLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
+import { roleToolDenied } from "./roledeny.ts";
+import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { CHILD_TRACE_EVENT, gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
 import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
@@ -1050,7 +1052,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** Read budget (budget.ts): foreman only; undefined = let the call go on. */
   function readBudgetCheck(s: Session | undefined, ctx: ExtensionContext, toolName: string, callId: string, input: unknown) {
-    if (!s || s.isChild || !READ_CLASS.has(toolName)) return undefined;
+    if (!s || s.isChild || !isReadCall(toolName, input)) return undefined;
     const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
     const file = toolName === "read" ? resolveToolPath(inp.path, ctx.cwd, os.homedir()) : null;
     // ceremony.ledgerHelper tool/bash: a pure-ledger shell command is not a re-check (ledgercall.ts).
@@ -1058,7 +1060,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // harness-friction: a handoff poll (ruling.md, owned dirs) or a git worktree add|list|prune is no re-check (recheckexempt.ts).
     const handoff = recheckExempt(toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, owned: s.owned });
     const exempt = ledgerOnly || handoff || s.supervisor.open.size > 0 || (file !== null && inRecorded(s.childFiles, normFile(file)));
-    const d = s.budget.check(toolName, callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt);
+    // MCP and subagent get|guide calls are counted under the name `read`, after the exemptions above.
+    const d = s.budget.check(READ_CLASS.has(toolName) ? toolName : "read", callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt);
     if (d.kind === "warn") {
       s.readNotices.set(callId, d.text);
       s.trace?.emit({ event: "read_budget", phase: d.phase, count: d.count, action: "warn" });
@@ -1228,6 +1231,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const ps = sessionFor(ctx);
       if (ps && !ps.isChild && ps.activeRuns.size > 0) ps.pollBash++;
       if (ps && !ps.isChild && mentionsLedger((event.input as { command?: unknown }).command)) ps.ledgerBash.add(event.toolCallId);
+    }
+    // Role tool denial (roledeny.ts): a child's tool matching roles.<role>.denyTools is denied, never asked.
+    if (process.env.PI_SUBAGENT_CHILD === "1") {
+      const rs = sessionFor(ctx);
+      const msg = roleToolDenied(rs ? get(rs.config.config, "roles") : undefined, launchBinding?.role, event.toolName);
+      if (msg) {
+        rs?.trace?.emit({ event: "guard", guard: "role_tool_denied", toolFamily: event.toolName, decision: "blocked", reason: "role_tool_denied" });
+        return { block: true, reason: `pi-foreman: ${msg}.` };
+      }
+    }
+    // A child never deletes an editor backup with rm (effects.ts); it reports it instead.
+    if (process.env.PI_SUBAGENT_CHILD === "1" && event.toolName === "bash" && editorBackupCommand((event.input as { command?: unknown }).command)) {
+      sessionFor(ctx)?.trace?.emit({ event: "guard", guard: "editor_backup", toolFamily: "bash", decision: "blocked", reason: "editor_backup" });
+      return { block: true, reason: "pi-foreman: [editor_backup] deleting an editor backup (`*~`, `*.bak`, `*.orig`, `*.swp`, `.#*`) with rm is denied; report it in your result instead." };
     }
     // First of all, before the permission system and the core guards: the overlay's deny/ask rules.
     if (isOverlayTool(event.toolName)) {
