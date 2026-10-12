@@ -539,6 +539,26 @@ export function redirectOk(r: Redirect, c: EffectCtx | null, cwd: string | null,
   return platform !== "win32" && tmpDest(r.target);
 }
 
+/** True for an operand naming an editor backup: `*~`, `*.bak`, `*.orig`, `*.swp` or `.#*` (by its last path part). */
+export function editorBackupOperand(word: string): boolean {
+  const base = word.split(/[\\/]/).pop() ?? word;
+  return /(~|\.bak|\.orig|\.swp)$/.test(base) || base.startsWith(".#");
+}
+
+/** True for `rm` / `rm -f` (any flags) with an editor-backup operand. */
+export function editorBackupDelete(words: string[]): boolean {
+  return words[0] === "rm" && words.slice(1).some((w) => !w.startsWith("-") && editorBackupOperand(w));
+}
+
+/** True when any segment of the shell command deletes an editor backup (the hook denies it for children). */
+export function editorBackupCommand(command: unknown): boolean {
+  if (typeof command !== "string") return false;
+  const chain = splitChain(command);
+  // a refused chain (an unquoted glob) is judged by its words
+  const units = chain ? chain.segments.map((s) => s.words) : command.split(/&&|\|\||[;|\n]/).map((u) => u.trim().split(/\s+/));
+  return units.some(editorBackupDelete);
+}
+
 /** The effect of one segment of a split chain (shellchain.ts), with `cwd` the cwd it runs in. */
 export function segmentEffect(c: EffectCtx, cwd: string | null, seg: Segment): SegmentEffect {
   const no = (cls: EffectClass, known: boolean, unit = seg.text): SegmentEffect => ({ cls, known, cwd, unit });
@@ -572,6 +592,7 @@ export function segmentEffect(c: EffectCtx, cwd: string | null, seg: Segment): S
     const e = sedEffect(c, cwd, words);
     return out(e.cls, true, e.label);
   }
+  if (prog === "rm" && editorBackupDelete(words)) return out("unknown", true);
   if (prog in WRITE_FLAGS) {
     const cls = writeVerb(c, cwd, prog, args);
     return out(cls, true, "effect-write-in");

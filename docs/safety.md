@@ -62,6 +62,7 @@ Asks go through a model review link (`foreman-review`) using `providers.<p>.revi
   `dest/<name>` the same, and no recursive copy into it). Every `cp` source must be a contained read
   ([permissions](permissions.md)), a recursive one from the worktree only. No `rm` in any form: `rm -rf /tmp/...` stays
   reviewed. POSIX only; on Windows it never matches. A user `ask`/`deny` pattern that catches the command wins.
+- A child's `rm` / `rm -f` of an editor backup (`*~`, `*.bak`, `*.orig`, `*.swp`, `.#*`) is denied with reason `editor_backup`; the child reports the file instead.
 - The permission system forwards only one unit of a chained command (the first most restrictive one), with the
   whole command as `full command` evidence. Every deterministic allow (`sed-read`, `timeout-wrapper`, `tmp-scratch`,
   `child-scratch`, `test-restore`, `effect-read`, `effect-build-test`, `effect-write-in`) must hold for both the unit
