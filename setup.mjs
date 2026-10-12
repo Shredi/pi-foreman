@@ -31,6 +31,8 @@ const USAGE = [
 const NO_INTERCOM_GLOB = "!node_modules/pi-intercom/**";
 const BUNDLED_RE = /^npm:(pi-subagents|@gotgenes\/pi-permission-system|pi-intercom)(@.*)?$/;
 const REMOTE_FOREMAN_RE = /^(npm:pi-foreman(@[^/]+)?|(github\.com\/[^/\s]+\/pi-foreman(\.git)?(@[^/]+)?\/?)|git:[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|git:https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?)$/;
+// Optional add-on; nothing in pi-foreman requires it (docs/herdr.md, "Optional add-on: background tasks").
+const ADDON_HINT = "optional add-on: PI_BG_FEATURES=process pi install npm:pi-background-tasks (background shell tasks with status, logs and kill; `process` leaves out the attribution provider override, which takes over the global anthropic provider slot).";
 const BRIDGE_HINT = "pi-claude-bridge: log in once. Run `CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude` and enter /login, or run `claude setup-token` and export CLAUDE_CODE_OAUTH_TOKEN (docs/install.md, \"Claude bridge: log in once\").";
 const INTERCOM = "pi-intercom";
 // pi-subagents runs this after creating a managed worktree (config: <agent dir>/extensions/subagent/config.json). POSIX only:
@@ -691,6 +693,7 @@ function main(argv) {
     if (errors.length) say(`  some roles are unresolved; only the resolvable part was written. Edit ${foremanFile}.`);
 
     if (finalPackages.some(isBridgeEntry)) say(BRIDGE_HINT.replace("<agent dir>", agentDir));
+    if (!opts.remove) say(ADDON_HINT);
     if (opts.develop && developSettings()) anyChange = true;
     if (!anyChange) say("pi-foreman: up to date, nothing to change.");
     else if (dry) say("pi-foreman: dry run complete, nothing written.");
