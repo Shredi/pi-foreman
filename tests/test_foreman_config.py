@@ -119,6 +119,35 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(res["config"]["roles"]["builder"].get("denyTools"), None)
         self.assertEqual(res["errors"], [])
 
+    def test_resources_defaults_and_project_loosening_dropped(self):
+        res0 = self.load()
+        self.assertEqual(res0["config"]["resources"],
+                         {"maxLoadPerCore": 1.5, "minFreeMemMB": 1024, "minFreeDiskGB": 5, "sampleSeconds": 30})
+        self.assertEqual(res0["errors"], [])
+        self.proj({"resources": {"maxLoadPerCore": 3.0, "minFreeMemMB": 100, "minFreeDiskGB": 1, "sampleSeconds": 10}})
+        res = self.load(trusted_project=True)
+        self.assertEqual(res["config"]["resources"],
+                         {"maxLoadPerCore": 1.5, "minFreeMemMB": 1024, "minFreeDiskGB": 5, "sampleSeconds": 30})
+        joined = "\n".join(res["warnings"])
+        for key in ("maxLoadPerCore", "minFreeMemMB", "minFreeDiskGB", "sampleSeconds"):
+            self.assertIn("resources." + key, joined)
+
+    def test_resources_project_tightening_kept(self):
+        self.l2({"resources": {"maxLoadPerCore": 2.0, "sampleSeconds": 60}})
+        self.proj({"resources": {"maxLoadPerCore": 1.0, "minFreeMemMB": 2048, "minFreeDiskGB": 10.5}})
+        res = self.load(trusted_project=True)
+        self.assertEqual(res["config"]["resources"],
+                         {"maxLoadPerCore": 1.0, "minFreeMemMB": 2048, "minFreeDiskGB": 10.5, "sampleSeconds": 60})
+        self.assertEqual(res["warnings"], [])
+        self.assertEqual(res["errors"], [])
+
+    def test_resources_schema_rejects_bad_user_values(self):
+        self.l2({"resources": {"maxLoadPerCore": 0, "sampleSeconds": 1}})
+        res = self.load()
+        msgs = res["errors"] + res["warnings"]
+        self.assertTrue(any("maxLoadPerCore" in e for e in msgs))
+        self.assertTrue(any("sampleSeconds" in e for e in msgs))
+
     def test_project_ignored_without_trust(self):
         self.proj({"fanout": {"max": 9}})
         self.assertEqual(self.load()["config"]["fanout"]["max"], 3)

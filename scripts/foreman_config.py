@@ -208,6 +208,7 @@ IGNORED_KEYS = [
     (("ceremony", "reviewModel"), "the fallback reviewer model comes from the user or overlay config"),
     (("ceremony", "reviewByOccasion"), "the per-occasion reviewer overrides come from the user or overlay config"),
     (("compaction", "priceTiers"), "the price tiers come from the user or overlay config"),
+    (("resources", "sampleSeconds"), "the sampling interval comes from the user or overlay config"),
     (("ladder", "strongAbove"), "the ladder and the child rank policy come from the user or overlay config"),
     (("ladder", "childMaxTurns"), "the ladder and the child rank policy come from the user or overlay config"),
     (("ladder", "childPolicy"), "the ladder and the child rank policy come from the user or overlay config"),
@@ -263,13 +264,17 @@ LAYER_TIGHTEN = [
     (("compaction", "threshold", "*"), "lower_only_number"),
     (("wait", "maxSeconds"), "lower_only"),
     (("wait", "maxActive"), "lower_only"),
+    (("resources", "maxLoadPerCore"), "lower_only_number"),
+    (("resources", "minFreeMemMB"), "higher_only"),
+    (("resources", "minFreeDiskGB"), "higher_only_number"),
     (("childMaxThinking",), ("ordered", tuple(THINKING))),
     (("tools", "git"), "false_only"),
     (("tools", "pr"), "false_only"),
 ]
 LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
                  "threshold": 0.3, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0,
-                 "windowMinutes": 1, "childTimeoutSeconds": 1, "reviewRuns": 1, "budgetUsd": 0.01}
+                 "windowMinutes": 1, "childTimeoutSeconds": 1, "reviewRuns": 1, "budgetUsd": 0.01,
+                 "maxLoadPerCore": 0.01}
 # lower_only values with no earlier layer value may not exceed this (the built-in default).
 LAYER_CAP = {"windowMinutes": 45}
 # Built-in cache policy per provider (mirrors BUILTIN_CACHE in extensions/core-adapter/cachepolicy.ts).
@@ -364,6 +369,17 @@ def _tighten_pattern(node, base, keys, rule, done, who, warnings, minimum=0):
                 warnings.append("%s: entries not extended: %s" % (label, ", ".join(map(str, dropped))))
             node[name] = [x for x in have if x in val]
             continue
+        elif rule in ("higher_only", "higher_only_number"):
+            num = rule == "higher_only_number"
+            isnum = lambda v: isinstance(v, (int, float) if num else int) and not isinstance(v, bool)  # noqa: E731
+            if not isnum(val):
+                why = "not a number" if num else "not an integer"
+            elif val < 0:
+                why = "below the minimum 0"
+            elif isnum(have) and val < have:
+                why = "it would loosen the policy"
+            else:
+                continue
         else:  # lower_only, lower_only_number
             num = rule == "lower_only_number"
             isnum = lambda v: isinstance(v, (int, float) if num else int) and not isinstance(v, bool)  # noqa: E731
@@ -627,6 +643,8 @@ def validate_schema(value, schema, path, issues):
     if _TYPES["number"](value):
         if "minimum" in schema and value < schema["minimum"]:
             issues.append(("error", path, "%s: below minimum %s" % (label, schema["minimum"])))
+        if "exclusiveMinimum" in schema and value <= schema["exclusiveMinimum"]:
+            issues.append(("error", path, "%s: must be above %s" % (label, schema["exclusiveMinimum"])))
         if "maximum" in schema and value > schema["maximum"]:
             issues.append(("error", path, "%s: above maximum %s" % (label, schema["maximum"])))
     if isinstance(value, dict):
@@ -1320,6 +1338,9 @@ def main(argv=None):
             out["roles"] = resolve_all(cfg, args.provider)
         human = "layers: %s\nwarnings: %d\nerrors: %d" % (
             ", ".join(res["layers"]), len(res["warnings"]), len(res["errors"]))
+        rs = cfg.get("resources") or {}
+        human += "\neffective resources: " + " ".join(
+            "%s=%s" % (k, rs.get(k)) for k in ("maxLoadPerCore", "minFreeMemMB", "minFreeDiskGB", "sampleSeconds"))
         human += "".join("\n  warning: " + w for w in res["warnings"])
         human += "".join("\n  error: " + e for e in res["errors"])
         emit(args, out, human)
