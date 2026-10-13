@@ -1,0 +1,47 @@
+{
+ "critical": [
+  {
+   "event": "wait",
+   "decision": "start",
+   "toolFamily": "pressure"
+  },
+  {
+   "event": "launch_deferred",
+   "reasons": "load",
+   "level": "critical"
+  },
+  {
+   "event": "wait",
+   "decision": "resolved",
+   "toolFamily": "pressure"
+  },
+  {
+   "event": "wait",
+   "decision": "wake",
+   "wakeKinds": "pressure"
+  }
+ ],
+ "high": [
+  {
+   "event": "launch_narrowed",
+   "width": 1,
+   "reasons": "load"
+  },
+  {
+   "event": "wait",
+   "decision": "start",
+   "toolFamily": "pressure"
+  },
+  {
+   "event": "wait",
+   "decision": "resolved",
+   "toolFamily": "pressure"
+  },
+  {
+   "event": "wait",
+   "decision": "wake",
+   "wakeKinds": "pressure"
+  }
+ ],
+ "ok": []
+}

@@ -26,14 +26,17 @@ import type { OverlayRules } from "./permoverlay.ts";
 import { resolveToolPath } from "./payload.ts";
 import { workspaceOf } from "./python.ts";
 import { realDeep, under } from "./triage.ts";
+import { pressureOutcome } from "./pressure.ts";
 import { WAKE_MESSAGE_TYPE } from "./usage.ts";
 
 export const WAIT_TOOL = "foreman_wait";
-export const WAIT_KINDS = ["timer", "file", "pid", "ci", "child"] as const;
+export const WAIT_KINDS = ["timer", "file", "pid", "ci", "child", "pressure"] as const;
+/** The kinds `foreman_wait start` accepts; `pressure` waits are started by the adapter (pressure.ts). */
+export const TOOL_WAIT_KINDS = WAIT_KINDS.filter((k) => k !== "pressure");
 export type WaitKind = (typeof WAIT_KINDS)[number];
 export const RUN_ID = /^\d{1,20}$/;
 export const NOTE_MAX = 200;
-export const POLL_MS: Record<WaitKind, number> = { timer: 0, file: 2000, pid: 2000, ci: 60_000, child: 0 };
+export const POLL_MS: Record<WaitKind, number> = { timer: 0, file: 2000, pid: 2000, ci: 60_000, child: 0, pressure: 0 };
 export const CI_TIMEOUT_MS = 30_000;
 const GH_MISSING = "gh was not found on PATH outside the workspace (empty, relative and workspace PATH entries are skipped).";
 const MAX_TIMER_MS = 2 ** 31 - 1;
@@ -61,7 +64,9 @@ export type ValidSpec =
   | { kind: "file"; path: string; note: string }
   | { kind: "pid"; pid: number; note: string; log?: string }
   | { kind: "ci"; runId: string; note: string; log?: string }
-  | { kind: "child"; label: string; note: string };
+  | { kind: "child"; label: string; note: string }
+  /** Adapter-started: critical = wake when the level drops below critical (or after `boundSeconds`); queue = wake when no run is active. */
+  | { kind: "pressure"; mode: "critical" | "queue"; args: unknown[]; pollMs: number; boundSeconds: number; note: string };
 
 /** Registry child label (or `any`) a `child` wait names. */
 export const CHILD_LABEL = /^[A-Za-z0-9._-]{1,40}$/;
@@ -165,6 +170,7 @@ export function parseStart(params: Record<string, unknown>, limits: WaitLimits, 
     }
     default:
       return { error: `${WAIT_TOOL}: kind must be timer, file, pid, ci or child.` };
+    // (a `pressure` kind is rejected here too: the adapter starts those)
   }
 }
 
@@ -252,6 +258,10 @@ export interface RuntimeDeps {
   ghRefusal?: () => string | null;
   wake: (outcomes: Outcome[]) => void;
   trace: (rec: Record<string, unknown>) => void;
+  /** pressure waits: the current pressure level and reasons (reads the pressure file). */
+  pressure?: () => { level: string; reasons: string[] };
+  /** pressure queue waits: true when no child run is active. */
+  idle?: () => boolean;
   /** Called after the set of active waits changed (a wait started, resolved or cancelled). */
   changed?: () => void;
   /** Modification time (ms) of a file, else null; lets a ruling wait ignore a ruling older than its ask.md. */
@@ -277,6 +287,8 @@ interface Entry {
   pollHandle?: unknown;
   ghErrors: number;
   ghFirstError: string;
+  /** pressure waits: mode and the launch arguments to hand back (a shared array a queue may still grow). */
+  press?: { mode: "critical" | "queue"; args: unknown[] };
 }
 
 /** Active waits of one foreman session. */
@@ -329,7 +341,16 @@ export class WaitRuntime {
     if (spec.kind === "child") e.label = spec.label;
     else if ((spec.kind === "pid" || spec.kind === "ci") && spec.log) e.log = spec.log;
     if (spec.kind === "pid") e.pid = spec.pid;
+    if (spec.kind === "pressure") e.press = { mode: spec.mode, args: spec.args };
     this.waits.set(id, e);
+    if (spec.kind === "pressure") {
+      const bound = Math.min(spec.boundSeconds, limits.maxSeconds);
+      e.handles.push(this.d.timers.set(() => this.resolve(id, pressureOutcome(spec.mode, "timeout", spec.args)), bound * 1000));
+      this.pollPressure(e, spec);
+      this.d.trace({ event: "wait", decision: "start", toolFamily: spec.kind });
+      this.notify();
+      return { id };
+    }
     e.handles.push(this.d.timers.set(() => this.resolve(id, "timeout"), limits.maxSeconds * 1000));
     if (spec.kind === "timer") e.handles.push(this.d.timers.set(() => this.resolve(id, "elapsed"), spec.seconds * 1000));
     else if (spec.kind !== "child") this.poll(e, spec, 0);
@@ -338,7 +359,18 @@ export class WaitRuntime {
     return { id };
   }
 
-  private poll(e: Entry, spec: Exclude<ValidSpec, { kind: "child" }>, delay: number): void {
+  /** Re-checks the pressure file every `pollMs`: a critical wait ends below critical, a queue wait when no run is active or the level is ok. */
+  private pollPressure(e: Entry, spec: Extract<ValidSpec, { kind: "pressure" }>): void {
+    e.pollHandle = this.d.timers.set(() => {
+      if (!this.waits.has(e.id)) return;
+      const p = this.d.pressure?.() ?? { level: "ok", reasons: [] };
+      const level = (p.level === "high" || p.level === "critical" ? p.level : "ok") as "ok" | "high" | "critical";
+      if (spec.mode === "critical" ? level !== "critical" : level === "ok" || (this.d.idle?.() ?? true)) return this.resolve(e.id, pressureOutcome(spec.mode, level, spec.args));
+      this.pollPressure(e, spec);
+    }, spec.pollMs);
+  }
+
+  private poll(e: Entry, spec: Exclude<ValidSpec, { kind: "child" | "pressure" }>, delay: number): void {
     e.pollHandle = this.d.timers.set(() => {
         if (!this.waits.has(e.id)) return;
         if (spec.kind === "file") {
@@ -533,13 +565,17 @@ export interface WaitSession {
   onCancel?: (id: string) => void;
   /** Called when a file wait on a ruling file woke (the harness writes `.seen`; askcontract.ts). */
   onRulingWake?: (file: string) => void;
+  /** The current pressure level and reasons (pressure waits). */
+  pressure?: () => { level: string; reasons: string[] };
+  /** True when no child run is active (pressure queue waits). */
+  idle?: () => boolean;
 }
 
 const PARAMS = {
   type: "object",
   properties: {
     action: { type: "string", enum: ["start", "list", "cancel"] },
-    kind: { type: "string", enum: [...WAIT_KINDS], description: "start: what to wait for." },
+    kind: { type: "string", enum: [...TOOL_WAIT_KINDS], description: "start: what to wait for." },
     seconds: { type: "integer", minimum: 1, description: "timer: seconds to wait." },
     path: { type: "string", description: "file: resolves when this file exists (inside the workspace, its .workflow/ or <agentDir>/pi-foreman/state/wait/)." },
     pid: { type: "integer", minimum: 2, description: "pid: resolves when this process has exited." },
@@ -554,7 +590,7 @@ const PARAMS = {
 };
 
 /** Register `foreman_wait` (foreman sessions only) and its shutdown cleanup. */
-export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]>; childNotice: (sessionId: string, label: string, kind: string, notePath: string) => boolean; cancelAll: (sessionId: string) => string[]; onChange: (sessionId: string, cb: () => void) => () => void } {
+export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]>; childNotice: (sessionId: string, label: string, kind: string, notePath: string) => boolean; cancelAll: (sessionId: string) => string[]; onChange: (sessionId: string, cb: () => void) => () => void; startPressure: (ctx: ExtensionContext, spec: Extract<ValidSpec, { kind: "pressure" }>) => Promise<{ id: string } | { error: string }> } {
   const runtimes = new Map<string, { rt: WaitRuntime; ctx: ExtensionContext }>();
   const listeners = new Map<string, Set<() => void>>();
   const handle = {
@@ -567,6 +603,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
     active: (sessionId: string) => runtimes.get(sessionId)?.rt.list() ?? [],
     childNotice: (sessionId: string, label: string, kind: string, notePath: string) => runtimes.get(sessionId)?.rt.childNotice(label, kind, notePath) ?? false,
     cancelAll: (sessionId: string) => runtimes.get(sessionId)?.rt.cancelAll() ?? [],
+    startPressure: async (_ctx: ExtensionContext, _spec: Extract<ValidSpec, { kind: "pressure" }>): Promise<{ id: string } | { error: string }> => ({ error: "pressure waits are for the foreman only" }),
   };
   pi.on("session_shutdown", async (_event, ctx) => {
     const id = ctx.sessionManager.getSessionId();
@@ -595,6 +632,8 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       gh: (runId) => ghRunView(runId, workspaceOf(s.cwd).root),
       ghRefusal: () => (resolveGh(workspaceOf(s.cwd).root) ? null : `ci waits are refused: ${GH_MISSING}`),
       trace: s.trace,
+      pressure: s.pressure,
+      idle: s.idle,
       changed: () => {
         for (const cb of [...(listeners.get(s.id) ?? [])]) cb();
       },
@@ -610,6 +649,13 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
     });
     runtimes.set(s.id, holder);
     return holder.rt;
+  };
+  handle.startPressure = async (ctx, spec) => {
+    const s = await deps.session(ctx);
+    if (s.isChild) return { error: "pressure waits are for the foreman only" };
+    const r = ensureRuntime(s, ctx).start(spec);
+    if (!("error" in r)) s.onStart?.(spec, r.id);
+    return r;
   };
   const waitTool = {
     name: WAIT_TOOL,

@@ -170,9 +170,22 @@ function capPut<K, V>(m: Map<K, V>, k: K, v: V): void {
 export class LaunchBatch {
   private ids: string[] = [];
   private readonly started = new Set<string>();
+  /** Counts assistant messages seen: a pressure gate narrows once per message. */
+  generation = 0;
+
+  /** Launch calls of the current message. */
+  get size(): number {
+    return this.ids.length;
+  }
+
+  /** Position of `id` among the launches of the current message, or -1. */
+  positionOf(id: string): number {
+    return this.ids.indexOf(id);
+  }
 
   /** Assistant message_end: its `subagent` launch/resume calls. */
   onAssistant(content: unknown, isLaunch: (args: unknown) => boolean): void {
+    this.generation++;
     this.ids = [];
     this.started.clear();
     if (!Array.isArray(content)) return;

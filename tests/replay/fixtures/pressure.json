@@ -1,0 +1,33 @@
+{
+ "foreman": {
+  "hi": [
+   {"tools": [
+    {"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:x-done]] map part a"}},
+    {"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:qa]] map part b"}},
+    {"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:qb]] map part c"}}
+   ]},
+   {"text": "Narrowed."}
+  ],
+  "qa": [{"text": "Queue wake seen."}],
+  "ok3": [
+   {"tools": [
+    {"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:x-done]] map part a"}},
+    {"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:x-done]] map part b"}},
+    {"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:x-done]] map part c"}}
+   ]},
+   {"text": "All three ran."}
+  ],
+  "crit": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:cr]] map the repo"}}]},
+   {"text": "Deferred."}
+  ],
+  "cr": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:cr]] map the repo"}}]},
+   {"text": "Relaunched."}
+  ]
+ },
+ "*": {
+  "x-done": [{"text": "explorer child result"}],
+  "cr": [{"text": "explorer child result after the pressure dropped"}]
+ }
+}

@@ -108,6 +108,7 @@ import { checkLaunch, completedAgents, hasSecurityFinding, initialRounds, NOTIFY
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { addonPresent, formatWaits, readAddonTasks } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
+import { CRITICAL_WAIT_SECONDS, criticalReason, narrowTasks, PRESSURE_FIXTURE_ENV, PressureSampler, pressurePath, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import type { CloseReport } from "./close.ts";
@@ -303,11 +304,18 @@ interface Session {
   widget: ChildWidget;
   /** Presence file (livestate.ts); null for a subagent child or a print/json run. */
   live: LiveState | null;
+  /** Foreman only: the pressure sampler timer (pressure.ts), and the launches queued behind the one that runs under high pressure (per assistant message). */
+  pressureSampler: PressureSampler | null;
+  pressureQ: { gen: number; entries: unknown[]; started: boolean } | null;
 }
 
 export interface AdapterDeps {
   spawner?: Spawner;
   platform?: string;
+  /** Tests: the clock the pressure file's staleness is judged by. */
+  pressureNow?: () => number;
+  /** Tests: replaces the call of scripts/foreman_pressure.py (a fixture sampler); the args are its argv. */
+  pressureRun?: (args: string[]) => Promise<{ ok: boolean; text: string }>;
 }
 
 export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): void {
@@ -539,6 +547,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       lastAssistantAt: null,
       widget: new ChildWidget(usageFile(agentDir, foremanSession), loadPrices(PKG_ROOT)),
       live: null,
+      pressureSampler: null,
+      pressureQ: null,
     };
     sessions.set(id, s);
     // `npm root -g` once per session, never awaited on the hot path; the overlay is rebuilt with the root when it resolves.
@@ -795,6 +805,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     herdrMeta.start(ctx, get(s.config.config, "herdr.groupTag") !== false);
     sidebarLive.start(ctx, { python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, sessionId: s.id, symbols: get(s.config.config, "ui.symbols"), live: s.live });
+    // Host pressure (pressure.ts): the foreman samples on a timer; the launch path only reads the file.
+    if (!s.isChild && !s.pressureSampler) {
+      s.pressureSampler = new PressureSampler({
+        file: pressurePath(s.agentDir),
+        workspace: s.cwd,
+        config: () => s.config.config,
+        run: deps.pressureRun ?? ((args) => runScript(s, "foreman_pressure.py", args, 20_000)),
+        trace: (r) => s.trace?.emit(r),
+        fixture: process.env[PRESSURE_FIXTURE_ENV]?.trim() || undefined,
+      });
+      s.pressureSampler.start();
+    }
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
@@ -817,6 +839,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     sweepScratch(s);
     review.drop(s.id);
     s.live?.stop();
+    s.pressureSampler?.stop();
     s.widget.dispose();
     usageFooter.drop(s.id);
     compactionGate.reset(s.id);
@@ -1294,6 +1317,33 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
   }
 
+  const pressureNow = deps.pressureNow ?? Date.now;
+  /** The pressure file as the launch path sees it (missing or stale = ok). */
+  const pressureOf = (s: Session): PressureState => readPressure(pressurePath(s.agentDir), sampleSecondsOf(s.config.config), pressureNow());
+
+  /**
+   * High pressure, fan-out width 1: the first launch of an assistant message runs, the others are queued behind it (refused with a
+   * wake: one `pressure` queue wait lists their arguments once no run is active). A `tasks` call keeps its first task and queues the rest.
+   * Returns the refusal text of a queued call, else undefined.
+   */
+  async function narrowLaunch(s: Session, ctx: ExtensionContext, callId: string, input: Record<string, unknown>, raw: Record<string, unknown>, p: PressureState): Promise<string | undefined> {
+    const gen = s.launchBatch.generation;
+    const pos = s.launchBatch.positionOf(callId);
+    const rest = pos > 0 ? null : (narrowTasks(input), narrowTasks(raw));
+    if (pos <= 0 && !rest) return undefined;
+    if (s.pressureQ?.gen !== gen) s.pressureQ = { gen, entries: [], started: false };
+    const q = s.pressureQ;
+    q.entries.push(rest ?? raw);
+    let failed = "";
+    if (!q.started) {
+      q.started = true;
+      s.trace?.emit({ event: "launch_narrowed", width: 1, reasons: p.reasons.join(",") });
+      const w = await waits.startPressure(ctx, { kind: "pressure", mode: "queue", args: q.entries, pollMs: sampleSecondsOf(s.config.config) * 1000, boundSeconds: Infinity, note: "queued launches" });
+      if ("error" in w) failed = ` (no wait could be started: ${w.error}; relaunch once a run has ended)`;
+    }
+    return rest ? undefined : `${queuedReason(p.reasons)}${failed}`;
+  }
+
   /** Overlay check (see permoverlay.ts); undefined = let the call go on. */
   async function overlayBlock(s: Session, ctx: ExtensionContext, toolName: string, input: Record<string, unknown>) {
     if (!s.overlay) return { block: true as const, reason: OVERLAY_UNAVAILABLE };
@@ -1412,6 +1462,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let rounds: LaunchRounds | undefined;
       let kind: LaunchKind | undefined;
       let climbs: Climb[] = [];
+      let pressureHigh: string[] | null = null;
+      let rawLaunch: Record<string, unknown> = {};
       let ladderRoles: Record<string, Json> | undefined;
       let reviewerClimbs: ReviewerClimb[] = [];
       let reviewerTraces: Record<string, unknown>[] = [];
@@ -1421,6 +1473,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === "subagent") {
         // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
         stripBinding(input);
+        rawLaunch = JSON.parse(JSON.stringify(input)) as Record<string, unknown>; // the arguments as the model gave them, for a deferred or queued launch
         const resolution = await currentRoles(s, ctx);
         const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
         const act = subagentActionCheck(input, { allowWorkflow, runs: s.runs, allowed: childRoleIds(get(s.config.config, "roles")), resolution, maxThinking: get(s.config.config, "maxThinking") });
@@ -1455,6 +1508,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (noModel) return { block: true, reason: noModel };
         const noPlan = s.isChild ? undefined : builderPlanBlock(s, ctx, input);
         if (noPlan) return { block: true, reason: noPlan };
+        // Host pressure (pressure.ts): critical defers the launch (nothing below runs or counts), high narrows the fan-out to one and suppresses climbs.
+        if (!s.isChild && isLaunchArgs(input)) {
+          const p = pressureOf(s);
+          if (p.level === "critical") {
+            const args = rawLaunch;
+            const w = await waits.startPressure(ctx, { kind: "pressure", mode: "critical", args: [args], pollMs: sampleSecondsOf(s.config.config) * 1000, boundSeconds: CRITICAL_WAIT_SECONDS, note: "launch deferred" });
+            s.trace?.emit({ event: "launch_deferred", level: p.level, reasons: p.reasons.join(",") });
+            return { block: true, reason: `${criticalReason(p.reasons)}${"error" in w ? ` (no wait could be started: ${w.error}; relaunch with: ${JSON.stringify(args)})` : ""}` };
+          }
+          if (p.level === "high") {
+            pressureHigh = p.reasons;
+            const queued = await narrowLaunch(s, ctx, event.toolCallId, input, rawLaunch, p);
+            if (queued) return { block: true, reason: queued };
+          }
+        }
         // Review occasions (occasion.ts) from the task markers, before any rewrite or facts block.
         if (!s.isChild && actionOf(input) === null) occasions = entryOccasions(input);
         // Review panel (panel.ts): a `[panel-shadow:<model>]` launch binds to a pending panel and gets the primary's task, or is refused.
@@ -1517,6 +1585,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           revClimb = revision && !resumed ? revisionClimb(s.config.config, resolution.provider, s.reviewGate.last === "fail") : null;
           if (revClimb === "review_fail" && !hasStrongRung(resolution.roles, "builder")) revClimb = null; // no strong rung: no-op
           preferStrong = revClimb !== null && !keyword;
+          if (pressureHigh && preferStrong) preferStrong = false; // no strong climb under high pressure (traced below)
           kind = revision ? (preferStrong ? "strong-relaunch" : "revision") : undefined;
         }
         // Ladder (ladder.ts): a strong launch needs a reason or a trigger; rank policy (ranks.ts) after the models are written.
@@ -1528,6 +1597,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return { block: true, reason: lp.block };
           }
           climbs = lp.climbs;
+          if (pressureHigh && (climbs.length > 0 || revClimb !== null)) {
+            // High pressure: the launch stays on the bottom rung; an explicit `strong` keyword is dropped, any other model the owner named stays.
+            for (const c of climbs) if (typeof c.entry.model === "string" && splitLevel(c.entry.model.trim()).base === "strong") delete c.entry.model;
+            if (typeof input.model === "string" && splitLevel(input.model.trim()).base === "strong") delete input.model;
+            climbs = [];
+            s.trace?.emit({ event: "climb_suppressed", level: "high", reasons: pressureHigh.join(",") });
+          }
           ladderRoles = resolution.roles;
           // ladder.reviewerClimb (reviewerclimb.ts): the reviewer's diff is taken here, before its model is picked; the facts reuse it.
           await s.reviewRuns.sync; // earlier run ends' findings are recorded (and traced) first
@@ -2438,7 +2514,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     platform,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, onStart: (spec, id) => markHandoffWait(s, spec, id), onCancel: (id) => cancelHandoffWait(s, id), onRulingWake: (file) => void askContractFor(s).onRulingWake(file) };
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, pressure: () => pressureOf(s), idle: () => s.activeRuns.size === 0, onStart: (spec, id) => markHandoffWait(s, spec, id), onCancel: (id) => cancelHandoffWait(s, id), onRulingWake: (file) => void askContractFor(s).onRulingWake(file) };
     },
   });
 

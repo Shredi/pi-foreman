@@ -14,6 +14,6 @@ test("7f: tool_error carries the tool and a redacted, cut message", () => {
 
 test("7f: message is kept only on a tool_error; fields were appended", () => {
   assert.equal(sanitizeTrace({ event: "other", message: "hello" }).message, undefined);
-  assert.deepEqual(TRACE_FIELDS.slice(-2), ["tool", "message"]);
+  assert.deepEqual(TRACE_FIELDS.slice(-5), ["tool", "message", "width", "reasons", "level"]);
   assert.equal(sanitizeTrace(toolErrorRecord("read", undefined)).message, "");
 });
