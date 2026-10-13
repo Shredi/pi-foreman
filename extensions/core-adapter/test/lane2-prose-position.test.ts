@@ -32,6 +32,7 @@ test("read, grep, ls and find on a space path under a `*` deny are denied", { sk
 
 test("a pure bash read of a quoted space path is denied; a commit message is not an operand", { skip: !posix }, () => {
   assert.equal(call("bash", { command: `cat "${space}"` }), "deny");
+  assert.equal(call("bash", { command: 'cat "/x/a b/f"' }), "deny"); // the literal form
   assert.equal(call("bash", { command: `git commit -m "${space}" -F "${space}"` }), "deny");
   assert.equal(call("bash", { command: `git commit -m "${space}"` }), "pass");
   assert.equal(call("bash", { command: `git commit --message="${space}"` }), "pass");

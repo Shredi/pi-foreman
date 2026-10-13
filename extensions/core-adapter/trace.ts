@@ -40,16 +40,42 @@ export function redactCommand(cmd: string): string {
   return out.replace(/[A-Za-z0-9+]{24,}={0,2}/g, keyish);
 }
 
+/** Verbs whose operands are file names (read or exec); the pattern verbs keep their first operand. */
+const OPERAND_VERBS = new Set(["cat", "head", "tail", "less", "more", "grep", "egrep", "fgrep", "rg", "sed", "awk", "node", "python", "python3", "bash", "sh", "zsh", "source"]);
+const PATTERN_VERBS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "awk"]);
+
 /**
  * A text with path-like tokens replaced by `[path]`: absolute paths, `~/…`, `./…`, any token with a `/` or a backslash
- * (relative paths, URLs) and bare file names with an extension (`b.txt`). Run after `redactCommand`.
+ * (relative paths, URLs), bare file names with an extension (`b.txt`), dot-leading names (`.env`, `.eslintrc.json`) and
+ * every operand of a read/exec verb (`cat Makefile id_rsa`; for grep/sed/awk/rg the first operand is the pattern or
+ * script and stays). An extensionless word outside an operand position stays. Run after `redactCommand`.
  */
 export function scrubPaths(text: string): string {
-  return text.replace(/[^\s'"`()<>\[\]{},;]+/g, (tok) => {
+  const file = /^(?:[A-Za-z0-9_@+-][\w@+.-]*\.[A-Za-z][A-Za-z0-9]{1,9}|\.[A-Za-z_][\w@+.-]*)$/;
+  // null: not after a verb; else whether the verb's first operand (a pattern or script) is still to be kept
+  let operand: null | { keepFirst: boolean } = null;
+  let last = 0;
+  return text.replace(/[^\s'"`()<>\[\]{},;]+/g, (tok: string, at: number) => {
+    if (/[;<>\n]/.test(text.slice(last, at))) operand = null; // a shell separator or redirect ends the operands
+    last = at + tok.length;
+    if (/^[|&]+$/.test(tok)) {
+      operand = null;
+      return tok;
+    }
     const core = /^(.*?)([.:!?]*)$/.exec(tok) ?? [tok, tok, ""];
-    const file = /^[A-Za-z0-9_@+-][\w@+.-]*\.[A-Za-z][A-Za-z0-9]{1,9}$/;
     const t = core[1];
-    const pathLike = /[\/\\]/.test(t) || t === "~" || file.test(t.replace(/(:\d+)+$/, ""));
+    const op = operand as null | { keepFirst: boolean };
+    let isOperand = false;
+    if (op && t && !t.startsWith("-")) {
+      if (op.keepFirst) op.keepFirst = false;
+      else isOperand = true;
+    }
+    if (core[2]) operand = null; // `cat: x:` is an error text, not a command; a sentence end closes the operands
+    else if (op === null && OPERAND_VERBS.has(t)) {
+      operand = { keepFirst: PATTERN_VERBS.has(t) };
+      return tok;
+    }
+    const pathLike = isOperand || /[\/\\]/.test(t) || t === "~" || file.test(t.replace(/(:\d+)+$/, ""));
     if (pathLike) return `[path]${core[2]}`;
     // `key=file.ext`: the value is a file name, the key stays
     const eq = t.indexOf("=");

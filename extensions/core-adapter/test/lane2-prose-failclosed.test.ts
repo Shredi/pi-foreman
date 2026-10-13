@@ -1,4 +1,4 @@
-// R6 lane 2 (fail closed): a word with white space escapes a catch-all `*` deny only in a pure read or as the value of a known prose option.
+// R6 lane 2 (fail closed): a word with white space escapes a catch-all `*` deny only as the value of a known prose option, decided by word position; never for a path tool or a pure read.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -29,7 +29,7 @@ test("writer verbs with a quoted space path under a `*` deny are denied", { skip
   }
 });
 
-test("prose passes in a pure read and as a known prose option value only", { skip: !posix }, () => {
+test("prose passes only as a known prose option value by position, a pure read's operand is denied", { skip: !posix }, () => {
   assert.equal(foreman('git commit --reason "read index.ts, then fix it"'), "pass");
   assert.equal(foreman('git commit -m "read index.ts, then x"'), "pass");
   assert.equal(foreman('git log --reason "read index.ts, then fix it"'), "pass");

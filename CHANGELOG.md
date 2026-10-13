@@ -44,7 +44,9 @@
 
 ### Known gaps
 - Modules imported by a scanned script are not scanned (1d scans the script file only).
-- A builder's bare `node --test` / `node --test .` (no operand) runs unscanned.
+- Any child's operand-less test runner (bare `node --test`, `node --test .`, `npm run test:node`, `make test`) runs untracked worktree files unscanned (only a builder can plant one).
+- A command with a backtick is refused for read-only children even when harmless: the over-block is deliberate (docs/permissions.md).
+- The trace scrubs extensionless file names (`Makefile`, `id_rsa`) only as operands of a read/exec verb; elsewhere such a word stays.
 - 2d: inline python over the state dir still asks (fail closed).
 - 2g: the external package's "approve for this session" is subagent-scoped.
 - 4d: `bg_wait` yielding during a supervisor ask is upstream in pi-subagents.

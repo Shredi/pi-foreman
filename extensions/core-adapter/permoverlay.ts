@@ -1757,7 +1757,8 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (texts.some((t) => bashMatches(pat, t, ctx))) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (command rule '${pat}'). This cannot be approved; use another way.` };
   }
   const targets = new Set([...c.writeTargets!, ...(c.tmpTargets ?? []), ...(c.roTargets ?? [])].flatMap((t) => [t, ...expandBraces(t)]));
-  // Fail closed: a word with white space is prose only in a pure read or as the value of a known prose option.
+  // Fail closed: a word with white space is prose only as the value of a known prose option, decided by word position;
+  // never for a path tool or a pure read (its words are operands).
   // by position: a string that also occurs outside a prose-option position (`-m "/a b/f" -F "/a b/f"`) is no prose
   const operands = new Map<string, number>();
   for (const w of c.words) operands.set(w, (operands.get(w) ?? 0) + 1);
