@@ -75,6 +75,7 @@ and `foreman:ready`. There is no second handshake.
 | Events | `foreman:ready` on `pi.events` (see Handshake); no other `foreman:*` events are emitted |
 | Retro backlog | `retro.backlogDir` points the central backlog elsewhere; `retro.repoBacklog` and `retro.workspaceKey` pick per-workspace stores and keys (see [retro](retro.md)). User or overlay config only. |
 | Ceremony, fan-out, fallback | `ceremony.*`, `fanout.max`, `providers.<p>.fallback` |
+| Host pressure limits | `resources.*` (see [resources](resources.md)); a project file may only tighten them |
 
 ### Own host CLI
 

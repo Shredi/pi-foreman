@@ -108,7 +108,7 @@ import { checkLaunch, completedAgents, hasSecurityFinding, initialRounds, NOTIFY
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { addonPresent, formatWaits, readAddonTasks } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
-import { CRITICAL_WAIT_SECONDS, criticalReason, narrowTasks, PRESSURE_FIXTURE_ENV, PressureSampler, pressurePath, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
+import { CRITICAL_WAIT_SECONDS, criticalReason, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import type { CloseReport } from "./close.ts";
@@ -566,7 +566,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       })
       .catch(() => undefined);
     if (!isChild) {
-      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id), () => waits.active(id));
+      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id), () => waits.active(id), () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; });
       const live = s.live;
       if (live) waits.onChange(id, () => live.touch());
     }
@@ -2950,7 +2950,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list",
+    description: "pi-foreman commands: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
       if (sub === "close") return close.command(args.trim().slice(sub.length), ctx);
@@ -2981,6 +2981,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         ctx.ui.notify(r.text, r.ok ? "info" : "error");
         return;
       }
+      if (sub === "status") {
+        const s = await ensureSession(ctx);
+        const open = s.isChild ? 0 : waits.active(s.id).length;
+        ctx.ui.notify([pressureStatusLine(pressureOf(s), pressureNow()), `open waits: ${open}`, `tier: ${s.ceremony.tier}`].join("\n"), "info");
+        return;
+      }
       if (sub === "waits") {
         const s = await ensureSession(ctx);
         const addon = addonPresent(pi.getAllTools().map((t) => t.name), { agentDir: s.agentDir, cwd: ctx.cwd });
@@ -2996,7 +3002,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       if (sub !== "doctor") {
-        ctx.ui.notify("Usage: /foreman doctor | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list", "warning");
+        ctx.ui.notify("Usage: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list", "warning");
         return;
       }
       const s = await ensureSession(ctx);
@@ -3050,6 +3056,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.registration) ok(`required child extensions registered (${s.registrationVia}, requireForAllRunners)`);
     else fail(`required child extensions not registered${s.registrationError ? `: ${s.registrationError}` : ""}`, "check the paths above and restart the session.");
     out.push(`INFO required child extension registration path: ${registrationPathLabel(s.registrationVia)}`);
+
+    // Host pressure: a fresh sample (the sampler timer's call); a missing probe is never a FAIL.
+    try {
+      const file = pressurePath(s.agentDir);
+      const args = ["sample", "--workspace", s.cwd, "--state", file, "--limits", JSON.stringify(limitsOf(s.config.config))];
+      const fx = process.env[PRESSURE_FIXTURE_ENV]?.trim();
+      if (fx) args.push("--fixture", fx);
+      await (deps.pressureRun ?? ((a) => runScript(s, "foreman_pressure.py", a, 20_000)))(args);
+    } catch {
+      // fall through to the stored file
+    }
+    out.push(pressureDoctorLine(readPressure(pressurePath(s.agentDir), sampleSecondsOf(s.config.config), pressureNow())));
 
     const providers = get(s.config.config, "providers");
     const names = providers && typeof providers === "object" ? Object.keys(providers as object).filter((p) => p !== "allowed") : [];

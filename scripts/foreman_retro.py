@@ -276,7 +276,8 @@ def trace_metrics(records):
     guards = collections.Counter()
     m = {"guard_blocks": {}, "overlay_blocks": 0, "triage_gate_blocks": 0, "revisions": 0,
          "safe_op_ran": 0, "safe_op_precondition_failed": 0, "supervisor_requests": 0, "turn_causes": {},
-         "rereviews": 0, "budget_hits": 0, "rung_up": 0, "child_read_budget": 0, "review_defer_headless": 0, "turns": 0}
+         "rereviews": 0, "budget_hits": 0, "rung_up": 0, "child_read_budget": 0, "review_defer_headless": 0, "turns": 0,
+         "launch_deferred": 0, "launch_narrowed": 0}
     causes = collections.Counter()
     pack = collections.Counter()
     prpack = collections.Counter()
@@ -309,6 +310,8 @@ def trace_metrics(records):
             m["child_read_budget"] += 1
         elif ev == "review_defer_headless":
             m["review_defer_headless"] += 1
+        elif ev in ("launch_deferred", "launch_narrowed"):
+            m[ev] += 1
         if ev == "turn":
             m["turns"] += 1
             if r.get("cause"):
@@ -642,6 +645,8 @@ def render_text(rep, proposals_path=None):
         L.append("friction: rereviews=%d budget_hits=%d rung_up=%d child_read_budget=%d review_defer_headless=%d turns=%d"
                  % (t["rereviews"], t["budget_hits"], t["rung_up"], t["child_read_budget"], t["review_defer_headless"],
                     t["turns"]))
+        if t.get("launch_deferred") or t.get("launch_narrowed"):  # omitted when both are 0
+            L.append("pressure: deferred %d, narrowed %d" % (t["launch_deferred"], t["launch_narrowed"]))
         gl = git_pack_line(rep)
         if gl:
             L.append(gl)

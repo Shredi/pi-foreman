@@ -153,6 +153,14 @@ def fmt_cost(c):
     return "$%.0f" % c if c >= 100 else "$%.2f" % c
 
 
+def _pressure_suffix(p):
+    """` ⚠ <reasons>` when the host is under pressure (level high or critical), else empty."""
+    if not isinstance(p, dict) or p.get("level") not in ("high", "critical"):
+        return ""
+    reasons = [str(r) for r in (p.get("reasons") or []) if r]
+    return " ⚠ " + ",".join(reasons) if reasons else " ⚠"
+
+
 def spread(left, right, width):
     """`left` + inner padding + `right`, right edge at `width` cells. When
     `left` would get fewer than L1_MIN_LABEL cells (`›…`), `right` is dropped,
@@ -326,6 +334,7 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
             shown = sum(1 for k in node.get("children") or [] if _recent_run(k, recent))
             done = max(0, (node.get("done_children") or 0) - shown)
             cost_text, tick = fmt_cost(tot.get("cost")), ("✓%d" % done if done else "")
+            cost_text += _pressure_suffix(node.get("pressure"))
             cost_w = cell_width(cost_text) + (1 + cell_width(tick) if tick else 0)
             counts = ""
             if width >= NARROW_COUNTS:

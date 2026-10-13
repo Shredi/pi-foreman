@@ -183,6 +183,8 @@ RULE_TEXT = {
     "intersect": "can only narrow the list",
     "lower_only": "lower only",
     "lower_only_number": "lower only",
+    "higher_only": "raise only",
+    "higher_only_number": "raise only",
 }
 # Rules _restrict_ceremony applies in code without a constant table.
 CEREMONY_RULES = {

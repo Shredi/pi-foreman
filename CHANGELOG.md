@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Host pressure gate (R5 P1)
+- `resources.*` keys (`maxLoadPerCore` 1.5, `minFreeMemMB` 1024, `minFreeDiskGB` 5, `sampleSeconds` 30; a project may only tighten) and a stdlib sampler `scripts/foreman_pressure.py`. At `high` child launches run one at a time and the strong climb pauses; at `critical` launches are deferred behind a `pressure` wait (10 minutes at most). Surfaces: `foreman doctor` pressure line, `/foreman status`, a ` ⚠ <reasons>` suffix on the Herdr cost row only when not `ok`, retro line `pressure: deferred N, narrowed M` (omitted when both are 0). Trace events `launch_narrowed`, `launch_deferred`, `climb_suppressed`. See `docs/resources.md`.
+
 ### Round 6, by lane
 - 1a: a read-only child's test run names only operands (`node --test <p>`, `npm run test:x -- <p>`, `pytest <p>`, `python3 -m pytest|unittest <p>`, `make test -C <p>`, values of `--require`/`--import`) that resolve inside the round worktree and are git-tracked; globs (all matches tracked), `$VAR` words (expanded, else denied) and untracked paths are denied with a reason; a builder still runs its own new untracked test. Operands fail closed: every word with a `/`, a file suffix or an existing file name is checked; only `make` options on an allowlist pass. Tests: `probescan.test.ts`.
 - 1b: `git config` is a read only in its read forms (`<key>`, `get`/`list`, `--get*`, `--list`); every other form, also `--global`/`--system`, is denied for a read-only child from any cwd.

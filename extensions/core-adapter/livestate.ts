@@ -62,6 +62,8 @@ export interface LiveFile {
   cost: number;
   /** ISO time the session became blocked (blockers empty -> non-empty); null when not blocked. */
   blockedSince: string | null;
+  /** Host pressure (pressure.ts); present only when the level is high or critical. */
+  pressure?: { level: "high" | "critical"; reasons: string[] };
 }
 
 export const liveDir = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "live");
@@ -117,10 +119,10 @@ export class LiveState {
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   /** Null when the mode writes no file (print, json, or unknown). */
-  static start(init: LiveInit, runs: () => RunView[], totals?: () => SessionTotals | null, waits?: () => LiveWait[]): LiveState | null {
+  static start(init: LiveInit, runs: () => RunView[], totals?: () => SessionTotals | null, waits?: () => LiveWait[], pressure?: () => { level: string; reasons: string[] } | null): LiveState | null {
     const mode = init.mode;
     if (mode !== "tui" && mode !== "rpc") return null;
-    const l = new LiveState(init, mode, runs, totals, waits);
+    const l = new LiveState(init, mode, runs, totals, waits, pressure);
     l.write();
     l.interval = setInterval(() => l.write(), HEARTBEAT_MS);
     l.interval.unref?.();
@@ -130,8 +132,10 @@ export class LiveState {
   private readonly runs: () => RunView[];
   private readonly totals: (() => SessionTotals | null) | undefined;
   private readonly waits: (() => LiveWait[]) | undefined;
-  private constructor(init: LiveInit, mode: LiveMode, runs: () => RunView[], totals?: () => SessionTotals | null, waits?: () => LiveWait[]) {
+  private readonly pressure: (() => { level: string; reasons: string[] } | null) | undefined;
+  private constructor(init: LiveInit, mode: LiveMode, runs: () => RunView[], totals?: () => SessionTotals | null, waits?: () => LiveWait[], pressure?: () => { level: string; reasons: string[] } | null) {
     this.runs = runs;
+    this.pressure = pressure;
     this.totals = totals;
     this.waits = waits;
     this.file = path.join(liveDir(init.agentDir), `${init.sessionId}.json`);
@@ -253,7 +257,14 @@ export class LiveState {
       // totals are best effort
     }
     const state = this.stateName;
-    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString() };
+    let pressure: LiveFile["pressure"];
+    try {
+      const pr = this.pressure?.();
+      if (pr && (pr.level === "high" || pr.level === "critical")) pressure = { level: pr.level, reasons: pr.reasons.slice(0, 6).map((r) => short(r, 40)) };
+    } catch {
+      // pressure is best effort
+    }
+    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), ...(pressure ? { pressure } : {}) };
   }
 
   private schedule(): void {

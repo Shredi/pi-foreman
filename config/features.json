@@ -527,6 +527,17 @@
       "enable": ""
     },
     {
+      "id": "resources",
+      "title": "Host pressure gate",
+      "purpose": "Samples load, free memory and free disk; at high pressure child launches run one at a time and the strong climb pauses, at critical pressure launches are deferred until the host recovers (10 minutes at most). `/foreman doctor` prints the current level and `/foreman status` the last sample.",
+      "doc": "docs/resources.md",
+      "keys": ["resources.maxLoadPerCore", "resources.minFreeMemMB", "resources.minFreeDiskGB", "resources.sampleSeconds"],
+      "commands": ["/foreman status"],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "idle-cache",
       "title": "Idle prompt-cache policy",
       "purpose": "Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge preset sets a 600 s byModel row and turns the keep-alive off); off for request-billed providers; silent without an entry.",
