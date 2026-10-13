@@ -120,7 +120,7 @@ export function asyncRunDirs(files: Iterable<string>, platform: string = process
     if (!m || !x.isAbsolute(m[1])) continue;
     // only the results of runs this session saw (`results/<run>.json`), never the whole results dir of the uid
     const run = m[2]?.replace(/\.json$/, "");
-    if (!run) continue;
+    if (!run || m[2] === "." || m[2] === ".." || run === "." || run === "..") continue;
     out.add(x.join(m[1], "async-subagent-results", `${run}.json`));
     if (/async-subagent-runs/.test(f)) out.add(x.join(m[1], "async-subagent-runs", run));
   }

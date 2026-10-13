@@ -112,6 +112,9 @@ class Rig:
         for d in (self.agent, self.project, self.tmp):
             d.mkdir()
         _run(["git", "init", "-q"], 60, cwd=str(self.project))
+        # the pressure sampler never reads the live host in a rig: an ok host sample unless a case passes its own PI_FOREMAN_PRESSURE_FIXTURE
+        self.ok_host = self.root / "host-ok.json"
+        self.ok_host.write_text(json.dumps({"loadPerCore": 0.1, "freeMemMB": 16000, "freeDiskGB": 500}), "utf-8")
         self.script = self.root / "script.json"
         self.script.write_text(json.dumps(script, indent=1), "utf-8")
         l2 = {
@@ -158,7 +161,8 @@ class Rig:
         env = {k: v for k, v in os.environ.items()
                if not k.upper().startswith(("PI_", "FOREMAN_")) and k.upper() not in ("TMPDIR", "TEMP", "TMP")}
         env.update({"PI_CODING_AGENT_DIR": str(self.agent), "FOREMAN_FAKE_SCRIPT": str(self.script),
-                    "TMPDIR": str(self.tmp), "TEMP": str(self.tmp), "TMP": str(self.tmp)})
+                    "TMPDIR": str(self.tmp), "TEMP": str(self.tmp), "TMP": str(self.tmp),
+                    "PI_FOREMAN_PRESSURE_FIXTURE": str(self.ok_host)})
         env.update(extra or {})
         return env
 

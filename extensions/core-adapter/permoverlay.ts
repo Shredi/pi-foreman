@@ -510,7 +510,9 @@ function inlineCode(core: string[]): string | null {
   return null;
 }
 
-const PY_SAFE_MODULES = new Set(["json", "re", "csv", "collections", "itertools", "math", "ast", "textwrap", "pprint", "string", "functools", "operator"]);
+const PY_IDENTS = new Set(["import", "json", "print", "list", "len", "sorted", "open", "dict", "str", "int", "for", "in", "if", "else", "and", "or", "not", "None", "True", "False"]);
+const PY_CALLABLES = new Set(["print", "list", "len", "sorted", "open", "dict", "str", "int"]);
+const PY_ATTRS = new Set(["load", "loads", "keys", "values", "items", "get", "read"]);
 
 /**
  * Inline python that can only read files: it imports nothing but pure-data modules, every `open` is a call with a literal path and
@@ -518,17 +520,77 @@ const PY_SAFE_MODULES = new Set(["json", "re", "csv", "collections", "itertools"
  * Anything else (a computed path, `os`, `pathlib`, `subprocess`) is not provably a read and stays scanned as a possible write.
  */
 export function pythonReadOnlyCode(code: string): boolean {
-  if (/modules|getattr|eval|exec|compile|__|rename|replace\(|remove|unlink|write|mkdir|rmdir|chmod|system|popen/.test(code)) return false;
-  if (/__|\b(getattr|setattr|delattr|eval|exec|compile|globals|locals|vars|input|breakpoint|memoryview|help)\b/.test(code)) return false;
-  const imports = [...code.matchAll(/(?:^|[;\s])(?:import\s+([\w., ]+)|from\s+([\w.]+)\s+import\b)/g)];
-  for (const m of imports) {
-    const mods = (m[1] ?? m[2]).split(",").map((x) => x.trim().split(/\s+as\s+/)[0].split(".")[0]);
-    if (!mods.every((x) => PY_SAFE_MODULES.has(x))) return false;
+  // strict allowlist, fail closed: pure ASCII, no backslash, no assignment or keyword argument, no def/with/lambda/class, no f-/b-/r-strings
+  if (!/^[\t\n\x20-\x7e]*$/.test(code) || code.includes("\\")) return false;
+  type Tok = { k: "str" | "id" | "num" | "p"; v: string };
+  const toks: Tok[] = [];
+  for (let i = 0; i < code.length; ) {
+    const c = code[i];
+    if (c === " " || c === "\t" || c === "\n") {
+      i++;
+    } else if (c === "'" || c === '"') {
+      const j = code.indexOf(c, i + 1);
+      if (j < 0) return false;
+      // a prefix letter (f, b, r, u ...) glued to the quote, or a second literal right after this one (implicit concatenation)
+      if (toks.length && toks[toks.length - 1].k === "id" && !/\s/.test(code[i - 1] ?? " ") && !PY_IDENTS.has(toks[toks.length - 1].v)) return false;
+      if (toks.length && toks[toks.length - 1].k === "str") return false;
+      toks.push({ k: "str", v: code.slice(i + 1, j) });
+      i = j + 1;
+    } else if (/[A-Za-z_]/.test(c)) {
+      const m = /^[A-Za-z0-9_]+/.exec(code.slice(i))![0];
+      toks.push({ k: "id", v: m });
+      i += m.length;
+    } else if (/[0-9]/.test(c)) {
+      const m = /^[0-9]+/.exec(code.slice(i))![0];
+      if (/[A-Za-z_.]/.test(code[i + m.length] ?? "")) return false;
+      toks.push({ k: "num", v: m });
+      i += m.length;
+    } else if ("()[],;.:".includes(c)) {
+      toks.push({ k: "p", v: c });
+      i++;
+    } else {
+      return false;
+    }
   }
-  if (/\bimport\b/.test(code) && !imports.length) return false;
-  const opens = (code.match(/\bopen\b/g) ?? []).length;
-  const good = (code.match(/\bopen\(\s*(['"])[^'"\\]*\1\s*(?:,\s*(['"])r[bt]?\2\s*)?\)/g) ?? []).length;
-  return opens === good;
+  for (let n = 0; n < toks.length; n++) {
+    const t = toks[n];
+    const prev = toks[n - 1];
+    const next = toks[n + 1];
+    if (t.k === "id") {
+      if (prev?.k === "p" && prev.v === ".") {
+        if (!PY_ATTRS.has(t.v)) return false;
+        continue;
+      }
+      if (t.v === "import") {
+        if (!(n === 0 || (prev.k === "p" && prev.v === ";")) || next?.k !== "id" || next.v !== "json") return false;
+        const after = toks[n + 2];
+        if (after && !(after.k === "p" && after.v === ";")) return false;
+        continue;
+      }
+      if (!PY_IDENTS.has(t.v) && !/^[a-z]$/.test(t.v)) return false;
+      if (t.v === "json" && !(prev?.k === "id" && prev.v === "import") && !(next?.k === "p" && next.v === ".")) return false;
+      if (next?.k === "p" && next.v === "(" && !PY_CALLABLES.has(t.v)) return false;
+      if (t.v === "open") {
+        // exactly `open('<literal>')` or `open('<literal>', 'r')`
+        if (next?.v !== "(" || toks[n + 2]?.k !== "str") return false;
+        const a = toks[n + 3];
+        if (a?.v === ")" && a.k === "p") continue;
+        if (!(a?.k === "p" && a.v === "," && toks[n + 4]?.k === "str" && toks[n + 4].v === "r" && toks[n + 5]?.k === "p" && toks[n + 5].v === ")")) return false;
+      }
+    } else if (t.k === "p" && t.v === "(") {
+      // a call needs a callable name or an attribute before it; a bare `(` is a group
+      if (prev?.k === "p" && (prev.v === ")" || prev.v === "]")) return false;
+      if (prev?.k === "str" || prev?.k === "num") return false;
+    } else if (t.k === "p" && t.v === "[") {
+      // a subscript only, holding one string or int literal
+      if (!(prev?.k === "id" || (prev?.k === "p" && (prev.v === ")" || prev.v === "]")))) return false;
+      if (prev.k === "id" && PY_IDENTS.has(prev.v) && prev.v !== "None") return false;
+      if ((next?.k !== "str" && next?.k !== "num") || toks[n + 2]?.v !== "]" || toks[n + 2].k !== "p") return false;
+    } else if (t.k === "p" && t.v === ".") {
+      if (next?.k !== "id" || !(prev?.k === "id" || (prev?.k === "p" && (prev.v === ")" || prev.v === "]")))) return false;
+    }
+  }
+  return toks.length > 0;
 }
 
 /** String literals of inline code, plus runs of literals joined by `+`, `.` or nothing (`"."+"env"` -> `.env`). */
@@ -1056,7 +1118,7 @@ const PURE_VERBS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk"
  * The only verbs whose protected operands count as a read (write-only protect rules skip them). Programmable or
  * option-rich readers (awk, sort, uniq, less, find, xargs, tee, ...) keep full protection whatever their flags.
  */
-const PROTECTED_READERS = new Set(["cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "ls", "stat", "file", "diff", "cmp", "md5sum", "sha1sum", "sha256sum", "shasum", "cd", "sed"]);
+const PROTECTED_READERS = new Set(["cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "ls", "stat", "file", "diff", "cmp", "md5sum", "sha1sum", "sha256sum", "shasum", "cd", "sed", "echo", "pwd", "true", "false"]);
 
 /** Short options that take a value, and long ones that take the next word, per read command. */
 const VALUE_OPTS: Record<string, { short: string; long: string[]; pattern: string; patternLong: string[]; file: string; fileLong: string[]; globLong?: string[]; globShort?: string }> = {
@@ -1235,8 +1297,10 @@ function protectedReader(core: string[], skip: Set<number>): boolean {
   const verb = baseName(core[0]);
   const args = core.map((x, i) => (i > 0 && !skip.has(i) ? x : "")).slice(1);
   const has = (re: RegExp): boolean => args.some((x) => re.test(x));
+  // a leading `$HOME/` / `${HOME}/` is expanded by the path checks (expandWord), like `~/`; any other expansion is unresolved
+  const expands = (x: string): boolean => /[$`]/.test(x.replace(/^\$(?:\{HOME\}|HOME)(?=$|\/)/, ""));
   // an unresolved expansion in any quoting may supply an option or script (`I=-i; sed $I p D`, `P=--pre=x; rg $P p D`)
-  if (has(/[$`]/)) return false;
+  if (args.some(expands)) return false;
   if (!PROTECTED_READERS.has(verb)) return false;
   if (verb === "file") return !has(/^-[A-Za-z]*C|^--compile/);
   if (GREP_FAMILY.has(verb)) return !has(/^-[A-Za-z]*f|^--(pre|pre-glob|file|ignore-file|hostname-bin)/) && unitReadOnly(core, skip);
@@ -1439,7 +1503,8 @@ function expandWord(w: string, ctx: MatchCtx): string {
   else if (s.startsWith("~/") || s.startsWith("~\\")) s = ctx.home + s.slice(1);
   s = s.replace(/^\$\{?HOME\}?(?=$|[\\/])/, ctx.home);
   const scratch = scratchOf(ctx);
-  if (scratch) s = s.replace(/^\$(\{FOREMAN_SCRATCH\}|FOREMAN_SCRATCH(?![A-Za-z0-9_]))/, scratch);
+  // `$S` is the child's conventional name for its scratch dir (`S=$FOREMAN_SCRATCH`); a line that assigns it elsewhere is also checked resolved (shellvars.ts)
+  if (scratch) s = s.replace(/^\$(\{FOREMAN_SCRATCH\}|FOREMAN_SCRATCH(?![A-Za-z0-9_])|\{S\}|S(?![A-Za-z0-9_]))/, scratch);
   // Git Bash / MSYS drive paths: /c/dir/x -> c:/dir/x
   if (ctx.platform === "win32") s = s.replace(/^\/([A-Za-z])(?=$|\/)/, "$1:");
   return s.replace(/^\$env:(USERPROFILE|HOME)(?=$|[\\/])/i, ctx.home);
