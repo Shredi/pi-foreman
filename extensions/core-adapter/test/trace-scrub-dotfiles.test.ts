@@ -5,7 +5,9 @@ import { sanitizeTrace } from "../trace.ts";
 
 test("trace: dot-leading names and extensionless command operands are scrubbed in every field", () => {
   const out = sanitizeTrace({ event: "overlay", decision: "deny", role: "builder", reason: "path rule '**/.env' matched '.env'", command: "cat .env .npmrc Makefile id_rsa .eslintrc.json" });
-  const text = Object.values(out).join("\n");
+  // the reason keeps the matched rule pattern (R3, trace.ts scrubReason); the matched word and the command carry no name
+  assert.equal(out.reason, "path rule '**/.env' matched '[path]'");
+  const text = Object.entries(out).filter(([k]) => k !== "reason").map(([, v]) => v).join("\n");
   for (const name of [".env", ".npmrc", ".eslintrc.json", "Makefile", "id_rsa"]) assert.ok(!text.includes(name), `${name} survived: ${text}`);
   assert.equal(out.command, "cat [path] [path] [path] [path] [path]");
   // exemptions stay: model ids and a finding's base name

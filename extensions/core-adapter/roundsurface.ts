@@ -92,6 +92,39 @@ export function childReadable(ledger: string | null, handoffDirs: string[], work
 }
 
 /**
+ * The main checkout's `.workflow` dir of each round worktree `<repo>.worktrees/<round>`, with its subtree: the round's own ledger and its notes
+ * live there, so it is a READ root for every child role of the round (R1). Nothing else of the main checkout, and no write.
+ */
+export function mainWorkflowReadable(worktrees: string[], platform: string = process.platform): string[] {
+  const x = px(platform);
+  const out: string[] = [];
+  for (const w of worktrees) {
+    const home = x.dirname(x.resolve(w));
+    const name = x.basename(home);
+    if (!name.endsWith(".worktrees") || name === ".worktrees") continue;
+    const flow = x.join(x.dirname(home), name.slice(0, -".worktrees".length), ".workflow");
+    out.push(flow, `${flow}/*`);
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * The foreman's own subagent run dirs, from the files recorded for its child runs: `<tmp>/pi-subagents-uid-<uid>/async-subagent-runs/<run>` for each
+ * run seen, plus that uid dir's `async-subagent-results`. A READ root for the foreman session (k); files elsewhere add nothing.
+ */
+export function asyncRunDirs(files: Iterable<string>, platform: string = process.platform): string[] {
+  const x = px(platform);
+  const out = new Set<string>();
+  for (const f of files) {
+    const m = /^(.*[\\/]pi-subagents-uid-[^\\/]+)[\\/]async-subagent-(?:runs|results)(?:[\\/]([^\\/]+))?/.exec(f);
+    if (!m || !x.isAbsolute(m[1])) continue;
+    out.add(x.join(m[1], "async-subagent-results"));
+    if (m[2] && /async-subagent-runs/.test(f)) out.add(x.join(m[1], "async-subagent-runs", m[2]));
+  }
+  return [...out];
+}
+
+/**
  * Every root the foreman session owns for reads and writes, listed in the permission reviewer's prompt (review.ts): its live child scratch dirs, the
  * round worktrees and their isolation dirs, its handoff dirs, the global npm root, `state/scratch/<session>` and the async run dirs of its own child runs.
  */

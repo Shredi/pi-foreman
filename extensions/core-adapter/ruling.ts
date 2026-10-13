@@ -128,15 +128,21 @@ export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulin
 /** The refusal reason when a session writes a ruling file in a dir where it is the child. */
 export const SELF_RULING_REASON = "a session cannot write its own parent's ruling";
 
-const REF_READ_VERBS = new Set(["cat", "head", "tail", "ls", "grep", "egrep", "fgrep", "rg", "wc", "stat", "file", "nl", "realpath"]);
+const REF_READ_VERBS = new Set(["cat", "head", "tail", "ls", "grep", "egrep", "fgrep", "rg", "wc", "stat", "file", "nl", "realpath", "sort", "uniq", "cut", "tr", "cd"]);
+/** `-o` is --only-matching for these, not an output file. */
+const REF_ONLY_MATCHING = new Set(["grep", "egrep", "fgrep", "rg", "ls"]);
 
 /** A command that only reads with a plain viewer verb (no redirect, background job, substitution, output option). */
 function pureRead(command: string): boolean {
-  if (/[`>&]|\$\(|<\(|\$\{/.test(command)) return false;
+  if (/[`>&]|\$\(|<\(|\$\{/.test(command.replace(/&&/g, ";"))) return false;
   const parts = command.split(/&&|\|\||;|\||\n/).map((p) => p.trim()).filter(Boolean);
   return parts.length > 0 && parts.every((p) => {
     const w = p.split(/\s+/);
-    return REF_READ_VERBS.has(w[0]) && !w.some((x) => /^--?o(utput)?\b/.test(x));
+    if (!REF_READ_VERBS.has(w[0])) return false;
+    // `uniq IN OUT` and `tr`'s sets are operands: uniq writes its second operand, so it takes none here
+    if (w[0] === "uniq" && w.slice(1).some((x) => !x.startsWith("-"))) return false;
+    if (w[0] === "sort" && w.some((x) => /^-[^-]*[oT]|^--(output|compress-program|temporary)/.test(x))) return false;
+    return REF_ONLY_MATCHING.has(w[0]) || !w.some((x) => /^--?o(utput)?\b/.test(x));
   });
 }
 

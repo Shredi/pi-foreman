@@ -510,6 +510,26 @@ function inlineCode(core: string[]): string | null {
   return null;
 }
 
+const PY_SAFE_MODULES = new Set(["json", "re", "sys", "csv", "collections", "itertools", "math", "ast", "textwrap", "pprint", "string", "functools", "operator"]);
+
+/**
+ * Inline python that can only read files: it imports nothing but pure-data modules, every `open` is a call with a literal path and
+ * no mode or a read mode, and nothing can reach another way to write (`__`, getattr, eval, exec, compile, input, breakpoint).
+ * Anything else (a computed path, `os`, `pathlib`, `subprocess`) is not provably a read and stays scanned as a possible write.
+ */
+export function pythonReadOnlyCode(code: string): boolean {
+  if (/__|\b(getattr|setattr|delattr|eval|exec|compile|globals|locals|vars|input|breakpoint|memoryview|help)\b/.test(code)) return false;
+  const imports = [...code.matchAll(/(?:^|[;\s])(?:import\s+([\w., ]+)|from\s+([\w.]+)\s+import\b)/g)];
+  for (const m of imports) {
+    const mods = (m[1] ?? m[2]).split(",").map((x) => x.trim().split(/\s+as\s+/)[0].split(".")[0]);
+    if (!mods.every((x) => PY_SAFE_MODULES.has(x))) return false;
+  }
+  if (/\bimport\b/.test(code) && !imports.length) return false;
+  const opens = (code.match(/\bopen\b/g) ?? []).length;
+  const good = (code.match(/\bopen\(\s*(['"])[^'"\\]*\1\s*(?:,\s*(['"])r[bt]?\2\s*)?\)/g) ?? []).length;
+  return opens === good;
+}
+
 /** String literals of inline code, plus runs of literals joined by `+`, `.` or nothing (`"."+"env"` -> `.env`). */
 export function codeLiterals(code: string): string[] {
   const lits: { text: string; start: number; end: number }[] = [];
@@ -652,7 +672,9 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
       redirNext = true;
       writeNext = c === ">";
       while (src[i + 1] === c) i++;
-      if (c === ">" && (src[i + 1] === "&" || (posix && src[i + 1] === "|"))) i++;
+      // `>&2`, `<&-`, `<&3`: an fd dup or close, its operand is no word of the command and `&` is no background operator
+      if ((c === ">" || (posix && c === "<")) && src[i + 1] === "&") i++;
+      else if (c === ">" && posix && src[i + 1] === "|") i++;
     } else if (c === "#" && cur === null && (i === 0 || /\s|[;&|()]/.test(src[i - 1]))) {
       while (i < src.length && src[i] !== "\n") i++;
       i--;
@@ -684,7 +706,7 @@ const RO_WRITERS = new Map<string, "all" | "last" | "mode">([
 ]);
 
 /** Read-only verbs (with unitReadOnly) and shell builtins that never write a path by themselves. */
-const RO_READERS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk", "mawk", "nawk", "find", "echo", "printf", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "ls", "cd", "pwd", "nl", "column", "diff", "true", "false", "stat", "file", "tree", "cmp", "md5sum", "sha1sum", "sha256sum", "shasum", "date", "which", "basename", "dirname", "realpath", "readlink", "jq", "test", "[", "[[", ":", "sleep", "uname", "whoami", "id", "export", "local", "declare", "typeset", "readonly", "read", "set", "unset", "shift", "return", "exit", "break", "continue", "wait", "type"]);
+const RO_READERS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk", "mawk", "nawk", "find", "echo", "printf", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "ls", "cd", "pwd", "nl", "column", "diff", "true", "false", "stat", "file", "tree", "cmp", "md5sum", "sha1sum", "sha256sum", "shasum", "date", "which", "basename", "dirname", "realpath", "readlink", "jq", "od", "hexdump", "xxd", "test", "[", "[[", ":", "sleep", "uname", "whoami", "id", "export", "local", "declare", "typeset", "readonly", "read", "set", "unset", "shift", "return", "exit", "break", "continue", "wait", "type"]);
 
 /** Read-only git subcommands, and the ones that touch only .git (branch/tag/remote list and edit refs, never the worktree). `config` is a read only in the forms of gitConfigRead. */
 const GIT_RO_SUBS = new Set(["status", "log", "diff", "show", "blame", "rev-parse", "ls-files", "ls-tree", "describe", "grep", "shortlog", "cat-file", "rev-list", "for-each-ref", "show-ref", "name-rev", "merge-base", "diff-tree", "diff-files", "diff-index", "count-objects", "branch", "tag", "remote", "worktree", "fetch", "version", "help"]);
@@ -918,7 +940,9 @@ function roEffect(core: string[], skip: Set<number>, inner: boolean): { targets:
   }
   if (RO_READERS.has(verb)) return unitReadOnly(core, skip) ? { targets: [] } : { targets: [], unknown: verb };
   if (SHELLS.has(verb) && inner) return { targets: [] };
-  if (buildTestRun(verb, args)) return { targets: [], run: true, script: repoScriptWord(verb, args) ?? undefined, operands: runOperands(verb, args) };
+  // the target of a redirect (`</dev/null`, `<&-`, `2>&1`) is no operand of the run
+  const runArgs = core.filter((_, i) => i > 0 && !skip.has(i));
+  if (buildTestRun(verb, runArgs)) return { targets: [], run: true, script: repoScriptWord(verb, runArgs) ?? undefined, operands: runOperands(verb, runArgs) };
   return { targets: [], unknown: verb };
 }
 
@@ -1012,6 +1036,8 @@ interface Collected {
   roOperands?: string[];
   /** Script files named to node/python/python3/bash/sh/npx (any child role): read and scanned when they lie outside git (probeScripts). */
   probeFiles?: string[];
+  /** Inline python that provably only reads (pythonReadOnlyCode): its text and literals are no write-protection operands. */
+  readCode?: Set<string>;
   /** A `cd`/`pushd`/`export`/`env` command or an env assignment prefix was found (refused next to a run for a read-only child). */
   roCdEnv?: boolean;
   /** Top level only: the session cwd and file probes, to resolve `..` words after a `cd` that ran first. */
@@ -1181,6 +1207,11 @@ function unitReadOnly(core: string[], skip: Set<number>): boolean {
     }
   }
   if (verb === "sort") return !has(/^-[A-Za-z]*o|^--(output|compress-program)\b/);
+  if (verb === "xxd") {
+    // `-r` reverts a dump into a binary and `xxd IN OUT` writes OUT: a read only without -r and with at most one operand (the values of -l -s -c -g -o are no operands)
+    if (has(/^-[A-Za-z]*r|^--(revert|r)\b/)) return false;
+    return args.filter((x, i) => x && !x.startsWith("-") && !/^-[lscgo]$/.test(args[i - 1] ?? "")).length <= 1;
+  }
   if (verb === "find") return !has(/^-(exec|execdir|ok|okdir|delete|fprint0?|fprintf|fls)$/);
   if (verb === "uniq") return !has(/^-[^-]*[^-cdDfisuwz0-9]/) && args.filter((x) => x && (x === "-" || !x.startsWith("-"))).length <= 1;
   if (verb === "rg") return !has(/^--(pre|hostname-bin)\b/);
@@ -1215,6 +1246,9 @@ function protectedReader(core: string[], skip: Set<number>): boolean {
 const REMOVERS = new Set(["rm", "rmdir", "unlink", "trash", "trash-put", "gio", "mv", "rename", "ren", "move", "del", "erase", "rd", "srm", "shred", "remove-item", "ri", "rni", "rename-item", "move-item", "mi"]);
 
 const MAX_DEPTH = 4;
+
+/** An include/exclude filter option with its value attached (`--exclude-dir=.git`): the value is a pattern to leave out, not a path the command opens. */
+const FILTER_OPT = /^--(exclude|include|exclude-dir|include-dir)=/;
 
 /** Builtins that assign their words to a variable. */
 const ASSIGNERS = new Set(["read", "declare", "typeset", "export", "local", "readonly", "mapfile", "readarray"]);
@@ -1337,6 +1371,10 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
     const code = inlineCode(v.core);
     if (code) out.words.push(...codeLiterals(code));
     if (code && out.protWords) out.protWords.push(...codeLiterals(code));
+    if (code && out.readCode && /^(python|pypy)/.test(baseName(v.core[0])) && pythonReadOnlyCode(code)) {
+      out.readCode.add(code);
+      for (const l of codeLiterals(code)) out.readCode.add(l);
+    }
     if (out.removeWords) {
       if (code) out.removeWords.push(...codeLiterals(code));
       const verb = v.core.length ? baseName(v.core[0]) : "";
@@ -1540,11 +1578,17 @@ function pathDeny(rules: PathRule[], word: string, ctx: MatchCtx, readOnly = fal
   const cands = pathCandidates(word, ctx);
   const denyPats = rules.filter((r) => r.action === "deny").map((r) => r.pattern);
   const prose = proseOk && /\s/.test(word);
-  const ownedPats = readOnly && rules.some((r) => CATCH_ALL.test(r.pattern)) ? ownedReadPatterns(ctx) : [];
+  const ownedPats = readOnly ? ownedReadPatterns(ctx) : [];
   for (const cand of ctx.platform === "win32" ? [...cands, ...shortNameVariants(cands, denyPats)] : cands) {
     let verdict: PathRule | null = null;
-    const ownedRead = ownedPats.some((pat) => pathMatches(pat, cand, ctx));
-    for (const r of rules) if (pathMatches(r.pattern, cand, ctx) && !(CATCH_ALL.test(r.pattern) && (prose || ownedRead))) verdict = r;
+    const ownedHits = ownedPats.filter((pat) => pathMatches(pat, cand, ctx));
+    const ownedRead = ownedHits.length > 0;
+    // a read below an owned root is no hit for a directory-scope rule (`<main>/*`) that contains that root; `*.env` and the like still fire
+    const scoped = (pattern: string): boolean => {
+      const m = ctx.platform === "win32" ? null : /^(\/[^*?[\]{}]*)\/\*$/.exec(pattern);
+      return !!m && ownedHits.some((pat) => pat.startsWith(`${m[1]}/`));
+    };
+    for (const r of rules) if (pathMatches(r.pattern, cand, ctx) && !(CATCH_ALL.test(r.pattern) && (prose || ownedRead)) && !(ownedRead && r.action === "deny" && scoped(r.pattern))) verdict = r;
     if (verdict && verdict.action === "deny") return verdict;
   }
   return null;
@@ -1600,6 +1644,21 @@ const LOOP_START = new Set(["while", "until", "for", "select"]);
  * the old cwd revives only where the and-list ends (`;`, `||`, `&`, newline, grouping). Inside a loop a
  * relative cd, pushd and popd deny (they repeat). Deny-only: it never allows.
  */
+const STDIN_WRITE = /open\([^)]*,\s*(['"])[rwax]*[wax+][^'"]*\1|\b(write_text|write_bytes|writeFile\w*|appendFile\w*|createWriteStream|copyFile\w*|os\.(remove|rename|replace|unlink)|shutil\.|fs\.(write|rm|unlink|rename))/;
+
+/**
+ * A child never writes files through a heredoc or a stdin script: `cat > f <<'EOF'`, `tee f <<EOF`, `python3 - <<EOF` / `node -e` fed from stdin
+ * that open a file for write. The body is invisible to the path checks, so it is refused outright (deny-only, no dialog).
+ */
+function childStdinWriteDeny(command: string): Decision | null {
+  const heredoc = /<<(?!<)/.test(command);
+  const stripped = command.replace(/\d*>&\d*-?|&>\s*\/dev\/null|\d*>>?\s*\/dev\/null/g, "");
+  const writer = (heredoc && /\bcat\b[^|;&\n]*>|\btee\b|\bdd\b[^|;&\n]*\bof=/.test(stripped))
+    || ((heredoc || /\|\s*(python[\d.]*|node|perl|ruby)\b|\b(python[\d.]*|node|perl|ruby)\s+-(\s|$)|<<<|\bnode\s+-e\b/.test(command)) && /\b(python[\d.]*|node|perl|ruby)\b/.test(command) && STDIN_WRITE.test(command));
+  if (!writer) return null;
+  return { kind: "deny", reason: "pi-foreman: denied for a child (heredoc or stdin-script file write): never heredoc or stdin-script file writes; use the write or edit tool." };
+}
+
 function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
   const win = ctx.platform === "win32";
   const p = win ? path.win32 : path.posix;
@@ -1718,9 +1777,11 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   if (ctx.role === "child") {
     const cd = childCdDeny(command, ctx);
     if (cd) return cd;
+    const sw = childStdinWriteDeny(command);
+    if (sw) return sw;
   }
   const scratch0 = scratchOf(ctx);
-  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], proseSkip: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
+  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], proseSkip: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], readCode: new Set(), ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
   collect(command, shell, 0, c);
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
@@ -1748,8 +1809,14 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const pure = c.pure === true && !/\$\(|`|[<>]\(/.test(command);
   // Only read-only verbs, no write redirect anywhere (any target: a literal, `$f`, a quoted loop variable), no PowerShell: write-only protect rules do not fire.
   // A protected path in an assignment (`f=...`) or a `for`/`select`/`case` word list stays scanned; without a write redirect nothing writes to it.
-  const readOnly = pure && c.ro === true && c.rdr === true && shell === "posix" && c.writeTargets!.size === 0;
-  const pwords = pure ? [...new Set(c.protWords!.flatMap((w) => [w, ...expandBraces(w)]))] : words;
+  const strictRead = pure && c.ro === true && c.rdr === true && shell === "posix" && c.writeTargets!.size === 0;
+  // Reads below an owned root (a `*` rule, ctx.readable) need no pure viewer pipeline: every unit is a known reader or a read-only git/test run,
+  // nothing writes (no redirect target, no write verb, no unknown command, nothing removed) and nothing builds a path at run time.
+  const ownedReadOk = !strictRead && !/\$\(|`|[<>]\(/.test(command) && shell === "posix" && c.ro === true && c.roUnknown === undefined && c.roDeny === undefined && c.roTargets!.size === 0 && c.tmpTargets!.size === 0 && c.writeTargets!.size === 0 && c.removeWords!.length === 0 && c.worktreeOp === undefined;
+  const readOnly = strictRead;
+  // `--exclude-dir=.git` names a path to leave out, never one to write: only a redirect target keeps such a word
+  const notFilter = (w: string): boolean => (!FILTER_OPT.test(w) && !(ctx.role === "child" && c.readCode!.has(w))) || c.writeTargets!.has(w) || !!c.tmpTargets?.has(w);
+  const pwords = (pure ? [...new Set(c.protWords!.flatMap((w) => [w, ...expandBraces(w)]))] : words).filter(notFilter);
   const pctx: MatchCtx = shell === "posix" ? { ...ctx, bashWords: true, dotGlob: /dotglob|globignore|glob_?dots/i.test(command) } : ctx;
   const removed = new Set(c.removeWords!.flatMap((w) => [w, ...expandBraces(w)]));
   const texts = [...c.unitTexts, ...c.pipeTexts];
@@ -1765,13 +1832,13 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   for (const w of c.proseSkip!) operands.set(w, (operands.get(w) ?? 0) - 1);
   const proseVals = new Set([...operands].filter(([, n]) => n <= 0).flatMap(([w]) => [w, ...expandBraces(w)]));
   for (const w of words) {
-    const hit = pathDeny(rules.pathRules, w, ctx, readOnly, !targets.has(w) && proseVals.has(w));
+    const hit = pathDeny(rules.pathRules, w, ctx, readOnly || ownedReadOk, !targets.has(w) && proseVals.has(w));
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(w)}'). Secret and policy paths are off limits to the agent, also through shell commands.` };
   }
   if (ctx.role === "child") {
     for (const w of pwords) {
       if (c.worktreeRemoveWords!.has(w)) continue;
-      const hit = childBlockHit(rules, w, pctx, readOnly);
+      const hit = childBlockHit(rules, w, pctx, readOnly || ownedReadOk);
       if (hit) return childBlockDecision(hit, w);
     }
   }

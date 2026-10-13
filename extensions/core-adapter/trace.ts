@@ -16,7 +16,8 @@ const MAX_COMMAND = 200; // a denied command (lane 3h)
 const DENY_EVENTS = new Set(["read_budget", "recheck_budget", "child_read_budget", "overlay", "launch_refused"]);
 const MAX_MESSAGE = 200; // a tool_error message (lane 7f)
 const UNSCRUBBED = new Set(["model", "models", "primary", "from", "to"]);
-const isDeny = (rec: Record<string, unknown>): boolean => DENY_EVENTS.has(String(rec.event)) && (rec.event === "launch_refused" || rec.action === "deny" || rec.decision === "deny");
+const isDeny = (rec: Record<string, unknown>): boolean => (DENY_EVENTS.has(String(rec.event)) && (rec.event === "launch_refused" || rec.action === "deny" || rec.decision === "deny")) || (rec.event === "guard" && rec.guard === "self_ruling" && rec.decision === "blocked");
+const MAX_REASON = 320; // a deny reason keeps its rule pattern, which sits after the lead-in
 
 /**
  * A denied command with secret-shaped tokens removed (before the 200-char cut):
@@ -83,6 +84,29 @@ export function scrubPaths(text: string): string {
   });
 }
 
+/**
+ * A deny reason with its rule patterns kept (`rule '<repo>/config/foreman.defaults.json'`): the pattern is a rule id, not content.
+ * Home paths in a pattern become `~`, any other absolute pattern `[path]`; the rest of the text is scrubbed like any trace string.
+ */
+export function scrubReason(text: string): string {
+  const kept: string[] = [];
+  const masked = text.replace(/\b(rules? ')([^'\n]{1,200})(')/g, (_m, a: string, pat: string, z: string) => {
+    const p = redactCommand(pat);
+    kept.push(/^(?:[A-Za-z]:)?[\\/]/.test(p) ? "[path]" : p);
+    return `${a}\u0000${kept.length - 1}\u0000${z}`;
+  });
+  return scrubPaths(redactCommand(masked)).replace(/\u0000(\d+)\u0000/g, (_m, i: string) => kept[Number(i)]);
+}
+
+/** Deny trace fields (lane 3h): the reason, the command (a bash command, else the tool name; 200 chars at the writer) and the role. */
+export function denyFields(reason: unknown, toolName: string, input: unknown, role: string, repoRoots: string[] = []): { reason: string; command: string; role: string } {
+  const c = input && typeof input === "object" ? (input as { command?: unknown }).command : undefined;
+  // the matched rule keeps its place in the repository: the package root and the project root read `<repo>` (scrubReason keeps `<repo>/…`)
+  let text = typeof reason === "string" ? reason : "";
+  for (const root of [...repoRoots].filter((r) => r.length > 1).sort((a, b) => b.length - a.length)) text = text.split(root.split(path.sep).join("/")).join("<repo>").split(root).join("<repo>");
+  return { reason: text, command: typeof c === "string" && c ? c : toolName, role };
+}
+
 /** Keep allowlisted keys whose value is a primitive; cap string length. */
 export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
   const out: Record<string, string | number | boolean | null> = {};
@@ -105,8 +129,8 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
       if (Number.isFinite(v)) out[k] = v;
     } else if (typeof v === "string") {
       // every string field: secrets redacted, then every path, URL and file name replaced by `[path]` (a URL whole); model ids (`model`, `models`, a panel's `primary`, a climb's `from`/`to`) are config, not content
-      const s = UNSCRUBBED.has(k) ? v : scrubPaths(redactCommand(v));
-      out[k] = s.slice(0, k === "command" ? MAX_COMMAND : MAX_STRING);
+      const s = UNSCRUBBED.has(k) ? v : k === "reason" && isDeny(rec) ? scrubReason(v) : scrubPaths(redactCommand(v));
+      out[k] = s.slice(0, k === "command" ? MAX_COMMAND : k === "reason" && isDeny(rec) ? MAX_REASON : MAX_STRING);
     }
   }
   return out as TraceRecord;

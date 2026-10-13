@@ -73,7 +73,7 @@ import type { ReviewRecord } from "./reviews.ts";
 import { dedupeToolCallNotices } from "./notices.ts";
 import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
 import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts";
-import { openTrace, toolErrorRecord, traceFile } from "./trace.ts";
+import { denyFields, openTrace, toolErrorRecord, traceFile } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
 import { loadPrices } from "./cost.ts";
 import { budgetCap, budgetCheck, failedItemsOf, prependReReview, reviewCapCheck, reviewRunsCap } from "./costguard.ts";
@@ -129,7 +129,7 @@ import { filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type R
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { launchEntries } from "./ladder.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
-import { childReadable, childSurface, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
+import { asyncRunDirs, childReadable, childSurface, mainWorkflowReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -137,12 +137,6 @@ const ENTRY = fileURLToPath(import.meta.url);
 const PKG_ROOT = path.resolve(HERE, "..", "..");
 const CORE_DIR = path.join(PKG_ROOT, "core");
 const BIN_DIR = path.join(PKG_ROOT, "bin");
-
-/** Deny trace fields (lane 3h): the reason, the command (a bash command, else the tool name; 200 chars at the writer) and the role. */
-function denyFields(reason: unknown, toolName: string, input: unknown, role: string): { reason: string; command: string; role: string } {
-  const c = input && typeof input === "object" ? (input as { command?: unknown }).command : undefined;
-  return { reason: typeof reason === "string" ? reason : "", command: typeof c === "string" && c ? c : toolName, role };
-}
 
 /** Launch refusal trace fields: the roles launched and the call as `subagent <roles>`. */
 function launchDeny(input: Record<string, unknown>): { role: string; command: string } {
@@ -1347,9 +1341,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Overlay check (see permoverlay.ts); undefined = let the call go on. */
   async function overlayBlock(s: Session, ctx: ExtensionContext, toolName: string, input: Record<string, unknown>) {
     if (!s.overlay) return { block: true as const, reason: OVERLAY_UNAVAILABLE };
-    const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, readable: childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform) }; })() : {}) });
+    const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform)] }; })() : {}) });
     const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) });
-    if (d) s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: r ? (d.kind === "deny" ? "deny" : "ask-denied") : "ask-approved", ...(r ? denyFields((d as { reason?: unknown }).reason, toolName, input, s.isChild ? s.usage.line.role : "foreman") : {}) });
+    if (d) s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: r ? (d.kind === "deny" ? "deny" : "ask-denied") : "ask-approved", ...(r ? denyFields((d as { reason?: unknown }).reason, toolName, input, s.isChild ? s.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) : {}) });
     return r;
   }
 
@@ -1372,7 +1366,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const rs = sessionFor(ctx);
       const why = rs && selfRulingRefusal(event.toolName, event.input as Record<string, unknown>, ctx.cwd, childDirsOf(rs));
       if (why) {
-        rs.trace?.emit({ event: "guard", guard: "self_ruling", toolFamily: event.toolName, decision: "blocked", reason: "self_ruling" });
+        rs.trace?.emit({ event: "guard", guard: "self_ruling", toolFamily: event.toolName, decision: "blocked", ...denyFields(`self_ruling: ${why}`, event.toolName, event.input, rs.isChild ? rs.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) });
         return { block: true, reason: `pi-foreman: ${why}.` };
       }
     }
@@ -2047,7 +2041,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.isChild) return { write: [], read: [] };
     const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform);
     const sid = (s.usage.line.foremanSession || "").split("").filter((c) => /[A-Za-z0-9_-]/.test(c)).join("");
-    return sessionOwnedSplit({ scratch: s.scratch.live(null), rounds, handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), npmRoot: s.owned.npmRoot, stateScratch: sid ? path.join(s.agentDir, "pi-foreman", "state", "scratch", sid) : null, asyncRuns: s.childFiles }, platform);
+    return sessionOwnedSplit({ scratch: s.scratch.live(null), rounds, handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), npmRoot: s.owned.npmRoot, stateScratch: sid ? path.join(s.agentDir, "pi-foreman", "state", "scratch", sid) : null, asyncRuns: [...s.childFiles, ...asyncRunDirs([...s.childFiles, ...ownAsyncResults()], platform)] }, platform);
+  };
+
+  /** `<tmp>/pi-subagents-uid-<uid>/async-subagent-results`: where this user's subagent runs leave their results (k). */
+  const ownAsyncResults = (): string[] => {
+    const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+    if (uid === undefined) return [];
+    let tmp = os.tmpdir();
+    try {
+      tmp = fs.realpathSync.native(tmp);
+    } catch {
+      // use the plain temp dir
+    }
+    return [path.join(tmp, `pi-subagents-uid-${uid}`, "async-subagent-results")];
   };
 
   /** The owned handoffs root (`<agentDir>/pi-foreman/handoffs`). */

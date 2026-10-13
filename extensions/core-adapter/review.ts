@@ -22,7 +22,7 @@ import { insideScratch } from "./childscratch.ts";
 import { deterministicAllow, deterministicAllowInfo, hits } from "./timeoutallow.ts";
 import { classify, effectCtx } from "./effects.ts";
 import * as path from "node:path";
-import { isolationDir, roundWorktreeAdd } from "./roundsurface.ts";
+import { isolationDir, mainWorkflowReadable, roundWorktreeAdd } from "./roundsurface.ts";
 import type { EffectClass, EffectCtx } from "./effects.ts";
 
 export const REVIEW_LINK = "foreman-review";
@@ -358,6 +358,8 @@ export class ForemanReview {
       if (!s) out = { verdict: { kind: "defer" }, label: "no-session" };
       else if (s.isChild) out = { verdict: { kind: "defer" }, label: "child" };
       else if (d.forwarding && surface.startsWith("external_directory") && (fixed = this.scratchPathAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
+      else if (!s.isChild && surface.startsWith("external_directory") && (fixed = this.readRootPathAllow(s, d, surface))) out = { verdict: { kind: "allow" }, label: fixed };
+      else if (surface === "bash" && !d.forwarding && (fixed = this.readRootsBashAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (!REVIEW_SURFACES.includes(surface)) out = { verdict: { kind: "defer" }, label: "surface" };
       else if (surface === "bash" && d.forwarding && (fixed = this.fixedAllow(s, d, cls))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (surface === "bash" && !d.forwarding && (fixed = this.roundWorktreeAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
@@ -391,7 +393,8 @@ export class ForemanReview {
     try {
       const roots = get(s.config(), "safety.permissions.readRoots");
       const ledger = this.ledgerOf(s);
-      const ctx = effectCtx(s.cwd, this.scratchOf(s, d), process.platform, ledger ? [...(Array.isArray(roots) ? roots : []), ledger] : roots);
+      const flow = d.forwarding ? this.mainFlowOf(s) : [];
+      const ctx = effectCtx(s.cwd, this.scratchOf(s, d), process.platform, [...(Array.isArray(roots) ? roots : []), ...(ledger ? [ledger] : []), ...flow]);
       return { ctx, cls: classify(reviewValue(d), ctx) };
     } catch {
       return null;
@@ -450,11 +453,54 @@ export class ForemanReview {
       if (!(owned.length || ownedRead.length) || !rules) return null;
       const roots = get(s.config(), "safety.permissions.readRoots");
       const ledger = this.ledgerOf(s);
-      const readable = [...(Array.isArray(roots) ? roots : []), ...ownedRead, ...(ledger ? [ledger] : [])];
+      const readable = [...(Array.isArray(roots) ? roots : []), ...ownedRead, ...(ledger ? [ledger] : []), ...(d.forwarding ? this.mainFlowOf(s) : [])];
       const ctx = { ...effectCtx(s.cwd, [...this.scratchOf(s, d), ...owned], process.platform, readable), noTmp: true };
       const full = reviewValue(d);
       const deps = { effects: ctx };
       return deterministicAllow(rules, unitValue(d), deps) && deterministicAllow(rules, full, deps) ? "owned-roots" : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The main checkout's `.workflow` dir of each round worktree: the round's own ledger and notes, a READ root for every child role (roundsurface.ts mainWorkflowReadable). */
+  private mainFlowOf(s: ReviewSession): string[] {
+    try {
+      return mainWorkflowReadable(s.roundDirs?.() ?? []).filter((p) => !p.endsWith("/*"));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * "owned-read" when an external-directory READ ask names a path inside an owned read root: the global npm root, the foreman's own subagent run dirs
+   * (`async-subagent-runs/<run>`, `async-subagent-results`), and for a forwarded child also the main checkout's `.workflow`. A write ask never matches.
+   */
+  private readRootPathAllow(s: ReviewSession, d: AskDetails, surface: string): string | null {
+    try {
+      if (!/read/i.test(surface)) return null;
+      const value = unitValue(d);
+      if (d.payload?.kind === "bash_external_directory" || d.toolName === "bash") return null;
+      const px = process.platform === "win32" ? path.win32 : path.posix;
+      if (!px.isAbsolute(value) || value.split(/[\\/]/).includes("..") || /[*?[\]{}]/.test(value)) return null;
+      const roots = [...rootList(s.readOnlyRoots), ...(d.forwarding ? this.mainFlowOf(s) : [])];
+      const norm = px.normalize(value);
+      return roots.some((r) => { const rel = px.relative(px.resolve(r), norm); return rel === "" || (!rel.startsWith("..") && !px.isAbsolute(rel)); }) ? "owned-read" : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** "owned-read" for the foreman's own bash command that only reads below its read-only owned roots (the async run dirs, the npm root). */
+  private readRootsBashAllow(s: ReviewSession, d: AskDetails): string | null {
+    try {
+      const read = rootList(s.readOnlyRoots);
+      const rules = s.bashRules?.();
+      if (!read.length || !rules) return null;
+      const ctx = { ...effectCtx(s.cwd, [], process.platform, read), noTmp: true };
+      const full = reviewValue(d);
+      const deps = { effects: ctx };
+      return deterministicAllow(rules, unitValue(d), deps) && deterministicAllow(rules, full, deps) && classify(full, ctx) === "read" ? "owned-read" : null;
     } catch {
       return null;
     }
