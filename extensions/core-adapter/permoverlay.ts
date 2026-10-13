@@ -510,7 +510,7 @@ function inlineCode(core: string[]): string | null {
   return null;
 }
 
-const PY_SAFE_MODULES = new Set(["json", "re", "sys", "csv", "collections", "itertools", "math", "ast", "textwrap", "pprint", "string", "functools", "operator"]);
+const PY_SAFE_MODULES = new Set(["json", "re", "csv", "collections", "itertools", "math", "ast", "textwrap", "pprint", "string", "functools", "operator"]);
 
 /**
  * Inline python that can only read files: it imports nothing but pure-data modules, every `open` is a call with a literal path and
@@ -518,6 +518,7 @@ const PY_SAFE_MODULES = new Set(["json", "re", "sys", "csv", "collections", "ite
  * Anything else (a computed path, `os`, `pathlib`, `subprocess`) is not provably a read and stays scanned as a possible write.
  */
 export function pythonReadOnlyCode(code: string): boolean {
+  if (/modules|getattr|eval|exec|compile|__|rename|replace\(|remove|unlink|write|mkdir|rmdir|chmod|system|popen/.test(code)) return false;
   if (/__|\b(getattr|setattr|delattr|eval|exec|compile|globals|locals|vars|input|breakpoint|memoryview|help)\b/.test(code)) return false;
   const imports = [...code.matchAll(/(?:^|[;\s])(?:import\s+([\w., ]+)|from\s+([\w.]+)\s+import\b)/g)];
   for (const m of imports) {
@@ -1812,10 +1813,12 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const strictRead = pure && c.ro === true && c.rdr === true && shell === "posix" && c.writeTargets!.size === 0;
   // Reads below an owned root (a `*` rule, ctx.readable) need no pure viewer pipeline: every unit is a known reader or a read-only git/test run,
   // nothing writes (no redirect target, no write verb, no unknown command, nothing removed) and nothing builds a path at run time.
-  const ownedReadOk = !strictRead && !/\$\(|`|[<>]\(/.test(command) && shell === "posix" && c.ro === true && c.roUnknown === undefined && c.roDeny === undefined && c.roTargets!.size === 0 && c.tmpTargets!.size === 0 && c.writeTargets!.size === 0 && c.removeWords!.length === 0 && c.worktreeOp === undefined;
+  const ownedReadOk = !strictRead && !/\$\(|`|[<>]\(/.test(command) && shell === "posix" && c.ro === true && c.roRun !== true && c.roUnknown === undefined && c.roDeny === undefined && c.roTargets!.size === 0 && c.tmpTargets!.size === 0 && c.writeTargets!.size === 0 && c.removeWords!.length === 0 && c.worktreeOp === undefined;
   const readOnly = strictRead;
   // `--exclude-dir=.git` names a path to leave out, never one to write: only a redirect target keeps such a word
-  const notFilter = (w: string): boolean => (!FILTER_OPT.test(w) && !(ctx.role === "child" && c.readCode!.has(w))) || c.writeTargets!.has(w) || !!c.tmpTargets?.has(w);
+  // the read-only python exemption holds only when the whole command is that one invocation: nothing else on the line may use the words
+  const soloPython = /^\s*(?:[\w./-]*python[\w.]*)(?:\s+-[A-Za-z]+)*\s*$/.test(command.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, ""));
+  const notFilter = (w: string): boolean => (!FILTER_OPT.test(w) && !(ctx.role === "child" && soloPython && c.readCode!.has(w))) || c.writeTargets!.has(w) || !!c.tmpTargets?.has(w);
   const pwords = (pure ? [...new Set(c.protWords!.flatMap((w) => [w, ...expandBraces(w)]))] : words).filter(notFilter);
   const pctx: MatchCtx = shell === "posix" ? { ...ctx, bashWords: true, dotGlob: /dotglob|globignore|glob_?dots/i.test(command) } : ctx;
   const removed = new Set(c.removeWords!.flatMap((w) => [w, ...expandBraces(w)]));

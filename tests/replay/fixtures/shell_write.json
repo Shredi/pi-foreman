@@ -28,7 +28,7 @@
  },
  "builder": {
   "bwrite": [
-   {"tools": [{"name": "write", "arguments": {"path": "built.txt", "content": "built\n"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "printf 'built\\n' > built.txt"}}]},
    {"text": "child: write finished"}
   ],
   "bheredoc": [

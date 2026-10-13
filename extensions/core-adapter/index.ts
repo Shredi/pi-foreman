@@ -2043,20 +2043,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.isChild) return { write: [], read: [] };
     const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform);
     const sid = (s.usage.line.foremanSession || "").split("").filter((c) => /[A-Za-z0-9_-]/.test(c)).join("");
-    return sessionOwnedSplit({ scratch: s.scratch.live(null), rounds, handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), npmRoot: s.owned.npmRoot, stateScratch: sid ? path.join(s.agentDir, "pi-foreman", "state", "scratch", sid) : null, asyncRuns: [...s.childFiles, ...asyncRunDirs([...s.childFiles, ...ownAsyncResults()], platform)] }, platform);
-  };
-
-  /** `<tmp>/pi-subagents-uid-<uid>/async-subagent-results`: where this user's subagent runs leave their results (k). */
-  const ownAsyncResults = (): string[] => {
-    const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
-    if (uid === undefined) return [];
-    let tmp = os.tmpdir();
-    try {
-      tmp = fs.realpathSync.native(tmp);
-    } catch {
-      // use the plain temp dir
-    }
-    return [path.join(tmp, `pi-subagents-uid-${uid}`, "async-subagent-results")];
+    return sessionOwnedSplit({ scratch: s.scratch.live(null), rounds, handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), npmRoot: s.owned.npmRoot, stateScratch: sid ? path.join(s.agentDir, "pi-foreman", "state", "scratch", sid) : null, asyncRuns: [...s.childFiles, ...asyncRunDirs(s.childFiles, platform)] }, platform);
   };
 
   /** The owned handoffs root (`<agentDir>/pi-foreman/handoffs`). */

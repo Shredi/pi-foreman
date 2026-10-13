@@ -31,9 +31,9 @@ fs.writeFileSync(path.join(results, "abc123.json"), "{}\n");
 const reg: RegistryLike = { find: () => { throw new Error("model called"); }, complete: async () => ({}) };
 const session = (extra: Partial<ReviewSession>): ReviewSession => ({ isChild: false, cwd: rt, provider: "a", config: () => ({}), registry: reg, intent: "", bashRules: () => rules, ...extra });
 
-test("asyncRunDirs: the run dir of a recorded file and the uid dir's results dir, nothing else", { skip: !posix }, () => {
-  assert.deepEqual(asyncRunDirs([path.join(run, "status.json"), "/x/other/file"], "linux").sort(), [results, run].sort());
-  assert.deepEqual(asyncRunDirs([path.join(results, "abc123.json")], "linux"), [results]);
+test("asyncRunDirs: the run dir of a recorded file and that run's results file, nothing else", { skip: !posix }, () => {
+  assert.deepEqual(asyncRunDirs([path.join(run, "status.json"), "/x/other/file"], "linux").sort(), [path.join(results, `${path.basename(run)}.json`), run].sort());
+  assert.deepEqual(asyncRunDirs([path.join(results, "abc123.json")], "linux"), [path.join(results, "abc123.json")]);
   assert.deepEqual(asyncRunDirs(["/home/u/pi-subagents-notuid/async-subagent-runs/r/x"], "linux"), []);
 });
 
