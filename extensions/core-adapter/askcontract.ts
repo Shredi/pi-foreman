@@ -10,6 +10,7 @@ export const ASK_FILE = "ask.md";
 export const ASK_MARKER = ".ask";
 export const SEEN_FILE = ".seen";
 const ASK_HEADER_RE = /^# Ask (\d{1,6}): (\S.*)$/;
+const NEEDS_RULING_NO_RE = /^needs_ruling:[ \t]*no[ \t]*$/im;
 
 /** `# Ask <n>: <topic>` on the first line of ask.md; null for anything else. */
 export function parseAskHeader(text: string): { n: number; topic: string } | null {
@@ -42,8 +43,8 @@ export class AskContract {
     this.d = d;
   }
 
-  /** A successful write/edit of `file`: "ask" (marker + signal), "seen" (signal released) or null (not ours). */
-  onFileWritten(file: string): "ask" | "seen" | null {
+  /** A successful write/edit of `file`: "ask" (marker + signal), "seen" (signal released), "note" (ask.md with `needs_ruling: no`: no marker, no signal) or null (not ours). */
+  onFileWritten(file: string): "ask" | "seen" | "note" | null {
     const base = path.basename(file);
     if (base !== ASK_FILE && base !== SEEN_FILE) return null;
     const real = realOf(file);
@@ -56,6 +57,7 @@ export class AskContract {
     const text = (this.d.read ?? ((f) => fs.readFileSync(f, "utf8")))(real);
     const head = text === null ? null : parseAskHeader(text);
     if (!head) return null;
+    if (text !== null && NEEDS_RULING_NO_RE.test(text)) return "note";
     try {
       (this.d.touch ?? ((f, t) => fs.writeFileSync(f, t, "utf8")))(path.join(dir, ASK_MARKER), `ask-${head.n}\n`);
     } catch {

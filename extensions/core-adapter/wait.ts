@@ -565,6 +565,8 @@ export interface WaitSession {
   onCancel?: (id: string) => void;
   /** Called when a file wait on a ruling file woke (the harness writes `.seen`; askcontract.ts). */
   onRulingWake?: (file: string) => void;
+  /** Appends a pending steer.md (steer.ts) to a wake message text. */
+  steer?: (text: string) => string;
   /** The current pressure level and reasons (pressure waits). */
   pressure?: () => { level: string; reasons: string[] };
   /** True when no child run is active (pressure queue waits). */
@@ -644,7 +646,9 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
         } catch {
           // a stale context: treat as idle
         }
-        pi.sendMessage(wakeMessage(outcomes), idle ? { triggerTurn: true } : { deliverAs: "followUp" });
+        const msg = wakeMessage(outcomes);
+        if (s.steer) msg.content = s.steer(msg.content);
+        pi.sendMessage(msg, idle ? { triggerTurn: true } : { deliverAs: "followUp" });
       },
     });
     runtimes.set(s.id, holder);

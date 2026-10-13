@@ -152,6 +152,27 @@ export function applyLaunchModels(input: Json, roles: Record<string, Json>, maxT
   return out;
 }
 
+/** The model each role of a (rewritten) `subagent` call launches on: the first entry per role, top level and tasks/chain/parallel. */
+export function roleModelsOf(input: unknown): Map<string, string> {
+  const out = new Map<string, string>();
+  const add = (o: Json): void => {
+    if (typeof o.agent === "string" && typeof o.model === "string" && o.model !== "" && !out.has(o.agent)) out.set(o.agent, o.model);
+  };
+  const visit = (list: unknown): void => {
+    if (!Array.isArray(list)) return;
+    for (const e of list) {
+      if (!isObj(e)) continue;
+      add(e);
+      visit(e.parallel);
+    }
+  };
+  if (!isObj(input)) return out;
+  add(input);
+  visit(input.tasks);
+  visit(input.chain);
+  return out;
+}
+
 const posInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0;
 
 /** `roles.<id>.timeoutMinutes` of the merged config in ms, or undefined when unset. */

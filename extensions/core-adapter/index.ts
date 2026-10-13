@@ -39,7 +39,7 @@ import { CHILD_TRACE_EVENT, gitGuardPayload, mainNeedsGitGuard, runGitGuard } fr
 import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
-import { applyLaunchModels, applyLaunchTimeouts, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
+import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
 import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
 import { ReviewFacts } from "./diffscan.ts";
@@ -115,6 +115,7 @@ import type { CloseReport } from "./close.ts";
 import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, sessionModelOf } from "./session.ts";
 import { closeChildren } from "./closechildren.ts";
 import { AskContract } from "./askcontract.ts";
+import { SteerReader } from "./steer.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
 import { foremanTriage, GATED_TOOLS, isTriaged, OUTWARD_TOOLS, triageAdvice, triageGateBlock, TRIAGE_RULES, TRIAGE_TOOL, trivialPathAdvice, workspaceTargets } from "./triage.ts";
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
@@ -1688,7 +1689,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (t.result) return t.result;
         if (guard === "ledger_guard_spawn" && agents.length > 0) {
           setCeremony(s, afterSpawn(s.ceremony));
-          for (const role of agents) s.trace?.emit({ event: "role_launch", role });
+          const modelOf = roleModelsOf(input);
+          for (const role of agents) s.trace?.emit({ event: "role_launch", role, ...(modelOf.has(role) ? { model: modelOf.get(role) } : {}) });
         }
       }
       if (event.toolName === "subagent" && !s.isChild) {
@@ -2071,6 +2073,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return c;
   }
 
+  /** steer.md of the own handoff dirs (steer.ts): appended to every wake delivered to this session. */
+  const steers = new Map<string, SteerReader>();
+  function steerFor(s: Session): SteerReader {
+    let r = steers.get(s.id);
+    if (!r) steers.set(s.id, (r = new SteerReader(() => childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)))));
+    return r;
+  }
+
   /** Rulings this session wrote itself (ruling.ts SelfRulings): never a parent verdict. */
   const selfRulings = new Map<string, SelfRulings>();
   const selfRulingsFor = (s: Session): SelfRulings => {
@@ -2183,7 +2193,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit")) {
       const given = (event.input as Record<string, unknown>).path;
       if (typeof given === "string") {
-        askContractFor(owner).onFileWritten(path.resolve(ctx.cwd, given));
+        if (askContractFor(owner).onFileWritten(path.resolve(ctx.cwd, given)) === "note") owner.trace?.emit({ event: "ask_note", needs_ruling: "no" });
         if (isRulingName(path.basename(given))) {
           const abs = path.resolve(ctx.cwd, given);
           let real = abs;
@@ -2195,6 +2205,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           selfRulingsFor(owner).mark(real);
         }
       }
+    }
+    // R6 4a: a ruling-<n>.md / ruling.md read through the read tool writes `.seen` and ends the blocked state now.
+    if (owner && !owner.isChild && !event.isError && event.toolName === "read") {
+      const given = (event.input as Record<string, unknown>).path;
+      if (typeof given === "string" && isRulingName(path.basename(given))) askContractFor(owner).onRulingWake(path.resolve(ctx.cwd, given));
     }
     const bashSnap = bashRulingSnaps.get(event.toolCallId);
     if (owner && bashSnap) {
@@ -2269,9 +2284,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           }
         }
       }
-      for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_launched", role, exit: event.isError ? 1 : 0, pollBash: s.pollBash || undefined });
+      const launchedOn = roleModelsOf(event.input);
+      for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_launched", role, exit: event.isError ? 1 : 0, pollBash: s.pollBash || undefined, ...(launchedOn.has(role) ? { model: launchedOn.get(role) } : {}) });
       if (s) s.pollBash = 0;
-      const notices = s?.launchNotices.get(event.toolCallId);
+      const modelLine = s && !s.isChild && !event.isError && launchedOn.size > 0 ? `pi-foreman: launched ${[...launchedOn].map(([role, model]) => `${role} on ${model}`).join(", ")}.` : null;
+      const notices = modelLine ? [...(s?.launchNotices.get(event.toolCallId) ?? []), modelLine] : s?.launchNotices.get(event.toolCallId);
       if (s && notices) s.launchNotices.delete(event.toolCallId);
       const held = s ? await holdLaunch(s, ctx, event.toolCallId, event.input, event.details, event.isError) : null;
       // A held launch's result carries the panel block of its run end (else it comes as its own message).
@@ -2332,7 +2349,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const asyncDir = typeof raw === "string" ? raw : null;
     const text = launchWaitText({ outcome: r.outcome, runId, role: run.role, ms, maxSeconds: cap.seconds, capBy: cap.by, by: r.by, end: r.end, asyncDir });
     const climb = s.ladder.eligible.get(run.role);
-    return { text: climb && climb.runId === runId ? `${text}\n${climbHint(climb)}` : text, path: r.end?.resultPath ?? asyncDir };
+    return { text: steerFor(s).append(climb && climb.runId === runId ? `${text}\n${climbHint(climb)}` : text), path: r.end?.resultPath ?? asyncDir };
   }
 
   // Knob 5a (launchwait.ts): a completion notice whose result an earlier message delivered is dropped from the model context.
@@ -2521,7 +2538,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     platform,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, pressure: () => pressureOf(s), idle: () => s.activeRuns.size === 0, onStart: (spec, id) => markHandoffWait(s, spec, id), onCancel: (id) => cancelHandoffWait(s, id), onRulingWake: (file) => void askContractFor(s).onRulingWake(file) };
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, pressure: () => pressureOf(s), idle: () => s.activeRuns.size === 0, onStart: (spec, id) => markHandoffWait(s, spec, id), onCancel: (id) => cancelHandoffWait(s, id), onRulingWake: (file) => void askContractFor(s).onRulingWake(file), steer: (text) => steerFor(s).append(text) };
     },
   });
 

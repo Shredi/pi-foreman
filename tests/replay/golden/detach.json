@@ -24,11 +24,13 @@
   },
   {
    "event": "role_launch",
-   "role": "explorer"
+   "role": "explorer",
+   "model": "foreman-fake/explorer"
   },
   {
    "event": "role_launched",
    "role": "explorer",
+   "model": "foreman-fake/explorer",
    "exit": 0
   },
   {
@@ -81,11 +83,13 @@
   },
   {
    "event": "role_launch",
-   "role": "explorer"
+   "role": "explorer",
+   "model": "foreman-fake/explorer"
   },
   {
    "event": "role_launched",
    "role": "explorer",
+   "model": "foreman-fake/explorer",
    "exit": 0
   },
   {

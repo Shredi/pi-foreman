@@ -2,7 +2,8 @@
  "foreman": [
   {
    "event": "role_launch",
-   "role": "reviewer"
+   "role": "reviewer",
+   "model": "foreman-fake/reviewer"
   },
   {
    "event": "finding",
@@ -11,7 +12,8 @@
   },
   {
    "event": "role_launch",
-   "role": "reviewer"
+   "role": "reviewer",
+   "model": "foreman-fake/reviewer"
   },
   {
    "event": "finding",
@@ -20,7 +22,8 @@
   },
   {
    "event": "role_launch",
-   "role": "reviewer"
+   "role": "reviewer",
+   "model": "foreman-fake/senior-reviewer"
   },
   {
    "event": "rung_up",

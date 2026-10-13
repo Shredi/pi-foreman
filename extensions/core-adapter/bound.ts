@@ -218,9 +218,14 @@ export function stepsOfRunEnd(data: unknown): Step[] {
   return out;
 }
 
-/** Verdicts (null = none parseable) of the completed reviewer / senior-reviewer children of a run-end event, in order. */
+/** Verdicts (null = none parseable) of the completed reviewer / senior-reviewer children of a run-end event, in order. A builder child revises the tree: only the verdicts after the last one count (the last verdict on the current tree wins). */
 export function reviewVerdictsOfRunEnd(data: unknown): (Verdict | null)[] {
-  return completedChildren(data).filter((c) => REVIEW_ROLES.includes(c.agent)).map((c) => c.verdict);
+  const out: (Verdict | null)[] = [];
+  for (const c of completedChildren(data)) {
+    if (c.agent === "builder") out.length = 0;
+    else if (REVIEW_ROLES.includes(c.agent)) out.push(c.verdict);
+  }
+  return out;
 }
 
 function completedChildren(data: unknown): { agent: string; verdict: Verdict | null }[] {

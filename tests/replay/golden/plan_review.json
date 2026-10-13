@@ -7,7 +7,8 @@
   },
   {
    "event": "role_launch",
-   "role": "reviewer"
+   "role": "reviewer",
+   "model": "foreman-fake/reviewer"
   },
   {
    "event": "plan_review",

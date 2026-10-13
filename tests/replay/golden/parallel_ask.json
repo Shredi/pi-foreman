@@ -21,7 +21,8 @@
   },
   {
    "event": "role_launch",
-   "role": "builder"
+   "role": "builder",
+   "model": "foreman-fake/builder"
   },
   {
    "event": "guard",
@@ -31,16 +32,19 @@
   },
   {
    "event": "role_launch",
-   "role": "builder"
+   "role": "builder",
+   "model": "foreman-fake/builder"
   },
   {
    "event": "role_launched",
    "role": "builder",
+   "model": "foreman-fake/builder",
    "exit": 0
   },
   {
    "event": "role_launched",
    "role": "builder",
+   "model": "foreman-fake/builder",
    "exit": 0
   },
   {

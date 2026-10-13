@@ -11,7 +11,8 @@
   },
   {
    "event": "role_launch",
-   "role": "reviewer"
+   "role": "reviewer",
+   "model": "foreman-fake/reviewer"
   },
   {
    "event": "plan_review",
@@ -38,7 +39,8 @@
   },
   {
    "event": "role_launch",
-   "role": "builder"
+   "role": "builder",
+   "model": "foreman-fake/builder"
   }
  ]
 }
