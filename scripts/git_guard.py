@@ -138,9 +138,10 @@ class Word(object):
 
 
 class Seg(object):
-    __slots__ = ("words", "heredocs", "herestrings", "pipe_in")
+    __slots__ = ("words", "heredocs", "herestrings", "pipe_in", "outs")
 
     def __init__(self, pipe_in=False):
+        self.outs = []             # file targets of `>` / `>>` / `&>` redirects (not fd dups, not /dev/null)
         self.words = []
         self.heredocs = []
         self.herestrings = []
@@ -180,6 +181,7 @@ class Lexer(object):
         self.wglob = False
         self.wstart = 0
         self.redir = None
+        self.redir_w = False
         self.pending = []
         self.callop = False  # PowerShell: the last token was the `&` or `.` call operator
 
@@ -198,8 +200,12 @@ class Lexer(object):
         word = Word("".join(self.w), self.wdyn, self.wglob, self.s[self.wstart:i])
         self.w = None
         kind, self.redir = self.redir, None
+        wr, self.redir_w = self.redir_w, False
         if kind is None:
             self.cur.words.append(word)
+        elif kind == "file" and wr:
+            if not (word.text == "/dev/null" or re.match(r"^[0-9]+-?$|^-$", word.text)):
+                self.cur.outs.append(word)
         elif kind.startswith("heredoc"):
             quoted = any(q in word.raw for q in "'\"\\")
             self.pending.append((word.text, kind == "heredoc-", quoted, self.cur))
@@ -524,6 +530,7 @@ class Lexer(object):
                 if f == "bash" and c == "&" and two == "&>":
                     i += 3 if s[i:i + 3] == "&>>" else 2
                     self.redir = "file"
+                    self.redir_w = True
                     continue
                 if two in ("&&", "||", ";;", "|&", ";&"):
                     self.end_seg(i, pipe_next=two == "|&")
@@ -559,6 +566,7 @@ class Lexer(object):
                     self.redir, i = "file", i + 2
                 else:
                     self.redir, i = "file", i + 1
+                self.redir_w = self.redir == "file" and c == ">"
                 continue
             if c in "()":
                 self.end_seg(i)
@@ -667,6 +675,9 @@ PUSH_CONFIG = re.compile(r"^(remote\..+\.(push|mirror)|remote\.pushdefault|push\
 # Environment variables whose value git runs as a command.
 EXEC_ENV = {"GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_PAGER", "GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF",
             "GIT_ASKPASS", "GIT_SSH", "GIT_PROXY_COMMAND", "EDITOR", "VISUAL", "PAGER"}
+# EXEC_KEY members whose `-c` override is refused outright (main and child); the other EXEC_KEY
+# program values are read as commands.
+HARD_EXEC_KEYS = frozenset(("core.hookspath", "core.fsmonitor", "diff.external"))
 ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
 GIT_CONFIG_ENV = re.compile(r"^GIT_CONFIG", re.I)
 
@@ -971,6 +982,11 @@ def run_command(words, seg, flavor, ctx, depth, envs, xargs_repl=None, via_xargs
     args = words[1:]
     d = OK
 
+    if ctx.mode == "child" and flavor == "bash":
+        sd = stdin_write_problem(name, args, seg, ctx)
+        if sd is not None:
+            return sd
+
     if is_git_name(name):
         if name != "git":
             args = [Word(name[4:])] + args
@@ -1087,6 +1103,39 @@ def run_command(words, seg, flavor, ctx, depth, envs, xargs_repl=None, via_xargs
             return unreadable(ctx, "inline %s code" % name)
         return d
     return d
+
+
+# A script that opens a file for writing: python open(.., 'w'|'a'|'x'|'+'), pathlib writers, node fs writers.
+SCRIPT_WRITE = re.compile(
+    r"\bopen\s*\([^()]*?,\s*(?:mode\s*=\s*)?[rbRB]?[\"'][rbtU]*[wax+][wax+rbtU]*[\"']"
+    r"|\.open\s*\(\s*(?:mode\s*=\s*)?[\"'][rbtU]*[wax+]"
+    r"|\.write_(?:text|bytes)\s*\("
+    r"|\b(?:writeFile|appendFile)(?:Sync)?\s*\(|\bfs\.(?:promises\.)?write\w*\s*\(|\bcreateWriteStream\b")
+STDIN_WRITE_REASON = "child rule: edit with the edit tool, never heredoc or stdin-script file writes"
+
+
+def stdin_write_problem(name, args, seg, ctx):
+    """Child rule: no file written from a heredoc or a stdin / inline interpreter script."""
+    texts = [h for h in seg.heredocs] + [w.text for w in seg.herestrings]
+    if re.match(r"^(python[0-9.]*|pythonw|py|node|nodejs)$", name):
+        plain = [w for w in args if not w.text.startswith("-") or w.text == "-"]
+        inline = any(w.text in ("-c", "-e", "-p", "--eval", "--print") for w in args)
+        if inline:
+            texts += [w.text for w in args]
+        elif seg.pipe_in and [w for w in plain if w.text != "-"] == [] and ctx.root:
+            texts.append(ctx.root[0])  # `echo '...' | python3 -`: the script comes from an earlier stage
+        elif [w for w in plain if w.text != "-"]:
+            return None  # a script file
+        if any(SCRIPT_WRITE.search(t) for t in texts):
+            return deny(STDIN_WRITE_REASON + ".")
+        return None
+    if name == "cat" and seg.outs and (seg.heredocs or seg.herestrings):
+        return deny(STDIN_WRITE_REASON + ".")
+    if name == "tee" and (seg.heredocs or seg.herestrings or (seg.pipe_in and ctx.root and "<<" in ctx.root[0])):
+        files = [w for w in args if not w.text.startswith("-") and w.text != "/dev/null"]
+        if files:
+            return deny(STDIN_WRITE_REASON + ".")
+    return None
 
 
 def shell_call(args, seg, flavor, ctx, depth, envs):
@@ -1331,6 +1380,9 @@ def git_args(args, seg, flavor, ctx, depth, envs, via_xargs=False, xargs_repl=No
         for k in envs:
             if GIT_CONFIG_ENV.match(k):
                 return deny("children may not inject git configuration through the environment (%s)." % k)
+    if not guessing and call is None and "PATH" in envs:
+        return ask("a PATH= prefix before git changes which git (and which hooks and helpers) runs; "
+                   "the guard cannot check it.")
     if not guessing and call is None:
         # Commands git runs from the environment: read them like any other command.
         for k, v in envs.items():
@@ -1376,6 +1428,8 @@ def git_args(args, seg, flavor, ctx, depth, envs, via_xargs=False, xargs_repl=No
                 ck = val.split("=", 1)[0].lower()
                 if NET_EXEC_KEY.match(ck):
                     call.exec_cfg.append(ck)
+                if ck in HARD_EXEC_KEYS and EXEC_KEY.match(ck):
+                    return deny("git --config-env %s makes git run a program or other hooks; it is refused in every role." % ck)
                 if ck.startswith("alias.") or EXEC_KEY.match(ck) or CHILD_CONFIG_DENY.match(ck):
                     if ctx.mode == "child":
                         return deny("children may not set %s through --config-env." % ck)
@@ -1408,6 +1462,8 @@ def git_config_override(kv, call, ctx, depth):
     if k.startswith("alias."):
         if ctx.mode == "child":
             return deny("children may not define git aliases (-c %s)." % key)
+        if val.startswith("!"):
+            return deny("a -c shell alias (-c %s) makes git run a program; define it in the config file instead." % key)
         call.cfg_aliases[k[6:]] = val
         return OK
     if ctx.mode == "child" and re.match(r"^include(if\..+)?\.path$", k):
@@ -1417,10 +1473,8 @@ def git_config_override(kv, call, ctx, depth):
     if NET_EXEC_KEY.match(k):
         call.exec_cfg.append(key)
     if EXEC_KEY.match(k):
-        if k == "core.hookspath":
-            if ctx.mode == "child":
-                return deny("children may not point git at another hooks directory (-c %s)." % key)
-            return OK
+        if k in HARD_EXEC_KEYS:
+            return deny("git -c %s makes git run a program or other hooks; it is refused in every role." % key)
         return analyze_text(val.lstrip("!"), "bash", ctx, depth + 1)
     return OK
 
