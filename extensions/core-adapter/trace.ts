@@ -39,6 +39,19 @@ export function redactCommand(cmd: string): string {
   return out.replace(/[A-Za-z0-9+]{24,}={0,2}/g, keyish);
 }
 
+/**
+ * A text with path-like tokens replaced by `[path]`: absolute paths, `~/…`, `./…`, any token with a `/` or a backslash
+ * (relative paths, URLs) and bare file names with an extension (`b.txt`). Run after `redactCommand`.
+ */
+export function scrubPaths(text: string): string {
+  return text.replace(/[^\s'"`()<>\[\]{},;]+/g, (tok) => {
+    const core = /^(.*?)([.:!?]*)$/.exec(tok) ?? [tok, tok, ""];
+    const t = core[1];
+    const pathLike = /[\/\\]/.test(t) || t === "~" || /^[A-Za-z0-9_@+-][\w@+.-]*\.[A-Za-z][A-Za-z0-9]{1,9}$/.test(t);
+    return pathLike ? `[path]${core[2]}` : tok;
+  });
+}
+
 /** Keep allowlisted keys whose value is a primitive; cap string length. */
 export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
   const out: Record<string, string | number | boolean | null> = {};
@@ -47,7 +60,7 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
     if (k === "command" && !isDeny(rec)) continue; // never a command outside a deny
     if (k === "message" && (rec.event !== "tool_error" || typeof v !== "string")) continue; // free text: only a tool_error's redacted message
     if (k === "message") {
-      out[k] = redactCommand(String(v)).slice(0, MAX_MESSAGE);
+      out[k] = scrubPaths(redactCommand(String(v))).slice(0, MAX_MESSAGE);
       continue;
     }
     if (k === "note" && rec.event !== "friction") continue; // free text: only the scrubbed friction note
@@ -65,10 +78,10 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
   return out as TraceRecord;
 }
 
-/** The `tool_error` record of a tool result with `isError`: tool name and the redacted first 200 characters of its text. */
+/** The `tool_error` record of a tool result with `isError`: tool name and the redacted, path-scrubbed first 200 characters of its text. */
 export function toolErrorRecord(tool: string, content: { type?: string; text?: string }[] | undefined): Record<string, unknown> {
   const text = (content ?? []).map((c) => (c && c.type === "text" ? c.text ?? "" : "")).join("\n").trim();
-  return { event: "tool_error", tool, message: redactCommand(text).slice(0, MAX_MESSAGE) };
+  return { event: "tool_error", tool, message: scrubPaths(redactCommand(text)).slice(0, MAX_MESSAGE) };
 }
 
 export interface TraceWriter {

@@ -42,8 +42,7 @@ class TestSafeOps(ReplayCase):
             {"event": "safe_op", "toolFamily": "move", "decision": "ran"},
             {"event": "safe_op", "toolFamily": "move", "decision": "precondition_failed", "precondition": "dst_exists"},
         ])
-        # lane 7f: only a tool_error's redacted message may carry the refusal text; no other record names a path
-        self.assertNotIn("b.txt", json.dumps([r for r in trace if r.get("event") != "tool_error"]))
+        self.assertNotIn("b.txt", json.dumps(trace))
         self.golden("safe_ops", {"session": shape(trace, KEYS)})
 
 
