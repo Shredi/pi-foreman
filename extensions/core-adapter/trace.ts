@@ -46,9 +46,13 @@ export function redactCommand(cmd: string): string {
 export function scrubPaths(text: string): string {
   return text.replace(/[^\s'"`()<>\[\]{},;]+/g, (tok) => {
     const core = /^(.*?)([.:!?]*)$/.exec(tok) ?? [tok, tok, ""];
+    const file = /^[A-Za-z0-9_@+-][\w@+.-]*\.[A-Za-z][A-Za-z0-9]{1,9}$/;
     const t = core[1];
-    const pathLike = /[\/\\]/.test(t) || t === "~" || /^[A-Za-z0-9_@+-][\w@+.-]*\.[A-Za-z][A-Za-z0-9]{1,9}$/.test(t);
-    return pathLike ? `[path]${core[2]}` : tok;
+    const pathLike = /[\/\\]/.test(t) || t === "~" || file.test(t.replace(/(:\d+)+$/, ""));
+    if (pathLike) return `[path]${core[2]}`;
+    // `key=file.ext`: the value is a file name, the key stays
+    const eq = t.indexOf("=");
+    return eq > 0 && file.test(t.slice(eq + 1).replace(/(:\d+)+$/, "")) ? `${t.slice(0, eq + 1)}[path]${core[2]}` : tok;
   });
 }
 

@@ -128,7 +128,7 @@ import { filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type R
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { launchEntries } from "./ladder.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
-import { childReadable, childSurface, roundWorktrees, sessionOwnedRoots as ownedRootsOf } from "./roundsurface.ts";
+import { childReadable, childSurface, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -779,7 +779,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("session_start", async (event, ctx) => {
     const s = await startSession(ctx);
     emitReady(pi.events as EventBus | undefined, core.claim);
-    review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [], recordUsage: (m) => { const x = sessions.get(s.id); if (x) appendUsage(x.usage.file, usageLine({ ...x.usage.line, role: "autoreview", launchId: null, kind: "foreman" }, m)); }, scratchDirs: (role) => sessions.get(s.id)?.scratch.live(role) ?? [], ownDirs: () => { const x = sessions.get(s.id); return x ? [...ownHandoffDirs(handoffsRoot(x), intercomIdOf(process.env, x.agentDir, x.id)), ...roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform)] : []; }, roundDirs: () => { const x = sessions.get(s.id); return x ? roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform) : []; }, ledgerFile: () => { const x = sessions.get(s.id); return x ? boundLedger(x.markerDir, x.usage.line.foremanSession) : null; }, ownedRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x) : []; }, ...reviewExtras(baseline, () => sessions.get(s.id)?.config.config, ctx) });
+    review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [], recordUsage: (m) => { const x = sessions.get(s.id); if (x) appendUsage(x.usage.file, usageLine({ ...x.usage.line, role: "autoreview", launchId: null, kind: "foreman" }, m)); }, scratchDirs: (role) => sessions.get(s.id)?.scratch.live(role) ?? [], ownDirs: () => { const x = sessions.get(s.id); return x ? [...ownHandoffDirs(handoffsRoot(x), intercomIdOf(process.env, x.agentDir, x.id)), ...roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform)] : []; }, roundDirs: () => { const x = sessions.get(s.id); return x ? roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform) : []; }, ledgerFile: () => { const x = sessions.get(s.id); return x ? boundLedger(x.markerDir, x.usage.line.foremanSession) : null; }, ownedRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x).write : []; }, readOnlyRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x).read : []; }, ...reviewExtras(baseline, () => sessions.get(s.id)?.config.config, ctx) });
     if (!s.isChild && (event.reason === "startup" || event.reason === "new")) await applyForemanModel(s, ctx);
     await registerChildExtensions(s, ctx);
     const orderNotice = s.isChild ? null : loadOrderNotice(s.cwd, s.agentDir, PKG_ROOT);
@@ -1966,12 +1966,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return out;
   }
 
-  /** The roots a foreman session owns, for the permission reviewer's prompt (roundsurface.ts sessionOwnedRoots); none for a child session. */
-  const sessionOwnedRoots = (s: Session): string[] => {
-    if (s.isChild) return [];
+  /** The roots a foreman session owns, for the permission reviewer's prompt (roundsurface.ts sessionOwnedSplit: read-write and read only); none for a child session. */
+  const sessionOwnedRoots = (s: Session): { write: string[]; read: string[] } => {
+    if (s.isChild) return { write: [], read: [] };
     const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform);
     const sid = (s.usage.line.foremanSession || "").split("").filter((c) => /[A-Za-z0-9_-]/.test(c)).join("");
-    return ownedRootsOf({ scratch: s.scratch.live(null), rounds, handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), npmRoot: s.owned.npmRoot, stateScratch: sid ? path.join(s.agentDir, "pi-foreman", "state", "scratch", sid) : null, asyncRuns: s.childFiles }, platform);
+    return sessionOwnedSplit({ scratch: s.scratch.live(null), rounds, handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), npmRoot: s.owned.npmRoot, stateScratch: sid ? path.join(s.agentDir, "pi-foreman", "state", "scratch", sid) : null, asyncRuns: s.childFiles }, platform);
   };
 
   /** The owned handoffs root (`<agentDir>/pi-foreman/handoffs`). */

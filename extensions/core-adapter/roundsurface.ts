@@ -101,6 +101,17 @@ export function sessionOwnedRoots(i: { scratch: string[]; rounds: string[]; hand
   return [...new Set(all.filter((p) => x.isAbsolute(p)).map((p) => x.resolve(p)))];
 }
 
+/**
+ * The owned roots split by what a child may do there (the permission reviewer's prompt and owned-roots allow): `write` are read-write (child scratch dirs,
+ * round and isolation worktrees, handoff dirs, `state/scratch/<session>`), `read` are read only (the global npm root, the async run dirs of the session's own child runs).
+ */
+export function sessionOwnedSplit(i: { scratch: string[]; rounds: string[]; handoffs: string[]; npmRoot?: string | null; stateScratch?: string | null; asyncRuns?: Iterable<string> }, platform: string = process.platform): { write: string[]; read: string[] } {
+  const x = px(platform);
+  const norm = (all: string[]): string[] => [...new Set(all.filter((p) => x.isAbsolute(p)).map((p) => x.resolve(p)))];
+  const write = norm([...i.scratch, ...i.rounds, ...i.rounds.map((r) => isolationDir(r, platform)), ...i.handoffs, ...(i.stateScratch ? [i.stateScratch] : [])]);
+  return { write, read: norm([...(i.npmRoot ? [i.npmRoot] : []), ...(i.asyncRuns ?? [])]).filter((p) => !write.includes(p)) };
+}
+
 const PLAIN = /^[A-Za-z0-9_./@+=,:%-]+$/;
 
 /**

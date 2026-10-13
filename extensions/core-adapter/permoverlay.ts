@@ -1531,12 +1531,12 @@ function ownedReadPatterns(ctx: MatchCtx): string[] {
 
 /**
  * The path rule that denies `word`. A catch-all rule (`*`) matches path OPERANDS only: not the parts of a word with white space (command prose,
- * an expression), and not a read (`readOnly`) below an owned root.
+ * an expression; `proseOk` false for a write target, which is always an operand), and not a read (`readOnly`) below an owned root.
  */
-function pathDeny(rules: PathRule[], word: string, ctx: MatchCtx, readOnly = false): PathRule | null {
+function pathDeny(rules: PathRule[], word: string, ctx: MatchCtx, readOnly = false, proseOk = true): PathRule | null {
   const cands = pathCandidates(word, ctx);
   const denyPats = rules.filter((r) => r.action === "deny").map((r) => r.pattern);
-  const prose = /\s/.test(word);
+  const prose = proseOk && /\s/.test(word);
   const ownedPats = readOnly && rules.some((r) => CATCH_ALL.test(r.pattern)) ? ownedReadPatterns(ctx) : [];
   for (const cand of ctx.platform === "win32" ? [...cands, ...shortNameVariants(cands, denyPats)] : cands) {
     let verdict: PathRule | null = null;
@@ -1731,8 +1731,9 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   for (const pat of rules.bashDeny) {
     if (texts.some((t) => bashMatches(pat, t, ctx))) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (command rule '${pat}'). This cannot be approved; use another way.` };
   }
+  const targets = new Set([...c.writeTargets!, ...(c.tmpTargets ?? []), ...(c.roTargets ?? [])].flatMap((t) => [t, ...expandBraces(t)]));
   for (const w of words) {
-    const hit = pathDeny(rules.pathRules, w, ctx, readOnly);
+    const hit = pathDeny(rules.pathRules, w, ctx, readOnly, !targets.has(w));
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(w)}'). Secret and policy paths are off limits to the agent, also through shell commands.` };
   }
   if (ctx.role === "child") {
@@ -2097,7 +2098,7 @@ export function checkPathTool(rules: OverlayRules, toolName: string, input: Reco
   const ctx: MatchCtx = ctx0.owned || !rules.owned ? ctx0 : { ...ctx0, owned: rules.owned };
   const paths = toolPaths(toolName, input);
   for (const { value, write } of paths) {
-    const hit = pathDeny(rules.pathRules, value, ctx, !write);
+    const hit = pathDeny(rules.pathRules, value, ctx, !write, !write);
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(value)}' for ${toolName}).` };
     const blocked = childBlockHit(rules, value, ctx, !write);
     if (blocked) return childBlockDecision(blocked, value);

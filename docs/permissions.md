@@ -330,15 +330,18 @@ the same for the foreman and every child it launches, and nothing else is inheri
 ### Ask families of lane 2 (R6)
 
 - **Owned roots in the reviewer prompt (2a).** The permission reviewer's request lists the roots the foreman session owns under
-  "Owned roots (owned — allow reads and writes)": its live child scratch dirs, the round worktrees and their isolation dirs, its
-  handoff dirs, the global npm root, `state/scratch/<session>` and the pi-subagents async run dirs of its OWN child runs
-  (`roundsurface.ts` `sessionOwnedRoots`). A model `defer` (never a deny, never a soft-deny) for a bash command is turned into an
-  allow (label `owned-roots`) only when the effect layer, with those roots added as scratch dirs, finds EVERY path operand and write
+  "Owned roots (owned — allow reads and writes)": its live child scratch dirs, the round worktrees and their isolation dirs (read-write
+  only for the main session and the builder; read only for any other forwarded child), its handoff dirs and `state/scratch/<session>`.
+  The global npm root and the pi-subagents async run dirs of its OWN child runs are listed apart as "owned, read only": reads below
+  them count, a write never does and stays a defer (`roundsurface.ts` `sessionOwnedSplit`). A model `defer` (never a deny, never a soft-deny) for a bash command is turned into an
+  allow (label `owned-roots`) only when the effect layer, with the read-write roots added as scratch dirs and the read only roots as read roots, finds EVERY path operand and write
   target inside the workspace, scratch or an owned root, and no ask or deny rule catches the command. /tmp does not count as owned here;
   one non-owned write target (also under /tmp) keeps the defer.
 - **The `*` path rule matches path operands only (2b).** A catch-all `*` deny does not fire on a word of command prose or on a sed
   expression (`sed 's/=.*//'`), and never denies a READ below an owned root (the scratch dir, the round roots, the ledger and handoff
-  read roots). A more specific rule (a secret inside an owned root) still denies, and writes are unchanged.
+  read roots). A more specific rule (a secret inside an owned root) still denies. The prose exemption applies only to a word that is not a
+  write target: a write target (a redirect target, `tee`/`cp`/`touch` operand) and the path of the `write` / `edit` tools are always path
+  operands, so a `*` deny still matches them even with white space in the name.
 - **sed as a reader (2b).** `sed` skips the protected-file write ask only without `-i`/`--in-place`, `-f`/`--file`,
   and with a script that has no `w`/`W`/`r`/`R`/`e`/`a`/`i`/`c` command and no `s///w` or `s///e` flag. Inline `python -c` is never a
   reader: a blocklist cannot classify python as read-only, so inline python over the state dir or any protected file still asks (fail

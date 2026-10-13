@@ -60,6 +60,21 @@ test("2b: a catch-all path rule never fires on a word of command prose", { skip:
   assert.equal(foreman("cat ./index.ts", adapter, star), "deny");
 });
 
+test("2b security: a `*` deny still catches a write target or a write/edit path with white space in it", { skip: !posix }, () => {
+  const spaced = path.join(main, "a b.txt");
+  const ctx: MatchCtx = { cwd: adapter, home: base, platform: process.platform, role: "main", owned };
+  for (const tool of ["write", "edit"]) {
+    const d = checkToolCall(rules(star), tool, { path: spaced, content: "x", oldText: "a", newText: "b" }, ctx);
+    assert.equal(d?.kind, "deny", tool);
+    assert.match(d?.reason ?? "", /path rule '\*'/);
+  }
+  assert.equal(foreman(`echo x > "${spaced}"`, adapter, star), "deny");
+  assert.equal(foreman(`tee "${spaced}"`, adapter, star), "deny");
+  assert.equal(child(`echo x > "${path.join(main, "a b")}"`, { cwd: adapter, merged: star }), "deny");
+  // prose in a non-target word still passes
+  assert.equal(foreman('git commit --reason "read index.ts, then fix it"', adapter, star), "pass");
+});
+
 test("2b: reads under owned roots are never denied by a `*` path rule", { skip: !posix }, () => {
   assert.equal(child(`cat ${scratch}/x.txt`, { merged: star }), "pass");
   assert.equal(child(`cat ${rt}/package.json`, { merged: star }), "pass");
