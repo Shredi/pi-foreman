@@ -43,8 +43,8 @@ test("a same-line assignment statement resolves a later $VAR like the literal pa
 test("$FOREMAN_SCRATCH resolves anywhere in a word, from the harness env only", () => {
   assert.equal(sh(child, "mkdir -p $FOREMAN_SCRATCH/probe/x"), "pass");
   assert.equal(sh(child, "cat x > $FOREMAN_SCRATCH/probe/out.txt"), "pass");
-  // a FOREMAN_* assignment on the line never supplies the value
-  assert.equal(sh(child, `FOREMAN_SCRATCH=${foremanDir}; cat $FOREMAN_SCRATCH/${blocked}`), "pass");
+  // a FOREMAN_* assignment on the line never supplies the value, and a rebound $FOREMAN_SCRATCH is no longer trusted (R5 final review B2)
+  assert.equal(sh(child, `FOREMAN_SCRATCH=${foremanDir}; cat $FOREMAN_SCRATCH/${blocked}`), "deny");
 });
 
 test("a prefix assignment stays unresolved: the same decision as an unknown $D", () => {

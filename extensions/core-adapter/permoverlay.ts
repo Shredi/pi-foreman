@@ -165,9 +165,35 @@ export interface MatchCtx {
    * session's own handoff dirs, the session's round worktrees). A write there stays closed; a `*` path rule does not fire on them either.
    */
   readable?: string[];
+  /** Variable names the checked line binds somewhere (boundNames): `expandWord` trusts no `$S` / `$HOME` among them. */
+  bound?: ReadonlySet<string>;
 }
 
 const scratchOf = (ctx: MatchCtx): string | undefined => ctx.scratch ?? ctx.owned?.childScratch;
+
+/** The names `expandWord` trusts while the line binds them nowhere. */
+const TRUSTED_VARS = new Set(["HOME", "S", "FOREMAN_SCRATCH"]);
+
+/**
+ * The variable names a shell line may bind anywhere (fail closed: over-matching is fine): `N=`, `N+=`, `N[..]=`
+ * (also after export/env/declare/local/readonly/typeset/let), `${N=..}` / `${N:=..}`, and N as a bare word
+ * (`read N`, `for N in`, `printf -v N`, `unset N`, `mapfile N`, `getopts o N`, `declare -n r=N`).
+ */
+function boundNames(command: string, shell: "posix" | "powershell" = "posix"): Set<string> {
+  const out = new Set<string>();
+  // PowerShell: `$N = ..`, `$env:N = ..`
+  if (shell === "powershell") for (const m of command.matchAll(/\$(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\s*\+?=(?!=)/gi)) out.add(m[1]).add(m[1].toUpperCase());
+  for (const m of command.matchAll(/(?:^|[^\w$-])([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/g)) out.add(m[1]);
+  for (const m of command.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*):?=/g)) out.add(m[1]);
+  for (const m of command.matchAll(/(?:^|[\s;&|("'=])([A-Za-z_][A-Za-z0-9_]*)(?=$|[\s;&|)"'[])/g)) out.add(m[1]);
+  return out;
+}
+
+/** Whether `word` holds a `$N` / `${N}` reference to a name in `names`. */
+function refsBound(word: string, names: ReadonlySet<string>): boolean {
+  for (const m of word.matchAll(/\$(?:\{([A-Za-z_][A-Za-z0-9_]*)|([A-Za-z_][A-Za-z0-9_]*))/g)) if (names.has((m[1] ?? m[2])!)) return true;
+  return false;
+}
 
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : []);
 const obj = (v: unknown): Json => (v && typeof v === "object" && !Array.isArray(v) ? (v as Json) : {});
@@ -1059,6 +1085,9 @@ function innerScript(core: string[]): { script: string; shell: "posix" | "powers
 interface Collected {
   /** Harness-set variables a same-line `$NAME` may resolve to (shellvars.ts); unset below the top level. */
   vars?: Record<string, string>;
+  /** Names the whole line binds (boundNames); with `boundRefs`, the words referencing a bound TRUSTED_VARS name the grammar left unresolved. */
+  bound?: ReadonlySet<string>;
+  boundRefs?: string[];
   unitTexts: string[];
   pipeTexts: string[];
   words: string[];
@@ -1297,8 +1326,9 @@ function protectedReader(core: string[], skip: Set<number>): boolean {
   const verb = baseName(core[0]);
   const args = core.map((x, i) => (i > 0 && !skip.has(i) ? x : "")).slice(1);
   const has = (re: RegExp): boolean => args.some((x) => re.test(x));
-  // a leading `$HOME/` / `${HOME}/` is expanded by the path checks (expandWord), like `~/`; any other expansion is unresolved
-  const expands = (x: string): boolean => /[$`]/.test(x.replace(/^\$(?:\{HOME\}|HOME)(?=$|\/)/, ""));
+  // a leading `$HOME/` / `${HOME}/` is expanded by the path checks (expandWord), like `~/` (checkShell denies a line that binds HOME);
+  // a bare `$HOME` and any other expansion is unresolved
+  const expands = (x: string): boolean => /[$`]/.test(x.replace(/^\$(?:\{HOME\}|HOME)(?=\/)/, ""));
   // an unresolved expansion in any quoting may supply an option or script (`I=-i; sed $I p D`, `P=--pre=x; rg $P p D`)
   if (args.some(expands)) return false;
   if (!PROTECTED_READERS.has(verb)) return false;
@@ -1363,6 +1393,11 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
       out.protWords?.push(...extra);
       out.unitTexts.push(rest.join(" "));
     }
+    // ONE resolution for every target set below: the unit's words with the grammar's values (shellvars.ts) substituted
+    const rWords = rw ? (lead ? rw.slice(lead) : rw) : unitWords;
+    const rcore = rWords.slice(off);
+    const trustedBound = new Set([...(out.bound ?? [])].filter((n) => TRUSTED_VARS.has(n)));
+    if (trustedBound.size) out.boundRefs?.push(...rWords.filter((w, i) => !patt.has(i) && refsBound(w, trustedBound)));
     if (out.childAsk === undefined) {
       let k = 1;
       if (verb0 === "git") {
@@ -1400,21 +1435,21 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
       }
       const np = new Set(nonPathArgs(v.core, skip).map((i) => i + off));
       out.protWords.push(...unitWords.filter((_, i) => !np.has(i)));
-      for (const i of WRITE_REDIRECTS.get(unitWords) ?? []) if (!DEV_TARGET.test(unitWords[i])) {
-        out.writeTargets?.add(unitWords[i]);
-        out.tmpTargets?.add(unitWords[i]);
-        out.roTargets?.add(asPathWord(unitWords[i]));
+      for (const i of WRITE_REDIRECTS.get(unitWords) ?? []) if (!DEV_TARGET.test(rWords[i])) {
+        out.writeTargets?.add(rWords[i]);
+        out.tmpTargets?.add(rWords[i]);
+        out.roTargets?.add(asPathWord(rWords[i]));
       }
       const writer = v.core.length ? TMP_WRITERS.get(baseName(v.core[0])) : undefined;
       if (writer && out.tmpTargets) {
-        const operands = v.core.slice(1).filter((x) => !x.startsWith("-"));
+        const operands = rcore.slice(1).filter((x) => !x.startsWith("-"));
         for (const x of writer === "last" ? operands.slice(-1) : operands) {
           out.tmpTargets.add(x);
           out.roTargets?.add(asPathWord(x));
         }
       }
       if (out.roTargets && !neutral && v.core.length) {
-        const e = roEffect(v.core, skip, innerScript(v.core) !== null);
+        const e = roEffect(rcore, skip, innerScript(v.core) !== null);
         if (e.run) {
           out.roRun = true;
           if (e.script !== undefined) (out.roScripts ??= []).push(e.script);
@@ -1426,7 +1461,7 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
         if (e.deny !== undefined) out.roDeny ??= e.deny;
         if (e.unknown !== undefined && shell === "posix" && out.roUnknown === undefined) {
           out.roUnknown = e.unknown;
-          out.roUnknownWords = v.core.slice(1);
+          out.roUnknownWords = rcore.slice(1);
         }
       }
     }
@@ -1501,10 +1536,12 @@ function expandWord(w: string, ctx: MatchCtx): string {
   let s = w.replace(/^file:\/\//, "");
   if (s === "~") s = ctx.home;
   else if (s.startsWith("~/") || s.startsWith("~\\")) s = ctx.home + s.slice(1);
-  s = s.replace(/^\$\{?HOME\}?(?=$|[\\/])/, ctx.home);
+  const bound = ctx.bound ?? new Set<string>();
+  if (!bound.has("HOME")) s = s.replace(/^\$(?:\{HOME\}|HOME)(?=$|[\\/])/, ctx.home);
   const scratch = scratchOf(ctx);
-  // `$S` is the child's conventional name for its scratch dir (`S=$FOREMAN_SCRATCH`); a line that assigns it elsewhere is also checked resolved (shellvars.ts)
-  if (scratch) s = s.replace(/^\$(\{FOREMAN_SCRATCH\}|FOREMAN_SCRATCH(?![A-Za-z0-9_])|\{S\}|S(?![A-Za-z0-9_]))/, scratch);
+  // `$S` is the child's conventional name for its scratch dir, trusted only while the line binds it nowhere (ctx.bound); a bound
+  // one resolves only through the closed grammar (shellvars.ts), whose values feed every target set (collect), else checkShell denies
+  if (scratch) s = s.replace(/^\$(\{FOREMAN_SCRATCH\}|FOREMAN_SCRATCH(?![A-Za-z0-9_])|\{S\}|S(?![A-Za-z0-9_]))/, (m, g: string) => (bound.has(g.replace(/[{}]/g, "")) ? m : scratch));
   // Git Bash / MSYS drive paths: /c/dir/x -> c:/dir/x
   if (ctx.platform === "win32") s = s.replace(/^\/([A-Za-z])(?=$|\/)/, "$1:");
   return s.replace(/^\$env:(USERPROFILE|HOME)(?=$|[\\/])/i, ctx.home);
@@ -1838,8 +1875,15 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
 
 export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchCtx): Decision | null {
   const shell = ctx0.shell ?? "posix";
-  const ctx: MatchCtx = ctx0.owned || !rules.owned ? ctx0 : { ...ctx0, owned: rules.owned };
   const command = rawCommand;
+  const bound = boundNames(command, shell);
+  const ctx: MatchCtx = { ...ctx0, ...(ctx0.owned || !rules.owned ? {} : { owned: rules.owned }), bound };
+  // a line that binds a harness-trusted variable it also uses (`HOME=-i; sed $HOME ...`, `read HOME; cat ~/x`) fails closed
+  for (const n of ["HOME", "FOREMAN_SCRATCH", "USERPROFILE"]) {
+    if (bound.has(n) && (new RegExp(`(?:^|[^\\w$-])${n}(?:\\[[^\\]]*\\])?\\+?=|\\$(?:env:)?\\{?${n}(?![A-Za-z0-9_])`, "i").test(command) || (n === "HOME" && /(?:^|[\s=:"'(])~/.test(command)))) {
+      return { kind: "deny", reason: `pi-foreman: denied by the permission policy (the line binds ${n} and uses it; a rebound ${n} is never trusted as a path). Use the literal path.` };
+    }
+  }
   if (ctx.role === "child") {
     const cd = childCdDeny(command, ctx);
     if (cd) return cd;
@@ -1847,7 +1891,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (sw) return sw;
   }
   const scratch0 = scratchOf(ctx);
-  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], proseSkip: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], readCode: new Set(), ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
+  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, bound, boundRefs: [], unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], proseSkip: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], readCode: new Set(), ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
   collect(command, shell, 0, c);
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
@@ -1861,6 +1905,15 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     c.ro = c.ro && raw.ro;
     c.rdr = c.rdr && raw.rdr;
     raw.writeTargets!.forEach((x) => c.writeTargets!.add(x));
+  }
+  // `$S` bound on the line and not resolved by the grammar: expandWord no longer trusts it, so it fails closed
+  if (scratch0 && c.boundRefs!.length) {
+    return { kind: "deny", reason: `pi-foreman: denied by the permission policy ('${clip(c.boundRefs![0])}' uses a variable this line rebinds; only an unbound $S / $FOREMAN_SCRATCH names your scratch dir). Use the literal path or S=$FOREMAN_SCRATCH alone.` };
+  }
+  // a child's write target through any variable the line binds but the grammar left unresolved (`S=/x; echo y | tee $S/f`) fails closed
+  if (ctx.role === "child") {
+    const t = [...c.writeTargets!, ...c.tmpTargets!, ...c.roTargets!].find((w) => refsBound(w, bound));
+    if (t !== undefined) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (write target '${clip(t)}' uses a variable this line binds, and the line is outside the resolvable grammar). Use the literal path.` };
   }
   if (ctx.role === "child" && c.worktreeOp !== undefined) {
     return { kind: "deny", reason: `pi-foreman: denied by the permission policy (git worktree ${clip(c.worktreeOp)} is the foreman's; children may only list worktrees). Ask the foreman.` };
