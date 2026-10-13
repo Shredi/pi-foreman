@@ -1547,6 +1547,15 @@ function pathDeny(rules: PathRule[], word: string, ctx: MatchCtx, readOnly = fal
   return null;
 }
 
+/** Values of the known prose options (`--reason`, `--title`, `--body`, `--note`, `--message`, and `-m` of `git commit`), quotes removed. */
+function proseOptionValues(command: string): Set<string> {
+  const out = new Set<string>();
+  const opts = /git\b[^|;&\n]*\bcommit\b/.test(command) ? "--reason|--title|--body|--note|--message|-m" : "--reason|--title|--body|--note|--message";
+  const re = new RegExp(`(?:^|\\s)(?:${opts})(?:=|\\s+)(?:"((?:[^"\\\\]|\\\\.)*)"|'([^']*)'|(\\S+))`, "g");
+  for (const m of command.matchAll(re)) out.add((m[1] ?? m[2] ?? m[3]).replace(/\\(.)/g, m[1] !== undefined ? "$1" : "\\$1"));
+  return out;
+}
+
 function pathAskHit(patterns: string[], word: string, ctx: MatchCtx): string | null {
   for (const cand of pathCandidates(word, ctx)) for (const pat of patterns) if (pathMatches(pat, cand, ctx)) return pat;
   return null;
@@ -1732,8 +1741,10 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (texts.some((t) => bashMatches(pat, t, ctx))) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (command rule '${pat}'). This cannot be approved; use another way.` };
   }
   const targets = new Set([...c.writeTargets!, ...(c.tmpTargets ?? []), ...(c.roTargets ?? [])].flatMap((t) => [t, ...expandBraces(t)]));
+  // Fail closed: a word with white space is prose only in a pure read or as the value of a known prose option.
+  const proseVals = proseOptionValues(command);
   for (const w of words) {
-    const hit = pathDeny(rules.pathRules, w, ctx, readOnly, !targets.has(w));
+    const hit = pathDeny(rules.pathRules, w, ctx, readOnly, !targets.has(w) && (readOnly || proseVals.has(w)));
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(w)}'). Secret and policy paths are off limits to the agent, also through shell commands.` };
   }
   if (ctx.role === "child") {
