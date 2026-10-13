@@ -195,7 +195,7 @@ export interface ReviewSession {
   roundDirs?: () => string[];
   /** The ledger file bound to this session (roundsurface.ts): a read root for every forwarded ask, `LEDGER-*.md` in its dir a readable glob. */
   ledgerFile?: () => string | null;
-  /** Every root the session owns for reads and writes (the scratch dirs, round and isolation worktrees, handoff dirs, npm root, state scratch, its own children's async run dirs): listed in the prompt, and a defer for a command that stays inside them is allowed. */
+  /** Every root the session owns for reads and writes (the scratch dirs, round and isolation worktrees, handoff dirs, state scratch; the npm root and async run dirs are read-only roots, see `readOnlyRoots`): listed in the prompt, and a defer for a command that stays inside them is allowed. */
   ownedRoots?: () => string[];
   /** The roots the session owns read only (the global npm root, its children's async run dirs): listed apart in the prompt, never a write root. */
   readOnlyRoots?: () => string[];

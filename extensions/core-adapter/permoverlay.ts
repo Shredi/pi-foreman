@@ -979,6 +979,8 @@ interface Collected {
   removeWords?: string[];
   /** `words` without the pattern/script operands of read commands (write protection). */
   protWords?: string[];
+  /** Words that are the value of a known prose option, by position (`--reason TEXT`, `--note=TEXT`, `-m TEXT` of `git commit`). */
+  proseSkip?: string[];
   /** Every unit's command is a read/filter command (PURE_VERBS) that cannot turn text into a path. */
   pure?: boolean;
   /** False once a unit can write: in-place sed, `sort -o`, `find -exec`/`-delete`, `rg --pre` and the like. */
@@ -1253,6 +1255,7 @@ function collect(src: string, shell: "posix" | "powershell", depth: number, out:
     const verb0 = v.core.length ? baseName(v.core[0]) : "";
     const patt = GREP_FAMILY.has(verb0) || verb0 === "git" || verb0 === "sed" || verb0.endsWith("awk") ? new Set(nonPathArgs(v.core, skip).map((i) => i + off)) : new Set<number>();
     out.words.push(...unitWords.filter((_, i) => !patt.has(i)));
+    out.proseSkip?.push(...proseIndexes(v.core).filter((i) => !patt.has(i + off)).map((i) => unitWords[i + off]));
     const rw = resolved.get(allWords);
     if (rw) {
       const rest = lead ? rw.slice(lead) : rw;
@@ -1547,12 +1550,24 @@ function pathDeny(rules: PathRule[], word: string, ctx: MatchCtx, readOnly = fal
   return null;
 }
 
-/** Values of the known prose options (`--reason`, `--title`, `--body`, `--note`, `--message`, and `-m` of `git commit`), quotes removed. */
-function proseOptionValues(command: string): Set<string> {
-  const out = new Set<string>();
-  const opts = /git\b[^|;&\n]*\bcommit\b/.test(command) ? "--reason|--title|--body|--note|--message|-m" : "--reason|--title|--body|--note|--message";
-  const re = new RegExp(`(?:^|\\s)(?:${opts})(?:=|\\s+)(?:"((?:[^"\\\\]|\\\\.)*)"|'([^']*)'|(\\S+))`, "g");
-  for (const m of command.matchAll(re)) out.add((m[1] ?? m[2] ?? m[3]).replace(/\\(.)/g, m[1] !== undefined ? "$1" : "\\$1"));
+const PROSE_OPTS = new Set(["--reason", "--title", "--body", "--note", "--message"]);
+
+/**
+ * The words of one unit (`core`) that are the value of a known prose option (`--reason`, `--title`, `--body`, `--note`, `--message`, and `-m`
+ * of a `git commit` unit), by position: the word directly after the option, or the whole `--opt=value` word.
+ */
+function proseIndexes(core: string[]): number[] {
+  let commit = false;
+  if (core.length && baseName(core[0]) === "git") {
+    let k = 1;
+    while (k < core.length && core[k].startsWith("-")) k += /^-[Cc]$/.test(core[k]) ? 2 : 1;
+    commit = core[k] === "commit";
+  }
+  const out: number[] = [];
+  core.forEach((x, i) => {
+    if (PROSE_OPTS.has(x.split("=")[0]) && x.includes("=")) out.push(i);
+    else if ((PROSE_OPTS.has(x) || (commit && x === "-m")) && i + 1 < core.length) out.push(i + 1);
+  });
   return out;
 }
 
@@ -1705,15 +1720,16 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (cd) return cd;
   }
   const scratch0 = scratchOf(ctx);
-  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
+  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], proseSkip: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
   collect(command, shell, 0, c);
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
-    const raw: Collected = { unitTexts: [], pipeTexts: [], words: [], removeWords: [], protWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set() };
+    const raw: Collected = { unitTexts: [], pipeTexts: [], words: [], removeWords: [], protWords: [], proseSkip: [], pure: true, ro: true, rdr: true, writeTargets: new Set() };
     collect(command, "powershell", 0, raw);
     c.words.push(...raw.words);
     c.removeWords!.push(...raw.removeWords!);
     c.protWords!.push(...raw.protWords!);
+    c.proseSkip!.push(...raw.proseSkip!);
     c.pure = c.pure && raw.pure;
     c.ro = c.ro && raw.ro;
     c.rdr = c.rdr && raw.rdr;
@@ -1742,9 +1758,13 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   }
   const targets = new Set([...c.writeTargets!, ...(c.tmpTargets ?? []), ...(c.roTargets ?? [])].flatMap((t) => [t, ...expandBraces(t)]));
   // Fail closed: a word with white space is prose only in a pure read or as the value of a known prose option.
-  const proseVals = proseOptionValues(command);
+  // by position: a string that also occurs outside a prose-option position (`-m "/a b/f" -F "/a b/f"`) is no prose
+  const operands = new Map<string, number>();
+  for (const w of c.words) operands.set(w, (operands.get(w) ?? 0) + 1);
+  for (const w of c.proseSkip!) operands.set(w, (operands.get(w) ?? 0) - 1);
+  const proseVals = new Set([...operands].filter(([, n]) => n <= 0).flatMap(([w]) => [w, ...expandBraces(w)]));
   for (const w of words) {
-    const hit = pathDeny(rules.pathRules, w, ctx, readOnly, !targets.has(w) && (readOnly || proseVals.has(w)));
+    const hit = pathDeny(rules.pathRules, w, ctx, readOnly, !targets.has(w) && proseVals.has(w));
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(w)}'). Secret and policy paths are off limits to the agent, also through shell commands.` };
   }
   if (ctx.role === "child") {
@@ -2109,7 +2129,7 @@ export function checkPathTool(rules: OverlayRules, toolName: string, input: Reco
   const ctx: MatchCtx = ctx0.owned || !rules.owned ? ctx0 : { ...ctx0, owned: rules.owned };
   const paths = toolPaths(toolName, input);
   for (const { value, write } of paths) {
-    const hit = pathDeny(rules.pathRules, value, ctx, !write, !write);
+    const hit = pathDeny(rules.pathRules, value, ctx, !write, false);
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(value)}' for ${toolName}).` };
     const blocked = childBlockHit(rules, value, ctx, !write);
     if (blocked) return childBlockDecision(blocked, value);

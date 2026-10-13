@@ -15,6 +15,7 @@ const MAX_COMMAND = 200; // a denied command (lane 3h)
 /** `command` is kept only on a deny trace: a refused launch, a read/recheck budget deny, an overlay deny. */
 const DENY_EVENTS = new Set(["read_budget", "recheck_budget", "child_read_budget", "overlay", "launch_refused"]);
 const MAX_MESSAGE = 200; // a tool_error message (lane 7f)
+const UNSCRUBBED = new Set(["model", "models", "primary", "from", "to"]);
 const isDeny = (rec: Record<string, unknown>): boolean => DENY_EVENTS.has(String(rec.event)) && (rec.event === "launch_refused" || rec.action === "deny" || rec.decision === "deny");
 
 /**
@@ -76,8 +77,11 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
     if (v === null || typeof v === "boolean") out[k] = v as null | boolean;
     else if (typeof v === "number") {
       if (Number.isFinite(v)) out[k] = v;
-    } else if (typeof v === "string" && k === "command") out[k] = redactCommand(v).slice(0, MAX_COMMAND);
-    else if (typeof v === "string") out[k] = v.length > (k === "command" ? MAX_COMMAND : MAX_STRING) ? v.slice(0, k === "command" ? MAX_COMMAND : MAX_STRING) : v;
+    } else if (typeof v === "string") {
+      // every string field: secrets redacted, then every path, URL and file name replaced by `[path]` (a URL whole); model ids (`model`, `models`, a panel's `primary`, a climb's `from`/`to`) are config, not content
+      const s = UNSCRUBBED.has(k) ? v : scrubPaths(redactCommand(v));
+      out[k] = s.slice(0, k === "command" ? MAX_COMMAND : MAX_STRING);
+    }
   }
   return out as TraceRecord;
 }

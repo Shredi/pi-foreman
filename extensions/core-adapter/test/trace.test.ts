@@ -30,7 +30,7 @@ test("trace: only an overlay deny carries its (redacted) command; the ask event 
   for (const event of ["ask", "overlay"]) {
     const out = sanitizeTrace({ event, toolFamily: "bash", decision: "deny", command: "curl http://x/secret", title: "t", message: "m", permissionDecisionReason: "r", input: { command: "x" } });
     // lane 3h: an overlay deny (and only a deny) carries its command; the ask event still carries none
-    assert.deepEqual(out, { event, toolFamily: "bash", decision: "deny", ...(event === "overlay" ? { command: "curl http://x/secret" } : {}) });
+    assert.deepEqual(out, { event, toolFamily: "bash", decision: "deny", ...(event === "overlay" ? { command: "curl [path]" } : {}) }); // the URL is scrubbed whole
   }
   // shell write refusals carry the write form only, never the command
   assert.deepEqual(sanitizeTrace({ event: "shell_write_refused", kind: "redirect", command: "echo x > src/a.go" }), { event: "shell_write_refused", kind: "redirect" });

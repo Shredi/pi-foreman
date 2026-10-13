@@ -41,7 +41,7 @@ class TestChildSed(ReplayCase):
         self.assertIsNone(reviews[0].get("model"), reviews[0])
         headless = [r for r in events if r.get("event") == "review_defer_headless"]
         self.assertEqual([h.get("role") for h in headless], ["builder", "builder"], headless)
-        self.assertIn("touch ../made.txt", headless[0].get("cmd", ""))
+        self.assertIn("touch [path]", headless[0].get("cmd", ""))  # the trace scrubs every string field
         self.assertIn("1wwritten", headless[1].get("cmd", ""))
         self.assertFalse((rig.project.parent / "made.txt").exists())
         self.assertFalse((rig.project / "written").exists())
