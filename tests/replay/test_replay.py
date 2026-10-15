@@ -1,9 +1,10 @@
 """Golden replay scenarios on the fake provider (design section 10, ledger items 43, 60, 69).
 
 Run:  python -m unittest discover -s tests/replay -v
-Needs node, Pi 1.1.0 (global npm install) and the repo's node_modules (npm install: pi-subagents,
-permission system, intercom). Without Pi the tests skip, unless
-FOREMAN_REPLAY_REQUIRED=1 (CI), where a missing Pi is a failure.
+Needs node, Pi 1.2.x (global npm install, Pi's managed install under ~/.pi/agent/install, or
+FOREMAN_PI_CLI) and the repo's node_modules (npm install: pi-subagents, permission system, intercom).
+A missing Pi CLI is always an error naming the paths tried (driver.resolve_pi_cli), never a skip of
+every scenario. Other missing prerequisites skip, unless FOREMAN_REPLAY_REQUIRED=1 (CI).
 FOREMAN_REPLAY_UPDATE_GOLDEN=1 rewrites the golden files from the current run.
 """
 from __future__ import annotations
@@ -24,8 +25,8 @@ from driver import PROVIDER_A, PROVIDER_B, Rig, load_fixture, marker, notificati
 def _unavailable():
     if not shutil.which("node"):
         return "node not on PATH"
+    driver.pi_cli()  # raises: no Pi CLI fails the run loudly instead of skipping every scenario
     try:
-        driver.pi_cli()
         driver.bundled_check()
     except Exception as exc:  # noqa: BLE001 - any setup failure means "cannot replay here"
         return str(exc)

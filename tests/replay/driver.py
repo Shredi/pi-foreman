@@ -10,7 +10,11 @@ The user's real Pi agent dir is never read or written: PI_CODING_AGENT_DIR alway
 into the temp root, and inherited PI_* / FOREMAN_* variables are dropped.
 
 Environment knobs:
-  FOREMAN_PI_CLI         path to Pi's cli.js (default: <npm root -g>/@earendil-works/pi-coding-agent/dist/bundle/cli.js)
+  FOREMAN_PI_CLI         path to Pi's cli.js; wins over the defaults, which are tried in order:
+                         <npm root -g>/@earendil-works/pi-coding-agent/dist/bundle/cli.js, then Pi's managed
+                         install ~/.pi/agent/install/releases/<current-version>/node_modules/
+                         @earendil-works/pi-coding-agent/dist/cli.js (read-only; <current-version> from
+                         ~/.pi/agent/install/current-version)
   FOREMAN_REPLAY_KEEP=1  keep temp roots for inspection
 """
 from __future__ import annotations
@@ -56,12 +60,59 @@ def npm_root_global():
     return _npm_root
 
 
+PI_PACKAGE = ("@earendil-works", "pi-coding-agent")
+
+
+def _pi_pin():
+    """(version, range) from packages.lock.json, so the install hint follows the supported range."""
+    try:
+        pi = json.loads((REPO / "packages.lock.json").read_text("utf-8"))["pi"]
+        return pi["version"], pi["range"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return "<pinned>", "<supported>"
+
+
+def pi_cli_candidates(environ=None, npm_root=None, home=None):
+    """Pi CLI paths to try, in order. FOREMAN_PI_CLI, when set, is the only candidate. Otherwise the global
+    npm install, then Pi's managed install (the user's ~/.pi/agent; the rig's temp agent dir has none).
+    `npm_root` may be a callable (called lazily); a failing npm lookup just drops that candidate."""
+    environ = os.environ if environ is None else environ
+    explicit = environ.get("FOREMAN_PI_CLI")
+    if explicit:
+        return [Path(explicit)]
+    out = []
+    root = npm_root_global if npm_root is None else npm_root
+    try:
+        root = root() if callable(root) else root
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        root = None
+    if root:
+        out.append(Path(root).joinpath(*PI_PACKAGE, "dist", "bundle", "cli.js"))
+    install = (Path.home() if home is None else Path(home)) / ".pi" / "agent" / "install"
+    try:
+        current = (install / "current-version").read_text("utf-8").strip()
+    except OSError:
+        current = ""
+    if current and "/" not in current and "\\" not in current and current not in (".", ".."):
+        out.append(install.joinpath("releases", current, "node_modules", *PI_PACKAGE, "dist", "cli.js"))
+    else:
+        out.append(install / "current-version")  # named in the error so the reader sees where it looked
+    return out
+
+
+def resolve_pi_cli(environ=None, npm_root=None, home=None):
+    """First existing candidate; RuntimeError naming every path tried otherwise."""
+    tried = pi_cli_candidates(environ, npm_root, home)
+    for cli in tried:
+        if cli.name == "cli.js" and cli.is_file():
+            return cli
+    version, rng = _pi_pin()
+    raise RuntimeError("Pi CLI not found; tried: %s (Pi %s is supported: npm install -g @earendil-works/pi-coding-agent@%s, "
+                       "or set FOREMAN_PI_CLI to its cli.js)" % (", ".join(str(p) for p in tried), rng, version))
+
+
 def pi_cli():
-    env = os.environ.get("FOREMAN_PI_CLI")
-    cli = Path(env) if env else Path(npm_root_global()) / "@earendil-works" / "pi-coding-agent" / "dist" / "bundle" / "cli.js"
-    if not cli.is_file():
-        raise RuntimeError("Pi CLI not found at %s (npm install -g @earendil-works/pi-coding-agent@1.1.0 or set FOREMAN_PI_CLI)" % cli)
-    return cli
+    return resolve_pi_cli()
 
 
 def bundled_check():

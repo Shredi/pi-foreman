@@ -32,7 +32,8 @@ node setup.mjs --dry-run                          # installer preview, writes no
 
 `python -m unittest discover -s tests/replay -v` starts `pi --mode rpc` with
 a temp `PI_CODING_AGENT_DIR` and temp project against a scripted fake provider and compares the trace to golden
-sequences. No real model calls. pi-subagents, the permission system and pi-intercom come from the repo's `node_modules` (run `npm install` first); the rig
+sequences. No real model calls. The Pi CLI comes from `FOREMAN_PI_CLI`, else the global npm root, else Pi's managed
+install (`~/.pi/agent/install/current-version`); none found is an error naming the paths tried, not a skip. pi-subagents, the permission system and pi-intercom come from the repo's `node_modules` (run `npm install` first); the rig
 adds only this repo as a package and filters intercom out for non-intercom rigs. `FOREMAN_REPLAY_UPDATE_GOLDEN=1` regenerates the replay goldens; run it only for the rigs you intend to change and review the diff. Design: `design/architecture.md`
 [section 10](../design/architecture.md#10-replay-rig-and-tests), installer: [section 11](../design/architecture.md#11-installer).
 
