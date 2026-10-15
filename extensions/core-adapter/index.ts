@@ -40,7 +40,7 @@ import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from ".
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
-import { ForemanReview, REVIEW_LINK, reviewTarget } from "./review.ts";
+import { ForemanReview, REVIEW_LINK, reviewTarget, userPromptOf } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
 import { ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
@@ -976,16 +976,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("before_agent_start", async (event, ctx) => {
     const s = await ensureSession(ctx);
     s.stopContinued = false;
-    review.setIntent(s.id, event.prompt ?? "");
-    // D7: a child never triages; only the foreman's request can escalate on a signal.
-    const signals = s.isChild ? [] : promptSignals(event.prompt ?? "", get(s.config.config, "ceremony.heavySignals"));
-    s.triageHint = "";
-    if (signals.length) {
-      if (heavyStrict(s)) {
-        // D6 strict: keyword hits are a hint for the foreman's own triage, not an escalation.
-        s.triageHint = `Signals seen: ${signals.join(", ")} — heavy only if the heavy criteria apply.`;
-        s.trace?.emit({ event: "triage_hint", signals: signals.join(", ") });
-      } else setCeremony(s, escalate(s.ceremony, "heavy", "auto", `heavy signal in the request: ${signals.join(", ")}`));
+    // Pi 1.2: a wake or child-notice run (messageType "custom") also lands here, without a prompt.
+    // Only a user run sets the review intent and triages; the section below is built for every run.
+    const prompt = userPromptOf(event);
+    if (prompt !== null) {
+      review.setIntent(s.id, prompt);
+      // D7: a child never triages; only the foreman's request can escalate on a signal.
+      const signals = s.isChild ? [] : promptSignals(prompt, get(s.config.config, "ceremony.heavySignals"));
+      s.triageHint = "";
+      if (signals.length) {
+        if (heavyStrict(s)) {
+          // D6 strict: keyword hits are a hint for the foreman's own triage, not an escalation.
+          s.triageHint = `Signals seen: ${signals.join(", ")} — heavy only if the heavy criteria apply.`;
+          s.trace?.emit({ event: "triage_hint", signals: signals.join(", ") });
+        } else setCeremony(s, escalate(s.ceremony, "heavy", "auto", `heavy signal in the request: ${signals.join(", ")}`));
+      }
     }
     if (s.isChild) {
       // ceremony.ledgerHelper "tool": reviewer roles learn to close V with foreman_ledger (instructions/reviewer.md).
@@ -1052,10 +1057,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function heavyStrict(s: Session): boolean {
     return get(s.config.config, "ceremony.heavyThreshold") !== "eee843d";
   }
-  // Review S3: a run a custom message starts (wake, child notice) skips before_agent_start, and
-  // its later model calls rebuild the prompt from Pi's base options, which lack the section (Pi
-  // records a `pi-foreman: null` patch). Event contexts cannot reach the base options, so the
-  // request keeps the section: the null patch is dropped from what the provider gets. After a
+  // Review S3: on Pi 1.2 a run a custom message starts while idle (wake, child notice) passes
+  // before_agent_start (messageType "custom") and gets the section there. On Pi 1.1 such a run
+  // skipped before_agent_start, and its later model calls rebuilt the prompt from Pi's base
+  // options, which lack the section (Pi records a `pi-foreman: null` patch). Event contexts cannot
+  // reach the base options, so the request keeps the section: the null patch is dropped from what
+  // the provider gets. Kept for Pi 1.1 compatibility (peer range `*`) and because after a
   // compaction (its stored head lacks the section, review N2) the cached text is put back.
   pi.on("context_with_system", async (event, ctx) => {
     const s = sessionFor(ctx);
@@ -1861,7 +1868,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("agent_end", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild) return;
-    s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite, wakeKinds: s.turn.cause === "wake" ? s.turn.wakeKinds : undefined, pollBash: s.pollBash || undefined, codemode: s.turn.codemode || undefined });
+    s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite, wakeKinds: s.turn.cause === "wake" ? s.turn.wakeKinds : undefined, pollBash: s.pollBash || undefined, codemode: s.turn.codemode || undefined, chars: review.intentOf(s.id).length }); // chars: review intent length (a wake run must not reset it)
     s.pollBash = 0;
     s.turnSeq += 1;
     s.turn = { cause: "other", cacheRead: 0, cacheWrite: 0 };
@@ -2872,7 +2879,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             limits = null; // a missing file adds no block
           }
         }
-        pi.sendUserMessage(modelRetroPrompt(limits));
+        // followUp: a turn already started (isIdle raced) finishes before the retro request runs.
+        pi.sendUserMessage(modelRetroPrompt(limits), { deliverAs: "followUp" });
       }
     },
   });

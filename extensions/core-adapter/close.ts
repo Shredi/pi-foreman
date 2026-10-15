@@ -483,7 +483,10 @@ export function registerClose(
       activeWaits: () => deps.activeWaits(s.id),
       activeRuns: () => deps.activeRuns(s.id),
       cancelWaits: deps.cancelWaits ? () => deps.cancelWaits!(s.id) : undefined,
-      sendUserMessage: (text) => pi.sendUserMessage(text),
+      // followUp: closeTurn checks isIdle() first, but a wake or notice run can start before the send,
+      // and Pi 1.2 needs deliverAs while busy; the close request then queues behind that run
+      // instead of steering into it. Idle, it starts its turn as before.
+      sendUserMessage: (text) => pi.sendUserMessage(text, { deliverAs: "followUp" }),
       runSync: () => s.runSync(holder.ctx),
       report: s.report ? (file) => s.report!(holder.ctx, file) : undefined,
       markClosed: s.markClosed ? () => s.markClosed!() : undefined,

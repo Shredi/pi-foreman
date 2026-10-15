@@ -298,6 +298,19 @@ export function requestText(d: AskDetails, surface: string, s: ReviewSession, no
   return lines.join("\n");
 }
 
+/**
+ * The user prompt of a `before_agent_start` event, or null when a custom message starts the run.
+ * Pi 1.2 also fires the event for `pi.sendMessage(..., { triggerTurn: true })` idle runs (a wake,
+ * a child notice) with `messageType: "custom"` and no `prompt`; such a run must not replace the
+ * user's request. Pi 1.1 has no `messageType` and fires only for user runs, so a missing one is a
+ * user run.
+ */
+export function userPromptOf(event: unknown): string | null {
+  const e = (event && typeof event === "object" ? event : {}) as { messageType?: unknown; prompt?: unknown };
+  if (e.messageType !== undefined && e.messageType !== "user") return null;
+  return typeof e.prompt === "string" ? e.prompt : "";
+}
+
 export class ForemanReview {
   private readonly sessions = new Map<string, ReviewSession>();
   private readonly disposers = new Map<string, () => void>();
@@ -316,6 +329,11 @@ export class ForemanReview {
   setIntent(id: string, prompt: string): void {
     const s = this.sessions.get(id);
     if (s) s.intent = prompt;
+  }
+
+  /** The request the reviewer sees for this session ("" before the first user run). */
+  intentOf(id: string): string {
+    return this.sessions.get(id)?.intent ?? "";
   }
 
   drop(id: string): void {
