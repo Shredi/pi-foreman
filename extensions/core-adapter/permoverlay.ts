@@ -185,8 +185,15 @@ const EVAL_BOUND = [...TRUSTED_VARS, "USERPROFILE"];
  */
 export function boundNames(command: string, shell: "posix" | "powershell" = "posix"): Set<string> {
   const out = new Set<string>();
-  // PowerShell: `$N = ..`, `$env:N = ..`
-  if (shell === "powershell") for (const m of command.matchAll(/\$(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\s*\+?=(?!=)/gi)) out.add(m[1]).add(m[1].toUpperCase());
+  // PowerShell (case-insensitive): `$N = ..`, `$env:N = ..`, `${env:N} = ..`, an `env:N` / `Env:\N` drive path (Set-Item, New-Item,
+  // si, ni, -Path ..), `[System.Environment]::SetEnvironmentVariable('N', ..)`; a non-literal env: name or variable name binds every trusted name
+  if (shell === "powershell") {
+    const add = (n: string): void => void out.add(n).add(n.toUpperCase());
+    for (const m of command.matchAll(/\$(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\s*\+?=(?!=)/gi)) add(m[1]);
+    for (const m of command.matchAll(/\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\}\s*\+?=(?!=)/gi)) add(m[1]);
+    for (const m of command.matchAll(/(?<![\w$:{])env:[\\/]?([A-Za-z_][A-Za-z0-9_]*)?/gi)) (m[1] ? [m[1]] : EVAL_BOUND).forEach(add);
+    for (const m of command.matchAll(/SetEnvironmentVariable\s*\(\s*(?:(['"])([A-Za-z_][A-Za-z0-9_]*)\1)?/gi)) (m[2] ? [m[2]] : EVAL_BOUND).forEach(add);
+  }
   for (const m of command.matchAll(/(?:^|[^\w$-])([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/g)) out.add(m[1]);
   for (const m of command.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*):?=/g)) out.add(m[1]);
   for (const m of command.matchAll(/(?:^|[\s;&|("'=`])([A-Za-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_])/g)) out.add(m[1]);
@@ -1550,7 +1557,8 @@ function expandWord(w: string, ctx: MatchCtx): string {
   if (scratch) s = s.replace(/^\$(\{FOREMAN_SCRATCH\}|FOREMAN_SCRATCH(?![A-Za-z0-9_])|\{S\}|S(?![A-Za-z0-9_]))/, (m, g: string) => (bound.has(g.replace(/[{}]/g, "")) ? m : scratch));
   // Git Bash / MSYS drive paths: /c/dir/x -> c:/dir/x
   if (ctx.platform === "win32") s = s.replace(/^\/([A-Za-z])(?=$|\/)/, "$1:");
-  return s.replace(/^\$env:(USERPROFILE|HOME)(?=$|[\\/])/i, ctx.home);
+  // a `$env:HOME` / `$env:USERPROFILE` the line binds (any case) stays unexpanded: untrusted
+  return s.replace(/^\$env:(USERPROFILE|HOME)(?=$|[\\/])/i, (m, n: string) => (bound.has(n.toUpperCase()) ? m : ctx.home));
 }
 
 /** Bash glob of one path segment: `*`, `?`, `[...]` / `[!...]`; an unclosed `[` is literal. */
@@ -1886,7 +1894,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const ctx: MatchCtx = { ...ctx0, ...(ctx0.owned || !rules.owned ? {} : { owned: rules.owned }), bound };
   // a line that binds a harness-trusted variable it also uses (`HOME=-i; sed $HOME ...`, `read HOME; cat ~/x`) fails closed
   for (const n of ["HOME", "FOREMAN_SCRATCH", "USERPROFILE"]) {
-    if (bound.has(n) && (new RegExp(`(?:^|[^\\w$-])${n}(?:\\[[^\\]]*\\])?\\+?=|\\$(?:env:)?\\{?${n}(?![A-Za-z0-9_])`, "i").test(command) || (n === "HOME" && /(?:^|[\s=:"'(])~/.test(command)))) {
+    if (bound.has(n) && (new RegExp(`(?:^|[^\\w$-])${n}(?:\\[[^\\]]*\\])?\\+?=|\\$\\{?(?:env:)?\\{?${n}(?![A-Za-z0-9_])`, "i").test(command) || (n === "HOME" && /(?:^|[\s=:"'(])~/.test(command)))) {
       return { kind: "deny", reason: `pi-foreman: denied by the permission policy (the line binds ${n} and uses it; a rebound ${n} is never trusted as a path). Use the literal path.` };
     }
   }
