@@ -141,3 +141,82 @@ for (const [line, name] of [
     untrusted(foreman(line, "powershell"), line);
   });
 }
+
+// ================================================================== full-grammar reviewer findings (ledger item 4)
+// Each literal line binds (or may bind) the trusted name it then uses; the use must not be trusted.
+
+// A. quote removal inside a name token (bash may not even treat some as assignments; bound anyway, fail closed)
+for (const line of [
+  `HO""ME=/x; cat $HOME/f`,
+  `H\\OME=/x; cat $HOME/f`,
+  `H''OME=/x; cat $HOME/f`,
+  `"HO"ME=/x; cat $HOME/f`,
+  `export HO""ME=/x; cat $HOME/.pi/agent/pi-foreman/x`,
+  `env "HO"ME=/x bash -c 'cat $HOME/.pi/agent/pi-foreman/x'`,
+  `declare H\\OME=/x; cat $HOME/f`,
+  `read "HO"ME <f; cat $HOME/f`,
+  `export $'HO''ME'=/x; cat $HOME/f`,
+  `declare -n r=HO""ME; r=/x; cat $HOME/f`,
+  `unset -v HO""ME; cat $HOME/f`,
+]) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line).has("HOME"), "boundNames sees HOME");
+    untrusted(foreman(line), line);
+  });
+}
+
+// B. indirection in a name position: every trusted name is bound (eval-like)
+for (const line of [
+  `n=HO; declare "\${n}ME=/x"; cat $HOME/f`,
+  `n=HO; printf -v "\${n}ME" /x; cat $HOME/f`,
+  `n=home; export "\${n^^}=/x"; cat $HOME/f`,
+  `export {HOME,X}=/x; cat $HOME/f`,
+  `n=HO; (( \${n}ME=1 )); cat $HOME/f`,
+]) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line).has("HOME"), "boundNames sees HOME");
+    untrusted(foreman(line), line);
+  });
+}
+test("read {S,} <f; echo x > $S/f", { skip: !posix }, () => {
+  const line = "read {S,} <f; echo x > $S/f";
+  assert.ok(boundNames(line).has("S"));
+  untrusted(child(line), line);
+});
+
+// C. lead characters and attached options
+for (const [line, name, who] of [
+  [`read \\S <f; echo x > $S/f`, "S", "child"],
+  [`printf -vS %s /x; echo x > $S/f`, "S", "child"],
+  [`printf -vHOME %s /x; cat $HOME/f`, "HOME", "foreman"],
+  [`read -aHOME <<<x; cat $HOME/f`, "HOME", "foreman"],
+  [`exec {S}>/dev/null; echo x > $S/f`, "S", "child"],
+  [`exec {HOME}>/dev/null; cat $HOME/f`, "HOME", "foreman"],
+  [`(( ++S )); echo x > $S/f`, "S", "child"],
+  [`: \${S[0]:=/x}; echo x > $S/f`, "S", "child"],
+] as const) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line).has(name), `boundNames sees ${name}`);
+    untrusted(who === "child" ? child(line) : foreman(line), line);
+  });
+}
+
+// D. eval-like command words found from the parsed command word
+for (const line of [
+  `if . ./f; then cat $HOME/f; fi`,
+  `while . ./f; do cat $HOME/f; done`,
+  `until . ./f; do cat $HOME/f; done`,
+  `if false; then :; elif . ./f; then cat $HOME/f; fi`,
+  `case x in x) . ./f;; esac; cat $HOME/f`,
+  `2>/dev/null . ./f; cat $HOME/f`,
+  `\\source ./f; cat $HOME/f`,
+  `"." ./f; cat $HOME/f`,
+  `x=source; $x ./f; cat $HOME/f`,
+  `BASH_ENV=./f bash -c 'cat $HOME/f'`,
+]) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line).has("HOME"), "boundNames sees HOME");
+    untrusted(foreman(line), line);
+  });
+}
+

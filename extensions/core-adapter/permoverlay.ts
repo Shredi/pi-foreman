@@ -185,6 +185,7 @@ const EVAL_BOUND = [...TRUSTED_VARS, "USERPROFILE"];
  */
 export function boundNames(command: string, shell: "posix" | "powershell" = "posix"): Set<string> {
   const out = new Set<string>();
+  const all = (): void => EVAL_BOUND.forEach((n) => out.add(n));
   // PowerShell (case-insensitive): `$N = ..`, `$env:N = ..`, `${env:N} = ..`, an `env:N` / `Env:\N` drive path (Set-Item, New-Item,
   // si, ni, -Path ..), `[System.Environment]::SetEnvironmentVariable('N', ..)`; a non-literal env: name or variable name binds every trusted name
   if (shell === "powershell") {
@@ -195,11 +196,111 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
     for (const m of command.matchAll(/SetEnvironmentVariable\s*\(\s*(?:(['"])([A-Za-z_][A-Za-z0-9_]*)\1)?/gi)) (m[2] ? [m[2]] : EVAL_BOUND).forEach(add);
   }
   for (const m of command.matchAll(/(?:^|[^\w$-])([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/g)) out.add(m[1]);
-  for (const m of command.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*):?=/g)) out.add(m[1]);
-  for (const m of command.matchAll(/(?:^|[\s;&|("'=`])([A-Za-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_])/g)) out.add(m[1]);
+  // the same over the line with quotes and backslashes removed (`HO""ME=`, `H\OME=`, `"HO"ME=`, `$'HO''ME'=`, `read \S`)
+  const norm = command.replace(/\$'/g, "'").replace(/[\\"']/g, "");
+  for (const text of norm === command ? [command] : [command, norm]) {
+    for (const m of text.matchAll(/(?:^|[^\w$-])([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/g)) out.add(m[1]);
+    for (const m of text.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?:?[=?]/g)) out.add(m[1]);
+    for (const m of text.matchAll(/(?:^|[\s;&|("'=`\\]|(?<!\$)\{)([A-Za-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_])/g)) out.add(m[1]);
+  }
+  // `{N}>f` / `{N}<f`: bash stores the fd in N; a non-literal one may be any name
+  for (const m of command.matchAll(/(?<!\$)\{([^{}\s]*)\}\d*[<>]/g)) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(m[1])) out.add(m[1]);
+    else all();
+  }
+  // arithmetic (`(( ++S ))`, `$(( N=1 ))`, `$[..]`, `let ..`): every name inside may be assigned; an expansion in it may name any
+  for (const m of command.matchAll(/\(\(([\s\S]*?)\)\)|\$\[([^\]]*)\]|\blet\s+([^;&|\n]*)/g)) {
+    const body = m[1] ?? m[2] ?? m[3] ?? "";
+    for (const t of body.matchAll(/(?<![\w$])([A-Za-z_][A-Za-z0-9_]*)/g)) out.add(t[1]);
+    if (/[$`]/.test(body) && /(?:^|[^=!<>])=(?!=)|\+\+|--/.test(body)) all();
+  }
   // `eval` / `source` / `.` run text this check never sees: every trusted name may be rebound
-  if (/(?:^|[\s;&|("'`])(?:eval|source)(?=$|[\s;&|)"'`])/.test(command) || /(?:^|[;&|(`{}!\n]|\b(?:then|do|else|command|builtin|exec|env|xargs|sudo|nohup|time)\s)\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*\.(?=$|\s)/.test(command)) EVAL_BOUND.forEach((n) => out.add(n));
+  if (/(?:^|[\s;&|("'`])(?:eval|source)(?=$|[\s;&|)"'`])/.test(command) || /(?:^|[;&|(`{}!\n]|\b(?:then|do|else|command|builtin|exec|env|xargs|sudo|nohup|time)\s)\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*\.(?=$|\s)/.test(command)) all();
+  // arithmetic was handled above: `x=$(( $a + 1 ))` holds no command word
+  if (shell === "posix") boundWords(command.replace(/\$?\(\(([\s\S]*?)\)\)/g, "0"), out, all);
+  // a shell started with BASH_ENV / ENV sources that file first
+  if (out.has("BASH_ENV") || /(?<![\w$])ENV(?:\[[^\]]*\])?\+?=/.test(norm)) all();
   return out;
+}
+
+/** Bash keywords before a command word. */
+const SH_KEYWORDS = new Set(["if", "then", "elif", "else", "while", "until", "do", "!", "{", "}", "time", "coproc", "fi", "done", "esac", "in"]);
+/** Bash builtins whose operands (or some of them) are variable names; with the options that take a non-name value. */
+const SH_BINDERS: Record<string, string> = { declare: "", typeset: "", local: "", export: "", readonly: "", unset: "", read: "pdtunNi", readarray: "dnOsuCc", mapfile: "dnOsuCc", getopts: "" };
+/** Wrappers that run the next word as the command. */
+const SH_WRAPS = new Set(["command", "builtin", "exec", "env", "nohup", "time", "sudo", "doas", "nice", "xargs", "setsid", "stdbuf", "timeout"]);
+
+/**
+ * boundNames over the parsed words (quotes and backslashes removed): the command word after keywords, leading redirects, assignments
+ * and wrappers; `.` / `source` / `eval` or a command word that is an expansion binds every trusted name (`all`), and so does an
+ * expansion, brace or substitution in a name position of declare/export/local/readonly/typeset/read/readarray/mapfile/unset/getopts/
+ * printf -v/env. Attached option values (`printf -vS`, `read -aHOME`) count as names.
+ */
+function boundWords(command: string, out: Set<string>, all: () => void): void {
+  const nameAt = (w: string): void => {
+    const head = w.split("=")[0];
+    if (/[$`{}()]/.test(head)) return all();
+    const n = /^([A-Za-z_][A-Za-z0-9_]*)/.exec(head.replace(/^\+/, ""));
+    if (n) out.add(n[1]);
+  };
+  const attached = (w: string): void => {
+    // `-vS`, `-aHOME`: any tail of an option group may be the value of an option taking a name
+    for (let k = 2; k < w.length; k++) nameAt(w.slice(k));
+  };
+  for (const pipe of parseShell(command, "posix").pipelines) {
+    for (const unit of pipe) {
+      const redir = REDIRECTS.get(unit) ?? new Set<number>();
+      let i = 0;
+      const skip = (): void => {
+        while (i < unit.length && (redir.has(i) || SH_KEYWORDS.has(unit[i]) || /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=/.test(unit[i]))) {
+          if (!redir.has(i)) nameAt(unit[i]);
+          i++;
+        }
+      };
+      skip();
+      while (i < unit.length && SH_WRAPS.has(unit[i])) {
+        const env = unit[i] === "env";
+        i++;
+        while (i < unit.length && (unit[i].startsWith("-") || redir.has(i))) {
+          if (env && /^-(?:u|-unset)$/.test(unit[i]) && i + 1 < unit.length) nameAt(unit[++i]);
+          else if (env && /^-u./.test(unit[i])) nameAt(unit[i].slice(2));
+          i++;
+        }
+        if (env) while (i < unit.length && unit[i].includes("=") && !unit[i].startsWith("-")) nameAt(unit[i++]);
+        skip();
+      }
+      const verb = unit[i];
+      if (verb === undefined) continue;
+      if (verb === "." || verb === "source" || verb === "eval" || /^[$`]/.test(verb)) {
+        all();
+        continue;
+      }
+      const args = unit.slice(i + 1).filter((_, k) => !redir.has(i + 1 + k));
+      if (verb === "printf") {
+        for (let k = 0; k < args.length && args[k].startsWith("-"); k++) {
+          if (args[k] === "--") break;
+          if (args[k] === "-v") nameAt(args[++k] ?? "");
+          else if (args[k].startsWith("-v")) nameAt(args[k].slice(2));
+        }
+        continue;
+      }
+      const valueOpts = SH_BINDERS[verb];
+      if (valueOpts === undefined || !Object.hasOwn(SH_BINDERS, verb)) continue;
+      let ops = 0;
+      for (let k = 0; k < args.length; k++) {
+        const a = args[k];
+        if (/^[-+][A-Za-z]/.test(a)) {
+          attached(a);
+          const last = a[a.length - 1];
+          if (a.length === 2 && valueOpts.includes(last)) k++;
+          continue;
+        }
+        // getopts: only the second operand is a name
+        if (verb === "getopts" && ops++ !== 1) continue;
+        nameAt(a);
+      }
+    }
+  }
 }
 
 /** Whether `word` holds a `$N` / `${N}` reference to a name in `names`. */
@@ -1547,9 +1648,12 @@ function defaults(ctx: MatchCtx): Required<Pick<MatchCtx, "exists" | "isDir" | "
 
 function expandWord(w: string, ctx: MatchCtx): string {
   let s = w.replace(/^file:\/\//, "");
-  if (s === "~") s = ctx.home;
-  else if (s.startsWith("~/") || s.startsWith("~\\")) s = ctx.home + s.slice(1);
   const bound = ctx.bound ?? new Set<string>();
+  // `~` is `$HOME`: trusted only while the line binds HOME nowhere
+  if (!bound.has("HOME")) {
+    if (s === "~") s = ctx.home;
+    else if (s.startsWith("~/") || s.startsWith("~\\")) s = ctx.home + s.slice(1);
+  }
   if (!bound.has("HOME")) s = s.replace(/^\$(?:\{HOME\}|HOME)(?=$|[\\/])/, ctx.home);
   const scratch = scratchOf(ctx);
   // `$S` is the child's conventional name for its scratch dir, trusted only while the line binds it nowhere (ctx.bound); a bound
@@ -1894,9 +1998,14 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const ctx: MatchCtx = { ...ctx0, ...(ctx0.owned || !rules.owned ? {} : { owned: rules.owned }), bound };
   // a line that binds a harness-trusted variable it also uses (`HOME=-i; sed $HOME ...`, `read HOME; cat ~/x`) fails closed
   for (const n of ["HOME", "FOREMAN_SCRATCH", "USERPROFILE"]) {
-    if (bound.has(n) && (new RegExp(`(?:^|[^\\w$-])${n}(?:\\[[^\\]]*\\])?\\+?=|\\$\\{?(?:env:)?\\{?${n}(?![A-Za-z0-9_])`, "i").test(command) || (n === "HOME" && /(?:^|[\s=:"'(])~/.test(command)))) {
+    if (bound.has(n) && (new RegExp(`(?:^|[^\\w$-])${n}(?:\\[[^\\]]*\\])?\\+?=|\\$\\{?(?:env:)?\\{?${n}(?![A-Za-z0-9_])`, "i").test(command) || (n === "HOME" && /(?<![\w])~/.test(command)))) {
       return { kind: "deny", reason: `pi-foreman: denied by the permission policy (the line binds ${n} and uses it; a rebound ${n} is never trusted as a path). Use the literal path.` };
     }
+  }
+  // `~-` ($OLDPWD), `~+` ($PWD), `~user` (a home dir) expand to paths this check never resolves: never read as cwd-relative names
+  if (shell === "posix") {
+    const tw = parseShell(command, "posix").pipelines.flat(2).find((w) => /(?:^|[=:{,])~[^/\\,}:\s]/.test(w));
+    if (tw !== undefined) return { kind: "deny", reason: `pi-foreman: denied by the permission policy ('${clip(tw)}' is a ~-, ~+ or ~user path this check does not resolve). Use the literal path.` };
   }
   if (ctx.role === "child") {
     const cd = childCdDeny(command, ctx);
