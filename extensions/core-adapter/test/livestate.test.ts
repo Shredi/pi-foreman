@@ -64,6 +64,17 @@ test("an own ask holds blocked while Pi sends no ui_prompt_start (prompt depth s
   l.stop();
 });
 
+test("a stuck ui blocker is cleared by a non-interactive path (agent_end / any input) back to the prior state", () => {
+  const l = LiveState.start({ agentDir: tmp(), sessionId: "s", cwd: "/w", mode: "rpc", env: {} }, () => [])!;
+  l.onAgentStart();
+  assert.equal(l.snapshot().state, "working");
+  l.setBlocked(true); // ui_prompt_start whose ui_prompt_end never arrives
+  assert.equal(l.snapshot().state, "blocked");
+  l.setBlocked(false); // agent_end / non-interactive input handler
+  assert.equal(l.snapshot().state, "working");
+  l.stop();
+});
+
 test("own ask and Pi prompt overlap: neither end nor typed-input release clears the other", () => {
   const l = LiveState.start({ agentDir: tmp(), sessionId: "s", cwd: "/w", mode: "rpc", env: {} }, () => [])!;
   l.setBlocked(true);
