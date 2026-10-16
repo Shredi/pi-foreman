@@ -545,6 +545,12 @@ def ledger_items(top, nums):
     return out or None
 
 
+def _write_lf(path, text):
+    # Path.write_text(newline=) is 3.10+; open() works on 3.9.
+    with open(str(path), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+
+
 def cmd_export(args):
     if not args.to:
         print("foreman_findings: export needs --to <dir>", file=sys.stderr)
@@ -599,13 +605,13 @@ def cmd_export(args):
     body = ledger_items(top, nums) if nums else None
     prompt = ("Make the change described below.\n\n" + "\n".join("- " + b for b in body) + "\n") if body else (
         "Implement the change in `%s` that the attached diff makes; it is a harvested review task.\n" % rel)
-    (Path(task) / "prompt.md").write_text(prompt, encoding="utf-8", newline="\n")
+    _write_lf(Path(task) / "prompt.md", prompt)
     truth = {"clean": False, "defects": [{"id": args.id, "file": rel, "lines": [max(1, line - 3), line + 3],
                                            "class": cls, "description": f.get("note") or "harvested finding"}]}
-    (Path(task) / "ground_truth.json").write_text(json.dumps(truth, indent=2) + "\n", encoding="utf-8", newline="\n")
+    _write_lf(Path(task) / "ground_truth.json", json.dumps(truth, indent=2) + "\n")
     harvest = {"source": "harvest", "confirmed": False, "findingId": args.id, "model": f.get("model"),
                "session": f.get("session"), "exportedTs": _now_iso()}
-    (Path(task) / "harvest.json").write_text(json.dumps(harvest, indent=2) + "\n", encoding="utf-8", newline="\n")
+    _write_lf(Path(task) / "harvest.json", json.dumps(harvest, indent=2) + "\n")
     import foreman_review_bench as rb
     errs = rb.validate_task(task)
     for e in errs:
