@@ -7,8 +7,16 @@
 - `foreman doctor` prints an info line with pi-background-tasks' declared peer range for `@earendil-works/pi-coding-agent` against the running Pi version (never a failure; no line without the add-on).
 - `foreman session open` passes the opener's `PI_BG_FEATURES` and every other `PI_BG_*` variable into the child's launch line and writes that line to `<handoff>/launch.txt`; `foreman doctor` prints the effective `PI_BG_FEATURES` and warns when `attribution` is on while the `anthropic` credential is not OAuth.
 
-### Host pressure gate (R5 P1)
+### pressure gate + permission-grammar hardening
 - `resources.*` keys (`maxLoadPerCore` 1.5, `minFreeMemMB` 1024, `minFreeDiskGB` 5, `sampleSeconds` 30; a project may only tighten) and a stdlib sampler `scripts/foreman_pressure.py`. At `high` child launches run one at a time and the strong climb pauses; at `critical` launches are deferred behind a `pressure` wait (10 minutes at most). Surfaces: `foreman doctor` pressure line, `/foreman status`, a ` ⚠ <reasons>` suffix on the Herdr cost row only when not `ok`, retro line `pressure: deferred N, narrowed M` (omitted when both are 0). Trace events `launch_narrowed`, `launch_deferred`, `climb_suppressed`. See `docs/resources.md`.
+- Guard: in the main session `git -c` with an exec key or a shell alias (`-c alias.x=!…`) is denied; a `PATH=` prefix before git asks; a child's file writes from a heredoc or stdin script (`python3 - <<…`, `echo … | python3 -`) are denied.
+- Read-only shell: fewer false positives for pure reads, the session's owned roots are readable, and every deny trace carries its reason.
+- Ceremony: the last review verdict wins, `steer.md` is read at wake, an open ask is shown, and the launch trace names the model.
+- Read-only python is allowlisted and its filter fails closed; owned reads are scoped to the owned roots; the `~/` and `$S` path grammar resolves once for all target sets.
+- `$HOME` and `$S` count as trusted only while the command leaves them unbound; one resolution serves every target set.
+- `boundNames`: every standalone name token binds (`read N<f`, `N<<<x`, `mapfile -t N<f`), and `eval`, `source` and `.` bind every trusted name.
+- PowerShell env forms (`Set-Item`/`New-Item env:`, `${env:N}=`, `SetEnvironmentVariable`) bind case-insensitively; the `$env:` home mapping applies only behind the bound check.
+- Literal tests per binding form, including the PowerShell env forms, the R5 regressions and the `HOMEDIR=`/`$HOME_OLD` negatives.
 
 ### Round 6, by lane
 - 1a: a read-only child's test run names only operands (`node --test <p>`, `npm run test:x -- <p>`, `pytest <p>`, `python3 -m pytest|unittest <p>`, `make test -C <p>`, values of `--require`/`--import`) that resolve inside the round worktree and are git-tracked; globs (all matches tracked), `$VAR` words (expanded, else denied) and untracked paths are denied with a reason; a builder still runs its own new untracked test. Operands fail closed: every word with a `/`, a file suffix or an existing file name is checked; only `make` options on an allowlist pass. Tests: `probescan.test.ts`.

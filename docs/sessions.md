@@ -151,6 +151,10 @@ A heavy task with several phases may run as a multi-session plan: one child sess
 
 Every orchestrator session works in its own worktree (`git worktree add …`) and never switches the shared main checkout. Merges happen from the session's worktree, so two sessions running in parallel cannot move each other's branch or working tree.
 
+A security revision after the final review is cap-exempt: one more Opus builder is allowed.
+Builders commit per numbered item.
+A child bundle holds at most 3 items.
+
 ### Trust dialog for a fresh worktree
 
 Pi asks `Trust project folder?` (`<cwd>`, "This allows pi to load .pi settings and resources, install missing project packages, and execute project extensions.") when the cwd has project resources (`.pi/settings.json`, `extensions`, `skills`, … or a `.agents/skills` directory in the cwd or an ancestor) and `<agent dir>/trust.json` holds no decision for it or a parent. A new round worktree has none, so every `foreman session open` into one would stop at the dialog.
