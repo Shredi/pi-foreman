@@ -1,9 +1,9 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkTestTmp } from "./_tmpbase.ts";
 import { classify, effectCtx, readRootsOf } from "../effects.ts";
 import type { EffectCtx } from "../effects.ts";
 import { splitChain } from "../shellchain.ts";
@@ -16,7 +16,7 @@ const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..",
 const rules = bashRules(readBaseline(pkgRoot)!, {});
 const posix = process.platform !== "win32";
 
-const base = fs.mkdtempSync(path.join(os.tmpdir(), "pf-effects-"));
+const base = mkTestTmp("pf-effects-");
 after(() => fs.rmSync(base, { recursive: true, force: true }));
 const repo = path.join(base, "repo");
 const scratch = path.join(base, "scratch");

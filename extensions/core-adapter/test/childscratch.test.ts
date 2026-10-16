@@ -3,9 +3,9 @@
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkTestTmp } from "./_tmpbase.ts";
 import { ChildScratch, createScratch, expandScratchVar, finishScratch, insideScratch, launchScratch, removeScratch, scratchCommandAllowed, scratchRoot, storeBrief, sweepScratch } from "../childscratch.ts";
 import type { ScratchHost } from "../childscratch.ts";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
@@ -14,7 +14,7 @@ import { readBinding } from "../usage.ts";
 import type { LaunchBinding } from "../usage.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-scratch-")));
+const base = fs.realpathSync.native(mkTestTmp("pf-scratch-"));
 const tmp = path.join(base, "tmp");
 const repo = path.join(base, "repo");
 fs.mkdirSync(tmp);
