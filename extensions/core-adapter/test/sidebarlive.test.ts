@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { SidebarLive, installSidebarLive, sidebarGate, type SidebarDeps } from "../sidebarlive.ts";
 import type { LiveStateName } from "../livestate.ts";
 
@@ -96,7 +97,7 @@ test("gate: needs HERDR_ENV=1, a pane, tui, python and the script", () => {
 });
 
 function fileURLToPathSelf(): string {
-  return new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  return fileURLToPath(import.meta.url);
 }
 
 test("one push per state change, none in a steady state apart from the refresh interval", (t) => {

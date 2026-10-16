@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { rmTestTmp } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
 import { addonPresent, bgLogPath, formatWaits, lastLines, readAddonTasks, shellFor, spawnDetached } from "../bg.ts";
@@ -13,7 +14,7 @@ import { mapTool, isShellTool } from "../toolmap.ts";
 import { isOverlayTool } from "../permoverlay.ts";
 import { LiveState, liveDir } from "../livestate.ts";
 
-const PKG = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "..");
+const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const tmp = (t: { after(fn: () => void): void }, prefix: string): string => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   t.after(() => rmTestTmp(dir));
@@ -78,7 +79,8 @@ test("foreman_bg: note defaults to the command; empty command, child and print m
   assert.match(print.content[0].text, /needs a TUI or RPC session/);
   const one = await bg.execute("c", { command: `node -e "setTimeout(()=>{},3000)"` }, undefined, undefined, h.ctx);
   assert.equal(h.handle.active("s1")[0].note, `node -e "setTimeout(()=>{},3000)"`);
-  process.kill(-Number(one.details.pid), "SIGTERM");
+  if (process.platform === "win32") process.kill(Number(one.details.pid));
+  else process.kill(-Number(one.details.pid), "SIGTERM");
   const c = waitHarness(t, { isChild: true });
   const refused = await c.tools.get("foreman_bg")!.execute("c", { command: "true" }, undefined, undefined, c.ctx);
   assert.equal(refused.isError, true);

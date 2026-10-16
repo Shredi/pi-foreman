@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -58,7 +59,7 @@ test("readPressure: missing and garbage files are ok/missing", (t) => {
 test("readPressure agrees with the Python read_state on the same files", (t) => {
   const dir = tmp(t);
   const file = path.join(dir, "pressure.json");
-  const script = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "..", "..", "scripts", "foreman_pressure.py");
+  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "scripts", "foreman_pressure.py");
   const py = (args: string[]) => {
     const r = spawnSync("python3", ["-I", script, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     return r.status === 0 ? (JSON.parse(r.stdout) as { level: string; reasons: string[] }) : null;
