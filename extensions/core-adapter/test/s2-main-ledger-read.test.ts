@@ -69,6 +69,8 @@ test("writes into the main checkout stay denied; the rest of the main checkout s
 });
 
 test("mainWorkflowReadable names only the sibling main checkout's .workflow of a round worktree", () => {
-  assert.deepEqual(mainWorkflowReadable([rt], "linux"), [`${main}/.workflow`, `${main}/.workflow/*`]);
-  assert.deepEqual(mainWorkflowReadable([path.join(base, "plain")], "linux"), []);
+  // rt/main are native temp paths, so name the host platform (a "linux" argument would not treat C:\ paths as absolute)
+  const flow = path.join(main, ".workflow");
+  assert.deepEqual(mainWorkflowReadable([rt], process.platform), [flow, `${flow}/*`]);
+  assert.deepEqual(mainWorkflowReadable([path.join(base, "plain")], process.platform), []);
 });

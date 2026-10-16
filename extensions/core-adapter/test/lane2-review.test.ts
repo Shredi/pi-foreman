@@ -104,7 +104,8 @@ test("2a: a command the rules deny or ask about is not allowed by the owned root
 });
 
 test("2a: sessionOwnedRoots lists scratch, round and isolation worktrees, handoffs, npm root, state scratch and own async runs", () => {
-  const rt = path.resolve("/w/repo.worktrees/round");
+  // the "linux" platform argument asserts POSIX semantics, so the fixture is built with path.posix on every host
+  const rt = path.posix.resolve("/w/repo.worktrees/round");
   const got = sessionOwnedRoots({ scratch: ["/t/s/c1"], rounds: [rt], handoffs: ["/a/handoffs/h1"], npmRoot: "/n/lib/node_modules", stateScratch: "/a/state/scratch/s1", asyncRuns: new Set(["/t/async/run-a", "relative/run-b", "/a/handoffs/h1"]) }, "linux");
   assert.deepEqual(got, ["/t/s/c1", rt, "/w/repo.worktrees/worktrees/round", "/a/handoffs/h1", "/n/lib/node_modules", "/a/state/scratch/s1", "/t/async/run-a"]);
   assert.deepEqual(sessionOwnedRoots({ scratch: [], rounds: [], handoffs: [] }, "linux"), []);

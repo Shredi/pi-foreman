@@ -30,10 +30,12 @@ test("R3 line 2: `npm run test:node > /tmp/_t2.txt …; npm run typecheck > /tmp
 });
 
 test("writes below the resolved temp dir and writer verbs are denied too", () => {
-  assert.equal(child(`echo x > ${tmpReal}/other/out.txt`)?.kind, "deny");
-  assert.equal(child(`echo x | tee ${tmpReal}/out.txt`)?.kind, "deny");
-  assert.equal(child(`cp a.txt ${tmpReal}/out.txt`)?.kind, "deny");
-  assert.equal(child(`mkdir -p ${tmpReal}/d`)?.kind, "deny");
+  // bash command lines spell the temp dir with forward slashes (a backslash is an escape in the bash grammar)
+  const tb = tmpReal.replace(/\\/g, "/");
+  assert.equal(child(`echo x > ${tb}/other/out.txt`)?.kind, "deny");
+  assert.equal(child(`echo x | tee ${tb}/out.txt`)?.kind, "deny");
+  assert.equal(child(`cp a.txt ${tb}/out.txt`)?.kind, "deny");
+  assert.equal(child(`mkdir -p ${tb}/d`)?.kind, "deny");
   const t = checkToolCall(rules, "write", { path: path.join(tmpReal, "x.txt"), content: "x" }, { ...base, role: "child", scratch });
   assert.equal(t?.kind, "deny");
   assert.ok(t!.reason.includes(scratch));
