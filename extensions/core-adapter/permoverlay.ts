@@ -190,17 +190,38 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
   // si, ni, -Path ..), `[System.Environment]::SetEnvironmentVariable('N', ..)`; a non-literal env: name or variable name binds every trusted name
   if (shell === "powershell") {
     const add = (n: string): void => void out.add(n).add(n.toUpperCase());
-    for (const m of command.matchAll(/\$(?:[A-Za-z]+:)?([A-Za-z_][A-Za-z0-9_]*)\s*[-+*/%]?\?{0,2}=(?!=)/gi)) add(m[1]);
-    for (const m of command.matchAll(/\$\{(?:[A-Za-z]+:)?([A-Za-z_][A-Za-z0-9_]*)\}\s*[-+*/%]?\?{0,2}=(?!=)/gi)) add(m[1]);
-    // `.Home = ..` (a provider's Home property), any property or name assigned
-    for (const m of command.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*[-+*/%]?\?{0,2}=(?!=)/g)) add(m[1]);
-    for (const m of command.matchAll(/(?<![\w$:{])(?:env|variable):[\\/]?([A-Za-z_][A-Za-z0-9_]*)?/gi)) (m[1] ? [m[1]] : EVAL_BOUND).forEach(add);
-    // a name argument that is not one quoted literal (`'HO'+'ME'`, `$n`) may be any name
-    for (const m of command.matchAll(/SetEnvironmentVariable\s*\(\s*(?:(['"])([A-Za-z_][A-Za-z0-9_]*)\1(?=\s*[,)]))?/gi)) (m[2] ? [m[2]] : EVAL_BOUND).forEach(add);
-    // every name token, in any case: `Set-Variable -Name home`, `Rename-Item env:X -NewName home`
-    for (const m of command.matchAll(/(?<![\w$:])(?<!\$\{)([A-Za-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_])/g)) add(m[1]);
-    // code this check never sees, or an item path built at run time: every trusted name may be rebound
-    if (/\[\s*scriptblock\s*\]\s*::\s*create|\.invoke(?:script)?\s*\(|\badd-type\b/i.test(command)) all();
+    // backtick escapes (`${env:HO`ME}`, `Set-Item env:HO`ME`) vanish before PowerShell reads the name
+    const plain = command.replace(/`([^\r\n])/g, "$1");
+    for (const text of plain === command ? [command] : [command, plain]) {
+      for (const m of text.matchAll(/\$(?:[A-Za-z]+:)?([A-Za-z_][A-Za-z0-9_]*)\s*[-+*/%]?\?{0,2}=(?!=)/gi)) add(m[1]);
+      for (const m of text.matchAll(/\$\{(?:[A-Za-z]+:)?([A-Za-z_][A-Za-z0-9_]*)\}\s*[-+*/%]?\?{0,2}=(?!=)/gi)) add(m[1]);
+      // `.Home = ..` (a provider's Home property), any property or name assigned
+      for (const m of text.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*[-+*/%]?\?{0,2}=(?!=)/g)) add(m[1]);
+      for (const m of text.matchAll(/(?<![\w$:{])(?:env|variable):[\\/]?([A-Za-z_][A-Za-z0-9_]*)?/gi)) (m[1] ? [m[1]] : EVAL_BOUND).forEach(add);
+      // provider-qualified paths: `Environment::HOME`, `Microsoft.PowerShell.Core\Environment::HOME`, `Variable::HOME`
+      for (const m of text.matchAll(/(?<![\w\]])(?:environment|variable)::([A-Za-z_][A-Za-z0-9_]*)?/gi)) (m[1] ? [m[1]] : EVAL_BOUND).forEach(add);
+      // a name argument that is not one quoted literal (`'HO'+'ME'`, `$n`) may be any name
+      for (const m of text.matchAll(/SetEnvironmentVariable\s*\(\s*(?:(['"])([A-Za-z_][A-Za-z0-9_]*)\1(?=\s*[,)]))?/gi)) (m[2] ? [m[2]] : EVAL_BOUND).forEach(add);
+      // `$ExecutionContext.SessionState.PSVariable.Set('HO'+'ME', ..)`, `.SetValue(..)`: the same
+      for (const m of text.matchAll(/\.Set(?:Value)?\s*\(\s*(?:(['"])([A-Za-z_][A-Za-z0-9_]*)\1(?=\s*[,)]))?/gi)) (m[2] ? [m[2]] : EVAL_BOUND).forEach(add);
+      // every name token, in any case: `Set-Variable -Name home`, `Rename-Item env:X -NewName home`
+      for (const m of text.matchAll(/(?<![\w$:])(?<!\$\{)([A-Za-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_])/g)) add(m[1]);
+      // code this check never sees, or an item path built at run time: every trusted name may be rebound
+      if (/\[\s*scriptblock\s*\]\s*::\s*create|\.invoke(?:script)?\s*\(|\badd-type\b/i.test(text)) all();
+      // eval-like cmdlets anywhere, not only as a command word (`$null = iex $c`, `(iex $c)`, `[void](iex $c)`), the `&` call operator
+      // and a dot-source after `=`, `(`, `;`, `|`, `{`, `}`, `]`
+      for (const m of text.matchAll(/(?<![\w$.\\/:-])([A-Za-z][\w.-]*)(?![\w.-])/g)) if (PS_EVAL.has(m[1].toLowerCase())) all();
+      if (/(?<![&\w])&(?!&)|(?:^|[=(;|{}\]])\s*\.\s+\S/.test(text)) all();
+      // item cmdlets anywhere (`$null = New-Item -Path ('en'+'v:HOME')`): a path / name that is not one literal may name any item
+      for (const m of text.matchAll(/(?<![\w$.\\/:-])(set-item|si|new-item|ni|rename-item|rni|set-content|sc|set-variable|sv|new-variable|nv)(?![\w-])([^;|\n]*)/gi)) {
+        const args = m[2].match(/'[^']*'|"[^"]*"|\([^)]*\)?|[^\s(]+/g) ?? [];
+        const pi = args.findIndex((a) => /^-(?:path|literalpath|name|pspath)$/i.test(a));
+        const target = pi >= 0 ? args[pi + 1] : args.find((a) => !a.startsWith("-"));
+        const fsPath = target !== undefined && /^(?:\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*|\$\{(?:env:)?[A-Za-z_][A-Za-z0-9_]*\}|~)[\\/][^$()`+{}'"]*$/i.test(target);
+        const literal = target !== undefined && (/^'[^']*'$/.test(target) || /^"[^"$`]*"$/.test(target) || /^[^$()`+{}'"]+$/.test(target) || fsPath);
+        if (!literal) all();
+      }
+    }
     for (const pipe of parseShell(command, "powershell").pipelines) {
       for (const unit of pipe) {
         const verb = (unit[0] ?? "").toLowerCase();

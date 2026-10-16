@@ -283,6 +283,23 @@ for (const [line, name, who] of [
   });
 }
 
+// U4: PowerShell eval / item cmdlets anywhere in the text; PSVariable.Set
+// U5: backtick escapes, provider-qualified `Environment::` paths
+for (const line of [
+  `$c = '$env:HO' + 'ME = ''/x'''; $null = iex $c; Get-Content $env:HOME/.pi/agent/pi-foreman/x`,
+  `$null = New-Item -Path ('en'+'v:HOME') -Value /x -Force; Get-Content $env:HOME/.pi/agent/pi-foreman/x`,
+  `$null = $ExecutionContext.SessionState.PSVariable.Set('HO'+'ME','/x'); Get-Content $HOME/.pi/agent/pi-foreman/x`,
+  `Write-Output (iex $c); Get-Content $env:HOME/f`,
+  "${env:HO`ME} = '/x'; Get-Content $env:HOME/.pi/agent/pi-foreman/x",
+  `Set-Item Environment::HOME /x; Get-Content $env:HOME/.pi/agent/pi-foreman/x`,
+  `Set-Item Microsoft.PowerShell.Core\\Environment::HOME /x; Get-Content $env:HOME/f`,
+]) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line, "powershell").has("HOME"), "boundNames sees HOME");
+    untrusted(foreman(line, "powershell"), line);
+  });
+}
+
 // the unbound PowerShell `$HOME` / `~` uses stay trusted
 test("powershell: unbound $HOME / ~ are trusted", { skip: !posix }, () => {
   assert.equal(foreman("Get-Content $HOME/.pi/agent/pi-foreman/x", "powershell"), "pass");
