@@ -64,6 +64,9 @@ class SessionTest(unittest.TestCase):
                     "HERDR_PANE_ID": "w1:p1", "PI_CODING_AGENT_DIR": str(self.agent)}
         for k in ("HERDR_BIN", "PI_INTERCOM_STABLE_ID", "PI_INTERCOM_SESSION_ID", "PI_FOREMAN_HANDOFF_DIR", "FAKE_HERDR_FAIL", "FAKE_HERDR_WORKSPACES"):
             self.env[k] = ""
+        for k in os.environ:  # the opener's add-on variables reach the pane command; tests set them explicitly
+            if k.startswith("PI_BG_"):
+                self.env[k] = ""
 
     def run_main(self, *argv, **env):
         e = dict(self.env, **env)
@@ -326,6 +329,58 @@ class SessionTest(unittest.TestCase):
         self.assertNotIn("shell", run.call_args[1])
         with mock.patch.object(fsn, "intercom_cli", return_value=None):
             self.assertFalse(fsn.send_intercom("fm-x-abc123", "hi")[0])
+
+    # -- ledger 9: the opener's PI_BG_* reach the child; launch.txt holds the exact launch line --------------------
+
+    def test_pi_bg_features_set_reaches_the_pane_command_and_launch_txt(self):
+        code, _, err = self.run_main(*self.open_args(), PI_BG_FEATURES="process,attribution", PI_BG_LOG_DIR="/tmp/bg logs")
+        self.assertEqual(code, 0, err)
+        command = [c for c in self.calls() if c[:2] == ["pane", "run"]][0][3]
+        words = shlex.split(command)
+        self.assertIn("PI_BG_FEATURES=process,attribution", words)
+        self.assertIn("PI_BG_LOG_DIR=/tmp/bg logs", words)
+        self.assertLess(words.index("PI_BG_FEATURES=process,attribution"), words.index("pi"))
+        handoff = Path(self.registry()[0]["handoff"])
+        self.assertEqual((handoff / "launch.txt").read_text("utf-8"), command + "\n")
+
+    def test_pi_bg_features_unset_is_absent_and_launch_txt_still_written(self):
+        code, _, err = self.run_main(*self.open_args())
+        self.assertEqual(code, 0, err)
+        command = [c for c in self.calls() if c[:2] == ["pane", "run"]][0][3]
+        self.assertNotIn("PI_BG_", command)
+        handoff = Path(self.registry()[0]["handoff"])
+        self.assertEqual((handoff / "launch.txt").read_text("utf-8"), command + "\n")
+
+    def test_launch_txt_without_herdr_is_the_printed_fallback_line(self):
+        code, out, err = self.run_main(*self.open_args(), HERDR_PANE_ID="", PI_BG_FEATURES="process")
+        self.assertEqual(code, 0, err)
+        handoff = Path(self.registry()[0]["handoff"])
+        line = (handoff / "launch.txt").read_text("utf-8").rstrip("\n")
+        self.assertIn("  " + line, out.splitlines())
+        self.assertIn("PI_BG_FEATURES", line)
+
+    def test_dry_run_writes_no_launch_txt(self):
+        code, out, err = self.run_main(*self.open_args("--dry-run"), PI_BG_FEATURES="process")
+        self.assertEqual(code, 0, err)
+        self.assertIn("PI_BG_FEATURES=process", out)
+        self.assertFalse((self.agent / "pi-foreman").exists())
+
+
+class AddonEnvTest(unittest.TestCase):
+    def test_only_pi_bg_vars_features_first_and_bad_values_skipped(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            pairs = fsn.addon_env({"PI_BG_Z": "1", "PI_BG_FEATURES": "process", "PI_BGX": "no", "HOME": "/h",
+                                   "PI_BG_EVIL": "x; id", "PI_BG_Q": "it\u2019s"})
+        self.assertEqual(pairs, [("PI_BG_FEATURES", "process"), ("PI_BG_Z", "1")])
+        self.assertIn("PI_BG_EVIL not forwarded", err.getvalue())
+        self.assertIn("PI_BG_Q not forwarded", err.getvalue())
+        self.assertEqual(fsn.addon_env({}), [])
+
+    def test_powershell_line_carries_the_features(self):
+        env = fsn.child_env(Path("/h/x"), "p", "c", "s", None, {"PI_BG_FEATURES": "process"})
+        self.assertIn("$env:PI_BG_FEATURES='process'; ", fsn.powershell_command(env, None, "go"))
+        self.assertEqual(fsn.child_env(Path("/h/x"), "p", "c", "s", None, {})[-1][0], fsn.ENV_PARENT_LABEL)
 
 
 class OpenerIdTest(unittest.TestCase):

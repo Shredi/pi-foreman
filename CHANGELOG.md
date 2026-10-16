@@ -5,6 +5,7 @@
 ### Pi 1.2.0 and the background-tasks add-on
 - Pi 1.2.0 supported (range 1.2.x).
 - `foreman doctor` prints an info line with pi-background-tasks' declared peer range for `@earendil-works/pi-coding-agent` against the running Pi version (never a failure; no line without the add-on).
+- `foreman session open` passes the opener's `PI_BG_FEATURES` and every other `PI_BG_*` variable into the child's launch line and writes that line to `<handoff>/launch.txt`; `foreman doctor` prints the effective `PI_BG_FEATURES` and warns when `attribution` is on while the `anthropic` credential is not OAuth.
 
 ### Host pressure gate (R5 P1)
 - `resources.*` keys (`maxLoadPerCore` 1.5, `minFreeMemMB` 1024, `minFreeDiskGB` 5, `sampleSeconds` 30; a project may only tighten) and a stdlib sampler `scripts/foreman_pressure.py`. At `high` child launches run one at a time and the strong climb pauses; at `critical` launches are deferred behind a `pressure` wait (10 minutes at most). Surfaces: `foreman doctor` pressure line, `/foreman status`, a ` ⚠ <reasons>` suffix on the Herdr cost row only when not `ok`, retro line `pressure: deferred N, narrowed M` (omitted when both are 0). Trace events `launch_narrowed`, `launch_deferred`, `climb_suppressed`. See `docs/resources.md`.

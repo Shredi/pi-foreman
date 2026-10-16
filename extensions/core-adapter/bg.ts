@@ -176,6 +176,40 @@ export function addonPeerRangeLine(dirs: { agentDir: string; cwd: string }, piVe
   return `${head} ${r}; running Pi ${piVersion} is outside it (npm may warn on install; check for a newer ${ADDON_PACKAGE})`;
 }
 
+export const ATTRIBUTION_WARNING = "Anthropic attribution refuses non-OAuth Anthropic credential; subscription OAuth token is required";
+
+/**
+ * Kind of the `anthropic` credential Pi would use: the stored auth.json entry first (its `type`), then the
+ * environment (ANTHROPIC_OAUTH_TOKEN before the key variables). Reads only the type; never returns a secret.
+ */
+export function anthropicCredentialKind(agentDir: string, env: NodeJS.ProcessEnv): "oauth" | "api_key" | "none" {
+  try {
+    const auth = JSON.parse(fs.readFileSync(path.join(agentDir, "auth.json"), "utf8")) as Record<string, unknown>;
+    const entry = auth?.anthropic as { type?: unknown } | undefined;
+    if (entry && typeof entry === "object") return entry.type === "oauth" ? "oauth" : "api_key";
+  } catch {
+    // no or unreadable auth store: the environment decides
+  }
+  if (env.ANTHROPIC_OAUTH_TOKEN?.trim()) return "oauth";
+  if (env.ANTHROPIC_API_KEY?.trim() || env.ANTHROPIC_AUTH_TOKEN?.trim()) return "api_key";
+  return "none";
+}
+
+/**
+ * Doctor lines for the add-on's features: the effective PI_BG_FEATURES (when the add-on is present or the variable
+ * is set), and a WARN when `attribution` is on while the anthropic credential is not OAuth. Never a FAIL.
+ */
+export function bgFeaturesDoctor(present: boolean, agentDir: string, env: NodeJS.ProcessEnv): string[] {
+  const raw = env.PI_BG_FEATURES;
+  if (!present && raw === undefined) return [];
+  const features = (raw ?? "").split(/[\s,]+/).filter(Boolean);
+  const out = [`INFO PI_BG_FEATURES: ${raw === undefined ? "unset (the add-on's defaults)" : oneLine(raw, 120) || "(empty)"}`];
+  if (features.includes("attribution") && anthropicCredentialKind(agentDir, env) !== "oauth") {
+    out.push(`WARN PI_BG_FEATURES has attribution but the anthropic credential is not OAuth: Pi shows "${ATTRIBUTION_WARNING}" — log in with the Anthropic subscription (/login anthropic) or drop attribution from PI_BG_FEATURES`);
+  }
+  return out;
+}
+
 export interface AddonTask {
   id: string;
   label: string;

@@ -196,6 +196,14 @@ named `anthropic` and decides by provider name (`model.provider === 'anthropic'`
 treated as an Anthropic route by that check, but the override takes over the global `anthropic` provider slot, so keep attribution off.
 `foreman setup` prints this install line.
 
+The add-on reads `PI_BG_FEATURES` when Pi starts, so `foreman session open` passes every `PI_BG_*` variable of the opener
+(`PI_BG_FEATURES` first; names and values checked, one that fails is skipped with a note) into the child's launch line, and
+writes that exact line to `<handoff>/launch.txt`: relaunching a child is a copy of that file. `/foreman doctor` prints the
+effective `INFO PI_BG_FEATURES: <value>` (with the add-on present or the variable set) and a `WARN` when `attribution` is in
+it while the `anthropic` credential is not OAuth (an api-key entry in the agent dir's `auth.json`, else `ANTHROPIC_API_KEY`):
+Pi then fails Anthropic turns with "Anthropic attribution refuses non-OAuth Anthropic credential; subscription OAuth token
+is required". The doctor reads only the credential's type, never its value.
+
 What pi-foreman does when the add-on is present (detected by its `bg_run` tool or its package directory; `/foreman doctor` prints
 `INFO background-tasks: present` or `absent`; with the package installed it adds an info line comparing the add-on's declared
 peer range for `@earendil-works/pi-coding-agent` with the running Pi version, never a failure):

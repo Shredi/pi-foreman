@@ -12,6 +12,7 @@
   parent    the opener's intercom id (the child's close check reads it: re-pointing the parent
             is a one-file change)
   child     the child's intercom id `fm-<slug>-<6 hex>`
+  launch.txt the exact launch line (the Herdr pane command, else this platform's fallback line)
 and records the session in `<agent dir>/pi-foreman/state/sessions.json` (atomic write).
 
 `brief` resolves its target (a handoff dir with a `child` file, or a registry label / child id; the newest
@@ -28,7 +29,8 @@ printed (POSIX `env A=B pi ...` or PowerShell `$env:A='B'; pi ...`, both with --
 the session is recorded as `pending`. After a Herdr open the child pane gets the display-only group tag
 `report-metadata <pane> --source user:pi-foreman --display-agent "<parent-slug> › <child-slug>"`
 (best effort, skipped when `herdr.groupTag` is false in L1 -> L3 -> L2); the child gets
-PI_FOREMAN_PARENT_LABEL=<parent-slug> so its Pi refreshes the tag. --dry-run writes nothing and prints the handoff dir,
+PI_FOREMAN_PARENT_LABEL=<parent-slug> so its Pi refreshes the tag. Every PI_BG_* variable of the opener (PI_BG_FEATURES first;
+names and values checked, a failing one is skipped with a note) is passed to the child as well. --dry-run writes nothing and prints the handoff dir,
 child id and command; no Herdr call, no registry entry.
 
 Agent dir: --agent-dir, else PI_CODING_AGENT_DIR, else ~/.pi/agent. Parent id: --parent-id, else
@@ -66,6 +68,11 @@ ENV_STABLE = "PI_INTERCOM_STABLE_ID"
 ENV_PARENT_LABEL = "PI_FOREMAN_PARENT_LABEL"
 ENV_MODEL = "PI_FOREMAN_SESSION_MODEL"
 ENV_PUBLISHED = "PI_INTERCOM_SESSION_ID"
+ENV_BG_PREFIX = "PI_BG_"
+ENV_BG_FEATURES = "PI_BG_FEATURES"
+BG_NAME_RE = re.compile(r"^PI_BG_[A-Z0-9_]{1,60}$")
+BG_VALUE_RE = re.compile(r"^[A-Za-z0-9._:/@,=+ -]{0,200}$")
+LAUNCH_FILE = "launch.txt"
 META_SOURCE = "user:pi-foreman"
 META_TTL_MS = 180000
 
@@ -246,10 +253,30 @@ def need_id(value, what):
     return value
 
 
-def child_env(handoff, parent, child, parent_slug, model=None):
+def addon_env(environ=None):
+    """The opener's PI_BG_* variables (pi-background-tasks' features, PI_BG_FEATURES first) as sorted pairs.
+
+    Names and values are checked against conservative patterns, so the pane command stays built from validated,
+    quoted values only; a variable that fails is skipped with a note on stderr."""
+    environ = os.environ if environ is None else environ
+    out = []
+    for k in sorted(k for k in environ if k.startswith(ENV_BG_PREFIX)):
+        v = environ[k]
+        if BG_NAME_RE.match(k) and BG_VALUE_RE.match(v):
+            out.append((k, v))
+        else:
+            name = k if BG_NAME_RE.match(k) else "a PI_BG_ variable"
+            sys.stderr.write("pi-foreman session: %s not forwarded (name or value outside the allowed characters)\n" % name)
+    return sorted(out, key=lambda kv: (kv[0] != ENV_BG_FEATURES, kv[0]))
+
+
+def child_env(handoff, parent, child, parent_slug, model=None, environ=None):
     env = [(ENV_HANDOFF, str(handoff)), (ENV_PARENT, parent), (ENV_STABLE, child), (ENV_PARENT_LABEL, parent_slug)]
     # the child's Pi keeps this model instead of applying the overlay/preset foreman role model
-    return env + [(ENV_MODEL, model)] if model else env
+    if model:
+        env.append((ENV_MODEL, model))
+    # the add-on reads its features at load: the child pane starts a fresh Pi, so pass the opener's along
+    return env + addon_env(environ)
 
 
 def rank_refusal(adir, own_model, child_model):
@@ -442,6 +469,9 @@ def cmd_open(a):
     (handoff / "brief.md").write_text(text.rstrip("\n") + "\n" + footer(a.label, a.plan_first), "utf-8")
     (handoff / "parent").write_text(parent + "\n", "utf-8")
     (handoff / "child").write_text(child + "\n", "utf-8")
+    # the exact launch line (Herdr's pane command, else this platform's fallback line): a relaunch is a copy
+    launch = command if binary or sys.platform != "win32" else powershell_command(env, a.model, prompt)
+    (handoff / LAUNCH_FILE).write_text(launch + "\n", "utf-8")
     entry = {"label": a.label, "child": child, "parent": parent, "handoff": str(handoff), "cwd": str(cwd),
              "model": a.model or None, "opened": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": "pending", "last": None}
     if managed_worktree(cwd, adir):  # Pi would ask "Trust project folder?" for a fresh worktree
