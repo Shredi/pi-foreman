@@ -152,6 +152,18 @@ test("launchwait: a held result loses every async-started guidance line, nothing
   assert.equal(dropAsyncGuidance([{ type: "text", text: "plain" }]).trimmed, 0);
 });
 
+test("launchwait: pi-subagents 0.77+ two-line and non-interactive guidance is dropped too (ledger 11)", () => {
+  const interactive = ["Async: builder [run-a]", "", "Detached. Return control now: native completion wakes you, so do not sleep, poll, or call bg_wait for it.", "One-shot check: subagent({ action: \"status\", id: \"...\" })."].join("\n");
+  const r = dropAsyncGuidance([{ type: "text", text: interactive }]);
+  assert.equal(r.trimmed, 2);
+  assert.equal((r.content[0] as { text: string }).text, "Async: builder [run-a]");
+  const headless = ["Async: builder [run-a]", "", "Detached non-interactive run: Pi auto-drains current-session subagent work at agent_end. Do not run sleep timers or polling loops. Use bg_wait only for results this turn needs from work without native notification, and subagent({ action: \"status\", id: \"...\" }) for a one-shot check."].join("\n");
+  const h = dropAsyncGuidance([{ type: "text", text: headless }]);
+  assert.equal(h.trimmed, 1);
+  assert.equal((h.content[0] as { text: string }).text, "Async: builder [run-a]");
+  assert.equal(dropAsyncGuidance([{ type: "text", text: "Detached the parser from the lexer." }]).trimmed, 0);
+});
+
 test("launchwait: a worktree run's status names the worktree in the result text", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-lw-status-"));
   try {

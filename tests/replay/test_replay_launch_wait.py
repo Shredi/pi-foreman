@@ -139,8 +139,14 @@ class TestLaunchWait(ReplayCase):
         [lw] = events(rig, sid, "launch_wait")
         self.assertEqual((lw["runId"], lw["outcome"]), (m.group(1), "abort"))
         self.assertLess(lw["ms"], 5000)
-        notice, _ = pi.wait_child_notify(timeout=120)
+        # pi-subagents 0.78.0: after a user abort the notice is appended to the session without
+        # starting a parent turn (the stopped parent stays stopped; it sees the notice with the next
+        # prompt), so there is no agent_settled to wait for (ledger 11).
+        late = collect(pi, lambda r: r.get("type") == "message_end" and (r.get("message") or {}).get("customType") == "subagent-notify", 120)
+        notice = late[-1]["message"].get("content")
+        notice = notice if isinstance(notice, str) else json.dumps(notice)
         self.assertIn("Background task completed: **builder**", notice)
+        self.assertEqual([r for r in late + pi.drain(2) if r.get("type") == "agent_start"], [], "the aborted parent stays stopped")
         pi.close()
 
     def test_two_launches_in_one_message_run_together(self):

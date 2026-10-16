@@ -312,7 +312,11 @@ export function deliveredRuns(m: unknown): string[] {
 
 // pi-subagents' async-started guidance (async-execution.js formatAsyncStartedMessage), interactive and
 // non-interactive text. All of it contradicts a held launch, which returns the child's result itself.
+// pi-subagents 0.77.0+ shortened it to the first three patterns (ledger 11); the rest is the 0.76 text.
 const ASYNC_GUIDANCE = [
+  /^Detached\. Return control now:/,
+  /^One-shot check: subagent\(\{ action: "status"/,
+  /^Detached non-interactive run: Pi auto-drains/,
   /^The async run is detached/,
   /^You are in an interactive session\./,
   /^Use bg_wait only for/,
