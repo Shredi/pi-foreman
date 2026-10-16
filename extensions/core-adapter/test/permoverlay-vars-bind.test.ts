@@ -283,6 +283,22 @@ for (const [line, name, who] of [
   });
 }
 
+// owner ruling: tilde / brace forms with HOME bound
+for (const line of [`read HOME <f; cat <~/x`, `for HOME in /x; do cat {~/x,y}; done`]) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line).has("HOME"), "boundNames sees HOME");
+    untrusted(foreman(line), line);
+  });
+}
+
+// owner ruling: PowerShell `$env:HOME` and `$HOME` bound vs unbound
+test("powershell: $env:HOME / $HOME bound vs unbound", { skip: !posix }, () => {
+  assert.equal(foreman("Get-Content $env:HOME/.pi/agent/pi-foreman/x", "powershell"), "pass");
+  assert.equal(foreman("Get-Content $HOME/.pi/agent/pi-foreman/x", "powershell"), "pass");
+  untrusted(foreman("$env:HOME = '/x'; Get-Content $env:HOME/.pi/agent/pi-foreman/x", "powershell"), "$env:HOME bound");
+  untrusted(foreman("$HOME = '/x'; Get-Content $HOME/.pi/agent/pi-foreman/x", "powershell"), "$HOME bound");
+});
+
 // U4: PowerShell eval / item cmdlets anywhere in the text; PSVariable.Set
 // U5: backtick escapes, provider-qualified `Environment::` paths
 for (const line of [
