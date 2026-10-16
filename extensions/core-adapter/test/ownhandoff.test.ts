@@ -3,9 +3,9 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkTestTmp } from "./_tmpbase.ts";
 import { effectCtx } from "../effects.ts";
 import { readBaseline } from "../permoverlay.ts";
 import { ForemanReview } from "../review.ts";
@@ -14,7 +14,7 @@ import { bashRules, deterministicAllow } from "../timeoutallow.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const rules = bashRules(readBaseline(pkgRoot)!, {});
-const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-ownho-")));
+const base = fs.realpathSync.native(mkTestTmp("pf-ownho-"));
 after(() => fs.rmSync(base, { recursive: true, force: true }));
 const wt = path.join(base, "repo.worktrees", "round");
 const handoff = path.join(base, "agent", "pi-foreman", "handoffs", "20260101-000000-demo");
