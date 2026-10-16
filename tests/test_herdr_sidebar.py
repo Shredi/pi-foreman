@@ -746,17 +746,23 @@ class PushTest(unittest.TestCase):
             with open(live, "w", encoding="utf-8") as fh:
                 json.dump(d, fh)
 
-        for _ in range(3):   # a steady state: one report, the rest are quiet (stamp still touched)
+        # Row 1 carries a wall-clock age ("1s"), so a push that straddles a second boundary (a loaded
+        # machine) legitimately re-reports with the same glyph. What must hold regardless of timing:
+        # no report repeats the previous tokens, and the glyph changes only with the state.
+        def glyphs():
+            seq = [r["tokens"]["fm_sym"] for r in self.herdr.reports()]
+            return [g for i, g in enumerate(seq) if i == 0 or g != seq[i - 1]]
+
+        for _ in range(3):
             self.assertEqual(self.push().returncode, 0)
-        reps = self.herdr.reports()
-        self.assertEqual(len(reps), 1)
-        self.assertEqual(reps[0]["tokens"]["fm_sym"], "⏳")
+        self.assertEqual(glyphs(), ["⏳"])
         set_state("done")
         self.push()
-        reps = self.herdr.reports()
-        self.assertEqual((len(reps), reps[-1]["tokens"]["fm_sym"]), (2, "✓"))
+        self.assertEqual(glyphs(), ["⏳", "✓"])
         self.push()
-        self.assertEqual(len(self.herdr.reports()), 2)
+        self.assertEqual(glyphs(), ["⏳", "✓"])
+        toks = [r["tokens"] for r in self.herdr.reports()]
+        self.assertTrue(all(a != b for a, b in zip(toks, toks[1:])), toks)
         with open(self.stamp, encoding="utf-8") as fh:
             self.assertEqual(fh.read(), "p1")
 
