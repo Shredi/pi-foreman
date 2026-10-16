@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import ntpath
 import os
+import posixpath
 import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -111,26 +113,29 @@ def resolve_npm_root(run=None, env=None, platform=None, which=None):
     platform = platform or sys.platform
     which = which or shutil.which
     win = platform.startswith("win")
+    # path flavour follows the target platform, not the host (a POSIX path is not absolute on a Windows host)
+    isabs = ntpath.isabs if win else posixpath.isabs
+    P = PureWindowsPath if win else PurePosixPath
     npm = which("npm")
     if npm:
         try:
             r = run([npm, "root", "-g"], capture_output=True, text=True, timeout=NPM_TIMEOUT_S)
             lines = [x.strip() for x in (r.stdout or "").splitlines() if x.strip()]
-            if r.returncode == 0 and lines and os.path.isabs(lines[-1]):
-                return Path(lines[-1]).as_posix()
+            if r.returncode == 0 and lines and isabs(lines[-1]):
+                return P(lines[-1]).as_posix()
         except (OSError, subprocess.SubprocessError):
             pass
     prefix = env.get("npm_config_prefix") or env.get("NPM_CONFIG_PREFIX")
     if win:
         if prefix:
-            return Path(prefix, "node_modules").as_posix()
+            return P(prefix, "node_modules").as_posix()
         appdata = env.get("APPDATA")
-        return Path(appdata, "npm", "node_modules").as_posix() if appdata else None
+        return P(appdata, "npm", "node_modules").as_posix() if appdata else None
     if not prefix:
         node = which("node")
         if node:
             prefix = str(Path(os.path.realpath(node)).parent.parent)
-    return Path(prefix, "lib", "node_modules").as_posix() if prefix else None
+    return P(prefix, "lib", "node_modules").as_posix() if prefix else None
 
 
 def default_owned():

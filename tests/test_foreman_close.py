@@ -108,7 +108,7 @@ class ReportTest(Base):
         self.assertEqual((code, rep["lines"][0]), (0, "CLOSE: ready"))
         self.assertTrue((self.state / "sessions" / SID / "close.json").is_file())
         ledger = self.tmp / "LEDGER.md"
-        ledger.write_text("- [x] 1. done\n- [~] deferred: later — 2. b\n```\n- [ ] 9. fenced\n```\n- [ ] 3. open one\n")
+        ledger.write_text("- [x] 1. done\n- [~] deferred: later — 2. b\n```\n- [ ] 9. fenced\n```\n- [ ] 3. open one\n", encoding="utf-8")
         (self.state / ("fable-orch-model-%s.json" % SID)).write_text(json.dumps({"ledger": str(ledger)}))
         code, rep = self.report()
         self.assertEqual((code, rep["openItems"]), (3, ["3. open one"]))

@@ -14,6 +14,8 @@ with open(os.path.join(os.path.dirname(__file__), "fixtures", "shellvars-cases.j
 
 
 class ShellVarsCasesTest(unittest.TestCase):
+    # fixture cwd/scratch are POSIX-absolute and the grammar is POSIX-only (os.path.normpath rewrites them on Windows)
+    @unittest.skipIf(os.name == "nt", "shell variable grammar is POSIX-absolute-path only")
     def test_grammar_membership_and_the_resolved_word_of_the_last_command(self):
         for c in FX["cases"]:
             with self.subTest(line=c["line"]):

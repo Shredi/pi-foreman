@@ -14,6 +14,10 @@ SCRIPT = ROOT / "scripts" / "shell_write_guard.py"
 sys.path.insert(0, str(ROOT / "scripts"))
 import shell_write_guard as swg  # noqa: E402
 
+# The variable grammar resolves only POSIX-absolute values (grammar_value: raw.startswith("/"), the twin of
+# certain() in shellvars.ts), so tests that interpolate a native tmp path (C:\...) cannot resolve on Windows.
+POSIX_VARS_ONLY = unittest.skipIf(os.name == "nt", "shell variable grammar is POSIX-absolute-path only")
+
 # (command, expected kind or None). `WS` is replaced by the workspace root.
 TABLE = [
     # bench shapes (the 2b foreman wrote project files this way)
@@ -300,6 +304,7 @@ class ShellWriteGuardTest(unittest.TestCase):
                 self.assertEqual(hit[0] if hit else None, kind, hit)
         self.assertIsNone(swg.decide("echo x > .workflow/n.md; echo y > /dev/null", self.ws, self.ws, "bash", [".workflow"], True))
 
+    @POSIX_VARS_ONLY
     def test_confine_allows_writes_inside_the_child_scratch_dir_only(self):
         # planner child with a scratch dir (childscratch.ts): inside it, also via $FOREMAN_SCRATCH, writes pass
         root = tempfile.mkdtemp(prefix="pf-swg-scratch-")
@@ -400,6 +405,7 @@ class ShellVarsTest(unittest.TestCase):
         hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], False, scratch, [self.hand])
         return hit[0] if hit else None
 
+    @POSIX_VARS_ONLY
     def test_assignment_statement_resolves_the_use(self):
         h = self.hand
         self.assertIsNone(self.kind('cp plan.md %s/plan.md' % h))
@@ -433,6 +439,7 @@ class ShellVarsTest(unittest.TestCase):
             with self.subTest(command=cmd):
                 self.assertEqual(self.kind(cmd), "cp", cmd)
 
+    @POSIX_VARS_ONLY
     def test_foreman_names_come_from_the_harness_only(self):
         root = tempfile.mkdtemp(prefix="pf-swg-vscratch-")
         self.addCleanup(shutil.rmtree, root, True)
@@ -479,6 +486,7 @@ class ShellVarsSecurityTest(unittest.TestCase):
         self.assertEqual(self.kind('H=%s; IFS=Z; cp plan.md "$H/plan.md"' % h), "cp")
         self.assertEqual(self.kind('H="%s/a %s/src/f"; cp plan.md $H' % (h, self.ws)), "cp")
 
+    @POSIX_VARS_ONLY
     def test_control_plain_assignment_still_resolves(self):
         self.assertIsNone(self.kind('H=%s; cp plan.md "$H/plan.md"' % self.hand))
 
@@ -553,6 +561,7 @@ class ShellVarsCaseNewlineTest(unittest.TestCase):
             with self.subTest(command=cmd):
                 self.assertEqual(self.kind(cmd), "cp", cmd)
 
+    @POSIX_VARS_ONLY
     def test_plain_newline_assignment_still_resolves(self):
         self.assertIsNone(self.kind("H=%s\ncp plan.md $H/plan.md" % self.hand))
 
@@ -608,6 +617,7 @@ class ShellVarsGrammarTest(unittest.TestCase):
                 self.assertIsNone(swg.grammar_statements("H=/ok; cp f $H x%sy" % tok))
                 self.assertIsNone(swg.grammar_statements("H=/ok; cp f $H %s" % tok))
 
+    @POSIX_VARS_ONLY
     def test_positive_rows_resolve(self):
         self.assertIsNone(self.kind("D=%s/x; mkdir -p $D" % self.scratch))
         self.assertIsNone(self.kind("mkdir -p $FOREMAN_SCRATCH/probe/x"))
