@@ -173,19 +173,25 @@ const scratchOf = (ctx: MatchCtx): string | undefined => ctx.scratch ?? ctx.owne
 
 /** The names `expandWord` trusts while the line binds them nowhere. */
 const TRUSTED_VARS = new Set(["HOME", "S", "FOREMAN_SCRATCH"]);
+/** The names a line with `eval` / `source` / `.` binds (boundNames): the trusted ones and `$env:USERPROFILE`'s. */
+const EVAL_BOUND = [...TRUSTED_VARS, "USERPROFILE"];
 
 /**
  * The variable names a shell line may bind anywhere (fail closed: over-matching is fine): `N=`, `N+=`, `N[..]=`
  * (also after export/env/declare/local/readonly/typeset/let), `${N=..}` / `${N:=..}`, and N as a bare word
- * (`read N`, `for N in`, `printf -v N`, `unset N`, `mapfile N`, `getopts o N`, `declare -n r=N`).
+ * (`read N`, `read N<f`, `read N<<<x`, `for N in`, `printf -v N`, `unset N`, `mapfile -t N<f`, `getopts o N`, `declare -n r=N`):
+ * any standalone name token after a non-identifier, non-`$`, non-`-` lead counts, whatever follows it (`$HOME_OLD` and
+ * `HOMEDIR=` never bind HOME). `eval`, `source` or `.` as a command word binds every trusted name (EVAL_BOUND).
  */
-function boundNames(command: string, shell: "posix" | "powershell" = "posix"): Set<string> {
+export function boundNames(command: string, shell: "posix" | "powershell" = "posix"): Set<string> {
   const out = new Set<string>();
   // PowerShell: `$N = ..`, `$env:N = ..`
   if (shell === "powershell") for (const m of command.matchAll(/\$(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\s*\+?=(?!=)/gi)) out.add(m[1]).add(m[1].toUpperCase());
   for (const m of command.matchAll(/(?:^|[^\w$-])([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/g)) out.add(m[1]);
   for (const m of command.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*):?=/g)) out.add(m[1]);
-  for (const m of command.matchAll(/(?:^|[\s;&|("'=])([A-Za-z_][A-Za-z0-9_]*)(?=$|[\s;&|)"'[])/g)) out.add(m[1]);
+  for (const m of command.matchAll(/(?:^|[\s;&|("'=`])([A-Za-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_])/g)) out.add(m[1]);
+  // `eval` / `source` / `.` run text this check never sees: every trusted name may be rebound
+  if (/(?:^|[\s;&|("'`])(?:eval|source)(?=$|[\s;&|)"'`])/.test(command) || /(?:^|[;&|(`{}!\n]|\b(?:then|do|else|command|builtin|exec|env|xargs|sudo|nohup|time)\s)\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*\.(?=$|\s)/.test(command)) EVAL_BOUND.forEach((n) => out.add(n));
   return out;
 }
 
