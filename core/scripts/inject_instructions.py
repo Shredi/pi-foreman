@@ -201,13 +201,13 @@ def _read_marker(cache):
 # Keys in the marker that belong to OTHER hooks and that this rewrite
 # must carry forward untouched. The cold-cache guard's activity stamps
 # live here: `last_stop` (written by the Stop hook), `last_prompt`
-# (written by the guard itself), and the `cold_ack`/`cold_ctx` pair of an
-# outstanding block. SessionStart re-fires on resume/clear/compact and
+# (written by the guard itself), the `cold_ack`/`cold_ctx` pair of an
+# outstanding block, and `wake_prompts` (pending /loop wakeups, Stop hook). SessionStart re-fires on resume/clear/compact and
 # rebuilds this file from a whitelist, so a key not named here is
 # silently dropped — which for the stamps meant that a `claude --resume`
 # of yesterday's 400k-token session lost its idle baseline and sailed
 # through the guard on exactly the message the guard exists for.
-CARRIED_KEYS = ("last_stop", "last_prompt", "cold_ack", "cold_ctx")
+CARRIED_KEYS = ("last_stop", "last_prompt", "cold_ack", "cold_ctx", "wake_prompts")
 
 
 def _carried(cache):
@@ -257,6 +257,35 @@ def ledger_reminder(fire, ledger):
     return (f"Live ledger for this session: {path} — re-read it before "
             "your next decision; reasoning from before this point may be "
             "gone.")
+
+
+def restore_stashed_binding(session_id):
+    """The ledger binding cleanup_session_cache.py stashed for THIS
+    session id at SessionEnd, if it still names a live ledger file;
+    the stash is consumed either way. None otherwise. Keyed by session
+    id, so it can never hand one session another's ledger."""
+    if not session_id:
+        return None
+    safe = "".join(c for c in str(session_id) if c.isalnum() or c in "-_")
+    stash = os.path.join(tempfile.gettempdir(), f"fable-orch-binding-{safe}.json")
+    if not os.path.isfile(stash):
+        return None
+    try:
+        with open(stash, encoding="utf-8") as f:
+            ledger = json.load(f).get("ledger")
+    except Exception:
+        ledger = None
+    try:
+        os.remove(stash)
+    except OSError:
+        pass
+    if not isinstance(ledger, str) or not ledger:
+        return None
+    low = os.path.basename(ledger).lower()
+    live = (low.startswith("ledger") and low.endswith(".md")
+            and low[6:7] in (".", "-", "_")
+            and not (low.endswith("-archive.md") or low.endswith("_archive.md")))
+    return ledger if live and os.path.isfile(ledger) else None
 
 
 # CHILD MODE (0.21.0). A Fable top chair hands a big multi-phase task to
@@ -415,6 +444,10 @@ def main():
     fire = data.get("source")  # startup | resume | clear | compact (advisory)
     cache = session_model_cache_path(session_id)
     prev_started, prev_model, prev_profile, prev_ledger = _read_marker(cache)
+    if not prev_ledger:
+        # SessionEnd deleted the marker and stashed the binding; this is
+        # the SAME session coming back (resume / app restart). 0.23.3.
+        prev_ledger = restore_stashed_binding(session_id)
 
     # The chair read guard budgets reads per TASK: `clear` starts a new
     # one and `compact` rewrote the context the reads were spent on, so
