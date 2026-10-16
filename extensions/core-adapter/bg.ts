@@ -94,6 +94,88 @@ export function addonPresent(toolNames: readonly string[], dirs: { agentDir: str
   return candidates.some((d) => fs.existsSync(path.join(d, "package.json")));
 }
 
+/** Installed add-on package directory (agent npm root first, then the project's), or null. */
+export function addonPackageDir(dirs: { agentDir: string; cwd: string }): string | null {
+  const candidates = [path.join(dirs.agentDir, "npm", "node_modules", ADDON_PACKAGE), path.join(dirs.cwd, ".pi", "npm", "node_modules", ADDON_PACKAGE)];
+  return candidates.find((d) => fs.existsSync(path.join(d, "package.json"))) ?? null;
+}
+
+export const PI_PACKAGE = "@earendil-works/pi-coding-agent";
+const PI_PACKAGE_OLD = "@mariozechner/pi-coding-agent";
+
+type Ver = [number, number, number];
+function parseVer(v: string): Ver | null {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(v.trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+const cmp = (a: Ver, b: Ver): number => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+
+/** One comparator against `v`; null when the comparator is not understood. */
+function matchComparator(v: Ver, c: string): boolean | null {
+  if (c === "*" || c === "x" || c === "X" || c === "") return true;
+  const m = /^(\^|~|>=|<=|>|<|=)?v?(\d+|[xX*])(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?(?:-[0-9A-Za-z.-]+)?$/.exec(c);
+  if (!m) return null;
+  const op = m[1] ?? "";
+  const parts = [m[2], m[3], m[4]].map((p) => (p === undefined || /^[xX*]$/.test(p) ? null : Number(p)));
+  const given = parts.findIndex((p) => p === null);
+  const n = given === -1 ? 3 : given; // how many leading numbers are fixed
+  const lo: Ver = [parts[0] ?? 0, n > 1 ? (parts[1] ?? 0) : 0, n > 2 ? (parts[2] ?? 0) : 0];
+  const bump = (i: number): Ver => (i === 0 ? [lo[0] + 1, 0, 0] : i === 1 ? [lo[0], lo[1] + 1, 0] : [lo[0], lo[1], lo[2] + 1]);
+  if (op === "" || op === "=") return n === 0 ? true : cmp(v, lo) >= 0 && cmp(v, bump(n - 1)) < 0;
+  if (op === ">=") return cmp(v, lo) >= 0;
+  if (op === ">") return n === 3 ? cmp(v, lo) > 0 : cmp(v, bump(n - 1)) >= 0;
+  if (op === "<") return cmp(v, lo) < 0;
+  if (op === "<=") return n === 3 ? cmp(v, lo) <= 0 : cmp(v, bump(n - 1)) < 0;
+  if (op === "~") return cmp(v, lo) >= 0 && cmp(v, bump(n >= 2 ? 1 : 0)) < 0;
+  // caret: the first non-zero fixed part may not change
+  const first = lo[0] !== 0 || n === 1 ? 0 : lo[1] !== 0 || n === 2 ? 1 : 2;
+  return cmp(v, lo) >= 0 && cmp(v, bump(Math.min(first, Math.max(0, n - 1)))) < 0;
+}
+
+/** Whether `version` satisfies an npm range (`||`, space-joined comparators, ^ ~ >= > <= < =, x-ranges); null when unparseable. */
+export function rangeAllows(range: string, version: string): boolean | null {
+  const v = parseVer(version);
+  if (!v) return null;
+  let any = false;
+  for (const set of range.split("||")) {
+    const comps = set.trim().replace(/(\^|~|>=|<=|>|<|=)\s+/g, "$1").split(/\s+/).filter(Boolean);
+    if (comps.includes("-")) return null; // hyphen ranges: not checked
+    let all = true;
+    for (const c of comps.length ? comps : ["*"]) {
+      const r = matchComparator(v, c);
+      if (r === null) return null;
+      all &&= r;
+    }
+    any ||= all;
+  }
+  return any;
+}
+
+/**
+ * Doctor info line: the add-on's declared peer range for Pi against the running Pi version. Never a FAIL;
+ * null when the add-on package is not installed.
+ */
+export function addonPeerRangeLine(dirs: { agentDir: string; cwd: string }, piVersion: string | null): string | null {
+  const dir = addonPackageDir(dirs);
+  if (!dir) return null;
+  let peers: Record<string, unknown> = {};
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")) as { peerDependencies?: unknown };
+    if (pkg.peerDependencies && typeof pkg.peerDependencies === "object") peers = pkg.peerDependencies as Record<string, unknown>;
+  } catch {
+    return `INFO ${ADDON_PACKAGE}: package.json unreadable, peer range for ${PI_PACKAGE} not checked`;
+  }
+  const range = [peers[PI_PACKAGE], peers[PI_PACKAGE_OLD]].find((r): r is string => typeof r === "string");
+  const head = `INFO ${ADDON_PACKAGE} peer range for ${PI_PACKAGE}:`;
+  if (!range) return `${head} none declared`;
+  const r = oneLine(range, 120);
+  if (!piVersion) return `${head} ${r}; running Pi version unknown`;
+  const fits = rangeAllows(range, piVersion);
+  if (fits === null) return `${head} ${r}; running Pi ${piVersion} (range not checked)`;
+  if (fits) return `${head} ${r}; running Pi ${piVersion} is inside it`;
+  return `${head} ${r}; running Pi ${piVersion} is outside it (npm may warn on install; check for a newer ${ADDON_PACKAGE})`;
+}
+
 export interface AddonTask {
   id: string;
   label: string;

@@ -106,7 +106,7 @@ import { claimCore, emitReady, installInert, missingBundled, setupInvocation } f
 let herdrEvents: EventBus | undefined;
 import { checkLaunch, completedAgents, hasSecurityFinding, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
-import { addonPresent, formatWaits, readAddonTasks } from "./bg.ts";
+import { addonPeerRangeLine, addonPresent, formatWaits, readAddonTasks } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
@@ -314,6 +314,8 @@ export interface AdapterDeps {
   pressureNow?: () => number;
   /** Tests: replaces the call of scripts/foreman_pressure.py (a fixture sampler); the args are its argv. */
   pressureRun?: (args: string[]) => Promise<{ ok: boolean; text: string }>;
+  /** Tests: the running Pi version the doctor compares the add-on's peer range against (default: Pi's VERSION export). */
+  piVersion?: () => Promise<string | null>;
 }
 
 export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): void {
@@ -3183,6 +3185,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       else ok(`idle cache keep-alive: Pi cacheWarming idle and promptCache declared for ${ctx.model?.provider}`);
     }
     out.push(`INFO background-tasks: ${addonPresent(pi.getAllTools().map((t) => t.name), { agentDir: s.agentDir, cwd: s.cwd }) ? "present" : "absent"}`);
+    const peerLine = addonPeerRangeLine({ agentDir: s.agentDir, cwd: s.cwd }, await (deps.piVersion ?? runningPiVersion)());
+    if (peerLine) out.push(peerLine);
     out.push(dormantDoctorLine(PKG_ROOT, s.config.config));
     return out;
   }
@@ -3205,6 +3209,16 @@ function askOutcome(isChild: boolean, reason: string | undefined): string {
 
 function driftAsk(ctx: ExtensionContext) {
   return { mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) };
+}
+
+/** The running Pi's version: Pi resolves its own package for extensions, so its VERSION export is the host's. Null when unavailable. */
+async function runningPiVersion(): Promise<string | null> {
+  try {
+    const v = ((await import("@earendil-works/pi-coding-agent")) as { VERSION?: unknown }).VERSION;
+    return typeof v === "string" && v ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 function safeTrusted(ctx: ExtensionContext): boolean {

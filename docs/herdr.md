@@ -197,7 +197,8 @@ treated as an Anthropic route by that check, but the override takes over the glo
 `foreman setup` prints this install line.
 
 What pi-foreman does when the add-on is present (detected by its `bg_run` tool or its package directory; `/foreman doctor` prints
-`INFO background-tasks: present` or `absent`):
+`INFO background-tasks: present` or `absent`; with the package installed it adds an info line comparing the add-on's declared
+peer range for `@earendil-works/pi-coding-agent` with the running Pi version, never a failure):
 
 - `foreman_bg` is not used: it refuses with a pointer to `bg_run`, so detached tasks have one owner;
 - `/foreman waits` also lists the add-on's running tasks (read from `.pi/tasks/*/*.json`, with the last 5 lines of each output);
