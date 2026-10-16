@@ -220,6 +220,18 @@ for (const line of [
   });
 }
 
+// E. tilde: `~` behind the bound check; `~-`, `~+`, `~user` never resolve against the cwd
+for (const line of [
+  `read HOME <f; echo y >~/f`,
+  `read HOME <f; cat <~/.pi/agent/pi-foreman/x`,
+  `for HOME in /x; do cat {~/.pi/agent/pi-foreman/x,y}; done`,
+  `OLDPWD=/x; echo y > ~-/f`,
+  `PWD=/x; echo y > ~+/f`,
+  `echo y > ~root/f`,
+]) {
+  test(line, { skip: !posix }, () => untrusted(foreman(line), line));
+}
+
 // F. PowerShell (shell "powershell")
 for (const line of [
   `[Environment]::SetEnvironmentVariable('HO'+'ME','/x'); Get-Content $env:HOME/.pi/agent/pi-foreman/x`,
