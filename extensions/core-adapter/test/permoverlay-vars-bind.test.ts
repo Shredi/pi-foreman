@@ -220,3 +220,30 @@ for (const line of [
   });
 }
 
+// F. PowerShell (shell "powershell")
+for (const line of [
+  `[Environment]::SetEnvironmentVariable('HO'+'ME','/x'); Get-Content $env:HOME/.pi/agent/pi-foreman/x`,
+  `Rename-Item env:X -NewName home; Get-Content $env:HOME/.pi/agent/pi-foreman/x`,
+  `Set-Variable -Name home -Value /x -Force; Get-Content $HOME/.pi/agent/pi-foreman/x`,
+  `Set-Item variable:HOME /x -Force; Get-Content $HOME/.pi/agent/pi-foreman/x`,
+  `iex (Get-Content ./f -Raw); Get-Content $env:HOME/.pi/agent/pi-foreman/x`,
+  `Invoke-Expression (Get-Content ./f -Raw); Get-Content $env:HOME/f`,
+  `& ./f.ps1; Get-Content $env:HOME/f`,
+  `./f.ps1; Get-Content $env:HOME/f`,
+  `Import-Module ./m.psm1; Get-Content $env:HOME/f`,
+  `$p='env'; Set-Item "\${p}:HOME" /x; Get-Content $env:HOME/f`,
+  `$global:HOME = '/x'; Get-Content $HOME/f`,
+  `(Get-PSProvider FileSystem).Home = '/x'; Get-Content ~/.pi/agent/pi-foreman/x`,
+]) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line, "powershell").has("HOME"), "boundNames sees HOME");
+    untrusted(foreman(line, "powershell"), line);
+  });
+}
+
+// the unbound PowerShell `$HOME` / `~` uses stay trusted
+test("powershell: unbound $HOME / ~ are trusted", { skip: !posix }, () => {
+  assert.equal(foreman("Get-Content $HOME/.pi/agent/pi-foreman/x", "powershell"), "pass");
+  assert.equal(foreman("Get-Content ~/.pi/agent/pi-foreman/x", "powershell"), "pass");
+  assert.equal(foreman("cat ~/.pi/agent/pi-foreman/x"), "pass");
+});

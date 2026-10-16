@@ -190,10 +190,33 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
   // si, ni, -Path ..), `[System.Environment]::SetEnvironmentVariable('N', ..)`; a non-literal env: name or variable name binds every trusted name
   if (shell === "powershell") {
     const add = (n: string): void => void out.add(n).add(n.toUpperCase());
-    for (const m of command.matchAll(/\$(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\s*\+?=(?!=)/gi)) add(m[1]);
-    for (const m of command.matchAll(/\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\}\s*\+?=(?!=)/gi)) add(m[1]);
-    for (const m of command.matchAll(/(?<![\w$:{])env:[\\/]?([A-Za-z_][A-Za-z0-9_]*)?/gi)) (m[1] ? [m[1]] : EVAL_BOUND).forEach(add);
-    for (const m of command.matchAll(/SetEnvironmentVariable\s*\(\s*(?:(['"])([A-Za-z_][A-Za-z0-9_]*)\1)?/gi)) (m[2] ? [m[2]] : EVAL_BOUND).forEach(add);
+    for (const m of command.matchAll(/\$(?:[A-Za-z]+:)?([A-Za-z_][A-Za-z0-9_]*)\s*[-+*/%]?\?{0,2}=(?!=)/gi)) add(m[1]);
+    for (const m of command.matchAll(/\$\{(?:[A-Za-z]+:)?([A-Za-z_][A-Za-z0-9_]*)\}\s*[-+*/%]?\?{0,2}=(?!=)/gi)) add(m[1]);
+    // `.Home = ..` (a provider's Home property), any property or name assigned
+    for (const m of command.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*[-+*/%]?\?{0,2}=(?!=)/g)) add(m[1]);
+    for (const m of command.matchAll(/(?<![\w$:{])(?:env|variable):[\\/]?([A-Za-z_][A-Za-z0-9_]*)?/gi)) (m[1] ? [m[1]] : EVAL_BOUND).forEach(add);
+    // a name argument that is not one quoted literal (`'HO'+'ME'`, `$n`) may be any name
+    for (const m of command.matchAll(/SetEnvironmentVariable\s*\(\s*(?:(['"])([A-Za-z_][A-Za-z0-9_]*)\1(?=\s*[,)]))?/gi)) (m[2] ? [m[2]] : EVAL_BOUND).forEach(add);
+    // every name token, in any case: `Set-Variable -Name home`, `Rename-Item env:X -NewName home`
+    for (const m of command.matchAll(/(?<![\w$:])(?<!\$\{)([A-Za-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_])/g)) add(m[1]);
+    // code this check never sees, or an item path built at run time: every trusted name may be rebound
+    if (/\[\s*scriptblock\s*\]\s*::\s*create|\.invoke(?:script)?\s*\(|\badd-type\b/i.test(command)) all();
+    for (const pipe of parseShell(command, "powershell").pipelines) {
+      for (const unit of pipe) {
+        const verb = (unit[0] ?? "").toLowerCase();
+        // `& $sb`, `$cmd args` (not `$x = ..`)
+        const call = /^\$[^=]*$/.test(verb) && !(unit[1] ?? "").startsWith("=");
+        if (PS_EVAL.has(verb) || /\.ps[md]?1$/i.test(verb) || call) all();
+        if (PS_ITEM.has(verb)) {
+          const args = unit.slice(1);
+          const pi = args.findIndex((a) => /^-(?:path|literalpath|name|pspath)$/i.test(a));
+          const target = pi >= 0 ? args[pi + 1] : args.find((a) => !a.startsWith("-"));
+          // a path built at run time may name an env: / variable: item; a file path below `$env:N` / `$HOME` / `~` stays a file path
+          const fsPath = target !== undefined && /^(?:\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*|\$\{(?:env:)?[A-Za-z_][A-Za-z0-9_]*\}|~)[\\/][^$()`+{}]*$/i.test(target);
+          if (target === undefined || (/[$()`+{}]/.test(target) && !fsPath)) all();
+        }
+      }
+    }
   }
   for (const m of command.matchAll(/(?:^|[^\w$-])([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/g)) out.add(m[1]);
   // the same over the line with quotes and backslashes removed (`HO""ME=`, `H\OME=`, `"HO"ME=`, `$'HO''ME'=`, `read \S`)
@@ -220,9 +243,15 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
   if (shell === "posix") boundWords(command.replace(/\$?\(\(([\s\S]*?)\)\)/g, "0"), out, all);
   // a shell started with BASH_ENV / ENV sources that file first
   if (out.has("BASH_ENV") || /(?<![\w$])ENV(?:\[[^\]]*\])?\+?=/.test(norm)) all();
+  // PowerShell names are case-insensitive
+  if (shell === "powershell") for (const n of [...out]) out.add(n.toUpperCase());
   return out;
 }
 
+/** PowerShell command words that run code this check never sees. */
+const PS_EVAL = new Set(["iex", "invoke-expression", ".", "&", "import-module", "ipmo", "invoke-command", "icm", "start-job", "sajb", "invoke-item", "ii", "powershell", "pwsh", "powershell.exe", "pwsh.exe"]);
+/** PowerShell item cmdlets whose path may be an env: / variable: drive item. */
+const PS_ITEM = new Set(["set-item", "si", "new-item", "ni", "rename-item", "rni", "copy-item", "cpi", "copy", "cp", "move-item", "mi", "move", "mv", "clear-item", "cli", "remove-item", "ri", "del", "rm", "erase", "set-variable", "sv", "set", "new-variable", "nv", "clear-variable", "clv", "remove-variable", "rv", "set-content", "sc", "add-content", "ac", "set-itemproperty", "sp", "new-itemproperty"]);
 /** Bash keywords before a command word. */
 const SH_KEYWORDS = new Set(["if", "then", "elif", "else", "while", "until", "do", "!", "{", "}", "time", "coproc", "fi", "done", "esac", "in"]);
 /** Bash builtins whose operands (or some of them) are variable names; with the options that take a non-name value. */
