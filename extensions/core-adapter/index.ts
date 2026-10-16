@@ -131,6 +131,7 @@ import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRound
 import { launchEntries } from "./ladder.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
 import { asyncRunDirs, childReadable, childSurface, mainWorkflowReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
+import { CustomSeen, isSubagentWake } from "./idlecustom.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -232,6 +233,8 @@ interface Session {
   waitingForParent: boolean;
   /** Foreman only: ids of the active waits that set waitingForParent (cleared with it). */
   handoffWaits: Set<string>;
+  /** Foreman only: custom messages handled so far, so an idle-appended one is handled once at the next input (idlecustom.ts, ledger 11). */
+  customSeen: CustomSeen;
   /** Uncounted finish refusals that ask for the builder's review_fail climb, since the last user prompt (at most 2). */
   climbRefusals: number;
   /** Foreman only: per-item FAIL counts of reviewer runs (ladder.reviewerClimb, reviewerclimb.ts). */
@@ -491,6 +494,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       finishRefusals: 0,
       waitingForParent: false,
       handoffWaits: new Set(),
+      customSeen: new CustomSeen(),
       climbRefusals: 0,
       reviewerFails: new ReviewerFails(),
       reviewCount: 0,
@@ -1788,19 +1792,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const m = event.message as { role?: string; customType?: string; provider?: string; model?: string; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: { total?: number } } };
     if (m.role === "custom") {
       const s = sessionFor(ctx);
-      const opened = s?.supervisor.onMessage(event.message);
-      if (opened) s?.trace?.emit({ event: "supervisor_request", role: opened.role, decision: "open" });
-      const cause = causeOfCustom(m.customType);
-      if (s && !s.isChild && cause) s.turn.cause = cause;
-      if (s && !s.isChild && cause) s.idleCache.onActivity();
-      if (s && !s.isChild && cause === "wake") s.turn.wakeKinds = [...new Set((event.message as { details?: { kinds?: unknown[] } }).details?.kinds ?? [])].map(String).join(",");
-      // An inbound intercom message or a foreman_wait wake is the parent answering: the finish gate is active again.
-      if (s && !s.isChild && (m.customType === INTERCOM_MESSAGE_TYPE || m.customType === WAKE_MESSAGE_TYPE)) (s.waitingForParent = false), s.handoffWaits.clear();
-      if (s && !s.isChild && m.customType === INTERCOM_MESSAGE_TYPE) s.turn.intercomFrom = intercomSender((event.message as { details?: unknown }).details);
-      if (s && !s.isChild && m.customType === NOTIFY_TYPE) onCompletionNotice(s, (event.message as { content?: unknown }).content);
+      if (s) onCustomMessage(s, event.message);
+      if (s && !s.isChild) s.customSeen.mark(event.message);
     }
     if (m.role !== "assistant") return undefined;
     const s = sessionFor(ctx);
+    if (s && !s.isChild) s.customSeen.settle();
     const content = (event.message as { content?: unknown }).content;
     // Knob 4: the message used the codemode tool (one script, possibly many nested calls).
     const codemode = Array.isArray(content) && content.some((c) => c && typeof c === "object" && (c as { type?: unknown }).type === "toolCall" && (c as { name?: unknown }).name === "codemode");
@@ -1836,11 +1833,35 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return undefined;
   });
 
+  /** A custom message the foreman received: at message_end, or appended while idle and found at the next input (idlecustom.ts). */
+  function onCustomMessage(s: Session, message: unknown): void {
+    const m = message as { customType?: string; details?: unknown; content?: unknown };
+    const opened = s.supervisor.onMessage(message);
+    if (opened) s.trace?.emit({ event: "supervisor_request", role: opened.role, decision: "open" });
+    if (s.isChild) return;
+    const cause = causeOfCustom(m.customType);
+    if (cause) s.turn.cause = cause;
+    if (cause) s.idleCache.onActivity();
+    if (cause === "wake") s.turn.wakeKinds = [...new Set((m.details as { kinds?: unknown[] } | undefined)?.kinds ?? [])].map(String).join(",");
+    // An inbound intercom message or a foreman_wait wake is the parent answering: the finish gate is active again.
+    if (m.customType === INTERCOM_MESSAGE_TYPE || m.customType === WAKE_MESSAGE_TYPE) (s.waitingForParent = false), s.handoffWaits.clear();
+    if (m.customType === INTERCOM_MESSAGE_TYPE) s.turn.intercomFrom = intercomSender(m.details);
+    if (m.customType === NOTIFY_TYPE) onCompletionNotice(s, m.content);
+  }
+
   // Turn cause (D9, measurement only): the last trigger before or during a foreman run.
   pi.on("input", async (event, ctx) => {
     const s = sessionFor(ctx);
     if (s && !s.isChild) s.idleCache.onActivity();
-    if (s && !s.isChild) s.turn.cause = causeOfInput(event.source, event.text);
+    // pi-subagents 0.76.1+: notices and supervisor requests appended while idle carry no message_end (ledger 11).
+    let idleCause: TurnCause | null = null;
+    if (s && !s.isChild) {
+      for (const msg of s.customSeen.unseenTrailing(ctx.sessionManager.getBranch?.() ?? [])) {
+        onCustomMessage(s, msg);
+        idleCause = causeOfCustom(msg.customType) ?? idleCause;
+      }
+    }
+    if (s && !s.isChild) s.turn.cause = isSubagentWake(event.source, event.text) ? idleCause ?? "child" : causeOfInput(event.source, event.text);
     if (s && !s.isChild && s.turn.cause === "intercom") s.turn.intercomFrom = lastIntercomSender(ctx.sessionManager.getBranch()) ?? s.turn.intercomFrom;
     // D3: the owner is back in the loop, so revision rounds count from zero again.
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.rounds = initialRounds();

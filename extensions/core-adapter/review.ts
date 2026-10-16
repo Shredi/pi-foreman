@@ -24,6 +24,7 @@ import { classify, effectCtx } from "./effects.ts";
 import * as path from "node:path";
 import { isolationDir, mainWorkflowReadable, roundWorktreeAdd } from "./roundsurface.ts";
 import type { EffectClass, EffectCtx } from "./effects.ts";
+import { isSubagentWakeText } from "./idlecustom.ts";
 
 export const REVIEW_LINK = "foreman-review";
 export const DEFAULT_REVIEW_TIMEOUT_MS = 15_000;
@@ -308,6 +309,8 @@ export function requestText(d: AskDetails, surface: string, s: ReviewSession, no
 export function userPromptOf(event: unknown): string | null {
   const e = (event && typeof event === "object" ? event : {}) as { messageType?: unknown; prompt?: unknown };
   if (e.messageType !== undefined && e.messageType !== "user") return null;
+  // pi-subagents 0.76.1+ wakes an idle parent with a user message of its own (idlecustom.ts): not the owner's request.
+  if (isSubagentWakeText(e.prompt)) return null;
   return typeof e.prompt === "string" ? e.prompt : "";
 }
 
