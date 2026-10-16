@@ -18,13 +18,16 @@ const git = (cwd: string, ...args: string[]): void => {
 const repo = path.join(tmp, "repo");
 const linked = path.join(tmp, "repo.worktrees", "linked");
 const real = path.join(tmp, "repo.worktrees", "real");
-fs.mkdirSync(path.join(repo, "node_modules"), { recursive: true });
-fs.writeFileSync(path.join(repo, "README"), "x\n");
-git(repo, "init", "-q");
-git(repo, "add", "README");
-git(repo, "commit", "-q", "-m", "init");
-git(repo, "worktree", "add", "-q", "-b", "linked", linked);
-git(repo, "worktree", "add", "-q", "-b", "real", real);
+// only the symlink test (skipped on win32) needs the repo; building it there crashed the whole file at load
+if (!skip) {
+  fs.mkdirSync(path.join(repo, "node_modules"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "README"), "x\n");
+  git(repo, "init", "-q");
+  git(repo, "add", "README");
+  git(repo, "commit", "-q", "-m", "init");
+  git(repo, "worktree", "add", "-q", "-b", "linked", linked);
+  git(repo, "worktree", "add", "-q", "-b", "real", real);
+}
 
 test("doctor: worktree list parsing", () => {
   assert.deepEqual(worktreePaths("worktree /a/b\nHEAD abc\nbranch refs/heads/main\n\nworktree /a/c\nHEAD def\ndetached\n"), ["/a/b", "/a/c"]);
