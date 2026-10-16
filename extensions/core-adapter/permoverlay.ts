@@ -232,13 +232,30 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
     else all();
   }
   // arithmetic (`(( ++S ))`, `$(( N=1 ))`, `$[..]`, `let ..`): every name inside may be assigned; an expansion in it may name any
-  for (const m of command.matchAll(/\(\(([\s\S]*?)\)\)|\$\[([^\]]*)\]|\blet\s+([^;&|\n]*)/g)) {
+  const arith = /\(\(([\s\S]*?)\)\)|\$\[([^\]]*)\]|\blet\s+([^;&|\n]*)/g;
+  const bodies: string[] = [];
+  for (const m of command.matchAll(arith)) {
     const body = m[1] ?? m[2] ?? m[3] ?? "";
+    bodies.push(body);
     for (const t of body.matchAll(/(?<![\w$])([A-Za-z_][A-Za-z0-9_]*)/g)) out.add(t[1]);
-    if (/[$`]/.test(body) && /(?:^|[^=!<>])=(?!=)|\+\+|--/.test(body)) all();
   }
+  // array subscripts (`${a[S++]}`, `a[i]=`) and `[[ x -eq y ]]` operands are arithmetic too
+  for (const m of command.matchAll(/[A-Za-z0-9_]\[([^\]]*)\]/g)) bodies.push(m[1]);
+  for (const m of command.matchAll(/\[\[([^\]]*)\]\]/g)) if (/\s-(?:eq|ne|lt|le|gt|ge)\s/.test(m[1])) bodies.push(m[1]);
+  // a name the line sets from a non-literal (`x=$'\x53=1'`, `read x`, `for x in`) may hold an assignment the arithmetic evaluates
+  const nonLit = new Set<string>();
+  for (const m of command.matchAll(/(?:^|[^\w$-])([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=([^\s;&|)]*)/g)) if (!/^[\w./:,@%+-]*$/.test(m[2])) nonLit.add(m[1]);
+  const outside = command.replace(arith, " ").replace(/\[\[[^\]]*\]\]|\[[^\]]*\]/g, " ").replace(/(?<![\w$-])[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=[\w./:,@%+-]*(?=$|[\s;&|)])/g, " ");
+  for (const body of bodies) {
+    if (/(?:^|[^=!<>])=(?!=)|\+\+|--/.test(body)) all();
+    for (const t of body.matchAll(/(?<![\w$])([A-Za-z_][A-Za-z0-9_]*)/g)) {
+      if (nonLit.has(t[1]) || new RegExp(`(?:^|[^\\w$-])${t[1]}(?![A-Za-z0-9_])`).test(outside)) all();
+    }
+  }
+  // `${x@P}` (prompt expansion runs substitutions), `${!x:=..}` / `${!x=..}` (assigns the name x holds)
+  if (/\$\{[^{}]*@P\}|\$\{![A-Za-z0-9_]+(?:\[[^\]]*\])?:?=/.test(command)) all();
   // `eval` / `source` / `.` run text this check never sees: every trusted name may be rebound
-  if (/(?:^|[\s;&|("'`])(?:eval|source)(?=$|[\s;&|)"'`])/.test(command) || /(?:^|[;&|(`{}!\n]|\b(?:then|do|else|command|builtin|exec|env|xargs|sudo|nohup|time)\s)\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*\.(?=$|\s)/.test(command)) all();
+  if (/(?:^|[\s;&|("'`])(?:eval|source)(?=$|[\s;&|)"'`])/.test(command) || /(?:^|[;&|(`{}!\n'"]|\b(?:then|do|else|command|builtin|exec|env|xargs|sudo|nohup|time)\s)\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*\.(?=$|\s)/.test(command)) all();
   // arithmetic was handled above: `x=$(( $a + 1 ))` holds no command word
   if (shell === "posix") boundWords(command.replace(/\$?\(\(([\s\S]*?)\)\)/g, "0"), out, all);
   // a shell started with BASH_ENV / ENV sources that file first
@@ -304,7 +321,20 @@ function boundWords(command: string, out: Set<string>, all: () => void): void {
         all();
         continue;
       }
+      // a nested shell's body (`bash -c '..'`) binds what it binds
+      const inner = innerScript(unit.slice(i));
+      if (inner) for (const n of boundNames(inner.script, inner.shell)) out.add(n);
       const args = unit.slice(i + 1).filter((_, k) => !redir.has(i + 1 + k));
+      // `trap 'cmd' SIG` runs text this check never sees; `trap - SIG` / `trap '' SIG` / `trap -p` do not
+      if (verb === "trap") {
+        const ops = args.filter((a) => !/^-[lp]$/.test(a) && a !== "--");
+        if (ops.length > 0 && ops[0] !== "-" && ops[0] !== "") all();
+        continue;
+      }
+      // `mapfile -C callback` / `readarray -C callback` evaluates the callback
+      if ((verb === "mapfile" || verb === "readarray") && args.some((a) => /^-[A-Za-z]*C/.test(a))) all();
+      // `declare -n r=VALUE`: VALUE is the name r refers to; an expansion there may name any
+      const nameref = (verb === "declare" || verb === "typeset" || verb === "local") && args.some((a) => /^-[A-Za-z]*n[A-Za-z]*$/.test(a));
       if (verb === "printf") {
         for (let k = 0; k < args.length && args[k].startsWith("-"); k++) {
           if (args[k] === "--") break;
@@ -327,6 +357,11 @@ function boundWords(command: string, out: Set<string>, all: () => void): void {
         // getopts: only the second operand is a name
         if (verb === "getopts" && ops++ !== 1) continue;
         nameAt(a);
+        if (nameref && a.includes("=")) {
+          const value = a.slice(a.indexOf("=") + 1);
+          if (/[$`{}()\\]/.test(value)) all();
+          else nameAt(value);
+        }
       }
     }
   }

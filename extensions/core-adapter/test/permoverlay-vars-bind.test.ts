@@ -253,6 +253,36 @@ for (const line of [
   });
 }
 
+// ================================================================== full-grammar re-review findings (ledger items 1, 2, 4)
+// Each literal line may bind the trusted name it then uses (through an expansion, nested shell, callback or arithmetic).
+const runAs = (who: "child" | "foreman", line: string): string => (who === "child" ? child(line) : foreman(line));
+
+// U1: nameref value built by expansion or a decoded escape
+// U2: nested shell bodies; a quoted `.`
+// U3: trap and mapfile/readarray -C callbacks are eval-like
+// U6: arithmetic over a variable set from a non-literal, `++`/`--`/`=` in a subscript, `${x@P}`, `${!x:=}`
+for (const [line, name, who] of [
+  ["x=; declare -n r=${x}S; r=/x; echo y > $S/f", "S", "child"],
+  ["x=HO; local -n r=${x}ME; r=/x; cat $HOME/f", "HOME", "foreman"],
+  ["declare -n r=$'\\x53'; read r <f; echo y > $S/f", "S", "child"],
+  ["bash -c 'printf -v \"$1\" %s /x; echo y > $S/f' _ $'\\x53'", "S", "child"],
+  ["bash -c '. ./f; echo y > $S/f'", "S", "child"],
+  ["x=$'\\x53'; trap 'printf -v \"$x\" %s /x' DEBUG; echo y > $S/f", "S", "child"],
+  ["trap '. ./f' DEBUG; cat $HOME/f", "HOME", "foreman"],
+  ["mapfile -C 'printf -v S %s' -c 1 a <f; echo y > $S/f", "S", "child"],
+  ["readarray -C 'printf -v S %s' -c 1 a <f; echo y > $S/f", "S", "child"],
+  ["x=$'\\x53=1'; (( x )); echo y > $S/f", "S", "child"],
+  ["echo ${a[S++]}; echo y > $S/f", "S", "child"],
+  ["x=S; : ${!x:=/x}; echo y > $S/f", "S", "child"],
+  ["x=S; : ${!x=/x}; echo y > $S/f", "S", "child"],
+  ["echo ${x@P}; echo y > $S/f", "S", "child"],
+] as const) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line).has(name), `boundNames sees ${name}`);
+    untrusted(runAs(who, line), line);
+  });
+}
+
 // the unbound PowerShell `$HOME` / `~` uses stay trusted
 test("powershell: unbound $HOME / ~ are trusted", { skip: !posix }, () => {
   assert.equal(foreman("Get-Content $HOME/.pi/agent/pi-foreman/x", "powershell"), "pass");
