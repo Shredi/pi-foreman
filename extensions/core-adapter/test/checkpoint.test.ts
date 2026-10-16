@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { rmTestTmp } from "./_tmpbase.ts";
 import { builderLaunchRefusal, changedPlans, currentPlanHash, isPlanPath, launchRefusalText, planSnapshot, planSummary, readPlan, sha256 } from "../checkpoint.ts";
 import type { PlanRecord } from "../checkpoint.ts";
 
@@ -10,7 +11,7 @@ const PLAN = "# Add the widget\n\n## Goal\nShip the widget.\nKeep it small.\n\n#
 
 function workspace(t: { after: (fn: () => void) => void }) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-ckpt-")));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => rmTestTmp(root));
   const ws = path.join(root, "ws");
   for (const d of [".git", ".workflow/scratch", "src"]) fs.mkdirSync(path.join(ws, d), { recursive: true });
   fs.writeFileSync(path.join(ws, ".workflow/scratch/plan-widget.md"), PLAN);

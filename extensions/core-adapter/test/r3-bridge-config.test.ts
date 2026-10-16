@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { rmTestTmp } from "./_tmpbase.ts";
 import { fileURLToPath } from "node:url";
 import coreAdapter from "../index.ts";
 import { ClaudeConfigWatch, takeClaudeSnapshot } from "../claudedrift.ts";
@@ -22,7 +23,7 @@ const noTrace = () => undefined;
 
 function tmp(t: { after(fn: () => void): void }, prefix: string): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmTestTmp(dir));
   return dir;
 }
 

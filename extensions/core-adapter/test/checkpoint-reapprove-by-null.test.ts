@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { rmTestTmp } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
@@ -14,7 +15,7 @@ test("foreman_checkpoint on an unchanged approved plan: no dialog, decision appr
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-reapprove-")));
   t.after(() => {
-    fs.rmSync(root, { recursive: true, force: true });
+    rmTestTmp(root);
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   });

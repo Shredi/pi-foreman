@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { rmTestTmp } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
 import { CompactionGate } from "../compaction.ts";
 import { IdleCache, type Busy } from "../idlecache.ts";
@@ -450,7 +451,7 @@ test("cache_warming_decision: R0 drift stop first, children and policy-less sess
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
   });
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-idle-")));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => rmTestTmp(root));
   const project = path.join(root, "project");
   fs.mkdirSync(project);
   process.env.PI_CODING_AGENT_DIR = path.join(root, "agent");

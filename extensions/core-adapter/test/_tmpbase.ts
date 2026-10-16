@@ -20,3 +20,16 @@ export function mkTestTmp(prefix: string): string {
   fs.mkdirSync(root, { recursive: true });
   return fs.mkdtempSync(path.join(root, prefix));
 }
+
+/**
+ * Remove a fixture dir. Windows refuses to delete a directory that is the process cwd or is still held by a
+ * just-exited child (EBUSY), so step out of it first and retry a few times.
+ */
+export function rmTestTmp(dir: string): void {
+  try {
+    const cwd = path.resolve(process.cwd());
+    const target = path.resolve(dir);
+    if (cwd === target || cwd.startsWith(target + path.sep)) process.chdir(os.tmpdir());
+  } catch { /* cwd may already be gone */ }
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}

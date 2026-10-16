@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { rmTestTmp } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
 import { addonPresent, bgLogPath, formatWaits, lastLines, readAddonTasks, shellFor, spawnDetached } from "../bg.ts";
 import { checkLogPath, parseStart, registerWait } from "../wait.ts";
@@ -15,7 +16,7 @@ import { LiveState, liveDir } from "../livestate.ts";
 const PKG = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "..");
 const tmp = (t: { after(fn: () => void): void }, prefix: string): string => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmTestTmp(dir));
   return dir;
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
