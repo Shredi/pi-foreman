@@ -165,6 +165,8 @@ export interface MatchCtx {
    * session's own handoff dirs, the session's round worktrees). A write there stays closed; a `*` path rule does not fire on them either.
    */
   readable?: string[];
+  /** Patterns of the session's own bg_run task dirs (roundsurface.ts ownTaskReadable): a strictly read-only shell command may name them although a protect rule (`{cwd}/.pi/*`) covers `.pi`; a write there stays protected. */
+  ownTasks?: string[];
   /** Variable names the checked line binds somewhere (boundNames): `expandWord` trusts no `$S` / `$HOME` among them. */
   bound?: ReadonlySet<string>;
 }
@@ -2595,6 +2597,10 @@ function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: bo
   const child = ctx.role === "child";
   let ask: ProtectHit | null = null;
   const cands = pathCandidates(word, ctx);
+  if (readOnly && shell && ctx.ownTasks?.length) {
+    const abs = cands.filter((x) => path.isAbsolute(x) || path.win32.isAbsolute(x));
+    if (abs.length && abs.every((x) => ctx.ownTasks!.some((p) => pathMatches(p, x, ctx)))) return null;
+  }
   const guessed = ctx.platform === "win32" ? shortNameVariants(cands, rules.map((r) => r.pattern)) : [];
   // the foreman's own roots (owned.ts): its writeAsk rules (the package root) do not ask below them, except the handoff files `parent`/`child`
   const owned = !child && ctx.owned?.readWrite.length ? ctx.owned.readWrite : [];

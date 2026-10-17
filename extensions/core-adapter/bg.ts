@@ -223,6 +223,8 @@ export interface AddonTask {
   pid?: number;
   ageSeconds: number;
   tail: string[];
+  /** The output file relative to the worktree (cwd), when it lies inside .pi/tasks. */
+  log?: string;
 }
 
 /** Running add-on tasks (status running) of the records under `<cwd>/.pi/tasks/<session>-<pid>/`, newest first; unreadable records are skipped. */
@@ -251,7 +253,7 @@ export function readAddonTasks(cwd: string, now: number = Date.now()): AddonTask
         // The log path comes from the record: read it only when it stays inside .pi/tasks.
         const outFile = typeof rec.outputPath === "string" ? path.resolve(cwd, rec.outputPath) : null;
         const inside = outFile !== null && path.relative(root, outFile) !== "" && !path.relative(root, outFile).startsWith("..") && !path.isAbsolute(path.relative(root, outFile));
-        out.push({ id: oneLine(rec.id, 40), label, ...(typeof rec.pid === "number" ? { pid: rec.pid } : {}), ageSeconds: Math.max(0, Math.round((now - start) / 1000)), tail: inside ? lastLines(outFile) : [], start });
+        out.push({ id: oneLine(rec.id, 40), label, ...(typeof rec.pid === "number" ? { pid: rec.pid } : {}), ageSeconds: Math.max(0, Math.round((now - start) / 1000)), tail: inside ? lastLines(outFile) : [], ...(inside ? { log: path.relative(cwd, outFile!).split(path.sep).join("/") } : {}), start });
       } catch {
         // a record being rewritten or foreign: skip
       }
@@ -279,6 +281,7 @@ export function formatWaits(waits: readonly WaitRow[], addon: readonly AddonTask
   for (const t of addon) {
     lines.push(`${ADDON_RUN_TOOL} ${t.id}${t.label ? ` "${t.label}"` : ""}: running ${t.ageSeconds}s${t.pid ? `, pid ${t.pid}` : ""}`);
     for (const l of t.tail) lines.push(`  | ${l}`);
+    if (t.log) lines.push(`  log ${t.log}`);
   }
   return lines.length ? lines.join("\n") : "No active waits.";
 }

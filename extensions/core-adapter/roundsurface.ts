@@ -92,6 +92,17 @@ export function childReadable(ledger: string | null, handoffDirs: string[], work
 }
 
 /**
+ * Read patterns for the session's own `bg_run` task dirs: `<root>/.pi/tasks/<session id>-*` (the add-on writes `<session>-<pid>/`) and everything below, for each
+ * workspace/cwd root. The id is cut to `[A-Za-z0-9_-]`, so another session's dir (`<other id>-<pid>`) never matches; no id, no patterns.
+ */
+export function ownTaskReadable(roots: string[], sessionId: string, platform: string = process.platform): string[] {
+  const x = px(platform);
+  const sid = (sessionId || "").split("").filter((c) => /[A-Za-z0-9_-]/.test(c)).join("");
+  if (!sid) return [];
+  return [...new Set(roots.filter((r) => x.isAbsolute(r)).map((r) => x.resolve(r)))].map((r) => `${x.join(r, ".pi", "tasks")}/${sid}-*`);
+}
+
+/**
  * The main checkout's `.workflow` dir of each round worktree `<repo>.worktrees/<round>`, with its subtree: the round's own ledger and its notes
  * live there, so it is a READ root for every child role of the round (R1). Nothing else of the main checkout, and no write.
  */

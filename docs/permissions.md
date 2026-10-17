@@ -25,6 +25,11 @@ The harness's own tools carry a tool-level `allow` in the baseline `tools` block
 "not on the chair allow list, escalated") for `subagents_enable`, `bg_status`, `bg_logs`, `bg_kill`, `bg_wait` and the `foreman_*` tools.
 `bg_run` and `foreman_bg` stay gated as bash above. Children keep their role's `tools` list, which holds none of them.
 
+The add-on's own task output (`<repo>/.pi/tasks/<own session id>-<pid>/**`) is readable through the read tool and a strictly read-only
+shell command (`cat`, `tail`, `grep`, ...) for the foreman and its children, although the write protection covers `.pi`; another
+session's `<id>-<pid>` dir, a symlink or `..` leading out, and every write there stay protected. `/foreman waits` prints each task's
+output file relative to the worktree (a `  log .pi/tasks/<id>-<pid>/<task>.output` line after the tail).
+
 ## Effect classes
 
 `extensions/core-adapter/effects.ts` sorts a command by what it does:
