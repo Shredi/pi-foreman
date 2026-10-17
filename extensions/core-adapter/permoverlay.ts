@@ -1596,6 +1596,10 @@ function innerScript(core: string[]): { script: string; shell: "posix" | "powers
 interface Collected {
   /** Harness-set variables a same-line `$NAME` may resolve to (shellvars.ts); unset below the top level. */
   vars?: Record<string, string>;
+  /** The host platform for the same-line variables (win32 forms in shellvars.ts); default process.platform. */
+  platform?: string;
+  /** The words as written that the grammar resolved (their values are in the target sets): the win32 raw pass adds no second, unresolved copy. */
+  resolvedWords?: Set<string>;
   /** Names the whole line binds (boundNames); with `boundRefs`, the words referencing a bound TRUSTED_VARS name the grammar left unresolved. */
   bound?: ReadonlySet<string>;
   boundRefs?: string[];
@@ -1872,7 +1876,7 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
   const src = shell === "powershell" ? psDashes(src0) : src0;
   const parsed = parseShell(src, shell);
   // same-line variables (shellvars.ts): the expanded words and texts are checked next to the line as written
-  const resolved = depth === 0 && shell === "posix" && out.vars ? resolveVars(parsed.pipelines, parsed.seps, out.vars, (u) => REDIRECTS.has(u), src) : new Map<string[], string[]>();
+  const resolved = depth === 0 && shell === "posix" && out.vars ? resolveVars(parsed.pipelines, parsed.seps, out.vars, (u) => REDIRECTS.has(u), src, out.platform) : new Map<string[], string[]>();
   for (const pipe of parsed.pipelines) if (pipe.some((u) => resolved.has(u))) out.pipeTexts.push(pipe.map((u) => (resolved.get(u) ?? u).join(" ")).join(" | "));
   for (const inner of parsed.subs) if (depth < MAX_DEPTH) collect(inner, shell, depth + 1, out);
   const visit = (allWords: string[]): void => {
@@ -1901,6 +1905,7 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
     if (rw) {
       const rest = lead ? rw.slice(lead) : rw;
       const extra = rest.filter((w, i) => w !== unitWords[i] && !patt.has(i));
+      rest.forEach((w, i) => { if (w !== unitWords[i]) out.resolvedWords?.add(unitWords[i]); });
       out.words.push(...extra);
       out.protWords?.push(...extra);
       out.unitTexts.push(rest.join(" "));
@@ -2412,7 +2417,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (sw) return sw;
   }
   const scratch0 = scratchOf(ctx);
-  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, bound, boundRefs: [], unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], proseSkip: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], readCode: new Set(), ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
+  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, platform: ctx.platform, resolvedWords: new Set(), bound, boundRefs: [], unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], proseSkip: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], readCode: new Set(), ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
   collect(command, shell, 0, c);
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
@@ -2425,7 +2430,8 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     c.pure = c.pure && raw.pure;
     c.ro = c.ro && raw.ro;
     c.rdr = c.rdr && raw.rdr;
-    raw.writeTargets!.forEach((x) => c.writeTargets!.add(x));
+    // a target the posix pass resolved (`> $S/tc.txt` after `S=$FOREMAN_SCRATCH`) is there with its value already
+    raw.writeTargets!.forEach((x) => { if (!c.resolvedWords!.has(x)) c.writeTargets!.add(x); });
   }
   // `$S` bound on the line and not resolved by the grammar: expandWord no longer trusts it, so it fails closed
   if (scratch0 && c.boundRefs!.length) {
