@@ -78,6 +78,7 @@ import { denyFields, openTrace, toolErrorRecord, traceFile } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
 import { loadPrices } from "./cost.ts";
 import { budgetCap, budgetCheck, failedItemsOf, prependReReview, reviewCapCheck, reviewRunsCap } from "./costguard.ts";
+import { costReport } from "./costreport.ts";
 import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
@@ -3105,9 +3106,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       if (sub === "cost") {
         const s = await ensureSession(ctx);
-        const ws = rest.join(" ").trim();
-        const wsPath = ws ? workspaceOf(path.resolve(ctx.cwd, ws)).root : "";
+        const json = rest.includes("--json");
+        const all = rest.includes("--all");
+        const ws = rest.filter((w) => w !== "--json" && w !== "--all").join(" ").trim();
+        const wsPath = ws ? workspaceOf(path.resolve(ctx.cwd, ws)).root : all ? workspaceOf(s.cwd).root : "";
         syncKeepalives(s, ctx);
+        if (json) {
+          const scoped = ws || all;
+          const jl = scoped ? readUsage(s.agentDir, { workspace: wsPath }) : readUsage(s.agentDir, { session: s.usage.line.foremanSession });
+          ctx.ui.notify(JSON.stringify(costReport(jl, loadPrices(PKG_ROOT), scoped ? `all sessions in ${wsPath}` : `session ${s.usage.line.foremanSession}`), null, 2), "info");
+          return;
+        }
         const lines = ws ? readUsage(s.agentDir, { workspace: wsPath }) : readUsage(s.agentDir, { session: s.usage.line.foremanSession });
         const title = ws ? `pi-foreman cost: all sessions in ${wsPath}` : `pi-foreman cost: session ${s.usage.line.foremanSession}`;
         ctx.ui.notify(formatSummary(aggregate(lines, loadPrices(PKG_ROOT)), title), "info");
