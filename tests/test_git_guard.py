@@ -120,7 +120,7 @@ TABLE = [
     # commit lint (main)
     ("git commit -m \"feat(x): y\"", "bash", A, A),
     ("git commit -m 'merge: phase 2'", "bash", A, A),
-    ("git commit -m 'did stuff'", "bash", D, D),
+    ("git commit -m 'did stuff'", "bash", A, D),
     ("git commit -am 'feat: y'", "bash", A, D),
     ("git commit --all -m 'feat: y'", "bash", A, D),
     ("git commit -m 'feat: y' a.txt", "bash", A, D),
