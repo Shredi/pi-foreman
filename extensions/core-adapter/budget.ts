@@ -10,7 +10,7 @@
 // `recheckBudget` read-class calls, then is told to finish (the read budget does not apply).
 // Finalization (R11 item 5): after a reviewer PASS or a completed finalizer, until the next started launch, the
 // read budget never refuses and a plain git commit/add/status/log is exempt from both budgets while no child run
-// is active (index.ts readBudgetCheck). A parent ruling line `read-budget: +N` raises the current window's deny by N.
+// is active (index.ts readBudgetCheck).
 
 import { PACK_READ_TOOL_NAMES } from "./gitpack.ts";
 
@@ -72,7 +72,6 @@ export class ReadBudget {
   private denied = false;
   private liftUsed: Record<Phase, boolean> = { before: false, after: false };
   private post: { ids: Set<string> } | null = null;
-  private extra = 0;
   private final = false;
 
   /** Finalization: a reviewer PASS or a completed finalizer since the last started launch (index.ts adds: no child run active). */
@@ -83,13 +82,6 @@ export class ReadBudget {
   /** A finalizer run completed: finalization starts (ends with the next started launch, a FAIL, an edit or a user prompt). */
   onFinalizer(): void {
     this.final = true;
-  }
-
-  /** A parent ruling `read-budget: +N`: the current window allows `n` more read calls and a standing deny is lifted. */
-  liftBy(n: number): { phase: Phase; count: number } {
-    this.extra += n;
-    this.denied = false;
-    return { phase: this.phase, count: this.ids.size };
   }
 
   get count(): number {
@@ -120,7 +112,7 @@ export class ReadBudget {
       return nested && this.denied ? this.deny(limits, this.ids.size) : { kind: "allow" };
     }
     const n = this.ids.size + 1;
-    const lim = { warn: limits[this.phase].warn + this.extra, deny: limits[this.phase].deny + this.extra };
+    const lim = limits[this.phase];
     if (this.denied || n > lim.deny) return this.deny(limits, n - 1);
     this.ids.add(top);
     if (n >= lim.warn) {
@@ -132,7 +124,7 @@ export class ReadBudget {
 
   private deny(limits: ReadLimits, count: number): BudgetDecision {
     this.denied = true;
-    const lim = { deny: limits[this.phase].deny + this.extra };
+    const lim = limits[this.phase];
     const since = this.phase === "before" ? "before the first launch" : "since the last launch";
     const how = this.liftUsed[this.phase] ? "The explorer already lifted this once in this phase; ask the owner to run /foreman budget lift." : "Launch the explorer: a started explorer run lifts the limit (or ask the owner to run /foreman budget lift).";
     return { kind: "deny", event: "read_budget", phase: this.phase, count, reason: `pi-foreman: [read_budget_exceeded] ${count} read calls ${since} (limit ${lim.deny}). ${how}` };
@@ -152,7 +144,6 @@ export class ReadBudget {
     }
     this.ids = new Set();
     this.denied = false;
-    this.extra = 0;
     return effect;
   }
 
@@ -170,7 +161,6 @@ export class ReadBudget {
     this.phase = "before";
     this.ids = new Set();
     this.denied = false;
-    this.extra = 0;
     this.final = false;
     this.liftUsed = { before: false, after: false };
     return n;
@@ -192,39 +182,23 @@ export class ReadBudget {
   }
 }
 
-const FINAL_GIT = /^git\s+(?:-C\s+\S+\s+)?(?:commit|add|status|log)(?:\s|$)/;
+// A word: allowed bare characters, single-quoted text without `'`, double-quoted text without `$`, backtick or `\`.
+const FINAL_ARG = `(?:[A-Za-z0-9_./:=@%+,-]|'[^']*'|"[^"$\`\\\\]*")+`;
+const FINAL_SEG = ` *git(?: +-C +${FINAL_ARG})? +(?:commit|add|status|log)(?: +${FINAL_ARG})* *`;
+const FINAL_RE = new RegExp(`^${FINAL_SEG}(?:(?:&&|\\|\\||;|\\||\\n)${FINAL_SEG})*$`);
 
 /**
  * A finalization command (R11 item 5): a bash command whose every segment is a plain `git commit|add|status|log`.
- * Quoted text (a commit message) is not split; a command or process substitution outside single quotes never qualifies.
- * Fail closed (R11 S2): an unquoted `&` that is not `&&` (a background job, `|&`, `>&`, `&>`), any unquoted `<` / `>`
- * (a redirection, process substitution), an unterminated quote or a substitution inside double quotes never qualifies.
+ * One allowlist regex, fail closed: outside quotes only `[A-Za-z0-9_./:=@%+,-]`, spaces and the separators `&&`,
+ * `||`, `;`, `|` and newline; single quotes take anything but `'`, double quotes anything but `$`, backtick and `\`.
+ * Anything else outside quotes (`$'…'`, `#`, `\`, a lone `&`, `<`, `>`, `(`, `)`, backticks, …) or an unclosed quote
+ * never qualifies. Quoted text (a commit message) is not split.
  */
 export function finalizationCommand(toolName: string, input: unknown): boolean {
   if (toolName !== "bash" || !input || typeof input !== "object") return false;
   const command = (input as Record<string, unknown>).command;
   if (typeof command !== "string") return false;
-  // One left-to-right pass reduces each quoted string to an empty pair (`''` / `""`), so a quote inside the other
-  // kind is literal; an escaped character outside quotes keeps its `\`; a substitution inside double quotes refuses.
-  let bare = "";
-  let q: "'" | '"' | null = null;
-  for (let i = 0; i < command.length; i++) {
-    const c = command[i];
-    if (q === "'") {
-      if (c === "'") (q = null), (bare += "''");
-    } else if (q === '"') {
-      if (c === "\\") i++;
-      else if (c === "`" || (c === "$" && command[i + 1] === "(")) return false;
-      else if (c === '"') (q = null), (bare += '""');
-    } else if (c === "\\") {
-      bare += command.slice(i, i + 2);
-      i++;
-    } else if (c === "'" || c === '"') q = c;
-    else bare += c;
-  }
-  if (q !== null || /\$\(|`|[<>]/.test(bare) || bare.replace(/&&/g, "").includes("&")) return false;
-  const segs = bare.split(/&&|\|\||[;|\n]/).map((x) => x.trim());
-  return segs.length > 0 && segs.every((x) => FINAL_GIT.test(x));
+  return FINAL_RE.test(command);
 }
 
 // Child result locations: taken only from structured places, never from free text (a child's

@@ -23,7 +23,7 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
-import { backgroundsJob, isRulingName, jobPid, parentApproval, parentRulingLift, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
+import { isRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -110,7 +110,7 @@ let herdrEvents: EventBus | undefined;
 import { checkLaunch, completedAgents, CritiqueCounter, hasSecurityFinding, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks } from "./bg.ts";
-import { processAlive, registerWait, waitLimits } from "./wait.ts";
+import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
@@ -246,10 +246,6 @@ interface Session {
   reviewCount: number;
   /** Foreman only: `[plan-review]` launches since the last user prompt, capped apart by ceremony.reviewRuns. */
   planReviewCount: number;
-  /** Foreman only: review runs added to ceremony.reviewRuns by parent rulings `review-cap: +N` since the last user prompt. */
-  reviewCapLift: number;
-  /** Foreman only: parent ruling lifts already applied (ruling.ts parentRulingLift; key + path + mtime). */
-  rulingLifts: Set<string>;
   /** Foreman only: item numbers of the last FAIL verdict, until a review passes (item-only re-review). */
   failItems: string[];
   /** Foreman only: critique raised and applied per review round (retro counter, rounds.ts CritiqueCounter). */
@@ -514,8 +510,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewerFails: new ReviewerFails(),
       reviewCount: 0,
       planReviewCount: 0,
-      reviewCapLift: 0,
-      rulingLifts: new Set(),
       failItems: [],
       critique: new CritiqueCounter(),
       budgetWarned: false,
@@ -1180,15 +1174,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const finalExempt = final && (!s.budget.postPass || finalizationCommand(toolName, input));
     const exempt = ledgerOnly || handoff || finalExempt || s.supervisor.open.size > 0 || (file !== null && inRecorded(s.childFiles, normFile(file)));
     // MCP and subagent get|guide calls are counted under the name `read`, after the exemptions above.
-    const check = () => s.budget.check(READ_CLASS.has(toolName) ? toolName : "read", callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt);
-    let d = check();
-    // A parent ruling `read-budget: +N` (newest ruling*.md of a dir where this session is the child) lifts the deny once.
-    const lift = d.kind === "deny" && d.event === "read_budget" ? parentRulingLift(childDirsOf(s), "read-budget", selfRulingsFor(s), s.rulingLifts) : null;
-    if (lift) {
-      const was = s.budget.liftBy(lift.n);
-      s.trace?.emit({ event: "read_budget", phase: was.phase, count: was.count, action: "lift", by: "ruling", requested: lift.n });
-      d = check();
-    }
+    const d = s.budget.check(READ_CLASS.has(toolName) ? toolName : "read", callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt);
     if (d.kind === "warn") {
       s.readNotices.set(callId, d.text);
       s.trace?.emit({ event: "read_budget", phase: d.phase, count: d.count, action: "warn" });
@@ -1419,13 +1405,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (ps && !ps.isChild) bashRulingSnaps.set(event.toolCallId, snapshotRulings(childDirsOf(ps)));
       if (ps && !ps.isChild && mentionsLedger((event.input as { command?: unknown }).command)) ps.ledgerBash.add(event.toolCallId);
     }
-    // R11 S1: a background job of this session (foreman_bg, bg_run, a shell call that backgrounds) opens a self-write
-    // window for ruling files from its launch until its exit is observed (ruling.ts SelfRulings.openJob).
-    {
-      const js = sessionFor(ctx);
-      const command = (event.input as { command?: unknown } | undefined)?.command;
-      if (js && !js.isChild && (event.toolName === FOREMAN_BG_TOOL || event.toolName === ADDON_BG_TOOL || ((event.toolName === "bash" || event.toolName === "powershell") && backgroundsJob(command)))) selfRulingsFor(js).openJob(event.toolCallId, () => childDirsOf(js));
-    }
     // A session never writes a ruling file in a handoff dir where it is the child (ruling.ts selfRulingRefusal).
     {
       const rs = sessionFor(ctx);
@@ -1619,23 +1598,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // R11 item 4: plan reviews and fix-round (all other) reviews are counted apart, each against the cap.
           const planCount = [...occasions].filter(([e, o]) => o === "plan-review" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent)).length;
           const reviewCount = subagentAgents(input).filter((r) => REVIEW_ROLES.includes(r)).length - planCount;
-          const capOf = (): number => reviewRunsCap(get(s.config.config, "ceremony.reviewRuns")) + s.reviewCapLift;
-          const capRefusal = () => {
-            const fix = reviewCapCheck(s.reviewCount, Math.max(0, reviewCount), capOf());
-            if (fix) return { ...fix, kind: "review", count: s.reviewCount };
-            const plan = reviewCapCheck(s.planReviewCount, planCount, capOf(), "plan");
-            return plan ? { ...plan, kind: "plan", count: s.planReviewCount } : null;
-          };
-          let rc = capRefusal();
-          // A parent ruling `review-cap: +N` (newest ruling*.md of a dir where this session is the child) lifts the cap once.
-          const lift = rc ? parentRulingLift(childDirsOf(s), "review-cap", selfRulingsFor(s), s.rulingLifts) : null;
-          if (lift) {
-            s.reviewCapLift += lift.n;
-            s.trace?.emit({ event: "review_cap_lift", by: "ruling", count: lift.n, limit: capOf() });
-            rc = capRefusal();
-          }
+          const cap = reviewRunsCap(get(s.config.config, "ceremony.reviewRuns"));
+          const fix = reviewCapCheck(s.reviewCount, Math.max(0, reviewCount), cap);
+          const plan = fix ? null : reviewCapCheck(s.planReviewCount, planCount, cap, "plan");
+          const rc = fix ? { ...fix, kind: "review", count: s.reviewCount } : plan ? { ...plan, kind: "plan", count: s.planReviewCount } : null;
           if (rc) {
-            s.trace?.emit({ event: "launch_refused", reason: rc.reason, tier: s.ceremony.tier, kind: rc.kind, count: rc.count, limit: capOf(), ...launchDeny(input) });
+            s.trace?.emit({ event: "launch_refused", reason: rc.reason, tier: s.ceremony.tier, kind: rc.kind, count: rc.count, limit: cap, ...launchDeny(input) });
             return { block: true, reason: rc.text };
           }
           if (s.failItems.length > 0) for (const [e, occ] of occasions) if (occ === "item" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependReReview(e.task, s.failItems);
@@ -1945,7 +1913,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.rounds = initialRounds();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.waitingForParent = false), s.handoffWaits.clear();
-    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.climbRefusals = 0), (s.reviewCount = 0), (s.planReviewCount = 0), (s.reviewCapLift = 0);
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.climbRefusals = 0), (s.reviewCount = 0), (s.planReviewCount = 0);
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset(); // a new piece of work: the next builder launch records a new diff base (diffscan.ts ReviewFacts)
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
       resetRecheck(s, "user");
@@ -2308,16 +2276,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (owner && bashSnap) {
       bashRulingSnaps.delete(event.toolCallId);
       selfRulingsFor(owner).markChanged(bashSnap, childDirsOf(owner));
-    }
-    // R11 S1: a foreman_bg / bg_run job is watched by its pid; a job whose command backgrounds again (a grandchild may
-    // outlive the pid) or whose pid is unknown stays open. A foreman_bg refusal (no pid) spawned nothing.
-    if (owner && !owner.isChild && (event.toolName === FOREMAN_BG_TOOL || event.toolName === ADDON_BG_TOOL)) {
-      const pid = jobPid(event.details, event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n"));
-      const sr = selfRulingsFor(owner);
-      if (backgroundsJob((event.input as { command?: unknown }).command)) {
-        // stays open
-      } else if (pid !== null) sr.watchJob(event.toolCallId, () => processAlive(pid));
-      else if (event.isError && event.toolName === FOREMAN_BG_TOOL) sr.closeJob(event.toolCallId);
     }
     // A `.seen` written by a shell command ends the ask too: the blocked state is recomputed from the files (R6 lane 4a).
     if (owner && !owner.isChild && event.toolName === "bash") askContractFor(owner).recheck();

@@ -1,6 +1,6 @@
 // R11 item 5 (P2): finalization (a reviewer PASS or a completed finalizer, no child run active) is exempt from
-// read_budget_exceeded and a plain git commit is not refused; a parent ruling line `read-budget: +N` (attributed like
-// item 4) lifts the read budget once per ruling file; with a launch pending the budget still refuses.
+// read_budget_exceeded and a plain git commit is not refused; a ruling file never changes the read budget; with a
+// launch pending the budget still refuses.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
@@ -68,7 +68,7 @@ test("read_budget_finalization_git_commit_allowed: a reviewer PASS (post-PASS) e
   assert.equal(b.finalized, false);
 });
 
-test("read_budget_parent_ruling_lifts", async (t) => {
+test("ruling_read_budget_line_has_no_effect", async (t) => {
   const a = await r11Rig(t);
   const dir = a.handoff("round", "child");
   const now = Date.now();
@@ -76,25 +76,11 @@ test("read_budget_parent_ruling_lifts", async (t) => {
   const out = await reads(a, DENY + 1);
   assert.ok(out.slice(0, DENY).every((r) => !readDenied(r)));
   assert.ok(readDenied(out[DENY]), "denied past the limit");
+  // a parent-written ruling with the line, newer than the ask: nothing changes
   writeAt(path.join(dir, "ruling.md"), "APPROVED\nread-budget: +3\n", now - 1000);
-  const more = await reads(a, 3);
-  assert.ok(more.every((r) => !readDenied(r)), "the ruling lifts the deny by 3");
-  assert.ok(readDenied(await a.call("bash", { command: "ls next" })), "the same ruling file lifts once");
-  assert.deepEqual(a.events("read_budget").filter((r) => r.action === "lift").map((r) => [r.by, r.requested]), [["ruling", 3]]);
-});
-
-test("read_budget_self_or_child_written_ruling_ignored", async (t) => {
-  const a = await r11Rig(t);
-  const now = Date.now();
-  const own = a.handoff("opened", "parent"); // this session's own child writes here
-  writeAt(path.join(own, "ask.md"), "ask\n", now - 60_000);
-  writeAt(path.join(own, "ruling.md"), "read-budget: +50\n", now - 1000);
-  const mine = a.handoff("round", "child");
-  writeAt(path.join(mine, "ask.md"), "ask\n", now - 60_000);
-  writeAt(path.join(mine, "ruling.md"), "read-budget: +50\n", now - 500);
-  await a.wrote(path.join(mine, "ruling.md")); // this session wrote it
-  const out = await reads(a, DENY + 2);
-  assert.ok(readDenied(out[DENY]) && readDenied(out[DENY + 1]), "neither a child-written nor a self-written ruling lifts");
+  assert.ok((await reads(a, 2)).every(readDenied), "the ruling line does not lift the read budget");
+  writeAt(path.join(dir, "ruling-2.md"), "read-budget: +50\n", now + 1000);
+  assert.ok(readDenied(await a.call("bash", { command: "ls next" })), "a newer ruling file neither");
   assert.deepEqual(a.events("read_budget").filter((r) => r.action === "lift"), []);
 });
 

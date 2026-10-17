@@ -86,48 +86,6 @@ export function snapshotRulings(dirs: string[]): Map<string, number> {
  */
 export class SelfRulings {
   private readonly written = new Map<string, number>();
-  /** Session-owned background jobs still running (R11 S1): launch time, ruling snapshot at launch, exit probe. */
-  private readonly jobs = new Map<string, { start: number; before: Map<string, number>; dirs: () => string[]; alive: () => boolean }>();
-  /** [launch, observed exit] of every closed job: a ruling whose mtime falls inside one is self-written. */
-  private readonly spans: [number, number][] = [];
-
-  /**
-   * A background job of this session started (foreman_bg, bg_run, a bash call that backgrounds): until its exit is
-   * observed, every ruling file that appears or changes is self-written. `dirs` gives the session's child handoff
-   * dirs (read at launch and again at the exit). The job stays open until `watchJob` gives an exit probe that returns
-   * false (no probe: open for the session's life).
-   */
-  openJob(id: string, dirs: () => string[], now: number = Date.now()): void {
-    if (!this.jobs.has(id)) this.jobs.set(id, { start: now, before: snapshotRulings(dirs()), dirs, alive: () => true });
-  }
-
-  /** How the exit of job `id` is observed (true while it runs). */
-  watchJob(id: string, alive: () => boolean): void {
-    const j = this.jobs.get(id);
-    if (j) j.alive = alive;
-  }
-
-  /** Job `id` exited: a fresh snapshot marks every ruling changed since its launch; its time span stays self-written. */
-  closeJob(id: string, now: number = Date.now()): void {
-    const j = this.jobs.get(id);
-    if (!j) return;
-    this.jobs.delete(id);
-    this.markChanged(j.before, j.dirs());
-    this.spans.push([j.start, now]);
-  }
-
-  /** Closes every job whose exit probe says it has exited (a throwing probe keeps it open). */
-  private sweep(): void {
-    for (const [id, j] of [...this.jobs]) {
-      let alive = true;
-      try {
-        alive = j.alive();
-      } catch {
-        // unknown: stays open
-      }
-      if (!alive) this.closeJob(id);
-    }
-  }
 
   /** A write/edit of `file`: remember its mtime (only ruling names). */
   mark(file: string): void {
@@ -141,41 +99,11 @@ export class SelfRulings {
     for (const [f, m] of snapshotRulings(dirs)) if (before.get(f) !== m) this.written.set(realKey(f), m);
   }
 
-  /**
-   * True when `file` (at `mtime`) is a ruling this session wrote, or may have written: its mtime lies in a closed
-   * job's span, or a background job is still open and the file is new or changed since that job's launch (fail closed).
-   */
+  /** True when `file` (at `mtime`) is a ruling this session wrote. */
   has(file: string, mtime: number): boolean {
-    this.sweep();
-    const key = realKey(file);
-    const w = this.written.get(key);
-    if (w !== undefined && mtime <= w) return true;
-    if (this.spans.some(([a, b]) => mtime >= a && mtime <= b)) return true;
-    for (const j of this.jobs.values()) {
-      if (mtime >= j.start) return true;
-      const was = [...j.before].find(([f]) => realKey(f) === key);
-      if (was === undefined || was[1] !== mtime) return true;
-    }
-    return false;
+    const w = this.written.get(realKey(file));
+    return w !== undefined && mtime <= w;
   }
-}
-
-/**
- * A shell command that may leave a job running after its tool result (R11 S1): a `&` that is not `&&`, `>&`, `&>`
- * or `|&`, or `nohup` / `disown` / `setsid`. Quoted text counts too (`sh -c '... &'`): any doubt is a background job.
- */
-export function backgroundsJob(command: unknown): boolean {
-  if (typeof command !== "string") return false;
-  if (/(?:^|[^A-Za-z0-9_-])(?:nohup|disown|setsid)(?![A-Za-z0-9_-])/.test(command)) return true;
-  return command.replace(/&&|>&|&>|\|&/g, "  ").includes("&");
-}
-
-/** The pid a foreman_bg / bg_run result names (`details.pid`, else `pid N` in its text), or null. */
-export function jobPid(details: unknown, text: string): number | null {
-  const d = details && typeof details === "object" ? (details as Record<string, unknown>).pid : undefined;
-  if (typeof d === "number" && Number.isInteger(d) && d > 1) return d;
-  const m = /\bpid\b\D{0,3}(\d{2,10})\b/i.exec(text);
-  return m ? Number(m[1]) : null;
 }
 
 /**
@@ -200,44 +128,6 @@ export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulin
     }
   }
   return null;
-}
-
-/** A gate a parent ruling line may lift: `review-cap: +N` (ceremony.reviewRuns) or `read-budget: +N` (ceremony.foremanReads). */
-export type RulingLiftKey = "review-cap" | "read-budget";
-
-/**
- * The lift a parent ruling grants for `key`: the line `<key>: +N` of the NEWEST `ruling*.md` in `dirs`, or null. `dirs`
- * must be the dirs where this session is the child (owned.ts childHandoffDirs), so a ruling written by one of its own
- * children (a dir where it is the parent) never counts. The ruling counts only when it is the parent's: not written by
- * this session (`self`) and not older than the session's ask.md or plan.md beside it (one of them must exist). Each
- * ruling file lifts each key once (its path, recorded in `used`): a changed or touched old ruling never lifts again,
- * a new parent ruling comes as a new file (`ruling-<n>.md`).
- */
-export function parentRulingLift(dirs: string[], key: RulingLiftKey, self: SelfRulings | undefined, used: Set<string>): { file: string; n: number } | null {
-  let newest: { file: string; m: number } | null = null;
-  for (const dir of dirs) {
-    let names: string[] = [];
-    try {
-      names = fs.readdirSync(dir).filter(isRulingName);
-    } catch {
-      continue;
-    }
-    for (const n of names) {
-      const file = path.join(dir, n);
-      const m = mtimeOf(file);
-      if (m !== null && (newest === null || m > newest.m)) newest = { file, m };
-    }
-  }
-  if (newest === null || self?.has(newest.file, newest.m)) return null;
-  const anchors = ["ask.md", "plan.md"].map((f) => mtimeOf(path.join(path.dirname(newest.file), f))).filter((m): m is number => m !== null);
-  if (anchors.length === 0 || newest.m < Math.max(...anchors)) return null;
-  const line = new RegExp(`^${key}:[ \\t]*\\+(\\d{1,4})[ \\t]*$`, "im").exec(readText(newest.file) ?? "");
-  const n = line ? Number(line[1]) : 0;
-  if (n < 1) return null;
-  const id = `${key}|${realKey(newest.file)}`;
-  if (used.has(id)) return null;
-  used.add(id);
-  return { file: newest.file, n };
 }
 
 /** The refusal reason when a session writes a ruling file in a dir where it is the child. */

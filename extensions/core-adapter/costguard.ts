@@ -37,7 +37,7 @@ export function budgetCheck(foreman: number, runs: number, cap: number | null, w
 export function reviewCapCheck(count: number, adding: number, cap: number, kind: "review" | "plan" = "review"): { reason: string; text: string } | null {
   if (adding === 0 || count + adding <= cap) return null;
   const what = kind === "plan" ? "plan review" : "review";
-  return { reason: "review_cap", text: `pi-foreman: review launch refused [review_cap]: ${count} ${what} run(s) already ran for this prompt (ceremony.reviewRuns ${cap}). Finish, or get the cap reset: the parent writes the line \`review-cap: +N\` in a ruling*.md of this session's handoff dir (newer than its ask.md or plan.md), or the owner sends a new prompt.` };
+  return { reason: "review_cap", text: `pi-foreman: review launch refused [review_cap]: ${count} ${what} run(s) already ran for this prompt (ceremony.reviewRuns ${cap}). Finish, or ask the owner for a new prompt: a new owner prompt resets the cap.` };
 }
 
 const MARK = "[re-review items:";

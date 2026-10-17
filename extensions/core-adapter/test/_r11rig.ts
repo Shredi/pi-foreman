@@ -113,11 +113,12 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     async call(toolName: string, input: Record<string, unknown>): Promise<Block> {
       return (await handlers.get("tool_call")!({ toolName, toolCallId: `t${++calls}`, input }, ctx)) as Block;
     },
-    /** One foreman tool call, then (unless `result` is null) its tool_result with `result` as details/text/isError. */
-    async tool(toolName: string, input: Record<string, unknown>, result: { details?: unknown; text?: string; isError?: boolean } | null = {}): Promise<Block> {
+    /** One foreman tool call whose effect `during` runs between its tool_call and its tool_result. */
+    async toolDoing(toolName: string, input: Record<string, unknown>, during: () => void | Promise<void>): Promise<Block> {
       const id = `t${++calls}`;
       const res = (await handlers.get("tool_call")!({ toolName, toolCallId: id, input }, ctx)) as Block;
-      if (result) await handlers.get("tool_result")!({ toolName, toolCallId: id, input, details: result.details ?? {}, content: [{ type: "text", text: result.text ?? "ok" }], isError: result.isError ?? false }, ctx);
+      await during();
+      await handlers.get("tool_result")!({ toolName, toolCallId: id, input, details: {}, content: [{ type: "text", text: "ok" }], isError: false }, ctx);
       return res;
     },
     /** The tool_result of a foreman write that went through (marks a self-written ruling). */
