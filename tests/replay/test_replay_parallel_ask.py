@@ -24,13 +24,21 @@ def settle_between_results(events):
 
 
 def drop_wake_stops(events, win32):
-    """On win32 (slow runner) the Stop guard of the supervisor-reply wake lands after the first
-    role_result instead of before it, so only the final Stop guard is kept there (applied to the
-    actual trace and to the golden alike; POSIX is untouched)."""
+    """On win32 (slow runner) the Stop guard of the supervisor-reply wake moves between the two
+    role_result events, where settle_between_results masks it. So on win32 only the Stop guards
+    between the `replied` supervisor_request and the first child_scratch/role_result are dropped
+    (from the actual trace and the golden alike); the first-turn and final Stops stay compared.
+    POSIX is untouched."""
     if not win32:
         return events
-    stops = [i for i, e in enumerate(events) if e["event"] == "guard" and e.get("toolFamily") == "Stop"]
-    drop = set(stops[:-1])
+    start = next((i for i, e in enumerate(events)
+                  if e["event"] == "supervisor_request" and e.get("decision") == "replied"), None)
+    if start is None:
+        return events
+    end = next((i for i in range(start, len(events)) if events[i]["event"] in ("child_scratch", "role_result")),
+               len(events))
+    drop = {i for i in range(start, end)
+            if events[i]["event"] == "guard" and events[i].get("toolFamily") == "Stop"}
     return [e for i, e in enumerate(events) if i not in drop]
 
 
@@ -65,14 +73,18 @@ class TestParallelAsk(ReplayCase):
 
 
 class TestDropWakeStops(unittest.TestCase):
-    EV = [{"event": "turn"}, {"event": "guard", "toolFamily": "Stop"}, {"event": "role_result"},
-          {"event": "guard", "toolFamily": "Stop"}]
+    S = {"event": "guard", "toolFamily": "Stop"}
+    EV = [{"event": "turn"}, S, {"event": "supervisor_request", "decision": "open"},
+          {"event": "supervisor_request", "decision": "replied"}, {"event": "turn"}, S,
+          {"event": "child_scratch"}, {"event": "role_result"}, {"event": "turn"}, S]
 
     def test_posix_unchanged(self):
         self.assertEqual(drop_wake_stops(self.EV, False), self.EV)
 
-    def test_win32_keeps_only_final_stop(self):
-        self.assertEqual(drop_wake_stops(self.EV, True), [self.EV[0], self.EV[2], self.EV[3]])
+    def test_win32_drops_only_reply_wake_stop(self):
+        want = [e for i, e in enumerate(self.EV) if i != 5]
+        self.assertEqual(drop_wake_stops(self.EV, True), want)
+        self.assertEqual(sum(e is self.S for e in want), 2)
 
 
 if __name__ == "__main__":
