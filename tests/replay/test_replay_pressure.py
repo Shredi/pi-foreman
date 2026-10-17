@@ -21,7 +21,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture, shape, tool_results  # noqa: E402
+from driver import load_fixture, shape, tool_results, wake_messages  # noqa: E402
 from test_replay import REASON, ReplayCase  # noqa: E402
 
 CONFIG = {"resources": {"sampleSeconds": 5}}
@@ -59,15 +59,15 @@ def wait_level(rig, level, timeout=40.0):
 
 
 def wake_and_settle(pi, timeout):
-    """Records until a foreman_wake message arrived and the run it started settled; returns (wake message, records)."""
+    """Records until a foreman_wake message arrived and the run it started settled; returns (normalised wake text, records)."""
     deadline = time.time() + timeout
     out, wake = [], None
     while True:
         rec = pi._next(deadline)
         out.append(rec)
-        msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
-        if rec.get("type") == "message_end" and msg.get("customType") == "foreman_wake" and "pressure" in str(msg.get("content")):
-            wake = msg
+        for kind, text in wake_messages([rec]):
+            if kind == "foreman_wake" and "pressure" in text:
+                wake = text
         if wake is not None and rec.get("type") == "agent_settled":
             return wake, out
 
@@ -95,7 +95,7 @@ class TestPressure(ReplayCase):
             self.assertIn("pressure high (load): child launches run one at a time; this launch is queued", text)
         wake, _ = wake_and_settle(pi, 90)
         pi.close()
-        content = str(wake.get("content"))
+        content = wake
         self.assertIn("(pressure)", content)
         self.assertIn("pressure: high, a run ended; relaunch the queued launches one at a time with: ", content)
         self.assertIn("[[replay:qa]] map part b", content)
@@ -114,7 +114,7 @@ class TestPressure(ReplayCase):
         wake, recs = wake_and_settle(pi, 90)
         pi.close()
         original = {"agent": "explorer", "task": "[[replay:cr]] map the repo"}
-        self.assertIn("pressure: ok, relaunch with: " + json.dumps(original, separators=(",", ":")), str(wake.get("content")))
+        self.assertIn("pressure: ok, relaunch with: " + json.dumps(original, separators=(",", ":")), wake)
         # the foreman relaunched with those arguments; nothing launched by itself before
         relaunch = tool_results(recs)
         self.assertEqual([(n, e) for n, e, _ in relaunch], [("subagent", False)], relaunch)
