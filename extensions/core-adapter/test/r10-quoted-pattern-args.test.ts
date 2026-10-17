@@ -1,13 +1,12 @@
 // R10 P1 item 4 (d): quoted pattern args are never classified as external paths. Reproduced first through the layers:
 // - the permission system's bash external-directory gate (pi-permission-system token classifier) names any word that starts with `/` as an
-//   external path unless its pattern-first table knows the command: it has no `git` row (`git log -S '/x/'`, `-G`, `--grep`, `-L '/a/,/b/:f'`)
-//   and reads only the first two letters of a short-option cluster (`grep -ne '/foo/'`). Its ask reaches the review link as surface
-//   external_directory(_read) with a bash payload.
+//   external path unless its pattern-first table knows the command: it has no `git` row (`git log -S '/x/'`, `-G`, `--grep`, `-L '/a/,/b/:f'`).
+//   grep/rg patterns are already handled (PS 39.0.2 externalAccesses() is [] for `grep -ne '/foo/' file.txt` and `rg -ne '/foo/' src`).
+//   Its ask reaches the review link as surface external_directory(_read) with a bash payload.
 // - the review link CANNOT fix that: PS wraps every authorizer-chain link in encloseInDelegationEnvelope (authority/authorizer-selection.ts,
 //   authority/delegation-envelope.ts), which caps an `allow` on the external_directory family to `defer`. A link-level "pattern-arg" allow was
 //   therefore dead in production and has been removed. The remaining fix is upstream: the PS bash token classifier
-//   (access-intent/bash/token-collection.ts) needs a `git` row (-S/-G/--grep values, the <range> of -L) and short-option-cluster handling for
-//   grep/rg `-e`. Until then the ask still reaches the dialog; this is the documented residual.
+//   (access-intent/bash/token-collection.ts) needs a `git` row (-S/-G/--grep values, the <range> of -L). Until then the ask still reaches the dialog; this is the documented residual.
 // - the overlay (checkToolCall): a `git log -S`/`-G`/`--grep` value that names a toolchain probe dir asked (the probe narrowing saw it as a
 //   path word); scriptOperands now knows those values, so they drop out of the path words like grep/rg patterns do. This part is ours and works.
 // `git log -L <range>:<file>`: only <range> is a non-path; <file> stays a path candidate (finding F).
