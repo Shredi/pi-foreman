@@ -192,7 +192,9 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
     const add = (n: string): void => void out.add(n).add(n.toUpperCase());
     // backtick escapes (`${env:HO`ME}`, `Set-Item env:HO`ME`) vanish before PowerShell reads the name
     const plain = command.replace(/`([^\r\n])/g, "$1");
-    for (const text of plain === command ? [command] : [command, plain]) {
+    // the colon form `-Path:env:HOME` / `-Name: HOME` is also read as `-Path env:HOME` (an extra text: the name regexes only add)
+    const colon = (s: string): string => s.replace(/(^|[\s;|({}=])(-[A-Za-z]+):[ \t]*(?=\S)/g, "$1$2 ");
+    for (const text of new Set([command, plain, colon(command), colon(plain)])) {
       for (const m of text.matchAll(/\$(?:[A-Za-z]+:)?([A-Za-z_][A-Za-z0-9_]*)\s*[-+*/%]?\?{0,2}=(?!=)/gi)) add(m[1]);
       for (const m of text.matchAll(/\$\{(?:[A-Za-z]+:)?([A-Za-z_][A-Za-z0-9_]*)\}\s*[-+*/%]?\?{0,2}=(?!=)/gi)) add(m[1]);
       // `.Home = ..` (a provider's Home property), any property or name assigned
@@ -207,7 +209,10 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
       // every name token, in any case: `Set-Variable -Name home`, `Rename-Item env:X -NewName home`
       for (const m of text.matchAll(/(?<![\w$:])(?<!\$\{)([A-Za-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_])/g)) add(m[1]);
       // code this check never sees, or an item path built at run time: every trusted name may be rebound
-      if (/\[\s*scriptblock\s*\]\s*::\s*create|\.invoke(?:script)?\s*\(|\badd-type\b/i.test(text)) all();
+      // (`.InvokeReturnAsIs(`, `.InvokeWithContext(`, `.NewScriptBlock(`, anything reached through `$ExecutionContext.InvokeCommand`)
+      if (/\[\s*scriptblock\s*\]\s*::\s*create|\.invoke\w*\s*\(|\.newscriptblock\s*\(|\$\{?executioncontext\}?\s*\.\s*invokecommand|\badd-type\b/i.test(text)) all();
+      // a splat (`Set-Item @p`, `Remove-Variable @{..}`, `@(..)`) on an item cmdlet anywhere may name any item
+      for (const m of text.matchAll(/(?<![\w$.\\/:-])([A-Za-z][\w-]*)(?![\w-])(?=([^;|\n]*))/g)) if (PS_ITEM.has(m[1].toLowerCase()) && /(?:^|\s)@[\w{(]/.test(m[2])) all();
       // eval-like cmdlets anywhere, not only as a command word (`$null = iex $c`, `(iex $c)`, `[void](iex $c)`), the `&` call operator
       // and a dot-source after `=`, `(`, `;`, `|`, `{`, `}`, `]`
       for (const m of text.matchAll(/(?<![\w$.\\/:-])([A-Za-z][\w.-]*)(?![\w.-])/g)) if (PS_EVAL.has(m[1].toLowerCase())) all();
@@ -215,8 +220,7 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
       // item cmdlets anywhere (`$null = New-Item -Path ('en'+'v:HOME')`): a path / name that is not one literal may name any item
       for (const m of text.matchAll(/(?<![\w$.\\/:-])(set-item|si|new-item|ni|rename-item|rni|set-content|sc|set-variable|sv|new-variable|nv)(?![\w-])([^;|\n]*)/gi)) {
         const args = m[2].match(/'[^']*'|"[^"]*"|\([^)]*\)?|[^\s(]+/g) ?? [];
-        const pi = args.findIndex((a) => /^-(?:path|literalpath|name|pspath)$/i.test(a));
-        const target = pi >= 0 ? args[pi + 1] : args.find((a) => !a.startsWith("-"));
+        const target = psTarget(args);
         const fsPath = target !== undefined && /^(?:\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*|\$\{(?:env:)?[A-Za-z_][A-Za-z0-9_]*\}|~)[\\/][^$()`+{}'"]*$/i.test(target);
         const literal = target !== undefined && (/^'[^']*'$/.test(target) || /^"[^"$`]*"$/.test(target) || /^[^$()`+{}'"]+$/.test(target) || fsPath);
         if (!literal) all();
@@ -230,8 +234,8 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
         if (PS_EVAL.has(verb) || /\.ps[md]?1$/i.test(verb) || call) all();
         if (PS_ITEM.has(verb)) {
           const args = unit.slice(1);
-          const pi = args.findIndex((a) => /^-(?:path|literalpath|name|pspath)$/i.test(a));
-          const target = pi >= 0 ? args[pi + 1] : args.find((a) => !a.startsWith("-"));
+          if (args.some((a) => /^@[\w{(]/.test(a))) all();
+          const target = psTarget(args);
           // a path built at run time may name an env: / variable: item; a file path below `$env:N` / `$HOME` / `~` stays a file path
           const fsPath = target !== undefined && /^(?:\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*|\$\{(?:env:)?[A-Za-z_][A-Za-z0-9_]*\}|~)[\\/][^$()`+{}]*$/i.test(target);
           if (target === undefined || (/[$()`+{}]/.test(target) && !fsPath)) all();
@@ -295,6 +299,17 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
   // PowerShell names are case-insensitive
   if (shell === "powershell") for (const n of [...out]) out.add(n.toUpperCase());
   return out;
+}
+
+/**
+ * The item a PowerShell item cmdlet names: the value of `-Path` / `-LiteralPath` / `-Name` / `-PSPath`, in the space form or the
+ * colon form (`-Path:env:HOME`, `-Path: $p`), else the first non-option word; undefined when there is none.
+ */
+function psTarget(args: string[]): string | undefined {
+  const pi = args.findIndex((a) => /^-(?:path|literalpath|name|pspath)(?::|$)/i.test(a));
+  if (pi < 0) return args.find((a) => !a.startsWith("-"));
+  const rest = args[pi].replace(/^-[A-Za-z]+:?/, "");
+  return rest !== "" ? rest : args[pi + 1];
 }
 
 /** PowerShell command words that run code this check never sees. */
