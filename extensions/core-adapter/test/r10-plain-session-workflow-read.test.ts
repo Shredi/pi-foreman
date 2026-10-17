@@ -4,10 +4,13 @@
 // - overlay (checkToolCall, `readable` = hubWorkflowReadable): passes (unchanged).
 // - review link, surface `bash` (the PS bash rules asked): readRootsBashAllow already allows it (hubFlow is a read-only owned root).
 // - review link, surface external_directory_read with a bash payload (the permission system's bash external-directory gate raised it when its
-//   rendered hub keys did not cover the path, e.g. a config rendered before paths.hubWorkflow was set): ASKED. readRootPathAllow returned null
-//   for every bash payload and the hub read root was added (mainFlowOf) only to forwarded child asks. Fixed there: a non-forwarded bash
-//   external-directory READ ask is allowed ("hub-workflow") when the whole command classifies as a read inside the cwd and the configured
-//   hub `.workflow` dirs (read only); a write, a write-capable surface and an unconfigured foreign `.workflow` still ask.
+//   rendered hub keys did not cover the path): ASKED, and the link CANNOT allow it: PS wraps every chain link in encloseInDelegationEnvelope
+//   (authority/delegation-envelope.ts), which caps an `allow` on the external_directory family to `defer`. A link-level "hub-workflow" allow was
+//   dead in production and is removed. The fix lives in the policy layer PS honours: the rendered `external_directory_read` keys
+//   (scripts/permissions_gen.py hub_read_patterns, tests/test_hub_workflow.py). PS matches a bash token by its typed spelling and its
+//   symlink-resolved alias (access-intent/access-path.ts matchValues, handlers/gates/external-directory-policy.ts), so a key spelled through a
+//   symlink missed a token typed as the real path; the realpath spelling is now rendered too. A config rendered before paths.hubWorkflow was set
+//   still needs `foreman setup` to re-render. The ask tests below stay: a write, a write-capable surface and a foreign `.workflow` are not allowed by the link.
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -71,9 +74,8 @@ const READS: [string, string[]][] = [
   [`cat ${ledger} | head -20`, [ledger]],
 ];
 for (const [cmd, paths] of READS) {
-  test(`expected-open (R10e): plain session ${cmd.split(w).join("<tmp>")} (review link external_directory_read: hub-workflow)`, { skip: !posix }, async () => {
-    assert.equal(await gate([hub], cmd, paths), "allow");
-    assert.equal(await gate(hub, cmd, paths), "allow", "hubWorkflow as a string");
+  test(`(decision: ask) plain session ${cmd.split(w).join("<tmp>")} (review link defers: PS delegation envelope caps its allow)`, { skip: !posix }, async () => {
+    assert.notEqual(await gate([hub], cmd, paths), "allow");
   });
 }
 

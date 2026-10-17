@@ -39,6 +39,17 @@ class HubWorkflowTest(unittest.TestCase):
         p = self.render(["rel/hub", "/a/../b", "", 3, "/"])
         self.assertEqual([k for k in p["external_directory_read"] if ".workflow" in k], [])
 
+    def test_symlinked_hub_renders_the_realpath_spelling_too(self):
+        real = Path(self.tmp.name).resolve() / "realhub"
+        (real / ".workflow").mkdir(parents=True)
+        link = Path(self.tmp.name).resolve() / "linkhub"
+        link.symlink_to(real)
+        r = self.render([str(link)])["external_directory_read"]
+        for base in (link.as_posix(), real.as_posix()):
+            self.assertEqual(r[base + "/.workflow"], "allow")
+            self.assertEqual(r[base + "/.workflow/*"], "allow")
+        self.assertNotIn(real.as_posix(), r)
+
     def test_project_layer_cannot_set_it(self):
         (self.agent / "foreman.json").write_text(json.dumps({"paths": {"hubWorkflow": ["/user/hub"]}}))
         proj = Path(self.tmp.name) / "proj"

@@ -506,31 +506,12 @@ export class ForemanReview {
     try {
       if (!/read/i.test(surface)) return null;
       const value = unitValue(d);
-      if (d.payload?.kind === "bash_external_directory" || d.toolName === "bash") return d.forwarding ? null : this.hubBashReadAllow(s, d);
+      if (d.payload?.kind === "bash_external_directory" || d.toolName === "bash") return null;
       const px = process.platform === "win32" ? path.win32 : path.posix;
       if (!px.isAbsolute(value) || value.split(/[\\/]/).includes("..") || /[*?[\]{}]/.test(value)) return null;
       const roots = [...rootList(s.readOnlyRoots), ...(d.forwarding ? this.mainFlowOf(s) : [])];
       const norm = px.normalize(value);
       return roots.some((r) => { const rel = px.relative(px.resolve(r), norm); return rel === "" || (!rel.startsWith("..") && !px.isAbsolute(rel)); }) ? "owned-read" : null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * "hub-workflow" (R10 item 5) for the session's own (not forwarded) bash external-directory READ ask whose whole command classifies as a read
-   * inside the cwd and the configured `paths.hubWorkflow` `.workflow` dirs (read only): a plain session reading the parent's ledger when the
-   * permission system's rendered hub keys did not cover it.
-   */
-  private hubBashReadAllow(s: ReviewSession, d: AskDetails): string | null {
-    try {
-      const hub = hubWorkflowDirs(get(s.config(), "paths.hubWorkflow"));
-      const rules = s.bashRules?.();
-      if (!hub.length || !rules) return null;
-      const ctx = { ...effectCtx(s.cwd, [], process.platform, hub), noTmp: true };
-      const full = reviewValue(d);
-      const deps = { effects: ctx };
-      return deterministicAllow(rules, unitValue(d), deps) && deterministicAllow(rules, full, deps) && classify(full, ctx) === "read" ? "hub-workflow" : null;
     } catch {
       return null;
     }
