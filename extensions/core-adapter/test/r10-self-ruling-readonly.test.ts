@@ -94,6 +94,39 @@ for (const [name, line] of DENY) {
   });
 }
 
+// Revision round 1 (reviewer F1-F5): each line writes <H>/ruling.md and passed the guard at 98ba72e. Case names are the
+// reviewer's literal lines.
+const DENY_R1: Array<[string, (r: Rig) => string, string?]> = [
+  // F1: a relative redirect or cp destination after a cd into the handoff dir
+  ["F1 cd <H> && cat <S>/x > ruling.md", (r) => `cd ${r.H} && cat ${r.S}/x > ruling.md`],
+  ["F1 cd <H> && cp <S>/x ruling.md", (r) => `cd ${r.H} && cp ${r.S}/x ruling.md`],
+  ["F1 pushd <H> && cat <S>/x > ruling.md", (r) => `pushd ${r.H} && cat ${r.S}/x > ruling.md`],
+  // F2: a backslash escape or line continuation hides a segment break
+  ["F2 echo APPROVED | tee \\ + newline + cat <H>/ruling.md", (r) => `echo APPROVED | tee \\\ncat ${r.H}/ruling.md`],
+  ["F2 echo APPROVED | tee \\; cat <H>/ruling.md", (r) => `echo APPROVED | tee \\; cat ${r.H}/ruling.md`],
+  ["F2 echo APPROVED | tee \\& cat <H>/ruling.md", (r) => `echo APPROVED | tee \\& cat ${r.H}/ruling.md`],
+  // F3: CDPATH reroutes a relative cd (cwd: the session root, where `up` does not exist)
+  ["F3 CDPATH=<parent of H>; cd up && cp x $N", (r) => `CDPATH=${r.hand}; cd up && cp x $N`],
+  ["F3 export CDPATH=<parent of H>; cd up && cp x $N", (r) => `export CDPATH=${r.hand}; cd up && cp x $N`],
+  // F4: a line that rebinds FOREMAN_SCRATCH keeps it dynamic
+  ["F4 FOREMAN_SCRATCH=<H>; cat x > $FOREMAN_SCRATCH/ruling.md", (r) => `FOREMAN_SCRATCH=${r.H}; cat x > $FOREMAN_SCRATCH/ruling.md`],
+  ["F4 FOREMAN_SCRATCH=<H>; cat x > $FOREMAN_SCRATCH/$N", (r) => `FOREMAN_SCRATCH=${r.H}; cat x > $FOREMAN_SCRATCH/$N`],
+  ["F4 export FOREMAN_SCRATCH=<H> && cp x $FOREMAN_SCRATCH/ruling.md", (r) => `export FOREMAN_SCRATCH=${r.H} && cp x $FOREMAN_SCRATCH/ruling.md`],
+  // F5: PowerShell write cmdlets (powershell tool)
+  ["F5 Set-Content <H>/ruling.md", (r) => `Set-Content -Path ${r.H}/ruling.md -Value APPROVED`, "powershell"],
+  ["F5 Out-File <H>/ruling.md", (r) => `"APPROVED" | Out-File -FilePath ${r.H}/ruling.md`, "powershell"],
+  ["F5 Copy-Item <S>/x <H>/ruling.md", (r) => `Copy-Item ${r.S}/x ${r.H}/ruling.md`, "powershell"],
+  ["F5 Add-Content <H>/ruling.md", (r) => `Add-Content -Path ${r.H}/ruling.md -Value APPROVED`, "powershell"],
+  ["F5 Set-Location <H>; Set-Content ruling.md", (r) => `Set-Location ${r.H}; Set-Content ruling.md APPROVED`, "powershell"],
+];
+
+for (const [name, line, tool] of DENY_R1) {
+  test(`r10 write surface denied (round 1): ${name}`, () => {
+    const r = rig();
+    assert.equal(run(r, line(r), tool ?? "bash"), SELF_RULING_REASON, line(r));
+  });
+}
+
 test("r10 write surface denied: write and edit tools on <H>/ruling.md", () => {
   const r = rig();
   for (const tool of ["write", "edit"]) assert.equal(selfRulingRefusal(tool, { path: path.join(r.H, "ruling.md") }, r.root, r.dirs, [r.S]), SELF_RULING_REASON, tool);
