@@ -35,6 +35,23 @@ The ledger is the scope source. The adapter prepends the ledger text to every `r
 
 A review launched after a FAIL checks only the items that failed: the harness prepends the line `[re-review items: 2, 4]` (the `N. FAIL` items of the last FAIL verdict, cleared by a PASS) to a plain `item` review task, and the verdict must list each of them as `N. PASS` or `N. FAIL`. `ceremony.reviewRuns` (default 3) caps the review runs per user prompt; the next launch is refused `[review_cap]`. Every review run, re-reviews and panel shadows included, traces `review_done` at its run end.
 
+## Critique
+
+After its verdict, a `reviewer` or `senior-reviewer` report carries a CRITIQUE block (agents/reviewer.md,
+agents/senior-reviewer.md) in a fixed format:
+
+```
+CRITIQUE:
+- [now] <a simplification one builder commit makes>
+- [later] <simplify later>
+```
+
+or `CRITIQUE: none`. It lists overengineering, niche checks beyond the item's scope, one-caller abstractions, flags or
+options nothing sets and tests of mocks. The foreman sends the `now` lines back to the builder in the same revision and
+records the `later` lines in result.md. Critique never turns a PASS into a FAIL (APPROVE into BLOCK) on its own: the
+verdict parsing (`verdictOf`, the `N. PASS` marks, the re-review items) skips the block (`withoutCritique` in rounds.ts).
+There is no extra review pass and no other reviewer model for it.
+
 ## Different-model rule
 
 A review by the model that built the work is weak evidence. On every `reviewer` launch, when the resolved model is the

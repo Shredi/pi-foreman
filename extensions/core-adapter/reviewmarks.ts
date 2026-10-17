@@ -5,7 +5,7 @@
 // turn. V is never marked here: it stays with the fresh verifier. Each review run marks at most
 // once, whether its result arrives inline (launch-wait) or as a detached completion notice.
 import * as fs from "node:fs";
-import { completedAgents, verdictOf } from "./rounds.ts";
+import { completedAgents, verdictOf, withoutCritique } from "./rounds.ts";
 import { noticeRuns } from "./launchwait.ts";
 
 export const MARK_NOTE = "verified by reviewer PASS";
@@ -21,13 +21,13 @@ export function stripLineDecoration(line: string): string {
 /**
  * Item numbers of the review's per-item `N. <word>` lines (word PASS or FAIL), in order, without
  * repeats. Each line may carry decoration (`- 1. PASS`, `**1. PASS**`, `` `1. PASS` ``, `1) PASS`)
- * and the doubled bench form "1. `1. PASS`". Lines inside ``` fences and `PASSED` do not count.
+ * and the doubled bench form "1. `1. PASS`". Lines inside ``` fences, the CRITIQUE block and `PASSED` do not count.
  */
 export function verdictItemsOf(text: string, word: "PASS" | "FAIL"): string[] {
   const out: string[] = [];
   let fenced = false;
   const re = new RegExp(`^${word}\\b`);
-  for (const line of text.split(/\r?\n/)) {
+  for (const line of withoutCritique(text).split(/\r?\n/)) {
     if (line.trimStart().startsWith("```")) {
       fenced = !fenced;
       continue;

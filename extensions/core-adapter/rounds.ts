@@ -57,9 +57,38 @@ export function completedAgents(content: string): string[] {
   return [...grouped[1].matchAll(/\*\*(.+?)\*\*/g)].map((m) => m[1]);
 }
 
-/** Verdict in a review's text: any FAIL/BLOCK wins, else PASS/APPROVE, else null. */
+// The reviewer's CRITIQUE block (agents/reviewer.md, agents/senior-reviewer.md): a `CRITIQUE:` line (`CRITIQUE: none`
+// when empty), then `- [now] <text>` / `- [later] <text>` lines. It is advice and never part of a verdict.
+const CRITIQUE_HEAD = /^\s*(?:[-*]\s+|\d+[.)]\s+)?\**CRITIQUE\**\s*:/i;
+const CRITIQUE_LINE = /^\s*[-*]\s+\[(now|later)\]/i;
+
+/** `text` without its CRITIQUE blocks (the head line and the `- [now|later]` lines and blank lines after it). */
+export function withoutCritique(text: string): string {
+  const out: string[] = [];
+  let inBlock = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (CRITIQUE_HEAD.test(line)) inBlock = true;
+    else if (!(inBlock && (CRITIQUE_LINE.test(line) || !line.trim()))) inBlock = false;
+    if (!inBlock) out.push(line);
+  }
+  return out.join("\n");
+}
+
+/** Counts of the `- [now]` and `- [later]` lines of a review's CRITIQUE blocks. */
+export function critiqueOf(text: string): { now: number; later: number } {
+  const c = { now: 0, later: 0 };
+  let inBlock = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (CRITIQUE_HEAD.test(line)) inBlock = true;
+    else if (inBlock && CRITIQUE_LINE.test(line)) c[CRITIQUE_LINE.exec(line)![1].toLowerCase() as "now" | "later"]++;
+    else if (line.trim()) inBlock = false;
+  }
+  return c;
+}
+
+/** Verdict in a review's text: any FAIL/BLOCK wins, else PASS/APPROVE, else null. The CRITIQUE block does not count. */
 export function verdictOf(text: string): Verdict | null {
-  const all = [...text.matchAll(/\b(?:overall\s+)?verdict\s*\**\s*:\s*\**\s*(pass|fail|approve|block)\b/gi)].map((m) => m[1].toLowerCase());
+  const all = [...withoutCritique(text).matchAll(/\b(?:overall\s+)?verdict\s*\**\s*:\s*\**\s*(pass|fail|approve|block)\b/gi)].map((m) => m[1].toLowerCase());
   if (all.some((v) => v === "fail" || v === "block")) return "fail";
   return all.length > 0 ? "pass" : null;
 }
