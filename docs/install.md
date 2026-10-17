@@ -8,7 +8,7 @@
 
 Setting up with an agent: point it at [features.md](features.md).
 
-Needs Node 22+, Pi 1.2.x on `PATH` and Python 3.9+. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
+Needs Node 22+, Pi 1.3.x on `PATH` and Python 3.9+. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
 
 ```sh
 pi install git:github.com/Shredi/pi-foreman            # global; pin with @<tag-or-commit>
@@ -116,11 +116,11 @@ Pi's install does and leaves it unchanged.
 
 ### Updating Pi
 
-The pinned Pi version lives in `packages.lock.json` (currently 1.2.0, range 1.2.x); `setup.mjs` refuses a Pi
+The pinned Pi version lives in `packages.lock.json` (currently 1.3.0, range 1.3.x); `setup.mjs` refuses a Pi
 outside the range. After a pin change, update the global Pi and re-run setup:
 
 ```sh
-npm i -g @earendil-works/pi-coding-agent@1.2.0
+npm i -g @earendil-works/pi-coding-agent@1.3.0
 foreman setup --dry-run && foreman setup
 ```
 

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Pi 1.3.0
+- Pi 1.3.0 supported (range 1.3.x); no extension-surface change. Pi's `--model` ambiguity fix prefers the provider with credentials.
+
 ### Pi 1.2.0 and the background-tasks add-on
 - Pi 1.2.0 supported (range 1.2.x).
 - `foreman doctor` prints an info line with pi-background-tasks' declared peer range for `@earendil-works/pi-coding-agent` against the running Pi version (never a failure; no line without the add-on).

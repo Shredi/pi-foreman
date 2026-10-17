@@ -15,7 +15,7 @@ the helpers while a stronger one stays in charge.
 
 ## Requirements
 
-Node 22+, Pi 1.2.x on your `PATH`, Python 3.9+. Linux, macOS and Windows.
+Node 22+, Pi 1.3.x on your `PATH`, Python 3.9+. Linux, macOS and Windows.
 
 ## Install
 
