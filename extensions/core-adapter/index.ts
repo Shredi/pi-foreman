@@ -22,7 +22,7 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
-import { isRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
+import { isRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingMessage, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -1382,7 +1382,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // A session never writes a ruling file in a handoff dir where it is the child (ruling.ts selfRulingRefusal).
     {
       const rs = sessionFor(ctx);
-      const why = rs && selfRulingRefusal(event.toolName, event.input as Record<string, unknown>, ctx.cwd, childDirsOf(rs));
+      const why = rs && selfRulingMessage(event.toolName, event.input as Record<string, unknown>, ctx.cwd, childDirsOf(rs));
       if (why) {
         rs.trace?.emit({ event: "guard", guard: "self_ruling", toolFamily: event.toolName, decision: "blocked", ...denyFields(`self_ruling: ${why}`, event.toolName, event.input, rs.isChild ? rs.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) });
         return { block: true, reason: `pi-foreman: ${why}.` };
