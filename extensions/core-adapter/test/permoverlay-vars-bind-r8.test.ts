@@ -241,3 +241,150 @@ for (const line of [
     assert.equal(foreman(line, "powershell"), "pass");
   });
 }
+
+// ------------------------------------------------------------------ revision 1, item 2: quoted integer RHS, special-parameter offsets
+for (const [line, name, who] of [
+  [`declare -i x; x=" $y"; ${S_USE}`, "S", "child"],
+  [`declare -i x=" $y"; ${S_USE}`, "S", "child"],
+  [`declare -i x; x=1" $y"; ${HOME_USE}`, "HOME", "foreman"],
+  [`declare -i x; x="1 + $y"; ${S_USE}`, "S", "child"],
+  [`declare -i x; x=' y'; ${S_USE}`, "S", "child"],
+  [`declare -i x; x+=" $y"; ${S_USE}`, "S", "child"],
+  [`typeset -i x; x=" \`cat f\`"; ${HOME_USE}`, "HOME", "foreman"],
+  [`echo \${$:$off}; ${S_USE}`, "S", "child"],
+  [`echo \${?:$off}; ${S_USE}`, "S", "child"],
+  [`echo \${-:$off}; ${S_USE}`, "S", "child"],
+  [`echo \${#:$off}; ${HOME_USE}`, "HOME", "foreman"],
+  [`echo \${!:$off}; ${S_USE}`, "S", "child"],
+  [`echo \${$:1:$len}; ${S_USE}`, "S", "child"],
+] as const) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line).has(name), `boundNames sees ${name}`);
+    untrusted(runAs(who, line), line);
+  });
+}
+
+// revision 1, item 2 negatives: lengths, indirection, defaults and quoted numeric literals leave HOME trusted
+for (const line of [
+  "echo ${#x}; cat $HOME/f",
+  "echo ${!x}; cat $HOME/f",
+  "echo ${x:-y}; cat $HOME/f",
+  "echo ${#:-0}; cat $HOME/f",
+  "echo ${?:-0}; cat $HOME/f",
+  "echo ${$:2}; cat $HOME/f",
+  'declare -i n; n="5"; cat $HOME/f',
+]) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(!boundNames(line).has("HOME"));
+    assert.equal(foreman(line.replace("$HOME/f", HOME_USE.slice(4))), "pass");
+  });
+}
+
+// ------------------------------------------------------------------ revision 1, item 3: comma arrays in the colon and space forms
+for (const [line, name] of [
+  [`Set-Item -Path:env:FOO, $p -Value /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -Path env:FOO ,$p -Value /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -Path:env:FOO, (gc f) -Value /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -Path:'env:FOO', $p -Value /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -Path env:FOO , $p -Value /x; ${PS_USE}`, "HOME"],
+  [`Remove-Item -Path:env:FOO, $p; ${PS_USE}`, "HOME"],
+  [`Set-Variable -Name:FOO, $n -Value /x; ${PS_VAR_USE}`, "HOME"],
+  [`Set-Item -Path:env:FOO,\n$p -Value /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -Path:env:FOO, env:HOME -Value /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -Path env:FOO ,env:HOME -Value /x; ${PS_USE}`, "HOME"],
+] as const) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line, "powershell").has(name), `boundNames sees ${name}`);
+    untrusted(foreman(line, "powershell"), line);
+  });
+}
+
+// ------------------------------------------------------------------ revision 1, item 19: pipeline input, positionals, destinations, module names
+for (const [line, name] of [
+  // pipeline input into an item cmdlet without a literal path / name
+  [`Get-Content f | Set-Item -Value /x; ${PS_USE}`, "HOME"],
+  [`gc f | si -Value /x; ${PS_USE}`, "HOME"],
+  [`gc f | New-Item -Value /x; ${PS_USE}`, "HOME"],
+  [`gc f | ni -Value /x; ${PS_USE}`, "HOME"],
+  [`gc f | Set-Content -Value x; ${PS_USE}`, "HOME"],
+  [`gc f | sc -Value x; ${PS_USE}`, "HOME"],
+  [`gc f | Remove-Item; ${PS_USE}`, "HOME"],
+  [`gc f | Clear-Item; ${PS_USE}`, "HOME"],
+  [`gc f | Rename-Item -NewName FOO; ${PS_USE}`, "HOME"],
+  [`gc f | Copy-Item -Destination ./b; ${PS_USE}`, "HOME"],
+  [`gc f | Move-Item -Destination ./b; ${PS_USE}`, "HOME"],
+  [`gc f | Rename-Item -Path env:X; ${PS_USE}`, "HOME"],
+  [`gc f | Set-Variable -Value /x; ${PS_VAR_USE}`, "HOME"],
+  [`gc f | sv -Value /x; ${PS_VAR_USE}`, "HOME"],
+  [`gc f | New-Variable -Value /x; ${PS_VAR_USE}`, "HOME"],
+  [`gc f | nv -Value /x; ${PS_VAR_USE}`, "HOME"],
+  [`$null = gc f | Set-Item -Value /x; ${PS_USE}`, "HOME"],
+  // a positional path after a named option's value, or behind an abbreviated parameter name
+  [`Set-Item -Value /x $p; ${PS_USE}`, "HOME"],
+  [`si -Value /x $p; ${PS_USE}`, "HOME"],
+  [`Set-Content -Value x $p; ${PS_USE}`, "HOME"],
+  [`New-Item -Value /x $p; ${PS_USE}`, "HOME"],
+  [`New-Item -ItemType Variable -Value /x $p; ${PS_USE}`, "HOME"],
+  [`Set-Variable -Value /x $n; ${PS_VAR_USE}`, "HOME"],
+  [`$null = Set-Item -Value /x $p; ${PS_USE}`, "HOME"],
+  [`Set-Item -Pa $p -Value /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -P $p /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -Lit $p /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -Pa:$p -Value /x; ${PS_USE}`, "HOME"],
+  [`Set-Variable -N $n -Value /x; ${PS_VAR_USE}`, "HOME"],
+  [`Set-Item -Force $p /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -Val /x $p; ${PS_USE}`, "HOME"],
+  [`Set-Item env:FOO /x $p; ${PS_USE}`, "HOME"],
+  // a non-literal destination
+  [`Rename-Item env:X -NewName $n; ${PS_USE}`, "HOME"],
+  [`Rename-Item env:X -NewName:$n; ${PS_USE}`, "HOME"],
+  [`Rename-Item env:X $n; ${PS_USE}`, "HOME"],
+  [`ren env:X $n; ${PS_USE}`, "HOME"],
+  [`rni env:X $n; ${PS_USE}`, "HOME"],
+  [`Copy-Item env:X -Destination $d; ${PS_USE}`, "HOME"],
+  [`Copy-Item env:X -Destination:$d; ${PS_USE}`, "HOME"],
+  [`copy env:X $d; ${PS_USE}`, "HOME"],
+  [`cp env:X $d; ${PS_USE}`, "HOME"],
+  [`cpi env:X $d; ${PS_USE}`, "HOME"],
+  [`Move-Item env:X -Destination $d; ${PS_USE}`, "HOME"],
+  [`move env:X $d; ${PS_USE}`, "HOME"],
+  [`mv env:X $d; ${PS_USE}`, "HOME"],
+  [`mi env:X $d; ${PS_USE}`, "HOME"],
+  [`Copy-Item -Destination $d env:X; ${PS_USE}`, "HOME"],
+  // a literal destination binds that name
+  [`Copy-Item env:X -Destination env:HOME; ${PS_USE}`, "HOME"],
+  [`Move-Item env:X variable:HOME; ${PS_VAR_USE}`, "HOME"],
+  // module-qualified cmdlet names
+  [`Microsoft.PowerShell.Management\\Set-Item -Path $p -Value /x; ${PS_USE}`, "HOME"],
+  [`microsoft.powershell.management\\set-item $p /x; ${PS_USE}`, "HOME"],
+  [`Microsoft.PowerShell.Management\\Set-Item -Value /x $p; ${PS_USE}`, "HOME"],
+  [`Microsoft.PowerShell.Utility\\Set-Variable -Name $n -Value /x; ${PS_VAR_USE}`, "HOME"],
+  [`MICROSOFT.POWERSHELL.UTILITY\\SET-VARIABLE $n /x; ${PS_VAR_USE}`, "HOME"],
+  [`Foo\\Set-Item @p; ${PS_USE}`, "HOME"],
+  [`$null = Microsoft.PowerShell.Management\\New-Item -Path $p; ${PS_USE}`, "HOME"],
+  [`gc f | Microsoft.PowerShell.Management\\Set-Item -Value /x; ${PS_USE}`, "HOME"],
+  [`Microsoft.PowerShell.Utility\\Invoke-Expression $c; ${PS_USE}`, "HOME"],
+] as const) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line, "powershell").has(name), `boundNames sees ${name}`);
+    untrusted(foreman(line, "powershell"), line);
+  });
+}
+
+// revision 1 negatives: literal targets, value-only expressions and readers leave HOME trusted
+for (const line of [
+  `Set-Item -Path:env:FOO, env:BAR -Value /x; ${PS_USE}`,
+  `Set-Item -Path env:FOO -Value $v; ${PS_USE}`,
+  `Set-Item env:FOO $v; ${PS_USE}`,
+  `Set-Item -Value $v -Path env:FOO; ${PS_USE}`,
+  `Get-Content f | Out-Null; ${PS_USE}`,
+  `gc f | Set-Item -Path env:FOO; ${PS_USE}`,
+  `Rename-Item env:X -NewName FOO; ${PS_USE}`,
+  `Copy-Item ./a ./b; ${PS_USE}`,
+  `Microsoft.PowerShell.Management\\Set-Item -Path env:FOO -Value /x; ${PS_USE}`,
+]) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(!boundNames(line, "powershell").has("HOME"), "not HOME");
+    assert.equal(foreman(line, "powershell"), "pass");
+  });
+}

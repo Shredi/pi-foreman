@@ -194,7 +194,10 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
     const plain = command.replace(/`([^\r\n])/g, "$1");
     // the colon form `-Path:env:HOME` / `-Name: HOME` is also read as `-Path env:HOME` (an extra text: the name regexes only add)
     const colon = (s: string): string => s.replace(/(^|[\s;|({}=])(-[A-Za-z]+):[ \t]*(?=\S)/g, "$1$2 ");
-    for (const text of new Set([command, plain, colon(command), colon(plain)])) {
+    // a module-qualified cmdlet (`Microsoft.PowerShell.Management\Set-Item`, `Foo\iex`) is also read without its module (an extra text)
+    const demod = (s: string): string => s.replace(/(?<![\w$.\\/:-])[A-Za-z][\w.]*\\(?=[A-Za-z])/g, "");
+    const texts = [command, plain, colon(command), colon(plain)];
+    for (const text of new Set([...texts, ...texts.map(demod)])) {
       for (const m of text.matchAll(/\$(?:[A-Za-z]+:)?([A-Za-z_][A-Za-z0-9_]*)\s*[-+*/%]?\?{0,2}=(?!=)/gi)) add(m[1]);
       for (const m of text.matchAll(/\$\{(?:[A-Za-z]+:)?([A-Za-z_][A-Za-z0-9_]*)\}\s*[-+*/%]?\?{0,2}=(?!=)/gi)) add(m[1]);
       // `.Home = ..` (a provider's Home property), any property or name assigned
@@ -218,27 +221,29 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
       for (const m of text.matchAll(/(?<![\w$.\\/:-])([A-Za-z][\w.-]*)(?![\w.-])/g)) if (PS_EVAL.has(m[1].toLowerCase())) all();
       if (/(?<![&\w])&(?!&)|(?:^|[=(;|{}\]])\s*\.\s+\S/.test(text)) all();
       // item cmdlets anywhere (`$null = New-Item -Path ('en'+'v:HOME')`): a path / name that is not one literal may name any item
+      // (psItemUnsafe: positionals, destinations, pipeline input, abbreviated parameters)
       for (const m of text.matchAll(/(?<![\w$.\\/:-])(set-item|si|new-item|ni|rename-item|rni|set-content|sc|set-variable|sv|new-variable|nv)(?![\w-])([^;|\n]*)/gi)) {
         const args = m[2].match(/'[^']*'|"[^"]*"|\([^)]*\)?|[^\s(]+/g) ?? [];
-        const target = psTarget(args);
-        const fsPath = target !== undefined && /^(?:\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*|\$\{(?:env:)?[A-Za-z_][A-Za-z0-9_]*\}|~)[\\/][^$()`+{}'"]*$/i.test(target);
-        const literal = target !== undefined && !/,\s*$/.test(target) && (/^'[^']*'$/.test(target) || /^"[^"$`]*"$/.test(target) || /^[^$()`+{}'"]+$/.test(target) || fsPath);
-        if (!literal) all();
+        const piped = /(?:^|[^|])\|\s*$/.test(text.slice(0, m.index));
+        const literal = (t: string): boolean =>
+          !/,\s*$/.test(t) && (/^'[^']*'$/.test(t) || /^"[^"$`]*"$/.test(t) || /^[^$()`+{}'"]+$/.test(t) || /^(?:\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*|\$\{(?:env:)?[A-Za-z_][A-Za-z0-9_]*\}|~)[\\/][^$()`+{}'"]*$/i.test(t));
+        if (psItemUnsafe(m[1].toLowerCase(), args, piped, literal)) all();
       }
     }
     for (const pipe of parseShell(command, "powershell").pipelines) {
-      for (const unit of pipe) {
-        const verb = (unit[0] ?? "").toLowerCase();
+      for (const [u, unit] of pipe.entries()) {
+        // `Microsoft.PowerShell.Management\Set-Item` is Set-Item
+        const verb = (unit[0] ?? "").toLowerCase().replace(/^[a-z][\w.]*\\(?=[a-z])/, "");
         // `& $sb`, `$cmd args` (not `$x = ..`)
         const call = /^\$[^=]*$/.test(verb) && !(unit[1] ?? "").startsWith("=");
         if (PS_EVAL.has(verb) || /\.ps[md]?1$/i.test(verb) || call) all();
         if (PS_ITEM.has(verb)) {
           const args = unit.slice(1);
           if (args.some((a) => /^@[\w{(]/.test(a))) all();
-          const target = psTarget(args);
           // a path built at run time may name an env: / variable: item; a file path below `$env:N` / `$HOME` / `~` stays a file path
-          const fsPath = target !== undefined && /^(?:\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*|\$\{(?:env:)?[A-Za-z_][A-Za-z0-9_]*\}|~)[\\/][^$()`+{}]*$/i.test(target);
-          if (target === undefined || /,\s*$/.test(target) || (/[$()`+{}]/.test(target) && !fsPath)) all();
+          const literal = (t: string): boolean =>
+            !/,\s*$/.test(t) && (!/[$()`+{}]/.test(t) || /^(?:\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*|\$\{(?:env:)?[A-Za-z_][A-Za-z0-9_]*\}|~)[\\/][^$()`+{}]*$/i.test(t));
+          if (psItemUnsafe(verb, args, u > 0, literal)) all();
         }
       }
     }
@@ -303,33 +308,103 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
 }
 
 /**
- * The item a PowerShell item cmdlet names: the value of `-Path` / `-LiteralPath` / `-Name` / `-PSPath`, in the space form or the
- * colon form (`-Path:env:HOME`, `-Path: $p`), else the first non-option word; undefined when there is none.
+ * Whether a PowerShell item cmdlet call (`verb`, an alias or a cmdlet name, and its argument words) may name an item the check cannot
+ * see, so that every trusted name may be rebound. Parameters are read in the space and the colon form (`-Path:env:HOME`, `-Path: $p`),
+ * comma arrays are one value (psArray), positionals fill the cmdlet's positional slots not bound by name (`Set-Item -Value /x $p`: `$p`
+ * is the path). Unsafe when: a splat; no path / name at all; a path, name, `-NewName` / `-Destination` or positional destination that
+ * is not `literal`; a parameter name that is not a known full name (`-Pa`, `-Lit`, `-N`: PowerShell takes any unambiguous prefix) while
+ * any word is non-literal or input is piped; piped input (`piped`) into Rename-Item / Copy-Item / Move-Item without a destination.
  */
-function psTarget(args: string[]): string | undefined {
-  const pi = args.findIndex((a) => /^-(?:path|literalpath|name|pspath)(?::|$)/i.test(a));
-  if (pi < 0) {
-    const k = args.findIndex((a) => !a.startsWith("-"));
-    return k < 0 ? undefined : psArray(args, k, args[k]);
+function psItemUnsafe(verb: string, args: string[], piped: boolean, literal: (t: string) => boolean): boolean {
+  if (args.some((a) => /^@[\w{(]/.test(a))) return true;
+  const slots = PS_SLOTS[PS_ITEM_CMDLET[verb] ?? ""] ?? ["path"];
+  const bound = new Set<string>();
+  const targets: string[] = [];
+  const dests: string[] = [];
+  const positional: string[] = [];
+  let unknown = false;
+  for (let k = 0; k < args.length; k++) {
+    const o = /^-([A-Za-z]\w*)(:)?([\s\S]*)$/.exec(args[k]);
+    if (!o) {
+      const [v, end] = psArray(args, k, args[k]);
+      positional.push(v);
+      k = end;
+      continue;
+    }
+    const p = o[1].toLowerCase();
+    const value = (): string | undefined => {
+      if (o[2] !== undefined && o[3] !== "") {
+        const [v, end] = psArray(args, k, o[3]);
+        k = end;
+        return v;
+      }
+      if (k + 1 >= args.length) return undefined;
+      const [v, end] = psArray(args, k + 1, args[k + 1]);
+      k = end;
+      return v;
+    };
+    if (PS_PATH_PARAMS.has(p)) {
+      const v = value();
+      if (v === undefined) return true;
+      const slot = p === "literalpath" || p === "pspath" ? "path" : p;
+      bound.add(slot);
+      (slot === "newname" || slot === "destination" ? dests : targets).push(v);
+    } else if (PS_VALUE_PARAMS.has(p)) {
+      value();
+      bound.add(p);
+    } else if (PS_SWITCH_PARAMS.has(p)) {
+      if (o[2] !== undefined) value();
+    } else unknown = true;
   }
-  const rest = args[pi].replace(/^-[A-Za-z]+:?/, "");
-  return rest !== "" ? psArray(args, pi, rest) : args[pi + 1] === undefined ? undefined : psArray(args, pi + 1, args[pi + 1]);
+  if (unknown) return piped || args.some((a) => !literal(a));
+  const open = slots.filter((s) => !bound.has(s));
+  positional.forEach((v, i) => {
+    const slot = open[i] ?? "path";
+    if (slot === "value") return;
+    (slot === "newname" || slot === "destination" ? dests : targets).push(v);
+  });
+  if (targets.length === 0 || ![...targets, ...dests].every(literal)) return true;
+  // pipeline input may bind -NewName / -Destination by property name
+  return piped && dests.length === 0 && (PS_SLOTS[PS_ITEM_CMDLET[verb] ?? ""] ?? []).some((s) => s === "newname" || s === "destination");
 }
 
 /**
  * A comma array argument (`env:FOO, $p`, `env:FOO ,$p`, `env:FOO , (gc f)`): `first` (the word at `args[k]`) joined with every following
- * word while a comma links them. A value that still ends in a comma continues on a line this check does not see (the callers reject it).
+ * word while a comma links them, and the index of the last word taken. A value that still ends in a comma continues on a line this
+ * check does not see (the `literal` predicates reject it).
  */
-function psArray(args: string[], k: number, first: string): string {
+function psArray(args: string[], k: number, first: string): [string, number] {
   let v = first;
   while (k + 1 < args.length && (/,\s*$/.test(v) || args[k + 1].startsWith(","))) v += ` ${args[++k]}`;
-  return v;
+  return [v, k];
 }
+
+/** The cmdlet behind each PS_ITEM word. */
+const PS_ITEM_CMDLET: Record<string, string> = {
+  "set-item": "set-item", si: "set-item", "new-item": "new-item", ni: "new-item", "rename-item": "rename-item", rni: "rename-item", ren: "rename-item",
+  "copy-item": "copy-item", cpi: "copy-item", copy: "copy-item", cp: "copy-item", "move-item": "move-item", mi: "move-item", move: "move-item", mv: "move-item",
+  "clear-item": "clear-item", cli: "clear-item", "remove-item": "remove-item", ri: "remove-item", del: "remove-item", rm: "remove-item", erase: "remove-item", rd: "remove-item", rmdir: "remove-item",
+  "set-variable": "set-variable", sv: "set-variable", set: "set-variable", "new-variable": "new-variable", nv: "new-variable", "clear-variable": "clear-variable", clv: "clear-variable",
+  "remove-variable": "remove-variable", rv: "remove-variable", "set-content": "set-content", sc: "set-content", "add-content": "add-content", ac: "add-content",
+  "set-itemproperty": "set-itemproperty", sp: "set-itemproperty", "new-itemproperty": "new-itemproperty",
+};
+/** Positional parameters of each item cmdlet, in position order (`value` is free, `newname` / `destination` a destination, the rest a target). */
+const PS_SLOTS: Record<string, string[]> = {
+  "set-item": ["path", "value"], "new-item": ["path"], "rename-item": ["path", "newname"], "copy-item": ["path", "destination"], "move-item": ["path", "destination"],
+  "clear-item": ["path"], "remove-item": ["path"], "set-variable": ["name", "value"], "new-variable": ["name", "value"], "clear-variable": ["name"], "remove-variable": ["name"],
+  "set-content": ["path", "value"], "add-content": ["path", "value"], "set-itemproperty": ["path", "name", "value"], "new-itemproperty": ["path", "name"],
+};
+/** Full parameter names that name the item or its destination. */
+const PS_PATH_PARAMS = new Set(["path", "literalpath", "pspath", "name", "newname", "destination"]);
+/** Full names of parameters that take a value which names no item. */
+const PS_VALUE_PARAMS = new Set(["value", "itemtype", "type", "encoding", "description", "option", "scope", "visibility", "erroraction", "warningaction", "informationaction"]);
+/** Full names of switch parameters (a value only in the colon form, `-Force:$true`). */
+const PS_SWITCH_PARAMS = new Set(["force", "passthru", "whatif", "confirm", "recurse", "nonewline", "asbytestream", "container", "verbose", "debug"]);
 
 /** PowerShell command words that run code this check never sees. */
 const PS_EVAL = new Set(["iex", "invoke-expression", ".", "&", "import-module", "ipmo", "invoke-command", "icm", "start-job", "sajb", "invoke-item", "ii", "powershell", "pwsh", "powershell.exe", "pwsh.exe"]);
 /** PowerShell item cmdlets whose path may be an env: / variable: drive item. */
-const PS_ITEM = new Set(["set-item", "si", "new-item", "ni", "rename-item", "rni", "copy-item", "cpi", "copy", "cp", "move-item", "mi", "move", "mv", "clear-item", "cli", "remove-item", "ri", "del", "rm", "erase", "set-variable", "sv", "set", "new-variable", "nv", "clear-variable", "clv", "remove-variable", "rv", "set-content", "sc", "add-content", "ac", "set-itemproperty", "sp", "new-itemproperty"]);
+const PS_ITEM = new Set(["set-item", "si", "new-item", "ni", "rename-item", "rni", "copy-item", "cpi", "copy", "cp", "move-item", "mi", "move", "mv", "clear-item", "cli", "remove-item", "ri", "del", "rm", "erase", "set-variable", "sv", "set", "new-variable", "nv", "clear-variable", "clv", "remove-variable", "rv", "set-content", "sc", "add-content", "ac", "set-itemproperty", "sp", "new-itemproperty", "ren", "rd", "rmdir"]);
 /** Bash keywords before a command word. */
 const SH_KEYWORDS = new Set(["if", "then", "elif", "else", "while", "until", "do", "!", "{", "}", "time", "coproc", "fi", "done", "esac", "in"]);
 /** Bash builtins whose operands (or some of them) are variable names; with the options that take a non-name value. */
