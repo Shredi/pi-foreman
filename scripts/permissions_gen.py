@@ -155,7 +155,10 @@ def hub_read_patterns(hub):
             continue
         out += [p + "/.workflow", p + "/.workflow/*"]
         # PS matches a bash token by its typed spelling and its symlink-resolved alias, so a key spelled through a symlink (or /var vs
-        # /private/var) misses a token typed as the real path: render the realpath spelling too.
+        # /private/var) misses a token typed as the real path: render the realpath spelling too. Only for a path absolute on this host OS, so a
+        # `C:/hub` on POSIX does not become `<cwd>/C:/hub`.
+        if not os.path.isabs(p):
+            continue
         real = Path(os.path.realpath(p)).as_posix().rstrip("/")
         if real and real != p and not real.endswith(":"):
             out += [real + "/.workflow", real + "/.workflow/*"]

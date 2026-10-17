@@ -50,6 +50,12 @@ class HubWorkflowTest(unittest.TestCase):
             self.assertEqual(r[base + "/.workflow/*"], "allow")
         self.assertNotIn(real.as_posix(), r)
 
+    def test_foreign_absolute_hub_gets_no_cwd_relative_realpath_key(self):
+        # a Windows-style entry on a POSIX host (or vice versa) is not absolute there: realpath would anchor it at the cwd
+        r = self.render(["C:/hub"])["external_directory_read"]
+        keys = sorted(k for k in r if ".workflow" in k)
+        self.assertEqual(keys, ["C:/hub/.workflow", "C:/hub/.workflow/*"])
+
     def test_project_layer_cannot_set_it(self):
         (self.agent / "foreman.json").write_text(json.dumps({"paths": {"hubWorkflow": ["/user/hub"]}}))
         proj = Path(self.tmp.name) / "proj"

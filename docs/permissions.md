@@ -321,6 +321,8 @@ value is ignored with a warning) names hub checkouts whose `.workflow/` path fam
 readable, read-only, for the foreman and its children in a round worktree: the read tool and read-only bash, no dialog,
 and the rendered `external_directory_read` carries the two patterns, so no ask either. Writes stay denied. A sibling
 that is not configured is handled as before. Relative entries, `..` components and a filesystem root are dropped.
+After setting or changing `paths.hubWorkflow`, or after upgrading to this release, re-run `foreman setup` to re-render the hub
+read keys (the realpath spelling of a symlinked hub dir is now rendered too).
 
 ### Round surfaces
 
