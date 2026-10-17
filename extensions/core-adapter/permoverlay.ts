@@ -222,7 +222,7 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
         const args = m[2].match(/'[^']*'|"[^"]*"|\([^)]*\)?|[^\s(]+/g) ?? [];
         const target = psTarget(args);
         const fsPath = target !== undefined && /^(?:\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*|\$\{(?:env:)?[A-Za-z_][A-Za-z0-9_]*\}|~)[\\/][^$()`+{}'"]*$/i.test(target);
-        const literal = target !== undefined && (/^'[^']*'$/.test(target) || /^"[^"$`]*"$/.test(target) || /^[^$()`+{}'"]+$/.test(target) || fsPath);
+        const literal = target !== undefined && !/,\s*$/.test(target) && (/^'[^']*'$/.test(target) || /^"[^"$`]*"$/.test(target) || /^[^$()`+{}'"]+$/.test(target) || fsPath);
         if (!literal) all();
       }
     }
@@ -238,7 +238,7 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
           const target = psTarget(args);
           // a path built at run time may name an env: / variable: item; a file path below `$env:N` / `$HOME` / `~` stays a file path
           const fsPath = target !== undefined && /^(?:\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*|\$\{(?:env:)?[A-Za-z_][A-Za-z0-9_]*\}|~)[\\/][^$()`+{}]*$/i.test(target);
-          if (target === undefined || (/[$()`+{}]/.test(target) && !fsPath)) all();
+          if (target === undefined || /,\s*$/.test(target) || (/[$()`+{}]/.test(target) && !fsPath)) all();
         }
       }
     }
@@ -308,9 +308,22 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
  */
 function psTarget(args: string[]): string | undefined {
   const pi = args.findIndex((a) => /^-(?:path|literalpath|name|pspath)(?::|$)/i.test(a));
-  if (pi < 0) return args.find((a) => !a.startsWith("-"));
+  if (pi < 0) {
+    const k = args.findIndex((a) => !a.startsWith("-"));
+    return k < 0 ? undefined : psArray(args, k, args[k]);
+  }
   const rest = args[pi].replace(/^-[A-Za-z]+:?/, "");
-  return rest !== "" ? rest : args[pi + 1];
+  return rest !== "" ? psArray(args, pi, rest) : args[pi + 1] === undefined ? undefined : psArray(args, pi + 1, args[pi + 1]);
+}
+
+/**
+ * A comma array argument (`env:FOO, $p`, `env:FOO ,$p`, `env:FOO , (gc f)`): `first` (the word at `args[k]`) joined with every following
+ * word while a comma links them. A value that still ends in a comma continues on a line this check does not see (the callers reject it).
+ */
+function psArray(args: string[], k: number, first: string): string {
+  let v = first;
+  while (k + 1 < args.length && (/,\s*$/.test(v) || args[k + 1].startsWith(","))) v += ` ${args[++k]}`;
+  return v;
 }
 
 /** PowerShell command words that run code this check never sees. */
