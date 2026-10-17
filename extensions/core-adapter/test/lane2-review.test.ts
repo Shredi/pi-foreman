@@ -25,7 +25,9 @@ const asyncRun = path.join(base, "async-subagent-runs", "run-a");
 const stateScratch = path.join(base, "agent", "pi-foreman", "state", "scratch", "s1");
 for (const d of [cwd, asyncRun, stateScratch]) fs.mkdirSync(d, { recursive: true });
 fs.writeFileSync(path.join(asyncRun, "status.json"), "{}\n");
+// the cwd must be a repository on every host: outside one the cwd is no allowed place and a read there stays a defer (win32 CI 453, 460)
 if (posix) execFileSync("git", ["init", "-q", cwd], { stdio: "ignore" });
+else fs.mkdirSync(path.join(cwd, ".git"));
 const owned = [asyncRun, stateScratch];
 const nonOwned = "/usr/local/pf-not-owned/b.txt";
 

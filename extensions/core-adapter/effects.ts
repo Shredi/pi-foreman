@@ -660,15 +660,15 @@ export class ChainWrites {
 }
 
 /** `command` with $FOREMAN_SCRATCH resolved once per scratch dir (the command itself when there is none). */
-export function scratchExpansions(command: string, scratch: string[]): string[] {
-  const out = scratch.map((d) => expandScratchVar(command, d)).filter((t): t is string => t !== null);
+export function scratchExpansions(command: string, scratch: string[], platform: string = process.platform): string[] {
+  const out = scratch.map((d) => expandScratchVar(command, d, platform)).filter((t): t is string => t !== null);
   return out.length ? out : [command];
 }
 
 /** The effect class of a whole command (see the header): its worst segment, the best reading over the scratch dirs. */
 export function classify(command: string, c: EffectCtx): EffectClass {
   let best: EffectClass = "unknown";
-  for (const text of scratchExpansions(command, c.scratch ?? [])) {
+  for (const text of scratchExpansions(command, c.scratch ?? [], plat(c))) {
     const chain = splitChain(text);
     if (!chain) continue;
     let worst: EffectClass = "read";

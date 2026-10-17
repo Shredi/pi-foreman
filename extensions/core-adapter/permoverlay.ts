@@ -152,6 +152,8 @@ export interface MatchCtx {
   exists?: (p: string) => boolean;
   isDir?: (p: string) => boolean;
   realpath?: (p: string) => string | null;
+  /** win32 only: realpath that expands 8.3 short names (`RUNNER~1` -> `runneradmin`; default fs.realpathSync.native). Injectable for tests. */
+  realpathNative?: (p: string) => string | null;
   list?: (dir: string) => string[];
   /** Write protection of bash words: `\` is no separator off win32, and `*` skips dot entries unless `dotGlob`. */
   bashWords?: boolean;
@@ -2633,6 +2635,8 @@ function insideDir(dir: string, p: string, ctx: MatchCtx): boolean {
 function tmpRoots(ctx: MatchCtx): string[] {
   const fsx = defaults(ctx);
   const raw = [os.tmpdir(), ...(ctx.platform === "win32" ? [] : ["/tmp"])];
+  // win32: os.tmpdir() may be an 8.3 short name (`C:\Users\RUNNER~1\...`) that fs.realpathSync keeps; the native realpath gives the long one
+  if (ctx.platform === "win32") return [...new Set(raw.flatMap((r) => [r, fsx.realpath(r), nativeReal(ctx)(r)]).filter((x): x is string => !!x))];
   return [...new Set(raw.flatMap((r) => [r, fsx.realpath(r)]).filter((x): x is string => !!x))];
 }
 
@@ -2645,9 +2649,37 @@ function childTmpWriteDeny(word: string, ctx: MatchCtx): Decision | null {
   if (ctx.role !== "child" || !scratch) return null;
   const roots = tmpRoots(ctx);
   const own = [scratch, ctx.cwd, workspaceOf(ctx.cwd).root, ...(ctx.roundRoots ?? [])];
+  if (ctx.platform === "win32") return childTmpWriteDenyWin32(word, ctx, scratch, roots, own);
   for (const cand of pathCandidates(word, ctx)) {
     if (!roots.some((r) => insideDir(r, cand, ctx))) continue;
     if (own.some((o) => insideDir(o, cand, ctx))) continue;
+    return { kind: "deny", reason: `pi-foreman: write to ${clip(word)} denied for a child: use FOREMAN_SCRATCH (${scratch}), not /tmp.` };
+  }
+  return null;
+}
+
+/** win32: fs.realpathSync.native (GetFinalPathNameByHandle expands 8.3 short names), or the injected ctx.realpathNative. */
+function nativeReal(ctx: MatchCtx): (p: string) => string | null {
+  return ctx.realpathNative ?? ((p) => { try { return fs.realpathSync.native(p); } catch { return null; } });
+}
+
+/**
+ * childTmpWriteDeny on win32: an 8.3 short name and its long name are one directory, so the candidates and the child's own dirs are
+ * also compared in their native-realpath spelling (the deepest existing ancestor, tail re-appended): a candidate with either spelling
+ * below a temp root is denied unless it lies inside an own dir; its native spelling counts for that only when no symlink is on its way
+ * (the JS realpath leaves it unchanged), so a link in the temp dir that points into the scratch stays denied as before.
+ */
+function childTmpWriteDenyWin32(word: string, ctx: MatchCtx, scratch: string, roots: string[], own0: (string | null | undefined)[]): Decision | null {
+  const nat = nativeReal(ctx);
+  const nfsx = { ...defaults(ctx), realpath: nat };
+  const own = [...own0, ...own0.map((o) => (o ? nat(o) : null))].filter((x): x is string => !!x);
+  for (const cand of pathCandidates(word, ctx)) {
+    const abs = path.win32.resolve(ctx.cwd, cand);
+    const spellings = [cand, realDeep(abs, path.win32, nfsx)].filter((x): x is string => !!x);
+    if (!spellings.some((s) => roots.some((r) => insideDir(r, s, ctx)))) continue;
+    const js = realDeep(abs, path.win32, defaults(ctx));
+    const noLink = !js || js.toLowerCase() === abs.toLowerCase();
+    if ((noLink ? spellings : [cand]).some((s) => own.some((o) => insideDir(o, s, ctx)))) continue;
     return { kind: "deny", reason: `pi-foreman: write to ${clip(word)} denied for a child: use FOREMAN_SCRATCH (${scratch}), not /tmp.` };
   }
   return null;

@@ -230,9 +230,16 @@ export class ChildScratch {
 /**
  * Replace `$FOREMAN_SCRATCH` / `${FOREMAN_SCRATCH}` outside single quotes by `dir`; null when the
  * dir holds a character the shell would read (then nothing is resolved and the caller refuses).
+ * win32: the dir is a native drive path (`C:\Users\RUNNER~1\...\scratch`); bash keeps a variable's value as is, so it is put in
+ * as the forward-slash spelling of the same path (`C:/Users/RUNNER~1/.../scratch`), and a `~` inside a name (an 8.3 short name,
+ * after a letter or digit) is literal. Not a drive path, or any other shell character, is null as on POSIX.
  */
-export function expandScratchVar(command: string, dir: string): string | null {
-  if (/[\s'"\\$`*?[\]{}()<>|;&!#~]/.test(dir)) return null;
+export function expandScratchVar(command: string, dir0: string, platform: string = process.platform): string | null {
+  let dir = dir0;
+  if (platform === "win32") {
+    dir = dir0.replace(/\\/g, "/");
+    if (!/^[A-Za-z]:\//.test(dir) || /(^|[^A-Za-z0-9])~/.test(dir) || /[\s'"\\$`*?[\]{}()<>|;&!#]/.test(dir)) return null;
+  } else if (/[\s'"\\$`*?[\]{}()<>|;&!#~]/.test(dir)) return null;
   let out = "";
   let single = false;
   let double = false;
@@ -315,7 +322,7 @@ const CMD_SYNTAX = /[|<>`$()\n\r]/;
 export function scratchCommandAllowed(command: string, dirs: string[], unitOk: (unit: string) => boolean, platform: string = process.platform): boolean {
   if (platform === "win32" || !dirs.length) return false;
   for (const d of dirs) {
-    const text = expandScratchVar(command, d);
+    const text = expandScratchVar(command, d, platform);
     if (text === null || CMD_SYNTAX.test(text) || /(^|[^&])&([^&]|$)/.test(text)) continue;
     const units = text.split(/&&|;/).map((u) => u.trim());
     if (units.some((u) => !u)) continue;

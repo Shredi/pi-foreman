@@ -123,11 +123,11 @@ export function deterministicAllowInfo(rules: BashRules, command: string, deps: 
   if (deps.scratchDirs?.length && deps.effects) {
     // child-scratch needs the composer as well: every segment a deterministic allow, cp sources checked as reads, ChainWrites
     for (const d of deps.scratchDirs) {
-      const text = expandScratchVar(command, d);
+      const text = expandScratchVar(command, d, deps.platform);
       if (text !== null && scratchCommandAllowed(text, deps.scratchDirs, (u) => unitAllowed(rules, u), deps.platform) && compose(rules, text, deps)) return { label: "child-scratch", segments: text.split(/&&|;/).length };
     }
   }
-  for (const text of scratchExpansions(command, deps.scratchDirs ?? [])) {
+  for (const text of scratchExpansions(command, deps.scratchDirs ?? [], c?.platform ?? deps.platform ?? process.platform)) {
     const r = compose(rules, text, deps);
     if (r) return r;
   }
