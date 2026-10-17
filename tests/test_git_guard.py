@@ -125,7 +125,7 @@ TABLE = [
     ("git commit --all -m 'feat: y'", "bash", A, D),
     ("git commit -m 'feat: y' a.txt", "bash", A, D),
     ("git commit --only -m 'feat: y'", "bash", A, D),
-    ("git commit -m \"$(cat msg.txt)\"", "bash", D, Q),
+    ("git commit -m \"$(cat msg.txt)\"", "bash", A, Q),
     ("git commit -F - <<'EOF'\nfeat: y\nEOF", "bash", A, Q),
     ("git commit", "bash", A, Q),
     ("git commit --amend --no-edit", "bash", A, Q),
