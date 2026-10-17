@@ -130,7 +130,7 @@ import { filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type R
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { launchEntries } from "./ladder.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
-import { asyncRunDirs, childReadable, childSurface, mainWorkflowReadable, ownTaskReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
+import { asyncRunDirs, childReadable, childSurface, hubWorkflowDirs, hubWorkflowReadable, mainWorkflowReadable, ownTaskReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { CustomSeen, isSubagentWake } from "./idlecustom.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
 
@@ -1359,7 +1359,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s.overlay) return { block: true as const, reason: OVERLAY_UNAVAILABLE };
     // the session's own bg_run task dirs (`.pi/tasks/<session id>-*`) are readable for the session and its children, no other session's
     const ownTasks = ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform);
-    const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform)] }; })() : {}) });
+    const hub = hubWorkflowReadable(get(s.config.config, "paths.hubWorkflow"), platform);
+    const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub }) });
     const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) });
     if (d) s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: r ? (d.kind === "deny" ? "deny" : "ask-denied") : "ask-approved", ...(r ? denyFields((d as { reason?: unknown }).reason, toolName, input, s.isChild ? s.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) : {}) });
     return r;
@@ -2077,7 +2078,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.isChild) return { write: [], read: [] };
     const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform);
     const sid = (s.usage.line.foremanSession || "").split("").filter((c) => /[A-Za-z0-9_-]/.test(c)).join("");
-    return sessionOwnedSplit({ scratch: s.scratch.live(null), rounds, handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), npmRoot: s.owned.npmRoot, stateScratch: sid ? path.join(s.agentDir, "pi-foreman", "state", "scratch", sid) : null, asyncRuns: [...s.childFiles, ...asyncRunDirs(s.childFiles, platform)] }, platform);
+    return sessionOwnedSplit({ scratch: s.scratch.live(null), rounds, handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), npmRoot: s.owned.npmRoot, stateScratch: sid ? path.join(s.agentDir, "pi-foreman", "state", "scratch", sid) : null, asyncRuns: [...s.childFiles, ...asyncRunDirs(s.childFiles, platform)], hubFlow: hubWorkflowDirs(get(s.config.config, "paths.hubWorkflow"), platform) }, platform);
   };
 
   /** The owned handoffs root (`<agentDir>/pi-foreman/handoffs`). */

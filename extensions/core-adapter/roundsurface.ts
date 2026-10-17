@@ -152,11 +152,33 @@ export function sessionOwnedRoots(i: { scratch: string[]; rounds: string[]; hand
  * The owned roots split by what a child may do there (the permission reviewer's prompt and owned-roots allow): `write` are read-write (child scratch dirs,
  * round and isolation worktrees, handoff dirs, `state/scratch/<session>`), `read` are read only (the global npm root, the async run dirs of the session's own child runs).
  */
-export function sessionOwnedSplit(i: { scratch: string[]; rounds: string[]; handoffs: string[]; npmRoot?: string | null; stateScratch?: string | null; asyncRuns?: Iterable<string> }, platform: string = process.platform): { write: string[]; read: string[] } {
+export function sessionOwnedSplit(i: { scratch: string[]; rounds: string[]; handoffs: string[]; npmRoot?: string | null; stateScratch?: string | null; asyncRuns?: Iterable<string>; hubFlow?: string[] }, platform: string = process.platform): { write: string[]; read: string[] } {
   const x = px(platform);
   const norm = (all: string[]): string[] => [...new Set(all.filter((p) => x.isAbsolute(p)).map((p) => x.resolve(p)))];
   const write = norm([...i.scratch, ...i.rounds, ...i.rounds.map((r) => isolationDir(r, platform)), ...i.handoffs, ...(i.stateScratch ? [i.stateScratch] : [])]);
-  return { write, read: norm([...(i.npmRoot ? [i.npmRoot] : []), ...(i.asyncRuns ?? [])]).filter((p) => !write.includes(p)) };
+  return { write, read: norm([...(i.npmRoot ? [i.npmRoot] : []), ...(i.asyncRuns ?? []), ...(i.hubFlow ?? [])]).filter((p) => !write.includes(p)) };
+}
+
+/**
+ * `paths.hubWorkflow` (a string or a list of absolute dirs) as the `.workflow` dir of each hub: the hub's ledger family, a READ root for the foreman and
+ * its children (never a write). Relative entries, `..` components and a filesystem root are dropped; empty by default.
+ */
+export function hubWorkflowDirs(value: unknown, platform: string = process.platform): string[] {
+  const x = px(platform);
+  const list = typeof value === "string" ? [value] : Array.isArray(value) ? value : [];
+  const out: string[] = [];
+  for (const v of list) {
+    if (typeof v !== "string" || !x.isAbsolute(v) || v.split(/[\\/]/).includes("..")) continue;
+    const d = x.resolve(v);
+    if (d === x.parse(d).root) continue;
+    out.push(x.join(d, ".workflow"));
+  }
+  return [...new Set(out)];
+}
+
+/** The read patterns of hubWorkflowDirs: the dir and its subtree. */
+export function hubWorkflowReadable(value: unknown, platform: string = process.platform): string[] {
+  return hubWorkflowDirs(value, platform).flatMap((d) => [d, `${d}/*`]);
 }
 
 const PLAIN = /^[A-Za-z0-9_./@+=,:%-]+$/;

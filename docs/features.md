@@ -390,6 +390,7 @@ Switch: `ceremony.orientation.enabled` is true.
 | `safety.permissions.readRoots` | `[]` | not in project/session (no tighten rule for this safety key) |
 | `safety.permissions.paths.deny` | `[]` | tighten-only (entries are added, never removed) |
 | `safety.permissions.paths.ask` | `[]` | tighten-only (entries are added, never removed) |
+| `paths.hubWorkflow` | `[]` | not in project/session (it loosens: it makes dirs outside the worktree readable; user or overlay config only) |
 
 ### auto-review
 
@@ -682,6 +683,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 
 | Key | Reason |
 |---|---|
+| `paths.hubWorkflow` | it loosens: it makes dirs outside the worktree readable; user or overlay config only |
 | `bridge.isolateClaudeConfig` | it loosens the host config isolation |
 | `providers.*.review` | it loosens: a review model approves asks |
 | `providers.*.cache.ttlSeconds` | the cache policy comes from the user or overlay config |

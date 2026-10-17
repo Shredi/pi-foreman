@@ -313,6 +313,14 @@ modified one is scanned) are not read. `npx tsx|node|ts-node|python3|bash <file>
 like a named script. Known limit: modules a scanned script imports are not read. A script path held in a variable other than
 `$FOREMAN_SCRATCH` is not resolved.
 
+### Hub ledger read
+
+`paths.hubWorkflow` (a string or a list of absolute dirs, default none; user or overlay config only, a project or session
+value is ignored with a warning) names hub checkouts whose `.workflow/` path family (the dir and everything below) is
+readable, read-only, for the foreman and its children in a round worktree: the read tool and read-only bash, no dialog,
+and the rendered `external_directory_read` carries the two patterns, so no ask either. Writes stay denied. A sibling
+that is not configured is handled as before. Relative entries, `..` components and a filesystem root are dropped.
+
 ### Round surfaces
 
 What the foreman session owns for the length of a round is one shared set (`roundsurface.ts`, ledger items 7c, 7e),

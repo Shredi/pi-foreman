@@ -506,6 +506,14 @@
         "dir": { "type": ["string", "null"], "description": "Trace directory. null means the state dir. A project or session value must resolve inside the workspace, else it is ignored." }
       }
     },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Extra places the foreman and its children may read (docs/permissions.md, Hub ledger read).",
+      "properties": {
+        "hubWorkflow": { "type": ["string", "array"], "items": { "type": "string" }, "description": "Absolute dir, or list of dirs, whose `.workflow/` path family (the hub's ledger and notes) is readable, read-only, for the foreman and its children in a round worktree: the read tool and read-only bash, no dialog. Writes stay denied. Default none. User or overlay config only; a project or session value is ignored with a warning." }
+      }
+    },
     "tools": {
       "type": "object",
       "additionalProperties": false,

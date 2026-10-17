@@ -144,6 +144,19 @@ def default_owned():
     return {"scratchRoot": Path(tmp, SCRATCH_DIR_NAME).as_posix(), "npmRoot": resolve_npm_root()}
 
 
+def hub_read_patterns(hub):
+    """external_directory_read keys of `paths.hubWorkflow` (string or list of absolute dirs): each `<dir>/.workflow` and its subtree."""
+    out = []
+    for d in strings([hub] if isinstance(hub, str) else hub):
+        if not (posixpath.isabs(d) or ntpath.isabs(d)) or ".." in d.replace("\\", "/").split("/"):
+            continue
+        p = Path(d).as_posix().rstrip("/")
+        if not p or p.endswith(":"):
+            continue
+        out += [p + "/.workflow", p + "/.workflow/*"]
+    return out
+
+
 def external_rules(baseline, agent_dir, owned):
     """(bare map, read map): external_directory and external_directory_read. Last match wins, so the
     catch-all comes first and the asks last; a pattern whose token did not resolve is dropped."""
@@ -171,7 +184,7 @@ def external_rules(baseline, agent_dir, owned):
     return bare, read or None
 
 
-def render(perms, agent_dir, ledger_helper="tool", owned=None):
+def render(perms, agent_dir, ledger_helper="tool", owned=None, hub=None):
     baseline = load_baseline()
     if ledger_helper == "off":
         baseline = without_ledger_helper(baseline)
@@ -181,6 +194,10 @@ def render(perms, agent_dir, ledger_helper="tool", owned=None):
     permission["path"] = pattern_map(path_rules(baseline, perms, agent_dir), DENY_PATH_REASON)
     bare, read = external_rules(baseline, agent_dir, default_owned() if owned is None else owned)
     permission["external_directory"] = bare
+    extra = hub_read_patterns(hub)
+    if extra:
+        read = dict(read or {})
+        read.update({p: "allow" for p in extra})
     if read:
         permission["external_directory_read"] = read
     out = {"permission": permission}
@@ -205,7 +222,7 @@ def main(argv=None):
     perms = (res["config"].get("safety") or {}).get("permissions") or {}
     agent = fc.resolve_agent_dir(args.agent_dir)
     helper = (res["config"].get("ceremony") or {}).get("ledgerHelper", "tool")
-    print(json.dumps({"config": render(perms, agent, helper), "warnings": res["warnings"], "errors": res["errors"]}, indent=2))
+    print(json.dumps({"config": render(perms, agent, helper, hub=(res["config"].get("paths") or {}).get("hubWorkflow")), "warnings": res["warnings"], "errors": res["errors"]}, indent=2))
     return 0
 
 

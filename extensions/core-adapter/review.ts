@@ -22,7 +22,7 @@ import { insideScratch } from "./childscratch.ts";
 import { deterministicAllow, deterministicAllowInfo, hits } from "./timeoutallow.ts";
 import { classify, effectCtx } from "./effects.ts";
 import * as path from "node:path";
-import { isolationDir, mainWorkflowReadable, roundWorktreeAdd } from "./roundsurface.ts";
+import { hubWorkflowDirs, isolationDir, mainWorkflowReadable, roundWorktreeAdd } from "./roundsurface.ts";
 import type { EffectClass, EffectCtx } from "./effects.ts";
 import { isSubagentWakeText } from "./idlecustom.ts";
 
@@ -487,7 +487,7 @@ export class ForemanReview {
   /** The main checkout's `.workflow` dir of each round worktree: the round's own ledger and notes, a READ root for every child role (roundsurface.ts mainWorkflowReadable). */
   private mainFlowOf(s: ReviewSession): string[] {
     try {
-      return mainWorkflowReadable(s.roundDirs?.() ?? []).filter((p) => !p.endsWith("/*"));
+      return [...mainWorkflowReadable(s.roundDirs?.() ?? []).filter((p) => !p.endsWith("/*")), ...hubWorkflowDirs(get(s.config(), "paths.hubWorkflow"))];
     } catch {
       return [];
     }
