@@ -138,17 +138,14 @@ class Word(object):
 
 
 class Seg(object):
-    __slots__ = ("words", "heredocs", "herestrings", "pipe_in", "outs", "before", "after", "group")
+    __slots__ = ("words", "heredocs", "herestrings", "pipe_in", "outs")
 
-    def __init__(self, pipe_in=False, before=None):
+    def __init__(self, pipe_in=False):
         self.outs = []             # file targets of `>` / `>>` / `&>` redirects (not fd dups, not /dev/null)
         self.words = []
         self.heredocs = []
         self.herestrings = []
         self.pipe_in = pipe_in
-        self.before = before       # the operator in front of the segment (None at the start of the text)
-        self.after = None          # the operator after it (None at the end of the text)
-        self.group = 0             # nesting depth in `( )` / `{ }` groups
 
     def raw(self):
         return " ".join([w.raw for w in self.words] + [w.raw for w in self.herestrings] + self.heredocs)
@@ -187,7 +184,6 @@ class Lexer(object):
         self.redir_w = False
         self.pending = []
         self.callop = False  # PowerShell: the last token was the `&` or `.` call operator
-        self.group = 0       # open `( )` / `{ }` groups
 
     # ------------------------------------------------------------- word helpers
     def start(self, i):
@@ -216,16 +212,14 @@ class Lexer(object):
         elif kind == "herestring":
             self.cur.herestrings.append(word)
 
-    def end_seg(self, i, pipe_next=False, op=None):
+    def end_seg(self, i, pipe_next=False):
         self.end_word(i)
         self.redir = None
         self.callop = False
         c = self.cur
-        c.after = op
-        c.group = self.group
         if c.words or c.herestrings or any(p[3] is c for p in self.pending):
             self.segs.append(c)
-        self.cur = Seg(pipe_in=pipe_next, before=op)
+        self.cur = Seg(pipe_in=pipe_next)
 
     def dyn(self):
         self.wdyn = True
@@ -416,7 +410,7 @@ class Lexer(object):
                 i += 1
                 continue
             if c == "\n":
-                self.end_seg(i, op=";")
+                self.end_seg(i)
                 i = self.heredoc_bodies(i + 1)
                 continue
             if c == "#" and self.w is None and f != "cmd":
@@ -529,7 +523,7 @@ class Lexer(object):
                 self.end_word(i)
                 two = s[i:i + 2]
                 if f == "powershell" and c == "&" and two != "&&":
-                    self.end_seg(i, op="&")
+                    self.end_seg(i)
                     i += 1
                     self.callop = True
                     continue
@@ -539,12 +533,12 @@ class Lexer(object):
                     self.redir_w = True
                     continue
                 if two in ("&&", "||", ";;", "|&", ";&"):
-                    self.end_seg(i, pipe_next=two == "|&", op=two)
+                    self.end_seg(i, pipe_next=two == "|&")
                     i += 2
                     if s[i - 2:i + 1] == ";;&":
                         i += 1
                     continue
-                self.end_seg(i, pipe_next=c == "|", op=c)
+                self.end_seg(i, pipe_next=c == "|")
                 i += 1
                 continue
             if c in "<>" or (c == "*" and f == "powershell" and s[i + 1:i + 2] == ">" and self.w is None):
@@ -575,15 +569,13 @@ class Lexer(object):
                 self.redir_w = self.redir == "file" and c == ">"
                 continue
             if c in "()":
-                self.end_seg(i, op=c)
-                self.group += 1 if c == "(" else -1
+                self.end_seg(i)
                 i += 1
                 continue
             if c in "{}":
                 lone = self.w is None and (i + 1 >= n or s[i + 1] in " \t\r\n;&|)")
                 if f == "powershell" or lone:
-                    self.end_seg(i, op=c)
-                    self.group += 1 if c == "{" else -1
+                    self.end_seg(i)
                     i += 1
                     continue
                 self.start(i)
@@ -721,7 +713,6 @@ class Ctx(object):
         self.pr_segs = set()     # segments that carry a PR form
         self.state_segs = set()  # segments that change the directory, HEAD or a ref
         self.cfg_env = False     # the command sets GIT_CONFIG_* (export, $env:) before a later segment
-        self.cd_unsure = False   # a directory change ran that ctx.cwd does not follow (subshell, pipeline, computed target)
         self.events = []         # child trace events of an allowed command ({"event": "test_restore", ...})
 
 
@@ -1003,17 +994,11 @@ def run_command(words, seg, flavor, ctx, depth, envs, xargs_repl=None, via_xargs
 
     if name in CD_NAMES:
         ctx.state_segs.add(seg)
-        # only a plain top-level `cd <dir>` joined by `&&` or `;` moves the shell that runs the later segments; any other cd leaves
-        # the directory of a later relative path unsure (git commit -F <relative file>)
-        top = depth == 0 and seg.group == 0 and not seg.pipe_in and seg.words and seg.words[0] is cmd and \
-            seg.before in (None, "&&", ";") and seg.after in (None, "&&", ";")
-        target = None
-        if top and name == "cd" and len(args) == 1 and not args[0].dynamic and not args[0].glob and not args[0].text.startswith(("-", "~")):
+        if name == "cd" and len(args) == 1 and not args[0].dynamic and not args[0].glob and not args[0].text.startswith(("-", "~")):
+            # later segments (git commit -F <relative file>) read relative paths from the new directory
             target = os.path.join(ctx.cwd, args[0].text)
-        if target is not None and os.path.isdir(target):
-            ctx.cwd = os.path.normpath(target)
-        else:
-            ctx.cd_unsure = True
+            if os.path.isdir(target):
+                ctx.cwd = os.path.normpath(target)
 
     if name in ("gh", "glab", "hub", "tea"):
         return pr_cli(name, args, ctx, seg)
@@ -1693,8 +1678,7 @@ def git_sub(sub, rest, seg, flavor, ctx, depth, envs, via_xargs, xargs_repl, cal
                 return d
         d = child_rules(s, rest, ctx, call, seg, via_xargs or bool(xargs_repl))
         if d.level == ALLOW and sub == "commit" and not via_xargs and not xargs_repl:
-            # R11 item 8: the same message pattern as the foreman's on every child commit; commit_lint refuses a computed message or a
-            # -F file it cannot read for a child (editor, --amend reuse and `-F -` stay unlinted)
+            # R11 item 8: the same commit lint as the foreman's; a message the guard cannot read stays unlinted for a child.
             lint = commit_lint(rest, ctx, call, envs, pattern_only=True)
             return lint if lint.level == DENY else d
         return d
@@ -2165,31 +2149,18 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False):
         return ask("the commit message is taken from elsewhere; %s." % USE_M)
     parts = []
     from_file = False  # a -F file's text never goes into a deny reason
-
-    def unread(why, way=USE_M):
-        # a child cannot ask: its commit message must be one the guard checks against the pattern (R11 item 8)
-        if pattern_only and ctx.mode == "child":
-            return deny("a child commit needs a message the guard can check against safety.git.commit.messagePattern (%s). "
-                        "Use -m '<literal message>' or -F <file inside the worktree>." % why)
-        return ask("%s; %s." % (why, way))
-
     for name, v in opts:
         if name in ("m", "message"):
             if v is None:
                 return OK  # git fails: -m needs a value
             if v.dynamic:
-                return unread("the commit message is computed")
+                return ask("the commit message is computed; %s." % USE_M)
             parts.append(v.text)
         elif name in ("F", "file"):
             if v is None:
                 return OK
-            if v.text == "-":
-                return ask("the commit message is read from stdin; %s." % USE_M)
-            if v.dynamic:
-                return unread("the commit message is read from a computed path")
-            if ctx.cd_unsure and not os.path.isabs(v.text):
-                return unread("the message file %s is relative and a cd in a subshell, pipeline or other branch leaves its directory "
-                              "unsure" % v.text, "use an absolute -F path or a top-level `cd <dir> &&`")
+            if v.dynamic or v.text == "-":
+                return ask("the commit message is read from %s; %s." % ("stdin" if v.text == "-" else "a computed path", USE_M))
             path = os.path.join(call.cwd, v.text)
             try:
                 top = (run_git(call, ctx, ["rev-parse", "--show-toplevel"], envs) or "").strip() or call.cwd
@@ -2199,7 +2170,7 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False):
                     parts.append(fh.read(1 << 20).decode("utf-8", "replace"))
                 from_file = True
             except OSError:
-                return unread("cannot read the message file %s" % v.text)
+                return ask("cannot read the message file %s; %s." % (v.text, USE_M))
     if not parts:
         return ask("the commit message is not on the command line (editor or --amend reuse); %s." % USE_M)
     # CRLF files (Windows editors, text-mode writes): git's cleanup drops the CR too.
