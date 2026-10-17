@@ -244,6 +244,22 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
         if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) add(v);
         else all();
       }
+      // a property write (`(Get-Variable $n).Value = 1`, `$v = gv $n; $v.Value = 1`, `$_.Value = 1`, `.set_Value(1)`) on what a variable /
+      // item getter returns writes the variable / item back: a getter whose name / path is missing, not one literal, or a wildcard
+      // (`gv HOM*`) may reach any variable; a literal name binds that name (the name-token rule)
+      if (/\.\s*(?:[A-Za-z_]\w*|'[^']*'|"[^"]*"|\$\w+)\s*(?:\[[^\]]*\]\s*)*[-+*/%]?\?{0,2}=(?!=)|\.\s*set_\w+\s*\(/i.test(text)) {
+        for (const m of text.matchAll(/(?<![\w$.\\/:-])([A-Za-z][\w-]*)(?![\w-])(?=([^;|)\n]*))/g)) {
+          if (!PS_GETTERS.has(m[1].toLowerCase())) continue;
+          const args = (m[2].match(/'[^']*'|"[^"]*"|\([^)]*\)?|[^\s(]+/g) ?? []).filter((a) => !/^-[A-Za-z]+:?$/.test(a));
+          if (args.length === 0 || args.some((a) => /[$()`+{}@,]/.test(a) || PS_WILD.test(a))) all();
+        }
+      }
+      // `Import-LocalizedData -BindingVariable $n` (`-b..`, the `-Variable` alias, `-v..`, or the first positional) sets the variable it
+      // names: any non-literal word in the call may name any variable
+      for (const m of text.matchAll(/(?<![\w$.\\/:-])import-localizeddata(?![\w-])(?=([^;|\n]*))/gi)) {
+        const args = m[1].match(/'[^']*'|"[^"]*"|\([^)]*\)?|[^\s(]+/g) ?? [];
+        if (args.some((a) => /[$()`+{}@]/.test(a))) all();
+      }
       // a splat on any cmdlet (`Get-Process @p`) may carry one of those parameters
       if (/(?:^|[\s(,;|{=])@[A-Za-z_]\w*/.test(text)) all();
     }
@@ -418,19 +434,20 @@ const PS_ITEM_CMDLET: Record<string, string> = {
   "clear-item": "clear-item", cli: "clear-item", "remove-item": "remove-item", ri: "remove-item", del: "remove-item", rm: "remove-item", erase: "remove-item", rd: "remove-item", rmdir: "remove-item",
   "set-variable": "set-variable", sv: "set-variable", set: "set-variable", "new-variable": "new-variable", nv: "new-variable", "clear-variable": "clear-variable", clv: "clear-variable",
   "remove-variable": "remove-variable", rv: "remove-variable", "set-content": "set-content", sc: "set-content", "add-content": "add-content", ac: "add-content",
-  "set-itemproperty": "set-itemproperty", sp: "set-itemproperty", "new-itemproperty": "new-itemproperty",
+  "set-itemproperty": "set-itemproperty", sp: "set-itemproperty", "new-itemproperty": "new-itemproperty", "clear-content": "clear-content", clc: "clear-content",
 };
 /** Positional parameters of each item cmdlet, in position order (`value` is free, `newname` / `destination` a destination, the rest a target). */
 const PS_SLOTS: Record<string, string[]> = {
   "set-item": ["path", "value"], "new-item": ["path"], "rename-item": ["path", "newname"], "copy-item": ["path", "destination"], "move-item": ["path", "destination"],
   "clear-item": ["path"], "remove-item": ["path"], "set-variable": ["name", "value"], "new-variable": ["name", "value"], "clear-variable": ["name"], "remove-variable": ["name"],
   "set-content": ["path", "value"], "add-content": ["path", "value"], "set-itemproperty": ["path", "name", "value"], "new-itemproperty": ["path", "name"],
+  "clear-content": ["path"],
 };
 /** The parameters of each item cmdlet that take pipeline input by property name and decide the target (fail closed: a guess counts). */
 const PS_PIPE: Record<string, string[]> = {
   "set-item": ["path"], "new-item": ["path", "name"], "rename-item": ["path", "newname"], "copy-item": ["path", "destination"], "move-item": ["path", "destination"],
   "clear-item": ["path"], "remove-item": ["path"], "set-variable": ["name"], "new-variable": ["name"], "clear-variable": ["name"], "remove-variable": ["name"],
-  "set-content": ["path"], "add-content": ["path"], "set-itemproperty": ["path", "name"], "new-itemproperty": ["path", "name"],
+  "set-content": ["path"], "add-content": ["path"], "set-itemproperty": ["path", "name"], "new-itemproperty": ["path", "name"], "clear-content": ["path"],
 };
 /** PowerShell wildcard characters in an item path or name. */
 const PS_WILD = /[*?[]/;
@@ -443,16 +460,24 @@ const PS_SWITCH_PARAMS = new Set(["force", "passthru", "whatif", "confirm", "rec
 
 /** PS_ITEM aliases that are English words (`rm`, `copy`, `set`): counted outside the command word only in a command position. */
 const PS_ITEM_WORDS = new Set(["copy", "cp", "move", "mv", "del", "rm", "erase", "rd", "rmdir", "ren", "set"]);
-/** Common parameters that set a variable, with the length of their shortest unambiguous prefix (`ov` .. `pv` are aliases). */
+/**
+ * Parameters that set a variable, with the length of their shortest prefix PowerShell accepts given only the common parameters (the
+ * grammar cannot know a cmdlet's own): `-o` is OutVariable / OutBuffer, `-e` ErrorAction / ErrorVariable, `-w` WarningAction /
+ * WarningVariable / WhatIf, `-i` InformationAction / InformationVariable; `-p` alone is PipelineVariable in Windows PowerShell 5.1 on a
+ * cmdlet without a P parameter. `-SessionVariable` (Invoke-WebRequest / Invoke-RestMethod) counts on any cmdlet from `-s`.
+ * `ov` .. `pv` and `sv` are aliases.
+ */
 const PS_VAR_PARAMS: [string, number][] = [
-  ["outvariable", 4], ["errorvariable", 6], ["warningvariable", 8], ["informationvariable", 12], ["pipelinevariable", 2],
-  ["ov", 2], ["ev", 2], ["wv", 2], ["iv", 2], ["pv", 2],
+  ["outvariable", 4], ["errorvariable", 6], ["warningvariable", 8], ["informationvariable", 12], ["pipelinevariable", 1], ["sessionvariable", 1],
+  ["ov", 2], ["ev", 2], ["wv", 2], ["iv", 2], ["pv", 2], ["sv", 2],
 ];
+/** Cmdlets (and aliases) that return PSVariable objects or provider items, whose properties (`.Value`) write the variable / item back. */
+const PS_GETTERS = new Set(["get-variable", "gv", "get-item", "gi", "get-childitem", "gci", "ls", "dir"]);
 
 /** PowerShell command words that run code this check never sees. */
 const PS_EVAL = new Set(["iex", "invoke-expression", ".", "&", "import-module", "ipmo", "invoke-command", "icm", "start-job", "sajb", "invoke-item", "ii", "powershell", "pwsh", "powershell.exe", "pwsh.exe"]);
 /** PowerShell item cmdlets whose path may be an env: / variable: drive item. */
-const PS_ITEM = new Set(["set-item", "si", "new-item", "ni", "rename-item", "rni", "copy-item", "cpi", "copy", "cp", "move-item", "mi", "move", "mv", "clear-item", "cli", "remove-item", "ri", "del", "rm", "erase", "set-variable", "sv", "set", "new-variable", "nv", "clear-variable", "clv", "remove-variable", "rv", "set-content", "sc", "add-content", "ac", "set-itemproperty", "sp", "new-itemproperty", "ren", "rd", "rmdir"]);
+const PS_ITEM = new Set(["set-item", "si", "new-item", "ni", "rename-item", "rni", "copy-item", "cpi", "copy", "cp", "move-item", "mi", "move", "mv", "clear-item", "cli", "remove-item", "ri", "del", "rm", "erase", "set-variable", "sv", "set", "new-variable", "nv", "clear-variable", "clv", "remove-variable", "rv", "set-content", "sc", "add-content", "ac", "set-itemproperty", "sp", "new-itemproperty", "ren", "rd", "rmdir", "clear-content", "clc"]);
 /** Bash keywords before a command word. */
 const SH_KEYWORDS = new Set(["if", "then", "elif", "else", "while", "until", "do", "!", "{", "}", "time", "coproc", "fi", "done", "esac", "in"]);
 /** Bash builtins whose operands (or some of them) are variable names; with the options that take a non-name value. */

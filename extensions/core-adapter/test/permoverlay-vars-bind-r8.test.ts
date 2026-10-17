@@ -581,3 +581,71 @@ for (const line of [`Set-Item -- env:FOO /x; ${PS_USE}`, `Set-Variable -- FOO /x
     assert.equal(foreman(line, "powershell"), "pass");
   });
 }
+
+// ------------------------------------------------------------------ revision 3, item 19: -p (PipelineVariable in Windows PowerShell 5.1),
+// -SessionVariable, Clear-Content, a property write on a variable / item getter, Import-LocalizedData -BindingVariable
+for (const [line, name] of [
+  [`Write-Output 1 -p $n; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -p:$n; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -pi $n; ${PS_VAR_USE}`, "HOME"],
+  [`$null = Get-Process -pipe $n; ${PS_VAR_USE}`, "HOME"],
+  [`iwr u -SessionVariable $n; ${PS_VAR_USE}`, "HOME"],
+  [`iwr u -sv $n; ${PS_VAR_USE}`, "HOME"],
+  [`irm u -s $n; ${PS_VAR_USE}`, "HOME"],
+  [`Invoke-WebRequest u -Sess:$n; ${PS_VAR_USE}`, "HOME"],
+  [`Invoke-RestMethod u -SessionVariable ('HO'+'ME'); ${PS_VAR_USE}`, "HOME"],
+  [`iwr u -SessionVariable HOME; ${PS_VAR_USE}`, "HOME"],
+  [`Clear-Content $p; ${PS_USE}`, "HOME"],
+  [`clc -Path $p; ${PS_USE}`, "HOME"],
+  [`$null = Clear-Content ('en'+'v:HOME'); ${PS_USE}`, "HOME"],
+  [`gc f | Clear-Content; ${PS_USE}`, "HOME"],
+  [`Clear-Content env:HOM?; ${PS_USE}`, "HOME"],
+  [`(Get-Variable $n).Value = 1; ${PS_VAR_USE}`, "HOME"],
+  [`(gv $n).Value = 1; ${PS_VAR_USE}`, "HOME"],
+  [`(Get-Item env:$n).Value = 1; ${PS_USE}`, "HOME"],
+  [`(gi $p).Value = 1; ${PS_USE}`, "HOME"],
+  [`(Get-Variable -Name $n).Value = 1; ${PS_VAR_USE}`, "HOME"],
+  [`(gv HOM*).Value = 1; ${PS_VAR_USE}`, "HOME"],
+  [`(Get-Variable)[0].Value = 1; ${PS_VAR_USE}`, "HOME"],
+  [`$v = gv $n; $v.Value = 1; ${PS_VAR_USE}`, "HOME"],
+  [`gv $n | % { $_.Value = 1 }; ${PS_VAR_USE}`, "HOME"],
+  [`(Get-ChildItem variable:$n).Value = 1; ${PS_VAR_USE}`, "HOME"],
+  [`(Get-Variable HOME).Value = 1; ${PS_VAR_USE}`, "HOME"],
+  [`Import-LocalizedData -BindingVariable $n; ${PS_VAR_USE}`, "HOME"],
+  [`Import-LocalizedData -b $n; ${PS_VAR_USE}`, "HOME"],
+  [`Import-LocalizedData -BindingVariable:$n; ${PS_VAR_USE}`, "HOME"],
+  [`Import-LocalizedData -Variable $n; ${PS_VAR_USE}`, "HOME"],
+  [`Import-LocalizedData $n; ${PS_VAR_USE}`, "HOME"],
+  [`$null = Import-LocalizedData -bi $n -FileName x.psd1; ${PS_VAR_USE}`, "HOME"],
+] as const) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line, "powershell").has(name), `boundNames sees ${name}`);
+    untrusted(foreman(line, "powershell"), line);
+  });
+}
+
+// revision 3, item 19 negatives: a literal variable / session name, a literal Clear-Content path and a literal getter name leave HOME trusted
+for (const line of [
+  `Write-Output 1 -p foo; ${PS_VAR_USE}`,
+  `iwr u -SessionVariable s1; ${PS_VAR_USE}`,
+  `Clear-Content ./a.txt; ${PS_USE}`,
+  `(Get-Variable foo).Value = 1; ${PS_VAR_USE}`,
+]) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(!boundNames(line, "powershell").has("HOME"), "not HOME");
+    assert.equal(foreman(line, "powershell"), "pass");
+  });
+}
+
+// revision 3, item 2 twins: an integer name absent from the use path, so only the assignment rule binds HOME
+for (const [line, name, who] of [
+  [`typeset -i k; k=$y; ${HOME_USE}`, "HOME", "foreman"],
+  [`declare -i k; k="$y"; ${HOME_USE}`, "HOME", "foreman"],
+  [`declare -i k; k=1" $y"; ${HOME_USE}`, "HOME", "foreman"],
+  [`typeset -i k; k=" \`cat f\`"; ${HOME_USE}`, "HOME", "foreman"],
+] as const) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line).has(name), `boundNames sees ${name}`);
+    untrusted(runAs(who, line), line);
+  });
+}
