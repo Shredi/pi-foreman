@@ -167,7 +167,11 @@ The foreman session owns a few places outside the workspace. Access to them is g
    The baseline rows `npm ci` and `npm install` are per user like every policy grant, so PS would allow them to
    children too; the child layer narrows them: a child's `git fetch`, `npm ci`, `npm install` and `npm i` ask
    (`npm install` rewrites `package-lock.json` and `node_modules`), the foreman keeps the two npm rows. `npm ci` and
-   `npm install` run the project's lifecycle scripts without a prompt for the foreman. There is no `git fetch` row
+   `npm install` run the project's lifecycle scripts without a prompt for the foreman. Exception: a child whose cwd is
+   its owned worktree root (a `roundRoots` entry, itself, not a subdir) runs a bare `npm ci` / `npm install` there unasked,
+   with only `--no-audit`, `--no-fund`, `--ignore-scripts`, `--prefer-offline`, `--offline`, `--legacy-peer-deps`,
+   `--no-progress`, `--silent`, `--loglevel=x` and a `--prefix` that names that root; `-g`, a foreign `--prefix`, a package
+   name, any other option, a `cd`, another cwd, or a `git fetch` in the line ask as before. There is no `git fetch` row
    (`--upload-pack=<cmd>` runs code): a `git fetch` asks for every role.
 
 The write-only protect rules (package root, `protect.ask`) are skipped for a shell command only when every unit is a

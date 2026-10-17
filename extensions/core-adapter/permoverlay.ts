@@ -1626,6 +1626,12 @@ interface Collected {
   worktreeOp?: string;
   /** `git fetch`, `npm ci`, `npm install` found: the foreman's baseline rows allow them, a child still asks. */
   childAsk?: string;
+  /** A childAsk unit other than a bare `npm ci` / `npm install` (safe flags, no package names, no `-g`): the owned-root pre-allow never applies. */
+  askUnsafe?: boolean;
+  /** `--prefix` values of the npm install/ci units (the owned-root pre-allow needs each to name the owned root itself). */
+  npmPrefixes?: string[];
+  /** A cd/pushd/Set-Location word occurs: the cwd of a later unit is not the session cwd. */
+  cdSeen?: boolean;
   /** Operands of `git worktree remove`: the permission system asks for it, so the worktree block leaves them to it. */
   worktreeRemoveWords?: Set<string>;
   /** Path words a unit writes, moves or deletes (RO_WRITERS, in-place sed, `dd of=`, writing git, `find -delete`): a read-only child's deny. */
@@ -1872,6 +1878,36 @@ const GREP_FAMILY = new Set(["grep", "egrep", "fgrep", "rg"]);
 /** `git worktree` subcommands a child may run (`remove` is ask in the permission system). */
 const WORKTREE_OK = new Set(["list", "remove"]);
 
+/** Options of a bare `npm install` / `npm ci` that write only the project (no registry, prefix or program choice). */
+const NPM_INSTALL_FLAGS = /^--(no-)?(audit|fund|progress|ignore-scripts|prefer-offline|offline|legacy-peer-deps|package-lock)$|^--silent$|^--loglevel=(silent|error|warn|info)$/;
+
+/** The `--prefix` values of an owned-root-safe `npm install|ci` argument list (`[]` without one), or null when an argument is not safe (`-g`, a package name, any other option, an expansion). */
+function npmInstallArgs(args: string[]): string[] | null {
+  const prefixes: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (NPM_INSTALL_FLAGS.test(a)) continue;
+    let val: string | undefined;
+    if (a === "--prefix") val = args[++i];
+    else if (a.startsWith("--prefix=")) val = a.slice(9);
+    else return null;
+    if (val === undefined || val === "" || /[$`~*?[\]{}\\]/.test(val)) return null;
+    prefixes.push(val);
+  }
+  return prefixes;
+}
+
+/** A child's `npm install|ci` runs unasked in its owned worktree root: the session cwd is that root itself, no cd, nothing else asks, every `--prefix` names the root. */
+function npmInstallOwned(c: Collected, ctx: MatchCtx): boolean {
+  if (c.askUnsafe || c.cdSeen || !ctx.cwd) return false;
+  const fsx = defaults(ctx);
+  const cwdReal = fsx.realpath(ctx.cwd);
+  if (!cwdReal) return false;
+  const root = (ctx.roundRoots ?? []).map((r) => fsx.realpath(r)).find((r) => r === cwdReal);
+  if (!root) return false;
+  return (c.npmPrefixes ?? []).every((p) => fsx.realpath(path.resolve(ctx.cwd, p)) === root);
+}
+
 function collect(src0: string, shell: "posix" | "powershell", depth: number, out: Collected): void {
   const src = shell === "powershell" ? psDashes(src0) : src0;
   const parsed = parseShell(src, shell);
@@ -1915,12 +1951,21 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
     const rcore = rWords.slice(off);
     const trustedBound = new Set([...(out.bound ?? [])].filter((n) => TRUSTED_VARS.has(n)));
     if (trustedBound.size) out.boundRefs?.push(...rWords.filter((w, i) => !patt.has(i) && refsBound(w, trustedBound)));
-    if (out.childAsk === undefined) {
+    if (CD_VERBS.has(verb0.toLowerCase())) out.cdSeen = true;
+    {
       let k = 1;
+      let ask: string | undefined;
       if (verb0 === "git") {
         while (k < v.core.length && v.core[k].startsWith("-")) k += /^-[Cc]$/.test(v.core[k]) ? 2 : 1;
-        if (v.core[k] === "fetch") out.childAsk = "git fetch";
-      } else if (verb0 === "npm" && (v.core[1] === "ci" || v.core[1] === "install" || v.core[1] === "i")) out.childAsk = `npm ${v.core[1]}`;
+        if (v.core[k] === "fetch") ask = "git fetch";
+        if (ask !== undefined) out.askUnsafe = true;
+      } else if (verb0 === "npm" && (v.core[1] === "ci" || v.core[1] === "install" || v.core[1] === "i")) {
+        ask = `npm ${v.core[1]}`;
+        const safe = npmInstallArgs(v.core.slice(2));
+        if (safe === null) out.askUnsafe = true;
+        else (out.npmPrefixes ??= []).push(...safe);
+      }
+      if (ask !== undefined && out.childAsk === undefined) out.childAsk = ask;
     }
     if (verb0 === "git" && out.worktreeOp === undefined) {
       let k = 1;
@@ -2450,7 +2495,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   if (ctx.role === "child" && c.worktreeOp !== undefined) {
     return { kind: "deny", reason: `pi-foreman: denied by the permission policy (git worktree ${clip(c.worktreeOp)} is the foreman's; children may only list worktrees). Ask the foreman.` };
   }
-  if (ctx.role === "child" && c.childAsk !== undefined) {
+  if (ctx.role === "child" && c.childAsk !== undefined && !npmInstallOwned(c, ctx)) {
     return { kind: "ask", reason: `pi-foreman: ${c.childAsk} needs approval for a child (it writes the project or the network; the foreman may run it).` };
   }
   const words = [...new Set(c.words.flatMap((w) => [w, ...expandBraces(w)]))];
