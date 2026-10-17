@@ -65,3 +65,13 @@ test("a child asks for FOO=1 npm ci with a foreign --prefix: an env prefix does 
 test("a child asks for FOO=1 npm ci in a non-owned cwd: an env prefix does not widen the cwd rule (decision: ask)", () => {
   assert.equal(run(other, "FOO=1 npm ci"), "ask");
 });
+
+// Fail-open gap: variants() strips `env -i` and a separate `export` unit is not seen, so these pass today; the fix is a later item.
+test("expected-open (R10): env -i npm ci", () => {
+  assert.equal(run(owned, "env -i npm ci"), "pass");
+});
+
+// Fail-open gap: a separate `export` unit is not seen by the owned-root pre-allow, so this passes today; the fix is a later item.
+test("expected-open (R10): export npm_config_prefix=<OWNED>/x; npm ci", () => {
+  assert.equal(run(owned, `export npm_config_prefix=${bashPath(path.join(owned, "x"))}; npm ci`), "pass");
+});
