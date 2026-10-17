@@ -167,7 +167,7 @@ export interface MatchCtx {
    * session's own handoff dirs, the session's round worktrees). A write there stays closed; a `*` path rule does not fire on them either.
    */
   readable?: string[];
-  /** Patterns of the session's own bg_run task dirs (roundsurface.ts ownTaskReadable): a strictly read-only shell command may name them although a protect rule (`{cwd}/.pi/*`) covers `.pi`; a write there stays protected. */
+  /** Patterns of the session's own bg_run task dirs (roundsurface.ts ownTaskReadable) and its cwd's `.pi/scratch` (piScratchReadable): a strictly read-only shell command may name them although a protect rule (`{cwd}/.pi/*`) covers `.pi`; a write there stays protected. */
   ownTasks?: string[];
   /**
    * Foreman only: patterns of its own usage records (roundsurface.ts ownUsageReadable). A shell command whose every unit is ls/cat/head/tail/wc/stat

@@ -103,6 +103,16 @@ export function ownTaskReadable(roots: string[], sessionId: string, platform: st
 }
 
 /**
+ * Read patterns for `<root>/.pi/scratch` and everything below, for each absolute workspace/cwd root (R10 item 2): the session's (and a child's, in
+ * its own worktree) log copies there are readable by a strictly read-only shell command through `MatchCtx.ownTasks`, although the protect rule
+ * `{cwd}/.pi/*` covers `.pi`; the rest of `.pi` and every write stay protected.
+ */
+export function piScratchReadable(roots: string[], platform: string = process.platform): string[] {
+  const x = px(platform);
+  return [...new Set(roots.filter((r) => x.isAbsolute(r)).map((r) => x.resolve(r)))].flatMap((r) => { const d = x.join(r, ".pi", "scratch"); return [d, `${d}/*`]; });
+}
+
+/**
  * Read patterns for the foreman's own usage records, `<agentDir>/pi-foreman/state/usage` and everything below (R10 item 1): a read-only shell
  * command of the foreman (ls/cat/head/tail/wc/stat, or the one python read form of permoverlay.ts usagePythonRead) may name them although the
  * protect rule `{agentDir}/pi-foreman/state/*` covers state/; a write there stays protected. Never given to a child.
