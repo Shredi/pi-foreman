@@ -711,7 +711,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
     name: BG_TOOL,
     label: "Background run",
     description:
-      "Run one shell command in the background (detached in its own process group on POSIX, not detached on win32; stdout and stderr go to a log file under the pi-foreman state scratch dir) and wait for it without model turns: registers a pid wait, returns the wait id and the log path at once, and you are woken when the process has exited. The command is guarded exactly like a bash call. Parameters: command, note (shown in the sidebar and `/foreman waits`).",
+      "Run one shell command in the background (detached on POSIX, not detached on win32; stdout and stderr go to a log file under the pi-foreman state scratch dir) and wait for it without model turns: registers a pid wait, returns the wait id and the log path at once, and you are woken when the process has exited. The command is guarded exactly like a bash call. Parameters: command, note (shown in the sidebar and `/foreman waits`).",
     parameters: BG_PARAMS as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await deps.session(ctx);
