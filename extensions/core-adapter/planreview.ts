@@ -101,7 +101,7 @@ export function planReviewSection(v: PlanVerdict, findings: readonly PanelFindin
   const out = [capped ? `Plan review: FAIL after ${Math.min(capped.rounds, capped.cap)} of ${capped.cap} rounds; open findings:` : `Plan review: ${v.verdict.toUpperCase()} (reviewer ${v.model ?? "unknown model"})`];
   for (const f of findings.slice(0, PLAN_REVIEW_FINDINGS_MAX)) out.push(`  ${one(f.file)}${f.line === null ? "" : `:${f.line}`} ${one(f.class)} ${one(f.note)}`.trimEnd());
   if (findings.length > PLAN_REVIEW_FINDINGS_MAX) out.push(`  (+${findings.length - PLAN_REVIEW_FINDINGS_MAX} more findings)`);
-  if (findings.length === 0) out.push("  (no located findings)");
+  if (findings.length === 0) out.push(capped ? "  (no located findings) The review cap is reached: the owner may override this FAIL at the checkpoint (approve the plan)." : "  (no located findings)");
   return out.join("\n");
 }
 

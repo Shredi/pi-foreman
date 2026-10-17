@@ -23,7 +23,7 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
-import { isRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
+import { isRulingName, parentApproval, parentRulingLift, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -241,8 +241,14 @@ interface Session {
   climbRefusals: number;
   /** Foreman only: per-item FAIL counts of reviewer runs (ladder.reviewerClimb, reviewerclimb.ts). */
   reviewerFails: ReviewerFails;
-  /** Foreman only: review launches since the last user prompt (ceremony.reviewRuns). */
+  /** Foreman only: review launches since the last user prompt (ceremony.reviewRuns), plan reviews excluded. */
   reviewCount: number;
+  /** Foreman only: `[plan-review]` launches since the last user prompt, capped apart by ceremony.reviewRuns. */
+  planReviewCount: number;
+  /** Foreman only: review runs added to ceremony.reviewRuns by parent rulings `review-cap: +N` since the last user prompt. */
+  reviewCapLift: number;
+  /** Foreman only: parent ruling lifts already applied (ruling.ts parentRulingLift; key + path + mtime). */
+  rulingLifts: Set<string>;
   /** Foreman only: item numbers of the last FAIL verdict, until a review passes (item-only re-review). */
   failItems: string[];
   /** Foreman only: critique raised and applied per review round (retro counter, rounds.ts CritiqueCounter). */
@@ -506,6 +512,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       climbRefusals: 0,
       reviewerFails: new ReviewerFails(),
       reviewCount: 0,
+      planReviewCount: 0,
+      reviewCapLift: 0,
+      rulingLifts: new Set(),
       failItems: [],
       critique: new CritiqueCounter(),
       budgetWarned: false,
@@ -1487,6 +1496,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let budgetNotes: string[] = [];
       // Counted and warned only once the launch passed every check (set at the end of the guard path).
       let pendingReviews = 0;
+      let pendingPlanReviews = 0;
       let pendingWarn: Record<string, unknown> | null = null;
       let rounds: LaunchRounds | undefined;
       let kind: LaunchKind | undefined;
@@ -1585,15 +1595,31 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             budgetNotes = [bd.text];
             pendingWarn = { event: "budget_warn", cost: Math.round(cost.total * 10000) / 10000, limit: budgetCap(get(s.config.config, "ceremony.budgetUsd")) };
           }
-          const reviewCount = subagentAgents(input).filter((r) => REVIEW_ROLES.includes(r)).length;
-          const cap = reviewRunsCap(get(s.config.config, "ceremony.reviewRuns"));
-          const rc = reviewCapCheck(s.reviewCount, reviewCount, cap);
+          // R11 item 4: plan reviews and fix-round (all other) reviews are counted apart, each against the cap.
+          const planCount = [...occasions].filter(([e, o]) => o === "plan-review" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent)).length;
+          const reviewCount = subagentAgents(input).filter((r) => REVIEW_ROLES.includes(r)).length - planCount;
+          const capOf = (): number => reviewRunsCap(get(s.config.config, "ceremony.reviewRuns")) + s.reviewCapLift;
+          const capRefusal = () => {
+            const fix = reviewCapCheck(s.reviewCount, Math.max(0, reviewCount), capOf());
+            if (fix) return { ...fix, kind: "review", count: s.reviewCount };
+            const plan = reviewCapCheck(s.planReviewCount, planCount, capOf(), "plan");
+            return plan ? { ...plan, kind: "plan", count: s.planReviewCount } : null;
+          };
+          let rc = capRefusal();
+          // A parent ruling `review-cap: +N` (newest ruling*.md of a dir where this session is the child) lifts the cap once.
+          const lift = rc ? parentRulingLift(childDirsOf(s), "review-cap", selfRulingsFor(s), s.rulingLifts) : null;
+          if (lift) {
+            s.reviewCapLift += lift.n;
+            s.trace?.emit({ event: "review_cap_lift", by: "ruling", count: lift.n, limit: capOf() });
+            rc = capRefusal();
+          }
           if (rc) {
-            s.trace?.emit({ event: "launch_refused", reason: rc.reason, tier: s.ceremony.tier, count: s.reviewCount, limit: cap, ...launchDeny(input) });
+            s.trace?.emit({ event: "launch_refused", reason: rc.reason, tier: s.ceremony.tier, kind: rc.kind, count: rc.count, limit: capOf(), ...launchDeny(input) });
             return { block: true, reason: rc.text };
           }
           if (s.failItems.length > 0) for (const [e, occ] of occasions) if (occ === "item" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependReReview(e.task, s.failItems);
-          pendingReviews = reviewCount;
+          pendingReviews = Math.max(0, reviewCount);
+          pendingPlanReviews = planCount;
         }
         // D3/D4: builder runs after a review of built work are revision rounds: every step of a
         // tasks/chain call, and a resume of a builder run (its model stays, so never a strong
@@ -1763,6 +1789,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       // Kept for the tool result only once the launch passed every check.
       s.reviewCount += pendingReviews;
+      s.planReviewCount += pendingPlanReviews;
       if (pendingWarn) {
         s.budgetWarned = true;
         s.trace?.emit(pendingWarn);
@@ -1897,7 +1924,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.rounds = initialRounds();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.waitingForParent = false), s.handoffWaits.clear();
-    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.climbRefusals = 0), (s.reviewCount = 0);
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.climbRefusals = 0), (s.reviewCount = 0), (s.planReviewCount = 0), (s.reviewCapLift = 0);
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset(); // a new piece of work: the next builder launch records a new diff base (diffscan.ts ReviewFacts)
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
       resetRecheck(s, "user");

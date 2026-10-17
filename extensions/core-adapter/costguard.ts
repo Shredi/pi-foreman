@@ -30,10 +30,14 @@ export function budgetCheck(foreman: number, runs: number, cap: number | null, w
   return null;
 }
 
-/** Refuse a review launch past the per-prompt cap; `count` = review runs already launched since the user's prompt. */
-export function reviewCapCheck(count: number, adding: number, cap: number): { reason: string; text: string } | null {
+/**
+ * Refuse a review launch past the per-prompt cap; `count` = review runs of the same kind already launched since the
+ * user's prompt. Plan reviews (`[plan-review]`) and the other (fix-round) reviews are counted apart, each against `cap`.
+ */
+export function reviewCapCheck(count: number, adding: number, cap: number, kind: "review" | "plan" = "review"): { reason: string; text: string } | null {
   if (adding === 0 || count + adding <= cap) return null;
-  return { reason: "review_cap", text: `pi-foreman: review launch refused [review_cap]: ${count} review run(s) already ran for this prompt (ceremony.reviewRuns ${cap}). Finish, or ask the user for another round.` };
+  const what = kind === "plan" ? "plan review" : "review";
+  return { reason: "review_cap", text: `pi-foreman: review launch refused [review_cap]: ${count} ${what} run(s) already ran for this prompt (ceremony.reviewRuns ${cap}). Finish, or get the cap reset: the parent writes the line \`review-cap: +N\` in a ruling*.md of this session's handoff dir (newer than its ask.md or plan.md), or the owner sends a new prompt.` };
 }
 
 const MARK = "[re-review items:";

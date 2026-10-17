@@ -130,6 +130,43 @@ export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulin
   return null;
 }
 
+/** A gate a parent ruling line may lift: `review-cap: +N` (ceremony.reviewRuns) or `read-budget: +N` (ceremony.foremanReads). */
+export type RulingLiftKey = "review-cap" | "read-budget";
+
+/**
+ * The lift a parent ruling grants for `key`: the line `<key>: +N` of the NEWEST `ruling*.md` in `dirs`, or null. `dirs`
+ * must be the dirs where this session is the child (owned.ts childHandoffDirs), so a ruling written by one of its own
+ * children (a dir where it is the parent) never counts. The ruling counts only when it is the parent's: not written by
+ * this session (`self`) and not older than the session's ask.md or plan.md beside it (one of them must exist). Each
+ * ruling file lifts each key once (path + mtime, recorded in `used`).
+ */
+export function parentRulingLift(dirs: string[], key: RulingLiftKey, self: SelfRulings | undefined, used: Set<string>): { file: string; n: number } | null {
+  let newest: { file: string; m: number } | null = null;
+  for (const dir of dirs) {
+    let names: string[] = [];
+    try {
+      names = fs.readdirSync(dir).filter(isRulingName);
+    } catch {
+      continue;
+    }
+    for (const n of names) {
+      const file = path.join(dir, n);
+      const m = mtimeOf(file);
+      if (m !== null && (newest === null || m > newest.m)) newest = { file, m };
+    }
+  }
+  if (newest === null || self?.has(newest.file, newest.m)) return null;
+  const anchors = ["ask.md", "plan.md"].map((f) => mtimeOf(path.join(path.dirname(newest.file), f))).filter((m): m is number => m !== null);
+  if (anchors.length === 0 || newest.m < Math.max(...anchors)) return null;
+  const line = new RegExp(`^${key}:[ \\t]*\\+(\\d{1,4})[ \\t]*$`, "im").exec(readText(newest.file) ?? "");
+  const n = line ? Number(line[1]) : 0;
+  if (n < 1) return null;
+  const id = `${key}|${realKey(newest.file)}|${newest.m}`;
+  if (used.has(id)) return null;
+  used.add(id);
+  return { file: newest.file, n };
+}
+
 /** The refusal reason when a session writes a ruling file in a dir where it is the child. */
 export const SELF_RULING_REASON = "a session cannot write its own parent's ruling";
 
