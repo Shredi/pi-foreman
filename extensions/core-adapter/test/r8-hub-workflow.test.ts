@@ -1,9 +1,8 @@
 // R8 item 14: paths.hubWorkflow makes the hub's `.workflow/` family readable (read only) for the foreman and its children.
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
@@ -12,10 +11,12 @@ import { ForemanReview } from "../review.ts";
 import type { RegistryLike, ReviewSession } from "../review.ts";
 import { bashRules } from "../timeoutallow.ts";
 import { hubWorkflowDirs, hubWorkflowReadable } from "../roundsurface.ts";
+import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(PKG)!;
-const w = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-hubwf-")));
+const w = fs.realpathSync(mkTestTmp("pf-hubwf-"));
+after(() => rmTestTmp(w));
 const ws = path.join(w, "repo.worktrees", "r8");
 const hub = path.join(w, "hub");
 const sibling = path.join(w, "sibling");
@@ -64,6 +65,22 @@ test("hub .workflow stays read-only: a write or a redirect into it is not allowe
     // the overlay's verdict on a write is the same with and without the key: the key adds read patterns only
     for (const [tool, input] of [["bash", { command: `cp x ${hub}/.workflow/LEDGER.md` }], ["bash", { command: `echo x > ${hub}/.workflow/LEDGER.md` }], ["bash", { command: `tee ${hub}/.workflow/LEDGER.md` }], ["write", { path: path.join(hub, ".workflow", "LEDGER.md") }]] as const)
       assert.equal(kind(role, [hub], tool, input), kind(role, [], tool, input), `${role} ${tool} ${JSON.stringify(input)}`);
+  }
+});
+
+test("non-tmp hub: .workflow is readable for main and child, a write or redirect into it is not allowed", () => {
+  // mkTestTmp guarantees w is not below /tmp (it falls back to ~/.cache/pi-foreman-tests); assert it, on POSIX
+  if (posix) assert.ok(w !== "/tmp" && !w.startsWith("/tmp/"), `fixture under /tmp: ${w}`);
+  const nonTmpHub = path.join(w, "nontmp", "hub2");
+  fs.mkdirSync(path.join(nonTmpHub, ".workflow"), { recursive: true });
+  const led = path.join(nonTmpHub, ".workflow", "LEDGER.md");
+  for (const role of ["main", "child"] as const) {
+    assert.equal(kind(role, [nonTmpHub], "read", { path: led }), "pass", role);
+    assert.equal(kind(role, [nonTmpHub], "bash", { command: `cat ${led}` }), "pass", role);
+    for (const [tool, input] of [["bash", { command: `cp x ${led}` }], ["bash", { command: `echo x > ${led}` }], ["write", { path: led }]] as const) {
+      // "pass" is the overlay having no opinion (the permission layer then asks); the key must add no write allowance
+      assert.equal(kind(role, [nonTmpHub], tool, input), kind(role, [], tool, input), `${role} ${tool}`);
+    }
   }
 });
 
