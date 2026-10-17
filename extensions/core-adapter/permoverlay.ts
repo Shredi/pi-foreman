@@ -222,13 +222,30 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
       if (/(?<![&\w])&(?!&)|(?:^|[=(;|{}\]])\s*\.\s+\S/.test(text)) all();
       // item cmdlets anywhere (`$null = New-Item -Path ('en'+'v:HOME')`): a path / name that is not one literal may name any item
       // (psItemUnsafe: positionals, destinations, pipeline input, abbreviated parameters)
-      for (const m of text.matchAll(/(?<![\w$.\\/:-])(set-item|si|new-item|ni|rename-item|rni|set-content|sc|set-variable|sv|new-variable|nv)(?![\w-])([^;|\n]*)/gi)) {
+      // every PS_ITEM cmdlet name and short alias anywhere; an English-word alias (`rm`, `copy`, `set`) only in a command position
+      // (`$null = rm $p`, `(del $p)`, `; mv a $d`)
+      for (const m of text.matchAll(/(?<![\w$.\\/:-])([A-Za-z][\w-]*)(?![\w-])(?=([^;|\n]*))/g)) {
+        const word = m[1].toLowerCase();
+        if (!PS_ITEM.has(word)) continue;
+        if (PS_ITEM_WORDS.has(word) && !/(?:^|[=(;|{}&!\]\n]|\b(?:return|throw|else|do|try|finally)\s)\s*$/i.test(text.slice(0, m.index))) continue;
         const args = m[2].match(/'[^']*'|"[^"]*"|\([^)]*\)?|[^\s(]+/g) ?? [];
         const piped = /(?:^|[^|])\|\s*$/.test(text.slice(0, m.index));
         const literal = (t: string): boolean =>
           !/,\s*$/.test(t) && (/^'[^']*'$/.test(t) || /^"[^"$`]*"$/.test(t) || /^[^$()`+{}'"]+$/.test(t) || /^(?:\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*|\$\{(?:env:)?[A-Za-z_][A-Za-z0-9_]*\}|~)[\\/][^$()`+{}'"]*$/i.test(t));
-        if (psItemUnsafe(m[1].toLowerCase(), args, piped, literal)) all();
+        if (psItemUnsafe(word, args, piped, literal)) all();
       }
+      // common parameters that set a variable (`-OutVariable`, `-ov`, `-ErrorVariable`, .., any unambiguous prefix) on any cmdlet, and
+      // `Tee-Object -Variable`: a literal name (`HOME`, `+HOME` appends) binds that name, anything else may name any variable
+      const tee = /(?<![\w$.\\/:-])(?:tee-object|tee)(?![\w-])/i.test(text);
+      for (const m of text.matchAll(/(?<![\w$-])-([A-Za-z]+)(?![\w-])(?:\s+('[^']*'|"[^"]*"|\([^)]*\)?|[^\s;|)]+))?/g)) {
+        const p = m[1].toLowerCase();
+        if (!PS_VAR_PARAMS.some(([full, min]) => p.length >= min && full.startsWith(p)) && !(tee && p.length >= 2 && "variable".startsWith(p))) continue;
+        const v = (m[2] ?? "").replace(/^'([^']*)'$/, "$1").replace(/^"([^"$`]*)"$/, "$1").replace(/^\+/, "");
+        if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) add(v);
+        else all();
+      }
+      // a splat on any cmdlet (`Get-Process @p`) may carry one of those parameters
+      if (/(?:^|[\s(,;|{=])@[A-Za-z_]\w*/.test(text)) all();
     }
     for (const pipe of parseShell(command, "powershell").pipelines) {
       for (const [u, unit] of pipe.entries()) {
@@ -356,6 +373,8 @@ function psItemUnsafe(verb: string, args: string[], piped: boolean, literal: (t:
       if (v === undefined) return true;
       const slot = p === "literalpath" || p === "pspath" ? "path" : p;
       bound.add(slot);
+      // `-Path env:HOM?` names every matching item; `-LiteralPath` / `-PSPath` expand no wildcard
+      if (p !== "literalpath" && p !== "pspath" && PS_WILD.test(v)) return true;
       (slot === "newname" || slot === "destination" ? dests : targets).push(v);
     } else if (PS_VALUE_PARAMS.has(p)) {
       value();
@@ -364,14 +383,19 @@ function psItemUnsafe(verb: string, args: string[], piped: boolean, literal: (t:
       if (o[2] !== undefined) value();
     } else unknown = true;
   }
-  if (unknown) return piped || args.some((a) => !literal(a));
+  if (unknown) return piped || args.some((a) => !literal(a) || PS_WILD.test(a));
   const open = slots.filter((s) => !bound.has(s));
+  let wild = false;
   positional.forEach((v, i) => {
     const slot = open[i] ?? "path";
     if (slot === "value") return;
+    bound.add(slot);
+    if (PS_WILD.test(v)) wild = true;
     (slot === "newname" || slot === "destination" ? dests : targets).push(v);
   });
-  if (targets.length === 0 || ![...targets, ...dests].every(literal)) return true;
+  if (wild || targets.length === 0 || ![...targets, ...dests].every(literal)) return true;
+  // pipeline input binds every parameter that takes it by property name and is not bound here (`gc f | New-Item -Path env:FOO`: Name)
+  if (piped && (PS_PIPE[PS_ITEM_CMDLET[verb] ?? ""] ?? ["path", "name"]).some((s) => !bound.has(s))) return true;
   // pipeline input may bind -NewName / -Destination by property name
   return piped && dests.length === 0 && (PS_SLOTS[PS_ITEM_CMDLET[verb] ?? ""] ?? []).some((s) => s === "newname" || s === "destination");
 }
@@ -402,12 +426,28 @@ const PS_SLOTS: Record<string, string[]> = {
   "clear-item": ["path"], "remove-item": ["path"], "set-variable": ["name", "value"], "new-variable": ["name", "value"], "clear-variable": ["name"], "remove-variable": ["name"],
   "set-content": ["path", "value"], "add-content": ["path", "value"], "set-itemproperty": ["path", "name", "value"], "new-itemproperty": ["path", "name"],
 };
+/** The parameters of each item cmdlet that take pipeline input by property name and decide the target (fail closed: a guess counts). */
+const PS_PIPE: Record<string, string[]> = {
+  "set-item": ["path"], "new-item": ["path", "name"], "rename-item": ["path", "newname"], "copy-item": ["path", "destination"], "move-item": ["path", "destination"],
+  "clear-item": ["path"], "remove-item": ["path"], "set-variable": ["name"], "new-variable": ["name"], "clear-variable": ["name"], "remove-variable": ["name"],
+  "set-content": ["path"], "add-content": ["path"], "set-itemproperty": ["path", "name"], "new-itemproperty": ["path", "name"],
+};
+/** PowerShell wildcard characters in an item path or name. */
+const PS_WILD = /[*?[]/;
 /** Full parameter names that name the item or its destination. */
 const PS_PATH_PARAMS = new Set(["path", "literalpath", "pspath", "name", "newname", "destination"]);
 /** Full names of parameters that take a value which names no item. */
 const PS_VALUE_PARAMS = new Set(["value", "itemtype", "type", "encoding", "description", "option", "scope", "visibility", "erroraction", "warningaction", "informationaction"]);
 /** Full names of switch parameters (a value only in the colon form, `-Force:$true`). */
 const PS_SWITCH_PARAMS = new Set(["force", "passthru", "whatif", "confirm", "recurse", "nonewline", "asbytestream", "container", "verbose", "debug"]);
+
+/** PS_ITEM aliases that are English words (`rm`, `copy`, `set`): counted outside the command word only in a command position. */
+const PS_ITEM_WORDS = new Set(["copy", "cp", "move", "mv", "del", "rm", "erase", "rd", "rmdir", "ren", "set"]);
+/** Common parameters that set a variable, with the length of their shortest unambiguous prefix (`ov` .. `pv` are aliases). */
+const PS_VAR_PARAMS: [string, number][] = [
+  ["outvariable", 4], ["errorvariable", 6], ["warningvariable", 8], ["informationvariable", 12], ["pipelinevariable", 2],
+  ["ov", 2], ["ev", 2], ["wv", 2], ["iv", 2], ["pv", 2],
+];
 
 /** PowerShell command words that run code this check never sees. */
 const PS_EVAL = new Set(["iex", "invoke-expression", ".", "&", "import-module", "ipmo", "invoke-command", "icm", "start-job", "sajb", "invoke-item", "ii", "powershell", "pwsh", "powershell.exe", "pwsh.exe"]);

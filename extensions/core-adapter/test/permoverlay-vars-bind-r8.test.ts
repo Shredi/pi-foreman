@@ -468,6 +468,112 @@ for (const [line, name] of [
   });
 }
 
+// ------------------------------------------------------------------ revision 2, item 19: item cmdlets anywhere, piped property names,
+// wildcard paths, common parameters that set a variable
+for (const [line, name] of [
+  // item cmdlets anywhere in the line
+  [`$null = Copy-Item env:X $d; ${PS_USE}`, "HOME"],
+  [`$null = Copy-Item env:X -Destination $d; ${PS_USE}`, "HOME"],
+  [`$null = Move-Item env:X -Destination $d; ${PS_USE}`, "HOME"],
+  [`$null = Move-Item env:X $d; ${PS_USE_UP}`, "USERPROFILE"],
+  [`$null = Remove-Item $p; ${PS_USE}`, "HOME"],
+  [`$null = Clear-Item $p; ${PS_USE}`, "HOME"],
+  [`$null = Microsoft.PowerShell.Management\\Copy-Item env:X $d; ${PS_USE}`, "HOME"],
+  [`$null = Microsoft.PowerShell.Management\\Remove-Item $p; ${PS_USE}`, "HOME"],
+  [`$r = Remove-Item $p; ${PS_USE}`, "HOME"],
+  [`$r = Move-Item env:X -Destination $d; ${PS_USE}`, "HOME"],
+  [`$null = cpi env:X $d; ${PS_USE}`, "HOME"],
+  [`$null = mi env:X $d; ${PS_USE}`, "HOME"],
+  [`$null = ri $p; ${PS_USE}`, "HOME"],
+  [`$null = cli $p; ${PS_USE}`, "HOME"],
+  [`$null = rm $p; ${PS_USE}`, "HOME"],
+  [`$null = del $p; ${PS_USE}`, "HOME"],
+  [`$null = Clear-Variable $n; ${PS_VAR_USE}`, "HOME"],
+  [`$null = Remove-Variable $n; ${PS_VAR_USE}`, "HOME"],
+  // a piped New-Item / Set-ItemProperty / New-ItemProperty takes Path and Name by property name
+  [`gc f | New-Item -Path env:FOO -Value /x; ${PS_USE}`, "HOME"],
+  [`gc f | ni -Path env:FOO -Value /x; ${PS_USE}`, "HOME"],
+  [`gc f | New-Item env:FOO -Value /x; ${PS_USE}`, "HOME"],
+  [`gc f | New-Item -Name FOO -Value /x; ${PS_USE}`, "HOME"],
+  [`$null = gc f | New-Item -Path env:FOO; ${PS_USE}`, "HOME"],
+  [`gc f | Set-ItemProperty -Path env:FOO -Value x; ${PS_USE}`, "HOME"],
+  [`gc f | New-ItemProperty -Path env:FOO; ${PS_USE}`, "HOME"],
+  // wildcard item paths and names
+  [`Set-Item env:HOM? /x; ${PS_USE}`, "HOME"],
+  [`Remove-Item env:HOM*; ${PS_USE}`, "HOME"],
+  [`Remove-Item -Path env:HOM*; ${PS_USE}`, "HOME"],
+  [`Remove-Item -Path:env:HOM*; ${PS_USE}`, "HOME"],
+  [`Remove-Item 'env:HOM*'; ${PS_USE}`, "HOME"],
+  [`Remove-Item env:USERPROFIL?; ${PS_USE_UP}`, "USERPROFILE"],
+  [`Remove-Item -Pa env:HOM*; ${PS_USE}`, "HOME"],
+  [`$null = Remove-Item env:HOM*; ${PS_USE}`, "HOME"],
+  [`Remove-Variable HOM*; ${PS_VAR_USE}`, "HOME"],
+  [`Clear-Variable -Name HOM?; ${PS_VAR_USE}`, "HOME"],
+  [`Set-Variable HOM? /x; ${PS_VAR_USE}`, "HOME"],
+  [`Copy-Item env:X env:HOM?; ${PS_USE}`, "HOME"],
+  // common parameters that set a variable, on any cmdlet
+  [`Get-Process -OutVariable $n; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -ov $n; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -OutVariable:$n; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -OutVar $n; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -ov ('HO'+'ME'); ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -ov "$n"; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -ErrorVariable $n; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -ev $n; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -WarningVariable $n; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -wv $n; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -InformationVariable $n; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -iv $n; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -PipelineVariable $n; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -pv $n; ${PS_VAR_USE}`, "HOME"],
+  [`$null = Get-Process -ev:$n; ${PS_VAR_USE}`, "HOME"],
+  [`gc f | Tee-Object -Variable $n; ${PS_VAR_USE}`, "HOME"],
+  [`gc f | Tee-Object -Var $n; ${PS_VAR_USE}`, "HOME"],
+  [`gc f | tee -Variable $n; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process @p; ${PS_VAR_USE}`, "HOME"],
+] as const) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line, "powershell").has(name), `boundNames sees ${name}`);
+    untrusted(foreman(line, "powershell"), line);
+  });
+}
+
+// revision 2, item 19 guards: these forms already held before this revision (the parser splits at `(`, `[H]` leaves `env:` without a
+// name, a literal name is a name token); kept so the new grammar cannot lose them
+for (const [line, name] of [
+  [`[void](Copy-Item env:X $d); ${PS_USE}`, "HOME"],
+  [`[void](Remove-Item $p); ${PS_USE}`, "HOME"],
+  [`Clear-Item env:[H]OME; ${PS_USE}`, "HOME"],
+  [`gc f | Tee-Object -Variable:$n; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -OutVariable HOME; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -ov +HOME; ${PS_VAR_USE}`, "HOME"],
+  [`Get-Process -OutVariable:HOME; ${PS_VAR_USE}`, "HOME"],
+  [`gc f | Tee-Object -Variable HOME; ${PS_VAR_USE}`, "HOME"],
+] as const) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line, "powershell").has(name), `boundNames sees ${name}`);
+    untrusted(foreman(line, "powershell"), line);
+  });
+}
+
+// revision 2, item 19 negatives: literal paths, -LiteralPath, a literal non-trusted variable name leave HOME trusted
+for (const line of [
+  `Remove-Item -LiteralPath env:FOO; ${PS_USE}`,
+  `Remove-Item -LiteralPath env:FOO*; ${PS_USE}`,
+  `$null = Remove-Item -LiteralPath env:FOO; ${PS_USE}`,
+  `Get-Content f -OutVariable foo; ${PS_USE}`,
+  `Get-Content f -ov +foo; ${PS_USE}`,
+  `gc f | Tee-Object -Variable foo; ${PS_USE}`,
+  `$null = Copy-Item ./a ./b; ${PS_USE}`,
+  `gc f | New-Item -Path ./d -Name x; ${PS_USE}`,
+  `Get-ChildItem -Include *.txt; ${PS_USE}`,
+]) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(!boundNames(line, "powershell").has("HOME"), "not HOME");
+    assert.equal(foreman(line, "powershell"), "pass");
+  });
+}
+
 // revision 2, item 3 negative: a literal path after `--` binds that name only
 for (const line of [`Set-Item -- env:FOO /x; ${PS_USE}`, `Set-Variable -- FOO /x; ${PS_USE}`]) {
   test(line, { skip: !posix }, () => {
