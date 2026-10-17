@@ -81,6 +81,7 @@ import { budgetCap, budgetCheck, failedItemsOf, prependReReview, reviewCapCheck,
 import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
+import { hubWorkflowDriftLines } from "./hubdrift.ts";
 import { ChildWidget, rungOf } from "./childwidget.ts";
 import { LiveState, intercomIdOf } from "./livestate.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
@@ -3094,7 +3095,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const inv = setupInvocation(PKG_ROOT, args.trim().slice(sub.length), s.agentDir);
         const r = await spawner(inv.command, inv.args, { timeoutMs: 300_000, cwd: s.cwd, env: inv.env });
         const ok = !r.error && !r.timedOut && r.code === 0;
-        ctx.ui.notify([r.stdout.trim(), r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? `setup.mjs: ${r.error.message}` : r.timedOut ? "setup.mjs timed out." : "setup.mjs produced no output."), ok ? "info" : "error");
+        ctx.ui.notify([r.stdout.trim(), r.stderr.trim(), ...hubDrift(s)].filter(Boolean).join("\n") || (r.error ? `setup.mjs: ${r.error.message}` : r.timedOut ? "setup.mjs timed out." : "setup.mjs produced no output."), ok ? "info" : "error");
         return;
       }
       if (sub !== "doctor") {
@@ -3107,6 +3108,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ctx.ui.notify(["pi-foreman doctor", ...lines].join("\n"), failed ? "error" : "info");
     },
   });
+
+  /** hubdrift.ts lines for the doctor and `/foreman setup`: the cwd's checkout and the session's round worktrees. */
+  function hubDrift(s: Session): string[] {
+    const checkouts = [workspaceOf(s.cwd).root, ...roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform)];
+    return hubWorkflowDriftLines({ agentDir: s.agentDir, hubWorkflow: get(s.config.config, "paths.hubWorkflow"), checkouts, platform });
+  }
 
   async function doctor(s: Session, ctx: ExtensionContext): Promise<string[]> {
     const out: string[] = [];
@@ -3225,6 +3232,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     else if (pf.state === "unreadable") fail("generated permission-system config is not valid JSON", "run the installer (node setup.mjs); it backs the file up first.");
     else if (pf.state === "stale") fail(`generated permission-system config is out of date: ${pf.detail}`, "run the installer (node setup.mjs).");
     else fail(`generated permission-system config was edited: ${pf.detail}. The installer owns this file`, "put your rules in foreman.json (safety.permissions) and run the installer; it backs the edited file up.");
+    out.push(...hubDrift(s));
 
     if (fs.existsSync(markerPath(s.markerDir, s.id))) ok(`session marker in ${s.markerDir}`);
     else fail("session marker missing", `make ${s.markerDir} writable and restart the session.`);
