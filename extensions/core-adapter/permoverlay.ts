@@ -169,6 +169,12 @@ export interface MatchCtx {
   readable?: string[];
   /** Patterns of the session's own bg_run task dirs (roundsurface.ts ownTaskReadable): a strictly read-only shell command may name them although a protect rule (`{cwd}/.pi/*`) covers `.pi`; a write there stays protected. */
   ownTasks?: string[];
+  /**
+   * Foreman only: patterns of its own usage records (roundsurface.ts ownUsageReadable). A shell command whose every unit is ls/cat/head/tail/wc/stat
+   * without a wrapper, write or substitution, or the one python read form (usagePythonRead), may name them although the protect rule
+   * `{agentDir}/pi-foreman/state/*` covers state/; a write there stays protected.
+   */
+  ownReads?: string[];
   /** Variable names the checked line binds somewhere (boundNames): `expandWord` trusts no `$S` / `$HOME` among them. */
   bound?: ReadonlySet<string>;
 }
@@ -1604,6 +1610,8 @@ function innerScript(core: string[]): { script: string; shell: "posix" | "powers
 }
 
 interface Collected {
+  /** The verb of every non-neutral unit (`""` for a unit with an env assignment or wrapper prefix): the own-usage read check (USAGE_VERBS). */
+  verbs?: string[];
   /** Harness-set variables a same-line `$NAME` may resolve to (shellvars.ts); unset below the top level. */
   vars?: Record<string, string>;
   /** The host platform for the same-line variables (win32 forms in shellvars.ts); default process.platform. */
@@ -2021,6 +2029,7 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
       // `printf -v f %s PATH`, `read f`, `declare f=PATH`, `mapfile f`: the words become a variable a later redirect may use
       if (ASSIGNERS.has(verb0) || (verb0 === "printf" && v.core.includes("-v"))) out.pure = false;
       if (!neutral && raw !== undefined) {
+        out.verbs?.push(off === 0 && v.core.length ? baseName(v.core[0]) : "");
         const reader = v.core.length > 0 && protectedReader(v.core, skip);
         if (!reader) out.rdr = false;
         if (!PURE_VERBS.has(baseName(raw)) || !v.core.length || !PURE_VERBS.has(baseName(v.core[0]))) out.pure = false;
@@ -2503,7 +2512,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (sw) return sw;
   }
   const scratch0 = scratchOf(ctx);
-  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, platform: ctx.platform, resolvedWords: new Set(), bound, boundRefs: [], unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], proseSkip: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], readCode: new Set(), ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
+  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, platform: ctx.platform, resolvedWords: new Set(), bound, boundRefs: [], unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], proseSkip: [], verbs: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], readCode: new Set(), ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
   collect(command, shell, 0, c);
   // win32 (Git Bash runs the posix-unescaped words): the ambiguous path words of the posix pass, before the raw pass adds its own
   const winAmb = ctx.platform === "win32" && shell === "posix" ? winAmbiguity(command, c) : undefined;
@@ -2551,6 +2560,8 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   // nothing writes (no redirect target, no write verb, no unknown command, nothing removed) and nothing builds a path at run time.
   const ownedReadOk = !strictRead && !/\$\(|`|[<>]\(/.test(command) && shell === "posix" && c.ro === true && c.roRun !== true && c.roUnknown === undefined && c.roDeny === undefined && c.roTargets!.size === 0 && c.tmpTargets!.size === 0 && c.writeTargets!.size === 0 && c.removeWords!.length === 0 && c.worktreeOp === undefined;
   const readOnly = strictRead;
+  // R10 item 1: the foreman's own usage records (ctx.ownReads): plain ls/cat/head/tail/wc/stat units that write nothing, or the one python read form
+  const ownRead = !!ctx.ownReads?.length && shell === "posix" && ((!/\$\(|`|[<>]\(/.test(command) && c.rdr === true && c.ro === true && c.writeTargets!.size === 0 && c.tmpTargets!.size === 0 && c.removeWords!.length === 0 && c.verbs!.length > 0 && c.verbs!.every((v) => USAGE_VERBS.has(v))) || usagePythonRead(command, ctx.ownReads!, ctx));
   // `--exclude-dir=.git` names a path to leave out, never one to write: only a redirect target keeps such a word
   // the read-only python exemption holds only when the whole command is that one invocation: nothing else on the line may use the words
   const soloPython = /^\s*(?:[\w./-]*python[\w.]*)(?:\s+-[A-Za-z]+)*\s*$/.test(command.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, ""));
@@ -2613,7 +2624,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
       return { kind: "deny", reason: `pi-foreman: '${clip(c.roUnknown)}' denied for a child: the round worktree is read-only except for its builder, and this command is neither a known reader nor a test run, so it may write there. Use a read command or ask the foreman.` };
     }
   }
-  const prot = pwords.map((w) => ({ w, hit: protectHit(rules.protect, w, pctx, true, removed.has(w), readOnly) })).filter((x) => x.hit);
+  const prot = pwords.map((w) => ({ w, hit: protectHit(rules.protect, w, pctx, true, removed.has(w), readOnly, ownRead) })).filter((x) => x.hit);
   const pd = prot.find((x) => x.hit!.kind === "deny");
   if (pd) return protectDecision(pd.hit!, pd.w, "shell command");
   const amb = winAmb ? (winAmb.viaVar ?? (ctx.role === "child" ? winAmb.word : undefined)) : undefined;
@@ -2631,11 +2642,40 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   return null;
 }
 
+/** The shell verbs that may read the foreman's own usage records (MatchCtx.ownReads). */
+const USAGE_VERBS = new Set(["ls", "cat", "head", "tail", "wc", "stat"]);
+
+const USAGE_PY = /^\s*(?:import\s+json\s*;\s*)?print\(\s*(?:open\(\s*(['"])([^'"\\$`]+)\1\s*\)\.read\(\s*\)|json\.load\(\s*open\(\s*(['"])([^'"\\$`]+)\3\s*\)\s*\))\s*\)\s*;?\s*$/;
+
+/**
+ * Ruling R10 D1: the whole command is one `python3 -c '<code>'` (or `python`) whose code is a single `print(open('<literal>').read())` or
+ * `print(json.load(open('<literal>')))` (an `import json;` before it), with no `'w'`/`'a'`, `os.`, `subprocess` or `exec` token, no redirect,
+ * and the literal an absolute path whose every spelling (realpath included) matches one of `patterns`. Anything else is false.
+ */
+export function usagePythonRead(command: string, patterns: string[], ctx: MatchCtx): boolean {
+  if (!patterns.length) return false;
+  const parsed = parseShell(command, "posix");
+  if (parsed.subs.length || parsed.pipelines.length !== 1 || parsed.pipelines[0].length !== 1) return false;
+  const words = parsed.pipelines[0][0];
+  if (REDIRECTS.get(words)?.size || words.length !== 3 || !/^python3?$/.test(words[0]) || words[1] !== "-c") return false;
+  const code = words[2];
+  if (/\bos\.|subprocess|exec|['"][wa]/.test(code) || !pythonReadOnlyCode(code)) return false;
+  const m = USAGE_PY.exec(code);
+  const lit = m ? (m[2] ?? m[4]) : undefined;
+  if (!lit || !path.posix.isAbsolute(lit) || lit.split("/").includes("..")) return false;
+  const cands = pathCandidates(lit, ctx).filter((x) => path.isAbsolute(x) || path.win32.isAbsolute(x));
+  return cands.length > 0 && cands.every((x) => patterns.some((p) => pathMatches(p, x, ctx)));
+}
+
 /** The strictest write-protection decision for one path word (deny before ask), or null. */
-function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: boolean, remove = false, readOnly = false): ProtectHit | null {
+function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: boolean, remove = false, readOnly = false, ownRead = false): ProtectHit | null {
   const child = ctx.role === "child";
   let ask: ProtectHit | null = null;
   const cands = pathCandidates(word, ctx);
+  if (ownRead && shell && !child && ctx.ownReads?.length) {
+    const abs = cands.filter((x) => path.isAbsolute(x) || path.win32.isAbsolute(x));
+    if (abs.length && abs.every((x) => ctx.ownReads!.some((p) => pathMatches(p, x, ctx)))) return null;
+  }
   if (readOnly && shell && ctx.ownTasks?.length) {
     const abs = cands.filter((x) => path.isAbsolute(x) || path.win32.isAbsolute(x));
     if (abs.length && abs.every((x) => ctx.ownTasks!.some((p) => pathMatches(p, x, ctx)))) return null;

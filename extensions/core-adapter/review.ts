@@ -21,7 +21,9 @@ import type { BashRules } from "./timeoutallow.ts";
 import { insideScratch } from "./childscratch.ts";
 import { deterministicAllow, deterministicAllowInfo, hits } from "./timeoutallow.ts";
 import { classify, effectCtx } from "./effects.ts";
+import * as os from "node:os";
 import * as path from "node:path";
+import { usagePythonRead } from "./permoverlay.ts";
 import { hubWorkflowDirs, isolationDir, mainWorkflowReadable, roundWorktreeAdd } from "./roundsurface.ts";
 import type { EffectClass, EffectCtx } from "./effects.ts";
 import { isSubagentWakeText } from "./idlecustom.ts";
@@ -200,6 +202,8 @@ export interface ReviewSession {
   ownedRoots?: () => string[];
   /** The roots the session owns read only (the global npm root, its children's async run dirs): listed apart in the prompt, never a write root. */
   readOnlyRoots?: () => string[];
+  /** The foreman's own usage record patterns (roundsurface.ts ownUsageReadable): the one python read form there is allowed without the model (R10 D1). */
+  ownReads?: () => string[];
 }
 
 /** Deny text for a forwarded child ask that deferred with no human to ask: names what runs without approval. */
@@ -381,6 +385,7 @@ export class ForemanReview {
       else if (d.forwarding && surface.startsWith("external_directory") && (fixed = this.scratchPathAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (!s.isChild && surface.startsWith("external_directory") && (fixed = this.readRootPathAllow(s, d, surface))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (surface === "bash" && !d.forwarding && (fixed = this.readRootsBashAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
+      else if (surface === "bash" && !d.forwarding && (fixed = this.ownUsageAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (!REVIEW_SURFACES.includes(surface)) out = { verdict: { kind: "defer" }, label: "surface" };
       else if (surface === "bash" && d.forwarding && (fixed = this.fixedAllow(s, d, cls))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (surface === "bash" && !d.forwarding && (fixed = this.roundWorktreeAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
@@ -522,6 +527,18 @@ export class ForemanReview {
       const full = reviewValue(d);
       const deps = { effects: ctx };
       return deterministicAllow(rules, unitValue(d), deps) && deterministicAllow(rules, full, deps) && classify(full, ctx) === "read" ? "owned-read" : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** "own-usage" for the foreman's own `python3 -c` read of its usage records in the one form ruling R10 D1 names (permoverlay.ts usagePythonRead). */
+  private ownUsageAllow(s: ReviewSession, d: AskDetails): string | null {
+    try {
+      const pats = s.isChild ? [] : s.ownReads?.() ?? [];
+      if (!pats.length) return null;
+      const ctx = { cwd: s.cwd, home: os.homedir(), platform: process.platform, role: "main" as const };
+      return usagePythonRead(reviewValue(d), pats, ctx) && usagePythonRead(unitValue(d), pats, ctx) ? "own-usage" : null;
     } catch {
       return null;
     }

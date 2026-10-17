@@ -103,6 +103,18 @@ export function ownTaskReadable(roots: string[], sessionId: string, platform: st
 }
 
 /**
+ * Read patterns for the foreman's own usage records, `<agentDir>/pi-foreman/state/usage` and everything below (R10 item 1): a read-only shell
+ * command of the foreman (ls/cat/head/tail/wc/stat, or the one python read form of permoverlay.ts usagePythonRead) may name them although the
+ * protect rule `{agentDir}/pi-foreman/state/*` covers state/; a write there stays protected. Never given to a child.
+ */
+export function ownUsageReadable(agentDir: string, platform: string = process.platform): string[] {
+  const x = px(platform);
+  if (!agentDir || !x.isAbsolute(agentDir)) return [];
+  const d = x.join(x.resolve(agentDir), "pi-foreman", "state", "usage");
+  return [d, `${d}/*`];
+}
+
+/**
  * The main checkout's `.workflow` dir of each round worktree `<repo>.worktrees/<round>`, with its subtree: the round's own ledger and its notes
  * live there, so it is a READ root for every child role of the round (R1). Nothing else of the main checkout, and no write.
  */
