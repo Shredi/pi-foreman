@@ -247,7 +247,7 @@ test("literal rows 6-11: node_modules reads pass for a child when the package ro
   const c = world(ws, "child");
   for (const cmd of [
     "ls node_modules | head -3; ls node_modules/.bin | head -3; cat extensions/core-adapter/cachepolicy.ts; cat extensions/core-adapter/compaction.ts; cat extensions/core-adapter/prwatch.ts | head -120; cat extensions/core-adapter/trace.ts | head -60",
-    `ls ${ws}/node_modules | wc -l; ls node_modules | wc -l`,
+    `ls ${bashPath(ws)}/node_modules | wc -l; ls node_modules | wc -l`,
     'grep -rn "cacheRead" -r node_modules/@anthropic* 2>/dev/null | head -0; grep -rn "claude-sonnet\\|cacheRead" --include=*.json -l config 2>/dev/null | head',
     'grep -n "anthropic" -il node_modules/@earendil-works/pi-ai/dist/*.js | head; ls node_modules/@earendil-works/pi-ai/dist | head -30',
     'grep -rn "claude-sonnet-4-5\\"" node_modules/@earendil-works/pi-ai/dist/models.generated.js | head -3',
@@ -358,7 +358,7 @@ test("literal row 25: a child's own scratch dir is open on every overlay surface
   const c = world(wt, "child", { scratch });
   assert.equal(sh(r, c, "node $FOREMAN_SCRATCH/probe/probe.mjs"), "pass");
   assert.equal(sh(r, c, "cat $FOREMAN_SCRATCH/replay.log"), "pass");
-  assert.equal(sh(r, c, `cat ${scratch}/replay.log > ${scratch}/copy.log`), "pass");
+  assert.equal(sh(r, c, `cat ${bashPath(scratch)}/replay.log > ${bashPath(scratch)}/copy.log`), "pass");
   assert.equal(sh(r, c, "cd ${FOREMAN_SCRATCH}/probe && ls"), "pass");
   for (const t of ["read", "write", "edit", "ls", "grep", "find"]) assert.equal(tool(r, c, t, { path: path.join(scratch, "probe", "x.mjs") }), "pass", t);
   // even when the scratch dir sits below a blocked root, it stays the child's
@@ -573,10 +573,11 @@ test("revision B3: a child stays out of sibling worktrees, other scratch dirs, r
   assert.equal(tool(r, child, "read", { path: own }), "pass");
   assert.equal(tool(r, child, "read", { path: other }), "deny");
   assert.equal(tool(r, child, "read", { path: alien }), "deny");
-  for (const cmd of [`echo x > ${other}`, `echo x > ${alien}`, `echo x > ${ruling}`, `cat ${cc}`, `ls ${path.dirname(cc)}`, `cp x ${other}`, `cd ${path.dirname(other)} && ls`]) {
+  const bp = (p: string): string => bashPath(p);
+  for (const cmd of [`echo x > ${bp(other)}`, `echo x > ${bp(alien)}`, `echo x > ${bp(ruling)}`, `cat ${bp(cc)}`, `ls ${bp(path.dirname(cc))}`, `cp x ${bp(other)}`, `cd ${bp(path.dirname(other))} && ls`]) {
     assert.equal(sh(r, child, cmd), "deny", `child: ${cmd}`);
   }
-  for (const cmd of [`echo x > ${mine}`, `echo x > ${own}`, `echo x > $FOREMAN_SCRATCH/g.txt`, `node ${own}`, `cat ${cc.replace("claude-config", "nothing")}`]) {
+  for (const cmd of [`echo x > ${bp(mine)}`, `echo x > ${bp(own)}`, `echo x > $FOREMAN_SCRATCH/g.txt`, `node ${bp(own)}`, `cat ${bp(cc.replace("claude-config", "nothing"))}`]) {
     assert.notEqual(sh(r, child, cmd), "deny", `child: ${cmd}`);
   }
   for (const cmd of [`echo x > ${other}`, `echo x > ${alien}`, `echo x > ${ruling}`, `cat ${cc}`]) assert.equal(sh(r, main, cmd), "pass", `main: ${cmd}`);

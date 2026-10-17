@@ -12,6 +12,7 @@ import type { RegistryLike, ReviewSession } from "../review.ts";
 import { bashRules } from "../timeoutallow.ts";
 import { hubWorkflowDirs, hubWorkflowReadable } from "../roundsurface.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { bashPath } from "./_bashpath.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(PKG)!;
@@ -38,8 +39,8 @@ test("hubWorkflowDirs: string or list, relative, .. and root entries dropped, em
 test("hub .workflow is readable by the read tool and read-only bash for main and child", () => {
   for (const role of ["main", "child"] as const) {
     assert.equal(kind(role, [hub], "read", { path: path.join(hub, ".workflow", "LEDGER.md") }), "pass", role);
-    assert.equal(kind(role, [hub], "bash", { command: `cat ${hub}/.workflow/LEDGER.md` }), "pass", role);
-    assert.equal(kind(role, hub, "bash", { command: `grep -n item ${hub}/.workflow/LEDGER.md | head` }), "pass", role);
+    assert.equal(kind(role, [hub], "bash", { command: `cat ${bashPath(hub)}/.workflow/LEDGER.md` }), "pass", role);
+    assert.equal(kind(role, hub, "bash", { command: `grep -n item ${bashPath(hub)}/.workflow/LEDGER.md | head` }), "pass", role);
   }
 });
 
@@ -76,8 +77,8 @@ test("non-tmp hub: .workflow is readable for main and child, a write or redirect
   const led = path.join(nonTmpHub, ".workflow", "LEDGER.md");
   for (const role of ["main", "child"] as const) {
     assert.equal(kind(role, [nonTmpHub], "read", { path: led }), "pass", role);
-    assert.equal(kind(role, [nonTmpHub], "bash", { command: `cat ${led}` }), "pass", role);
-    for (const [tool, input] of [["bash", { command: `cp x ${led}` }], ["bash", { command: `echo x > ${led}` }], ["write", { path: led }]] as const) {
+    assert.equal(kind(role, [nonTmpHub], "bash", { command: `cat ${bashPath(led)}` }), "pass", role);
+    for (const [tool, input] of [["bash", { command: `cp x ${bashPath(led)}` }], ["bash", { command: `echo x > ${bashPath(led)}` }], ["write", { path: led }]] as const) {
       // "pass" is the overlay having no opinion (the permission layer then asks); the key must add no write allowance
       assert.equal(kind(role, [nonTmpHub], tool, input), kind(role, [], tool, input), `${role} ${tool}`);
     }

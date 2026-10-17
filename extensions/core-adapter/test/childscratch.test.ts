@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { bashPath } from "./_bashpath.ts";
 import { ChildScratch, createScratch, expandScratchVar, finishScratch, insideScratch, launchScratch, removeScratch, scratchCommandAllowed, scratchRoot, storeBrief, sweepScratch } from "../childscratch.ts";
 import type { ScratchHost } from "../childscratch.ts";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
@@ -152,7 +153,7 @@ test("row 25: the overlay leaves a child's own scratch dir open on every surface
   const kind = (command: string): string => checkToolCall(r, "bash", { command }, ctx)?.kind ?? "pass";
   assert.equal(kind("node $FOREMAN_SCRATCH/probe/probe.mjs"), "pass");
   assert.equal(kind("cat $FOREMAN_SCRATCH/replay.log"), "pass");
-  assert.equal(kind(`node ${mine}/probe/probe.mjs > ${mine}/out.log 2>&1`), "pass");
+  assert.equal(kind(`node ${bashPath(mine)}/probe/probe.mjs > ${bashPath(mine)}/out.log 2>&1`), "pass");
   assert.equal(kind("cd $FOREMAN_SCRATCH && ls"), "pass");
   for (const t of ["read", "write", "edit", "ls", "grep", "find"]) assert.equal(checkToolCall(r, t, { path: path.join(mine, "probe", "probe.mjs") }, ctx), null, t);
   // the same dir through the owned-roots parameter
@@ -160,5 +161,5 @@ test("row 25: the overlay leaves a child's own scratch dir open on every surface
   const owned = buildOverlayRules(readBaseline(PKG)!, {}, {}, path.join(base, "agent"), undefined, undefined, false, { readWrite: [], readOnly: [], childScratch: mine });
   assert.equal(checkToolCall(owned, "bash", { command: "cd $FOREMAN_SCRATCH && ls" }, noScratch), null);
   // another launch's dir is outside the workspace: cd refuses
-  assert.equal(kind(`cd ${theirs} && ls`), "deny");
+  assert.equal(kind(`cd ${bashPath(theirs)} && ls`), "deny");
 });

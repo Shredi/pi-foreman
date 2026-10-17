@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import type { MatchCtx, OverlayRules } from "../permoverlay.ts";
+import { bashPath } from "./_bashpath.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(PKG)!;
@@ -25,7 +26,7 @@ const run = (cwd: string, command: string): string => {
 };
 
 test("a child runs npm install / npm ci in its owned worktree root without an ask", () => {
-  for (const cmd of ["npm install", "npm ci", "npm i", "npm ci --no-audit --no-fund", "npm install --prefix .", `npm ci --prefix=${owned}`]) assert.equal(run(owned, cmd), "pass", cmd);
+  for (const cmd of ["npm install", "npm ci", "npm i", "npm ci --no-audit --no-fund", "npm install --prefix .", `npm ci --prefix=${bashPath(owned)}`]) assert.equal(run(owned, cmd), "pass", cmd);
 });
 
 test("a child still asks for npm install / ci with -g, a foreign --prefix, a package name or another option", () => {

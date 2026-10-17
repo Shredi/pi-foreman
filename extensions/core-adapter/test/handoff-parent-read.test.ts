@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import type { MatchCtx, OverlayRules } from "../permoverlay.ts";
+import { bashPath } from "./_bashpath.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(PKG)!;
@@ -34,10 +35,10 @@ test("own handoff dir: the foreman reads parent and child; writes still ask", ()
 });
 
 test("handoff dirs stay closed to a child (the overlay knows no 'own' dir for a child; plan.md/result.md excepted)", () => {
-  assert.equal(sh("child", `cat ${path.join(dir, "plan.md")}`), "pass");
+  assert.equal(sh("child", `cat ${bashPath(path.join(dir, "plan.md"))}`), "pass");
   for (const f of ["parent", "child"]) {
     const p = path.join(dir, f);
-    assert.equal(sh("child", `cat ${p}`), "deny", `cat ${f}`);
+    assert.equal(sh("child", `cat ${bashPath(p)}`), "deny", `cat ${f}`);
     assert.equal(tool("child", "write", { path: p }), "deny", `write ${f}`);
   }
 });

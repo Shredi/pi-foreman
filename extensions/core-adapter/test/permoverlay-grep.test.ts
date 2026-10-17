@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import type { MatchCtx, OverlayRules } from "../permoverlay.ts";
+import { bashPath } from "./_bashpath.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(PKG)!;
@@ -39,8 +40,8 @@ test("git grep: the pattern (bare, -e, -nE, before --) is no path operand", () =
     assert.equal(sh(c, `git grep -n "${home}/.ssh/id_rsa"`), "pass", c.role);
     assert.equal(sh(c, `git grep -nE "/Users/[a-z]+/x" -- src`), "pass", c.role);
     assert.equal(sh(c, `git grep -e "${home}/.ssh/id_rsa" -- src`), "pass", c.role);
-    assert.equal(sh(c, `git -C ${wt} grep -nE "${home}/\\.ssh/id_[a-z]+" -- src`), "pass", c.role);
-    assert.equal(sh(c, `git grep -nE "x" -- ${home}/.ssh/id_rsa`), "deny", c.role);
+    assert.equal(sh(c, `git -C ${bashPath(wt)} grep -nE "${home}/\\.ssh/id_[a-z]+" -- src`), "pass", c.role);
+    assert.equal(sh(c, `git grep -nE "x" -- ${bashPath(home)}/.ssh/id_rsa`), "deny", c.role);
   }
 });
 

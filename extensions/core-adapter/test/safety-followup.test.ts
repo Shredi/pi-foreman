@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { rmTestTmp } from "./_tmpbase.ts";
+import { bashPath } from "./_bashpath.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -95,7 +96,7 @@ test("remove/rename of the agent dir's parent is asked in the foreman, denied in
     ["bash", { command: "trash ~/.pi" }],
     ["bash", { command: "mv ~/.pi ~/.pi-old" }],
     ["bash", { command: `rm -r "$HOME/.pi/"` }],
-    ["bash", { command: `rmdir ${dotPi}` }],
+    ["bash", { command: `rmdir ${bashPath(dotPi)}` }],
     ["bash", { command: `python3 -c "import shutil; shutil.rmtree('${dotPi}')"` }],
     ["foreman_move", { src: dotPi, dst: path.join(root, "pi-old") }],
   ] as Array<[string, Record<string, unknown>]>) {
@@ -104,7 +105,7 @@ test("remove/rename of the agent dir's parent is asked in the foreman, denied in
   }
   for (const [tool, input] of [
     ["bash", { command: "ls ~/.pi" }],
-    ["bash", { command: `ls -la ${dotPi}` }],
+    ["bash", { command: `ls -la ${bashPath(dotPi)}` }],
     ["ls", { path: dotPi }],
     ["bash", { command: "trash ~/.pi/other-file" }],
   ] as Array<[string, Record<string, unknown>]>) {
@@ -114,6 +115,6 @@ test("remove/rename of the agent dir's parent is asked in the foreman, denied in
   // Derived from the agent dir, not hard-coded: another agent dir protects its own parent.
   const other = path.join(root, "custom", "agent-x");
   const r2 = buildOverlayRules(readBaseline(PKG)!, {}, {}, other, path.join(root, "pkg"));
-  assert.equal(checkToolCall(r2, "bash", { command: `trash ${path.join(root, "custom")}` }, { cwd, home, platform: process.platform, role: "child" })?.kind, "deny");
+  assert.equal(checkToolCall(r2, "bash", { command: `trash ${bashPath(path.join(root, "custom"))}` }, { cwd, home, platform: process.platform, role: "child" })?.kind, "deny");
   assert.equal(checkToolCall(r2, "bash", { command: "trash ~/.pi" }, { cwd, home, platform: process.platform, role: "child" })?.kind ?? "pass", "pass");
 });
