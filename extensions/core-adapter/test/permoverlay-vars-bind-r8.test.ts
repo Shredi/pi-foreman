@@ -141,3 +141,103 @@ for (const line of [
     assert.equal(foreman(line.replace("$HOME/f", HOME_USE.slice(4))), "pass");
   });
 }
+
+// ------------------------------------------------------------------ item 3: PowerShell colon parameters, splatting, ScriptBlocks
+const PS_USE = "Get-Content $env:HOME/.pi/agent/pi-foreman/x";
+const PS_USE_UP = "Get-Content $env:USERPROFILE/.pi/agent/pi-foreman/x";
+const PS_VAR_USE = "Get-Content $HOME/.pi/agent/pi-foreman/x";
+
+test("r8 baseline: the unbound PowerShell uses are trusted", { skip: !posix }, () => {
+  for (const use of [PS_USE, PS_USE_UP, PS_VAR_USE]) assert.equal(foreman(use, "powershell"), "pass", use);
+});
+
+for (const [line, name] of [
+  // (a) the colon form `-Path:value` parses like `-Path value`
+  [`Set-Item -Path:$p /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -Path: $p /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -PATH:$p /x; ${PS_USE_UP}`, "USERPROFILE"],
+  [`Set-Item -path:$p /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -Path:'env:HOME' /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -Path:env:HOME /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -Path: env:HOME /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -Path:Env:\\USERPROFILE /x; ${PS_USE_UP}`, "USERPROFILE"],
+  [`Set-Item -LiteralPath:$p /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -LiteralPath:env:USERPROFILE /x; ${PS_USE_UP}`, "USERPROFILE"],
+  [`New-Item -Path:"env:HOME" -Value /x; ${PS_USE}`, "HOME"],
+  [`New-Item -Path:$p -Value /x; ${PS_USE}`, "HOME"],
+  [`si -Path:$p /x; ${PS_USE}`, "HOME"],
+  [`Set-Variable -Name:$n -Value /x; ${PS_VAR_USE}`, "HOME"],
+  [`Set-Variable -Name:HOME -Value /x; ${PS_VAR_USE}`, "HOME"],
+  [`Set-Variable -name: HOME -Value /x; ${PS_VAR_USE}`, "HOME"],
+  [`sv -Name:$n /x; ${PS_VAR_USE}`, "HOME"],
+  [`Remove-Item -Path:env:HOME; ${PS_USE}`, "HOME"],
+  [`Remove-Item -Path:$p; ${PS_USE}`, "HOME"],
+  [`Clear-Variable -Name:$n; ${PS_VAR_USE}`, "HOME"],
+  [`Rename-Item env:X -NewName:HOME; ${PS_USE}`, "HOME"],
+  [`Set-Item -Path:('en'+'v:HOME') /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -Path:"env:$n" /x; ${PS_USE}`, "HOME"],
+  [`Set-Item @($p) /x; ${PS_USE}`, "HOME"],
+  // (b) a splat on a binder cmdlet, or passed to Invoke-Command / icm / &
+  [`Set-Item @p; ${PS_USE}`, "HOME"],
+  [`Set-Item @p -Value /x; ${PS_USE}`, "HOME"],
+  [`si @p; ${PS_USE}`, "HOME"],
+  [`Set-Variable @p; ${PS_VAR_USE}`, "HOME"],
+  [`sv @p; ${PS_VAR_USE}`, "HOME"],
+  [`New-Variable @p; ${PS_VAR_USE}`, "HOME"],
+  [`nv @p; ${PS_VAR_USE}`, "HOME"],
+  [`New-Item @p; ${PS_USE}`, "HOME"],
+  [`ni @p; ${PS_USE_UP}`, "USERPROFILE"],
+  [`Set-Content @p; ${PS_USE}`, "HOME"],
+  [`sc @p; ${PS_USE}`, "HOME"],
+  [`Clear-Variable @p; ${PS_VAR_USE}`, "HOME"],
+  [`Remove-Item @p; ${PS_USE}`, "HOME"],
+  [`Remove-Variable @p; ${PS_VAR_USE}`, "HOME"],
+  [`$null = Set-Item @p; ${PS_USE}`, "HOME"],
+  [`Set-Item @{Path=$n; Value='/x'}; ${PS_USE}`, "HOME"],
+  [`Set-Item @{Path=$n}; ${PS_USE}`, "HOME"],
+  [`Invoke-Command @p; ${PS_USE}`, "HOME"],
+  [`icm @p; ${PS_USE}`, "HOME"],
+  [`& @p; ${PS_USE}`, "HOME"],
+  // (c) ScriptBlock forms run code this check never sees
+  [`$ExecutionContext.InvokeCommand.NewScriptBlock($c).InvokeReturnAsIs(); ${PS_USE}`, "HOME"],
+  [`$sb = $ExecutionContext.InvokeCommand.NewScriptBlock($c); $sb.InvokeReturnAsIs(); ${PS_USE}`, "HOME"],
+  [`$sb.InvokeReturnAsIs(); ${PS_USE}`, "HOME"],
+  [`$sb.InvokeWithContext($null, $null); ${PS_USE_UP}`, "USERPROFILE"],
+  [`$x.NewScriptBlock($c); ${PS_USE}`, "HOME"],
+  [`[ScriptBlock]::Create($c).InvokeReturnAsIs(); ${PS_USE}`, "HOME"],
+  [`$ExecutionContext.InvokeCommand.InvokeScript($c); ${PS_USE}`, "HOME"],
+  [`$null = $ExecutionContext.InvokeCommand.ExpandString($c); ${PS_USE}`, "HOME"],
+  [`$ic = $ExecutionContext.InvokeCommand; ${PS_USE}`, "HOME"],
+  [`Invoke-Expression $c; ${PS_USE}`, "HOME"],
+  [`iex $c; ${PS_USE}`, "HOME"],
+  [`& $sb; ${PS_USE}`, "HOME"],
+  [`. $sb; ${PS_USE}`, "HOME"],
+  [`$sb.Invoke(); ${PS_USE}`, "HOME"],
+] as const) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line, "powershell").has(name), `boundNames sees ${name}`);
+    untrusted(foreman(line, "powershell"), line);
+  });
+}
+
+// item 3 negatives: a literal colon target binds that name only; a reader binds nothing; `$HOMEDIR` is not HOME
+test(`Set-Item -Path:env:FOO /x; ${PS_USE}`, { skip: !posix }, () => {
+  const line = `Set-Item -Path:env:FOO /x; ${PS_USE}`;
+  const names = boundNames(line, "powershell");
+  assert.ok(names.has("FOO"), "binds FOO");
+  assert.ok(!names.has("HOME"), "not HOME");
+  assert.equal(foreman(line, "powershell"), "pass");
+});
+
+for (const line of [
+  `Set-Item -Path:'env:FOO' -Value:/x; ${PS_USE}`,
+  `Set-Variable -Name:FOO -Value /x; ${PS_USE}`,
+  `$HOMEDIR = 1; ${PS_USE}`,
+  `Get-Item -Path:$p; ${PS_USE}`,
+  `Get-Item -Path:env:FOO; ${PS_USE}`,
+]) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(!boundNames(line, "powershell").has("HOME"), "not HOME");
+    assert.equal(foreman(line, "powershell"), "pass");
+  });
+}
