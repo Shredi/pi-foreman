@@ -9,8 +9,8 @@
 - Plan reviews and fix-round reviews have separate counters; the `review_cap` text names the owner prompt as the reset.
 - Finalization read-budget exemption: it follows harness state and is aware of pending launches.
 - `/foreman cost --json`.
-- The cd guard skips commit messages.
-- HOME binding covers `python -c` and `node -c` bodies.
+- The cd guard skips literal commit-message values (`-m`/`--message`); a message the shell may expand is still scanned.
+- The HOME-binding check ignores a plain `python -c` / `node -e` body in that command's own unit.
 - A child may run `npm ci` in the foreman's `bench/pi-lock`.
 - Presence states with icons (see `docs/herdr.md`).
 
