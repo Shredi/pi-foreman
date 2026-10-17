@@ -1909,9 +1909,6 @@ function npmInstallArgs(args: string[], platform?: string): string[] | null {
   return prefixes;
 }
 
-/** An env assignment that changes what npm (or the shell and loader it runs through) reads, writes or runs: no owned-root pre-allow. */
-const ENV_CHANGES_NPM = /^(npm_|NODE|PATH$|LD_|DYLD_|HOME$|USERPROFILE$|XDG_|BASH_ENV$|ENV$|IFS$|PS4$|CDPATH$|SHELL$|TMP$|TMPDIR$|TEMP$|GIT_|INIT_CWD$|PWD$|OLDPWD$|PREFIX$|APPDATA$|LOCALAPPDATA$|PSMODULEPATH$)/i;
-
 /** A child's `npm install|ci` runs unasked in its owned worktree root: the session cwd is that root itself, no cd, nothing else asks, every `--prefix` names the root. */
 function npmInstallOwned(c: Collected, ctx: MatchCtx): boolean {
   if (c.askUnsafe || c.cdSeen || !ctx.cwd) return false;
@@ -2001,7 +1998,8 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
         if (ask !== undefined) out.askUnsafe = true;
       } else if (verb0 === "npm" && (v.core[1] === "ci" || v.core[1] === "install" || v.core[1] === "i")) {
         ask = `npm ${v.core[1]}`;
-        const safe = v.env.some((e) => ENV_CHANGES_NPM.test(e.slice(0, e.indexOf("=")))) ? null : npmInstallArgs(v.core.slice(2), out.platform);
+        // Fail closed: any env assignment prefix (npm_*, PATH, COMSPEC, CC, ...) may change what npm reads, writes or runs, so it loses the pre-allow.
+        const safe = v.env.length > 0 ? null : npmInstallArgs(v.core.slice(2), out.platform);
         if (safe === null) out.askUnsafe = true;
         else (out.npmPrefixes ??= []).push(...safe);
       }

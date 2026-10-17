@@ -1,4 +1,4 @@
-// Ledger 11 (variants): an env-assignment prefix is seen by the owned-root pre-allow; one that changes npm's behaviour is not pre-allowed.
+// Ledger 11 (variants): an env-assignment prefix is seen by the owned-root pre-allow; any env prefix loses the pre-allow (fail closed).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -26,12 +26,24 @@ const run = (cwd: string, command: string): string => {
   return checkToolCall(rules, "bash", { command }, ctx)?.kind ?? "pass";
 };
 
-test("a child runs FOO=1 npm ci in its owned worktree root without an ask (decision: pass, the env prefix is seen)", () => {
-  assert.equal(run(owned, "FOO=1 npm ci"), "pass");
+test("a child runs npm ci in its owned worktree root without an ask (decision: pass, no env prefix)", () => {
+  assert.equal(run(owned, "npm ci"), "pass");
 });
 
-test("a child runs FOO=1 BAR=2 npm ci in its owned worktree root without an ask (decision: pass, every env prefix is seen)", () => {
-  assert.equal(run(owned, "FOO=1 BAR=2 npm ci"), "pass");
+test("a child asks for FOO=1 npm ci in its owned worktree root: any env prefix loses the pre-allow (decision: ask)", () => {
+  assert.equal(run(owned, "FOO=1 npm ci"), "ask");
+});
+
+test("a child asks for FOO=1 BAR=2 npm ci in its owned worktree root: any env prefix loses the pre-allow (decision: ask)", () => {
+  assert.equal(run(owned, "FOO=1 BAR=2 npm ci"), "ask");
+});
+
+test("a child asks for COMSPEC=x npm ci in its owned root: an unlisted env name still loses the pre-allow (decision: ask)", () => {
+  assert.equal(run(owned, "COMSPEC=x npm ci"), "ask");
+});
+
+test("a child asks for CC=x npm ci in its owned root: an unlisted env name still loses the pre-allow (decision: ask)", () => {
+  assert.equal(run(owned, "CC=x npm ci"), "ask");
 });
 
 test("a child asks for npm_config_prefix=/elsewhere npm ci in its owned root: no owned-root pre-allow for a behaviour-changing env prefix (decision: ask)", () => {
