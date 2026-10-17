@@ -277,7 +277,10 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
   const outside = command.replace(arith, " ").replace(/\[\[[^\]]*\]\]|\[[^\]]*\]/g, " ").replace(/(?<![\w$-])[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=[\w./:,@%+-]*(?=$|[\s;&|)])/g, " ");
   for (const body of bodies) {
     if (/(?:^|[^=!<>])=(?!=)|\+\+|--/.test(body)) all();
-    for (const t of body.matchAll(/(?<![\w$])([A-Za-z_][A-Za-z0-9_]*)/g)) {
+    // an expansion's text is evaluated as arithmetic too (`y='S=1'; (( $y ))`): `$y` / `${y}` count like `y`, and a positional,
+    // `$@` / `$*`, an indirect `${!y}` or a substitution may hold any assignment
+    if (/\$(?:\d|[@*(]|\{[\d@*!])|`/.test(body)) all();
+    for (const t of body.matchAll(/(?<![\w$])(?:\$\{?)?([A-Za-z_][A-Za-z0-9_]*)/g)) {
       if (nonLit.has(t[1]) || new RegExp(`(?:^|[^\\w$-])${t[1]}(?![A-Za-z0-9_])`).test(outside)) all();
     }
   }

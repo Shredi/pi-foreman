@@ -24,7 +24,7 @@ for (const d of [path.join(main, ".workflow"), agentDir, scratch]) fs.mkdirSync(
 const owned = ownedRoots({ agentDir, workspaceRoot: main, tmpRoot: path.join(base, "tmp"), npmRoot: null });
 const rules = buildOverlayRules(baseline, {}, {}, agentDir, pkgRoot, undefined, false, owned);
 
-const foreman = (command: string): string => checkToolCall(rules, "bash", { command }, { cwd: main, home, platform: process.platform, role: "main", owned })?.kind ?? "pass";
+const foreman = (command: string, tool = "bash"): string => checkToolCall(rules, tool, { command }, { cwd: main, home, platform: process.platform, role: "main", owned })?.kind ?? "pass";
 const child = (command: string): string => {
   const ctx: MatchCtx = { cwd: main, home, platform: process.platform, role: "child", scratch, owned };
   return checkToolCall(rules, "bash", { command }, ctx)?.kind ?? "pass";
@@ -104,6 +104,40 @@ for (const line of [
   test(line, { skip: !posix }, () => {
     assert.ok(!boundNames(line).has("HOME"));
     assert.equal(foreman(line), foreman("cat $HOME/f"));
+    assert.equal(foreman(line.replace("$HOME/f", HOME_USE.slice(4))), "pass");
+  });
+}
+
+// ------------------------------------------------------------------ item 2b: an expansion inside an arithmetic body
+// `(( $y ))`, `$(( $y ))`, `let "$y"`: the expanded text is evaluated as arithmetic, so `y='S=1'` assigns S
+for (const [line, name, who] of [
+  [`y=$(cat f); (( $y )); ${S_USE}`, "S", "child"],
+  [`y=$(cat f); echo $(( $y )); ${S_USE}`, "S", "child"],
+  [`y=$(cat f); let "$y"; ${HOME_USE}`, "HOME", "foreman"],
+  [`y=$(cat f); let $y; ${S_USE}`, "S", "child"],
+  [`y=$(cat f); (( \${y} )); ${S_USE}`, "S", "child"],
+  [`read y <f; (( $y )); ${S_USE}`, "S", "child"],
+  [`for y in $z; do (( $y )); done; ${HOME_USE}`, "HOME", "foreman"],
+  [`f() { (( $1 )); }; f "$y"; ${S_USE}`, "S", "child"],
+  [`y=$(cat f); echo $(( 1 + $y )); ${S_USE}`, "S", "child"],
+  [`y=$(cat f); [[ $y -eq 1 ]]; ${S_USE}`, "S", "child"],
+  [`y=$(cat f); echo \${a[$y]}; ${S_USE}`, "S", "child"],
+  [`y=$(cat f); echo $[ $y ]; ${S_USE}`, "S", "child"],
+] as const) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line).has(name), `boundNames sees ${name}`);
+    untrusted(runAs(who, line), line);
+  });
+}
+
+// item 2b negatives: a literal-valued or unset name in arithmetic leaves HOME trusted
+for (const line of [
+  "n=5; echo $(( $n + 1 )); cat $HOME/f",
+  "echo $(( $n + 1 )); cat $HOME/f",
+  "(( 1 + 2 )); cat $HOME/f",
+]) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(!boundNames(line).has("HOME"));
     assert.equal(foreman(line.replace("$HOME/f", HOME_USE.slice(4))), "pass");
   });
 }
