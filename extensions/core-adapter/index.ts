@@ -32,7 +32,7 @@ import { dormantDoctorLine } from "./features.ts";
 import { collectOrientation } from "./orient.ts";
 import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits } from "./childreads.ts";
-import { bgWaitLocations,detailLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
+import { bgWaitLocations,detailLocations, finalizationCommand, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { roleToolDenied } from "./roledeny.ts";
 import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
@@ -1173,9 +1173,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const ledgerOnly = toolName === "bash" && ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper")) !== "off" && isLedgerOnlyCommand(inp.command);
     // harness-friction: a handoff poll (ruling.md, owned dirs) or a git worktree add|list|prune is no re-check (recheckexempt.ts).
     const handoff = recheckExempt(toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, owned: s.owned });
-    const exempt = ledgerOnly || handoff || s.supervisor.open.size > 0 || (file !== null && inRecorded(s.childFiles, normFile(file)));
+    // R11 item 5: finalization (a reviewer PASS or a completed finalizer, no child run active): the read budget never
+    // refuses, and a plain git commit/add/status/log is exempt from the recheck budget too.
+    const final = s.budget.finalized && s.activeRuns.size === 0;
+    const finalExempt = final && (!s.budget.postPass || finalizationCommand(toolName, input));
+    const exempt = ledgerOnly || handoff || finalExempt || s.supervisor.open.size > 0 || (file !== null && inRecorded(s.childFiles, normFile(file)));
     // MCP and subagent get|guide calls are counted under the name `read`, after the exemptions above.
-    const d = s.budget.check(READ_CLASS.has(toolName) ? toolName : "read", callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt);
+    const check = () => s.budget.check(READ_CLASS.has(toolName) ? toolName : "read", callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt);
+    let d = check();
+    // A parent ruling `read-budget: +N` (newest ruling*.md of a dir where this session is the child) lifts the deny once.
+    const lift = d.kind === "deny" && d.event === "read_budget" ? parentRulingLift(childDirsOf(s), "read-budget", selfRulingsFor(s), s.rulingLifts) : null;
+    if (lift) {
+      const was = s.budget.liftBy(lift.n);
+      s.trace?.emit({ event: "read_budget", phase: was.phase, count: was.count, action: "lift", by: "ruling", requested: lift.n });
+      d = check();
+    }
     if (d.kind === "warn") {
       s.readNotices.set(callId, d.text);
       s.trace?.emit({ event: "read_budget", phase: d.phase, count: d.count, action: "warn" });
@@ -1263,6 +1275,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (!s.isChild) recordPlanReviews(s, runId, reviewResults);
           if (!s.isChild) s.brief.onRunEnd(runEndOf(data), s.launchedRoles.get(runId), (id, text) => storeBrief(s, id, text));
           if (!shadowRun(reviewLaunch)) for (const step of stepsOfRunEnd(data)) s.steps[step]++;
+          if (!s.isChild && stepsOfRunEnd(data).includes("finalizer")) s.budget.onFinalizer(); // R11 item 5: finalization starts
           for (const f of frictionOfRunEnd(data)) s.trace?.emit({ event: "friction", role: f.role, runId: f.runId, kind: f.kind, note: f.note });
           const verdicts = reviewVerdictsOfRunEnd(counted);
           s.reviewGate = onReviewVerdicts(s.reviewGate, verdicts, Date.now());

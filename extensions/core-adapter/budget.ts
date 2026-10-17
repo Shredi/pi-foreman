@@ -8,6 +8,9 @@
 // the call is refused. After a deny, only a fresh explorer launch that started (not a resume) lifts it, once per phase;
 // then only the user's `/foreman budget lift`. Knob 2: after a reviewer PASS the foreman gets
 // `recheckBudget` read-class calls, then is told to finish (the read budget does not apply).
+// Finalization (R11 item 5): after a reviewer PASS or a completed finalizer, until the next started launch, the
+// read budget never refuses and a plain git commit/add/status/log is exempt from both budgets while no child run
+// is active (index.ts readBudgetCheck). A parent ruling line `read-budget: +N` raises the current window's deny by N.
 
 import { PACK_READ_TOOL_NAMES } from "./gitpack.ts";
 
@@ -69,6 +72,25 @@ export class ReadBudget {
   private denied = false;
   private liftUsed: Record<Phase, boolean> = { before: false, after: false };
   private post: { ids: Set<string> } | null = null;
+  private extra = 0;
+  private final = false;
+
+  /** Finalization: a reviewer PASS or a completed finalizer since the last started launch (index.ts adds: no child run active). */
+  get finalized(): boolean {
+    return this.final;
+  }
+
+  /** A finalizer run completed: finalization starts (ends with the next started launch, a FAIL, an edit or a user prompt). */
+  onFinalizer(): void {
+    this.final = true;
+  }
+
+  /** A parent ruling `read-budget: +N`: the current window allows `n` more read calls and a standing deny is lifted. */
+  liftBy(n: number): { phase: Phase; count: number } {
+    this.extra += n;
+    this.denied = false;
+    return { phase: this.phase, count: this.ids.size };
+  }
 
   get count(): number {
     return this.ids.size;
@@ -98,7 +120,7 @@ export class ReadBudget {
       return nested && this.denied ? this.deny(limits, this.ids.size) : { kind: "allow" };
     }
     const n = this.ids.size + 1;
-    const lim = limits[this.phase];
+    const lim = { warn: limits[this.phase].warn + this.extra, deny: limits[this.phase].deny + this.extra };
     if (this.denied || n > lim.deny) return this.deny(limits, n - 1);
     this.ids.add(top);
     if (n >= lim.warn) {
@@ -110,7 +132,7 @@ export class ReadBudget {
 
   private deny(limits: ReadLimits, count: number): BudgetDecision {
     this.denied = true;
-    const lim = limits[this.phase];
+    const lim = { deny: limits[this.phase].deny + this.extra };
     const since = this.phase === "before" ? "before the first launch" : "since the last launch";
     const how = this.liftUsed[this.phase] ? "The explorer already lifted this once in this phase; ask the owner to run /foreman budget lift." : "Launch the explorer: a started explorer run lifts the limit (or ask the owner to run /foreman budget lift).";
     return { kind: "deny", event: "read_budget", phase: this.phase, count, reason: `pi-foreman: [read_budget_exceeded] ${count} read calls ${since} (limit ${lim.deny}). ${how}` };
@@ -121,6 +143,7 @@ export class ReadBudget {
     const was = this.phase;
     const effect: LaunchEffect = {};
     this.phase = "after";
+    this.final = false;
     if (this.denied) {
       // only a fresh explorer launch lifts a deny, once per phase; any other launch leaves it standing
       if (!fresh || !roles.includes("explorer") || this.liftUsed[was]) return effect;
@@ -129,6 +152,7 @@ export class ReadBudget {
     }
     this.ids = new Set();
     this.denied = false;
+    this.extra = 0;
     return effect;
   }
 
@@ -146,6 +170,8 @@ export class ReadBudget {
     this.phase = "before";
     this.ids = new Set();
     this.denied = false;
+    this.extra = 0;
+    this.final = false;
     this.liftUsed = { before: false, after: false };
     return n;
   }
@@ -153,15 +179,33 @@ export class ReadBudget {
   /** Reviewer PASS: enter the post-PASS state (knob 2). */
   enterPost(): void {
     this.post = { ids: new Set() };
+    this.final = true;
   }
 
   /** Leave the post-PASS state; returns the checks used, or null when it was not active. */
   resetPost(): number | null {
+    this.final = false;
     if (!this.post) return null;
     const n = this.post.ids.size;
     this.post = null;
     return n;
   }
+}
+
+const FINAL_GIT = /^git\s+(?:-C\s+\S+\s+)?(?:commit|add|status|log)(?:\s|$)/;
+
+/**
+ * A finalization command (R11 item 5): a bash command whose every segment is a plain `git commit|add|status|log`.
+ * Quoted text (a commit message) is not split; a command or process substitution outside single quotes never qualifies.
+ */
+export function finalizationCommand(toolName: string, input: unknown): boolean {
+  if (toolName !== "bash" || !input || typeof input !== "object") return false;
+  const command = (input as Record<string, unknown>).command;
+  if (typeof command !== "string") return false;
+  const bare = command.replace(/'[^']*'/g, "''");
+  if (/\$\(|`|<\(|>\(/.test(bare)) return false;
+  const segs = bare.replace(/"(?:[^"\\]|\\.)*"/g, '""').split(/&&|\|\||[;|\n]/).map((x) => x.trim());
+  return segs.length > 0 && segs.every((x) => FINAL_GIT.test(x));
 }
 
 // Child result locations: taken only from structured places, never from free text (a child's
