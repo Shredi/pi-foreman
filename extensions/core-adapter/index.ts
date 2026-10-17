@@ -2399,6 +2399,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       stopPoll();
       ctx.signal?.removeEventListener("abort", onCtxAbort);
     }
+    // a steer that landed after the last poll (the wait resolved first) is taken now, so this result shows it
+    const late = watch.take();
+    if (late) steerText = steerText ? `${steerText}\n\n${late}` : late;
     if (steerText && r.outcome === "abort" && !ctx.signal?.aborted) {
       const ms = Date.now() - started;
       watch.commit(); // the steer is in the returned text
