@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import type { MatchCtx, OverlayRules } from "../permoverlay.ts";
 import { resolveVars } from "../shellvars.ts";
+import { bashPath } from "./_bashpath.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(PKG)!;
@@ -27,17 +28,21 @@ const sh = (c: MatchCtx, command: string): string => checkToolCall(rules, "bash"
 const foremanDir = path.join(ag, "pi-foreman");
 const blocked = "handoffs/s1/ruling.md";
 const child = world("child", { scratch });
+// the paths as bash words (Git Bash on win32 reads an unquoted `\` as an escape)
+const bScratch = bashPath(scratch);
+const bForeman = bashPath(foremanDir);
+const bHome = bashPath(home);
 
 test("a same-line assignment statement resolves a later $VAR like the literal path", () => {
-  assert.equal(sh(child, `D=${scratch}/x; mkdir -p $D`), "pass");
-  assert.equal(sh(child, `D=${scratch}/x && mkdir -p "$D"`), "pass");
-  assert.equal(sh(child, `mkdir -p ${scratch}/x`), "pass");
+  assert.equal(sh(child, `D=${bScratch}/x; mkdir -p $D`), "pass");
+  assert.equal(sh(child, `D=${bScratch}/x && mkdir -p "$D"`), "pass");
+  assert.equal(sh(child, `mkdir -p ${bScratch}/x`), "pass");
   // the resolved path is what the rules see
-  assert.equal(sh(child, `cat ${foremanDir}/${blocked}`), "deny");
+  assert.equal(sh(child, `cat ${bForeman}/${blocked}`), "deny");
   assert.equal(sh(child, `cat $H/${blocked}`), "pass", "unknown $H");
-  assert.equal(sh(child, `H=${foremanDir}; cat $H/${blocked}`), "deny");
-  assert.equal(sh(child, `H=${foremanDir}; cat \${H}/${blocked}`), "deny");
-  assert.equal(sh(world("main"), `S=${home}/.ssh; cat $S/id_rsa`), "deny");
+  assert.equal(sh(child, `H=${bForeman}; cat $H/${blocked}`), "deny");
+  assert.equal(sh(child, `H=${bForeman}; cat \${H}/${blocked}`), "deny");
+  assert.equal(sh(world("main"), `S=${bHome}/.ssh; cat $S/id_rsa`), "deny");
 });
 
 test("$FOREMAN_SCRATCH resolves anywhere in a word, from the harness env only", () => {
@@ -49,21 +54,21 @@ test("$FOREMAN_SCRATCH resolves anywhere in a word, from the harness env only", 
 
 test("a prefix assignment stays unresolved: the same decision as an unknown $D", () => {
   const unknown = sh(child, `cat $D/${blocked}`);
-  assert.equal(sh(child, `D=${foremanDir} cat $D/${blocked}`), unknown);
-  assert.notEqual(sh(child, `D=${foremanDir}; cat $D/${blocked}`), unknown);
+  assert.equal(sh(child, `D=${bForeman} cat $D/${blocked}`), unknown);
+  assert.notEqual(sh(child, `D=${bForeman}; cat $D/${blocked}`), unknown);
 });
 
 test("the last assignment wins; unsafe or conditional forms stay unresolved", () => {
   const unknown = sh(child, `cat $D/${blocked}`);
-  assert.equal(sh(child, `D=${foremanDir}; D=${scratch}; cat $D/${blocked}`), "pass");
-  assert.equal(sh(child, `D=${scratch}; D=${foremanDir}; cat $D/${blocked}`), "deny");
+  assert.equal(sh(child, `D=${bForeman}; D=${bScratch}; cat $D/${blocked}`), "pass");
+  assert.equal(sh(child, `D=${bScratch}; D=${bForeman}; cat $D/${blocked}`), "deny");
   for (const cmd of [
-    `true && D=${foremanDir}; cat $D/${blocked}`,
-    `(D=${foremanDir}); cat $D/${blocked}`,
-    `D=${foremanDir}; for D in a; do cat $D/${blocked}; done`,
-    `D=${foremanDir}; export D=x; cat $D/${blocked}`,
-    `D=${foremanDir}; read D; cat $D/${blocked}`,
-    `D=handoffs; cat ${foremanDir}/$D/s1/ruling.md`,
+    `true && D=${bForeman}; cat $D/${blocked}`,
+    `(D=${bForeman}); cat $D/${blocked}`,
+    `D=${bForeman}; for D in a; do cat $D/${blocked}; done`,
+    `D=${bForeman}; export D=x; cat $D/${blocked}`,
+    `D=${bForeman}; read D; cat $D/${blocked}`,
+    `D=handoffs; cat ${bForeman}/$D/s1/ruling.md`,
     `D=$(pwd); cat $D/${blocked}`,
     `D="$X/y"; cat $D/${blocked}`,
   ]) assert.equal(sh(child, cmd), unknown, cmd);

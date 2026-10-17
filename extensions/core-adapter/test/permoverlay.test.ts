@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOverlayRules, checkToolCall, parseShell, readBaseline, resolveDecision, wildcardRegExp } from "../permoverlay.ts";
 import type { Decision, MatchCtx, OverlayRules } from "../permoverlay.ts";
+import { bashPath } from "./_bashpath.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(PKG)!;
@@ -233,11 +234,11 @@ test("literal rows 1-5: read-only commands naming config/foreman.defaults.json p
   // R6 lane 2b: a read-only sed (print-only script, no -i/-f/w/e) is a protected reader; rows 2 and 5 pass now; row 3 still holds a `D=` assignment (not a sed matter)
   const sedLimit = new Set([2]);
   [
-    String.raw`cd ${ws}; grep -n "usage" tests/replay/fake_provider.ts | head -20; grep -n '"compaction"' -A25 config/foreman.schema.json | head -40; grep -n '"compaction"' -A6 config/foreman.defaults.json; grep -n "PROVIDERS\s*=" tests/replay/fake_provider.ts; grep -n "cacheWarming" node_modules/@earendil-works/pi-coding-agent/docs/settings.md`,
-    String.raw`cd ${ws} && grep -n -A12 '"compaction"' config/foreman.defaults.json; sed -n 330,365p config/foreman.schema.json; grep -n '"minimum": 0.3' config/foreman.schema.json`,
-    String.raw`cd ${ws}; grep -n "compaction" -A12 config/foreman.defaults.json | head -30; sed -n 335,360p config/foreman.schema.json; D=node_modules/@earendil-works/pi-coding-agent; grep -n "function estimateProjectedContextTokens" -A30 $D/dist/core/*.js $D/dist/core/compaction/*.js | head -40`,
+    String.raw`cd ${bashPath(ws)}; grep -n "usage" tests/replay/fake_provider.ts | head -20; grep -n '"compaction"' -A25 config/foreman.schema.json | head -40; grep -n '"compaction"' -A6 config/foreman.defaults.json; grep -n "PROVIDERS\s*=" tests/replay/fake_provider.ts; grep -n "cacheWarming" node_modules/@earendil-works/pi-coding-agent/docs/settings.md`,
+    String.raw`cd ${bashPath(ws)} && grep -n -A12 '"compaction"' config/foreman.defaults.json; sed -n 330,365p config/foreman.schema.json; grep -n '"minimum": 0.3' config/foreman.schema.json`,
+    String.raw`cd ${bashPath(ws)}; grep -n "compaction" -A12 config/foreman.defaults.json | head -30; sed -n 335,360p config/foreman.schema.json; D=node_modules/@earendil-works/pi-coding-agent; grep -n "function estimateProjectedContextTokens" -A30 $D/dist/core/*.js $D/dist/core/compaction/*.js | head -40`,
     "cat config/foreman.defaults.json | head -60; grep -n \"compact\" docs/sessions.md | head -20",
-    String.raw`cd ${ws}; sed -n 1,60p extensions/core-adapter/compaction.ts; grep -n '"threshold"' -A12 config/foreman.defaults.json | head -20; sed -n 800,812p extensions/core-adapter/index.ts`,
+    String.raw`cd ${bashPath(ws)}; sed -n 1,60p extensions/core-adapter/compaction.ts; grep -n '"threshold"' -A12 config/foreman.defaults.json | head -20; sed -n 800,812p extensions/core-adapter/index.ts`,
   ].forEach((cmd, i) => assert.equal(sh(r, c, cmd), sedLimit.has(i) ? "deny" : "pass", cmd));
 });
 
@@ -257,7 +258,7 @@ test("literal rows 6-11: node_modules reads pass for a child when the package ro
 test("literal row 12 and 18: a grep flag value (--exclude-dir=.git, .claude) is no path", () => {
   const r = rules2(false, ws);
   for (const c of [world(wt, "child"), world(wt, "main")]) {
-    assert.equal(sh(r, c, `cd ${wt}; grep -rln "symbols.json" --exclude-dir=node_modules --exclude-dir=.git . | head`), "pass");
+    assert.equal(sh(r, c, `cd ${bashPath(wt)}; grep -rln "symbols.json" --exclude-dir=node_modules --exclude-dir=.git . | head`), "pass");
     assert.equal(sh(r, c, `grep -rn x --exclude-dir=.claude --exclude-dir .git --include=*.ts src`), "pass");
     assert.equal(sh(r, c, `rg -g '!.git' -g=.claude --glob .pi x`), "pass");
   }
@@ -290,11 +291,11 @@ test("literal row 14: a child may cd to the workspace root (cd .. from a subdir,
   const r = rules2(false);
   const sub = world(path.join(wt, "sub"), "child", { scratch });
   assert.equal(sh(r, sub, "cd .."), "pass");
-  assert.equal(sh(r, sub, `cd ${wt} && ls`), "pass");
+  assert.equal(sh(r, sub, `cd ${bashPath(wt)} && ls`), "pass");
   assert.equal(sh(r, sub, "cd $FOREMAN_SCRATCH && ls"), "pass");
   assert.equal(sh(r, sub, "cd ../.. && ls"), "deny", "above the worktree root");
-  assert.equal(sh(r, sub, `cd ${w2}`), "deny");
-  assert.equal(sh(r, sub, `cd ${path.join(w2, "other")}`), "deny", "a sibling outside the workspace");
+  assert.equal(sh(r, sub, `cd ${bashPath(w2)}`), "deny");
+  assert.equal(sh(r, sub, `cd ${bashPath(path.join(w2, "other"))}`), "deny", "a sibling outside the workspace");
   assert.equal(sh(r, world(path.join(wt, "sub"), "child"), "cd $FOREMAN_SCRATCH"), "deny", "no scratch dir known");
   // the owned-roots parameter stands in for ctx.scratch
   const owned = { readWrite: [], readOnly: [], childScratch: scratch };
@@ -720,7 +721,7 @@ test("review 8: protected operands are skipped only for a minimal reader set", (
     `echo x | tee ${D}`,
   ];
   const good = [
-    `cd ${ws}; grep -n "usage" tests/replay/fake_provider.ts | head -20; grep -n '"compaction"' -A6 ${D}; grep -n "cacheWarming" node_modules/@earendil-works/pi-coding-agent/docs/settings.md`,
+    `cd ${bashPath(ws)}; grep -n "usage" tests/replay/fake_provider.ts | head -20; grep -n '"compaction"' -A6 ${D}; grep -n "cacheWarming" node_modules/@earendil-works/pi-coding-agent/docs/settings.md`,
     `cat ${D} | head -60; grep -n "compact" docs/sessions.md | head -20`,
     `ls node_modules | head -3; ls node_modules/.bin | head -3; cat extensions/core-adapter/cachepolicy.ts`,
     `grep -rln "symbols.json" --exclude-dir=node_modules --exclude-dir=.git . | head`,

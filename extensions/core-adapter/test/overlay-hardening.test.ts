@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOverlayRules, checkToolCall, codeLiterals, expandBraces, isSelfHost, readBaseline } from "../permoverlay.ts";
 import type { MatchCtx } from "../permoverlay.ts";
+import { bashPath } from "./_bashpath.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(PKG)!;
@@ -63,7 +64,7 @@ test("protect matches path arguments only: patterns, scripts and echo text are n
   fs.writeFileSync(at(cwd, "internal", "db", "exchange_status.go"), "package db\n");
   run([
     // two real bench commands that were denied: `\` read as a separator, `*` listing .git
-    [sh(`cd ${cwd} && grep -rn "broadcastServerUpdate\\|func (h \\*\\|clientsMu\\|register\\b" internal/api/*.go | grep -v _test | head -50`), "pass", "pass"],
+    [sh(`cd ${bashPath(cwd)} && grep -rn "broadcastServerUpdate\\|func (h \\*\\|clientsMu\\|register\\b" internal/api/*.go | grep -v _test | head -50`), "pass", "pass"],
     [sh(`grep -n "LogCleanup\\b\\|Transport \\*\\|ExchangeStatus struct" internal/db/exchange_status.go`), "pass", "pass"],
     [sh("grep -rn '.git/config' internal"), "pass", "pass"],
     [sh("rg -e .git/HEAD internal"), "pass", "pass"],

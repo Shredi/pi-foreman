@@ -13,7 +13,10 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 const py = await resolvePython({ envPath: process.env.PI_FOREMAN_PYTHON, platform: process.platform, spawner: defaultSpawner });
 const pc = { sessionId: "s1", cwd: os.tmpdir(), home: os.homedir() };
 
-test("H=<handoff dir>; cp <plan> \"$H/plan.md\" is allowed for an allowed dir; the prefix form stays refused", { skip: !py.ok ? "no Python >= 3.9" : false }, async () => {
+// win32: the python guard's variable grammar is POSIX-absolute only (grammar_value in scripts/shell_write_guard.py, as
+// POSIX_VARS_ONLY in tests/test_shell_write_guard.py), and this fixture puts the native handoff path unquoted into the
+// bash line (Git Bash reads its `\` as an escape); there the line stays unresolved and is refused (fail closed).
+test("H=<handoff dir>; cp <plan> \"$H/plan.md\" is allowed for an allowed dir; the prefix form stays refused", { skip: !py.ok ? "no Python >= 3.9" : process.platform === "win32" ? "python guard variable grammar is POSIX-only" : false }, async () => {
   const ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-swg-vars-")));
   try {
     const handoff = path.join(ws, "handoffs", "s1");

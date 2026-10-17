@@ -9,6 +9,7 @@ import type { MatchCtx } from "../permoverlay.ts";
 import { GRAMMAR, resolveVars } from "../shellvars.ts";
 import { effectCtx } from "../effects.ts";
 import { bashRules, deterministicAllow } from "../timeoutallow.ts";
+import { bashPath } from "./_bashpath.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const fx = JSON.parse(fs.readFileSync(path.join(PKG, "tests", "fixtures", "shellvars-cases.json"), "utf8")) as {
@@ -45,7 +46,7 @@ const ssh = path.join(home, ".ssh");
 
 test("R3b literal lines: cd, S=$FOREMAN_SCRATCH and a later $S operand or redirect never ask", () => {
   for (const role of ["child", "main"] as const) {
-    assert.equal(sh(role, `cd ${wt}; S=$FOREMAN_SCRATCH; mkdir -p $S; npm test > $S/tc.txt`), "pass", role);
+    assert.equal(sh(role, `cd ${bashPath(wt)}; S=$FOREMAN_SCRATCH; mkdir -p $S; npm test > $S/tc.txt`), "pass", role);
     assert.equal(sh(role, `S=$FOREMAN_SCRATCH; mkdir -p $S; npm test > "$S/tc.txt"`), "pass", role);
   }
 });
@@ -69,7 +70,7 @@ test("a heredoc line with a $S operand gets no deterministic allow, as its liter
 
 test("cd <literal> and NAME=$PWD make a later protected path visible to the rules", () => {
   assert.equal(sh("main", `cat ${ssh}/id_rsa`), "deny");
-  assert.equal(sh("main", `cd ${ssh}; H=$PWD; cat $H/id_rsa`), "deny");
-  assert.equal(sh("main", `cd ${home}; H=$PWD/.ssh; cat "$H/id_rsa"`), "deny");
-  assert.equal(sh("main", `cd ${wt}; H=$PWD; cat $H/id_rsa`), "pass", "a path under the worktree is not protected");
+  assert.equal(sh("main", `cd ${bashPath(ssh)}; H=$PWD; cat $H/id_rsa`), "deny");
+  assert.equal(sh("main", `cd ${bashPath(home)}; H=$PWD/.ssh; cat "$H/id_rsa"`), "deny");
+  assert.equal(sh("main", `cd ${bashPath(wt)}; H=$PWD; cat $H/id_rsa`), "pass", "a path under the worktree is not protected");
 });

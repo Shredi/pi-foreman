@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { bashPath } from "./_bashpath.ts";
 import { ForemanReview, requestText } from "../review.ts";
 import type { RegistryLike, ReviewSession } from "../review.ts";
 import { readBaseline } from "../permoverlay.ts";
@@ -61,11 +62,11 @@ test("2a: a defer for a command inside the owned roots is allowed (the literal '
   const r = new ForemanReview();
   const traced: Record<string, unknown>[] = [];
   r.upsert("s", session(reply(DEFER), { trace: (x) => void traced.push(x) }));
-  assert.deepEqual(await r.authorize("s", ask(`cat ${asyncRun}/status.json`)), { kind: "allow" });
-  assert.deepEqual(await r.authorize("s", ask(`mkdir -p ${stateScratch}/d && touch ${stateScratch}/d/a.txt`)), { kind: "allow" });
+  assert.deepEqual(await r.authorize("s", ask(`cat ${bashPath(asyncRun)}/status.json`)), { kind: "allow" });
+  assert.deepEqual(await r.authorize("s", ask(`mkdir -p ${bashPath(stateScratch)}/d && touch ${bashPath(stateScratch)}/d/a.txt`)), { kind: "allow" });
   assert.equal(traced.at(-1)?.decision, "owned-roots");
   // the foreman's own read of its child's async run dir does not ask either (non-forwarded ask)
-  assert.deepEqual(await r.authorize("s", { requestId: "r9", surface: "bash", command: `ls ${asyncRun}` }), { kind: "allow" });
+  assert.deepEqual(await r.authorize("s", { requestId: "r9", surface: "bash", command: `ls ${bashPath(asyncRun)}` }), { kind: "allow" });
 });
 
 test("2a: without owned roots, or with one non-owned path or write target, the defer stays", { skip: !posix }, async () => {
@@ -120,8 +121,8 @@ test("2f: childReadable names the bound ledger, its LEDGER-*.md siblings, the ha
 test("2g: a session-wide allow holds for every fresh reviewer child of the session (the review link is keyed by the session, not the child)", async () => {
   const r = new ForemanReview();
   r.upsert("s", session(reply(DEFER)));
-  const first = await r.authorize("s", { ...ask(`cat ${asyncRun}/status.json`, 1), agentName: "reviewer" });
-  const second = await r.authorize("s", { ...ask(`cat ${asyncRun}/status.json`, 2), agentName: "reviewer" });
-  const third = await r.authorize("s", { ...ask(`ls ${asyncRun}`, 3), agentName: "reviewer", surface: "bash" });
+  const first = await r.authorize("s", { ...ask(`cat ${bashPath(asyncRun)}/status.json`, 1), agentName: "reviewer" });
+  const second = await r.authorize("s", { ...ask(`cat ${bashPath(asyncRun)}/status.json`, 2), agentName: "reviewer" });
+  const third = await r.authorize("s", { ...ask(`ls ${bashPath(asyncRun)}`, 3), agentName: "reviewer", surface: "bash" });
   assert.deepEqual([first, second, third], [{ kind: "allow" }, { kind: "allow" }, { kind: "allow" }]);
 });
