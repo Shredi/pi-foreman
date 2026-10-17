@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { RepeatRefusals, repeatStopReason } from "./repeatguard.ts";
+import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, userOverride } from "./ceremony.ts";
 import { checkTrivial, effectiveRequired, escalationNote, trivialBuilderPath } from "./trivial.ts";
 import type { CeremonyState } from "./ceremony.ts";
@@ -1370,7 +1371,27 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const manifest = new ManifestRecorder((p) => fs.existsSync(p));
   const manifestCtx = (s: Session, cwd: string) => ({ cwd, stateDir: path.join(s.agentDir, "pi-foreman", "state"), platform });
 
+  // A child refused twice with the same reason on the same tool is stopped (repeatguard.ts).
+  const repeatRefusals = new Map<string, RepeatRefusals>();
   pi.on("tool_call", async (event, ctx) => {
+    const r = await toolCallGate(event, ctx);
+    if (!r || !(r as { block?: boolean }).block || process.env.PI_SUBAGENT_CHILD !== "1") return r;
+    const rs = sessionFor(ctx);
+    if (!rs || !rs.isChild) return r;
+    const reason = String((r as { reason?: unknown }).reason ?? "");
+    let counter = repeatRefusals.get(rs.id);
+    if (!counter) repeatRefusals.set(rs.id, (counter = new RepeatRefusals()));
+    if (!counter.note(event.toolName, reason)) return r;
+    rs.trace?.emit({ event: "child_probe_stop", role: rs.usage.line.role, tool: event.toolName, reason });
+    try {
+      ctx.abort();
+    } catch {
+      // the block below still refuses the call
+    }
+    return { block: true as const, reason: repeatStopReason(reason) };
+  });
+
+  async function toolCallGate(event: ToolCallEvent, ctx: ExtensionContext) {
     const ms = sessionFor(ctx);
     if (ms) manifest.onToolCall(event.toolCallId, event.toolName, event.input as Record<string, unknown>, manifestCtx(ms, ctx.cwd));
     if (event.toolName === "subagent") sessionFor(ctx)?.launchBatch.onToolCall(event.toolCallId);
@@ -1793,7 +1814,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     } catch (err) {
       return { block: true, reason: `pi-foreman: adapter error before ${event.toolName} (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
     }
-  });
+  }
 
   pi.on("message_end", async (event, ctx) => {
     const m = event.message as { role?: string; customType?: string; provider?: string; model?: string; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: { total?: number } } };
