@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Round 11
+- Ladder: a `review_fail` climb targets the higher of the launch model and the strong rung by provider rank; a model above the strong rung stays, trace reason `already above strong rung`.
+- A child stopped by a permission-policy block is never climb-eligible or relaunched; trace `child_policy_block` is the stop record.
+- `foreman doctor` and `setup` report hub-ledger drift (WARN or INFO); see the new section in `docs/permissions.md`.
+- Plan reviews and fix-round reviews have separate counters; the `review_cap` text names the owner prompt as the reset.
+- Finalization read-budget exemption: it follows harness state and is aware of pending launches.
+- `/foreman cost --json`.
+- The cd guard skips commit messages.
+- HOME binding covers `python -c` and `node -c` bodies.
+- A child may run `npm ci` in the foreman's `bench/pi-lock`.
+- Presence states with icons (see `docs/herdr.md`).
+
 ### Round 10, permission overlay
 - Toolchain probes: the baseline gets `externalDirectory.probe` (`/usr/local/bin`, `/opt/homebrew/bin`, `/usr/bin`, `~/.local/bin`, `~/.npm/_npx`, `~/.npm-global/bin`, `%APPDATA%/npm` on Windows), rendered as `external_directory_read` keys (dir and `dir/*`). The overlay narrows them: a plain `ls`/`stat`/`which` line and the `ls` tool pass, any other command, pipe, redirect or substitution naming them asks (a child: deny). The rendered policy changes: `/foreman doctor` reports drift until you run `foreman setup` again.
 - Hub ledger read: after setting or changing `paths.hubWorkflow`, or after this release, re-run `foreman setup` to re-render the hub read keys (the realpath spelling of a symlinked hub dir is now rendered too).

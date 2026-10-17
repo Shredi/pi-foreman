@@ -44,6 +44,8 @@ A builder revision launched while the latest reviewer verdict is FAIL goes to th
 builder's live rung is the bottom one, the finish gate refuses once more without counting the refusal
 (`finish_refused {climb_available: true}`).
 
+The `review_fail` target is the higher of the launch model and the strong rung by provider rank (`providers.<p>.ranks`). A model that ranks above the strong rung stays: the trace is `rung_top` with reason `already above strong rung`. A model below it rises to the strong rung.
+
 `strongOnRevision` (default true) also covers a revision that answers a FAIL with a `SECURITY:` finding: it launches
 on the strong rung. The security exemption (`revision_security_exempt`) is separate: it lifts only the revision cap
 for that round and never climbs by itself; with `strongOnRevision` false the exempt revision stays on the bottom
@@ -103,6 +105,7 @@ A child's records carry `role` and `runId` (the launch id) in its own `trace-<la
 |---|---|---|
 | `rung_up` | `role, from, to, reason` (+ `item` or `hits`, and `policy_override` for the reviewer) | A launch climbs from its live rung. |
 | `rung_top` | `role, model, reason` (+ `item` or `hits`, `policy_override`) | A climb was due but the live rung already is the top one. |
+| `child_policy_block` | `role, runId, kind, outcome, exit, decision` | A child stopped on a permission-policy block: `kind` is `policy_block`, `decision` is `stopped`. It is never climb-eligible and the harness does not relaunch it; the report says so. |
 | `review_model` | `role, from, to, reason` | The different-model rule moved a reviewer off the foreman's model (`same_as_foreman`) or found no alternative (`no_alternative`). |
 | `review_occasion` | `occasion, thinking, model_overridden` | A reviewer launch for that occasion (`item`, `plan-review`, `pre-pr`, `second-opinion`); `ceremony.reviewByOccasion` applied (see [review](review.md#per-occasion-overrides)). |
 | `panel`, `finding` | see [review](review.md) | Shadow launch; a located finding. |
