@@ -1225,7 +1225,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const ended = runEndOf(data);
           s.ladder.onRunEnd(ended);
           // policy_block (launchwait.ts): the stop record; the run is not climb-eligible and the harness never relaunches it.
-          if (ended?.policyBlock && !s.isChild) s.trace?.emit({ event: "child_policy_block", role: ended.role ?? (s.launchedRoles.get(runId) ?? [])[0] ?? "?", runId, kind: "policy_block", outcome: ended.status, exit: 1, decision: "stopped" });
+          if (ended?.policyBlock && !s.isChild) s.trace?.emit({ event: "child_policy_block", role: ended.role ?? (s.launchedRoles.get(runId) ?? [])[0] ?? "?", runId, kind: "policy_block", outcome: ended.status, exit: ended.status === "completed" ? 0 : 1, decision: "stopped" });
           // Review results with their occasion (occasion.ts); the verdict consumers see only the counting ones.
           const reviewLaunch = s.isChild ? undefined : s.reviewRuns.byRun.get(runId);
           const reviewResults = s.isChild ? [] : reviewResultsOfRunEnd(data, reviewLaunch);
