@@ -12,6 +12,17 @@ from driver import load_fixture, shape, tool_results  # noqa: E402
 from test_replay import REASON, ReplayCase  # noqa: E402
 
 
+def settle_between_results(events):
+    """Whether the foreman wakes for the first finished child before the second one lands is a
+    scheduling race (slow CI runners take the extra wake, fast hosts batch both results into one),
+    so the wake's llm/turn/Stop events between the two role_result events are not part of the golden."""
+    res = [i for i, e in enumerate(events) if e["event"] == "role_result"]
+    if len(res) < 2:
+        return events
+    keep = {"child_scratch", "role_result"}
+    return [e for i, e in enumerate(events) if not (res[0] < i < res[-1]) or e["event"] in keep]
+
+
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % (REASON,))
 class TestParallelAsk(ReplayCase):
     def test_two_launches_one_ask(self):
@@ -29,7 +40,7 @@ class TestParallelAsk(ReplayCase):
         self.assertTrue(any("first child finished" in n for n in notices), notices)
         self.assertTrue(any("second child finished" in n for n in notices), notices)
         t = rig.traces()
-        foreman = shape(t.pop("trace-" + sid))
+        foreman = settle_between_results(shape(t.pop("trace-" + sid)))
         children = sorted((shape(v) for v in t.values() if v and v[0].get("role") == "child"), key=repr)
         self.assertEqual(len(children), 2, "adapter did not load in both children")
         sup = [r["decision"] for r in foreman if r["event"] == "supervisor_request"]
