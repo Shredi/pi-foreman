@@ -153,6 +153,8 @@ export interface MatchCtx {
   role?: "main" | "child";
   /** Child only: the round worktree the child's cwd lies in, or its own isolation worktree under a round (roundsurface.ts roundRoots); never a sibling isolation worktree, so `*.worktrees/*` stays closed around them. */
   roundRoots?: string[];
+  /** Child only: the foreman's own checkout (workspace root); `npm install|ci` into its `bench/pi-lock` is pre-allowed (R11 item 10). */
+  foremanRoot?: string;
   /** Child only: round worktrees the child may read but not write (roundsurface.ts childSurface); a write below one outside `roundRoots` and the scratch dir is denied. */
   roundReadRoots?: string[];
   exists?: (p: string) => boolean;
@@ -2015,10 +2017,12 @@ function npmInstallOwned(c: Collected, ctx: MatchCtx): boolean {
     return !!r && (r === root || r.startsWith(root.endsWith(path.sep) ? root : root + path.sep));
   };
   const root = (ctx.roundRoots ?? []).map((r) => fsx.realpath(r)).find((r): r is string => !!r && inRoot(r, ctx.cwd));
-  if (!root) return false;
   const dirs = npmCwds(ctx.cwd, c.npmCds ?? [], path);
-  if (!dirs.every((d) => inRoot(root, d))) return false;
-  return (c.npmUnits ?? [[]]).every((prefixes) => dirs.every((d) => (prefixes.length ? prefixes.every((p) => inRoot(root, path.resolve(d, p))) : inRoot(root, npmLocalPrefix(d, path, fsx.exists)))));
+  const into = (r: string): boolean => (c.npmUnits ?? [[]]).every((prefixes) => dirs.every((d) => (prefixes.length ? prefixes.every((p) => inRoot(r, path.resolve(d, p))) : inRoot(r, npmLocalPrefix(d, path, fsx.exists)))));
+  if (root && dirs.every((d) => inRoot(root, d)) && into(root)) return true;
+  // the foreman's own `bench/pi-lock` (R11 item 10): every dir npm may install into is inside it, wherever the child's cwd is
+  const lock = ctx.foremanRoot ? fsx.realpath(path.join(ctx.foremanRoot, "bench", "pi-lock")) : undefined;
+  return !!lock && into(lock);
 }
 
 /**
@@ -2478,6 +2482,31 @@ function childStdinWriteDeny(command: string): Decision | null {
   return { kind: "deny", reason: "pi-foreman: denied for a child (heredoc or stdin-script file write): never heredoc or stdin-script file writes; use the write or edit tool." };
 }
 
+/**
+ * The words of a `git commit` unit without its message values (`-m X`, `-mX`, `-am X`, `--message=X`, `--message X`; a `-F file` path is not
+ * message content), or null when the unit is no `git commit`.
+ */
+function commitMessageFree(u: string[]): string[] | null {
+  const v = variants(u);
+  const core = v.core;
+  if (!core.length || baseName(core[0]) !== "git") return null;
+  let k = 1;
+  while (k < core.length && core[k].startsWith("-")) k += /^-[Cc]$/.test(core[k]) ? 2 : 1;
+  if (core[k] !== "commit") return null;
+  const out = [...v.env, ...core.slice(0, k + 1)];
+  for (let i = k + 1; i < core.length; i++) {
+    const w = core[i];
+    if (w === "--") {
+      out.push(...core.slice(i));
+      break;
+    }
+    if (/^-[A-Za-z]*m$/.test(w) || w === "--message") i++;
+    else if (/^-[A-Za-z]*m.+$/.test(w) || w.startsWith("--message=")) continue;
+    else out.push(w);
+  }
+  return out;
+}
+
 function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
   const win = ctx.platform === "win32";
   const p = win ? path.win32 : path.posix;
@@ -2494,19 +2523,19 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
   });
   const deny = (): Decision => ({ kind: "deny", reason: CD_DENY });
   const cdpath = (x: string): boolean => /cdpath/i.test(x);
-  if (cdpath(command)) return deny();
   let cur = new Set([p.resolve(norm(ctx.cwd))]);
   const stack: Array<{ set: Set<string>; sure: boolean }> = [];
   // sep: the operator after the unit (`|` inside a pipeline, "" for a keyword-only unit)
   const units: Array<{ core: string[]; sep: string }> = [];
   let blocked = false;
   const gather = (src: string, shell: "posix" | "powershell", depth: number): void => {
-    if (cdpath(src)) blocked = true;
     const parsed = parseShell(src, shell);
+    // a `git commit` message is text, not a command: with one in the source the scan runs per unit on the words outside the message values
+    if (!parsed.pipelines.some((pipe) => pipe.some((u) => commitMessageFree(u) !== null)) && cdpath(src)) blocked = true;
     for (const sub of parsed.subs) if (depth < MAX_DEPTH) gather(sub, shell, depth + 1);
     parsed.pipelines.forEach((pipe, pi) => pipe.forEach((u, ui) => {
       const sep = ui < pipe.length - 1 ? "|" : parsed.seps[pi];
-      if (u.some(cdpath)) blocked = true;
+      if ((commitMessageFree(u) ?? u).some(cdpath)) blocked = true;
       // keywords, env assignments and wrappers in any order: `! FOO=1 command cd x`
       let core = u;
       for (let n = 0; n < 8; n++) {
@@ -2589,14 +2618,34 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
   return null;
 }
 
+/**
+ * The line without the quoted body of an inline `python3 -c` / `node -e` (R11 item 9): that code is no shell, so its `=` and names bind nothing.
+ * Only a plain body (no `$`, backtick or backslash: the shell expands none of it) written as `-c "body"` or `-c 'body'` is dropped; an env prefix
+ * (`HOME=x python3 -c ..`) stays in the line.
+ */
+function withoutInlineBodies(command: string): string {
+  let out = command;
+  for (const pipe of parseShell(command, "posix").pipelines) {
+    for (const u of pipe) {
+      const code = inlineCode(variants(u).core);
+      if (!code || /[$`\\]/.test(code)) continue;
+      const lit = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      out = out.replace(new RegExp(`(\\s-[A-Za-z]*[ce]\\s+)(?:"${lit}"|'${lit}')`, "g"), "$1 ");
+    }
+  }
+  return out;
+}
+
 export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchCtx): Decision | null {
   const shell = ctx0.shell ?? "posix";
   const command = shell === "powershell" ? psDashes(rawCommand) : rawCommand;
   const bound = boundNames(command, shell);
+  const homeLine = shell === "posix" ? withoutInlineBodies(command) : command;
+  const homeBound = homeLine === command ? bound : boundNames(homeLine, shell);
   const ctx: MatchCtx = { ...ctx0, ...(ctx0.owned || !rules.owned ? {} : { owned: rules.owned }), bound };
   // a line that binds a harness-trusted variable it also uses (`HOME=-i; sed $HOME ...`, `read HOME; cat ~/x`) fails closed
   for (const n of ["HOME", "FOREMAN_SCRATCH", "USERPROFILE"]) {
-    if (bound.has(n) && (new RegExp(`(?:^|[^\\w$-])${n}(?:\\[[^\\]]*\\])?\\+?=|\\$\\{?(?:env:)?\\{?${n}(?![A-Za-z0-9_])`, "i").test(command) || (n === "HOME" && /(?<![\w])~/.test(command)))) {
+    if (homeBound.has(n) && (new RegExp(`(?:^|[^\\w$-])${n}(?:\\[[^\\]]*\\])?\\+?=|\\$\\{?(?:env:)?\\{?${n}(?![A-Za-z0-9_])`, "i").test(homeLine) || (n === "HOME" && /(?<![\w])~/.test(homeLine)))) {
       return { kind: "deny", reason: `pi-foreman: denied by the permission policy (the line binds ${n} and uses it; a rebound ${n} is never trusted as a path). Use the literal path.` };
     }
   }
