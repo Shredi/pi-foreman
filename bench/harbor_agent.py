@@ -51,7 +51,7 @@ from harbor.models.agent.context import AgentContext
 
 REPO = Path(__file__).resolve().parents[1]
 PI_PACKAGE = "@earendil-works/pi-coding-agent"
-PI_VERSION = "1.1.0"
+PI_VERSION = "1.3.0"
 SUBAGENTS = "pi-subagents@0.78.0"  # equals the pi-subagents dependency in package.json
 BRIDGE = "pi-claude-bridge@0.9.2"
 # Bridge 0.9.2 asks for ^0.3.293 (0.9.1 and the stage-1 model check used 0.3.288). npm picks
