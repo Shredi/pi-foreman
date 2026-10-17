@@ -1213,6 +1213,10 @@ export function codeLiterals(code: string): string[] {
 const REDIRECTS = new WeakMap<string[], Set<number>>();
 /** The subset of REDIRECTS written to (`>`, `>>`, `&>`, `>|`, `>&`), not read from. */
 const WRITE_REDIRECTS = new WeakMap<string[], Set<number>>();
+/** Word indices of a parsed unit with a `$` or backtick outside single quotes (the shell may expand it, `${N:=v}` binds N). */
+const LIVE_WORDS = new WeakMap<string[], Set<number>>();
+/** Source offsets [start, end) of each word of a parsed unit, in the string given to parseShell. */
+const WORD_SPANS = new WeakMap<string[], Array<[number, number]>>();
 
 /** pipelines -> units -> words (quotes removed). */
 export function parseShell(src: string, shell: "posix" | "powershell" = "posix"): Parsed {
@@ -1225,6 +1229,11 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
   let wredir = new Set<number>();
   let redirNext = false;
   let writeNext = false;
+  let pos = 0;
+  let wordStart = 0;
+  let wordLive = false;
+  let spans: Array<[number, number]> = [];
+  let live = new Set<number>();
   const flush = (): void => {
     if (cur !== null) {
       if (redirNext) {
@@ -1233,9 +1242,12 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
       }
       redirNext = false;
       writeNext = false;
+      spans.push([wordStart, pos]);
+      if (wordLive) live.add(words.length);
       words.push(cur);
     }
     cur = null;
+    wordLive = false;
   };
   const endUnit = (): void => {
     flush();
@@ -1243,8 +1255,12 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
       units.push(words);
       if (redir.size) REDIRECTS.set(words, redir);
       if (wredir.size) WRITE_REDIRECTS.set(words, wredir);
+      LIVE_WORDS.set(words, live);
+      WORD_SPANS.set(words, spans);
     }
     words = [];
+    spans = [];
+    live = new Set();
     redir = new Set();
     wredir = new Set();
     redirNext = false;
@@ -1265,6 +1281,8 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
   let pipeOpen = false;
   for (let i = 0; i < src.length; i++) {
     const c = src[i];
+    pos = i;
+    if (cur === null) wordStart = i;
     if (c !== " " && c !== "\t" && c !== "\r" && c !== "\n" && c !== "|") pipeOpen = false;
     if (c === (posix ? "\\" : "`")) {
       if (src[i + 1] === "\n") i++;
@@ -1286,6 +1304,7 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
       let s = "";
       while (j < src.length && src[j] !== '"') {
         if (src[j] === (posix ? "\\" : "`") && j + 1 < src.length && (posix ? '"\\$`\n'.includes(src[j + 1]) : true)) j++;
+        else if (src[j] === "$" || (posix && src[j] === "`")) wordLive = true;
         s += src[j++];
       }
       add(s);
@@ -1327,8 +1346,12 @@ export function parseShell(src: string, shell: "posix" | "powershell" = "posix")
     } else if (c === "#" && cur === null && (i === 0 || /\s|[;&|()]/.test(src[i - 1]))) {
       while (i < src.length && src[i] !== "\n") i++;
       i--;
-    } else add(c);
+    } else {
+      if (c === "$") wordLive = true;
+      add(c);
+    }
   }
+  pos = src.length;
   endPipe("end");
   return { pipelines, seps, subs: substitutions(src, shell) };
 }
@@ -2483,28 +2506,41 @@ function childStdinWriteDeny(command: string): Decision | null {
 }
 
 /**
- * The words of a `git commit` unit without its message values (`-m X`, `-mX`, `-am X`, `--message=X`, `--message X`; a `-F file` path is not
- * message content), or null when the unit is no `git commit`.
+ * The words of a `git commit` unit without its literal message values (`-m X`, `-mX`, `-am X`, `--message=X`, `--message X`; a `-F file`
+ * path is not message content), or null when the unit is no `git commit`. A value with a `$` or backtick outside single quotes may expand
+ * (`"${N:=v}"` binds N in the shell): it stays in the words and `literal` is false.
  */
-function commitMessageFree(u: string[]): string[] | null {
+function commitMessageFree(u: string[]): { words: string[]; literal: boolean } | null {
   const v = variants(u);
   const core = v.core;
   if (!core.length || baseName(core[0]) !== "git") return null;
   let k = 1;
   while (k < core.length && core[k].startsWith("-")) k += /^-[Cc]$/.test(core[k]) ? 2 : 1;
   if (core[k] !== "commit") return null;
+  // core is a suffix of u (variants strips leading words, a path prefix keeps the length); no lexer record: every word may expand
+  const off = u.length - core.length;
+  const lv = LIVE_WORDS.get(u);
+  const isLive = (i: number): boolean => !lv || lv.has(off + i);
   const out = [...v.env, ...core.slice(0, k + 1)];
+  let literal = true;
   for (let i = k + 1; i < core.length; i++) {
     const w = core[i];
     if (w === "--") {
       out.push(...core.slice(i));
       break;
     }
-    if (/^-[A-Za-z]*m$/.test(w) || w === "--message") i++;
-    else if (/^-[A-Za-z]*m.+$/.test(w) || w.startsWith("--message=")) continue;
-    else out.push(w);
+    const sep = /^-[A-Za-z]*m$/.test(w) || w === "--message";
+    const joined = !sep && (/^-[A-Za-z]*m.+$/.test(w) || w.startsWith("--message="));
+    if (!sep && !joined) out.push(w);
+    else if (sep && i + 1 < core.length && isLive(i + 1)) {
+      literal = false;
+      out.push(w, core[++i]);
+    } else if (joined && isLive(i)) {
+      literal = false;
+      out.push(w);
+    } else if (sep) i++;
   }
-  return out;
+  return { words: out, literal };
 }
 
 function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
@@ -2530,12 +2566,14 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
   let blocked = false;
   const gather = (src: string, shell: "posix" | "powershell", depth: number): void => {
     const parsed = parseShell(src, shell);
-    // a `git commit` message is text, not a command: with one in the source the scan runs per unit on the words outside the message values
-    if (!parsed.pipelines.some((pipe) => pipe.some((u) => commitMessageFree(u) !== null)) && cdpath(src)) blocked = true;
+    // a literal `git commit` message is text, not a command: with a commit in the source and every message value literal the scan runs per
+    // unit on the words outside the message values
+    const commits = parsed.pipelines.flatMap((pipe) => pipe.map(commitMessageFree)).filter((x) => x !== null);
+    if ((!commits.length || commits.some((x) => !x.literal)) && cdpath(src)) blocked = true;
     for (const sub of parsed.subs) if (depth < MAX_DEPTH) gather(sub, shell, depth + 1);
     parsed.pipelines.forEach((pipe, pi) => pipe.forEach((u, ui) => {
       const sep = ui < pipe.length - 1 ? "|" : parsed.seps[pi];
-      if ((commitMessageFree(u) ?? u).some(cdpath)) blocked = true;
+      if ((commitMessageFree(u)?.words ?? u).some(cdpath)) blocked = true;
       // keywords, env assignments and wrappers in any order: `! FOO=1 command cd x`
       let core = u;
       for (let n = 0; n < 8; n++) {
@@ -2620,19 +2658,26 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
 
 /**
  * The line without the quoted body of an inline `python3 -c` / `node -e` (R11 item 9): that code is no shell, so its `=` and names bind nothing.
- * Only a plain body (no `$`, backtick or backslash: the shell expands none of it) written as `-c "body"` or `-c 'body'` is dropped; an env prefix
+ * Only a plain body (no `$`, backtick or backslash: the shell expands none of it) is dropped, and only the code word of that very unit (by its
+ * source offsets) whose command word is python or node; the same text as a `bash -c` body elsewhere stays. An env prefix
  * (`HOME=x python3 -c ..`) stays in the line.
  */
 function withoutInlineBodies(command: string): string {
-  let out = command;
+  const cut: Array<[number, number]> = [];
   for (const pipe of parseShell(command, "posix").pipelines) {
     for (const u of pipe) {
-      const code = inlineCode(variants(u).core);
+      const core = variants(u).core;
+      if (!core.length || !/^(python[0-9.]*|node)$/.test(baseName(core[0]))) continue;
+      const code = inlineCode(core);
       if (!code || /[$`\\]/.test(code)) continue;
-      const lit = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      out = out.replace(new RegExp(`(\\s-[A-Za-z]*[ce]\\s+)(?:"${lit}"|'${lit}')`, "g"), "$1 ");
+      const off = u.length - core.length;
+      const idx = core.findIndex((w, k) => k > 0 && w === code && /^-[A-Za-z]*[ce]$/.test(core[k - 1]));
+      const span = idx > 0 ? WORD_SPANS.get(u)?.[off + idx] : undefined;
+      if (span && !LIVE_WORDS.get(u)?.has(off + idx)) cut.push(span);
     }
   }
+  let out = command;
+  for (const [s, e] of cut.sort((a, b) => b[0] - a[0])) out = `${out.slice(0, s)} ${out.slice(e)}`;
   return out;
 }
 
