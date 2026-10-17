@@ -31,7 +31,7 @@ const MAX_ADDON_TASKS = 20;
 export const BG_PARAMS = {
   type: "object",
   properties: {
-    command: { type: "string", description: "The shell command to run detached (same guards as a bash call)." },
+    command: { type: "string", description: "The shell command to run in the background (detached on POSIX, not detached on win32; same guards as a bash call)." },
     note: { type: "string", maxLength: 200, description: "Shown in the sidebar, `/foreman waits` and the wake message." },
   },
   required: ["command"],
