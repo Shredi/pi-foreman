@@ -127,6 +127,26 @@ for (const [name, line, tool] of DENY_R1) {
   });
 }
 
+// Revision round 2 (reviewer regression against 545abc2 + finding 2): `lnk` does not exist when the guard runs, so the
+// target fell back to path.resolve, was judged outside and masked; quote-split and chdir/sl moves were not seen.
+const DENY_R2: Array<[string, (r: Rig) => string, string?]> = [
+  ["R2 ln -s <abs H> lnk; cat x > lnk/ruling.md", (r) => `ln -s ${r.H} lnk; cat x > lnk/ruling.md`],
+  ["R2 ln -s <abs H> lnk; cp x lnk/ruling.md", (r) => `ln -s ${r.H} lnk; cp x lnk/ruling.md`],
+  ["R2 mklink /D lnk <H> & cat x > lnk/ruling.md", (r) => `mklink /D lnk ${r.H} & cat x > lnk/ruling.md`],
+  ["R2 New-Item -ItemType SymbolicLink lnk <H>; Set-Content lnk/ruling.md", (r) => `New-Item -ItemType SymbolicLink -Path lnk -Target ${r.H}; Set-Content lnk/ruling.md APPROVED`, "powershell"],
+  // the <H> operand makes the unmasked line refusable; before the fix the segment was masked as writing outside
+  ["R2 cat <H>/plan.md > newdir/ruling.md (nonexistent parent dir)", (r) => `cat ${r.H}/plan.md > newdir/ruling.md`],
+  ["R2 c''d <H> && cat <S>/x > ruling.md", (r) => `c''d ${r.H} && cat ${r.S}/x > ruling.md`],
+  ["R2 chdir <H> && cat <S>/x > ruling.md", (r) => `chdir ${r.H} && cat ${r.S}/x > ruling.md`],
+];
+
+for (const [name, line, tool] of DENY_R2) {
+  test(`r10 write surface denied (round 2): ${name}`, () => {
+    const r = rig();
+    assert.equal(run(r, line(r), tool ?? "bash"), SELF_RULING_REASON, line(r));
+  });
+}
+
 test("r10 write surface denied: write and edit tools on <H>/ruling.md", () => {
   const r = rig();
   for (const tool of ["write", "edit"]) assert.equal(selfRulingRefusal(tool, { path: path.join(r.H, "ruling.md") }, r.root, r.dirs, [r.S]), SELF_RULING_REASON, tool);
