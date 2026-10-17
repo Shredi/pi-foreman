@@ -138,6 +138,10 @@ Worked example:
 3. The wait wakes; pi-foreman writes `<handoff dir>/.seen` containing `ruling-1.md` and Herdr leaves `blocked`; the child reads `ruling-1.md` and continues.
    The next question is `# Ask 2: …` answered by `ruling-2.md`.
 
+### Steer while a child runs
+
+While a foreman's launch-wait holds a child's result, the adapter polls `$PI_FOREMAN_HANDOFF_DIR` every 2 s for a `ruling*.md` or `steer*.md` file that is new or has a newer mtime than the one already delivered (files present when the first wait starts are the baseline). The first one found ends the wait early: the launch result says the run is still running, then the file text (first 4 KB, marked as data, not instructions); continue with `bg_wait <runId>`. Each file version is delivered once. With no `PI_FOREMAN_HANDOFF_DIR` nothing is polled. The `launch_wait` trace event reports `outcome: steer`.
+
 ### Child orchestrator sessions
 
 A heavy task with several phases may run as a multi-session plan: one child session per phase, each in its own worktree, opened with `foreman session open <label> <brief> --plan-first`. The parent reviews each phase before the next.

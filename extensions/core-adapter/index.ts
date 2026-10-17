@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { SteerWatch } from "./steerwatch.ts";
 import { RepeatRefusals, repeatStopReason } from "./repeatguard.ts";
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, userOverride } from "./ceremony.ts";
@@ -1195,6 +1196,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
   // Knob 3 launch-wait (launchwait.ts): held launch results, released by run end, supervisor request, abort or timeout.
   const launchWaits = new LaunchWaits();
+  const steerWatches = new Map<string, SteerWatch>();
+  const steerWatchFor = (s: Session): SteerWatch => {
+    let w = steerWatches.get(s.id);
+    if (!w) steerWatches.set(s.id, (w = new SteerWatch(() => process.env.PI_FOREMAN_HANDOFF_DIR)));
+    return w;
+  };
   pi.events?.on(SUPERVISOR_SURFACED_EVENT, (data: unknown) => launchWaits.onSupervisorRequest(data));
   pi.on("session_shutdown", async () => launchWaits.abortAll());
 
@@ -2385,7 +2392,29 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (open) return { text: open, path: null, plain: true };
     const cap = holdCap(waitLimits((k) => get(s.config.config, `wait.${k}`)).maxSeconds, roleTimeoutMs(get(s.config.config, "roles"), run.role));
     const started = Date.now();
-    const r = await launchWaits.wait(runId, cap.seconds * 1000, ctx.signal);
+    // a chair/parent steer file in the handoff dir ends the wait early (steerwatch.ts); no handoff dir: no polling
+    const watch = steerWatchFor(s);
+    const stop = new AbortController();
+    const onCtxAbort = (): void => stop.abort();
+    ctx.signal?.addEventListener("abort", onCtxAbort, { once: true });
+    if (ctx.signal?.aborted) stop.abort();
+    let steerText = "";
+    const stopPoll = watch.start((text) => {
+      steerText = text;
+      stop.abort();
+    });
+    let r: Awaited<ReturnType<typeof launchWaits.wait>>;
+    try {
+      r = await launchWaits.wait(runId, cap.seconds * 1000, stop.signal);
+    } finally {
+      stopPoll();
+      ctx.signal?.removeEventListener("abort", onCtxAbort);
+    }
+    if (steerText && r.outcome === "abort" && !ctx.signal?.aborted) {
+      const ms = Date.now() - started;
+      s.trace?.emit({ event: "launch_wait", role: run.role, runId, outcome: "steer", ms });
+      return { text: `pi-foreman launch-wait: run ${runId} (${run.role}) is still running after ${Math.round(ms / 1000)}s; the wait ended early because a steer arrived. Continue with bg_wait ${runId} after acting on it.\n${steerText}`, path: null, plain: true };
+    }
     const ms = Date.now() - started;
     s.trace?.emit({ event: "launch_wait", role: run.role, runId, outcome: r.outcome, ms });
     const raw = details && typeof details === "object" ? (details as { asyncDir?: unknown }).asyncDir : undefined;
