@@ -31,5 +31,12 @@ export function rmTestTmp(dir: string): void {
     const target = path.resolve(dir);
     if (cwd === target || cwd.startsWith(target + path.sep)) process.chdir(os.tmpdir());
   } catch { /* cwd may already be gone */ }
-  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+  } catch (e) {
+    // Windows: a detached child can keep the dir open past the retries; a leaked temp dir on a runner is harmless.
+    const code = (e as NodeJS.ErrnoException)?.code;
+    if (process.platform === "win32" && (code === "EBUSY" || code === "EPERM" || code === "ENOTEMPTY")) return;
+    throw e;
+  }
 }
