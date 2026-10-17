@@ -56,7 +56,7 @@ Besides the approval and trace lines, the report carries these lines when there 
   events and `launch_entry` events (tasks and chain entries without a marker; see [ladder](ladder.md#trace-records)).
 - `critique: raised 4, applied 2; per round raised/diff lines: 3/120, 1/14`: the critique counter (below); shown when
   the trace has at least one counted review. The JSON report has `trace.critique_raised`, `trace.critique_applied` and
-  `trace.critique_rounds` (`[{raised, lines}]`, `lines` absent when the review had no diff, `?` in the text; 0 for an empty diff).
+  `trace.critique_rounds` (`[{raised, lines}]`, `lines` null when the review had no diff, `?` in the text; 0 for an empty diff).
 - `pr: 4 calls (create 1, checks 2, watch 1)`: PR tool calls from `tool_pack` events, listing counts of at least 1 in
   the order create, status, checks, comments, watch. The JSON report has `trace.pr_pack`.
 
