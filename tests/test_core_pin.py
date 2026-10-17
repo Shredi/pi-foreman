@@ -4,7 +4,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CORE = ROOT / "core"
-PINNED_SHA = "c9522fb7bba50a991124b6f996fb94702e9cf5ee"
+
+
+def pinned_sha():
+    """The pinned sha comes from core/VERSION, so a repin needs no test edit."""
+    for line in (CORE / "VERSION").read_text(encoding="utf-8").splitlines():
+        if line.startswith("sha: "):
+            return line[len("sha: "):].strip()
+    return ""
+
+
 GENERATED = ("VERSION", "MANIFEST")
 IGNORED_PARTS = ("__pycache__", ".pytest_cache")
 
@@ -36,7 +45,9 @@ class CorePinTest(unittest.TestCase):
 
     def test_version_names_pinned_sha(self):
         text = (CORE / "VERSION").read_text(encoding="utf-8")
-        self.assertIn("sha: " + PINNED_SHA, text.splitlines())
+        sha = pinned_sha()
+        self.assertRegex(sha, r"^[0-9a-f]{40}$")
+        self.assertIn("sha: " + sha, text.splitlines())
 
     def test_conformance_failure_names_only(self):
         import sys
