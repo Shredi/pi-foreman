@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { SteerWatch } from "./steerwatch.ts";
+import { SteerWatch, foldSteer } from "./steerwatch.ts";
 import { RepeatRefusals, repeatStopReason } from "./repeatguard.ts";
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, userOverride } from "./ceremony.ts";
@@ -2400,7 +2400,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (ctx.signal?.aborted) stop.abort();
     let steerText = "";
     const stopPoll = watch.start((text) => {
-      steerText = text;
+      steerText = steerText ? `${steerText}\n\n${text}` : text;
       stop.abort();
     });
     let r: Awaited<ReturnType<typeof launchWaits.wait>>;
@@ -2412,6 +2412,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (steerText && r.outcome === "abort" && !ctx.signal?.aborted) {
       const ms = Date.now() - started;
+      watch.commit(); // the steer is in the returned text
       s.trace?.emit({ event: "launch_wait", role: run.role, runId, outcome: "steer", ms });
       return { text: `pi-foreman launch-wait: run ${runId} (${run.role}) is still running after ${Math.round(ms / 1000)}s; the wait ended early because a steer arrived. Continue with bg_wait ${runId} after acting on it.\n${steerText}`, path: null, plain: true };
     }
@@ -2421,7 +2422,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const asyncDir = typeof raw === "string" ? raw : null;
     const text = launchWaitText({ outcome: r.outcome, runId, role: run.role, ms, maxSeconds: cap.seconds, capBy: cap.by, by: r.by, end: r.end, asyncDir });
     const climb = s.ladder.eligible.get(run.role);
-    return { text: steerFor(s).append(climb && climb.runId === runId ? `${text}\n${climbHint(climb)}` : text), path: r.end?.resultPath ?? asyncDir };
+    // a steer taken as the run ended is delivered only if it is shown here; otherwise it stays pending
+    const shown = foldSteer(watch, steerText, climb && climb.runId === runId ? `${text}\n${climbHint(climb)}` : text, !ctx.signal?.aborted);
+    return { text: steerFor(s).append(shown), path: r.end?.resultPath ?? asyncDir };
   }
 
   // Knob 5a (launchwait.ts): a completion notice whose result an earlier message delivered is dropped from the model context.
