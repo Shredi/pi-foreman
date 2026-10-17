@@ -258,12 +258,13 @@ export class LadderState {
     if (r && runId) capPut(this.byRun, runId, r);
   }
 
-  /** Run end: a bottom-rung run whose report asks for a climb becomes the role's handoff. */
+  /** Run end: a bottom-rung run whose report asks for a climb becomes the role's handoff; a policy_block run never does. */
   onRunEnd(end: RunEnd | null): Handoff | null {
     if (!end) return null;
     const r = this.byRun.get(end.runId);
     this.byRun.delete(end.runId);
     if (!r || !r.bottom) return null;
+    if (end.policyBlock) return null; // policy_block (launchwait.ts): stopped, never climb-eligible, never relaunched
     const cause = climbCause(end.summary);
     if (!cause) return null;
     const h: Handoff = { role: r.role, runId: end.runId, cause, summary: end.summary, resultPath: end.resultPath };

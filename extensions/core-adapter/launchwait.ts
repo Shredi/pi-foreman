@@ -26,7 +26,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { NOTIFY_TYPE } from "./rounds.ts";
+import { NOTIFY_TYPE, verdictOf } from "./rounds.ts";
 
 export type LaunchWaitMode = "block" | "detach";
 export type WaitOutcome = "done" | "supervisor" | "released" | "timeout" | "abort";
@@ -60,6 +60,21 @@ export interface RunEnd {
   role: string | null;
   summary: string;
   resultPath: string | null;
+  /** policy_block: the run ended with exit 1 (not completed), no review verdict and a usage-policy block marker in its output. */
+  policyBlock?: true;
+}
+
+/** The usage-policy block marker of a child's output or error (a provider refusal under its usage policy). */
+export const POLICY_BLOCK_RE = /\busage[ _-]?polic(?:y|ies)\b/i;
+
+/** The line a policy_block run's report carries: stopped, not retried, not climb-eligible. */
+export const POLICY_BLOCK_LINE = "pi-foreman: this run was stopped for a usage-policy block (policy_block: no verdict, exit 1) and is not retried: the harness does not relaunch it and it is not climb-eligible. Report it to the owner; do not relaunch the same task.";
+
+/** Whether a run end is a policy_block: not completed (role_result exit 1), no verdict in its output, a usage-policy marker in its output or error. */
+function policyBlocked(data: Json, results: Json[], status: string, summary: string): boolean {
+  if (status === "completed") return false;
+  const texts = [summary, str(data.error) ?? "", ...results.map((r) => str(r.error) ?? "")];
+  return texts.every((t) => verdictOf(t) === null) && texts.some((t) => POLICY_BLOCK_RE.test(t));
 }
 
 /** The parts of a run-end event (pi-subagents result-watcher payload) launch-wait reports. */
@@ -71,7 +86,9 @@ export function runEndOf(data: unknown): RunEnd | null {
   const status = stopped ? "stopped" : paused ? "paused" : data.success === true ? "completed" : "failed";
   const role = str(data.agent) ?? str(results[0]?.agent) ?? null;
   const summary = str(data.summary) ?? results.map((r) => str(r.summary) ?? "").filter(Boolean).join("\n\n");
-  return { runId: data.runId as string, status, role, summary, resultPath: str(data.asyncDir) ?? null };
+  const end: RunEnd = { runId: data.runId as string, status, role, summary, resultPath: str(data.asyncDir) ?? null };
+  if (policyBlocked(data, results, status, summary)) end.policyBlock = true;
+  return end;
 }
 
 interface Waiter {
@@ -258,7 +275,8 @@ export function launchWaitText(o: { outcome: WaitOutcome; runId: string; role: s
       const s = o.end?.summary ?? "";
       const body = s.length > SUMMARY_MAX ? `${s.slice(0, SUMMARY_MAX)}\n[... cut at ${SUMMARY_MAX} characters; the full output is under the result path]` : s || "(no output)";
       // the worktree line goes before the child's output
-      return `pi-foreman launch-wait: run ${o.runId} (${o.role}) ended ${o.end?.status ?? "completed"} after ${fmtSeconds(o.ms)}.${where} No bg_wait is needed for it.${tree ? `${tree}\n` : " "}Child output:\n${body}`;
+      const blocked = o.end?.policyBlock ? `\n${POLICY_BLOCK_LINE}` : "";
+      return `pi-foreman launch-wait: run ${o.runId} (${o.role}) ended ${o.end?.status ?? "completed"} after ${fmtSeconds(o.ms)}.${where} No bg_wait is needed for it.${tree ? `${tree}\n` : " "}Child output:\n${body}${blocked}`;
     }
     case "supervisor":
       return `pi-foreman launch-wait: run ${o.runId} (${o.role}) is still running and the child asks you something (the supervisor request follows). Answer it with subagent_supervisor, then bg_wait ${o.runId}.${where}${tree}`;

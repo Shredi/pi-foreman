@@ -1221,7 +1221,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           s.widget.refresh();
         }
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
-          s.ladder.onRunEnd(runEndOf(data));
+          const ended = runEndOf(data);
+          s.ladder.onRunEnd(ended);
+          // policy_block (launchwait.ts): the stop record; the run is not climb-eligible and the harness never relaunches it.
+          if (ended?.policyBlock && !s.isChild) s.trace?.emit({ event: "child_policy_block", role: ended.role ?? (s.launchedRoles.get(runId) ?? [])[0] ?? "?", runId, kind: "policy_block", outcome: ended.status, exit: 1, decision: "stopped" });
           // Review results with their occasion (occasion.ts); the verdict consumers see only the counting ones.
           const reviewLaunch = s.isChild ? undefined : s.reviewRuns.byRun.get(runId);
           const reviewResults = s.isChild ? [] : reviewResultsOfRunEnd(data, reviewLaunch);
@@ -2416,7 +2419,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const text = launchWaitText({ outcome: r.outcome, runId, role: run.role, ms, maxSeconds: cap.seconds, capBy: cap.by, by: r.by, end: r.end, asyncDir });
     const climb = s.ladder.eligible.get(run.role);
     // a steer taken as the run ended is delivered only if it is shown here; otherwise it stays pending
-    const shown = foldSteer(watch, steerText, climb && climb.runId === runId ? `${text}\n${climbHint(climb)}` : text, !ctx.signal?.aborted);
+    const shown = foldSteer(watch, steerText, climb && climb.runId === runId && !r.end?.policyBlock ? `${text}\n${climbHint(climb)}` : text, !ctx.signal?.aborted);
     return { text: steerFor(s).append(shown), path: r.end?.resultPath ?? asyncDir };
   }
 
