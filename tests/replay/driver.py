@@ -137,6 +137,29 @@ def provider_map(providers, unmapped=()):
     return {p: {"roles": {r: {"model": "%s/%s" % (p, r)} for r in ROLES if r not in unmapped}} for p in providers}
 
 
+def _under_tmp(p):
+    """True if `p` (literal or resolved) is /tmp or below it. Never on Windows."""
+    if os.name == "nt":
+        return False
+    for c in (os.path.abspath(p), os.path.realpath(p)):
+        if c == "/tmp" or c.startswith("/tmp/"):
+            return True
+    return False
+
+
+def scenario_tmp_base():
+    """Base dir for scenario workspaces, never under a literal /tmp. The overlay adds /tmp as a write root
+    on non-win32, so a workspace below it (Linux CI: tempfile.gettempdir() == /tmp) would be classed
+    tmp-scratch and hide the containment the scenarios assert. PI_FOREMAN_TEST_TMP overrides the base
+    (mirrors extensions/core-adapter/test/_tmpbase.ts)."""
+    env = os.environ.get("PI_FOREMAN_TEST_TMP", "").strip()
+    base = env or tempfile.gettempdir()
+    if _under_tmp(base):
+        base = os.path.join(os.path.expanduser("~"), ".cache", "pi-foreman-tests")
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
 class Rig:
     """One throwaway Pi world: agent dir + project + tmp, plus the processes started in it."""
 
@@ -147,7 +170,7 @@ class Rig:
         the L2 `providers` map, and so the generated agentOverridesByProvider, empty."""
         # pi-intercom's broker socket lives in the agent dir; macOS caps socket paths at 103 bytes,
         # which the default temp dir there exceeds, so intercom rigs use /tmp on POSIX.
-        base = "/tmp" if intercom and os.name != "nt" and os.path.isdir("/tmp") else None
+        base = "/tmp" if intercom and os.name != "nt" and os.path.isdir("/tmp") else scenario_tmp_base()
         self.root = Path(tempfile.mkdtemp(prefix="pf-replay-%s-" % name, dir=base)).resolve()
         self.procs = []
         try:
@@ -273,7 +296,7 @@ class Rig:
         if os.environ.get("FOREMAN_REPLAY_KEEP") == "1":
             sys.stderr.write("replay: kept %s\n" % self.root)
             return
-        tmp_roots = {Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve()}
+        tmp_roots = {Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve(), Path(scenario_tmp_base()).resolve()}
         if self.root.parent in tmp_roots and self.root.name.startswith("pf-replay-"):
             for _ in range(5):
                 try:
