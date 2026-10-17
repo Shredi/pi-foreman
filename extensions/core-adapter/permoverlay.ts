@@ -378,6 +378,8 @@ function boundWords(command: string, out: Set<string>, all: () => void): void {
         // getopts: only the second operand is a name
         if (verb === "getopts" && ops++ !== 1) continue;
         nameAt(a);
+        // `r=$x; declare -n r`, `for r in $x; do declare -n r`: without a value here, r refers to whatever name it already holds
+        if (nameref && !a.includes("=")) all();
         if (nameref && a.includes("=")) {
           const value = a.slice(a.indexOf("=") + 1);
           if (/[$`{}()\\]/.test(value)) all();
