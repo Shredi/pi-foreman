@@ -247,6 +247,12 @@ _G_NAME = r"[A-Za-z_][A-Za-z0-9_]*"
 # a value starts with `/` or a prefix: a bare word such as `IFS=Z` is no path
 GRAMMAR_ASSIGN = re.compile("(%s)=((?:%s|/)[%s]*)" % (_G_NAME, "|".join(re.escape(p) for p in GRAMMAR_PREFIXES),
                                                         GRAMMAR_LITERAL_CHARS))
+# Windows (Git Bash): also an unquoted `X:/...` or a double-quoted `"X:\..."` value (an 8.3 short-name tilde `RUNNER~1` kept);
+# GRAMMAR_ASSIGN_NT_WORD is the lexed word (quotes gone). An unquoted `X:\x` is drive-relative to bash: never resolved.
+_NT = os.name == "nt"
+_G_NT_LIT = r"(?:[%s]|(?<=[A-Za-z0-9])~(?=[0-9]))" % GRAMMAR_LITERAL_CHARS
+GRAMMAR_ASSIGN_NT = re.compile(r'(%s)=(?:([A-Za-z]:/%s*)|"([A-Za-z]:[\\/](?:%s|\\)*)(?<!\\)")' % (_G_NAME, _G_NT_LIT, _G_NT_LIT))
+GRAMMAR_ASSIGN_NT_WORD = re.compile(r"(%s)=([A-Za-z]:[\\/](?:%s|\\)*)" % (_G_NAME, _G_NT_LIT))
 _G_REF = r"\$(?:\{(%s)\}|(%s))" % (_G_NAME, _G_NAME)
 _G_WORD = re.compile(r"(?:[%s]|%s)+" % (GRAMMAR_WORD_CHARS, _G_REF))
 _G_HEREDOC = re.compile(r"<<[A-Za-z_][A-Za-z0-9_]*")   # an unquoted opener, a word of its own
@@ -264,7 +270,7 @@ def grammar_value(raw, cwd=None, scratch=None):
     """The certain value of an assignment literal: an absolute plain path, `$FOREMAN_SCRATCH` (the harness scratch
     dir) or `$PWD` (the tracked cwd) plus an optional `/rest`; a `$HOME`, relative, `~` or empty value is not
     certain (None). Same as `certain()` in shellvars.ts."""
-    if raw.startswith("/"):
+    if raw.startswith("/") or (_NT and re.match(r"[A-Za-z]:[\\/]", raw)):
         return raw
     for prefix, base in (("$FOREMAN_SCRATCH", scratch), ("$PWD", cwd)):
         rest = raw[len(prefix):]
@@ -299,12 +305,12 @@ def grammar_statements(text):
                 return None
             continue
         words = re.split(r"[ \t]+", stmt)
-        m = GRAMMAR_ASSIGN.fullmatch(stmt)
+        m = GRAMMAR_ASSIGN.fullmatch(stmt) or (_NT and GRAMMAR_ASSIGN_NT.fullmatch(stmt)) or None
         if m:
             # a conditional assignment (`test -f x && D=/a`, `cmd || D=/a`) may not run: not a statement of its own
             if not grammar_name_ok(m.group(1)) or not (before in (None, ";", "\n") or (before == "&&" and prev_assign)):
                 return None
-            out.append((m.group(1), m.group(2)))
+            out.append((m.group(1), m.group(2) or m.group(3)))
             prev_assign = True
             continue
         prev_assign = False
@@ -493,7 +499,7 @@ class Lexer(object):
             return
         if len(c.words) != 1:
             return
-        m = GRAMMAR_ASSIGN.fullmatch(c.words[0].text)
+        m = GRAMMAR_ASSIGN.fullmatch(c.words[0].text) or (_NT and GRAMMAR_ASSIGN_NT_WORD.fullmatch(c.words[0].text)) or None
         if m:
             value = grammar_value(m.group(2), self.cwd, self.scratch)
             if value is None:

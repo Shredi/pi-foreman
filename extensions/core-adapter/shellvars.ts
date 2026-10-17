@@ -22,7 +22,8 @@
  * and a value may hold an 8.3 short-name tilde (`RUNNER~1`, after a letter or digit, before a digit: bash never expands it);
  * a native `$PWD` / `$FOREMAN_SCRATCH` (`C:\...`) is a certain base, and `cd X:/...` is tracked with path.win32. An
  * unquoted `X:\x` is `X:x` to bash (drive-relative): it never resolves, and `cd X:x` makes the tracked cwd unknown.
- * The python guard (scripts/shell_write_guard.py) keeps the POSIX forms only: there such a line stays unresolved (refused).
+ * The python guard (scripts/shell_write_guard.py) adds on Windows only the unquoted `X:/...` and double-quoted `"X:\..."`
+ * values (GRAMMAR_ASSIGN_NT); any other win32 form stays unresolved there (refused).
  */
 
 import * as path from "node:path";
