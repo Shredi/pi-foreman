@@ -22,7 +22,8 @@ from test_replay import REASON, ReplayCase  # noqa: E402
 class TestChildScratch(ReplayCase):
     def test_scratch_write_allowed_then_removed_at_run_end(self):
         rig = self.rig("scratch", load_fixture("child_scratch"), permissions="baseline", config={"review": {"headless": True}})
-        (rig.project / "notes.txt").write_text("hello\n", "utf-8")
+        # bytes, not write_text: text mode would turn \n into \r\n on win32 and the copy would be 7 bytes
+        (rig.project / "notes.txt").write_bytes(b"hello\n")
         pi = rig.start()
         sid = pi.session_id()
         res = tool_results(pi.prompt("[[replay:s1]] go", timeout=60))
