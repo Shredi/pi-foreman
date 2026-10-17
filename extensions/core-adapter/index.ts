@@ -105,7 +105,7 @@ import { claimCore, emitReady, installInert, missingBundled, setupInvocation } f
 
 /** pi.events of the loaded extension, for the Herdr blocked signal (set in the factory). */
 let herdrEvents: EventBus | undefined;
-import { checkLaunch, completedAgents, hasSecurityFinding, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
+import { checkLaunch, completedAgents, CritiqueCounter, hasSecurityFinding, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
@@ -127,7 +127,7 @@ import { explicitModelAllowed, launchedModels, PLANNER_OWN_RUNG_HINT, rankRefusa
 import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
-import { filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
+import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { launchEntries } from "./ladder.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
@@ -244,6 +244,8 @@ interface Session {
   reviewCount: number;
   /** Foreman only: item numbers of the last FAIL verdict, until a review passes (item-only re-review). */
   failItems: string[];
+  /** Foreman only: critique raised and applied per review round (retro counter, rounds.ts CritiqueCounter). */
+  critique: CritiqueCounter;
   /** Foreman only: the 80 % budget warning was given (ceremony.budgetUsd). */
   budgetWarned: boolean;
   /**
@@ -504,6 +506,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewerFails: new ReviewerFails(),
       reviewCount: 0,
       failItems: [],
+      critique: new CritiqueCounter(),
       budgetWarned: false,
       reviewRuns: { byCall: new Map(), byRun: new Map(), blocks: new Map(), findings: new Map(), sync: Promise.resolve() },
       panels: new PendingPanels({ send: (text) => pi.sendMessage({ customType: "pi-foreman-panel", content: text, display: true }, { triggerTurn: false }), trace: (r) => s.trace?.emit(r), extra: () => prChecksLine(s) }),
@@ -1232,6 +1235,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             for (const d of done) s.trace?.emit({ event: "review_done", role: d.role, decision: d.decision, runId, ...(d.shadow ? { kind: "shadow" } : {}) });
             // Item-only re-review: the failed items of the latest FAIL verdict, cleared by a pass.
             for (const r of reviewResults) if (r.counts) {
+              s.trace?.emit(s.critique.onReview(r.text, r.role, runId, reviewLaunch?.lines));
               const items = failedItemsOf(r.text);
               if (items.length > 0) s.failItems = items;
               else if (r.verdict === "pass") s.failItems = [];
@@ -1729,11 +1733,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // Review bookkeeping to the run end (occasion.ts): occasion, shadow, model per entry; the files the findings are located in.
           const first = launchEntries(input).find((e) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent));
           const occ = first ? occasions.get(first) : undefined;
-          const files = !first ? [] : occ === "plan-review" ? planReviewFiles(String(first.task ?? ""), boundLedger(s.markerDir, s.id)) : await reviewFacts.diffOf(first, input, ctx.cwd).then((d) => filesOfDiff(`${d.diff ?? ""}\n${d.untracked}`), () => []);
+          const diffText = !first || occ === "plan-review" ? null : await reviewFacts.diffOf(first, input, ctx.cwd).then((d) => `${d.diff ?? ""}\n${d.untracked}`, () => null);
+          const files = !first ? [] : occ === "plan-review" ? planReviewFiles(String(first.task ?? ""), boundLedger(s.markerDir, s.id)) : filesOfDiff(diffText);
           const sh = shadow.kind === "launch" ? shadow : null;
           const rl = reviewLaunchOf(input, occasions, new Map(sh ? [[input, sh.base]] : []), { started: Date.now(), files, panel: sh ? { gate: sh.pending.gate, primary: sh.pending.primary, shadows: [sh.base] } : panel?.panel ?? null, climbed: new Set(reviewerClimbs.map((c) => c.entry)) });
           if (rl && panel) rl.task = panel.task;
           if (rl && sh) rl.bind = sh.pending.id;
+          if (rl && diffText !== null) rl.lines = diffLinesOf(diffText);
           if (rl) capSet(s.reviewRuns.byCall, event.toolCallId, rl);
         }
         const planLedger = boundLedger(s.markerDir, s.id);
@@ -1756,6 +1762,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit(pendingWarn);
       }
       if (notices.length + budgetNotes.length > 0) s.launchNotices.set(event.toolCallId, [...notices, ...budgetNotes]);
+      if (event.toolName === "subagent" && !s.isChild && subagentAgents(input).includes("builder")) {
+        const applied = s.critique.onBuilder();
+        if (applied) s.trace?.emit(applied);
+      }
       if (rounds) {
         s.rounds = rounds.next;
         for (let i = 0; i < rounds.revisions; i++) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: kind });

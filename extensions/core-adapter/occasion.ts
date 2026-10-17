@@ -49,6 +49,8 @@ export interface ReviewLaunch {
   started: number;
   /** Changed files the review covers (the facts diff; plan + ledger for a plan review). */
   files: string[];
+  /** Changed lines of the reviewed diff (retro critique counter); unset for a plan review. */
+  lines?: number;
   /** Panel launch: the gate and the models (panel.ts); set on a gate primary and on a shadow launch. */
   panel: { gate: Occasion; primary: string; shadows: string[] } | null;
   /** Gate primary of a panel: its task text before the facts block (a shadow launch gets the same). */

@@ -54,6 +54,9 @@ Besides the approval and trace lines, the report carries these lines when there 
 - `explorer: 4 launches, m-opus 1 (25 %, fact-critical 1); m-sonnet 2; m-haiku 1`: explorer launches by model, the share
   on the top-rank models, and the `fact-critical` marker count. Sources: usage lines (single launches), `research_rung`
   events and `launch_entry` events (tasks and chain entries without a marker; see [ladder](ladder.md#trace-records)).
+- `critique: raised 4, applied 2; per round raised/diff lines: 3/120, 1/14`: the critique counter (below); shown when
+  the trace has at least one counted review. The JSON report has `trace.critique_raised`, `trace.critique_applied` and
+  `trace.critique_rounds` (`[{raised, lines}]`, `lines` null when the review had no diff, `?` in the text).
 - `pr: 4 calls (create 1, checks 2, watch 1)`: PR tool calls from `tool_pack` events, listing counts of at least 1 in
   the order create, status, checks, comments, watch. The JSON report has `trace.pr_pack`.
 
@@ -64,6 +67,18 @@ Besides the approval and trace lines, the report carries these lines when there 
   line's prompt (input + cacheRead + cacheWrite); keep-alive lines count as the previous line, so a bridged gap is
   not cold. Without a TTL the count is 0. The line shows when a cache policy applies or any count is above 0; the JSON
   report has `cache` (`keepalives`, `keepaliveCost`, `warmCompactions`, `coldResumes`, `ttlSeconds`).
+
+## Critique counter
+
+A round is one counted review run (primary `reviewer` or `senior-reviewer` on an `item` or `pre-pr` occasion; plan
+reviews, second opinions and panel shadows do not count). At its run end the foreman traces `critique {kind: raised,
+role, runId, count, lines}`: `count` is the number of `- [now]` and `- [later]` lines of the report's CRITIQUE block
+(see [review](review.md#critique)), `lines` the added plus removed lines of the diff the review was launched on
+(working tree and untracked files against the builder's base; absent for a review with no diff). "Applied" is the
+signal the harness can see, not proof of a change: the first builder launch after that review and before the next
+counted review traces `critique {kind: applied, role: builder, count}` with the review's `now` count, because the
+foreman sends those lines back to the builder in that revision. A new counted review replaces `now` lines no builder
+launch took. `later` lines are never applied here; the foreman records them in result.md.
 
 ## Child traces
 

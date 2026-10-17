@@ -86,6 +86,30 @@ export function critiqueOf(text: string): { now: number; later: number } {
   return c;
 }
 
+/**
+ * Retro counter (docs/retro.md "Critique counter"), one round per counted review run: `critique {kind: raised, count,
+ * lines}` at its run end (`count` = its `[now]` + `[later]` lines, `lines` = changed lines of the diff it reviewed), and
+ * `critique {kind: applied, count}` at the next builder launch before the next counted review (`count` = that review's
+ * `[now]` lines, which the foreman sends back in that revision). A later review replaces unsent `now` lines.
+ */
+export class CritiqueCounter {
+  private now = 0;
+
+  /** A counted review run ended: its `raised` record. */
+  onReview(text: string, role: string, runId: string, lines?: number): Record<string, string | number> {
+    const c = critiqueOf(text);
+    this.now = c.now;
+    return { event: "critique", kind: "raised", role, runId, count: c.now + c.later, ...(lines !== undefined ? { lines } : {}) };
+  }
+
+  /** A builder launch passed every check: the `applied` record when the last review left `now` lines, else null. */
+  onBuilder(): Record<string, string | number> | null {
+    const count = this.now;
+    this.now = 0;
+    return count > 0 ? { event: "critique", kind: "applied", role: "builder", count } : null;
+  }
+}
+
 /** Verdict in a review's text: any FAIL/BLOCK wins, else PASS/APPROVE, else null. The CRITIQUE block does not count. */
 export function verdictOf(text: string): Verdict | null {
   const all = [...withoutCritique(text).matchAll(/\b(?:overall\s+)?verdict\s*\**\s*:\s*\**\s*(pass|fail|approve|block)\b/gi)].map((m) => m[1].toLowerCase());

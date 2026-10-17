@@ -50,7 +50,9 @@ or `CRITIQUE: none`. It lists overengineering, niche checks beyond the item's sc
 options nothing sets and tests of mocks. The foreman sends the `now` lines back to the builder in the same revision and
 records the `later` lines in result.md. Critique never turns a PASS into a FAIL (APPROVE into BLOCK) on its own: the
 verdict parsing (`verdictOf`, the `N. PASS` marks, the re-review items) skips the block (`withoutCritique` in rounds.ts).
-There is no extra review pass and no other reviewer model for it.
+There is no extra review pass and no other reviewer model for it. Each counted review traces how many critique lines
+it raised and how many `now` lines a builder revision took, with the diff size: see
+[retro](retro.md#critique-counter).
 
 ## Different-model rule
 
