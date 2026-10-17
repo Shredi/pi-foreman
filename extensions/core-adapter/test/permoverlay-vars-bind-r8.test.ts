@@ -649,3 +649,44 @@ for (const [line, name, who] of [
     untrusted(runAs(who, line), line);
   });
 }
+
+// ------------------------------------------------------------------ revision 4, item 19: en / em / horizontal-bar dashes as a parameter
+// dash, a getter without one literal name, set_<Name> / -MemberName member writes, aliases
+for (const line of [
+  `Get-Process \u2013ov $n; ${PS_VAR_USE}`,
+  `Get-Process \u2014OutVariable $n; ${PS_VAR_USE}`,
+  `Set-Item \u2013Path $p \u2013Value 1; ${PS_USE}`,
+  `Set-Item \u2014Path $p 1; ${PS_USE}`,
+  `Set-Item \u2015Path $p 1; ${PS_USE}`,
+  `(Get-Variable -Scope 0)[0].Value = 1; ${PS_VAR_USE}`,
+  `gv -Scope global | ? Name -eq $n | % { $_.Value = 1 }; ${PS_VAR_USE}`,
+  `gv -Exclude foo | % { $_.Value = 1 }; ${PS_VAR_USE}`,
+  `gv $n | % set_Value 1; ${PS_VAR_USE}`,
+  `gv $n | ForEach-Object -MemberName set_Value -ArgumentList 1; ${PS_VAR_USE}`,
+  `gv $n | ForEach-Object -MemberName $m -ArgumentList 1; ${PS_VAR_USE}`,
+  `gv $n | % Value 1; ${PS_VAR_USE}`,
+  `Set-Alias x $c; x $p 1; ${PS_USE}`,
+  `sal x Set-Item; x $p 1; ${PS_USE}`,
+  `New-Item alias:x -Value Set-Item; ${PS_USE}`,
+  `$alias:x = 'Set-Item'; x $p 1; ${PS_USE}`,
+]) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line, "powershell").has("HOME"), "boundNames sees HOME");
+    untrusted(foreman(line, "powershell"), line);
+  });
+}
+
+// revision 4, item 19 negatives: a literal name / getter / alias read leaves HOME trusted
+for (const line of [
+  `Get-Process -Name foo; ${PS_VAR_USE}`,
+  `Get-Variable foo; ${PS_VAR_USE}`,
+  `gv foo | % { $_.Value }; ${PS_VAR_USE}`,
+  `Get-Alias ls; ${PS_USE}`,
+  `Get-Process \u2013Name foo; ${PS_VAR_USE}`,
+  `(Get-Variable -Name foo).Value = 1; ${PS_VAR_USE}`,
+]) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(!boundNames(line, "powershell").has("HOME"), "not HOME");
+    assert.equal(foreman(line, "powershell"), "pass");
+  });
+}

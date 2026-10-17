@@ -189,6 +189,10 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
   // PowerShell (case-insensitive): `$N = ..`, `$env:N = ..`, `${env:N} = ..`, an `env:N` / `Env:\N` drive path (Set-Item, New-Item,
   // si, ni, -Path ..), `[System.Environment]::SetEnvironmentVariable('N', ..)`; a non-literal env: name or variable name binds every trusted name
   if (shell === "powershell") {
+    // PowerShell takes an en dash, em dash or horizontal bar (U+2013..U+2015) as a parameter dash (`Get-Process \u2013ov $n`): the line
+    // with every one of them read as `-` binds too
+    const dashed = command.replace(/[\u2013\u2014\u2015]/g, "-");
+    if (dashed !== command) boundNames(dashed, shell).forEach((n) => out.add(n));
     const add = (n: string): void => void out.add(n).add(n.toUpperCase());
     // backtick escapes (`${env:HO`ME}`, `Set-Item env:HO`ME`) vanish before PowerShell reads the name
     const plain = command.replace(/`([^\r\n])/g, "$1");
@@ -244,16 +248,19 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
         if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) add(v);
         else all();
       }
-      // a property write (`(Get-Variable $n).Value = 1`, `$v = gv $n; $v.Value = 1`, `$_.Value = 1`, `.set_Value(1)`) on what a variable /
-      // item getter returns writes the variable / item back: a getter whose name / path is missing, not one literal, or a wildcard
-      // (`gv HOM*`) may reach any variable; a literal name binds that name (the name-token rule)
-      if (/\.\s*(?:[A-Za-z_]\w*|'[^']*'|"[^"]*"|\$\w+)\s*(?:\[[^\]]*\]\s*)*[-+*/%]?\?{0,2}=(?!=)|\.\s*set_\w+\s*\(/i.test(text)) {
-        for (const m of text.matchAll(/(?<![\w$.\\/:-])([A-Za-z][\w-]*)(?![\w-])(?=([^;|)\n]*))/g)) {
+      // a property write (`(Get-Variable $n).Value = 1`, `$v = gv $n; $v.Value = 1`, `$_.Value = 1`, `.set_Value(1)`, `% set_Value 1`,
+      // `.$m(1)`, `ForEach-Object -MemberName $m`) on what a variable / item getter returns writes the variable / item back: a getter is
+      // literal-named only with one literal positional name or one literal -Name / -Path / -LiteralPath value, no wildcard and no other
+      // parameter (that name binds through the name-token rule); any other getter (`gv -Scope 0`, `gv -Exclude foo`, `gv`) may reach any variable
+      if (psMemberWrite(text)) {
+        for (const m of text.matchAll(/(?<![\w$.\\/:-])([A-Za-z][\w-]*)(?![\w-])(?=([^;|)}\n]*))/g)) {
           if (!PS_GETTERS.has(m[1].toLowerCase())) continue;
-          const args = (m[2].match(/'[^']*'|"[^"]*"|\([^)]*\)?|[^\s(]+/g) ?? []).filter((a) => !/^-[A-Za-z]+:?$/.test(a));
-          if (args.length === 0 || args.some((a) => /[$()`+{}@,]/.test(a) || PS_WILD.test(a))) all();
+          if (!psGetterLiteral(m[2].match(/'[^']*'|"[^"]*"|\([^)]*\)?|[^\s(]+/g) ?? [])) all();
         }
       }
+      // an alias (`Set-Alias x $c; x $p 1`, `sal`, `New-Alias`, `nal`, `Import-Alias`, `ipal`) or anything on the alias: drive
+      // (`New-Item alias:x -Value Set-Item`, `$alias:x = ..`, `Alias::x`) may turn any later word into an item cmdlet
+      if (/(?<![\w$.\\/:-])(?:set-alias|sal|new-alias|nal|import-alias|ipal)(?![\w-])/i.test(text) || /(?<![\w-])alias:/i.test(text)) all();
       // `Import-LocalizedData -BindingVariable $n` (`-b..`, the `-Variable` alias, `-v..`, or the first positional) sets the variable it
       // names: any non-literal word in the call may name any variable
       for (const m of text.matchAll(/(?<![\w$.\\/:-])import-localizeddata(?![\w-])(?=([^;|\n]*))/gi)) {
@@ -267,8 +274,8 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
       for (const [u, unit] of pipe.entries()) {
         // `Microsoft.PowerShell.Management\Set-Item` is Set-Item
         const verb = (unit[0] ?? "").toLowerCase().replace(/^[a-z][\w.]*\\(?=[a-z])/, "");
-        // `& $sb`, `$cmd args` (not `$x = ..`)
-        const call = /^\$[^=]*$/.test(verb) && !(unit[1] ?? "").startsWith("=");
+        // `& $sb`, `$cmd args` (not `$x = ..`, not a lone `$_.Value` / `$PSItem.Value` read in a script block)
+        const call = /^\$[^=]*$/.test(verb) && !(unit[1] ?? "").startsWith("=") && !(unit.length === 1 && /^\$(?:_|psitem)(?:\.[a-z_]\w*)+$/.test(verb));
         if (PS_EVAL.has(verb) || /\.ps[md]?1$/i.test(verb) || call) all();
         if (PS_ITEM.has(verb)) {
           const args = unit.slice(1);
@@ -414,6 +421,56 @@ function psItemUnsafe(verb: string, args: string[], piped: boolean, literal: (t:
   if (piped && (PS_PIPE[PS_ITEM_CMDLET[verb] ?? ""] ?? ["path", "name"]).some((s) => !bound.has(s))) return true;
   // pipeline input may bind -NewName / -Destination by property name
   return piped && dests.length === 0 && (PS_SLOTS[PS_ITEM_CMDLET[verb] ?? ""] ?? []).some((s) => s === "newname" || s === "destination");
+}
+
+/**
+ * A PowerShell line with an en dash, em dash or horizontal bar (U+2013..U+2015) at the start of a word read as the `-` PowerShell takes
+ * it for (`Remove-Item \u2013Recurse`, `Set-Item \u2013Path $p`), so parameter, rule and path checks see the parameter.
+ */
+function psDashes(s: string): string {
+  return s.replace(/(?<=(?:^|[\s;|({}=,&!])[-\u2013\u2014\u2015]*)[\u2013\u2014\u2015]/g, "-");
+}
+
+/**
+ * Whether a PowerShell line writes a property or calls a member on some object: `.X = ..`, `.X[0] += ..`, `.'X' = ..`, `.$m = ..`,
+ * `.($m) = ..`, a dynamic member call (`.$m(..)`, `.'set_Value'(..)`), any `set_<Name>` token (`.set_Value(1)`, `% set_Value 1`), and
+ * ForEach-Object (`%`, `foreach`) in its member form: a `-MemberName` (any prefix) or positional member that is not one literal name, or
+ * a member with any further argument (`% Value 1` sets the property).
+ */
+function psMemberWrite(text: string): boolean {
+  if (/\.\s*(?:[A-Za-z_]\w*|'[^']*'|"[^"]*"|\$\{?\w+\}?|\([^)]*\))\s*(?:\[[^\]]*\]\s*)*[-+*/%]?\?{0,2}=(?!=)/.test(text)) return true;
+  if (/\.\s*(?:'[^']*'|"[^"]*"|\$\{?\w+\}?|\([^)]*\))\s*\(/.test(text)) return true;
+  if (/(?<![\w$-])set_\w/i.test(text)) return true;
+  for (const m of text.matchAll(/(?<![\w$.\\/:-])(?:%|foreach|foreach-object)(?![\w-])(?=([^;|\n]*))/gi)) {
+    const args = (m[1].match(/'[^']*'|"[^"]*"|\([^)]*\)?|[^\s(]+/g) ?? []).filter((a) => !/^[)}]+$/.test(a));
+    if (args.length === 0 || args[0].startsWith("{")) continue;
+    const lit = (t: string | undefined): boolean => t !== undefined && /^\w+$/.test(t.replace(/^'(\w+)'$|^"(\w+)"$/, "$1$2"));
+    const o = /^-([A-Za-z]+)(?::([\s\S]*))?$/.exec(args[0]);
+    if (!o) {
+      if (!lit(args[0]) || args.length > 1) return true;
+      continue;
+    }
+    // `-MemberName` by any prefix (`-m`, `-mem`), its value in the space or the colon form
+    const k = args.findIndex((a) => /^-m[a-z]*(?::|$)/i.test(a) && "membername".startsWith(a.slice(1).split(":")[0].toLowerCase()));
+    if (k < 0) continue;
+    const colon = /^-[A-Za-z]+:([\s\S]+)$/.exec(args[k]);
+    const v = colon ? colon[1] : args[k + 1];
+    if (!lit(v) || args.length > (colon ? 1 : 2)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether the argument words of a variable / item getter name one literal item: one literal positional name, or one literal `-Name` /
+ * `-Path` / `-LiteralPath` value (space or colon form), with no wildcard, no expression and no other parameter.
+ */
+function psGetterLiteral(args: string[]): boolean {
+  const lit = (t: string | undefined): boolean => t !== undefined && /^[^$()`+{}@,'"\s]+$/.test(t.replace(/^'([^']*)'$|^"([^"$`]*)"$/, "$1$2")) && !PS_WILD.test(t);
+  if (args.length === 1) {
+    const colon = /^-(?:name|path|literalpath):([\s\S]+)$/i.exec(args[0]);
+    return colon ? lit(colon[1]) : !args[0].startsWith("-") && lit(args[0]);
+  }
+  return args.length === 2 && /^-(?:name|path|literalpath)$/i.test(args[0]) && !args[1].startsWith("-") && lit(args[1]);
 }
 
 /**
@@ -1811,7 +1868,8 @@ const GREP_FAMILY = new Set(["grep", "egrep", "fgrep", "rg"]);
 /** `git worktree` subcommands a child may run (`remove` is ask in the permission system). */
 const WORKTREE_OK = new Set(["list", "remove"]);
 
-function collect(src: string, shell: "posix" | "powershell", depth: number, out: Collected): void {
+function collect(src0: string, shell: "posix" | "powershell", depth: number, out: Collected): void {
+  const src = shell === "powershell" ? psDashes(src0) : src0;
   const parsed = parseShell(src, shell);
   // same-line variables (shellvars.ts): the expanded words and texts are checked next to the line as written
   const resolved = depth === 0 && shell === "posix" && out.vars ? resolveVars(parsed.pipelines, parsed.seps, out.vars, (u) => REDIRECTS.has(u), src) : new Map<string[], string[]>();
@@ -2333,7 +2391,7 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
 
 export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchCtx): Decision | null {
   const shell = ctx0.shell ?? "posix";
-  const command = rawCommand;
+  const command = shell === "powershell" ? psDashes(rawCommand) : rawCommand;
   const bound = boundNames(command, shell);
   const ctx: MatchCtx = { ...ctx0, ...(ctx0.owned || !rules.owned ? {} : { owned: rules.owned }), bound };
   // a line that binds a harness-trusted variable it also uses (`HOME=-i; sed $HOME ...`, `read HOME; cat ~/x`) fails closed
