@@ -161,6 +161,8 @@ export interface PrWatchesDeps {
   intervalMs(): number;
   now(): number;
   timers?: Timers;
+  /** A watch started or ended (presence refresh). */
+  changed?(): void;
 }
 
 interface Watch {
@@ -212,6 +214,7 @@ export class PrWatches {
     this.watches.set(n, w);
     w.stopper = this.timers.set(() => this.end(w, { outcome: "timeout", detail: String(Math.round(timeoutMs / 1000)) }), timeoutMs);
     this.arm(w);
+    this.deps.changed?.();
   }
 
   clear(): void {
@@ -222,6 +225,7 @@ export class PrWatches {
     }
     this.watches.clear();
     this.reserved.clear();
+    this.deps.changed?.();
   }
 
   private arm(w: Watch): void {
@@ -259,6 +263,7 @@ export class PrWatches {
     this.timers.clear(w.poller);
     this.timers.clear(w.stopper);
     if (this.watches.get(w.n) === w) this.watches.delete(w.n);
+    this.deps.changed?.();
     let idle = true;
     try {
       idle = this.deps.idle();

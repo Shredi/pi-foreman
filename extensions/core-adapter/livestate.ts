@@ -62,8 +62,17 @@ export interface LiveFile {
   cost: number;
   /** ISO time the session became blocked (blockers empty -> non-empty); null when not blocked. */
   blockedSince: string | null;
+  /** Sidebar presence (R11 P4); `state` stays for older readers: blocked = waiting-owner, waiting-external reads as working. */
+  presence: PresenceName;
   /** Host pressure (pressure.ts); present only when the level is high or critical. */
   pressure?: { level: "high" | "critical"; reasons: string[] };
+}
+
+export type PresenceName = "working" | "waiting-owner" | "waiting-external" | "idle" | "done";
+
+/** done > waiting-owner > working > waiting-external > idle. */
+export function presenceState(i: { done: boolean; owner: boolean; turn: boolean; children: boolean; externalWaits: boolean }): PresenceName {
+  return i.done ? "done" : i.owner ? "waiting-owner" : i.turn || i.children ? "working" : i.externalWaits ? "waiting-external" : "idle";
 }
 
 export const liveDir = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "live");
@@ -104,7 +113,7 @@ export interface LiveInit {
 
 export class LiveState {
   private readonly file: string;
-  private readonly base: Omit<LiveFile, "heartbeatAt" | "lastEventAt" | "state" | "runs" | "waits" | "intercomId" | "tokensIn" | "tokensOut" | "cost" | "blockedSince">;
+  private readonly base: Omit<LiveFile, "heartbeatAt" | "lastEventAt" | "state" | "runs" | "waits" | "intercomId" | "tokensIn" | "tokensOut" | "cost" | "blockedSince" | "presence">;
   private readonly idOf: () => string;
   private readonly startedMs = Date.now();
   private lastEventMs = this.startedMs;
@@ -183,6 +192,17 @@ export class LiveState {
   /** The current state name without building a snapshot. */
   get stateName(): LiveStateName {
     return this.done ? "done" : this.blockers.size > 0 ? "blocked" : this.working || this.waitList().length > 0 ? "working" : "idle"; // a pending wait is work: never shown idle or done (R6 lane 7a)
+  }
+
+  /** Presence state: an open ask/checkpoint/prompt, a running turn or child, a pending external wait, else idle. */
+  get presenceName(): PresenceName {
+    let children = false;
+    try {
+      children = this.runs().some((r) => r.endedAt === null && r.state === "working");
+    } catch {
+      // runs are best effort
+    }
+    return presenceState({ done: this.done, owner: this.blockers.size > 0, turn: this.working, children, externalWaits: this.waitList().length > 0 });
   }
 
   private waitList(): LiveWait[] {
@@ -264,7 +284,7 @@ export class LiveState {
     } catch {
       // pressure is best effort
     }
-    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), ...(pressure ? { pressure } : {}) };
+    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(pressure ? { pressure } : {}) };
   }
 
   private schedule(): void {

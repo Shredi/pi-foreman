@@ -32,7 +32,7 @@ test("file shape, atomic write (no temp left), state transitions and done on sto
   const l = LiveState.start({ agentDir: d, sessionId: "sess1", cwd: "/w", mode: "rpc", env, pid: 42 }, () => [run]);
   assert.ok(l);
   const a = read(d, "sess1");
-  assert.deepEqual(Object.keys(a), ["v", "sessionId", "intercomId", "parentIntercom", "handoff", "label", "cwd", "pid", "mode", "startedAt", "paneId", "heartbeatAt", "lastEventAt", "state", "runs", "waits", "tokensIn", "tokensOut", "cost", "blockedSince"]);
+  assert.deepEqual(Object.keys(a), ["v", "sessionId", "intercomId", "parentIntercom", "handoff", "label", "cwd", "pid", "mode", "startedAt", "paneId", "heartbeatAt", "lastEventAt", "state", "runs", "waits", "tokensIn", "tokensOut", "cost", "blockedSince", "presence"]);
   assert.equal(a.v, 1);
   assert.equal(a.parentIntercom, "par");
   assert.equal(a.label, "job");

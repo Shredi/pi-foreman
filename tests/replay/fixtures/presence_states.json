@@ -1,0 +1,28 @@
+{
+ "builder": {
+  "p_child": [
+   {"text": "child: done"}
+  ]
+ },
+ "foreman": {
+  "p_idle": [
+   {"text": "Nothing to do."}
+  ],
+  "p_work": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:p_child]] do nothing"}}]},
+   {"text": "Launched."},
+   {"text": "Builder reported."}
+  ],
+  "p_ask": [
+   {"tools": [{"name": "bash", "arguments": {"command": "true || find ./pf-replay-ask -delete"}}]},
+   {"text": "Asked."}
+  ],
+  "p_wait": [
+   {"tools": [{"name": "foreman_wait", "arguments": {"action": "start", "kind": "timer", "seconds": 40, "note": "[[replay:p_after]] t"}}]},
+   {"text": "Waiting."}
+  ],
+  "p_after": [
+   {"text": "Woken."}
+  ]
+ }
+}

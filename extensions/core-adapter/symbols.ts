@@ -4,14 +4,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type SymbolKey = "working" | "waiting" | "asking" | "blocked" | "done" | "lost" | "keepalive";
+export type SymbolKey = "working" | "waiting" | "asking" | "blocked" | "done" | "lost" | "keepalive" | PresenceKey;
 export type SymbolSet = Record<SymbolKey, string>;
+/** Presence-state icons (livestate.ts PresenceName; `working` and `done` reuse their own keys). */
+export type PresenceKey = "waiting-owner" | "waiting-external" | "idle";
 
 const KEEPALIVE: Record<"unicode" | "nerd", string> = { unicode: "♨", nerd: "" };
 
 const FALLBACK: Record<"unicode" | "nerd", Omit<SymbolSet, "keepalive">> = {
-  unicode: { working: "⏳", waiting: "⏸", asking: "?", blocked: "✋", done: "✓", lost: "✗" },
-  nerd: { working: "", waiting: "", asking: "", blocked: "", done: "", lost: "" },
+  unicode: { working: "⏳", waiting: "⏸", asking: "?", blocked: "✋", done: "✓", lost: "✗", "waiting-owner": "✋", "waiting-external": "↻", idle: "⏸" },
+  nerd: { "waiting-owner": "\uf256", "waiting-external": "\uf017", idle: "\uf04c", working: "", waiting: "", asking: "", blocked: "", done: "", lost: "" },
 };
 
 const FILE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "config", "symbols.json");

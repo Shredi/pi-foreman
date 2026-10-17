@@ -490,6 +490,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         trace: (r) => s.trace?.emit(r),
         intervalMs: () => (typeof get(s.config.config, "tools.prWatchSeconds") === "number" ? (get(s.config.config, "tools.prWatchSeconds") as number) : 60) * 1000,
         now: () => Date.now(),
+        changed: () => s.live?.touch(),
       }),
       claudeCfg: new ClaudeConfigWatch(),
       trace: ((t) => openTrace({ enabled: t.enabled, dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: t.id, base: t.base }))(sessionTrace(get(config.config, "trace.enabled"), get(config.config, "retro.enabled"), ctx.mode, id, b)),
@@ -581,7 +582,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       })
       .catch(() => undefined);
     if (!isChild) {
-      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id), () => waits.active(id), () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; });
+      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const n = sessions.get(id)?.prWatches.size() ?? 0; return n > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${n} pr watch`, ageSeconds: 0, leftSeconds: 0 }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; });
       const live = s.live;
       if (live) waits.onChange(id, () => live.touch());
     }

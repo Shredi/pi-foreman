@@ -83,6 +83,21 @@ Herdr's status stays working; the wait shows on line 2 (below).
 | done | ✓ |
 | lost | ✗ |
 
+### Presence states and their `state_icon` glyphs
+
+The presence file (`state/live/<session>.json`) carries `presence`, one of five names; each has its own icon key in
+`config/symbols.json`. Precedence: `done` > `waiting-owner` > `working` > `waiting-external` > `idle` (a finished
+session is `done` whatever else is still open). The legacy `state` field is unchanged for older readers (`blocked` is
+`waiting-owner`; `waiting-external` still reads `working`), and `presence` is absent from files written by older versions.
+
+| `presence` | `state_icon` glyph (unicode / nerd) | Meaning |
+|---|---|---|
+| `working` | ⏳ / `\uf252` | the foreman turn runs, or a child run is live, with nothing for you to do |
+| `waiting-owner` | ✋ / `\uf256` | an open ask, checkpoint dialog or UI prompt waits for you |
+| `waiting-external` | ↻ / `\uf017` | only external waits are pending: `foreman_wait`, `foreman_bg` pid waits, `pr_watch` |
+| `idle` | ⏸ / `\uf04c` | none of the above |
+| `done` | ✓ / `\uf00c` | the session ended |
+
 With `ui.symbols: nerd` the glyphs follow the table at the end of this page. The optional variant in the snippet puts Herdr's
 `state_icon` cell in front (set `--lead-cells`). A nested session's tree prefix (`├─`, `└─`)
 starts its `fm_l1`. The colours in the snippet are placeholders. After updating, merge the new snippet again and run

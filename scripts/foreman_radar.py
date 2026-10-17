@@ -39,7 +39,9 @@ STARTING_WINDOW = 120.0
 SYMBOLS_PATH = Path(__file__).resolve().parent.parent / "config" / "symbols.json"
 SYM_ORDER = ("working", "waiting", "asking", "blocked", "done", "lost")
 SYM_COLORS = {"working": "32", "waiting": "90", "asking": "33", "blocked": "33", "done": "90", "lost": "31"}
-FALLBACK_SYMBOLS = {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗"}
+PRESENCE_KEYS = ("waiting-owner", "waiting-external", "idle")  # R11 P4 state icons; header counts stay on SYM_ORDER
+FALLBACK_SYMBOLS = {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗",
+                    "waiting-owner": "✋", "waiting-external": "↻", "idle": "⏸"}
 COLORS = {"working": "32", "blocked": "33", "starting": "36", "idle": "90", "lost": "31"}
 ACTIVE = ("working", "blocked", "starting")
 
@@ -185,7 +187,7 @@ def load_symbols(name="unicode"):
     table = d.get(name) if isinstance(d, dict) and isinstance(d.get(name), dict) else None
     if table is None:
         table = d.get("unicode") if isinstance(d, dict) and isinstance(d.get("unicode"), dict) else {}
-    return {k: table[k] if isinstance(table.get(k), str) else FALLBACK_SYMBOLS[k] for k in SYM_ORDER}
+    return {k: table[k] if isinstance(table.get(k), str) else FALLBACK_SYMBOLS[k] for k in SYM_ORDER + PRESENCE_KEYS}
 
 
 def sym_key(n):
@@ -204,6 +206,15 @@ def sym_key(n):
     if st == "failed":
         return "lost"
     return "blocked" if st == "blocked" else "waiting"
+
+
+def icon_key(n):
+    """Symbol key for a row: the presence state of a live session when its file has one, else sym_key."""
+    key = sym_key(n)
+    p = n.get("presence")
+    if n["glyph"] != "lost" and key in ("waiting", "blocked", "working") and p in PRESENCE_KEYS + ("working",):
+        return p
+    return key
 
 
 def cell_width(text):
@@ -389,6 +400,7 @@ def build(data, now):
         cwd_name = base_name(d["cwd"]) + " " if isinstance(d.get("cwd"), str) and d.get("cwd") else ""
         n["name"] = (d.get("label") if isinstance(d.get("label"), str) and d.get("label") else "") or n["name"] or cwd_name + sid[:8]
         n["glyph"], n["state"] = live_glyph(d, now)
+        n["presence"] = d.get("presence")
         n["sid"] = sid
         times = [parse_ts(d.get("lastEventAt")), data["trace"].get(sid)]
         times = [t for t in times if t is not None]
@@ -663,7 +675,7 @@ def render(roots, now, width=80, color=False, show_cost=True, selected=None, sym
         line2 += d(" · oldest block ") + sgr("33", fmt_age(max(ages)), color)
     if not table:
         return [head, line2, "", "no sessions"]
-    gw = max(cell_width(symbols[sym_key(n)]) for _, n in table)
+    gw = max(cell_width(symbols[icon_key(n)]) for _, n in table)
     pw = max(cell_width(p) + 2 + cell_width(n["name"]) for p, n in table)
     lines = [head, line2, ""]
     for i, (prefix, n) in enumerate(table):
@@ -674,7 +686,7 @@ def render(roots, now, width=80, color=False, show_cost=True, selected=None, sym
         name_c = name if lost or not m or m.start() == 0 else name[:m.start()] + d(m.group(0))
         if lost:
             name_c = d(name)
-        sym = symbols[sym_key(n)]
+        sym = symbols[icon_key(n)]
         glyph_c = sgr(COLORS[n["glyph"]], sym, color) + " " * (gw - cell_width(sym))
         sc = COLORS[n["glyph"]] if n["glyph"] in ("working", "blocked") else "2"
         state_c = sgr(sc, "%-9s" % n["state"], color)
@@ -731,7 +743,7 @@ def read_key(seconds, state):
 
 
 def to_json_node(n, now, symbols):
-    key = sym_key(n)
+    key = icon_key(n)
     age = None if n["last"] is None else max(0, int(now - n["last"]))
     blocked = None
     if n["state"] == "blocked":
