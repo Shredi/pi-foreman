@@ -263,6 +263,14 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
   // array subscripts (`${a[S++]}`, `a[i]=`) and `[[ x -eq y ]]` operands are arithmetic too
   for (const m of command.matchAll(/[A-Za-z0-9_]\[([^\]]*)\]/g)) bodies.push(m[1]);
   for (const m of command.matchAll(/\[\[([^\]]*)\]\]/g)) if (/\s-(?:eq|ne|lt|le|gt|ge)\s/.test(m[1])) bodies.push(m[1]);
+  // `${a:off}` / `${a:off:len}` (not `${a:-x}` / `${a:=x}` / `${a:+x}` / `${a:?x}`; `${a: -1}` is one) evaluate off and len as arithmetic,
+  // and so does every `x=RHS` / `x+=RHS` once x has the integer attribute: only a plain numeric expression stays benign there
+  if (shell === "posix") {
+    const strict: string[] = [];
+    for (const m of command.matchAll(/\$\{!?(?:[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?|[@*]|\d+):(?![-=+?])([^}]*)/g)) strict.push(m[1]);
+    for (const text of norm === command ? [command] : [command, norm]) strict.push(...intBodies(text, all));
+    for (const body of strict) if (!/^[\s\d+\-*/%():]*$/.test(body.replace(/["']/g, ""))) all();
+  }
   // a name the line sets from a non-literal (`x=$'\x53=1'`, `read x`, `for x in`) may hold an assignment the arithmetic evaluates
   const nonLit = new Set<string>();
   for (const m of command.matchAll(/(?:^|[^\w$-])([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=([^\s;&|)]*)/g)) if (!/^[\w./:,@%+-]*$/.test(m[2])) nonLit.add(m[1]);
@@ -388,6 +396,32 @@ function boundWords(command: string, out: Set<string>, all: () => void): void {
       }
     }
   }
+}
+
+/**
+ * The right-hand sides of every `x=RHS` / `x+=RHS` / `x[..]=RHS` whose name some `declare` / `typeset` / `local` with an `i` option
+ * (`-i`, `-ix`, `-ai`) gives the integer attribute: bash evaluates them as arithmetic. Any other bare mention of such a name outside
+ * those statements (`read x`, `for x in`, `printf -v x`) may assign it a text bash evaluates too, so it binds every trusted name (`all`).
+ */
+function intBodies(text: string, all: () => void): string[] {
+  const stmt = /(?:^|[\s;&|({}!`])(?:declare|typeset|local)(?=\s)([^;&|\n)]*)/g;
+  const names = new Set<string>();
+  for (const m of text.matchAll(stmt)) {
+    const words = m[1].trim().split(/\s+/).filter(Boolean);
+    if (!words.some((w) => /^-[A-Za-z]*i[A-Za-z]*$/.test(w))) continue;
+    for (const w of words) {
+      const n = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?(?:\+?=|$)/.exec(w);
+      if (n && !w.startsWith("-") && !w.startsWith("+")) names.add(n[1]);
+    }
+  }
+  const out: string[] = [];
+  for (const n of names) {
+    const assign = new RegExp(`(?<![\\w$-])${n}(?:\\[[^\\]]*\\])?\\+?=([^\\s;&|)]*)`, "g");
+    for (const m of text.matchAll(assign)) out.push(m[1]);
+    const rest = text.replace(stmt, " ").replace(assign, " ");
+    if (new RegExp(`(?<![\\w$])(?<!\\$\\{)${n}(?![A-Za-z0-9_])`).test(rest)) all();
+  }
+  return out;
 }
 
 /** Whether `word` holds a `$N` / `${N}` reference to a name in `names`. */

@@ -59,6 +59,35 @@ for (const [line, name, who] of [
   });
 }
 
+// ------------------------------------------------------------------ item 2: integer attribute and substring offsets
+for (const [line, name, who] of [
+  [`declare -i x; x=$y; ${S_USE}`, "S", "child"],
+  [`y=$(cat f); declare -i x; x=$y; ${S_USE}`, "S", "child"],
+  [`typeset -i x; x=$y; ${HOME_USE}`, "HOME", "foreman"],
+  [`f() { local -i x; x=$1; }; f "$y"; ${S_USE}`, "S", "child"],
+  [`declare -ix x; x=$y; ${S_USE}`, "S", "child"],
+  [`declare -ai a; a[0]=$y; ${S_USE}`, "S", "child"],
+  [`declare -i x; x+=$y; ${S_USE}`, "S", "child"],
+  [`declare -i x=$y; ${S_USE}`, "S", "child"],
+  [`declare -i x; x=y; ${S_USE}`, "S", "child"],
+  [`declare -i x; x="$y"; ${HOME_USE}`, "HOME", "foreman"],
+  [`declare -i x; read x <f; ${S_USE}`, "S", "child"],
+  [`declare -i x; for x in $y; do :; done; ${S_USE}`, "S", "child"],
+  [`echo \${a:$off}; ${S_USE}`, "S", "child"],
+  [`echo \${a:off}; ${S_USE}`, "S", "child"],
+  [`echo \${a:1:$len}; ${HOME_USE}`, "HOME", "foreman"],
+  [`echo \${a:1:len}; ${S_USE}`, "S", "child"],
+  [`echo \${a: -x}; ${S_USE}`, "S", "child"],
+  [`echo \${a:S=1}; ${S_USE}`, "S", "child"],
+  [`echo \${@:$off}; ${S_USE}`, "S", "child"],
+  [`echo \${a[0]:$off}; ${S_USE}`, "S", "child"],
+] as const) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line).has(name), `boundNames sees ${name}`);
+    untrusted(runAs(who, line), line);
+  });
+}
+
 // ------------------------------------------------------------------ negatives: HOME stays unbound
 for (const line of [
   "declare -i n; n=5; cat $HOME/f",
