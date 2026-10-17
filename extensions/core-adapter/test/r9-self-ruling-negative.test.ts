@@ -26,6 +26,7 @@ const OPEN: Array<[string, string]> = [
   ["sed w", `sed -n "w $D/$N" x`],
   ["sort -uo", `sort -uo $D/$N x`],
   ["git diff --output=", `git diff --output=$D/$N`],
+  ["sh -c redirect", `sh -c "echo A > $D/$N"`],
 ];
 
 for (const [name, command] of OPEN) {
