@@ -4,6 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import { rmTestTmp } from "./_tmpbase.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,7 +16,7 @@ const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..
 
 function tmp(t: { after(fn: () => void): void }, prefix: string): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmTestTmp(dir));
   return dir;
 }
 

@@ -2,12 +2,27 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
+import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
 import { roleModelsOf } from "../launchmodel.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
+
+/** Poll until the state dir listing (names + sizes) is unchanged for two polls, at most 5 s. */
+async function waitQuiet(dir: string): Promise<void> {
+  const snap = (): string => {
+    try { return fs.readdirSync(dir).sort().map((n) => `${n}:${fs.statSync(path.join(dir, n)).size}`).join("|"); } catch { return ""; }
+  };
+  let prev = snap();
+  let stable = 0;
+  for (let waited = 0; waited < 5000 && stable < 2; waited += 100) {
+    await new Promise((r) => setTimeout(r, 100));
+    const cur = snap();
+    stable = cur === prev ? stable + 1 : 0;
+    prev = cur;
+  }
+}
 
 test("roleModelsOf: single, tasks, chain and parallel entries; first per role", () => {
   assert.deepEqual([...roleModelsOf({ agent: "builder", model: "p/b" })], [["builder", "p/b"]]);
@@ -18,9 +33,14 @@ test("roleModelsOf: single, tasks, chain and parallel entries; first per role", 
 test("a launch traces role_launch and role_launched with the mapped model and the result names it", async (t) => {
   const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-lmodel-")));
-  t.after(() => {
-    fs.rmSync(root, { recursive: true, force: true });
+  const root = fs.realpathSync(mkTestTmp("pf-lmodel-"));
+  let shutdown: (() => Promise<unknown>) | undefined;
+  t.after(async () => {
+    // t.after hooks run in registration order, so shutdown and the quiescence wait live in this one hook,
+    // before the removal: the dir must have stopped changing before it is deleted.
+    try { await shutdown?.(); } catch { /* best effort */ }
+    await waitQuiet(path.join(root, "agent", "pi-foreman", "state"));
+    rmTestTmp(root);
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   });
@@ -61,7 +81,7 @@ test("a launch traces role_launch and role_launched with the mapped model and th
     ui: { notify: () => undefined, confirm: async () => false, select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined },
   };
   await handlers.get("session_start")!({ reason: "startup" }, ctx);
-  t.after(async () => handlers.get("session_shutdown")?.({}, ctx));
+  shutdown = async () => handlers.get("session_shutdown")?.({}, ctx);
   const input: Record<string, unknown> = { agent: "explorer", task: "look" };
   await handlers.get("message_end")!({ message: { role: "assistant", content: [{ type: "toolCall", id: "c1", name: "subagent", arguments: input }] } }, ctx);
   assert.equal(await handlers.get("tool_call")!({ toolName: "subagent", toolCallId: "c1", input }, ctx), undefined);
