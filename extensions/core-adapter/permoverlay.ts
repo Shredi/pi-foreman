@@ -265,6 +265,10 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
       // an alias (`Set-Alias x $c; x $p 1`, `sal`, `New-Alias`, `nal`, `Import-Alias`, `ipal`) or anything on the alias: drive
       // (`New-Item alias:x -Value Set-Item`, `$alias:x = ..`, `Alias::x`) may turn any later word into an item cmdlet
       if (/(?<![\w$.\\/:-])(?:set-alias|sal|new-alias|nal|import-alias|ipal)(?![\w-])/i.test(text) || /(?<![\w-])alias:/i.test(text)) all();
+      // anything on the function: drive (`Set-Item function:x $c; x`, `si`, `ni function:x -Value {..}`, `New-Item -Path function: -Name x`,
+      // `$function:x = ..`, `${function:x} = ..`, `Function::x`) defines code a later word runs, and `using module ./m.psm1` loads it:
+      // like `iex $c` / `Import-Module`, every trusted name may be rebound
+      if (/(?<![\w-])function:/i.test(text) || /(?<![\w$.\\/:-])using\s+module(?![\w-])/i.test(text)) all();
       // `Import-LocalizedData -BindingVariable $n` (`-b..`, the `-Variable` alias, `-v..`, or the first positional) sets the variable it
       // names: any non-literal word in the call may name any variable
       for (const m of text.matchAll(/(?<![\w$.\\/:-])import-localizeddata(?![\w-])(?=([^;|\n]*))/gi)) {
