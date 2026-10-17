@@ -493,9 +493,9 @@ def retry_sh(cmd, tries=3, pause=20):
 
 
 def pi_prebaked(row):
-    """Row-level `bench.pi_prebaked` (default off): install pi from the committed bench/pi-lock lockfile."""
+    """Row-level `bench.pi_prebaked` (default on; `false` opts out): install pi from the committed bench/pi-lock lockfile."""
     bench = row.get("bench") if isinstance(row.get("bench"), dict) else {}
-    return bool(bench.get("pi_prebaked"))
+    return bench.get("pi_prebaked") is not False
 
 
 def pi_install_command(prebaked=False):

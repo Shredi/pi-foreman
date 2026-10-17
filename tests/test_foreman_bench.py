@@ -713,12 +713,12 @@ class RetryAndPrebakedTests(unittest.TestCase):
         code, n = self.run_retry(99, "set -e; ")
         self.assertEqual((code != 0, n), (True, 3))
 
-    def test_pi_lock_matches_version_and_prebaked_is_opt_in(self):
+    def test_pi_lock_matches_version_and_prebaked_is_default(self):
         pkg = json.loads((ROOT / "bench" / "pi-lock" / "package.json").read_text("utf-8"))
         lock = json.loads((ROOT / "bench" / "pi-lock" / "package-lock.json").read_text("utf-8"))
         self.assertEqual(pkg["dependencies"], {ha.PI_PACKAGE: ha.PI_VERSION})
         self.assertEqual(lock["packages"]["node_modules/" + ha.PI_PACKAGE]["version"], ha.PI_VERSION)
-        self.assertFalse(ha.pi_prebaked({"bench": {}}) or ha.pi_prebaked({}))
+        self.assertTrue(ha.pi_prebaked({"bench": {}}) and ha.pi_prebaked({}))
         self.assertTrue(ha.pi_prebaked({"bench": {"pi_prebaked": True}}))
         live, baked = ha.pi_install_command(False), ha.pi_install_command(True)
         self.assertIn("npm install -g", live)
@@ -726,6 +726,9 @@ class RetryAndPrebakedTests(unittest.TestCase):
         self.assertIn("npm ci", baked)
         self.assertNotIn("npm install -g", baked)
         self.assertTrue(live.endswith("pi --version") and baked.endswith("pi --version"))
+
+    def test_pi_prebaked_false_opts_out_of_the_lock(self):
+        self.assertFalse(ha.pi_prebaked({"bench": {"pi_prebaked": False}}))
 
     def test_smoke_preset_rows_install_pi_from_the_lock(self):
         # A live `npm install -g` resolves pi's caret dependencies at run time: pi 1.1.0 with a later
