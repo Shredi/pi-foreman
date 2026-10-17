@@ -32,7 +32,6 @@ def read_decision(permission, value):
     return None, permission.get("*", "ask")
 
 
-@unittest.skipIf(os.name == "nt", "POSIX temp paths")
 class PlainSessionLedgerRenderTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -63,6 +62,13 @@ class PlainSessionLedgerRenderTest(unittest.TestCase):
             self.assertEqual(read_decision(p, path.as_posix()), ("*", "ask"), path)
         # read keys only: the write family is untouched
         self.assertNotIn(self.hub.as_posix() + "/.workflow/*", p["external_directory"])
+
+    def test_hub_read_patterns_collapse_dot_segment_and_trailing_slash(self):
+        # hubdrift.ts resolves `/a/./hub/` to `/a/hub`; the rendered keys carry that resolved spelling, so the doctor sees no false drift
+        self.assertEqual(pg.hub_read_patterns(["/a/./hub/"])[:2], ["/a/hub/.workflow", "/a/hub/.workflow/*"])
+        dotted = self.hub.parent.as_posix() + "/./hub/"
+        p = self.render([dotted])
+        self.assertEqual(read_decision(p, self.ledger), (self.hub.as_posix() + "/.workflow/*", "allow"))
 
 
 if __name__ == "__main__":

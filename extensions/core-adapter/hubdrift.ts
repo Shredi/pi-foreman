@@ -27,9 +27,19 @@ export function hubWorkflowDriftLines(i: { agentDir: string; hubWorkflow: unknow
     }
     const perm = isObj(live) ? live.permission : undefined;
     const read = isObj(perm) && isObj(perm.external_directory_read) ? perm.external_directory_read : {};
-    const missing = dirs.map((d) => d.split("\\").join("/")).filter((d) => read[d] !== "allow" || read[`${d}/*`] !== "allow");
-    if (!missing.length) return [];
-    return [`WARN paths.hubWorkflow is set but the permission-system config ${psGlobalConfigPath(i.agentDir)} lacks the hub read keys for ${missing.join(", ")}: a ledger read there asks (external_directory catch-all) — fix: re-run foreman setup to re-render it (docs/permissions.md, Hub ledger read).`];
+    // Both normalised spellings count: the resolved form (hubWorkflowDirs, `/a/./hub` -> `/a/hub`) and the typed one with only a trailing `/`
+    // stripped (what permissions_gen.hub_read_patterns keeps when its pathlib form leaves a spelling as typed), so neither causes a false WARN.
+    const slash = (s: string): string => s.split("\\").join("/");
+    const has = (d: string): boolean => read[d] === "allow" && read[`${d}/*`] === "allow";
+    const missing = new Set<string>();
+    for (const v of typeof i.hubWorkflow === "string" ? [i.hubWorkflow] : Array.isArray(i.hubWorkflow) ? i.hubWorkflow : []) {
+      const [d] = hubWorkflowDirs(v, platform);
+      if (!d) continue;
+      const resolved = slash(d);
+      if (!has(resolved) && !has(`${slash(v as string).replace(/\/+$/, "")}/.workflow`)) missing.add(resolved);
+    }
+    if (!missing.size) return [];
+    return [`WARN paths.hubWorkflow is set but the permission-system config ${psGlobalConfigPath(i.agentDir)} lacks the hub read keys for ${[...missing].join(", ")}: a ledger read there asks (external_directory catch-all) — fix: re-run foreman setup to re-render it (docs/permissions.md, Hub ledger read).`];
   }
   const x = platform === "win32" ? path.win32 : path.posix;
   const found = new Set<string>();
