@@ -1683,10 +1683,12 @@ interface Collected {
   childAsk?: string;
   /** A childAsk unit other than a bare `npm ci` / `npm install` (safe flags, no package names, no `-g`): the owned-root pre-allow never applies. */
   askUnsafe?: boolean;
-  /** `--prefix` values of the npm install/ci units (the owned-root pre-allow needs each to name the owned root itself). */
-  npmPrefixes?: string[];
-  /** A cd/pushd/Set-Location word occurs: the cwd of a later unit is not the session cwd. */
-  cdSeen?: boolean;
+  /** The `--prefix` values of each npm install/ci unit (`[]` without one); the owned-root pre-allow resolves them against every dir the cd chain may leave. */
+  npmUnits?: string[][];
+  /** The literal target of each top-level `cd <dir>` in order (R10 item 6: the dirs a later npm unit may run in). */
+  npmCds?: string[];
+  /** A cd/pushd/Set-Location the pre-allow does not resolve: not `cd <one literal dir>` at the top level, or more than NPM_MAX_CDS of them. */
+  npmCdUnsafe?: boolean;
   /** Operands of `git worktree remove`: the permission system asks for it, so the worktree block leaves them to it. */
   worktreeRemoveWords?: Set<string>;
   /** Path words a unit writes, moves or deletes (RO_WRITERS, in-place sed, `dd of=`, writing git, `find -delete`): a read-only child's deny. */
@@ -2048,12 +2050,18 @@ const GREP_FAMILY = new Set(["grep", "egrep", "fgrep", "rg"]);
 const WORKTREE_OK = new Set(["list", "remove"]);
 
 /** Options of a bare `npm install` / `npm ci` that write only the project (no registry, prefix or program choice). */
-const NPM_INSTALL_FLAGS = /^--(no-)?(audit|fund|progress|ignore-scripts|prefer-offline|offline|legacy-peer-deps|package-lock)$|^--silent$|^--loglevel=(silent|error|warn|info)$/;
+const NPM_INSTALL_FLAGS = /^--(no-)?(audit|fund|progress|ignore-scripts|prefer-offline|offline|legacy-peer-deps|package-lock)$|^--package-lock-only$|^--silent$|^--loglevel=(silent|error|warn|info)$/;
+
+/** The most top-level `cd <dir>` units a line may hold and keep the owned-root npm pre-allow (each subset of the chain is a possible cwd). */
+const NPM_MAX_CDS = 4;
+
+/** A `--prefix` value or cd target the owned-root pre-allow cannot resolve: an expansion, glob, `\`, or a `~` (win32: a `~` inside a name, as in an 8.3 short name `RUNNER~1`, is literal). */
+function npmUnsafeWord(w: string, platform?: string): boolean {
+  return (platform === "win32" ? /[$`*?[\]{}\\]|(^|[^A-Za-z0-9])~/ : /[$`~*?[\]{}\\]/).test(w);
+}
 
 /** The `--prefix` values of an owned-root-safe `npm install|ci` argument list (`[]` without one), or null when an argument is not safe (`-g`, a package name, any other option, an expansion). */
 function npmInstallArgs(args: string[], platform?: string): string[] | null {
-  // win32: a `~` inside a name (an 8.3 short name like `RUNNER~1`, after a letter or digit) is literal; any other `~` stays unsafe
-  const unsafe = platform === "win32" ? /[$`*?[\]{}\\]|(^|[^A-Za-z0-9])~/ : /[$`~*?[\]{}\\]/;
   const prefixes: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -2062,29 +2070,57 @@ function npmInstallArgs(args: string[], platform?: string): string[] | null {
     if (a === "--prefix") val = args[++i];
     else if (a.startsWith("--prefix=")) val = a.slice(9);
     else return null;
-    if (val === undefined || val === "" || unsafe.test(val)) return null;
+    if (val === undefined || val === "" || npmUnsafeWord(val, platform)) return null;
     prefixes.push(val);
   }
   return prefixes;
 }
 
-/** A child's `npm install|ci` runs unasked in its owned worktree root: the session cwd is that root itself, no cd, nothing else asks, every `--prefix` names the root. */
+/**
+ * Every cwd a line's top-level `cd` chain may leave (each subset of the chain in order: a failed cd leaves the dir as it was), starting at `cwd`.
+ */
+function npmCwds(cwd: string, cds: string[], p: path.PlatformPath): string[] {
+  let dirs = [cwd];
+  for (const t of cds) dirs = [...new Set([...dirs, ...dirs.map((d) => p.resolve(d, t))])];
+  return dirs;
+}
+
+/** The dir npm installs into when run in `dir` without --prefix: the nearest ancestor (itself included) with package.json or node_modules, else `dir`. */
+function npmLocalPrefix(dir: string, p: path.PlatformPath, exists: (x: string) => boolean): string {
+  for (let d = dir, n = 0; n < 64; n++) {
+    if (exists(p.join(d, "package.json")) || exists(p.join(d, "node_modules"))) return d;
+    const up = p.dirname(d);
+    if (up === d) break;
+    d = up;
+  }
+  return dir;
+}
+
+/**
+ * A child's `npm install|ci` runs unasked in its owned worktree root or a subdir of it (R10 item 6): nothing else asks, every cd is one literal
+ * top-level `cd <dir>`, and every dir npm may install into realpaths inside one owned root that holds the session cwd: for each cwd the cd
+ * chain may leave, each `--prefix` resolved against it, or without one the dir npm takes itself (npmLocalPrefix). A symlink out of the root asks.
+ */
 function npmInstallOwned(c: Collected, ctx: MatchCtx): boolean {
-  if (c.askUnsafe || c.cdSeen || !ctx.cwd) return false;
+  if (c.askUnsafe || c.npmCdUnsafe || !ctx.cwd) return false;
   if (ctx.platform === "win32") return npmInstallOwnedWin32(c, ctx);
   const fsx = defaults(ctx);
-  const cwdReal = fsx.realpath(ctx.cwd);
-  if (!cwdReal) return false;
-  const root = (ctx.roundRoots ?? []).map((r) => fsx.realpath(r)).find((r) => r === cwdReal);
+  const inRoot = (root: string, d: string): boolean => {
+    const r = fsx.realpath(d);
+    return !!r && (r === root || r.startsWith(root.endsWith(path.sep) ? root : root + path.sep));
+  };
+  const root = (ctx.roundRoots ?? []).map((r) => fsx.realpath(r)).find((r): r is string => !!r && inRoot(r, ctx.cwd));
   if (!root) return false;
-  return (c.npmPrefixes ?? []).every((p) => fsx.realpath(path.resolve(ctx.cwd, p)) === root);
+  const dirs = npmCwds(ctx.cwd, c.npmCds ?? [], path);
+  if (!dirs.every((d) => inRoot(root, d))) return false;
+  return (c.npmUnits ?? [[]]).every((prefixes) => dirs.every((d) => (prefixes.length ? prefixes.every((p) => inRoot(root, path.resolve(d, p))) : inRoot(root, npmLocalPrefix(d, path, fsx.exists)))));
 }
 
 /**
  * npmInstallOwned on win32: an 8.3 short name and its long name are one directory, so the cwd, the round roots and each `--prefix`
  * (forward or back slashes, resolved with path.win32) are compared case-folded in their JS-realpath and native-realpath (8.3 expanded)
  * spellings. A prefix's native spelling counts only when no symlink is on its way (the JS realpath leaves it unchanged): a link is no
- * alias, so it counts by its target alone. Equality only: a subdir or a parent of the owned root is not it.
+ * alias, so it counts by its target alone. Inside means equal to or below one spelling of the root (R10 item 6), never a parent of it.
  */
 function npmInstallOwnedWin32(c: Collected, ctx: MatchCtx): boolean {
   const fsx = defaults(ctx);
@@ -2097,11 +2133,12 @@ function npmInstallOwnedWin32(c: Collected, ctx: MatchCtx): boolean {
     const noLink = norm(js) === norm(abs);
     return [js, ...(noLink ? [nat(abs)] : [])].filter((x): x is string => !!x).map(norm);
   };
-  const same = (a: string[], b: string[]): boolean => a.some((x) => b.includes(x));
-  const cwdS = spellings(ctx.cwd);
-  const root = (ctx.roundRoots ?? []).map(spellings).find((r) => same(r, cwdS));
+  const inside = (a: string[], root: string[]): boolean => a.some((x) => root.some((r) => x === r || x.startsWith(r.endsWith("\\") ? r : r + "\\")));
+  const root = (ctx.roundRoots ?? []).map(spellings).find((r) => r.length > 0 && inside(spellings(ctx.cwd), r));
   if (!root) return false;
-  return (c.npmPrefixes ?? []).every((p) => same(spellings(p), root));
+  const dirs = npmCwds(path.win32.resolve(ctx.cwd), c.npmCds ?? [], path.win32);
+  if (!dirs.every((d) => inside(spellings(d), root))) return false;
+  return (c.npmUnits ?? [[]]).every((prefixes) => dirs.every((d) => (prefixes.length ? prefixes.every((p) => inside(spellings(path.win32.resolve(d, p)), root)) : inside(spellings(npmLocalPrefix(d, path.win32, fsx.exists)), root))));
 }
 
 function collect(src0: string, shell: "posix" | "powershell", depth: number, out: Collected): void {
@@ -2149,7 +2186,12 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
     const rcore = rWords.slice(off);
     const trustedBound = new Set([...(out.bound ?? [])].filter((n) => TRUSTED_VARS.has(n)));
     if (trustedBound.size) out.boundRefs?.push(...rWords.filter((w, i) => !patt.has(i) && refsBound(w, trustedBound)));
-    if (CD_VERBS.has(verb0.toLowerCase())) out.cdSeen = true;
+    if (CD_VERBS.has(verb0.toLowerCase())) {
+      const t = v.core[1];
+      const ok = depth === 0 && verb0 === "cd" && off === 0 && v.core.length === 2 && skip.size === 0 && !!t && !t.startsWith("-") && !npmUnsafeWord(t, out.platform) && (out.npmCds?.length ?? 0) < NPM_MAX_CDS;
+      if (ok) (out.npmCds ??= []).push(t);
+      else out.npmCdUnsafe = true;
+    }
     {
       let k = 1;
       let ask: string | undefined;
@@ -2162,7 +2204,7 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
         // Fail closed: any env assignment prefix (npm_*, PATH, COMSPEC, CC, ...) may change what npm reads, writes or runs, so it loses the pre-allow.
         const safe = v.env.length > 0 ? null : npmInstallArgs(v.core.slice(2), out.platform);
         if (safe === null) out.askUnsafe = true;
-        else (out.npmPrefixes ??= []).push(...safe);
+        else (out.npmUnits ??= []).push(safe);
       }
       if (ask !== undefined && out.childAsk === undefined) out.childAsk = ask;
     }

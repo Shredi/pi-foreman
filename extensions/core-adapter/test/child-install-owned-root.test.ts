@@ -36,8 +36,8 @@ test("a child still asks for npm install / ci with -g, a foreign --prefix, a pac
 test("a child still asks in a non-owned cwd, a subdir of the owned root, after a cd, or next to git fetch", () => {
   assert.equal(run(other, "npm ci"), "ask");
   assert.equal(run(ws, "npm install"), "ask");
-  assert.equal(run(path.join(owned, "sub"), "npm ci"), "ask");
-  assert.equal(run(owned, "cd sub && npm ci"), "ask");
+  assert.equal(run(path.join(owned, "sub"), "npm ci"), "pass"); // R10 item 6 (ruling D2): a subdir of the owned root is pre-allowed
+  assert.equal(run(owned, "cd sub && npm ci"), "pass"); // R10 item 6 (ruling D2)
   assert.equal(run(owned, "npm ci && git fetch origin"), "ask");
 });
 

@@ -72,7 +72,7 @@ test("win32 child: plain npm ci and npm ci --prefix . in the owned root pass", (
 test("win32 child: npm ci --prefix=C:/Users/RUNNER~1/.../other asks (foreign prefix, either spelling)", () => {
   assert.equal(run(`npm ci --prefix=${fwd(OTHER)}`), "ask");
   assert.equal(run(`npm ci --prefix=${fwd(toLong(OTHER))}`), "ask");
-  assert.equal(run(`npm ci --prefix=${fwd(path.win32.join(OWNED, "sub"))}`), "ask");
+  assert.equal(run(`npm ci --prefix=${fwd(path.win32.join(OWNED, "sub"))}`), "pass"); // R10 item 6 (ruling D2): a subdir of the owned root is pre-allowed
   assert.equal(run("npm ci --prefix=D:/elsewhere"), "ask");
 });
 
