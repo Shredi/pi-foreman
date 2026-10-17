@@ -388,3 +388,63 @@ for (const line of [
     assert.equal(foreman(line, "powershell"), "pass");
   });
 }
+
+// ------------------------------------------------------------------ revision 2, item 2: default/assign expansions on an integer name,
+// bash's integer specials, compound-array subscripts, `[[ .. ]]` operands holding a subscript
+for (const [line, name, who] of [
+  [`declare -i x; : \${x:=$y}; ${S_USE}`, "S", "child"],
+  [`declare -i x; : \${x:+$y}; ${S_USE}`, "S", "child"],
+  [`declare -i n; : \${n+$y}; ${HOME_USE}`, "HOME", "foreman"],
+  [`declare -i x; : \${x:-$y}; ${S_USE}`, "S", "child"],
+  [`declare -i x; : \${x-$y}; ${S_USE}`, "S", "child"],
+  [`declare -i x; : \${x:?$y}; ${S_USE}`, "S", "child"],
+  [`declare -ai a; : \${a[0]:=$y}; ${S_USE}`, "S", "child"],
+  [`typeset -i n; echo "\${n:=$y}"; ${HOME_USE}`, "HOME", "foreman"],
+  [`OPTIND=$y; ${S_USE}`, "S", "child"],
+  [`OPTERR=$y; ${S_USE}`, "S", "child"],
+  [`SECONDS=$y; ${HOME_USE}`, "HOME", "foreman"],
+  [`RANDOM=$y; ${S_USE}`, "S", "child"],
+  [`LINENO=$y; ${S_USE}`, "S", "child"],
+  [`HISTCMD=$y; ${S_USE}`, "S", "child"],
+  [`OPTIND="$y"; ${S_USE}`, "S", "child"],
+  [`OPTIND+=$y; ${S_USE}`, "S", "child"],
+  [`export OPTIND=$y; ${S_USE}`, "S", "child"],
+  [`: \${OPTIND:=$y}; ${S_USE}`, "S", "child"],
+  [`read OPTIND <f; ${S_USE}`, "S", "child"],
+  [`y=$(cat f); a=([$y]=1); ${S_USE}`, "S", "child"],
+  [`y=$(cat f); declare -a a=([$y]=1); ${S_USE}`, "S", "child"],
+  [`y=$(cat f); a+=([$y]=1); ${HOME_USE}`, "HOME", "foreman"],
+  [`y=$(cat f); a=(x [$y]=1); ${S_USE}`, "S", "child"],
+  [`read y <f; a=([$y]=1); ${S_USE}`, "S", "child"],
+  [`y=$(cat f); [[ a[0] -eq $y ]]; ${S_USE}`, "S", "child"],
+  [`y=$(cat f); [[ a[0] -ne $y ]]; ${S_USE}`, "S", "child"],
+  [`y=$(cat f); [[ a[0] -lt $y ]]; ${HOME_USE}`, "HOME", "foreman"],
+  [`y=$(cat f); [[ a[0] -le $y ]]; ${S_USE}`, "S", "child"],
+  [`y=$(cat f); [[ a[0] -gt $y ]]; ${S_USE}`, "S", "child"],
+  [`y=$(cat f); [[ a[0] -ge $y ]]; ${S_USE}`, "S", "child"],
+  [`y=$(cat f); [[ $y -lt a[0] ]]; ${S_USE}`, "S", "child"],
+  [`y=$(cat f); [[ a[0] -eq y ]]; ${S_USE}`, "S", "child"],
+  [`y=$(cat f); [[ \${a[0]} -eq $y ]]; ${S_USE}`, "S", "child"],
+  [`y=$(cat f); [[ a[b[0]] -eq $y ]]; ${S_USE}`, "S", "child"],
+] as const) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line).has(name), `boundNames sees ${name}`);
+    untrusted(runAs(who, line), line);
+  });
+}
+
+// revision 2, item 2 negatives: numeric literals, unset operands, reads of the specials leave HOME trusted
+for (const line of [
+  "OPTIND=1; cat $HOME/f",
+  "[[ $n -eq 1 ]]; cat $HOME/f",
+  "[[ a[0] -eq 1 ]]; cat $HOME/f",
+  "declare -i n; : ${n:=5}; cat $HOME/f",
+  "a=([0]=1 [1]=2); cat $HOME/f",
+  "shift $((OPTIND-1)); cat $HOME/f",
+  "echo $RANDOM $SECONDS; cat $HOME/f",
+]) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(!boundNames(line).has("HOME"));
+    assert.equal(foreman(line.replace("$HOME/f", HOME_USE.slice(4))), "pass");
+  });
+}

@@ -271,7 +271,9 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
   }
   // array subscripts (`${a[S++]}`, `a[i]=`) and `[[ x -eq y ]]` operands are arithmetic too
   for (const m of command.matchAll(/[A-Za-z0-9_]\[([^\]]*)\]/g)) bodies.push(m[1]);
-  for (const m of command.matchAll(/\[\[([^\]]*)\]\]/g)) if (/\s-(?:eq|ne|lt|le|gt|ge)\s/.test(m[1])) bodies.push(m[1]);
+  // compound-array subscripts (`a=([$y]=1)`, `a=(x [$y]=1)`, `declare -a a=([$y]=1)`)
+  for (const m of command.matchAll(/(?:^|[\s(])\[([^\]]*)\]\+?=/g)) bodies.push(m[1]);
+  for (const body of dblBrackets(command)) if (/\s-(?:eq|ne|lt|le|gt|ge)\s/.test(body)) bodies.push(body);
   // `${a:off}` / `${a:off:len}` (not `${a:-x}` / `${a:=x}` / `${a:+x}` / `${a:?x}`; `${a: -1}` is one) evaluate off and len as arithmetic,
   // and so does every `x=RHS` / `x+=RHS` once x has the integer attribute: only a plain numeric expression stays benign there
   if (shell === "posix") {
@@ -522,16 +524,53 @@ function intBodies(text: string, all: () => void): string[] {
     }
   }
   const out: string[] = [];
-  for (const n of names) {
+  for (const n of [...names, ...SH_INT_SPECIALS]) {
+    // `${x:=w}` / `${x=w}` assign w; `${x:+w}` / `${x-w}` / `${x:?w}` count too (fail closed): w must be a plain numeric literal
+    for (const m of text.matchAll(new RegExp(`\\$\\{${n}(?:\\[[^\\]]*\\])?:?[-=+?]([^}]*)`, "g"))) out.push(m[1]);
     // the whole assignment word with its quoting (`x=" $y"`, `x=1" $y"`, an unterminated quote runs to the end); a quoted part may
     // hold any text, so a body with a quote counts only when it is a plain numeric literal once the quotes are gone
     const assign = new RegExp(`(?<![\\w$-])${n}(?:\\[[^\\]]*\\])?\\+?=((?:"[^"]*"?|'[^']*'?|[^\\s;&|)"'])*)`, "g");
     for (const m of text.matchAll(assign)) out.push(m[1]);
     const rest = text.replace(stmt, " ").replace(assign, " ");
+    // a special read inside arithmetic (`shift $((OPTIND-1))`) assigns nothing; any other bare mention (`read OPTIND`) may
+    if (!names.has(n)) {
+      if (new RegExp(`(?<![\\w$])(?<!\\$\\{)${n}(?![A-Za-z0-9_])`).test(rest.replace(/\(\([\s\S]*?\)\)|\$\[[^\]]*\]/g, " "))) all();
+      continue;
+    }
     if (new RegExp(`(?<![\\w$])(?<!\\$\\{)${n}(?![A-Za-z0-9_])`).test(rest)) all();
   }
   return out;
 }
+
+/**
+ * The bodies of every `[[ .. ]]` in `command`: a single bracket pair inside (`a[0]`, `a[b[0]]`) is part of the body, so the body runs
+ * to the `]]` that closes the `[[` (to the end of the line when none does).
+ */
+function dblBrackets(command: string): string[] {
+  const out: string[] = [];
+  for (const m of command.matchAll(/\[\[/g)) {
+    let depth = 0;
+    let end = command.length;
+    for (let i = m.index + 2; i < command.length; i++) {
+      if (command[i] === "[") depth++;
+      else if (command[i] === "]") {
+        if (depth > 0) depth--;
+        else if (command[i + 1] === "]") {
+          end = i;
+          break;
+        }
+      }
+    }
+    out.push(command.slice(m.index + 2, end));
+  }
+  return out;
+}
+
+/**
+ * Bash variables some bash builds treat as integers without a declaration (fail closed: assigning them a non-literal counts as
+ * arithmetic, like an `-i` name).
+ */
+const SH_INT_SPECIALS = ["OPTIND", "OPTERR", "LINENO", "RANDOM", "SRANDOM", "SECONDS", "EPOCHSECONDS", "HISTCMD", "COLUMNS", "LINES", "HISTSIZE", "HISTFILESIZE"];
 
 /** Whether `word` holds a `$N` / `${N}` reference to a name in `names`. */
 function refsBound(word: string, names: ReadonlySet<string>): boolean {
