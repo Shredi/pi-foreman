@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -483,6 +484,38 @@ def tool_results(records, tool=None):
 
 def notifications(records):
     return [r.get("message", "") for r in records if r.get("type") == "extension_ui_request" and r.get("method") == "notify"]
+
+
+# Custom message types that wake or notify the foreman (foreman_wake covers wait, timer and pressure outcomes).
+WAKE_TYPES = ("foreman_wake", "pi-foreman-pr")
+_WAKE_SUBS = (  # applied in order: one rule per kind of volatile value, not per wake event
+    (re.compile(r"https?://\S+"), "<url>"),
+    (re.compile(r"\d{4}-\d\d-\d\d[T ]\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:?\d\d)?"), "<ts>"),
+    (re.compile(r"(?<![\w/.:-])(?:[A-Za-z]:[\\/]|/)[^\s\"'`,;)]+"), "<path>"),
+    (re.compile(r"\bw\d+\b"), "<id>"),
+    (re.compile(r"#\d+\b"), "#<n>"),
+    (re.compile(r"\b\d+(?:\.\d+)? ?(?:ms|s|min|m)\b"), "<dur>"),
+)
+
+
+def normalise_wake(text):
+    """A wake or notification text with ids, timestamps, paths, urls, PR numbers and durations replaced by placeholders."""
+    for rx, rep in _WAKE_SUBS:
+        text = rx.sub(rep, text)
+    return text
+
+
+def wake_messages(records):
+    """[(customType, normalised content)] of every foreman wake message in an RPC transcript."""
+    out = []
+    for r in records:
+        msg = r.get("message") if isinstance(r.get("message"), dict) else {}
+        if r.get("type") == "message_end" and msg.get("customType") in WAKE_TYPES:
+            c = msg.get("content")
+            if isinstance(c, list):
+                c = "\n".join(p.get("text", "") for p in c if isinstance(p, dict))
+            out.append((msg["customType"], normalise_wake(str(c or ""))))
+    return out
 
 
 def shape(records, keys=("event", "role", "toolFamily", "guard", "decision", "model", "tier", "exit")):
