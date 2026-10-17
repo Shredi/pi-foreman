@@ -35,6 +35,9 @@ export function rulingFresh(file: string, mtime: (p: string) => number | null = 
   return ask === null || ruling === null || ruling >= ask;
 }
 
+/** `needs_ruling: no` line of an ask.md: an informational ask. */
+export const NEEDS_RULING_NO_RE = /^needs_ruling:[ \t]*no[ \t]*$/im;
+
 /**
  * The ask in `dir` is unanswered: `.ask` is present and `.seen` does not name its ruling (`ruling-<n>.md` for
  * `ask-<n>`, or `ruling.md`; with no number in `.ask`, any `.seen` ends it). Never a stored flag.
@@ -42,6 +45,8 @@ export function rulingFresh(file: string, mtime: (p: string) => number | null = 
 export function askOpen(dir: string): boolean {
   const ask = readText(path.join(dir, ".ask"));
   if (ask === null) return false;
+  // an informational ask (`needs_ruling: no`) never holds the hand, whatever an older `.ask` says
+  if (NEEDS_RULING_NO_RE.test(readText(path.join(dir, "ask.md")) ?? "")) return false;
   const seen = readText(path.join(dir, ".seen"));
   if (seen === null) return true;
   const named = seen.trim();

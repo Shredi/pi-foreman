@@ -4,13 +4,12 @@
 // the foreman writes `.seen` (the ruling file name) after reading it, which ends the blocked state.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { askOpen, isRulingName } from "./ruling.ts";
+import { askOpen, isRulingName, NEEDS_RULING_NO_RE } from "./ruling.ts";
 
 export const ASK_FILE = "ask.md";
 export const ASK_MARKER = ".ask";
 export const SEEN_FILE = ".seen";
 const ASK_HEADER_RE = /^# Ask (\d{1,6}): (\S.*)$/;
-const NEEDS_RULING_NO_RE = /^needs_ruling:[ \t]*no[ \t]*$/im;
 
 /** `# Ask <n>: <topic>` on the first line of ask.md; null for anything else. */
 export function parseAskHeader(text: string): { n: number; topic: string } | null {
@@ -57,7 +56,10 @@ export class AskContract {
     const text = (this.d.read ?? ((f) => fs.readFileSync(f, "utf8")))(real);
     const head = text === null ? null : parseAskHeader(text);
     if (!head) return null;
-    if (text !== null && NEEDS_RULING_NO_RE.test(text)) return "note";
+    if (text !== null && NEEDS_RULING_NO_RE.test(text)) {
+      this.release(dir); // an informational ask supersedes an open one: the hand never stays up for it
+      return "note";
+    }
     try {
       (this.d.touch ?? ((f, t) => fs.writeFileSync(f, t, "utf8")))(path.join(dir, ASK_MARKER), `ask-${head.n}\n`);
     } catch {
