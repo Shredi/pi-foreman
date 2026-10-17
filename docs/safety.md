@@ -147,6 +147,10 @@ pi-subagents delivers `subagent_control_notice` custom messages with `pi.sendMes
 
 On Windows pi-subagents cannot spawn a script hook without a shell, so the `foreman-worktree-setup` hook does not run there. Managed worktrees keep a symlinked `node_modules`, and builders must not run `npm ci` in them (it would rewrite the main checkout's `node_modules`). `/foreman doctor` WARNs on a symlinked `node_modules` in a live worktree.
 
+## Known limit: background runs on Windows
+
+On Windows a `foreman_bg` command runs under `cmd.exe` (`cmd /d /s /c "<command>"`), and the add-on's `bg_run` also runs its commands under `cmd.exe`, while the overlay rules, the shell-write guard, the destructive guard and the git guard classify the command as bash. cmd syntax the bash scanner does not model (`&` as a separator, `^` escapes, `%VAR%` expansion, cmd built-ins such as `del`, `rd` or `copy`) can therefore pass with a verdict that is wrong for what actually runs. Keep background commands on Windows to plain program calls (`node …`, `npm test`). Running them through `bash.exe -c` (Git Bash), so the guards and the shell agree, is a later item.
+
 ## Further safety and runtime keys
 
 Key-by-key layer rules for `safety.*`: `design/architecture.md`
