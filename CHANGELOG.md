@@ -5,6 +5,12 @@
 ### Round 10, permission overlay
 - Toolchain probes: the baseline gets `externalDirectory.probe` (`/usr/local/bin`, `/opt/homebrew/bin`, `/usr/bin`, `~/.local/bin`, `~/.npm/_npx`, `~/.npm-global/bin`, `%APPDATA%/npm` on Windows), rendered as `external_directory_read` keys (dir and `dir/*`). The overlay narrows them: a plain `ls`/`stat`/`which` line and the `ls` tool pass, any other command, pipe, redirect or substitution naming them asks (a child: deny). The rendered policy changes: `/foreman doctor` reports drift until you run `foreman setup` again.
 - Hub ledger read: after setting or changing `paths.hubWorkflow`, or after this release, re-run `foreman setup` to re-render the hub read keys (the realpath spelling of a symlinked hub dir is now rendered too).
+- The foreman reads its own state and usage files, and `.pi/scratch` is readable.
+- Quoted `git log -S/-G/--grep` values are no longer overlay path candidates; the production prompt still needs an upstream permission-system change.
+- A child may run `npm ci` and `npm install --package-lock-only` in its own worktree subdirectories.
+- Self-ruling narrowing was attempted and reverted; its fixtures are kept.
+- Windows replay expectations are recorded for the round.
+- The bench rig pins Pi 1.3.0 and `bench/pi-lock` is regenerated.
 
 ### Pi 1.3.0
 - Pi 1.3.0 supported (range 1.3.x); no extension-surface change. Pi's `--model` ambiguity fix prefers the provider with credentials.
