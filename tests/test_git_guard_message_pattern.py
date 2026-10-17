@@ -65,9 +65,9 @@ class MessagePatternScopeTest(unittest.TestCase):
         got, reason = decide("git commit -F '%s/msg.txt'" % outside, "main", self.repo)
         self.assertEqual(got, "ask")
         self.assertIn("cannot read the message file", reason)
-        # a child's unreadable message stays unlinted (it cannot ask): a bad subject in the outside file is not read
+        # a child cannot ask: a message file outside the worktree is refused (R11 fix round 1, item 8b)
         Path(outside, "bad.txt").write_text("review(r10): x\n")
-        self.assertEqual(decide("git commit -F '%s/bad.txt'" % outside, "child", self.repo)[0], "allow")
+        self.assertEqual(decide("git commit -F '%s/bad.txt'" % outside, "child", self.repo)[0], "deny")
 
 
 if __name__ == "__main__":
