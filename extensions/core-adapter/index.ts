@@ -21,7 +21,7 @@ import { npmRootDrift, npmRootDriftNotice, readPolicy } from "./npmrootdrift.ts"
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
-import { actionOf, endActive, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
+import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
 import { isRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
@@ -186,6 +186,8 @@ interface Session {
   runs: RunRegistry;
   /** Child runs launched by this session that have not ended (actions.ts trackActive; /sync and close refuse while any). */
   activeRuns: Set<string>;
+  /** R11 item 5: tool call ids of subagent launches accepted at tool_call with no tool_result yet (finalization is off while any). */
+  pendingLaunches: Set<string>;
   /** Foreman bash calls made while a child run was active, since the last trace emit (D5; delta, reset on emit). */
   pollBash: number;
   /** Launch notices (strong model asked for but unmapped) by tool call id, added to the subagent result. */
@@ -473,6 +475,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       notified: new Set(),
       runs: new Map(),
       activeRuns: new Set(),
+      pendingLaunches: new Set(),
       pollBash: 0,
       launchNotices: new Map(),
       supervisor: new SupervisorWindow(),
@@ -980,6 +983,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
   pi.on("turn_start", async (event, ctx) => {
     const s = sessionFor(ctx);
+    // A launch whose tool_result never came does not keep finalization off past its turn.
+    s?.pendingLaunches.clear();
     if (s && !s.isChild) s.idleCache.noteTurnStart(typeof event.timestamp === "number" ? event.timestamp : Date.now());
   });
   pi.on("agent_start", async (_event, ctx) => {
@@ -1170,7 +1175,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const handoff = recheckExempt(toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, owned: s.owned });
     // R11 item 5: finalization (a reviewer PASS or a completed finalizer, no child run active): the read budget never
     // refuses, and a plain git commit/add/status/log is exempt from the recheck budget too.
-    const final = s.budget.finalized && s.activeRuns.size === 0;
+    // An accepted launch without its tool_result yet also ends it (fail closed).
+    const final = s.budget.finalized && s.activeRuns.size === 0 && s.pendingLaunches.size === 0;
     const finalExempt = final && (!s.budget.postPass || finalizationCommand(toolName, input));
     const exempt = ledgerOnly || handoff || finalExempt || s.supervisor.open.size > 0 || (file !== null && inRecorded(s.childFiles, normFile(file)));
     // MCP and subagent get|guide calls are counted under the name `read`, after the exemptions above.
@@ -1827,6 +1833,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const b = recordLaunchUsage(s, ctx, input, kind, limits);
         if (!s.isChild) s.widget.runs.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: b?.model ?? null });
       }
+      if (event.toolName === "subagent" && !s.isChild && !isManagementCall(input)) s.pendingLaunches.add(event.toolCallId);
       if (event.toolName === "subagent" && !s.isChild && launchRoles(s, input).includes("planner")) capSet(s.planSnaps.byCall, event.toolCallId, planSnapshot(planOpts(s, ctx)));
       return undefined;
     } catch (err) {
@@ -2308,6 +2315,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (event.toolName === "subagent") {
       const s = sessionFor(ctx);
       if (s) {
+        s.pendingLaunches.delete(event.toolCallId);
         recordLaunch(s.runs, event.input, event.details, event.isError);
         recordLaunchRoles(s.launchedRoles, event.input, event.details, event.isError);
         const heads = s.launchHeadsByCall.get(event.toolCallId);

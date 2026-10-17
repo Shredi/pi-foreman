@@ -108,6 +108,8 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
       return { id, res: (await handlers.get("tool_call")!({ toolName: "subagent", toolCallId: id, input }, ctx)) as Block };
     },
     started: (id: string, input: Record<string, unknown>, runId: string) => handlers.get("tool_result")!({ toolName: "subagent", toolCallId: id, input, details: { runId }, content: [{ type: "text", text: "started" }], isError: false }, ctx),
+    /** A launch's tool_result that is an error with no run started. */
+    errored: (id: string, input: Record<string, unknown>) => handlers.get("tool_result")!({ toolName: "subagent", toolCallId: id, input, details: {}, content: [{ type: "text", text: "launch failed" }], isError: true }, ctx),
     end: (data: Record<string, unknown>) => channels.get("subagent:async-complete")!(data),
     /** One foreman tool call (tool_call only); returns its block or undefined. */
     async call(toolName: string, input: Record<string, unknown>): Promise<Block> {
