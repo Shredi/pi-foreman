@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { SteerWatch, foldSteer } from "./steerwatch.ts";
+import { SteerWatch, foldSteer, takeLateSteer } from "./steerwatch.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, userOverride } from "./ceremony.ts";
 import { checkTrivial, effectiveRequired, escalationNote, trivialBuilderPath } from "./trivial.ts";
@@ -2400,8 +2400,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ctx.signal?.removeEventListener("abort", onCtxAbort);
     }
     // a steer that landed after the last poll (the wait resolved first) is taken now, so this result shows it
-    const late = watch.take();
-    if (late) steerText = steerText ? `${steerText}\n\n${late}` : late;
+    steerText = takeLateSteer(watch, steerText);
     if (steerText && r.outcome === "abort" && !ctx.signal?.aborted) {
       const ms = Date.now() - started;
       watch.commit(); // the steer is in the returned text

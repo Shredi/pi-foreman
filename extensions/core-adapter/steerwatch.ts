@@ -25,6 +25,16 @@ export function foldSteer(watch: SteerWatch, steer: string, base: string, canSho
   return `${base}\n${steer}`;
 }
 
+/**
+ * The steer text of a launch wait once the wait has ended: `steer` (taken by the poll during the wait) followed by a
+ * steer that landed after the last poll (the wait resolved first), taken now so the result shows it.
+ */
+export function takeLateSteer(watch: SteerWatch, steer: string): string {
+  const late = watch.take();
+  if (!late) return steer;
+  return steer ? `${steer}\n\n${late}` : late;
+}
+
 export class SteerWatch {
   private readonly seen = new Map<string, number>();
   private baselined = false;
