@@ -134,8 +134,7 @@ export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulin
 /** The refusal reason when a session writes a ruling file in a dir where it is the child. */
 export const SELF_RULING_REASON = "a session cannot write its own parent's ruling";
 
-/** Strict viewer set: verbs with no file-writing option (the few that have one are excluded in `provableRead`). `cd` only moves. */
-const VIEWERS = new Set(["cat", "head", "tail", "less", "more", "wc", "ls", "stat", "file", "grep", "egrep", "fgrep", "rg", "diff", "md5sum", "shasum", "sha256sum", "od", "hexdump", "nl", "readlink", "realpath", "basename", "dirname", "test", "[", "cd"]);
+const REF_READ_VERBS = new Set(["cat", "head", "tail", "ls", "grep", "egrep", "fgrep", "rg", "wc", "stat", "file", "nl", "realpath", "sort", "uniq", "cut", "tr", "cd"]);
 
 interface Seg { words: string[]; redirs: string[] }
 
@@ -242,6 +241,7 @@ function writeTargets(words: string[]): { targets: string[]; sources: string[] }
 
 const WRAPPERS = new Set(["sudo", "nohup", "time", "command", "env", "nice", "exec", "xargs", "builtin", "stdbuf", "setsid"]);
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash", "pwsh", "powershell"]);
+const GIT_READ = new Set(["show", "log", "diff", "status", "blame", "grep", "ls-files", "cat-file"]);
 
 /** The words after leading assignments, wrapper verbs (`env`, `nohup`, `xargs`, …) and their flags. */
 function stripWrappers(words: string[]): string[] {
@@ -273,39 +273,15 @@ function parseable(s: string): boolean {
   return (s.match(/'/g) ?? []).length % 2 === 0 && (s.match(/(?<!\\)"/g) ?? []).length % 2 === 0;
 }
 
-/**
- * The two allowlisted read forms of a verb that has writing options (`w`/`e` commands, `--output`, `-O`): a plain
- * `sed [-nEr] 'N,Mp|/re/p|s/a/b/[gpI]' FILE…` and `git (show|log|diff|cat-file) [-n -p --stat …] REV…`. Anything else is strict.
- */
-const SED_SCRIPT = /^(?:[0-9$]*(?:,[0-9$]+)?[pdq=]|\/[^/\\;\n]*\/[pdq]|s\/[^/\\;\n]*\/[^/\\;\n]*\/[gpI]*)$/;
-function plainSedRead(args: string[]): boolean {
-  const flags = args.filter((a) => a.startsWith("-"));
-  if (!flags.every((a) => /^-[nEr]+$|^--(quiet|silent|regexp-extended)$/.test(a))) return false;
-  const ops = args.filter((a) => !a.startsWith("-"));
-  return ops.length > 0 && SED_SCRIPT.test(ops[0]);
-}
-const GIT_SAFE_OPT = /^(?:-[0-9]+|-[npq]|--(?:stat|oneline|no-pager|name-only|name-status|cached|short|no-color|shortstat|numstat|patch|quiet)|--)$/;
-function plainGitRead(args: string[]): boolean {
-  if (!args[0] || !GIT_PLAIN.has(args[0])) return false; // no global options (`-c`, `--no-pager` before the subcommand)
-  return args.slice(1).every((a) => !a.startsWith("-") || GIT_SAFE_OPT.test(a));
-}
-const GIT_PLAIN = new Set(["show", "log", "diff", "cat-file"]);
-
-/**
- * A segment whose ruling-named words are only read operands: ONLY a strict viewer with no file-writing option.
- * Every other verb (sed, sort, git, awk, find, tar, …) is checked word by word, quoted words and flag values included.
- */
+/** A segment whose ruling-named words are only read operands: a viewer, non-in-place sed, diff, read-only git, copy sources. */
 function provableRead(rest: string[]): boolean {
   const verb = rest[0];
+  if (!verb) return false;
   const args = rest.slice(1);
-  if (verb === "sed") return plainSedRead(args);
-  if (verb === "git") return plainGitRead(args);
-  if (!verb || !VIEWERS.has(verb)) return false;
-  if (verb === "rg") return !args.some((a) => /^--pre(-glob)?(=|$)|^--hostname-bin(=|$)/.test(a));
-  if (verb === "diff") return !args.some((a) => a === "--output" || a.startsWith("--output=") || a === "-o");
-  if (verb === "less") return !args.some((a) => /^-[A-Za-z]*[oO]/.test(a) || /^--(log-file|LOG-FILE)/.test(a));
-  if (verb === "file") return !args.some((a) => /^-[A-Za-z]*C/.test(a) || a === "--compile");
-  return true;
+  if (REF_READ_VERBS.has(verb) || verb === "diff" || WRITE_LAST.has(verb)) return true;
+  if (verb === "sed") return !args.some((a) => a === "--in-place" || a.startsWith("--in-place=") || /^-[a-zA-Z]*i/.test(a));
+  if (verb === "git") return GIT_READ.has(args.find((a) => !a.startsWith("-")) ?? "");
+  return false;
 }
 
 const realDir = (d: string): string => path.dirname(realKey(path.join(d, "x")));
@@ -388,25 +364,10 @@ export function selfRulingTarget(toolName: string, input: Record<string, unknown
           if (s !== undefined) return s;
         }
       }
-      // anything but a strict viewer: any word naming a ruling file or resolving into a child dir is refused,
-      // except a cp/mv/rsync source whose destination is outside every child dir
+      // anything but a provable read: fail closed on any ruling word next to a dir mention
       if (!(provableRead(rest) && !hasXargs)) {
-        const toks = (x: string): string[] => [x, ...x.split(/[\s;&|<>()'",=:]+/)].filter(Boolean);
-        const embedded = (x: string): boolean => toks(x).some((t) => isRulingName(path.basename(t)) && (inChildAt(at, t) || inChild(t)));
-        const intoDir = (t: string): boolean => {
-          if (/^~[^/]+(\/|$)/.test(t)) return false;
-          const home = process.env.HOME ?? os.homedir();
-          const q = t === "~" ? home : t.startsWith("~/") ? path.join(home, t.slice(2)) : t;
-          if (![...childDirs, ...dirs].some((d) => t.includes(d)) && !/[/~]|^\.\.?$/.test(t)) return false; // a bare word is no path
-          return [...childDirs, ...dirs].some((d) => t.includes(d)) || [at, cwd].some((b) => {
-            const r = realKey(path.resolve(b, q));
-            return [...dirs].some((d) => r === d || r.startsWith(d + path.sep));
-          });
-        };
-        const outside = (d: string): boolean => !dynWord(d) && !toks(d).some(intoDir);
-        const cpVerb = rest[0] === "cp" || rest[0] === "mv" || rest[0] === "rsync";
-        const exempt = cpVerb && targets.length > 0 && targets.every(outside) ? new Set(sources) : new Set<string>();
-        const w = seg.words.find((x) => !covered(x) && !exempt.has(x) && (embedded(x) || toks(x).some(intoDir) || (/ruling/.test(x) && (mentionsDir || moves || dynWord(x)))));
+        const embedded = (x: string): boolean => x.split(/[\s;&|<>()'",=:]+/).some((t) => isRulingName(path.basename(t)) && (inChildAt(at, t) || inChild(t)));
+        const w = seg.words.find((x) => !covered(x) && /ruling/.test(x) && (inChildAt(at, x) || inChild(x) || embedded(x) || mentionsDir || moves || dynWord(x)));
         if (w !== undefined) return w;
       }
     }
