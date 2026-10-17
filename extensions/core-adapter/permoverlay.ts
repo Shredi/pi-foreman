@@ -1555,13 +1555,15 @@ function baseName(w: string): string {
   return b.toLowerCase().replace(/\.(exe|cmd|bat)$/, "");
 }
 
-/** The unit as written, then with env assignments / wrapper commands / the path prefix stripped. */
-function variants(words: string[]): { texts: string[]; core: string[] } {
+/** The unit as written, then with env assignments / wrapper commands / the path prefix stripped; `env` lists the stripped assignments. */
+function variants(words: string[]): { texts: string[]; core: string[]; env: string[] } {
   let w = words.slice();
   const texts: string[] = [];
+  const env: string[] = [];
   for (let n = 0; n < 8 && w.length; n++) {
     texts.push(w.join(" "));
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0])) {
+      env.push(w[0]);
       w = w.slice(1);
       continue;
     }
@@ -1574,7 +1576,7 @@ function variants(words: string[]): { texts: string[]; core: string[] } {
     w = w.slice(1);
     while (w.length && (w[0].startsWith("-") || /^\d+(\.\d+)?[smhd]?$/.test(w[0]))) w = w.slice(1);
   }
-  return { texts, core: w };
+  return { texts, core: w, env };
 }
 
 /** The script a shell-ish unit carries in an argument (`bash -c '...'`, `eval ...`, `pwsh -c ...`). */
@@ -1901,6 +1903,9 @@ function npmInstallArgs(args: string[]): string[] | null {
   return prefixes;
 }
 
+/** An env assignment that changes what npm (or the shell and loader it runs through) reads, writes or runs: no owned-root pre-allow. */
+const ENV_CHANGES_NPM = /^(npm_|NODE|PATH$|LD_|DYLD_|HOME$|USERPROFILE$|XDG_|BASH_ENV$|ENV$|IFS$|PS4$|CDPATH$|SHELL$|TMP$|TMPDIR$|TEMP$|GIT_|INIT_CWD$|PWD$|OLDPWD$|PREFIX$|APPDATA$|LOCALAPPDATA$|PSMODULEPATH$)/i;
+
 /** A child's `npm install|ci` runs unasked in its owned worktree root: the session cwd is that root itself, no cd, nothing else asks, every `--prefix` names the root. */
 function npmInstallOwned(c: Collected, ctx: MatchCtx): boolean {
   if (c.askUnsafe || c.cdSeen || !ctx.cwd) return false;
@@ -1965,7 +1970,7 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
         if (ask !== undefined) out.askUnsafe = true;
       } else if (verb0 === "npm" && (v.core[1] === "ci" || v.core[1] === "install" || v.core[1] === "i")) {
         ask = `npm ${v.core[1]}`;
-        const safe = npmInstallArgs(v.core.slice(2));
+        const safe = v.env.some((e) => ENV_CHANGES_NPM.test(e.slice(0, e.indexOf("=")))) ? null : npmInstallArgs(v.core.slice(2));
         if (safe === null) out.askUnsafe = true;
         else (out.npmPrefixes ??= []).push(...safe);
       }
