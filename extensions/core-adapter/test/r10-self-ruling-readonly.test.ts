@@ -1,8 +1,11 @@
-// R10 item 7: the self-ruling guard narrowed to real write surfaces of ruling*.md in a handoff dir where the session is
-// the child. Before the fix (reproduced against 545abc2): L1 refused by branch 1 `named.some(inChild)` (the cat operand),
+// R10 item 7: the narrowing of the self-ruling guard to real write surfaces of ruling*.md was REVERTED to the 545abc2
+// guard after three review cycles (98ba72e, 5c79ea3, f30001b); each re-review found new bypasses (quote-split moves
+// that are not the command word, PowerShell backtick escapes, links made by an interpreter). A parser-level rewrite is
+// needed (open item). The deny fixtures stay; the read-only lines are kept as documented current state.
+// Against the 545abc2 guard: L1 refused by branch 1 `named.some(inChild)` (the cat operand),
 // L2 with `cd $FOREMAN_SCRATCH` by branch 3 `dynamic && moves`, L3 by branch 3 `dynamic && mentionsDir` (the `ls`
 // operand, `[` in the heredoc body), the session copy line (cp brief + `cat >>` heredoc) by branch 2 `named && dynamic`;
-// L2 with a literal scratch path and the cp of plan.md into the handoff dir already passed.
+// L2 with a literal scratch path and the cp of plan.md into the handoff dir pass.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -25,20 +28,31 @@ function rig() {
   return { root, hand, H, S, dirs: childHandoffDirs(hand, "me") };
 }
 type Rig = ReturnType<typeof rig>;
-const run = (r: Rig, command: string, tool = "bash", cwd = r.root) => selfRulingRefusal(tool, { command }, cwd, r.dirs, [r.S]);
+const run = (r: Rig, command: string, tool = "bash", cwd = r.root) => selfRulingRefusal(tool, { command }, cwd, r.dirs);
 
-const PASS: Array<[string, (r: Rig) => string]> = [
-  ["L1 cp plan.md to scratch && cat ruling.md >> scratch file", (r) => `cp ${r.H}/plan.md ${r.S} && cat ${r.H}/ruling.md >> ${r.S}/x.md`],
-  ["L1 with $FOREMAN_SCRATCH targets", (r) => `cp ${r.H}/plan.md $FOREMAN_SCRATCH && cat ${r.H}/ruling.md >> $FOREMAN_SCRATCH/x.md`],
-  ["L2 cd scratch && gh run view", (r) => `cd ${r.S} && gh run view 39038003331`],
-  ["L2 cd $FOREMAN_SCRATCH && gh run view", () => `cd $FOREMAN_SCRATCH && gh run view 39038003331`],
-  ["L3 ls handoff; python3 heredoc not naming a ruling", (r) => `ls ${r.H}/; python3 - <<'EOF'\nimport json\nd = json.load(open('${r.S}/status.json'))\nprint(d["runs"][0])\nEOF`],
-  ["session: cp brief.md out of the handoff dir && cat >> plan heredoc", (r) => `cp ${r.H}/brief.md ${r.root}/.workflow/scratch/brief-r10.md && cat >> ${r.root}/.workflow/scratch/plan-r10.md <<'EOF'\n## Addendum\n- Default without a ruling: ask. Ask at $25.\nEOF`],
-  ["session: cp plan.md into the handoff dir (target is not ruling*.md)", (r) => `cp ${r.root}/.workflow/scratch/plan-r10.md ${r.H}/plan.md`],
+// Documented current state (R10, narrowing reverted): what the 545abc2 guard returns for the read-only lines.
+const REFUSED_NOW: Array<[string, (r: Rig) => string]> = [
+  ["cp <H>/plan.md <S> && cat <H>/ruling.md >> <S>/x.md", (r) => `cp ${r.H}/plan.md ${r.S} && cat ${r.H}/ruling.md >> ${r.S}/x.md`],
+  ["cp <H>/plan.md $FOREMAN_SCRATCH && cat <H>/ruling.md >> $FOREMAN_SCRATCH/x.md", (r) => `cp ${r.H}/plan.md $FOREMAN_SCRATCH && cat ${r.H}/ruling.md >> $FOREMAN_SCRATCH/x.md`],
+  ["cd $FOREMAN_SCRATCH && gh run view 39038003331", () => `cd $FOREMAN_SCRATCH && gh run view 39038003331`],
+  ["ls <H>/; python3 - <<'EOF' (json.load of <S>/status.json, print(d[\"runs\"][0]))", (r) => `ls ${r.H}/; python3 - <<'EOF'\nimport json\nd = json.load(open('${r.S}/status.json'))\nprint(d["runs"][0])\nEOF`],
+  ["cp <H>/brief.md <root>/.workflow/scratch/brief-r10.md && cat >> <root>/.workflow/scratch/plan-r10.md <<'EOF' ($25 in the body)", (r) => `cp ${r.H}/brief.md ${r.root}/.workflow/scratch/brief-r10.md && cat >> ${r.root}/.workflow/scratch/plan-r10.md <<'EOF'\n## Addendum\n- Default without a ruling: ask. Ask at $25.\nEOF`],
 ];
 
-for (const [name, line] of PASS) {
-  test(`r10 read-only passes: ${name}`, () => {
+for (const [name, line] of REFUSED_NOW) {
+  test(`documented current state (R10, narrowing reverted): ${name} is refused`, () => {
+    const r = rig();
+    assert.equal(run(r, line(r)), SELF_RULING_REASON, line(r));
+  });
+}
+
+const PASSES_NOW: Array<[string, (r: Rig) => string]> = [
+  ["cd <S> && gh run view 39038003331", (r) => `cd ${r.S} && gh run view 39038003331`],
+  ["cp <root>/.workflow/scratch/plan-r10.md <H>/plan.md", (r) => `cp ${r.root}/.workflow/scratch/plan-r10.md ${r.H}/plan.md`],
+];
+
+for (const [name, line] of PASSES_NOW) {
+  test(`documented current state (R10, narrowing reverted): ${name} passes`, () => {
     const r = rig();
     assert.equal(run(r, line(r)), undefined, line(r));
   });
@@ -140,6 +154,22 @@ const DENY_R2: Array<[string, (r: Rig) => string, string?]> = [
   ["R2 chdir <H> && cat <S>/x > ruling.md", (r) => `chdir ${r.H} && cat ${r.S}/x > ruling.md`],
 ];
 
+// Revision round 3 (final re-review of f30001b, findings 1-3): bypasses of the narrowed guard; the 545abc2 guard refuses them.
+const DENY_R3: Array<[string, (r: Rig) => string, string?]> = [
+  ["R3 finding 1: { c''d <H>; }; cat <S>/x > ruling.md", (r) => `{ c''d ${r.H}; }; cat ${r.S}/x > ruling.md`],
+  ["R3 finding 1: builtin c''d <H> && cat <S>/x > ruling.md", (r) => `builtin c''d ${r.H} && cat ${r.S}/x > ruling.md`],
+  ["R3 finding 1: if c''d <H>; then cat <S>/x > ruling.md; fi", (r) => `if c''d ${r.H}; then cat ${r.S}/x > ruling.md; fi`],
+  ["R3 finding 2: Set`-Location <H>; Set-Content ruling.md APPROVED", (r) => `Set\`-Location ${r.H}; Set-Content ruling.md APPROVED`, "powershell"],
+  ["R3 finding 3: perl -e 'symlink(\"<H>\",\"/tmp/d\")'; cat x > /tmp/d/ruling.md", (r) => `perl -e 'symlink("${r.H}","/tmp/d")'; cat x > /tmp/d/ruling.md`],
+];
+
+for (const [name, line, tool] of DENY_R3) {
+  test(`r10 write surface denied (round 3): ${name}`, () => {
+    const r = rig();
+    assert.equal(run(r, line(r), tool ?? "bash"), SELF_RULING_REASON, line(r));
+  });
+}
+
 for (const [name, line, tool] of DENY_R2) {
   test(`r10 write surface denied (round 2): ${name}`, () => {
     const r = rig();
@@ -149,10 +179,10 @@ for (const [name, line, tool] of DENY_R2) {
 
 test("r10 write surface denied: write and edit tools on <H>/ruling.md", () => {
   const r = rig();
-  for (const tool of ["write", "edit"]) assert.equal(selfRulingRefusal(tool, { path: path.join(r.H, "ruling.md") }, r.root, r.dirs, [r.S]), SELF_RULING_REASON, tool);
+  for (const tool of ["write", "edit"]) assert.equal(selfRulingRefusal(tool, { path: path.join(r.H, "ruling.md") }, r.root, r.dirs), SELF_RULING_REASON, tool);
 });
 
-test("r10: without a scratch dir $FOREMAN_SCRATCH stays unresolved and L2 fails closed next to a handoff mention", () => {
+test("r10: $FOREMAN_SCRATCH stays unresolved and L2 fails closed next to a handoff mention", () => {
   const r = rig();
   const line = `cd $FOREMAN_SCRATCH && cp x $N && ls ${r.H}`;
   assert.equal(selfRulingRefusal("bash", { command: line }, r.root, r.dirs), SELF_RULING_REASON);

@@ -4,7 +4,6 @@
 // /ceremony); after a FAIL the refusal only names it.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { expandScratchVar } from "./childscratch.ts";
 
 const RULING_RE = /^ruling(?:-(\d{1,6}))?\.md$/;
 const ASK_N_RE = /^ask-(\d{1,6})\s*$/;
@@ -154,133 +153,13 @@ function pureRead(command: string): boolean {
 
 const unquote = (w: string): string => w.replace(/^['"]+|['"]+$/g, "");
 const realDir = (d: string): string => path.dirname(realKey(path.join(d, "x")));
-const realFull = (p: string): string => {
-  try {
-    return fs.realpathSync.native(p);
-  } catch {
-    return realKey(p);
-  }
-};
-
-/** Pure read verbs whose operands are read positions (R10 item 7, Addendum A). */
-const READ_POS_VERBS = new Set(["ls", "cat", "head", "tail", "wc", "stat", "diff"]);
-/** A word the shell takes as is: no variable, glob, quote, escape, substitution or redirect character. */
-const LITERAL = /^[\w./,:@+=%^-]+$/;
-const SEGMENT_SEP = /(&&|\|\||[;|\n]|(?<![<>&])&(?![>&]))/;
-/** A move of the working dir, bash or PowerShell spelling (PowerShell is case-insensitive). */
-const MOVE = /\b(cd|chdir|pushd|popd|sl|Set-Location|Push-Location|Pop-Location)\b/i;
-/** Any assignment word (`NAME=`, `NAME+=`) or PowerShell `$x =` binding. */
-const ASSIGN = /(^|[\s;&|(`])[A-Za-z_]\w*\+?=|\$[\w:]+\s*=(?!=)/;
-/** A bare (not `$NAME`/`${NAME}`) mention of a variable that steers path resolution: a binding, export, read or for. */
-const PATH_VARS = /(^|[^\w${])(CDPATH|FOREMAN_SCRATCH|HOME|OLDPWD|PWD)\b/;
-
-/**
- * R10 item 7 (F1, F2): a line whose shell part moves the cwd, holds a backslash (escape or line continuation) or binds a
- * variable is read as a whole: no segment is masked, since a relative target or a segment split may not be what it seems.
- */
-const opaqueShell = (s: string): boolean =>
-  MOVE.test(s) || s.includes("\\") || ASSIGN.test(s) || PATH_VARS.test(s) || makesLink(s) || quotedCommandWord(s);
-
-/**
- * R10 item 7 (round 2): the line creates a link (`ln`, `link`, `mklink`, a New-Item link type, `cp -s`/`-l`/`--link`/
- * `--symbolic-link`, `mount`, `bindfs`): a target path may lead through a link made earlier on the same line.
- */
-const LINK_VERB = /(^|[\s;&|(/\\])(ln|link|mklink|mount|bindfs)(\.exe)?(?=[\s;&|)]|$)/i;
-const LINK_TYPE = /\b(SymbolicLink|Junction|HardLink)\b/i;
-const CP_LINK = /(^|[\s;&|(/])cp\s(?:[^;&|\n]*\s)?(-[A-Za-z]*[sl][A-Za-z]*|--link|--symbolic-link)(?=[\s;&|)]|$)/;
-const makesLink = (s: string): boolean => LINK_VERB.test(s) || LINK_TYPE.test(s) || CP_LINK.test(s);
-
-/**
- * R10 item 7 (round 2): a segment's command word holds a quote (`c''d`, `"c"d`): the verb may not be what it seems.
- * Restricted to the first word of a segment after its leading assignments (`NAME="v"`, kept open by the R9 corpus),
- * since the L3 line quotes its heredoc delimiter (`<<'EOF'`).
- */
-const LEAD_ASSIGN = /^(?:[A-Za-z_]\w*\+?=(?:'[^']*'|"[^"]*"|[^\s'"])*\s+)*/;
-const quotedCommandWord = (s: string): boolean =>
-  s.split(SEGMENT_SEP).some((seg, i) => {
-    const w = seg.trim().replace(LEAD_ASSIGN, "").split(/\s+/, 1)[0] ?? "";
-    // an assignment cut open by a separator inside its quotes (`LESSOPEN="|...`) is a value, not a command word
-    return i % 2 === 0 && /['"]/.test(w) && !/^[A-Za-z_]\w*\+?=/.test(w);
-  });
-
-/** The shell part of `text`: everything before the first heredoc body. */
-function shellPart(text: string): string {
-  const h = /(?<!<)<<(?!<)/.exec(text);
-  const end = h ? text.indexOf("\n", h.index) : -1;
-  return h && end >= 0 ? text.slice(0, end) : text;
-}
-
-/**
- * `text` with every segment removed that only reads with a literal word list: a pure read verb (READ_POS_VERBS) whose
- * output redirect targets lie outside every handoff dir, or a flag-light `cp` whose sources do not name a ruling and
- * whose destination lies outside (a cp/install SOURCE naming `ruling*` is never relaxed: `cp -s`/`-l` alias it).
- * Only the shell part before the first heredoc line counts; a heredoc body (interpreter code) is never removed.
- */
-function maskReads(text: string, outside: (p: string) => boolean): string {
-  const h = /(?<!<)<<(?!<)/.exec(text);
-  const end = h ? text.indexOf("\n", h.index) : -1;
-  const shell = h && end >= 0 ? text.slice(0, end) : text;
-  const body = h && end >= 0 ? text.slice(end) : "";
-  if (opaqueShell(shell)) return text;
-  const parts = shell.split(SEGMENT_SEP);
-  return parts.map((seg, i) => (i % 2 === 0 && readOnlySegment(seg, outside) ? "" : seg)).join("") + body;
-}
-
-function readOnlySegment(seg: string, outside: (p: string) => boolean): boolean {
-  const t = seg.trim().split(/\s+/).filter(Boolean);
-  if (t.length < 2) return false;
-  if (t[0] === "cp") {
-    if (t.some((w) => /[<>]/.test(w))) return false;
-    const ops = t.slice(1).filter((w) => !/^-[aRrpfvnLHP]+$/.test(w));
-    if (ops.length < 2 || ops.some((w) => w.startsWith("-") || !LITERAL.test(w))) return false;
-    const dst = ops[ops.length - 1];
-    return ops.slice(0, -1).every((w) => !/ruling/.test(path.basename(w))) && outside(dst);
-  }
-  if (!READ_POS_VERBS.has(t[0])) return false;
-  for (let i = 1; i < t.length; i++) {
-    const w = t[i];
-    if (w.startsWith("<<")) return false;
-    const r = /^(\d*>>?|\d*>\||&>>?|<)(.*)$/.exec(w);
-    if (!r) {
-      if (!LITERAL.test(w)) return false;
-      continue;
-    }
-    const target = r[2] || t[++i];
-    if (target === undefined) return false;
-    if (r[1] !== "<" && /^&\d$/.test(target)) continue;
-    if (!LITERAL.test(target) || (r[1] !== "<" && !outside(target))) return false;
-  }
-  return true;
-}
-
-/**
- * True when a `cd`/`pushd`/`Set-Location` in `text` may land in a handoff dir: its target is not a literal path
- * (after `$FOREMAN_SCRATCH` is resolved), is an option, is relative after an earlier move, or lies in a handoff dir.
- */
-function movesUnsafe(text: string, cwd: string, inHandoff: (p: string) => boolean): boolean {
-  // F2/F3: a backslash may hide a move (`c\d`), CDPATH reroutes a relative cd, a bound HOME/PWD/OLDPWD steers `~`/`cd`
-  if (text.includes("\\") || /CDPATH/.test(text) || PATH_VARS.test(text)) return true;
-  if (quotedCommandWord(shellPart(text))) return true;
-  if (MOVE.test(text) && ASSIGN.test(text)) return true;
-  let n = 0;
-  for (const m of text.matchAll(new RegExp(MOVE.source, "gi"))) {
-    const rest = text.slice(m.index + m[0].length);
-    const t = /^[ \t]+([^\s;&|)]+)/.exec(rest)?.[1];
-    if (!t || t.startsWith("-") || !LITERAL.test(t)) return true;
-    if (n++ > 0 && !path.isAbsolute(t)) return true;
-    if (inHandoff(path.resolve(cwd, t))) return true;
-  }
-  return false;
-}
 
 /**
  * Refusal reason when `toolName` would write a `ruling*.md` inside one of `childDirs` (the dirs where this session is
  * the child), else undefined. write/edit `path`, foreman_copy/foreman_move `dst`; shell-like tools fail closed: any word
  * naming such a file (or a ruling name next to a mention of a child dir) is refused unless the command is a pure read.
- * R10 item 7: read positions (operands of a pure read verb, a non-ruling `cp` source copied outside) do not count, a
- * `$FOREMAN_SCRATCH` resolves to `scratch`, and a `cd` to a literal dir outside every handoff dir is no move.
  */
-export function selfRulingRefusal(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[], scratch: string[] = []): string | undefined {
+export function selfRulingRefusal(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[]): string | undefined {
   if (childDirs.length === 0) return undefined;
   const dirs = new Set(childDirs.map(realDir));
   const inChild = (p: string): boolean => isRulingName(path.basename(p)) && dirs.has(path.dirname(realKey(path.resolve(cwd, p))));
@@ -296,40 +175,14 @@ export function selfRulingRefusal(toolName: string, input: Record<string, unknow
   if (toolName === "bash" || toolName === "powershell" || toolName === "foreman_bg" || toolName === "bg_run") {
     const cmd = str(input.command);
     if (!cmd || pureRead(cmd)) return undefined;
-    let text = cmd;
-    // F4: a line that binds FOREMAN_SCRATCH (any mention beyond a `$FOREMAN_SCRATCH`/`${FOREMAN_SCRATCH}` read) keeps it dynamic
-    const bindsScratch = /FOREMAN_SCRATCH/.test(cmd.replace(/\$FOREMAN_SCRATCH\b|\$\{FOREMAN_SCRATCH\}/g, ""));
-    for (const d of bindsScratch ? [] : scratch) {
-      const t = expandScratchVar(cmd, d);
-      if (t !== null) {
-        text = t;
-        break;
-      }
-    }
-    const roots = [...new Set([...childDirs.map((d) => path.resolve(d)), ...dirs])];
-    const inHandoff = (p: string): boolean => {
-      const a = path.resolve(cwd, p);
-      return [a, realFull(a)].some((x) => roots.some((d) => x === d || x.startsWith(d + path.sep)));
-    };
-    // round 2: a target whose parent dir cannot be realpath-resolved now (a link or dir made later on the line) is never outside
-    const resolvable = (p: string): boolean => {
-      try {
-        fs.realpathSync.native(path.dirname(path.resolve(cwd, p)));
-        return true;
-      } catch {
-        return false;
-      }
-    };
-    const masked = maskReads(text, (p) => resolvable(p) && !inHandoff(p));
-    const words = masked.split(/[\s;&|<>()]+/).filter(Boolean).map(unquote);
-    // a plain prose word (`ruling:`, `ruling.ts:180`) cannot name a ruling file; any path, quote, glob or `.md` keeps it
-    const named = words.filter((w) => /ruling/.test(w) && !(/^[\w.,:-]+$/.test(w) && !/ruling[^/]*\.md/i.test(w)));
+    const words = cmd.split(/[\s;&|<>()]+/).filter(Boolean).map(unquote);
+    const named = words.filter((w) => /ruling/.test(w));
     const dynamic = words.some((w) => /[*?[$]/.test(w));
-    const mentionsDir = [...childDirs, ...dirs].some((d) => masked.includes(d));
-    const moves = MOVE.test(masked); // a relative word may not mean the file it seems to
+    const mentionsDir = [...childDirs, ...dirs].some((d) => cmd.includes(d));
+    const moves = /\b(cd|pushd|Set-Location)\b/.test(cmd); // a relative word may not mean the file it seems to
     if (named.some(inChild)) return SELF_RULING_REASON;
     if (named.length > 0 && (mentionsDir || moves || dynamic)) return SELF_RULING_REASON;
-    return dynamic && (mentionsDir || movesUnsafe(text, cwd, inHandoff)) ? SELF_RULING_REASON : undefined;
+    return dynamic && (mentionsDir || moves) ? SELF_RULING_REASON : undefined;
   }
   return undefined;
 }

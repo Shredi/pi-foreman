@@ -1395,7 +1395,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // A session never writes a ruling file in a handoff dir where it is the child (ruling.ts selfRulingRefusal).
     {
       const rs = sessionFor(ctx);
-      const why = rs && selfRulingRefusal(event.toolName, event.input as Record<string, unknown>, ctx.cwd, childDirsOf(rs), rs.isChild && launchBinding?.scratch ? [launchBinding.scratch] : []);
+      const why = rs && selfRulingRefusal(event.toolName, event.input as Record<string, unknown>, ctx.cwd, childDirsOf(rs));
       if (why) {
         rs.trace?.emit({ event: "guard", guard: "self_ruling", toolFamily: event.toolName, decision: "blocked", ...denyFields(`self_ruling: ${why}`, event.toolName, event.input, rs.isChild ? rs.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) });
         return { block: true, reason: `pi-foreman: ${why}.` };
