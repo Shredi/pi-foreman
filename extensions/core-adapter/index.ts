@@ -23,7 +23,7 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
-import { isRulingName, parentApproval, parentRulingLift, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
+import { backgroundsJob, isRulingName, jobPid, parentApproval, parentRulingLift, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -110,7 +110,7 @@ let herdrEvents: EventBus | undefined;
 import { checkLaunch, completedAgents, CritiqueCounter, hasSecurityFinding, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks } from "./bg.ts";
-import { registerWait, waitLimits } from "./wait.ts";
+import { processAlive, registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
@@ -1419,6 +1419,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (ps && !ps.isChild) bashRulingSnaps.set(event.toolCallId, snapshotRulings(childDirsOf(ps)));
       if (ps && !ps.isChild && mentionsLedger((event.input as { command?: unknown }).command)) ps.ledgerBash.add(event.toolCallId);
     }
+    // R11 S1: a background job of this session (foreman_bg, bg_run, a shell call that backgrounds) opens a self-write
+    // window for ruling files from its launch until its exit is observed (ruling.ts SelfRulings.openJob).
+    {
+      const js = sessionFor(ctx);
+      const command = (event.input as { command?: unknown } | undefined)?.command;
+      if (js && !js.isChild && (event.toolName === FOREMAN_BG_TOOL || event.toolName === ADDON_BG_TOOL || ((event.toolName === "bash" || event.toolName === "powershell") && backgroundsJob(command)))) selfRulingsFor(js).openJob(event.toolCallId, () => childDirsOf(js));
+    }
     // A session never writes a ruling file in a handoff dir where it is the child (ruling.ts selfRulingRefusal).
     {
       const rs = sessionFor(ctx);
@@ -2301,6 +2308,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (owner && bashSnap) {
       bashRulingSnaps.delete(event.toolCallId);
       selfRulingsFor(owner).markChanged(bashSnap, childDirsOf(owner));
+    }
+    // R11 S1: a foreman_bg / bg_run job is watched by its pid; a job whose command backgrounds again (a grandchild may
+    // outlive the pid) or whose pid is unknown stays open. A foreman_bg refusal (no pid) spawned nothing.
+    if (owner && !owner.isChild && (event.toolName === FOREMAN_BG_TOOL || event.toolName === ADDON_BG_TOOL)) {
+      const pid = jobPid(event.details, event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n"));
+      const sr = selfRulingsFor(owner);
+      if (backgroundsJob((event.input as { command?: unknown }).command)) {
+        // stays open
+      } else if (pid !== null) sr.watchJob(event.toolCallId, () => processAlive(pid));
+      else if (event.isError && event.toolName === FOREMAN_BG_TOOL) sr.closeJob(event.toolCallId);
     }
     // A `.seen` written by a shell command ends the ask too: the blocked state is recomputed from the files (R6 lane 4a).
     if (owner && !owner.isChild && event.toolName === "bash") askContractFor(owner).recheck();
