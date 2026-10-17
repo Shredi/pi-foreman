@@ -25,6 +25,9 @@
 //       the strong rung when strongOnRevision resolves true (same lookup; L1 ladder.strongOnRevision
 //       true). A revision without a FAIL climbs only with providers.<p>.strongOnRevision true
 //       (reason revision). The finish gate refuses once more, uncounted, while that climb is open.
+//       With providers.<p>.ranks the review_fail target is max(current, strong) by rank (current = the
+//       explicit launch model, else the live rung): a model above the strong rung stays (rung_top,
+//       reason `already above strong rung`), an explicit model below it rises to the strong rung.
 //
 // The live rung: `live` holds each role's model of its latest launch (single, tasks, chain,
 // parallel). A climb starts from that model; when it already is the strong rung there is no
@@ -32,6 +35,10 @@
 import { get, type Json } from "./config.ts";
 import { splitLevel, type Tier } from "./launchmodel.ts";
 import type { RunEnd } from "./launchwait.ts";
+import { tierOf, type Rank } from "./ranks.ts";
+
+/** Trace reason of a review_fail climb whose launch model already ranks above the strong rung (it stays). */
+export const ABOVE_STRONG_REASON = "already above strong rung";
 
 export const DEFAULT_STRONG_ABOVE = 100_000;
 export const RUNG_UP_MARKER = "RUNG_UP:";
@@ -201,7 +208,7 @@ export interface Climb {
   role: string;
   from: string;
   to: string;
-  /** context | stuck | checks_failed | foreman | heavy | revision | review_fail */
+  /** context | stuck | checks_failed | foreman | heavy | revision | review_fail | already above strong rung */
   reason: string;
   handoff?: Handoff;
   /** The live model already is the strong rung: traced as rung_top, not rung_up. */
@@ -214,6 +221,16 @@ export interface LadderOptions {
   preferStrong?: boolean;
   /** The rung_up reason of a preferStrong climb (default "revision"). */
   revisionReason?: "revision" | "review_fail";
+  /** Provider ranks (ranks.ts ranksOf): a review_fail climb targets max(current, strong) by rank. */
+  ranks?: Map<string, Rank[]>;
+}
+
+/** Whether model `a` ranks strictly above `b` (lower tier number); null when either is unranked. */
+function ranksAbove(ranks: Map<string, Rank[]> | undefined, a: string, b: string): boolean | null {
+  if (!ranks || ranks.size === 0) return null;
+  const ta = tierOf(ranks, a);
+  const tb = tierOf(ranks, b);
+  return ta === null || tb === null ? null : ta < tb;
 }
 
 /** Foreman side: rung per launch, climb-eligible runs per role. */
@@ -289,6 +306,22 @@ export class LadderState {
       const to = splitLevel(strong).base;
       const top = from === to || undefined;
       if (keyword !== "strong") {
+        // review_fail: the target is max(current, strong) by provider rank; current = the explicit launch model, else the live rung.
+        const explicitModel = keyword.includes("/") ? keyword : null;
+        if (role === "builder" && opts.preferStrong && opts.revisionReason === "review_fail" && (keyword === "" || explicitModel)) {
+          const current = explicitModel ?? from;
+          const above = current === to ? false : ranksAbove(opts.ranks, current, to);
+          if (above) {
+            if (!explicitModel && lv) e.model = lv; // the live rung stays (applyLaunchModels honours it as an explicit model)
+            climbs.push({ entry: e, role, from: current, to: current, reason: ABOVE_STRONG_REASON, top: true });
+            continue;
+          }
+          if (explicitModel && above === false) {
+            if (current !== to) e.model = "strong"; // below the strong rung: rises to it
+            climbs.push({ entry: e, role, from: current, to, reason: "review_fail", top: current === to || undefined });
+            continue;
+          }
+        }
         if (keyword === "" && role === "builder" && opts.preferStrong) climbs.push({ entry: e, role, from, to, reason: opts.revisionReason ?? "revision", top });
         continue;
       }

@@ -123,7 +123,7 @@ import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectCha
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
-import { explicitModelAllowed, launchedModels, PLANNER_OWN_RUNG_HINT, rankRefusal, rankRefusalFor, rolesOfModel } from "./ranks.ts";
+import { explicitModelAllowed, launchedModels, PLANNER_OWN_RUNG_HINT, rankRefusal, rankRefusalFor, ranksOf, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
@@ -1606,7 +1606,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           }
           const revision = rounds.revisions > 0;
           const keyword = typeof input.model === "string" && (STRENGTHS as readonly string[]).includes(splitLevel(input.model.trim()).base);
-          // ladder.ts revisionClimb: after a reviewer FAIL (review_fail), else only with providers.<p>.strongOnRevision true.
+          // ladder.ts revisionClimb: review_fail while the review gate's latest verdict is FAIL (s.reviewGate.last, not the run's own
+          // verdict), else only with providers.<p>.strongOnRevision true. LadderState.plan targets max(current, strong) by rank.
           revClimb = revision && !resumed ? revisionClimb(s.config.config, resolution.provider, s.reviewGate.last === "fail") : null;
           if (revClimb === "review_fail" && !hasStrongRung(resolution.roles, "builder")) revClimb = null; // no strong rung: no-op
           preferStrong = revClimb !== null && !keyword;
@@ -1616,7 +1617,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // Ladder (ladder.ts): a strong launch needs a reason or a trigger; rank policy (ranks.ts) after the models are written.
         // A panel shadow skips it: no climb, no live rung.
         if (!s.isChild && actionOf(input) === null && shadow.kind !== "launch") {
-          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined });
+          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined, ranks: ranksOf(s.config.config) });
           if (lp.block) {
             s.trace?.emit({ event: "launch_refused", reason: "strong_no_reason", tier: s.ceremony.tier, ...launchDeny(input) });
             return { block: true, reason: lp.block };
