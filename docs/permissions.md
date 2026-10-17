@@ -324,6 +324,20 @@ that is not configured is handled as before. Relative entries, `..` components a
 After setting or changing `paths.hubWorkflow`, or after upgrading to this release, re-run `foreman setup` to re-render the hub
 read keys (the realpath spelling of a symlinked hub dir is now rendered too).
 
+#### Plain-session ledger read asks (`external_directory_read`)
+
+Cause: the permission-system config (`extensions/pi-permission-system/config.json`, written by `foreman setup` from
+`scripts/permissions_gen.py render`) was rendered while `paths.hubWorkflow` was unset. It then has no
+`external_directory_read` key for `<hub>/.workflow`, so a read of `<hub>/.workflow/LEDGER-*.md` from a plain session
+matches only the catch-all `external_directory["*"] = "ask"` and raises an ask. pi-foreman's own layers allow the read;
+the permission system caps a review-link allow on this family, so only the rendered keys help.
+
+Fix: set `paths.hubWorkflow` to the hub checkout in your user (or overlay) foreman.json and re-run `foreman setup`. No
+other allow rule is added: the hub root outside `.workflow/` and a `.workflow/` of a repo you did not configure still ask.
+`/foreman doctor` and `/foreman setup` print a WARN when `paths.hubWorkflow` is set but the live config lacks the hub
+keys, and an INFO hint (the key is never set for you) when it is unset while a `.workflow/` with a `LEDGER-*.md` file
+sits one level above the main checkout of the cwd or a round worktree.
+
 ### Round surfaces
 
 What the foreman session owns for the length of a round is one shared set (`roundsurface.ts`, ledger items 7c, 7e),
