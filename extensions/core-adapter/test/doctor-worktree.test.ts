@@ -6,10 +6,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promptCacheSnippet, symlinkedNodeModules, worktreeDoctor, worktreePaths } from "../registry.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
 
 const skip = process.platform === "win32" ? "symlink fixtures are POSIX only" : false;
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-doctor-wt-")));
-process.on("exit", () => fs.rmSync(tmp, { recursive: true, force: true }));
+process.on("exit", () => rmTestTmp(tmp));
 
 const git = (cwd: string, ...args: string[]): void => {
   execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@example.invalid", ...args], { cwd, stdio: "ignore", env: { ...process.env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: "1" } });

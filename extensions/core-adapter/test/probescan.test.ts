@@ -10,13 +10,14 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import { childSurface } from "../roundsurface.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(pkgRoot)!;
 const CASES = JSON.parse(fs.readFileSync(path.join(pkgRoot, "tests", "fixtures", "split-literal-cases.json"), "utf8")) as { probeDeny: string[] };
 const posix = process.platform !== "win32";
 const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-probe-")));
-after(() => fs.rmSync(base, { recursive: true, force: true }));
+after(() => rmTestTmp(base));
 const rt = path.join(base, "repo.worktrees", "round");
 const scratch = path.join(base, "scratch");
 fs.mkdirSync(path.join(rt, "tests"), { recursive: true });

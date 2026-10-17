@@ -8,6 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanupWorktrees, createWorktrees } from "../../../node_modules/pi-subagents/src/runs/shared/worktree.js";
+import { rmTestTmp } from "./_tmpbase.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const HOOK = path.join(ROOT, "bin", "foreman-worktree-setup");
@@ -48,7 +49,7 @@ test("worktree hook: a lockfile turns the linked node_modules into a real copy",
     assert.equal(fs.readFileSync(path.join(repo, "node_modules", "pkg", "index.js"), "utf8"), "module.exports = 1;\n", "the main checkout is untouched");
     cleanupWorktrees(wt.setup);
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    rmTestTmp(tmp);
   }
 });
 
@@ -59,6 +60,6 @@ test("worktree hook: without a lockfile the link stays", { skip }, async () => {
     assert.equal(fs.lstatSync(path.join(wt.path, "node_modules")).isSymbolicLink(), true);
     cleanupWorktrees(wt.setup);
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    rmTestTmp(tmp);
   }
 });

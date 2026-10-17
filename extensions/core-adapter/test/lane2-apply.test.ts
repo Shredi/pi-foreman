@@ -11,12 +11,13 @@ import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.t
 import type { MatchCtx } from "../permoverlay.ts";
 import { ownedRoots } from "../owned.ts";
 import { childSurface } from "../roundsurface.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(pkgRoot)!;
 const posix = process.platform !== "win32";
 const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-lane2a-")));
-after(() => fs.rmSync(base, { recursive: true, force: true }));
+after(() => rmTestTmp(base));
 
 const agentDir = path.join(base, "agent");
 const main = path.join(base, "repo");

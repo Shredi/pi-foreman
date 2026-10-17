@@ -10,6 +10,7 @@ import type { SafeOpsSession } from "../safeops.ts";
 import { resolvePython } from "../python.ts";
 import { defaultSpawner } from "../spawn.ts";
 import type { SpawnResult, Spawner } from "../spawn.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
 
 const SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "scripts", "safe_ops.py");
 
@@ -106,7 +107,7 @@ test("safeops: real safe_ops.py moves once, then reports dst_exists", { skip: !p
     assert.equal(no.details.precondition, "dst_exists");
     assert.equal(fs.readFileSync(path.join(tmp, "c.txt"), "utf8"), "y");
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    rmTestTmp(tmp);
   }
 });
 

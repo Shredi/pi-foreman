@@ -9,10 +9,11 @@ import * as path from "node:path";
 import { criticalReason, limitsOf, narrowTasks, PressureSampler, pressureOutcome, pressurePath, queuedReason, readPressure, sampleSecondsOf } from "../pressure.ts";
 import { parseStart, TOOL_WAIT_KINDS, WAIT_KINDS, WaitRuntime } from "../wait.ts";
 import type { Outcome, Timers, WaitLimits } from "../wait.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
 
 function tmp(t: { after(fn: () => void): void }): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-press-"));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmTestTmp(dir));
   return dir;
 }
 

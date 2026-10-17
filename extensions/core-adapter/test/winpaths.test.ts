@@ -11,6 +11,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOverlayRules, checkToolCall, readBaseline, shortNameFits } from "../permoverlay.ts";
 import type { MatchCtx } from "../permoverlay.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(PKG)!;
@@ -87,6 +88,6 @@ test("win32 host: real trailing-dot and short-name spellings reach the protected
     assert.equal(fs.realpathSync.native(path.join(cwd, name)).toLowerCase(), fs.realpathSync.native(path.join(cwd, ".claude")).toLowerCase(), "the short name reaches the same folder");
     assert.equal(k(path.join(cwd, name, "settings.json")), "ask/deny");
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    rmTestTmp(root);
   }
 });

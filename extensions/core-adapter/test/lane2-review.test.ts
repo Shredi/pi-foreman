@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkTestTmp } from "./_tmpbase.ts";
+import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { bashPath } from "./_bashpath.ts";
 import { ForemanReview, requestText } from "../review.ts";
 import type { RegistryLike, ReviewSession } from "../review.ts";
@@ -18,7 +18,7 @@ const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..",
 const baseline = readBaseline(pkgRoot)!;
 const posix = process.platform !== "win32";
 const base = fs.realpathSync.native(mkTestTmp("pf-lane2r-"));
-after(() => fs.rmSync(base, { recursive: true, force: true }));
+after(() => rmTestTmp(base));
 
 const cwd = path.join(base, "repo");
 const asyncRun = path.join(base, "async-subagent-runs", "run-a");

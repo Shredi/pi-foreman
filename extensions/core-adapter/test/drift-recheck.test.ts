@@ -14,6 +14,7 @@ import { ClaudeConfigWatch } from "../claudedrift.ts";
 import { registerSafeOps } from "../safeops.ts";
 import { resolvePython } from "../python.ts";
 import { defaultSpawner } from "../spawn.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
 
 const SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "scripts", "safe_ops.py");
 const HOME = os.tmpdir();
@@ -22,7 +23,7 @@ const noTrace = () => undefined;
 
 function tmp(t: { after(fn: () => void): void }, prefix: string): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmTestTmp(dir));
   return dir;
 }
 

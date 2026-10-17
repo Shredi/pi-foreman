@@ -13,6 +13,7 @@ import { resolvePython } from "../python.ts";
 import { defaultSpawner } from "../spawn.ts";
 import type { Spawner } from "../spawn.ts";
 import { FAIL_POLICY } from "../translate.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const py = await resolvePython({ envPath: process.env.PI_FOREMAN_PYTHON, platform: process.platform, spawner: defaultSpawner });
@@ -80,7 +81,7 @@ test("child extension with the real script blocks push shapes and passes plain g
       assert.equal(await h({ toolName: "bash", input: { command } }, ctx(cwd)), undefined, command);
     }
   } finally {
-    fs.rmSync(cwd, { recursive: true, force: true });
+    rmTestTmp(cwd);
   }
 });
 
@@ -101,7 +102,7 @@ test("child extension forwards an allowed test restore to pi.events as test_rest
     assert.equal(await handler!({ toolName: "bash", input: { command: "git restore tests/test_a.py" } }, ctx(cwd)), undefined);
     assert.deepEqual(seen, [[CHILD_TRACE_EVENT, { sessionId: "child-1", event: "test_restore", cmd: "tests/test_a.py" }]]);
   } finally {
-    fs.rmSync(cwd, { recursive: true, force: true });
+    rmTestTmp(cwd);
   }
 });
 

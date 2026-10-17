@@ -9,6 +9,7 @@ import { buildOverlayRules, readBaseline } from "../permoverlay.ts";
 import { causeOfCustom } from "../usage.ts";
 import { checkRunId, checkWaitPath, Governor, parseStart, resolveBin, resolveGh, WaitRuntime, wakeMessage } from "../wait.ts";
 import type { Outcome, Timers, WaitLimits } from "../wait.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-wait-")));
@@ -198,8 +199,8 @@ test("resolveBin: glab and gh are found outside the workspace only, with explici
     fs.writeFileSync(path.join(bin, "gh.cmd"), "");
     assert.equal(resolveBin("gh", ws, { PATH: bin }, "linux"), null);
   } finally {
-    fs.rmSync(ws, { recursive: true, force: true });
-    fs.rmSync(bin, { recursive: true, force: true });
+    rmTestTmp(ws);
+    rmTestTmp(bin);
   }
 });
 

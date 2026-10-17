@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { mainNeedsGitGuard } from "../gitguard.ts";
 import { appendReview, headOf, headsAt, isPrToolName, launchCwds, MAX_REVIEWS, passHeads, prGateRefusal, prToolRefusal, checksLine, reviewedHead, reviewsOfRunEnd } from "../reviews.ts";
 import type { ReviewRecord } from "../reviews.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
 
 test("reviewsOfRunEnd: completed reviewer results with a verdict and their cwd", () => {
   const ok = reviewsOfRunEnd({ agent: "reviewer", status: "completed", cwd: "/w", output: "Overall verdict: PASS" });
@@ -64,7 +65,7 @@ test("headOf and prToolRefusal against a real repository, and head_unknown outsi
     assert.equal((await prToolRefusal(dir, [newer], { branch: "nosuch" }))?.reason, "head_unknown");
     assert.equal((await prToolRefusal(dir, [newer], { head_branch: 7 }))?.reason, "head_unknown");
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    rmTestTmp(dir);
   }
 });
 
@@ -84,7 +85,7 @@ test("reviewedHead keeps a head only when HEAD at launch equals HEAD at run end 
     assert.equal(reviewedHead(undefined, dir, atStart), null);
     assert.equal(reviewedHead(start, dir, null), null);
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    rmTestTmp(dir);
   }
 });
 
@@ -110,7 +111,7 @@ test("prGateRefusal: child, gate off, and a pushed upstream that was not reviewe
     assert.equal((await gate([second]))?.reason, "stale_review");
     assert.equal(await gate([second, first]), null);
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    rmTestTmp(dir);
   }
 });
 

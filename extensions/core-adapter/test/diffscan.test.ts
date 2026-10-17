@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { collectFacts, diffWithFacts, factsBlock, isTestPath, scanDiff, securityScan, untrackedDiff } from "../diffscan.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
 
 const diff = (file: string, removed: string[], added: string[], extra = ""): string =>
   `diff --git a/${file} b/${file}\n${extra}--- a/${file}\n+++ b/${file}\n@@ -1,${removed.length} +1,${added.length} @@\n${removed.map((l) => `-${l}`).join("\n")}\n${added.map((l) => `+${l}`).join("\n")}\n`;
@@ -97,7 +98,7 @@ test("git side: the Go caller is the test file in the package that calls the sym
     put("internal/api/websocket_hub_test.go", "package api\n");
     assert.equal((await diffWithFacts(dir, null)).facts.filter((f) => f.kind === "signature").length, 0);
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    rmTestTmp(dir);
   }
 });
 
@@ -123,6 +124,6 @@ test("untrackedDiff: untracked new files become added lines for the security sca
     fs.writeFileSync(path.join(dir, "ignored.ts"), "spawn(x);\n");
     assert.deepEqual(securityScan(await untrackedDiff(dir)), ["path:auth", "exec("]);
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    rmTestTmp(dir);
   }
 });

@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { commentOnlySince, isCommentOnlyChange, worktreeTree } from "../commentonly.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
 
 const GO = `package hub
 
@@ -113,6 +114,6 @@ test("snapshot of a clean tree; a comment-only edit since lists the file; no cha
     fs.writeFileSync(path.join(dir, "hub.go"), GO.replace("len(msg) +", "len(msg) -"));
     assert.equal(await commentOnlySince(snap), null);
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    rmTestTmp(dir);
   }
 });
