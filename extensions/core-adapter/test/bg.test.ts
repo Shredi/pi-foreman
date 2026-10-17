@@ -2,6 +2,7 @@
 // a short `node -e` / `echo` through foreman_bg; guard cases pass command STRINGS that are refused before any spawn.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -9,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { rmTestTmp } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
 import { addonPresent, bgLogPath, formatWaits, lastLines, readAddonTasks, shellFor, spawnDetached } from "../bg.ts";
-import { checkLogPath, parseStart, registerWait } from "../wait.ts";
+import { checkLogPath, parseStart, processAlive, registerWait } from "../wait.ts";
 import { mapTool, isShellTool } from "../toolmap.ts";
 import { isOverlayTool } from "../permoverlay.ts";
 import { LiveState, liveDir } from "../livestate.ts";
@@ -21,6 +22,15 @@ const tmp = (t: { after(fn: () => void): void }, prefix: string): string => {
   return dir;
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/**
+ * Stop a foreman_bg run before its temp dir is removed. POSIX: signal its process group (as before). win32: the pid
+ * is cmd.exe, whose node child would keep the cwd busy (EBUSY on cleanup), so kill the whole tree and wait for exit.
+ */
+async function stopDetached(pid: number, posix: () => void): Promise<void> {
+  if (process.platform !== "win32") return posix();
+  spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+  for (let i = 0; i < 50 && processAlive(pid); i++) await sleep(100);
+}
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Tool = { name: string; execute: (...a: unknown[]) => Promise<{ content: { text: string }[]; details: Record<string, unknown>; isError?: boolean }> };
 
@@ -79,8 +89,7 @@ test("foreman_bg: note defaults to the command; empty command, child and print m
   assert.match(print.content[0].text, /needs a TUI or RPC session/);
   const one = await bg.execute("c", { command: `node -e "setTimeout(()=>{},3000)"` }, undefined, undefined, h.ctx);
   assert.equal(h.handle.active("s1")[0].note, `node -e "setTimeout(()=>{},3000)"`);
-  if (process.platform === "win32") process.kill(Number(one.details.pid));
-  else process.kill(-Number(one.details.pid), "SIGTERM");
+  await stopDetached(Number(one.details.pid), () => process.kill(-Number(one.details.pid), "SIGTERM"));
   const c = waitHarness(t, { isChild: true });
   const refused = await c.tools.get("foreman_bg")!.execute("c", { command: "true" }, undefined, undefined, c.ctx);
   assert.equal(refused.isError, true);
@@ -145,6 +154,14 @@ test("shellFor, spawnDetached and lastLines", async (t) => {
   assert.deepEqual(lastLines(path.join(dir, "missing.log")), []);
   const bad = spawnDetached("true", path.join(dir, "no-such-dir"), path.join(dir, "c.log"));
   if ("pid" in bad) await sleep(50);
+});
+
+test("shellFor win32: cmd /d /s /c with the command wrapped in one more pair of quotes, verbatim; POSIX unchanged", () => {
+  const command = `node -e "console.log('a b');setTimeout(()=>{},1)" & echo "x y"`;
+  assert.deepEqual(shellFor(command, "win32"), { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"node -e "console.log('a b');setTimeout(()=>{},1)" & echo "x y""`], verbatim: true });
+  assert.deepEqual(shellFor("echo x", "win32").args, ["/d", "/s", "/c", '"echo x"']);
+  assert.deepEqual(shellFor(command, "linux").args, ["-c", command]);
+  assert.equal(shellFor(command, "linux").verbatim, false);
 });
 
 function fakeTasks(cwd: string): void {
@@ -401,5 +418,5 @@ test("sidebar: a foreman_bg pid wait with note `suites` shows up in the presence
   assert.equal(file.state, "working"); // a pending wait is work in progress (lane 7a)
   assert.equal(file.waits.length, 1);
   assert.deepEqual([file.waits[0].id, file.waits[0].kind, file.waits[0].note], [String(r.details.id), "pid", "suites"]);
-  process.kill(Number(r.details.pid), "SIGTERM");
+  await stopDetached(Number(r.details.pid), () => process.kill(Number(r.details.pid), "SIGTERM"));
 });

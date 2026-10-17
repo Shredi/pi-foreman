@@ -45,9 +45,15 @@ export const safeSegment = (v: string): string => v.replace(/[^A-Za-z0-9._-]+/g,
 export const bgScratchDir = (stateDir: string, sessionId: string): string => path.join(stateDir, "scratch", safeSegment(sessionId));
 export const bgLogPath = (stateDir: string, sessionId: string, waitId: string): string => path.join(bgScratchDir(stateDir, sessionId), `wait-${safeSegment(waitId)}.log`);
 
-/** The shell that runs the command: bash (else sh) on POSIX, `cmd /c` on Windows. */
+/**
+ * The shell that runs the command: bash (else sh) on POSIX, `cmd /d /s /c` on Windows. With `/s /c`, cmd strips the
+ * first and the last quote of its command line, so the command is wrapped in one more pair of quotes (what Node's
+ * `shell: true` does on win32); without them a quoted `node -e "..."` loses its quotes and cmd parses `<`, `>`, `&`
+ * inside it as redirections. The arguments go verbatim (no MSVCRT re-quoting), as cmd parses them itself.
+ * Known limit: on Windows the command runs under cmd.exe while the guards classify it as bash (docs/safety.md).
+ */
 export function shellFor(command: string, platform: string = process.platform): { file: string; args: string[]; verbatim: boolean } {
-  if (platform === "win32") return { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", command], verbatim: true };
+  if (platform === "win32") return { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"${command}"`], verbatim: true };
   return { file: fs.existsSync("/bin/bash") ? "/bin/bash" : "/bin/sh", args: ["-c", command], verbatim: false };
 }
 
@@ -58,6 +64,7 @@ export function spawnDetached(command: string, cwd: string, logPath: string, pla
     fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 });
     fd = fs.openSync(logPath, "a", 0o600);
     const sh = shellFor(command, platform);
+    // the log fd stays open until spawn has returned (the child holds its own duplicate by then); `finally` closes ours
     const child = spawn(sh.file, sh.args, { cwd, detached: true, stdio: ["ignore", fd, fd], env: process.env, windowsHide: true, windowsVerbatimArguments: sh.verbatim });
     child.on("error", () => undefined);
     child.unref();
