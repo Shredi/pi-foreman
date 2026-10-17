@@ -23,7 +23,7 @@ import { deterministicAllow, deterministicAllowInfo, hits } from "./timeoutallow
 import { classify, effectCtx } from "./effects.ts";
 import * as os from "node:os";
 import * as path from "node:path";
-import { usagePythonRead } from "./permoverlay.ts";
+import { patternArgPaths, usagePythonRead } from "./permoverlay.ts";
 import { hubWorkflowDirs, isolationDir, mainWorkflowReadable, roundWorktreeAdd } from "./roundsurface.ts";
 import type { EffectClass, EffectCtx } from "./effects.ts";
 import { isSubagentWakeText } from "./idlecustom.ts";
@@ -382,6 +382,7 @@ export class ForemanReview {
       if (s && !s.isChild && surface === "bash") cls = this.classOf(s, d);
       if (!s) out = { verdict: { kind: "defer" }, label: "no-session" };
       else if (s.isChild) out = { verdict: { kind: "defer" }, label: "child" };
+      else if (surface.startsWith("external_directory") && (fixed = this.patternArgAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (d.forwarding && surface.startsWith("external_directory") && (fixed = this.scratchPathAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (!s.isChild && surface.startsWith("external_directory") && (fixed = this.readRootPathAllow(s, d, surface))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (surface === "bash" && !d.forwarding && (fixed = this.readRootsBashAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
@@ -512,6 +513,28 @@ export class ForemanReview {
       const roots = [...rootList(s.readOnlyRoots), ...(d.forwarding ? this.mainFlowOf(s) : [])];
       const norm = px.normalize(value);
       return roots.some((r) => { const rel = px.relative(px.resolve(r), norm); return rel === "" || (!rel.startsWith("..") && !px.isAbsolute(rel)); }) ? "owned-read" : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * "pattern-arg" (R10 item 4) when a bash external-directory ask names only words that are pattern operands of a read-only line (grep/rg `-e`,
+   * a read-only sed script, `git log -S/-G/--grep`, the <range> of `git log -L`; permoverlay patternArgPaths) and no other word of the line
+   * names the same path. Relative words resolve against the ask's own working directory (a forwarded child's), else the session cwd.
+   */
+  private patternArgAllow(s: ReviewSession, d: AskDetails): string | null {
+    try {
+      if (d.payload?.kind !== "bash_external_directory" && d.toolName !== "bash") return null;
+      const ev = Array.isArray(d.payload?.evidence) ? d.payload.evidence : [];
+      const ext = ev.filter((e) => e?.label === "external path").map((e) => e.text);
+      if (!ext.length || ext.some((t) => typeof t !== "string" || !t)) return null;
+      const wd = ev.find((e) => e?.label === "working directory" && typeof e.text === "string" && e.text)?.text ?? s.cwd;
+      const px = process.platform === "win32" ? path.win32 : path.posix;
+      if (!px.isAbsolute(wd)) return null;
+      const pa = patternArgPaths(reviewValue(d), wd);
+      if (!pa) return null;
+      return ext.every((t) => { const a = px.resolve(wd, t as string); return pa.patterns.has(a) && !pa.others.has(a); }) ? "pattern-arg" : null;
     } catch {
       return null;
     }

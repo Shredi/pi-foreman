@@ -1780,6 +1780,7 @@ function scriptOperands(core: string[], skip: Set<number>): number[] {
     // `git grep` takes grep's pattern forms after its global options
     let k = 1;
     while (k < core.length && core[k].startsWith("-")) k += /^-[Cc]$/.test(core[k]) ? 2 : 1;
+    if (core[k] === "log") return gitLogPatterns(core, k, skip);
     if (core[k] !== "grep") return [];
     const rest = core.slice(k);
     return scriptOperands(rest, new Set([...skip].filter((i) => i > k).map((i) => i - k))).map((i) => i + k);
@@ -1839,6 +1840,119 @@ function scriptOperands(core: string[], skip: Set<number>): number[] {
   }
   if (!given && positional > 0) scripts.push(positional);
   return scripts;
+}
+
+/**
+ * R10 item 4: the pickaxe/grep values of `git log` (`-S <string>`, `-G <regex>`, `--grep <pattern>`, their attached forms `-S<s>`, `--grep=<p>`),
+ * up to `--`. `-L <range>:<file>` is left out: its <file> part stays a path word (patternArgPaths drops only the <range>).
+ */
+function gitLogPatterns(core: string[], k: number, skip: Set<number>): number[] {
+  const out: number[] = [];
+  for (let i = k + 1; i < core.length; i++) {
+    const x = core[i];
+    if (skip.has(i)) continue;
+    if (x === "--") break;
+    if ((x === "-S" || x === "-G" || x === "--grep") && i + 1 < core.length) {
+      if (!skip.has(i + 1)) out.push(i + 1);
+      i++;
+    } else if (/^-[SG]./.test(x) || x.startsWith("--grep=")) out.push(i);
+  }
+  return out;
+}
+
+/** The `<range>` of each separate `-L <range>:<file>` value of `git log` whose `<file>` is a plain relative path (no `..`, `~`, `$` or root): word index -> range. */
+function gitLogRanges(core: string[], skip: Set<number>): Map<number, string> {
+  const out = new Map<number, string>();
+  let k = 1;
+  while (k < core.length && core[k].startsWith("-")) k += /^-[Cc]$/.test(core[k]) ? 2 : 1;
+  if (core[k] !== "log") return out;
+  for (let i = k + 1; i + 1 < core.length; i++) {
+    if (core[i] === "--") break;
+    if (core[i] !== "-L" || skip.has(i + 1)) continue;
+    const v = core[++i];
+    const c = v.lastIndexOf(":");
+    const file = c > 0 ? v.slice(c + 1) : "";
+    if (file && !/^[~/\\$]/.test(file) && !/^[A-Za-z]:/.test(file) && !file.split(/[\\/]/).includes("..")) out.set(i, v.slice(0, c));
+  }
+  return out;
+}
+
+/** Verbs a line explained by patternArgPaths may use besides git: PURE_VERBS that take no text from their input as a path, never echo/printf/find/awk (their words are no patterns here). */
+const PATTERN_LINE_VERBS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "ls", "cd", "pwd", "nl", "column", "diff", "true", "false"]);
+const PATTERN_GIT_SUBS = new Set(["log", "show", "diff", "grep"]);
+
+/**
+ * R10 item 4: the absolute spellings of the pattern operands of a read-only line (grep/rg `-e` values and patterns, a read-only sed script,
+ * `git log -S/-G/--grep` values, the `<range>` of `git log -L <range>:<file>`) and of every OTHER word (operands, option values, redirect
+ * targets, cd targets), so a caller can tell a pattern the permission system took for an external path from a real one. Null when the
+ * line may turn text into a path or run something else: a substitution, a unit that is no plain read verb (or `git log|show|diff|grep`
+ * without global options), an env or wrapper prefix, a write-capable sed/rg/sort. Relative words resolve against `cwd`; after a `cd` a
+ * relative pattern counts for nothing and a relative other word with `..` makes the line null.
+ */
+export function patternArgPaths(command: string, cwd: string, platform: string = process.platform, home: string = os.homedir()): { patterns: Set<string>; others: Set<string> } | null {
+  if (/\$\(|`|[<>]\(/.test(command)) return null;
+  const parsed = parseShell(command, "posix");
+  if (parsed.subs.length) return null;
+  const p = platform === "win32" ? path.win32 : path.posix;
+  const patterns = new Set<string>();
+  const others = new Set<string>();
+  let cd = false;
+  const abs = (w: string, other: boolean): string | null => {
+    if (w === "") return null;
+    if (w === "~" || w.startsWith("~/")) return p.join(home, w.slice(1));
+    if (p.isAbsolute(w)) return p.resolve(w);
+    if (cd && other && w.split(/[\\/]/).includes("..")) throw new Error("cd");
+    return cd ? (other ? p.resolve(cwd, w) : null) : p.resolve(cwd, w);
+  };
+  const put = (set: Set<string>, w: string, other: boolean): void => {
+    const a = abs(w, other);
+    if (a) set.add(a);
+  };
+  try {
+    for (const pipe of parsed.pipelines) {
+      for (const unit of pipe) {
+        if (!unit.length) continue;
+        const verb = unit[0];
+        if (baseName(verb) !== verb || /^[A-Za-z_][A-Za-z0-9_]*=/.test(verb)) return null;
+        const skip = REDIRECTS.get(unit) ?? new Set<number>();
+        if (verb === "git") {
+          if (!PATTERN_GIT_SUBS.has(unit[1] ?? "")) return null;
+        } else if (!PATTERN_LINE_VERBS.has(verb) || !unitReadOnly(unit, skip)) return null;
+        const pat = new Set(nonPathArgs(unit, skip));
+        const ranges = verb === "git" ? gitLogRanges(unit, skip) : new Map<number, string>();
+        for (let i = 1; i < unit.length; i++) {
+          const x = unit[i];
+          if (pat.has(i)) {
+            put(patterns, x, false);
+            // the attached forms: `--grep=/x/`, `--regexp=/x/`, `-e/x/`, `-ne/x/`, `-S/x/`
+            const eq = x.startsWith("--") ? x.indexOf("=") : -1;
+            if (eq > 0) put(patterns, x.slice(eq + 1), false);
+            else if (/^-[A-Za-z]+./.test(x)) {
+              const m = /^-[A-Za-z]*?[eSG](.+)$/.exec(x);
+              if (m) put(patterns, m[1], false);
+            }
+            continue;
+          }
+          const range = ranges.get(i);
+          if (range !== undefined) {
+            // the word as the permission system reads it is explained by its range; the <file> part is a relative path (gitLogRanges)
+            put(patterns, x, false);
+            put(others, x.slice(range.length + 1), true);
+            continue;
+          }
+          put(others, x, true);
+          const eq = x.indexOf("=");
+          if (eq > 0) put(others, x.slice(eq + 1), true);
+          const colon = x.indexOf(":");
+          if (colon > 0) put(others, x.slice(colon + 1), true);
+        }
+        if (verb === "cd") cd = true;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return { patterns, others };
 }
 
 /** Long grep/rg options whose separate value names a file or program: it stays a path word. */
