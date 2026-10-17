@@ -26,6 +26,10 @@
     "foreman_ledger": "allow",
     "foreman_wait": "allow",
     "bg_wait": "allow",
+    "bg_status": "allow",
+    "bg_logs": "allow",
+    "bg_kill": "allow",
+    "subagents_enable": "allow",
     "contact_supervisor": "allow",
     "intercom": "allow",
     "codemode": "allow"

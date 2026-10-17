@@ -21,6 +21,10 @@ deny/ask rule, the shell-write guard, the destructive guard and the git guard se
 `shellTools` in `config/permissions.baseline.json` maps both to the bash rules for the permission system (`commandArgument: command`,
 the same alias `powershell` has). A missing or non-string `command` is denied.
 
+The harness's own tools carry a tool-level `allow` in the baseline `tools` block, so the foreman gets no permission dialog (formerly
+"not on the chair allow list, escalated") for `subagents_enable`, `bg_status`, `bg_logs`, `bg_kill`, `bg_wait` and the `foreman_*` tools.
+`bg_run` and `foreman_bg` stay gated as bash above. Children keep their role's `tools` list, which holds none of them.
+
 ## Effect classes
 
 `extensions/core-adapter/effects.ts` sorts a command by what it does:
