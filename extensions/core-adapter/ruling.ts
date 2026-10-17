@@ -134,112 +134,24 @@ export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulin
 export const SELF_RULING_REASON = "a session cannot write its own parent's ruling";
 
 const REF_READ_VERBS = new Set(["cat", "head", "tail", "ls", "grep", "egrep", "fgrep", "rg", "wc", "stat", "file", "nl", "realpath", "sort", "uniq", "cut", "tr", "cd"]);
+/** `-o` is --only-matching for these, not an output file. */
+const REF_ONLY_MATCHING = new Set(["grep", "egrep", "fgrep", "rg", "ls"]);
 
-interface Seg { words: string[]; redirs: string[] }
-
-/** Split a shell line into simple commands: quotes stripped, redirect targets kept apart from the words. */
-function shellSegments(cmd: string): Seg[] {
-  const segs: Seg[] = [];
-  let seg: Seg = { words: [], redirs: [] };
-  let cur = "";
-  let inWord = false;
-  let pending: "redir" | "skip" | null = null;
-  const flush = (): void => {
-    if (!inWord) return;
-    if (pending === "redir") seg.redirs.push(cur);
-    else if (pending !== "skip") seg.words.push(cur);
-    pending = null;
-    cur = "";
-    inWord = false;
-  };
-  const endSeg = (): void => {
-    flush();
-    if (seg.words.length || seg.redirs.length) segs.push(seg);
-    seg = { words: [], redirs: [] };
-    pending = null;
-  };
-  for (let i = 0; i < cmd.length; i++) {
-    const c = cmd[i];
-    if (c === "'") {
-      const j = cmd.indexOf("'", i + 1);
-      const end = j < 0 ? cmd.length : j;
-      cur += cmd.slice(i + 1, end);
-      inWord = true;
-      i = end;
-    } else if (c === '"') {
-      inWord = true;
-      for (i++; i < cmd.length && cmd[i] !== '"'; i++) {
-        if (cmd[i] === "\\" && i + 1 < cmd.length) i++;
-        cur += cmd[i];
-      }
-    } else if (c === "\\" && i + 1 < cmd.length) {
-      cur += cmd[++i];
-      inWord = true;
-    } else if (/\s/.test(c) && c !== "\n") {
-      flush();
-    } else if (c === ">" || (c === "&" && cmd[i + 1] === ">")) {
-      if (inWord && /^\d+$/.test(cur)) { cur = ""; inWord = false; } else flush();
-      if (c === "&") i++;
-      while (cmd[i + 1] === ">" || cmd[i + 1] === "|") i++;
-      if (cmd[i + 1] === "&" && c === ">") {
-        i++; // a descriptor duplicate (`2>&1`), no file
-        while (/[\d-]/.test(cmd[i + 1] ?? "")) i++;
-      } else pending = "redir";
-    } else if (c === "<") {
-      flush();
-      while (cmd[i + 1] === "<") i++;
-      pending = "skip";
-    } else if (";|&\n(){}".includes(c)) {
-      endSeg();
-    } else {
-      cur += c;
-      inWord = true;
-    }
-  }
-  endSeg();
-  return segs;
+/** A command that only reads with a plain viewer verb (no redirect, background job, substitution, output option). */
+function pureRead(command: string): boolean {
+  if (/[`>&]|\$\(|<\(|\$\{/.test(command.replace(/&&/g, ";"))) return false;
+  const parts = command.split(/&&|\|\||;|\||\n/).map((p) => p.trim()).filter(Boolean);
+  return parts.length > 0 && parts.every((p) => {
+    const w = p.split(/\s+/);
+    if (!REF_READ_VERBS.has(w[0])) return false;
+    // `uniq IN OUT` and `tr`'s sets are operands: uniq writes its second operand, so it takes none here
+    if (w[0] === "uniq" && w.slice(1).some((x) => !x.startsWith("-"))) return false;
+    if (w[0] === "sort" && w.some((x) => /^-[^-]*[oT]|^--(output|compress-program|temporary)/.test(x))) return false;
+    return REF_ONLY_MATCHING.has(w[0]) || !w.some((x) => /^--?o(utput)?\b/.test(x));
+  });
 }
 
-const WRITE_ALL = new Set(["tee", "touch", "truncate"]);
-const WRITE_LAST = new Set(["cp", "mv", "install", "ln", "rsync"]);
-const isAssign = (w: string): boolean => /^[A-Za-z_][A-Za-z0-9_]*=/.test(w);
-
-/** Words a simple command can write to (not classified as ruling or not yet), plus the directory-copy sources. */
-function writeTargets(words: string[]): { targets: string[]; sources: string[] } {
-  const none = { targets: [] as string[], sources: [] as string[] };
-  let k = 0;
-  while (k < words.length && (isAssign(words[k]) || ["sudo", "nohup", "time", "command", "env", "nice"].includes(words[k]))) k++;
-  const verb = words[k];
-  if (!verb) return none;
-  const args = words.slice(k + 1);
-  const ops = args.filter((a) => !a.startsWith("-"));
-  if (WRITE_ALL.has(verb)) return { targets: ops, sources: [] };
-  if (WRITE_LAST.has(verb)) {
-    const ti = args.findIndex((a) => a === "-t" || a.startsWith("--target-directory"));
-    if (ti >= 0) {
-      const a = args[ti];
-      const dir = a.includes("=") ? a.slice(a.indexOf("=") + 1) : args[ti + 1];
-      return { targets: dir ? [dir] : [], sources: ops.filter((o) => o !== dir) };
-    }
-    return ops.length > 1 ? { targets: [ops[ops.length - 1]], sources: ops.slice(0, -1) } : none;
-  }
-  if (verb === "dd") return { targets: args.filter((a) => a.startsWith("of=")).map((a) => a.slice(3)), sources: [] };
-  if (verb === "sed" && args.some((a) => a === "--in-place" || a.startsWith("--in-place=") || /^-[a-zA-Z]*i/.test(a))) return { targets: ops, sources: [] };
-  if (verb === "uniq") return { targets: ops.slice(1), sources: [] };
-  if (verb === "sort") {
-    const t: string[] = [];
-    args.forEach((a, n) => {
-      if (a === "-o" || a === "--output") t.push(args[n + 1] ?? "");
-      else if (a.startsWith("--output=")) t.push(a.slice(9));
-      else if (/^-o./.test(a)) t.push(a.slice(2));
-    });
-    return { targets: t.filter(Boolean), sources: [] };
-  }
-  return none;
-}
-
-const KNOWN_VERBS = new Set([...REF_READ_VERBS, ...WRITE_ALL, ...WRITE_LAST, "dd", "sed", "echo", "printf", "git", "env", "pwd", "true", "false", "rm", "mkdir", "sleep", "find", "diff", "test", "export"]);
-
+const unquote = (w: string): string => w.replace(/^['"]+|['"]+$/g, "");
 const realDir = (d: string): string => path.dirname(realKey(path.join(d, "x")));
 
 /**
@@ -248,63 +160,29 @@ const realDir = (d: string): string => path.dirname(realKey(path.join(d, "x")));
  * naming such a file (or a ruling name next to a mention of a child dir) is refused unless the command is a pure read.
  */
 export function selfRulingRefusal(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[]): string | undefined {
-  return selfRulingTarget(toolName, input, cwd, childDirs) === undefined ? undefined : SELF_RULING_REASON;
-}
-
-/** The refusal message naming the matched target, or undefined when the call is allowed. */
-export function selfRulingMessage(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[]): string | undefined {
-  const t = selfRulingTarget(toolName, input, cwd, childDirs);
-  return t === undefined ? undefined : `${SELF_RULING_REASON} (target: ${t})`;
-}
-
-/** The write target (word or path) that would write a ruling file in a child dir, or undefined. */
-export function selfRulingTarget(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[]): string | undefined {
   if (childDirs.length === 0) return undefined;
   const dirs = new Set(childDirs.map(realDir));
-  const inChildAt = (base: string, p: string): boolean => isRulingName(path.basename(p)) && dirs.has(path.dirname(realKey(path.resolve(base, p))));
-  const inChild = (p: string): boolean => inChildAt(cwd, p);
+  const inChild = (p: string): boolean => isRulingName(path.basename(p)) && dirs.has(path.dirname(realKey(path.resolve(cwd, p))));
   const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
   if (toolName === "write" || toolName === "edit") {
     const p = str(input.path);
-    return p && inChild(p) ? p : undefined;
+    return p && inChild(p) ? SELF_RULING_REASON : undefined;
   }
   if (toolName === "foreman_copy" || toolName === "foreman_move") {
     const p = str(input.dst);
-    return p && inChild(p) ? p : undefined;
+    return p && inChild(p) ? SELF_RULING_REASON : undefined;
   }
   if (toolName === "bash" || toolName === "powershell" || toolName === "foreman_bg" || toolName === "bg_run") {
     const cmd = str(input.command);
-    if (!cmd) return undefined;
+    if (!cmd || pureRead(cmd)) return undefined;
+    const words = cmd.split(/[\s;&|<>()]+/).filter(Boolean).map(unquote);
+    const named = words.filter((w) => /ruling/.test(w));
+    const dynamic = words.some((w) => /[*?[$]/.test(w));
     const mentionsDir = [...childDirs, ...dirs].some((d) => cmd.includes(d));
-    const rulingAnywhere = /ruling/.test(cmd);
-    const moves = /\b(cd|pushd|Set-Location)\b/.test(cmd);
-    const dynWord = (w: string): boolean => /[*?[$`]/.test(w);
-    let at = cwd;
-    for (const seg of shellSegments(cmd)) {
-      const verb = seg.words.find((w) => !isAssign(w));
-      if (verb === "cd" || verb === "pushd") {
-        const arg = seg.words.slice(seg.words.indexOf(verb) + 1).find((w) => !w.startsWith("-"));
-        if (arg && !dynWord(arg)) at = path.resolve(at, arg);
-      }
-      const { targets, sources } = writeTargets(seg.words);
-      const all = [...seg.redirs.filter((r) => !r.startsWith("/dev/")), ...targets];
-      for (const t of all) {
-        if (inChildAt(at, t) || inChild(t)) return t;
-        if (isRulingName(path.basename(t)) && (mentionsDir || moves)) return t;
-        if (dynWord(t) && (mentionsDir || rulingAnywhere)) return t;
-        // copying a ruling-named source into a child dir itself
-        if (dirs.has(realKey(path.resolve(at, t))) || dirs.has(realKey(path.resolve(cwd, t)))) {
-          const s = sources.find((x) => isRulingName(path.basename(x)) || dynWord(x) && rulingAnywhere);
-          if (s !== undefined) return s;
-        }
-      }
-      // a command that is neither a viewer nor a known writer: fail closed on a ruling word next to a dir mention
-      if (verb && !KNOWN_VERBS.has(verb) && !isAssign(verb)) {
-        const w = seg.words.find((x) => /ruling/.test(x) && (inChildAt(at, x) || mentionsDir || moves || dynWord(x)));
-        if (w !== undefined) return w;
-      }
-    }
-    return undefined;
+    const moves = /\b(cd|pushd|Set-Location)\b/.test(cmd); // a relative word may not mean the file it seems to
+    if (named.some(inChild)) return SELF_RULING_REASON;
+    if (named.length > 0 && (mentionsDir || moves || dynamic)) return SELF_RULING_REASON;
+    return dynamic && (mentionsDir || moves) ? SELF_RULING_REASON : undefined;
   }
   return undefined;
 }
