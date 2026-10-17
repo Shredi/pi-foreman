@@ -77,21 +77,9 @@ test("child extension with the real script blocks push shapes and passes plain g
       assert.equal(r?.block, true, command);
       assert.match(r!.reason, /^pi-foreman git guard: /);
     }
-    for (const command of ["git status", "git commit -m 'fix(r11): whatever'", "echo git push"]) {
+    for (const command of ["git status", "git commit -m 'whatever'", "echo git push"]) {
       assert.equal(await h({ toolName: "bash", input: { command } }, ctx(cwd)), undefined, command);
     }
-  } finally {
-    rmTestTmp(cwd);
-  }
-});
-
-test("message_pattern_child_nonconventional_subject_refused (child extension, real script)", { skip: !py.ok ? "no Python >= 3.9" : false }, async () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pf-gg-"));
-  try {
-    const h = loadChildGuard({ env: { ...process.env, PI_FOREMAN_PYTHON: py.ok ? py.info.executable : "" } });
-    const r = await h({ toolName: "bash", input: { command: "git commit -m 'review(r10): x'" } }, ctx(cwd));
-    assert.equal(r?.block, true);
-    assert.match(r!.reason, /safety\.git\.commit\.messagePattern/);
   } finally {
     rmTestTmp(cwd);
   }

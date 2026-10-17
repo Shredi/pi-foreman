@@ -164,7 +164,7 @@ Key-by-key layer rules for `safety.*`: `design/architecture.md`
 | `safety.permissions.paths.deny`, `safety.permissions.paths.ask` | Path patterns tools and shell commands may never touch / need approval, on top of the baseline secret paths; a project can add entries only. |
 | `safety.review.required` | Require a review before close-out; a project can only set true. |
 | `safety.git.protectedBranches` | Branch patterns that never receive a force push, mirror push or delete from the foreman; a project can add entries only. |
-| `safety.git.commit.messagePattern` | Regular expression the commit subject must match; `null` switches the check off; a project cannot set it. The pattern applies to foreman and child commits alike (a `-F` message file must lie inside the commit's worktree). |
+| `safety.git.commit.messagePattern` | Regular expression the commit subject must match; `null` switches the check off; a project cannot set it. |
 | `safety.git.commit.requiredTrailers`, `safety.git.commit.forbiddenTrailers` | Regular expressions each required trailer line must match / no trailer line may match; a project can add entries only. |
 | `safety.git.commit.checkCommand` | argv run before each foreman commit with the staged diff on stdin and the message in `PI_FOREMAN_COMMIT_MESSAGE`; a non-zero exit blocks the commit. |
 | `safety.ops.copyMaxBytes` | Size cap for `foreman_copy`; a project can only lower it. |
