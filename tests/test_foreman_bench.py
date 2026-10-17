@@ -727,6 +727,13 @@ class RetryAndPrebakedTests(unittest.TestCase):
         self.assertNotIn("npm install -g", baked)
         self.assertTrue(live.endswith("pi --version") and baked.endswith("pi --version"))
 
+    def test_smoke_preset_rows_install_pi_from_the_lock(self):
+        # A live `npm install -g` resolves pi's caret dependencies at run time: pi 1.1.0 with a later
+        # pi-codemode broke every subagent runner's startup (CI bench-smoke, reward 0 at the cap).
+        rows = json.loads((ROOT / "bench" / "presets" / "smoke.json").read_text("utf-8"))["rows"]
+        self.assertTrue(rows)
+        self.assertEqual([r["id"] for r in rows if not ha.pi_prebaked(r)], [])
+
 
 if __name__ == "__main__":
     unittest.main()
