@@ -157,6 +157,31 @@ def hub_read_patterns(hub):
     return out
 
 
+def probe_read_patterns(probe, home=None, platform=None, env=None):
+    """external_directory_read keys of `externalDirectory.probe` (toolchain bin dirs, the npx cache): each dir and its subtree. A leading `~` is the
+    home dir, `%APPDATA%` resolves only on Windows (else the entry is dropped), a relative or unresolved entry is dropped. Read keys only."""
+    platform = platform or sys.platform
+    env = os.environ if env is None else env
+    home = Path.home().as_posix() if home is None else home
+    win = platform.startswith("win")
+    out = []
+    for p in strings(probe):
+        if p == "~" or p.startswith("~/"):
+            if not home:
+                continue
+            p = home.rstrip("/") + p[1:]
+        if "%APPDATA%" in p:
+            appdata = env.get("APPDATA") if win else None
+            if not appdata or not ntpath.isabs(appdata):
+                continue
+            p = p.replace("%APPDATA%", PureWindowsPath(appdata).as_posix())
+        p = p.rstrip("/")
+        if not p or "{" in p or "%" in p or not (posixpath.isabs(p) or ntpath.isabs(p)):
+            continue
+        out += [p, p + "/*"]
+    return out
+
+
 def external_rules(baseline, agent_dir, owned):
     """(bare map, read map): external_directory and external_directory_read. Last match wins, so the
     catch-all comes first and the asks last; a pattern whose token did not resolve is dropped."""
@@ -181,6 +206,7 @@ def external_rules(baseline, agent_dir, owned):
     for p in fill(ext.get("ask")):
         bare[p] = "ask"
     read = {p: "allow" for p in fill(ext.get("read"))}
+    read.update({p: "allow" for p in probe_read_patterns(ext.get("probe"))})
     return bare, read or None
 
 

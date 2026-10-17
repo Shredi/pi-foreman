@@ -127,12 +127,18 @@ export interface OverlayRules {
   /** childBlock patterns that stay open below the child's own workspace root (its round worktree). */
   childBlockInWorkspace?: string[];
   owned?: OwnedRoots;
+  /**
+   * Toolchain probe dirs (baseline `externalDirectory.probe`, each dir and its subtree): the permission system read-allows them for every role, the
+   * overlay narrows that to pure ls/stat/which shell lines and the ls tool; anything else naming them asks (R10 item 3).
+   */
+  probeDirs?: string[];
 }
 
 export interface Baseline {
   bash: { deny: string[]; ask: string[]; allow?: string[] };
   paths: { deny: string[]; except: string[] };
   protect: { deny: string[]; ask: string[]; childDeny: string[]; writeAsk: string[]; writeAskSelfHost?: string[]; removeAsk?: string[] };
+  externalDirectory?: { probe?: string[] };
 }
 
 export type Decision = { kind: "deny" | "ask"; reason: string };
@@ -733,6 +739,7 @@ export function readBaseline(pkgRoot: string): Baseline | null {
       bash: { deny: strs(bash.deny), ask: strs(bash.ask), allow: strs(bash.allow) },
       paths: { deny: strs(paths.deny), except: strs(paths.except) },
       protect: { deny: strs(pr.deny), ask: strs(pr.ask), childDeny: strs(pr.childDeny), writeAsk: strs(pr.writeAsk), writeAskSelfHost: strs(pr.writeAskSelfHost), removeAsk: strs(pr.removeAsk) },
+      externalDirectory: { probe: strs(obj(raw.externalDirectory).probe) },
     };
   } catch {
     return null;
@@ -809,7 +816,33 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
     childBlockExcept: CHILD_BLOCK_EXCEPT.map(sub),
     childBlockInWorkspace: CHILD_BLOCK_WORKTREES,
     ...(owned ? { owned } : {}),
+    probeDirs: probeDirPatterns(baseline.externalDirectory?.probe ?? []),
   };
+}
+
+/** The probe dir list as overlay patterns: `%APPDATA%` only on win32 with APPDATA set (else the entry is dropped), `~` left to the matcher; dir + `dir/*`. */
+function probeDirPatterns(list: string[], platform: string = process.platform, appData: string | undefined = process.env.APPDATA): string[] {
+  const out: string[] = [];
+  for (const p0 of list) {
+    let p = p0;
+    if (p.includes("%APPDATA%")) {
+      if (platform !== "win32" || !appData || !path.win32.isAbsolute(appData)) continue;
+      p = p.replace(/%APPDATA%/g, appData.split("\\").join("/").replace(/\/+$/, ""));
+    }
+    p = p.replace(/\/+$/, "");
+    if (p) out.push(p, `${p}/*`);
+  }
+  return out;
+}
+
+/** The toolchain probe pattern a path word lies in (any spelling, as written or resolved), or null (R10 item 3). */
+function probeHit(rules: OverlayRules, word: string, ctx: MatchCtx): string | null {
+  if (!rules.probeDirs?.length) return null;
+  for (const x of pathCandidates(word, ctx)) {
+    const pat = rules.probeDirs.find((p) => pathMatches(p, x, ctx));
+    if (pat) return pat;
+  }
+  return null;
 }
 
 // ------------------------------------------------------------------ wildcard
@@ -1612,6 +1645,10 @@ function innerScript(core: string[]): { script: string; shell: "posix" | "powers
 interface Collected {
   /** The verb of every non-neutral unit (`""` for a unit with an env assignment or wrapper prefix): the own-usage read check (USAGE_VERBS). */
   verbs?: string[];
+  /** The command word of every unit as written (a toolchain probe dir named only as the program to run is left to the permission system's bash rules). */
+  cmdWords?: string[];
+  /** Some unit has a redirect (any target, `/dev/null` included). */
+  redirected?: boolean;
   /** Harness-set variables a same-line `$NAME` may resolve to (shellvars.ts); unset below the top level. */
   vars?: Record<string, string>;
   /** The host platform for the same-line variables (win32 forms in shellvars.ts); default process.platform. */
@@ -1976,6 +2013,8 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
     out.unitTexts.push(...v.texts);
     const redir = REDIRECTS.get(unitWords) ?? new Set<number>();
     const off = unitWords.length - v.core.length;
+    if (redir.size) out.redirected = true;
+    if (v.core.length) out.cmdWords?.push(unitWords[off]);
     const skip = new Set([...redir].filter((i) => i >= off).map((i) => i - off));
     // the pattern of grep/rg and their include/exclude/glob values are no paths, whatever the rest of the command does
     const verb0 = v.core.length ? baseName(v.core[0]) : "";
@@ -2512,7 +2551,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (sw) return sw;
   }
   const scratch0 = scratchOf(ctx);
-  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, platform: ctx.platform, resolvedWords: new Set(), bound, boundRefs: [], unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], proseSkip: [], verbs: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], readCode: new Set(), ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
+  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, platform: ctx.platform, resolvedWords: new Set(), bound, boundRefs: [], unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], proseSkip: [], verbs: [], cmdWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], readCode: new Set(), ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
   collect(command, shell, 0, c);
   // win32 (Git Bash runs the posix-unescaped words): the ambiguous path words of the posix pass, before the raw pass adds its own
   const winAmb = ctx.platform === "win32" && shell === "posix" ? winAmbiguity(command, c) : undefined;
@@ -2627,6 +2666,12 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const prot = pwords.map((w) => ({ w, hit: protectHit(rules.protect, w, pctx, true, removed.has(w), readOnly, ownRead) })).filter((x) => x.hit);
   const pd = prot.find((x) => x.hit!.kind === "deny");
   if (pd) return protectDecision(pd.hit!, pd.w, "shell command");
+  // R10 item 3: the permission system read-allows the toolchain probe dirs for any command; only a pure ls/stat/which line may name them
+  const probeWord = words.find((w) => !c.cmdWords!.includes(w) && probeHit(rules, w, pctx) !== null);
+  if (probeWord !== undefined) {
+    const probeOk = shell === "posix" && !/\$\(|`|[<>]\(/.test(command) && !/\$/.test(command.replace(/\$(?:\{HOME\}|HOME)(?=\/)/g, "")) && c.redirected !== true && c.writeTargets!.size === 0 && c.tmpTargets!.size === 0 && c.removeWords!.length === 0 && c.verbs!.length > 0 && c.verbs!.every((v) => PROBE_VERBS.has(v));
+    if (!probeOk) return { kind: "ask", reason: `pi-foreman: '${clip(probeWord)}' is in a toolchain bin dir or the npx cache: only a plain ls, stat or which line may name it without approval (no other command, pipe, redirect or substitution).` };
+  }
   const amb = winAmb ? (winAmb.viaVar ?? (ctx.role === "child" ? winAmb.word : undefined)) : undefined;
   if (amb !== undefined) {
     return { kind: "ask", reason: `pi-foreman: '${clip(amb)}' needs approval: under Git Bash it is (or holds a variable assigned) a drive-relative or backslash path, so which file it names is not certain. Use a forward-slash path (C:/...) or a quoted native path ("C:\\...").` };
@@ -2641,6 +2686,9 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   if (prot.length) return protectDecision(prot[0].hit!, prot[0].w, "shell command");
   return null;
 }
+
+/** The only verbs a shell line naming a toolchain probe dir may use (R10 item 3). */
+const PROBE_VERBS = new Set(["ls", "stat", "which"]);
 
 /** The shell verbs that may read the foreman's own usage records (MatchCtx.ownReads). */
 const USAGE_VERBS = new Set(["ls", "cat", "head", "tail", "wc", "stat"]);
@@ -3054,6 +3102,11 @@ export function checkPathTool(rules: OverlayRules, toolName: string, input: Reco
   for (const { value } of paths) {
     const pat = pathAskHit(rules.pathAsk, value, ctx);
     if (pat) return { kind: "ask", reason: `pi-foreman: this path needs approval (project/session rule '${pat}' matched '${clip(value)}').` };
+  }
+  // R10 item 3: in a toolchain probe dir only the ls tool lists without approval
+  if (toolName !== "ls") {
+    const pv = paths.find((x) => probeHit(rules, x.value, ctx) !== null);
+    if (pv) return { kind: "ask", reason: `pi-foreman: '${clip(pv.value)}' is in a toolchain bin dir or the npx cache: only the ls tool (or a plain ls/stat/which shell line) may look there without approval.` };
   }
   return prot.length ? protectDecision(prot[0].hit!, prot[0].w, `${toolName} call`) : null;
 }

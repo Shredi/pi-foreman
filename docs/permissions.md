@@ -198,6 +198,7 @@ Heredoc bodies are scanned like any shell text (a `.pi` or `$x` in prose heredoc
 |---|---|
 | `<agentDir>/pi-foreman[/*]` | reads of the handoff, state and config files of pi-foreman |
 | `<npm root -g>[/*]` | global packages, for bash reads (PS already allows the read tools there) |
+| `externalDirectory.probe`, each `[/*]` | toolchain probes: `/usr/local/bin`, `/opt/homebrew/bin`, `/usr/bin`, `~/.local/bin`, `~/.npm/_npx`, `~/.npm-global/bin`, `%APPDATA%/npm` (Windows only). `~` is the home dir at render time; an entry that does not resolve is dropped. Read keys only. The overlay narrows them for every role: only a shell line whose every unit is a plain `ls`, `stat` or `which` (no pipe into another command, no redirect, substitution, env or wrapper prefix) and the `ls` tool pass; any other command naming a path there, and the read/grep/find/write/edit tools, ask (a child: deny). A found binary run as the command word is left to PS's bash rules, which ask. After an update that adds this list, `/foreman doctor` reports drift until `foreman setup` is run again |
 
 Last: `ask` for `<agentDir>/pi-foreman/handoffs/*/parent` and `.../child` stay on the write side (`protect.writeAsk`
 asks too). Reads of those two files are allowed by the read pattern above.

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Round 10, permission overlay
+- Toolchain probes: the baseline gets `externalDirectory.probe` (`/usr/local/bin`, `/opt/homebrew/bin`, `/usr/bin`, `~/.local/bin`, `~/.npm/_npx`, `~/.npm-global/bin`, `%APPDATA%/npm` on Windows), rendered as `external_directory_read` keys (dir and `dir/*`). The overlay narrows them: a plain `ls`/`stat`/`which` line and the `ls` tool pass, any other command, pipe, redirect or substitution naming them asks (a child: deny). The rendered policy changes: `/foreman doctor` reports drift until you run `foreman setup` again.
+
 ### Pi 1.3.0
 - Pi 1.3.0 supported (range 1.3.x); no extension-surface change. Pi's `--model` ambiguity fix prefers the provider with credentials.
 
