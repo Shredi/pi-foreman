@@ -325,8 +325,14 @@ function psItemUnsafe(verb: string, args: string[], piped: boolean, literal: (t:
   const dests: string[] = [];
   const positional: string[] = [];
   let unknown = false;
+  // `--` ends the parameters: it is no value, and every later word is positional (`Set-Item -- $p /x`: `$p` is the path)
+  let ended = false;
   for (let k = 0; k < args.length; k++) {
-    const o = /^-([A-Za-z]\w*)(:)?([\s\S]*)$/.exec(args[k]);
+    if (!ended && args[k] === "--") {
+      ended = true;
+      continue;
+    }
+    const o = ended ? null : /^-([A-Za-z]\w*)(:)?([\s\S]*)$/.exec(args[k]);
     if (!o) {
       const [v, end] = psArray(args, k, args[k]);
       positional.push(v);

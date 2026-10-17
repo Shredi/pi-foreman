@@ -448,3 +448,30 @@ for (const line of [
     assert.equal(foreman(line.replace("$HOME/f", HOME_USE.slice(4))), "pass");
   });
 }
+
+// ------------------------------------------------------------------ revision 2, item 3: `--` ends the parameters, every later word is positional
+for (const [line, name] of [
+  [`Set-Item -- $p /x; ${PS_USE}`, "HOME"],
+  [`si -- $p /x; ${PS_USE_UP}`, "USERPROFILE"],
+  [`Set-Variable -- $n /x; ${PS_VAR_USE}`, "HOME"],
+  [`sv -- $n /x; ${PS_VAR_USE}`, "HOME"],
+  [`New-Variable -- $n /x; ${PS_VAR_USE}`, "HOME"],
+  [`Set-Content -- $p x; ${PS_USE}`, "HOME"],
+  [`Add-Content -- $p x; ${PS_USE}`, "HOME"],
+  [`Set-Item -- ('en'+'v:HOME') /x; ${PS_USE}`, "HOME"],
+  [`$null = Set-Item -- $p /x; ${PS_USE}`, "HOME"],
+  [`Set-Item -Force -- $p /x; ${PS_USE}`, "HOME"],
+] as const) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(boundNames(line, "powershell").has(name), `boundNames sees ${name}`);
+    untrusted(foreman(line, "powershell"), line);
+  });
+}
+
+// revision 2, item 3 negative: a literal path after `--` binds that name only
+for (const line of [`Set-Item -- env:FOO /x; ${PS_USE}`, `Set-Variable -- FOO /x; ${PS_USE}`]) {
+  test(line, { skip: !posix }, () => {
+    assert.ok(!boundNames(line, "powershell").has("HOME"), "not HOME");
+    assert.equal(foreman(line, "powershell"), "pass");
+  });
+}
