@@ -35,7 +35,7 @@ test("diffLinesOf counts added and removed lines, not the file headers", () => {
 
 test("index wiring: critique raised at a counted review run end, applied at an accepted builder launch, lines from the review launch diff", () => {
   const src = fs.readFileSync(path.join(import.meta.dirname, "..", "index.ts"), "utf8");
-  assert.match(src, /for \(const r of reviewResults\) if \(r\.counts\) \{\n\s+s\.trace\?\.emit\(s\.critique\.onReview\(r\.text, r\.role, runId, reviewLaunch\?\.lines\)\);/);
-  assert.match(src, /subagentAgents\(input\)\.includes\("builder"\)\) \{\n\s+const applied = s\.critique\.onBuilder\(\);/);
+  assert.match(src, /for \(const r of reviewResults\) if \(r\.counts\) \{\r?\n\s+s\.trace\?\.emit\(s\.critique\.onReview\(r\.text, r\.role, runId, reviewLaunch\?\.lines\)\);/);
+  assert.match(src, /subagentAgents\(input\)\.includes\("builder"\)\) \{\r?\n\s+const applied = s\.critique\.onBuilder\(\);/);
   assert.match(src, /if \(rl && diffText !== null\) rl\.lines = diffLinesOf\(diffText\);/);
 });
