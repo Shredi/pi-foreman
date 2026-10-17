@@ -14,6 +14,21 @@ import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.t
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
+/** Poll until the state dir listing (names + sizes) is unchanged for two polls, at most 5 s. */
+async function waitQuiet(dir: string): Promise<void> {
+  const snap = (): string => {
+    try { return fs.readdirSync(dir).sort().map((n) => `${n}:${fs.statSync(path.join(dir, n)).size}`).join("|"); } catch { return ""; }
+  };
+  let prev = snap();
+  let stable = 0;
+  for (let waited = 0; waited < 5000 && stable < 2; waited += 100) {
+    await new Promise((r) => setTimeout(r, 100));
+    const cur = snap();
+    stable = cur === prev ? stable + 1 : 0;
+    prev = cur;
+  }
+}
+
 function tmp(t: { after(fn: () => void): void }, prefix: string): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   t.after(() => rmTestTmp(dir));
@@ -26,10 +41,13 @@ test("session_start warns in the main session when pi-claude-bridge loads before
   const keys = ["PATH", "Path", "PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "CLAUDE_CONFIG_DIR", "GIT_CONFIG_COUNT"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   for (let i = 0; i < 8; i++) saved[`GIT_CONFIG_KEY_${i}`] = process.env[`GIT_CONFIG_KEY_${i}`], saved[`GIT_CONFIG_VALUE_${i}`] = process.env[`GIT_CONFIG_VALUE_${i}`];
-  t.after(() => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-lo-")));
+  t.after(async () => {
+    // One hook, in order: quiescence wait (the test already awaited session_shutdown), removal, env restore.
+    await waitQuiet(path.join(root, "agent", "pi-foreman", "state"));
+    rmTestTmp(root);
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
   });
-  const root = tmp(t, "pf-lo-");
   const project = path.join(root, "project");
   const agentDir = path.join(root, "agent");
   fs.mkdirSync(project);

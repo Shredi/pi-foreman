@@ -16,6 +16,24 @@ let rigs = 0;
 const iso = (ms: number): string => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
 const ROLES = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
 
+// Captured at load: tests mock setTimeout via t.mock.timers, and the after hook can still run under the mock.
+const realSetTimeout = globalThis.setTimeout;
+
+/** Poll until the state dir listing (names + sizes) is unchanged for two polls, at most 5 s. */
+async function waitQuiet(dir: string): Promise<void> {
+  const snap = (): string => {
+    try { return fs.readdirSync(dir).sort().map((n) => `${n}:${fs.statSync(path.join(dir, n)).size}`).join("|"); } catch { return ""; }
+  };
+  let prev = snap();
+  let stable = 0;
+  for (let waited = 0; waited < 5000 && stable < 2; waited += 100) {
+    await new Promise((r) => realSetTimeout(r, 100));
+    const cur = snap();
+    stable = cur === prev ? stable + 1 : 0;
+    prev = cur;
+  }
+}
+
 function tmp(t: { after(fn: () => void): void }, prefix: string): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   t.after(() => rmTestTmp(dir));
@@ -44,11 +62,16 @@ interface Rig {
 async function rig(t: { after(fn: () => void): void }, o: { strong?: boolean } = {}): Promise<Rig> {
   const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
-  t.after(() => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-press-launch-")));
+  let shutdown: (() => Promise<unknown>) | undefined;
+  t.after(async () => {
+    // t.after hooks run in registration order: shutdown, then quiescence, then removal, then env restore, all in this one hook.
+    try { await shutdown?.(); } catch { /* best effort */ }
+    await waitQuiet(path.join(root, "agent", "pi-foreman", "state"));
+    rmTestTmp(root);
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   });
-  const root = tmp(t, "pf-press-launch-");
   const project = path.join(root, "project");
   const agentDir = path.join(root, "agent");
   fs.mkdirSync(path.join(project, ".workflow"), { recursive: true });
@@ -98,7 +121,7 @@ async function rig(t: { after(fn: () => void): void }, o: { strong?: boolean } =
     ui: { notify: () => undefined, confirm: async () => false, select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined },
   };
   await handlers.get("session_start")!({ reason: "startup" }, ctx);
-  t.after(async () => handlers.get("session_shutdown")?.({}, ctx));
+  shutdown = async () => handlers.get("session_shutdown")?.({}, ctx);
   const file = pressurePath(agentDir);
   const r: Rig = {
     handlers,
