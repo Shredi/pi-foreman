@@ -1,6 +1,6 @@
 // `foreman_bg` (ledger item 5) and the optional background-tasks add-on (item 6).
 //
-// `foreman_bg {command, note}` runs one shell command detached (own process group, stdout and stderr to
+// `foreman_bg {command, note}` runs one shell command detached (own process group on POSIX, see bgSpawnFlags for win32; stdout and stderr to
 // `<stateDir>/scratch/<session>/wait-<id>.log`) and registers a `pid` wait for it, so the foreman ends its turn and is
 // woken when the process is gone. The call is guarded exactly like a foreground `bash` call with the same command:
 // index.ts routes `foreman_bg` through the same tool_call guards (overlay, shell write guard, destructive and git guard)
@@ -57,7 +57,19 @@ export function shellFor(command: string, platform: string = process.platform): 
   return { file: fs.existsSync("/bin/bash") ? "/bin/bash" : "/bin/sh", args: ["-c", command], verbatim: false };
 }
 
-/** Spawn `command` detached with stdout and stderr appended to `logPath`; the pid, or why not. */
+/**
+ * The spawn flags of a foreman_bg run. POSIX: detached (own process group, so wait.ts kills `-pid`). win32: not detached, as
+ * node's `detached` there is DETACHED_PROCESS: cmd.exe then has no console, a console grandchild it starts (node, npm) gets a new
+ * console whose std handles replace the inherited log handle, and its output never reaches the log (CI ids 32, 33, 39; cmd's own
+ * builtins still did). Without it cmd shares the parent's console (or, when the parent has none, a new one hidden by windowsHide)
+ * and passes the log handle on. Windows ends no child when its parent exits, and wait.ts kills the plain pid on win32, so the run
+ * still outlives the session; the trade-off: a console close or Ctrl+C event of the parent's console now reaches the run as well.
+ */
+export function bgSpawnFlags(platform: string = process.platform): { detached: boolean; windowsHide: boolean } {
+  return { detached: platform !== "win32", windowsHide: true };
+}
+
+/** Spawn `command` detached (bgSpawnFlags) with stdout and stderr appended to `logPath`; the pid, or why not. */
 export function spawnDetached(command: string, cwd: string, logPath: string, platform: string = process.platform): { pid: number } | { error: string } {
   let fd: number | null = null;
   try {
@@ -65,7 +77,7 @@ export function spawnDetached(command: string, cwd: string, logPath: string, pla
     fd = fs.openSync(logPath, "a", 0o600);
     const sh = shellFor(command, platform);
     // the log fd stays open until spawn has returned (the child holds its own duplicate by then); `finally` closes ours
-    const child = spawn(sh.file, sh.args, { cwd, detached: true, stdio: ["ignore", fd, fd], env: process.env, windowsHide: true, windowsVerbatimArguments: sh.verbatim });
+    const child = spawn(sh.file, sh.args, { cwd, ...bgSpawnFlags(platform), stdio: ["ignore", fd, fd], env: process.env, windowsVerbatimArguments: sh.verbatim });
     child.on("error", () => undefined);
     child.unref();
     if (!child.pid) return { error: `${BG_TOOL}: could not start ${sh.file}.` };

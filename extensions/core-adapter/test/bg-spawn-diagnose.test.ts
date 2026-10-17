@@ -1,7 +1,8 @@
-// r9 item 1 (Windows CI ids 32, 38): under win32 the foreman_bg log stayed empty ('' after the process had exited), so neither the
-// node grandchild's output nor any cmd error reached it. The cause is not provable on a POSIX host. This test asserts the product
-// behaviour on every host (a shell builtin and a node grandchild of spawnDetached both write to the log) and, only when that fails,
-// fails with probes that tell the candidate causes apart (see the `probes` keys):
+// r9 item 1 (Windows CI ids 32, 33, 39 at 5fd754d): under win32 the foreman_bg log of a node grandchild stayed empty. The CI probes
+// below showed the cause: cmd's own builtin reached the log, node spawned directly and under an attached cmd did, but a node under a
+// detached (DETACHED_PROCESS) cmd did not, with the log opened "a" or "w". Fix: bgSpawnFlags spawns cmd not detached on win32.
+// This test asserts the product behaviour on every host (a shell builtin and a node grandchild of spawnDetached both write to the
+// log); the probes are only its failure message (see the `probes` keys):
 //   builtin   spawnDetached `echo`: cmd.exe itself writes to the inherited log handle
 //   node      spawnDetached `node -e`: the grandchild under a detached (DETACHED_PROCESS) cmd keeps the handle
 //   direct    node spawned detached without cmd, log opened "a": an append-only handle (FILE_APPEND_DATA) works as stdout
@@ -68,7 +69,7 @@ async function probes(dir: string, logs: { builtin: string; node: string }): Pro
   return `spawnDetached log stayed without the expected line; probes: ${JSON.stringify(out, null, 1)}`;
 }
 
-test("spawnDetached: a shell builtin and a node grandchild both write to the log; a failure carries the win32 probes (CI ids 32, 38)", async (t) => {
+test("spawnDetached: a shell builtin and a node grandchild both write to the log (win32: cmd not detached; CI ids 32, 33, 39)", async (t) => {
   const dir = mkTestTmp("pf-bgdiag-");
   t.after(() => rmTestTmp(dir));
   const logs = { builtin: path.join(dir, "builtin.log"), node: path.join(dir, "node.log") };
@@ -77,7 +78,7 @@ test("spawnDetached: a shell builtin and a node grandchild both write to the log
   assert.ok("pid" in a && "pid" in b, JSON.stringify([a, b]));
   const ok = (): boolean => /pf-builtin-ok/.test(read(logs.builtin)) && /pf-node-ok/.test(read(logs.node));
   for (let i = 0; i < 100 && !ok(); i++) await sleep(100);
-  if (!ok()) assert.fail(await probes(dir, logs));
-  assert.match(read(logs.builtin), /pf-builtin-ok/);
-  assert.match(read(logs.node), /pf-node-ok/);
+  const why = ok() ? undefined : await probes(dir, logs);
+  assert.match(read(logs.builtin), /pf-builtin-ok/, why);
+  assert.match(read(logs.node), /pf-node-ok/, why);
 });
