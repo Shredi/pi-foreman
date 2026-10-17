@@ -52,7 +52,7 @@ from harbor.models.agent.context import AgentContext
 REPO = Path(__file__).resolve().parents[1]
 PI_PACKAGE = "@earendil-works/pi-coding-agent"
 PI_VERSION = "1.1.0"
-SUBAGENTS = "pi-subagents@0.75.0"
+SUBAGENTS = "pi-subagents@0.78.0"  # equals the pi-subagents dependency in package.json
 BRIDGE = "pi-claude-bridge@0.9.2"
 # Bridge 0.9.2 asks for ^0.3.293 (0.9.1 and the stage-1 model check used 0.3.288). npm picks
 # the platform package (claude-agent-sdk-linux-<arch>) from the SDK's optional dependencies.
@@ -581,7 +581,9 @@ class _BenchPi(BaseInstalledAgent):
     async def _upload_json(self, environment, data, remote):
         with tempfile.TemporaryDirectory(prefix="pf-bench-") as tmp:
             p = Path(tmp) / "f"
-            p.write_text(data if isinstance(data, str) else json.dumps(data, indent=1), "utf-8")
+            fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(data if isinstance(data, str) else json.dumps(data, indent=1))
             await environment.upload_file(p, remote)
 
     def task_id(self):
