@@ -3,6 +3,7 @@
 // the files, a ruling older than its ask is ignored. A parent ruling never satisfies the finish gate (the chair runs
 // /ceremony); after a FAIL the refusal only names it.
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 const RULING_RE = /^ruling(?:-(\d{1,6}))?\.md$/;
@@ -238,7 +239,50 @@ function writeTargets(words: string[]): { targets: string[]; sources: string[] }
   return none;
 }
 
-const KNOWN_VERBS = new Set([...REF_READ_VERBS, ...WRITE_ALL, ...WRITE_LAST, "dd", "sed", "echo", "printf", "git", "env", "pwd", "true", "false", "rm", "mkdir", "sleep", "find", "diff", "test", "export"]);
+const WRAPPERS = new Set(["sudo", "nohup", "time", "command", "env", "nice", "exec", "xargs", "builtin", "stdbuf", "setsid"]);
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash", "pwsh", "powershell"]);
+const GIT_READ = new Set(["show", "log", "diff", "status", "blame", "grep", "ls-files", "cat-file"]);
+
+/** The words after leading assignments, wrapper verbs (`env`, `nohup`, `xargs`, …) and their flags. */
+function stripWrappers(words: string[]): string[] {
+  let k = 0;
+  let wrapped = false;
+  while (k < words.length) {
+    const w = words[k];
+    if (isAssign(w)) k++;
+    else if (WRAPPERS.has(w)) { wrapped = true; k++; }
+    else if (wrapped && w.startsWith("-")) k++;
+    else break;
+  }
+  return words.slice(k);
+}
+
+/** The script text of `sh -c SCRIPT`, `pwsh -Command SCRIPT`, `eval ARGS…`; undefined for any other command. */
+function interpreterScript(rest: string[]): string | undefined {
+  const verb = rest[0];
+  if (verb === "eval") return rest.slice(1).join(" ");
+  if (!verb || !SHELLS.has(path.basename(verb))) return undefined;
+  const i = rest.findIndex((a, n) => n > 0 && (/^-[A-Za-z]*c$/.test(a) || /^-command$/i.test(a) || /^-c(ommand)?$/i.test(a)));
+  if (i < 0 || i + 1 >= rest.length) return undefined;
+  return /^pwsh|powershell/.test(path.basename(verb)) ? rest.slice(i + 1).join(" ") : rest[i + 1];
+}
+
+/** A script the segment splitter models faithfully: balanced quotes, no substitutions. */
+function parseable(s: string): boolean {
+  if (/`|\$\(|<\(|\$\{/.test(s)) return false;
+  return (s.match(/'/g) ?? []).length % 2 === 0 && (s.match(/(?<!\\)"/g) ?? []).length % 2 === 0;
+}
+
+/** A segment whose ruling-named words are only read operands: a viewer, non-in-place sed, diff, read-only git, copy sources. */
+function provableRead(rest: string[]): boolean {
+  const verb = rest[0];
+  if (!verb) return false;
+  const args = rest.slice(1);
+  if (REF_READ_VERBS.has(verb) || verb === "diff" || WRITE_LAST.has(verb)) return true;
+  if (verb === "sed") return !args.some((a) => a === "--in-place" || a.startsWith("--in-place=") || /^-[a-zA-Z]*i/.test(a));
+  if (verb === "git") return GIT_READ.has(args.find((a) => !a.startsWith("-")) ?? "");
+  return false;
+}
 
 const realDir = (d: string): string => path.dirname(realKey(path.join(d, "x")));
 
@@ -261,7 +305,13 @@ export function selfRulingMessage(toolName: string, input: Record<string, unknow
 export function selfRulingTarget(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[]): string | undefined {
   if (childDirs.length === 0) return undefined;
   const dirs = new Set(childDirs.map(realDir));
-  const inChildAt = (base: string, p: string): boolean => isRulingName(path.basename(p)) && dirs.has(path.dirname(realKey(path.resolve(base, p))));
+  const inChildAt = (base: string, p: string): boolean => {
+    if (!isRulingName(path.basename(p))) return false;
+    if (/^~[^/]+(\/|$)/.test(p)) return true; // `~user/…` cannot be resolved here: refuse outright
+    const home = process.env.HOME ?? os.homedir();
+    const q = p === "~" ? home : p.startsWith("~/") ? path.join(home, p.slice(2)) : p;
+    return dirs.has(path.dirname(realKey(path.resolve(base, q))));
+  };
   const inChild = (p: string): boolean => inChildAt(cwd, p);
   const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
   if (toolName === "write" || toolName === "edit") {
@@ -279,8 +329,24 @@ export function selfRulingTarget(toolName: string, input: Record<string, unknown
     const rulingAnywhere = /ruling/.test(cmd);
     const moves = /\b(cd|pushd|Set-Location)\b/.test(cmd);
     const dynWord = (w: string): boolean => /[*?[$`]/.test(w);
-    let at = cwd;
-    for (const seg of shellSegments(cmd)) {
+    const hasXargs = /\bxargs\b/.test(cmd);
+    const scan = (text: string, start: string, depth: number): string | undefined => {
+    let at = start;
+    for (const seg of shellSegments(text)) {
+      const rest = stripWrappers(seg.words);
+      const inner = interpreterScript(rest);
+      let covered = (_x: string): boolean => false; // words the recursion into a parseable script already classified
+      if (inner !== undefined) {
+        if (depth <= 6 && parseable(inner)) covered = (x) => x === inner || (x !== rest[0] && inner.split(" ").includes(x));
+        if (depth > 6 || !parseable(inner)) {
+          const w = rest.find((x) => /ruling/.test(x) || /handoffs/.test(x) || [...childDirs, ...dirs].some((d) => x.includes(d)));
+          if (w !== undefined) return w;
+        }
+        if (depth <= 6) {
+          const t = scan(inner, at, depth + 1);
+          if (t !== undefined) return t;
+        }
+      }
       const verb = seg.words.find((w) => !isAssign(w));
       if (verb === "cd" || verb === "pushd") {
         const arg = seg.words.slice(seg.words.indexOf(verb) + 1).find((w) => !w.startsWith("-"));
@@ -298,13 +364,16 @@ export function selfRulingTarget(toolName: string, input: Record<string, unknown
           if (s !== undefined) return s;
         }
       }
-      // a command that is neither a viewer nor a known writer: fail closed on a ruling word next to a dir mention
-      if (verb && !KNOWN_VERBS.has(verb) && !isAssign(verb)) {
-        const w = seg.words.find((x) => /ruling/.test(x) && (inChildAt(at, x) || mentionsDir || moves || dynWord(x)));
+      // anything but a provable read: fail closed on any ruling word next to a dir mention
+      if (!(provableRead(rest) && !hasXargs)) {
+        const embedded = (x: string): boolean => x.split(/[\s;&|<>()'",=:]+/).some((t) => isRulingName(path.basename(t)) && (inChildAt(at, t) || inChild(t)));
+        const w = seg.words.find((x) => !covered(x) && /ruling/.test(x) && (inChildAt(at, x) || inChild(x) || embedded(x) || mentionsDir || moves || dynWord(x)));
         if (w !== undefined) return w;
       }
     }
     return undefined;
+    };
+    return scan(cmd, cwd, 0);
   }
   return undefined;
 }
