@@ -994,6 +994,11 @@ def run_command(words, seg, flavor, ctx, depth, envs, xargs_repl=None, via_xargs
 
     if name in CD_NAMES:
         ctx.state_segs.add(seg)
+        if name == "cd" and len(args) == 1 and not args[0].dynamic and not args[0].glob and not args[0].text.startswith(("-", "~")):
+            # later segments (git commit -F <relative file>) read relative paths from the new directory
+            target = os.path.join(ctx.cwd, args[0].text)
+            if os.path.isdir(target):
+                ctx.cwd = os.path.normpath(target)
 
     if name in ("gh", "glab", "hub", "tea"):
         return pr_cli(name, args, ctx, seg)
@@ -1671,7 +1676,12 @@ def git_sub(sub, rest, seg, flavor, ctx, depth, envs, via_xargs, xargs_repl, cal
             d = pr_push(rest, ctx, call, envs, seg)
             if d.level > ALLOW:
                 return d
-        return child_rules(s, rest, ctx, call, seg, via_xargs or bool(xargs_repl))
+        d = child_rules(s, rest, ctx, call, seg, via_xargs or bool(xargs_repl))
+        if d.level == ALLOW and sub == "commit" and not via_xargs and not xargs_repl:
+            # R11 item 8: the same commit lint as the foreman's; a message the guard cannot read stays unlinted for a child.
+            lint = commit_lint(rest, ctx, call, envs, pattern_only=True)
+            return lint if lint.level == DENY else d
+        return d
     if via_xargs and sub in ("commit", "push"):
         return ask("git %s gets arguments from xargs input; the guard cannot check them." % sub)
     if sub == "commit":
@@ -2124,13 +2134,13 @@ COMMIT_ARG = ("message", "file", "reuse-message", "reedit-message", "fixup", "sq
 TRAILER_LINE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*\s*:\s")
 
 
-def commit_lint(rest, ctx, call, envs):
+def commit_lint(rest, ctx, call, envs, pattern_only=False):
     opts, pos, dd, dyn = parse_opts(rest, short_arg="mFCct", known=COMMIT_KNOWN, long_arg=COMMIT_ARG)
     if has(opts, "dry-run"):
         return OK
-    if has(opts, "a", "all"):
+    if has(opts, "a", "all") and not pattern_only:
         return deny("commit -a/--all is not allowed: stage the files with `git add <paths>`, then commit.")
-    if has(opts, "i", "include", "o", "only", "pathspec-from-file") or [w for w in pos if not w.dynamic] or dd:
+    if not pattern_only and (has(opts, "i", "include", "o", "only", "pathspec-from-file") or [w for w in pos if not w.dynamic] or dd):
         return deny("commit with pathspecs (or --include/--only) is not allowed: stage with `git add <paths>`, "
                     "then run `git commit` without paths.")
     if dyn:
@@ -2153,6 +2163,9 @@ def commit_lint(rest, ctx, call, envs):
                 return ask("the commit message is read from %s; %s." % ("stdin" if v.text == "-" else "a computed path", USE_M))
             path = os.path.join(call.cwd, v.text)
             try:
+                top = (run_git(call, ctx, ["rev-parse", "--show-toplevel"], envs) or "").strip() or call.cwd
+                if os.path.commonpath([os.path.realpath(top), os.path.realpath(path)]) != os.path.realpath(top):
+                    raise OSError("outside the worktree")
                 with open(path, "rb") as fh:
                     parts.append(fh.read(1 << 20).decode("utf-8", "replace"))
                 from_file = True
@@ -2183,6 +2196,8 @@ def commit_lint(rest, ctx, call, envs):
             if from_file:
                 return deny("commit message does not match safety.git.commit.messagePattern %s." % pattern)
             return deny("commit subject %r does not match safety.git.commit.messagePattern %s." % (subject[:120], pattern))
+    if pattern_only:
+        return OK  # a child is held to the message pattern only (trailers and checkCommand stay the foreman's)
     for req in cc.get("requiredTrailers") or []:
         try:
             if not any(re.search(req, t) for t in trailers):
