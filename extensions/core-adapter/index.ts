@@ -2335,6 +2335,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const touchUp = owner.reviewGate.last === "pass" && !owner.reviewGate.revised && (await owner.reviewSync, await commentOnlyNow(owner));
       if (!touchUp) owner.reviewGate = onRevision(owner.reviewGate);
     }
+    // R11 item 5: a finalization started by a completed finalizer (no PASS) also ends on a project edit.
+    if (owner && !owner.isChild && !event.isError && owner.budget.finalized && !owner.budget.postPass && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) resetRecheck(owner, "edit");
     if (owner && !owner.isChild && !event.isError && event.toolName === "bg_wait") recordChild(owner, bgWaitLocations(event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n"), knownRun(owner)));
     if (owner && pending) {
       owner.pendingChanges.delete(event.toolCallId);

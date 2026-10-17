@@ -197,14 +197,33 @@ const FINAL_GIT = /^git\s+(?:-C\s+\S+\s+)?(?:commit|add|status|log)(?:\s|$)/;
 /**
  * A finalization command (R11 item 5): a bash command whose every segment is a plain `git commit|add|status|log`.
  * Quoted text (a commit message) is not split; a command or process substitution outside single quotes never qualifies.
+ * Fail closed (R11 S2): an unquoted `&` that is not `&&` (a background job, `|&`, `>&`, `&>`), any unquoted `<` / `>`
+ * (a redirection, process substitution), an unterminated quote or a substitution inside double quotes never qualifies.
  */
 export function finalizationCommand(toolName: string, input: unknown): boolean {
   if (toolName !== "bash" || !input || typeof input !== "object") return false;
   const command = (input as Record<string, unknown>).command;
   if (typeof command !== "string") return false;
-  const bare = command.replace(/'[^']*'/g, "''");
-  if (/\$\(|`|<\(|>\(/.test(bare)) return false;
-  const segs = bare.replace(/"(?:[^"\\]|\\.)*"/g, '""').split(/&&|\|\||[;|\n]/).map((x) => x.trim());
+  // One left-to-right pass reduces each quoted string to an empty pair (`''` / `""`), so a quote inside the other
+  // kind is literal; an escaped character outside quotes keeps its `\`; a substitution inside double quotes refuses.
+  let bare = "";
+  let q: "'" | '"' | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (q === "'") {
+      if (c === "'") (q = null), (bare += "''");
+    } else if (q === '"') {
+      if (c === "\\") i++;
+      else if (c === "`" || (c === "$" && command[i + 1] === "(")) return false;
+      else if (c === '"') (q = null), (bare += '""');
+    } else if (c === "\\") {
+      bare += command.slice(i, i + 2);
+      i++;
+    } else if (c === "'" || c === '"') q = c;
+    else bare += c;
+  }
+  if (q !== null || /\$\(|`|[<>]/.test(bare) || bare.replace(/&&/g, "").includes("&")) return false;
+  const segs = bare.split(/&&|\|\||[;|\n]/).map((x) => x.trim());
   return segs.length > 0 && segs.every((x) => FINAL_GIT.test(x));
 }
 
