@@ -111,8 +111,8 @@ test("win32: cd C:/w/proj; S=$FOREMAN_SCRATCH; mkdir -p $S; npm test > $S/tc.txt
 
 test("win32: H=C:\\Profiles\\u\\.ssh; cat $H/id_rsa (unquoted: bash assigns C:Profilesu.ssh)", () => {
   assert.equal(resolved("H=C:\\Profiles\\u\\.ssh; cat $H/id_rsa", "win32", wEnv), null);
-  // never resolved to the native path: decided like an unknown $H (bash reads the drive-relative C:Profilesu.ssh/id_rsa)
-  for (const role of ["main", "child"] as const) assert.equal(wsh(role, "H=C:\\Profiles\\u\\.ssh; cat $H/id_rsa"), wsh(role, "cat $H/id_rsa"), role);
+  // never resolved to the native path; a read through a $H holding a drive-relative / backslash literal asks (r8 item 5 revision, constraint (c))
+  for (const role of ["main", "child"] as const) assert.equal(wsh(role, "H=C:\\Profiles\\u\\.ssh; cat $H/id_rsa"), "ask", role);
   assert.equal(allowW("H=C:\\w\\proj; cat $H/f"), null, "no deterministic allow");
 });
 

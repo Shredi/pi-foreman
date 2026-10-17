@@ -2419,6 +2419,8 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const scratch0 = scratchOf(ctx);
   const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, platform: ctx.platform, resolvedWords: new Set(), bound, boundRefs: [], unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], proseSkip: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], readCode: new Set(), ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
   collect(command, shell, 0, c);
+  // win32 (Git Bash runs the posix-unescaped words): the ambiguous path words of the posix pass, before the raw pass adds its own
+  const winAmb = ctx.platform === "win32" && shell === "posix" ? winAmbiguity(command, c) : undefined;
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
     const raw: Collected = { unitTexts: [], pipeTexts: [], words: [], removeWords: [], protWords: [], proseSkip: [], pure: true, ro: true, rdr: true, writeTargets: new Set() };
@@ -2432,6 +2434,9 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     c.rdr = c.rdr && raw.rdr;
     // a target the posix pass resolved (`> $S/tc.txt` after `S=$FOREMAN_SCRATCH`) is there with its value already
     raw.writeTargets!.forEach((x) => { if (!c.resolvedWords!.has(x)) c.writeTargets!.add(x); });
+  }
+  if (ctx.role === "child" && winAmb?.target !== undefined) {
+    return { kind: "deny", reason: `pi-foreman: write target '${clip(winAmb.target)}' denied for a child: under Git Bash it is drive-relative or keeps a \\ without being an absolute path, so where it writes is not certain. Use a forward-slash path (C:/...) or a quoted native path ("C:\\...").` };
   }
   // `$S` bound on the line and not resolved by the grammar: expandWord no longer trusts it, so it fails closed
   if (scratch0 && c.boundRefs!.length) {
@@ -2525,6 +2530,10 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const prot = pwords.map((w) => ({ w, hit: protectHit(rules.protect, w, pctx, true, removed.has(w), readOnly) })).filter((x) => x.hit);
   const pd = prot.find((x) => x.hit!.kind === "deny");
   if (pd) return protectDecision(pd.hit!, pd.w, "shell command");
+  const amb = winAmb ? (winAmb.viaVar ?? (ctx.role === "child" ? winAmb.word : undefined)) : undefined;
+  if (amb !== undefined) {
+    return { kind: "ask", reason: `pi-foreman: '${clip(amb)}' needs approval: under Git Bash it is (or holds a variable assigned) a drive-relative or backslash path, so which file it names is not certain. Use a forward-slash path (C:/...) or a quoted native path ("C:\\...").` };
+  }
   for (const pat of rules.bashAsk) {
     if (texts.some((t) => bashMatches(pat, t, ctx))) return { kind: "ask", reason: `pi-foreman: this command needs approval (project/session rule '${pat}').` };
   }
@@ -2591,6 +2600,31 @@ function childTmpWriteDeny(word: string, ctx: MatchCtx): Decision | null {
     return { kind: "deny", reason: `pi-foreman: write to ${clip(word)} denied for a child: use FOREMAN_SCRATCH (${scratch}), not /tmp.` };
   }
   return null;
+}
+
+/** win32: a path word Git Bash leaves drive-relative (`C:x`, an unquoted `C:\x`) or with a `\` while not absolute (`a\b`). */
+const WIN_ABS = /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/])/;
+const winAmbiguousWord = (w: string): boolean => /^[A-Za-z]:(?![\\/])/.test(w) || (w.includes("\\") && !WIN_ABS.test(w));
+
+/**
+ * win32 bash line (words of the posix pass, as bash runs them): `target` is the first write target (redirect, writer operand) that is
+ * an ambiguous word; `word` the first ambiguous path operand; `viaVar` the first path operand referencing a name the line assigns a
+ * drive-relative or backslash-bearing literal that is not absolute after unescaping (`H=C:\w; cat $H/f`; the grammar never resolves it).
+ */
+function winAmbiguity(command: string, c: Collected): { target?: string; word?: string; viaVar?: string } {
+  const targets = [...c.writeTargets!, ...c.tmpTargets!, ...c.roTargets!];
+  const names = new Set<string>();
+  for (const m of command.matchAll(/(?:^|[\s;&|(])([A-Za-z_][A-Za-z0-9_]*)=((?:[^\s;&|()<>'"\\]|\\.|'[^']*'|"(?:[^"\\]|\\.)*")*)/g)) {
+    const raw = m[2];
+    const v = parseShell(`: ${raw}`, "posix").pipelines[0]?.[0]?.[1] ?? "";
+    if ((raw.includes("\\") || /^[A-Za-z]:(?![\\/])/.test(v)) && !WIN_ABS.test(v)) names.add(m[1]);
+  }
+  const words = c.protWords ?? [];
+  return {
+    target: targets.find(winAmbiguousWord),
+    word: words.find(winAmbiguousWord),
+    viaVar: names.size ? [...words, ...targets].find((w) => refsBound(w, names)) : undefined,
+  };
 }
 
 /** A child writing below a round worktree it may only read (reviewer, explorer, ... in the round worktree; any child in an isolation worktree). */

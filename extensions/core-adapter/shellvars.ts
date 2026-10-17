@@ -17,7 +17,8 @@
  * The last assignment wins; only a value starting with `/` (or `$FOREMAN_SCRATCH` from the harness env) is certain.
  *
  * win32 only (`platform === "win32"`; Git Bash runs the line): an assignment value may also be a drive path `X:/...`, a
- * double-quoted `"X:\..."` / `"\\\\server\\..."` (bash keeps `\` there, `\\` is one `\`) or a single-quoted `'X:\...'`; a word
+ * double-quoted `"X:\..."` / `"\\\\server\\..."` (bash keeps `\` there, `\\` is one `\`), a single-quoted `'X:\...'` or an unquoted
+ * escaped `X:\\...` / `\\\\server\\...` whose unescaped value (what bash assigns) is win32-absolute; a word
  * and a value may hold an 8.3 short-name tilde (`RUNNER~1`, after a letter or digit, before a digit: bash never expands it);
  * a native `$PWD` / `$FOREMAN_SCRATCH` (`C:\...`) is a certain base, and `cd X:/...` is tracked with path.win32. An
  * unquoted `X:\x` is `X:x` to bash (drive-relative): it never resolves, and `cd X:x` makes the tracked cwd unknown.
@@ -52,6 +53,9 @@ const WIN_WORD = new RegExp(`^(?:[${GRAMMAR.wordChars}]|${SHORT_TILDE}|${REF})+$
 const WIN_LIT = `(?:[${GRAMMAR.literalChars}]|${SHORT_TILDE})*`;
 // win32 assignment values: `X:/...` unquoted; `"X:\..."`, `"\\\\server\\..."` double-quoted (no trailing `\`: it would escape the quote); `'X:\...'`
 const WIN_ASSIGN_BARE = new RegExp(`^(${NAME})=([A-Za-z]:/${WIN_LIT})$`);
+// an unquoted value with `\` escapes (`C:\\a\\b`, `\\\\srv\\share`; every `\` escapes a `\` or a literal character): bash's value drops each
+// escaping `\` (winAssign); it counts only when that value is win32-absolute (`C:\a` unquoted is the drive-relative `C:a`)
+const WIN_ASSIGN_ESC = new RegExp(`^(${NAME})=((?:[A-Za-z]:)?(?:[${GRAMMAR.literalChars}]|${SHORT_TILDE}|\\\\[\\\\${GRAMMAR.literalChars}])*)$`);
 const WIN_ASSIGN_DQ = new RegExp(`^(${NAME})="((?:[A-Za-z]:[\\\\/]|\\\\\\\\)(?:[\\\\${GRAMMAR.literalChars}]|${SHORT_TILDE})*)(?<!\\\\)"$`);
 const WIN_ASSIGN_SQ = new RegExp(`^(${NAME})='((?:[A-Za-z]:[\\\\/]|\\\\\\\\)(?:[\\\\${GRAMMAR.literalChars}]|${SHORT_TILDE})*)'$`);
 /** A win32 absolute path: a drive path `X:\` / `X:/` or a UNC `\\server` (`//server`); not `X:x` (drive-relative) nor `\x` (root of the current drive). */
@@ -61,6 +65,11 @@ const winAbs = (s: string): boolean => /^[A-Za-z]:[\\/]/.test(s) || /^[\\/]{2}[^
 function winAssign(stmt: string): [string, string] | null {
   const b = stmt.match(WIN_ASSIGN_BARE);
   if (b) return [b[1], b[2]];
+  const e = stmt.match(WIN_ASSIGN_ESC);
+  if (e && e[2].includes("\\")) {
+    const v = e[2].replace(/\\(.)/g, "$1");
+    if (winAbs(v)) return [e[1], v];
+  }
   const d = stmt.match(WIN_ASSIGN_DQ);
   if (d) return [d[1], d[2].replace(/\\\\/g, "\\")];
   const s = stmt.match(WIN_ASSIGN_SQ);
