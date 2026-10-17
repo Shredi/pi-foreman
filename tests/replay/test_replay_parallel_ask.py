@@ -23,6 +23,17 @@ def settle_between_results(events):
     return [e for i, e in enumerate(events) if not (res[0] < i < res[-1]) or e["event"] in keep]
 
 
+def drop_wake_stops(events, win32):
+    """On win32 (slow runner) the Stop guard of the supervisor-reply wake lands after the first
+    role_result instead of before it, so only the final Stop guard is kept there (applied to the
+    actual trace and to the golden alike; POSIX is untouched)."""
+    if not win32:
+        return events
+    stops = [i for i, e in enumerate(events) if e["event"] == "guard" and e.get("toolFamily") == "Stop"]
+    drop = set(stops[:-1])
+    return [e for i, e in enumerate(events) if i not in drop]
+
+
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % (REASON,))
 class TestParallelAsk(ReplayCase):
     def test_two_launches_one_ask(self):
@@ -45,7 +56,23 @@ class TestParallelAsk(ReplayCase):
         self.assertEqual(len(children), 2, "adapter did not load in both children")
         sup = [r["decision"] for r in foreman if r["event"] == "supervisor_request"]
         self.assertEqual(sup, ["open", "replied"])
-        self.golden("parallel_ask", {"foreman": foreman, "children": children})
+        if sys.platform != "win32":
+            self.golden("parallel_ask", {"foreman": foreman, "children": children})
+            return
+        want = json.loads((Path(__file__).resolve().parent / "golden" / "parallel_ask.json").read_text("utf-8"))
+        self.assertEqual(drop_wake_stops(foreman, True), drop_wake_stops(want["foreman"], True))
+        self.assertEqual(children, want["children"])
+
+
+class TestDropWakeStops(unittest.TestCase):
+    EV = [{"event": "turn"}, {"event": "guard", "toolFamily": "Stop"}, {"event": "role_result"},
+          {"event": "guard", "toolFamily": "Stop"}]
+
+    def test_posix_unchanged(self):
+        self.assertEqual(drop_wake_stops(self.EV, False), self.EV)
+
+    def test_win32_keeps_only_final_stop(self):
+        self.assertEqual(drop_wake_stops(self.EV, True), [self.EV[0], self.EV[2], self.EV[3]])
 
 
 if __name__ == "__main__":

@@ -33,7 +33,10 @@ class TestChildScratch(ReplayCase):
         pi.close()
         foreman = traces["trace-" + sid]
         reviews = [r for r in foreman if r.get("event") == "review"]
-        self.assertTrue(any(r.get("decision") == "child-scratch" for r in reviews), reviews)
+        # win32 has no programmatic scratch (scratchCommandAllowed is false there, ruling D5): the
+        # write is auto-allowed as write-in with no dialog instead of `child-scratch`.
+        want = "effect-write-in" if sys.platform == "win32" else "child-scratch"
+        self.assertTrue(any(r.get("decision") == want for r in reviews), reviews)
         [done] = [r for r in foreman if r.get("event") == "child_scratch"]
         self.assertEqual((done.get("role"), done.get("files"), done.get("bytes"), done.get("action")), ("builder", 1, 6, "removed"))
         root = rig.tmp / "pi-foreman-scratch"
