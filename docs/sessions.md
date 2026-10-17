@@ -404,7 +404,7 @@ The tag is text only. Real grouping needs Herdr itself:
 
 ## Background runs
 
-The foreman-only `foreman_bg({command, note})` runs one shell command detached (its own process group; stdout and stderr go to
+The foreman-only `foreman_bg({command, note})` runs one shell command detached (its own process group on POSIX, not detached on win32; stdout and stderr go to
 `<agent dir>/pi-foreman/state/scratch/<session>/wait-<id>.log`) and registers a `pid` wait with your `note`. It returns the wait
 id and the log path at once; you end the turn and one message wakes you when the process has exited (the exit code is not
 known: read the log). The command passes the same guards as a bash call, with no bypass: the overlay deny and ask rules, the

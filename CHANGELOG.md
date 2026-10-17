@@ -277,7 +277,7 @@
   review model configured, an interactive top-level session prints one notice naming the presets and this command;
   new key `quiet` (default false) silences it.
 - Bench: row `bench.pi_prebaked` installs pi with `npm ci` from the committed lock in `bench/pi-lock/` (pins the
-  transitive tree); default stays the live install.
+  transitive tree); the default is now the pinned `bench/pi-lock/` install, and `bench.pi_prebaked=false` opts out to the live install.
 - Docs: "Parallel rounds" in `docs/sessions.md` (one worktree per orchestrator session, never switch the main checkout).
 - Launch briefs: `instructions/foreman.md` gets explorer, builder and foreman skeletons (invariants and callers, new tests
   instead of edits, no narrowed fuzz strategies, visibility, shared symbols, edit tools only); matching rules in
