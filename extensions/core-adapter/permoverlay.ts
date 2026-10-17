@@ -1892,7 +1892,9 @@ const WORKTREE_OK = new Set(["list", "remove"]);
 const NPM_INSTALL_FLAGS = /^--(no-)?(audit|fund|progress|ignore-scripts|prefer-offline|offline|legacy-peer-deps|package-lock)$|^--silent$|^--loglevel=(silent|error|warn|info)$/;
 
 /** The `--prefix` values of an owned-root-safe `npm install|ci` argument list (`[]` without one), or null when an argument is not safe (`-g`, a package name, any other option, an expansion). */
-function npmInstallArgs(args: string[]): string[] | null {
+function npmInstallArgs(args: string[], platform?: string): string[] | null {
+  // win32: a `~` inside a name (an 8.3 short name like `RUNNER~1`, after a letter or digit) is literal; any other `~` stays unsafe
+  const unsafe = platform === "win32" ? /[$`*?[\]{}\\]|(^|[^A-Za-z0-9])~/ : /[$`~*?[\]{}\\]/;
   const prefixes: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -1901,7 +1903,7 @@ function npmInstallArgs(args: string[]): string[] | null {
     if (a === "--prefix") val = args[++i];
     else if (a.startsWith("--prefix=")) val = a.slice(9);
     else return null;
-    if (val === undefined || val === "" || /[$`~*?[\]{}\\]/.test(val)) return null;
+    if (val === undefined || val === "" || unsafe.test(val)) return null;
     prefixes.push(val);
   }
   return prefixes;
@@ -1913,12 +1915,37 @@ const ENV_CHANGES_NPM = /^(npm_|NODE|PATH$|LD_|DYLD_|HOME$|USERPROFILE$|XDG_|BAS
 /** A child's `npm install|ci` runs unasked in its owned worktree root: the session cwd is that root itself, no cd, nothing else asks, every `--prefix` names the root. */
 function npmInstallOwned(c: Collected, ctx: MatchCtx): boolean {
   if (c.askUnsafe || c.cdSeen || !ctx.cwd) return false;
+  if (ctx.platform === "win32") return npmInstallOwnedWin32(c, ctx);
   const fsx = defaults(ctx);
   const cwdReal = fsx.realpath(ctx.cwd);
   if (!cwdReal) return false;
   const root = (ctx.roundRoots ?? []).map((r) => fsx.realpath(r)).find((r) => r === cwdReal);
   if (!root) return false;
   return (c.npmPrefixes ?? []).every((p) => fsx.realpath(path.resolve(ctx.cwd, p)) === root);
+}
+
+/**
+ * npmInstallOwned on win32: an 8.3 short name and its long name are one directory, so the cwd, the round roots and each `--prefix`
+ * (forward or back slashes, resolved with path.win32) are compared case-folded in their JS-realpath and native-realpath (8.3 expanded)
+ * spellings. A prefix's native spelling counts only when no symlink is on its way (the JS realpath leaves it unchanged): a link is no
+ * alias, so it counts by its target alone. Equality only: a subdir or a parent of the owned root is not it.
+ */
+function npmInstallOwnedWin32(c: Collected, ctx: MatchCtx): boolean {
+  const fsx = defaults(ctx);
+  const nat = nativeReal(ctx);
+  const norm = (p: string): string => path.win32.resolve(p).toLowerCase();
+  const spellings = (p: string): string[] => {
+    const abs = path.win32.resolve(ctx.cwd, p);
+    const js = fsx.realpath(abs);
+    if (!js) return [];
+    const noLink = norm(js) === norm(abs);
+    return [js, ...(noLink ? [nat(abs)] : [])].filter((x): x is string => !!x).map(norm);
+  };
+  const same = (a: string[], b: string[]): boolean => a.some((x) => b.includes(x));
+  const cwdS = spellings(ctx.cwd);
+  const root = (ctx.roundRoots ?? []).map(spellings).find((r) => same(r, cwdS));
+  if (!root) return false;
+  return (c.npmPrefixes ?? []).every((p) => same(spellings(p), root));
 }
 
 function collect(src0: string, shell: "posix" | "powershell", depth: number, out: Collected): void {
@@ -1974,7 +2001,7 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
         if (ask !== undefined) out.askUnsafe = true;
       } else if (verb0 === "npm" && (v.core[1] === "ci" || v.core[1] === "install" || v.core[1] === "i")) {
         ask = `npm ${v.core[1]}`;
-        const safe = v.env.some((e) => ENV_CHANGES_NPM.test(e.slice(0, e.indexOf("=")))) ? null : npmInstallArgs(v.core.slice(2));
+        const safe = v.env.some((e) => ENV_CHANGES_NPM.test(e.slice(0, e.indexOf("=")))) ? null : npmInstallArgs(v.core.slice(2), out.platform);
         if (safe === null) out.askUnsafe = true;
         else (out.npmPrefixes ??= []).push(...safe);
       }
@@ -2220,7 +2247,10 @@ function tokenCandidates(word: string, ctx: MatchCtx, depth: number): string[] {
   if (eq > 0 && depth === 0) out.push(...tokenCandidates(s.slice(eq + 1), ctx, 1));
   // `<rev>:<path>` (`git show HEAD:.env`, T14): the part after the first `:` is a path too
   const colon = s.indexOf(":");
-  if (colon >= 0 && depth < 2 && !/^[A-Za-z]:([\\/]|$)/.test(s)) out.push(...tokenCandidates(s.slice(colon + 1), ctx, 2));
+  // win32: in `--prefix=C:/x` the first `:` is the drive colon of the value after `=`, which the `=` reading above takes whole (as it
+  // takes a bare `C:/x`); split there it gave a drive-less `/x` that resolves against another drive
+  const driveAfterEq = ctx.platform === "win32" && eq > 0 && colon === eq + 2 && /^[A-Za-z]:[\\/]/.test(s.slice(eq + 1));
+  if (colon >= 0 && depth < 2 && !driveAfterEq && !/^[A-Za-z]:([\\/]|$)/.test(s)) out.push(...tokenCandidates(s.slice(colon + 1), ctx, 2));
   if (!s) return out;
   const abs = p.resolve(ctx.cwd, s);
   const pathShaped = (ctx.bashWords && ctx.platform !== "win32" ? /^[.~]|\// : /^[.~]|[\\/]/).test(s) || (ctx.platform === "win32" && SHORT_NAME.test(s));
