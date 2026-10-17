@@ -271,7 +271,8 @@ export function boundNames(command: string, shell: "posix" | "powershell" = "pos
   // and so does every `x=RHS` / `x+=RHS` once x has the integer attribute: only a plain numeric expression stays benign there
   if (shell === "posix") {
     const strict: string[] = [];
-    for (const m of command.matchAll(/\$\{!?(?:[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?|[@*]|\d+):(?![-=+?])([^}]*)/g)) strict.push(m[1]);
+    // special parameters too (`${$:off}`, `${?:off}`, `${-:off}`, `${#:off}`, `${!:off}`); `${#x}` / `${!x}` hold no `:` there
+    for (const m of command.matchAll(/\$\{!?(?:[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?|[@*$?#!-]|\d+):(?![-=+?])([^}]*)/g)) strict.push(m[1]);
     for (const text of norm === command ? [command] : [command, norm]) strict.push(...intBodies(text, all));
     for (const body of strict) if (!/^[\s\d+\-*/%():]*$/.test(body.replace(/["']/g, ""))) all();
   }
@@ -434,7 +435,9 @@ function intBodies(text: string, all: () => void): string[] {
   }
   const out: string[] = [];
   for (const n of names) {
-    const assign = new RegExp(`(?<![\\w$-])${n}(?:\\[[^\\]]*\\])?\\+?=([^\\s;&|)]*)`, "g");
+    // the whole assignment word with its quoting (`x=" $y"`, `x=1" $y"`, an unterminated quote runs to the end); a quoted part may
+    // hold any text, so a body with a quote counts only when it is a plain numeric literal once the quotes are gone
+    const assign = new RegExp(`(?<![\\w$-])${n}(?:\\[[^\\]]*\\])?\\+?=((?:"[^"]*"?|'[^']*'?|[^\\s;&|)"'])*)`, "g");
     for (const m of text.matchAll(assign)) out.push(m[1]);
     const rest = text.replace(stmt, " ").replace(assign, " ");
     if (new RegExp(`(?<![\\w$])(?<!\\$\\{)${n}(?![A-Za-z0-9_])`).test(rest)) all();
