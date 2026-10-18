@@ -63,12 +63,10 @@ export function dropEndedRunNotices<M>(messages: readonly M[], endedRunIds: Read
 }
 
 /**
- * Visible path (R12 item 9): a finalized `subagent_control_notice` the attention state does not admit (its run
- * ended, or the same state was shown) is returned with `display: false`; anything else is null (leave it).
+ * Visible path (R12 item 9): a finalized `subagent_control_notice` whose run already ended is returned with `display: false`; anything else is null (leave it).
  */
 export function hideStaleNotice<M>(att: AttentionNotices, m: M): M | null {
   const ev = isObj(m) && m.role === "custom" && m.customType === "subagent_control_notice" && isObj(m.details) && isObj(m.details.event) ? m.details.event : null;
   if (!ev || typeof ev.runId !== "string") return null;
-  const state = `${ev.reason ?? ""}:${typeof ev.toolCallId === "string" ? ev.toolCallId : ""}`;
-  return att.admit(ev.runId, state) ? null : ({ ...(m as object), display: false } as M);
+  return att.endedRuns.has(ev.runId) ? ({ ...(m as object), display: false } as M) : null;
 }

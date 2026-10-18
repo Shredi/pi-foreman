@@ -28,6 +28,13 @@ test("tool_open_visible_notice_stops_after_run_exit", () => {
   assert.equal(hideStaleNotice(att, notice("r2")), null, "other run unaffected");
 });
 
+test("tool_open_visible_notice_two_indices_live_run_both_shown", () => {
+  const att = new AttentionNotices();
+  assert.equal(hideStaleNotice(att, notice("r1", "c1")), null);
+  assert.equal(hideStaleNotice(att, notice("r1", "c2")), null);
+  assert.equal(hideStaleNotice(att, notice("r1", "c1")), null, "same state again: still shown, dedupe is pi-subagents'");
+});
+
 test("tool_open_notice_kept_for_live_run", () => {
   const msgs = [notice("r1"), notice("r2", "c2")];
   assert.equal(dropEndedRunNotices(msgs, new Set(["r9"])), null);
