@@ -134,7 +134,7 @@ import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEO
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { launchEntries } from "./ladder.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
-import { asyncRunDirs, bashOutputLogs, childReadable, childSurface, hubWorkflowDirs, hubWorkflowReadable, mainWorkflowReadable, ownTaskReadable, ownUsageReadable, piScratchReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
+import { asyncRunDirs, bashOutputLogs, recordBashOutputLog, childReadable, childSurface, hubWorkflowDirs, hubWorkflowReadable, mainWorkflowReadable, ownTaskReadable, ownUsageReadable, piScratchReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { CustomSeen, isSubagentWake } from "./idlecustom.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
 
@@ -1170,21 +1170,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const normFile = (p: string): string => (platform === "win32" ? p.replace(/\\/g, "/").toLowerCase() : p);
   /** Record child result locations (resolved, so no `..` survives); a location containing the cwd is skipped. */
   const recordChild = (s: Session, paths: string[]): void => recordFiles(s.childFiles, paths, (p) => normFile(path.resolve(p)), s.cwd);
-  /** Pi's bash tool_result `details.fullOutputPath` (else the `Full output: <path>` line of its text) is the session's own readable log; the realpath spelling too. */
-  const recordBashLog = (s: Session, details: unknown, text: string): void => {
-    const given = details && typeof details === "object" ? (details as Record<string, unknown>).fullOutputPath : undefined;
-    const parsed = /Full output: (\S+?)\]/.exec(text)?.[1];
-    const p = typeof given === "string" ? given : parsed;
-    if (!p || s.bashLogs.size >= 50) return;
-    for (const q of bashOutputLogs([p], platform)) {
-      s.bashLogs.add(q);
-      try {
-        s.bashLogs.add(fs.realpathSync.native(q));
-      } catch {
-        // not there: the given spelling only
-      }
-    }
-  };
+  /** Pi's bash tool_result `details.fullOutputPath` is the session's own readable log; the realpath spelling too. Never the result text. */
+  const recordBashLog = (s: Session, details: unknown): void => recordBashOutputLog(s.bashLogs, details, platform);
 
   const knownRun = (s: Session) => (runId: string): boolean => s.launchedRoles.has(runId) || s.runs.has(runId);
 
@@ -2398,7 +2385,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     // R11 item 5: a finalization started by a completed finalizer (no PASS) also ends on a project edit.
     if (owner && !owner.isChild && !event.isError && owner.budget.finalized && !owner.budget.postPass && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) resetRecheck(owner, "edit");
-    if (owner && event.toolName === "bash") recordBashLog(owner, event.details, event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n"));
+    if (owner && event.toolName === "bash") recordBashLog(owner, event.details);
     if (owner && !owner.isChild && !event.isError && event.toolName === "bg_wait") recordChild(owner, bgWaitLocations(event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n"), knownRun(owner)));
     if (owner && pending) {
       owner.pendingChanges.delete(event.toolCallId);

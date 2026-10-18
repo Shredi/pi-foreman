@@ -126,6 +126,31 @@ export function bashOutputLogs(paths: Iterable<string>, platform: string = proce
   return [...new Set(out)];
 }
 
+/** At most this many recorded bash output log spellings per session; the oldest is evicted. */
+const MAX_BASH_LOGS = 50;
+
+/**
+ * Record a bash `tool_result`'s `details.fullOutputPath` (and its realpath spelling) into `logs`, newest kept (R13 item 5).
+ * Only that structured field counts: the result text is the command's own output and can carry a forged `Full output:` line.
+ */
+export function recordBashOutputLog(logs: Set<string>, details: unknown, platform: string = process.platform): void {
+  const given = details && typeof details === "object" ? (details as Record<string, unknown>).fullOutputPath : undefined;
+  if (typeof given !== "string") return;
+  for (const q of bashOutputLogs([given], platform)) {
+    const spellings = [q];
+    try {
+      spellings.push(fs.realpathSync.native(q));
+    } catch {
+      // not there: the given spelling only
+    }
+    for (const p of spellings) {
+      logs.delete(p);
+      logs.add(p);
+      if (logs.size > MAX_BASH_LOGS) logs.delete(logs.values().next().value as string);
+    }
+  }
+}
+
 /**
  * Read patterns for the foreman's own usage records, `<agentDir>/pi-foreman/state/usage` and everything below (R10 item 1): a read-only shell
  * command of the foreman (ls/cat/head/tail/wc/stat, or the one python read form of permoverlay.ts usagePythonRead) may name them although the
