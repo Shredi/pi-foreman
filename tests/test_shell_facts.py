@@ -162,6 +162,13 @@ class ShellFactsTest(unittest.TestCase):
             self.assertTrue(any(x["dir"] is None and x["name"] is None for x in w), (name, w))
         self.assertEqual(self.writes("D=/h; ls -la $D; cat $D/parent"), [])
 
+    @unittest.skipUnless(sys.platform == "win32", "native drive paths are win32 targets")
+    def test_native_backslash_drive_paths_are_targets_on_win32(self):
+        # quoted: the path itself; unquoted: bash escapes, but the native spelling is ALSO a candidate (fail closed)
+        for line in ("echo A > 'D:\\x\\h\\ruling.md'", 'cp x "D:\\x\\h\\ruling.md"', "echo A > D:\\x\\h\\ruling.md",
+                     "dd of=D:\\x\\h\\ruling.md", "node w.js D:\\x\\h\\ruling.md"):
+            self.assertIn("D:\\x\\h\\ruling.md", [w["path"] for w in self.writes(line)], line)
+
     def test_unreadable_line_is_an_error(self):
         self.assertIsNotNone(sf.facts({"command": "echo 'open", "cwd": self.cwd})["error"])
 

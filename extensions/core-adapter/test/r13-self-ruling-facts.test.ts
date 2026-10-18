@@ -141,6 +141,14 @@ for (const [name, line] of DENY_R4) {
   });
 }
 
+// The exception to inBash: the point of these lines is the native backslash spelling (quoted reaches the path; unquoted is a
+// bash escape, but the native spelling is a candidate too, fail closed).
+test("r13 deny (win32): a native backslash path to the parent's ruling, quoted or not", { skip: process.platform !== "win32" }, async () => {
+  const r = rig();
+  const f = path.join(r.H, "ruling.md");
+  for (const line of [`echo A > '${f}'`, `cp x "${f}"`, `echo A > ${f}`]) assert.equal(await run(r, line), SELF_RULING_REASON, line);
+});
+
 test("r13 fail closed: no python, a missing interpreter and an unreadable line refuse a shell call", async () => {
   const r = rig();
   const cmd = `ls ${inBash(r.H)}`;

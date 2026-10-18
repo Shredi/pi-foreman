@@ -165,12 +165,35 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
   const abs = resolveWord(c, cwd, word);
   if (!abs) return false;
   const x = px(c);
+  const alt = realSpelling(c, abs);
+  const real = c.realpath ?? realDefault;
   for (const b of only ?? bases(c, write)) {
-    if (!within(c, b, abs, write)) continue;
-    if (write && hasGitPart(c, x.relative(x.resolve(b), abs))) return false;
-    if (realInside(c, b, abs, write, write)) return true;
+    // win32: the word and the base may spell one dir differently (8.3 `RUNNER~1` vs `runneradmin`): compare the real spellings too
+    const rb = alt ? (real(b) ?? b) : b;
+    const [base, p] = within(c, b, abs, write) ? [b, abs] : alt && within(c, rb, alt, write) ? [rb, alt] : [null, null];
+    if (base === null || p === null) continue;
+    if (write && hasGitPart(c, x.relative(x.resolve(base), p))) return false;
+    if (realInside(c, base, p, write, write)) return true;
   }
   return false;
+}
+
+/** win32 only: `abs` with its deepest existing ancestor through the native realpath (8.3 short names expanded), else null. */
+function realSpelling(c: EffectCtx, abs: string): string | null {
+  if (plat(c) !== "win32") return null;
+  const x = px(c);
+  const real = c.realpath ?? realDefault;
+  const exists = c.exists ?? existsDefault;
+  const tail: string[] = [];
+  let e = abs;
+  while (!exists(e)) {
+    const d = x.dirname(e);
+    if (d === e) return null;
+    tail.unshift(x.basename(e));
+    e = d;
+  }
+  const r = real(e);
+  return r ? x.join(r, ...tail) : null;
 }
 
 /** Options that name a program to run (`rg --hostname-bin`, `go test -exec`, `npm --script-shell`, `--*-command`, `--exec*`). */

@@ -167,9 +167,27 @@ def add(st, kind, text, glob=False, cwd="keep", partial=None):
     st.writes.append(rec)
 
 
+_NATIVE_RAW = re.compile(r"^[A-Za-z]:\\")
+
+
+def native_raw(raw, v, st):
+    """win32 bash only: a word written as a native drive path with backslashes (`D:\\x\\h\\r`, quoted or not). Bash reads unquoted
+    backslashes as escapes, but a Windows shell or a quoted spelling reaches the native path, so it is ALSO a candidate target
+    (fail closed). The quote-stripped raw text, or None when it adds nothing (not win32, an expansion, equal to the value)."""
+    if os.path.sep != "\\" or st.flavor != "bash" or not raw:
+        return None
+    r = raw.replace('"', "").replace("'", "")
+    if not _NATIVE_RAW.match(r) or "$" in r or "`" in r or r == v:
+        return None
+    return r
+
+
 def add_word(st, kind, word, cwd="keep"):
     v = value(word, st)
     add(st, kind, v, glob=word.glob, cwd=cwd, partial=word.text if v is None else None)
+    n = native_raw(word.raw, v, st)
+    if n is not None:
+        add(st, kind, n, glob=word.glob, cwd=cwd)
 
 
 def operands(args):
@@ -448,6 +466,10 @@ def ruling_args(args, st):
     """A literal ruling-named argument of a program that is not a known reader: the program may write it."""
     for w in args:
         t = w.text.split("=", 1)[-1] if w.text.startswith("-") else w.text
+        r = w.raw.split("=", 1)[-1] if w.raw.startswith("-") else w.raw
+        n = native_raw(r, t, st)
+        if n is not None and RULING.match(os.path.basename(n.replace("\\", "/"))):
+            add(st, "arg", n)
         if "\0" not in t and _abs(t) and RULING.match(os.path.basename(t.replace("\\", "/"))):
             add(st, "arg", t)
         elif RULING_IN.search(w.text):  # inside awk system(), find -name/-exec, ...: the dir is unknown
@@ -508,8 +530,12 @@ def command(words, seg, flavor, st, depth):
     if name == "dd":
         for w in args:
             if w.text.startswith("of="):
-                v = value(gg.Word(w.text[3:], raw=w.raw[3:] if w.raw.startswith("of=") else w.raw), st)
+                ow = gg.Word(w.text[3:], raw=w.raw[3:] if w.raw.startswith("of=") else w.raw)
+                v = value(ow, st)
                 add(st, "dd", v, glob=w.glob, partial=w.text[3:] if v is None else None)
+                n = native_raw(ow.raw, v, st)
+                if n is not None:
+                    add(st, "dd", n, glob=w.glob)
         return
     if name in ("sed", "gsed"):
         sed_call(args, st)
