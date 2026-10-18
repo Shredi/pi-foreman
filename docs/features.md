@@ -41,6 +41,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | Feature | State | Purpose | Enable | Doc |
 |---|---|---|---|---|
 | [setup](#setup) | on | `foreman setup` writes the permission config, the generated `subagents` block and a starter `foreman.json`; `/foreman doctor` checks the result and `update-check` lists newer pinned packages. | on by default | [install](install.md#install) |
+| [doctor-providers](#doctor-providers) | on | `/foreman doctor` prints `providers: <list>`, the providers the model registry holds in this session; a missing `claude-bridge` there means the bridge is not loaded or has not registered yet (see the opened-session note). | on by default | [sessions](sessions.md#providers-in-opened-sessions) |
 | [model-map](#model-map) | opt-in | Maps each role to a model and thinking level per provider; until a model is mapped, children run on Pi's default model and an interactive session shows one notice. | `{"providers": {"<provider>": {"roles": {"foreman": {"model": "<provider>/<big-model>"}, "builder": {"model": "<provider>/<mid-model>"}}}}}` | [install](install.md#what-setup-writes) |
 | [presets](#presets) | opt-in | Opt-in model maps under `config/presets/` (role models, ranks, strong rungs, reviewer climb) merged into your `foreman.json` on request, never by default. The `inexpensive` preset names roles by rank tier and resolves them from your `providers.<x>.ranks` at apply time (docs/presets.md). | `foreman config apply-preset claude-bridge --dry-run` | [presets](presets.md) |
 | [roles](#roles) | on | Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time limit of the neutral roles. | on by default | [roles](roles.md#further-role-and-provider-keys) |
@@ -62,6 +63,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [launch-wait](#launch-wait) | on | Holds a foreman launch until the child finishes or asks something, drops duplicate completion notices and caps concurrent children. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [waits](#waits) | on | The foreman-only `foreman_wait` tool waits on timers, files, processes and CI runs within a duration and concurrency limit, batching its notices. | on by default | [sessions](sessions.md#further-session-keys) |
 | [foreman-bg](#foreman-bg) | on | The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool. | on by default | [sessions](sessions.md#background-runs) |
+| [reviewer-finalizer-bg](#reviewer-finalizer-bg) | on | The reviewer and finalizer roles list `bg_run`, `bg_status` and `bg_logs`, so a long test run can go to the background; the names resolve to nothing without the pi-background-tasks add-on, and `bg_run` passes the same bash guards. | on by default | [roles](roles.md#further-role-and-provider-keys) |
 | [background-tasks-addon](#background-tasks-addon) | on | Detects the optional pi-background-tasks add-on (install: `PI_BG_FEATURES=process pi install npm:pi-background-tasks`): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it. | on by default | [herdr](herdr.md#optional-add-on-background-tasks) |
 | [orientation](#orientation) | on | Adds a short repository overview (file tree, AGENTS.md or README head, build and test commands) to the foreman's system prompt once per session. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [child-scratch](#child-scratch) | on | Gives every single-child launch its own temp dir (`$FOREMAN_SCRATCH`) that the guards allow writes in and the harness removes when the run ends. | on by default | [safety](safety.md#child-scratch) |
@@ -77,6 +79,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [guards](#guards) | on | Loads the guard extensions into every child, sets the limits of the precondition-checked copy and worktree-remove tools, and picks the Python that runs every guard. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
 | [bridge-isolation](#bridge-isolation) | on | With the Claude bridge, points `CLAUDE_CONFIG_DIR` at an empty folder so the host's Claude Code settings, hooks and plugins do not load into bridge turns. | on by default | [safety](safety.md#bridge-isolation) |
 | [sessions](#sessions) | on | `/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom. The session runs on the `session-foreman` role's model (default: the opening session's own model) and never on a higher rank. | on by default | [sessions](sessions.md#session-commands) |
+| [round-state](#round-state) | on | In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns only from the parent's `ruling.md` newer than both the plan and the handoff plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
 | [remote-intercom](#remote-intercom) | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [sync](#sync) | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
 | [retro](#retro) | on | `/retro` prints the session's friction metrics, writes permission-allow proposals and files findings to a local backlog read with `foreman backlog`. | on by default | [retro](retro.md#switches) |
@@ -84,6 +87,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [close](#close) | on | Records what a session creates, prints a CLOSE report and removes its own worktrees and scratch only when every precondition passes. | on by default | [close](close.md#config) |
 | [trace](#trace) | on | Writes allowlisted trace records per session and child (no command lines or file contents); by default it follows the effective retro switch. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
 | [footer-ui](#footer-ui) | on | Shows tokens, list-price cost and child launches in the footer, the children widget below the editor and the glyph set, with `/foreman cost` for a summary. | on by default | [sessions](sessions.md#commands) |
+| [dialogs-cli](#dialogs-cli) | on | The foreman-only `foreman_dialogs({trace?})` tool and `foreman dialogs <trace>` (`bin/foreman`, `.cmd`, `.ps1`) return the JSON of `/foreman dialogs --json` for this session's trace or a named trace file; read only. A session's own async run results join the read-only verbs. | on by default | [sessions](sessions.md#commands) |
 | [herdr](#herdr) | on | In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes. | on by default | [sessions](sessions.md#herdr) |
 | [radar](#radar) | on | `foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files. | on by default | [sessions](sessions.md#radar) |
 | [compaction](#compaction) | on | Compacts the context earlier on dearer models: the trigger fraction depends on the model's input price tier. | on by default | [sessions](sessions.md#further-session-keys) |
@@ -99,6 +103,12 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | Key | Default | Layer |
 |---|---|---|
 | `version` | `1` | any layer |
+
+### doctor-providers
+
+**Providers line in doctor.** `/foreman doctor` prints `providers: <list>`, the providers the model registry holds in this session; a missing `claude-bridge` there means the bridge is not loaded or has not registered yet (see the opened-session note).
+
+No config key.
 
 ### model-map
 
@@ -352,6 +362,12 @@ No config key.
 
 No config key.
 
+### reviewer-finalizer-bg
+
+**Background tools for reviewer and finalizer.** The reviewer and finalizer roles list `bg_run`, `bg_status` and `bg_logs`, so a long test run can go to the background; the names resolve to nothing without the pi-background-tasks add-on, and `bg_run` passes the same bash guards.
+
+No config key.
+
 ### background-tasks-addon
 
 **Background-tasks add-on detection.** Detects the optional pi-background-tasks add-on (install: `PI_BG_FEATURES=process pi install npm:pi-background-tasks`): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it.
@@ -503,6 +519,12 @@ Switch: `safety.subagents.allowWorkflow` is true.
 
 No config key.
 
+### round-state
+
+**Reload-safe round state.** In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns only from the parent's `ruling.md` newer than both the plan and the handoff plan.
+
+No config key.
+
 ### remote-intercom
 
 **Remote intercom.** Allows intercom across machines and opening panes; both are off by default.
@@ -579,6 +601,12 @@ Switch: `retro.repoBacklog` is non-empty.
 | `ui.spinner` | `true` | any layer |
 | `widget.children` | `true` | any layer |
 
+### dialogs-cli
+
+**Permission dialogs as a tool and CLI.** The foreman-only `foreman_dialogs({trace?})` tool and `foreman dialogs <trace>` (`bin/foreman`, `.cmd`, `.ps1`) return the JSON of `/foreman dialogs --json` for this session's trace or a named trace file; read only. A session's own async run results join the read-only verbs.
+
+No config key.
+
 ### herdr
 
 **Herdr pane state.** In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes.
@@ -653,6 +681,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [retro](#retro) | `/retro`, `foreman retro`, `foreman backlog` |
 | [close](#close) | `/foreman close`, `foreman close`, `foreman worktree` |
 | [footer-ui](#footer-ui) | `/foreman cost`, `/foreman dialogs` |
+| [dialogs-cli](#dialogs-cli) | `foreman dialogs` |
 | [radar](#radar) | `foreman radar` |
 | [resources](#resources) | `/foreman status` |
 

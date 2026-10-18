@@ -428,6 +428,21 @@ A regex that looks like an absolute path therefore raises no external-path ask. 
 value as a path word: `-f`, `--file`, `--exclude-from`, `--ignore-file`, `--pre`. The remaining operands are paths
 as before.
 
+### Windows spellings (R13 win32 fixes)
+
+On win32 a path may be spelled two ways: a native drive path with backslashes, and the 8.3 short name of a segment (`RUNNER~1`
+for `runneradmin`). `realSpelling()` (`extensions/core-adapter/effects.ts`) takes the deepest existing ancestor of a word through
+the native realpath, so `RUNNER~1\h` gets its long spelling. `contained()` then compares the word and the base by their real
+spellings as well, so a read root stored by its realpath (`readRootsOf`) still matches a path written in short form. `realInside`
+still decides on real paths, the `.git` check runs on the spelling that matched, and a different file still does not match. Off
+win32 nothing changes.
+
+The bash scanner reads a backslash as an escape, so `D:\x\h\ruling.md` names another file in bash. `native_raw()`
+(`scripts/shell_facts.py`) therefore records a bash word written as a native drive path (quoted or not) as a write candidate in
+its quote-stripped native spelling as well: redirects, copiers, `tee`, `dd of=`, and ruling-named arguments are checked against
+the native path, because a quoted spelling or a Windows shell reaches it. Words with `$` or a backtick are left as they are.
+This is win32 bash only and fails closed.
+
 ### Known limit: the permission system package
 
 The permission system package (`node_modules/@gotgenes/pi-permission-system`) runs its own path extraction before the

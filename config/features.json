@@ -21,6 +21,17 @@
       "enable": ""
     },
     {
+      "id": "doctor-providers",
+      "title": "Providers line in doctor",
+      "purpose": "`/foreman doctor` prints `providers: <list>`, the providers the model registry holds in this session; a missing `claude-bridge` there means the bridge is not loaded or has not registered yet (see the opened-session note).",
+      "doc": "docs/sessions.md#providers-in-opened-sessions",
+      "keys": [],
+      "commands": [],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "model-map",
       "title": "Model map per provider and role",
       "purpose": "Maps each role to a model and thinking level per provider; until a model is mapped, children run on Pi's default model and an interactive session shows one notice.",
@@ -252,6 +263,17 @@
       "enable": ""
     },
     {
+      "id": "reviewer-finalizer-bg",
+      "title": "Background tools for reviewer and finalizer",
+      "purpose": "The reviewer and finalizer roles list `bg_run`, `bg_status` and `bg_logs`, so a long test run can go to the background; the names resolve to nothing without the pi-background-tasks add-on, and `bg_run` passes the same bash guards.",
+      "doc": "docs/roles.md#further-role-and-provider-keys",
+      "keys": [],
+      "commands": [],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "background-tasks-addon",
       "title": "Background-tasks add-on detection",
       "purpose": "Detects the optional pi-background-tasks add-on (install: `PI_BG_FEATURES=process pi install npm:pi-background-tasks`): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it.",
@@ -417,6 +439,17 @@
       "enable": ""
     },
     {
+      "id": "round-state",
+      "title": "Reload-safe round state",
+      "purpose": "In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns only from the parent's `ruling.md` newer than both the plan and the handoff plan.",
+      "doc": "docs/sessions.md#child-orchestrator-sessions",
+      "keys": [],
+      "commands": [],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "remote-intercom",
       "title": "Remote intercom",
       "purpose": "Allows intercom across machines and opening panes; both are off by default.",
@@ -489,6 +522,17 @@
       "doc": "docs/sessions.md#commands",
       "keys": ["footer.usage", "ui", "widget.children"],
       "commands": ["/foreman cost", "/foreman dialogs"],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
+      "id": "dialogs-cli",
+      "title": "Permission dialogs as a tool and CLI",
+      "purpose": "The foreman-only `foreman_dialogs({trace?})` tool and `foreman dialogs <trace>` (`bin/foreman`, `.cmd`, `.ps1`) return the JSON of `/foreman dialogs --json` for this session's trace or a named trace file; read only. A session's own async run results join the read-only verbs.",
+      "doc": "docs/sessions.md#commands",
+      "keys": [],
+      "commands": ["foreman dialogs"],
       "switch": null,
       "state": "on",
       "enable": ""

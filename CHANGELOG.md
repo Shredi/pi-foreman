@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Round 14
+- Own-state reads have one source of truth: `ownStateRead` decides for the overlay and the review link alike. Reads of the session's own trace file, its own bg_run outputs (which join the own-read set; the `foreman_wait` log is bounded) and a `.workflow/scratch/` script or a `cd <worktree> &&` prefix pass for the foreman.
+- Child message-file input: a child's `git commit -F` message file lies only under `<worktree>/.workflow/scratch/` or its own `$FOREMAN_SCRATCH`; `.pi/` is refused, a white-space `FOREMAN_SCRATCH` is unresolvable and denied, and an inline `FOREMAN_SCRATCH=` never counts. The message-file exemption lifts only the write protection of `git commit -F`; a child `git tag -F` under a protect rule is denied with its own reason. A zsh `=word` message file is refused by the git guard.
+- Residual shell-facts rows (`scripts/shell_facts.py`): awk run-time redirect targets and `| getline` / `|&` / `system()` are computed writes; xargs into an unknown program is a link maker; sed `e`/`w`/`W` are judged by command; zsh `=word` message files; anchored ruling-name basenames; a `cp` source is a read and `cp <src> <new file>` writes nothing below the source; a copier backup suffix (`-S`/`--suffix`) is an option value and writes an unknown name next to its target; recursive and `-a` copies, rsync and script files count as link makers. A `cp` into a target that is no directory is refused again.
+- `foreman_dialogs({trace?})` tool and the `foreman dialogs <trace>` CLI (`bin/foreman`, `.cmd`, `.ps1`; one implementation through `node --experimental-strip-types`, needs Node 22.6+) return the JSON of `/foreman dialogs --json`. A session's own async run results (`async-subagent-results/<run>.json`) join the read-only verbs and inline reads; another session's run id still asks.
+- Reviewer and finalizer roles list the `bg_run`, `bg_status` and `bg_logs` tools, so a long test run can go to the background; the roles stay `async` and the names resolve to nothing without the add-on.
+- Reload-safe round state: a round session keeps `<handoff>/round-state.json` (topic, plan hash, plan-review verdict and round count, review counters, revision rounds per chain). It never keeps an approval: the checkpoint approval comes back only from the parent's `ruling.md` (not `ruling-<n>.md`) that is newer than both the plan and the handoff plan.
+- `foreman doctor` prints a `providers:` line (the providers the model registry holds in the session); the opened-session docs note the `/reload` workaround for a missing `claude-bridge`.
+
 ### Round 13
 - Self-ruling guard reads lexed write surfaces through the new `scripts/shell_facts.py`, built on the git_guard Lexer; it fails closed and matches `ruling*.md` only, never `*.ack`. Computed scripts, sed `e`/`w`/`W`, find actions and computed program names count as computed writes.
 - Child `git commit -F` allowlist: an optional `cd`, then `git add`/`status`/`diff --cached`, then one commit. Glob and `~` message paths are denied, and `--amend --no-edit` has its own deny reason; `message_file_clobbered` is now used only on the foreman's path.
@@ -10,6 +19,7 @@
 - Pi's truncated bash output log (`details.fullOutputPath`) is readable by its own session for read-only verbs. New dialogs family `own bash output log`; `cut` is now a read verb.
 - Tests: `waitQuiet` is shared in `test/_tmpbase.ts`, and tests shut the adapter down before removing temp dirs.
 - R12 leftovers: stale comments fixed, the `REPEAT_STOP_REASONS` docs row added, `HUB_ROOT_FIX` referenced from the test, and the permissions renderer refusal prints one line and exits 2.
+- Windows (win32) fixes: `shell_facts` keeps a posix-rooted bash target (`/h/r`, `cd /h`) posix instead of joining it onto the native cwd (5b9fb50); the R13 adapter tests write native paths into bash lines with forward slashes (7343076); a native backslash drive word is also a write candidate in its native spelling, and read roots match 8.3 short spellings (247d8c5); the self-ruling suites use forward slashes in bash lines, and the launch trace test pins pressure off (0b0530f).
 
 ### Round 12
 - Commit-message lint is uniform for foreman and children; the cd guard tracks only top-level `cd` and never reads message text; an unreadable message is a child deny; `-F -` with a literal heredoc is linted on its body.
