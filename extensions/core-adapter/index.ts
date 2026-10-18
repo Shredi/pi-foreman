@@ -108,8 +108,8 @@ import { claimCore, emitReady, installInert, missingBundled, setupInvocation } f
 
 /** pi.events of the loaded extension, for the Herdr blocked signal (set in the factory). */
 let herdrEvents: EventBus | undefined;
-import { checkLaunch, completedAgents, CritiqueCounter, hasSecurityFinding, initialRounds, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, verdictOf } from "./rounds.ts";
-import type { LaunchRounds, RoundState } from "./rounds.ts";
+import { chainKey, checkLaunch, completedAgents, CritiqueCounter, hasSecurityFinding, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, RoundChains, verdictOf } from "./rounds.ts";
+import type { LaunchRounds } from "./rounds.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
@@ -219,8 +219,8 @@ interface Session {
   dedupeTraced: Set<string>;
   /** Async-started guidance lines trimmed from a held launch result, by run id (trace notify_deduped). */
   trimmedLines: Map<string, number>;
-  /** Foreman only: builder revision rounds since the last user prompt or /ceremony tier change (rounds.ts). */
-  rounds: RoundState;
+  /** Foreman only: builder revision rounds per review chain since the last user prompt or /ceremony tier change (rounds.ts). */
+  chains: RoundChains;
   /** Foreman only, ceremony gate (bound.ts): own project-file changes at trivial, reset by /ceremony. */
   tally: Tally;
   /** Changes of gated calls that passed the bound check, by tool call id, counted at their result. */
@@ -502,7 +502,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       turnSeq: 0,
       checksCache: { current: null },
       turn: { cause: "other", cacheRead: 0, cacheWrite: 0 },
-      rounds: initialRounds(),
+      chains: new RoundChains(),
       tally: emptyTally(),
       pendingChanges: new Map(),
       launchedRoles: new Map(),
@@ -650,7 +650,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.ceremony = next;
     if (next.tier !== before) {
       if (!s.isChild) s.trace?.emit({ event: "tier", tier: next.tier }); // D7: a tier event is the foreman's triage
-      s.rounds = onTierChange(s.rounds, next.source);
+      s.chains.clear(onTierChange(s.chains.state, next.source));
     }
   }
 
@@ -1691,8 +1691,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         let preferStrong = false;
         let revClimb: "revision" | "review_fail" | null = null;
         if (steps.length > 0) {
-          rounds = checkLaunch(s.rounds, steps, s.ceremony.tier, get(s.config.config, "ceremony.revisionRounds"));
+          s.chains.enter(chainKey(input, s.chains.key));
+          if (s.chains.applyRuling(childDirsOf(s), selfRulingsFor(s))) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: "ruling_reset" });
+          rounds = checkLaunch(s.chains.state, steps, s.ceremony.tier, get(s.config.config, "ceremony.revisionRounds"), s.chains.key);
           if (rounds.block) {
+            s.chains.refusal = { key: s.chains.key, at: Date.now() };
             s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: "blocked" });
             return { block: true, reason: rounds.block };
           }
@@ -1862,9 +1865,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (applied) s.trace?.emit(applied);
       }
       if (rounds) {
-        s.rounds = rounds.next;
+        s.chains.state = rounds.next;
         for (let i = 0; i < rounds.revisions; i++) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: kind });
-        if (rounds.exempt) s.trace?.emit({ event: "revision_security_exempt", role: "builder", tier: s.ceremony.tier, count: rounds.exempt, after: s.rounds.exempt ?? 0 });
+        if (rounds.exempt) s.trace?.emit({ event: "revision_security_exempt", role: "builder", tier: s.ceremony.tier, count: rounds.exempt, after: s.chains.state.exempt ?? 0 });
       }
       if (event.toolName === "subagent" && !s.isChild) {
         const lf = boundLedger(s.markerDir, s.id);
@@ -1991,7 +1994,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s && !s.isChild) s.turn.cause = isSubagentWake(event.source, event.text) ? idleCause ?? "child" : causeOfInput(event.source, event.text);
     if (s && !s.isChild && s.turn.cause === "intercom") s.turn.intercomFrom = lastIntercomSender(ctx.sessionManager.getBranch()) ?? s.turn.intercomFrom;
     // D3: the owner is back in the loop, so revision rounds count from zero again.
-    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.rounds = initialRounds();
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.chains.clear();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.waitingForParent = false), s.handoffWaits.clear();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.climbRefusals = 0), (s.reviewCount = 0), (s.planReviewCount = 0);
@@ -2036,7 +2039,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // a second opinion, plan review or panel never marks items (occasion.ts); the run end marks the counting primary
     const launch = passed ? s.reviewRuns.byRun.get(passed.runId) : undefined;
     if (passed && !(launch && (launch.panel || launch.entries.some((e) => REVIEW_ROLES.includes(e.role) && (e.occasion === "second-opinion" || e.occasion === "plan-review"))))) markByReview(s, passed.runId, passed.text);
-    s.rounds = onReviewDone(s.rounds, verdict, verdict === "fail" && hasSecurityFinding(text));
+    s.chains.state = onReviewDone(s.chains.state, verdict, verdict === "fail" && hasSecurityFinding(text));
     if (verdict === "pass") {
       s.budget.enterPost();
       s.trace?.emit({ event: "recheck_budget", count: 0, action: "start" });

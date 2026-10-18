@@ -21,8 +21,16 @@
 // Security exemption: a reviewer FAIL whose report has a finding line starting `SECURITY:` makes the
 // builder launches that answer it (after that FAIL, up to the next review verdict) exempt from the
 // limit. They still count toward a ceiling: exempt + counted revisions never exceed 2 x the limit.
+//
+// Chains: the count is kept per review chain (`RoundChains`), the key being the phase a launch's task names
+// (`P2`, `phase 2`; a launch naming none stays on the current chain). A new phase starts at zero, so a limit reached
+// in P1 does not block a P2 builder. A parent `ruling-*.md` with the line `revision-round: +1`, written after the
+// refusal it answers (ctime), resets that chain's count once (`rulingReset`).
 
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { Tier } from "./ceremony.ts";
+import { isRulingName } from "./ruling.ts";
 
 export const NOTIFY_TYPE = "subagent-notify";
 export const REVIEW_ROLES = ["reviewer", "senior-reviewer"];
@@ -42,6 +50,86 @@ export interface RoundState {
 }
 
 export type Verdict = "pass" | "fail";
+
+export const DEFAULT_CHAIN = "main";
+
+/** The phase key a launch call's task texts name (`P2`, `phase 2`), or `current` when none does. */
+export function chainKey(input: Record<string, unknown>, current = DEFAULT_CHAIN): string {
+  const texts: unknown[] = [input.task];
+  for (const list of [input.tasks, input.chain]) {
+    if (!Array.isArray(list)) continue;
+    for (const e of list) {
+      if (!e || typeof e !== "object") continue;
+      const o = e as Record<string, unknown>;
+      texts.push(o.task, ...(Array.isArray(o.parallel) ? o.parallel.map((p) => (p && typeof p === "object" ? (p as Record<string, unknown>).task : undefined)) : []));
+    }
+  }
+  for (const t of texts) {
+    const m = typeof t === "string" ? /\bP(\d+)\b|\b[Pp]hase[ -]?(\d+)\b/.exec(t) : null;
+    if (m) return `P${m[1] ?? m[2]}`;
+  }
+  return current;
+}
+
+/** A parent ruling in `dirs` with the line `revision-round: +1`, ctime newer than `afterMs` (the refusal) and not used yet. */
+export function rulingReset(dirs: string[], afterMs: number, used: Set<string>, self?: { has(file: string, mtime: number): boolean }): { file: string; id: string } | null {
+  for (const dir of dirs) {
+    let names: string[] = [];
+    try {
+      names = fs.readdirSync(dir).filter(isRulingName);
+    } catch {
+      continue;
+    }
+    for (const n of names) {
+      const file = path.join(dir, n);
+      try {
+        const st = fs.statSync(file);
+        const id = `${file}:${st.ctimeMs}`;
+        if (st.ctimeMs <= afterMs || used.has(id) || self?.has(file, st.mtimeMs)) continue;
+        if (/^revision-round:[ \t]*\+1[ \t]*$/m.test(fs.readFileSync(file, "utf8"))) return { file, id };
+      } catch {
+        // vanished
+      }
+    }
+  }
+  return null;
+}
+
+/** The round state of the active review chain, the others set aside, and the last refusal (what a ruling must be newer than). */
+export class RoundChains {
+  key = DEFAULT_CHAIN;
+  state: RoundState = initialRounds();
+  refusal: { key: string; at: number } | null = null;
+  private readonly saved = new Map<string, RoundState>();
+  private readonly used = new Set<string>();
+
+  /** Make `key` the active chain (its own state, a fresh one for a new phase). */
+  enter(key: string): void {
+    if (key === this.key) return;
+    this.saved.set(this.key, this.state);
+    this.state = this.saved.get(key) ?? initialRounds();
+    this.saved.delete(key);
+    this.key = key;
+  }
+
+  /** An owner prompt or tier change: every chain starts again. */
+  clear(state: RoundState = initialRounds()): void {
+    this.saved.clear();
+    this.refusal = null;
+    this.state = state;
+  }
+
+  /** After a refusal of the active chain: a fresh parent `revision-round: +1` ruling resets its count once. Returns the ruling file. */
+  applyRuling(dirs: string[], self?: { has(file: string, mtime: number): boolean }): string | null {
+    if (!this.refusal || this.refusal.key !== this.key) return null;
+    const r = rulingReset(dirs, this.refusal.at, this.used, self);
+    if (!r) return null;
+    this.used.add(r.id);
+    this.state = { ...this.state, used: 0, exempt: 0 };
+    this.refusal = null;
+    return r.file;
+  }
+}
 
 export function initialRounds(): RoundState {
   return { built: false, reviewOpen: false, used: 0 };
@@ -167,7 +255,7 @@ export interface LaunchRounds {
  * Walk a launch call's steps: each builder entry while a review is open is a revision round;
  * a review step after built work opens one. Refused when the call would exceed the tier's limit.
  */
-export function checkLaunch(s: RoundState, steps: string[][], tier: Tier, configured: unknown): LaunchRounds {
+export function checkLaunch(s: RoundState, steps: string[][], tier: Tier, configured: unknown, key = DEFAULT_CHAIN): LaunchRounds {
   let { built, reviewOpen } = s;
   let secOpen = s.secOpen === true;
   let counted = 0;
@@ -197,7 +285,7 @@ export function checkLaunch(s: RoundState, steps: string[][], tier: Tier, config
   if (next.used <= limit && next.used + usedExempt <= ceiling) return out();
   const over = next.used <= limit;
   const note = usedExempt > 0 ? ` ${usedExempt} revision(s) answering a SECURITY finding were exempt from the limit but count toward the ceiling of ${ceiling} (2 x revisionRounds).` : "";
-  return out(`pi-foreman: revision ${over ? "ceiling" : "limit"} for ${tier} reached (${over ? ceiling : limit}): this launch would bring the revision rounds to ${over ? next.used + usedExempt : next.used} (a builder run after a review, also one in the same chain or while a review is still running).${note} Report the open findings to the owner and ask how to go on; the owner can raise the tier with /ceremony. A new user prompt starts the count again.`);
+  return out(`pi-foreman: revision ${over ? "ceiling" : "limit"} for ${tier} reached (${over ? ceiling : limit}): this launch would bring the revision rounds to ${over ? next.used + usedExempt : next.used} (a builder run after a review, also one in the same chain or while a review is still running).${note} Report the open findings to the owner and ask how to go on; the owner can raise the tier with /ceremony. The count is kept per review chain (chain ${key}); it starts again (1) on a new user prompt (owner prompt), or (2) when the parent writes a ruling-<n>.md with the line \`revision-round: +1\` after this refusal (used once).`);
 }
 
 /** A tier change: only the user's own (`/ceremony`) starts the count again; a raise by the foreman, a ledger header or a signal does not. */
