@@ -194,13 +194,12 @@ export async function shellFacts(command: string, cwd: string, shell: "bash" | "
 const globRe = (g: string): RegExp => new RegExp(`^${g.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
 
 /**
- * A write surface that may hit a ruling file in one of `dirs` (real paths). `moves`: the line moves or renames a path (a
- * handoff dir may then reach a target that does not exist yet).
+ * A write surface that may hit a ruling file in one of `dirs` (real paths). `moves`: the line moves or renames a path; kept
+ * in the signature, unread since R14 ruling 7 reverted the `into` shortcut: an `into` fact (`cp <src> T` writes
+ * `T/<src name>`) under a T that is no directory now is refused like any other write below a non-directory.
  */
 export function factHitsRuling(w: WriteFact, dirs: Set<string>, links: boolean, moves = false): boolean {
   if (w.read) return false;
-  // `cp <src> <new file>`: the target is no directory, so nothing lands below it, unless the line links or moves a dir there
-  if (w.into && w.dir !== null && !links && !moves && !isDir(w.dir)) return dirs.has(realDir(w.dir));
   // an existing file (or symlink to one) at a known path: judged by what it really is
   if (w.path && fs.existsSync(w.path)) {
     const real = realKey(w.path);

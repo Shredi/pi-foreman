@@ -1,6 +1,7 @@
 // R14 item 3 (chair ruling 3): the self-ruling guard refused the foreman's `cp <own handoff>/ruling-2.md .workflow/scratch/...`.
-// A ruling name is a basename match, a copy source is a read, and `<target>/<source name>` of a copy into a target that is no
-// directory is no write below it; a ruling-named write into a handoff dir where the session is the child stays refused.
+// A ruling name is a basename match and a copy source is a read; a ruling-named write into a handoff dir where the session is
+// the child stays refused. R14 ruling 7 reverted the `into` shortcut: `cp <H>/ruling-2.md T` with T no directory is refused
+// again (`T/ruling-2.md` may be written); foreman_copy is the path for that copy.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -32,8 +33,6 @@ const bash = (r: Rig): Rig => ({ ...r, root: inBash(r.root), hand: inBash(r.hand
 const run = (r: Rig, command: string) => selfRulingRefusal("bash", { command }, r.root, r.dirs, { scratch: r.S });
 
 const PASS: Array<[string, (r: Rig) => string]> = [
-  ["cp <H>/ruling-2.md .workflow/scratch/r14-ruling-2.md && echo ok", (r) => `cp ${r.H}/ruling-2.md .workflow/scratch/r14-ruling-2.md && echo ok`],
-  ["cp <H>/ruling-2.md <abs worktree>/.workflow/scratch/r14-ruling-2.md", (r) => `cp ${r.H}/ruling-2.md ${r.root}/.workflow/scratch/r14-ruling-2.md`],
   ["cat <H>/ruling-2.md > .workflow/scratch/r14-ruling-2.md", (r) => `cat ${r.H}/ruling-2.md > .workflow/scratch/r14-ruling-2.md`],
   ["cat >> <H>/asks.md heredoc naming ruling-2.md; touch <H>/.ack", (r) => `cat >> ${r.H}/asks.md <<'EOF'\n- ask 3: see ruling-2.md\nEOF\ntouch ${r.H}/.ack`],
   ["echo x >> <H>/asks.md", (r) => `echo x >> ${r.H}/asks.md`],
