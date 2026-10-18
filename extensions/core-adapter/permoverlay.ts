@@ -2066,11 +2066,13 @@ function npmInstallOwnedWin32(c: Collected, ctx: MatchCtx): boolean {
     return [js, ...(noLink ? [nat(abs)] : [])].filter((x): x is string => !!x).map(norm);
   };
   const inside = (a: string[], root: string[]): boolean => a.some((x) => root.some((r) => x === r || x.startsWith(r.endsWith("\\") ? r : r + "\\")));
-  const root = (ctx.roundRoots ?? []).map(spellings).find((r) => r.length > 0 && inside(spellings(ctx.cwd), r));
-  if (!root) return false;
   const dirs = npmCwds(path.win32.resolve(ctx.cwd), c.npmCds ?? [], path.win32);
-  if (!dirs.every((d) => inside(spellings(d), root))) return false;
-  return (c.npmUnits ?? [[]]).every((prefixes) => dirs.every((d) => (prefixes.length ? prefixes.every((p) => inside(spellings(path.win32.resolve(d, p)), root)) : inside(spellings(npmLocalPrefix(d, path.win32, fsx.exists)), root))));
+  const into = (root: string[]): boolean => (c.npmUnits ?? [[]]).every((prefixes) => dirs.every((d) => (prefixes.length ? prefixes.every((p) => inside(spellings(path.win32.resolve(d, p)), root)) : inside(spellings(npmLocalPrefix(d, path.win32, fsx.exists)), root))));
+  const root = (ctx.roundRoots ?? []).map(spellings).find((r) => r.length > 0 && inside(spellings(ctx.cwd), r));
+  if (root && dirs.every((d) => inside(spellings(d), root)) && into(root)) return true;
+  // the foreman's own `bench/pi-lock` (R11 item 10), as on POSIX: every dir npm may install into is inside it, wherever the cwd is
+  const lock = ctx.foremanRoot ? spellings(path.win32.join(ctx.foremanRoot, "bench", "pi-lock")) : [];
+  return lock.length > 0 && into(lock);
 }
 
 function collect(src0: string, shell: "posix" | "powershell", depth: number, out: Collected): void {
