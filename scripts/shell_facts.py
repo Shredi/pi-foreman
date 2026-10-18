@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import posixpath
 import re
 import sys
 import tempfile
@@ -65,6 +66,25 @@ COMPUTED = gg.Word("\0", dynamic=True, raw="$(xargs)")
 UNKNOWN_SCRATCH = os.path.join(tempfile.gettempdir(), "pi-foreman-scratch-unknown")
 _REF = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 _PLAIN = re.compile(r"(?:[A-Za-z0-9/._=:@%+,~-]|\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*)+")
+
+
+def _pm(p):
+    """The path module for `p`: posixpath for a posix-rooted path (`/h/r` in a bash line, `cd /h`), else os.path. On POSIX both
+    are posixpath (no change); on win32 a posix-rooted target stays posix instead of taking the drive and backslashes of the
+    native cwd, and native (drive) paths keep ntpath. Consumers resolve both forms the same way (path.resolve / realpath)."""
+    return posixpath if p.startswith("/") and not p.startswith("//") else os.path
+
+
+def _abs(p):
+    return _pm(p).isabs(p)
+
+
+def _resolve(base, p):
+    """`p` made absolute against `base` (the tracked cwd) with the module of whichever of them roots the result."""
+    if _abs(p):
+        return _pm(p).normpath(p)
+    m = _pm(base)
+    return m.normpath(m.join(base, p))
 
 
 class State(object):
@@ -133,15 +153,15 @@ def add(st, kind, text, glob=False, cwd="keep", partial=None):
             rec["name"] = tail
         if "\0" not in head and (head or partial.startswith("/")):
             d = head or "/"
-            rec["dir"] = os.path.normpath(d if os.path.isabs(d) else os.path.join(base, d)) if (os.path.isabs(d) or base) else None
+            rec["dir"] = _resolve(base, d) if (_abs(d) or base) else None
     elif text is not None:
         if text.startswith("~"):
             text = os.path.expanduser(text)
-        if os.path.isabs(text) or base:
-            p = os.path.normpath(text if os.path.isabs(text) else os.path.join(base, text))
+        if _abs(text) or base:
+            p = _resolve(base, text)
             rec["path"] = p
-            rec["dir"] = os.path.dirname(p)
-            rec["name"] = os.path.basename(p) or None
+            rec["dir"] = _pm(p).dirname(p)
+            rec["name"] = _pm(p).basename(p) or None
         else:
             rec["name"] = os.path.basename(text.rstrip("/")) or None
     st.writes.append(rec)
@@ -247,12 +267,10 @@ def change_dir(args, st, flavor):
     if flavor == "powershell":
         ops = [w for w in args if w.text.lower() not in ("-path", "-literalpath")]
     v = value(ops[0], st) if len(ops) == 1 else None
-    if v is None or v in ("-",) or v.startswith("~") or (st.cdpath and not os.path.isabs(v)):
+    if v is None or v in ("-",) or v.startswith("~") or (st.cdpath and not _abs(v)):
         st.cwd = None
-    elif os.path.isabs(v):
-        st.cwd = os.path.normpath(v)
-    elif st.cwd is not None:
-        st.cwd = os.path.normpath(os.path.join(st.cwd, v))
+    elif _abs(v) or st.cwd is not None:
+        st.cwd = _resolve(st.cwd, v)
 
 
 def copier(name, args, st):
@@ -296,7 +314,7 @@ def copier(name, args, st):
             sv = value(src, st)
             name_ = os.path.basename(sv.rstrip("/")) if sv is not None else None
             if tv is not None and name_:
-                add(st, "dest", os.path.join(tv, name_), glob=src.glob or target_dir.glob)
+                add(st, "dest", _pm(tv).join(tv, name_), glob=src.glob or target_dir.glob)
             else:
                 add(st, "dest", None, partial=(target_dir.text + "/" + (name_ or "\0")))
     else:
@@ -430,7 +448,7 @@ def ruling_args(args, st):
     """A literal ruling-named argument of a program that is not a known reader: the program may write it."""
     for w in args:
         t = w.text.split("=", 1)[-1] if w.text.startswith("-") else w.text
-        if "\0" not in t and os.path.isabs(t) and RULING.match(os.path.basename(t.replace("\\", "/"))):
+        if "\0" not in t and _abs(t) and RULING.match(os.path.basename(t.replace("\\", "/"))):
             add(st, "arg", t)
         elif RULING_IN.search(w.text):  # inside awk system(), find -name/-exec, ...: the dir is unknown
             add(st, "arg", None, partial="\0/ruling.md")
@@ -590,7 +608,7 @@ def facts(payload):
     text = payload.get("command") or ""
     flavor = "powershell" if payload.get("shell") == "powershell" else "bash"
     cwd = payload.get("cwd") or os.getcwd()
-    st = State(os.path.normpath(cwd), line_vars(text, payload.get("scratch_dir")) if flavor == "bash" else {}, flavor)
+    st = State(_pm(cwd).normpath(cwd), line_vars(text, payload.get("scratch_dir")) if flavor == "bash" else {}, flavor)
     try:
         walk(text, flavor, st, 0)
     except ValueError as exc:

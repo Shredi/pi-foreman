@@ -141,7 +141,9 @@ class ChildCommitFileAllowlistTest(unittest.TestCase):
         self.assertEqual(decide("git commit -F %s" % MSG, "child", self.repo), ("allow", ""))
 
     def test_cd_add_commit_line_passes(self):
-        c = "cd %s && git add a b && git commit -F %s" % (self.repo, MSG)
+        # A child on Windows writes the cd target into the bash line with forward slashes; native backslashes would be bash escapes.
+        in_bash = self.repo.replace("\\", "/") if sys.platform == "win32" else self.repo
+        c = "cd %s && git add a b && git commit -F %s" % (in_bash, MSG)
         self.assertEqual(decide(c, "child", self.repo), ("allow", ""))
         self.assertEqual(decide(c, "child", self.outside), ("allow", ""))
 
