@@ -180,7 +180,7 @@ export interface MatchCtx {
   /**
    * Foreman only: patterns of its own state records, state/usage, its own live and trace file (roundsurface.ts ownUsageReadable). A shell command
    * whose every unit is ls/cat/head/tail/wc/stat without a wrapper, write or substitution, the python/node read forms (usagePythonRead,
-   * usageNodeRead) or an ownReadChain line (bindings, `cd <worktree> &&`, a `.workflow/scratch/` script) may name them although the protect
+   * usageNodeRead) or an ownStateRead line (bindings, `cd <worktree> &&`, a `.workflow/scratch/` script) may name them although the protect
    * rule `{agentDir}/pi-foreman/state/*` covers state/; a write there stays protected.
    */
   ownReads?: string[];
@@ -2807,9 +2807,9 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const ownedReadOk = !strictRead && !/\$\(|`|[<>]\(/.test(command) && shell === "posix" && c.ro === true && c.roRun !== true && c.roUnknown === undefined && c.roDeny === undefined && c.roTargets!.size === 0 && c.tmpTargets!.size === 0 && c.writeTargets!.size === 0 && c.removeWords!.length === 0 && c.worktreeOp === undefined;
   const readOnly = strictRead;
   // R10 item 1: the foreman's own usage records (ctx.ownReads): plain ls/cat/head/tail/wc/stat units that write nothing, or the one python read form
-  // R12 item 2: or a `;`/`&&`/pipe chain whose units touching the own records are such reads and whose other units are read-only (ownReadChain)
-  // R14 item 1: ownReadChain also takes a leading `cd <worktree> &&`, a `2>&1` and a worktree `.workflow/scratch/` script given own records
-  const ownRead = !!ctx.ownReads?.length && shell === "posix" && ((!/\$\(|`|[<>]\(/.test(command) && c.rdr === true && c.ro === true && c.writeTargets!.size === 0 && c.tmpTargets!.size === 0 && c.removeWords!.length === 0 && c.verbs!.length > 0 && c.verbs!.every((v) => USAGE_VERBS.has(v))) || usagePythonRead(command, ctx.ownReads!, ctx) || usageNodeRead(command, ctx.ownReads!, ctx) || (c.writeTargets!.size === 0 && c.tmpTargets!.size === 0 && ownReadChain(command, ctx)));
+  // R12 item 2: or a `;`/`&&`/pipe chain whose units touching the own records are such reads and whose other units are read-only (ownStateRead)
+  // R14 item 1: ownStateRead also takes a leading `cd <worktree> &&`, a `2>&1` and a worktree `.workflow/scratch/` script given own records
+  const ownRead = !!ctx.ownReads?.length && shell === "posix" && ((!/\$\(|`|[<>]\(/.test(command) && c.rdr === true && c.ro === true && c.writeTargets!.size === 0 && c.tmpTargets!.size === 0 && c.removeWords!.length === 0 && c.verbs!.length > 0 && c.verbs!.every((v) => USAGE_VERBS.has(v))) || usagePythonRead(command, ctx.ownReads!, ctx) || usageNodeRead(command, ctx.ownReads!, ctx) || (c.writeTargets!.size === 0 && c.tmpTargets!.size === 0 && ownStateRead(command, ctx)));
   // `--exclude-dir=.git` names a path to leave out, never one to write: only a redirect target keeps such a word
   // the read-only python exemption holds only when the whole command is that one invocation: nothing else on the line may use the words
   const soloPython = /^\s*(?:[\w./-]*python[\w.]*)(?:\s+-[A-Za-z]+)*\s*$/.test(command.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, ""));
@@ -2993,8 +2993,9 @@ const VERSION_PROBE = /^(?:node|python3?)$/;
  * be an fd dup `N>&M` (`2>&1`).
  * At least one unit reads an own record. Any other `$` fails. No unit removes (no remover verb; the code of the read forms is fixed, so
  * Collected.removeWords holds only its literals). Write targets and tee are checked by the caller (Collected).
+ * R14 item 1: the one own-read decision, shared by the overlay (checkShell ownRead) and review.ts ownUsageAllow (formerly ownReadChain).
  */
-function ownReadChain(command: string, ctx0: MatchCtx): boolean {
+export function ownStateRead(command: string, ctx0: MatchCtx): boolean {
   const pats = ctx0.ownReads ?? [];
   if (!pats.length || ctx0.role === "child" || /\$\(|`|[<>]\(/.test(command)) return false;
   const parsed = parseShell(command, "posix");
@@ -3093,7 +3094,7 @@ function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: bo
   let ask: ProtectHit | null = null;
   const cands = pathCandidates(word, ctx);
   if (ownRead && shell && !child && ctx.ownReads?.length) {
-    // a binding `name=<own record>` (ownReadChain) writes nothing: its value is the path
+    // a binding `name=<own record>` (ownStateRead) writes nothing: its value is the path
     const bind = /^[A-Za-z_][A-Za-z0-9_]*=/.exec(word);
     // a word with white space that is the code of the node read form (USAGE_NODE) is split into tokens: its absolute tokens must be own records, its code
     // fragments (`.readFileSync`) are no paths of the line (posix only)

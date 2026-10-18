@@ -9,7 +9,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
-import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
+import { buildOverlayRules, checkToolCall, ownStateRead, readBaseline } from "../permoverlay.ts";
+import { ForemanReview } from "../review.ts";
+import type { RegistryLike } from "../review.ts";
 import type { MatchCtx, OverlayRules } from "../permoverlay.ts";
 import { ownUsageReadable } from "../roundsurface.ts";
 import { traceFile } from "../trace.ts";
@@ -108,4 +110,39 @@ test("own_state_read_script_outside_workflow_scratch_not_passed", { skip: !posix
     `cd ${inBash(w)} && node ws/.workflow/scratch/dialogs.mjs ~/.pi/agent/pi-foreman/state/trace-${SID}.jsonl`,
     `cd ${inBash(ws)} || node .workflow/scratch/dialogs.mjs ~/.pi/agent/pi-foreman/state/trace-${SID}.jsonl`,
   ]) assert.notEqual(sh(cmd), "pass", cmd);
+});
+
+// R14 ruling 2c: review.ts ownUsageAllow takes the overlay's one own-read decision (permoverlay.ts ownStateRead). The link resolves `~`
+// with os.homedir(), so its own-read set is built under the real home (nothing is written there; the session ids are made up).
+const realAg = path.join(os.homedir(), ".pi", "agent");
+const realState = path.join(realAg, "pi-foreman", "state");
+const linkReads = ownUsageReadable(realAg, process.platform, SID, { dir: undefined, stateDir: realState });
+const noModel: RegistryLike = { find: () => { throw new Error("model called"); }, complete: async () => ({}) };
+const link = async (value: string, isChild = false): Promise<string> => {
+  const r = new ForemanReview();
+  r.upsert("s", { isChild, cwd: ws, provider: "a", config: () => ({}), registry: noModel, intent: "", ownReads: () => linkReads });
+  const v = await r.authorize("s", { requestId: "r", surface: "bash", agentName: "foreman", value, toolName: "bash" });
+  return v.kind;
+};
+
+test("own_state_read_review_link_allows_both_literal_lines", { skip: !posix }, async () => {
+  for (const line of [liveLine(SID), traceLine(SID)]) {
+    assert.equal(ownStateRead(line, { cwd: ws, home: os.homedir(), platform: process.platform, role: "main", ownReads: linkReads }), true, line);
+    assert.equal(await link(line), "allow", line);
+  }
+});
+
+test("own_state_read_review_link_other_sid_and_child_not_allowed", { skip: !posix }, async () => {
+  for (const line of [liveLine(OTHER), traceLine(OTHER)]) assert.notEqual(await link(line), "allow", line);
+  for (const line of [liveLine(SID), traceLine(SID)]) assert.notEqual(await link(line, true), "allow", line);
+  assert.equal(ownStateRead(traceLine(SID), { cwd: ws, home: os.homedir(), platform: process.platform, role: "child", ownReads: linkReads }), false);
+});
+
+test("own_state_read_review_link_write_forms_not_allowed", { skip: !posix }, async () => {
+  const T = `~/.pi/agent/pi-foreman/state/trace-${SID}.jsonl`;
+  for (const line of [
+    `cd ${inBash(ws)} && node .workflow/scratch/dialogs.mjs ${T} > ~/.pi/agent/pi-foreman/state/x`,
+    `cd ${inBash(ws)} && node .workflow/scratch/dialogs.mjs ${T} | tee ~/.pi/agent/pi-foreman/state/x`,
+    traceLine(SID, "tools/dialogs.mjs"),
+  ]) assert.notEqual(await link(line), "allow", line);
 });

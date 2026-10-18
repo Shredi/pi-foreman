@@ -155,7 +155,7 @@ export function recordBashOutputLog(logs: Set<string>, details: unknown, platfor
 /**
  * Read patterns for the foreman's own state records (R10 item 1, R12 item 2, R14 item 1): `<agentDir>/pi-foreman/state/usage` and everything below,
  * the session's own presence file `state/live/<session>.json` and its own trace file (trace.ts traceFile: `trace.dir` when set, else the state
- * dir). A read-only shell command of the foreman (permoverlay.ts ownRead: ls/cat/head/tail/wc/stat, the python/node read forms, ownReadChain)
+ * dir). A read-only shell command of the foreman (permoverlay.ts ownRead: ls/cat/head/tail/wc/stat, the python/node read forms, ownStateRead)
  * may name them although the protect rule `{agentDir}/pi-foreman/state/*` covers state/; a write there and another session's files stay
  * protected. Never given to a child.
  */

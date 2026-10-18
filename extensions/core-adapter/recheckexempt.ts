@@ -36,8 +36,8 @@ function ownedOrRuling(p: string, c: ExemptCtx): boolean {
   return (c.ownTasks ?? []).some((pat) => underTask(pat, p, c.platform));
 }
 
-/** `p` lies below a dir of the pattern `<tasks dir>/<prefix>*` (the one segment below the tasks dir starts with the prefix). */
-function underTask(pat: string, p: string, platform: string): boolean {
+/** `p` lies below a dir of the pattern `<tasks dir>/<prefix>*` (the one segment below the tasks dir starts with the prefix); also wait.ts checkLogPath. */
+export function underTask(pat: string, p: string, platform: string): boolean {
   const impl = platform === "win32" ? path.win32 : path.posix;
   const fold = (x: string): string => (platform === "win32" || platform === "darwin" ? x.toLowerCase() : x);
   if (!pat.endsWith("*")) return false;

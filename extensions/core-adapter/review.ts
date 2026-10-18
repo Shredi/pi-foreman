@@ -23,7 +23,7 @@ import { deterministicAllow, deterministicAllowInfo, hits } from "./timeoutallow
 import { classify, effectCtx } from "./effects.ts";
 import * as os from "node:os";
 import * as path from "node:path";
-import { usageNodeRead, usagePythonRead } from "./permoverlay.ts";
+import { ownStateRead } from "./permoverlay.ts";
 import { hubWorkflowDirs, isolationDir, mainWorkflowReadable, roundWorktreeAdd } from "./roundsurface.ts";
 import type { EffectClass, EffectCtx } from "./effects.ts";
 import { isSubagentWakeText } from "./idlecustom.ts";
@@ -202,7 +202,7 @@ export interface ReviewSession {
   ownedRoots?: () => string[];
   /** The roots the session owns read only (the global npm root, its children's async run dirs): listed apart in the prompt, never a write root. */
   readOnlyRoots?: () => string[];
-  /** The foreman's own usage record patterns (roundsurface.ts ownUsageReadable): the one python read form there is allowed without the model (R10 D1). */
+  /** The foreman's own usage record patterns (roundsurface.ts ownUsageReadable): a line permoverlay.ts ownStateRead accepts (the overlay's own-read decision, R10 D1 / R12 / R14 item 1) is allowed without the model. */
   ownReads?: () => string[];
 }
 
@@ -566,13 +566,13 @@ export class ForemanReview {
     }
   }
 
-  /** "own-usage" for the foreman's own `python3 -c` read of its usage records in the one form ruling R10 D1 names (permoverlay.ts usagePythonRead), or its `node -e` twin (usageNodeRead, R12 item 2). */
+  /** "own-usage" for the foreman's own read of its own records: the overlay's one own-read decision (permoverlay.ts ownStateRead, R14 item 1), which holds the R10 D1 python form and its `node -e` twin. */
   private ownUsageAllow(s: ReviewSession, d: AskDetails): string | null {
     try {
       const pats = s.isChild ? [] : s.ownReads?.() ?? [];
       if (!pats.length) return null;
-      const ctx = { cwd: s.cwd, home: os.homedir(), platform: process.platform, role: "main" as const };
-      const read = (v: string): boolean => usagePythonRead(v, pats, ctx) || usageNodeRead(v, pats, ctx);
+      const ctx = { cwd: s.cwd, home: os.homedir(), platform: process.platform, role: "main" as const, ownReads: pats };
+      const read = (v: string): boolean => ownStateRead(v, ctx);
       return read(reviewValue(d)) && read(unitValue(d)) ? "own-usage" : null;
     } catch {
       return null;

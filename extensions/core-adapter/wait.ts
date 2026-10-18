@@ -24,6 +24,7 @@ import { underOwned } from "./owned.ts";
 import { isProtectedPath } from "./permoverlay.ts";
 import type { OverlayRules } from "./permoverlay.ts";
 import { resolveToolPath } from "./payload.ts";
+import { underTask } from "./recheckexempt.ts";
 import { workspaceOf } from "./python.ts";
 import { realDeep, under } from "./triage.ts";
 import { pressureOutcome } from "./pressure.ts";
@@ -80,6 +81,8 @@ export interface PathBoundOpts {
   overlay: OverlayRules | null;
   /** ownedRoots(...).readWrite: a file wait may also watch a path under these (default: none). */
   owned?: string[];
+  /** R14 item 1: the session's own bg_run task dirs (roundsurface.ts ownTaskReadable): a pid/ci `log` may be a file there. */
+  ownTasks?: string[];
 }
 
 /** One line, control characters dropped, capped. */
@@ -131,6 +134,8 @@ export function checkLogPath(raw: unknown, o: PathBoundOpts): { log?: string } |
   const real = realDeep(abs);
   const roots = [path.resolve(path.join(o.agentDir, "pi-foreman", "state", "scratch")), realDeep(path.resolve(path.join(o.agentDir, "pi-foreman", "state", "scratch")))];
   if (roots.some((r) => under(r, abs, o.platform)) && roots.some((r) => under(r, real, o.platform))) return { log: abs };
+  // R14 item 1: the session's own bg_run output (`.pi/tasks/<own session>-<pid>/…`), symlinks followed; another session's stays refused
+  if ((o.ownTasks ?? []).some((p) => underTask(p, abs, o.platform)) && (o.ownTasks ?? []).some((p) => underTask(p, real, o.platform))) return { log: abs };
   const r = checkWaitPath(raw, o);
   return "error" in r ? { error: r.error.replace(`${WAIT_TOOL} on`, `${WAIT_TOOL} log on`) } : { log: r.path };
 }
@@ -559,6 +564,8 @@ export interface WaitSession {
   trace: (rec: Record<string, unknown>) => void;
   /** ownedRoots(...).readWrite, read at each use (the foreman only). */
   owned?: () => string[];
+  /** R14 item 1: the session's own bg_run task dir patterns for this cwd (roundsurface.ts ownTaskReadable; the foreman only). */
+  ownTasks?: (cwd: string) => string[];
   /** Called with a started wait's spec (the finish gate's waiting_for_parent state). */
   onStart?: (spec: ValidSpec, id: string) => void;
   /** Called after a wait was cancelled (the finish gate may leave waiting_for_parent). */
@@ -696,7 +703,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       }
       if (params.action !== "start") return refuse(`${WAIT_TOOL}: action must be start, list or cancel.`);
       const l = limits();
-      const spec = parseStart(params, l, { cwd: ctx.cwd, home: deps.home, agentDir: s.agentDir, platform: deps.platform, overlay: s.overlay, owned: s.owned?.() });
+      const spec = parseStart(params, l, { cwd: ctx.cwd, home: deps.home, agentDir: s.agentDir, platform: deps.platform, overlay: s.overlay, owned: s.owned?.(), ownTasks: s.ownTasks?.(ctx.cwd) });
       if ("error" in spec) return refuse(spec.error, params.kind);
       const r = ensure().start(spec);
       if ("error" in r) return text(r.error, { decision: "refused" }, true);
