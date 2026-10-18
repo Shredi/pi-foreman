@@ -1936,7 +1936,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const s = sessionFor(ctx);
       if (s) onCustomMessage(s, event.message);
       if (s && !s.isChild) s.customSeen.mark(event.message);
-      // R12 item 9: a needs-attention notice for a run that ended (or one already shown) is no longer displayed
+      // R12 item 9: a needs-attention notice for a run that ended is no longer displayed
       const hidden = s && !s.isChild ? hideStaleNotice(s.attention, event.message) : null;
       if (hidden) return { message: hidden };
     }

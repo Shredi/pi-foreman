@@ -1,7 +1,7 @@
 // Dedupe state for "subagent needs attention" notices (pi-subagents sends them as `subagent_control_notice`
-// custom messages). A notice is shown once per (runId, state) and never after the run's end event
-// (RUN_END_EVENTS). Pi's extension hooks cannot drop a queued custom message before it starts a turn
-// (docs/safety.md), so nothing in the adapter consults this yet; it is the state a drop hook would use.
+// custom messages). `endedRuns` (runs whose end event arrived, RUN_END_EVENTS in supervisor.ts) feeds the visible
+// path (hideStaleNotice, index.ts message_end) and the model-context filter (dropEndedRunNotices, index.ts context).
+// `admit` (shown once per runId and state, never after the run ended) has no production caller; notices.test.ts calls it.
 
 export class AttentionNotices {
   private readonly seen = new Set<string>();
