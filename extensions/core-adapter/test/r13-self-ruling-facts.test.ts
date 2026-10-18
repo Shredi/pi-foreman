@@ -96,6 +96,28 @@ for (const [name, line] of DENY) {
   });
 }
 
+// Review round 3: sed scripts with e, w or W anywhere, sed long options that are not exact GNU forms and computed find
+// words are fully computed writes.
+const DENY_R3: Array<[string, (r: Rig) => string]> = [
+  ["sed 1w", (r) => `sed -n '1w ${r.H}/ruling.md' ${r.S}/usage.json`],
+  ["sed $w", (r) => `sed -n '$w ${r.H}/ruling.md' ${r.S}/usage.json`],
+  ["sed s|a|b|w", (r) => `sed 's|a|b|w ${r.H}/ruling.md' ${r.S}/usage.json`],
+  ["sed 1,+2e", (r) => `sed '1,+2e touch ${r.H}/ruling.md' ${r.S}/usage.json`],
+  ["sed 1 ! e", (r) => `sed '1 ! e touch ${r.H}/ruling.md' ${r.S}/usage.json`],
+  ["sed --expr=", (r) => `sed --expr='1e touch ${r.H}/ruling.md' ${r.S}/usage.json`],
+  ["sed --fi=", (r) => `sed --fi=script.sed ${r.S}/usage.json`],
+  ["sed --in", (r) => `sed --in s/a/b/ ${r.H}/ruling.md`],
+  ["find computed action $A", (r) => `find ${r.H} -name ruling.md $A touch {} +`],
+  ['find quoted "$A"', (r) => `find ${r.H} -name ruling.md "$A" touch {} +`],
+];
+
+for (const [name, line] of DENY_R3) {
+  test(`r13 deny (round 3): ${name}`, async () => {
+    const r = rig();
+    assert.equal(await run(r, line(r)), SELF_RULING_REASON, line(r));
+  });
+}
+
 test("r13 fail closed: no python, a missing interpreter and an unreadable line refuse a shell call", async () => {
   const r = rig();
   const cmd = `ls ${r.H}`;

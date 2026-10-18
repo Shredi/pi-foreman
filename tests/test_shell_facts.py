@@ -127,6 +127,25 @@ class ShellFactsTest(unittest.TestCase):
                      "sed -n -e 's/a/b/p' -e '1,3p' /s/x", "sed --expression=s/a/b/ /s/x", "sed -E 's/x+/y/' /s/x"):
             self.assertEqual(self.writes(line), [], line)
 
+    def test_review_round3_deny_cases_are_fully_computed(self):
+        cases = {
+            "sed 1w": "sed -n '1w /h/ruling.md' /s/x",
+            "sed $w": "sed -n '$w /h/ruling.md' /s/x",
+            "sed s|a|b|w": "sed 's|a|b|w /h/ruling.md' /s/x",
+            "sed 1,+2e": "sed '1,+2e touch /h/ruling.md' /s/x",
+            "sed 1 ! e": "sed '1 ! e touch /h/ruling.md' /s/x",
+            "sed --expr=": "sed --expr='1e touch /h/ruling.md' /s/x",
+            "sed --fi=": "sed --fi=script.sed /s/x",
+            "sed --in": "sed --in s/a/b/ /h/ruling.md",
+            "find computed action $A": "find /h -name ruling.md $A touch {} +",
+            "find quoted \"$A\"": "find /h -name ruling.md \"$A\" touch {} +",
+        }
+        for name, line in cases.items():
+            w = self.writes(line)
+            self.assertTrue(any(x["dir"] is None and x["name"] is None for x in w), (name, w))
+        for line in ("sed -n 's/a/b/p' /s/x", "sed --quiet --regexp-extended 's/x+/y/p' /s/x", "find /h -name x -print"):
+            self.assertEqual(self.writes(line), [], line)
+
     def test_unreadable_line_is_an_error(self):
         self.assertIsNotNone(sf.facts({"command": "echo 'open", "cwd": self.cwd})["error"])
 

@@ -57,10 +57,10 @@ INLINE = {"-c", "-e", "-E", "--eval", "-p", "--print", "-r"}
 LINK_CODE = re.compile(r"\b(?:sym)?link(?:Sync|_to)?\s*\(|\bhardlink_to\b|\bsymlink\b")
 RULING = re.compile(r"^ruling(?:-\d{1,6})?\.md$")
 RULING_IN = re.compile(r"(?<![A-Za-z0-9_-])ruling(?:-\d{1,6})?\.md(?![A-Za-z0-9_])")
-SED_E_CMD = re.compile(r"(?:^|[;\n{}])\s*(?:[0-9$,~!]+|/(?:[^/\\\n]|\\.)*/[IM]*)*\s*e(?:\s|[;}]|$)")
-SED_CUSTOM_ADDR = re.compile(r"(?:^|[;\n{},!])\s*\\")
+SED_LONG = {"--expression", "--file", "--in-place", "--quiet", "--silent", "--null-data", "--regexp-extended",
+            "--separate", "--sandbox", "--debug", "--posix", "--line-length", "--zero-terminated",
+            "--follow-symlinks", "--unbuffered", "--help", "--version"}
 FIND_ACTION = re.compile(r"^-(exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)$")
-SED_S_FLAGS = re.compile(r"s([^\\\n])(?:(?!\1)[^\\\n]|\\.)*\1(?:(?!\1)[^\\\n]|\\.)*\1([a-zA-Z0-9]*)")
 COMPUTED = gg.Word("\0", dynamic=True, raw="$(xargs)")
 UNKNOWN_SCRATCH = os.path.join(tempfile.gettempdir(), "pi-foreman-scratch-unknown")
 _REF = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
@@ -306,7 +306,8 @@ def copier(name, args, st):
 
 
 def sed_call(args, st):
-    """Options normalised first: `-e X`, `-eX`, `-ne X`, `--expression[=]X`; `-f`/`--file` scripts are unknown."""
+    """Options normalised first: `-e X`, `-eX`, `-ne X`, `--expression[=]X`; `-f`/`--file` scripts and long options
+    other than the exact GNU forms (abbreviations such as `--expr=`, `--in`) are unknown: a fully computed write."""
     scripts, files, inplace, explicit, unsure = [], [], False, False, False
     i, opts = 0, True
     while i < len(args):
@@ -317,7 +318,9 @@ def sed_call(args, st):
             opts = False
         elif opts and t.startswith("--"):
             key, eq, val = t.partition("=")
-            if key in ("--expression", "--file"):
+            if key not in SED_LONG:
+                unsure = True  # an abbreviation or unknown option: the script or in-place target is not known
+            elif key in ("--expression", "--file"):
                 explicit = True
                 unsure = unsure or key == "--file"
                 s = gg.Word(val) if eq else nxt
@@ -355,19 +358,11 @@ def sed_call(args, st):
     if not explicit and files:
         scripts.append(files.pop(0))
     if unsure:
-        add(st, "sed-f", None)  # script file: unknown commands, fully computed write
+        add(st, "sed-f", None)  # script file or unknown option: unknown commands, fully computed write
     for s in scripts:
-        if not re.search(r"[ewW\0]", s.text):
-            continue  # no e, w or W anywhere: no command can write
-        if "\0" in s.text or SED_CUSTOM_ADDR.search(s.text):
-            add(st, "sed-e", None)  # computed script or a \cREc address we do not parse: fully computed write
-            continue
-        if SED_E_CMD.search(s.text) or any("e" in m.group(2) for m in SED_S_FLAGS.finditer(s.text)):
-            add(st, "sed-e", None)  # the e command / s///e flag runs a shell command: computed write
-        for m in re.finditer(r"(?:^|[;\n}]|/[gpiImMe0-9]*)\s*[wW]\s+([^;\n}]+)", s.text):
-            tgt = m.group(1).strip()
-            if tgt not in ("/dev/stdout", "/dev/stderr"):
-                add(st, "sed-w", None if "\0" in tgt else tgt, partial=tgt if "\0" in tgt else None)
+        if re.search(r"[ewW\0]", s.text):
+            # e/w/W anywhere (e command, w/W file, s///e or s///w flag) or a computed script: fully computed write
+            add(st, "sed-e", None)
     if inplace:
         for f in files:
             add_word(st, "sed-i", f)
@@ -497,8 +492,9 @@ def command(words, seg, flavor, st, depth):
         sed_call(args, st)
         return
     if name == "find":
-        if any(FIND_ACTION.match(w.text) for w in args):
-            add(st, "find", None)  # -exec/-ok run a command, -delete/-fprint/-fls write: fully computed write
+        if any("\0" in w.text or FIND_ACTION.match(w.text) for w in args):
+            # -exec/-ok run a command, -delete/-fprint/-fls write, a computed word may be any of them: fully computed write
+            add(st, "find", None)
         return
     if name in ("truncate", "touch", "shred"):
         skip = False
