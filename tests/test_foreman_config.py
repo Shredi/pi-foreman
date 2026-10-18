@@ -315,7 +315,8 @@ class ConfigTest(unittest.TestCase):
             self.assertIsInstance(entry["tools"], list)
             self.assertEqual("codemode" in entry["tools"], role == "explorer", role)
         self.assertEqual(sub["agentOverrides"]["finalizer"]["tools"],
-                         ["read", "ls", "grep", "find", "bash", "edit"] + list(fc.PR_READ_TOOLS))
+                         ["read", "ls", "grep", "find", "bash", "edit", "bg_run", "bg_status", "bg_logs"]
+                         + list(fc.PR_READ_TOOLS))
         json.dumps(out)
 
     def test_children_never_get_the_intercom_tool(self):
@@ -337,7 +338,8 @@ class ConfigTest(unittest.TestCase):
         self.assertIn("foreman_ledger", fc.resolve_role(cfg, "reviewer", "p1")["tools"])
         cfg["ceremony"]["ledgerHelper"] = "off"
         self.assertEqual(fc.generate_subagents(cfg)["subagents"]["agentOverrides"]["reviewer"]["tools"],
-                         ["read", "ls", "grep", "find", "bash"] + list(fc.PR_ROLE_TOOLS["reviewer"]))
+                         ["read", "ls", "grep", "find", "bash", "bg_run", "bg_status", "bg_logs"]
+                         + list(fc.PR_ROLE_TOOLS["reviewer"]))
 
     def test_git_pack_tools_for_bash_roles_only_when_on(self):
         self.l2({"providers": PROV, "tools": {"git": True}})
