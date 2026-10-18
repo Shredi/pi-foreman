@@ -56,7 +56,8 @@ const PASSES_NOW: Array<[string, (r: Rig) => string]> = [
 ];
 
 // R14 ruling 3 supersedes Addendum D for a plain cp: copying a ruling OUT of the handoff dir is a read (cp -s/-l, ln and mv
-// sources stay writes, see DENY).
+// sources stay writes, see DENY and DENY_R14). The R10 Addendum-D row `cp <H>/ruling.md <scratch>/...` moves DENY -> PASS by
+// R14 ruling 3 and the R13 item 1 spec line "reads of handoff paths anywhere ... are not denies".
 const PASSES_R14: Array<[string, (r: Rig) => string]> = [
   ["session: cp ruling.md out of the handoff dir", (r) => `cp ${r.H}/ruling.md ${r.root}/.workflow/scratch/ruling-r10.md`],
 ];
@@ -65,6 +66,22 @@ for (const [name, line] of PASSES_R14) {
   test(`r14 ruling 3 (copy source is a read): ${name} passes`, async () => {
     const r = rig();
     assert.equal(await run(r, line(view(r))), undefined, line(view(r)));
+  });
+}
+
+// R14 ruling 3: every write form of the Addendum-D row stays denied
+const DENY_R14: Array<[string, (r: Rig) => string]> = [
+  ["cp -s <H>/ruling.md <scratch>/ruling-r10.md", (r) => `cp -s ${r.H}/ruling.md ${r.root}/.workflow/scratch/ruling-r10.md`],
+  ["cp -l <H>/ruling.md <scratch>/ruling-r10.md", (r) => `cp -l ${r.H}/ruling.md ${r.root}/.workflow/scratch/ruling-r10.md`],
+  ["ln <H>/ruling.md <scratch>/ruling-r10.md", (r) => `ln ${r.H}/ruling.md ${r.root}/.workflow/scratch/ruling-r10.md`],
+  ["mv <H>/ruling.md <scratch>/ruling-r10.md", (r) => `mv ${r.H}/ruling.md ${r.root}/.workflow/scratch/ruling-r10.md`],
+  ["cp x <child handoff>/ruling.md", (r) => `cp ${r.S}/x ${r.H}/ruling.md`],
+];
+
+for (const [name, line] of DENY_R14) {
+  test(`r14 ruling 3 (write forms of the Addendum-D row): ${name} is refused`, async () => {
+    const r = rig();
+    assert.equal(await run(r, line(view(r))), SELF_RULING_REASON, line(view(r)));
   });
 }
 
