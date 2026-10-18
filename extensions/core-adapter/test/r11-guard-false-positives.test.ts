@@ -84,24 +84,27 @@ test("home_binding_env_prefix_on_python_c_still_refused", () => {
 
 // ---- item 10: child npm ci / install in the foreman checkout's bench/pi-lock
 const lock = path.join(foreman, "bench", "pi-lock");
+// a path written INTO a bash line: on win32 a child writes forward slashes (unquoted backslashes are bash escapes,
+// see the win32 fixtures in r11-npm-lock-win32.test.ts); the ctx paths stay native
+const inBash = (p: string): string => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
 const npm = (command: string, at = wt, extra: Partial<MatchCtx> = {}): string => child(command, { roundRoots: [wt], foremanRoot: foreman, ...extra }, at).kind;
 
 test("npm_ci_bench_pi_lock_foreman_checkout_allowed", () => {
-  assert.equal(npm(`npm ci --prefix ${lock}`), "pass");
-  assert.equal(npm(`npm install --prefix=${lock}`), "pass");
+  assert.equal(npm(`npm ci --prefix ${inBash(lock)}`), "pass");
+  assert.equal(npm(`npm install --prefix=${inBash(lock)}`), "pass");
   assert.equal(npm("npm ci", lock), "pass");
   assert.equal(npm("npm ci", lock, { roundRoots: [] }), "pass");
 });
 
 test("npm_install_env_prefix_still_fail_closed", () => {
-  assert.equal(npm(`npm_config_registry=http://x npm ci --prefix ${lock}`), "ask");
+  assert.equal(npm(`npm_config_registry=http://x npm ci --prefix ${inBash(lock)}`), "ask");
   assert.equal(npm("PATH=/x npm ci", lock), "ask");
 });
 
 test("npm_install_other_dir_still_asks", () => {
-  assert.equal(npm(`npm ci --prefix ${foreman}`), "ask");
-  assert.equal(npm(`npm ci --prefix ${path.join(foreman, "bench", "other")}`), "ask");
+  assert.equal(npm(`npm ci --prefix ${inBash(foreman)}`), "ask");
+  assert.equal(npm(`npm ci --prefix ${inBash(path.join(foreman, "bench", "other"))}`), "ask");
   assert.equal(npm("npm ci", path.join(foreman, "bench", "other")), "ask");
-  assert.equal(npm(`npm ci --prefix ${lock}`, wt, { foremanRoot: undefined }), "ask");
-  assert.equal(npm(`npm ci --prefix ${lock}/..`), "ask");
+  assert.equal(npm(`npm ci --prefix ${inBash(lock)}`, wt, { foremanRoot: undefined }), "ask");
+  assert.equal(npm(`npm ci --prefix ${inBash(lock)}/..`), "ask");
 });
