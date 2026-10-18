@@ -258,7 +258,12 @@ def main(argv=None):
     perms = (res["config"].get("safety") or {}).get("permissions") or {}
     agent = fc.resolve_agent_dir(args.agent_dir)
     helper = (res["config"].get("ceremony") or {}).get("ledgerHelper", "tool")
-    print(json.dumps({"config": render(perms, agent, helper, hub=(res["config"].get("paths") or {}).get("hubWorkflow")), "warnings": res["warnings"], "errors": res["errors"]}, indent=2))
+    try:
+        config = render(perms, agent, helper, hub=(res["config"].get("paths") or {}).get("hubWorkflow"))
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(json.dumps({"config": config, "warnings": res["warnings"], "errors": res["errors"]}, indent=2))
     return 0
 
 
