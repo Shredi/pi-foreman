@@ -2199,7 +2199,7 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False):
                 with open(path, "rb") as fh:
                     parts.append(fh.read(1 << 20).decode("utf-8", "replace"))
                 from_file = True
-            except OSError:
+            except (OSError, ValueError):  # ValueError: commonpath across Windows drives, so outside the worktree
                 return unread("cannot read the message file %s" % v.text)
     if not parts:
         return ask("the commit message is not on the command line (editor or --amend reuse); %s." % USE_M)

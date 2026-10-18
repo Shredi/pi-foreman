@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -127,6 +128,15 @@ class ChildUnreadableMessageTest(unittest.TestCase):
         # parent ruling: editor, --amend reuse and a -F - heredoc stay as they were for a child
         for c in ("git commit", "git commit --amend --no-edit", "git commit -F - <<'EOF'\nfeat: y\nEOF"):
             self.assertEqual(decide(c, "child", self.repo)[0], "allow", c)
+
+    def test_message_file_commonpath_value_error_is_unsure(self):
+        # R12 item 1: os.path.commonpath raises ValueError across Windows drives; that is outside the worktree, so unsure
+        Path(self.repo, "msg.txt").write_text("fix(r11): x\n")
+        with mock.patch.object(gg.os.path, "commonpath", side_effect=ValueError("Paths don't have the same drive")):
+            got, reason = decide("git commit -F msg.txt", "child", self.repo)
+            self.assertEqual(got, "deny")
+            self.assertIn("cannot read the message file msg.txt", reason)
+            self.assertEqual(decide("git commit -F msg.txt", "main", self.repo)[0], "ask")
 
 
 if __name__ == "__main__":
