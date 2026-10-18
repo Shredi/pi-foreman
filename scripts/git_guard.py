@@ -1003,10 +1003,11 @@ def run_command(words, seg, flavor, ctx, depth, envs, xargs_repl=None, via_xargs
 
     if name in CD_NAMES:
         ctx.state_segs.add(seg)
-        # only a plain top-level `cd <dir>` joined by `&&` or `;` moves the shell that runs the later segments; any other cd leaves
-        # the directory of a later relative path unsure (git commit -F <relative file>)
+        # only a plain top-level `cd <dir>` moves the shell that runs the later segments: it starts the text or follows `;` / a
+        # newline (after `&&` or `||` it may not run), and it is followed by the end, `;`, a newline or `&&`. Any other cd leaves
+        # the directory of a later relative path unsure (git commit -F <relative file>). Message text is never read for a cd.
         top = depth == 0 and seg.group == 0 and not seg.pipe_in and seg.words and seg.words[0] is cmd and \
-            seg.before in (None, "&&", ";") and seg.after in (None, "&&", ";")
+            seg.before in (None, ";") and seg.after in (None, ";", "&&")
         target = None
         if top and name == "cd" and len(args) == 1 and not args[0].dynamic and not args[0].glob and not args[0].text.startswith(("-", "~")):
             target = os.path.join(ctx.cwd, args[0].text)
