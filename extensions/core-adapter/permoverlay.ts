@@ -2895,15 +2895,22 @@ function soloUnit(command: string, patterns: string[]): string[] | null {
   return REDIRECTS.get(words)?.size ? null : words;
 }
 
-/** R12 item 2: the D1 code reading `sys.argv[1]` instead of a literal (`python3 -c '…open(sys.argv[1])…' <path>`); only json/sys imported. */
-const USAGE_PY_ARGV = /^\s*(?:import\s+(?:json|sys)(?:\s*,\s*(?:json|sys))?\s*;\s*)*print\(\s*(?:open\(\s*sys\.argv\[1\]\s*\)\.read\(\s*\)|json\.load\(\s*open\(\s*sys\.argv\[1\]\s*\)\s*\))\s*\)\s*;?\s*$/;
+/**
+ * R12 item 2: the D1 code reading `sys.argv[N]` instead of a literal (`python3 -c '…open(sys.argv[N])…' <path>…`); only json/sys imported.
+ * The open has no mode or mode 'r'/'rb'; json.load may be followed by literal subscripts (`["state"]`, `[0]`), nothing else.
+ */
+const USAGE_PY_ARGV = /^\s*(?:import\s+(?:json|sys)(?:\s*,\s*(?:json|sys))?\s*;\s*)*print\(\s*(?:open\(\s*sys\.argv\[[1-9]\](?:\s*,\s*(?:'rb?'|"rb?"))?\s*\)\.read\(\s*\)|json\.load\(\s*open\(\s*sys\.argv\[[1-9]\](?:\s*,\s*(?:'rb?'|"rb?"))?\s*\)\s*\)(?:\[\s*(?:\d+|'[\w.-]*'|"[\w.-]*")\s*\])*)\s*\)\s*;?\s*$/;
 
 /** usagePythonRead over parsed words: `python3 -c <D1 code>` or `python3 -c <argv code> <path>`. */
 function usagePyWords(words: string[], patterns: string[], ctx: MatchCtx): boolean {
-  if ((words.length !== 3 && words.length !== 4) || !/^python3?$/.test(words[0]) || words[1] !== "-c") return false;
+  if (words.length < 3 || words.length > 12 || !/^python3?$/.test(words[0]) || words[1] !== "-c") return false;
   const code = words[2];
-  // the argv form is closed by its regex (only json/sys imports, one print of the file); pythonReadOnlyCode refuses `import json,sys`
-  if (words.length === 4) return USAGE_PY_ARGV.test(code) && ownLiteral(words[3], patterns, ctx);
+  // the argv form is closed by its regex (only json/sys imports, one print of the file); pythonReadOnlyCode refuses `import json,sys`.
+  // Every argv word is an own record and the one index read names one of them.
+  if (words.length > 3) {
+    const n = Number(/sys\.argv\[(\d)\]/.exec(code)?.[1] ?? 0);
+    return USAGE_PY_ARGV.test(code) && n >= 1 && n <= words.length - 3 && words.slice(3).every((x) => ownLiteral(x, patterns, ctx));
+  }
   if (/\bos\.|subprocess|exec|['"][wa]/.test(code) || !pythonReadOnlyCode(code)) return false;
   const m = USAGE_PY.exec(code);
   return ownLiteral(m ? (m[2] ?? m[4]) : undefined, patterns, ctx);

@@ -51,6 +51,27 @@ test("state_live_var_bound_python_r11_literal", { skip: !posix }, () => {
   assert.equal(sh(`f=~/.pi/agent/pi-foreman/state/live/${SID}.json; python3 -c "print(open('$f').read())"`), "pass");
 });
 
+test("state_live_var_bound_python_open_argv_r12_live_literal", { skip: !posix }, () => {
+  // the R12 live literal: a subscript after json.load (`["state"]`, escaped inside the double-quoted code), the path as the last argv
+  const F = `~/.pi/agent/pi-foreman/state/live/${SID}.json`;
+  const body = (open: string) => `"import json,sys; print(json.load(${open})[\\"state\\"])"`;
+  assert.equal(sh(`f=${F}; python3 -c ${body("open(sys.argv[1])")} $f`), "pass");
+  assert.equal(sh(`f=${F}; python3 -c ${body(`open(sys.argv[1], 'r')`)} $f`), "pass");
+  assert.equal(sh(`f=${F}; python3 -c ${body(`open(sys.argv[1], 'rb')`)} $f`), "pass");
+  assert.equal(sh(`f=${F}; python3 -c "import json,sys; print(open(sys.argv[2]).read())" $f $f`), "pass");
+  // a write mode, a write call, another session's file, a foreign argv or a child stay protected
+  for (const cmd of [
+    `f=${F}; python3 -c ${body(`open(sys.argv[1], 'w')`)} $f`,
+    `f=${F}; python3 -c ${body(`open(sys.argv[1], \\"a\\")`)} $f`,
+    `f=${F}; python3 -c ${body(`open(sys.argv[1], 'r+')`)} $f`,
+    `f=${F}; python3 -c "import json,sys; print(json.load(open(sys.argv[1])))" $f ~/.pi/agent/pi-foreman/state/rounds.json`,
+    `f=${F}; python3 -c "import json,sys; print(json.load(open(sys.argv[1]))[\\"state\\"]); open(sys.argv[1],'w')" $f`,
+    `f=~/.pi/agent/pi-foreman/state/live/${OTHER}.json; python3 -c ${body("open(sys.argv[1])")} $f`,
+  ]) assert.notEqual(sh(cmd), "pass", cmd);
+  const child: MatchCtx = { cwd: ws, home, platform: process.platform, role: "child", ownReads };
+  assert.notEqual(checkToolCall(rules, "bash", { command: `f=${F}; python3 -c ${body("open(sys.argv[1])")} $f` }, child)?.kind ?? "pass", "pass");
+});
+
 test("state_live_var_bound_ls", { skip: !posix }, () => {
   assert.equal(sh(`f=~/.pi/agent/pi-foreman/state/live/${SID}.json; ls $f`), "pass");
   assert.equal(sh(`f=~/.pi/agent/pi-foreman/state/live/${SID}.json; ls -la "\${f}"; cat $f | head -n 3`), "pass");
