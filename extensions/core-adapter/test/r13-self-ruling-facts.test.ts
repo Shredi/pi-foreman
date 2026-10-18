@@ -118,6 +118,25 @@ for (const [name, line] of DENY_R3) {
   });
 }
 
+// Review round 4: a computed or unresolved program name and a computed word among the sed args are fully computed writes.
+const DENY_R4: Array<[string, (r: Rig) => string]> = [
+  ["$Q -i s/a/b/ <H>/ruling.md", (r) => `$Q -i s/a/b/ ${r.H}/ruling.md`],
+  ["Q=sed; $Q -i s/a/b/ <H>/ruling.md", (r) => `Q=sed; $Q -i s/a/b/ ${r.H}/ruling.md`],
+  ['"$C" -i s/a/b/ <H>/ruling.md', (r) => `"$C" -i s/a/b/ ${r.H}/ruling.md`],
+  ["$(echo sed) -i s/a/b/ <H>/ruling.md", (r) => `$(echo sed) -i s/a/b/ ${r.H}/ruling.md`],
+  ["$Q <H>/ruling.md", (r) => `$Q ${r.H}/ruling.md`],
+  ["sed s/a/b/ $OPT <H>/ruling.md", (r) => `sed s/a/b/ $OPT ${r.H}/ruling.md`],
+  ["OPT=-i; sed s/a/b/ $OPT <H>/ruling.md", (r) => `OPT=-i; sed s/a/b/ $OPT ${r.H}/ruling.md`],
+  ['sed -e s/a/b/ "$O" <H>/ruling.md', (r) => `sed -e s/a/b/ "$O" ${r.H}/ruling.md`],
+];
+
+for (const [name, line] of DENY_R4) {
+  test(`r13 deny (round 4): ${name}`, async () => {
+    const r = rig();
+    assert.equal(await run(r, line(r)), SELF_RULING_REASON, line(r));
+  });
+}
+
 test("r13 fail closed: no python, a missing interpreter and an unreadable line refuse a shell call", async () => {
   const r = rig();
   const cmd = `ls ${r.H}`;

@@ -146,6 +146,22 @@ class ShellFactsTest(unittest.TestCase):
         for line in ("sed -n 's/a/b/p' /s/x", "sed --quiet --regexp-extended 's/x+/y/p' /s/x", "find /h -name x -print"):
             self.assertEqual(self.writes(line), [], line)
 
+    def test_review_round4_computed_program_and_sed_words_are_fully_computed(self):
+        cases = {
+            "$Q -i": "$Q -i s/a/b/ /h/ruling.md",
+            "Q=sed; $Q -i": "Q=sed; $Q -i s/a/b/ /h/ruling.md",
+            '"$C" -i': '"$C" -i s/a/b/ /h/ruling.md',
+            "$(echo sed) -i": "$(echo sed) -i s/a/b/ /h/ruling.md",
+            "$Q ruling": "$Q /h/ruling.md",
+            "sed $OPT": "sed s/a/b/ $OPT /h/ruling.md",
+            "OPT=-i; sed $OPT": "OPT=-i; sed s/a/b/ $OPT /h/ruling.md",
+            'sed -e "$O"': 'sed -e s/a/b/ "$O" /h/ruling.md',
+        }
+        for name, line in cases.items():
+            w = self.writes(line)
+            self.assertTrue(any(x["dir"] is None and x["name"] is None for x in w), (name, w))
+        self.assertEqual(self.writes("D=/h; ls -la $D; cat $D/parent"), [])
+
     def test_unreadable_line_is_an_error(self):
         self.assertIsNotNone(sf.facts({"command": "echo 'open", "cwd": self.cwd})["error"])
 

@@ -355,6 +355,10 @@ def sed_call(args, st):
         else:
             files.append(w)
         i += 1
+    for w in args:
+        v = value(w, st) if "\0" in w.text else w.text
+        if v is None or ("\0" in w.text and v.startswith("-")):
+            unsure = True  # a computed word may be -i, -f or a script: fully computed write
     if not explicit and files:
         scripts.append(files.pop(0))
     if unsure:
@@ -437,6 +441,7 @@ def command(words, seg, flavor, st, depth):
         return
     cmd = words[0]
     if "\0" in cmd.text:
+        add(st, "command", None)  # computed or unresolved program: fully computed write
         return
     name = gg.prog_name(cmd.text)
     args = words[1:]
