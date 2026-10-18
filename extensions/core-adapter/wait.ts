@@ -135,7 +135,10 @@ export function checkLogPath(raw: unknown, o: PathBoundOpts): { log?: string } |
   const roots = [path.resolve(path.join(o.agentDir, "pi-foreman", "state", "scratch")), realDeep(path.resolve(path.join(o.agentDir, "pi-foreman", "state", "scratch")))];
   if (roots.some((r) => under(r, abs, o.platform)) && roots.some((r) => under(r, real, o.platform))) return { log: abs };
   // R14 item 1: the session's own bg_run output (`.pi/tasks/<own session>-<pid>/…`), symlinks followed; another session's stays refused
-  if ((o.ownTasks ?? []).some((p) => underTask(p, abs, o.platform)) && (o.ownTasks ?? []).some((p) => underTask(p, real, o.platform))) return { log: abs };
+  // the resolved path is compared against the patterns as given and with their dir resolved (a win32 8.3 temp name differs from the long one)
+  const realPat = (p: string): string => path.join(realDeep(path.dirname(p)), path.basename(p));
+  const tasks = o.ownTasks ?? [];
+  if (tasks.some((p) => underTask(p, abs, o.platform)) && tasks.some((p) => underTask(p, real, o.platform) || underTask(realPat(p), real, o.platform))) return { log: abs };
   const r = checkWaitPath(raw, o);
   return "error" in r ? { error: r.error.replace(`${WAIT_TOOL} on`, `${WAIT_TOOL} log on`) } : { log: r.path };
 }

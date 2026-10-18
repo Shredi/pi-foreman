@@ -164,7 +164,8 @@ for (const [name, line] of DENY_R14) {
 const PASS_R14: Array<[string, (r: Rig) => string]> = [
   ["sed -n '1,5p' <H>/ruling.md", (r) => `sed -n '1,5p' ${r.H}/ruling.md`],
   ["sed -n '/review/p' <H>/ruling.md (a regex with w and e)", (r) => `sed -n '/review/p' ${r.H}/ruling.md`],
-  ["C=cat; $C <H>/ruling.md", (r) => `C=cat; $C ${r.H}/ruling.md`],
+  // the variable is not `C`: a win32 drive letter `C:/…` in the path is a second bare mention of the name, which bound_program refuses
+  ["C=cat; $C <H>/ruling.md", (r) => `RDR=cat; $RDR ${r.H}/ruling.md`],
 ];
 
 for (const [name, line] of PASS_R14) {
