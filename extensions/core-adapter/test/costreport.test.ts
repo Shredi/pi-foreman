@@ -2,11 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { costReport } from "../costreport.ts";
 import { parseLines } from "../usage.ts";
 import { loadPrices } from "../cost.ts";
 
-const here = path.dirname(new URL(import.meta.url).pathname);
+const here = path.dirname(fileURLToPath(import.meta.url));
 
 test("cost_json_usage_fixture_priced_to_cent", () => {
   const lines = parseLines(fs.readFileSync(path.join(here, "fixtures", "cost-usage.jsonl"), "utf8"));
