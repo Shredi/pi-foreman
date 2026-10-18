@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Round 12
+- Commit-message lint is uniform for foreman and children; the cd guard tracks only top-level `cd` and never reads message text; an unreadable message is a child deny; `-F -` with a literal heredoc is linted on its body.
+- Own `state/usage` and live-session files stay readable by read-only verbs ahead of the protected-config write rule; writes stay protected.
+- A same-line function or alias named `python3`/`node` no longer hides its `-c` body from the HOME-binding and guarded-literal checks.
+- A second identical probe-class deny in one child run stops the run (`child_repeat_refusal`); other deny reasons never stop it.
+- A newer `ruling-*.md` is picked up before any launch or checkpoint press; `ruling-<name>.ack` records it.
+- `foreman doctor` warns on a `paths.hubWorkflow` ending in `.workflow`; setup refuses a doubled `.workflow/.workflow`.
+- `/foreman dialogs --json` counts per regression family from the trace.
+- `recheck_budget_exceeded` names the real review verdict; reads of a child's own bg_run outputs skip the recheck budget.
+- A stale "tool open" notice stops once the run's exit is recorded.
+- `foreman_copy` accepts the foreman's own session handoff dir as source.
+
 ### Round 11
 - Ladder: a `review_fail` climb targets the higher of the launch model and the strong rung by provider rank; a model above the strong rung stays, trace reason `already above strong rung`.
 - A child stopped by a permission-policy block is never climb-eligible or relaunched; trace `child_policy_block` is the stop record.

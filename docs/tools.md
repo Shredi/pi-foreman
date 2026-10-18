@@ -55,7 +55,7 @@ All lists carry `truncated` (bool) and `total` (count before the cut). Caps: 200
 
 ### Write tools in the pack
 
-`foreman_move`, `foreman_copy` and `foreman_worktree_remove` are unchanged and always registered; see
+`foreman_move`, `foreman_copy` and `foreman_worktree_remove` are unchanged and always registered (the foreman's `foreman_copy` may also read from its own session handoff dir); see
 [safety](safety.md). While the pack is on they also emit a `tool_pack` trace event, so retro can compare tool use.
 
 ### Children

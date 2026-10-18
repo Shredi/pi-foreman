@@ -164,10 +164,10 @@ Key-by-key layer rules for `safety.*`: `design/architecture.md`
 | `safety.permissions.paths.deny`, `safety.permissions.paths.ask` | Path patterns tools and shell commands may never touch / need approval, on top of the baseline secret paths; a project can add entries only. |
 | `safety.review.required` | Require a review before close-out; a project can only set true. |
 | `safety.git.protectedBranches` | Branch patterns that never receive a force push, mirror push or delete from the foreman; a project can add entries only. |
-| `safety.git.commit.messagePattern` | Regular expression the commit subject must match; `null` switches the check off; a project cannot set it. The pattern applies to foreman and child commits alike (a `-F` message file must lie inside the commit's worktree). |
+| `safety.git.commit.messagePattern` | Regular expression the commit subject must match; `null` switches the check off; a project cannot set it. The pattern applies to foreman and child commits alike (a `-F` message file must lie inside the commit's worktree). A child whose message the guard cannot read is denied (the foreman is asked). `-F -` / `-F /dev/stdin` passes for a child only with a literal same-line heredoc, linted on its body; other stdin or computed sources are denied. Several `-F`, or `-F` with `-m`, count as unread; a `-F` target written on the same line is a child deny. |
 | `safety.git.commit.requiredTrailers`, `safety.git.commit.forbiddenTrailers` | Regular expressions each required trailer line must match / no trailer line may match; a project can add entries only. |
 | `safety.git.commit.checkCommand` | argv run before each foreman commit with the staged diff on stdin and the message in `PI_FOREMAN_COMMIT_MESSAGE`; a non-zero exit blocks the commit. |
-| `safety.ops.copyMaxBytes` | Size cap for `foreman_copy`; a project can only lower it. |
+| `safety.ops.copyMaxBytes` | Size cap for `foreman_copy`; a project can only lower it. The foreman's `foreman_copy` may also read from its own session handoff dir (into worktree scratch); children may not. |
 | `safety.ops.worktreeDisposable` | Path components whose ignored files `foreman_worktree_remove` may delete (`name/` = a directory); not settable by a project. |
 | `safety.ops.baseBranch` | Base branch for the merged check of `foreman_worktree_remove`; `null` = origin HEAD, else main, else master. |
 | `safety.preconditionOps` | Settings container for the precondition-checked operations; a project cannot set it. |
