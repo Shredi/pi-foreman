@@ -32,7 +32,7 @@ import { dormantDoctorLine } from "./features.ts";
 import { collectOrientation } from "./orient.ts";
 import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits } from "./childreads.ts";
-import { bgWaitLocations,detailLocations, finalizationCommand, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
+import { bgWaitLocations, finalizationCommand, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { roleToolDenied } from "./roledeny.ts";
 import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
@@ -2415,7 +2415,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (!s.isChild) {
           // Budgets restart only for a launch that started (a run id came back), not a refused one.
           if (runId) {
-            recordChild(s, detailLocations(event.details));
+            recordChild(s, launchLocations(event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n"), event.details, path.join(os.tmpdir(), `pi-subagents-uid-${process.getuid?.() ?? ""}`)));
             const roles = s.launchedRoles.get(runId) ?? subagentAgents(event.input as Record<string, unknown>);
             const cited = citedItems(subagentTaskText(event.input as Record<string, unknown>));
             s.retro.launchItems.set(runId, cited);

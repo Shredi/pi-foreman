@@ -224,6 +224,19 @@ export function detailLocations(details: unknown): string[] {
   return [d.asyncDir, d.resultPath].filter(isAbs);
 }
 
+/**
+ * A started launch's own run, recorded at launch: `details.asyncDir`/`resultPath`, a "Result path: <abs>." sentence of the result text, and the run dir
+ * `<uidRoot>/async-subagent-runs/<id>` for each "Async: <agent> [<id>]" line (`uidRoot` = `<tmp>/pi-subagents-uid-<uid>`; null = no such guess).
+ */
+export function launchLocations(text: string, details: unknown, uidRoot: string | null): string[] {
+  const out = detailLocations(details);
+  for (const m of text.matchAll(/Result path: (\S+?)\.(?:\s|$)/g)) if (isAbs(m[1])) out.push(m[1]);
+  if (uidRoot && isAbs(uidRoot)) {
+    for (const m of text.matchAll(/^Async: .+ \[([A-Za-z0-9_.-]+)\]\s*$/gm)) if (m[1] !== "." && m[1] !== "..") out.push(`${uidRoot.replace(/[\\/]+$/, "")}/async-subagent-runs/${m[1]}`);
+  }
+  return out;
+}
+
 /** A completion notice's "Retention-managed async directory:" lines whose last segment is a run id `known` accepts. */
 export function noticeLocations(text: string, known: (runId: string) => boolean): string[] {
   const out: string[] = [];

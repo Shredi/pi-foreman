@@ -18,7 +18,7 @@ import type { Json } from "./config.ts";
 import { get } from "./config.ts";
 import { BRIDGE_PROVIDER } from "./bridgeiso.ts";
 import type { BashRules } from "./timeoutallow.ts";
-import { insideScratch } from "./childscratch.ts";
+import { expandScratchVar, insideScratch } from "./childscratch.ts";
 import { deterministicAllow, deterministicAllowInfo, hits } from "./timeoutallow.ts";
 import { classify, effectCtx } from "./effects.ts";
 import * as os from "node:os";
@@ -524,9 +524,11 @@ export class ForemanReview {
       const rules = s.bashRules?.();
       if (!read.length || !rules) return null;
       const ctx = { ...effectCtx(s.cwd, [], process.platform, read), noTmp: true };
-      const full = reviewValue(d);
+      // `$TMPDIR/pi-subagents-uid-<uid>/...` (the chair's spelling of a run's output log) is read as the foreman's own tmp dir; none when the command sets TMPDIR itself
+      const tmp = (v: string): string => (/TMPDIR\s*=/.test(v) ? v : expandScratchVar(v, (process.env.TMPDIR || os.tmpdir()).replace(/(.)\/+$/, "$1"), process.platform, "TMPDIR") ?? v);
+      const full = tmp(reviewValue(d));
       const deps = { effects: ctx };
-      return deterministicAllow(rules, unitValue(d), deps) && deterministicAllow(rules, full, deps) && classify(full, ctx) === "read" ? "owned-read" : null;
+      return deterministicAllow(rules, tmp(unitValue(d)), deps) && deterministicAllow(rules, full, deps) && classify(full, ctx) === "read" ? "owned-read" : null;
     } catch {
       return null;
     }
