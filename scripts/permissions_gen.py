@@ -153,6 +153,8 @@ def hub_read_patterns(hub):
         p = Path(d).as_posix().rstrip("/")
         if not p or p.endswith(":"):
             continue
+        if p.rsplit("/", 1)[-1] == ".workflow":
+            raise ValueError(f"paths.hubWorkflow {d} ends in .workflow: hub ROOT, the renderer appends .workflow")
         out += [p + "/.workflow", p + "/.workflow/*"]
         # PS matches a bash token by its typed spelling and its symlink-resolved alias, so a key spelled through a symlink (or /var vs
         # /private/var) misses a token typed as the real path: render the realpath spelling too. Only for a path absolute on this host OS, so a

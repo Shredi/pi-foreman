@@ -16,6 +16,15 @@ const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 
  * its main checkout `<repo>`, derived as mainWorkflowReadable does; any other dir is a main checkout itself); the key is never set automatically.
  */
 export function hubWorkflowDriftLines(i: { agentDir: string; hubWorkflow: unknown; checkouts: string[]; platform?: string }): string[] {
+  const doubled = (typeof i.hubWorkflow === "string" ? [i.hubWorkflow] : Array.isArray(i.hubWorkflow) ? i.hubWorkflow : [])
+    .filter((v): v is string => typeof v === "string" && v.split(/[\\/]+/).filter(Boolean).pop() === ".workflow")
+    .map((v) => `WARN paths.hubWorkflow ${v} ends in .workflow: ${HUB_ROOT_FIX}.`);
+  return [...doubled, ...driftLines(i)];
+}
+
+export const HUB_ROOT_FIX = "hub ROOT, the renderer appends .workflow";
+
+function driftLines(i: { agentDir: string; hubWorkflow: unknown; checkouts: string[]; platform?: string }): string[] {
   const platform = i.platform ?? process.platform;
   const dirs = hubWorkflowDirs(i.hubWorkflow, platform);
   if (dirs.length) {

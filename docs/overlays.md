@@ -96,3 +96,5 @@ Sessions opened by `foreman session open` run on the `session-foreman` role's mo
   "session-foreman": { "model": "github-copilot/<foreman model id>", "thinking": "high" }
 } } } }
 ```
+
+`paths.hubWorkflow` names the hub ROOT (the dir that contains `.workflow/`), never the `.workflow` dir itself: the renderer appends `.workflow`, `/foreman doctor` warns and `foreman setup` refuses a value ending in `.workflow`.
