@@ -1,8 +1,9 @@
 @echo off
-rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree [args]` for cmd.
+rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs [args]` for cmd.
 setlocal
 set "PF_HERE=%~dp0"
 if /i "%~1"=="setup" goto setup
+if /i "%~1"=="dialogs" goto dialogs
 set "PF_PY=%PI_FOREMAN_PYTHON%"
 set "PF_PYARGS="
 set "PF_SCRIPT="
@@ -17,7 +18,7 @@ if /i "%~1"=="backlog" set "PF_SCRIPT=foreman_backlog.py"
 if /i "%~1"=="findings" set "PF_SCRIPT=foreman_findings.py"
 if /i "%~1"=="close" set "PF_SCRIPT=foreman_close.py"
 if /i "%~1"=="worktree" set "PF_SCRIPT=foreman_worktree.py"
-if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|backlog^|findings^|close^|worktree [args] 1>&2 & exit /b 2)
+if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|backlog^|findings^|close^|worktree^|dialogs [args] 1>&2 & exit /b 2)
 shift
 set "PF_ARGS="
 :collect
@@ -30,6 +31,11 @@ if defined PF_PY goto run
 where py >nul 2>nul
 if errorlevel 1 (set "PF_PY=python") else (set "PF_PY=py" & set "PF_PYARGS=-3")
 goto run
+:dialogs
+node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=6)?0:1)" >nul 2>nul
+if errorlevel 1 (echo foreman dialogs needs Node ^>= 22.6 ^(--experimental-strip-types^) 1>&2 & exit /b 1)
+node --no-warnings --experimental-strip-types "%PF_HERE%..\extensions\core-adapter\dialogs-cli.ts" "%~2"
+exit /b %ERRORLEVEL%
 :setup
 shift
 set "PF_ARGS="

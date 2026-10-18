@@ -209,6 +209,15 @@ export function asyncRunDirs(files: Iterable<string>, platform: string = process
 }
 
 /**
+ * R14 item 4 (chair ruling 4): the results files of the recorded own runs (`async-subagent-results/<run>.json` and `output-archives/<run>.json`),
+ * the part of asyncRunDirs a read-only verb or a python/node inline read of the foreman may name as an own record (MatchCtx.ownReads).
+ */
+export function asyncResultReads(files: Iterable<string>, platform: string = process.platform): string[] {
+  const x = px(platform);
+  return asyncRunDirs(files, platform).filter((p) => /[\\/]async-subagent-results[\\/][^\\/]+\.json$/.test(p)).flatMap((p) => [p, x.join(x.dirname(p), "output-archives", x.basename(p))]);
+}
+
+/**
  * Every root the foreman session owns for reads and writes, listed in the permission reviewer's prompt (review.ts): its live child scratch dirs, the
  * round worktrees and their isolation dirs, its handoff dirs, the global npm root, `state/scratch/<session>` and the async run dirs of its own child runs.
  */

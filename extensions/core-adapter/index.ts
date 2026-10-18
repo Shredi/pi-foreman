@@ -84,6 +84,8 @@ import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } 
 import { workspaceOf } from "./python.ts";
 import { hubWorkflowDriftLines } from "./hubdrift.ts";
 import { dialogFields, dialogsJson } from "./dialogs.ts";
+
+const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildWidget, rungOf } from "./childwidget.ts";
 import { LiveState, intercomIdOf } from "./livestate.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
@@ -134,7 +136,7 @@ import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEO
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { launchEntries } from "./ladder.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
-import { asyncRunDirs, bashOutputLogs, recordBashOutputLog, childReadable, childSurface, hubWorkflowDirs, hubWorkflowReadable, mainWorkflowReadable, ownTaskReadable, ownUsageReadable, piScratchReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
+import { asyncResultReads, asyncRunDirs, bashOutputLogs, recordBashOutputLog, childReadable, childSurface, hubWorkflowDirs, hubWorkflowReadable, mainWorkflowReadable, ownTaskReadable, ownUsageReadable, piScratchReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { CustomSeen, isSubagentWake } from "./idlecustom.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
 
@@ -812,7 +814,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("session_start", async (event, ctx) => {
     const s = await startSession(ctx);
     emitReady(pi.events as EventBus | undefined, core.claim);
-    review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [], recordUsage: (m) => { const x = sessions.get(s.id); if (x) appendUsage(x.usage.file, usageLine({ ...x.usage.line, role: "autoreview", launchId: null, kind: "foreman" }, m)); }, scratchDirs: (role) => sessions.get(s.id)?.scratch.live(role) ?? [], ownDirs: () => { const x = sessions.get(s.id); return x ? [...ownHandoffDirs(handoffsRoot(x), intercomIdOf(process.env, x.agentDir, x.id)), ...roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform)] : []; }, roundDirs: () => { const x = sessions.get(s.id); return x ? roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform) : []; }, ledgerFile: () => { const x = sessions.get(s.id); return x ? boundLedger(x.markerDir, x.usage.line.foremanSession) : null; }, ownedRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x).write : []; }, readOnlyRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x).read : []; }, ownReads: () => { const x = sessions.get(s.id); return x && !x.isChild ? [...ownUsageReadable(x.agentDir, platform, x.id, { dir: get(x.config.config, "trace.dir"), stateDir: x.markerDir }), ...ownTaskReadable([x.cwd, workspaceOf(x.cwd).root, x.usage.line.workspace], x.usage.line.foremanSession, platform)] : []; }, ...reviewExtras(baseline, () => sessions.get(s.id)?.config.config, ctx) });
+    review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [], recordUsage: (m) => { const x = sessions.get(s.id); if (x) appendUsage(x.usage.file, usageLine({ ...x.usage.line, role: "autoreview", launchId: null, kind: "foreman" }, m)); }, scratchDirs: (role) => sessions.get(s.id)?.scratch.live(role) ?? [], ownDirs: () => { const x = sessions.get(s.id); return x ? [...ownHandoffDirs(handoffsRoot(x), intercomIdOf(process.env, x.agentDir, x.id)), ...roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform)] : []; }, roundDirs: () => { const x = sessions.get(s.id); return x ? roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform) : []; }, ledgerFile: () => { const x = sessions.get(s.id); return x ? boundLedger(x.markerDir, x.usage.line.foremanSession) : null; }, ownedRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x).write : []; }, readOnlyRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x).read : []; }, ownReads: () => { const x = sessions.get(s.id); return x && !x.isChild ? [...ownUsageReadable(x.agentDir, platform, x.id, { dir: get(x.config.config, "trace.dir"), stateDir: x.markerDir }), ...ownTaskReadable([x.cwd, workspaceOf(x.cwd).root, x.usage.line.workspace], x.usage.line.foremanSession, platform), ...asyncResultReads(x.childFiles, platform)] : []; }, ...reviewExtras(baseline, () => sessions.get(s.id)?.config.config, ctx) });
     if (!s.isChild && (event.reason === "startup" || event.reason === "new")) await applyForemanModel(s, ctx);
     await registerChildExtensions(s, ctx);
     const orderNotice = s.isChild ? null : loadOrderNotice(s.cwd, s.agentDir, PKG_ROOT);
@@ -1410,7 +1412,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // and the session cwd's `.pi/scratch` (log copies; a child's cwd is its worktree)
     const ownTasks = [...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...piScratchReadable([ctx.cwd, (() => { try { return fs.realpathSync(ctx.cwd); } catch { return ctx.cwd; } })()], platform), ...bashOutputLogs(s.bashLogs, platform)];
     const hub = hubWorkflowReadable(get(s.config.config, "paths.hubWorkflow"), platform);
-    const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, ...(s.usage.line.workspace ? { foremanRoot: workspaceOf(s.usage.line.workspace).root } : {}), readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub, ownReads: [...ownUsageReadable(s.agentDir, platform, s.id, { dir: get(s.config.config, "trace.dir"), stateDir: s.markerDir }), ...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform)] }) });
+    const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, ...(s.usage.line.workspace ? { foremanRoot: workspaceOf(s.usage.line.workspace).root } : {}), readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub, ownReads: [...ownUsageReadable(s.agentDir, platform, s.id, { dir: get(s.config.config, "trace.dir"), stateDir: s.markerDir }), ...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...asyncResultReads(s.childFiles, platform)] }) });
     const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) });
     if (d) {
       const df = denyFields((d as { reason?: unknown }).reason, toolName, input, s.isChild ? s.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]);
@@ -2784,6 +2786,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const em = editModeOfSession(s);
         const advice = tier === "trivial" && trivialBuilderPath(get(s.config.config, "ceremony.required")) ? trivialPathAdvice(em.mode === "bounded") : tier === "trivial" && em.mode !== "bounded" ? `No builder is required, but ${editModeAdvice(em.mode, em.scratchDir)} for any project change (that makes the task standard).` : triageAdvice(tier);
         return { content: [{ type: "text" as const, text: [`${note}${tierLine(s.ceremony)} ${advice} ${TRIAGE_RULES}`, finishLine({ [tier]: requiredOf(s, tier) }, tier)].filter(Boolean).join(" ") }], details: { decision: "recorded", tier } };
+      },
+    } as never);
+  }
+
+  // R14 item 4: the permission dialogs of the trace, the text of `/foreman dialogs --json`; foreman only, read only.
+  if (process.env.PI_SUBAGENT_CHILD !== "1") {
+    pi.registerTool({
+      name: DIALOGS_TOOL,
+      label: "Permission dialogs",
+      description: "Count the permission dialogs (overlay ask records) of a trace per regression family, with the redacted command lines: the JSON of /foreman dialogs --json. Without trace, the session's own trace. Read only.",
+      parameters: { type: "object", properties: { trace: { type: "string", minLength: 1, description: "Path of a trace file; default: this session's trace." } }, additionalProperties: false } as never,
+      async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+        const s = await ensureSession(ctx);
+        if (s.isChild) return { content: [{ type: "text" as const, text: `${DIALOGS_TOOL} is for the foreman only.` }], details: { decision: "refused" }, isError: true };
+        const text = dialogsJson(typeof params.trace === "string" && params.trace ? { file: path.resolve(s.cwd, params.trace) } : s.trace);
+        return { content: [{ type: "text" as const, text }], details: { decision: "done" } };
       },
     } as never);
   }

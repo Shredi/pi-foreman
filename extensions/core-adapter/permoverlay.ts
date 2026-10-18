@@ -2953,6 +2953,9 @@ function soloUnit(command: string, patterns: string[]): string[] | null {
  */
 const USAGE_PY_ARGV = /^\s*(?:import\s+(?:json|sys)(?:\s*,\s*(?:json|sys))?\s*;\s*)*print\(\s*(?:open\(\s*sys\.argv\[[1-9]\](?:\s*,\s*(?:'rb?'|"rb?"))?\s*\)\.read\(\s*\)|json\.load\(\s*open\(\s*sys\.argv\[[1-9]\](?:\s*,\s*(?:'rb?'|"rb?"))?\s*\)\s*\)(?:\[\s*(?:\d+|'[\w.-]*'|"[\w.-]*")\s*\])*)\s*\)\s*;?\s*$/;
 
+/** R14 item 4: the results-file read of the chair's line, `d=json.load(open(sys.argv[N])); print(str(d.get('output') or d.get('results') or d)[-K:])`; fixed text, one file read, nothing else. */
+const USAGE_PY_ARGV_TAIL = /^\s*import\s+json\s*,\s*sys\s*;\s*d\s*=\s*json\.load\(\s*open\(\s*sys\.argv\[[1-9]\]\s*\)\s*\)\s*;\s*print\(\s*str\(\s*d\.get\(\s*(['"])output\1\s*\)\s+or\s+d\.get\(\s*(['"])results\2\s*\)\s+or\s+d\s*\)(?:\[\s*-\d{1,5}\s*:\s*\])?\s*\)\s*;?\s*$/;
+
 /** usagePythonRead over parsed words: `python3 -c <D1 code>` or `python3 -c <argv code> <path>`. */
 function usagePyWords(words: string[], patterns: string[], ctx: MatchCtx): boolean {
   if (words.length < 3 || words.length > 12 || !/^python3?$/.test(words[0]) || words[1] !== "-c") return false;
@@ -2961,7 +2964,7 @@ function usagePyWords(words: string[], patterns: string[], ctx: MatchCtx): boole
   // Every argv word is an own record and the one index read names one of them.
   if (words.length > 3) {
     const n = Number(/sys\.argv\[(\d)\]/.exec(code)?.[1] ?? 0);
-    return USAGE_PY_ARGV.test(code) && n >= 1 && n <= words.length - 3 && words.slice(3).every((x) => ownLiteral(x, patterns, ctx));
+    return (USAGE_PY_ARGV.test(code) || USAGE_PY_ARGV_TAIL.test(code)) && n >= 1 && n <= words.length - 3 && words.slice(3).every((x) => ownLiteral(x, patterns, ctx));
   }
   if (/\bos\.|subprocess|exec|['"][wa]/.test(code) || !pythonReadOnlyCode(code)) return false;
   const m = USAGE_PY.exec(code);
@@ -3066,6 +3069,8 @@ export function ownStateRead(command: string, ctx0: MatchCtx): boolean {
       }
       if (words.slice(1).some(own)) return false;
       if (VERSION_PROBE.test(verb) && words.length === 2 && (words[1] === "--version" || words[1] === "-V" || words[1] === "-v")) continue;
+      // R14 item 4: the chair's `…; git log --oneline -8` tail (plain history flags only, no pager/format/output option)
+      if (verb === "git" && words[1] === "log" && words.slice(2).every((w, k, a) => /^(?:--oneline|--decorate|--graph|--stat|-\d{1,3}|--max-count=\d{1,3})$/.test(w) || (/^\d{1,3}$/.test(w) && a[k - 1] === "-n") || w === "-n")) continue;
       if (!CHAIN_READERS.has(verb)) return false;
       if (PROTECTED_READERS.has(verb) ? !protectedReader(words, new Set()) : !unitReadOnly(words, new Set())) return false;
     }

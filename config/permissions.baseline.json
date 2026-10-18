@@ -22,6 +22,7 @@
     "pr_comments": "allow",
     "pr_watch": "allow",
     "foreman_triage": "allow",
+    "foreman_dialogs": "allow",
     "foreman_checkpoint": "allow",
     "foreman_ledger": "allow",
     "foreman_wait": "allow",
