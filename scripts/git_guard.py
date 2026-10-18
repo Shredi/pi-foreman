@@ -138,7 +138,7 @@ class Word(object):
 
 
 class Seg(object):
-    __slots__ = ("words", "heredocs", "herestrings", "pipe_in", "outs", "before", "after", "group", "ins")
+    __slots__ = ("words", "heredocs", "herestrings", "pipe_in", "outs", "before", "after", "group", "ins", "redirs", "lexer")
 
     def __init__(self, pipe_in=False, before=None):
         self.outs = []             # file targets of `>` / `>>` / `&>` redirects (not fd dups, not /dev/null)
@@ -152,6 +152,10 @@ class Seg(object):
         # input redirects in order as (fd, kind, body): fd the explicit number before the operator (0 when absent); kind
         # "<" (file or dup), "<<<", "<<'" (quoted heredoc), "<<" (heredoc); body the here-string/heredoc text (None for "<")
         self.ins = []
+        # every redirection token in order as (fd, op, target Word): fd the explicit number (None when absent), op the literal
+        # operator (`<`, `>`, `>>`, `>&`, `<&`, `<>`, `>|`, `&>`, `&>>`, `<<`, `<<-`, `<<<`); fd dups, /dev/null kept
+        self.redirs = []
+        self.lexer = None          # the Lexer whose line this segment belongs to
 
     def raw(self):
         return " ".join([w.raw for w in self.words] + [w.raw for w in self.herestrings] + self.heredocs)
@@ -188,7 +192,8 @@ class Lexer(object):
         self.wstart = 0
         self.redir = None
         self.redir_w = False
-        self.redir_fd = 0    # the fd number written before the current redirect operator (0 when absent)
+        self.redir_fd = None  # the fd number written before the current redirect operator (None when absent)
+        self.redir_op = None  # the literal redirect operator
         self.pending = []
         self.callop = False  # PowerShell: the last token was the `&` or `.` call operator
         self.group = 0       # open `( )` / `{ }` groups
@@ -209,7 +214,10 @@ class Lexer(object):
         self.w = None
         kind, self.redir = self.redir, None
         wr, self.redir_w = self.redir_w, False
-        fd, self.redir_fd = self.redir_fd, 0
+        xfd, self.redir_fd = self.redir_fd, None
+        fd = 0 if xfd is None else xfd
+        if kind is not None:
+            self.cur.redirs.append((xfd, self.redir_op, word))
         if kind is None:
             self.cur.words.append(word)
         elif kind == "file" and wr:
@@ -228,11 +236,12 @@ class Lexer(object):
     def end_seg(self, i, pipe_next=False, op=None):
         self.end_word(i)
         self.redir = None
-        self.redir_fd = 0
+        self.redir_fd = None
         self.callop = False
         c = self.cur
         c.after = op
         c.group = self.group
+        c.lexer = self
         if c.words or c.herestrings or any(p[3] is c for p in self.pending):
             self.segs.append(c)
         self.cur = Seg(pipe_in=pipe_next, before=op)
@@ -545,7 +554,8 @@ class Lexer(object):
                     self.callop = True
                     continue
                 if f == "bash" and c == "&" and two == "&>":
-                    i += 3 if s[i:i + 3] == "&>>" else 2
+                    self.redir_op = "&>>" if s[i:i + 3] == "&>>" else "&>"
+                    i += len(self.redir_op)
                     self.redir = "file"
                     self.redir_w = True
                     continue
@@ -575,6 +585,7 @@ class Lexer(object):
                     self.dyn()
                     i = k + 1
                     continue
+                at = i
                 if f == "bash" and s.startswith("<<<", i):
                     self.redir, i = "herestring", i + 3
                 elif f == "bash" and s.startswith("<<-", i):
@@ -585,6 +596,7 @@ class Lexer(object):
                     self.redir, i = "file", i + 2
                 else:
                     self.redir, i = "file", i + 1
+                self.redir_op = s[at:i]
                 self.redir_w = self.redir == "file" and c == ">"
                 continue
             if c in "()":
@@ -1717,7 +1729,7 @@ def git_sub(sub, rest, seg, flavor, ctx, depth, envs, via_xargs, xargs_repl, cal
     if via_xargs and sub in ("commit", "push"):
         return ask("git %s gets arguments from xargs input; the guard cannot check them." % sub)
     if sub == "commit":
-        return commit_lint(rest, ctx, call, envs)
+        return commit_lint(rest, ctx, call, envs, seg=seg)
     if sub == "push":
         d = pr_push(rest, ctx, call, envs, seg)
         return d if d.level > ALLOW else push_lint(rest, ctx, call, envs)
@@ -2164,6 +2176,95 @@ COMMIT_KNOWN = (
 COMMIT_ARG = ("message", "file", "reuse-message", "reedit-message", "fixup", "squash", "template", "author",
               "date", "cleanup", "trailer", "pathspec-from-file")
 TRAILER_LINE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*\s*:\s")
+# R12 item 1 (F2): programs whose path arguments can land on a -F message file before git reads it, and the wrappers that may
+# stand in front of them.
+CLOBBER_PROGS = frozenset(("cp", "mv", "ln", "install", "tee", "rsync"))
+CLOBBER_WRAPPERS = frozenset(("sudo", "doas", "command", "builtin", "env", "nice", "nohup", "time", "exec", "xargs",
+                              "busybox", "stdbuf"))
+
+
+def stdin_message_whitelisted(seg, ctx):
+    """R12 item 1 (F1, parent ruling 3): a child's stdin commit message is linted only when the commit segment is on the top-level
+    line, carries exactly one redirection token, a plain `<<` / `<<-` heredoc with no fd number, has no pipe into it and sits in no
+    group, and no earlier segment of the line has `exec`, a redirection or a `( )` / `{ }` group."""
+    if seg is None or seg.lexer is None or not ctx.root or seg.lexer.s != ctx.root[0]:
+        return False
+    if seg.pipe_in or seg.group or len(seg.redirs) != 1:
+        return False
+    fd, op, _ = seg.redirs[0]
+    if fd is not None or op not in ("<<", "<<-"):
+        return False
+    segs = seg.lexer.segs
+    for prev in segs[:segs.index(seg)]:
+        if prev.redirs or prev.group or prev.before in ("(", "{") or \
+                any(re.search(r"\bexec\b", w.text) for w in prev.words):
+            return False
+    return True
+
+
+def _line_segs(lexer, depth=0):
+    """The segments of a lexed line and of its command substitutions."""
+    out = list(lexer.segs)
+    if depth < MAX_DEPTH:
+        for sub in lexer.subs:
+            try:
+                out += _line_segs(lex(sub, lexer.f), depth + 1)
+            except LexError:
+                pass
+    return out
+
+
+def message_file_clobbered(seg, ctx, call, target):
+    """R12 item 1 (F2): True when the line (any segment, any line of a multi-line command, a command substitution) writes to,
+    appends to, copies / moves / links onto or `exec`-opens a path whose resolved form or basename equals the -F target, or a
+    computed path: the guard reads the file before the line runs, so the text git reads may differ."""
+    segs = _line_segs(seg.lexer) if seg is not None and seg.lexer is not None else []
+    if ctx.root and (seg is None or seg.lexer is None or seg.lexer.s != ctx.root[0]):
+        try:
+            segs += _line_segs(lex(ctx.root[0], ctx.root[1]))
+        except LexError:
+            return True
+    real = os.path.realpath(os.path.join(call.cwd, target))
+    bases = {os.path.basename(target.replace("\\", "/").rstrip("/")), os.path.basename(real)}
+
+    def hits(w, ancestor=False):
+        if w.dynamic:
+            return True
+        t = w.text
+        if not t:
+            return False
+        p = os.path.realpath(os.path.join(call.cwd, os.path.expanduser(t)))
+        if p == real or os.path.basename(t.replace("\\", "/").rstrip("/")) in bases:
+            return True
+        return ancestor and (real + os.sep).startswith(p.rstrip(os.sep) + os.sep)
+
+    for s in segs:
+        execs = any(not w.dynamic and w.text == "exec" for w in s.words)
+        for _, op, w in s.redirs:
+            if not op or op.startswith("<<") or not (">" in op or execs):
+                continue
+            if op in (">&", "<&") and re.match(r"^[0-9]+-?$|^-$", w.text) and not w.dynamic:
+                continue  # an fd dup, not a path
+            if hits(w):
+                return True
+        if s is seg:
+            continue
+        k = 0
+        while k < len(s.words) and not s.words[k].dynamic and (ASSIGN.match(s.words[k].text) or s.words[k].text in KEYWORDS["bash"]
+                                                                or prog_name(s.words[k].text) in CLOBBER_WRAPPERS
+                                                                or (k and s.words[k].text.startswith("-"))):
+            k += 1
+        if k < len(s.words) and (s.words[k].dynamic or prog_name(s.words[k].text) in CLOBBER_PROGS):
+            if s.words[k].dynamic:
+                continue  # a computed program is reviewed elsewhere; its arguments are not a known copy
+            for a in s.words[k + 1:]:
+                if a.text.startswith("-") and not a.dynamic:
+                    if "=" not in a.text:
+                        continue
+                    a = Word(a.text.partition("=")[2])
+                if hits(a, ancestor=True):
+                    return True
+    return False
 
 
 def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
@@ -2210,6 +2311,9 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
                 if (seg is not None and seg.pipe_in) or len(stdin) > 1 or any(x[0] != 0 for x in ins):
                     return unread("the commit message is read from stdin with a pipe, an input redirect on another fd or "
                                   "several stdin sources")
+                if not stdin_message_whitelisted(seg, ctx):
+                    return unread("the commit message is read from stdin and the commit carries another redirection, sits in a "
+                                  "group, or an earlier segment has exec, a redirection or a group")
                 src = stdin[0] if stdin else None
                 if src is None or src[1] not in ("<<", "<<'") or src[2] is None or \
                         (src[1] == "<<" and re.search(r"[$`\\]", src[2])):
@@ -2221,6 +2325,10 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
             if ctx.cd_unsure and not os.path.isabs(v.text):
                 return unread("the message file %s is relative and a cd in a subshell, pipeline or other branch leaves its directory "
                               "unsure" % v.text, "use an absolute -F path or a top-level `cd <dir> &&`")
+            if message_file_clobbered(seg, ctx, call, v.text):
+                return unread("the message file %s is written, copied, moved, linked or exec-opened on the same command line; "
+                              "the guard reads it before the line runs" % v.text,
+                              "write the message file in an earlier command, then commit")
             path = os.path.join(call.cwd, v.text)
             try:
                 top = (run_git(call, ctx, ["rev-parse", "--show-toplevel"], envs) or "").strip() or call.cwd
