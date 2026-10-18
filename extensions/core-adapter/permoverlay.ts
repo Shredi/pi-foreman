@@ -1693,8 +1693,10 @@ interface Collected {
   protWords?: string[];
   /** Words that are the value of a known prose option, by position (`--reason TEXT`, `--note=TEXT`, `-m TEXT` of `git commit`). */
   proseSkip?: string[];
-  /** R14 item 2: the message-file operands of `git commit` / `git tag` (`-F f`, `--file f`, `--file=f`), by position: git reads them, never writes. */
+  /** R14 item 2: the message-file operands of `git commit` (`-F f`, `--file f`, `--file=f`), by position: git reads them, never writes. */
   msgFiles?: string[];
+  /** R14 ruling 5: the message-file operands of `git tag`: no exemption, a child's protected one is denied with its own reason. */
+  tagMsgFiles?: string[];
   /** Every unit's command is a read/filter command (PURE_VERBS) that cannot turn text into a path. */
   pure?: boolean;
   /** False once a unit can write: in-place sed, `sort -o`, `find -exec`/`-delete`, `rg --pre` and the like. */
@@ -1801,10 +1803,11 @@ const GIT_MSG_VALUE_OPTS = new Set(["-m", "-c", "-C", "-t", "-u", "--message", "
  * R14 item 2: indexes into `core` of the message-file operand of `git commit` / `git tag`: the word after an exact `-F` or `--file`, or an
  * exact `--file=<f>` word, before any `--`. Git reads that file; attached or combined short forms (`-Ff`, `-sF f`) are not taken.
  */
-function gitMessageFiles(core: string[], skip: Set<number>): number[] {
+function gitMessageFiles(core: string[], skip: Set<number>): { tag: boolean; at: number[] } {
   let k = 1;
   while (k < core.length && core[k].startsWith("-")) k += /^-[Cc]$/.test(core[k]) ? 2 : 1;
-  if (core[k] !== "commit" && core[k] !== "tag") return [];
+  const tag = core[k] === "tag";
+  if (core[k] !== "commit" && !tag) return { tag, at: [] };
   const out: number[] = [];
   for (let i = k + 1; i < core.length; i++) {
     const x = core[i];
@@ -1813,7 +1816,7 @@ function gitMessageFiles(core: string[], skip: Set<number>): number[] {
     else if (x.startsWith("--file=") && x.length > 7) out.push(i);
     else if (GIT_MSG_VALUE_OPTS.has(x)) i++;
   }
-  return out;
+  return { tag, at: out };
 }
 
 /** nonPathArgs before the read-only filter: every pattern/script operand (and, for grep and rg, the include/exclude/glob values). */
@@ -2133,7 +2136,10 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
     const patt = GREP_FAMILY.has(verb0) || verb0 === "git" || verb0 === "sed" || verb0.endsWith("awk") ? new Set(nonPathArgs(v.core, skip).map((i) => i + off)) : new Set<number>();
     out.words.push(...unitWords.filter((_, i) => !patt.has(i)));
     out.proseSkip?.push(...proseIndexes(v.core).filter((i) => !patt.has(i + off)).map((i) => unitWords[i + off]));
-    if (verb0 === "git") out.msgFiles?.push(...gitMessageFiles(v.core, skip).flatMap((i) => { const x = unitWords[i + off]; return x.startsWith("--file=") ? [x, x.slice(7)] : [x]; }));
+    if (verb0 === "git") {
+      const m = gitMessageFiles(v.core, skip);
+      (m.tag ? out.tagMsgFiles : out.msgFiles)?.push(...m.at.flatMap((i) => { const x = unitWords[i + off]; return x.startsWith("--file=") ? [x, x.slice(7)] : [x]; }));
+    }
     const rw = resolved.get(allWords);
     if (rw) {
       const rest = lead ? rw.slice(lead) : rw;
@@ -2757,19 +2763,20 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (sw) return sw;
   }
   const scratch0 = scratchOf(ctx);
-  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, platform: ctx.platform, resolvedWords: new Set(), bound, boundRefs: [], unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], proseSkip: [], msgFiles: [], verbs: [], cmdWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], readCode: new Set(), shadowed, ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
+  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, platform: ctx.platform, resolvedWords: new Set(), bound, boundRefs: [], unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], proseSkip: [], msgFiles: [], tagMsgFiles: [], verbs: [], cmdWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], readCode: new Set(), shadowed, ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
   collect(command, shell, 0, c);
   // win32 (Git Bash runs the posix-unescaped words): the ambiguous path words of the posix pass, before the raw pass adds its own
   const winAmb = ctx.platform === "win32" && shell === "posix" ? winAmbiguity(command, c) : undefined;
   if (ctx.platform === "win32" && shell === "posix") {
     // native paths in a bash command (`cat C:\Users\x\.ssh\id`): lex again with `\` kept literal
-    const raw: Collected = { unitTexts: [], pipeTexts: [], words: [], removeWords: [], protWords: [], proseSkip: [], msgFiles: [], pure: true, ro: true, rdr: true, writeTargets: new Set() };
+    const raw: Collected = { unitTexts: [], pipeTexts: [], words: [], removeWords: [], protWords: [], proseSkip: [], msgFiles: [], tagMsgFiles: [], pure: true, ro: true, rdr: true, writeTargets: new Set() };
     collect(command, "powershell", 0, raw);
     c.words.push(...raw.words);
     c.removeWords!.push(...raw.removeWords!);
     c.protWords!.push(...raw.protWords!);
     c.proseSkip!.push(...raw.proseSkip!);
     c.msgFiles!.push(...raw.msgFiles!);
+    c.tagMsgFiles!.push(...raw.tagMsgFiles!);
     c.pure = c.pure && raw.pure;
     c.ro = c.ro && raw.ro;
     c.rdr = c.rdr && raw.rdr;
@@ -2814,7 +2821,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   // the read-only python exemption holds only when the whole command is that one invocation: nothing else on the line may use the words
   const soloPython = /^\s*(?:[\w./-]*python[\w.]*)(?:\s+-[A-Za-z]+)*\s*$/.test(command.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, ""));
   const notFilter = (w: string): boolean => (!FILTER_OPT.test(w) && !(ctx.role === "child" && soloPython && c.readCode!.has(w))) || c.writeTargets!.has(w) || !!c.tmpTargets?.has(w);
-  // R14 item 2: a `git commit`/`git tag` message file is read, not written: out of write protection when every occurrence of the word is one
+  // R14 item 2: a `git commit` message file is read, not written: out of the `{cwd}/.pi/*` rule (only) when every occurrence of the word is one
   const pool = pure ? c.protWords! : c.words;
   const msgLeft = new Map<string, number>();
   for (const w of pool) msgLeft.set(w, (msgLeft.get(w) ?? 0) + 1);
@@ -2822,7 +2829,9 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const msgOnly = (w: string): boolean => c.msgFiles!.includes(w) && (msgLeft.get(w) ?? 0) <= 0 && !c.writeTargets!.has(w) && !c.tmpTargets?.has(w) && !c.roTargets?.has(w);
   // the message-file exemption is for the write protection only: the child read-block (handoffs, artifacts, siblings, other scratch) sees every word
   const rwords = (pure ? [...new Set(c.protWords!.flatMap((w) => [w, ...expandBraces(w)]))] : words).filter(notFilter);
-  const pwords = rwords.filter((w) => !msgOnly(w));
+  // R14 ruling 5: lifted are `{cwd}/.pi/*` and the writeAsk package-root pair (`{pkgRoot}`, `{pkgRoot}/*`: a read of a package file is no write);
+  // every ask/deny/childDeny rule (another session's state, intercom, settings.json, .git) and the handoff parent/child writeAsk rules still see it
+  const msgProtect = rules.protect.filter((r) => r.pattern !== "{cwd}/.pi/*" && !(r.fromWriteAsk && !r.pattern.includes("/handoffs/")));
   const pctx: MatchCtx = shell === "posix" ? { ...ctx, bashWords: true, dotGlob: /dotglob|globignore|glob_?dots/i.test(command) } : ctx;
   const removed = new Set(c.removeWords!.flatMap((w) => [w, ...expandBraces(w)]));
   const texts = [...c.unitTexts, ...c.pipeTexts];
@@ -2880,7 +2889,14 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
       return { kind: "deny", reason: `pi-foreman: '${clip(c.roUnknown)}' denied for a child: the round worktree is read-only except for its builder, and this command is neither a known reader nor a test run, so it may write there. Use a read command or ask the foreman.` };
     }
   }
-  const prot = pwords.map((w) => ({ w, hit: protectHit(rules.protect, w, pctx, true, removed.has(w), readOnly, ownRead) })).filter((x) => x.hit);
+  if (ctx.role === "child") {
+    // R14 ruling 5: a `git tag -F` message file has no exemption (git_guard lints commits only)
+    for (const w of c.tagMsgFiles!) {
+      const hit = protectHit(rules.protect, w, pctx, true);
+      if (hit) return { kind: "deny", reason: `pi-foreman: denied for a child: '${clip(w)}' is a git tag message file under the write protection (rule '${hit.rule.pattern}'). Only a git commit -F/--file message file may lie below .pi; put a tag message in .workflow/scratch/ or $FOREMAN_SCRATCH, or use -m.` };
+    }
+  }
+  const prot = rwords.map((w) => ({ w, hit: protectHit(msgOnly(w) ? msgProtect : rules.protect, w, pctx, true, removed.has(w), readOnly, ownRead) })).filter((x) => x.hit);
   const pd = prot.find((x) => x.hit!.kind === "deny");
   if (pd) return protectDecision(pd.hit!, pd.w, "shell command");
   // R10 item 3: the permission system read-allows the toolchain probe dirs for any command; only a pure ls/stat/which line may name them

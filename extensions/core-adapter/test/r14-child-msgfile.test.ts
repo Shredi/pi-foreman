@@ -33,7 +33,7 @@ test("child_git_commit_F_pi_scratch_left_to_git_guard", () => {
     `git commit --file .pi/scratch/m.txt`,
     `git commit --file=.pi/scratch/m.txt`,
     `git commit -s -F .pi/scratch/m.txt`,
-    `git tag -a v1 -F .pi/scratch/m.txt`,
+    // R14 ruling 5 flips the `git tag -a v1 -F .pi/scratch/m.txt` row to DENY: child_git_tag_F_protected_path_denied_own_reason
     `git commit -F .workflow/scratch/m.txt`,
   ]) assert.equal(sh(cmd), "pass", `${cmd}: ${checkToolCall(rules, "bash", { command: cmd }, child)?.reason}`);
 });
@@ -97,4 +97,39 @@ test("child_msgfile_other_positions_still_protected", () => {
     `git commit -sF .pi/scratch/m.txt`,
     `git notes add -F .pi/scratch/m.txt`,
   ]) assert.equal(sh(cmd), "deny", cmd);
+});
+
+// R14 ruling 5: the exemption is for `git commit -F/--file` only and lifts only `{cwd}/.pi/*`; a `git tag -F` message file keeps every
+// protect rule (the overlay decides, with its own reason), and a commit message file naming another protect.ask path stays protected.
+const otherTrace = path.join(ag, "pi-foreman", "state", "trace-other-sid.jsonl");
+fs.mkdirSync(path.dirname(otherTrace), { recursive: true });
+fs.writeFileSync(otherTrace, "{}\n");
+
+test("child_git_tag_F_protected_path_denied_own_reason", () => {
+  for (const cmd of [`git tag -a v -F .pi/scratch/m.txt`, `git tag -a v --file=.pi/scratch/m.txt`, `git tag -a v -F ${inBash(otherTrace)}`]) {
+    const d = shB(cmd);
+    assert.equal(d.kind, "deny", cmd);
+    assert.match(d.reason!, /git tag message file/, cmd);
+  }
+});
+
+test("child_git_commit_F_other_session_state_trace_denied", () => {
+  for (const cmd of [`git commit -F ${inBash(otherTrace)}`, `git commit --file=${inBash(otherTrace)}`, `git commit -F ${inBash(path.join(ag, "settings.json"))}`, `git commit -F ${inBash(path.join(ag, "intercom", "x.json"))}`]) {
+    const d = shB(cmd);
+    assert.equal(d.kind, "deny", cmd);
+    assert.doesNotMatch(d.reason!, /\{cwd\}\/\.pi\/\*/, cmd);
+  }
+});
+
+test("child_git_commit_F_pkgroot_file_passes_only_as_message_file", () => {
+  // the fixture's package root is the worktree: its writeAsk pair is lifted for the commit message-file operand only
+  assert.equal(shB(`git commit -F docs/pkg-notes.txt`).kind, "pass");
+  for (const cmd of [`git commit -F docs/pkg-notes.txt; touch docs/pkg-notes.txt`, `git commit -F docs/pkg-notes.txt -- docs/pkg-notes.txt`, `git commit -F docs/pkg-notes.txt && cat docs/pkg-notes.txt`, `cp m.txt docs/pkg-notes.txt && git commit -F docs/pkg-notes.txt`, `git tag -a v -F docs/pkg-notes.txt`]) {
+    assert.equal(shB(cmd).kind, "deny", cmd);
+  }
+});
+
+test("child_git_tag_F_own_scratch_passes", () => {
+  // (the fixture's worktree is the package root, so a tag message file inside it meets the writeAsk rule: no exemption for tags)
+  assert.equal(shB(`git tag -a v -F ${inBash(path.join(ownScratch, "m.txt"))}`).kind, "pass");
 });

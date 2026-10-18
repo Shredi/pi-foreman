@@ -171,7 +171,10 @@ The foreman session owns a few places outside the workspace. Access to them is g
    write-protect rules keep asking or denying. A child's write permissions are therefore unchanged by this section.
    **Child input dirs** (R14): a child keeps the files it hands to a command (a `git commit -F` message file) only in
    `$FOREMAN_SCRATCH` or `<worktree>/.workflow/scratch/`; `.pi/scratch/` is the main session's dir. The message-file
-   operand of `git commit` / `git tag` (`-F f`, `--file f`, `--file=f`) is a read, not a write-protect word; it still
+   operand of `git commit` (`-F f`, `--file f`, `--file=f`) is a read: the write protection lifts only `{cwd}/.pi/*` and
+   the writeAsk package-root pair for it; every other protect rule (another session's `state/*`, `intercom/*`,
+   `settings.json`, `.git`, the handoff `parent`/`child` files) still applies. A `git tag` message file has no such
+   exemption: a child's tag `-F` operand under any protect rule is denied by the overlay with its own reason. It still
    meets the child read-block above (handoffs, artifacts, sibling worktrees, other children's scratch: denied). The git
    guard decides: only below `<worktree>/.workflow/scratch/` (by realpath, that dir no symlink) or below the exact
    realpath of the child's own scratch dir from the launch environment; nowhere else in the worktree (no parent,
