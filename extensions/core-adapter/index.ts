@@ -2632,7 +2632,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     isChild: process.env.PI_SUBAGENT_CHILD === "1",
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { python: pyPath(s), isChild: s.isChild, opsConfig: get(s.config.config, "safety.ops"), packOn: s.gitPack, trace: (r) => s.trace?.emit(r) };
+      const own = process.env.PI_FOREMAN_HANDOFF_DIR?.trim();
+      const handoffDirs = s.isChild ? [] : [...ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), ...(own && path.isAbsolute(own) ? [own] : [])];
+      return { python: pyPath(s), isChild: s.isChild, opsConfig: get(s.config.config, "safety.ops"), handoffDirs, packOn: s.gitPack, trace: (r) => s.trace?.emit(r) };
     },
     script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
     preflight: async (ctx, op, callId) => {

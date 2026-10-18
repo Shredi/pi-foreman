@@ -180,7 +180,8 @@ def resolve_arg(cwd, value, what):
 class Paths(object):
     """Checked source and destination for move/copy (the shared path rules)."""
 
-    def __init__(self, req):
+    def __init__(self, req, src_roots=()):
+        # src_roots: extra realpath'd roots a copy source may sit under (the foreman's own handoff dirs, R12 item 10)
         cwd = req.get("cwd")
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
         self.root = workspace_root(cwd)
@@ -197,17 +198,19 @@ class Paths(object):
         if not os.path.isdir(dst_parent):
             raise Precondition("dst_parent_missing", "the destination's parent directory does not exist")
         self.dst = os.path.join(os.path.realpath(dst_parent), dst_name)
-        for p in (self.src, src_real):
-            if not is_inside(self.root, p):
-                raise Precondition("outside_workspace", "src resolves outside the workspace root")
+        src_base = self.root
+        if not is_inside(self.root, self.src):
+            src_base = next((r for r in src_roots if is_inside(r, self.src)), None)
+        if src_base is None or not is_inside(src_base, src_real):
+            raise Precondition("outside_workspace", "src resolves outside the workspace root")
         if not is_inside(self.root, self.dst):
             raise Precondition("outside_workspace", "dst resolves outside the workspace root")
-        for p in (self.src, src_real, self.dst):
-            if has_git_component(os.path.relpath(p, self.root)):
+        for p, base in ((self.src, src_base), (src_real, src_base), (self.dst, self.root)):
+            if has_git_component(os.path.relpath(p, base)):
                 raise Precondition("inside_git_dir", "neither path may be inside .git")
         if os.path.lexists(self.dst):
             raise Precondition("dst_exists", "%s already exists" % args.get("dst"))
-        self.rel_src = os.path.relpath(self.src, self.root)
+        self.rel_src = os.path.relpath(self.src, self.root) if src_base == self.root else self.src
         self.rel_dst = os.path.relpath(self.dst, self.root)
 
 
@@ -324,8 +327,18 @@ def _scan(top, cap):
     return entries, total
 
 
+def src_roots(req):
+    """The request's top-level srcRoots (absolute dirs, realpath'd); never read from args."""
+    roots = req.get("srcRoots")
+    if roots is None:
+        return []
+    if not isinstance(roots, list) or not all(isinstance(r, str) and r and "\0" not in r and os.path.isabs(r) for r in roots):
+        raise Precondition("bad_request", "srcRoots must be a list of absolute paths")
+    return [os.path.realpath(r) for r in roots if os.path.isdir(r)]
+
+
 def op_copy(req):
-    p = Paths(req)
+    p = Paths(req, src_roots(req))
     cap = ops_config(req.get("config"))["copyMaxBytes"]
     if is_link(p.src):
         raise Precondition("src_symlink", "the source is a symlink or junction")

@@ -27,13 +27,15 @@ export interface RunSafeOpInput {
   env: Record<string, string>;
   spawner: Spawner;
   timeoutMs?: number;
+  /** Extra roots a `copy` source may sit under (the foreman's own handoff dirs); a top-level request key, never in `args`. */
+  srcRoots?: string[];
 }
 
 export async function runSafeOp(input: RunSafeOpInput): Promise<SafeOpOutcome> {
   if (!input.python) return { kind: "error", message: "no Python >= 3.9 found; nothing was done. Set python.path or PI_FOREMAN_PYTHON and run /foreman doctor." };
   const timeoutMs = input.timeoutMs ?? SAFE_OP_TIMEOUT_MS;
   const r = await input.spawner(input.python, ["-E", "-s", input.script], {
-    input: asciiJson({ op: input.op, args: input.args, cwd: input.cwd, config: input.config ?? {} }),
+    input: asciiJson({ op: input.op, args: input.args, cwd: input.cwd, config: input.config ?? {}, ...(input.op === "copy" && input.srcRoots?.length ? { srcRoots: input.srcRoots } : {}) }),
     env: input.env,
     cwd: input.cwd,
     timeoutMs,
@@ -94,6 +96,8 @@ export interface SafeOpsSession {
   packOn?: boolean;
   /** The merged `safety.ops` object. */
   opsConfig: unknown;
+  /** The foreman's own handoff dirs (owned.ts ownHandoffDirs + its PI_FOREMAN_HANDOFF_DIR), from session state; ignored for a child. */
+  handoffDirs?: string[];
   trace(rec: Record<string, unknown>): void;
 }
 
@@ -137,7 +141,9 @@ export function registerSafeOps(pi: Pick<ExtensionAPI, "registerTool">, deps: Sa
           return failure(`${t.name}: ${pre.reason} Nothing was done.`, { decision: "blocked" });
         }
         if (s.packOn === true) s.trace({ event: "tool_pack", pack: "git", op: t.op });
-        const outcome = await runSafeOp({ python: s.python, script: deps.script, op: t.op, args: params, cwd: ctx.cwd, config: s.opsConfig, env: deps.env(), spawner: deps.spawner, timeoutMs: deps.timeoutMs });
+        // R12 item 10: a foreman copy may read from its own handoff dirs; a child gets no extra source root.
+        const srcRoots = t.op === "copy" && !s.isChild && !deps.isChild ? (s.handoffDirs ?? []) : [];
+        const outcome = await runSafeOp({ python: s.python, script: deps.script, op: t.op, args: params, cwd: ctx.cwd, config: s.opsConfig, env: deps.env(), spawner: deps.spawner, timeoutMs: deps.timeoutMs, ...(srcRoots.length ? { srcRoots } : {}) });
         if (outcome.kind === "ran") {
           s.trace({ event: "safe_op", toolFamily: t.op, decision: "ran" });
           return { content: [{ type: "text" as const, text: `${t.name}: done. ${summary(outcome.result)}` }], details: { decision: "ran", result: outcome.result } };
