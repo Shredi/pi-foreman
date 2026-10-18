@@ -162,6 +162,51 @@ class ShellFactsTest(unittest.TestCase):
             self.assertTrue(any(x["dir"] is None and x["name"] is None for x in w), (name, w))
         self.assertEqual(self.writes("D=/h; ls -la $D; cat $D/parent"), [])
 
+    def test_r14_residual_deny_rows_are_fully_computed(self):
+        cases = {
+            "awk redirect to a bound variable operand": "f=/h/ruling.md; awk '{print > f}' f=\"$f\" /s/x",
+            "awk -v redirect target": "f=/h/ruling.md; awk -v o=\"$f\" '{print > o}' /s/x",
+            "awk -v literal target": "awk -v o=/h/x '{print > o}' /s/x",
+            "awk print into a quoted handoff path": "awk '{print > \"/h/plan.md\"}' /s/x",
+            "awk printf append": "awk '{printf \"%s\", $0 >> \"/h/plan.md\"}' /s/x",
+            "awk print pipe": "awk '{print | \"sh\"}' /s/x",
+            "awk getline command": "awk 'BEGIN{\"sh\" | getline x}'",
+            "awk -f program file": "awk -f prog.awk /s/x",
+            "awk computed program": "awk \"$P\" /s/x",
+            "xargs into an unknown program": "echo /h/ruling.md | xargs mytool",
+            "xargs -n1 into an unknown program": "ls /h/* | xargs -n1 mytool --in-place",
+            "computed program bound to a writer": "C=touch; $C /h/ruling.md",
+            "computed program bound twice": "C=cat; C=touch; $C /h/ruling.md",
+            "computed program bound in an && branch": "false && C=cat; $C touch /h/ruling.md",
+            "computed program bound in a group": "{ C=cat; }; $C /h/ruling.md",
+            "computed program read into": "C=cat; read C; $C /h/ruling.md",
+            "computed program default form": "C=cat; ${C:=touch} /h/ruling.md",
+            "computed program bound inline": "C=cat $C /h/ruling.md",
+        }
+        for name, line in cases.items():
+            w = self.writes(line)
+            self.assertTrue(any(x["dir"] is None and x["name"] is None for x in w), (name, w))
+
+    def test_r14_residual_pass_rows_write_nothing(self):
+        for line in ("sed -n '1,5p' /h/ruling.md",
+                     "sed -n '/review/p' /h/ruling.md",
+                     "sed -n 's/new/wow/p' /h/ruling.md",
+                     "sed -n -e '/^W/,/^E/p' -e '$=' /h/ruling.md",
+                     "sed '/x/{s/a/b/g;p}' /h/ruling.md",
+                     "sed '1i\\\nwe were here' /h/plan.md",
+                     "C=cat; $C /h/ruling.md",
+                     "C=head; \"$C\" -n 3 /h/ruling.md; ${C} /h/plan.md",
+                     "awk '{print $1}' /h/plan.md",
+                     "awk -F: '$1 > 5 {print $2}' /h/plan.md",
+                     "echo /h/plan.md | xargs cat",
+                     "sed -e 'a\\' -e 'w /h/x' /s/x"):  # sed joins the -e scripts: the second is the appended text
+            self.assertEqual(self.writes(line), [], line)
+        # the e/w/W commands and s flags are still fully computed writes
+        for line in ("sed -n '/review/w /h/x' /s/x", "sed '/a/e date' /s/x", "sed 's/a/b/gw /h/x' /s/x", "sed '/a/{W /h/x\n}' /s/x",
+                     "sed 's/a/b/;e date' /s/x", "sed 'y/abc/' /s/x", "sed 's/a/b/x' /s/x"):
+            w = self.writes(line)
+            self.assertTrue(any(x["dir"] is None and x["name"] is None for x in w), (line, w))
+
     @unittest.skipUnless(sys.platform == "win32", "native drive paths are win32 targets")
     def test_native_backslash_drive_paths_are_targets_on_win32(self):
         # quoted: the path itself; unquoted: bash escapes, but the native spelling is ALSO a candidate (fail closed)

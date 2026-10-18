@@ -88,13 +88,15 @@ def _resolve(base, p):
 
 
 class State(object):
-    def __init__(self, cwd, vars_, flavor):
+    def __init__(self, cwd, vars_, flavor, text=""):
         self.cwd = cwd
         self.vars = vars_
         self.flavor = flavor
         self.writes = []
         self.links = False
         self.cdpath = False
+        self.text = text
+        self.progs = {}  # R14 item 3: NAME -> literal of a top-level `NAME=word;` segment, None once assigned any other way
 
 
 def line_vars(text, scratch):
@@ -239,15 +241,21 @@ def segment(seg, flavor, st, depth):
             words.pop(0)
             continue
         if flavor == "bash" and gg.ASSIGN.match(w.text):
-            assignment(w, st, depth)
+            assignment(w, st, depth, seg if len(seg.words) == 1 else None)
             words.pop(0)
             continue
         break
     command(words, seg, flavor, st, depth)
 
 
-def assignment(w, st, depth):
+def assignment(w, st, depth, alone=None):
     name = w.text.split("=", 1)[0].rstrip("+")
+    # R14 item 3: a program name bound by a plain `NAME=word` segment of its own on the top-level `;` sequence (no group, pipe,
+    # redirect or `&&`/`||`, so it always runs before what follows); any other assignment of the name leaves it unresolved
+    plain = alone is not None and depth == 0 and not w.text.split("=", 1)[0].endswith("+") and \
+        re.match(r"^[A-Za-z][A-Za-z0-9_.-]*$", w.text.split("=", 1)[1]) and w.raw == w.text and \
+        alone.before in (None, ";") and alone.after in (None, ";") and not alone.group and not alone.pipe_in and not alone.redirs
+    st.progs[name] = w.text.split("=", 1)[1] if plain and name not in st.progs else None
     if name == "CDPATH":
         st.cdpath = True
     if name in EXEC_ENV:
@@ -278,6 +286,29 @@ def strip_wrapper(name, args, st):
     if name == "timeout" and rest:
         rest = rest[1:]
     return rest
+
+
+def bound_program(word, st):
+    """R14 item 3: the read-only program a whole `$NAME` / `${NAME}` command word names through a same-line plain binding
+    (State.progs), or None. The line may name NAME only in that one binding and in `$NAME` / `${NAME}` references (no read,
+    export, for, `${NAME:=...}` or second binding), and the value must be a known reader."""
+    m = re.match(r'^"?\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"?$', word.raw or "")
+    if not m or st.flavor != "bash":
+        return None
+    name = m.group(1) or m.group(2)
+    v = st.progs.get(name)
+    if v is None or v not in READERS:
+        return None
+    binds = 0
+    for o in re.finditer(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(name), st.text):
+        before, after = st.text[:o.start()], st.text[o.end():]
+        if before.endswith("$") or (before.endswith("${") and after.startswith("}")):
+            continue
+        if after.startswith("=") and binds == 0:
+            binds += 1
+            continue
+        return None
+    return v if binds == 1 else None
 
 
 def change_dir(args, st, flavor):
@@ -399,13 +430,159 @@ def sed_call(args, st):
         scripts.append(files.pop(0))
     if unsure:
         add(st, "sed-f", None)  # script file or unknown option: unknown commands, fully computed write
-    for s in scripts:
-        if re.search(r"[ewW\0]", s.text):
-            # e/w/W anywhere (e command, w/W file, s///e or s///w flag) or a computed script: fully computed write
-            add(st, "sed-e", None)
+    # sed joins its -e scripts with newlines (an `a\` text may continue into the next one)
+    if scripts and sed_script_writes("\n".join(s.text for s in scripts)):
+        # an e/w/W command, an s///e or s///w flag, a computed or unknown script: fully computed write
+        add(st, "sed-e", None)
     if inplace:
         for f in files:
             add_word(st, "sed-i", f)
+
+
+# R14 item 3: awk options that take no value and write nothing; any other option (-f/-e program, -i include/inplace, -o/-p/-d
+# output files, -E, an abbreviation) leaves the program or a written file unknown
+AWK_FLAGS = {"-P", "--posix", "-c", "--traditional", "-S", "--sandbox", "-N", "--use-lc-numeric", "-r", "--re-interval",
+             "-b", "--characters-as-bytes", "-n", "--non-decimal-data", "-s", "--no-optimize", "-O", "--optimize"}
+# an output redirect or pipe of print/printf, a `| getline` / `|&` command or system(): the program writes or runs something
+AWK_WRITES = re.compile(r"\bsystem\s*\(|\|\s*&|\|\s*getline|\bprintf?\b[^;{}\n]*[>|]")
+
+
+def awk_call(args, st):
+    """R14 item 3: awk's program text (string literals blanked) with a print/printf redirect or pipe, `| getline`, `|&` or
+    system(), a computed program, or an unknown option is a fully computed write: the target (`print > f` with `-v f=...` or
+    `f=...` operands, a quoted path, a variable) is built at run time. A literal ruling-named operand is still an argument write."""
+    i = 0
+    while i < len(args):
+        t = args[i].text
+        if t == "--":
+            i += 1
+            break
+        if t in ("-v", "-F", "--assign", "--field-separator"):
+            i += 2
+            continue
+        if (t.startswith(("-v", "-F")) and len(t) > 2) or t.startswith(("--assign=", "--field-separator=")) or t in AWK_FLAGS:
+            i += 1
+            continue
+        if t.startswith("-") and t != "-":
+            add(st, "awk", None)
+            return
+        break
+    if i < len(args):
+        p = args[i]
+        prog = value(p, st) if "\0" in p.text else p.text
+        if prog is None or AWK_WRITES.search(re.sub(r'"(?:[^"\\\n]|\\.)*"', '""', prog)):
+            add(st, "awk", None)
+    ruling_args(args, st)
+
+
+def _sed_part(s, i, d):
+    """Index after the next unescaped delimiter `d` from `i` (a regex or replacement), or None when unterminated."""
+    while i < len(s):
+        if s[i] == "\\":
+            i += 2
+            continue
+        if s[i] == d:
+            return i + 1
+        i += 1
+    return None
+
+
+def _sed_addr(s, i, second=False):
+    """Index after one address at `i` (none is fine), or None when malformed."""
+    n = len(s)
+    if i < n and second and s[i] in "+~":
+        i += 1
+        j = i
+        while i < n and s[i].isdigit():
+            i += 1
+        return i if i > j else None
+    if i < n and s[i].isdigit():
+        while i < n and s[i].isdigit():
+            i += 1
+        if i < n and s[i] == "~":
+            i += 1
+            while i < n and s[i].isdigit():
+                i += 1
+        return i
+    if i < n and s[i] == "$":
+        return i + 1
+    if i < n and (s[i] == "/" or s[i] == "\\"):
+        if s[i] == "\\":
+            if i + 1 >= n or s[i + 1] in "\n\\":
+                return None
+            d, i = s[i + 1], i + 2
+        else:
+            d, i = "/", i + 1
+        i = _sed_part(s, i, d)
+        while i is not None and i < n and s[i] in "IM":
+            i += 1
+        return i
+    return i
+
+
+def sed_script_writes(s):
+    """R14 item 3: True when a sed script may run a command or write a file: an `e`, `w` or `W` command, an `s` command with an
+    `e` or `w` flag, a computed part, or anything this scanner does not know (fail closed). A regex, a replacement, a label or
+    `a`/`i`/`c` text that merely contains those letters is no command (`sed -n '/review/p'`)."""
+    if "\0" in s:
+        return True
+    i, n = 0, len(s)
+
+    def skip(i, chars):
+        while i < n and s[i] in chars:
+            i += 1
+        return i
+
+    def to_eol(i, stops="\n"):
+        while i < n and s[i] not in stops:
+            i += 1
+        return i
+
+    while True:
+        i = skip(i, " \t\n;")
+        if i >= n:
+            return False
+        i = _sed_addr(s, i)
+        if i is None:
+            return True
+        i = skip(i, " \t")
+        if i < n and s[i] == ",":
+            i = _sed_addr(s, skip(i + 1, " \t"), second=True)
+            if i is None:
+                return True
+        i = skip(skip(i, " \t"), "! \t")
+        if i >= n:
+            return True
+        c = s[i]
+        i += 1
+        if c in "=dDgGhHnNpPxzF{}":
+            continue
+        if c in "qQlL":
+            i = skip(skip(i, " \t"), "0123456789")
+        elif c in "bTt:v":
+            i = to_eol(i, "\n;")
+        elif c in "rR#":
+            i = to_eol(i)
+        elif c in "aic":
+            i = skip(i, " \t")
+            if i + 1 < n and s[i] == "\\" and s[i + 1] == "\n":
+                i += 2
+            while i < n and s[i] != "\n":
+                i += 2 if s[i] == "\\" else 1
+        elif c in "sy":
+            if i >= n or s[i] in "\n\\":
+                return True
+            d = s[i]
+            i = _sed_part(s, i + 1, d)
+            i = _sed_part(s, i, d) if i is not None else None
+            if i is None:
+                return True
+            while c == "s" and i < n and s[i] not in ";\n}":
+                if s[i] not in "gpiImM0123456789 \t":
+                    return True  # e, w or an unknown flag
+                i += 1
+        else:
+            return True  # e, w, W or an unknown command
 
 
 def option_values(args, shorts, longs):
@@ -481,15 +658,19 @@ def command(words, seg, flavor, st, depth):
         return
     cmd = words[0]
     if "\0" in cmd.text:
-        add(st, "command", None)  # computed or unresolved program: fully computed write
-        return
+        prog = bound_program(cmd, st)
+        if prog is None:
+            add(st, "command", None)  # computed or unresolved program: fully computed write
+            return
+        cmd = gg.Word(prog)  # R14 item 3: `C=cat; $C <file>` runs that reader
     name = gg.prog_name(cmd.text)
     args = words[1:]
     if name in WRAPPERS:
         rest = strip_wrapper(name, args, st)
         if name == "xargs" and rest:
             rest = rest + [COMPUTED]  # operands from stdin
-        command(rest, seg, flavor, st, depth)
+        if command(rest, seg, flavor, st, depth) == "unknown" and name == "xargs":
+            add(st, "xargs", None)  # R14 item 3: an unknown program given stdin words may write any of them: fully computed write
         return
     if name in CD:
         change_dir(args, st, flavor)
@@ -539,6 +720,9 @@ def command(words, seg, flavor, st, depth):
         return
     if name in ("sed", "gsed"):
         sed_call(args, st)
+        return
+    if name in ("awk", "gawk", "mawk", "nawk"):
+        awk_call(args, st)
         return
     if name == "find":
         if any("\0" in w.text or FIND_ACTION.match(w.text) for w in args):
@@ -594,6 +778,7 @@ def command(words, seg, flavor, st, depth):
     if name in READERS:
         return
     ruling_args(args, st)
+    return "unknown"
 
 
 def shell(args, seg, st, depth):
@@ -634,7 +819,7 @@ def facts(payload):
     text = payload.get("command") or ""
     flavor = "powershell" if payload.get("shell") == "powershell" else "bash"
     cwd = payload.get("cwd") or os.getcwd()
-    st = State(_pm(cwd).normpath(cwd), line_vars(text, payload.get("scratch_dir")) if flavor == "bash" else {}, flavor)
+    st = State(_pm(cwd).normpath(cwd), line_vars(text, payload.get("scratch_dir")) if flavor == "bash" else {}, flavor, text)
     try:
         walk(text, flavor, st, 0)
     except ValueError as exc:

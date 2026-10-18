@@ -2455,6 +2455,9 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
                 if v.glob or any(c in t for t in (v.text, v.raw) for c in "*?[{") or \
                         v.text.startswith("~") or v.raw.startswith("~"):
                     return unread("the message file path has a glob or ~ the shell expands; use a literal message path")
+                # R14 item 3: zsh expands a leading `=cmd` to the path of the command cmd
+                if v.text.startswith("=") or v.raw.lstrip("\"'").startswith("="):
+                    return unread("the message file path is a zsh =word (the path of a command); use a literal message path")
                 why = child_message_line_problem(seg, ctx, call, envs)
                 if why is not None:
                     return unread(why)

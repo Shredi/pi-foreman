@@ -141,6 +141,39 @@ for (const [name, line] of DENY_R4) {
   });
 }
 
+// R14 item 3: residual rows. awk builds its redirect target at run time, xargs hands stdin words to an unknown program, and a computed
+// program name bound to a writer (or bound in any way the facts cannot follow) stays a fully computed write.
+const DENY_R14: Array<[string, (r: Rig) => string]> = [
+  ["awk redirect to a bound variable operand", (r) => `f=${r.H}/ruling.md; awk '{print > f}' f="$f" ${r.S}/usage.json`],
+  ["awk -v redirect target from a bound variable", (r) => `f=${r.H}/ruling.md; awk -v o="$f" '{print > o}' ${r.S}/usage.json`],
+  ["awk print into a quoted handoff path", (r) => `awk '{print > "${r.H}/ruling.md"}' ${r.S}/usage.json`],
+  ["xargs into an unknown program with a handoff path", (r) => `echo ${r.H}/ruling.md | xargs mytool`],
+  ["C=touch; $C <H>/ruling.md", (r) => `C=touch; $C ${r.H}/ruling.md`],
+  ["false && C=cat; $C touch <H>/ruling.md", (r) => `false && C=cat; $C touch ${r.H}/ruling.md`],
+  ["C=cat; C=touch; $C <H>/ruling.md", (r) => `C=cat; C=touch; $C ${r.H}/ruling.md`],
+];
+
+for (const [name, line] of DENY_R14) {
+  test(`r14 deny (residual): ${name}`, async () => {
+    const r = rig();
+    assert.equal(await run(r, line(bash(r))), SELF_RULING_REASON, line(bash(r)));
+  });
+}
+
+// R14 item 3: a read-only sed script whose regex merely contains e/w/W, and a computed program name a same-line binding resolves to a reader.
+const PASS_R14: Array<[string, (r: Rig) => string]> = [
+  ["sed -n '1,5p' <H>/ruling.md", (r) => `sed -n '1,5p' ${r.H}/ruling.md`],
+  ["sed -n '/review/p' <H>/ruling.md (a regex with w and e)", (r) => `sed -n '/review/p' ${r.H}/ruling.md`],
+  ["C=cat; $C <H>/ruling.md", (r) => `C=cat; $C ${r.H}/ruling.md`],
+];
+
+for (const [name, line] of PASS_R14) {
+  test(`r14 pass (residual): ${name}`, async () => {
+    const r = rig();
+    assert.equal(await run(r, line(bash(r))), undefined, line(bash(r)));
+  });
+}
+
 // The exception to inBash: the point of these lines is the native backslash spelling (quoted reaches the path; unquoted is a
 // bash escape, but the native spelling is a candidate too, fail closed).
 test("r13 deny (win32): a native backslash path to the parent's ruling, quoted or not", { skip: process.platform !== "win32" }, async () => {

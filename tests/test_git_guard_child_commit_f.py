@@ -257,6 +257,12 @@ class ChildMessageInputDirsTest(unittest.TestCase):
         for d in (os.path.dirname(self.scratch), self.outside):
             self.assertEqual(self.decide("git commit -F $FOREMAN_SCRATCH/m.txt", dict(os.environ, FOREMAN_SCRATCH=d))[0], "deny", d)
 
+    def test_child_f_zsh_equals_word_denied(self):
+        for c in ("git commit -F =git", "git commit --file =git", "git commit --file==git", "git commit -F '=git'"):
+            got, reason = self.decide(c)
+            self.assertEqual(got, "deny", c)
+            self.assertIn("use a literal message path", reason, c)
+
     def test_child_cd_other_repo_commit_denied(self):
         other = tempfile.mkdtemp(prefix="pf-gg-r14-other-")
         self.addCleanup(shutil.rmtree, other, True)
