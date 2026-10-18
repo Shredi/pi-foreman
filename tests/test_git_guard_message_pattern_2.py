@@ -34,7 +34,7 @@ class MessageFileCdScopeTest(unittest.TestCase):
         self.assertEqual(decide(command, "main", self.repo)[0], "ask", command)
         got, reason = decide(command, "child", self.repo)
         self.assertEqual(got, "deny", command)
-        self.assertIn("-F <file inside the worktree>", reason)
+        self.assertIn("-F <file in $FOREMAN_SCRATCH or <worktree>/.workflow/scratch/>", reason)
 
     def test_message_file_subshell_cd_not_tracked(self):
         for c in ("(cd sub) && git commit -F msg.txt", "(cd sub && true); git commit -F msg.txt", "{ cd sub; } && git commit -F msg.txt",
@@ -122,7 +122,7 @@ class ChildUnreadableMessageTest(unittest.TestCase):
             got, reason = decide(c, "child", self.repo)
             self.assertEqual(got, "deny", c)
             self.assertIn("-m '<literal message>'", reason, c)
-            self.assertIn("-F <file inside the worktree>", reason, c)
+            self.assertIn("-F <file in $FOREMAN_SCRATCH or <worktree>/.workflow/scratch/>", reason, c)
             self.assertIn("safety.git.commit.messagePattern", reason, c)
             # the foreman still gets the dialog
             self.assertEqual(decide(c, "main", self.repo)[0], "ask", c)

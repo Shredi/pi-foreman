@@ -3,6 +3,7 @@ group, heredoc, here-string, pipe or redirect, made of an optional first top-lev
 `git status` / `git diff --cached` and exactly one `git commit -F <file>`. Everything else with -F is a child deny ("write the message
 file in an earlier command"); `--amend --no-edit` is a child deny with its own reason. The foreman (main mode) keeps
 message_file_clobbered and its ask. Command STRINGS only."""
+import os
 import shutil
 import subprocess
 import sys
@@ -42,7 +43,7 @@ class ChildCommitFileAllowlistTest(unittest.TestCase):
         got, reason = decide(command, "child", self.repo)
         self.assertEqual(got, "deny", command)
         self.assertIn(EARLIER, reason, command)
-        self.assertIn("-F <file inside the worktree>", reason, command)
+        self.assertIn("-F <file in $FOREMAN_SCRATCH or <worktree>/.workflow/scratch/>", reason, command)
         self.assertNotIn("fix(r13): conforming", reason, command)  # the file text never goes into a reason
 
     def expect_deny(self, command):
@@ -171,6 +172,102 @@ class ChildCommitFileAllowlistTest(unittest.TestCase):
         self.assertFalse(gg.message_file_clobbered(gg.lex(plain, "bash").segs[-1], ctx, gg.GitCall(ctx), MSG))
         self.assertEqual(decide(line, "main", self.repo)[0], "ask")
         self.assertEqual(decide("git commit -F %s && git log --oneline -1" % MSG, "main", self.repo)[0], "allow")
+
+
+def in_bash(p):
+    """A native path as a child writes it into a bash line (forward slashes on Windows)."""
+    return p.replace("\\", "/") if sys.platform == "win32" else p
+
+
+class ChildMessageInputDirsTest(unittest.TestCase):
+    """R14 items 2 and 3: a child's message file lives in $FOREMAN_SCRATCH (the exact realpath of its own scratch dir from the launch
+    environment) or the worktree, never under the worktree's .pi/ (the main session's dir); a sibling or parent scratch dir, a symlink
+    escape, an inline FOREMAN_SCRATCH rebind and a cd into another repo are denied."""
+
+    def setUp(self):
+        self.repo = tempfile.mkdtemp(prefix="pf-gg-r14-")
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        for r in (self.repo,):
+            subprocess.run(["git", "-C", r, "init", "-q"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for d in (".workflow/scratch", ".pi/scratch"):
+            Path(self.repo, d).mkdir(parents=True)
+            Path(self.repo, d, "m.txt").write_text("fix(r14): conforming\n")
+        base = tempfile.mkdtemp(prefix="pf-gg-r14-tmp-")
+        self.addCleanup(shutil.rmtree, base, True)
+        session = Path(base, "pi-foreman-scratch", "01a1500b-sid")
+        self.scratch = str(session / "Lown-launch")
+        self.sibling = str(session / "Lother-launch")
+        self.outside = str(Path(base, "outside"))
+        for d in (self.scratch, self.sibling, self.outside):
+            Path(d).mkdir(parents=True)
+            Path(d, "m.txt").write_text("fix(r14): conforming\n")
+        Path(session, "m.txt").write_text("fix(r14): conforming\n")
+        self.env = dict(os.environ, FOREMAN_SCRATCH=self.scratch)
+
+    def decide(self, command, env=None):
+        d = gg.decide(command, "child", cwd=self.repo, env=self.env if env is None else env)
+        return LEVEL[d.level], d.reason
+
+    def test_child_f_pi_scratch_refused_with_git_guard_reason(self):
+        got, reason = self.decide("git commit -F .pi/scratch/m.txt")
+        self.assertEqual(got, "deny")
+        self.assertIn("is under .pi/, the main session's dir", reason)
+        self.assertIn("$FOREMAN_SCRATCH or <worktree>/.workflow/scratch/", reason)
+        self.assertNotIn("write protection", reason)
+        self.assertNotIn("fix(r14): conforming", reason)
+
+    def test_child_f_workflow_scratch_passes(self):
+        self.assertEqual(self.decide("git commit -F .workflow/scratch/m.txt"), ("allow", ""))
+
+    def test_child_f_foreman_scratch_passes(self):
+        for c in ("git commit -F $FOREMAN_SCRATCH/m.txt",
+                  'git commit -F "$FOREMAN_SCRATCH/m.txt"',
+                  "git add a; git commit --file $FOREMAN_SCRATCH/m.txt",
+                  "git commit -F '%s/m.txt'" % in_bash(self.scratch)):
+            self.assertEqual(self.decide(c), ("allow", ""), c)
+
+    def test_child_f_sibling_scratch_dir_denied(self):
+        for c in ("git commit -F '%s/m.txt'" % in_bash(self.sibling),
+                  "git commit -F $FOREMAN_SCRATCH/../Lother-launch/m.txt",
+                  "git commit -F $FOREMAN_SCRATCH/../m.txt",
+                  "git commit -F '%s/m.txt'" % in_bash(os.path.dirname(self.scratch))):
+            got, reason = self.decide(c)
+            self.assertEqual(got, "deny", c)
+            self.assertIn("cannot read the message file", reason, c)
+
+    @unittest.skipIf(sys.platform == "win32", "symlinks need privileges on Windows")
+    def test_child_f_scratch_symlink_escape_denied(self):
+        os.symlink(os.path.join(self.outside, "m.txt"), os.path.join(self.scratch, "link.txt"))
+        got, reason = self.decide("git commit -F $FOREMAN_SCRATCH/link.txt")
+        self.assertEqual(got, "deny")
+        self.assertIn("cannot read the message file", reason)
+
+    def test_child_f_inline_foreman_scratch_rebind_denied(self):
+        for c in ("FOREMAN_SCRATCH=%s git commit -F $FOREMAN_SCRATCH/m.txt" % in_bash(self.sibling),
+                  'git commit -F "${FOREMAN_SCRATCH}/m.txt"',  # outside the one word form: fails closed
+                  "export FOREMAN_SCRATCH=%s; git commit -F $FOREMAN_SCRATCH/m.txt" % in_bash(self.sibling),
+                  "FOREMAN_SCRATCH=%s; git commit -F $FOREMAN_SCRATCH/m.txt" % in_bash(self.sibling)):
+            self.assertEqual(self.decide(c)[0], "deny", c)
+
+    def test_child_f_foreman_scratch_without_launch_env_denied(self):
+        env = dict(os.environ)
+        env.pop("FOREMAN_SCRATCH", None)
+        self.assertEqual(self.decide("git commit -F $FOREMAN_SCRATCH/m.txt", env)[0], "deny")
+        # a launch env that is no pi-foreman scratch dir (the parent, the tmp root) is not trusted
+        for d in (os.path.dirname(self.scratch), self.outside):
+            self.assertEqual(self.decide("git commit -F $FOREMAN_SCRATCH/m.txt", dict(os.environ, FOREMAN_SCRATCH=d))[0], "deny", d)
+
+    def test_child_cd_other_repo_commit_denied(self):
+        other = tempfile.mkdtemp(prefix="pf-gg-r14-other-")
+        self.addCleanup(shutil.rmtree, other, True)
+        subprocess.run(["git", "-C", other, "init", "-q"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        Path(other, ".workflow", "scratch").mkdir(parents=True)
+        Path(other, ".workflow", "scratch", "m.txt").write_text("fix(r14): conforming\n")
+        got, reason = self.decide("cd %s && git commit -F .workflow/scratch/m.txt" % in_bash(other))
+        self.assertEqual(got, "deny")
+        self.assertIn("another repository", reason)
+        # a cd inside the own worktree still passes
+        self.assertEqual(self.decide("cd %s && git commit -F .workflow/scratch/m.txt" % in_bash(self.repo)), ("allow", ""))
 
 
 if __name__ == "__main__":

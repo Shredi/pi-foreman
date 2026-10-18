@@ -169,6 +169,11 @@ The foreman session owns a few places outside the workspace. Access to them is g
    `<tmp>/pi-foreman-scratch/**` except the asking child's own `$FOREMAN_SCRATCH` subtree (another child's dir). The
    operands of `git worktree remove` are left to PS, which asks. The `parent` and `child` handoff files and all
    write-protect rules keep asking or denying. A child's write permissions are therefore unchanged by this section.
+   **Child input dirs** (R14): a child keeps the files it hands to a command (a `git commit -F` message file) only in
+   `$FOREMAN_SCRATCH` or `<worktree>/.workflow/scratch/`; `.pi/scratch/` is the main session's dir. The message-file
+   operand of `git commit` / `git tag` (`-F f`, `--file f`, `--file=f`) is a read, not a write-protect word; the git
+   guard decides: inside the worktree but not below its `.pi/`, or below the exact realpath of the child's own scratch
+   dir from the launch environment (no parent, sibling or symlink escape; an inline `FOREMAN_SCRATCH=` never counts).
    The baseline rows `npm ci` and `npm install` are per user like every policy grant, so PS would allow them to
    children too; the child layer narrows them: a child's `git fetch`, `npm ci`, `npm install` and `npm i` ask
    (`npm install` rewrites `package-lock.json` and `node_modules`), the foreman keeps the two npm rows. `npm ci` and

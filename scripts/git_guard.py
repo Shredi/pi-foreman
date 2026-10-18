@@ -737,6 +737,7 @@ class Ctx(object):
     def __init__(self, mode, cwd, config, env=None):
         self.mode = mode
         self.cwd = cwd or os.getcwd()
+        self.start_cwd = self.cwd  # the hook's cwd; a plain first cd moves self.cwd (run_command)
         self.cfg = config
         self.env = dict(os.environ if env is None else env)
         self._alias_cache = {}
@@ -2270,13 +2271,61 @@ def message_file_clobbered(seg, ctx, call, target):
 CHILD_F_OPS = (None, ";", "&&")
 CHILD_F_FIX = ("write the message file in an earlier command, then commit on a line with only an optional top-level "
                "`cd <dir in the worktree> &&`, `git add` / `git status` / `git diff --cached` and one `git commit -F <file>`")
+# R14 item 2: the only dirs a child's message file may live in (docs/sessions.md, docs/permissions.md)
+CHILD_F_DIRS = "$FOREMAN_SCRATCH or <worktree>/.workflow/scratch/"
+CHILD_SCRATCH_WORD = re.compile(r'^"?\$FOREMAN_SCRATCH(/[^\s$`\\*?\[\]{}~"\'<>|&;()]+)"?$')
+
+
+def child_scratch_root(ctx):
+    """R14 item 2: the realpath of the running child's own scratch dir, from the hook's launch environment (ctx.env, never the command
+    text or a segment's inline env): an existing absolute dir `<tmp>/pi-foreman-scratch/<session>/<launch>` (childscratch.ts), else None."""
+    d = ctx.env.get("FOREMAN_SCRATCH") or ""
+    if not os.path.isabs(d):
+        return None
+    real = os.path.realpath(d)
+    if not os.path.isdir(real) or os.path.basename(os.path.dirname(os.path.dirname(real))) != "pi-foreman-scratch":
+        return None
+    return real
+
+
+def child_scratch_word(w, ctx):
+    """R14 item 2: the path a whole `$FOREMAN_SCRATCH/<rest>` word (optionally double-quoted, no other expansion) names, with the
+    launch environment's value; None when the scratch root is unset or the line names FOREMAN_SCRATCH other than as `$FOREMAN_SCRATCH`
+    (an inline `FOREMAN_SCRATCH=...`, export, read, unset: a rebound name is never trusted)."""
+    m = CHILD_SCRATCH_WORD.match(w.raw or "")
+    if not m or child_scratch_root(ctx) is None or not ctx.root or \
+            re.search(r"(?<![\w$])FOREMAN_SCRATCH(?![A-Za-z0-9_])", ctx.root[0]):
+        return None
+    return ctx.env["FOREMAN_SCRATCH"] + m.group(1)
+
+
+def child_message_dir_problem(name, real, top, ctx):
+    """R14 item 2: why a child's message file `name` (realpath `real`) is outside the child input dirs, or None. Accepted: inside the
+    worktree `top` but not below its `.pi/` (the main session's dir), or below the exact realpath of the running child's own scratch dir.
+    In-worktree paths outside `.workflow/scratch/` stay accepted (R13 lines keep passing); the docs name only the two input dirs."""
+    def under(root, p):
+        try:
+            return os.path.commonpath([root, p]) == root
+        except ValueError:  # across Windows drives
+            return False
+    top = os.path.realpath(top)
+    if under(top, real):
+        if under(os.path.join(top, ".pi"), real):
+            return "the message file %s is under .pi/, the main session's dir; a child's message file goes in %s" % (name, CHILD_F_DIRS)
+        return None
+    scratch = child_scratch_root(ctx)
+    if scratch is not None and real != scratch and under(scratch, real):
+        return None
+    return "cannot read the message file %s (a child's message file must be in %s)" % (name, CHILD_F_DIRS)
 
 
 def child_message_line_problem(seg, ctx, call, envs):
     """R13 item 2: a child's `git commit -F <file>` is read only when the whole input is one top-level line (no substitution, group,
     heredoc, here-string, pipe, input or output redirect, `||` or `&`) of an optional first `cd <literal dir>`, any number of
     `git add` / `git status` / `git diff --cached` and exactly one `git commit` (this one), and the cd target lies inside the
-    worktree of the tracked cwd (the caller's read keeps the -F file inside it). Returns why it is not, or None. An allowlist: nothing else on the line can write the
+    worktree of the tracked cwd and (R14 item 3) inside the worktree of the hook's cwd when that is one, so never another repo (the
+    caller's read keeps the -F file in the child input dirs, child_message_dir_problem). The commit's -F value may be a
+    `$FOREMAN_SCRATCH/<file>` word (child_scratch_word). Returns why it is not, or None. An allowlist: nothing else on the line can write the
     file between the guard's read and git's (replaces message_file_clobbered for children)."""
     if seg is None or seg.lexer is None or not ctx.root or seg.lexer.s != ctx.root[0]:
         return "the commit is not on the top-level line; %s" % CHILD_F_FIX
@@ -2301,7 +2350,7 @@ def child_message_line_problem(seg, ctx, call, envs):
         if s.heredocs or s.herestrings or s.ins or s.redirs or s.pipe_in or s.group or \
                 s.before not in CHILD_F_OPS or s.after not in CHILD_F_OPS:
             return "`%s` has a redirection, heredoc, pipe, group or an operator other than `;` / `&&`; %s" % (shown, CHILD_F_FIX)
-        if len(words) < 2 or any(w.dynamic for w in words) or words[0].glob or words[1].glob:
+        if len(words) < 2 or any(w.dynamic and not (s is seg and child_scratch_word(w, ctx)) for w in words) or words[0].glob or words[1].glob:
             return "`%s` is not a plain cd or git command; %s" % (shown, CHILD_F_FIX)
         prog, sub = words[0].text, words[1].text
         if prog == "cd":
@@ -2309,6 +2358,12 @@ def child_message_line_problem(seg, ctx, call, envs):
             # run_command moved ctx.cwd (so call.cwd) to a plain first cd's existing target; any other cd left cd_unsure
             if k != 0 or len(words) != 2 or t.startswith(("-", "~")) or ctx.cd_unsure or not inside(call.cwd):
                 return "`%s` is not one first `cd <dir in the worktree>`; %s" % (shown, CHILD_F_FIX)
+            # R14 item 3: a child that starts in a worktree commits only there, not in another repo it cds into
+            start = GitCall(ctx)
+            start.cwd = ctx.start_cwd
+            home = (run_git(start, ctx, ["rev-parse", "--show-toplevel"], None) or "").strip()
+            if home and os.path.realpath(home) != top:
+                return "`%s` changes into another repository than the worktree the child runs in; %s" % (shown, CHILD_F_FIX)
             continue
         if prog_name(prog) != "git":
             return "`%s` is not a cd, git add, git status, git diff --cached or the commit; %s" % (shown, CHILD_F_FIX)
@@ -2325,7 +2380,7 @@ def child_message_line_problem(seg, ctx, call, envs):
             return "`%s` is not a cd, git add, git status, git diff --cached or the commit; %s" % (shown, CHILD_F_FIX)
     if commits != 1:
         return "the commit is not a plain top-level git commit; %s" % CHILD_F_FIX
-    return None  # a -F file outside the worktree is refused by the read below ("cannot read the message file")
+    return None  # a -F file outside the child input dirs is refused by the read below (child_message_dir_problem)
 
 
 def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
@@ -2336,7 +2391,7 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
         # R13 item 2: its own reason, not the generic unread message
         return deny("children may not run `git commit --amend --no-edit`: it rewrites the last commit and keeps its message "
                     "unread by the guard (amend without a new message; message not readable, child cannot ask). "
-                    "Make a new commit with -m '<literal message>' or -F <file inside the worktree>.")
+                    "Make a new commit with -m '<literal message>' or -F <file in %s>." % CHILD_F_DIRS)
     if has(opts, "a", "all") and not pattern_only:
         return deny("commit -a/--all is not allowed: stage the files with `git add <paths>`, then commit.")
     if not pattern_only and (has(opts, "i", "include", "o", "only", "pathspec-from-file") or [w for w in pos if not w.dynamic] or dd):
@@ -2354,7 +2409,7 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
         if pattern_only and ctx.mode == "child":
             return deny("a child commit needs a message the guard can check against safety.git.commit.messagePattern "
                         "(%s; message not readable, child cannot ask). "
-                        "Use -m '<literal message>' or -F <file inside the worktree>." % why)
+                        "Use -m '<literal message>' or -F <file in %s>." % (why, CHILD_F_DIRS))
         return ask("%s; %s." % (why, way))
 
     n_file = sum(1 for name, _ in opts if name in ("F", "file"))
@@ -2389,6 +2444,10 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
                     return unread("the commit message is read from stdin that is not a literal heredoc on the commit")
                 parts.append(src[2])
                 continue
+            child = pattern_only and ctx.mode == "child"
+            scratch_path = child_scratch_word(v, ctx) if child and v.dynamic else None
+            if scratch_path is not None:
+                v = Word(scratch_path)  # R14 item 2: `$FOREMAN_SCRATCH/<file>` with the launch environment's value
             if v.dynamic:
                 return unread("the commit message is read from a computed path")
             if pattern_only and ctx.mode == "child":
@@ -2409,7 +2468,12 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
             path = os.path.join(call.cwd, v.text)
             try:
                 top = (run_git(call, ctx, ["rev-parse", "--show-toplevel"], envs) or "").strip() or call.cwd
-                if os.path.commonpath([os.path.realpath(top), os.path.realpath(path)]) != os.path.realpath(top):
+                if child:
+                    # R14 item 2: the child input dirs only, by realpath (no parent, sibling or symlink escape)
+                    where = child_message_dir_problem(v.text, os.path.realpath(path), top, ctx)
+                    if where is not None:
+                        return unread(where)
+                elif os.path.commonpath([os.path.realpath(top), os.path.realpath(path)]) != os.path.realpath(top):
                     raise OSError("outside the worktree")
                 with open(path, "rb") as fh:
                     parts.append(fh.read(1 << 20).decode("utf-8", "replace"))
