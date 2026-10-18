@@ -2291,6 +2291,9 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
                         "Use -m '<literal message>' or -F <file inside the worktree>." % why)
         return ask("%s; %s." % (why, way))
 
+    n_file = sum(1 for name, _ in opts if name in ("F", "file"))
+    if n_file > 1 or (n_file and has(opts, "m", "message")):  # git uses only the last -F; the guard would lint the first
+        return unread("the commit has several -F/--file options or -F with -m", "use a single -m or a single -F")
     for name, v in opts:
         if name in ("m", "message"):
             if v is None:
