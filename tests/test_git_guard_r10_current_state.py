@@ -36,7 +36,9 @@ class R10CurrentStateTest(unittest.TestCase):
 
     def test_r10_message_file_after_cd_asks_current_state(self):
         """R12: main mode, cd <worktree> && git commit -F <relative file> from another cwd reads the file; the pattern decides."""
-        d = gg.decide("cd %s && git commit -F .workflow/scratch/msg.txt" % self.repo, "main", cwd=self.other, config=None)
+        # A child on Windows writes the cd target into the bash line with forward slashes; native backslashes would be bash escapes.
+        in_bash = self.repo.replace("\\", "/") if sys.platform == "win32" else self.repo
+        d = gg.decide("cd %s && git commit -F .workflow/scratch/msg.txt" % in_bash, "main", cwd=self.other, config=None)
         self.assertEqual(d.level, gg.DENY)
         self.assertNotIn("cannot read the message file", d.reason)
         self.assertIn("messagePattern", d.reason)
