@@ -7,6 +7,11 @@ export class AttentionNotices {
   private readonly seen = new Set<string>();
   private readonly ended = new Set<string>();
 
+  /** Run ids whose end event arrived. */
+  get endedRuns(): ReadonlySet<string> {
+    return this.ended;
+  }
+
   /** The run's end event arrived: later notices for it are stale. */
   onRunEnd(runId: string): void {
     this.ended.add(runId);
@@ -42,4 +47,28 @@ export function dedupeToolCallNotices<M>(messages: readonly M[]): { messages: M[
     out.push(m);
   }
   return out.length === messages.length ? null : { messages: out, dropped: messages.length - out.length };
+}
+
+/**
+ * Model-context filter (R12 item 9): drops `subagent_control_notice` messages whose run already ended
+ * (`endedRunIds`). Run after dedupeToolCallNotices. Null when nothing was dropped.
+ */
+export function dropEndedRunNotices<M>(messages: readonly M[], endedRunIds: ReadonlySet<string>): { messages: M[]; dropped: number } | null {
+  if (endedRunIds.size === 0) return null;
+  const out = messages.filter((m) => {
+    const ev = isObj(m) && m.role === "custom" && m.customType === "subagent_control_notice" && isObj(m.details) && isObj(m.details.event) ? m.details.event : null;
+    return !(ev && typeof ev.runId === "string" && endedRunIds.has(ev.runId));
+  });
+  return out.length === messages.length ? null : { messages: out, dropped: messages.length - out.length };
+}
+
+/**
+ * Visible path (R12 item 9): a finalized `subagent_control_notice` the attention state does not admit (its run
+ * ended, or the same state was shown) is returned with `display: false`; anything else is null (leave it).
+ */
+export function hideStaleNotice<M>(att: AttentionNotices, m: M): M | null {
+  const ev = isObj(m) && m.role === "custom" && m.customType === "subagent_control_notice" && isObj(m.details) && isObj(m.details.event) ? m.details.event : null;
+  if (!ev || typeof ev.runId !== "string") return null;
+  const state = `${ev.reason ?? ""}:${typeof ev.toolCallId === "string" ? ev.toolCallId : ""}`;
+  return att.admit(ev.runId, state) ? null : ({ ...(m as object), display: false } as M);
 }

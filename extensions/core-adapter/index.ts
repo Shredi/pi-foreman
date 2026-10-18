@@ -71,7 +71,7 @@ import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
 import { appendReview, capSet, checksLine, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prGateRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
-import { dedupeToolCallNotices } from "./notices.ts";
+import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, hideStaleNotice } from "./notices.ts";
 import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
 import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts";
 import { denyFields, openTrace, toolErrorRecord, traceFile } from "./trace.ts";
@@ -241,6 +241,8 @@ interface Session {
   handoffWaits: Set<string>;
   /** Foreman only: custom messages handled so far, so an idle-appended one is handled once at the next input (idlecustom.ts, ledger 11). */
   customSeen: CustomSeen;
+  /** Needs-attention notices: ended runs (RUN_END_EVENTS) and what was shown (notices.ts, R12 item 9). */
+  attention: AttentionNotices;
   /** Uncounted finish refusals that ask for the builder's review_fail climb, since the last user prompt (at most 2). */
   climbRefusals: number;
   /** Foreman only: per-item FAIL counts of reviewer runs (ladder.reviewerClimb, reviewerclimb.ts). */
@@ -511,6 +513,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       waitingForParent: false,
       handoffWaits: new Set(),
       customSeen: new CustomSeen(),
+      attention: new AttentionNotices(),
       climbRefusals: 0,
       reviewerFails: new ReviewerFails(),
       reviewCount: 0,
@@ -1234,6 +1237,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.supervisor.onRunEnd(data);
         endActive(s.activeRuns, data);
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
+        if (typeof runId === "string") s.attention.onRunEnd(runId);
         if (typeof runId === "string") finishScratch(s, s.scratch.onRunEnd(runId));
         if (typeof runId === "string" && !s.isChild) {
           s.widget.runs.onRunEnd(runId);
@@ -1908,6 +1912,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const s = sessionFor(ctx);
       if (s) onCustomMessage(s, event.message);
       if (s && !s.isChild) s.customSeen.mark(event.message);
+      // R12 item 9: a needs-attention notice for a run that ended (or one already shown) is no longer displayed
+      const hidden = s && !s.isChild ? hideStaleNotice(s.attention, event.message) : null;
+      if (hidden) return { message: hidden };
     }
     if (m.role !== "assistant") return undefined;
     const s = sessionFor(ctx);
@@ -2520,8 +2527,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const s = sessionFor(ctx);
     if (!s || s.isChild || !dedupeOn(get(s.config.config, "ceremony.dedupeNotify"))) return undefined;
     const calls = dedupeToolCallNotices(event.messages);
-    const r = dedupeNotices(calls?.messages ?? event.messages);
-    if (!r) return calls ? { messages: calls.messages } : undefined;
+    const ended = dropEndedRunNotices(calls?.messages ?? event.messages, s.attention.endedRuns);
+    const r = dedupeNotices(ended?.messages ?? calls?.messages ?? event.messages);
+    const base = ended ?? calls;
+    if (!r) return base ? { messages: base.messages } : undefined;
     for (const runId of r.deduped) {
       if (s.dedupeTraced.has(runId)) continue;
       s.dedupeTraced.add(runId);
