@@ -2820,7 +2820,9 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   for (const w of pool) msgLeft.set(w, (msgLeft.get(w) ?? 0) + 1);
   for (const w of c.msgFiles!) msgLeft.set(w, (msgLeft.get(w) ?? 0) - 1);
   const msgOnly = (w: string): boolean => c.msgFiles!.includes(w) && (msgLeft.get(w) ?? 0) <= 0 && !c.writeTargets!.has(w) && !c.tmpTargets?.has(w) && !c.roTargets?.has(w);
-  const pwords = (pure ? [...new Set(c.protWords!.flatMap((w) => [w, ...expandBraces(w)]))] : words).filter((w) => notFilter(w) && !msgOnly(w));
+  // the message-file exemption is for the write protection only: the child read-block (handoffs, artifacts, siblings, other scratch) sees every word
+  const rwords = (pure ? [...new Set(c.protWords!.flatMap((w) => [w, ...expandBraces(w)]))] : words).filter(notFilter);
+  const pwords = rwords.filter((w) => !msgOnly(w));
   const pctx: MatchCtx = shell === "posix" ? { ...ctx, bashWords: true, dotGlob: /dotglob|globignore|glob_?dots/i.test(command) } : ctx;
   const removed = new Set(c.removeWords!.flatMap((w) => [w, ...expandBraces(w)]));
   const texts = [...c.unitTexts, ...c.pipeTexts];
@@ -2840,7 +2842,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(w)}'). Secret and policy paths are off limits to the agent, also through shell commands.` };
   }
   if (ctx.role === "child") {
-    for (const w of pwords) {
+    for (const w of rwords) {
       if (c.worktreeRemoveWords!.has(w)) continue;
       const hit = childBlockHit(rules, w, pctx, readOnly || ownedReadOk);
       if (hit) return childBlockDecision(hit, w);

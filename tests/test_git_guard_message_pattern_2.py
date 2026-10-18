@@ -56,7 +56,8 @@ class MessageFileCdScopeTest(unittest.TestCase):
     def test_message_file_top_level_cd_tracked(self):
         for mode in ("main", "child"):
             for c in ("cd sub && git commit -F msg.txt", "cd sub; git commit -F msg.txt", "cd sub\ngit commit -F msg.txt"):
-                self.assertEqual(decide(c, mode, self.repo)[0], "allow", (mode, c))
+                # R14 item 2 (ruling 2b): a child's message file outside <worktree>/.workflow/scratch/ is refused (sub/ is not one)
+                self.assertEqual(decide(c, mode, self.repo)[0], "allow" if mode == "main" else "deny", (mode, c))
             self.assertEqual(decide("git commit -F msg.txt", mode, self.repo)[0], "deny", mode)
         # R12 item 1: the second cd follows `&&` (not top-level), so the directory is unknown: foreman ask, child deny
         self.expect_unsure("cd sub && cd .. && git commit -F msg.txt")

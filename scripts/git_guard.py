@@ -2278,9 +2278,10 @@ CHILD_SCRATCH_WORD = re.compile(r'^"?\$FOREMAN_SCRATCH(/[^\s$`\\*?\[\]{}~"\'<>|&
 
 def child_scratch_root(ctx):
     """R14 item 2: the realpath of the running child's own scratch dir, from the hook's launch environment (ctx.env, never the command
-    text or a segment's inline env): an existing absolute dir `<tmp>/pi-foreman-scratch/<session>/<launch>` (childscratch.ts), else None."""
+    text or a segment's inline env): an existing absolute dir `<tmp>/pi-foreman-scratch/<session>/<launch>` (childscratch.ts), else None.
+    A value with white space is unresolvable (None)."""
     d = ctx.env.get("FOREMAN_SCRATCH") or ""
-    if not os.path.isabs(d):
+    if not os.path.isabs(d) or re.search(r"\s", d):
         return None
     real = os.path.realpath(d)
     if not os.path.isdir(real) or os.path.basename(os.path.dirname(os.path.dirname(real))) != "pi-foreman-scratch":
@@ -2300,19 +2301,22 @@ def child_scratch_word(w, ctx):
 
 
 def child_message_dir_problem(name, real, top, ctx):
-    """R14 item 2: why a child's message file `name` (realpath `real`) is outside the child input dirs, or None. Accepted: inside the
-    worktree `top` but not below its `.pi/` (the main session's dir), or below the exact realpath of the running child's own scratch dir.
-    In-worktree paths outside `.workflow/scratch/` stay accepted (R13 lines keep passing); the docs name only the two input dirs."""
+    """R14 item 2: why a child's message file `name` (realpath `real`) is outside the child input dirs, or None. Accepted only below
+    `<worktree>/.workflow/scratch/` (that dir its own realpath, no symlink on the way) or below the exact realpath of the running child's
+    own scratch dir; nowhere else in the worktree."""
     def under(root, p):
         try:
             return os.path.commonpath([root, p]) == root
         except ValueError:  # across Windows drives
             return False
     top = os.path.realpath(top)
+    wf = os.path.join(top, ".workflow", "scratch")
+    if real != wf and os.path.realpath(wf) == wf and under(wf, real):
+        return None
     if under(top, real):
         if under(os.path.join(top, ".pi"), real):
             return "the message file %s is under .pi/, the main session's dir; a child's message file goes in %s" % (name, CHILD_F_DIRS)
-        return None
+        return "the message file %s is in the worktree outside .workflow/scratch/; a child's message file goes in %s" % (name, CHILD_F_DIRS)
     scratch = child_scratch_root(ctx)
     if scratch is not None and real != scratch and under(scratch, real):
         return None

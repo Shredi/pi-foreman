@@ -38,6 +38,50 @@ test("child_git_commit_F_pi_scratch_left_to_git_guard", () => {
   ]) assert.equal(sh(cmd), "pass", `${cmd}: ${checkToolCall(rules, "bash", { command: cmd }, child)?.reason}`);
 });
 
+// R14 ruling 2a: the message-file exemption lifts only the write protection; the child read-block (handoffs, other children's scratch)
+// still sees the -F operand, so `git tag -a v -F <handoff>` (git_guard lints only commits) and `git commit -F <blocked>` stay denied.
+const inBash = (p: string): string => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
+const scratchRoot = path.join(w, "tmp", "pi-foreman-scratch");
+const ownScratch = path.join(scratchRoot, "s1", "Lown");
+const otherScratch = path.join(scratchRoot, "s1", "Lother");
+const handoff = path.join(ag, "pi-foreman", "handoffs", "s1", "handoff.md");
+for (const d of [ownScratch, otherScratch, path.dirname(handoff)]) fs.mkdirSync(d, { recursive: true });
+for (const f of [path.join(ownScratch, "m.txt"), path.join(otherScratch, "m.txt"), handoff, path.join(ws, ".workflow", "scratch", "m.txt")]) fs.writeFileSync(f, "subject\n");
+const rulesB: OverlayRules = buildOverlayRules(baseline, {}, {}, ag, ws, undefined, false, { readWrite: [], readOnly: [], childScratchRoot: scratchRoot });
+const childB: MatchCtx = { ...child, scratch: ownScratch };
+const shB = (command: string): { kind: string; reason?: string } => { const d = checkToolCall(rulesB, "bash", { command }, childB); return { kind: d?.kind ?? "pass", reason: d?.reason }; };
+
+test("child_git_tag_F_handoff_file_denied", () => {
+  const d = shB(`git tag -a v -F ${inBash(handoff)}`);
+  assert.equal(d.kind, "deny");
+  assert.match(d.reason!, /handoff, artifact and configuration paths/);
+});
+
+test("child_git_commit_F_handoff_file_denied", () => {
+  for (const cmd of [`git commit -F ${inBash(handoff)}`, `git commit --file=${inBash(handoff)}`]) {
+    const d = shB(cmd);
+    assert.equal(d.kind, "deny", cmd);
+    assert.match(d.reason!, /handoff, artifact and configuration paths/, cmd);
+  }
+});
+
+test("child_git_commit_F_other_child_scratch_denied", () => {
+  const d = shB(`git commit -F ${inBash(path.join(otherScratch, "m.txt"))}`);
+  assert.equal(d.kind, "deny");
+  assert.match(d.reason!, /pi-foreman-scratch/);
+});
+
+test("child_git_commit_F_pi_scratch_reaches_git_guard_not_write_protection", () => {
+  // the overlay passes it on; git_guard refuses it (tests/test_git_guard_child_commit_f.py test_child_f_pi_scratch_refused_with_git_guard_reason)
+  assert.deepEqual(shB(`git commit -F .pi/scratch/m.txt`), { kind: "pass", reason: undefined });
+});
+
+test("child_git_commit_F_workflow_and_own_scratch_pass", () => {
+  for (const cmd of [`git commit -F .workflow/scratch/m.txt`, `git commit -F ${inBash(path.join(ownScratch, "m.txt"))}`, `git commit -F $FOREMAN_SCRATCH/m.txt`]) {
+    assert.equal(shB(cmd).kind, "pass", `${cmd}: ${shB(cmd).reason}`);
+  }
+});
+
 test("child_msgfile_other_positions_still_protected", () => {
   // the same overlay verdict as before R14: a write, another subcommand, a value of -m, a pathspec, an attached or combined short form
   for (const cmd of [

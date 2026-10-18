@@ -48,7 +48,11 @@ class MultiMessageFileTest(unittest.TestCase):
         self.expect_unread("git commit -m 'fix: x' -F other.txt")
 
     def test_single_conforming_message_file_unchanged(self):
-        self.assertEqual(decide("git commit -F ok.txt", "child", self.repo)[0], "allow")
+        # R14 item 2 (ruling 2b): a child's message file is read only from <worktree>/.workflow/scratch/ (or $FOREMAN_SCRATCH)
+        Path(self.repo, ".workflow", "scratch").mkdir(parents=True)
+        Path(self.repo, ".workflow", "scratch", "ok.txt").write_text("fix(r12): x\n")
+        self.assertEqual(decide("git commit -F .workflow/scratch/ok.txt", "child", self.repo)[0], "allow")
+        self.assertEqual(decide("git commit -F ok.txt", "child", self.repo)[0], "deny")
         self.assertEqual(decide("git commit -F ok.txt", "main", self.repo)[0], "allow")
 
 

@@ -181,8 +181,8 @@ def in_bash(p):
 
 class ChildMessageInputDirsTest(unittest.TestCase):
     """R14 items 2 and 3: a child's message file lives in $FOREMAN_SCRATCH (the exact realpath of its own scratch dir from the launch
-    environment) or the worktree, never under the worktree's .pi/ (the main session's dir); a sibling or parent scratch dir, a symlink
-    escape, an inline FOREMAN_SCRATCH rebind and a cd into another repo are denied."""
+    environment) or <worktree>/.workflow/scratch/, nowhere else in the worktree (ruling 2b); a sibling or parent scratch dir, a symlink
+    escape, an inline FOREMAN_SCRATCH rebind, a launch value with white space and a cd into another repo are denied."""
 
     def setUp(self):
         self.repo = tempfile.mkdtemp(prefix="pf-gg-r14-")
@@ -274,6 +274,49 @@ class ChildMessageInputDirsTest(unittest.TestCase):
         self.assertIn("another repository", reason)
         # a cd inside the own worktree still passes
         self.assertEqual(self.decide("cd %s && git commit -F .workflow/scratch/m.txt" % in_bash(self.repo)), ("allow", ""))
+
+    def test_child_f_worktree_non_scratch_denied(self):
+        # R14 ruling 2b: the worktree outside .workflow/scratch/ is no child message dir (the root, a subdir, .workflow/ itself)
+        Path(self.repo, "msg.txt").write_text("fix(r14): conforming\n")
+        Path(self.repo, "sub").mkdir()
+        Path(self.repo, "sub", "m.txt").write_text("fix(r14): conforming\n")
+        Path(self.repo, ".workflow", "m.txt").write_text("fix(r14): conforming\n")
+        for c in ("git commit -F msg.txt", "git commit -F sub/m.txt", "cd sub && git commit -F m.txt", "git commit -F .workflow/m.txt",
+                  "git commit -F '%s/msg.txt'" % in_bash(self.repo), "git commit -F .workflow/scratch/../m.txt"):
+            got, reason = self.decide(c)
+            self.assertEqual(got, "deny", c)
+            self.assertIn("in the worktree outside .workflow/scratch/", reason, c)
+            self.assertIn("$FOREMAN_SCRATCH or <worktree>/.workflow/scratch/", reason, c)
+
+    def test_child_f_cd_into_workflow_relative_passes(self):
+        self.assertEqual(self.decide("cd .workflow && git commit -F scratch/m.txt"), ("allow", ""))
+
+    @unittest.skipIf(sys.platform == "win32", "symlinks need privileges on Windows")
+    def test_child_f_workflow_scratch_symlink_escape_denied(self):
+        Path(self.repo, "msg.txt").write_text("fix(r14): conforming\n")
+        os.symlink(os.path.join(self.repo, "msg.txt"), os.path.join(self.repo, ".workflow", "scratch", "link.txt"))
+        self.assertEqual(self.decide("git commit -F .workflow/scratch/link.txt")[0], "deny")
+
+    @unittest.skipIf(sys.platform == "win32", "symlinks need privileges on Windows")
+    def test_child_f_workflow_scratch_dir_symlink_denied(self):
+        repo = tempfile.mkdtemp(prefix="pf-gg-r14-ln-")
+        self.addCleanup(shutil.rmtree, repo, True)
+        subprocess.run(["git", "-C", repo, "init", "-q"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        Path(repo, "elsewhere").mkdir()
+        Path(repo, "elsewhere", "m.txt").write_text("fix(r14): conforming\n")
+        Path(repo, ".workflow").mkdir()
+        os.symlink(os.path.join(repo, "elsewhere"), os.path.join(repo, ".workflow", "scratch"))
+        d = gg.decide("git commit -F .workflow/scratch/m.txt", "child", cwd=repo, env=self.env)
+        self.assertEqual(LEVEL[d.level], "deny")
+
+    def test_child_f_foreman_scratch_whitespace_value_denied(self):
+        spaced = os.path.join(os.path.dirname(self.scratch), "L sp launch")
+        Path(spaced).mkdir()
+        Path(spaced, "m.txt").write_text("fix(r14): conforming\n")
+        env = dict(os.environ, FOREMAN_SCRATCH=spaced)
+        for c in ("git commit -F $FOREMAN_SCRATCH/m.txt", 'git commit -F "$FOREMAN_SCRATCH/m.txt"', "git commit -F '%s/m.txt'" % in_bash(spaced)):
+            self.assertEqual(self.decide(c, env)[0], "deny", c)
+        self.assertIsNone(gg.child_scratch_root(gg.Ctx("child", self.repo, gg.merge_config(gg.DEFAULT_CONFIG, {}), env=env)))
 
 
 if __name__ == "__main__":

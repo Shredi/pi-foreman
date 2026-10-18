@@ -128,7 +128,7 @@ touches `.ask` and shows the session as blocked in Herdr (`herdr:blocked`, label
   still changed is ignored until the parent writes it again (a newer mtime). Self-written marks live in memory.
 - **Child input dirs.** A child writes the files it passes to a command (its `git commit -F` message file) only into
   `$FOREMAN_SCRATCH` or `<worktree>/.workflow/scratch/`; `.pi/scratch/` is the main session's dir, and the git guard
-  refuses a child message file there (docs/permissions.md, overlay narrowing).
+  refuses a child message file there and anywhere else in the worktree (docs/permissions.md, overlay narrowing).
 - **`bg_wait` during a builder's supervisor ask.** pi-foreman does not refuse it (`bg_wait` is exempt from the supervisor window).
   The pi-subagents package (node_modules, not editable here) ends the wait with "Wait yielded for a pending supervisor
   request"; background work continues, so answer with `subagent_supervisor` and call `bg_wait` again.
