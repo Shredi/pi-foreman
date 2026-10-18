@@ -2,7 +2,9 @@
 // failed with `run failed: repeated guarded-token probe` (stderr, exit code 1, block reason), aborts its turn and traces
 // `child_repeat_refusal`; every later tool call is blocked (no third attempt). The parent's runEndOf reads the marker as repeatRefusal
 // (the R11 policy_block family): failed, not paused, no retry, no climb, no relaunch hint.
-// Probe lines: `git worktree add|prune` are foreman-only worktree ops the overlay denies for a child (permoverlay.ts checkShell).
+// Only probe-class reasons (launchwait.ts REPEAT_STOP_REASONS) are stop-eligible; a repeated cd outside the workspace never stops a run.
+// Probe lines: `HOME=/x; ls ~` binds HOME and uses it (a stop-eligible rebinding deny); `git worktree add|prune` are foreman-only
+// worktree ops and `cd /` leaves the workspace (denied for a child, not stop-eligible) (permoverlay.ts checkShell).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -10,7 +12,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import coreAdapter from "../index.ts";
 import { LadderState } from "../ladder.ts";
-import { launchWaitText, REPEAT_REFUSAL_ERROR, REPEAT_REFUSAL_LINE, runEndOf } from "../launchwait.ts";
+import { launchWaitText, REPEAT_REFUSAL_ERROR, REPEAT_REFUSAL_LINE, REPEAT_STOP_REASONS, runEndOf } from "../launchwait.ts";
 import { r11Rig } from "./_r11rig.ts";
 import { rmTestTmp } from "./_tmpbase.ts";
 
@@ -98,12 +100,13 @@ async function childRig(t: { after(fn: () => void | Promise<void>): void }) {
 
 test("child_second_identical_deny_stops_run", async (t) => {
   const c = await childRig(t);
-  const first = await c.bash("git worktree add ../x");
+  const first = await c.bash("HOME=/x; ls ~");
   assert.equal(first?.block, true);
+  assert.match(first?.reason ?? "", /the line binds HOME and uses it/);
   assert.doesNotMatch(first?.reason ?? "", new RegExp(REPEAT_REFUSAL_ERROR));
   assert.equal(c.aborts(), 0);
   assert.equal(c.events("child_repeat_refusal").length, 0);
-  const second = await c.bash("git worktree add ../x");
+  const second = await c.bash("HOME=/x; ls ~");
   assert.equal(second?.block, true);
   assert.match(second?.reason ?? "", new RegExp(REPEAT_REFUSAL_ERROR));
   assert.ok((second?.reason ?? "").includes(first!.reason!), "the stop names the refusal");
@@ -131,6 +134,51 @@ test("child_two_different_denies_do_not_stop", async (t) => {
   assert.equal(c.aborts(), 0);
   assert.equal(c.events("child_repeat_refusal").length, 0);
   assert.doesNotMatch((await c.bash("ls"))?.reason ?? "", new RegExp(REPEAT_REFUSAL_ERROR));
+});
+
+test("child_repeated_cd_outside_workspace_does_not_stop", async (t) => {
+  const c = await childRig(t);
+  for (let i = 0; i < 5; i++) {
+    const r = await c.bash("cd /");
+    assert.equal(r?.block, true, `cd ${i}`);
+    assert.match(r?.reason ?? "", /children may cd only inside the workspace/);
+    assert.doesNotMatch(r?.reason ?? "", new RegExp(REPEAT_REFUSAL_ERROR));
+  }
+  // a repeated worktree-op deny is no probe either
+  for (let i = 0; i < 3; i++) assert.doesNotMatch((await c.bash("git worktree add ../x"))?.reason ?? "", new RegExp(REPEAT_REFUSAL_ERROR));
+  assert.equal(c.aborts(), 0);
+  assert.equal(c.events("child_repeat_refusal").length, 0);
+  // the run goes on: a harmless call passes
+  assert.equal((await c.bash("ls"))?.block, undefined);
+});
+
+test("repeat_stop_reasons_eligible_and_not", () => {
+  const hit = (r: string): boolean => REPEAT_STOP_REASONS.some((re) => re.test(r));
+  const eligible = [
+    "pi-foreman: 'x.py' denied for a child: the script spells a guarded token from pieces (split literal reassembles a guarded token). No split, concatenated or encoded guarded tokens; a probe that needs one runs through the test suite's fixtures.",
+    "pi-foreman: denied by the permission policy (the line binds HOME and uses it; a rebound HOME is never trusted as a path). Use the literal path.",
+    "pi-foreman: denied by the permission policy (the line binds FOREMAN_SCRATCH and uses it; a rebound FOREMAN_SCRATCH is never trusted as a path). Use the literal path.",
+    "pi-foreman: denied by the permission policy ('$S/x' uses a variable this line rebinds; only an unbound $S / $FOREMAN_SCRATCH names your scratch dir). Use the literal path or S=$FOREMAN_SCRATCH alone.",
+    "pi-foreman: denied by the permission policy (write target '$D/x' uses a variable this line binds, and the line is outside the resolvable grammar). Use the literal path.",
+    "pi-foreman: a session cannot write its own parent's ruling.",
+    "pi-foreman: denied by the permission policy (path rule '~/.ssh/*' matched '~/.ssh/id_rsa'). Secret and policy paths are off limits to the agent, also through shell commands.",
+    "pi-foreman: denied by the permission policy (path rule '/a/agent/foreman.json' matched '/a/agent/foreman.json'). The foreman's handoff, artifact and configuration paths are not for subagents; ask the foreman.",
+    "pi-foreman: denied by the permission policy (path rule '**/.env' matched '.env' for read).",
+    "pi-foreman: denied by the write protection (rule '.git/hooks/*' matches in a bash write). Git internals, agent and harness configuration are off limits to subagents; ask the foreman.",
+  ];
+  const not = [
+    "pi-foreman: denied by the permission policy (children may cd only inside the workspace). Use a path below the workspace root, or work with relative paths from it.",
+    "pi-foreman: denied by the permission policy (path rule '*.worktrees/*' matched '../repo.worktrees/r2/x'). The foreman's handoff, artifact and configuration paths are not for subagents; ask the foreman.",
+    "pi-foreman: denied by the permission policy (path rule '/v/T/pi-foreman-scratch/s1' matched '/v/T/pi-foreman-scratch/s1/x'). The foreman's handoff, artifact and configuration paths are not for subagents; ask the foreman.",
+    "pi-foreman: denied by the permission policy (git worktree add is the foreman's; children may only list worktrees). Ask the foreman.",
+    "pi-foreman: write to /tmp/x denied for a child: use FOREMAN_SCRATCH (/s), not /tmp.",
+    "pi-foreman: npm install needs approval (it may rewrite node_modules).",
+    "pi-foreman: [child_read_budget_exceeded] 40 read calls (limit 40). Stop reading: return your report now.",
+    "pi-foreman: [recheck_budget_exceeded] the reviewer passed; finish now.",
+    "pi-foreman: review launch refused [review_cap]: 3 reviewer run(s) already ran for this prompt (ceremony.reviewRuns 3).",
+  ];
+  for (const r of eligible) assert.ok(hit(r), r);
+  for (const r of not) assert.ok(!hit(r), r);
 });
 
 const STOPPED = `pi-foreman: ${REPEAT_REFUSAL_ERROR}: the same refusal twice in this run, so the run is stopped and not retried.`;

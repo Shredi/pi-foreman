@@ -69,6 +69,23 @@ export interface RunEnd {
 /** The error a child marks its run failed with after the second identical overlay deny reason in that run (R12 item 4). */
 export const REPEAT_REFUSAL_ERROR = "run failed: repeated guarded-token probe";
 
+/**
+ * The probe-class deny reasons a repeat may stop a child run on (R12 item 4, parent ruling 1): the count stays keyed by the exact reason,
+ * but only a reason matching one of these is stop-eligible. Guarded-literal split/concatenated/encoded forms; HOME/FOREMAN_SCRATCH/$S
+ * rebinding; a self-ruling write; protected-config and credential path reads and writes (path rules other than `*.worktrees/*` and a
+ * scratch root; the write protection). Never: cd outside the workspace, worktree paths, npm/install asks, temp-dir writes, read-budget
+ * and review-cap refusals.
+ */
+export const REPEAT_STOP_REASONS: readonly RegExp[] = [
+  /split literal reassembles a guarded token/,
+  /\(the line binds [A-Za-z_]+ and uses it;/,
+  /uses a variable this line rebinds; only an unbound \$S/,
+  /write target '.*' uses a variable this line binds/,
+  /cannot write its own parent's ruling/,
+  /\(path rule '(?![^']*(?:\.worktrees|scratch))[^']*' matched /,
+  /denied by the write protection \(rule '/,
+];
+
 /** The line a repeat_refusal run's report carries: stopped, not retried, not climb-eligible (the policy_block family). */
 export const REPEAT_REFUSAL_LINE = `pi-foreman: this run was stopped by its own guard (${REPEAT_REFUSAL_ERROR}: the same refusal twice in one run) and is not retried: the harness does not relaunch it and it is not climb-eligible. Read the refusal in its output; do not relaunch the same task unchanged.`;
 

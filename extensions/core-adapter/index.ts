@@ -112,7 +112,7 @@ import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
-import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
+import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import type { CloseReport } from "./close.ts";
 import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, sessionModelOf } from "./session.ts";
@@ -1397,18 +1397,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, ...(s.usage.line.workspace ? { foremanRoot: workspaceOf(s.usage.line.workspace).root } : {}), readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub, ownReads: ownUsageReadable(s.agentDir, platform, s.id) }) });
     const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) });
     if (d) s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: r ? (d.kind === "deny" ? "deny" : "ask-denied") : "ask-approved", ...(r ? denyFields((d as { reason?: unknown }).reason, toolName, input, s.isChild ? s.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) : {}) });
-    // R12 item 4: the second identical deny reason (exact string) within one child run stops that run (repeatRefusalStop)
-    if (s.isChild && r && d?.kind === "deny") {
-      const key = `${s.id}\0${d.reason}`;
-      const n = (childDenyCounts.get(key) ?? 0) + 1;
-      childDenyCounts.set(key, n);
-      if (n >= 2) return repeatRefusalStop(s, ctx, d.reason);
-    }
+    if (s.isChild && r && d?.kind === "deny") return repeatedDeny(s, ctx, d.reason) ?? r;
     return r;
   }
 
   /** Child deny reasons per child session (one child run): count by exact reason (R12 item 4). */
   const childDenyCounts = new Map<string, number>();
+
+  /**
+   * R12 item 4: the second identical stop-eligible deny reason (exact string, matching REPEAT_STOP_REASONS) within one child run stops
+   * that run (repeatRefusalStop); other deny reasons (cd outside the workspace, worktree paths, temp-dir writes ...) never stop it.
+   */
+  function repeatedDeny(s: Session, ctx: ExtensionContext, reason: string): { block: true; reason: string } | undefined {
+    if (!s.isChild || !REPEAT_STOP_REASONS.some((re) => re.test(reason))) return undefined;
+    const key = `${s.id}\0${reason}`;
+    const n = (childDenyCounts.get(key) ?? 0) + 1;
+    childDenyCounts.set(key, n);
+    return n >= 2 ? repeatRefusalStop(s, ctx, reason) : undefined;
+  }
   /** Child sessions stopped by repeatRefusalStop, with the block reason every later tool call of the run gets. */
   const repeatStopped = new Map<string, string>();
 
@@ -1457,7 +1463,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const why = rs && selfRulingRefusal(event.toolName, event.input as Record<string, unknown>, ctx.cwd, childDirsOf(rs));
       if (why) {
         rs.trace?.emit({ event: "guard", guard: "self_ruling", toolFamily: event.toolName, decision: "blocked", ...denyFields(`self_ruling: ${why}`, event.toolName, event.input, rs.isChild ? rs.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) });
-        return { block: true, reason: `pi-foreman: ${why}.` };
+        return repeatedDeny(rs, ctx, why) ?? { block: true, reason: `pi-foreman: ${why}.` };
       }
     }
     // Role tool denial (roledeny.ts): a child's tool matching roles.<role>.denyTools is denied, never asked.

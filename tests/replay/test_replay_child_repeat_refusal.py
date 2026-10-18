@@ -1,6 +1,7 @@
 """R12 item 4: a child that gets the same overlay deny twice stops its run (replay fixture child_repeat_refusal).
 
-The builder runs `git worktree add ../x` (foreman-only, denied for a child) twice: the second identical deny reason stops the run with
+The builder runs `HOME=x; touch ~/rebound.txt` (binds HOME and uses it: a stop-eligible probe-class deny, launchwait.ts
+REPEAT_STOP_REASONS) twice: the second identical deny reason stops the run with
 `run failed: repeated guarded-token probe` and the child traces `child_repeat_refusal`; its third scripted step (`touch third.txt`)
 never runs (no third attempt) and the foreman launches the builder once (no auto-retry).
 Same prerequisites and skips as test_replay.py."""
@@ -29,6 +30,7 @@ class TestChildRepeatRefusal(ReplayCase):
         self.assertEqual([s.get("decision") for s in stops], ["stopped"], stops)
         # no third attempt: the step after the stop never ran
         self.assertFalse((rig.project / "third.txt").exists())
+        self.assertFalse((rig.project / "x" / "rebound.txt").exists())
         self.assertFalse((rig.project.parent / "x").exists())
         # no auto-retry: one builder launch
         launches = [r for r in events if r.get("event") == "role_launch"]

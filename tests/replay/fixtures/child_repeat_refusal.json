@@ -9,10 +9,10 @@
  "builder": {
   "bld": [
    {"tools": [
-    {"name": "bash", "arguments": {"command": "git worktree add ../x"}}
+    {"name": "bash", "arguments": {"command": "HOME=x; touch ~/rebound.txt"}}
    ]},
    {"tools": [
-    {"name": "bash", "arguments": {"command": "git worktree add ../x"}}
+    {"name": "bash", "arguments": {"command": "HOME=x; touch ~/rebound.txt"}}
    ]},
    {"tools": [
     {"name": "bash", "arguments": {"command": "touch third.txt"}}
