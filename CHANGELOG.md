@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Round 13
+- Self-ruling guard reads lexed write surfaces through the new `scripts/shell_facts.py`, built on the git_guard Lexer; it fails closed and matches `ruling*.md` only, never `*.ack`. Computed scripts, sed `e`/`w`/`W`, find actions and computed program names count as computed writes.
+- Child `git commit -F` allowlist: an optional `cd`, then `git add`/`status`/`diff --cached`, then one commit. Glob and `~` message paths are denied, and `--amend --no-edit` has its own deny reason; `message_file_clobbered` is now used only on the foreman's path.
+- Revision rounds are keyed per review chain. A parent ruling line `revision-round: +1` resets a chain once, and only when the ruling is newer than the refusal; the refusal names the chain and both reset paths.
+- The foreman's own async run ids are recorded at launch; `$TMPDIR` run-log reads are allowed for read-only verbs.
+- Pi's truncated bash output log (`details.fullOutputPath`) is readable by its own session for read-only verbs. New dialogs family `own bash output log`; `cut` is now a read verb.
+- Tests: `waitQuiet` is shared in `test/_tmpbase.ts`, and tests shut the adapter down before removing temp dirs.
+- R12 leftovers: stale comments fixed, the `REPEAT_STOP_REASONS` docs row added, `HUB_ROOT_FIX` referenced from the test, and the permissions renderer refusal prints one line and exits 2.
+
 ### Round 12
 - Commit-message lint is uniform for foreman and children; the cd guard tracks only top-level `cd` and never reads message text; an unreadable message is a child deny; `-F -` with a literal heredoc is linted on its body.
 - Own `state/usage` and live-session files stay readable by read-only verbs ahead of the protected-config write rule; writes stay protected.
