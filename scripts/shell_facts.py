@@ -58,6 +58,8 @@ LINK_CODE = re.compile(r"\b(?:sym)?link(?:Sync|_to)?\s*\(|\bhardlink_to\b|\bsyml
 RULING = re.compile(r"^ruling(?:-\d{1,6})?\.md$")
 RULING_IN = re.compile(r"(?<![A-Za-z0-9_-])ruling(?:-\d{1,6})?\.md(?![A-Za-z0-9_])")
 SED_E_CMD = re.compile(r"(?:^|[;\n{}])\s*(?:[0-9$,~!]+|/(?:[^/\\\n]|\\.)*/[IM]*)*\s*e(?:\s|[;}]|$)")
+SED_CUSTOM_ADDR = re.compile(r"(?:^|[;\n{},!])\s*\\")
+FIND_ACTION = re.compile(r"^-(exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)$")
 SED_S_FLAGS = re.compile(r"s([^\\\n])(?:(?!\1)[^\\\n]|\\.)*\1(?:(?!\1)[^\\\n]|\\.)*\1([a-zA-Z0-9]*)")
 COMPUTED = gg.Word("\0", dynamic=True, raw="$(xargs)")
 UNKNOWN_SCRATCH = os.path.join(tempfile.gettempdir(), "pi-foreman-scratch-unknown")
@@ -304,28 +306,62 @@ def copier(name, args, st):
 
 
 def sed_call(args, st):
-    scripts, files, inplace = [], [], False
-    i = 0
-    explicit = False
+    """Options normalised first: `-e X`, `-eX`, `-ne X`, `--expression[=]X`; `-f`/`--file` scripts are unknown."""
+    scripts, files, inplace, explicit, unsure = [], [], False, False, False
+    i, opts = 0, True
     while i < len(args):
-        t = args[i].text
-        if t in ("-e", "--expression") and i + 1 < len(args):
-            scripts.append(args[i + 1])
-            explicit = True
-            i += 2
-            continue
-        if t in ("-f", "--file") and i + 1 < len(args):
-            explicit = True
-            i += 2
-            continue
-        if t.startswith("-i") or t.startswith("--in-place") or (t.startswith("-") and not t.startswith("--") and "i" in t[1:]):
-            inplace = True
-        if not t.startswith("-") or t == "-":
-            files.append(args[i])
+        w = args[i]
+        t = w.text
+        nxt = args[i + 1] if i + 1 < len(args) else None
+        if opts and t == "--":
+            opts = False
+        elif opts and t.startswith("--"):
+            key, eq, val = t.partition("=")
+            if key in ("--expression", "--file"):
+                explicit = True
+                unsure = unsure or key == "--file"
+                s = gg.Word(val) if eq else nxt
+                if not eq:
+                    i += 1
+                if key == "--expression" and s is not None:
+                    scripts.append(s)
+            elif key == "--in-place":
+                inplace = True
+            elif key == "--line-length" and not eq:
+                i += 1
+        elif opts and t.startswith("-") and len(t) > 1:
+            for k, c in enumerate(t[1:], 1):
+                rest = t[k + 1:]
+                if c in "ef":
+                    explicit = True
+                    s = gg.Word(rest) if rest else nxt
+                    if not rest:
+                        i += 1
+                    if c == "f":
+                        unsure = True
+                    elif s is not None:
+                        scripts.append(s)
+                    break
+                if c == "i":
+                    inplace = True  # the rest of the cluster is the backup suffix
+                    break
+                if c == "l":
+                    if not rest:
+                        i += 1
+                    break
+        else:
+            files.append(w)
         i += 1
     if not explicit and files:
         scripts.append(files.pop(0))
+    if unsure:
+        add(st, "sed-f", None)  # script file: unknown commands, fully computed write
     for s in scripts:
+        if not re.search(r"[ewW\0]", s.text):
+            continue  # no e, w or W anywhere: no command can write
+        if "\0" in s.text or SED_CUSTOM_ADDR.search(s.text):
+            add(st, "sed-e", None)  # computed script or a \cREc address we do not parse: fully computed write
+            continue
         if SED_E_CMD.search(s.text) or any("e" in m.group(2) for m in SED_S_FLAGS.finditer(s.text)):
             add(st, "sed-e", None)  # the e command / s///e flag runs a shell command: computed write
         for m in re.finditer(r"(?:^|[;\n}]|/[gpiImMe0-9]*)\s*[wW]\s+([^;\n}]+)", s.text):
@@ -459,6 +495,10 @@ def command(words, seg, flavor, st, depth):
         return
     if name in ("sed", "gsed"):
         sed_call(args, st)
+        return
+    if name == "find":
+        if any(FIND_ACTION.match(w.text) for w in args):
+            add(st, "find", None)  # -exec/-ok run a command, -delete/-fprint/-fls write: fully computed write
         return
     if name in ("truncate", "touch", "shred"):
         skip = False

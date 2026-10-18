@@ -65,7 +65,28 @@ const DENY: Array<[string, (r: Rig) => string]> = [
   ["xargs touch from stdin", (r) => `echo ${r.H}/ruling.md | xargs touch`],
   ["awk system", (r) => `awk 'BEGIN{system("touch ${r.H}/ruling.md")}'`],
   ["find -exec", (r) => `find ${r.H} -name ruling.md -exec touch {} +`],
+  ["find -exec sh -c on r*.md", (r) => `find ${r.H} -name 'r*.md' -exec sh -c 'echo APPROVED > "$1"' _ {} \\;`],
+  ["find -type f -exec touch {} +", (r) => `find ${r.H} -type f -exec touch {} +`],
+  ["find -delete", (r) => `find ${r.H} -name 'r*' -delete`],
+  ["sed --expression=1e", (r) => `sed --expression='1e touch ${r.H}/ruling.md' ${r.S}/usage.json`],
+  ["sed -e1e (one word)", (r) => `sed '-e1e touch ${r.H}/ruling.md' ${r.S}/usage.json`],
+  ["sed -ne 1e", (r) => `sed -ne '1e touch ${r.H}/ruling.md' ${r.S}/usage.json`],
+  ["sed custom-delimiter address then e", (r) => `sed '\\,a,e touch ${r.H}/ruling.md' ${r.S}/usage.json`],
+  ["sed -f script file", (r) => `sed -f script.sed ${r.S}/usage.json`],
 ];
+
+const PASS_R2: Array<[string, (r: Rig) => string]> = [
+  ["find -name x -print", (r) => `find ${r.H} -name x -print`],
+  ["sed -n -e s///p", (r) => `sed -n -e 's/a/b/p' ${r.S}/usage.json`],
+  ["sed -n s///p", (r) => `sed -n 's/a/b/p' ${r.S}/usage.json`],
+];
+
+for (const [name, line] of PASS_R2) {
+  test(`r13 named pass (round 2): ${name}`, async () => {
+    const r = rig();
+    assert.equal(await run(r, line(r)), undefined, line(r));
+  });
+}
 
 for (const [name, line] of DENY) {
   test(`r13 deny: ${name}`, async () => {

@@ -102,6 +102,31 @@ class ShellFactsTest(unittest.TestCase):
             self.assertTrue(any(x["dir"] is None and x["name"] in (None, "ruling.md") for x in w), (name, w))
         self.assertEqual(self.writes("sed -n 's/a/b/p' /s/x"), [])
 
+    def test_review_round2_deny_cases_are_fully_computed(self):
+        cases = {
+            "find -exec sh -c": "find /h -name 'r*.md' -exec sh -c 'echo APPROVED > \"$1\"' _ {} \\;",
+            "find -exec touch +": "find /h -type f -exec touch {} +",
+            "find -execdir": "find /h -execdir touch x \\;",
+            "find -ok": "find /h -ok touch {} \\;",
+            "find -delete": "find /h -name x -delete",
+            "find -fprint": "find /h -fprint /s/out",
+            "sed --expression=": "sed --expression='1e touch /h/ruling.md' /s/x",
+            "sed --expression X": "sed --expression '1e touch /h/ruling.md' /s/x",
+            "sed -eX": "sed '-e1e touch /h/ruling.md' /s/x",
+            "sed -ne X": "sed -ne '1e touch /h/ruling.md' /s/x",
+            "sed custom address": "sed '\\,a,e touch /h/ruling.md' /s/x",
+            "sed custom address after comma": "sed '1,\\cxce touch /h/ruling.md' /s/x",
+            "sed -f": "sed -f script.sed /s/x",
+            "sed --file=": "sed --file=script.sed /s/x",
+            "sed computed script": 'sed "$S" /s/x',
+        }
+        for name, line in cases.items():
+            w = self.writes(line)
+            self.assertTrue(any(x["dir"] is None and x["name"] is None for x in w), (name, w))
+        for line in ("find /h -name x -print", "ls /h", "grep -rln x /h", "sed -n 's/a/b/p' /s/x",
+                     "sed -n -e 's/a/b/p' -e '1,3p' /s/x", "sed --expression=s/a/b/ /s/x", "sed -E 's/x+/y/' /s/x"):
+            self.assertEqual(self.writes(line), [], line)
+
     def test_unreadable_line_is_an_error(self):
         self.assertIsNotNone(sf.facts({"command": "echo 'open", "cwd": self.cwd})["error"])
 
