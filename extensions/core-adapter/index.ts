@@ -1177,7 +1177,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // ceremony.ledgerHelper tool/bash: a pure-ledger shell command is not a re-check (ledgercall.ts).
     const ledgerOnly = toolName === "bash" && ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper")) !== "off" && isLedgerOnlyCommand(inp.command);
     // harness-friction: a handoff poll (ruling.md, owned dirs) or a git worktree add|list|prune is no re-check (recheckexempt.ts).
-    const handoff = recheckExempt(toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, owned: s.owned });
+    // R12 item 8: reads of the session's own bg_run outputs (`.pi/tasks/<session id>-*`) are exempt too, another session's are not.
+    const handoff = recheckExempt(toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, owned: s.owned, ownTasks: ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform) });
     // R11 item 5: finalization (a reviewer PASS or a completed finalizer, no child run active): the read budget never
     // refuses, and a plain git commit/add/status/log is exempt from the recheck budget too.
     // An accepted launch without its tool_result yet also ends it (fail closed).
@@ -1185,6 +1186,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const finalExempt = final && (!s.budget.postPass || finalizationCommand(toolName, input));
     const exempt = ledgerOnly || handoff || finalExempt || s.supervisor.open.size > 0 || (file !== null && inRecorded(s.childFiles, normFile(file)));
     // MCP and subagent get|guide calls are counted under the name `read`, after the exemptions above.
+    s.budget.verdict = s.reviewGate.last; // R12 item 8: the recheck refusal names the real verdict
     const d = s.budget.check(READ_CLASS.has(toolName) ? toolName : "read", callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt);
     if (d.kind === "warn") {
       s.readNotices.set(callId, d.text);

@@ -73,6 +73,8 @@ export class ReadBudget {
   private liftUsed: Record<Phase, boolean> = { before: false, after: false };
   private post: { ids: Set<string> } | null = null;
   private final = false;
+  /** The latest review verdict (index.ts sets it from the review gate before each check); undefined keeps the default "the reviewer passed" text. */
+  verdict?: "pass" | "fail" | "none" | null;
 
   /** Finalization: a reviewer PASS or a completed finalizer since the last started launch (index.ts adds: no child run active). */
   get finalized(): boolean {
@@ -102,7 +104,7 @@ export class ReadBudget {
     if (this.post) {
       if (this.post.ids.has(top)) return { kind: "allow" };
       if (this.post.ids.size >= recheck) {
-        return { kind: "deny", event: "recheck_budget", count: this.post.ids.size + 1, reason: `pi-foreman: [recheck_budget_exceeded] the reviewer passed; finish now. You have used your ${recheck} own check${recheck === 1 ? "" : "s"} after the pass; report the result instead of checking again.` };
+        return { kind: "deny", event: "recheck_budget", count: this.post.ids.size + 1, reason: `pi-foreman: [recheck_budget_exceeded] ${this.recheckLead()}; finish now. You have used your ${recheck} own check${recheck === 1 ? "" : "s"} after the pass; report the result instead of checking again.` };
       }
       this.post.ids.add(top);
       return { kind: "allow" };
@@ -120,6 +122,12 @@ export class ReadBudget {
       return { kind: "warn", phase: this.phase, count: n, text: `pi-foreman: read budget ${n} of ${lim.deny} read calls ${since}. Launch the explorer for the rest of the research instead of reading yourself.` };
     }
     return { kind: "allow" };
+  }
+
+  private recheckLead(): string {
+    if (this.verdict === "fail") return "the last review FAILED";
+    if (this.verdict === "none" || this.verdict === null) return "no review has passed";
+    return "the reviewer passed";
   }
 
   private deny(limits: ReadLimits, count: number): BudgetDecision {

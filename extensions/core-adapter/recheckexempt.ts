@@ -13,6 +13,8 @@ export interface ExemptCtx {
   home: string;
   platform: string;
   owned: OwnedRoots;
+  /** R12 item 8: the session's own bg_run output dirs, `<root>/.pi/tasks/<session id>-*` (roundsurface.ts ownTaskReadable); other sessions' task dirs stay counted. */
+  ownTasks?: string[];
 }
 
 const PATH_FIELDS = ["path", "file", "dir", "directory", "cwd"] as const;
@@ -30,7 +32,21 @@ function expand(w: string, c: ExemptCtx): string | null {
 
 function ownedOrRuling(p: string, c: ExemptCtx): boolean {
   const root = handoffsRootOf(c.owned.readWrite);
-  return !!root && underOwned(root, p, c.platform);
+  if (root && underOwned(root, p, c.platform)) return true;
+  return (c.ownTasks ?? []).some((pat) => underTask(pat, p, c.platform));
+}
+
+/** `p` lies below a dir of the pattern `<tasks dir>/<prefix>*` (the one segment below the tasks dir starts with the prefix). */
+function underTask(pat: string, p: string, platform: string): boolean {
+  const impl = platform === "win32" ? path.win32 : path.posix;
+  const fold = (x: string): string => (platform === "win32" || platform === "darwin" ? x.toLowerCase() : x);
+  if (!pat.endsWith("*")) return false;
+  const prefix = fold(impl.basename(pat).slice(0, -1));
+  if (!prefix || prefix.includes("*")) return false;
+  const base = fold(impl.resolve(impl.dirname(pat))).split(impl.sep);
+  const t = fold(impl.resolve(p)).split(impl.sep);
+  if (t.length <= base.length || !base.every((seg, n) => seg === t[n])) return false;
+  return t[base.length].startsWith(prefix);
 }
 
 /** Path-like words: contain a separator or start with `~`. */
