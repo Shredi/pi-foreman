@@ -1733,6 +1733,8 @@ interface Collected {
   probeFiles?: string[];
   /** Inline python that provably only reads (pythonReadOnlyCode): its text and literals are no write-protection operands. */
   readCode?: Set<string>;
+  /** Interpreter names the line redefines as a shell function or alias (shadowedInterpreters): their -c/-e body is collected as shell. */
+  shadowed?: Set<string>;
   /** A `cd`/`pushd`/`export`/`env` command or an env assignment prefix was found (refused next to a run for a read-only child). */
   roCdEnv?: boolean;
   /** Top level only: the session cwd and file probes, to resolve `..` words after a `cd` that ran first. */
@@ -2209,7 +2211,10 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
     const code = inlineCode(v.core);
     if (code) out.words.push(...codeLiterals(code));
     if (code && out.protWords) out.protWords.push(...codeLiterals(code));
-    if (code && out.readCode && /^(python|pypy)/.test(baseName(v.core[0])) && pythonReadOnlyCode(code)) {
+    // R12 item 3: a same-line function or alias with the interpreter's name may run the body as shell: it is checked as shell
+    const shadow = !!code && !!out.shadowed?.has(baseName(v.core[0]));
+    if (shadow && depth < MAX_DEPTH) collect(code!, "posix", depth + 1, out);
+    if (code && !shadow && out.readCode && /^(python|pypy)/.test(baseName(v.core[0])) && pythonReadOnlyCode(code)) {
       out.readCode.add(code);
       for (const l of codeLiterals(code)) out.readCode.add(l);
     }
@@ -2664,12 +2669,12 @@ function childCdDeny(command: string, ctx: MatchCtx): Decision | null {
  * source offsets) whose command word is python or node; the same text as a `bash -c` body elsewhere stays. An env prefix
  * (`HOME=x python3 -c ..`) stays in the line.
  */
-function withoutInlineBodies(command: string): string {
+function withoutInlineBodies(command: string, shadowed: Set<string>): string {
   const cut: Array<[number, number]> = [];
   for (const pipe of parseShell(command, "posix").pipelines) {
     for (const u of pipe) {
       const core = variants(u).core;
-      if (!core.length || !/^(python[0-9.]*|node)$/.test(baseName(core[0]))) continue;
+      if (!core.length || !/^(python[0-9.]*|node)$/.test(baseName(core[0])) || shadowed.has(baseName(core[0]))) continue;
       const code = inlineCode(core);
       if (!code || /[$`\\]/.test(code)) continue;
       const off = u.length - core.length;
@@ -2683,11 +2688,29 @@ function withoutInlineBodies(command: string): string {
   return out;
 }
 
+/**
+ * R12 item 3: the interpreter names (python, python3, python3.x, pypy, node) the line defines as a shell function (`name(){`, `function name`)
+ * or an alias (`alias name=`), anywhere in the whole text (newlines and nested -c bodies included; a definition after the call also counts:
+ * fail closed). Such a name may run its -c/-e body as shell.
+ */
+function shadowedInterpreters(command: string): Set<string> {
+  const out = new Set<string>();
+  const N = "python[0-9.]*|pypy[0-9.]*|node";
+  const lead = "(?:^|[\\s;&|(){}'\"`])";
+  for (const m of command.matchAll(new RegExp(`${lead}(?:function\\s+)?(${N})\\s*\\(\\s*\\)`, "g"))) out.add(m[1]);
+  for (const m of command.matchAll(new RegExp(`${lead}function\\s+(${N})(?![\\w.-])`, "g"))) out.add(m[1]);
+  for (const m of command.matchAll(new RegExp(`${lead}alias\\s+([^;&|\\n]*)`, "g"))) {
+    for (const a of m[1].matchAll(new RegExp(`(?:^|[\\s'"])(${N})=`, "g"))) out.add(a[1]);
+  }
+  return out;
+}
+
 export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchCtx): Decision | null {
   const shell = ctx0.shell ?? "posix";
   const command = shell === "powershell" ? psDashes(rawCommand) : rawCommand;
   const bound = boundNames(command, shell);
-  const homeLine = shell === "posix" ? withoutInlineBodies(command) : command;
+  const shadowed = shell === "posix" ? shadowedInterpreters(command) : new Set<string>();
+  const homeLine = shell === "posix" ? withoutInlineBodies(command, shadowed) : command;
   const homeBound = homeLine === command ? bound : boundNames(homeLine, shell);
   const ctx: MatchCtx = { ...ctx0, ...(ctx0.owned || !rules.owned ? {} : { owned: rules.owned }), bound };
   // a line that binds a harness-trusted variable it also uses (`HOME=-i; sed $HOME ...`, `read HOME; cat ~/x`) fails closed
@@ -2708,7 +2731,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (sw) return sw;
   }
   const scratch0 = scratchOf(ctx);
-  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, platform: ctx.platform, resolvedWords: new Set(), bound, boundRefs: [], unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], proseSkip: [], verbs: [], cmdWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], readCode: new Set(), ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
+  const c: Collected = { vars: { ...(scratch0 ? { FOREMAN_SCRATCH: scratch0 } : {}), ...(ctx.cwd ? { PWD: ctx.cwd } : {}) }, platform: ctx.platform, resolvedWords: new Set(), bound, boundRefs: [], unitTexts: [], pipeTexts: [command.trim(), command.trim().replace(/\s+/g, " ")], words: [], removeWords: [], protWords: [], proseSkip: [], verbs: [], cmdWords: [], pure: true, ro: true, rdr: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set(), worktreeRemoveWords: new Set(), probeFiles: [], readCode: new Set(), shadowed, ...(ctx.cwd && shell === "posix" && ctx.platform !== "win32" ? { cdBase: { cwd: ctx.cwd, realpath: defaults(ctx).realpath, isDir: defaults(ctx).isDir } } : {}) };
   collect(command, shell, 0, c);
   // win32 (Git Bash runs the posix-unescaped words): the ambiguous path words of the posix pass, before the raw pass adds its own
   const winAmb = ctx.platform === "win32" && shell === "posix" ? winAmbiguity(command, c) : undefined;
