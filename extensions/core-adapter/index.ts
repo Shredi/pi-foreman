@@ -83,6 +83,7 @@ import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, WAKE_M
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { hubWorkflowDriftLines } from "./hubdrift.ts";
+import { dialogFields, dialogsJson } from "./dialogs.ts";
 import { ChildWidget, rungOf } from "./childwidget.ts";
 import { LiveState, intercomIdOf } from "./livestate.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
@@ -1399,7 +1400,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const hub = hubWorkflowReadable(get(s.config.config, "paths.hubWorkflow"), platform);
     const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, ...(s.usage.line.workspace ? { foremanRoot: workspaceOf(s.usage.line.workspace).root } : {}), readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub, ownReads: ownUsageReadable(s.agentDir, platform, s.id) }) });
     const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) });
-    if (d) s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: r ? (d.kind === "deny" ? "deny" : "ask-denied") : "ask-approved", ...(r ? denyFields((d as { reason?: unknown }).reason, toolName, input, s.isChild ? s.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) : {}) });
+    if (d) {
+      const df = denyFields((d as { reason?: unknown }).reason, toolName, input, s.isChild ? s.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]);
+      const asked = !(r && d.kind === "deny");
+      s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: r ? (d.kind === "deny" ? "deny" : "ask-denied") : "ask-approved", ...(r || asked ? df : {}), ...(asked ? dialogFields(df.command) : {}) });
+    }
     if (s.isChild && r && d?.kind === "deny") return repeatedDeny(s, ctx, d.reason) ?? r;
     return r;
   }
@@ -3149,6 +3154,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const r = s.budget.userLift();
         s.trace?.emit({ event: "read_budget", phase: r.phase, count: r.count, action: "lift", by: "user" });
         ctx.ui.notify(`pi-foreman: read budget lifted (phase ${r.phase}); the count starts again.`, "info");
+        return;
+      }
+      if (sub === "dialogs") {
+        const s = await ensureSession(ctx);
+        if (!rest.includes("--json")) {
+          ctx.ui.notify("Usage: /foreman dialogs --json", "warning");
+          return;
+        }
+        ctx.ui.notify(dialogsJson(s.trace), "info");
         return;
       }
       if (sub === "cost") {

@@ -488,7 +488,7 @@
       "purpose": "Shows tokens, list-price cost and child launches in the footer, the children widget below the editor and the glyph set, with `/foreman cost` for a summary.",
       "doc": "docs/sessions.md#commands",
       "keys": ["footer.usage", "ui", "widget.children"],
-      "commands": ["/foreman cost"],
+      "commands": ["/foreman cost", "/foreman dialogs"],
       "switch": null,
       "state": "on",
       "enable": ""

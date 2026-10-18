@@ -652,7 +652,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [sync](#sync) | `/sync`, `foreman sync` |
 | [retro](#retro) | `/retro`, `foreman retro`, `foreman backlog` |
 | [close](#close) | `/foreman close`, `foreman close`, `foreman worktree` |
-| [footer-ui](#footer-ui) | `/foreman cost` |
+| [footer-ui](#footer-ui) | `/foreman cost`, `/foreman dialogs` |
 | [radar](#radar) | `foreman radar` |
 | [resources](#resources) | `/foreman status` |
 
