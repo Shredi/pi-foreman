@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { SteerWatch, foldSteer, takeLateSteer } from "./steerwatch.ts";
+import { SteerWatch, foldSteer, pickupRuling, takeLateSteer } from "./steerwatch.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, userOverride } from "./ceremony.ts";
 import { checkTrivial, effectiveRequired, escalationNote, trivialBuilderPath } from "./trivial.ts";
@@ -1215,11 +1215,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // Knob 3 launch-wait (launchwait.ts): held launch results, released by run end, supervisor request, abort or timeout.
   const launchWaits = new LaunchWaits();
   const steerWatches = new Map<string, SteerWatch>();
+  const sessionStartMs = Date.now();
   const steerWatchFor = (s: Session): SteerWatch => {
     let w = steerWatches.get(s.id);
-    if (!w) steerWatches.set(s.id, (w = new SteerWatch(() => process.env.PI_FOREMAN_HANDOFF_DIR)));
+    if (!w) steerWatches.set(s.id, (w = new SteerWatch(() => process.env.PI_FOREMAN_HANDOFF_DIR, sessionStartMs)));
     return w;
   };
+  /** A newer ruling in the handoff dir, taken before a gated action (child launch, checkpoint press); "" when none. */
+  const rulingPickup = (s: Session, gate: string): string => (s.isChild ? "" : pickupRuling(steerWatchFor(s), gate));
   pi.events?.on(SUPERVISOR_SURFACED_EVENT, (data: unknown) => launchWaits.onSupervisorRequest(data));
   pi.on("session_shutdown", async () => launchWaits.abortAll());
 
@@ -1465,6 +1468,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         rs.trace?.emit({ event: "guard", guard: "self_ruling", toolFamily: event.toolName, decision: "blocked", ...denyFields(`self_ruling: ${why}`, event.toolName, event.input, rs.isChild ? rs.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) });
         return repeatedDeny(rs, ctx, why) ?? { block: true, reason: `pi-foreman: ${why}.` };
       }
+    }
+    // A newer ruling (ruling-*.md, steer-*.md) in the handoff dir is read before any child launch: the launch waits, the ruling text is the reason.
+    if (event.toolName === "subagent") {
+      const ps = sessionFor(ctx);
+      const agents = ps ? subagentAgents(event.input as Record<string, unknown>) : [];
+      const text = ps && agents.length > 0 ? rulingPickup(ps, `launch ${agents.join("+")}`) : "";
+      if (text) return { block: true, reason: `pi-foreman: a newer ruling arrived before this launch; it is not started. Act on it, then launch again.\n${text}` };
     }
     // Role tool denial (roledeny.ts): a child's tool matching roles.<role>.denyTools is denied, never asked.
     if (process.env.PI_SUBAGENT_CHILD === "1") {
@@ -2908,6 +2918,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if ("error" in r) return done("refused", null, r.error, true);
         const plan = r.plan;
         const name = `plan-${plan.topic}.md`;
+        const ruling = rulingPickup(s, `checkpoint ${name}`);
+        if (ruling) return done("pending", null, `pi-foreman: a newer ruling arrived before the checkpoint press; ${name} is not presented. Act on it, then call ${CHECKPOINT_TOOL} again.\n${ruling}`);
         const hash8 = plan.hash.slice(0, 8);
         s.trace?.emit({ event: "plan_version", tier, from: sha256(plan.bytes).slice(0, 16), to: plan.hash.slice(0, 16) }); // from = hash of the file bytes, to = version (body) hash
         // ceremony.planReview (planreview.ts): a [plan-review] verdict on these bytes first; a first FAIL goes back to the planner.
