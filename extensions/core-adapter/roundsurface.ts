@@ -117,11 +117,13 @@ export function piScratchReadable(roots: string[], platform: string = process.pl
  * command of the foreman (ls/cat/head/tail/wc/stat, or the one python read form of permoverlay.ts usagePythonRead) may name them although the
  * protect rule `{agentDir}/pi-foreman/state/*` covers state/; a write there stays protected. Never given to a child.
  */
-export function ownUsageReadable(agentDir: string, platform: string = process.platform): string[] {
+export function ownUsageReadable(agentDir: string, platform: string = process.platform, sessionId?: string): string[] {
   const x = px(platform);
   if (!agentDir || !x.isAbsolute(agentDir)) return [];
   const d = x.join(x.resolve(agentDir), "pi-foreman", "state", "usage");
-  return [d, `${d}/*`];
+  // R12 item 2: and the session's own presence file state/live/<session>.json (livestate.ts), never another session's
+  const live = sessionId && /^[A-Za-z0-9_.-]+$/.test(sessionId) && !sessionId.startsWith(".") ? [x.join(x.resolve(agentDir), "pi-foreman", "state", "live", `${sessionId}.json`)] : [];
+  return [d, `${d}/*`, ...live];
 }
 
 /**

@@ -2757,7 +2757,8 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const ownedReadOk = !strictRead && !/\$\(|`|[<>]\(/.test(command) && shell === "posix" && c.ro === true && c.roRun !== true && c.roUnknown === undefined && c.roDeny === undefined && c.roTargets!.size === 0 && c.tmpTargets!.size === 0 && c.writeTargets!.size === 0 && c.removeWords!.length === 0 && c.worktreeOp === undefined;
   const readOnly = strictRead;
   // R10 item 1: the foreman's own usage records (ctx.ownReads): plain ls/cat/head/tail/wc/stat units that write nothing, or the one python read form
-  const ownRead = !!ctx.ownReads?.length && shell === "posix" && ((!/\$\(|`|[<>]\(/.test(command) && c.rdr === true && c.ro === true && c.writeTargets!.size === 0 && c.tmpTargets!.size === 0 && c.removeWords!.length === 0 && c.verbs!.length > 0 && c.verbs!.every((v) => USAGE_VERBS.has(v))) || usagePythonRead(command, ctx.ownReads!, ctx));
+  // R12 item 2: or a `;`/`&&`/pipe chain whose units touching the own records are such reads and whose other units are read-only (ownReadChain)
+  const ownRead = !!ctx.ownReads?.length && shell === "posix" && ((!/\$\(|`|[<>]\(/.test(command) && c.rdr === true && c.ro === true && c.writeTargets!.size === 0 && c.tmpTargets!.size === 0 && c.removeWords!.length === 0 && c.verbs!.length > 0 && c.verbs!.every((v) => USAGE_VERBS.has(v))) || usagePythonRead(command, ctx.ownReads!, ctx) || usageNodeRead(command, ctx.ownReads!, ctx) || (c.writeTargets!.size === 0 && c.tmpTargets!.size === 0 && ownReadChain(command, ctx)));
   // `--exclude-dir=.git` names a path to leave out, never one to write: only a redirect target keeps such a word
   // the read-only python exemption holds only when the whole command is that one invocation: nothing else on the line may use the words
   const soloPython = /^\s*(?:[\w./-]*python[\w.]*)(?:\s+-[A-Za-z]+)*\s*$/.test(command.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, ""));
@@ -2858,18 +2859,116 @@ const USAGE_PY = /^\s*(?:import\s+json\s*;\s*)?print\(\s*(?:open\(\s*(['"])([^'"
  * and the literal an absolute path whose every spelling (realpath included) matches one of `patterns`. Anything else is false.
  */
 export function usagePythonRead(command: string, patterns: string[], ctx: MatchCtx): boolean {
-  if (!patterns.length) return false;
+  const words = soloUnit(command, patterns);
+  return !!words && usagePyWords(words, patterns, ctx);
+}
+
+/** The words of a command that is one unit without a redirect or substitution (and `patterns` non-empty), else null. */
+function soloUnit(command: string, patterns: string[]): string[] | null {
+  if (!patterns.length) return null;
   const parsed = parseShell(command, "posix");
-  if (parsed.subs.length || parsed.pipelines.length !== 1 || parsed.pipelines[0].length !== 1) return false;
+  if (parsed.subs.length || parsed.pipelines.length !== 1 || parsed.pipelines[0].length !== 1) return null;
   const words = parsed.pipelines[0][0];
-  if (REDIRECTS.get(words)?.size || words.length !== 3 || !/^python3?$/.test(words[0]) || words[1] !== "-c") return false;
+  return REDIRECTS.get(words)?.size ? null : words;
+}
+
+/** R12 item 2: the D1 code reading `sys.argv[1]` instead of a literal (`python3 -c '…open(sys.argv[1])…' <path>`); only json/sys imported. */
+const USAGE_PY_ARGV = /^\s*(?:import\s+(?:json|sys)(?:\s*,\s*(?:json|sys))?\s*;\s*)*print\(\s*(?:open\(\s*sys\.argv\[1\]\s*\)\.read\(\s*\)|json\.load\(\s*open\(\s*sys\.argv\[1\]\s*\)\s*\))\s*\)\s*;?\s*$/;
+
+/** usagePythonRead over parsed words: `python3 -c <D1 code>` or `python3 -c <argv code> <path>`. */
+function usagePyWords(words: string[], patterns: string[], ctx: MatchCtx): boolean {
+  if ((words.length !== 3 && words.length !== 4) || !/^python3?$/.test(words[0]) || words[1] !== "-c") return false;
   const code = words[2];
+  // the argv form is closed by its regex (only json/sys imports, one print of the file); pythonReadOnlyCode refuses `import json,sys`
+  if (words.length === 4) return USAGE_PY_ARGV.test(code) && ownLiteral(words[3], patterns, ctx);
   if (/\bos\.|subprocess|exec|['"][wa]/.test(code) || !pythonReadOnlyCode(code)) return false;
   const m = USAGE_PY.exec(code);
-  const lit = m ? (m[2] ?? m[4]) : undefined;
+  return ownLiteral(m ? (m[2] ?? m[4]) : undefined, patterns, ctx);
+}
+
+/** An absolute literal without `..` whose every spelling (realpath included) matches one of `patterns`. */
+function ownLiteral(lit: string | undefined, patterns: string[], ctx: MatchCtx): boolean {
   if (!lit || !path.posix.isAbsolute(lit) || lit.split("/").includes("..")) return false;
   const cands = pathCandidates(lit, ctx).filter((x) => path.isAbsolute(x) || path.win32.isAbsolute(x));
   return cands.length > 0 && cands.every((x) => patterns.some((p) => pathMatches(p, x, ctx)));
+}
+
+const USAGE_NODE = /^\s*(?:console\.log|process\.stdout\.write)\(\s*require\(\s*(['"])(?:node:)?fs\1\s*\)\.readFileSync\(\s*(['"])([^'"\\$`]+)\2\s*(?:,\s*(['"])utf-?8\4\s*)?\)(?:\.toString\(\s*\))?\s*\)\s*;?\s*$/;
+
+/**
+ * R12 item 2 (the node twin of usagePythonRead): the whole command is one `node -e '<code>'` whose code is a single
+ * `console.log(require('fs').readFileSync('<literal>'[, 'utf8']))` (or `process.stdout.write(…)`), no redirect, the literal an own record.
+ */
+export function usageNodeRead(command: string, patterns: string[], ctx: MatchCtx): boolean {
+  const words = soloUnit(command, patterns);
+  return !!words && usageNodeWords(words, patterns, ctx);
+}
+
+function usageNodeWords(words: string[], patterns: string[], ctx: MatchCtx): boolean {
+  if (words.length !== 3 || words[0] !== "node" || words[1] !== "-e") return false;
+  const m = USAGE_NODE.exec(words[2]);
+  return ownLiteral(m?.[3], patterns, ctx);
+}
+
+/** Read-only units a chain naming the own records may hold besides the reads of them (R12 item 2); none of their words may name an own record. */
+const CHAIN_READERS = new Set(["grep", "egrep", "fgrep", "rg", "wc", "head", "tail", "cat", "ls", "stat", "echo", "pwd", "true", "false", "sort", "uniq", "cut", "tr"]);
+const VERSION_PROBE = /^(?:node|python3?)$/;
+
+/**
+ * R12 item 2: the foreman's line reads its own records (ctx.ownReads) in a chain. Every unit is joined by `;`, `&&`, `||` or `|` (no
+ * substitution, redirect, background, group or subshell) and is either
+ * - a literal binding `name=<path>` alone at the top level after `;` or at the start (`~/`/`$HOME/` expanded, no `$`, glob or space), whose
+ *   `$name`/`${name}` later units see as that literal;
+ * - a read of the own records: ls/cat/head/tail/wc/stat whose operands are all own records, or the D1 python / node read form;
+ * - a read-only unit from CHAIN_READERS naming no own record, or `node|python3 --version`.
+ * At least one unit reads an own record. Any other `$` fails. No unit removes (no remover verb; the code of the read forms is fixed, so
+ * Collected.removeWords holds only its literals). Write targets and tee are checked by the caller (Collected).
+ */
+function ownReadChain(command: string, ctx: MatchCtx): boolean {
+  const pats = ctx.ownReads ?? [];
+  if (!pats.length || ctx.role === "child" || /\$\(|`|[<>]\(/.test(command)) return false;
+  const parsed = parseShell(command, "posix");
+  if (parsed.subs.length || parsed.seps.some((s) => ![";", "&&", "||", "end"].includes(s))) return false;
+  const own = (w: string): boolean => {
+    const abs = pathCandidates(w, ctx).filter((x) => path.isAbsolute(x) || path.win32.isAbsolute(x));
+    return abs.length > 0 && abs.every((x) => pats.some((p) => pathMatches(p, x, ctx)));
+  };
+  const vars = new Map<string, string>();
+  let reads = 0;
+  for (let i = 0; i < parsed.pipelines.length; i++) {
+    const pipe = parsed.pipelines[i];
+    for (const unit of pipe) {
+      if (!unit.length || REDIRECTS.get(unit)?.size) return false;
+      const bind = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(unit[0]);
+      if (bind) {
+        if (unit.length !== 1 || pipe.length !== 1 || (i > 0 && parsed.seps[i - 1] !== ";")) return false;
+        if (["HOME", "FOREMAN_SCRATCH", "USERPROFILE", "S", "PATH", "PWD"].includes(bind[1])) return false;
+        const v = expandWord(bind[2], ctx);
+        if (!v || /[$`\\*?[\]{}\s~]/.test(v) || !path.posix.isAbsolute(v)) return false;
+        vars.set(bind[1], v);
+        continue;
+      }
+      const words = unit.map((w) => w.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (m, a: string | undefined, b: string | undefined) => vars.get((a ?? b)!) ?? m));
+      if (words.some((w) => /[$`]/.test(w.replace(/^\$(?:\{HOME\}|HOME)(?=\/)/, "")))) return false;
+      const verb = words[0];
+      if (usagePyWords(words, pats, ctx) || usageNodeWords(words, pats, ctx)) {
+        reads++;
+        continue;
+      }
+      if (USAGE_VERBS.has(verb) && protectedReader(words, new Set())) {
+        const operands = words.slice(1).filter((w) => !w.startsWith("-") && !/^\d+$/.test(w));
+        if (operands.length && operands.every(own)) {
+          reads++;
+          continue;
+        }
+      }
+      if (words.slice(1).some(own)) return false;
+      if (VERSION_PROBE.test(verb) && words.length === 2 && (words[1] === "--version" || words[1] === "-V" || words[1] === "-v")) continue;
+      if (!CHAIN_READERS.has(verb)) return false;
+      if (PROTECTED_READERS.has(verb) ? !protectedReader(words, new Set()) : !unitReadOnly(words, new Set())) return false;
+    }
+  }
+  return reads > 0;
 }
 
 /** The strictest write-protection decision for one path word (deny before ask), or null. */
@@ -2878,7 +2977,12 @@ function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: bo
   let ask: ProtectHit | null = null;
   const cands = pathCandidates(word, ctx);
   if (ownRead && shell && !child && ctx.ownReads?.length) {
-    const abs = cands.filter((x) => path.isAbsolute(x) || path.win32.isAbsolute(x));
+    // a binding `name=<own record>` (ownReadChain) writes nothing: its value is the path
+    const bind = /^[A-Za-z_][A-Za-z0-9_]*=/.exec(word);
+    // a word with white space that is the code of the node read form (USAGE_NODE) is split into tokens: its absolute tokens must be own records, its code
+    // fragments (`.readFileSync`) are no paths of the line (posix only)
+    const tokens = /\s/.test(word) && ctx.platform !== "win32" && USAGE_NODE.test(word) ? word.split(/[\s'"`(),;<>]+/).filter((t) => /^(?:\/|~\/|\$HOME\/|\$\{HOME\}\/)/.test(t)) : null;
+    const abs = (tokens ? tokens.flatMap((t) => pathCandidates(t, ctx)) : bind ? pathCandidates(word.slice(bind[0].length), ctx) : cands).filter((x) => path.isAbsolute(x) || path.win32.isAbsolute(x));
     if (abs.length && abs.every((x) => ctx.ownReads!.some((p) => pathMatches(p, x, ctx)))) return null;
   }
   if (readOnly && shell && ctx.ownTasks?.length) {

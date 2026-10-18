@@ -23,7 +23,7 @@ import { deterministicAllow, deterministicAllowInfo, hits } from "./timeoutallow
 import { classify, effectCtx } from "./effects.ts";
 import * as os from "node:os";
 import * as path from "node:path";
-import { usagePythonRead } from "./permoverlay.ts";
+import { usageNodeRead, usagePythonRead } from "./permoverlay.ts";
 import { hubWorkflowDirs, isolationDir, mainWorkflowReadable, roundWorktreeAdd } from "./roundsurface.ts";
 import type { EffectClass, EffectCtx } from "./effects.ts";
 import { isSubagentWakeText } from "./idlecustom.ts";
@@ -532,13 +532,14 @@ export class ForemanReview {
     }
   }
 
-  /** "own-usage" for the foreman's own `python3 -c` read of its usage records in the one form ruling R10 D1 names (permoverlay.ts usagePythonRead). */
+  /** "own-usage" for the foreman's own `python3 -c` read of its usage records in the one form ruling R10 D1 names (permoverlay.ts usagePythonRead), or its `node -e` twin (usageNodeRead, R12 item 2). */
   private ownUsageAllow(s: ReviewSession, d: AskDetails): string | null {
     try {
       const pats = s.isChild ? [] : s.ownReads?.() ?? [];
       if (!pats.length) return null;
       const ctx = { cwd: s.cwd, home: os.homedir(), platform: process.platform, role: "main" as const };
-      return usagePythonRead(reviewValue(d), pats, ctx) && usagePythonRead(unitValue(d), pats, ctx) ? "own-usage" : null;
+      const read = (v: string): boolean => usagePythonRead(v, pats, ctx) || usageNodeRead(v, pats, ctx);
+      return read(reviewValue(d)) && read(unitValue(d)) ? "own-usage" : null;
     } catch {
       return null;
     }
