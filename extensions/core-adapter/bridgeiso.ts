@@ -7,6 +7,18 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 export const BRIDGE_PROVIDER = "claude-bridge";
+
+/** The doctor's `providers:` line: the providers the model registry holds in this session, sorted. */
+export function providersLine(registry: { getAll?(): { provider: string }[] }): string {
+  let all: { provider: string }[] = [];
+  try {
+    all = registry.getAll?.() ?? [];
+  } catch {
+    all = [];
+  }
+  const names = [...new Set(all.map((m) => m.provider))].sort();
+  return `providers: ${names.length ? names.join(", ") : "(none)"}`;
+}
 /** Entries that make the folder a non-empty Claude Code config by existing. settings*.json and plugins/ are judged by content (see hostConfigFindings). */
 export const FORBIDDEN_ENTRIES = ["hooks", "CLAUDE.md", "agents", "skills", "commands"];
 const SETTINGS_FILES = ["settings.json", "settings.local.json"];

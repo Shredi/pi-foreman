@@ -206,6 +206,18 @@ the command in its pane. Without Herdr, or if it fails, it prints the command, f
 `env PI_FOREMAN_HANDOFF_DIR=… pi [--model ID] 'Read the handoff brief at …'` or, on Windows, the PowerShell form
 `$env:PI_FOREMAN_HANDOFF_DIR='…'; pi …`, and the session stays `pending`.
 
+### Providers in opened sessions
+
+The opened command is a plain `pi [--model ID] '<prompt>'`: it loads the same packages as any start, so
+`claude-bridge/*` models are there only if pi-claude-bridge is in `settings.json` packages. One R13 round session
+opened with `--model anthropic/…` had no `claude-bridge/*` entries in `/model` until `/reload`. Not reproduced
+(no live run); best hypothesis from reading Pi's startup: Pi resolves the `enabledModels` scope (or `--models`)
+once at start, and a provider an extension registers later (after the scope is resolved, e.g. in `session_start`)
+is missing from that scoped list; `/reload` resolves it again. No generic fix in pi-foreman. Workaround: run
+`/reload` in the opened session, or add the bridge models to `enabledModels`. `/foreman doctor` prints
+`providers: <list>`, the providers the model registry holds in that session; a missing `claude-bridge` there
+means the bridge is not loaded or has not registered yet.
+
 ### Opener intercom id
 
 The id written to `parent` is, in order: `PI_INTERCOM_SESSION_ID` (the id pi-intercom 0.17.0 resolved and
