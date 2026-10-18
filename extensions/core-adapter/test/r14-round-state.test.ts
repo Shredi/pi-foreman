@@ -238,6 +238,19 @@ test("ruling-<n>.md APPROVED only (no ruling.md APPROVED) -> nothing granted", a
   assert.ok(planRequired(await b.launch("builder")));
 });
 
+test("scratch plan differs from the handoff plan.md the parent approved -> nothing granted", async (t) => {
+  const w = world(t);
+  fs.writeFileSync(path.join(w.handoff, "plan.md"), PLAN + "\nThe version the parent read.\n");
+  const a = await w.adapter();
+  assert.equal(await a.checkpoint(), "approve");
+  await tick();
+  w.rule("ruling.md", "APPROVED\n"); // newer than both plan files: only the hashes differ
+  await a.down();
+  assert.equal((w.stored().plan as { hash: string }).hash, w.hash(), "dir and scratch hash match");
+  const b = await w.adapter();
+  assert.ok(planRequired(await b.launch("builder")));
+});
+
 test("different handoff dir -> discarded", async (t) => {
   const w = world(t);
   const a = await w.adapter();

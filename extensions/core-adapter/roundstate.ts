@@ -4,11 +4,12 @@
 // The file keeps the handoff dir, the checkpointed plan's topic and version hash, the plan-review lineage of that plan,
 // the review counters and the revision rounds per chain. It never keeps an approval: on session_start the checkpoint
 // approval comes back only from the parent's `ruling.md` (parentApproval restore mode: first line APPROVED, ctime newer
-// than the ctime of both `<scratch>/plan-<topic>.md` and `<handoff>/plan.md`). Any other field (`approved: true`) is
+// than the ctime of both `<scratch>/plan-<topic>.md` and `<handoff>/plan.md`, and both plan files of one version hash). Any other field (`approved: true`) is
 // ignored. A different handoff dir or plan hash discards the whole file (re-ceremony). Counters restore only as
 // non-negative integers; a chain with a bad one starts fresh. The rulings a chain used and its last refusal are not kept.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { planVersionHash } from "./checkpoint.ts";
 import type { Verdict } from "./rounds.ts";
 import { initialRounds } from "./rounds.ts";
 import type { RoundState } from "./rounds.ts";
@@ -121,11 +122,22 @@ const ctimeOf = (f: string): number | null => {
   }
 };
 
-/** The parent's ruling.md approves `plan` when it is newer (ctime) than both plan files; never a stored flag. */
+/**
+ * The parent's ruling.md approves `plan` when it is newer (ctime) than both plan files and the scratch plan has the
+ * version hash of the handoff plan.md the parent ruled on (planVersionHash: the body above any appendix); never a stored flag.
+ */
 function approvalOf(dir: string, plan: { topic: string; path: string; hash: string }, review: unknown, self?: SelfRulings): Restored["approval"] {
+  const handoffPlan = path.join(dir, "plan.md");
   const a = ctimeOf(plan.path);
-  const b = ctimeOf(path.join(dir, "plan.md"));
+  const b = ctimeOf(handoffPlan);
   if (a === null || b === null) return null;
+  let parentHash: string;
+  try {
+    parentHash = planVersionHash(fs.readFileSync(handoffPlan));
+  } catch {
+    return null;
+  }
+  if (parentHash !== plan.hash) return null;
   const ruling = parentApproval([dir], Math.max(a, b), self, true);
   const at = ruling ? ctimeOf(ruling) : null;
   if (!ruling || at === null) return null;
