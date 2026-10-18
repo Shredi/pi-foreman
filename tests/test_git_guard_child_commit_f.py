@@ -105,6 +105,37 @@ class ChildCommitFileAllowlistTest(unittest.TestCase):
                   "git -C . commit -F %s" % MSG):
             self.expect_earlier(c)
 
+    # ---------------------------------------------------------------- glob / tilde in the -F value
+    def expect_literal(self, command):
+        got, reason = decide(command, "child", self.repo)
+        self.assertEqual(got, "deny", command)
+        self.assertIn("use a literal message path", reason, command)
+
+    def test_child_f_glob_bracket_denied(self):
+        Path(self.repo, ".workflow", "scratch", "m[s]g.txt").write_text("fix(r13): conforming\n")
+        self.expect_literal("git commit -F .workflow/scratch/m[s]g.txt")
+        self.expect_literal("git commit --file .workflow/scratch/m[s]g.txt")
+
+    def test_child_f_glob_star_denied(self):
+        self.expect_literal("git commit -F .workflow/scratch/ms*.txt")
+        self.expect_literal("git commit -F .workflow/scratch/ms?.txt")
+
+    def test_child_f_brace_denied(self):
+        self.expect_literal("git commit -F .workflow/scratch/{msg,x}.txt")
+
+    def test_child_f_tilde_denied(self):
+        self.expect_literal("git commit -F ~/msg.txt")
+
+    def test_child_f_glued_glob_denied(self):
+        Path(self.repo, ".workflow", "scratch", "m[s]g.txt").write_text("fix(r13): conforming\n")
+        self.expect_literal("git commit -F.workflow/scratch/m[s]g.txt")
+        self.expect_literal("git commit -F~/msg.txt")
+
+    def test_child_f_long_glued_glob_denied(self):
+        Path(self.repo, ".workflow", "scratch", "m[s]g.txt").write_text("fix(r13): conforming\n")
+        self.expect_literal("git commit --file=.workflow/scratch/m[s]g.txt")
+        self.expect_literal("git commit --file=.workflow/scratch/ms*.txt")
+
     # ---------------------------------------------------------------- named pass cases
     def test_plain_line_passes(self):
         self.assertEqual(decide("git commit -F %s" % MSG, "child", self.repo), ("allow", ""))

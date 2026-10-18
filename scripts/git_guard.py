@@ -2392,6 +2392,10 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
             if v.dynamic:
                 return unread("the commit message is read from a computed path")
             if pattern_only and ctx.mode == "child":
+                # the shell expands a glob or ~ before git sees the path; the glued -Fx / --file=x forms lose the glob flag
+                if v.glob or any(c in t for t in (v.text, v.raw) for c in "*?[{") or \
+                        v.text.startswith("~") or v.raw.startswith("~"):
+                    return unread("the message file path has a glob or ~ the shell expands; use a literal message path")
                 why = child_message_line_problem(seg, ctx, call, envs)
                 if why is not None:
                     return unread(why)
