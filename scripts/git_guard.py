@@ -138,7 +138,7 @@ class Word(object):
 
 
 class Seg(object):
-    __slots__ = ("words", "heredocs", "herestrings", "pipe_in", "outs", "before", "after", "group")
+    __slots__ = ("words", "heredocs", "herestrings", "pipe_in", "outs", "before", "after", "group", "ins")
 
     def __init__(self, pipe_in=False, before=None):
         self.outs = []             # file targets of `>` / `>>` / `&>` redirects (not fd dups, not /dev/null)
@@ -149,6 +149,7 @@ class Seg(object):
         self.before = before       # the operator in front of the segment (None at the start of the text)
         self.after = None          # the operator after it (None at the end of the text)
         self.group = 0             # nesting depth in `( )` / `{ }` groups
+        self.ins = []              # input redirects in order: "<" (file or dup), "<<<", "<<'" (quoted heredoc), "<<" (heredoc)
 
     def raw(self):
         return " ".join([w.raw for w in self.words] + [w.raw for w in self.herestrings] + self.heredocs)
@@ -210,11 +211,15 @@ class Lexer(object):
         elif kind == "file" and wr:
             if not (word.text == "/dev/null" or re.match(r"^[0-9]+-?$|^-$", word.text)):
                 self.cur.outs.append(word)
+        elif kind == "file":
+            self.cur.ins.append("<")
         elif kind.startswith("heredoc"):
             quoted = any(q in word.raw for q in "'\"\\")
             self.pending.append((word.text, kind == "heredoc-", quoted, self.cur))
+            self.cur.ins.append("<<'" if quoted else "<<")
         elif kind == "herestring":
             self.cur.herestrings.append(word)
+            self.cur.ins.append("<<<")
 
     def end_seg(self, i, pipe_next=False, op=None):
         self.end_word(i)
@@ -1694,9 +1699,11 @@ def git_sub(sub, rest, seg, flavor, ctx, depth, envs, via_xargs, xargs_repl, cal
                 return d
         d = child_rules(s, rest, ctx, call, seg, via_xargs or bool(xargs_repl))
         if d.level == ALLOW and sub == "commit" and not via_xargs and not xargs_repl:
-            # R11 item 8: the same message pattern as the foreman's on every child commit; commit_lint refuses a computed message or a
-            # -F file it cannot read for a child (editor, --amend reuse and `-F -` stay unlinted)
-            lint = commit_lint(rest, ctx, call, envs, pattern_only=True)
+            # R11 item 8 / R12 item 1: the same message pattern as the foreman's on every child commit; a message the guard cannot
+            # read (computed, editor, --amend reuse, stdin other than a literal heredoc) is a deny for a child, never the allow above
+            lint = commit_lint(rest, ctx, call, envs, pattern_only=True, seg=seg)
+            if lint.level == ASK:
+                return deny("%s (message not readable, child cannot ask)" % lint.reason[len(PREFIX):].rstrip("."))
             return lint if lint.level == DENY else d
         return d
     if via_xargs and sub in ("commit", "push"):
@@ -2151,7 +2158,7 @@ COMMIT_ARG = ("message", "file", "reuse-message", "reedit-message", "fixup", "sq
 TRAILER_LINE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*\s*:\s")
 
 
-def commit_lint(rest, ctx, call, envs, pattern_only=False):
+def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
     opts, pos, dd, dyn = parse_opts(rest, short_arg="mFCct", known=COMMIT_KNOWN, long_arg=COMMIT_ARG)
     if has(opts, "dry-run"):
         return OK
@@ -2170,7 +2177,8 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False):
     def unread(why, way=USE_M):
         # a child cannot ask: its commit message must be one the guard checks against the pattern (R11 item 8)
         if pattern_only and ctx.mode == "child":
-            return deny("a child commit needs a message the guard can check against safety.git.commit.messagePattern (%s). "
+            return deny("a child commit needs a message the guard can check against safety.git.commit.messagePattern "
+                        "(%s; message not readable, child cannot ask). "
                         "Use -m '<literal message>' or -F <file inside the worktree>." % why)
         return ask("%s; %s." % (why, way))
 
@@ -2184,8 +2192,18 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False):
         elif name in ("F", "file"):
             if v is None:
                 return OK
-            if v.text == "-":
-                return ask("the commit message is read from stdin; %s." % USE_M)
+            if v.text in ("-", "/dev/stdin"):
+                # R12 item 1: a child's stdin message is read only from a literal heredoc on the commit itself (the last input
+                # redirect); any other stdin source is unsure. The foreman keeps the ask.
+                if not (pattern_only and ctx.mode == "child"):
+                    return ask("the commit message is read from stdin; %s." % USE_M)
+                last = seg.ins[-1] if seg is not None and seg.ins else None
+                k = sum(1 for x in seg.ins if x in ("<<", "<<'")) - 1 if last in ("<<", "<<'") else -1
+                body = seg.heredocs[k] if 0 <= k < len(seg.heredocs) else None
+                if body is None or (last == "<<" and re.search(r"[$`\\]", body)):
+                    return unread("the commit message is read from stdin that is not a literal heredoc on the commit")
+                parts.append(body)
+                continue
             if v.dynamic:
                 return unread("the commit message is read from a computed path")
             if ctx.cd_unsure and not os.path.isabs(v.text):

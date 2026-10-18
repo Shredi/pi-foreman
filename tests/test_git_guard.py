@@ -127,8 +127,8 @@ TABLE = [
     ("git commit --only -m 'feat: y'", "bash", A, D),
     ("git commit -m \"$(cat msg.txt)\"", "bash", D, Q),
     ("git commit -F - <<'EOF'\nfeat: y\nEOF", "bash", A, Q),
-    ("git commit", "bash", A, Q),
-    ("git commit --amend --no-edit", "bash", A, Q),
+    ("git commit", "bash", D, Q),
+    ("git commit --amend --no-edit", "bash", D, Q),
     ("git commit -n -m 'fix(guard): z' -m 'body'", "bash", A, A),
     # push lint (main)
     ("git push --force origin main", "bash", D, D),

@@ -125,9 +125,10 @@ class ChildUnreadableMessageTest(unittest.TestCase):
             self.assertIn("safety.git.commit.messagePattern", reason, c)
             # the foreman still gets the dialog
             self.assertEqual(decide(c, "main", self.repo)[0], "ask", c)
-        # parent ruling: editor, --amend reuse and a -F - heredoc stay as they were for a child
-        for c in ("git commit", "git commit --amend --no-edit", "git commit -F - <<'EOF'\nfeat: y\nEOF"):
-            self.assertEqual(decide(c, "child", self.repo)[0], "allow", c)
+        # R12 item 1 child-stdin ruling: an unsure message (editor, --amend reuse) is a deny for a child; a literal -F - heredoc is linted
+        for c in ("git commit", "git commit --amend --no-edit"):
+            self.assertEqual(decide(c, "child", self.repo)[0], "deny", c)
+        self.assertEqual(decide("git commit -F - <<'EOF'\nfeat: y\nEOF", "child", self.repo)[0], "allow")
 
     def test_message_file_commonpath_value_error_is_unsure(self):
         # R12 item 1: os.path.commonpath raises ValueError across Windows drives; that is outside the worktree, so unsure
