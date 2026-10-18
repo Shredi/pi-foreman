@@ -79,3 +79,26 @@ for (const [name, line] of DENY) {
     assert.equal(await run(r, line(bash(r))), SELF_RULING_REASON, line(bash(r)));
   });
 }
+
+// R14 ruling 5: a copy into a target that is no directory now is a write below it when the line can make that target a
+// symlink first (recursive/-a copy, tar/unzip/git or any unknown program), and a backup option writes a name of its own choosing
+// next to the target (`cp -b -S .md x <H>/ruling` writes <H>/ruling.md)
+const DENY5: Array<[string, (r: Rig) => string]> = [
+  ["cp -R <S>/lnk T && cp <S>/ruling.md T (lnk -> child handoff dir)", (r) => `cp -R ${r.S}/lnk .workflow/scratch/t && cp ${r.S}/ruling.md .workflow/scratch/t`],
+  ["cp -a <S>/lnk T && cp <S>/ruling.md T (lnk -> child handoff dir)", (r) => `cp -a ${r.S}/lnk .workflow/scratch/t && cp ${r.S}/ruling.md .workflow/scratch/t`],
+  ["tar xf a.tar && cp <S>/ruling.md T", (r) => `tar xf ${r.S}/a.tar && cp ${r.S}/ruling.md .workflow/scratch/t`],
+  ["cp -b -S .md x <H>/ruling", (r) => `cp -b -S .md ${r.S}/x ${r.H}/ruling`],
+  ["mv --backup --suffix=.md x <H>/ruling", (r) => `mv --backup --suffix=.md ${r.S}/x ${r.H}/ruling`],
+];
+
+for (const [name, line] of DENY5) {
+  test(`r14 self-ruling names deny: ${name}`, async () => {
+    const r = rig();
+    try {
+      fs.symlinkSync(r.C, path.join(r.S, "lnk"), "dir");
+    } catch {
+      // no symlink right (win32): the line alone decides
+    }
+    assert.equal(await run(r, line(bash(r))), SELF_RULING_REASON, line(bash(r)));
+  });
+}

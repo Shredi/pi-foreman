@@ -14,8 +14,11 @@ move of the file), dd `of=`, `sed -i` operands and sed `w` files, truncate/touch
 `--output=` values, PowerShell write cmdlets, interpreter code writes (shell_write_guard.code_writes), and a literal
 ruling-named argument of a program that is not a known reader (`node w.js <file>`). `path`/`dir`/`name` are null when
 the shell computes them and the same-line variable grammar (shell_write_guard.grammar_statements) cannot resolve them;
-`cwd` is the directory tracked through cd/pushd/Set-Location (null once unsure). `links` is true when the line creates
-a symlink or hard link (ln, mklink, New-Item -ItemType SymbolicLink, `symlink`/`link` in interpreter code).
+`cwd` is the directory tracked through cd/pushd/Set-Location (null once unsure). `links` is true when the line may create
+a symlink or hard link (ln, mklink, New-Item -ItemType SymbolicLink, `symlink`/`link` in interpreter code; R14 ruling 5:
+also a recursive/-a/-P/-d copy, rsync, an interpreter or shell script file and any unknown program such as tar, unzip or
+git checkout). A backup option of a copier (`-b`, `--backup`, `-S`, `--suffix`) adds a `backup` write of unknown name
+next to the target and in it.
 `error` is set when the line cannot be read; the adapter then fails closed.
 
 Input on stdin: {"command": str, "cwd": str, "shell": "bash" | "powershell", "scratch_dir": str | null}.
@@ -330,6 +333,7 @@ def copier(name, args, st):
     i = 0
     after = False
     linking = name in LINKERS
+    backup = False
     while i < len(args):
         w = args[i]
         t = w.text.lower() if st.flavor == "powershell" else w.text
@@ -344,14 +348,24 @@ def copier(name, args, st):
             target_dir = args[i + 1]
             i += 1
         elif not after and t.startswith("-") and t != "-":
+            if st.flavor == "bash" and re.match(r"^--(backup|suffix)(=|$)|^-[a-zA-Z]*[bS]", t):
+                backup = True
+            # R14 ruling 5: the backup suffix is an option value, never a source (`cp -b -S .md x <H>/ruling` writes <H>/ruling.md);
+            # BSD install's -S takes none, so there the next word stays an operand (the backup writes below fail closed anyway)
+            if st.flavor == "bash" and (t == "--suffix" or (name != "install" and re.match(r"^-[a-zA-Z]*S$", t))) and i + 1 < len(args):
+                i += 1
             if name in LINKERS or (name == "cp" and re.match(r"^-[a-zA-Z]*[sl]|^--(symbolic-)?link$", w.text)):
                 st.links = linking = True
+            # R14 ruling 5: a recursive, archive or no-dereference copy recreates symlinks it meets
+            if (name == "cp" and re.match(r"^-[a-zA-Z]*[RraPd]|^--(recursive|archive|no-dereference|preserve=.*(links|all).*)$", w.text)) or \
+                    (st.flavor == "powershell" and t == "-recurse"):
+                st.links = True
             if st.flavor == "powershell" and t in ("-itemtype", "-filter", "-include", "-exclude") and i + 1 < len(args):
                 i += 1
         else:
             rest.append(w)
         i += 1
-    if name in LINKERS:
+    if name in LINKERS or name == "rsync":
         st.links = True
     if target_dir is None and len(rest) >= 2:
         target_dir, rest = rest[-1], rest[:-1]
@@ -361,6 +375,11 @@ def copier(name, args, st):
     read = name in ("cp", "install", "copy-item", "cpi", "copy") and not linking
     for src in rest:
         add_word(st, "source", src, read=read)
+    if backup:
+        # the backup `<target><suffix>` (or `<target>/<name><suffix>`) has a name the line chooses: next to the target and in it
+        t = target_dir.text if target_dir is not None else "."
+        add(st, "backup", None, partial=t.rstrip("/") + "\0")
+        add(st, "backup", None, partial=t.rstrip("/") + "/\0", into=True)
     if target_dir is not None:
         add_word(st, "dest", target_dir)
         tv = value(target_dir, st)
@@ -636,6 +655,8 @@ def interpreter(lang, name, args, seg, flavor, st, depth):
     if not code and (not script or (i < len(args) and args[i].text == "-")):
         code.extend(seg.heredocs)
         code.extend(w.text for w in seg.herestrings)
+    if script and not code:
+        st.links = True  # R14 ruling 5: a script file is unknown code
     for c in code:
         if LINK_CODE.search(c):
             st.links = True
@@ -782,6 +803,7 @@ def command(words, seg, flavor, st, depth):
             return
     if name in READERS:
         return
+    st.links = True  # R14 ruling 5: an unknown program (tar, unzip, git checkout, ...) may create a symlink
     ruling_args(args, st)
     return "unknown"
 
@@ -812,6 +834,7 @@ def shell(args, seg, st, depth):
                 nested(v, "bash", st, depth)
         return
     if pos:
+        st.links = True  # a script file: unknown code
         ruling_args(pos, st)
         return
     for body in seg.heredocs:

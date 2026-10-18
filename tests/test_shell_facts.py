@@ -219,6 +219,26 @@ class ShellFactsTest(unittest.TestCase):
         self.assertEqual(self.writes("node w.js /s/r14-ruling-2.md /s/x.ruling.md"), [])
         self.assertEqual(self.writes("cat >> /h/asks.md <<'EOF'\nsee ruling-2.md\nEOF\ntouch /h/.ack")[0]["path"], "/h/asks.md")
 
+    def test_r14_ruling5_same_line_link_makers_set_links(self):
+        # a recursive/-a copy recreates a symlink, tar/unzip/git and other unknown programs may create one: a later `cp <S>/ruling.md T`
+        # then cannot be judged by what T is now
+        for line in ("cp -R /s/lnk /t/T && cp /s/ruling.md /t/T", "cp -a /s/lnk /t/T && cp /s/ruling.md /t/T",
+                     "tar xf a.tar && cp /s/ruling.md /t/T", "unzip a.zip && cp /s/ruling.md /t/T",
+                     "git checkout x && cp /s/ruling.md /t/T", "rsync /s/lnk /t/T && cp /s/ruling.md /t/T",
+                     "python3 mk.py && cp /s/ruling.md /t/T", "cp -P /s/lnk /t/T", "cp -r /s/d /t/T", "cp --archive /s/d /t/T"):
+            self.assertTrue(sf.facts({"command": line, "cwd": self.cwd})["links"], line)
+        self.assertFalse(sf.facts({"command": "cp /h/ruling-2.md .workflow/scratch/r14-ruling-2.md && echo ok", "cwd": self.cwd})["links"])
+
+    def test_r14_ruling5_backup_suffix_is_an_option_value_and_a_write_in_the_target_dir(self):
+        for line in ("cp -b -S .md x /h/ruling", "mv --backup --suffix=.md x /h/ruling", "cp --suffix .md x /h/ruling", "install -b -S .md x /h/ruling",
+                     "ln -b -S .md x /h/ruling", "cp -bS.md x /h/ruling"):
+            w = self.writes(line)
+            self.assertNotIn(".md", [x["name"] for x in w if x["kind"] == "source" and not line.startswith("install")], line)
+            backups = [x for x in w if x["kind"] == "backup"]
+            self.assertIn("/h", [x["dir"] for x in backups], line)
+            self.assertTrue(all(x["name"] is None for x in backups), line)
+        self.assertEqual([x["kind"] for x in self.writes("cp x /h/ruling")], ["source", "dest", "dest"])
+
     @unittest.skipUnless(sys.platform == "win32", "native drive paths are win32 targets")
     def test_native_backslash_drive_paths_are_targets_on_win32(self):
         # quoted: the path itself; unquoted: bash escapes, but the native spelling is ALSO a candidate (fail closed)
