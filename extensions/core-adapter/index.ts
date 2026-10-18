@@ -112,7 +112,7 @@ import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
-import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
+import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import type { CloseReport } from "./close.ts";
 import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, sessionModelOf } from "./session.ts";
@@ -1241,6 +1241,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           s.ladder.onRunEnd(ended);
           // policy_block (launchwait.ts): the stop record; the run is not climb-eligible and the harness never relaunches it.
           if (ended?.policyBlock && !s.isChild) s.trace?.emit({ event: "child_policy_block", role: ended.role ?? (s.launchedRoles.get(runId) ?? [])[0] ?? "?", runId, kind: "policy_block", outcome: ended.status, exit: ended.status === "completed" ? 0 : 1, decision: "stopped" });
+          // repeat_refusal (launchwait.ts, R12 item 4): the child stopped itself after the same refusal twice; the same family, the parent's stop record
+          if (ended?.repeatRefusal && !s.isChild) s.trace?.emit({ event: "child_repeat_refusal", role: ended.role ?? (s.launchedRoles.get(runId) ?? [])[0] ?? "?", runId, kind: "repeat_refusal", outcome: ended.status, exit: ended.status === "completed" ? 0 : 1, decision: "stopped" });
           // Review results with their occasion (occasion.ts); the verdict consumers see only the counting ones.
           const reviewLaunch = s.isChild ? undefined : s.reviewRuns.byRun.get(runId);
           const reviewResults = s.isChild ? [] : reviewResultsOfRunEnd(data, reviewLaunch);
@@ -1395,7 +1397,42 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, ...(s.usage.line.workspace ? { foremanRoot: workspaceOf(s.usage.line.workspace).root } : {}), readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub, ownReads: ownUsageReadable(s.agentDir, platform, s.id) }) });
     const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) });
     if (d) s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: r ? (d.kind === "deny" ? "deny" : "ask-denied") : "ask-approved", ...(r ? denyFields((d as { reason?: unknown }).reason, toolName, input, s.isChild ? s.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) : {}) });
+    // R12 item 4: the second identical deny reason (exact string) within one child run stops that run (repeatRefusalStop)
+    if (s.isChild && r && d?.kind === "deny") {
+      const key = `${s.id}\0${d.reason}`;
+      const n = (childDenyCounts.get(key) ?? 0) + 1;
+      childDenyCounts.set(key, n);
+      if (n >= 2) return repeatRefusalStop(s, ctx, d.reason);
+    }
     return r;
+  }
+
+  /** Child deny reasons per child session (one child run): count by exact reason (R12 item 4). */
+  const childDenyCounts = new Map<string, number>();
+  /** Child sessions stopped by repeatRefusalStop, with the block reason every later tool call of the run gets. */
+  const repeatStopped = new Map<string, string>();
+
+  /**
+   * R12 item 4 (the policy_block family, launchwait.ts): the child marks its run failed with REPEAT_REFUSAL_ERROR (stderr, exit code 1, the
+   * block reason the transcript keeps), aborts its turn and traces `child_repeat_refusal`; the parent's runEndOf reads the marker as
+   * repeatRefusal: failed, no retry, no climb. Every later tool call of the run is blocked with the same text, so there is no third attempt.
+   */
+  function repeatRefusalStop(s: Session, ctx: ExtensionContext, reason: string): { block: true; reason: string } {
+    const msg = `pi-foreman: ${REPEAT_REFUSAL_ERROR}: the same refusal twice in this run, so the run is stopped and not retried. Report it to the foreman. Refusal: ${reason}`;
+    repeatStopped.set(s.id, msg);
+    s.trace?.emit({ event: "child_repeat_refusal", runId: launchBinding?.launchId ?? s.id, role: s.usage.line.role || "?", reason, decision: "stopped" });
+    try {
+      process.stderr.write(`${msg}\n`);
+    } catch {
+      // the exit code and the block reason still carry it
+    }
+    process.exitCode = 1;
+    try {
+      ctx.abort();
+    } catch {
+      // the block itself stops this call
+    }
+    return { block: true, reason: msg };
   }
 
   // Session manifest (manifest.ts): pre-state here, silent `foreman_close.py record` at tool_result.
@@ -1404,6 +1441,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   pi.on("tool_call", async (event, ctx) => {
     const ms = sessionFor(ctx);
+    const stopped = ms?.isChild ? repeatStopped.get(ms.id) : undefined;
+    if (stopped) return { block: true, reason: stopped };
     if (ms) manifest.onToolCall(event.toolCallId, event.toolName, event.input as Record<string, unknown>, manifestCtx(ms, ctx.cwd));
     if (event.toolName === "subagent") sessionFor(ctx)?.launchBatch.onToolCall(event.toolCallId);
     if (event.toolName === "bash") {
@@ -2447,7 +2486,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const text = launchWaitText({ outcome: r.outcome, runId, role: run.role, ms, maxSeconds: cap.seconds, capBy: cap.by, by: r.by, end: r.end, asyncDir });
     const climb = s.ladder.eligible.get(run.role);
     // a steer taken as the run ended is delivered only if it is shown here; otherwise it stays pending
-    const shown = foldSteer(watch, steerText, climb && climb.runId === runId && !r.end?.policyBlock ? `${text}\n${climbHint(climb)}` : text, !ctx.signal?.aborted);
+    const shown = foldSteer(watch, steerText, climb && climb.runId === runId && !r.end?.policyBlock && !r.end?.repeatRefusal ? `${text}\n${climbHint(climb)}` : text, !ctx.signal?.aborted);
     return { text: steerFor(s).append(shown), path: r.end?.resultPath ?? asyncDir };
   }
 

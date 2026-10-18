@@ -106,6 +106,7 @@ A child's records carry `role` and `runId` (the launch id) in its own `trace-<la
 | `rung_up` | `role, from, to, reason` (+ `item` or `hits`, and `policy_override` for the reviewer) | A launch climbs from its live rung. |
 | `rung_top` | `role, model, reason` (+ `item` or `hits`, `policy_override`) | A climb was due but the live rung already is the top one. |
 | `child_policy_block` | `role, runId, kind, outcome, exit, decision` | A child stopped on a permission-policy block: `kind` is `policy_block`, `decision` is `stopped`. It is never climb-eligible and the harness does not relaunch it; the report says so. |
+| `child_repeat_refusal` | child: `runId, role, reason, decision`; foreman: `role, runId, kind, outcome, exit, decision` | The child got the same overlay deny reason twice in one run and stopped it (`run failed: repeated guarded-token probe`, `decision` `stopped`); every later tool call of the run is blocked. The foreman's record (`kind` `repeat_refusal`) treats it like `child_policy_block`: failed, never climb-eligible, not relaunched. |
 | `review_model` | `role, from, to, reason` | The different-model rule moved a reviewer off the foreman's model (`same_as_foreman`) or found no alternative (`no_alternative`). |
 | `review_occasion` | `occasion, thinking, model_overridden` | A reviewer launch for that occasion (`item`, `plan-review`, `pre-pr`, `second-opinion`); `ceremony.reviewByOccasion` applied (see [review](review.md#per-occasion-overrides)). |
 | `panel`, `finding` | see [review](review.md) | Shadow launch; a located finding. |

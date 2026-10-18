@@ -1,0 +1,23 @@
+{
+ "foreman": {
+  "b1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:bld]] short task"}}]},
+   {"text": "Launched."},
+   {"text": "Builder reported."}
+  ]
+ },
+ "builder": {
+  "bld": [
+   {"tools": [
+    {"name": "bash", "arguments": {"command": "git worktree add ../x"}}
+   ]},
+   {"tools": [
+    {"name": "bash", "arguments": {"command": "git worktree add ../x"}}
+   ]},
+   {"tools": [
+    {"name": "bash", "arguments": {"command": "touch third.txt"}}
+   ]},
+   {"text": "repeat child finished"}
+  ]
+ }
+}

@@ -62,6 +62,20 @@ export interface RunEnd {
   resultPath: string | null;
   /** policy_block: the run ended with exit 1 (not completed), no review verdict and a usage-policy block marker in its output. */
   policyBlock?: true;
+  /** repeat_refusal (R12 item 4): the child stopped itself after the same overlay deny twice (REPEAT_REFUSAL_ERROR in its output or error). */
+  repeatRefusal?: true;
+}
+
+/** The error a child marks its run failed with after the second identical overlay deny reason in that run (R12 item 4). */
+export const REPEAT_REFUSAL_ERROR = "run failed: repeated guarded-token probe";
+
+/** The line a repeat_refusal run's report carries: stopped, not retried, not climb-eligible (the policy_block family). */
+export const REPEAT_REFUSAL_LINE = `pi-foreman: this run was stopped by its own guard (${REPEAT_REFUSAL_ERROR}: the same refusal twice in one run) and is not retried: the harness does not relaunch it and it is not climb-eligible. Read the refusal in its output; do not relaunch the same task unchanged.`;
+
+/** Whether a run end is a repeat_refusal: not completed, REPEAT_REFUSAL_ERROR in its output or error. */
+function repeatRefused(data: Json, results: Json[], status: string, summary: string): boolean {
+  if (status === "completed") return false;
+  return [summary, str(data.error) ?? "", ...results.map((r) => str(r.error) ?? "")].some((t) => t.includes(REPEAT_REFUSAL_ERROR));
 }
 
 /** The usage-policy block marker of a child's output or error (a provider refusal under its usage policy). */
@@ -88,6 +102,11 @@ export function runEndOf(data: unknown): RunEnd | null {
   const summary = str(data.summary) ?? results.map((r) => str(r.summary) ?? "").filter(Boolean).join("\n\n");
   const end: RunEnd = { runId: data.runId as string, status, role, summary, resultPath: str(data.asyncDir) ?? null };
   if (policyBlocked(data, results, status, summary)) end.policyBlock = true;
+  // the child aborts its turn as it stops, which pi-subagents may report as paused/interrupted: the marker makes it a failed run
+  if (repeatRefused(data, results, status, summary)) {
+    end.repeatRefusal = true;
+    if (end.status === "paused") end.status = "failed";
+  }
   return end;
 }
 
@@ -275,7 +294,7 @@ export function launchWaitText(o: { outcome: WaitOutcome; runId: string; role: s
       const s = o.end?.summary ?? "";
       const body = s.length > SUMMARY_MAX ? `${s.slice(0, SUMMARY_MAX)}\n[... cut at ${SUMMARY_MAX} characters; the full output is under the result path]` : s || "(no output)";
       // the worktree line goes before the child's output
-      const blocked = o.end?.policyBlock ? `\n${POLICY_BLOCK_LINE}` : "";
+      const blocked = `${o.end?.policyBlock ? `\n${POLICY_BLOCK_LINE}` : ""}${o.end?.repeatRefusal ? `\n${REPEAT_REFUSAL_LINE}` : ""}`;
       return `pi-foreman launch-wait: run ${o.runId} (${o.role}) ended ${o.end?.status ?? "completed"} after ${fmtSeconds(o.ms)}.${where} No bg_wait is needed for it.${tree ? `${tree}\n` : " "}Child output:\n${body}${blocked}`;
     }
     case "supervisor":

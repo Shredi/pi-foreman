@@ -265,6 +265,7 @@ export class LadderState {
     this.byRun.delete(end.runId);
     if (!r || !r.bottom) return null;
     if (end.policyBlock) return null; // policy_block (launchwait.ts): stopped, never climb-eligible, never relaunched
+    if (end.repeatRefusal) return null; // repeat_refusal (launchwait.ts, R12 item 4): the same family
     const cause = climbCause(end.summary);
     if (!cause) return null;
     const h: Handoff = { role: r.role, runId: end.runId, cause, summary: end.summary, resultPath: end.resultPath };
