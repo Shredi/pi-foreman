@@ -35,6 +35,9 @@ class TestChildRepeatRefusal(ReplayCase):
         self.assertEqual(len(launches), 1, launches)
         text = "\n".join(p.read_text("utf-8", "replace") for p in rig.agent.rglob("*.jsonl"))
         self.assertIn("run failed: repeated guarded-token probe", text)
+        # the parent saw the marker end to end: its stop record (kind repeat_refusal), the run failed
+        parent = [r for r in events if r.get("event") == "child_repeat_refusal" and r.get("kind") == "repeat_refusal"]
+        self.assertEqual([(p.get("decision"), p.get("outcome"), p.get("exit")) for p in parent], [("stopped", "failed", 1)], parent)
 
 
 if __name__ == "__main__":

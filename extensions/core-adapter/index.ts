@@ -1923,6 +1923,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     radarTouch(s, ctx);
     usageFooter.update(s.id, ctx, event.message, { enabled: get(s.config.config, "footer.usage"), isChild: s.isChild, children: s.launches.size, wait: waitNote(waits.active(s.id)), runsCost: s.isChild ? undefined : summedCost(s).runs });
+    // R12 item 4: after repeatRefusalStop every assistant message of the run carries the stop as its error; pi-subagents reports the last
+    // assistant error as the run's error (the path a usage-policy block takes), so the parent's runEndOf sees REPEAT_REFUSAL_ERROR.
+    const stoppedMsg = s.isChild ? repeatStopped.get(s.id) : undefined;
+    if (stoppedMsg) return { message: { ...event.message, errorMessage: stoppedMsg } as typeof event.message };
     return undefined;
   });
 
