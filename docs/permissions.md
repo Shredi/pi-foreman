@@ -374,7 +374,10 @@ the same for the foreman and every child it launches, and nothing else is inheri
   them count, a write never does and stays a defer (`roundsurface.ts` `sessionOwnedSplit`). A run is recorded AT LAUNCH from the launch result
   (`details.asyncDir`, a `Result path: <abs>.` sentence, the `Async: <agent> [<id>]` line giving `<tmp>/pi-subagents-uid-<uid>/async-subagent-runs/<id>`,
   `budget.ts` `launchLocations`), so its `output-*.log` is readable with read-only verbs (`tail -c 2500 $TMPDIR/pi-subagents-uid-<uid>/async-subagent-runs/<run>/output-0.log`;
-  `$TMPDIR` is read as the foreman's own tmp dir, never when the command sets `TMPDIR` itself). A model `defer` (never a deny, never a soft-deny) for a bash command is turned into an
+  `$TMPDIR` is read as the foreman's own tmp dir, never when the command sets `TMPDIR` itself). Pi's truncated bash output log
+  (`pi-bash-<hex>.log`, `details.fullOutputPath` of a bash `tool_result` in Pi 1.3.x) is recorded per session as an exact own path
+  (`roundsurface.ts` `bashOutputLogs`): read-only verbs (`cut -c1-600 <path> | head -40`; `cut` is a read verb of the effect layer) pass for
+  the session that produced it, never another session's log, never a write; dialogs count it as the family `own_bash_output_log`. A model `defer` (never a deny, never a soft-deny) for a bash command is turned into an
   allow (label `owned-roots`) only when the effect layer, with the read-write roots added as scratch dirs and the read only roots as read roots, finds EVERY path operand and write
   target inside the workspace, scratch or an owned root, and no ask or deny rule catches the command. /tmp does not count as owned here;
   one non-owned write target (also under /tmp) keeps the defer.

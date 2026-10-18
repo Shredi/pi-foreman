@@ -113,6 +113,20 @@ export function piScratchReadable(roots: string[], platform: string = process.pl
 }
 
 /**
+ * Exact read patterns for Pi's truncated bash output logs (`pi-bash-<hex>.log`, a bash `tool_result`'s `details.fullOutputPath`) the session recorded (R13 item 5):
+ * a strictly read-only shell command of that session may name them through `MatchCtx.ownTasks`. Only absolute paths of that shape, no `..` or glob character.
+ */
+export function bashOutputLogs(paths: Iterable<string>, platform: string = process.platform): string[] {
+  const x = px(platform);
+  const out: string[] = [];
+  for (const p of paths) {
+    if (typeof p !== "string" || !x.isAbsolute(p) || /[*?[\]{}\n]/.test(p) || p.split(/[\\/]/).includes("..")) continue;
+    if (/^pi-bash-[0-9a-f]+\.log$/.test(x.basename(p))) out.push(x.normalize(p));
+  }
+  return [...new Set(out)];
+}
+
+/**
  * Read patterns for the foreman's own usage records, `<agentDir>/pi-foreman/state/usage` and everything below (R10 item 1): a read-only shell
  * command of the foreman (ls/cat/head/tail/wc/stat, or the one python read form of permoverlay.ts usagePythonRead) may name them although the
  * protect rule `{agentDir}/pi-foreman/state/*` covers state/; a write there stays protected. Never given to a child.

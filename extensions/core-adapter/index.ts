@@ -134,7 +134,7 @@ import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEO
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { launchEntries } from "./ladder.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
-import { asyncRunDirs, childReadable, childSurface, hubWorkflowDirs, hubWorkflowReadable, mainWorkflowReadable, ownTaskReadable, ownUsageReadable, piScratchReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
+import { asyncRunDirs, bashOutputLogs, childReadable, childSurface, hubWorkflowDirs, hubWorkflowReadable, mainWorkflowReadable, ownTaskReadable, ownUsageReadable, piScratchReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { CustomSeen, isSubagentWake } from "./idlecustom.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
 
@@ -293,6 +293,8 @@ interface Session {
   readNotices: Map<string, string>;
   /** Child result locations from structured places only (budget.ts); a `read` of one or below one is exempt from the budget. */
   childFiles: Set<string>;
+  /** Pi's truncated bash output logs (`details.fullOutputPath`) of this session's own bash calls (roundsurface.ts bashOutputLogs). */
+  bashLogs: Set<string>;
   /** Foreman only: bash calls that run `ledger`, by tool call id until tool_execution_end (trace ledger_call). */
   ledgerBash: Set<string>;
   /** Foreman: rung per launch and climb-eligible runs (ladder.ts). Child: the once-only context steer. */
@@ -537,6 +539,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       budget: new ReadBudget(),
       readNotices: new Map(),
       childFiles: new Set(),
+      bashLogs: new Set(),
       ledgerBash: new Set(),
       launchBatch: new LaunchBatch(),
       dedupeTraced: new Set(),
@@ -1167,6 +1170,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const normFile = (p: string): string => (platform === "win32" ? p.replace(/\\/g, "/").toLowerCase() : p);
   /** Record child result locations (resolved, so no `..` survives); a location containing the cwd is skipped. */
   const recordChild = (s: Session, paths: string[]): void => recordFiles(s.childFiles, paths, (p) => normFile(path.resolve(p)), s.cwd);
+  /** Pi's bash tool_result `details.fullOutputPath` (else the `Full output: <path>` line of its text) is the session's own readable log; the realpath spelling too. */
+  const recordBashLog = (s: Session, details: unknown, text: string): void => {
+    const given = details && typeof details === "object" ? (details as Record<string, unknown>).fullOutputPath : undefined;
+    const parsed = /Full output: (\S+?)\]/.exec(text)?.[1];
+    const p = typeof given === "string" ? given : parsed;
+    if (!p || s.bashLogs.size >= 50) return;
+    for (const q of bashOutputLogs([p], platform)) {
+      s.bashLogs.add(q);
+      try {
+        s.bashLogs.add(fs.realpathSync.native(q));
+      } catch {
+        // not there: the given spelling only
+      }
+    }
+  };
+
   const knownRun = (s: Session) => (runId: string): boolean => s.launchedRoles.has(runId) || s.runs.has(runId);
 
   /** Read budget (budget.ts): foreman only; undefined = let the call go on. */
@@ -1402,7 +1421,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s.overlay) return { block: true as const, reason: OVERLAY_UNAVAILABLE };
     // the session's own bg_run task dirs (`.pi/tasks/<session id>-*`) are readable for the session and its children, no other session's
     // and the session cwd's `.pi/scratch` (log copies; a child's cwd is its worktree)
-    const ownTasks = [...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...piScratchReadable([ctx.cwd, (() => { try { return fs.realpathSync(ctx.cwd); } catch { return ctx.cwd; } })()], platform)];
+    const ownTasks = [...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...piScratchReadable([ctx.cwd, (() => { try { return fs.realpathSync(ctx.cwd); } catch { return ctx.cwd; } })()], platform), ...bashOutputLogs(s.bashLogs, platform)];
     const hub = hubWorkflowReadable(get(s.config.config, "paths.hubWorkflow"), platform);
     const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, ...(s.usage.line.workspace ? { foremanRoot: workspaceOf(s.usage.line.workspace).root } : {}), readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub, ownReads: ownUsageReadable(s.agentDir, platform, s.id) }) });
     const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) });
@@ -2201,7 +2220,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.isChild) return { write: [], read: [] };
     const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform);
     const sid = (s.usage.line.foremanSession || "").split("").filter((c) => /[A-Za-z0-9_-]/.test(c)).join("");
-    return sessionOwnedSplit({ scratch: s.scratch.live(null), rounds, handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), npmRoot: s.owned.npmRoot, stateScratch: sid ? path.join(s.agentDir, "pi-foreman", "state", "scratch", sid) : null, asyncRuns: [...s.childFiles, ...asyncRunDirs(s.childFiles, platform)], hubFlow: hubWorkflowDirs(get(s.config.config, "paths.hubWorkflow"), platform) }, platform);
+    return sessionOwnedSplit({ scratch: s.scratch.live(null), rounds, handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), npmRoot: s.owned.npmRoot, stateScratch: sid ? path.join(s.agentDir, "pi-foreman", "state", "scratch", sid) : null, asyncRuns: [...s.childFiles, ...asyncRunDirs(s.childFiles, platform), ...bashOutputLogs(s.bashLogs, platform)], hubFlow: hubWorkflowDirs(get(s.config.config, "paths.hubWorkflow"), platform) }, platform);
   };
 
   /** The owned handoffs root (`<agentDir>/pi-foreman/handoffs`). */
@@ -2379,6 +2398,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     // R11 item 5: a finalization started by a completed finalizer (no PASS) also ends on a project edit.
     if (owner && !owner.isChild && !event.isError && owner.budget.finalized && !owner.budget.postPass && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) resetRecheck(owner, "edit");
+    if (owner && event.toolName === "bash") recordBashLog(owner, event.details, event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n"));
     if (owner && !owner.isChild && !event.isError && event.toolName === "bg_wait") recordChild(owner, bgWaitLocations(event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n"), knownRun(owner)));
     if (owner && pending) {
       owner.pendingChanges.delete(event.toolCallId);

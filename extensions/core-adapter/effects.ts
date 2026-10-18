@@ -1,6 +1,6 @@
 // Effect classes for a child's bash ask (ladder-polish item 8, docs/permissions.md). `classify`
 // sorts a command by what it does, not by a name list:
-//   read        ls cat head tail wc stat file tree diff grep rg find, print-only sed, read-only git
+//   read        ls cat head tail cut wc stat file tree diff grep rg find, print-only sed, read-only git
 //               (status log diff show; add/clean/mv/rm only with -n/--dry-run), npm/cargo/make dry runs
 //   build-test  the project's own test/build commands, taken from its manifest at the worktree root
 //               (package.json scripts test/build/lint, Makefile test targets, Cargo.toml, go.mod,
@@ -215,7 +215,7 @@ export interface SegmentEffect {
   wrapped?: boolean;
 }
 
-const READ = new Set(["ls", "cat", "head", "tail", "wc", "stat", "file", "tree", "diff", "grep", "egrep", "fgrep", "rg", "find"]);
+const READ = new Set(["ls", "cat", "head", "tail", "cut", "wc", "stat", "file", "tree", "diff", "grep", "egrep", "fgrep", "rg", "find"]);
 const FIND_BAD = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls", "-L", "-H", "-follow"]);
 
 function shortHas(a: string, ch: string): boolean {

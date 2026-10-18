@@ -3,13 +3,14 @@
 // itself keeps only the redacted, path-scrubbed `command` (trace.ts), which is what the report prints as literal lines.
 import * as fs from "node:fs";
 
-export const DIALOG_FAMILIES = ["state_usage_read", "pi_scratch_read", "toolchain_probe", "own_run_dir", "own_bg_output", "owned_scratch", "hub_ledger_read", "other"] as const;
+export const DIALOG_FAMILIES = ["state_usage_read", "pi_scratch_read", "toolchain_probe", "own_run_dir", "own_bg_output", "own_bash_output_log", "owned_scratch", "hub_ledger_read", "other"] as const;
 export type DialogFamily = (typeof DIALOG_FAMILIES)[number];
 
 /** The regression family of a dialog's command (raw text, before the trace scrubs it). */
 export function dialogFamily(command: string): DialogFamily {
   const c = command.replace(/\\/g, "/");
   if (/\.pi\/tasks\//.test(c)) return "own_bg_output";
+  if (/\bpi-bash-[0-9a-f]+\.log\b/.test(c)) return "own_bash_output_log";
   if (/\.pi\/scratch\b/.test(c)) return "pi_scratch_read";
   if (/pi-foreman-scratch/.test(c)) return "owned_scratch";
   if (/\bLEDGER-[^\s/]*\.md\b|\.workflow\/LEDGER/.test(c)) return "hub_ledger_read";
