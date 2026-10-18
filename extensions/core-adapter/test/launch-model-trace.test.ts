@@ -53,7 +53,8 @@ test("a launch traces role_launch and role_launched with the mapped model and th
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never);
+  // no host pressure sampling: a loaded CI runner must not defer the launch (a missing pressure file reads as ok)
+  coreAdapter(pi as never, { pressureRun: async () => ({ ok: true, text: "" }) });
   const ctx = {
     sessionManager: { getSessionId: () => "lmodel-session", getSessionFile: () => undefined },
     cwd: project,

@@ -21,6 +21,8 @@ function rig() {
   return { root, up, down, dirs: childHandoffDirs(path.join(root, "handoffs"), "me") };
 }
 const refuse = (r: ReturnType<typeof rig>, tool: string, input: Record<string, unknown>, cwd = r.root) => selfRulingRefusal(tool, input, cwd, r.dirs);
+// A child on Windows writes a path into a bash line with forward slashes; native backslashes would be bash escapes. PowerShell keeps native.
+const inBash = (p: string): string => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
 
 test("self ruling: write, edit, foreman_copy dst and foreman_move dst into the child-side dir are refused", async () => {
   const r = rig();
@@ -34,27 +36,28 @@ test("self ruling: write, edit, foreman_copy dst and foreman_move dst into the c
 
 test("self ruling: shell redirect, cp, backgrounded job and foreman_bg/bg_run naming the path are refused", async () => {
   const r = rig();
-  const f = path.join(r.up, "ruling.md");
-  for (const tool of ["bash", "powershell", "foreman_bg", "bg_run"]) assert.equal(await refuse(r, tool, { command: `echo APPROVED > ${f}` }), SELF_RULING_REASON, tool);
+  const native = path.join(r.up, "ruling.md");
+  const f = inBash(native);
+  for (const tool of ["bash", "powershell", "foreman_bg", "bg_run"]) assert.equal(await refuse(r, tool, { command: `echo APPROVED > ${tool === "powershell" ? native : f}` }), SELF_RULING_REASON, tool);
   assert.equal(await refuse(r, "bash", { command: `cp x ${f}` }), SELF_RULING_REASON);
   assert.equal(await refuse(r, "bash", { command: `(sleep 2; printf APPROVED > "${f}") &` }), SELF_RULING_REASON);
   assert.equal(await refuse(r, "bash", { command: "cp x ruling.md" }, r.up), SELF_RULING_REASON);
   assert.equal(await refuse(r, "bash", { command: `cat ${f} & cp x ${f}` }), SELF_RULING_REASON);
-  assert.equal(await refuse(r, "bash", { command: `cd ${r.up} && cp x ruling*.md` }), SELF_RULING_REASON);
+  assert.equal(await refuse(r, "bash", { command: `cd ${inBash(r.up)} && cp x ruling*.md` }), SELF_RULING_REASON);
   assert.equal(await refuse(r, "foreman_bg", { command: `sleep 3 && cp x ${f}` }), SELF_RULING_REASON);
 });
 
 test("self ruling: pure reads of the ruling and the dir stay allowed", async () => {
   const r = rig();
-  assert.equal(await refuse(r, "bash", { command: `cat ${path.join(r.up, "ruling-1.md")}` }), undefined);
-  assert.equal(await refuse(r, "bash", { command: `ls ${r.up}` }), undefined);
-  assert.equal(await refuse(r, "bash", { command: `head -3 ${path.join(r.up, "ruling.md")} | wc -l` }), undefined);
+  assert.equal(await refuse(r, "bash", { command: `cat ${inBash(path.join(r.up, "ruling-1.md"))}` }), undefined);
+  assert.equal(await refuse(r, "bash", { command: `ls ${inBash(r.up)}` }), undefined);
+  assert.equal(await refuse(r, "bash", { command: `head -3 ${inBash(path.join(r.up, "ruling.md"))} | wc -l` }), undefined);
 });
 
 test("self ruling: parent-side dirs, unrelated shell commands and the harness .seen write are unaffected", async () => {
   const r = rig();
   assert.equal(await refuse(r, "write", { path: path.join(r.down, "ruling.md") }), undefined);
-  assert.equal(await refuse(r, "bash", { command: `echo APPROVED > ${path.join(r.down, "ruling-2.md")}` }), undefined);
+  assert.equal(await refuse(r, "bash", { command: `echo APPROVED > ${inBash(path.join(r.down, "ruling-2.md"))}` }), undefined);
   assert.equal(await refuse(r, "write", { path: path.join(r.up, ".seen") }), undefined);
   assert.equal(await refuse(r, "bash", { command: "rm *.o" }), undefined);
   assert.equal(await refuse(r, "write", { path: path.join(r.up, "result.md") }), undefined);

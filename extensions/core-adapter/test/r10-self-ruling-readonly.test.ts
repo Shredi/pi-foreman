@@ -29,6 +29,10 @@ function rig() {
 }
 type Rig = ReturnType<typeof rig>;
 const run = (r: Rig, command: string, tool = "bash", cwd = r.root) => selfRulingRefusal(tool, { command }, cwd, r.dirs);
+// A child on Windows writes a path into a bash line with forward slashes; native backslashes would be bash escapes.
+// Bash lines are built from this view; PowerShell lines and the ctx paths (cwd, child dirs) stay native.
+const inBash = (p: string): string => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
+const view = (r: Rig, tool = "bash"): Rig => (tool === "powershell" ? r : { ...r, root: inBash(r.root), hand: inBash(r.hand), H: inBash(r.H), S: inBash(r.S) });
 
 // R10 read-only lines the 545abc2 guard refused; the r13 lexed write-surface check (hub 170) passes them.
 const PASSES_R13: Array<[string, (r: Rig) => string]> = [
@@ -42,7 +46,7 @@ const PASSES_R13: Array<[string, (r: Rig) => string]> = [
 for (const [name, line] of PASSES_R13) {
   test(`r13 lexed write surfaces: ${name} passes`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(r)), undefined, line(r));
+    assert.equal(await run(r, line(view(r))), undefined, line(view(r)));
   });
 }
 
@@ -54,7 +58,7 @@ const PASSES_NOW: Array<[string, (r: Rig) => string]> = [
 for (const [name, line] of PASSES_NOW) {
   test(`documented current state (R10, narrowing reverted): ${name} passes`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(r)), undefined, line(r));
+    assert.equal(await run(r, line(view(r))), undefined, line(view(r)));
   });
 }
 
@@ -104,7 +108,7 @@ for (const [name, line] of DENY) {
   test(`r10 write surface denied: ${name}`, async () => {
     const r = rig();
     const cwd = name.startsWith("relative cd") ? r.hand : r.root;
-    assert.equal(await run(r, line(r), "bash", cwd), SELF_RULING_REASON, line(r));
+    assert.equal(await run(r, line(view(r)), "bash", cwd), SELF_RULING_REASON, line(view(r)));
   });
 }
 
@@ -137,7 +141,7 @@ const DENY_R1: Array<[string, (r: Rig) => string, string?]> = [
 for (const [name, line, tool] of DENY_R1) {
   test(`r10 write surface denied (round 1): ${name}`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(r), tool ?? "bash"), SELF_RULING_REASON, line(r));
+    assert.equal(await run(r, line(view(r, tool)), tool ?? "bash"), SELF_RULING_REASON, line(view(r, tool)));
   });
 }
 
@@ -166,14 +170,14 @@ const DENY_R3: Array<[string, (r: Rig) => string, string?]> = [
 for (const [name, line, tool] of DENY_R3) {
   test(`r10 write surface denied (round 3): ${name}`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(r), tool ?? "bash"), SELF_RULING_REASON, line(r));
+    assert.equal(await run(r, line(view(r, tool)), tool ?? "bash"), SELF_RULING_REASON, line(view(r, tool)));
   });
 }
 
 for (const [name, line, tool] of DENY_R2) {
   test(`r10 write surface denied (round 2): ${name}`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(r), tool ?? "bash"), SELF_RULING_REASON, line(r));
+    assert.equal(await run(r, line(view(r, tool)), tool ?? "bash"), SELF_RULING_REASON, line(view(r, tool)));
   });
 }
 
@@ -184,6 +188,6 @@ test("r10 write surface denied: write and edit tools on <H>/ruling.md", async ()
 
 test("r10: $FOREMAN_SCRATCH stays unresolved and L2 fails closed next to a handoff mention", async () => {
   const r = rig();
-  const line = `cd $FOREMAN_SCRATCH && cp x $N && ls ${r.H}`;
+  const line = `cd $FOREMAN_SCRATCH && cp x $N && ls ${inBash(r.H)}`;
   assert.equal(await selfRulingRefusal("bash", { command: line }, r.root, r.dirs), SELF_RULING_REASON);
 });

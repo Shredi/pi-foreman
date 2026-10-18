@@ -14,6 +14,8 @@ const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..",
 const baseline = readBaseline(pkgRoot)!;
 const posix = process.platform !== "win32";
 const repo = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-s2-tr-")));
+// A child on Windows writes a path into a bash line with forward slashes; native backslashes would be bash escapes.
+const inBash = (p: string): string => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
 after(() => fs.rmSync(repo, { recursive: true, force: true }));
 fs.mkdirSync(path.join(repo, "config"), { recursive: true });
 const rules = buildOverlayRules(baseline, {}, {}, path.join(repo, "agent"), repo, undefined, true);
@@ -47,7 +49,7 @@ test("a self_ruling guard row carries the command and a non-empty reason", async
     fs.writeFileSync(path.join(up, "parent"), "other\n");
     fs.writeFileSync(path.join(up, "child"), "me\n");
     const dirs = childHandoffDirs(path.join(root, "handoffs"), "me");
-    const input = { command: `cp x ${path.join(up, "ruling-1.md")}` };
+    const input = { command: `cp x ${inBash(path.join(up, "ruling-1.md"))}` };
     const why = await selfRulingRefusal("bash", input, root, dirs);
     assert.equal(why, SELF_RULING_REASON);
     const row = sanitizeTrace({ event: "guard", guard: "self_ruling", toolFamily: "bash", decision: "blocked", ...denyFields(`self_ruling: ${why}`, "bash", input, "builder", [pkgRoot, root]) });
@@ -69,10 +71,10 @@ test("self-ruling guard: read-only pipelines pass, a real write to the parent's 
     const runs = path.join(root, "pi-subagents-uid-501", "async-subagent-runs", "run-1");
     for (const command of [
       `grep -o '"model":"[^"]*"' status.json events.jsonl | sort | uniq -c`,
-      `ls ${runs}; grep -ho '"model":"[^"]*"' *.json | sort | uniq -c`,
-      `cd ${runs} && grep -ho '"model":"[^"]*"' *.json | sort | uniq -c`,
+      `ls ${inBash(runs)}; grep -ho '"model":"[^"]*"' *.json | sort | uniq -c`,
+      `cd ${inBash(runs)} && grep -ho '"model":"[^"]*"' *.json | sort | uniq -c`,
     ]) assert.equal(await selfRulingRefusal("bash", { command }, runs, dirs), undefined, command);
-    for (const command of [`echo APPROVED > ${path.join(up, "ruling-1.md")}`, `sort -o ${path.join(up, "ruling.md")} x`, `cat x | tee ${path.join(up, "ruling-2.md")}`]) assert.equal(await selfRulingRefusal("bash", { command }, runs, dirs), SELF_RULING_REASON, command);
+    for (const command of [`echo APPROVED > ${inBash(path.join(up, "ruling-1.md"))}`, `sort -o ${inBash(path.join(up, "ruling.md"))} x`, `cat x | tee ${inBash(path.join(up, "ruling-2.md"))}`]) assert.equal(await selfRulingRefusal("bash", { command }, runs, dirs), SELF_RULING_REASON, command);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

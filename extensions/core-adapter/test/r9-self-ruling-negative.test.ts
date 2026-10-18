@@ -49,5 +49,5 @@ for (const [name, command] of OPEN) {
 
 test("expected-open (R9) control: the same form naming the file literally stays refused", async () => {
   const { root, H, dirs } = rig();
-  assert.equal(await selfRulingRefusal("bash", { command: `sort -uo ${H}/ruling.md x` }, root, dirs), SELF_RULING_REASON);
+  assert.equal(await selfRulingRefusal("bash", { command: `sort -uo ${process.platform === "win32" ? H.replace(/\\/g, "/") : H}/ruling.md x` }, root, dirs), SELF_RULING_REASON);
 });
