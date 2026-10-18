@@ -178,9 +178,10 @@ export interface MatchCtx {
   /** Patterns of the session's own bg_run task dirs (roundsurface.ts ownTaskReadable) and its cwd's `.pi/scratch` (piScratchReadable): a strictly read-only shell command may name them although a protect rule (`{cwd}/.pi/*`) covers `.pi`; a write there stays protected. */
   ownTasks?: string[];
   /**
-   * Foreman only: patterns of its own usage records (roundsurface.ts ownUsageReadable). A shell command whose every unit is ls/cat/head/tail/wc/stat
-   * without a wrapper, write or substitution, or the one python read form (usagePythonRead), may name them although the protect rule
-   * `{agentDir}/pi-foreman/state/*` covers state/; a write there stays protected.
+   * Foreman only: patterns of its own state records, state/usage, its own live and trace file (roundsurface.ts ownUsageReadable). A shell command
+   * whose every unit is ls/cat/head/tail/wc/stat without a wrapper, write or substitution, the python/node read forms (usagePythonRead,
+   * usageNodeRead) or an ownReadChain line (bindings, `cd <worktree> &&`, a `.workflow/scratch/` script) may name them although the protect
+   * rule `{agentDir}/pi-foreman/state/*` covers state/; a write there stays protected.
    */
   ownReads?: string[];
   /** Variable names the checked line binds somewhere (boundNames): `expandWord` trusts no `$S` / `$HOME` among them. */
@@ -2781,6 +2782,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const readOnly = strictRead;
   // R10 item 1: the foreman's own usage records (ctx.ownReads): plain ls/cat/head/tail/wc/stat units that write nothing, or the one python read form
   // R12 item 2: or a `;`/`&&`/pipe chain whose units touching the own records are such reads and whose other units are read-only (ownReadChain)
+  // R14 item 1: ownReadChain also takes a leading `cd <worktree> &&`, a `2>&1` and a worktree `.workflow/scratch/` script given own records
   const ownRead = !!ctx.ownReads?.length && shell === "posix" && ((!/\$\(|`|[<>]\(/.test(command) && c.rdr === true && c.ro === true && c.writeTargets!.size === 0 && c.tmpTargets!.size === 0 && c.removeWords!.length === 0 && c.verbs!.length > 0 && c.verbs!.every((v) => USAGE_VERBS.has(v))) || usagePythonRead(command, ctx.ownReads!, ctx) || usageNodeRead(command, ctx.ownReads!, ctx) || (c.writeTargets!.size === 0 && c.tmpTargets!.size === 0 && ownReadChain(command, ctx)));
   // `--exclude-dir=.git` names a path to leave out, never one to write: only a redirect target keeps such a word
   // the read-only python exemption holds only when the whole command is that one invocation: nothing else on the line may use the words
@@ -2950,25 +2952,40 @@ const VERSION_PROBE = /^(?:node|python3?)$/;
  * - a literal binding `name=<path>` alone at the top level after `;` or at the start (`~/`/`$HOME/` expanded, no `$`, glob or space), whose
  *   `$name`/`${name}` later units see as that literal;
  * - a read of the own records: ls/cat/head/tail/wc/stat whose operands are all own records, or the D1 python / node read form;
- * - a read-only unit from CHAIN_READERS naming no own record, or `node|python3 --version`.
+ * - a read-only unit from CHAIN_READERS naming no own record, or `node|python3 --version`;
+ * - R14 item 1: a worktree scratch script given only own records, `node [--experimental-strip-types] <script>.mjs <own>…` or
+ *   `python3 <script>.py <own>…`, the script's realpath below `<worktree>/.workflow/scratch/` (ownScratchScript).
+ * R14 item 1: the line may start with `cd <worktree> &&` (the session's own worktree root, workspaceOf(ctx.cwd)); a unit's only redirect may
+ * be an fd dup `N>&M` (`2>&1`).
  * At least one unit reads an own record. Any other `$` fails. No unit removes (no remover verb; the code of the read forms is fixed, so
  * Collected.removeWords holds only its literals). Write targets and tee are checked by the caller (Collected).
  */
-function ownReadChain(command: string, ctx: MatchCtx): boolean {
-  const pats = ctx.ownReads ?? [];
-  if (!pats.length || ctx.role === "child" || /\$\(|`|[<>]\(/.test(command)) return false;
+function ownReadChain(command: string, ctx0: MatchCtx): boolean {
+  const pats = ctx0.ownReads ?? [];
+  if (!pats.length || ctx0.role === "child" || /\$\(|`|[<>]\(/.test(command)) return false;
   const parsed = parseShell(command, "posix");
   if (parsed.subs.length || parsed.seps.some((s) => ![";", "&&", "||", "end"].includes(s))) return false;
+  let ctx = ctx0;
+  const root = ctx0.cwd ? workspaceOf(ctx0.cwd).root : "";
+  const lead = parsed.pipelines[0];
+  if (lead?.length === 1 && lead[0][0] === "cd") {
+    if (lead[0].length !== 2 || parsed.seps[0] !== "&&" || parsed.pipelines.length < 2 || REDIRECTS.get(lead[0])?.size || !root) return false;
+    const real = defaults(ctx0).realpath;
+    const d = expandWord(lead[0][1], ctx0);
+    if (/[$`\\*?[\]{}\s~]/.test(d) || !path.posix.isAbsolute(d) || real(d) === null || real(d) !== real(root)) return false;
+    ctx = { ...ctx0, cwd: root };
+  }
   const own = (w: string): boolean => {
     const abs = pathCandidates(w, ctx).filter((x) => path.isAbsolute(x) || path.win32.isAbsolute(x));
     return abs.length > 0 && abs.every((x) => pats.some((p) => pathMatches(p, x, ctx)));
   };
   const vars = new Map<string, string>();
   let reads = 0;
-  for (let i = 0; i < parsed.pipelines.length; i++) {
+  for (let i = ctx === ctx0 ? 0 : 1; i < parsed.pipelines.length; i++) {
     const pipe = parsed.pipelines[i];
-    for (const unit of pipe) {
-      if (!unit.length || REDIRECTS.get(unit)?.size) return false;
+    for (const unit0 of pipe) {
+      const unit = fdDupFree(unit0, command);
+      if (!unit?.length) return false;
       const bind = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(unit[0]);
       if (bind) {
         if (unit.length !== 1 || pipe.length !== 1 || (i > 0 && parsed.seps[i - 1] !== ";")) return false;
@@ -2992,6 +3009,10 @@ function ownReadChain(command: string, ctx: MatchCtx): boolean {
           continue;
         }
       }
+      if (root && ownScratchScript(words, root, ctx) && words.slice(words[1] === "--experimental-strip-types" ? 3 : 2).every(own)) {
+        reads++;
+        continue;
+      }
       if (words.slice(1).some(own)) return false;
       if (VERSION_PROBE.test(verb) && words.length === 2 && (words[1] === "--version" || words[1] === "-V" || words[1] === "-v")) continue;
       if (!CHAIN_READERS.has(verb)) return false;
@@ -2999,6 +3020,37 @@ function ownReadChain(command: string, ctx: MatchCtx): boolean {
     }
   }
   return reads > 0;
+}
+
+/**
+ * The words of a parsed unit without its fd dup redirects (`2>&1`, `>&2`: the operand a single digit right after `>&` in `command`), or null
+ * when the unit has any other redirect.
+ */
+function fdDupFree(unit: string[], command: string): string[] | null {
+  const r = REDIRECTS.get(unit);
+  if (!r?.size) return unit;
+  const spans = WORD_SPANS.get(unit);
+  for (const k of r) {
+    const s = spans?.[k]?.[0];
+    if (s === undefined || !/^\d$/.test(unit[k]) || command.slice(s - 2, s + 1) !== `>&${unit[k]}` || /[<>&]/.test(command[s - 3] ?? "")) return null;
+  }
+  return unit.filter((_, k) => !r.has(k));
+}
+
+/**
+ * R14 item 1: `node [--experimental-strip-types] <script>.mjs …` or `python3 <script>.py …` whose script word (no `$`, glob or `~`) resolves
+ * against ctx.cwd to an existing file whose realpath lies below the realpath of `<root>/.workflow/scratch/` (no parent, sibling or symlink
+ * escape). The operands are checked by the caller.
+ */
+function ownScratchScript(words: string[], root: string, ctx: MatchCtx): boolean {
+  const node = words[0] === "node";
+  if (!node && words[0] !== "python3") return false;
+  const script = words[node && words[1] === "--experimental-strip-types" ? 2 : 1];
+  if (!script || script.startsWith("-") || /[$`*?[\]{}\s~\\]/.test(script) || !script.endsWith(node ? ".mjs" : ".py") || !ctx.cwd) return false;
+  const real = defaults(ctx).realpath;
+  const dir = real(path.join(root, ".workflow", "scratch"));
+  const file = real(path.resolve(ctx.cwd, script));
+  return !!dir && !!file && file !== dir && insideDir(dir, file, ctx) && !defaults(ctx).isDir(file);
 }
 
 /** The strictest write-protection decision for one path word (deny before ask), or null. */

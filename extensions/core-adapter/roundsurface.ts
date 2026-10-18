@@ -10,6 +10,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { splitChain } from "./shellchain.ts";
 import { workspaceTop } from "./gitdrift.ts";
+import { traceFile } from "./trace.ts";
 
 const px = (platform: string): path.PlatformPath => (platform === "win32" ? path.win32 : path.posix);
 
@@ -152,17 +153,23 @@ export function recordBashOutputLog(logs: Set<string>, details: unknown, platfor
 }
 
 /**
- * Read patterns for the foreman's own usage records, `<agentDir>/pi-foreman/state/usage` and everything below (R10 item 1): a read-only shell
- * command of the foreman (ls/cat/head/tail/wc/stat, or the one python read form of permoverlay.ts usagePythonRead) may name them although the
- * protect rule `{agentDir}/pi-foreman/state/*` covers state/; a write there stays protected. Never given to a child.
+ * Read patterns for the foreman's own state records (R10 item 1, R12 item 2, R14 item 1): `<agentDir>/pi-foreman/state/usage` and everything below,
+ * the session's own presence file `state/live/<session>.json` and its own trace file (trace.ts traceFile: `trace.dir` when set, else the state
+ * dir). A read-only shell command of the foreman (permoverlay.ts ownRead: ls/cat/head/tail/wc/stat, the python/node read forms, ownReadChain)
+ * may name them although the protect rule `{agentDir}/pi-foreman/state/*` covers state/; a write there and another session's files stay
+ * protected. Never given to a child.
  */
-export function ownUsageReadable(agentDir: string, platform: string = process.platform, sessionId?: string): string[] {
+export function ownUsageReadable(agentDir: string, platform: string = process.platform, sessionId?: string, trace?: { dir: unknown; stateDir: string }): string[] {
   const x = px(platform);
   if (!agentDir || !x.isAbsolute(agentDir)) return [];
   const d = x.join(x.resolve(agentDir), "pi-foreman", "state", "usage");
+  const sid = sessionId && /^[A-Za-z0-9_.-]+$/.test(sessionId) && !sessionId.startsWith(".") ? sessionId : "";
   // R12 item 2: and the session's own presence file state/live/<session>.json (livestate.ts), never another session's
-  const live = sessionId && /^[A-Za-z0-9_.-]+$/.test(sessionId) && !sessionId.startsWith(".") ? [x.join(x.resolve(agentDir), "pi-foreman", "state", "live", `${sessionId}.json`)] : [];
-  return [d, `${d}/*`, ...live];
+  const live = sid ? [x.join(x.resolve(agentDir), "pi-foreman", "state", "live", `${sid}.json`)] : [];
+  // R14 item 1: and its own trace file, by the name the trace writer uses; a glob character in it would widen the pattern
+  const tf = sid && trace?.stateDir ? traceFile(trace.dir, trace.stateDir, sid) : "";
+  const own = tf && x.isAbsolute(tf) && !/[*?[\]{}]/.test(tf) ? [tf] : [];
+  return [d, `${d}/*`, ...live, ...own];
 }
 
 /**
