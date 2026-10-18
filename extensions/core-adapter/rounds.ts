@@ -119,6 +119,20 @@ export class RoundChains {
     this.state = state;
   }
 
+  /** Every chain's state, the active one included (the reload file, roundstate.ts). */
+  all(): Map<string, RoundState> {
+    return new Map([...this.saved, [this.key, this.state]]);
+  }
+
+  /** After a reload: `key` active, the other chains set aside; no refusal and no used ruling carry over. */
+  restore(key: string, chains: Map<string, RoundState>): void {
+    this.saved.clear();
+    for (const [k, v] of chains) if (k !== key) this.saved.set(k, v);
+    this.key = key;
+    this.state = chains.get(key) ?? initialRounds();
+    this.refusal = null;
+  }
+
   /** After a refusal of the active chain: a fresh parent `revision-round: +1` ruling resets its count once. Returns the ruling file. */
   applyRuling(dirs: string[], self?: { has(file: string, mtime: number): boolean }): string | null {
     if (!this.refusal || this.refusal.key !== this.key) return null;

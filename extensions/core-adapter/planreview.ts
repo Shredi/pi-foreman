@@ -69,6 +69,16 @@ export class PlanReviews {
     this.byPath.set(planPath, { latest: v, rounds: (l?.rounds ?? 0) + (l && l.latest.hash === v.hash ? 0 : 1) });
   }
 
+  /** The latest verdict and round count of a plan's lineage, or null (the reload file, roundstate.ts). */
+  lineage(planPath: string): { latest: PlanVerdict; rounds: number } | null {
+    return this.byPath.get(planPath) ?? null;
+  }
+
+  /** After a reload: put back a lineage the reload file kept. */
+  restore(planPath: string, latest: PlanVerdict, rounds: number): void {
+    this.byPath.set(planPath, { latest, rounds });
+  }
+
   /**
    * The verdict that lets the checkpoint open, or why it is refused. A FAIL below `cap` rounds goes back
    * to the planner; a FAIL at the cap opens it with `capped` (and the round count).

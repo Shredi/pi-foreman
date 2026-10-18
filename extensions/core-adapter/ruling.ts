@@ -115,20 +115,30 @@ export class SelfRulings {
  * `afterMs` (the last FAIL verdict). Returns its path, or null. Only for naming it in the finish refusal: it is never a
  * verdict. `dirs` must be the dirs where this session is the child (owned.ts childHandoffDirs); `self` skips rulings
  * this session wrote.
+ *
+ * `restore` (reload, roundstate.ts): only `ruling.md` (never `ruling-<n>.md`), first line `APPROVED`, and its ctime
+ * (which a session cannot set back) newer than `afterMs` (the ctime of both plan files). Such a ruling restores the
+ * plan checkpoint approval after /reload, nothing else: the finish gate still needs a reviewer PASS.
  */
-export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulings): string | null {
+export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulings, restore = false): string | null {
   for (const dir of dirs) {
     let names: string[] = [];
     try {
-      names = fs.readdirSync(dir).filter(isRulingName);
+      names = fs.readdirSync(dir).filter(restore ? (n) => n === "ruling.md" : isRulingName);
     } catch {
       continue;
     }
     for (const n of names) {
       const m = mtimeOf(path.join(dir, n));
-      if (m === null || m <= afterMs || self?.has(path.join(dir, n), m)) continue;
+      let c: number | null = null;
+      try {
+        c = fs.statSync(path.join(dir, n)).ctimeMs;
+      } catch {
+        // vanished
+      }
+      if (m === null || c === null || (restore ? c : m) <= afterMs || self?.has(path.join(dir, n), m)) continue;
       const first = (readText(path.join(dir, n)) ?? "").split(/\r?\n/, 1)[0].trim();
-      if (first === "APPROVED" || first === "SHIP") return path.join(dir, n);
+      if (first === "APPROVED" || (!restore && first === "SHIP")) return path.join(dir, n);
     }
   }
   return null;
