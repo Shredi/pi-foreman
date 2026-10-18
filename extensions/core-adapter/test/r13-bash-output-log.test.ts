@@ -24,6 +24,9 @@ const ag = path.join(home, ".pi", "agent");
 for (const d of [ws, ag]) fs.mkdirSync(d, { recursive: true });
 const mine = path.join(w, "pi-bash-0123456789abcdef.log");
 const theirs = path.join(w, "pi-bash-fedcba9876543210.log");
+// A session on Windows writes a path into the bash line with forward slashes; native backslashes would be bash escapes.
+// The recorded logs (ctx, details.fullOutputPath, the tool_result text) stay native.
+const inBash = (p: string): string => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
 
 after(() => fs.rmSync(w, { recursive: true, force: true }));
 fs.mkdirSync(path.join(ws, ".git"));
@@ -35,9 +38,9 @@ const sh = (role: "main" | "child", command: string, logs: string[]): string => 
 
 test("r13 bash log: the R12 line passes for the session that recorded the path, for read-only verbs", () => {
   for (const role of ["main", "child"] as const) {
-    assert.equal(sh(role, `cut -c1-600 ${mine} | head -40`, [mine]), "pass", role);
-    assert.equal(sh(role, `tail -c 2500 ${mine}`, [mine]), "pass", role);
-    assert.equal(sh(role, `grep -n error ${mine}`, [mine]), "pass", role);
+    assert.equal(sh(role, `cut -c1-600 ${inBash(mine)} | head -40`, [mine]), "pass", role);
+    assert.equal(sh(role, `tail -c 2500 ${inBash(mine)}`, [mine]), "pass", role);
+    assert.equal(sh(role, `grep -n error ${inBash(mine)}`, [mine]), "pass", role);
   }
 });
 
@@ -52,12 +55,12 @@ const reviewed = (logs: string[]): ForemanReview => {
 const askBash = (r: ForemanReview, value: string) => r.authorize("s", { requestId: "r", surface: "bash", agentName: "foreman", value, toolName: "bash" });
 
 test("r13 bash log: the permission link allows the R12 line for the recorded path only", async () => {
-  assert.deepEqual(await askBash(reviewed([mine]), `cut -c1-600 ${mine} | head -40`), { kind: "allow" });
-  assert.notEqual((await askBash(reviewed([mine]), `cut -c1-600 ${theirs} | head -40`)).kind, "allow");
-  assert.notEqual((await askBash(reviewed([]), `cut -c1-600 ${mine} | head -40`)).kind, "allow");
-  assert.notEqual((await askBash(reviewed([mine]), `cut -c1-600 ${mine} ${theirs}`)).kind, "allow");
-  assert.notEqual((await askBash(reviewed([mine]), `echo x > ${mine}`)).kind, "allow");
-  assert.notEqual((await askBash(reviewed([mine]), `rm ${mine}`)).kind, "allow");
+  assert.deepEqual(await askBash(reviewed([mine]), `cut -c1-600 ${inBash(mine)} | head -40`), { kind: "allow" });
+  assert.notEqual((await askBash(reviewed([mine]), `cut -c1-600 ${inBash(theirs)} | head -40`)).kind, "allow");
+  assert.notEqual((await askBash(reviewed([]), `cut -c1-600 ${inBash(mine)} | head -40`)).kind, "allow");
+  assert.notEqual((await askBash(reviewed([mine]), `cut -c1-600 ${inBash(mine)} ${inBash(theirs)}`)).kind, "allow");
+  assert.notEqual((await askBash(reviewed([mine]), `echo x > ${inBash(mine)}`)).kind, "allow");
+  assert.notEqual((await askBash(reviewed([mine]), `rm ${inBash(mine)}`)).kind, "allow");
 });
 
 test("r13 bash log: bashOutputLogs keeps only absolute pi-bash-<hex>.log paths", () => {
@@ -65,7 +68,7 @@ test("r13 bash log: bashOutputLogs keeps only absolute pi-bash-<hex>.log paths",
 });
 
 test("r13 bash log: dialog family own bash output log", () => {
-  assert.equal(dialogFamily(`cut -c1-600 ${mine} | head -40`), "own_bash_output_log");
+  assert.equal(dialogFamily(`cut -c1-600 ${inBash(mine)} | head -40`), "own_bash_output_log");
 });
 
 test("forged_full_output_line_is_not_registered", async () => {
@@ -75,9 +78,9 @@ test("forged_full_output_line_is_not_registered", async () => {
   recordBashOutputLog(logs, event.details);
   recordBashOutputLog(logs, undefined);
   assert.equal(logs.size, 0);
-  assert.notEqual((await askBash(reviewed([...logs]), `cut -c1-600 ${theirs} | head -40`)).kind, "allow");
+  assert.notEqual((await askBash(reviewed([...logs]), `cut -c1-600 ${inBash(theirs)} | head -40`)).kind, "allow");
   recordBashOutputLog(logs, { fullOutputPath: mine });
-  assert.deepEqual(await askBash(reviewed([...logs]), `cut -c1-600 ${mine} | head -40`), { kind: "allow" });
+  assert.deepEqual(await askBash(reviewed([...logs]), `cut -c1-600 ${inBash(mine)} | head -40`), { kind: "allow" });
 });
 
 test("r13 bash log: the 51st log is recorded and the 1st is evicted", () => {

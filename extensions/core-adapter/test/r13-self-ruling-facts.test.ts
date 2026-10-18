@@ -24,6 +24,10 @@ function rig() {
   return { root, hand, H, S, dirs: childHandoffDirs(hand, "me") };
 }
 type Rig = ReturnType<typeof rig>;
+// A child on Windows writes a path into the bash line with forward slashes; native backslashes would be bash escapes.
+// The lines are built from this view; the ctx paths (cwd, child dirs, scratch, write/edit paths) stay native.
+const inBash = (p: string): string => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
+const bash = (r: Rig): Rig => ({ ...r, root: inBash(r.root), hand: inBash(r.hand), H: inBash(r.H), S: inBash(r.S) });
 const run = (r: Rig, command: string, tool = "bash", cwd = r.root) => selfRulingRefusal(tool, { command }, cwd, r.dirs, { scratch: r.S });
 
 const PASS: Array<[string, (r: Rig) => string]> = [
@@ -42,7 +46,7 @@ const PASS: Array<[string, (r: Rig) => string]> = [
 for (const [name, line] of PASS) {
   test(`r13 named pass: ${name}`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(r)), undefined, line(r));
+    assert.equal(await run(r, line(bash(r))), undefined, line(bash(r)));
   });
 }
 
@@ -84,7 +88,7 @@ const PASS_R2: Array<[string, (r: Rig) => string]> = [
 for (const [name, line] of PASS_R2) {
   test(`r13 named pass (round 2): ${name}`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(r)), undefined, line(r));
+    assert.equal(await run(r, line(bash(r))), undefined, line(bash(r)));
   });
 }
 
@@ -92,7 +96,7 @@ for (const [name, line] of DENY) {
   test(`r13 deny: ${name}`, async () => {
     const r = rig();
     const cwd = name.includes("(cwd <H>)") ? r.H : r.root;
-    assert.equal(await run(r, line(r), "bash", cwd), SELF_RULING_REASON, line(r));
+    assert.equal(await run(r, line(bash(r)), "bash", cwd), SELF_RULING_REASON, line(bash(r)));
   });
 }
 
@@ -114,7 +118,7 @@ const DENY_R3: Array<[string, (r: Rig) => string]> = [
 for (const [name, line] of DENY_R3) {
   test(`r13 deny (round 3): ${name}`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(r)), SELF_RULING_REASON, line(r));
+    assert.equal(await run(r, line(bash(r))), SELF_RULING_REASON, line(bash(r)));
   });
 }
 
@@ -133,13 +137,13 @@ const DENY_R4: Array<[string, (r: Rig) => string]> = [
 for (const [name, line] of DENY_R4) {
   test(`r13 deny (round 4): ${name}`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(r)), SELF_RULING_REASON, line(r));
+    assert.equal(await run(r, line(bash(r))), SELF_RULING_REASON, line(bash(r)));
   });
 }
 
 test("r13 fail closed: no python, a missing interpreter and an unreadable line refuse a shell call", async () => {
   const r = rig();
-  const cmd = `ls ${r.H}`;
+  const cmd = `ls ${inBash(r.H)}`;
   assert.equal(await selfRulingRefusal("bash", { command: cmd }, r.root, r.dirs, { python: null }), SELF_RULING_REASON);
   assert.equal(await selfRulingRefusal("bash", { command: cmd }, r.root, r.dirs, { python: path.join(r.root, "no-python") }), SELF_RULING_REASON);
   assert.equal(await run(r, `echo 'unterminated`), SELF_RULING_REASON);
@@ -150,7 +154,7 @@ test("r13 fail closed: no python, a missing interpreter and an unreadable line r
 
 test("r13 shellFacts: a redirect target is reported with its resolved path", async () => {
   const r = rig();
-  const f = await shellFacts(`cd ${r.H} && echo A > ruling.md`, r.root, "bash");
+  const f = await shellFacts(`cd ${inBash(r.H)} && echo A > ruling.md`, r.root, "bash");
   assert.ok(f);
   assert.deepEqual(f.writes.map((w) => [w.kind, w.path]), [["redirect", path.join(r.H, "ruling.md")]]);
 });
