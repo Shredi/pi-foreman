@@ -18,7 +18,7 @@ import type { Json } from "./config.ts";
 import { get } from "./config.ts";
 import { BRIDGE_PROVIDER } from "./bridgeiso.ts";
 import type { BashRules } from "./timeoutallow.ts";
-import { expandScratchVar, insideScratch } from "./childscratch.ts";
+import { insideScratch } from "./childscratch.ts";
 import { deterministicAllow, deterministicAllowInfo, hits } from "./timeoutallow.ts";
 import { classify, effectCtx } from "./effects.ts";
 import * as os from "node:os";
@@ -252,6 +252,38 @@ export function reviewValue(d: AskDetails): string {
 function unitValue(d: AskDetails): string {
   const v =d.command ?? d.value ?? d.payload?.request?.value ?? d.target ?? d.skillName ?? d.path ?? d.toolInputPreview ?? "";
   return typeof v === "string" ? v : String(v);
+}
+
+/**
+ * Replace `$TMPDIR` / `${TMPDIR}` outside single quotes by `dir` (the foreman's own tmp dir); the command unchanged when `dir` holds a character the
+ * shell would read, when the command sets, reads, unsets, exports or loops over TMPDIR itself, or on win32. `${TMPDIR:-…}` is not matched and stays.
+ */
+function expandTmpdir(command: string, dir: string, platform: string): string {
+  if (platform === "win32" || /[\s'"\\$`*?[\]{}()<>|;&!#~]/.test(dir) || !path.posix.isAbsolute(dir)) return command;
+  if (/\bTMPDIR\s*=|\b(?:unset|export|read|for|declare|typeset|local|printenv|env)\b[^;&|\n]*\bTMPDIR\b/.test(command)) return command;
+  let out = "";
+  let single = false;
+  let double = false;
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (c === "\\" && !single) {
+      out += command.slice(i, i + 2);
+      i++;
+      continue;
+    }
+    if (c === "'" && !double) single = !single;
+    else if (c === '"' && !single) double = !double;
+    if (c === "$" && !single) {
+      const m = /^\$(?:\{TMPDIR\}|TMPDIR(?![A-Za-z0-9_]))/.exec(command.slice(i));
+      if (m) {
+        out += dir;
+        i += m[0].length - 1;
+        continue;
+      }
+    }
+    out += c;
+  }
+  return out;
 }
 
 function rootList(f: (() => string[]) | undefined): string[] {
@@ -525,7 +557,7 @@ export class ForemanReview {
       if (!read.length || !rules) return null;
       const ctx = { ...effectCtx(s.cwd, [], process.platform, read), noTmp: true };
       // `$TMPDIR/pi-subagents-uid-<uid>/...` (the chair's spelling of a run's output log) is read as the foreman's own tmp dir; none when the command sets TMPDIR itself
-      const tmp = (v: string): string => (/TMPDIR\s*=/.test(v) ? v : expandScratchVar(v, (process.env.TMPDIR || os.tmpdir()).replace(/(.)\/+$/, "$1"), process.platform, "TMPDIR") ?? v);
+      const tmp = (v: string): string => expandTmpdir(v, (process.env.TMPDIR || os.tmpdir()).replace(/(.)\/+$/, "$1"), process.platform);
       const full = tmp(reviewValue(d));
       const deps = { effects: ctx };
       return deterministicAllow(rules, tmp(unitValue(d)), deps) && deterministicAllow(rules, full, deps) && classify(full, ctx) === "read" ? "owned-read" : null;

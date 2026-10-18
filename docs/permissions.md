@@ -372,7 +372,7 @@ the same for the foreman and every child it launches, and nothing else is inheri
   only for the main session and the builder; read only for any other forwarded child), its handoff dirs and `state/scratch/<session>`.
   The global npm root and the pi-subagents async run dirs of its OWN child runs are listed apart as "owned, read only": reads below
   them count, a write never does and stays a defer (`roundsurface.ts` `sessionOwnedSplit`). A run is recorded AT LAUNCH from the launch result
-  (`details.asyncDir`, a `Result path: <abs>.` sentence, the `Async: <agent> [<id>]` line giving `<tmp>/pi-subagents-uid-<uid>/async-subagent-runs/<id>`,
+  (`details.asyncDir`, the `Async: <agent> [<id>]` line giving `<tmp>/pi-subagents-uid-<uid>/async-subagent-runs/<id>`,
   `budget.ts` `launchLocations`), so its `output-*.log` is readable with read-only verbs (`tail -c 2500 $TMPDIR/pi-subagents-uid-<uid>/async-subagent-runs/<run>/output-0.log`;
   `$TMPDIR` is read as the foreman's own tmp dir, never when the command sets `TMPDIR` itself). Pi's truncated bash output log
   (`pi-bash-<hex>.log`, `details.fullOutputPath` of a bash `tool_result` in Pi 1.3.x) is recorded per session as an exact own path

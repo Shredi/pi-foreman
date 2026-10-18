@@ -67,9 +67,9 @@ test("chair line, after: the absolute spelling is allowed too, a write or anothe
   assert.notEqual((await ask(r, "TMPDIR=/etc; tail -c 2500 $TMPDIR/pi-subagents-uid-501/async-subagent-runs/abc123/output-0.log")).kind, "allow");
 });
 
-test("launchLocations: details, Result path sentence and the Async id; a bad id adds nothing", () => {
+test("launchLocations: details and the Async id; a Result path sentence is free text and adds nothing; a bad id adds nothing", () => {
   assert.deepEqual(launchLocations("Async: builder [r1]", { asyncDir: "/t/pi-subagents-uid-1/async-subagent-runs/r1" }, "/t/pi-subagents-uid-1"), ["/t/pi-subagents-uid-1/async-subagent-runs/r1", "/t/pi-subagents-uid-1/async-subagent-runs/r1"]);
-  assert.deepEqual(launchLocations("run r1 ended. Result path: /t/x/r1. No bg_wait", undefined, null), ["/t/x/r1"]);
+  assert.deepEqual(launchLocations("run r1 ended. Result path: /t/x/r1. No bg_wait", undefined, null), []);
   assert.deepEqual(launchLocations("Async: builder [..]", undefined, "/t/u"), []);
   assert.deepEqual(launchLocations("Async: builder [a/b]", undefined, "/t/u"), []);
 });

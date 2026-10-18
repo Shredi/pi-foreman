@@ -234,7 +234,7 @@ export class ChildScratch {
  * as the forward-slash spelling of the same path (`C:/Users/RUNNER~1/.../scratch`), and a `~` inside a name (an 8.3 short name,
  * after a letter or digit) is literal. Not a drive path, or any other shell character, is null as on POSIX.
  */
-export function expandScratchVar(command: string, dir0: string, platform: string = process.platform, name: string = SCRATCH_ENV): string | null {
+export function expandScratchVar(command: string, dir0: string, platform: string = process.platform): string | null {
   let dir = dir0;
   if (platform === "win32") {
     dir = dir0.replace(/\\/g, "/");
@@ -253,7 +253,7 @@ export function expandScratchVar(command: string, dir0: string, platform: string
     if (c === "'" && !double) single = !single;
     else if (c === '"' && !single) double = !double;
     if (c === "$" && !single) {
-      const m = new RegExp(`^\\$(?:\\{${name}\\}|${name}(?![A-Za-z0-9_]))`).exec(command.slice(i));
+      const m = /^\$(?:\{FOREMAN_SCRATCH\}|FOREMAN_SCRATCH(?![A-Za-z0-9_]))/.exec(command.slice(i));
       if (m) {
         out += dir;
         i += m[0].length - 1;
