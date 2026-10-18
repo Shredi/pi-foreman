@@ -1,6 +1,7 @@
-// R14 item 5: the finalizer and reviewer roles list bg_run, bg_status and bg_logs. A tool name loads no extension (pi-subagents docs/agents.md), so the
-// test also pins what makes the add-on's extension load in the child: the agent is a background (`async: true`) child with no `extensions:` field,
-// which loads the parent's ambient extensions; and the guard map covers bg_run.
+// R14 ruling 10: the finalizer and reviewer roles list NO bg_run, bg_status or bg_logs while the pi-background-tasks add-on is not wired
+// conditionally. pi-subagents treats `tools` as a strict allowlist and refuses to start a child that names an unavailable tool ("Agent
+// 'reviewer' requested unavailable child tools: bg_run, bg_status, bg_logs"), so without the add-on every reviewer launch ended exit 1
+// with no verdict. The guard map still covers bg_run for sessions that have the add-on.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -19,16 +20,10 @@ const frontmatter = (role: string): Record<string, string> => {
 const defaults = JSON.parse(fs.readFileSync(path.join(pkgRoot, "config", "foreman.defaults.json"), "utf8")) as { roles: Record<string, { tools: string[] }> };
 
 for (const role of ["finalizer", "reviewer"]) {
-  test(`${role}: bg_run, bg_status, bg_logs are in the agent tools and the default role tools`, () => {
-    const fm = frontmatter(role);
-    const tools = fm.tools.split(",").map((x) => x.trim());
-    for (const b of BG) assert.ok(tools.includes(b), `${role}.md tools has ${b}`);
-    for (const b of BG) assert.ok(defaults.roles[role].tools.includes(b), `defaults roles.${role}.tools has ${b}`);
-  });
-  test(`${role}: a background child without an extensions field, so the ambient add-on extension loads`, () => {
-    const fm = frontmatter(role);
-    assert.equal(fm.async, "true");
-    assert.equal("extensions" in fm, false);
+  test(`${role}: no bg_run, bg_status, bg_logs in the agent tools or the default role tools`, () => {
+    const tools = frontmatter(role).tools.split(",").map((x) => x.trim());
+    for (const b of BG) assert.equal(tools.includes(b), false, `${role}.md tools has no ${b}`);
+    for (const b of BG) assert.equal(defaults.roles[role].tools.includes(b), false, `defaults roles.${role}.tools has no ${b}`);
   });
 }
 

@@ -194,7 +194,7 @@ test("model map checks: registry gaps, auth gaps and the reviewer family warning
 
 test("H4 pin: the reviewer roles are read-only with a shell", () => {
   const base = ["read", "ls", "grep", "find", "bash"];
-  const wants: Record<string, string[]> = { reviewer: [...base, "bg_run", "bg_status", "bg_logs"], "senior-reviewer": base };
+  const wants: Record<string, string[]> = { reviewer: base, "senior-reviewer": base };
   const defaults = JSON.parse(fs.readFileSync(path.join(PKG, "config", "foreman.defaults.json"), "utf8"));
   for (const [role, want] of Object.entries(wants)) {
     assert.deepEqual(defaults.roles[role].tools, want, role);

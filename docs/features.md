@@ -63,7 +63,6 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [launch-wait](#launch-wait) | on | Holds a foreman launch until the child finishes or asks something, drops duplicate completion notices and caps concurrent children. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [waits](#waits) | on | The foreman-only `foreman_wait` tool waits on timers, files, processes and CI runs within a duration and concurrency limit, batching its notices. | on by default | [sessions](sessions.md#further-session-keys) |
 | [foreman-bg](#foreman-bg) | on | The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool. | on by default | [sessions](sessions.md#background-runs) |
-| [reviewer-finalizer-bg](#reviewer-finalizer-bg) | on | The reviewer and finalizer roles list `bg_run`, `bg_status` and `bg_logs`, so a long test run can go to the background; the names resolve to nothing without the pi-background-tasks add-on, and `bg_run` passes the same bash guards. | on by default | [roles](roles.md#further-role-and-provider-keys) |
 | [background-tasks-addon](#background-tasks-addon) | on | Detects the optional pi-background-tasks add-on (install: `PI_BG_FEATURES=process pi install npm:pi-background-tasks`): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it. | on by default | [herdr](herdr.md#optional-add-on-background-tasks) |
 | [orientation](#orientation) | on | Adds a short repository overview (file tree, AGENTS.md or README head, build and test commands) to the foreman's system prompt once per session. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [child-scratch](#child-scratch) | on | Gives every single-child launch its own temp dir (`$FOREMAN_SCRATCH`) that the guards allow writes in and the harness removes when the run ends. | on by default | [safety](safety.md#child-scratch) |
@@ -359,12 +358,6 @@ No config key.
 ### foreman-bg
 
 **Background shell runs.** The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool.
-
-No config key.
-
-### reviewer-finalizer-bg
-
-**Background tools for reviewer and finalizer.** The reviewer and finalizer roles list `bg_run`, `bg_status` and `bg_logs`, so a long test run can go to the background; the names resolve to nothing without the pi-background-tasks add-on, and `bg_run` passes the same bash guards.
 
 No config key.
 

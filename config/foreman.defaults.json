@@ -27,9 +27,9 @@
     "planner": { "tools": ["read", "ls", "grep", "find", "write", "edit"], "denyTools": ["mcp__*"], "codemode": false, "launch": "detached", "timeoutMinutes": 20 },
     "explorer": { "tools": ["read", "ls", "grep", "find", "bash"], "denyTools": ["mcp__*"], "codemode": true, "launch": "detached", "timeoutMinutes": 20, "strongAbove": 200000 },
     "builder": { "tools": ["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_move", "foreman_copy"], "codemode": false, "launch": "detached", "timeoutMinutes": 60 },
-    "reviewer": { "tools": ["read", "ls", "grep", "find", "bash", "bg_run", "bg_status", "bg_logs"], "denyTools": ["mcp__*"], "codemode": false, "launch": "detached", "timeoutMinutes": 30 },
+    "reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "denyTools": ["mcp__*"], "codemode": false, "launch": "detached", "timeoutMinutes": 30 },
     "senior-reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "denyTools": ["mcp__*"], "codemode": false, "launch": "detached", "timeoutMinutes": 45 },
-    "finalizer": { "tools": ["read", "ls", "grep", "find", "bash", "edit", "bg_run", "bg_status", "bg_logs"], "codemode": false, "launch": "detached", "timeoutMinutes": 30 }
+    "finalizer": { "tools": ["read", "ls", "grep", "find", "bash", "edit"], "codemode": false, "launch": "detached", "timeoutMinutes": 30 }
   },
   "providers": {},
   "fanout": { "max": 3 },

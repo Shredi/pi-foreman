@@ -263,17 +263,6 @@
       "enable": ""
     },
     {
-      "id": "reviewer-finalizer-bg",
-      "title": "Background tools for reviewer and finalizer",
-      "purpose": "The reviewer and finalizer roles list `bg_run`, `bg_status` and `bg_logs`, so a long test run can go to the background; the names resolve to nothing without the pi-background-tasks add-on, and `bg_run` passes the same bash guards.",
-      "doc": "docs/roles.md#further-role-and-provider-keys",
-      "keys": [],
-      "commands": [],
-      "switch": null,
-      "state": "on",
-      "enable": ""
-    },
-    {
       "id": "background-tasks-addon",
       "title": "Background-tasks add-on detection",
       "purpose": "Detects the optional pi-background-tasks add-on (install: `PI_BG_FEATURES=process pi install npm:pi-background-tasks`): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it.",
