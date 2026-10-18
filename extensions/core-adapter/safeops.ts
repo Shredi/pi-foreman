@@ -74,7 +74,7 @@ export const SAFE_OP_TOOLS: { name: string; op: SafeOp; label: string; descripti
     op: "copy",
     label: "Copy (checked)",
     description:
-      "Copy a file or directory inside the workspace without approval and without overwriting. Runs only when both paths resolve inside the git workspace root (the foreman may also copy from its own session handoff dir into worktree scratch), the destination does not exist, neither is inside .git, the source has no symlinks and is under safety.ops.copyMaxBytes. Otherwise it changes nothing and returns `precondition failed: <which>`.",
+      "Copy a file or directory inside the workspace without approval and without overwriting. Runs only when both paths resolve inside the git workspace root (the foreman may also copy from its own session handoff dir into the workspace), the destination does not exist, neither is inside .git, the source has no symlinks and is under safety.ops.copyMaxBytes. Otherwise it changes nothing and returns `precondition failed: <which>`.",
     parameters: { type: "object", properties: { src: PATH_PROP("Source file or directory."), dst: PATH_PROP("Destination path; must not exist.") }, required: ["src", "dst"], additionalProperties: false },
     foremanOnly: false,
   },

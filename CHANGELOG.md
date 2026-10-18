@@ -10,7 +10,7 @@
 - A newer `ruling-*.md` is picked up before any launch or checkpoint press; `ruling-<name>.ack` records it.
 - `foreman doctor` warns on a `paths.hubWorkflow` ending in `.workflow`; setup refuses a doubled `.workflow/.workflow`.
 - `/foreman dialogs --json` counts per regression family from the trace.
-- `recheck_budget_exceeded` names the real review verdict; reads of a child's own bg_run outputs skip the recheck budget.
+- `recheck_budget_exceeded` names the real review verdict; reads of the foreman session's own bg_run outputs skip the recheck budget.
 - A stale "tool open" notice stops once the run's exit is recorded.
 - `foreman_copy` accepts the foreman's own session handoff dir as source.
 
