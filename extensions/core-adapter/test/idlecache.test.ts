@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { rmTestTmp } from "./_tmpbase.ts";
+import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
 import { CompactionGate } from "../compaction.ts";
 import { IdleCache, type Busy } from "../idlecache.ts";
@@ -451,7 +451,12 @@ test("cache_warming_decision: R0 drift stop first, children and policy-less sess
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
   });
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-idle-")));
-  t.after(() => rmTestTmp(root));
+  let shutdown: (() => Promise<unknown>) | undefined;
+  t.after(async () => {
+    try { await shutdown?.(); } catch { /* best effort */ }
+    await waitQuiet(path.join(root, "agent", "pi-foreman", "state"));
+    rmTestTmp(root);
+  });
   const project = path.join(root, "project");
   fs.mkdirSync(project);
   process.env.PI_CODING_AGENT_DIR = path.join(root, "agent");
@@ -479,6 +484,7 @@ test("cache_warming_decision: R0 drift stop first, children and policy-less sess
     ui: { notify: () => undefined, confirm: async () => false, setStatus: () => undefined },
   });
   await fire("session_start", { reason: "startup" }, ctx("claude-bridge"));
+  shutdown = async () => fire("session_shutdown", {}, ctx("claude-bridge"));
   assert.equal(await fire("cache_warming_decision", {}, ctx("claude-bridge")), undefined, "off before the first settle");
   await fire("agent_settled", {}, ctx("claude-bridge"));
   assert.deepEqual(await fire("cache_warming_decision", {}, ctx("claude-bridge")), { action: "warm" }, "watching in the window");
@@ -490,5 +496,4 @@ test("cache_warming_decision: R0 drift stop first, children and policy-less sess
   fs.mkdirSync(path.join(project, ".pi"), { recursive: true });
   fs.writeFileSync(path.join(project, ".pi", "claude-bridge.json"), JSON.stringify({ provider: { pathToClaudeCodeExecutable: path.join(root, "no-such-cc") } }));
   assert.deepEqual(await fire("cache_warming_decision", {}, ctx("claude-bridge")), { action: "stop" }, "R0: drift pending");
-  await fire("session_shutdown", {}, ctx("claude-bridge"));
 });

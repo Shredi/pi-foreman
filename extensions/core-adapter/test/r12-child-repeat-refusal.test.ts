@@ -14,7 +14,7 @@ import coreAdapter from "../index.ts";
 import { LadderState } from "../ladder.ts";
 import { launchWaitText, REPEAT_REFUSAL_ERROR, REPEAT_REFUSAL_LINE, REPEAT_STOP_REASONS, runEndOf } from "../launchwait.ts";
 import { r11Rig } from "./_r11rig.ts";
-import { rmTestTmp } from "./_tmpbase.ts";
+import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Block = { block?: boolean; reason?: string } | undefined;
@@ -29,7 +29,7 @@ async function childRig(t: { after(fn: () => void | Promise<void>): void }) {
   let shutdown: (() => Promise<unknown>) | undefined;
   t.after(async () => {
     try { await shutdown?.(); } catch { /* best effort */ }
-    await new Promise((r) => setTimeout(r, 300));
+    await waitQuiet(path.join(root, "agent", "pi-foreman", "state"));
     rmTestTmp(root);
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k];
     else process.env[k] = v;

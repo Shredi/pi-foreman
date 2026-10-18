@@ -8,7 +8,7 @@ import * as path from "node:path";
 import coreAdapter from "../index.ts";
 import { LadderState } from "../ladder.ts";
 import { launchWaitText, POLICY_BLOCK_LINE, runEndOf } from "../launchwait.ts";
-import { rmTestTmp } from "./_tmpbase.ts";
+import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
@@ -23,7 +23,7 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
   let shutdown: (() => Promise<unknown>) | undefined;
   t.after(async () => {
     try { await shutdown?.(); } catch { /* best effort */ }
-    await new Promise((r) => setTimeout(r, 300));
+    await waitQuiet(path.join(root, "agent", "pi-foreman", "state"));
     rmTestTmp(root);
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k];
     else process.env[k] = v;

@@ -21,6 +21,24 @@ export function mkTestTmp(prefix: string): string {
   return fs.mkdtempSync(path.join(root, prefix));
 }
 
+// Captured at load: tests mock setTimeout via t.mock.timers, and an after hook can still run under the mock.
+const realSetTimeout = globalThis.setTimeout;
+
+/** Poll until the dir listing (names + sizes) is unchanged for two polls, at most 5 s. Call after the adapter shutdown, before rmTestTmp. */
+export async function waitQuiet(dir: string): Promise<void> {
+  const snap = (): string => {
+    try { return fs.readdirSync(dir).sort().map((n) => `${n}:${fs.statSync(path.join(dir, n)).size}`).join("|"); } catch { return ""; }
+  };
+  let prev = snap();
+  let stable = 0;
+  for (let waited = 0; waited < 5000 && stable < 2; waited += 100) {
+    await new Promise((r) => realSetTimeout(r, 100));
+    const cur = snap();
+    stable = cur === prev ? stable + 1 : 0;
+    prev = cur;
+  }
+}
+
 /**
  * Remove a fixture dir. Windows refuses to delete a directory that is the process cwd or is still held by a
  * just-exited child (EBUSY), so step out of it first and retry a few times.

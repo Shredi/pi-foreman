@@ -3,15 +3,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import { rmTestTmp } from "./_tmpbase.ts";
+import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 import coreAdapter, { type AdapterDeps } from "../index.ts";
 import { addonPeerRangeLine, anthropicCredentialKind, ATTRIBUTION_WARNING, bgFeaturesDoctor, rangeAllows } from "../bg.ts";
 
-const tmp = (t: { after(fn: () => void): void }, prefix: string): string => {
+const tmp = (t: { after(fn: () => void): void }, prefix: string, beforeRm?: (dir: string) => Promise<void>): string => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
-  t.after(() => rmTestTmp(dir));
+  t.after(async () => {
+    await beforeRm?.(dir);
+    rmTestTmp(dir);
+  });
   return dir;
 };
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
@@ -32,7 +35,11 @@ function doctorHarness(t: { after(fn: () => void): void }, deps: AdapterDeps = {
   });
   for (const [k, v] of Object.entries(env)) if (v === undefined) delete process.env[k];
   else process.env[k] = v;
-  const root = tmp(t, "pf-addon-");
+  const shutdowns: (() => Promise<unknown>)[] = [];
+  const root = tmp(t, "pf-addon-", async (dir) => {
+    for (const s of shutdowns) try { await s(); } catch { /* best effort */ }
+    await waitQuiet(path.join(dir, "x", "agent", "pi-foreman", "state"));
+  });
   const project = path.join(root, "project");
   const agentDir = path.join(root, "x", "agent");
   fs.mkdirSync(path.join(project, ".workflow"), { recursive: true });
@@ -68,7 +75,7 @@ function doctorHarness(t: { after(fn: () => void): void }, deps: AdapterDeps = {
   };
   const doctor = async (): Promise<{ text: string; level: string }> => {
     await handlers.get("session_start")!({ reason: "startup" }, ctx);
-    t.after(async () => handlers.get("session_shutdown")?.({}, ctx));
+    shutdowns.push(async () => handlers.get("session_shutdown")?.({}, ctx));
     await commands.get("foreman")!.handler("doctor", ctx);
     return notes.pop()!;
   };

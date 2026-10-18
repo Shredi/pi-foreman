@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import { rmTestTmp } from "./_tmpbase.ts";
+import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 import coreAdapter from "../index.ts";
@@ -13,7 +13,12 @@ type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
 function adapter(t: { after(fn: () => void): void }, toolNames: string[]) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-edbk-")));
-  t.after(() => rmTestTmp(root));
+  let shutdown: (() => Promise<unknown>) | undefined;
+  t.after(async () => {
+    try { await shutdown?.(); } catch { /* best effort */ }
+    await waitQuiet(path.join(root, "x", "agent", "pi-foreman", "state"));
+    rmTestTmp(root);
+  });
   const saved = process.env.PI_CODING_AGENT_DIR;
   t.after(() => {
     if (saved === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -49,6 +54,7 @@ function adapter(t: { after(fn: () => void): void }, toolNames: string[]) {
     modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }) },
     ui: { notify: () => undefined, confirm: async () => false },
   };
+  shutdown = async () => handlers.get("session_shutdown")?.({}, ctx);
   return { handlers, ctx, project };
 }
 

@@ -3,26 +3,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { mkTestTmp, rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
 import { roleModelsOf } from "../launchmodel.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
-
-/** Poll until the state dir listing (names + sizes) is unchanged for two polls, at most 5 s. */
-async function waitQuiet(dir: string): Promise<void> {
-  const snap = (): string => {
-    try { return fs.readdirSync(dir).sort().map((n) => `${n}:${fs.statSync(path.join(dir, n)).size}`).join("|"); } catch { return ""; }
-  };
-  let prev = snap();
-  let stable = 0;
-  for (let waited = 0; waited < 5000 && stable < 2; waited += 100) {
-    await new Promise((r) => setTimeout(r, 100));
-    const cur = snap();
-    stable = cur === prev ? stable + 1 : 0;
-    prev = cur;
-  }
-}
 
 test("roleModelsOf: single, tasks, chain and parallel entries; first per role", () => {
   assert.deepEqual([...roleModelsOf({ agent: "builder", model: "p/b" })], [["builder", "p/b"]]);

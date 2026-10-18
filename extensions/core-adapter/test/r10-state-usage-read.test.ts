@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import type { MatchCtx, OverlayRules } from "../permoverlay.ts";
 import { ownUsageReadable } from "../roundsurface.ts";
@@ -20,7 +21,10 @@ const baseline = readBaseline(PKG)!;
 const posix = process.platform !== "win32";
 
 const w = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r10-usage-")));
-after(() => fs.rmSync(w, { recursive: true, force: true }));
+after(async () => {
+  await waitQuiet(path.join(w, "home", ".pi", "agent", "pi-foreman", "state"));
+  rmTestTmp(w);
+});
 const ws = path.join(w, "ws");
 const home = path.join(w, "home");
 const ag = path.join(home, ".pi", "agent");

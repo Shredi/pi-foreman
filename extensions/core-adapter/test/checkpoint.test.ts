@@ -3,15 +3,18 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { rmTestTmp } from "./_tmpbase.ts";
+import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { builderLaunchRefusal, changedPlans, currentPlanHash, isPlanPath, launchRefusalText, planSnapshot, planSummary, readPlan, sha256 } from "../checkpoint.ts";
 import type { PlanRecord } from "../checkpoint.ts";
 
 const PLAN = "# Add the widget\n\n## Goal\nShip the widget.\nKeep it small.\n\n## Approach\nx\n\n## Risks\ny\n";
 
-function workspace(t: { after: (fn: () => void) => void }) {
+function workspace(t: { after: (fn: () => void) => void }, beforeRm?: (root: string) => Promise<void>) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-ckpt-")));
-  t.after(() => rmTestTmp(root));
+  t.after(async () => {
+    await beforeRm?.(root);
+    rmTestTmp(root);
+  });
   const ws = path.join(root, "ws");
   for (const d of [".git", ".workflow/scratch", "src"]) fs.mkdirSync(path.join(ws, d), { recursive: true });
   fs.writeFileSync(path.join(ws, ".workflow/scratch/plan-widget.md"), PLAN);
@@ -130,7 +133,11 @@ test("checkpoint tool: sequential; a plan changed during the dialog is not appro
   t.after(() => {
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
   });
-  const { root, ws, scratch } = workspace(t);
+  let shutdown: (() => Promise<unknown>) | undefined;
+  const { root, ws, scratch } = workspace(t, async (r) => {
+    try { await shutdown?.(); } catch { /* best effort */ }
+    await waitQuiet(path.join(r, "agent", "pi-foreman", "state"));
+  });
   process.env.PI_CODING_AGENT_DIR = path.join(root, "agent");
   delete process.env.PI_SUBAGENT_CHILD;
   type Fn = (...a: unknown[]) => Promise<unknown>;
@@ -153,6 +160,7 @@ test("checkpoint tool: sequential; a plan changed during the dialog is not appro
     ui: { notify: () => undefined, confirm: async () => false, select: async () => (onSelect(), "approve"), setStatus: () => undefined, setWidget: () => undefined },
   };
   await handlers.get("session_start")!({ reason: "startup" }, ctx);
+  shutdown = async () => handlers.get("session_shutdown")!({}, ctx);
   const tool = tools.get("foreman_checkpoint")!;
   assert.equal(tool.executionMode, "sequential");
   const call = async () => ((await tool.execute("c", { path: ".workflow/scratch/plan-widget.md" }, undefined, undefined, ctx)) as { details: { decision: string }; content: { text: string }[] });
@@ -170,5 +178,4 @@ test("checkpoint tool: sequential; a plan changed during the dialog is not appro
   assert.match(busy.content[0].text, /a planner run of this session is still active/);
   channels.get("subagent:async-complete")!({ runId: "run-p", agent: "planner", success: true });
   assert.equal((await call()).details.decision, "approve", "still approved: the refusal changed no record");
-  await handlers.get("session_shutdown")!({}, ctx);
 });

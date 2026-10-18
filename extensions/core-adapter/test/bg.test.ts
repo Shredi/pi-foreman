@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { rmTestTmp } from "./_tmpbase.ts";
+import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
 import { addonPresent, bgLogPath, formatWaits, lastLines, readAddonTasks, shellFor, spawnDetached } from "../bg.ts";
 import { checkLogPath, parseStart, processAlive, registerWait } from "../wait.ts";
@@ -16,9 +16,12 @@ import { isOverlayTool } from "../permoverlay.ts";
 import { LiveState, liveDir } from "../livestate.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const tmp = (t: { after(fn: () => void): void }, prefix: string): string => {
+const tmp = (t: { after(fn: () => void): void }, prefix: string, beforeRm?: (dir: string) => Promise<void>): string => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
-  t.after(() => rmTestTmp(dir));
+  t.after(async () => {
+    await beforeRm?.(dir);
+    rmTestTmp(dir);
+  });
   return dir;
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -36,7 +39,11 @@ type Tool = { name: string; execute: (...a: unknown[]) => Promise<{ content: { t
 
 function waitHarness(t: { after(fn: () => void): void }, opts: { toolNames?: string[]; isChild?: boolean } = {}) {
   delete process.env.PI_SUBAGENT_CHILD;
-  const root = tmp(t, "pf-bg-");
+  let shutdown: (() => Promise<unknown>) | undefined;
+  const root = tmp(t, "pf-bg-", async (dir) => {
+    try { await shutdown?.(); } catch { /* best effort */ }
+    await waitQuiet(path.join(dir, "agent", "pi-foreman", "state"));
+  });
   const agentDir = path.join(root, "agent");
   const cwd = path.join(root, "proj");
   fs.mkdirSync(cwd, { recursive: true });
@@ -52,7 +59,7 @@ function waitHarness(t: { after(fn: () => void): void }, opts: { toolNames?: str
   const session = { id: "s1", isChild: opts.isChild === true, cwd, agentDir, overlay: null, config: () => ({ wait: { batchWindowSeconds: 0 } }), trace: () => undefined };
   const handle = registerWait(pi as never, { session: async () => session as never, home: root, platform: process.platform });
   const ctx = { mode: "tui", cwd, isIdle: () => true, sessionManager: { getSessionId: () => "s1" } };
-  t.after(async () => handlers.get("session_shutdown")?.({}, ctx));
+  shutdown = async () => handlers.get("session_shutdown")?.({}, ctx);
   return { root, agentDir, cwd, tools, wakes, handle, ctx, session };
 }
 
@@ -221,7 +228,11 @@ function adapter(t: { after(fn: () => void): void }, opts: { confirm?: () => Pro
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   });
-  const root = tmp(t, "pf-bgad-");
+  let shutdown: (() => Promise<unknown>) | undefined;
+  const root = tmp(t, "pf-bgad-", async (dir) => {
+    try { await shutdown?.(); } catch { /* best effort */ }
+    await waitQuiet(path.join(dir, "x", "agent", "pi-foreman", "state"));
+  });
   const project = path.join(root, "project");
   const agentDir = path.join(root, "x", "agent");
   fs.mkdirSync(path.join(project, ".workflow"), { recursive: true });
@@ -257,13 +268,13 @@ function adapter(t: { after(fn: () => void): void }, opts: { confirm?: () => Pro
     modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }) },
     ui: { notify: (m: string) => void notes.push(m), confirm: async (title: string) => (confirms.push(title), opts.confirm ? opts.confirm() : false) },
   };
+  shutdown = async () => handlers.get("session_shutdown")?.({}, ctx);
   return { handlers, commands, tools, ctx, project, agentDir, notes, confirms, root };
 }
 
 test("guard parity: foreman_bg gets exactly the verdict a bash call with the same command gets (deny, ask, allow)", async (t) => {
   const a = adapter(t);
   await a.handlers.get("session_start")!({ reason: "startup" }, a.ctx);
-  t.after(async () => a.handlers.get("session_shutdown")?.({}, a.ctx));
   const parent = path.dirname(a.agentDir);
   const cases: [string, string][] = [
     ["shell write into a project file", "echo x > src/a.txt"],
@@ -311,7 +322,6 @@ test("the permission baseline maps foreman_bg to the bash rules (shellTools alia
 test("/foreman waits: lists waits with note, age, left and the last 5 log lines; includes the add-on's tasks when present", async (t) => {
   const a = adapter(t, { toolNames: ["bash", "bg_run"] });
   await a.handlers.get("session_start")!({ reason: "startup" }, a.ctx);
-  t.after(async () => a.handlers.get("session_shutdown")?.({}, a.ctx));
   const waits = a.commands.get("foreman")!;
   await waits.handler("waits", a.ctx);
   assert.equal(a.notes.pop(), "No active waits.");
@@ -334,14 +344,12 @@ test("/foreman waits without the add-on ignores .pi/tasks; doctor prints INFO ba
   const absent = adapter(t, { toolNames: ["bash"] });
   fakeTasks(absent.project);
   await absent.handlers.get("session_start")!({ reason: "startup" }, absent.ctx);
-  t.after(async () => absent.handlers.get("session_shutdown")?.({}, absent.ctx));
   await absent.commands.get("foreman")!.handler("waits", absent.ctx);
   assert.equal(absent.notes.pop(), "No active waits.");
   await absent.commands.get("foreman")!.handler("doctor", absent.ctx);
   assert.match(absent.notes.pop()!, /\nINFO background-tasks: absent\n/);
   const present = adapter(t, { toolNames: ["bash", "bg_run"] });
   await present.handlers.get("session_start")!({ reason: "startup" }, present.ctx);
-  t.after(async () => present.handlers.get("session_shutdown")?.({}, present.ctx));
   await present.commands.get("foreman")!.handler("doctor", present.ctx);
   assert.match(present.notes.pop()!, /\nINFO background-tasks: present\n/);
 });
@@ -351,7 +359,6 @@ test("/foreman waits without the add-on ignores .pi/tasks; doctor prints INFO ba
 test("guard parity: the add-on's bg_run gets exactly the verdict a bash call gets; a non-string command is denied", async (t) => {
   const a = adapter(t, { toolNames: ["bash", "bg_run"] });
   await a.handlers.get("session_start")!({ reason: "startup" }, a.ctx);
-  t.after(async () => a.handlers.get("session_shutdown")?.({}, a.ctx));
   const parent = path.dirname(a.agentDir);
   const cases: [string, string][] = [
     ["shell write into a project file", "echo x > src/a.txt"],

@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { rmTestTmp } from "./_tmpbase.ts";
+import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { fileURLToPath } from "node:url";
 import coreAdapter from "../index.ts";
 import { ClaudeConfigWatch, takeClaudeSnapshot } from "../claudedrift.ts";
@@ -21,9 +21,12 @@ const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..
 const PRINT = { mode: "print", hasUI: false };
 const noTrace = () => undefined;
 
-function tmp(t: { after(fn: () => void): void }, prefix: string): string {
+function tmp(t: { after(fn: () => void): void }, prefix: string, beforeRm?: (dir: string) => Promise<void>): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
-  t.after(() => rmTestTmp(dir));
+  t.after(async () => {
+    await beforeRm?.(dir);
+    rmTestTmp(dir);
+  });
   return dir;
 }
 
@@ -185,7 +188,11 @@ test("R3-H1: session_before_compact / session_before_tree cancel on claude-bridg
   t.after(() => {
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
   });
-  const root = tmp(t, "pf-r3c-");
+  let shutdown: (() => Promise<unknown>) | undefined;
+  const root = tmp(t, "pf-r3c-", async (dir) => {
+    try { await shutdown?.(); } catch { /* best effort */ }
+    await waitQuiet(path.join(dir, "agent", "pi-foreman", "state"));
+  });
   const project = path.join(root, "project");
   fs.mkdirSync(project);
   process.env.PI_CODING_AGENT_DIR = path.join(root, "agent");
@@ -206,6 +213,7 @@ test("R3-H1: session_before_compact / session_before_tree cancel on claude-bridg
     ui: { notify: (m: string) => void notes.push(m), confirm: async () => answer },
   });
   await handlers.get("session_start")!({ reason: "startup" }, ctx(undefined, false));
+  shutdown = async () => handlers.get("session_shutdown")!({}, ctx(undefined, false));
   const compact = handlers.get("session_before_compact")!;
   const tree = handlers.get("session_before_tree")!;
   assert.equal(await compact({ reason: "threshold" }, ctx("claude-bridge", false)), undefined, "no drift: compaction proceeds");
@@ -220,7 +228,6 @@ test("R3-H1: session_before_compact / session_before_tree cancel on claude-bridg
   answer = true;
   assert.equal(await tree({}, ctx("claude-bridge", true)), undefined, "approved: re-baselined");
   assert.equal(await compact({ reason: "threshold" }, ctx("claude-bridge", false)), undefined, "approved state is the new baseline");
-  await handlers.get("session_shutdown")!({}, ctx(undefined, false));
 });
 
 test("win32 (simulated): a Windows path in inline code is seen with single, doubled or raw-string backslashes", () => {
