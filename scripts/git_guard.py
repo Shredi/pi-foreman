@@ -149,7 +149,9 @@ class Seg(object):
         self.before = before       # the operator in front of the segment (None at the start of the text)
         self.after = None          # the operator after it (None at the end of the text)
         self.group = 0             # nesting depth in `( )` / `{ }` groups
-        self.ins = []              # input redirects in order: "<" (file or dup), "<<<", "<<'" (quoted heredoc), "<<" (heredoc)
+        # input redirects in order as (fd, kind, body): fd the explicit number before the operator (0 when absent); kind
+        # "<" (file or dup), "<<<", "<<'" (quoted heredoc), "<<" (heredoc); body the here-string/heredoc text (None for "<")
+        self.ins = []
 
     def raw(self):
         return " ".join([w.raw for w in self.words] + [w.raw for w in self.herestrings] + self.heredocs)
@@ -186,6 +188,7 @@ class Lexer(object):
         self.wstart = 0
         self.redir = None
         self.redir_w = False
+        self.redir_fd = 0    # the fd number written before the current redirect operator (0 when absent)
         self.pending = []
         self.callop = False  # PowerShell: the last token was the `&` or `.` call operator
         self.group = 0       # open `( )` / `{ }` groups
@@ -206,24 +209,26 @@ class Lexer(object):
         self.w = None
         kind, self.redir = self.redir, None
         wr, self.redir_w = self.redir_w, False
+        fd, self.redir_fd = self.redir_fd, 0
         if kind is None:
             self.cur.words.append(word)
         elif kind == "file" and wr:
             if not (word.text == "/dev/null" or re.match(r"^[0-9]+-?$|^-$", word.text)):
                 self.cur.outs.append(word)
         elif kind == "file":
-            self.cur.ins.append("<")
+            self.cur.ins.append((fd, "<", None))
         elif kind.startswith("heredoc"):
             quoted = any(q in word.raw for q in "'\"\\")
-            self.pending.append((word.text, kind == "heredoc-", quoted, self.cur))
-            self.cur.ins.append("<<'" if quoted else "<<")
+            self.pending.append((word.text, kind == "heredoc-", quoted, self.cur, len(self.cur.ins)))
+            self.cur.ins.append((fd, "<<'" if quoted else "<<", None))
         elif kind == "herestring":
             self.cur.herestrings.append(word)
-            self.cur.ins.append("<<<")
+            self.cur.ins.append((fd, "<<<", word.text))
 
     def end_seg(self, i, pipe_next=False, op=None):
         self.end_word(i)
         self.redir = None
+        self.redir_fd = 0
         self.callop = False
         c = self.cur
         c.after = op
@@ -393,7 +398,7 @@ class Lexer(object):
 
     def heredoc_bodies(self, i):
         s, n = self.s, self.n
-        for delim, strip, quoted, seg in self.pending:
+        for delim, strip, quoted, seg, at in self.pending:
             lines = []
             while i < n:
                 e = s.find("\n", i)
@@ -405,6 +410,7 @@ class Lexer(object):
                 lines.append(line)
             body = "\n".join(lines)
             seg.heredocs.append(body)
+            seg.ins[at] = (seg.ins[at][0], seg.ins[at][1], body)
             if not quoted:
                 self.subs.extend(expansion_subs(body))
         self.pending = []
@@ -557,7 +563,9 @@ class Lexer(object):
                     i += 1
                     c = ">"
                 if self.w is not None and "".join(self.w).isdigit() and not self.wdyn:
+                    fd = int("".join(self.w))
                     self.w = None
+                    self.redir_fd = fd
                 else:
                     self.end_word(i)
                 if f == "bash" and s[i + 1:i + 2] == "(":
@@ -2193,16 +2201,20 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
             if v is None:
                 return OK
             if v.text in ("-", "/dev/stdin"):
-                # R12 item 1: a child's stdin message is read only from a literal heredoc on the commit itself (the last input
-                # redirect); any other stdin source is unsure. The foreman keeps the ask.
+                # R12 item 1: a child's stdin message is read only from a literal heredoc on fd 0 of the commit itself; a pipe,
+                # an input redirect on another explicit fd, or several stdin sources is a deny. The foreman keeps the ask.
                 if not (pattern_only and ctx.mode == "child"):
                     return ask("the commit message is read from stdin; %s." % USE_M)
-                last = seg.ins[-1] if seg is not None and seg.ins else None
-                k = sum(1 for x in seg.ins if x in ("<<", "<<'")) - 1 if last in ("<<", "<<'") else -1
-                body = seg.heredocs[k] if 0 <= k < len(seg.heredocs) else None
-                if body is None or (last == "<<" and re.search(r"[$`\\]", body)):
+                ins = seg.ins if seg is not None else []
+                stdin = [x for x in ins if x[0] == 0]
+                if (seg is not None and seg.pipe_in) or len(stdin) > 1 or any(x[0] != 0 for x in ins):
+                    return unread("the commit message is read from stdin with a pipe, an input redirect on another fd or "
+                                  "several stdin sources")
+                src = stdin[0] if stdin else None
+                if src is None or src[1] not in ("<<", "<<'") or src[2] is None or \
+                        (src[1] == "<<" and re.search(r"[$`\\]", src[2])):
                     return unread("the commit message is read from stdin that is not a literal heredoc on the commit")
-                parts.append(body)
+                parts.append(src[2])
                 continue
             if v.dynamic:
                 return unread("the commit message is read from a computed path")
@@ -2227,6 +2239,8 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
     for v in values(opts, "trailer"):
         if v is not None:
             if v.dynamic:
+                if pattern_only and ctx.mode == "child":
+                    return deny("a --trailer value is computed; write it out (computed trailer, child cannot ask).")
                 return ask("a --trailer value is computed; write it out.")
             m = re.match(r"^([^:=]+)[:=](.*)$", v.text, re.S)
             trailers.append("%s: %s" % (m.group(1).strip(), m.group(2).strip()) if m else v.text)
