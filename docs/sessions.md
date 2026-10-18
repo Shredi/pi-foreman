@@ -114,9 +114,16 @@ touches `.ask` and shows the session as blocked in Herdr (`herdr:blocked`, label
   Only handoff dirs whose `child` file names this session count (for the ask state too); a dir where this session is the
   `parent` never does. **Who may write a ruling file:** only the parent. A session's write, edit, `foreman_copy` /
   `foreman_move` destination, or `bash` / `powershell` / `foreman_bg` / `bg_run` command that names `ruling*.md` in a dir
-  where it is the child is refused up front ("a session cannot write its own parent's ruling"); a shell command is
-  refused unless it is a pure read (`cat`, `head`, `ls`, `grep`, `wc`, `stat`), also when it only mentions such a dir
-  next to a glob, variable or `cd`. Writing `ruling*.md` into a dir where it is the parent (answering its child) stays
+  where it is the child is refused up front ("a session cannot write its own parent's ruling"). A shell command is lexed
+  by `scripts/shell_facts.py` (the git guard's Lexer, nested `sh -c` / heredoc scripts up to depth 4) and refused only
+  when a write surface may be such a file: a redirect on any fd, `tee`/`cp`/`mv`/`install`/`ln`/`rsync` (their
+  destinations, and a ruling file as their source), `dd of=`, `sed -i` and sed `w`, `truncate`/`touch`, `sort -o`,
+  `curl -o`, `--output=`, PowerShell write cmdlets, python/node/perl code writes, or a ruling-named argument of a
+  program that is not a reader. A computed name or directory in a write position (an unbound `$var`, a glob, a `cd`
+  the tracker cannot follow, a directory that does not exist yet, a line that makes a symlink) counts as such a file.
+  Reads, `$`/glob words in read positions and heredoc bodies never do; `$FOREMAN_SCRATCH` is the harness scratch dir
+  unless the line assigns it. `ruling-<name>.ack` files are no ruling files. No python, a timeout or an unreadable
+  line refuses the call. Writing `ruling*.md` into a dir where it is the parent (answering its child) stays
   allowed. This refusal is defence in depth, since a ruling cannot satisfy the gate anyway; a ruling file this session
   still changed is ignored until the parent writes it again (a newer mtime). Self-written marks live in memory.
 - **`bg_wait` during a builder's supervisor ask.** pi-foreman does not refuse it (`bg_wait` is exempt from the supervisor window).

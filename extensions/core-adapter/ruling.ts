@@ -4,6 +4,10 @@
 // /ceremony); after a FAIL the refusal only names it.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import { runGuard } from "./runguard.ts";
+import { defaultSpawner } from "./spawn.ts";
+import type { Spawner } from "./spawn.ts";
 
 const RULING_RE = /^ruling(?:-(\d{1,6}))?\.md$/;
 const ASK_N_RE = /^ask-(\d{1,6})\s*$/;
@@ -133,33 +137,94 @@ export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulin
 /** The refusal reason when a session writes a ruling file in a dir where it is the child. */
 export const SELF_RULING_REASON = "a session cannot write its own parent's ruling";
 
-const REF_READ_VERBS = new Set(["cat", "head", "tail", "ls", "grep", "egrep", "fgrep", "rg", "wc", "stat", "file", "nl", "realpath", "sort", "uniq", "cut", "tr", "cd"]);
-/** `-o` is --only-matching for these, not an output file. */
-const REF_ONLY_MATCHING = new Set(["grep", "egrep", "fgrep", "rg", "ls"]);
+const realDir = (d: string): string => path.dirname(realKey(path.join(d, "x")));
+const isDir = (d: string): boolean => {
+  try {
+    return fs.statSync(d).isDirectory();
+  } catch {
+    return false;
+  }
+};
 
-/** A command that only reads with a plain viewer verb (no redirect, background job, substitution, output option). */
-function pureRead(command: string): boolean {
-  if (/[`>&]|\$\(|<\(|\$\{/.test(command.replace(/&&/g, ";"))) return false;
-  const parts = command.split(/&&|\|\||;|\||\n/).map((p) => p.trim()).filter(Boolean);
-  return parts.length > 0 && parts.every((p) => {
-    const w = p.split(/\s+/);
-    if (!REF_READ_VERBS.has(w[0])) return false;
-    // `uniq IN OUT` and `tr`'s sets are operands: uniq writes its second operand, so it takes none here
-    if (w[0] === "uniq" && w.slice(1).some((x) => !x.startsWith("-"))) return false;
-    if (w[0] === "sort" && w.some((x) => /^-[^-]*[oT]|^--(output|compress-program|temporary)/.test(x))) return false;
-    return REF_ONLY_MATCHING.has(w[0]) || !w.some((x) => /^--?o(utput)?\b/.test(x));
-  });
+/** One write surface of a shell line, as `scripts/shell_facts.py` reports it (null = computed, unresolved). */
+export interface WriteFact {
+  kind: string;
+  path: string | null;
+  dir: string | null;
+  name: string | null;
+  glob: boolean;
+}
+export interface ShellFacts {
+  writes: WriteFact[];
+  links: boolean;
+  error: string | null;
 }
 
-const unquote = (w: string): string => w.replace(/^['"]+|['"]+$/g, "");
-const realDir = (d: string): string => path.dirname(realKey(path.join(d, "x")));
+/** How the shell facts are obtained: the python interpreter (null = none, fails closed), spawner, scratch dir. */
+export interface SelfRulingDeps {
+  python?: string | null;
+  spawner?: Spawner;
+  env?: Record<string, string>;
+  /** `$FOREMAN_SCRATCH` of the session (default: the process env). */
+  scratch?: string | null;
+  timeoutMs?: number;
+}
+
+const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/** Run `scripts/shell_facts.py` on a command; null when it did not answer cleanly (the caller fails closed). */
+export async function shellFacts(command: string, cwd: string, shell: "bash" | "powershell", deps: SelfRulingDeps = {}): Promise<ShellFacts | null> {
+  const python = deps.python === undefined ? (process.platform === "win32" ? "python" : "python3") : deps.python;
+  const env = deps.env ?? Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string"));
+  const scratch = deps.scratch === undefined ? (process.env.FOREMAN_SCRATCH ?? null) : deps.scratch;
+  const run = await runGuard({ python, coreDir: PKG_ROOT, guard: "shell_facts", payload: { command, cwd, shell, scratch_dir: scratch }, env, cwd: PKG_ROOT, spawner: deps.spawner ?? defaultSpawner, timeoutMs: deps.timeoutMs });
+  if (run.status !== "ran" || run.code !== 0) return null;
+  try {
+    const f = JSON.parse(run.stdout.trim().split(/\r?\n/).pop() ?? "") as ShellFacts;
+    return Array.isArray(f.writes) && f.error === null ? f : null;
+  } catch {
+    return null;
+  }
+}
+
+const globRe = (g: string): RegExp => new RegExp(`^${g.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
+
+/** A write surface that may hit a ruling file in one of `dirs` (real paths). */
+export function factHitsRuling(w: WriteFact, dirs: Set<string>, links: boolean): boolean {
+  // an existing file (or symlink to one) at a known path: judged by what it really is
+  if (w.path && fs.existsSync(w.path)) {
+    const real = realKey(w.path);
+    let target = real;
+    try {
+      target = fs.realpathSync.native(w.path);
+    } catch {
+      // dangling: the lexical path stands
+    }
+    for (const p of [real, target]) if (isRulingName(path.basename(p)) && dirs.has(path.dirname(p))) return true;
+  }
+  let name = false;
+  if (w.name === null) name = true;
+  else if (w.glob) {
+    try {
+      name = ["ruling.md", "ruling-1.md"].some((n) => globRe(w.name as string).test(n));
+    } catch {
+      name = true;
+    }
+  } else name = isRulingName(w.name);
+  if (!name) return false;
+  if (w.dir === null || links || !isDir(w.dir)) return true;
+  return dirs.has(realDir(w.dir));
+}
 
 /**
  * Refusal reason when `toolName` would write a `ruling*.md` inside one of `childDirs` (the dirs where this session is
- * the child), else undefined. write/edit `path`, foreman_copy/foreman_move `dst`; shell-like tools fail closed: any word
- * naming such a file (or a ruling name next to a mention of a child dir) is refused unless the command is a pure read.
+ * the child), else undefined. write/edit `path`, foreman_copy/foreman_move `dst` are compared directly. Shell-like tools
+ * are read through `scripts/shell_facts.py` (the git guard's Lexer): only a WRITE surface (redirect, cp/mv/tee/dd/sed -i
+ * ..., interpreter code writes, a ruling-named argument of a non-reader) that may be such a file is refused; a computed
+ * name or directory in a write position counts as one. No answer from the script (no python, timeout, unreadable line)
+ * refuses. `*.ack` files are never ruling names.
  */
-export function selfRulingRefusal(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[]): string | undefined {
+export async function selfRulingRefusal(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[], deps: SelfRulingDeps = {}): Promise<string | undefined> {
   if (childDirs.length === 0) return undefined;
   const dirs = new Set(childDirs.map(realDir));
   const inChild = (p: string): boolean => isRulingName(path.basename(p)) && dirs.has(path.dirname(realKey(path.resolve(cwd, p))));
@@ -174,15 +239,10 @@ export function selfRulingRefusal(toolName: string, input: Record<string, unknow
   }
   if (toolName === "bash" || toolName === "powershell" || toolName === "foreman_bg" || toolName === "bg_run") {
     const cmd = str(input.command);
-    if (!cmd || pureRead(cmd)) return undefined;
-    const words = cmd.split(/[\s;&|<>()]+/).filter(Boolean).map(unquote);
-    const named = words.filter((w) => /ruling/.test(w));
-    const dynamic = words.some((w) => /[*?[$]/.test(w));
-    const mentionsDir = [...childDirs, ...dirs].some((d) => cmd.includes(d));
-    const moves = /\b(cd|pushd|Set-Location)\b/.test(cmd); // a relative word may not mean the file it seems to
-    if (named.some(inChild)) return SELF_RULING_REASON;
-    if (named.length > 0 && (mentionsDir || moves || dynamic)) return SELF_RULING_REASON;
-    return dynamic && (mentionsDir || moves) ? SELF_RULING_REASON : undefined;
+    if (!cmd) return undefined;
+    const facts = await shellFacts(cmd, cwd, toolName === "powershell" ? "powershell" : "bash", deps);
+    if (!facts) return SELF_RULING_REASON;
+    return facts.writes.some((w) => factHitsRuling(w, dirs, facts.links)) ? SELF_RULING_REASON : undefined;
   }
   return undefined;
 }

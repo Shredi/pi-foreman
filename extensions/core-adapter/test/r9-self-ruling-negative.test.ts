@@ -19,24 +19,35 @@ function rig() {
 }
 
 const OPEN: Array<[string, string]> = [
+  ["interpreter script args", `node w.js $D $N`],
+];
+
+// closed by r13 lexed write-surface check (hub 170): a computed target in a write position is refused.
+const CLOSED_R13: Array<[string, string]> = [
   ["git pager env", `GIT_PAGER="dd of=$D/$N" git show HEAD`],
   ["git external-diff env", `GIT_EXTERNAL_DIFF="dd of=$D/$N" git diff`],
   ["lessopen env", `LESSOPEN="|dd of=$D/$N" less x`],
-  ["interpreter script args", `node w.js $D $N`],
   ["sed w", `sed -n "w $D/$N" x`],
   ["sort -uo", `sort -uo $D/$N x`],
   ["git diff --output=", `git diff --output=$D/$N`],
   ["sh -c redirect", `sh -c "echo A > $D/$N"`],
 ];
 
-for (const [name, command] of OPEN) {
-  test(`expected-open (R9): ${name} with a shell-built target is not refused`, () => {
+for (const [name, command] of CLOSED_R13) {
+  test(`closed (R13): ${name} with a shell-built target is refused`, async () => {
     const { root, dirs } = rig();
-    assert.equal(selfRulingRefusal("bash", { command }, root, dirs), undefined, command);
+    assert.equal(await selfRulingRefusal("bash", { command }, root, dirs), SELF_RULING_REASON, command);
   });
 }
 
-test("expected-open (R9) control: the same form naming the file literally stays refused", () => {
+for (const [name, command] of OPEN) {
+  test(`expected-open (R9): ${name} with a shell-built target is not refused`, async () => {
+    const { root, dirs } = rig();
+    assert.equal(await selfRulingRefusal("bash", { command }, root, dirs), undefined, command);
+  });
+}
+
+test("expected-open (R9) control: the same form naming the file literally stays refused", async () => {
   const { root, H, dirs } = rig();
-  assert.equal(selfRulingRefusal("bash", { command: `sort -uo ${H}/ruling.md x` }, root, dirs), SELF_RULING_REASON);
+  assert.equal(await selfRulingRefusal("bash", { command: `sort -uo ${H}/ruling.md x` }, root, dirs), SELF_RULING_REASON);
 });

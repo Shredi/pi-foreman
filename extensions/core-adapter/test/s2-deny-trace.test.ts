@@ -39,7 +39,7 @@ test("scrubReason keeps rule ids and hides home paths", () => {
   assert.ok(scrubReason("rule '/opt/other/place/x' matched").includes("rule '[path]'"));
 });
 
-test("a self_ruling guard row carries the command and a non-empty reason", () => {
+test("a self_ruling guard row carries the command and a non-empty reason", async () => {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-s2-sr-")));
   try {
     const up = path.join(root, "handoffs", "up");
@@ -48,7 +48,7 @@ test("a self_ruling guard row carries the command and a non-empty reason", () =>
     fs.writeFileSync(path.join(up, "child"), "me\n");
     const dirs = childHandoffDirs(path.join(root, "handoffs"), "me");
     const input = { command: `cp x ${path.join(up, "ruling-1.md")}` };
-    const why = selfRulingRefusal("bash", input, root, dirs);
+    const why = await selfRulingRefusal("bash", input, root, dirs);
     assert.equal(why, SELF_RULING_REASON);
     const row = sanitizeTrace({ event: "guard", guard: "self_ruling", toolFamily: "bash", decision: "blocked", ...denyFields(`self_ruling: ${why}`, "bash", input, "builder", [pkgRoot, root]) });
     assert.equal(row.reason, `self_ruling: ${SELF_RULING_REASON}`);
@@ -58,7 +58,7 @@ test("a self_ruling guard row carries the command and a non-empty reason", () =>
   }
 });
 
-test("self-ruling guard: read-only pipelines pass, a real write to the parent's ruling is refused", () => {
+test("self-ruling guard: read-only pipelines pass, a real write to the parent's ruling is refused", async () => {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-s2-sr2-")));
   try {
     const up = path.join(root, "handoffs", "up");
@@ -71,8 +71,8 @@ test("self-ruling guard: read-only pipelines pass, a real write to the parent's 
       `grep -o '"model":"[^"]*"' status.json events.jsonl | sort | uniq -c`,
       `ls ${runs}; grep -ho '"model":"[^"]*"' *.json | sort | uniq -c`,
       `cd ${runs} && grep -ho '"model":"[^"]*"' *.json | sort | uniq -c`,
-    ]) assert.equal(selfRulingRefusal("bash", { command }, runs, dirs), undefined, command);
-    for (const command of [`echo APPROVED > ${path.join(up, "ruling-1.md")}`, `sort -o ${path.join(up, "ruling.md")} x`, `cat x | tee ${path.join(up, "ruling-2.md")}`]) assert.equal(selfRulingRefusal("bash", { command }, runs, dirs), SELF_RULING_REASON, command);
+    ]) assert.equal(await selfRulingRefusal("bash", { command }, runs, dirs), undefined, command);
+    for (const command of [`echo APPROVED > ${path.join(up, "ruling-1.md")}`, `sort -o ${path.join(up, "ruling.md")} x`, `cat x | tee ${path.join(up, "ruling-2.md")}`]) assert.equal(await selfRulingRefusal("bash", { command }, runs, dirs), SELF_RULING_REASON, command);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

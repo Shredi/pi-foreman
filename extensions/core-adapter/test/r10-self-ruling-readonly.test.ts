@@ -30,8 +30,8 @@ function rig() {
 type Rig = ReturnType<typeof rig>;
 const run = (r: Rig, command: string, tool = "bash", cwd = r.root) => selfRulingRefusal(tool, { command }, cwd, r.dirs);
 
-// Documented current state (R10, narrowing reverted): what the 545abc2 guard returns for the read-only lines.
-const REFUSED_NOW: Array<[string, (r: Rig) => string]> = [
+// R10 read-only lines the 545abc2 guard refused; the r13 lexed write-surface check (hub 170) passes them.
+const PASSES_R13: Array<[string, (r: Rig) => string]> = [
   ["cp <H>/plan.md <S> && cat <H>/ruling.md >> <S>/x.md", (r) => `cp ${r.H}/plan.md ${r.S} && cat ${r.H}/ruling.md >> ${r.S}/x.md`],
   ["cp <H>/plan.md $FOREMAN_SCRATCH && cat <H>/ruling.md >> $FOREMAN_SCRATCH/x.md", (r) => `cp ${r.H}/plan.md $FOREMAN_SCRATCH && cat ${r.H}/ruling.md >> $FOREMAN_SCRATCH/x.md`],
   ["cd $FOREMAN_SCRATCH && gh run view 39038003331", () => `cd $FOREMAN_SCRATCH && gh run view 39038003331`],
@@ -39,10 +39,10 @@ const REFUSED_NOW: Array<[string, (r: Rig) => string]> = [
   ["cp <H>/brief.md <root>/.workflow/scratch/brief-r10.md && cat >> <root>/.workflow/scratch/plan-r10.md <<'EOF' ($25 in the body)", (r) => `cp ${r.H}/brief.md ${r.root}/.workflow/scratch/brief-r10.md && cat >> ${r.root}/.workflow/scratch/plan-r10.md <<'EOF'\n## Addendum\n- Default without a ruling: ask. Ask at $25.\nEOF`],
 ];
 
-for (const [name, line] of REFUSED_NOW) {
-  test(`documented current state (R10, narrowing reverted): ${name} is refused`, () => {
+for (const [name, line] of PASSES_R13) {
+  test(`r13 lexed write surfaces: ${name} passes`, async () => {
     const r = rig();
-    assert.equal(run(r, line(r)), SELF_RULING_REASON, line(r));
+    assert.equal(await run(r, line(r)), undefined, line(r));
   });
 }
 
@@ -52,9 +52,9 @@ const PASSES_NOW: Array<[string, (r: Rig) => string]> = [
 ];
 
 for (const [name, line] of PASSES_NOW) {
-  test(`documented current state (R10, narrowing reverted): ${name} passes`, () => {
+  test(`documented current state (R10, narrowing reverted): ${name} passes`, async () => {
     const r = rig();
-    assert.equal(run(r, line(r)), undefined, line(r));
+    assert.equal(await run(r, line(r)), undefined, line(r));
   });
 }
 
@@ -101,10 +101,10 @@ const DENY: Array<[string, (r: Rig) => string]> = [
 ];
 
 for (const [name, line] of DENY) {
-  test(`r10 write surface denied: ${name}`, () => {
+  test(`r10 write surface denied: ${name}`, async () => {
     const r = rig();
     const cwd = name.startsWith("relative cd") ? r.hand : r.root;
-    assert.equal(run(r, line(r), "bash", cwd), SELF_RULING_REASON, line(r));
+    assert.equal(await run(r, line(r), "bash", cwd), SELF_RULING_REASON, line(r));
   });
 }
 
@@ -135,9 +135,9 @@ const DENY_R1: Array<[string, (r: Rig) => string, string?]> = [
 ];
 
 for (const [name, line, tool] of DENY_R1) {
-  test(`r10 write surface denied (round 1): ${name}`, () => {
+  test(`r10 write surface denied (round 1): ${name}`, async () => {
     const r = rig();
-    assert.equal(run(r, line(r), tool ?? "bash"), SELF_RULING_REASON, line(r));
+    assert.equal(await run(r, line(r), tool ?? "bash"), SELF_RULING_REASON, line(r));
   });
 }
 
@@ -164,26 +164,26 @@ const DENY_R3: Array<[string, (r: Rig) => string, string?]> = [
 ];
 
 for (const [name, line, tool] of DENY_R3) {
-  test(`r10 write surface denied (round 3): ${name}`, () => {
+  test(`r10 write surface denied (round 3): ${name}`, async () => {
     const r = rig();
-    assert.equal(run(r, line(r), tool ?? "bash"), SELF_RULING_REASON, line(r));
+    assert.equal(await run(r, line(r), tool ?? "bash"), SELF_RULING_REASON, line(r));
   });
 }
 
 for (const [name, line, tool] of DENY_R2) {
-  test(`r10 write surface denied (round 2): ${name}`, () => {
+  test(`r10 write surface denied (round 2): ${name}`, async () => {
     const r = rig();
-    assert.equal(run(r, line(r), tool ?? "bash"), SELF_RULING_REASON, line(r));
+    assert.equal(await run(r, line(r), tool ?? "bash"), SELF_RULING_REASON, line(r));
   });
 }
 
-test("r10 write surface denied: write and edit tools on <H>/ruling.md", () => {
+test("r10 write surface denied: write and edit tools on <H>/ruling.md", async () => {
   const r = rig();
-  for (const tool of ["write", "edit"]) assert.equal(selfRulingRefusal(tool, { path: path.join(r.H, "ruling.md") }, r.root, r.dirs), SELF_RULING_REASON, tool);
+  for (const tool of ["write", "edit"]) assert.equal(await selfRulingRefusal(tool, { path: path.join(r.H, "ruling.md") }, r.root, r.dirs), SELF_RULING_REASON, tool);
 });
 
-test("r10: $FOREMAN_SCRATCH stays unresolved and L2 fails closed next to a handoff mention", () => {
+test("r10: $FOREMAN_SCRATCH stays unresolved and L2 fails closed next to a handoff mention", async () => {
   const r = rig();
   const line = `cd $FOREMAN_SCRATCH && cp x $N && ls ${r.H}`;
-  assert.equal(selfRulingRefusal("bash", { command: line }, r.root, r.dirs), SELF_RULING_REASON);
+  assert.equal(await selfRulingRefusal("bash", { command: line }, r.root, r.dirs), SELF_RULING_REASON);
 });
