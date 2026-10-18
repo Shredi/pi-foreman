@@ -104,7 +104,7 @@ export class ReadBudget {
     if (this.post) {
       if (this.post.ids.has(top)) return { kind: "allow" };
       if (this.post.ids.size >= recheck) {
-        return { kind: "deny", event: "recheck_budget", count: this.post.ids.size + 1, reason: `pi-foreman: [recheck_budget_exceeded] ${this.recheckLead()}; finish now. You have used your ${recheck} own check${recheck === 1 ? "" : "s"} after the pass; report the result instead of checking again.` };
+        return { kind: "deny", event: "recheck_budget", count: this.post.ids.size + 1, reason: this.recheckReason(recheck) };
       }
       this.post.ids.add(top);
       return { kind: "allow" };
@@ -124,10 +124,12 @@ export class ReadBudget {
     return { kind: "allow" };
   }
 
-  private recheckLead(): string {
-    if (this.verdict === "fail") return "the last review FAILED";
-    if (this.verdict === "none" || this.verdict === null) return "no review has passed";
-    return "the reviewer passed";
+  private recheckReason(recheck: number): string {
+    const checks = `${recheck} own check${recheck === 1 ? "" : "s"}`;
+    const head = "pi-foreman: [recheck_budget_exceeded]";
+    if (this.verdict === "fail") return `${head} the last review FAILED; fix the failed items or report. You have used your ${checks} in this phase; do not keep checking.`;
+    if (this.verdict === "none" || this.verdict === null) return `${head} no review is recorded yet; launch the reviewer or report. You have used your ${checks} in this phase; do not keep checking.`;
+    return `${head} the reviewer passed; finish now. You have used your ${checks} after the pass; report the result instead of checking again.`;
   }
 
   private deny(limits: ReadLimits, count: number): BudgetDecision {
