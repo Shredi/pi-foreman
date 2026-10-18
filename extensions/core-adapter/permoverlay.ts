@@ -2214,7 +2214,7 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
     // R12 item 3: a same-line function or alias with the interpreter's name may run the body as shell: it is checked as shell
     const shadow = !!code && !!out.shadowed?.has(baseName(v.core[0]));
     if (shadow && depth < MAX_DEPTH) collect(code!, "posix", depth + 1, out);
-    if (code && !shadow && out.readCode && /^(python|pypy)/.test(baseName(v.core[0])) && pythonReadOnlyCode(code)) {
+    if (code && !shadow && out.readCode && /^(python[0-9.]*|pypy[0-9.]*)$/.test(baseName(v.core[0])) && pythonReadOnlyCode(code)) {
       out.readCode.add(code);
       for (const l of codeLiterals(code)) out.readCode.add(l);
     }

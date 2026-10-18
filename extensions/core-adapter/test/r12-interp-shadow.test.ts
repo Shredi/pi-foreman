@@ -55,6 +55,19 @@ test("interp_python_function_shadow_checked_as_shell", () => {
   }
 });
 
+test("interp_read_code_names_only_real_pythons", { skip: process.platform === "win32" }, () => {
+  // readCode (the read-only python exemption) holds for python[0-9.]* and pypy[0-9.]* only; `python_x` / `python3-x` are other
+  // programs (inlineCode's INTERPRETERS is anchored the same way), so their protected operands are checked like any program's
+  const ws = path.join(root, "selfhost");
+  fs.mkdirSync(ws, { recursive: true });
+  fs.writeFileSync(path.join(ws, "package.json"), "{}\n");
+  const own = buildOverlayRules(readBaseline(PKG)!, {}, {}, path.join(root, "agent"), ws, undefined, false);
+  const sh = (command: string): string => checkToolCall(own, "bash", { command }, { cwd: ws, home, platform: process.platform, role: "child" })?.kind ?? "pass";
+  const code = `"print(open('package.json').read())"`;
+  for (const p of ["python3", "python", "python3.12"]) assert.equal(sh(`${p} -c ${code}`), "pass", p);
+  for (const p of ["python_x", "python3-x", "pypy_x", "python3.12-x"]) assert.notEqual(sh(`${p} -c ${code} package.json`), "pass", p);
+});
+
 test("interp_node_alias_shadow_checked_as_shell", () => {
   for (const c of [
     "alias node=sh; node -e 'HOME=/x; cat ~/y'",
