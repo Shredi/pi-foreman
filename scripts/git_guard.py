@@ -2177,7 +2177,7 @@ COMMIT_ARG = ("message", "file", "reuse-message", "reedit-message", "fixup", "sq
               "date", "cleanup", "trailer", "pathspec-from-file")
 TRAILER_LINE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*\s*:\s")
 # R12 item 1 (F2): programs whose path arguments can land on a -F message file before git reads it, and the wrappers that may
-# stand in front of them.
+# stand in front of them. Foreman (main mode) only since R13 item 2: a child's -F line goes through child_message_line_problem.
 CLOBBER_PROGS = frozenset(("cp", "mv", "ln", "install", "tee", "rsync"))
 CLOBBER_WRAPPERS = frozenset(("sudo", "doas", "command", "builtin", "env", "nice", "nohup", "time", "exec", "xargs",
                               "busybox", "stdbuf"))
@@ -2267,10 +2267,76 @@ def message_file_clobbered(seg, ctx, call, target):
     return False
 
 
+CHILD_F_OPS = (None, ";", "&&")
+CHILD_F_FIX = ("write the message file in an earlier command, then commit on a line with only an optional top-level "
+               "`cd <dir in the worktree> &&`, `git add` / `git status` / `git diff --cached` and one `git commit -F <file>`")
+
+
+def child_message_line_problem(seg, ctx, call, envs):
+    """R13 item 2: a child's `git commit -F <file>` is read only when the whole input is one top-level line (no substitution, group,
+    heredoc, here-string, pipe, input or output redirect, `||` or `&`) of an optional first `cd <literal dir>`, any number of
+    `git add` / `git status` / `git diff --cached` and exactly one `git commit` (this one), and the cd target lies inside the
+    worktree of the tracked cwd (the caller's read keeps the -F file inside it). Returns why it is not, or None. An allowlist: nothing else on the line can write the
+    file between the guard's read and git's (replaces message_file_clobbered for children)."""
+    if seg is None or seg.lexer is None or not ctx.root or seg.lexer.s != ctx.root[0]:
+        return "the commit is not on the top-level line; %s" % CHILD_F_FIX
+    lx = seg.lexer
+    if lx.subs:
+        return "the line has a command or process substitution; %s" % CHILD_F_FIX
+    top = (run_git(call, ctx, ["rev-parse", "--show-toplevel"], envs) or "").strip()
+    if not top:
+        return "the commit runs outside a git worktree"
+    top = os.path.realpath(top)
+
+    def inside(p):
+        try:
+            return os.path.commonpath([top, os.path.realpath(p)]) == top
+        except ValueError:  # across Windows drives
+            return False
+
+    commits = 0
+    for k, s in enumerate(lx.segs):
+        words = s.words
+        shown = " ".join(w.raw for w in words)[:80]
+        if s.heredocs or s.herestrings or s.ins or s.redirs or s.pipe_in or s.group or \
+                s.before not in CHILD_F_OPS or s.after not in CHILD_F_OPS:
+            return "`%s` has a redirection, heredoc, pipe, group or an operator other than `;` / `&&`; %s" % (shown, CHILD_F_FIX)
+        if len(words) < 2 or any(w.dynamic for w in words) or words[0].glob or words[1].glob:
+            return "`%s` is not a plain cd or git command; %s" % (shown, CHILD_F_FIX)
+        prog, sub = words[0].text, words[1].text
+        if prog == "cd":
+            t = sub
+            # run_command moved ctx.cwd (so call.cwd) to a plain first cd's existing target; any other cd left cd_unsure
+            if k != 0 or len(words) != 2 or t.startswith(("-", "~")) or ctx.cd_unsure or not inside(call.cwd):
+                return "`%s` is not one first `cd <dir in the worktree>`; %s" % (shown, CHILD_F_FIX)
+            continue
+        if prog_name(prog) != "git":
+            return "`%s` is not a cd, git add, git status, git diff --cached or the commit; %s" % (shown, CHILD_F_FIX)
+        args = [w.text for w in words[2:]]
+        if sub == "commit":
+            if s is not seg:
+                return "the line has more than one git commit; %s" % CHILD_F_FIX
+            commits += 1
+        elif sub in ("add", "status"):
+            pass
+        elif sub == "diff" and "--cached" in args and not any(a.startswith("--output") for a in args):
+            pass
+        else:
+            return "`%s` is not a cd, git add, git status, git diff --cached or the commit; %s" % (shown, CHILD_F_FIX)
+    if commits != 1:
+        return "the commit is not a plain top-level git commit; %s" % CHILD_F_FIX
+    return None  # a -F file outside the worktree is refused by the read below ("cannot read the message file")
+
+
 def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
     opts, pos, dd, dyn = parse_opts(rest, short_arg="mFCct", known=COMMIT_KNOWN, long_arg=COMMIT_ARG)
     if has(opts, "dry-run"):
         return OK
+    if pattern_only and ctx.mode == "child" and has(opts, "amend") and has(opts, "no-edit"):
+        # R13 item 2: its own reason, not the generic unread message
+        return deny("children may not run `git commit --amend --no-edit`: it rewrites the last commit and keeps its message "
+                    "unread by the guard (amend without a new message; message not readable, child cannot ask). "
+                    "Make a new commit with -m '<literal message>' or -F <file inside the worktree>.")
     if has(opts, "a", "all") and not pattern_only:
         return deny("commit -a/--all is not allowed: stage the files with `git add <paths>`, then commit.")
     if not pattern_only and (has(opts, "i", "include", "o", "only", "pathspec-from-file") or [w for w in pos if not w.dynamic] or dd):
@@ -2325,10 +2391,14 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
                 continue
             if v.dynamic:
                 return unread("the commit message is read from a computed path")
+            if pattern_only and ctx.mode == "child":
+                why = child_message_line_problem(seg, ctx, call, envs)
+                if why is not None:
+                    return unread(why)
             if ctx.cd_unsure and not os.path.isabs(v.text):
                 return unread("the message file %s is relative and a cd in a subshell, pipeline or other branch leaves its directory "
                               "unsure" % v.text, "use an absolute -F path or a top-level `cd <dir> &&`")
-            if message_file_clobbered(seg, ctx, call, v.text):
+            if not (pattern_only and ctx.mode == "child") and message_file_clobbered(seg, ctx, call, v.text):
                 return unread("the message file %s is written, copied, moved, linked or exec-opened on the same command line; "
                               "the guard reads it before the line runs" % v.text,
                               "write the message file in an earlier command, then commit")

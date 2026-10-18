@@ -42,8 +42,9 @@ class MessageFileCdScopeTest(unittest.TestCase):
             self.expect_unsure(c)
         # an absolute -F path does not depend on the directory
         c = "(cd sub) && git commit -F '%s/sub/msg.txt'" % self.repo
-        for mode in ("main", "child"):
-            self.assertEqual(decide(c, mode, self.repo)[0], "allow", mode)
+        self.assertEqual(decide(c, "main", self.repo)[0], "allow")
+        # r13 item 2: child -F allowlist forbids groups
+        self.assertEqual(decide(c, "child", self.repo)[0], "deny")
 
     def test_message_file_pipeline_cd_not_tracked(self):
         for c in ("cd sub | true; git commit -F msg.txt", "true | cd sub && git commit -F msg.txt", "cd sub || true; git commit -F msg.txt",
