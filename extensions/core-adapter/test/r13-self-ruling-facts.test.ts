@@ -58,6 +58,13 @@ const DENY: Array<[string, (r: Rig) => string]> = [
   ["python heredoc writing a computed path", (r) => `ls ${r.H}/; python3 - <<'EOF'\np = '${r.H}' + '/' + 'ruling.md'\nopen(p, 'w').write('APPROVED')\nEOF`],
   ["exec 3> into <H>", (r) => `exec 3> ${r.H}/ruling.md`],
   ["truncate", (r) => `truncate -s 0 ${r.H}/ruling.md`],
+  ["computed sh -c", () => `sh -c "$C"`],
+  ["computed eval", () => `eval "$C"`],
+  ["sed e command", (r) => `sed '1e touch ${r.H}/ruling.md' ${r.S}/usage.json`],
+  ["sed s///e", (r) => `sed 's|.*|touch ${r.H}/ruling.md|e' ${r.S}/usage.json`],
+  ["xargs touch from stdin", (r) => `echo ${r.H}/ruling.md | xargs touch`],
+  ["awk system", (r) => `awk 'BEGIN{system("touch ${r.H}/ruling.md")}'`],
+  ["find -exec", (r) => `find ${r.H} -name ruling.md -exec touch {} +`],
 ];
 
 for (const [name, line] of DENY) {

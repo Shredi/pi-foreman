@@ -56,6 +56,10 @@ LANGS = (("python", re.compile(r"^(python[0-9.]*|pythonw|py)$")), ("node", re.co
 INLINE = {"-c", "-e", "-E", "--eval", "-p", "--print", "-r"}
 LINK_CODE = re.compile(r"\b(?:sym)?link(?:Sync|_to)?\s*\(|\bhardlink_to\b|\bsymlink\b")
 RULING = re.compile(r"^ruling(?:-\d{1,6})?\.md$")
+RULING_IN = re.compile(r"(?<![A-Za-z0-9_-])ruling(?:-\d{1,6})?\.md(?![A-Za-z0-9_])")
+SED_E_CMD = re.compile(r"(?:^|[;\n{}])\s*(?:[0-9$,~!]+|/(?:[^/\\\n]|\\.)*/[IM]*)*\s*e(?:\s|[;}]|$)")
+SED_S_FLAGS = re.compile(r"s([^\\\n])(?:(?!\1)[^\\\n]|\\.)*\1(?:(?!\1)[^\\\n]|\\.)*\1([a-zA-Z0-9]*)")
+COMPUTED = gg.Word("\0", dynamic=True, raw="$(xargs)")
 UNKNOWN_SCRATCH = os.path.join(tempfile.gettempdir(), "pi-foreman-scratch-unknown")
 _REF = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 _PLAIN = re.compile(r"(?:[A-Za-z0-9/._=:@%+,~-]|\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*)+")
@@ -322,6 +326,8 @@ def sed_call(args, st):
     if not explicit and files:
         scripts.append(files.pop(0))
     for s in scripts:
+        if SED_E_CMD.search(s.text) or any("e" in m.group(2) for m in SED_S_FLAGS.finditer(s.text)):
+            add(st, "sed-e", None)  # the e command / s///e flag runs a shell command: computed write
         for m in re.finditer(r"(?:^|[;\n}]|/[gpiImMe0-9]*)\s*[wW]\s+([^;\n}]+)", s.text):
             tgt = m.group(1).strip()
             if tgt not in ("/dev/stdout", "/dev/stderr"):
@@ -389,10 +395,10 @@ def ruling_args(args, st):
     """A literal ruling-named argument of a program that is not a known reader: the program may write it."""
     for w in args:
         t = w.text.split("=", 1)[-1] if w.text.startswith("-") else w.text
-        if "\0" in t:
-            continue
-        if RULING.match(os.path.basename(t.replace("\\", "/"))):
+        if "\0" not in t and os.path.isabs(t) and RULING.match(os.path.basename(t.replace("\\", "/"))):
             add(st, "arg", t)
+        elif RULING_IN.search(w.text):  # inside awk system(), find -name/-exec, ...: the dir is unknown
+            add(st, "arg", None, partial="\0/ruling.md")
 
 
 def command(words, seg, flavor, st, depth):
@@ -404,7 +410,10 @@ def command(words, seg, flavor, st, depth):
     name = gg.prog_name(cmd.text)
     args = words[1:]
     if name in WRAPPERS:
-        command(strip_wrapper(name, args, st), seg, flavor, st, depth)
+        rest = strip_wrapper(name, args, st)
+        if name == "xargs" and rest:
+            rest = rest + [COMPUTED]  # operands from stdin
+        command(rest, seg, flavor, st, depth)
         return
     if name in CD:
         change_dir(args, st, flavor)
@@ -424,6 +433,9 @@ def command(words, seg, flavor, st, depth):
                 return
         return
     if name in ("eval", "invoke-expression", "iex"):
+        if name == "eval" and any(value(w, st) is None for w in args):
+            add(st, "eval", None)  # computed script: fully computed write
+            return
         nested(" ".join(w.text for w in args if w.text.lower() != "-command"), flavor if name == "eval" else "powershell", st, depth)
         return
     if name == "tee" or name == "tee-object":
@@ -518,7 +530,11 @@ def shell(args, seg, st, depth):
     pos = args[i:]
     if code:
         if pos:
-            nested(pos[0].text, "bash", st, depth)
+            v = value(pos[0], st)
+            if v is None:
+                add(st, "shell", None)  # computed script: fully computed write
+            else:
+                nested(v, "bash", st, depth)
         return
     if pos:
         ruling_args(pos, st)

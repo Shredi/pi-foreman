@@ -87,6 +87,21 @@ class ShellFactsTest(unittest.TestCase):
         self.assertTrue(sf.facts({"command": "perl -e 'symlink(\"/h\",\"/tmp/d\")'", "cwd": self.cwd})["links"])
         self.assertIn(("cmdlet", "/h/ruling.md"), self.kinds("Set`-Location /h; Set-Content ruling.md APPROVED", shell="powershell"))
 
+    def test_review_round1_deny_cases_have_unknown_dir(self):
+        cases = {
+            "computed sh -c": 'sh -c "$C"',
+            "computed eval": 'eval "$C"',
+            "sed e command": "sed '1e touch /h/ruling.md' /s/x",
+            "sed s///e": "sed 's|.*|touch /h/ruling.md|e' /s/x",
+            "xargs touch from stdin": "echo /h/ruling.md | xargs touch",
+            "awk system": "awk 'BEGIN{system(\"touch /h/ruling.md\")}'",
+            "find -exec": "find /h -name ruling.md -exec touch {} +",
+        }
+        for name, line in cases.items():
+            w = self.writes(line)
+            self.assertTrue(any(x["dir"] is None and x["name"] in (None, "ruling.md") for x in w), (name, w))
+        self.assertEqual(self.writes("sed -n 's/a/b/p' /s/x"), [])
+
     def test_unreadable_line_is_an_error(self):
         self.assertIsNotNone(sf.facts({"command": "echo 'open", "cwd": self.cwd})["error"])
 
