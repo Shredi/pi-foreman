@@ -57,7 +57,7 @@ LANGS = (("python", re.compile(r"^(python[0-9.]*|pythonw|py)$")), ("node", re.co
 INLINE = {"-c", "-e", "-E", "--eval", "-p", "--print", "-r"}
 LINK_CODE = re.compile(r"\b(?:sym)?link(?:Sync|_to)?\s*\(|\bhardlink_to\b|\bsymlink\b")
 RULING = re.compile(r"^ruling(?:-\d{1,6})?\.md$")
-RULING_IN = re.compile(r"(?<![A-Za-z0-9_-])ruling(?:-\d{1,6})?\.md(?![A-Za-z0-9_])")
+RULING_IN = re.compile(r"(?<![A-Za-z0-9_.-])ruling(?:-\d{1,6})?\.md(?![A-Za-z0-9_])")
 SED_LONG = {"--expression", "--file", "--in-place", "--quiet", "--silent", "--null-data", "--regexp-extended",
             "--separate", "--sandbox", "--debug", "--posix", "--line-length", "--zero-terminated",
             "--follow-symlinks", "--unbuffered", "--help", "--version"}
@@ -145,10 +145,12 @@ def value(word, st):
     return "".join(out)
 
 
-def add(st, kind, text, glob=False, cwd="keep", partial=None):
-    """Record a write target. `text` None: fully computed; `partial` the raw text with NULs for computed parts."""
+def add(st, kind, text, glob=False, cwd="keep", partial=None, **flags):
+    """Record a write target. `text` None: fully computed; `partial` the raw text with NULs for computed parts. `flags`: R14
+    item 3 `read` (a copy source: only read) and `into` (`<target>/<source name>`: written only when the target is a directory)."""
     base = st.cwd if cwd == "keep" else cwd
     rec = {"kind": kind, "path": None, "dir": None, "name": None, "glob": bool(glob), "cwd": base}
+    rec.update({k: True for k, v in flags.items() if v})
     if text is None and partial is not None:
         head, _, tail = partial.replace("\\", "/").rpartition("/")
         if "\0" not in tail and tail:
@@ -184,12 +186,12 @@ def native_raw(raw, v, st):
     return r
 
 
-def add_word(st, kind, word, cwd="keep"):
+def add_word(st, kind, word, cwd="keep", **flags):
     v = value(word, st)
-    add(st, kind, v, glob=word.glob, cwd=cwd, partial=word.text if v is None else None)
+    add(st, kind, v, glob=word.glob, cwd=cwd, partial=word.text if v is None else None, **flags)
     n = native_raw(word.raw, v, st)
     if n is not None:
-        add(st, kind, n, glob=word.glob, cwd=cwd)
+        add(st, kind, n, glob=word.glob, cwd=cwd, **flags)
 
 
 def operands(args):
@@ -327,6 +329,7 @@ def copier(name, args, st):
     rest = []
     i = 0
     after = False
+    linking = name in LINKERS
     while i < len(args):
         w = args[i]
         t = w.text.lower() if st.flavor == "powershell" else w.text
@@ -342,7 +345,7 @@ def copier(name, args, st):
             i += 1
         elif not after and t.startswith("-") and t != "-":
             if name in LINKERS or (name == "cp" and re.match(r"^-[a-zA-Z]*[sl]|^--(symbolic-)?link$", w.text)):
-                st.links = True
+                st.links = linking = True
             if st.flavor == "powershell" and t in ("-itemtype", "-filter", "-include", "-exclude") and i + 1 < len(args):
                 i += 1
         else:
@@ -354,8 +357,10 @@ def copier(name, args, st):
         target_dir, rest = rest[-1], rest[:-1]
     elif target_dir is None:
         rest = rest  # one operand (ln -s x): the link lands in the cwd under the source name
+    # R14 item 3: a copy (cp, install, Copy-Item, cmd copy) only reads its sources; a move, link or rsync may change them
+    read = name in ("cp", "install", "copy-item", "cpi", "copy") and not linking
     for src in rest:
-        add_word(st, "source", src)
+        add_word(st, "source", src, read=read)
     if target_dir is not None:
         add_word(st, "dest", target_dir)
         tv = value(target_dir, st)
@@ -363,9 +368,9 @@ def copier(name, args, st):
             sv = value(src, st)
             name_ = os.path.basename(sv.rstrip("/")) if sv is not None else None
             if tv is not None and name_:
-                add(st, "dest", _pm(tv).join(tv, name_), glob=src.glob or target_dir.glob)
+                add(st, "dest", _pm(tv).join(tv, name_), glob=src.glob or target_dir.glob, into=True)
             else:
-                add(st, "dest", None, partial=(target_dir.text + "/" + (name_ or "\0")))
+                add(st, "dest", None, partial=(target_dir.text + "/" + (name_ or "\0")), into=True)
     else:
         for src in rest:
             sv = value(src, st)

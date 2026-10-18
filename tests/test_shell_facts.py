@@ -207,6 +207,18 @@ class ShellFactsTest(unittest.TestCase):
             w = self.writes(line)
             self.assertTrue(any(x["dir"] is None and x["name"] is None for x in w), (line, w))
 
+    def test_r14_copy_source_is_a_read_and_ruling_names_are_basenames(self):
+        w = self.writes("cp /h/ruling-2.md .workflow/scratch/r14-ruling-2.md && echo ok")
+        self.assertEqual([x.get("read") for x in w if x["kind"] == "source"], [True])
+        into = [x for x in w if x.get("into")]
+        self.assertEqual([x["path"] for x in into], [os.path.join(self.cwd, ".workflow", "scratch", "r14-ruling-2.md", "ruling-2.md")])
+        # a move, a link and rsync may change their sources
+        for line in ("mv /h/ruling-2.md /s/x", "ln /h/ruling-2.md /s/x", "cp -l /h/ruling-2.md /s/x", "rsync /h/ruling-2.md /s/x"):
+            self.assertEqual([x.get("read") for x in self.writes(line) if x["kind"] == "source"], [None], line)
+        # a name that merely ends in ruling-<n>.md is no ruling name
+        self.assertEqual(self.writes("node w.js /s/r14-ruling-2.md /s/x.ruling.md"), [])
+        self.assertEqual(self.writes("cat >> /h/asks.md <<'EOF'\nsee ruling-2.md\nEOF\ntouch /h/.ack")[0]["path"], "/h/asks.md")
+
     @unittest.skipUnless(sys.platform == "win32", "native drive paths are win32 targets")
     def test_native_backslash_drive_paths_are_targets_on_win32(self):
         # quoted: the path itself; unquoted: bash escapes, but the native spelling is ALSO a candidate (fail closed)

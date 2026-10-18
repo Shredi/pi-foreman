@@ -153,6 +153,10 @@ export interface WriteFact {
   dir: string | null;
   name: string | null;
   glob: boolean;
+  /** A copy source (cp, install, Copy-Item): only read, never a write. */
+  read?: boolean;
+  /** `<target>/<source name>` of a copier: written only when the target is a directory when the command runs. */
+  into?: boolean;
 }
 export interface ShellFacts {
   writes: WriteFact[];
@@ -189,8 +193,14 @@ export async function shellFacts(command: string, cwd: string, shell: "bash" | "
 
 const globRe = (g: string): RegExp => new RegExp(`^${g.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
 
-/** A write surface that may hit a ruling file in one of `dirs` (real paths). */
-export function factHitsRuling(w: WriteFact, dirs: Set<string>, links: boolean): boolean {
+/**
+ * A write surface that may hit a ruling file in one of `dirs` (real paths). `moves`: the line moves or renames a path (a
+ * handoff dir may then reach a target that does not exist yet).
+ */
+export function factHitsRuling(w: WriteFact, dirs: Set<string>, links: boolean, moves = false): boolean {
+  if (w.read) return false;
+  // `cp <src> <new file>`: the target is no directory, so nothing lands below it, unless the line links or moves a dir there
+  if (w.into && w.dir !== null && !links && !moves && !isDir(w.dir)) return dirs.has(realDir(w.dir));
   // an existing file (or symlink to one) at a known path: judged by what it really is
   if (w.path && fs.existsSync(w.path)) {
     const real = realKey(w.path);
@@ -222,7 +232,7 @@ export function factHitsRuling(w: WriteFact, dirs: Set<string>, links: boolean):
  * are read through `scripts/shell_facts.py` (the git guard's Lexer): only a WRITE surface (redirect, cp/mv/tee/dd/sed -i
  * ..., interpreter code writes, a ruling-named argument of a non-reader) that may be such a file is refused; a computed
  * name or directory in a write position counts as one. No answer from the script (no python, timeout, unreadable line)
- * refuses. `*.ack` files are never ruling names.
+ * refuses. `*.ack` files are never ruling names; a copy source (`cp <H>/ruling-2.md x`) is a read.
  */
 export async function selfRulingRefusal(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[], deps: SelfRulingDeps = {}): Promise<string | undefined> {
   if (childDirs.length === 0) return undefined;
@@ -242,7 +252,8 @@ export async function selfRulingRefusal(toolName: string, input: Record<string, 
     if (!cmd) return undefined;
     const facts = await shellFacts(cmd, cwd, toolName === "powershell" ? "powershell" : "bash", deps);
     if (!facts) return SELF_RULING_REASON;
-    return facts.writes.some((w) => factHitsRuling(w, dirs, facts.links)) ? SELF_RULING_REASON : undefined;
+    const moves = facts.writes.some((w) => w.kind === "source" && !w.read);
+    return facts.writes.some((w) => factHitsRuling(w, dirs, facts.links, moves)) ? SELF_RULING_REASON : undefined;
   }
   return undefined;
 }

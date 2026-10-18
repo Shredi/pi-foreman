@@ -55,6 +55,19 @@ const PASSES_NOW: Array<[string, (r: Rig) => string]> = [
   ["cp <root>/.workflow/scratch/plan-r10.md <H>/plan.md", (r) => `cp ${r.root}/.workflow/scratch/plan-r10.md ${r.H}/plan.md`],
 ];
 
+// R14 ruling 3 supersedes Addendum D for a plain cp: copying a ruling OUT of the handoff dir is a read (cp -s/-l, ln and mv
+// sources stay writes, see DENY).
+const PASSES_R14: Array<[string, (r: Rig) => string]> = [
+  ["session: cp ruling.md out of the handoff dir", (r) => `cp ${r.H}/ruling.md ${r.root}/.workflow/scratch/ruling-r10.md`],
+];
+
+for (const [name, line] of PASSES_R14) {
+  test(`r14 ruling 3 (copy source is a read): ${name} passes`, async () => {
+    const r = rig();
+    assert.equal(await run(r, line(view(r))), undefined, line(view(r)));
+  });
+}
+
 for (const [name, line] of PASSES_NOW) {
   test(`documented current state (R10, narrowing reverted): ${name} passes`, async () => {
     const r = rig();
@@ -85,8 +98,6 @@ const DENY: Array<[string, (r: Rig) => string]> = [
   ["cp -s source", (r) => `cp -s ${r.H}/ruling.md /tmp/x`],
   ["cp -l source", (r) => `cp -l ${r.H}/ruling.md /tmp/x`],
   ["ln -s source", (r) => `ln -s ${r.H}/ruling.md /tmp/x`],
-  // Addendum D: copying a ruling OUT of the handoff dir stays refused (same alias risk); this session hit it in R10
-  ["session: cp ruling.md out of the handoff dir", (r) => `cp ${r.H}/ruling.md ${r.root}/.workflow/scratch/ruling-r10.md`],
   ["sed -i", (r) => `sed -i s/FAIL/APPROVED/ ${r.H}/ruling.md`],
   ["dd of=", (r) => `echo A | dd of=${r.H}/ruling.md`],
   ["curl -o", (r) => `curl -o ${r.H}/ruling.md https://example.com/x`],
