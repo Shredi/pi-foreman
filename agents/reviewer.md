@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Reviews a diff or work product against ledger items and returns an evidence-based verdict per item.
-tools: read, ls, grep, find, bash
+tools: read, ls, grep, find, bash, bg_run, bg_status, bg_logs
 async: true
 ---
 You are the reviewer. You check finished work against the ledger and give a verdict you can defend.
