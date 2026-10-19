@@ -1,13 +1,13 @@
 {
-  "comment": "R16 P1 item 3: the literal R11-R14 friction lines and the floor lines of the brief, as named cases. Placeholders, filled by r16-auto-review.test.ts: {sid} the foreman session id, {id} a bg task id, {run} an async run id, {tmp} the test's TMPDIR stand-in, {H} the own handoff dir (the chair writes rulings there; the session is its child), {C} another handoff dir where the session is the child, {agentDir} the agent dir, {other} another session id. Every path is passed through inBash. expect: pass = no overlay decision (no dialog, no model call); review = an overlay ask the auto reviewer decides (no dialog with an allowing stub); dialog = a selfMod ask (human dialog, no model call); refused = the self_ruling guard (ruling.ts) refuses it before the overlay (no dialog, no model call); deny = a deterministic overlay deny (no model call).",
+  "comment": "R16 P1 item 3: the literal R11-R14 friction lines and the floor lines of the brief, as named cases, run through the real adapter (index.ts tool_call, overlayBlock) with a stubbed reviewer. Placeholders, filled by r16-auto-review.test.ts: {sid} the foreman session id, {id} a bg task id, {run} an async run id, {tmp} the test's TMPDIR stand-in, {H} the own handoff dir (the chair writes rulings there; the session is its child), {C} another handoff dir where the session is the child, {agentDir} the agent dir (also for a leading ~/.pi/agent), {other} another session id. Every path is passed through inBash. expect: pass = no overlay decision (no dialog, no model call); allow = an overlay ask the auto reviewer decides (no dialog with an allowing stub); dialog = a selfMod ask (human dialog, no model call); refused = the self_ruling guard (ruling.ts) refuses it before the overlay (no dialog, no model call); deny = a deterministic overlay deny (no model call). selfMod (ruling 2): a protect ask hit on a shell write/remove target or a write tool's path; a protected path a shell line only reads or mentions goes to the reviewer.",
   "friction": [
     { "name": "own_bg_output_cat", "expect": "pass", "line": "cat .pi/tasks/{sid}-66406/{id}.output" },
     { "name": "own_async_results_python_read", "expect": "pass", "line": "python3 -c \"import json,sys; d=json.load(open(sys.argv[1])); print(str(d.get('output') or d)[-5000:])\" {tmp}/pi-subagents-uid-501/async-subagent-results/{run}.json" },
-    { "name": "handoff_ruling_for_cat", "expect": "refused", "note": "170 false positive; refused by ruling.ts before the overlay, unchanged until P2 item 4a", "line": "cd {H}/ && for f in ruling-1.md ruling-2.md; do cat $f; done" },
-    { "name": "cp_ruling_into_scratch", "expect": "refused", "note": "refused by ruling.ts before the overlay (R14 ruling 7), unchanged until P2 item 4a", "line": "cp {H}/ruling-2.md .workflow/scratch/r14-ruling-2.md && echo ok" },
+    { "name": "handoff_ruling_for_cat", "expect": "refused", "note": "170 false positive; DEFERRED to P2 item 4a (ruling 2): today's refusal by ruling.ts before the overlay, a PASS row in 4a", "line": "cd {H}/ && for f in ruling-1.md ruling-2.md; do cat $f; done" },
+    { "name": "cp_ruling_into_scratch", "expect": "refused", "note": "R14 ruling 7; DEFERRED to P2 item 4a (ruling 2): today's refusal by ruling.ts before the overlay, a PASS row in 4a", "line": "cp {H}/ruling-2.md .workflow/scratch/r14-ruling-2.md && echo ok" },
     { "name": "usage_ls_grep_node_version", "expect": "pass", "line": "ls ~/.pi/agent/pi-foreman/state/usage/ | grep {id}; node --version" },
     { "name": "pi_scratch_read", "expect": "pass", "line": "cat .pi/scratch/{id}.log" },
-    { "name": "own_bg_output_chain", "expect": "dialog", "note": "deviation (decision A): the ask is a protect.ask hit ({cwd}/.pi/*, no strict read), so selfMod: human dialog, never reviewed", "line": "sleep 22; tail -c 200 .pi/tasks/{sid}-66406/{id}.output; echo; echo \"---\"; cat .pi/tasks/{sid}-66406/{id}.output | wc -c" },
+    { "name": "own_bg_output_chain", "expect": "allow", "note": "ruling 2 (selfMod width B): the {cwd}/.pi/* hit is a read, no write target: the auto reviewer decides", "line": "sleep 22; tail -c 200 .pi/tasks/{sid}-66406/{id}.output; echo; echo \"---\"; cat .pi/tasks/{sid}-66406/{id}.output | wc -c" },
     { "name": "r16_f1_ruling_append_and_cp", "expect": "refused", "note": "R16 live F1: refused by ruling.ts before the overlay, unchanged until P2 item 4a", "line": "cd .workflow/scratch && { printf '\\n## Ruling\\n\\n'; cat {H}/ruling.md; } >> plan-r16.md && cp {H}/ruling.md r16-ruling.md && tail -3 plan-r16.md" }
   ],
   "hardDeny": [
@@ -17,11 +17,34 @@
   "selfMod": [
     { "name": "agentdir_settings_write", "line": "echo '{}' > {agentDir}/settings.json" },
     { "name": "other_session_state_write", "note": "accepted gap: human dialog, no model call (protect.ask {agentDir}/pi-foreman/state/*), no new rule", "line": "echo x > {agentDir}/pi-foreman/state/live/{other}.json" },
-    { "name": "probe_ask_after_protect_hit", "line": "ls ~/.local/bin | head -3; echo '{}' > {agentDir}/settings.json" }
+    { "name": "probe_ask_after_protect_hit", "line": "ls ~/.local/bin | head -3; echo '{}' > {agentDir}/settings.json" },
+    { "name": "redirect_into_pi_settings", "line": "echo '{}' > .pi/settings.json" },
+    { "name": "cp_into_agent_settings", "line": "cp x.json {agentDir}/settings.json" },
+    { "name": "tee_into_agent_extensions", "line": "echo x | tee {agentDir}/extensions/x.ts" },
+    { "name": "rm_pi_settings", "line": "rm .pi/settings.json" },
+    { "name": "read_then_write_pi_settings", "note": "a read and a write of protected paths on one line: the write target makes it selfMod", "line": "cat .pi/foreman.json > .pi/settings.json" }
+  ],
+  "cdRelativeGaps": [
+    { "name": "cd_then_redirect_into_pi", "expect": "allow", "note": "known gap (ruling 2, no new parser rule): the lexer does not resolve a cd-relative write target, so only the cd word '.pi' hits {cwd}/.pi (a mention, no target): the auto reviewer decides under the prose hard_deny (before width B it was selfMod through that cd word)", "line": "cd .pi && echo '{}' > settings.json" },
+    { "name": "cd_agentdir_then_cp_settings", "expect": "pass", "note": "known gap, pre-existing (unchanged by R16): no protect hit at all for a cd-relative target", "line": "cd {agentDir} && cp /x.json settings.json" }
+  ],
+  "selfModTool": [
+    { "name": "write_tool_agent_settings", "tool": "write", "input": { "path": "{agentDir}/settings.json", "content": "{}" } },
+    { "name": "edit_tool_pi_settings", "tool": "edit", "input": { "path": ".pi/settings.json", "edits": [{ "oldText": "a", "newText": "b" }] } },
+    { "name": "copy_tool_into_agent_foreman_json", "tool": "foreman_copy", "input": { "src": "x.json", "dst": "{agentDir}/foreman.json" } }
   ],
   "rulesFileWrite": { "name": "user_rules_file_write", "line": "echo x > {agentDir}/my-rules.md" },
   "reviewable": [
     { "name": "toolchain_probe_pipe", "line": "ls ~/.local/bin | head -3" },
-    { "name": "project_ask_rule", "line": "make deploy-docs" }
+    { "name": "project_settings_read_mention", "note": "ruling 2: a read-only .pi/* mention (no strict read: node is no pure viewer) is a plain ask, no selfMod", "line": "cat .pi/settings.json; node --version" },
+    { "name": "other_session_state_read", "note": "ruling 2: a read of another session's state goes to the reviewer (prose hard_deny), not selfMod", "line": "cat {agentDir}/pi-foreman/state/live/{other}.json; node --version" }
+  ],
+  "verdicts": [
+    { "name": "deny_high", "reply": "{\"verdict\":\"deny\",\"reason\":\"no\",\"riskLevel\":\"high\"}", "expect": "deny" },
+    { "name": "deny_critical", "reply": "{\"verdict\":\"deny\",\"reason\":\"no\",\"riskLevel\":\"critical\"}", "expect": "deny" },
+    { "name": "deny_without_risk_level", "reply": "{\"verdict\":\"deny\",\"reason\":\"no\"}", "expect": "dialog" },
+    { "name": "deny_unknown_risk_level", "reply": "{\"verdict\":\"deny\",\"reason\":\"no\",\"riskLevel\":\"severe\"}", "expect": "dialog" },
+    { "name": "soft_deny_medium", "reply": "{\"verdict\":\"deny\",\"reason\":\"meh\",\"riskLevel\":\"medium\"}", "expect": "dialog" },
+    { "name": "defer", "reply": "{\"verdict\":\"defer\"}", "expect": "dialog" }
   ]
 }

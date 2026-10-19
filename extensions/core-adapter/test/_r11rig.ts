@@ -11,7 +11,8 @@ export type Block = { block?: boolean; reason?: string } | undefined;
 
 let rigs = 0;
 
-export async function r11Rig(t: { after(fn: () => void | Promise<void>): void }, ceremony: Record<string, unknown> = {}) {
+/** `opts.ctx`: fields that replace the fake ctx's (ui, modelRegistry, ...); `opts.config`: top-level keys merged into the user foreman.json. */
+export async function r11Rig(t: { after(fn: () => void | Promise<void>): void }, ceremony: Record<string, unknown> = {}, opts: { ctx?: Record<string, unknown>; config?: Record<string, unknown> } = {}) {
   const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE", "PI_INTERCOM_SESSION_ID", "PI_INTERCOM_STABLE_ID"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r11-p2-")));
@@ -42,6 +43,7 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     providers: { fake: { roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } },
     trace: { enabled: true },
     ceremony: { launchWait: "detach", ...ceremony },
+    ...opts.config,
   };
   fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify(l2));
   const handlers = new Map<string, Handler>();
@@ -73,6 +75,7 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     isIdle: () => true,
     modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }) },
     ui: { notify: () => undefined, confirm: async () => false, select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined },
+    ...opts.ctx,
   };
   await handlers.get("session_start")!({ reason: "startup" }, ctx);
   shutdown = async () => handlers.get("session_shutdown")?.({}, ctx);
@@ -84,6 +87,7 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
   const handoffs = path.join(agentDir, "pi-foreman", "handoffs");
   let calls = 0;
   return {
+    ctx,
     agentDir,
     project,
     sessionId,
