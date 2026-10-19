@@ -86,7 +86,7 @@
   "resources": { "maxLoadPerCore": 1.5, "minFreeMemMB": 1024, "minFreeDiskGB": 5, "sampleSeconds": 30 },
   "paths": { "hubWorkflow": [] },
   "safety": {
-    "permissions": { "allow": [], "ask": [], "deny": [], "paths": { "deny": [], "ask": [] }, "projectCommands": [], "readRoots": [] },
+    "permissions": { "allow": [], "ask": [], "deny": [], "paths": { "deny": [], "ask": [] }, "projectCommands": [], "readRoots": [], "autoReview": { "enabled": true, "rulesFile": null } },
     "requiredChildExtensions": [],
     "children": { "mayPush": false },
     "review": { "required": false },

@@ -397,6 +397,8 @@ Switch: `ceremony.orientation.enabled` is true.
 | `safety.permissions.allow` | `[]` | tighten-only (can only narrow the list) |
 | `safety.permissions.projectCommands` | `[]` | not in project/session (no tighten rule for this safety key) |
 | `safety.permissions.readRoots` | `[]` | not in project/session (no tighten rule for this safety key) |
+| `safety.permissions.autoReview.enabled` | `true` | not in project/session (no tighten rule for this safety key) |
+| `safety.permissions.autoReview.rulesFile` | `null` | not in project/session (no tighten rule for this safety key) |
 | `safety.permissions.paths.deny` | `[]` | tighten-only (entries are added, never removed) |
 | `safety.permissions.paths.ask` | `[]` | tighten-only (entries are added, never removed) |
 | `paths.hubWorkflow` | `[]` | not in project/session (it loosens: it makes dirs outside the worktree readable; user or overlay config only) |

@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-export const TRACE_FIELDS = ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by", "phase", "count", "action", "runId", "outcome", "ms", "codemode", "after", "allowed", "items", "attested", "agent", "signals", "policy", "foreman", "turns", "rung", "cmd", "chars", "cut", "climb_available", "trimmed_lines", "skipped", "bytes", "segments", "class", "item", "hits", "policy_override", "note", "findingId", "gate", "file", "line", "primary", "models", "ready", "removed", "handover", "occasion", "thinking", "model_overridden", "marker", "pack", "op", "limit", "command", "tool", "message", "width", "reasons", "level"] as const;
+export const TRACE_FIELDS = ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by", "phase", "count", "action", "runId", "outcome", "ms", "codemode", "after", "allowed", "items", "attested", "agent", "signals", "policy", "foreman", "turns", "rung", "cmd", "chars", "cut", "climb_available", "trimmed_lines", "skipped", "bytes", "segments", "class", "family", "rule", "item", "hits", "policy_override", "note", "findingId", "gate", "file", "line", "primary", "models", "ready", "removed", "handover", "occasion", "thinking", "model_overridden", "marker", "pack", "op", "limit", "command", "tool", "message", "width", "reasons", "level"] as const;
 export type TraceField = (typeof TRACE_FIELDS)[number];
 export type TraceRecord = Partial<Record<TraceField, string | number | boolean | null>>;
 
@@ -16,7 +16,7 @@ const MAX_COMMAND = 200; // a denied command (lane 3h)
 const DENY_EVENTS = new Set(["read_budget", "recheck_budget", "child_read_budget", "overlay", "launch_refused"]);
 const MAX_MESSAGE = 200; // a tool_error message (lane 7f)
 const UNSCRUBBED = new Set(["model", "models", "primary", "from", "to"]);
-const isDeny = (rec: Record<string, unknown>): boolean => (DENY_EVENTS.has(String(rec.event)) && (rec.event === "launch_refused" || rec.action === "deny" || rec.decision === "deny")) || (rec.event === "guard" && rec.guard === "self_ruling" && rec.decision === "blocked") || (rec.event === "overlay" && typeof rec.decision === "string" && rec.decision.startsWith("ask-")); // the overlay's ask dialogs keep their command (`/foreman dialogs`)
+const isDeny = (rec: Record<string, unknown>): boolean => (DENY_EVENTS.has(String(rec.event)) && (rec.event === "launch_refused" || rec.action === "deny" || rec.decision === "deny")) || (rec.event === "guard" && rec.guard === "self_ruling" && rec.decision === "blocked") || (rec.event === "overlay" && typeof rec.decision === "string" && rec.decision.startsWith("ask-")) || rec.event === "auto_review_allow"; // the overlay's ask dialogs and the auto reviewer's allows (R16) keep their command (`/foreman dialogs`)
 const MAX_REASON = 320; // a deny reason keeps its rule pattern, which sits after the lead-in
 
 /**

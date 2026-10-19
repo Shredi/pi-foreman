@@ -141,7 +141,11 @@ export interface Baseline {
   externalDirectory?: { probe?: string[] };
 }
 
-export type Decision = { kind: "deny" | "ask"; reason: string };
+/**
+ * `rule` / `path`: what made an ask (the rule pattern, the matched word), for the auto reviewer and its trace (R16 item 1).
+ * `selfMod`: the line also hit a protect rule of kind ask (any protect list or the reviewer rules file): never auto-reviewed.
+ */
+export type Decision = { kind: "deny" | "ask"; reason: string; rule?: string; path?: string; selfMod?: true };
 
 export interface MatchCtx {
   cwd: string;
@@ -732,6 +736,20 @@ function refsBound(word: string, names: ReadonlySet<string>): boolean {
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : []);
 const obj = (v: unknown): Json => (v && typeof v === "object" && !Array.isArray(v) ? (v as Json) : {});
 
+/**
+ * R16 item 2: the reviewer rules file of the overlay's asks. `safety.permissions.autoReview.rulesFile` of `base` (the layers before the
+ * project and session layers: a project cannot set it) replaces the shipped `config/permissions.rules.md`; absolute, `~/...` or relative
+ * to the agent dir. Null without either.
+ */
+export function rulesFilePath(base: unknown, agentDir: string, pkgRoot: string | undefined, home: string = os.homedir()): string | null {
+  const f = obj(obj(base).autoReview).rulesFile;
+  if (typeof f === "string" && f.trim()) {
+    const t = f.trim();
+    return t === "~" || t.startsWith("~/") || t.startsWith("~\\") ? path.join(home, t.slice(1)) : path.resolve(agentDir, t);
+  }
+  return pkgRoot ? path.join(pkgRoot, "config", "permissions.rules.md") : null;
+}
+
 export function readBaseline(pkgRoot: string): Baseline | null {
   try {
     const raw = JSON.parse(fs.readFileSync(path.join(pkgRoot, "config", "permissions.baseline.json"), "utf8")) as Json;
@@ -805,6 +823,8 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
   const mp = obj(m.paths);
   const bp = obj(b.paths);
   const hasBase = Object.keys(b).length > 0;
+  // R16: a user rules file of the auto reviewer is protected like protect.ask (the shipped one is under writeAskSelfHost / writeAsk)
+  const userRules = typeof obj(b.autoReview).rulesFile === "string" ? rulesFilePath(b, agentDir, undefined) : null;
   return {
     bashDeny: [...baseline.bash.deny, ...strs(m.deny)],
     bashAsk: hasBase ? without(strs(m.ask), strs(b.ask)) : [],
@@ -814,7 +834,7 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
       ...strs(mp.deny).map((pattern): PathRule => ({ pattern: sub(pattern), action: "deny" })),
     ],
     pathAsk: hasBase ? without(strs(mp.ask), strs(bp.ask)) : [],
-    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true, { readOk: "main" }), ...prot(pb?.childDeny, null, true), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false, { readOk: "child", fromWriteAsk: true }), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true }))],
+    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true, { readOk: "main" }), ...prot(pb?.childDeny, null, true), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false, { readOk: "child", fromWriteAsk: true }), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true })), ...(userRules ? prot([slash(userRules)], "ask", true, { readOk: "main" }) : [])],
     childBlock: [...CHILD_BLOCK.map(sub), ...CHILD_BLOCK_WORKTREES, ...(owned?.childScratchRoot ? [slash(owned.childScratchRoot), `${slash(owned.childScratchRoot)}/*`] : [])],
     childBlockExcept: CHILD_BLOCK_EXCEPT.map(sub),
     childBlockInWorkspace: CHILD_BLOCK_WORKTREES,
@@ -2899,22 +2919,24 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const prot = rwords.map((w) => ({ w, hit: protectHit(msgOnly(w) ? msgProtect : rules.protect, w, pctx, true, removed.has(w), readOnly, ownRead) })).filter((x) => x.hit);
   const pd = prot.find((x) => x.hit!.kind === "deny");
   if (pd) return protectDecision(pd.hit!, pd.w, "shell command");
+  // R16 item 1: every ask from here on is self-modification when the line also hit a protect ask rule (never auto-reviewed)
+  const sm = prot.length ? { selfMod: true as const } : {};
   // R10 item 3: the permission system read-allows the toolchain probe dirs for any command; only a pure ls/stat/which line may name them
   const probeWord = words.find((w) => !c.cmdWords!.includes(w) && probeHit(rules, w, pctx) !== null);
   if (probeWord !== undefined) {
     const probeOk = shell === "posix" && !/\$\(|`|[<>]\(/.test(command) && !/\$/.test(command.replace(/\$(?:\{HOME\}|HOME)(?=\/)/g, "")) && c.redirected !== true && c.writeTargets!.size === 0 && c.tmpTargets!.size === 0 && c.removeWords!.length === 0 && c.verbs!.length > 0 && c.verbs!.every((v) => PROBE_VERBS.has(v));
-    if (!probeOk) return { kind: "ask", reason: `pi-foreman: '${clip(probeWord)}' is in a toolchain bin dir or the npx cache: only a plain ls, stat or which line may name it without approval (no other command, pipe, redirect or substitution).` };
+    if (!probeOk) return { kind: "ask", reason: `pi-foreman: '${clip(probeWord)}' is in a toolchain bin dir or the npx cache: only a plain ls, stat or which line may name it without approval (no other command, pipe, redirect or substitution).`, rule: "toolchain-probe", path: clip(probeWord), ...sm };
   }
   const amb = winAmb ? (winAmb.viaVar ?? (ctx.role === "child" ? winAmb.word : undefined)) : undefined;
   if (amb !== undefined) {
-    return { kind: "ask", reason: `pi-foreman: '${clip(amb)}' needs approval: under Git Bash it is (or holds a variable assigned) a drive-relative or backslash path, so which file it names is not certain. Use a forward-slash path (C:/...) or a quoted native path ("C:\\...").` };
+    return { kind: "ask", reason: `pi-foreman: '${clip(amb)}' needs approval: under Git Bash it is (or holds a variable assigned) a drive-relative or backslash path, so which file it names is not certain. Use a forward-slash path (C:/...) or a quoted native path ("C:\\...").`, rule: "ambiguous-drive-path", path: clip(amb), ...sm };
   }
   for (const pat of rules.bashAsk) {
-    if (texts.some((t) => bashMatches(pat, t, ctx))) return { kind: "ask", reason: `pi-foreman: this command needs approval (project/session rule '${pat}').` };
+    if (texts.some((t) => bashMatches(pat, t, ctx))) return { kind: "ask", reason: `pi-foreman: this command needs approval (project/session rule '${pat}').`, rule: pat, ...sm };
   }
   for (const w of words) {
     const pat = pathAskHit(rules.pathAsk, w, ctx);
-    if (pat) return { kind: "ask", reason: `pi-foreman: this path needs approval (project/session rule '${pat}' matched '${clip(w)}').` };
+    if (pat) return { kind: "ask", reason: `pi-foreman: this path needs approval (project/session rule '${pat}' matched '${clip(w)}').`, rule: pat, path: clip(w), ...sm };
   }
   if (prot.length) return protectDecision(prot[0].hit!, prot[0].w, "shell command");
   return null;
@@ -3451,7 +3473,7 @@ function protectDecision(hit: ProtectHit, word: string, what: string): Decision 
   const how = hit.shortName ? `matched '${clip(word)}' read as a Windows 8.3 short name, which may be the protected path,` : `matched '${clip(word)}'`;
   return hit.kind === "deny"
     ? { kind: "deny", reason: `pi-foreman: denied by the write protection (rule '${hit.rule.pattern}' ${how} in a ${what}). Git internals, agent and harness configuration are off limits${hit.rule.main === "ask" ? " to subagents; ask the foreman" : ""}.` }
-    : { kind: "ask", reason: `pi-foreman: this changes protected configuration (rule '${hit.rule.pattern}' ${how} in a ${what}) and needs approval.` };
+    : { kind: "ask", reason: `pi-foreman: this changes protected configuration (rule '${hit.rule.pattern}' ${how} in a ${what}) and needs approval.`, rule: hit.rule.pattern, path: clip(word), selfMod: true };
 }
 
 const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls", "foreman_move", "foreman_copy", "git_log", "git_diff_stat"]);
@@ -3498,14 +3520,16 @@ export function checkPathTool(rules: OverlayRules, toolName: string, input: Reco
   const prot = paths.filter((x) => x.write).map((x) => ({ w: x.value, hit: protectHit(rules.protect, x.value, ctx, false, x.remove === true) })).filter((x) => x.hit);
   const pd = prot.find((x) => x.hit!.kind === "deny");
   if (pd) return protectDecision(pd.hit!, pd.w, `${toolName} call`);
+  // R16 item 1: as in checkShell, an ask after a protect ask hit is self-modification
+  const sm = prot.length ? { selfMod: true as const } : {};
   for (const { value } of paths) {
     const pat = pathAskHit(rules.pathAsk, value, ctx);
-    if (pat) return { kind: "ask", reason: `pi-foreman: this path needs approval (project/session rule '${pat}' matched '${clip(value)}').` };
+    if (pat) return { kind: "ask", reason: `pi-foreman: this path needs approval (project/session rule '${pat}' matched '${clip(value)}').`, rule: pat, path: clip(value), ...sm };
   }
   // R10 item 3: in a toolchain probe dir only the ls tool lists without approval
   if (toolName !== "ls") {
     const pv = paths.find((x) => probeHit(rules, x.value, ctx) !== null);
-    if (pv) return { kind: "ask", reason: `pi-foreman: '${clip(pv.value)}' is in a toolchain bin dir or the npx cache: only the ls tool (or a plain ls/stat/which shell line) may look there without approval.` };
+    if (pv) return { kind: "ask", reason: `pi-foreman: '${clip(pv.value)}' is in a toolchain bin dir or the npx cache: only the ls tool (or a plain ls/stat/which shell line) may look there without approval.`, rule: "toolchain-probe", path: clip(pv.value), ...sm };
   }
   return prot.length ? protectDecision(prot[0].hit!, prot[0].w, `${toolName} call`) : null;
 }

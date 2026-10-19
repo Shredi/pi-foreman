@@ -11,7 +11,7 @@ import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
-import { buildOverlayRules, checkToolCall, isOverlayTool, isSelfHost,OVERLAY_UNAVAILABLE, readBaseline, resolveDecision } from "./permoverlay.ts";
+import { buildOverlayRules, checkToolCall, isOverlayTool, isSelfHost,OVERLAY_UNAVAILABLE, readBaseline, resolveDecision, rulesFilePath } from "./permoverlay.ts";
 import type { OverlayRules } from "./permoverlay.ts";
 import { childHandoffDirs, ownedRoots, ownHandoffDirs, resolveNpmRoot, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
@@ -41,7 +41,7 @@ import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from ".
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
-import { ForemanReview, REVIEW_LINK, reviewTarget, userPromptOf } from "./review.ts";
+import { ForemanReview, overlayAutoReview, REVIEW_LINK, reviewTarget, userPromptOf } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
 import { ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
@@ -83,7 +83,7 @@ import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, WAKE_M
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { hubWorkflowDriftLines } from "./hubdrift.ts";
-import { dialogFields, dialogsJson } from "./dialogs.ts";
+import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
 
 const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildWidget, rungOf } from "./childwidget.ts";
@@ -1462,6 +1462,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const ownTasks = [...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...piScratchReadable([ctx.cwd, (() => { try { return fs.realpathSync(ctx.cwd); } catch { return ctx.cwd; } })()], platform), ...bashOutputLogs(s.bashLogs, platform)];
     const hub = hubWorkflowReadable(get(s.config.config, "paths.hubWorkflow"), platform);
     const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, ...(s.usage.line.workspace ? { foremanRoot: workspaceOf(s.usage.line.workspace).root } : {}), readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub, ownReads: [...ownUsageReadable(s.agentDir, platform, s.id, { dir: get(s.config.config, "trace.dir"), stateDir: s.markerDir }), ...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...asyncResultReads(s.childFiles, platform)] }) });
+    // R16 item 1: a foreman ask that is no self-modification goes to the auto reviewer first; allow lets the call go on to the later layers
+    const rulesFile = rulesFilePath(s.config.basePermissions, s.agentDir, PKG_ROOT);
+    const auto = await overlayAutoReview(review, s.id, d, toolName, input, { enabled: get(s.config.config, "safety.permissions.autoReview.enabled") !== false, isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, session: s.usage.line.foremanSession || s.id, rules: () => (rulesFile ? fs.readFileSync(rulesFile, "utf8") : "") });
+    if (d && auto) {
+      const df = denyFields(auto === "allow" ? d.reason : auto.reason, toolName, input, "foreman", [PKG_ROOT, ctx.cwd]);
+      if (auto === "allow") {
+        s.trace?.emit({ event: "auto_review_allow", toolFamily: toolName, family: dialogFamily(df.command), rule: d.rule ?? null, command: df.command });
+        return undefined;
+      }
+      s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: "deny", by: "auto", ...df });
+      return auto;
+    }
     const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) });
     if (d) {
       const df = denyFields((d as { reason?: unknown }).reason, toolName, input, s.isChild ? s.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]);

@@ -431,6 +431,15 @@
             "allow": { "type": "array", "items": { "type": "string" }, "description": "Bash patterns (permission-system wildcard syntax) allowed without asking, on top of the baseline. A project or session cannot extend it." },
             "projectCommands": { "type": "array", "items": { "type": "string" }, "description": "The repo's own test and build commands, as bash patterns; allowed without asking. A project or session cannot set it." },
             "readRoots": { "type": "array", "items": { "type": "string" }, "description": "Absolute dirs (or ~/...) a child's read-class bash ask may also read without the model review (docs/permissions.md). Reads only. A project or session cannot set it." },
+            "autoReview": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "The foreman's own overlay asks go to the review model (providers.<p>.review) before the human dialog: allow runs the call, a high or critical deny blocks it, anything else asks the human. Deny decisions, self-modification asks, children and sessions without a UI never reach the model. User or overlay config only.",
+              "properties": {
+                "enabled": { "type": "boolean", "description": "Review the foreman's overlay asks before the dialog. Default true." },
+                "rulesFile": { "type": ["string", "null"], "description": "Reviewer rules (prose) that replace the shipped config/permissions.rules.md: absolute, ~/... or relative to the agent dir. null = the shipped file. Read from the user layer only; the file is write-protected like protect.ask." }
+              }
+            },
             "paths": {
               "type": "object",
               "additionalProperties": false,
