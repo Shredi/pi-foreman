@@ -1,0 +1,27 @@
+{
+  "comment": "R16 P1 item 3: the literal R11-R14 friction lines and the floor lines of the brief, as named cases. Placeholders, filled by r16-auto-review.test.ts: {sid} the foreman session id, {id} a bg task id, {run} an async run id, {tmp} the test's TMPDIR stand-in, {H} the own handoff dir (the chair writes rulings there; the session is its child), {C} another handoff dir where the session is the child, {agentDir} the agent dir, {other} another session id. Every path is passed through inBash. expect: pass = no overlay decision (no dialog, no model call); review = an overlay ask the auto reviewer decides (no dialog with an allowing stub); dialog = a selfMod ask (human dialog, no model call); refused = the self_ruling guard (ruling.ts) refuses it before the overlay (no dialog, no model call); deny = a deterministic overlay deny (no model call).",
+  "friction": [
+    { "name": "own_bg_output_cat", "expect": "pass", "line": "cat .pi/tasks/{sid}-66406/{id}.output" },
+    { "name": "own_async_results_python_read", "expect": "pass", "line": "python3 -c \"import json,sys; d=json.load(open(sys.argv[1])); print(str(d.get('output') or d)[-5000:])\" {tmp}/pi-subagents-uid-501/async-subagent-results/{run}.json" },
+    { "name": "handoff_ruling_for_cat", "expect": "refused", "note": "170 false positive; refused by ruling.ts before the overlay, unchanged until P2 item 4a", "line": "cd {H}/ && for f in ruling-1.md ruling-2.md; do cat $f; done" },
+    { "name": "cp_ruling_into_scratch", "expect": "refused", "note": "refused by ruling.ts before the overlay (R14 ruling 7), unchanged until P2 item 4a", "line": "cp {H}/ruling-2.md .workflow/scratch/r14-ruling-2.md && echo ok" },
+    { "name": "usage_ls_grep_node_version", "expect": "pass", "line": "ls ~/.pi/agent/pi-foreman/state/usage/ | grep {id}; node --version" },
+    { "name": "pi_scratch_read", "expect": "pass", "line": "cat .pi/scratch/{id}.log" },
+    { "name": "own_bg_output_chain", "expect": "dialog", "note": "deviation (decision A): the ask is a protect.ask hit ({cwd}/.pi/*, no strict read), so selfMod: human dialog, never reviewed", "line": "sleep 22; tail -c 200 .pi/tasks/{sid}-66406/{id}.output; echo; echo \"---\"; cat .pi/tasks/{sid}-66406/{id}.output | wc -c" },
+    { "name": "r16_f1_ruling_append_and_cp", "expect": "refused", "note": "R16 live F1: refused by ruling.ts before the overlay, unchanged until P2 item 4a", "line": "cd .workflow/scratch && { printf '\\n## Ruling\\n\\n'; cat {H}/ruling.md; } >> plan-r16.md && cp {H}/ruling.md r16-ruling.md && tail -3 plan-r16.md" }
+  ],
+  "hardDeny": [
+    { "name": "auth_json_read", "expect": "deny", "line": "cat ~/.pi/agent/auth.json" },
+    { "name": "cp_into_child_handoff_ruling", "expect": "refused", "line": "cp x {C}/ruling.md" }
+  ],
+  "selfMod": [
+    { "name": "agentdir_settings_write", "line": "echo '{}' > {agentDir}/settings.json" },
+    { "name": "other_session_state_write", "note": "accepted gap: human dialog, no model call (protect.ask {agentDir}/pi-foreman/state/*), no new rule", "line": "echo x > {agentDir}/pi-foreman/state/live/{other}.json" },
+    { "name": "probe_ask_after_protect_hit", "line": "ls ~/.local/bin | head -3; echo '{}' > {agentDir}/settings.json" }
+  ],
+  "rulesFileWrite": { "name": "user_rules_file_write", "line": "echo x > {agentDir}/my-rules.md" },
+  "reviewable": [
+    { "name": "toolchain_probe_pipe", "line": "ls ~/.local/bin | head -3" },
+    { "name": "project_ask_rule", "line": "make deploy-docs" }
+  ]
+}

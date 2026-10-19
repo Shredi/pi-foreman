@@ -3,7 +3,7 @@
 // itself keeps only the redacted, path-scrubbed `command` (trace.ts), which is what the report prints as literal lines.
 import * as fs from "node:fs";
 
-export const DIALOG_FAMILIES = ["state_usage_read", "pi_scratch_read", "toolchain_probe", "own_run_dir", "own_bg_output", "own_bash_output_log", "owned_scratch", "hub_ledger_read", "other"] as const;
+export const DIALOG_FAMILIES = ["state_usage_read", "pi_scratch_read", "toolchain_probe", "own_run_dir", "own_bg_output", "own_bash_output_log", "owned_scratch", "hub_ledger_read", "other", "auto_review_allow"] as const;
 export type DialogFamily = (typeof DIALOG_FAMILIES)[number];
 
 /** The regression family of a dialog's command (raw text, before the trace scrubs it). */
@@ -25,7 +25,7 @@ export const dialogFields = (command: string): { class: DialogFamily } => ({ cla
 
 export type DialogReport = Record<string, { count: number; lines: string[] }>;
 
-/** The report of a trace file's overlay `ask-*` records (a missing or unreadable file reads as no records). */
+/** The report of a trace file's overlay `ask-*` records, plus the asks the auto reviewer allowed without a dialog (`auto_review_allow`, R16); a missing or unreadable file reads as no records. */
 export function dialogReport(traceFile: string): DialogReport {
   const out: DialogReport = {};
   for (const f of DIALOG_FAMILIES) out[f] = { count: 0, lines: [] };
@@ -41,6 +41,11 @@ export function dialogReport(traceFile: string): DialogReport {
     try {
       rec = JSON.parse(raw) as Record<string, unknown>;
     } catch {
+      continue;
+    }
+    if (rec.event === "auto_review_allow") {
+      out.auto_review_allow.count++;
+      out.auto_review_allow.lines.push(typeof rec.command === "string" ? rec.command : String(rec.toolFamily ?? ""));
       continue;
     }
     if (rec.event !== "overlay" || typeof rec.decision !== "string" || !rec.decision.startsWith("ask-")) continue;
