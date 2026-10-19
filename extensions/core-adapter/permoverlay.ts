@@ -145,6 +145,7 @@ export interface Baseline {
  * `rule` / `path`: what made an ask (the rule pattern, the matched word), for the auto reviewer and its trace (R16 item 1).
  * `selfMod`: a protect rule of kind ask (any protect list or the reviewer rules file) hit a shell write/remove target or a path tool's
  * write path: never auto-reviewed. A protected path that a shell line only reads or mentions is a plain ask (R16 ruling 2).
+ * A write into the session's own `{cwd}/.pi/scratch/` is not selfMod (R17): it stays an ordinary ask for the auto reviewer.
  */
 export type Decision = { kind: "deny" | "ask"; reason: string; rule?: string; path?: string; selfMod?: true };
 
@@ -2919,7 +2920,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const pd = prot.find((x) => x.hit!.kind === "deny");
   if (pd) return protectDecision(pd.hit!, pd.w, "shell command");
   // R16 item 1, ruling 2: every ask from here on is self-modification (never auto-reviewed) when a protect ask hit is a write or remove target
-  const written = prot.find((x) => targets.has(x.w) || targets.has(asPathWord(x.w)) || removed.has(x.w));
+  const written = prot.find((x) => (targets.has(x.w) || targets.has(asPathWord(x.w)) || removed.has(x.w)) && !ownScratch(pctx, x.w));
   const sm = written ? { selfMod: true as const } : {};
   // R10 item 3: the permission system read-allows the toolchain probe dirs for any command; only a pure ls/stat/which line may name them
   const probeWord = words.find((w) => !c.cmdWords!.includes(w) && probeHit(rules, w, pctx) !== null);
@@ -3464,6 +3465,14 @@ interface ProtectHit {
   shortName: boolean;
 }
 
+/** R17: `word` (resolved against the session cwd, `..` folded) lies strictly below the session's own `{cwd}/.pi/scratch`. */
+function ownScratch(ctx: MatchCtx, word: string): boolean {
+  const p = ctx.platform === "win32" ? path.win32 : path.posix;
+  const fold = (s: string): string => (foldsCase(ctx.platform) ? s.toLowerCase() : s);
+  const rel = p.relative(fold(p.resolve(ctx.cwd, ".pi", "scratch")), fold(p.resolve(ctx.cwd, word)));
+  return rel !== "" && rel !== ".." && !rel.startsWith(".." + p.sep) && !p.isAbsolute(rel);
+}
+
 function protectDecision(hit: ProtectHit, word: string, what: string, selfMod = true): Decision {
   const how = hit.shortName ? `matched '${clip(word)}' read as a Windows 8.3 short name, which may be the protected path,` : `matched '${clip(word)}'`;
   return hit.kind === "deny"
@@ -3516,7 +3525,8 @@ export function checkPathTool(rules: OverlayRules, toolName: string, input: Reco
   const pd = prot.find((x) => x.hit!.kind === "deny");
   if (pd) return protectDecision(pd.hit!, pd.w, `${toolName} call`);
   // R16 item 1: as in checkShell, an ask after a protect ask hit is self-modification
-  const sm = prot.length ? { selfMod: true as const } : {};
+  const selfProt = prot.filter((x) => !ownScratch(ctx, x.w));
+  const sm = selfProt.length ? { selfMod: true as const } : {};
   for (const { value } of paths) {
     const pat = pathAskHit(rules.pathAsk, value, ctx);
     if (pat) return { kind: "ask", reason: `pi-foreman: this path needs approval (project/session rule '${pat}' matched '${clip(value)}').`, rule: pat, path: clip(value), ...sm };
@@ -3526,7 +3536,7 @@ export function checkPathTool(rules: OverlayRules, toolName: string, input: Reco
     const pv = paths.find((x) => probeHit(rules, x.value, ctx) !== null);
     if (pv) return { kind: "ask", reason: `pi-foreman: '${clip(pv.value)}' is in a toolchain bin dir or the npx cache: only the ls tool (or a plain ls/stat/which shell line) may look there without approval.`, rule: "toolchain-probe", path: clip(pv.value), ...sm };
   }
-  return prot.length ? protectDecision(prot[0].hit!, prot[0].w, `${toolName} call`) : null;
+  return prot.length ? protectDecision(prot[0].hit!, prot[0].w, `${toolName} call`, selfProt.length > 0) : null;
 }
 
 export function checkToolCall(rules: OverlayRules, toolName: string, input: Record<string, unknown>, ctx: MatchCtx): Decision | null {
