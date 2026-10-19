@@ -143,7 +143,8 @@ export interface Baseline {
 
 /**
  * `rule` / `path`: what made an ask (the rule pattern, the matched word), for the auto reviewer and its trace (R16 item 1).
- * `selfMod`: the line also hit a protect rule of kind ask (any protect list or the reviewer rules file): never auto-reviewed.
+ * `selfMod`: a protect rule of kind ask (any protect list or the reviewer rules file) hit a shell write/remove target or a path tool's
+ * write path: never auto-reviewed. A protected path that a shell line only reads or mentions is a plain ask (R16 ruling 2).
  */
 export type Decision = { kind: "deny" | "ask"; reason: string; rule?: string; path?: string; selfMod?: true };
 
@@ -2919,8 +2920,9 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const prot = rwords.map((w) => ({ w, hit: protectHit(msgOnly(w) ? msgProtect : rules.protect, w, pctx, true, removed.has(w), readOnly, ownRead) })).filter((x) => x.hit);
   const pd = prot.find((x) => x.hit!.kind === "deny");
   if (pd) return protectDecision(pd.hit!, pd.w, "shell command");
-  // R16 item 1: every ask from here on is self-modification when the line also hit a protect ask rule (never auto-reviewed)
-  const sm = prot.length ? { selfMod: true as const } : {};
+  // R16 item 1, ruling 2: every ask from here on is self-modification (never auto-reviewed) when a protect ask hit is a write or remove target
+  const written = prot.find((x) => targets.has(x.w) || targets.has(asPathWord(x.w)) || removed.has(x.w));
+  const sm = written ? { selfMod: true as const } : {};
   // R10 item 3: the permission system read-allows the toolchain probe dirs for any command; only a pure ls/stat/which line may name them
   const probeWord = words.find((w) => !c.cmdWords!.includes(w) && probeHit(rules, w, pctx) !== null);
   if (probeWord !== undefined) {
@@ -2938,7 +2940,8 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     const pat = pathAskHit(rules.pathAsk, w, ctx);
     if (pat) return { kind: "ask", reason: `pi-foreman: this path needs approval (project/session rule '${pat}' matched '${clip(w)}').`, rule: pat, path: clip(w), ...sm };
   }
-  if (prot.length) return protectDecision(prot[0].hit!, prot[0].w, "shell command");
+  if (written) return protectDecision(written.hit!, written.w, "shell command");
+  if (prot.length) return protectDecision(prot[0].hit!, prot[0].w, "shell command", false);
   return null;
 }
 
@@ -3469,11 +3472,11 @@ interface ProtectHit {
   shortName: boolean;
 }
 
-function protectDecision(hit: ProtectHit, word: string, what: string): Decision {
+function protectDecision(hit: ProtectHit, word: string, what: string, selfMod = true): Decision {
   const how = hit.shortName ? `matched '${clip(word)}' read as a Windows 8.3 short name, which may be the protected path,` : `matched '${clip(word)}'`;
   return hit.kind === "deny"
     ? { kind: "deny", reason: `pi-foreman: denied by the write protection (rule '${hit.rule.pattern}' ${how} in a ${what}). Git internals, agent and harness configuration are off limits${hit.rule.main === "ask" ? " to subagents; ask the foreman" : ""}.` }
-    : { kind: "ask", reason: `pi-foreman: this changes protected configuration (rule '${hit.rule.pattern}' ${how} in a ${what}) and needs approval.`, rule: hit.rule.pattern, path: clip(word), selfMod: true };
+    : { kind: "ask", reason: `pi-foreman: this changes protected configuration (rule '${hit.rule.pattern}' ${how} in a ${what}) and needs approval.`, rule: hit.rule.pattern, path: clip(word), ...(selfMod ? { selfMod: true as const } : {}) };
 }
 
 const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls", "foreman_move", "foreman_copy", "git_log", "git_diff_stat"]);
