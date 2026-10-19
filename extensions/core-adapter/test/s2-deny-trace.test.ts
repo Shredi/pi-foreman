@@ -74,7 +74,8 @@ test("self-ruling guard: read-only pipelines pass, a real write to the parent's 
       `ls ${inBash(runs)}; grep -ho '"model":"[^"]*"' *.json | sort | uniq -c`,
       `cd ${inBash(runs)} && grep -ho '"model":"[^"]*"' *.json | sort | uniq -c`,
     ]) assert.equal(await selfRulingRefusal("bash", { command }, runs, dirs), undefined, command);
-    for (const command of [`echo APPROVED > ${inBash(path.join(up, "ruling-1.md"))}`, `sort -o ${inBash(path.join(up, "ruling.md"))} x`, `cat x | tee ${inBash(path.join(up, "ruling-2.md"))}`]) assert.equal(await selfRulingRefusal("bash", { command }, runs, dirs), SELF_RULING_REASON, command);
+    // R16 item 4a: the `sort -o <H>/ruling.md x` row lives in test/retired/self-ruling-rows.json (the flat ask trigger)
+    for (const command of [`echo APPROVED > ${inBash(path.join(up, "ruling-1.md"))}`, `cat x | tee ${inBash(path.join(up, "ruling-2.md"))}`]) assert.equal(await selfRulingRefusal("bash", { command }, runs, dirs), SELF_RULING_REASON, command);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

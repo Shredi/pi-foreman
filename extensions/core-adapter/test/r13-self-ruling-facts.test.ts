@@ -1,12 +1,14 @@
 // R13 item 1 (hub 170, hub 288): the self-ruling guard reads lexed write surfaces (scripts/shell_facts.py, the git guard's
 // Lexer). Named PASS cases are literal friction lines of R11/R12; the fail-closed cases refuse with the old reason.
+// R16 item 4a: ruling.ts keeps the plain literal-path deny on the TS lexer; the rows it no longer decides live in
+// test/retired/self-ruling-rows.json (fail-closed, computed, sed/awk/find/xargs and bound-variable rows).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { childHandoffDirs } from "../owned.ts";
-import { SELF_RULING_REASON, selfRulingRefusal, shellFacts } from "../ruling.ts";
+import { SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
 
 function rig() {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r13sr-")));
@@ -28,16 +30,14 @@ type Rig = ReturnType<typeof rig>;
 // The lines are built from this view; the ctx paths (cwd, child dirs, scratch, write/edit paths) stay native.
 const inBash = (p: string): string => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
 const bash = (r: Rig): Rig => ({ ...r, root: inBash(r.root), hand: inBash(r.hand), H: inBash(r.H), S: inBash(r.S) });
-const run = (r: Rig, command: string, tool = "bash", cwd = r.root) => selfRulingRefusal(tool, { command }, cwd, r.dirs, { scratch: r.S });
+const run = (r: Rig, command: string, tool = "bash", cwd = r.root) => selfRulingRefusal(tool, { command }, cwd, r.dirs);
 
 const PASS: Array<[string, (r: Rig) => string]> = [
   ["ls -la $D; cat $D/parent (D bound to <H>)", (r) => `D=${r.H}; ls -la $D; cat $D/parent`],
   ["ls -la $D; cat $D/parent (D unbound)", () => `ls -la $D; cat $D/parent`],
   ["cd extensions/core-adapter; grep -rln selfRuling .", () => `cd extensions/core-adapter; grep -rln selfRuling .`],
-  ["cp <H>/plan.md <S> && cat <H>/ruling.md >> <S>/x.md", (r) => `cp ${r.H}/plan.md ${r.S} && cat ${r.H}/ruling.md >> ${r.S}/x.md`],
   ["ls <H>/; python3 heredoc reading <H> files, writing <S>", (r) => `ls ${r.H}/; python3 - <<'EOF'\nimport os\nfor n in os.listdir('${r.H}'):\n    print(n, open(os.path.join('${r.H}', n)).read()[:40])\nopen('${r.S}/notes.txt', 'w').write('x')\nEOF`],
   ["node -e reading and writing the own usage file", (r) => `node -e "const fs=require('fs');const d=JSON.parse(fs.readFileSync('${r.S}/usage.json','utf8'));d.n=1;fs.writeFileSync('${r.S}/usage.json',JSON.stringify(d))"`],
-  ["ack_write_in_own_handoff_dir_passes (shell redirect)", (r) => `echo seen > ${r.H}/ruling-x.ack`],
   ["heredoc body with $25 and [ appended to own scratch", (r) => `cat >> ${r.S}/plan.md <<'EOF'\n- Ask at $25 [x] ruling.md\nEOF`],
   ["glob and $ words in read positions next to <H>", (r) => `ls ${r.H}/*.md $X; grep -l APPROVED ${r.H}/ruling*.md`],
   ["write ruling.md in own scratch", (r) => `echo x > $FOREMAN_SCRATCH/ruling.md`],
@@ -56,27 +56,7 @@ test("r13 named pass: ack_write_in_own_handoff_dir_passes (write tool)", async (
 });
 
 const DENY: Array<[string, (r: Rig) => string]> = [
-  ["bound variable resolves into <H>", (r) => `D=${r.H}; echo A > $D/ruling.md`],
   ["subshell cd does not carry over (cwd <H>)", () => `echo $(cd /tmp) ; cat x > ruling.md`],
-  ["existing symlink file aliasing the ruling", (r) => `ln -s ${r.H}/ruling.md ${r.S}/alias; echo A > ${r.S}/alias`],
-  ["python heredoc writing a computed path", (r) => `ls ${r.H}/; python3 - <<'EOF'\np = '${r.H}' + '/' + 'ruling.md'\nopen(p, 'w').write('APPROVED')\nEOF`],
-  ["exec 3> into <H>", (r) => `exec 3> ${r.H}/ruling.md`],
-  ["truncate", (r) => `truncate -s 0 ${r.H}/ruling.md`],
-  ["computed sh -c", () => `sh -c "$C"`],
-  ["computed eval", () => `eval "$C"`],
-  ["sed e command", (r) => `sed '1e touch ${r.H}/ruling.md' ${r.S}/usage.json`],
-  ["sed s///e", (r) => `sed 's|.*|touch ${r.H}/ruling.md|e' ${r.S}/usage.json`],
-  ["xargs touch from stdin", (r) => `echo ${r.H}/ruling.md | xargs touch`],
-  ["awk system", (r) => `awk 'BEGIN{system("touch ${r.H}/ruling.md")}'`],
-  ["find -exec", (r) => `find ${r.H} -name ruling.md -exec touch {} +`],
-  ["find -exec sh -c on r*.md", (r) => `find ${r.H} -name 'r*.md' -exec sh -c 'echo APPROVED > "$1"' _ {} \\;`],
-  ["find -type f -exec touch {} +", (r) => `find ${r.H} -type f -exec touch {} +`],
-  ["find -delete", (r) => `find ${r.H} -name 'r*' -delete`],
-  ["sed --expression=1e", (r) => `sed --expression='1e touch ${r.H}/ruling.md' ${r.S}/usage.json`],
-  ["sed -e1e (one word)", (r) => `sed '-e1e touch ${r.H}/ruling.md' ${r.S}/usage.json`],
-  ["sed -ne 1e", (r) => `sed -ne '1e touch ${r.H}/ruling.md' ${r.S}/usage.json`],
-  ["sed custom-delimiter address then e", (r) => `sed '\\,a,e touch ${r.H}/ruling.md' ${r.S}/usage.json`],
-  ["sed -f script file", (r) => `sed -f script.sed ${r.S}/usage.json`],
 ];
 
 const PASS_R2: Array<[string, (r: Rig) => string]> = [
@@ -103,16 +83,7 @@ for (const [name, line] of DENY) {
 // Review round 3: sed scripts with e, w or W anywhere, sed long options that are not exact GNU forms and computed find
 // words are fully computed writes.
 const DENY_R3: Array<[string, (r: Rig) => string]> = [
-  ["sed 1w", (r) => `sed -n '1w ${r.H}/ruling.md' ${r.S}/usage.json`],
-  ["sed $w", (r) => `sed -n '$w ${r.H}/ruling.md' ${r.S}/usage.json`],
-  ["sed s|a|b|w", (r) => `sed 's|a|b|w ${r.H}/ruling.md' ${r.S}/usage.json`],
-  ["sed 1,+2e", (r) => `sed '1,+2e touch ${r.H}/ruling.md' ${r.S}/usage.json`],
-  ["sed 1 ! e", (r) => `sed '1 ! e touch ${r.H}/ruling.md' ${r.S}/usage.json`],
-  ["sed --expr=", (r) => `sed --expr='1e touch ${r.H}/ruling.md' ${r.S}/usage.json`],
-  ["sed --fi=", (r) => `sed --fi=script.sed ${r.S}/usage.json`],
   ["sed --in", (r) => `sed --in s/a/b/ ${r.H}/ruling.md`],
-  ["find computed action $A", (r) => `find ${r.H} -name ruling.md $A touch {} +`],
-  ['find quoted "$A"', (r) => `find ${r.H} -name ruling.md "$A" touch {} +`],
 ];
 
 for (const [name, line] of DENY_R3) {
@@ -122,50 +93,10 @@ for (const [name, line] of DENY_R3) {
   });
 }
 
-// Review round 4: a computed or unresolved program name and a computed word among the sed args are fully computed writes.
-const DENY_R4: Array<[string, (r: Rig) => string]> = [
-  ["$Q -i s/a/b/ <H>/ruling.md", (r) => `$Q -i s/a/b/ ${r.H}/ruling.md`],
-  ["Q=sed; $Q -i s/a/b/ <H>/ruling.md", (r) => `Q=sed; $Q -i s/a/b/ ${r.H}/ruling.md`],
-  ['"$C" -i s/a/b/ <H>/ruling.md', (r) => `"$C" -i s/a/b/ ${r.H}/ruling.md`],
-  ["$(echo sed) -i s/a/b/ <H>/ruling.md", (r) => `$(echo sed) -i s/a/b/ ${r.H}/ruling.md`],
-  ["$Q <H>/ruling.md", (r) => `$Q ${r.H}/ruling.md`],
-  ["sed s/a/b/ $OPT <H>/ruling.md", (r) => `sed s/a/b/ $OPT ${r.H}/ruling.md`],
-  ["OPT=-i; sed s/a/b/ $OPT <H>/ruling.md", (r) => `OPT=-i; sed s/a/b/ $OPT ${r.H}/ruling.md`],
-  ['sed -e s/a/b/ "$O" <H>/ruling.md', (r) => `sed -e s/a/b/ "$O" ${r.H}/ruling.md`],
-];
-
-for (const [name, line] of DENY_R4) {
-  test(`r13 deny (round 4): ${name}`, async () => {
-    const r = rig();
-    assert.equal(await run(r, line(bash(r))), SELF_RULING_REASON, line(bash(r)));
-  });
-}
-
-// R14 item 3: residual rows. awk builds its redirect target at run time, xargs hands stdin words to an unknown program, and a computed
-// program name bound to a writer (or bound in any way the facts cannot follow) stays a fully computed write.
-const DENY_R14: Array<[string, (r: Rig) => string]> = [
-  ["awk redirect to a bound variable operand", (r) => `f=${r.H}/ruling.md; awk '{print > f}' f="$f" ${r.S}/usage.json`],
-  ["awk -v redirect target from a bound variable", (r) => `f=${r.H}/ruling.md; awk -v o="$f" '{print > o}' ${r.S}/usage.json`],
-  ["awk print into a quoted handoff path", (r) => `awk '{print > "${r.H}/ruling.md"}' ${r.S}/usage.json`],
-  ["xargs into an unknown program with a handoff path", (r) => `echo ${r.H}/ruling.md | xargs mytool`],
-  ["C=touch; $C <H>/ruling.md", (r) => `C=touch; $C ${r.H}/ruling.md`],
-  ["false && C=cat; $C touch <H>/ruling.md", (r) => `false && C=cat; $C touch ${r.H}/ruling.md`],
-  ["C=cat; C=touch; $C <H>/ruling.md", (r) => `C=cat; C=touch; $C ${r.H}/ruling.md`],
-];
-
-for (const [name, line] of DENY_R14) {
-  test(`r14 deny (residual): ${name}`, async () => {
-    const r = rig();
-    assert.equal(await run(r, line(bash(r))), SELF_RULING_REASON, line(bash(r)));
-  });
-}
-
-// R14 item 3: a read-only sed script whose regex merely contains e/w/W, and a computed program name a same-line binding resolves to a reader.
+// R14 item 3: a read-only sed script whose regex merely contains e/w/W.
 const PASS_R14: Array<[string, (r: Rig) => string]> = [
   ["sed -n '1,5p' <H>/ruling.md", (r) => `sed -n '1,5p' ${r.H}/ruling.md`],
   ["sed -n '/review/p' <H>/ruling.md (a regex with w and e)", (r) => `sed -n '/review/p' ${r.H}/ruling.md`],
-  // the variable is not `C`: a win32 drive letter `C:/…` in the path is a second bare mention of the name, which bound_program refuses
-  ["C=cat; $C <H>/ruling.md", (r) => `RDR=cat; $RDR ${r.H}/ruling.md`],
 ];
 
 for (const [name, line] of PASS_R14) {
@@ -181,22 +112,4 @@ test("r13 deny (win32): a native backslash path to the parent's ruling, quoted o
   const r = rig();
   const f = path.join(r.H, "ruling.md");
   for (const line of [`echo A > '${f}'`, `cp x "${f}"`, `echo A > ${f}`]) assert.equal(await run(r, line), SELF_RULING_REASON, line);
-});
-
-test("r13 fail closed: no python, a missing interpreter and an unreadable line refuse a shell call", async () => {
-  const r = rig();
-  const cmd = `ls ${inBash(r.H)}`;
-  assert.equal(await selfRulingRefusal("bash", { command: cmd }, r.root, r.dirs, { python: null }), SELF_RULING_REASON);
-  assert.equal(await selfRulingRefusal("bash", { command: cmd }, r.root, r.dirs, { python: path.join(r.root, "no-python") }), SELF_RULING_REASON);
-  assert.equal(await run(r, `echo 'unterminated`), SELF_RULING_REASON);
-  // the tool path compare needs no python
-  assert.equal(await selfRulingRefusal("write", { path: path.join(r.H, "ruling.md") }, r.root, r.dirs, { python: null }), SELF_RULING_REASON);
-  assert.equal(await selfRulingRefusal("bash", { command: cmd }, r.root, [], { python: null }), undefined);
-});
-
-test("r13 shellFacts: a redirect target is reported with its resolved path", async () => {
-  const r = rig();
-  const f = await shellFacts(`cd ${inBash(r.H)} && echo A > ruling.md`, r.root, "bash");
-  assert.ok(f);
-  assert.deepEqual(f.writes.map((w) => [w.kind, w.path]), [["redirect", path.join(r.H, "ruling.md")]]);
 });

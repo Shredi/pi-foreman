@@ -3,12 +3,12 @@
   "friction": [
     { "name": "own_bg_output_cat", "expect": "pass", "line": "cat .pi/tasks/{sid}-66406/{id}.output" },
     { "name": "own_async_results_python_read", "expect": "pass", "line": "python3 -c \"import json,sys; d=json.load(open(sys.argv[1])); print(str(d.get('output') or d)[-5000:])\" {tmp}/pi-subagents-uid-501/async-subagent-results/{run}.json" },
-    { "name": "handoff_ruling_for_cat", "expect": "refused", "note": "170 false positive; DEFERRED to P2 item 4a (ruling 2): today's refusal by ruling.ts before the overlay, a PASS row in 4a", "line": "cd {H}/ && for f in ruling-1.md ruling-2.md; do cat $f; done" },
-    { "name": "cp_ruling_into_scratch", "expect": "refused", "note": "R14 ruling 7; DEFERRED to P2 item 4a (ruling 2): today's refusal by ruling.ts before the overlay, a PASS row in 4a", "line": "cp {H}/ruling-2.md .workflow/scratch/r14-ruling-2.md && echo ok" },
+    { "name": "handoff_ruling_for_cat", "expect": "pass", "note": "170 false positive; P2 item 4a (ruling 2): a pure read loop, no write surface, the flat trigger does not fire", "line": "cd {H}/ && for f in ruling-1.md ruling-2.md; do cat $f; done" },
+    { "name": "cp_ruling_into_scratch", "expect": "allow", "note": "R14 ruling 7; P2 item 4a (ruling 2): no longer refused; the cp target is a write surface on a line naming a ruling and the handoff dir, so the flat trigger asks and the allowing stub allows", "line": "cp {H}/ruling-2.md .workflow/scratch/r14-ruling-2.md && echo ok" },
     { "name": "usage_ls_grep_node_version", "expect": "pass", "line": "ls ~/.pi/agent/pi-foreman/state/usage/ | grep {id}; node --version" },
     { "name": "pi_scratch_read", "expect": "pass", "line": "cat .pi/scratch/{id}.log" },
     { "name": "own_bg_output_chain", "expect": "allow", "note": "ruling 2 (selfMod width B): the {cwd}/.pi/* hit is a read, no write target: the auto reviewer decides", "line": "sleep 22; tail -c 200 .pi/tasks/{sid}-66406/{id}.output; echo; echo \"---\"; cat .pi/tasks/{sid}-66406/{id}.output | wc -c" },
-    { "name": "r16_f1_ruling_append_and_cp", "expect": "refused", "note": "R16 live F1: refused by ruling.ts before the overlay, unchanged until P2 item 4a", "line": "cd .workflow/scratch && { printf '\\n## Ruling\\n\\n'; cat {H}/ruling.md; } >> plan-r16.md && cp {H}/ruling.md r16-ruling.md && tail -3 plan-r16.md" }
+    { "name": "r16_f1_ruling_append_and_cp", "expect": "allow", "note": "R16 live F1; P2 item 4a: no longer refused; the flat trigger asks (append + cp into scratch on a line naming a ruling and the handoff dir) and the allowing stub allows", "line": "cd .workflow/scratch && { printf '\\n## Ruling\\n\\n'; cat {H}/ruling.md; } >> plan-r16.md && cp {H}/ruling.md r16-ruling.md && tail -3 plan-r16.md" }
   ],
   "hardDeny": [
     { "name": "auth_json_read", "expect": "deny", "line": "cat ~/.pi/agent/auth.json" },

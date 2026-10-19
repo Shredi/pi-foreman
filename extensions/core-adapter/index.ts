@@ -12,7 +12,7 @@ import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint } f
 import type { Json, MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
 import { buildOverlayRules, checkToolCall, isOverlayTool, isSelfHost,OVERLAY_UNAVAILABLE, readBaseline, resolveDecision, rulesFilePath } from "./permoverlay.ts";
-import type { OverlayRules } from "./permoverlay.ts";
+import type { Decision, OverlayRules } from "./permoverlay.ts";
 import { childHandoffDirs, ownedRoots, ownHandoffDirs, resolveNpmRoot, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
@@ -23,7 +23,7 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
-import { isRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
+import { isRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingAsk, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -1455,13 +1455,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** Overlay check (see permoverlay.ts); undefined = let the call go on. */
-  async function overlayBlock(s: Session, ctx: ExtensionContext, toolName: string, input: Record<string, unknown>) {
+  async function overlayBlock(s: Session, ctx: ExtensionContext, toolName: string, input: Record<string, unknown>, rulingAsk?: Decision) {
     if (!s.overlay) return { block: true as const, reason: OVERLAY_UNAVAILABLE };
     // the session's own bg_run task dirs (`.pi/tasks/<session id>-*`) are readable for the session and its children, no other session's
     // and the session cwd's `.pi/scratch` (log copies; a child's cwd is its worktree)
     const ownTasks = [...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...piScratchReadable([ctx.cwd, (() => { try { return fs.realpathSync(ctx.cwd); } catch { return ctx.cwd; } })()], platform), ...bashOutputLogs(s.bashLogs, platform)];
     const hub = hubWorkflowReadable(get(s.config.config, "paths.hubWorkflow"), platform);
-    const d = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, ...(s.usage.line.workspace ? { foremanRoot: workspaceOf(s.usage.line.workspace).root } : {}), readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub, ownReads: [...ownUsageReadable(s.agentDir, platform, s.id, { dir: get(s.config.config, "trace.dir"), stateDir: s.markerDir }), ...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...asyncResultReads(s.childFiles, platform)] }) });
+    const d0 = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, ...(s.usage.line.workspace ? { foremanRoot: workspaceOf(s.usage.line.workspace).root } : {}), readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub, ownReads: [...ownUsageReadable(s.agentDir, platform, s.id, { dir: get(s.config.config, "trace.dir"), stateDir: s.markerDir }), ...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...asyncResultReads(s.childFiles, platform)] }) });
+    // R16 item 4a: the self-ruling ask (ruling.ts selfRulingAsk) takes the place of an overlay ask that is no self-modification
+    const d = d0 && (d0.kind === "deny" || d0.selfMod) ? d0 : (rulingAsk ?? d0);
     // R16 item 1: a foreman ask that is no self-modification goes to the auto reviewer first; allow lets the call go on to the later layers
     const rulesFile = rulesFilePath(s.config.basePermissions, s.agentDir, PKG_ROOT);
     const auto = await overlayAutoReview(review, s.id, d, toolName, input, { enabled: get(s.config.config, "safety.permissions.autoReview.enabled") !== false, isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, session: s.usage.line.foremanSession || s.id, rules: () => (rulesFile ? fs.readFileSync(rulesFile, "utf8") : "") });
@@ -1540,14 +1542,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (ps && !ps.isChild) bashRulingSnaps.set(event.toolCallId, snapshotRulings(childDirsOf(ps)));
       if (ps && !ps.isChild && mentionsLedger((event.input as { command?: unknown }).command)) ps.ledgerBash.add(event.toolCallId);
     }
-    // A session never writes a ruling file in a handoff dir where it is the child (ruling.ts selfRulingRefusal).
+    // A session never writes a ruling file in a handoff dir where it is the child (ruling.ts): a literal path is refused here,
+    // a line that writes and names a ruling and a handoff dir is an overlay ask (selfRulingAsk, judged in overlayBlock).
+    let rulingAsk: Decision | undefined;
     {
       const rs = sessionFor(ctx);
-      const why = rs && (await selfRulingRefusal(event.toolName, event.input as Record<string, unknown>, ctx.cwd, childDirsOf(rs), { python: pyPath(rs), spawner }));
+      const why = rs && selfRulingRefusal(event.toolName, event.input as Record<string, unknown>, ctx.cwd, childDirsOf(rs));
       if (why) {
         rs.trace?.emit({ event: "guard", guard: "self_ruling", toolFamily: event.toolName, decision: "blocked", ...denyFields(`self_ruling: ${why}`, event.toolName, event.input, rs.isChild ? rs.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) });
         return repeatedDeny(rs, ctx, why) ?? { block: true, reason: `pi-foreman: ${why}.` };
       }
+      rulingAsk = rs ? selfRulingAsk(event.toolName, event.input as Record<string, unknown>, childDirsOf(rs)) : undefined;
     }
     // A newer ruling (ruling-*.md, steer-*.md) in the handoff dir is read before any child launch: the launch waits, the ruling text is the reason.
     if (event.toolName === "subagent") {
@@ -1573,7 +1578,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // First of all, before the permission system and the core guards: the overlay's deny/ask rules.
     if (isOverlayTool(event.toolName)) {
       try {
-        const blocked = await overlayBlock(await ensureSession(ctx), ctx, event.toolName, event.input as Record<string, unknown>);
+        const blocked = await overlayBlock(await ensureSession(ctx), ctx, event.toolName, event.input as Record<string, unknown>, rulingAsk);
         if (blocked) return blocked;
       } catch (err) {
         return { block: true, reason: `pi-foreman: adapter error in the permission overlay (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };

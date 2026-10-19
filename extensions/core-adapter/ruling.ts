@@ -4,10 +4,8 @@
 // /ceremony); after a FAIL the refusal only names it.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
-import { runGuard } from "./runguard.ts";
-import { defaultSpawner } from "./spawn.ts";
-import type { Spawner } from "./spawn.ts";
+import { shellWrites } from "./permoverlay.ts";
+import type { Decision } from "./permoverlay.ts";
 
 const RULING_RE = /^ruling(?:-(\d{1,6}))?\.md$/;
 const ASK_N_RE = /^ask-(\d{1,6})\s*$/;
@@ -148,123 +146,41 @@ export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulin
 export const SELF_RULING_REASON = "a session cannot write its own parent's ruling";
 
 const realDir = (d: string): string => path.dirname(realKey(path.join(d, "x")));
-const isDir = (d: string): boolean => {
-  try {
-    return fs.statSync(d).isDirectory();
-  } catch {
-    return false;
-  }
-};
-
-/** One write surface of a shell line, as `scripts/shell_facts.py` reports it (null = computed, unresolved). */
-export interface WriteFact {
-  kind: string;
-  path: string | null;
-  dir: string | null;
-  name: string | null;
-  glob: boolean;
-  /** A copy source (cp, install, Copy-Item): only read, never a write. */
-  read?: boolean;
-  /** `<target>/<source name>` of a copier: written only when the target is a directory when the command runs. */
-  into?: boolean;
-}
-export interface ShellFacts {
-  writes: WriteFact[];
-  links: boolean;
-  error: string | null;
-}
-
-/** How the shell facts are obtained: the python interpreter (null = none, fails closed), spawner, scratch dir. */
-export interface SelfRulingDeps {
-  python?: string | null;
-  spawner?: Spawner;
-  env?: Record<string, string>;
-  /** `$FOREMAN_SCRATCH` of the session (default: the process env). */
-  scratch?: string | null;
-  timeoutMs?: number;
-}
-
-const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-
-/** Run `scripts/shell_facts.py` on a command; null when it did not answer cleanly (the caller fails closed). */
-export async function shellFacts(command: string, cwd: string, shell: "bash" | "powershell", deps: SelfRulingDeps = {}): Promise<ShellFacts | null> {
-  const python = deps.python === undefined ? (process.platform === "win32" ? "python" : "python3") : deps.python;
-  const env = deps.env ?? Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string"));
-  const scratch = deps.scratch === undefined ? (process.env.FOREMAN_SCRATCH ?? null) : deps.scratch;
-  const run = await runGuard({ python, coreDir: PKG_ROOT, guard: "shell_facts", payload: { command, cwd, shell, scratch_dir: scratch }, env, cwd: PKG_ROOT, spawner: deps.spawner ?? defaultSpawner, timeoutMs: deps.timeoutMs });
-  if (run.status !== "ran" || run.code !== 0) return null;
-  try {
-    const f = JSON.parse(run.stdout.trim().split(/\r?\n/).pop() ?? "") as ShellFacts;
-    return Array.isArray(f.writes) && f.error === null ? f : null;
-  } catch {
-    return null;
-  }
-}
-
-const globRe = (g: string): RegExp => new RegExp(`^${g.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
+const SHELL_TOOLS = new Set(["bash", "powershell", "foreman_bg", "bg_run"]);
+const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
+const shellOf = (toolName: string): "posix" | "powershell" => (toolName === "powershell" ? "powershell" : "posix");
 
 /**
- * A write surface that may hit a ruling file in one of `dirs` (real paths). `moves`: the line moves or renames a path; kept
- * in the signature, unread since R14 ruling 7 reverted the `into` shortcut: an `into` fact (`cp <src> T` writes
- * `T/<src name>`) under a T that is no directory now is refused like any other write below a non-directory.
+ * Refusal reason when `toolName` writes a `ruling*.md` inside one of `childDirs` (the dirs where this session is the child) at a
+ * literal path, else undefined: write/edit `path`, foreman_copy/foreman_move `dst`, or a write surface of a shell line
+ * (permoverlay.ts shellWrites), resolved against `cwd` as written. R16 item 4a: no cd, variable or symlink tracking, no suffix
+ * joins; what the literal path does not show is selfRulingAsk's. `*.ack` files are never ruling names; a copy source is a read.
  */
-export function factHitsRuling(w: WriteFact, dirs: Set<string>, links: boolean, moves = false): boolean {
-  if (w.read) return false;
-  // an existing file (or symlink to one) at a known path: judged by what it really is
-  if (w.path && fs.existsSync(w.path)) {
-    const real = realKey(w.path);
-    let target = real;
-    try {
-      target = fs.realpathSync.native(w.path);
-    } catch {
-      // dangling: the lexical path stands
-    }
-    for (const p of [real, target]) if (isRulingName(path.basename(p)) && dirs.has(path.dirname(p))) return true;
-  }
-  let name = false;
-  if (w.name === null) name = true;
-  else if (w.glob) {
-    try {
-      name = ["ruling.md", "ruling-1.md"].some((n) => globRe(w.name as string).test(n));
-    } catch {
-      name = true;
-    }
-  } else name = isRulingName(w.name);
-  if (!name) return false;
-  if (w.dir === null || links || !isDir(w.dir)) return true;
-  return dirs.has(realDir(w.dir));
-}
-
-/**
- * Refusal reason when `toolName` would write a `ruling*.md` inside one of `childDirs` (the dirs where this session is
- * the child), else undefined. write/edit `path`, foreman_copy/foreman_move `dst` are compared directly. Shell-like tools
- * are read through `scripts/shell_facts.py` (the git guard's Lexer): only a WRITE surface (redirect, cp/mv/tee/dd/sed -i
- * ..., interpreter code writes, a ruling-named argument of a non-reader) that may be such a file is refused; a computed
- * name or directory in a write position counts as one. No answer from the script (no python, timeout, unreadable line)
- * refuses. `*.ack` files are never ruling names; a copy source (`cp <H>/ruling-2.md x`) is a read.
- */
-export async function selfRulingRefusal(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[], deps: SelfRulingDeps = {}): Promise<string | undefined> {
+export function selfRulingRefusal(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[]): string | undefined {
   if (childDirs.length === 0) return undefined;
   const dirs = new Set(childDirs.map(realDir));
   const inChild = (p: string): boolean => isRulingName(path.basename(p)) && dirs.has(path.dirname(realKey(path.resolve(cwd, p))));
-  const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
-  if (toolName === "write" || toolName === "edit") {
-    const p = str(input.path);
-    return p && inChild(p) ? SELF_RULING_REASON : undefined;
-  }
-  if (toolName === "foreman_copy" || toolName === "foreman_move") {
-    const p = str(input.dst);
-    return p && inChild(p) ? SELF_RULING_REASON : undefined;
-  }
-  if (toolName === "bash" || toolName === "powershell" || toolName === "foreman_bg" || toolName === "bg_run") {
-    const cmd = str(input.command);
-    if (!cmd) return undefined;
-    const facts = await shellFacts(cmd, cwd, toolName === "powershell" ? "powershell" : "bash", deps);
-    if (!facts) return SELF_RULING_REASON;
-    const moves = facts.writes.some((w) => w.kind === "source" && !w.read);
-    return facts.writes.some((w) => factHitsRuling(w, dirs, facts.links, moves)) ? SELF_RULING_REASON : undefined;
-  }
-  return undefined;
+  const words = toolName === "write" || toolName === "edit" ? [str(input.path)] : toolName === "foreman_copy" || toolName === "foreman_move" ? [str(input.dst)] : [];
+  const cmd = SHELL_TOOLS.has(toolName) ? str(input.command) : null;
+  if (cmd) words.push(...shellWrites(cmd, shellOf(toolName)).words);
+  return words.some((p) => p && inChild(p)) ? SELF_RULING_REASON : undefined;
+}
+
+/**
+ * R16 item 4a (ruling D1): a FLAT ask trigger on the lexed line, no resolution. A shell line with a write surface anywhere
+ * (shellWrites), the token `ruling` anywhere and a handoff-dir path anywhere (one of `childDirs`, or `handoffs/<its name>` in any
+ * spelling: `~`, `$HOME`, relative) is an overlay ask: the auto reviewer judges it under the rules' hard_deny, the human on defer.
+ * A pure read of a ruling never asks; a dir where this session is the parent (its child's rulings) is no trigger.
+ */
+export function selfRulingAsk(toolName: string, input: Record<string, unknown>, childDirs: string[]): Decision | undefined {
+  const cmd = SHELL_TOOLS.has(toolName) ? str(input.command) : null;
+  if (!cmd || childDirs.length === 0 || !/ruling/i.test(cmd)) return undefined;
+  const fold = (s: string): string => s.replace(/\\/g, "/").toLowerCase();
+  const line = fold(cmd);
+  if (!childDirs.some((d) => [`handoffs/${path.basename(d)}`, d, realDir(d)].some((p) => line.includes(fold(p))))) return undefined;
+  const w = shellWrites(cmd, shellOf(toolName));
+  if (w.words.length === 0 && !w.unnamed) return undefined;
+  return { kind: "ask", reason: "pi-foreman: this line writes, names a ruling and a handoff dir; a session never writes its own parent's ruling, so it needs approval.", rule: "self-ruling" };
 }
 
 /** What `/foreman close` adds when the ceremony is incomplete: what the parent must still rule. */

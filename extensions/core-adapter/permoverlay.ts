@@ -2945,6 +2945,20 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   return null;
 }
 
+/**
+ * R16 item 4a (ruling.ts): the write surfaces of a shell line as this lexer collects them, with no cd or variable resolution: the words of
+ * write redirects, writer operands and removes, and `unnamed` when a unit may write without naming a target (an unknown command, in-place
+ * sed, a script run, any PowerShell line: its cmdlet writes are not modelled here). win32 bash lines are lexed a second time with `\` kept
+ * literal, as checkShell does.
+ */
+export function shellWrites(command: string, shell: "posix" | "powershell" = "posix", platform: string = process.platform): { words: string[]; unnamed: boolean } {
+  const c: Collected = { unitTexts: [], pipeTexts: [], words: [], removeWords: [], protWords: [], ro: true, writeTargets: new Set(), tmpTargets: new Set(), roTargets: new Set() };
+  collect(command, shell, 0, c);
+  if (platform === "win32" && shell === "posix") collect(command, "powershell", 0, c);
+  const words = [...c.writeTargets!, ...c.tmpTargets!, ...c.roTargets!, ...c.removeWords!].flatMap((w) => [w, ...expandBraces(w)]);
+  return { words: [...new Set(words)], unnamed: shell === "powershell" || c.ro === false || c.roUnknown !== undefined || c.roRun === true };
+}
+
 /** The only verbs a shell line naming a toolchain probe dir may use (R10 item 3). */
 const PROBE_VERBS = new Set(["ls", "stat", "which"]);
 

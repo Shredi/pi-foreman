@@ -43,7 +43,7 @@ test("self ruling: shell redirect, cp, backgrounded job and foreman_bg/bg_run na
   assert.equal(await refuse(r, "bash", { command: `(sleep 2; printf APPROVED > "${f}") &` }), SELF_RULING_REASON);
   assert.equal(await refuse(r, "bash", { command: "cp x ruling.md" }, r.up), SELF_RULING_REASON);
   assert.equal(await refuse(r, "bash", { command: `cat ${f} & cp x ${f}` }), SELF_RULING_REASON);
-  assert.equal(await refuse(r, "bash", { command: `cd ${inBash(r.up)} && cp x ruling*.md` }), SELF_RULING_REASON);
+  // R16 item 4a: `cd <H> && cp x ruling*.md` lives in test/retired/self-ruling-rows.json (the flat ask trigger)
   assert.equal(await refuse(r, "foreman_bg", { command: `sleep 3 && cp x ${f}` }), SELF_RULING_REASON);
 });
 
