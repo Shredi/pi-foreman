@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Round 17
+- A write into the session's own `{cwd}/.pi/scratch/` is no longer self-modification (`selfMod`) in the overlay: a shell write or a path-tool write there stays an ordinary ask and goes to the auto reviewer instead of the human dialog. See docs/permissions.md "Two layers".
+- `foreman doctor` prints an `autoReview:` line: `on|off (rulesFile: shipped or the path, model: <provider/model> or none)`.
+
 ### Round 16
 - Auto reviewer for overlay asks: a foreman overlay ask that is no self-modification goes to the `foreman-review` authorizer before the human dialog (`safety.permissions.autoReview.enabled`, default on). An allow lets the call go on; a deny with riskLevel high or critical is a block; a soft deny, defer, error, timeout or missing model is the dialog. Trace event `auto_review_allow`; `foreman_dialogs` counts it as its own family. See docs/permissions.md "Two layers".
 - The reviewer rules are prose in `config/permissions.rules.md` (tiers hard_deny, soft_deny, allow, plus an environment paragraph); `safety.permissions.autoReview.rulesFile` (user layer or overlay) replaces the file. The file is protected under `writeAskSelfHost`.
