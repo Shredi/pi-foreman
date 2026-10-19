@@ -3467,6 +3467,7 @@ interface ProtectHit {
 
 /** R17: `word` (resolved against the session cwd, `..` folded) lies strictly below the session's own `{cwd}/.pi/scratch`. */
 function ownScratch(ctx: MatchCtx, word: string): boolean {
+  if (!/^[\w./@+:-]+$/.test(word)) return false; // the shell lexer resolves no `$var`, substitution or glob: only literal words
   const p = ctx.platform === "win32" ? path.win32 : path.posix;
   const fold = (s: string): string => (foldsCase(ctx.platform) ? s.toLowerCase() : s);
   const rel = p.relative(fold(p.resolve(ctx.cwd, ".pi", "scratch")), fold(p.resolve(ctx.cwd, word)));

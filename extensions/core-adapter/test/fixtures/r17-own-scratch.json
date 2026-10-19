@@ -6,7 +6,11 @@
   "selfMod": [
     { "name": "redirect_into_pi_settings", "line": "echo x > .pi/settings.json" },
     { "name": "scratch_dotdot_settings", "line": "echo x > .pi/scratch/../settings.json" },
-    { "name": "mixed_scratch_and_settings", "line": "cp a .pi/scratch/x && echo x > .pi/settings.json" }
+    { "name": "mixed_scratch_and_settings", "line": "cp a .pi/scratch/x && echo x > .pi/settings.json" },
+    { "name": "scratch_var_dotdot", "line": "X=../settings.json; echo x > .pi/scratch/$X" },
+    { "name": "scratch_braced_var_dotdot", "line": "echo x > .pi/scratch/${X}" },
+    { "name": "scratch_glob_dotdot", "line": "echo x > .pi/scratch/.[.]/settings.json" },
+    { "name": "scratch_subst_dotdot", "line": "echo x > .pi/scratch/$(echo ..)/settings.json" }
   ],
   "reviewableTool": [
     { "name": "write_tool_own_scratch", "tool": "write", "input": { "path": ".pi/scratch/note.md", "content": "x" } }
