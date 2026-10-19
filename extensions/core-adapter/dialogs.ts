@@ -27,7 +27,7 @@ export const dialogFields = (command: string): { class: DialogFamily } => ({ cla
 
 export type DialogReport = Record<string, { count: number; lines: string[] }>;
 
-/** The report of a trace file's overlay `ask-*` records, plus the asks the auto reviewer allowed without a dialog (`auto_review_allow`, R16); a missing or unreadable file reads as no records. */
+/** The report of a trace file's overlay `ask-*` records, plus the self-ruling refusals (guard `self_ruling`), plus the asks the auto reviewer allowed without a dialog (`auto_review_allow`, R16); a missing or unreadable file reads as no records. */
 export function dialogReport(traceFile: string): DialogReport {
   const out: DialogReport = {};
   for (const f of DIALOG_FAMILIES) out[f] = { count: 0, lines: [] };
@@ -48,6 +48,12 @@ export function dialogReport(traceFile: string): DialogReport {
     if (rec.event === "auto_review_allow") {
       out.auto_review_allow.count++;
       out.auto_review_allow.lines.push(typeof rec.command === "string" ? rec.command : String(rec.toolFamily ?? ""));
+      continue;
+    }
+    // the self-ruling refusal (index.ts guard record) is a block, not an overlay ask, and counts in its own family
+    if (rec.event === "guard" && rec.guard === "self_ruling" && rec.decision === "blocked") {
+      out.self_ruling_refusal.count++;
+      out.self_ruling_refusal.lines.push(typeof rec.command === "string" ? rec.command : String(rec.toolFamily ?? ""));
       continue;
     }
     if (rec.event !== "overlay" || typeof rec.decision !== "string" || !rec.decision.startsWith("ask-")) continue;
