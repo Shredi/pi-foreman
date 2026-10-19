@@ -37,6 +37,11 @@
    "model": "foreman-fake/foreman"
   },
   {
+   "event": "review",
+   "decision": "empty",
+   "model": "foreman-fake/foreman"
+  },
+  {
    "event": "overlay",
    "role": "foreman",
    "toolFamily": "bash",
