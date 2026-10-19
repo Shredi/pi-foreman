@@ -3480,7 +3480,9 @@ function ownScratch(ctx: MatchCtx, word: string, shell = false): boolean {
   try {
     const fsx = defaults(ctx);
     const root = fsx.realpath(p.resolve(ctx.cwd, ".pi", "scratch"));
-    if (!root) return false;
+    const realCwd = fsx.realpath(ctx.cwd);
+    // the root itself must not be a link (`.pi/scratch -> .pi`, or `.pi` a link): else the carve-out would move onto `.pi/*`
+    if (!root || !realCwd || fold(root) !== fold(p.join(realCwd, ".pi", "scratch"))) return false;
     const real = (x: string): string | null => realDeep(p.resolve(ctx.cwd, x), p, fsx);
     for (const c of pathCandidates(word, ctx)) {
       const r = real(c);

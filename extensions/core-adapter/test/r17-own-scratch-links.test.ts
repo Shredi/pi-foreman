@@ -56,3 +56,34 @@ selfMod("symlink redirect", "bash", { command: "echo x > .pi/scratch/l" });
 selfMod("hard link redirect", "bash", { command: "echo x > .pi/scratch/h" });
 selfMod("symlink write tool", "write", { path: ".pi/scratch/l", content: "x" });
 selfMod("hard link write tool", "write", { path: ".pi/scratch/h", content: "x" });
+
+// the scratch root itself must not be a link: `.pi/scratch -> .pi`, or `.pi -> <other dir holding scratch>` fails closed
+// (one rig; each case swaps the real `.pi` aside, builds its layout, then restores it)
+const failsClosed = (name: string, layout: () => void, tool: string, input: Record<string, unknown>): void => {
+  test(`r17 own scratch root link ${name}: selfMod, the human dialog`, { skip: win }, async () => {
+    const aside = path.join(rig.project, "pi-real");
+    fs.renameSync(pi, aside);
+    try {
+      layout();
+      const r = await run(tool, input);
+      assert.deepEqual([r.outcome, r.dialogs, r.calls], ["ask-denied", 1, 0]);
+    } finally {
+      fs.rmSync(pi, { recursive: true, force: true });
+      fs.renameSync(aside, pi);
+    }
+  });
+};
+const scratchIsPi = (): void => {
+  fs.mkdirSync(pi);
+  fs.writeFileSync(path.join(pi, "settings.json"), "{}");
+  fs.symlinkSync(".", path.join(pi, "scratch"));
+};
+const piIsLink = (): void => {
+  const other = path.join(rig.project, "other-pi");
+  fs.mkdirSync(path.join(other, "scratch"), { recursive: true });
+  fs.symlinkSync(other, pi);
+};
+failsClosed("scratch -> .pi redirect", scratchIsPi, "bash", { command: "echo x > .pi/scratch/settings.json" });
+failsClosed("scratch -> .pi write tool", scratchIsPi, "write", { path: ".pi/scratch/settings.json", content: "x" });
+failsClosed(".pi link write tool", piIsLink, "write", { path: ".pi/scratch/new.md", content: "x" });
+failsClosed(".pi link redirect", piIsLink, "bash", { command: "echo x > .pi/scratch/new.md" });
