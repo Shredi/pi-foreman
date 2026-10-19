@@ -1,0 +1,17 @@
+{
+  "comment": "R17 item 1: a write into the session's own {cwd}/.pi/scratch/ is not selfMod (the auto reviewer decides); the rest of .pi/* stays selfMod (human dialog). Placeholders, filled by r17-own-scratch.test.ts: {H} an own handoff dir (absolute, under the agent dir).",
+  "reviewable": [
+    { "name": "cp_ruling_into_own_scratch", "line": "cp {H}/ruling-2.md .pi/scratch/live-ruling-2.md" }
+  ],
+  "selfMod": [
+    { "name": "redirect_into_pi_settings", "line": "echo x > .pi/settings.json" },
+    { "name": "scratch_dotdot_settings", "line": "echo x > .pi/scratch/../settings.json" },
+    { "name": "mixed_scratch_and_settings", "line": "cp a .pi/scratch/x && echo x > .pi/settings.json" }
+  ],
+  "reviewableTool": [
+    { "name": "write_tool_own_scratch", "tool": "write", "input": { "path": ".pi/scratch/note.md", "content": "x" } }
+  ],
+  "selfModTool": [
+    { "name": "write_tool_pi_settings", "tool": "write", "input": { "path": ".pi/settings.json", "content": "{}" } }
+  ]
+}
