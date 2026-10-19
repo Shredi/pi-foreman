@@ -1,0 +1,18 @@
+{
+  "comment": "R16 P3 item 7: the R14 chair's misses from .workflow/scratch/r14-chair-asks.md (## Dialogs), as named cases: name, the line (literal paths, the chair's placeholders filled), and the expected family for dialogFamily. Used by r16-dialogs.test.ts.",
+  "cases": [
+    { "name": "170_toolerr_verbatim", "line": "pi-foreman: a session cannot write its own parent's ruling.", "family": "self_ruling_refusal" },
+    { "name": "170_toolerr_bare", "line": "a session cannot write its own parent's ruling.", "family": "self_ruling_refusal" },
+    { "name": "170_trigger_text", "line": "pi-foreman: this line writes, names a ruling and a handoff dir; a session never writes its own parent's ruling, so it needs approval.", "family": "self_ruling_refusal" },
+    { "name": "own_run_dir_ls_runs", "line": "bash ls /var/folders/kk/T/pi-subagents-uid-501/async-subagent-runs/3108047b-6c1e-4a0d-9f2e-5b7a1c2d3e4f/", "family": "own_run_dir" },
+    { "name": "own_run_dir_cp_output_log", "line": "cp /var/folders/kk/T/pi-subagents-uid-501/async-subagent-runs/3108047b-6c1e-4a0d-9f2e-5b7a1c2d3e4f/output-0.log .workflow/scratch/r14-explore-p1.md", "family": "own_run_dir" },
+    { "name": "own_run_dir_results_json_read", "line": "python3 -c \"import json; print(json.load(open('/var/folders/kk/T/pi-subagents-uid-501/async-subagent-results/3108047b-6c1e-4a0d-9f2e-5b7a1c2d3e4f.json')))\"; git log --oneline -1", "family": "own_run_dir" },
+    { "name": "own_bg_output_20_01", "line": "cat .pi/tasks/01a15a1e-own-66406/bc00d3ee1.output; ps -p 66406", "family": "own_bg_output" },
+    { "name": "own_bg_output_20_48", "line": "cat .pi/tasks/01a15a1e-own-66406/bb28dc811.output; ps -p 66406", "family": "own_bg_output" },
+    { "name": "own_bg_output_21_01", "line": "cat .pi/tasks/01a15a1e-own-66406/bf930347d.output; ps -p 66406", "family": "own_bg_output" },
+    { "name": "own_bg_output_foreman_wait_log", "line": "foreman_wait log .pi/tasks/01a15a1e-own-66406/bc00d3ee1.output", "family": "own_bg_output" },
+    { "name": "trace_read_dialogs_own_trace", "line": "bin/foreman dialogs ~/.pi/agent/pi-foreman/state/trace-01a15a1e-own.jsonl", "family": "trace_read" },
+    { "name": "trace_read_cat_own_trace", "line": "cat ~/.pi/agent/pi-foreman/state/trace-01a15a1e-own.jsonl | wc -l", "family": "trace_read" },
+    { "name": "state_read_not_trace", "line": "cat ~/.pi/agent/pi-foreman/state/session-1.json", "family": "state_usage_read" }
+  ]
+}

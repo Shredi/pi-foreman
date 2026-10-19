@@ -3,18 +3,20 @@
 // itself keeps only the redacted, path-scrubbed `command` (trace.ts), which is what the report prints as literal lines.
 import * as fs from "node:fs";
 
-export const DIALOG_FAMILIES = ["state_usage_read", "pi_scratch_read", "toolchain_probe", "own_run_dir", "own_bg_output", "own_bash_output_log", "owned_scratch", "hub_ledger_read", "other", "auto_review_allow"] as const;
+export const DIALOG_FAMILIES = ["state_usage_read", "trace_read", "self_ruling_refusal", "pi_scratch_read", "toolchain_probe", "own_run_dir", "own_bg_output", "own_bash_output_log", "owned_scratch", "hub_ledger_read", "other", "auto_review_allow"] as const;
 export type DialogFamily = (typeof DIALOG_FAMILIES)[number];
 
 /** The regression family of a dialog's command (raw text, before the trace scrubs it). */
 export function dialogFamily(command: string): DialogFamily {
   const c = command.replace(/\\/g, "/");
+  if (/a session (?:cannot write|never writes) its own parent's ruling/.test(c)) return "self_ruling_refusal";
   if (/\.pi\/tasks\//.test(c)) return "own_bg_output";
   if (/\bpi-bash-[0-9a-f]+\.log\b/.test(c)) return "own_bash_output_log";
   if (/\.pi\/scratch\b/.test(c)) return "pi_scratch_read";
   if (/pi-foreman-scratch/.test(c)) return "owned_scratch";
   if (/\bLEDGER-[^\s/]*\.md\b|\.workflow\/LEDGER/.test(c)) return "hub_ledger_read";
-  if (/\.pi\/[^\s/]*\/?runs?\/|\/\.pi\/runs?\b|\/pi-subagents?\/runs?\b|\basync-subagent-runs\b/.test(c)) return "own_run_dir";
+  if (/\.pi\/[^\s/]*\/?runs?\/|\/\.pi\/runs?\b|\/pi-subagents?\/runs?\b|\basync-subagent-(?:runs|results)\b/.test(c)) return "own_run_dir";
+  if (/(^|[\s/])trace-[\w.-]*\.jsonl?\b/.test(c)) return "trace_read";
   if (/(^|[\s/])(?:state|usage)[-\w.]*(?:\.jsonl?|\/)|\/(?:state|usage)\b|\busage[-_]/.test(c)) return "state_usage_read";
   if (/^\s*(?:which|command -v|type)\s+\S+|\s(?:--version|-V)\s*$|^\s*(?:node|python3?|npm|npx|tsc|git|cargo|go|java|ruby|uv)\s+(?:--version|-v|version)\b/.test(c)) return "toolchain_probe";
   return "other";
