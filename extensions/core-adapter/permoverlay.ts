@@ -184,8 +184,8 @@ export interface MatchCtx {
   ownTasks?: string[];
   /**
    * Foreman only: patterns of its own state records, state/usage, its own live and trace file (roundsurface.ts ownUsageReadable). A shell command
-   * whose every unit is ls/cat/head/tail/wc/stat without a wrapper, write or substitution, the python/node read forms (usagePythonRead,
-   * usageNodeRead) or an ownStateRead line (bindings, `cd <worktree> &&`, a `.workflow/scratch/` script) may name them although the protect
+   * that is an ownStateRead line (ls/cat/head/tail/wc/stat reads, the python/node read forms, bindings, `cd <worktree> &&`, a
+   * `.workflow/scratch/` script) and writes nothing may name them although the protect
    * rule `{agentDir}/pi-foreman/state/*` covers state/; a write there stays protected.
    */
   ownReads?: string[];
@@ -1690,7 +1690,7 @@ function innerScript(core: string[]): { script: string; shell: "posix" | "powers
 }
 
 interface Collected {
-  /** The verb of every non-neutral unit (`""` for a unit with an env assignment or wrapper prefix): the own-usage read check (USAGE_VERBS). */
+  /** The verb of every non-neutral unit (`""` for a unit with an env assignment or wrapper prefix): the probe-dir check (PROBE_VERBS). */
   verbs?: string[];
   /** The command word of every unit as written (a toolchain probe dir named only as the program to run is left to the permission system's bash rules). */
   cmdWords?: string[];
@@ -2834,10 +2834,8 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   // nothing writes (no redirect target, no write verb, no unknown command, nothing removed) and nothing builds a path at run time.
   const ownedReadOk = !strictRead && !/\$\(|`|[<>]\(/.test(command) && shell === "posix" && c.ro === true && c.roRun !== true && c.roUnknown === undefined && c.roDeny === undefined && c.roTargets!.size === 0 && c.tmpTargets!.size === 0 && c.writeTargets!.size === 0 && c.removeWords!.length === 0 && c.worktreeOp === undefined;
   const readOnly = strictRead;
-  // R10 item 1: the foreman's own usage records (ctx.ownReads): plain ls/cat/head/tail/wc/stat units that write nothing, or the one python read form
-  // R12 item 2: or a `;`/`&&`/pipe chain whose units touching the own records are such reads and whose other units are read-only (ownStateRead)
-  // R14 item 1: ownStateRead also takes a leading `cd <worktree> &&`, a `2>&1` and a worktree `.workflow/scratch/` script given own records
-  const ownRead = !!ctx.ownReads?.length && shell === "posix" && ((!/\$\(|`|[<>]\(/.test(command) && c.rdr === true && c.ro === true && c.writeTargets!.size === 0 && c.tmpTargets!.size === 0 && c.removeWords!.length === 0 && c.verbs!.length > 0 && c.verbs!.every((v) => USAGE_VERBS.has(v))) || usagePythonRead(command, ctx.ownReads!, ctx) || usageNodeRead(command, ctx.ownReads!, ctx) || (c.writeTargets!.size === 0 && c.tmpTargets!.size === 0 && ownStateRead(command, ctx)));
+  // R16 item 4c: the foreman's own usage records (ctx.ownReads) are lifted only for an ownStateRead line that writes nothing (the one own-read decision)
+  const ownRead = !!ctx.ownReads?.length && shell === "posix" && c.writeTargets!.size === 0 && c.tmpTargets!.size === 0 && ownStateRead(command, ctx);
   // `--exclude-dir=.git` names a path to leave out, never one to write: only a redirect target keeps such a word
   // the read-only python exemption holds only when the whole command is that one invocation: nothing else on the line may use the words
   const soloPython = /^\s*(?:[\w./-]*python[\w.]*)(?:\s+-[A-Za-z]+)*\s*$/.test(command.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, ""));
@@ -2968,25 +2966,6 @@ const USAGE_VERBS = new Set(["ls", "cat", "head", "tail", "wc", "stat"]);
 const USAGE_PY = /^\s*(?:import\s+json\s*;\s*)?print\(\s*(?:open\(\s*(['"])([^'"\\$`]+)\1\s*\)\.read\(\s*\)|json\.load\(\s*open\(\s*(['"])([^'"\\$`]+)\3\s*\)\s*\))\s*\)\s*;?\s*$/;
 
 /**
- * Ruling R10 D1: the whole command is one `python3 -c '<code>'` (or `python`) whose code is a single `print(open('<literal>').read())` or
- * `print(json.load(open('<literal>')))` (an `import json;` before it), with no `'w'`/`'a'`, `os.`, `subprocess` or `exec` token, no redirect,
- * and the literal an absolute path whose every spelling (realpath included) matches one of `patterns`. Anything else is false.
- */
-export function usagePythonRead(command: string, patterns: string[], ctx: MatchCtx): boolean {
-  const words = soloUnit(command, patterns);
-  return !!words && usagePyWords(words, patterns, ctx);
-}
-
-/** The words of a command that is one unit without a redirect or substitution (and `patterns` non-empty), else null. */
-function soloUnit(command: string, patterns: string[]): string[] | null {
-  if (!patterns.length) return null;
-  const parsed = parseShell(command, "posix");
-  if (parsed.subs.length || parsed.pipelines.length !== 1 || parsed.pipelines[0].length !== 1) return null;
-  const words = parsed.pipelines[0][0];
-  return REDIRECTS.get(words)?.size ? null : words;
-}
-
-/**
  * R12 item 2: the D1 code reading `sys.argv[N]` instead of a literal (`python3 -c '…open(sys.argv[N])…' <path>…`); only json/sys imported.
  * The open has no mode or mode 'r'/'rb'; json.load may be followed by literal subscripts (`["state"]`, `[0]`), nothing else.
  */
@@ -2995,7 +2974,11 @@ const USAGE_PY_ARGV = /^\s*(?:import\s+(?:json|sys)(?:\s*,\s*(?:json|sys))?\s*;\
 /** R14 item 4: the results-file read of the chair's line, `d=json.load(open(sys.argv[N])); print(str(d.get('output') or d.get('results') or d)[-K:])`; fixed text, one file read, nothing else. */
 const USAGE_PY_ARGV_TAIL = /^\s*import\s+json\s*,\s*sys\s*;\s*d\s*=\s*json\.load\(\s*open\(\s*sys\.argv\[[1-9]\]\s*\)\s*\)\s*;\s*print\(\s*str\(\s*d\.get\(\s*(['"])output\1\s*\)\s+or\s+d\.get\(\s*(['"])results\2\s*\)\s+or\s+d\s*\)(?:\[\s*-\d{1,5}\s*:\s*\])?\s*\)\s*;?\s*$/;
 
-/** usagePythonRead over parsed words: `python3 -c <D1 code>` or `python3 -c <argv code> <path>`. */
+/**
+ * Ruling R10 D1 (an ownStateRead unit): `python3 -c '<code>'` (or `python`) whose code is a single `print(open('<literal>').read())` or
+ * `print(json.load(open('<literal>')))` (an `import json;` before it), with no `'w'`/`'a'`, `os.`, `subprocess` or `exec` token, the literal
+ * an own record; or `python3 -c <argv code> <path>`.
+ */
 function usagePyWords(words: string[], patterns: string[], ctx: MatchCtx): boolean {
   if (words.length < 3 || words.length > 12 || !/^python3?$/.test(words[0]) || words[1] !== "-c") return false;
   const code = words[2];
@@ -3020,14 +3003,9 @@ function ownLiteral(lit: string | undefined, patterns: string[], ctx: MatchCtx):
 const USAGE_NODE = /^\s*(?:console\.log|process\.stdout\.write)\(\s*require\(\s*(['"])(?:node:)?fs\1\s*\)\.readFileSync\(\s*(['"])([^'"\\$`]+)\2\s*(?:,\s*(['"])utf-?8\4\s*)?\)(?:\.toString\(\s*\))?\s*\)\s*;?\s*$/;
 
 /**
- * R12 item 2 (the node twin of usagePythonRead): the whole command is one `node -e '<code>'` whose code is a single
- * `console.log(require('fs').readFileSync('<literal>'[, 'utf8']))` (or `process.stdout.write(…)`), no redirect, the literal an own record.
+ * R12 item 2 (the node twin of usagePyWords, an ownStateRead unit): `node -e '<code>'` whose code is a single
+ * `console.log(require('fs').readFileSync('<literal>'[, 'utf8']))` (or `process.stdout.write(…)`), the literal an own record.
  */
-export function usageNodeRead(command: string, patterns: string[], ctx: MatchCtx): boolean {
-  const words = soloUnit(command, patterns);
-  return !!words && usageNodeWords(words, patterns, ctx);
-}
-
 function usageNodeWords(words: string[], patterns: string[], ctx: MatchCtx): boolean {
   if (words.length !== 3 || words[0] !== "node" || words[1] !== "-e") return false;
   const m = USAGE_NODE.exec(words[2]);

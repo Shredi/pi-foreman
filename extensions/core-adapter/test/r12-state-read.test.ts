@@ -9,7 +9,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
-import { buildOverlayRules, checkToolCall, readBaseline, usageNodeRead } from "../permoverlay.ts";
+import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import type { MatchCtx, OverlayRules } from "../permoverlay.ts";
 import { ownUsageReadable } from "../roundsurface.ts";
 import { ForemanReview } from "../review.ts";
@@ -85,11 +85,6 @@ test("state_usage_node_e_read", { skip: !posix }, () => {
   const F = path.join(usage, `${SID}.jsonl`);
   assert.equal(sh(`node -e "console.log(require('fs').readFileSync('${F}','utf8'))"`), "pass");
   assert.equal(sh(`node -e "process.stdout.write(require('fs').readFileSync('${F}', 'utf8'))"`), "pass");
-  assert.equal(usageNodeRead(`node -e "console.log(require('fs').readFileSync('${F}','utf8'))"`, ownReads, ctx), true);
-  // any write or other module stays out of the form
-  assert.equal(usageNodeRead(`node -e "require('fs').writeFileSync('${F}','x')"`, ownReads, ctx), false);
-  assert.equal(usageNodeRead(`node -e "require('child_process').execSync('ls ${usage}')"`, ownReads, ctx), false);
-  assert.equal(usageNodeRead(`node -e "console.log(require('fs').readFileSync('${path.join(state, "rounds.json")}','utf8'))"`, ownReads, ctx), false);
   assert.notEqual(sh(`node -e "require('fs').writeFileSync('${F}','x')"`), "pass");
 });
 
