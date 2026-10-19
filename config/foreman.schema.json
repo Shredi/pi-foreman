@@ -287,7 +287,10 @@
     "review": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "headless": { "type": "boolean", "description": "true = a deferred forwarded child permission ask is denied with the allowed forms instead of waiting for a human (headless and bench runs). User or overlay config only." } }
+      "properties": {
+        "headless": { "type": "boolean", "description": "true = a deferred forwarded child permission ask is denied with the allowed forms instead of waiting for a human (headless and bench runs). User or overlay config only." },
+        "critic": { "type": "array", "items": { "type": "string" }, "description": "Questions rendered into every reviewer and senior-reviewer task; the review answers each once per ledger item as a line `CRITIC: <item> Q<k>: <answer>`. The harness does not parse the lines. Empty list = no block. Default: the four owner questions." }
+      }
     },
     "sync": {
       "type": "object",

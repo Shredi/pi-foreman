@@ -80,6 +80,15 @@ role and either set `ladder.childPolicy: "any"` (every model available) or rank 
 The permission auto-review (see [safety](safety.md)) uses `providers.<p>.review.model`; when unset it picks the
 cheapest role-map model (by registry input price, with auth) and traces it as `by: "auto"`; with none, asks go to you.
 
+## Review critic
+
+The config list `review.critic` (default: four questions: is it lean and the right layer, real repeated friction or an
+invented edge case, code or config we would not miss, does it move toward the Pi top-chair switch) is rendered as a
+`[pi-foreman critic]` block into every `reviewer` and `senior-reviewer` task, after the ledger block. The review answers
+each question once per ledger item as a line `CRITIC: <item> Q<k>: <answer>`; an item that fails question 3 is dropped, not
+built. The harness does not parse or enforce the lines. A builder or explorer task gets no block. An overlay or preset
+replaces the list through the normal config layering; an empty list renders no block.
+
 Design record for the ladder: `design/architecture.md`
 [role ladder and rank policy](../design/architecture.md#role-ladder-and-rank-policy).
 

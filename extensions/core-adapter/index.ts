@@ -94,7 +94,7 @@ import { CompactionGate } from "./compaction.ts";
 import { resolveCachePolicy } from "./cachepolicy.ts";
 import { IdleCache, type Busy } from "./idlecache.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
-import { applyLedgerItems } from "./ledgerblock.ts";
+import { applyLedgerItems, criticOf } from "./ledgerblock.ts";
 import { citedItems, ledgerHint, writeHint } from "./hints.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, sessionTrace, withDigest } from "./retro.ts";
 import { frictionOfRunEnd } from "./friction.ts";
@@ -1948,7 +1948,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === "subagent" && !s.isChild) {
         const lf = boundLedger(s.markerDir, s.id);
         const lg = (() => { try { return lf ? fs.readFileSync(lf, "utf8") : null; } catch { return null; } })();
-        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf)) s.trace?.emit(r);
+        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")))) s.trace?.emit(r);
       }
       if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input)) s.trace?.emit(r);
       if (event.toolName === "subagent" && climbs.length > 0) {
