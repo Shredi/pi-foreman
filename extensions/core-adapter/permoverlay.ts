@@ -2920,7 +2920,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const pd = prot.find((x) => x.hit!.kind === "deny");
   if (pd) return protectDecision(pd.hit!, pd.w, "shell command");
   // R16 item 1, ruling 2: every ask from here on is self-modification (never auto-reviewed) when a protect ask hit is a write or remove target
-  const written = prot.find((x) => (targets.has(x.w) || targets.has(asPathWord(x.w)) || removed.has(x.w)) && !ownScratch(pctx, x.w));
+  const written = prot.find((x) => (targets.has(x.w) || targets.has(asPathWord(x.w)) || removed.has(x.w)) && !ownScratch(pctx, x.w, true));
   const sm = written ? { selfMod: true as const } : {};
   // R10 item 3: the permission system read-allows the toolchain probe dirs for any command; only a pure ls/stat/which line may name them
   const probeWord = words.find((w) => !c.cmdWords!.includes(w) && probeHit(rules, w, pctx) !== null);
@@ -3466,12 +3466,38 @@ interface ProtectHit {
 }
 
 /** R17: `word` (resolved against the session cwd, `..` folded) lies strictly below the session's own `{cwd}/.pi/scratch`. */
-function ownScratch(ctx: MatchCtx, word: string): boolean {
-  if (!/^[\w./@+:-]+$/.test(word)) return false; // the shell lexer resolves no `$var`, substitution or glob: only literal words
+function ownScratch(ctx: MatchCtx, word: string, shell = false): boolean {
+  // the shell lexer resolves no `$var`, substitution or glob: only literal words (a path tool's input is no shell word)
+  if (shell && !/^[\w./@+:-]+$/.test(word)) return false;
   const p = ctx.platform === "win32" ? path.win32 : path.posix;
   const fold = (s: string): string => (foldsCase(ctx.platform) ? s.toLowerCase() : s);
-  const rel = p.relative(fold(p.resolve(ctx.cwd, ".pi", "scratch")), fold(p.resolve(ctx.cwd, word)));
-  return rel !== "" && rel !== ".." && !rel.startsWith(".." + p.sep) && !p.isAbsolute(rel);
+  const inside = (root: string, x: string): boolean => {
+    const rel = p.relative(fold(root), fold(p.resolve(ctx.cwd, x)));
+    return rel !== "" && rel !== ".." && !rel.startsWith(".." + p.sep) && !p.isAbsolute(rel);
+  };
+  if (!inside(p.resolve(ctx.cwd, ".pi", "scratch"), word)) return false;
+  // the protect match follows links: every spelling it sees, the realpath included, must lie in the real scratch dir (fail closed)
+  try {
+    const fsx = defaults(ctx);
+    const root = fsx.realpath(p.resolve(ctx.cwd, ".pi", "scratch"));
+    if (!root) return false;
+    const real = (x: string): string | null => realDeep(p.resolve(ctx.cwd, x), p, fsx);
+    for (const c of pathCandidates(word, ctx)) {
+      const r = real(c);
+      if (!r || !inside(root, r)) return false;
+    }
+    const abs = p.resolve(ctx.cwd, word);
+    let st: fs.Stats | null = null;
+    try { st = fs.lstatSync(abs); } catch { st = null; }
+    if (st?.isSymbolicLink()) {
+      const r = fsx.realpath(abs);
+      if (!r || !inside(root, r)) return false;
+      try { st = fs.lstatSync(r); } catch { return false; }
+    }
+    return !(st && !st.isDirectory() && st.nlink > 1);
+  } catch {
+    return false;
+  }
 }
 
 function protectDecision(hit: ProtectHit, word: string, what: string, selfMod = true): Decision {
