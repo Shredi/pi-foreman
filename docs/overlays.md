@@ -70,12 +70,25 @@ and `foreman:ready`. There is no second handshake.
 | Display names | `displayNames` preset or per-id map |
 | Skills | `skills/` in the overlay package (Pi skills format) |
 | Permission rules | `safety.permissions` entries (see [safety](safety.md)) |
+| Reviewer rules | `safety.permissions.autoReview.rulesFile` replaces the shipped reviewer rules (see [Reviewer rules file](#reviewer-rules-file)) |
 | Guards and child extensions | `safety.requiredChildExtensions` |
 | MCP servers | Pi `mcp.json` or `registerMcpServer` from the overlay extension |
 | Events | `foreman:ready` on `pi.events` (see Handshake); no other `foreman:*` events are emitted |
 | Retro backlog | `retro.backlogDir` points the central backlog elsewhere; `retro.repoBacklog` and `retro.workspaceKey` pick per-workspace stores and keys (see [retro](retro.md)). User or overlay config only. |
 | Ceremony, fan-out, fallback | `ceremony.*`, `fanout.max`, `providers.<p>.fallback` |
 | Host pressure limits | `resources.*` (see [resources](resources.md)); a project file may only tighten them |
+
+### Reviewer rules file
+
+The foreman's own overlay asks (a project or session ask rule, a toolchain probe line, an unclear drive path) go to the
+review model before the human dialog (`safety.permissions.autoReview.enabled`, default on). The model judges them by the
+prose rules in `config/permissions.rules.md`: the tiers `hard_deny`, `soft_deny` and `allow` and an environment paragraph
+that names what the session owns. `safety.permissions.autoReview.rulesFile` (absolute, `~/...` or relative to the agent
+dir) replaces that file whole; there is no append. It is read from the user, organisation and default layers only: a
+project or session value is ignored with a warning. The replacing file is write-protected like `protect.ask`, the shipped
+one is under `protect.writeAskSelfHost`. Keep it short: system prompt, rules and request together stay within 4000
+characters, and a request that does not fit goes to the human. Deny decisions and asks that touch protected configuration
+never reach the model.
 
 ### Own host CLI
 

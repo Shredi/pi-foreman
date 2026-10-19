@@ -257,6 +257,7 @@
     ],
     "writeAskSelfHost": [
       "{pkgRoot}/config/permissions*.json",
+    "{pkgRoot}/config/permissions.rules.md",
       "{pkgRoot}/config/foreman.defaults.json",
       "{pkgRoot}/package.json"
     ]
