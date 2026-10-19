@@ -87,6 +87,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [trace](#trace) | on | Writes allowlisted trace records per session and child (no command lines or file contents); by default it follows the effective retro switch. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
 | [footer-ui](#footer-ui) | on | Shows tokens, list-price cost and child launches in the footer, the children widget below the editor and the glyph set, with `/foreman cost` for a summary. | on by default | [sessions](sessions.md#commands) |
 | [dialogs-cli](#dialogs-cli) | on | The foreman-only `foreman_dialogs({trace?})` tool and `foreman dialogs <trace>` (`bin/foreman`, `.cmd`, `.ps1`) return the JSON of `/foreman dialogs --json` for this session's trace or a named trace file; read only. A session's own async run results join the read-only verbs. | on by default | [sessions](sessions.md#commands) |
+| [ask-user-question](#ask-user-question) | on | The foreman-only `ask_user_question({questions})` tool (1 to 4 questions, 2 to 4 options each plus free text) raises the questions in the pane and blocks the turn until a human answers; without a UI it tells the agent to use the ask.md file path, which stays unchanged. With an open ask.md in an own handoff dir the answer is also written to `ruling-<n>.md`. | on by default | [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session) |
 | [herdr](#herdr) | on | In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes. | on by default | [sessions](sessions.md#herdr) |
 | [radar](#radar) | on | `foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files. | on by default | [sessions](sessions.md#radar) |
 | [compaction](#compaction) | on | Compacts the context earlier on dearer models: the trigger fraction depends on the model's input price tier. | on by default | [sessions](sessions.md#further-session-keys) |
@@ -599,6 +600,12 @@ Switch: `retro.repoBacklog` is non-empty.
 ### dialogs-cli
 
 **Permission dialogs as a tool and CLI.** The foreman-only `foreman_dialogs({trace?})` tool and `foreman dialogs <trace>` (`bin/foreman`, `.cmd`, `.ps1`) return the JSON of `/foreman dialogs --json` for this session's trace or a named trace file; read only. A session's own async run results join the read-only verbs.
+
+No config key.
+
+### ask-user-question
+
+**Structured in-pane question.** The foreman-only `ask_user_question({questions})` tool (1 to 4 questions, 2 to 4 options each plus free text) raises the questions in the pane and blocks the turn until a human answers; without a UI it tells the agent to use the ask.md file path, which stays unchanged. With an open ask.md in an own handoff dir the answer is also written to `ruling-<n>.md`.
 
 No config key.
 

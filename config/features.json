@@ -527,6 +527,17 @@
       "enable": ""
     },
     {
+      "id": "ask-user-question",
+      "title": "Structured in-pane question",
+      "purpose": "The foreman-only `ask_user_question({questions})` tool (1 to 4 questions, 2 to 4 options each plus free text) raises the questions in the pane and blocks the turn until a human answers; without a UI it tells the agent to use the ask.md file path, which stays unchanged. With an open ask.md in an own handoff dir the answer is also written to `ruling-<n>.md`.",
+      "doc": "docs/sessions.md#ask-by-file-parent-that-is-not-a-pi-session",
+      "keys": [],
+      "commands": [],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "herdr",
       "title": "Herdr pane state",
       "purpose": "In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes.",

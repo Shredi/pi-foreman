@@ -84,6 +84,7 @@ import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } 
 import { workspaceOf } from "./python.ts";
 import { hubWorkflowDriftLines } from "./hubdrift.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
+import { ASK_USER_TOOL, askUserQuestion } from "./askuser.ts";
 
 const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildWidget, rungOf } from "./childwidget.ts";
@@ -2870,6 +2871,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (s.isChild) return { content: [{ type: "text" as const, text: `${DIALOGS_TOOL} is for the foreman only.` }], details: { decision: "refused" }, isError: true };
         const text = dialogsJson(typeof params.trace === "string" && params.trace ? { file: path.resolve(s.cwd, params.trace) } : s.trace);
         return { content: [{ type: "text" as const, text }], details: { decision: "done" } };
+      },
+    } as never);
+  }
+
+  // R16 item 5: a structured in-pane question for a human at the pane (askuser.ts); foreman only.
+  if (process.env.PI_SUBAGENT_CHILD !== "1") {
+    pi.registerTool({
+      name: ASK_USER_TOOL,
+      label: "Ask the user",
+      description: "Ask the human at the pane 1 to 4 structured questions (2 to 4 options each, plus free text unless allowFreeText is false); blocks until answered. Without a human at the pane it says so: ask by file (ask.md) instead. With an open ask.md the answer is also written to ruling-<n>.md.",
+      parameters: { type: "object", properties: { questions: { type: "array", minItems: 1, maxItems: 4, items: { type: "object", properties: { question: { type: "string", minLength: 1 }, options: { type: "array", minItems: 2, maxItems: 4, items: { type: "string", minLength: 1 } }, allowFreeText: { type: "boolean" } }, required: ["question", "options"], additionalProperties: false } } }, required: ["questions"], additionalProperties: false } as never,
+      async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+        const s = await ensureSession(ctx);
+        if (s.isChild) return { content: [{ type: "text" as const, text: `${ASK_USER_TOOL} is for the foreman only.` }], details: { decision: "refused" }, isError: true };
+        const r = await askUserQuestion(params, { hasUI: ctx.hasUI, ui: ctx.ui, ownDirs: () => ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)) });
+        return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.decision }, ...(r.decision === "refused" ? { isError: true } : {}) };
       },
     } as never);
   }
