@@ -115,7 +115,7 @@ touches `.ask` and shows the session as blocked in Herdr (`herdr:blocked`, label
   `parent` never does. **Who may write a ruling file:** only the parent. A session's write, edit, `foreman_copy` /
   `foreman_move` destination, or `bash` / `powershell` / `foreman_bg` / `bg_run` command that names `ruling*.md` in a dir
   where it is the child is refused up front ("a session cannot write its own parent's ruling"). A shell command is lexed
-  by `scripts/shell_facts.py` (the git guard's Lexer, nested `sh -c` / heredoc scripts up to depth 4) and refused only
+  by the overlay's lexer (`permoverlay.ts`, no cd or variable resolution) and refused only
   when a write surface may be such a file: a redirect on any fd, `tee`/`cp`/`mv`/`install`/`ln`/`rsync` (their
   destinations, and a ruling file as their source), `dd of=`, `sed -i` and sed `w`, `truncate`/`touch`, `sort -o`,
   `curl -o`, `--output=`, PowerShell write cmdlets, python/node/perl code writes, or a ruling-named argument of a

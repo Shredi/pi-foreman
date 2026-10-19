@@ -437,11 +437,6 @@ spellings as well, so a read root stored by its realpath (`readRootsOf`) still m
 still decides on real paths, the `.git` check runs on the spelling that matched, and a different file still does not match. Off
 win32 nothing changes.
 
-The bash scanner reads a backslash as an escape, so `D:\x\h\ruling.md` names another file in bash. `native_raw()`
-(`scripts/shell_facts.py`) therefore records a bash word written as a native drive path (quoted or not) as a write candidate in
-its quote-stripped native spelling as well: redirects, copiers, `tee`, `dd of=`, and ruling-named arguments are checked against
-the native path, because a quoted spelling or a Windows shell reaches it. Words with `$` or a backtick are left as they are.
-This is win32 bash only and fails closed.
 
 ### Known limit: the permission system package
 

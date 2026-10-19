@@ -22,8 +22,6 @@ export type GuardOutcome = { kind: "decision"; d: HookDecision } | { kind: "fail
  *   ledger_guard_stop   open: a broken gate must not trap the session in a continue loop
  *   git_guard           closed: commit/push lint (main) and the child git block list
  *   shell_write_guard   closed: the foreman's bash may not write project files (plan D3)
- *   shell_facts         reports facts only, never decides; this entry exists for the type and is never
- *                       reached (the self-ruling caller in ruling.ts runs it directly and fails closed)
  */
 export type FailPolicy = "closed" | "open" | "closed-if-ledger-target";
 export const FAIL_POLICY: Record<GuardName, FailPolicy> = {
@@ -34,7 +32,6 @@ export const FAIL_POLICY: Record<GuardName, FailPolicy> = {
   ledger_guard_stop: "open",
   git_guard: "closed",
   shell_write_guard: "closed",
-  shell_facts: "open",
 };
 
 const LABEL: Record<GuardName, string> = {
@@ -45,7 +42,6 @@ const LABEL: Record<GuardName, string> = {
   ledger_guard_stop: "stop gate",
   git_guard: "git guard",
   shell_write_guard: "shell write guard",
-  shell_facts: "shell facts",
 };
 
 function parseJsonLoose(text: string): unknown {
