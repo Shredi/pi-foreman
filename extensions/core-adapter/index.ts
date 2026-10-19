@@ -41,7 +41,7 @@ import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from ".
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
-import { ForemanReview, overlayAutoReview, REVIEW_LINK, reviewTarget, userPromptOf } from "./review.ts";
+import { autoReviewDoctorLine, autoReviewTarget, ForemanReview, overlayAutoReview, REVIEW_LINK, reviewTarget, userPromptOf } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
 import { ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
@@ -3456,6 +3456,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!rt) out.push(`WARN no review model for provider ${ctx.model?.provider ?? "(none)"}: model review (${REVIEW_LINK}) is off, every ask goes to you — set providers.<p>.review.model in foreman.json`);
     else if (!ctx.modelRegistry.find(rt.provider, rt.modelId)) fail(`review model ${rt.provider}/${rt.modelId} not in the model registry; asks go to you`, "correct providers.<p>.review.model.");
     else ok(`model review: ${rt.provider}/${rt.modelId} (timeout ${rt.timeoutMs} ms)`);
+    out.push(`INFO ${autoReviewDoctorLine(get(s.config.config, "safety.permissions.autoReview.enabled") !== false, rulesFilePath(s.config.basePermissions, s.agentDir, PKG_ROOT), PKG_ROOT, rt ?? autoReviewTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as unknown as Parameters<typeof autoReviewTarget>[2]))}`);
     if (s.permissionSystemError) fail(s.permissionSystemError, "run the installer (node setup.mjs); the package is pinned in packages.lock.json.");
     else ok(`permission system resolvable (${PS_PACKAGE})`);
     if (s.overlay) ok(`permission overlay active (${s.overlay.bashDeny.length} command deny, ${s.overlay.pathRules.length} path rules, ${s.overlay.bashAsk.length + s.overlay.pathAsk.length} project/session ask)`);

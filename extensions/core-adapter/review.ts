@@ -112,6 +112,12 @@ export function autoReviewTarget(config: Json | undefined, provider: string | un
   return { provider: best.provider, modelId: best.modelId, timeoutMs: typeof t === "number" && Number.isFinite(t) && t > 0 ? t : DEFAULT_REVIEW_TIMEOUT_MS, auto: true };
 }
 
+/** R17: the doctor's `autoReview: on|off (rulesFile: <path or shipped>, model: <provider/model>)` line; `shipped` = the rules file is the package default. */
+export function autoReviewDoctorLine(enabled: boolean, rulesFile: string | null, pkgRoot: string, target: ReviewTarget | null): string {
+  const shipped = !rulesFile || path.resolve(rulesFile) === path.resolve(pkgRoot, "config", "permissions.rules.md");
+  return `autoReview: ${enabled ? "on" : "off"} (rulesFile: ${shipped ? "shipped" : rulesFile}, model: ${target ? `${target.provider}/${target.modelId}` : "none"})`;
+}
+
 /** The reviewer's reply text -> verdict. Anything but a well-formed JSON verdict defers. */
 export function parseVerdict(text: string): Outcome {
   const defer: Verdict = { kind: "defer" };
