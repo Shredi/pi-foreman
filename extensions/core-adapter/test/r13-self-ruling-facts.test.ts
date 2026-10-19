@@ -1,5 +1,5 @@
-// R13 item 1 (hub 170, hub 288): the self-ruling guard reads lexed write surfaces (scripts/shell_facts.py, the git guard's
-// Lexer). Named PASS cases are literal friction lines of R11/R12; the fail-closed cases refuse with the old reason.
+// R13 item 1 (hub 170, hub 288): the self-ruling guard reads lexed write surfaces (the git guard's
+// Lexer; scripts/shell_facts.py was removed in R16). Named PASS cases are literal friction lines of R11/R12; the fail-closed cases refuse with the old reason.
 // R16 item 4a: ruling.ts keeps the plain literal-path deny on the TS lexer; the rows it no longer decides live in
 // test/retired/self-ruling-rows.json (fail-closed, computed, sed/awk/find/xargs and bound-variable rows).
 import { test } from "node:test";

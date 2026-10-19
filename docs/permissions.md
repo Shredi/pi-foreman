@@ -8,15 +8,17 @@
 
 The foreman's permission decisions come in two layers.
 
-- **Basic blockers**, the deterministic floor: `protect.deny`, `childDeny`, the destructive guard, credential reads,
-  foreign session dirs, an own ruling written by a plain path, secrets in commits and writes that modify the
-  package's own permission config (self-modification). They run first, are never judged by a model and nothing below
-  can allow what they refuse.
+- **Basic blockers**, the deterministic floor: `protect.deny`, `childDeny`, credential reads, foreign session dirs and
+  an own ruling written by a plain path are overlay denies; they are never judged by a model. The destructive guard
+  and the secrets-in-commit check run after the overlay: they are later deterministic layers that an auto-review
+  allow does not skip.
 - **Auto reviewer**: every other foreman overlay ask goes to the review model first, judged by the prose rules in
   `config/permissions.rules.md`. Its verdict decides: an allow lets the call go on to the later layers.
 
-What reaches a human: a reviewer deny (riskLevel high or critical) is a block (the call is refused with its reason); a soft deny
-(low or medium), a defer, an error, a timeout or no review model is the dialog as before. A child's ask and a session without a UI behave as before. An overlay
+What reaches a human: a reviewer deny is a block (the call is refused with its reason) only with riskLevel high or
+critical; a deny with riskLevel low, medium or missing, a defer, an error, a timeout or no review model is the dialog
+as before. Self-modification writes (`selfMod`: a protect ask hit on a shell write or remove target, or on a
+write, edit, move or copy tool) go to the human dialog with no model call; they are not refused. A child's ask and a session without a UI behave as before. An overlay
 replaces the rules file through `safety.permissions.autoReview.rulesFile` (user layer only; see
 [overlays](overlays.md#reviewer-rules-file)); `safety.permissions.autoReview.enabled` switches the reviewer off.
 
