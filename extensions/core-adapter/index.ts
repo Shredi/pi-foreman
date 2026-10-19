@@ -2885,7 +2885,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
         const s = await ensureSession(ctx);
         if (s.isChild) return { content: [{ type: "text" as const, text: `${ASK_USER_TOOL} is for the foreman only.` }], details: { decision: "refused" }, isError: true };
-        const r = await askUserQuestion(params, { hasUI: ctx.hasUI, ui: ctx.ui, ownDirs: () => ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)) });
+        const r = await askUserQuestion(params, { hasUI: ctx.hasUI, ui: ctx.ui, ownDirs: () => childDirsOf(s) });
         return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.decision }, ...(r.decision === "refused" ? { isError: true } : {}) };
       },
     } as never);

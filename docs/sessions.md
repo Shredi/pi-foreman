@@ -103,7 +103,7 @@ touches `.ask` and shows the session as blocked in Herdr (`herdr:blocked`, label
 - **`ask_user_question` (foreman only).** When a human is at the pane, the foreman can also raise a structured question:
   `ask_user_question({questions: [{question, options, allowFreeText?}]})` takes 1 to 4 questions with 2 to 4 options each
   (plus an "Other" free-text entry unless `allowFreeText` is false) and blocks the turn until each is answered. The
-  `ask.md` file path above stays unchanged. When an own handoff dir holds an open `ask.md`, the answer is also written to
+  `ask.md` file path above stays unchanged. When a handoff dir where this session is the child holds an open `ask.md` (never a dir it opened as parent), the answer is also written to
   `ruling-<n>.md` (n from its `# Ask <n>:` line; an existing ruling is not overwritten). With no UI (print/rpc mode,
   nobody at the pane) or a dismissed dialog the result tells the agent to use the `ask.md` file path instead.
 - **`.seen` by the harness.** When a file wait on `ruling-<n>.md` (or `ruling.md`) in an own handoff dir wakes, pi-foreman

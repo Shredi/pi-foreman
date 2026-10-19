@@ -1,5 +1,5 @@
 // ask_user_question (R16 item 5): a structured in-pane question for a human at the pane (foreman only). The ask.md
-// file path (askcontract.ts) is unchanged; when an own handoff dir holds an open ask.md, the answer is also written
+// file path (askcontract.ts) is unchanged; when a handoff dir where this session is the child holds an open ask.md, the answer is also written
 // to `ruling-<n>.md`. No UI (print/rpc/json mode, unattended): the result tells the agent to use the ask.md path.
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -21,7 +21,7 @@ export interface AskUserDeps {
     select(title: string, options: string[]): Promise<string | undefined>;
     input(title: string, placeholder?: string): Promise<string | undefined>;
   };
-  /** This session's own handoff dirs (owned.ts ownHandoffDirs). */
+  /** The handoff dirs where this session is the child (owned.ts childHandoffDirs), never those it opened as parent. */
   ownDirs: () => string[];
 }
 
