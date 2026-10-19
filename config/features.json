@@ -549,6 +549,28 @@
       "enable": ""
     },
     {
+      "id": "auto-review-overlay",
+      "title": "Auto reviewer for overlay asks",
+      "purpose": "Every foreman overlay ask that is no self-modification goes to the review model before the human dialog: an allow lets the call go on, a deny with riskLevel high or critical is a block, defers, errors, timeouts and a missing model fall back to the dialog. The deterministic basic blockers run first and are not judged.",
+      "doc": "docs/permissions.md#two-layers",
+      "keys": [],
+      "commands": [],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
+      "id": "reviewer-rules-file",
+      "title": "Reviewer rules file",
+      "purpose": "The auto reviewer judges overlay asks by the prose rules in `config/permissions.rules.md`; `safety.permissions.autoReview.rulesFile` in the user layer or an overlay replaces the file.",
+      "doc": "docs/overlays.md#reviewer-rules-file",
+      "keys": [],
+      "commands": [],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "herdr",
       "title": "Herdr pane state",
       "purpose": "In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes.",

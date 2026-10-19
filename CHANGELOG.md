@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Round 16
+- Auto reviewer for overlay asks: a foreman overlay ask that is no self-modification goes to the `foreman-review` authorizer before the human dialog (`safety.permissions.autoReview.enabled`, default on). An allow lets the call go on; a deny with riskLevel high or critical is a block; a soft deny, defer, error, timeout or missing model is the dialog. Trace event `auto_review_allow`; `foreman_dialogs` counts it as its own family. See docs/permissions.md "Two layers".
+- The reviewer rules are prose in `config/permissions.rules.md` (tiers hard_deny, soft_deny, allow, plus an environment paragraph); `safety.permissions.autoReview.rulesFile` (user layer or overlay) replaces the file. The file is protected under `writeAskSelfHost`.
+- Removals: `scripts/shell_facts.py` is deleted (872 lines to 0); `ruling.ts` shrinks from 280 to 196 lines and keeps the plain literal-path deny of a session's own parent ruling plus one flat ask trigger; `permoverlay.ts` drops the USAGE_VERBS chain and the python/node usage-read forms (`ownRead` is `ownStateRead` alone), net +19 lines for the whole file because of the reviewer wiring. Self-modification asks and the deterministic floor stay as before.
+- `ask_user_question({questions})`, a foreman-only tool: 1 to 4 questions with 2 to 4 options and free text, raised in the pane; without a UI it points at the `ask.md` file path.
+- `review.critic` (list, default four questions on leanness and the right layer, real friction, dispensable code, direction) is rendered into every reviewer and senior-reviewer task with the instruction to answer `CRITIC: <item> Q<k>: <answer>` once per ledger item; the harness does not parse the lines. An empty list renders no block.
+- `foreman_dialogs` families: `self_ruling_refusal` (refusal text and the blocked `self_ruling` guard record), `trace_read` (checked before `state_usage_read`), `async-subagent-results` joins `own_run_dir`, `auto_review_allow`.
+- Docs: new "Two layers" section in docs/permissions.md; the `writeAskSelfHost` list names `config/permissions.rules.md`; feature rows for the auto reviewer, the rules file and the critic.
+
 ### Round 14
 - Own-state reads have one source of truth: `ownStateRead` decides for the overlay and the review link alike. Reads of the session's own trace file, its own bg_run outputs (which join the own-read set; the `foreman_wait` log is bounded) and a `.workflow/scratch/` script or a `cd <worktree> &&` prefix pass for the foreman.
 - Child message-file input: a child's `git commit -F` message file lies only under `<worktree>/.workflow/scratch/` or its own `$FOREMAN_SCRATCH`; `.pi/` is refused, a white-space `FOREMAN_SCRATCH` is unresolvable and denied, and an inline `FOREMAN_SCRATCH=` never counts. The message-file exemption lifts only the write protection of `git commit -F`; a child `git tag -F` under a protect rule is denied with its own reason. A zsh `=word` message file is refused by the git guard.

@@ -4,6 +4,22 @@
 > Read it when a child command is reviewed or denied that you expected to run, or before you widen an allow.
 > The overlay deny and protect rules and the git guard run first; nothing here can allow what they refuse.
 
+## Two layers
+
+The foreman's permission decisions come in two layers.
+
+- **Basic blockers**, the deterministic floor: `protect.deny`, `childDeny`, the destructive guard, credential reads,
+  foreign session dirs, an own ruling written by a plain path, secrets in commits and writes that modify the
+  package's own permission config (self-modification). They run first, are never judged by a model and nothing below
+  can allow what they refuse.
+- **Auto reviewer**: every other foreman overlay ask goes to the review model first, judged by the prose rules in
+  `config/permissions.rules.md`. Its verdict decides: an allow lets the call go on to the later layers.
+
+What reaches a human: a reviewer deny (riskLevel high or critical) is a block (the call is refused with its reason); a soft deny
+(low or medium), a defer, an error, a timeout or no review model is the dialog as before. A child's ask and a session without a UI behave as before. An overlay
+replaces the rules file through `safety.permissions.autoReview.rulesFile` (user layer only; see
+[overlays](overlays.md#reviewer-rules-file)); `safety.permissions.autoReview.enabled` switches the reviewer off.
+
 ## Where this applies
 
 A child (subagent) bash command the permission system asks about is forwarded to the foreman's review link
@@ -451,10 +467,10 @@ change on the package side is a separate round.
 
 When the session's working directory is the package root or inside it (symlinks resolved; case-insensitive on
 Windows and macOS), the baseline's `protect.writeAsk` entries for `{pkgRoot}` and `{pkgRoot}/*` are replaced by
-`protect.writeAskSelfHost`: only `config/permissions*.json`, `config/foreman.defaults.json` and `package.json`
-under the package root still ask in the main session and are denied to children. Other writes in the checkout (docs,
-extensions, tests, scripts) pass. The child ban on naming a protected path in a shell narrows the same way, to these
-three paths. Every other protect list is unchanged (`.git`, agent dir, `.pi`, handoffs). The session writes a `protect_selfhost` trace event and a top
+`protect.writeAskSelfHost`: only `config/permissions*.json`, `config/permissions.rules.md`, `config/foreman.defaults.json`
+and `package.json` under the package root still ask in the main session and are denied to children. Other writes in the
+checkout (docs, extensions, tests, scripts) pass. The child ban on naming a protected path in a shell narrows the same
+way, to these paths. Every other protect list is unchanged (`.git`, agent dir, `.pi`, handoffs). The session writes a `protect_selfhost` trace event and a top
 session shows one notice: "pi-foreman: dev checkout: package-root write protection narrowed".
 
 ## Known limits
