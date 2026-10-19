@@ -550,6 +550,8 @@ export class ForemanReview {
       else {
         model = `${target.provider}/${target.modelId}`;
         out = await this.callModel(s, target, text, a.value, system);
+        // R16 ruling 2: an overlay ask is denied only at riskLevel high/critical; a deny without one (or another level) goes to the human
+        if (out.verdict.kind === "deny" && out.riskLevel !== "high" && out.riskLevel !== "critical") out = { verdict: { kind: "defer" }, label: "deny-no-risk", ...(out.reason ? { reason: out.reason } : {}) };
       }
     } catch {
       out = { verdict: { kind: "defer" }, label: "error", errorKind: "internal" };
