@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Round 15
+- `roles.<id>.skills` names the skills a child role gets, as catalog entries; `inheritSkills` stays off. User or overlay config only. A child's shell read of a skill its role names passes (per role; the `read` tool sees the union), `foreman setup` re-renders the read keys, and extra `SKILL.md` frontmatter keys are tolerated by Pi and pi-subagents (tests). Residual: package skills under `{agentDir}/npm/node_modules` and settings `skills` paths still ask.
+- `roles.<id>.mcp` (`server` or `server/tool`) maps onto `mcp:<entry>` tools for child roles; user or overlay config only. Errors where the role's `denyTools` deny the server's tools, and for `foreman` and `session-foreman`. The deny check normalises the tool part like Pi.
+- New generic skill `skills/skill-authoring`, listed in package.json `pi.skills`, with a Pi section (role skills, placement and precedence, loader keys, trigger-test recipe).
+- Docs: `## Skills and MCP per role` in docs/roles.md; feature rows for `roles.<x>.mcp`.
+- Read keys: `foreman setup` renders read grants for Pi install releases, the subagent run root and `readRoots` (the Python renderer follows the TS `readRootsOf` rules). See docs/permissions.md.
+- Checkpoint verdict: a verdict file written by the parent (`ruling-plan.md`) decides `foreman_checkpoint`, bound to the plan's ctime; a parent `ruling.md` APPROVED counts in parent mode. The node tests are hermetic against ambient session env.
+
 ### Round 17
 - A write into the session's own `{cwd}/.pi/scratch/` is no longer self-modification (`selfMod`) in the overlay: a shell write or a path-tool write there stays an ordinary ask and goes to the auto reviewer instead of the human dialog. See docs/permissions.md "Two layers".
 - `foreman doctor` prints an `autoReview:` line: `on|off (rulesFile: shipped or the path, model: <provider/model> or none)`.

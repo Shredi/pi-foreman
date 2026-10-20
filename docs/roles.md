@@ -118,3 +118,31 @@ Design record for the ladder: `design/architecture.md`
 | `providers.<p>.fallback.provider`, `providers.<p>.fallback.confirm` | One explicit fallback provider for roles this provider does not map (auth failure or unavailability only), and whether to ask once per session first. |
 
 A skill's `SKILL.md` may carry extra frontmatter keys (`metadata`, `compatibility`, `allowed-tools`, `context`, `agent`); both Pi and pi-subagents tolerate and ignore them, so they change neither the catalog entry nor the role.
+
+## Skills and MCP per role
+
+The table above has the key rows; this section gives the behaviour.
+
+### `roles.<id>.skills`
+
+- A child role gets the skills it names, as catalog entries (name, description, location). `inheritSkills` stays off and the system prompt is replaced, so an unnamed skill is not listed. The child reads the body with the `read` tool.
+- A name is one plain path segment. The repo copy (`<repo>/.agents/skills`) wins over a user copy (`~/.agents/skills`, `<agentDir>/skills`) of the same name. Pi's loader takes the frontmatter `name` and falls back to the directory name; the role resolver matches by directory name, so keep the two equal.
+- User or overlay config only; a project or session value is ignored with a warning.
+- Read scope: shell reads are granted per role, only for the skill dirs that role names. The `read` tool sees the union of the skills any role names. `foreman setup` re-renders the `external_directory_read` keys, so re-run it after changing `skills` (see docs/permissions.md, "Skill reads").
+- Residual: a package skill under `{agentDir}/npm/node_modules`, or a skill from a settings `skills` path, still asks when a child reads its body. An in-repo named skill stays denied to a child's shell read (the `read` tool works).
+- The package ships one generic skill, `skills/skill-authoring`, listed in `pi.skills`; name it in a role's `skills` to give that role the authoring guide.
+
+### `roles.<id>.mcp`
+
+- A list of strings. An entry is `server` (all of its tools) or `server/tool`; each becomes `mcp:<entry>` in the role's generated subagent tools, served by Pi's built-in MCP.
+- User or overlay config only; a project or session value is ignored with a warning, because a server runs a command.
+- Servers come from Pi's `<agentDir>/mcp.json`; the project `.pi/mcp.json` counts only when the project is trusted. Tool names are `mcp__<server>__<tool>`; a character outside `[A-Za-z0-9_]` becomes `_`.
+- `enabled: false` in `mcp.json` keeps the server off in children too. A server cannot be kept child-only through `mcp.json`: any enabled server also connects in the main session (unless `--no-mcp`).
+- `pi-mcp-adapter`, if installed, takes priority over the built-in MCP.
+- A role without `mcp` loads no MCP extension and starts no server.
+- The read-only roles (`planner`, `explorer`, `reviewer`, `senior-reviewer`) deny `mcp__*` through `denyTools` by default.
+
+Two config errors:
+
+- `roles.<id>.mcp: role <id> denies <pattern> (denyTools); remove mcp or the deny` (hits the four read-only roles by default).
+- `roles.<id>.mcp: only child roles take mcp; the main session already loads every enabled server in mcp.json` (hits `foreman` and `session-foreman`).
