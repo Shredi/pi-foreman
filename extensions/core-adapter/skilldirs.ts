@@ -1,4 +1,4 @@
-// The skill paths a child's role names (roles.<role>.skills), resolved the way pi-subagents resolves them, as realpaths.
+// The skill paths a child's role names (roles.<role>.skills), resolved the way pi-subagents resolves them, as realpaths and, for a linked skill, as the link spelling.
 // permoverlay.ts (MatchCtx.skillDirs) lets a read-only shell word below one of them skip the childDeny `.agents` rules.
 // Fail-closed: any error gives an empty list.
 import * as fs from "node:fs";
@@ -47,9 +47,11 @@ export async function childSkillDirs(configRoles: unknown, role: string | null |
     const out = new Set<string>();
     for (const s of resolve(names, cwd).resolved) {
       const target = path.basename(s.path) === "SKILL.md" ? path.dirname(s.path) : s.path;
-      const real = fs.realpathSync(target);
-      if (path.parse(real).root === real || homes.some((h) => isAncestorOrSame(real, h))) continue;
-      out.add(real);
+      // both spellings: a shell word names the link (`~/.agents/skills/x`), the protect match also sees its realpath
+      for (const d of new Set([path.resolve(target), fs.realpathSync(target)])) {
+        if (path.parse(d).root === d || homes.some((h) => isAncestorOrSame(d, h))) continue;
+        out.add(d);
+      }
     }
     return [...out];
   } catch {
