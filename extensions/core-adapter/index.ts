@@ -407,7 +407,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.widget.refresh();
     }
   };
-  pi.events?.on(PERMISSIONS_UI_PROMPT, (d: unknown) => radarEvent((s) => s.widget.runs.onPrompt(d)));
+  // Dialog count (dialogs.ts): one `dialog` record per prompt this session shows (`permission`), or per forwarded child prompt (`child`, never also `permission`).
+  const promptsSeen = new Set<string>();
+  const traceDialogPrompt = (d: unknown): void => {
+    const p = (d && typeof d === "object" ? d : {}) as { requestId?: unknown; forwarding?: unknown };
+    if (typeof p.requestId === "string") {
+      if (promptsSeen.has(p.requestId)) return;
+      promptsSeen.add(p.requestId);
+      if (promptsSeen.size > 256) promptsSeen.delete(promptsSeen.values().next().value as string);
+    }
+    const f = p.forwarding && typeof p.forwarding === "object" ? (p.forwarding as { requesterAgentName?: unknown }) : null;
+    const who = f && typeof f.requesterAgentName === "string" ? { agent: f.requesterAgentName } : {};
+    [...sessions.values()][0]?.trace?.emit({ event: "dialog", surface: f ? "child" : "permission", ...who });
+  };
+  pi.events?.on(PERMISSIONS_UI_PROMPT, (d: unknown) => {
+    traceDialogPrompt(d);
+    radarEvent((s) => s.widget.runs.onPrompt(d));
+  });
   pi.events?.on(PERMISSIONS_DECISION, (d: unknown) => radarEvent((s) => s.widget.runs.onDecision(d)));
   const radarTouch = (s: Session | undefined, ctx: ExtensionContext): void => {
     if (!s) return;
@@ -946,7 +962,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (event.source === "set" || event.source === "cycle") userPickedModel = true;
     const ms = sessionFor(ctx);
     if (ms && !ms.isChild && event.model?.provider === BRIDGE_PROVIDER && event.previousModel?.provider !== BRIDGE_PROVIDER) {
-      const b = await ms.claudeCfg.check(ctx.cwd, "claude-bridge turns", driftAsk(ctx), (r) => ms.trace?.emit(r));
+      const b = await ms.claudeCfg.check(ctx.cwd, "claude-bridge turns", driftAsk(ctx, ms.trace), (r) => ms.trace?.emit(r));
       if (b) ctx.ui.notify(`${b.reason}\nThe next claude-bridge prompt asks again.`, "error");
     }
   });
@@ -955,7 +971,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("input", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild || ctx.model?.provider !== BRIDGE_PROVIDER) return { action: "continue" as const };
-    const b = await s.claudeCfg.check(ctx.cwd, "this claude-bridge prompt", driftAsk(ctx), (r) => s.trace?.emit(r));
+    const b = await s.claudeCfg.check(ctx.cwd, "this claude-bridge prompt", driftAsk(ctx, s.trace), (r) => s.trace?.emit(r));
     if (!b) return { action: "continue" as const };
     ctx.ui.notify(b.reason, "error");
     if (!ctx.hasUI) process.stderr.write(`${b.reason}\n`);
@@ -967,7 +983,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("context", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild || ctx.model?.provider !== BRIDGE_PROVIDER) return undefined;
-    const b = await s.claudeCfg.check(ctx.cwd, "this claude-bridge run", driftAsk(ctx), (r) => s.trace?.emit(r));
+    const b = await s.claudeCfg.check(ctx.cwd, "this claude-bridge run", driftAsk(ctx, s.trace), (r) => s.trace?.emit(r));
     if (!b) return undefined;
     ctx.abort();
     ctx.ui.notify(b.reason, "error");
@@ -983,7 +999,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   async function bridgeSummaryGate(ctx: ExtensionContext, what: string): Promise<{ cancel: true } | undefined> {
     const s = sessionFor(ctx);
     if (!s || s.isChild || ctx.model?.provider !== BRIDGE_PROVIDER) return undefined;
-    const b = await s.claudeCfg.check(ctx.cwd, `this ${what}`, driftAsk(ctx), (r) => s.trace?.emit(r));
+    const b = await s.claudeCfg.check(ctx.cwd, `this ${what}`, driftAsk(ctx, s.trace), (r) => s.trace?.emit(r));
     if (!b) return undefined;
     ctx.ui.notify(`${b.reason}\nThe ${what} was cancelled.`, "error");
     if (!ctx.hasUI) process.stderr.write(`${b.reason}\n`);
@@ -1886,7 +1902,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // Children get the git guard in child mode from extensions/git-guard; main mode is the foreman lint.
         if (guard === "git_guard" && (s.isChild || !mainNeedsGitGuard(input.command))) continue;
         if (guard === "git_guard") {
-          const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this git command", driftAsk(ctx), (r) => s.trace?.emit(r), event.toolCallId);
+          const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this git command", driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), event.toolCallId);
           if (drift) return drift;
         }
         if (guard === "git_guard") await s.reviewSync;
@@ -1918,7 +1934,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       if (event.toolName === "subagent" && !s.isChild) {
         // Changes since the last launch are checked first, so a new launch cannot absorb them.
-        const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this child launch", driftAsk(ctx), (r) => s.trace?.emit(r));
+        const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this child launch", driftAsk(ctx, s.trace), (r) => s.trace?.emit(r));
         if (drift) return drift;
         s.gitDrift.snapshot(ctx.cwd, os.homedir());
         // Frugal-roles D5: base for the review diff at a builder launch, diff facts into a reviewer's task.
@@ -2794,7 +2810,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
     preflight: async (ctx, op, callId) => {
       const s = await ensureSession(ctx);
-      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), op, driftAsk(ctx), (r) => s.trace?.emit(r), callId);
+      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), op, driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), callId);
     },
     spawner,
     env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
@@ -2807,7 +2823,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
     preflight: async (ctx, op, callId) => {
       const s = await ensureSession(ctx);
-      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), "git_" + op, driftAsk(ctx), (r) => s.trace?.emit(r), callId);
+      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), "git_" + op, driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), callId);
     },
     spawner,
     env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
@@ -2835,7 +2851,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
     preflight: async (ctx, op, callId) => {
       const s = await ensureSession(ctx);
-      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), "foreman_" + op, driftAsk(ctx), (r) => s.trace?.emit(r), callId);
+      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), "foreman_" + op, driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), callId);
     },
     pushRefusal: async (ctx) => {
       const s = await ensureSession(ctx);
@@ -2922,12 +2938,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     } as never);
   }
 
-  // R14 item 4: the permission dialogs of the trace, the text of `/foreman dialogs --json`; foreman only, read only.
+  // R14 item 4, R18 item 2: the blocking dialogs of the trace, the text of `/foreman dialogs --json`; foreman only, read only.
   if (process.env.PI_SUBAGENT_CHILD !== "1") {
     pi.registerTool({
       name: DIALOGS_TOOL,
       label: "Permission dialogs",
-      description: "Count the permission dialogs (overlay ask records) of a trace per regression family, with the redacted command lines: the JSON of /foreman dialogs --json. Without trace, the session's own trace. Read only.",
+      description: "Count the blocking dialogs of a trace (overlay asks, permission prompts, child dialogs, checkpoint, ask_user_question, guard asks, drift asks) per family, with the redacted command lines and a total: the JSON of /foreman dialogs --json. Without trace, the session's own trace. Read only.",
       parameters: { type: "object", properties: { trace: { type: "string", minLength: 1, description: "Path of a trace file; default: this session's trace." } }, additionalProperties: false } as never,
       async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
         const s = await ensureSession(ctx);
@@ -2949,6 +2965,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const s = await ensureSession(ctx);
         if (s.isChild) return { content: [{ type: "text" as const, text: `${ASK_USER_TOOL} is for the foreman only.` }], details: { decision: "refused" }, isError: true };
         const r = await askUserQuestion(params, { hasUI: ctx.hasUI, ui: ctx.ui, ownDirs: () => childDirsOf(s) });
+        if (r.decision === "answered" || r.decision === "dismissed") s.trace?.emit({ event: "dialog", surface: "ask_user" });
         return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.decision }, ...(r.decision === "refused" ? { isError: true } : {}) };
       },
     } as never);
@@ -3148,6 +3165,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         } else {
           if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return done("pending", null, pendingText);
           const title = `pi-foreman checkpoint: ${name} (${hash8})`;
+          s.trace?.emit({ event: "dialog", surface: "checkpoint" });
           try {
             ctx.ui.notify(planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash) + (reviewed ? `\n${reviewed}` : ""), "info");
             answer = await withBlocked(herdrEvents, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
@@ -3587,8 +3605,16 @@ function askOutcome(isChild: boolean, reason: string | undefined): string {
   return "no-ui";
 }
 
-function driftAsk(ctx: ExtensionContext) {
-  return { mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) };
+/** The drift confirm of `ctx`; `trace` gets one `dialog` record (surface `drift`) when the confirm actually opens. */
+function driftAsk(ctx: ExtensionContext, trace?: TraceWriter | null) {
+  return {
+    mode: ctx.mode,
+    hasUI: ctx.hasUI,
+    confirm: blockedConfirm(herdrEvents, (title, msg) => {
+      trace?.emit({ event: "dialog", surface: "drift" });
+      return ctx.ui.confirm(title, msg);
+    }),
+  };
 }
 
 /** The running Pi's version: Pi resolves its own package for extensions, so its VERSION export is the host's. Null when unavailable. */

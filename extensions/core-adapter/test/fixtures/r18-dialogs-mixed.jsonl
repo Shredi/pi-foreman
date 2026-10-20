@@ -1,0 +1,11 @@
+{"ts":"2026-10-20T10:00:00.000Z","event":"overlay","toolFamily":"bash","decision":"ask-approved","command":"node --version","class":"toolchain_probe"}
+{"ts":"2026-10-20T10:00:01.000Z","event":"dialog","surface":"permission"}
+{"ts":"2026-10-20T10:00:02.000Z","event":"dialog","surface":"child","agent":"builder"}
+{"ts":"2026-10-20T10:00:03.000Z","event":"dialog","surface":"checkpoint"}
+{"ts":"2026-10-20T10:00:04.000Z","event":"dialog","surface":"ask_user"}
+{"ts":"2026-10-20T10:00:05.000Z","event":"ask","guard":"git","toolFamily":"bash","decision":"approved"}
+{"ts":"2026-10-20T10:00:06.000Z","event":"dialog","surface":"drift"}
+{"ts":"2026-10-20T10:00:07.000Z","event":"auto_review_allow","toolFamily":"bash","command":"cat x"}
+{"ts":"2026-10-20T10:00:08.000Z","event":"guard","guard":"self_ruling","toolFamily":"write","decision":"blocked"}
+{"ts":"2026-10-20T10:00:09.000Z","event":"ask","guard":"git","toolFamily":"bash","decision":"no-ui"}
+{"ts":"2026-10-20T10:00:10.000Z","event":"ask","guard":"git","toolFamily":"bash","decision":"child"}
