@@ -132,8 +132,20 @@ test("parent mode: a plan edit after the verdict makes it stale (pending), a ver
   const future = new Date(Date.now() + 60_000);
   fs.utimesSync(plan, future, future);
   assert.equal((await r.tool.execute("c1", { path: PLAN })).details?.decision, "pending");
-  fs.utimesSync(plan, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+  await new Promise((res) => setTimeout(res, 20));
+  r.verdict("APPROVED\n");
   assert.equal((await r.tool.execute("c2", { path: PLAN })).details?.decision, "approve");
+});
+
+test("parent mode: a plan edited after the verdict with its mtime backdated is still pending", async (t) => {
+  const r = await rig(t, { parent: true, ui: false });
+  r.verdict("APPROVED\n");
+  await new Promise((res) => setTimeout(res, 20));
+  const plan = path.join(r.project, PLAN);
+  fs.appendFileSync(plan, "Sneaky.\n");
+  const past = new Date(Date.now() - 3_600_000);
+  fs.utimesSync(plan, past, past);
+  assert.equal((await r.tool.execute("c1", { path: PLAN })).details?.decision, "pending");
 });
 
 test("human mode, attended: the dialog still runs and a ruling-plan.md is not read", async (t) => {
@@ -160,6 +172,8 @@ test("checkpointMode: configured value wins; the default follows the parent env"
   assert.equal(checkpointMode(undefined, {}), "human");
 });
 
+const await_ = (ms: number): void => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
 test("readPlanVerdict: first line only, other first lines and a stale file are no verdict", (t) => {
   const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-cpv-")));
   t.after(() => rmTestTmp(d));
@@ -167,14 +181,17 @@ test("readPlanVerdict: first line only, other first lines and a stale file are n
   fs.writeFileSync(plan, "p");
   fs.utimesSync(plan, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
   const v = (s: string) => { fs.writeFileSync(path.join(d, "ruling-plan.md"), s); return readPlanVerdict(d, plan); };
+  await_(20);
   assert.deepEqual(v("APPROVED"), { kind: "approve" });
   assert.deepEqual(v("REVISE fix it"), { kind: "revise", note: "fix it" });
   assert.deepEqual(v("REJECT"), { kind: "reject" });
   assert.equal(v("SHIP"), null);
   assert.equal(v("\nAPPROVED"), null);
   assert.equal(v("REVISEfix"), null);
-  fs.utimesSync(plan, new Date(Date.now() + 60_000), new Date(Date.now() + 60_000));
-  assert.equal(v("APPROVED"), null);
+  v("APPROVED");
+  await_(20);
+  fs.utimesSync(plan, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+  assert.equal(readPlanVerdict(d, plan), null);
 });
 
 test("a session cannot write its own ruling-plan.md in a dir where it is the child", (t) => {

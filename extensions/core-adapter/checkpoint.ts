@@ -211,14 +211,14 @@ export function checkpointMode(configured: unknown, env: NodeJS.ProcessEnv): Che
 
 /**
  * The parent's verdict on the plan: first line `APPROVED`, `REVISE <text>` (the rest of the file joins the text) or `REJECT` in
- * `<dir>/ruling-plan.md`. A regular file whose ctime (which a session cannot set back) is newer than the plan file's mtime: a plan edit after the
+ * `<dir>/ruling-plan.md`. A regular file whose ctime is newer than the plan file's ctime (neither can be set back, unlike an mtime): a plan edit after the
  * verdict makes it stale, so the edited plan needs a new one. Null = no usable verdict.
  */
 export function readPlanVerdict(dir: string, planFile: string): PlanVerdict | null {
   try {
     const file = path.join(dir, PLAN_VERDICT_FILE);
     const st = fs.lstatSync(file);
-    if (!st.isFile() || st.size > PLAN_MAX_BYTES || st.ctimeMs <= fs.statSync(planFile).mtimeMs) return null;
+    if (!st.isFile() || st.size > PLAN_MAX_BYTES || st.ctimeMs <= fs.statSync(planFile).ctimeMs) return null;
     const text = fs.readFileSync(file, "utf8");
     const first = text.split(/\r?\n/, 1)[0].trim();
     if (first === "APPROVED") return { kind: "approve" };
