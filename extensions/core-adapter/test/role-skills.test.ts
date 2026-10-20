@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { buildSkillInjection, clearSkillCache, resolveSkills } from "../../../node_modules/pi-subagents/src/agents/skills.js";
 import { buildEffectiveSystemPrompt } from "../../../node_modules/pi-subagents/src/runs/shared/effective-system-prompt.js";
+import type { AgentConfig } from "../../../node_modules/pi-subagents/src/agents/agents.js";
 import { loadSkills } from "@earendil-works/pi-coding-agent";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
@@ -69,7 +70,7 @@ test("the effective system prompt of an agent with one named skill lists no unna
   writeSkill(path.join(home, ".agents", "skills"), "named-skill", "Does the named thing");
   writeSkill(path.join(home, ".agents", "skills"), "other-skill", "Does the other thing");
   const { resolved } = resolveSkills(["named-skill"], repo);
-  const prompt = buildEffectiveSystemPrompt({ agent: { name: "builder", systemPrompt: "Base prompt." }, resolvedSkills: resolved, cwd: repo });
+  const prompt = buildEffectiveSystemPrompt({ agent: { name: "builder", systemPrompt: "Base prompt." } as AgentConfig, resolvedSkills: resolved, cwd: repo });
   assert.match(prompt, /^Base prompt\./);
   assert.match(prompt, /<name>named-skill<\/name>/);
   assert.ok(!prompt.includes("other-skill"), prompt);
