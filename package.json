@@ -24,7 +24,8 @@
     },
     "skills": [
       "./node_modules/pi-subagents/skills",
-      "./node_modules/pi-intercom/skills"
+      "./node_modules/pi-intercom/skills",
+      "./skills"
     ],
     "prompts": [
       "./node_modules/pi-subagents/prompts"
