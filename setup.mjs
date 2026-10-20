@@ -295,6 +295,24 @@ function missingBundledEntries(root) {
   return entries.filter((e) => typeof e === "string" && e.startsWith("./node_modules/") && !fs.existsSync(path.join(root, e)));
 }
 
+/**
+ * Why `npm ci` must run in the checkout `root`: "missing" (no node_modules), "stale" (package-lock.json is newer than the
+ * node_modules/.package-lock.json npm writes on every install), or null (fresh, or no package-lock.json).
+ */
+export function npmCiReason(root) {
+  let lockTime;
+  try {
+    lockTime = fs.statSync(path.join(root, "package-lock.json")).mtimeMs;
+  } catch {
+    return null;
+  }
+  try {
+    return fs.statSync(path.join(root, "node_modules", ".package-lock.json")).mtimeMs < lockTime ? "stale" : null;
+  } catch {
+    return "missing";
+  }
+}
+
 function entrySource(e) {
   if (typeof e === "string") return e;
   if (isObj(e) && typeof e.source === "string") return e.source;
@@ -375,6 +393,16 @@ function main(argv) {
   say(`pi-foreman installer${dry ? " (dry run: nothing will be written)" : ""}${opts.remove ? " [remove]" : ""}`);
   say(`  agent dir: ${agentDir}`);
   say(`  settings:  ${settingsFile}${opts.project ? " (project)" : ""}`);
+
+  // A checkout (not a pi-managed install) whose lockfile changed since the last install: reinstall, so a merge that bumped a dependency takes effect.
+  const ciReason = opts.remove || !fs.existsSync(path.join(ROOT, ".git")) ? null : npmCiReason(ROOT);
+  if (ciReason) {
+    say(`  package-lock.json: node_modules ${ciReason === "missing" ? "missing" : "older than the lock"}, ${dry ? "would run" : "running"} npm ci in ${ROOT}`);
+    if (!dry) {
+      const r = spawnSync(WIN ? "npm.cmd" : "npm", ["ci"], { cwd: ROOT, stdio: "inherit", shell: WIN, windowsHide: true });
+      if (r.error || r.status !== 0) throw new Fatal(`npm ci failed${r.error ? `: ${r.error.message}` : ` (exit ${r.status})`}. Fix it and run \`foreman setup\` again.`);
+    }
+  }
 
   const pi = piCommand();
   const piVersion = checkPi(pi, lock, agentDir, projectDir);
@@ -701,14 +729,17 @@ function main(argv) {
   }
 }
 
-try {
-  main(process.argv.slice(2));
-} catch (err) {
-  if (err instanceof Fatal) {
-    (err.code === 0 ? console.log : console.error)(err.message);
-    process.exitCode = err.code;
-  } else {
-    console.error(err && err.stack ? err.stack : String(err));
-    process.exitCode = 1;
+// Run only as the entry point, so the tests can import npmCiReason.
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === path.join(ROOT, "setup.mjs")) {
+  try {
+    main(process.argv.slice(2));
+  } catch (err) {
+    if (err instanceof Fatal) {
+      (err.code === 0 ? console.log : console.error)(err.message);
+      process.exitCode = err.code;
+    } else {
+      console.error(err && err.stack ? err.stack : String(err));
+      process.exitCode = 1;
+    }
   }
 }

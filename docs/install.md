@@ -138,7 +138,7 @@ bin/foreman setup --develop
 ```
 
 After pulling a checkout that changed `package.json`, run `npm ci` again (setup keeps top-level bundled copies when a
-manifest entry is missing and prints the same hint; `/foreman doctor` FAILs on a missing bundled entry).
+manifest entry is missing and prints the same hint; `/foreman doctor` FAILs on a missing bundled entry). `foreman setup` in a checkout also runs `npm ci` itself when `package-lock.json` is newer than `node_modules/.package-lock.json` (or `node_modules` is missing); after a merge that changes `package-lock.json`, run `npm ci` (or `foreman setup`) in the main checkout.
 
 `--develop` writes `.pi/settings.json` inside the checkout with `".."` as a package plus an empty-filter override of
 the installed pi-foreman source. Project packages load before global ones and only after project trust (`pi -a` when
