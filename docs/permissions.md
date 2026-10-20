@@ -18,7 +18,7 @@ The foreman's permission decisions come in two layers.
 What reaches a human: a reviewer deny is a block (the call is refused with its reason) only with riskLevel high or
 critical; a deny with riskLevel low, medium or missing, a defer, an error, a timeout or no review model is the dialog
 as before. Self-modification writes (`selfMod`: a protect ask hit on a shell write or remove target, or on a
-write, edit, move or copy tool) go to the human dialog with no model call; they are not refused. A write into the session's own `{cwd}/.pi/scratch/` is not selfMod and goes to the reviewer. A child's ask and a session without a UI behave as before. An overlay
+write, edit, move or copy tool) go to the human dialog with no model call; they are not refused. A write into the session's own `{cwd}/.pi/scratch/` is not selfMod and goes to the reviewer. A headless foreman (print or json mode, no UI) gets no auto review and behaves as before. An overlay
 replaces the rules file through `safety.permissions.autoReview.rulesFile` (user layer only; see
 [overlays](overlays.md#reviewer-rules-file)); `safety.permissions.autoReview.enabled` switches the reviewer off.
 
