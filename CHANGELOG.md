@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Round 19
-- Own CLI allow: the foreman's one simple `<root>/bin/foreman` command with verbs `session open|brief|list|status`, `dialogs` or `findings list` is allowed without the auto reviewer (trace `overlay_allow{rule: own_cli}`); all other verbs take the normal path. Residual: `session open --cwd/--agent-dir` accepts any path. See docs/permissions.md.
+- Own CLI allow: the foreman's one simple `<root>/bin/foreman` command with verbs `session open|brief|list`, `dialogs` or `findings list` is allowed without the auto reviewer (trace `overlay_allow{rule: own_cli}`); all other verbs take the normal path. Residual: `session open --cwd/--agent-dir` accepts any path. See docs/permissions.md.
 - A reviewer or senior-reviewer PASS on a plan review no longer starts the post-PASS recheck window, so the foreman keeps its normal read budget.
 
 ### Round 18

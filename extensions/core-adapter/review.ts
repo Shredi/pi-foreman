@@ -712,7 +712,7 @@ export class ForemanReview {
   }
 
   /**
-   * "own-cli" for the foreman's own `<root>/bin/foreman` with a read-only or launch-only verb (`session open|brief|list|status`, `dialogs`, `findings list`):
+   * "own-cli" for the foreman's own `<root>/bin/foreman` with a read-only or launch-only verb (`session open|brief|list`, `dialogs`, `findings list`):
    * one simple command, a head that realpaths to the root's own entry inside the root, no `..`, no expansion, no redirect, no matching ask/deny rule.
    * Recorded residual: `session open ... --cwd <other path>` launches in that path.
    */
@@ -728,7 +728,8 @@ export class ForemanReview {
       if (unitHasRedirect(w) || w.some((x) => /[\n\r`$*?[\]{}]/.test(x))) return null;
       if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0]) || w[0].split(/[\\/]/).includes("..")) return null;
       const [head, a, b] = w;
-      const verb = a === "session" ? ["open", "brief", "list", "status"].includes(b) : a === "dialogs" ? true : a === "findings" && b === "list";
+      if (!head.includes("/")) return null;
+      const verb = a === "session" ? ["open", "brief", "list"].includes(b) : a === "dialogs" ? true : a === "findings" && b === "list";
       if (!verb) return null;
       const root = fs.realpathSync(s.foremanRoot?.() ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".."));
       const own = fs.realpathSync(path.join(root, "bin", "foreman"));

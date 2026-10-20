@@ -47,7 +47,7 @@ test("own_cli_session_open_allowed_with_trace_and_no_model", { skip: !posix }, a
 });
 
 test("own_cli_other_read_verbs_allowed", { skip: !posix }, async () => {
-  for (const v of ["findings list --json", "session list --json", "session brief x hello", "session status", "dialogs --json", "dialogs trace.jsonl"]) assert.equal((await run(`${ownBin} ${v}`)).kind, "allow", v);
+  for (const v of ["findings list --json", "session list --json", "session brief x hello", "dialogs --json", "dialogs trace.jsonl"]) assert.equal((await run(`${ownBin} ${v}`)).kind, "allow", v);
 });
 
 test("own_cli_session_open_other_cwd_allowed_residual", { skip: !posix }, async () => {
