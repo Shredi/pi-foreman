@@ -227,7 +227,14 @@ Heredoc bodies are scanned like any shell text (a `.pi` or `$x` in prose heredoc
 |---|---|
 | `<agentDir>/pi-foreman[/*]` | reads of the handoff, state and config files of pi-foreman |
 | `<npm root -g>[/*]` | global packages, for bash reads (PS already allows the read tools there) |
+| `<agentDir>/install/releases[/*]` | Pi's own installed releases (`ls <agentDir>/install/releases/<v>/node_modules`) |
+| `<tmp>/pi-subagents-uid-*/async-subagent-runs[/*]` | the pi-subagents run root (`<tmp>` is the realpath of the OS temp dir, token `{tmpRoot}`; dropped when it does not resolve) |
 | `externalDirectory.probe`, each `[/*]` | toolchain probes: `/usr/local/bin`, `/opt/homebrew/bin`, `/usr/bin`, `~/.local/bin`, `~/.npm/_npx`, `~/.npm-global/bin`, `%APPDATA%/npm` (Windows only). `~` is the home dir at render time; an entry that does not resolve is dropped. Read keys only. The overlay narrows them for every role: only a shell line whose every unit is a plain `ls`, `stat` or `which` (no pipe into another command, no redirect, substitution, env or wrapper prefix) and the `ls` tool pass; any other command naming a path there, and the read/grep/find/write/edit tools, ask (a child: deny). A found binary run as the command word is left to PS's bash rules, which ask. After an update that adds this list, `/foreman doctor` reports drift until `foreman setup` is run again |
+
+Each `safety.permissions.readRoots` entry is also rendered as `external_directory_read` keys (dir and `dir/*`, plus the realpath
+spelling; relative or `..` entries, filesystem roots, the home dir and its ancestors are dropped), so a bash line that reads below
+a read root raises no directory ask. The policy layer does this because a review-link `allow` on the `external_directory` family is
+capped to `defer`. Re-run `foreman setup` after changing `readRoots`.
 
 Last: `ask` for `<agentDir>/pi-foreman/handoffs/*/parent` and `.../child` stay on the write side (`protect.writeAsk`
 asks too). Reads of those two files are allowed by the read pattern above.

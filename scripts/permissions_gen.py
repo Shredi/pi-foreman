@@ -141,7 +141,7 @@ def resolve_npm_root(run=None, env=None, platform=None, which=None):
 def default_owned():
     """Machine-dependent tokens of the external_directory patterns."""
     tmp = os.path.realpath(tempfile.gettempdir())
-    return {"scratchRoot": Path(tmp, SCRATCH_DIR_NAME).as_posix(), "npmRoot": resolve_npm_root()}
+    return {"scratchRoot": Path(tmp, SCRATCH_DIR_NAME).as_posix(), "npmRoot": resolve_npm_root(), "tmpRoot": Path(tmp).as_posix()}
 
 
 def hub_read_patterns(hub):
@@ -164,6 +164,36 @@ def hub_read_patterns(hub):
         real = Path(os.path.realpath(p)).as_posix().rstrip("/")
         if real and real != p and not real.endswith(":"):
             out += [real + "/.workflow", real + "/.workflow/*"]
+    return out
+
+
+def read_roots_patterns(roots, home=None):
+    """external_directory_read keys of `safety.permissions.readRoots`: each absolute dir and its subtree, plus the realpath spelling. A leading `~` is
+    the home dir; a relative entry, one with `..`, a filesystem root, the home dir and any dir that holds it are dropped (as the TS `readRootsOf`)."""
+    home = Path.home().as_posix() if home is None else home
+    real_home = Path(os.path.realpath(home)).as_posix()
+
+    def unsafe(p):
+        return not p or p.endswith(":") or home == p or real_home == p or home.startswith(p + "/") or real_home.startswith(p + "/")
+
+    out = []
+    for d in strings(roots):
+        if d == "~" or d.startswith("~/"):
+            d = home + d[1:]
+        if not (posixpath.isabs(d) or ntpath.isabs(d)) or ".." in d.replace("\\", "/").split("/"):
+            continue
+        p = Path(d).as_posix().rstrip("/")
+        if unsafe(p):
+            continue
+        spellings = [p]
+        if os.path.isabs(p):
+            real = Path(os.path.realpath(p)).as_posix().rstrip("/")
+            if unsafe(real):
+                continue
+            if real != p:
+                spellings.append(real)
+        for s in spellings:
+            out += [s, s + "/*"]
     return out
 
 
@@ -230,7 +260,7 @@ def render(perms, agent_dir, ledger_helper="tool", owned=None, hub=None):
     permission["path"] = pattern_map(path_rules(baseline, perms, agent_dir), DENY_PATH_REASON)
     bare, read = external_rules(baseline, agent_dir, default_owned() if owned is None else owned)
     permission["external_directory"] = bare
-    extra = hub_read_patterns(hub)
+    extra = hub_read_patterns(hub) + read_roots_patterns((perms or {}).get("readRoots"))
     if extra:
         read = dict(read or {})
         read.update({p: "allow" for p in extra})

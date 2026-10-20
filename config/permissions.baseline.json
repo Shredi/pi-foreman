@@ -37,7 +37,7 @@
     "codemode": "allow"
   },
   "externalDirectory": {
-    "comment": "Owned paths outside the workspace (docs/permissions.md, Owned paths). allow: bare external_directory keys (read and write); read: external_directory_read keys; ask: keys appended last so they win. Tokens: {agentDir}, {scratchRoot} (<realpath tmpdir>/pi-foreman-scratch, the children's scratch root), {npmRoot} (npm root -g, resolved when the file is rendered; the pattern is dropped when it does not resolve). The patterns are per user, not per session: the overlay keeps children out of the main-only ones. probe: toolchain bin dirs and the npx cache, rendered as external_directory_read keys (each dir and dir/*; a leading ~ is the home dir, %APPDATA% only on Windows, an entry that does not resolve is dropped); the overlay narrows them to a plain ls/stat/which shell line and the ls tool, anything else naming them asks.",
+    "comment": "Owned paths outside the workspace (docs/permissions.md, Owned paths). allow: bare external_directory keys (read and write); read: external_directory_read keys; ask: keys appended last so they win. Tokens: {agentDir}, {scratchRoot} (<realpath tmpdir>/pi-foreman-scratch, the children's scratch root), {tmpRoot} (the realpath of the OS temp dir; the pi-subagents run root lives below it), {npmRoot} (npm root -g, resolved when the file is rendered; the pattern is dropped when it does not resolve). The patterns are per user, not per session: the overlay keeps children out of the main-only ones. probe: toolchain bin dirs and the npx cache, rendered as external_directory_read keys (each dir and dir/*; a leading ~ is the home dir, %APPDATA% only on Windows, an entry that does not resolve is dropped); the overlay narrows them to a plain ls/stat/which shell line and the ls tool, anything else naming them asks.",
     "allow": [
       "{agentDir}/pi-foreman/handoffs/*",
       "{agentDir}/sessions/*/subagent-artifacts",
@@ -53,7 +53,11 @@
       "{agentDir}/pi-foreman",
       "{agentDir}/pi-foreman/*",
       "{npmRoot}",
-      "{npmRoot}/*"
+      "{npmRoot}/*",
+      "{agentDir}/install/releases",
+      "{agentDir}/install/releases/*",
+      "{tmpRoot}/pi-subagents-uid-*/async-subagent-runs",
+      "{tmpRoot}/pi-subagents-uid-*/async-subagent-runs/*"
     ],
     "probe": [
       "/usr/local/bin",

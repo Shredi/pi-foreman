@@ -307,6 +307,17 @@
       "enable": ""
     },
     {
+      "id": "owned-install-reads",
+      "title": "Reads of Pi's install and run dirs",
+      "purpose": "Shell reads (`ls`, `cat`) of Pi's own install releases and the pi-subagents run root need no dialog; setup renders them as read grants, as it does each `safety.permissions.readRoots` entry.",
+      "doc": "docs/permissions.md#owned-paths",
+      "keys": [],
+      "commands": [],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "auto-review",
       "title": "Permission auto-review",
       "purpose": "A review model decides permission asks (children's included) before they reach you; unset, it picks the cheapest mapped model, and with none the asks go to you.",

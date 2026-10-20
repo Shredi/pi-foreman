@@ -65,6 +65,22 @@ class GeneratorTest(unittest.TestCase):
             self.assertEqual(read[pat], "allow", pat)
         self.assertNotIn(a + "/pi-foreman/*", ext)
 
+    def test_install_releases_and_async_run_root_read_patterns(self):
+        a = Path(self.agent).as_posix()
+        owned = dict(OWNED, tmpRoot="/tmpx")
+        read = pg.render({}, self.agent, owned=owned)["permission"]["external_directory_read"]
+        for pat in (a + "/install/releases", a + "/install/releases/*",
+                    "/tmpx/pi-subagents-uid-*/async-subagent-runs", "/tmpx/pi-subagents-uid-*/async-subagent-runs/*"):
+            self.assertEqual(read[pat], "allow", pat)
+        # the run-root patterns are dropped when tmpRoot does not resolve; the install ones stay
+        read = pg.render({}, self.agent, owned=OWNED)["permission"]["external_directory_read"]
+        self.assertEqual([k for k in read if "async-subagent-runs" in k], [])
+        self.assertIn(a + "/install/releases/*", read)
+
+    def test_default_owned_has_tmp_root(self):
+        owned = pg.default_owned()
+        self.assertTrue(owned["scratchRoot"].startswith(owned["tmpRoot"] + "/"))
+
     def test_unresolved_npm_root_drops_its_patterns(self):
         p = pg.render({}, self.agent, owned={"scratchRoot": "/t/pi-foreman-scratch", "npmRoot": None})["permission"]
         self.assertEqual([k for k in p["external_directory_read"] if "node_modules" in k], [])
