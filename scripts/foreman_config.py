@@ -108,6 +108,7 @@ Keys outside safety that the project and session layers cannot loosen either
     python.*                         ignored
     roles.*.launch                   ignored
     roles.*.file                     ignored (a role file replaces the prompt)
+    roles.*.mcp                      ignored (an MCP server runs a command: user or overlay config only)
     roles.<id>.tools                 narrow only (intersection with the L1 -> L3 -> L2 list)
     roles.*.codemode                 only false is accepted (true adds the codemode tool)
     providers.*.roles.*.codemode     only false is accepted
@@ -144,6 +145,7 @@ from __future__ import annotations
 import argparse
 import copy
 import datetime
+import fnmatch
 import json
 import os
 import re
@@ -197,6 +199,7 @@ IGNORED_KEYS = [
     (("python", "*"), "interpreter settings come from the user or overlay config"),
     (("roles", "*", "launch"), "the launch mode comes from the user or overlay config"),
     (("roles", "*", "file"), "a role file replaces the prompt: user or overlay config only"),
+    (("roles", "*", "mcp"), "an MCP server runs a command: user or overlay config only"),
     (("providers", "*", "roles", "*", "strong"), "the strong model is picked in the user or overlay config"),
     (("tools", "prHost"), "the PR host program comes from the user or overlay config"),
     (("sync", "repos"), "the repository list comes from the user or overlay config"),
@@ -687,6 +690,28 @@ def semantic_issues(cfg):
                         path = "safety.git.commit." + key
                         issues.append(("error", path, "%s: invalid regular expression %r (%s)" % (path, pat, exc)))
     issues.extend(pr_host_issues((cfg.get("tools") or {}).get("prHost")))
+    issues.extend(mcp_deny_issues(cfg))
+    return issues
+
+
+def mcp_deny_issues(cfg):
+    """A role that is given MCP servers while its denyTools deny the mcp__ namespace could never use them."""
+    issues = []
+    for rid, role in (cfg.get("roles") or {}).items():
+        names = role.get("mcp") if isinstance(role, dict) else None
+        if not isinstance(names, list) or not names:
+            continue
+        if rid in ("foreman", SESSION_FOREMAN):
+            path = "roles.%s.mcp" % rid
+            issues.append(("error", path, "%s: only child roles take mcp; the main session already loads every enabled server in mcp.json" % path))
+            continue
+        samples = ["mcp__%s__%s" % (n.split("/", 1)[0].replace("-", "_"), n.split("/", 1)[1] if "/" in n else "*")
+                   for n in names if isinstance(n, str) and n]
+        for pat in role.get("denyTools") or []:
+            if isinstance(pat, str) and any(fnmatch.fnmatchcase(s, pat) for s in samples):
+                path = "roles.%s.mcp" % rid
+                issues.append(("error", path, "%s: role %s denies %s (denyTools); remove mcp or the deny" % (path, rid, pat)))
+                break
     return issues
 
 
@@ -998,6 +1023,15 @@ def with_pr_pack(cfg, role, tools):
     return tools
 
 
+def with_mcp(cfg, role, tools):
+    """Append the role's `mcp` servers as `mcp:<name>` entries; pi-subagents routes them to the built-in MCP."""
+    out = list(tools)
+    for name in ((cfg.get("roles") or {}).get(role) or {}).get("mcp") or []:
+        if isinstance(name, str) and name and "mcp:" + name not in out:
+            out.append("mcp:" + name)
+    return out
+
+
 def resolve_role(cfg, role, provider):
     """Return {model, thinking, codemode, tools[, strong]}; raise ConfigError if unresolvable.
 
@@ -1019,7 +1053,7 @@ def resolve_role(cfg, role, provider):
     codemode = effective_codemode(cfg, provider, role)
     tools = list((cfg.get("roles") or {}).get(role, {}).get("tools", []))
     if role != "foreman":
-        tools = with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in tools if t not in CHILD_DENIED_TOOLS])))
+        tools = with_mcp(cfg, role, with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in tools if t not in CHILD_DENIED_TOOLS]))))
     if codemode and "codemode" not in tools:
         tools.append("codemode")
     out = {"model": model, "thinking": cap_thinking(thinking, cfg.get("maxThinking")),
@@ -1071,7 +1105,7 @@ def generate_subagents(cfg):
         tools = with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in (cfg.get("roles") or {}).get(role, {}).get("tools", []) if t not in CHILD_DENIED_TOOLS])))
         if cfg.get("roles", {}).get(role, {}).get("codemode") and "codemode" not in tools:
             tools.append("codemode")
-        overrides[role] = {"tools": tools}
+        overrides[role] = {"tools": with_mcp(cfg, role, tools)}
     for provider in sorted(cfg.get("providers") or {}):
         entries = {}
         for role in CHILD_ROLES:
