@@ -23,7 +23,7 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
-import { isRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingAsk, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
+import { isBriefName, isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingAsk, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -112,7 +112,7 @@ import { claimCore, emitReady, installInert, missingBundled, setupInvocation } f
 
 /** pi.events of the loaded extension, for the Herdr blocked signal (set in the factory). */
 let herdrEvents: EventBus | undefined;
-import { chainKey, checkLaunch, completedAgents, CritiqueCounter, hasSecurityFinding, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, RoundChains, verdictOf } from "./rounds.ts";
+import { chainKey, checkLaunch, completedAgents, CritiqueCounter, hasSecurityFinding, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, RoundChains, rulingReset, verdictOf } from "./rounds.ts";
 import type { LaunchRounds } from "./rounds.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
@@ -196,6 +196,10 @@ interface Session {
   activeRuns: Set<string>;
   /** R11 item 5: tool call ids of subagent launches accepted at tool_call with no tool_result yet (finalization is off while any). */
   pendingLaunches: Set<string>;
+  /** Foreman only: tool call ids of write/edit/shell calls between their tool_call and tool_result (capsReset waits while any: a parallel call cannot be seen before its self-write is marked). */
+  mutating: Set<string>;
+  /** Foreman only: ms epoch of the last parent ruling/brief that lifted the caps (capsReset); persisted with reviewCount. */
+  capsResetAt: number;
   /** Foreman bash calls made while a child run was active, since the last trace emit (D5; delta, reset on emit). */
   pollBash: number;
   /** Launch notices (strong model asked for but unmapped) by tool call id, added to the subagent result. */
@@ -403,7 +407,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.widget.refresh();
     }
   };
-  pi.events?.on(PERMISSIONS_UI_PROMPT, (d: unknown) => radarEvent((s) => s.widget.runs.onPrompt(d)));
+  // Dialog count (dialogs.ts): one `dialog` record per prompt this session shows (`permission`), or per forwarded child prompt (`child`, never also `permission`).
+  const promptsSeen = new Set<string>();
+  const traceDialogPrompt = (d: unknown): void => {
+    const p = (d && typeof d === "object" ? d : {}) as { requestId?: unknown; forwarding?: unknown };
+    if (typeof p.requestId === "string") {
+      if (promptsSeen.has(p.requestId)) return;
+      promptsSeen.add(p.requestId);
+      if (promptsSeen.size > 256) promptsSeen.delete(promptsSeen.values().next().value as string);
+    }
+    const f = p.forwarding && typeof p.forwarding === "object" ? (p.forwarding as { requesterAgentName?: unknown }) : null;
+    const who = f && typeof f.requesterAgentName === "string" ? { agent: f.requesterAgentName } : {};
+    [...sessions.values()][0]?.trace?.emit({ event: "dialog", surface: f ? "child" : "permission", ...who });
+  };
+  pi.events?.on(PERMISSIONS_UI_PROMPT, (d: unknown) => {
+    traceDialogPrompt(d);
+    radarEvent((s) => s.widget.runs.onPrompt(d));
+  });
   pi.events?.on(PERMISSIONS_DECISION, (d: unknown) => radarEvent((s) => s.widget.runs.onDecision(d)));
   const radarTouch = (s: Session | undefined, ctx: ExtensionContext): void => {
     if (!s) return;
@@ -490,6 +510,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       runs: new Map(),
       activeRuns: new Set(),
       pendingLaunches: new Set(),
+      mutating: new Set(),
+      capsResetAt: 0,
       pollBash: 0,
       launchNotices: new Map(),
       supervisor: new SupervisorWindow(),
@@ -682,6 +704,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       chains: chainsOf(s.chains.all()),
       reviewCount: s.reviewCount,
       planReviewCount: s.planReviewCount,
+      ...(s.capsResetAt > 0 ? { capsResetAt: s.capsResetAt } : {}),
     });
   }
 
@@ -701,6 +724,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.chains.restore(r.chain, r.chains);
     s.reviewCount = r.reviewCount;
     s.planReviewCount = r.planReviewCount;
+    s.capsResetAt = r.capsResetAt;
     const a = r.approval;
     if (a) {
       s.plan = { topic: a.topic, path: a.path, hash: a.hash, status: "approved", approvedAt: new Date(a.at).toISOString(), by: "rig", note: `restored after reload from ${a.ruling}` };
@@ -938,7 +962,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (event.source === "set" || event.source === "cycle") userPickedModel = true;
     const ms = sessionFor(ctx);
     if (ms && !ms.isChild && event.model?.provider === BRIDGE_PROVIDER && event.previousModel?.provider !== BRIDGE_PROVIDER) {
-      const b = await ms.claudeCfg.check(ctx.cwd, "claude-bridge turns", driftAsk(ctx), (r) => ms.trace?.emit(r));
+      const b = await ms.claudeCfg.check(ctx.cwd, "claude-bridge turns", driftAsk(ctx, ms.trace), (r) => ms.trace?.emit(r));
       if (b) ctx.ui.notify(`${b.reason}\nThe next claude-bridge prompt asks again.`, "error");
     }
   });
@@ -947,7 +971,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("input", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild || ctx.model?.provider !== BRIDGE_PROVIDER) return { action: "continue" as const };
-    const b = await s.claudeCfg.check(ctx.cwd, "this claude-bridge prompt", driftAsk(ctx), (r) => s.trace?.emit(r));
+    const b = await s.claudeCfg.check(ctx.cwd, "this claude-bridge prompt", driftAsk(ctx, s.trace), (r) => s.trace?.emit(r));
     if (!b) return { action: "continue" as const };
     ctx.ui.notify(b.reason, "error");
     if (!ctx.hasUI) process.stderr.write(`${b.reason}\n`);
@@ -959,7 +983,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("context", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild || ctx.model?.provider !== BRIDGE_PROVIDER) return undefined;
-    const b = await s.claudeCfg.check(ctx.cwd, "this claude-bridge run", driftAsk(ctx), (r) => s.trace?.emit(r));
+    const b = await s.claudeCfg.check(ctx.cwd, "this claude-bridge run", driftAsk(ctx, s.trace), (r) => s.trace?.emit(r));
     if (!b) return undefined;
     ctx.abort();
     ctx.ui.notify(b.reason, "error");
@@ -975,7 +999,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   async function bridgeSummaryGate(ctx: ExtensionContext, what: string): Promise<{ cancel: true } | undefined> {
     const s = sessionFor(ctx);
     if (!s || s.isChild || ctx.model?.provider !== BRIDGE_PROVIDER) return undefined;
-    const b = await s.claudeCfg.check(ctx.cwd, `this ${what}`, driftAsk(ctx), (r) => s.trace?.emit(r));
+    const b = await s.claudeCfg.check(ctx.cwd, `this ${what}`, driftAsk(ctx, s.trace), (r) => s.trace?.emit(r));
     if (!b) return undefined;
     ctx.ui.notify(`${b.reason}\nThe ${what} was cancelled.`, "error");
     if (!ctx.hasUI) process.stderr.write(`${b.reason}\n`);
@@ -1047,6 +1071,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const s = sessionFor(ctx);
     // A launch whose tool_result never came does not keep finalization off past its turn.
     s?.pendingLaunches.clear();
+    s?.mutating.clear();
     if (s && !s.isChild) s.idleCache.noteTurnStart(typeof event.timestamp === "number" ? event.timestamp : Date.now());
   });
   pi.on("agent_start", async (_event, ctx) => {
@@ -1538,14 +1563,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   pi.on("tool_call", async (event, ctx) => {
     const ms = sessionFor(ctx);
+    if (ms && !ms.isChild) {
+      capsReset(ms, event.toolCallId);
+      if (MUTATING_TOOLS.has(event.toolName)) ms.mutating.add(event.toolCallId);
+    }
+    const res = await (async () => {
     const stopped = ms?.isChild ? repeatStopped.get(ms.id) : undefined;
     if (stopped) return { block: true, reason: stopped };
     if (ms) manifest.onToolCall(event.toolCallId, event.toolName, event.input as Record<string, unknown>, manifestCtx(ms, ctx.cwd));
     if (event.toolName === "subagent") sessionFor(ctx)?.launchBatch.onToolCall(event.toolCallId);
+    if (event.toolName === "bash" || event.toolName === "powershell") {
+      const ps = sessionFor(ctx);
+      if (ps && !ps.isChild) bashRulingSnaps.set(event.toolCallId, snapshotRulings(childDirsOf(ps)));
+    }
     if (event.toolName === "bash") {
       const ps = sessionFor(ctx);
       if (ps && !ps.isChild && ps.activeRuns.size > 0) ps.pollBash++;
-      if (ps && !ps.isChild) bashRulingSnaps.set(event.toolCallId, snapshotRulings(childDirsOf(ps)));
       if (ps && !ps.isChild && mentionsLedger((event.input as { command?: unknown }).command)) ps.ledgerBash.add(event.toolCallId);
     }
     // A session never writes a ruling file in a handoff dir where it is the child (ruling.ts): a literal path is refused here,
@@ -1869,7 +1902,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // Children get the git guard in child mode from extensions/git-guard; main mode is the foreman lint.
         if (guard === "git_guard" && (s.isChild || !mainNeedsGitGuard(input.command))) continue;
         if (guard === "git_guard") {
-          const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this git command", driftAsk(ctx), (r) => s.trace?.emit(r), event.toolCallId);
+          const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this git command", driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), event.toolCallId);
           if (drift) return drift;
         }
         if (guard === "git_guard") await s.reviewSync;
@@ -1901,7 +1934,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       if (event.toolName === "subagent" && !s.isChild) {
         // Changes since the last launch are checked first, so a new launch cannot absorb them.
-        const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this child launch", driftAsk(ctx), (r) => s.trace?.emit(r));
+        const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this child launch", driftAsk(ctx, s.trace), (r) => s.trace?.emit(r));
         if (drift) return drift;
         s.gitDrift.snapshot(ctx.cwd, os.homedir());
         // Frugal-roles D5: base for the review diff at a builder launch, diff facts into a reviewer's task.
@@ -1990,6 +2023,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     } catch (err) {
       return { block: true, reason: `pi-foreman: adapter error before ${event.toolName} (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
     }
+    })();
+    // a blocked call gets no tool_result, so it is not in flight
+    if (res && ms) ms.mutating.delete(event.toolCallId);
+    return res;
   });
 
   pi.on("message_end", async (event, ctx) => {
@@ -2318,6 +2355,41 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** The handoff dirs where this session is the child: the only ones the ask state and the parent-ruling gate read. */
   const childDirsOf = (s: Session): string[] => childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id));
   const bashRulingSnaps = new Map<string, Map<string, number>>();
+  const MUTATING_TOOLS = new Set(["write", "edit", "bash", "powershell"]);
+
+  /**
+   * A parent-written `ruling-<n>.md` / `brief-<x>.md` in this session's handoff dir lifts the review cap, the recheck budget and the read
+   * budget (rounds.ts rulingReset, strict: regular file, ctime and mtime newer than the watermark, not self-written; no text parser).
+   * Skipped while another write/edit/shell call is in flight. Runs at the top of tool_call, before the budget and cap checks.
+   */
+  function capsReset(s: Session, callId: string): void {
+    if ([...s.mutating].some((id) => id !== callId)) return;
+    let dirs = childDirsOf(s);
+    const rd = roundStateDir(process.env);
+    if (rd && dirs.length > 0) {
+      const real = (p: string): string => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
+      dirs = dirs.filter((d) => real(d) === real(rd));
+    }
+    if (dirs.length === 0) return;
+    const after = Math.max(s.capsResetAt, sessionStartMs);
+    const used = new Set<string>();
+    const hits: string[] = [];
+    let at = 0;
+    const scan = () => rulingReset(dirs, after, used, selfRulingsFor(s), { names: isCapsResetName, line: null, strict: true });
+    for (let r = scan(); r; r = scan()) {
+      used.add(r.id);
+      hits.push(path.basename(r.file));
+      at = Math.max(at, r.at);
+    }
+    if (hits.length === 0) return;
+    s.reviewCount = 0;
+    s.planReviewCount = 0;
+    resetRecheck(s, "ruling");
+    s.budget.resetAll();
+    s.capsResetAt = Math.ceil(at);
+    persistRounds(s);
+    s.trace?.emit({ event: "cap_reset", by: isBriefName(hits[0]) ? "brief" : "ruling", count: hits.length });
+  }
 
   /** One of this session's own handoff dirs (owned.ts ownHandoffDirs) holds a plan.md or result.md written in the last day (a round is waiting on its parent). */
   function handoffContext(s: Session): boolean {
@@ -2402,6 +2474,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("tool_execution_end", async (event, ctx) => {
     const s = sessionFor(ctx);
     if (s && !s.isChild) s.idleCache.onActivity();
+    s?.mutating.delete(event.toolCallId);
     if (!s || s.isChild || !s.ledgerBash.delete(event.toolCallId)) return;
     const res = event.result as { content?: { type?: string; text?: string }[] } | undefined;
     const text = (res?.content ?? []).map((c) => (c && c.type === "text" ? c.text ?? "" : "")).join("\n");
@@ -2421,7 +2494,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const given = (event.input as Record<string, unknown>).path;
       if (typeof given === "string") {
         if (askContractFor(owner).onFileWritten(path.resolve(ctx.cwd, given)) === "note") owner.trace?.emit({ event: "ask_note", needs_ruling: "no" });
-        if (isRulingName(path.basename(given))) {
+        if (isTrackedRulingName(path.basename(given))) {
           const abs = path.resolve(ctx.cwd, given);
           let real = abs;
           try {
@@ -2443,6 +2516,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       bashRulingSnaps.delete(event.toolCallId);
       selfRulingsFor(owner).markChanged(bashSnap, childDirsOf(owner));
     }
+    owner?.mutating.delete(event.toolCallId);
     // A `.seen` written by a shell command ends the ask too: the blocked state is recomputed from the files (R6 lane 4a).
     if (owner && !owner.isChild && event.toolName === "bash") askContractFor(owner).recheck();
     const pending = owner?.pendingChanges.get(event.toolCallId);
@@ -2736,7 +2810,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
     preflight: async (ctx, op, callId) => {
       const s = await ensureSession(ctx);
-      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), op, driftAsk(ctx), (r) => s.trace?.emit(r), callId);
+      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), op, driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), callId);
     },
     spawner,
     env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
@@ -2749,7 +2823,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
     preflight: async (ctx, op, callId) => {
       const s = await ensureSession(ctx);
-      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), "git_" + op, driftAsk(ctx), (r) => s.trace?.emit(r), callId);
+      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), "git_" + op, driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), callId);
     },
     spawner,
     env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
@@ -2777,7 +2851,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
     preflight: async (ctx, op, callId) => {
       const s = await ensureSession(ctx);
-      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), "foreman_" + op, driftAsk(ctx), (r) => s.trace?.emit(r), callId);
+      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), "foreman_" + op, driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), callId);
     },
     pushRefusal: async (ctx) => {
       const s = await ensureSession(ctx);
@@ -2864,12 +2938,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     } as never);
   }
 
-  // R14 item 4: the permission dialogs of the trace, the text of `/foreman dialogs --json`; foreman only, read only.
+  // R14 item 4, R18 item 2: the blocking dialogs of the trace, the text of `/foreman dialogs --json`; foreman only, read only.
   if (process.env.PI_SUBAGENT_CHILD !== "1") {
     pi.registerTool({
       name: DIALOGS_TOOL,
       label: "Permission dialogs",
-      description: "Count the permission dialogs (overlay ask records) of a trace per regression family, with the redacted command lines: the JSON of /foreman dialogs --json. Without trace, the session's own trace. Read only.",
+      description: "Count the blocking dialogs of a trace (overlay asks, permission prompts, child dialogs, checkpoint, ask_user_question, guard asks, drift asks) per family, with the redacted command lines and a total: the JSON of /foreman dialogs --json. Without trace, the session's own trace. Read only.",
       parameters: { type: "object", properties: { trace: { type: "string", minLength: 1, description: "Path of a trace file; default: this session's trace." } }, additionalProperties: false } as never,
       async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
         const s = await ensureSession(ctx);
@@ -2891,6 +2965,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const s = await ensureSession(ctx);
         if (s.isChild) return { content: [{ type: "text" as const, text: `${ASK_USER_TOOL} is for the foreman only.` }], details: { decision: "refused" }, isError: true };
         const r = await askUserQuestion(params, { hasUI: ctx.hasUI, ui: ctx.ui, ownDirs: () => childDirsOf(s) });
+        if (r.decision === "answered" || r.decision === "dismissed") s.trace?.emit({ event: "dialog", surface: "ask_user" });
         return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.decision }, ...(r.decision === "refused" ? { isError: true } : {}) };
       },
     } as never);
@@ -3090,6 +3165,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         } else {
           if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return done("pending", null, pendingText);
           const title = `pi-foreman checkpoint: ${name} (${hash8})`;
+          s.trace?.emit({ event: "dialog", surface: "checkpoint" });
           try {
             ctx.ui.notify(planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash) + (reviewed ? `\n${reviewed}` : ""), "info");
             answer = await withBlocked(herdrEvents, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
@@ -3529,8 +3605,16 @@ function askOutcome(isChild: boolean, reason: string | undefined): string {
   return "no-ui";
 }
 
-function driftAsk(ctx: ExtensionContext) {
-  return { mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) };
+/** The drift confirm of `ctx`; `trace` gets one `dialog` record (surface `drift`) when the confirm actually opens. */
+function driftAsk(ctx: ExtensionContext, trace?: TraceWriter | null) {
+  return {
+    mode: ctx.mode,
+    hasUI: ctx.hasUI,
+    confirm: blockedConfirm(herdrEvents, (title, msg) => {
+      trace?.emit({ event: "dialog", surface: "drift" });
+      return ctx.ui.confirm(title, msg);
+    }),
+  };
 }
 
 /** The running Pi's version: Pi resolves its own package for extensions, so its VERSION export is the host's. Null when unavailable. */

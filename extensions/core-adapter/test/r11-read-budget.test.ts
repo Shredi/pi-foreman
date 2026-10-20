@@ -1,6 +1,7 @@
 // R11 item 5 (P2): finalization (a reviewer PASS or a completed finalizer, no child run active) is exempt from
-// read_budget_exceeded and a plain git commit is not refused; a ruling file never changes the read budget; with a
-// launch pending the budget still refuses.
+// read_budget_exceeded and a plain git commit is not refused; a ruling line never changes the read budget, but a
+// parent-written ruling-<n>.md or brief-<x>.md resets it (R18 item 1, r18-caps-reset.test.ts); with a launch pending
+// the budget still refuses.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
@@ -68,7 +69,7 @@ test("read_budget_finalization_git_commit_allowed: a reviewer PASS (post-PASS) e
   assert.equal(b.finalized, false);
 });
 
-test("ruling_read_budget_line_has_no_effect", async (t) => {
+test("ruling_read_budget_line_has_no_effect_but_ruling_file_lifts", async (t) => {
   const a = await r11Rig(t);
   const dir = a.handoff("round", "child");
   const now = Date.now();
@@ -76,12 +77,15 @@ test("ruling_read_budget_line_has_no_effect", async (t) => {
   const out = await reads(a, DENY + 1);
   assert.ok(out.slice(0, DENY).every((r) => !readDenied(r)));
   assert.ok(readDenied(out[DENY]), "denied past the limit");
-  // a parent-written ruling with the line, newer than the ask: nothing changes
+  // a parent-written ruling.md with the line, newer than the ask: nothing changes (no text parser, ruling.md is no reset file)
   writeAt(path.join(dir, "ruling.md"), "APPROVED\nread-budget: +3\n", now - 1000);
   assert.ok((await reads(a, 2)).every(readDenied), "the ruling line does not lift the read budget");
-  writeAt(path.join(dir, "ruling-2.md"), "read-budget: +50\n", now + 1000);
-  assert.ok(readDenied(await a.call("bash", { command: "ls next" })), "a newer ruling file neither");
   assert.deepEqual(a.events("read_budget").filter((r) => r.action === "lift"), []);
+  // a parent-written ruling-2.md resets the read budget
+  writeAt(path.join(dir, "ruling-2.md"), "go on\n", Date.now());
+  await a.turnStart(); // the reads above were tool_calls only: none is in flight on the next turn
+  assert.ok(!readDenied(await a.call("bash", { command: "ls next" })), "a parent ruling-<n>.md lifts the read budget");
+  assert.equal(a.events("cap_reset").length, 1);
 });
 
 test("read_budget_still_refused_with_launch_pending", async (t) => {

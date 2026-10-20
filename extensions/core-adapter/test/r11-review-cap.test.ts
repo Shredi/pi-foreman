@@ -1,6 +1,7 @@
 // R11 item 4 (P2): plan reviews and fix-round reviews are capped apart by ceremony.reviewRuns; the review_cap refusal
-// names its one reset path (a new owner prompt); a ruling file never changes the cap; a capped plan-review FAIL without
-// located findings says the owner may override it at the checkpoint.
+// names its one reset path (a new owner prompt); a ruling line never changes the cap, but a parent-written ruling-<n>.md
+// or brief-<x>.md resets it (R18 item 1, r18-caps-reset.test.ts); a capped plan-review FAIL without located findings says
+// the owner may override it at the checkpoint.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
@@ -30,22 +31,21 @@ test("review_cap_fix_round_counted_separately", async (t) => {
   assert.equal((await a.launch(planReview(4))).res, undefined);
 });
 
-test("ruling_review_cap_line_has_no_effect", async (t) => {
+test("ruling_review_cap_line_has_no_effect_but_ruling_file_lifts", async (t) => {
   const a = await r11Rig(t, { reviewRuns: 1 });
   const dir = a.handoff("round", "child");
   const now = Date.now();
   writeAt(path.join(dir, "ask.md"), "ask: one more review round?\n", now - 60_000);
   assert.equal((await a.launch(review(1))).res, undefined);
   assert.ok(capRefused((await a.launch(review(2))).res), "capped before the ruling");
-  // a parent-written ruling with the line, newer than the ask: nothing changes
+  // a parent-written ruling.md with the line, newer than the ask: nothing changes (no text parser, ruling.md is no reset file)
   writeAt(path.join(dir, "ruling.md"), "APPROVED\nreview-cap: +2\n", now - 1000);
   assert.ok(capRefused((await a.launch(review(2))).res), "the ruling line does not lift the cap");
-  writeAt(path.join(dir, "ruling-2.md"), "review-cap: +5\n", now + 1000);
-  assert.ok(capRefused((await a.launch(review(2))).res), "a newer ruling file neither");
   assert.deepEqual(a.events("review_cap_lift"), []);
-  // the owner prompt is the reset
-  await a.ownerPrompt();
-  assert.equal((await a.launch(review(3))).res, undefined);
+  // a parent-written ruling-2.md resets the cap, whatever it says
+  writeAt(path.join(dir, "ruling-2.md"), "go on\n", Date.now());
+  assert.equal((await a.launch(review(2))).res, undefined, "a parent ruling-<n>.md lifts the cap");
+  assert.equal(a.events("cap_reset").length, 1);
 });
 
 test("review_cap_refusal_names_reset_path", () => {

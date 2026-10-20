@@ -1,9 +1,15 @@
-// `/foreman dialogs --json`: the session trace's permission-dialog records (overlay decision `ask-*`) counted per regression family.
-// The family is decided at emit time from the raw command (`dialogFamily`) and kept in the existing `class` trace field; the trace
+// `/foreman dialogs --json`: the session trace's blocking dialogs counted per family: overlay asks (decision `ask-*`, regression family by
+// command), permission-system prompts, forwarded child prompts, checkpoint dialogs, ask_user_question, guard asks and drift asks (R18: `dialog`
+// records with a `surface`, and the guard's `ask` record), plus a `total` of the blocking families (dialogsJson).
+// The overlay family is decided at emit time from the raw command (`dialogFamily`) and kept in the existing `class` trace field; the trace
 // itself keeps only the redacted, path-scrubbed `command` (trace.ts), which is what the report prints as literal lines.
 import * as fs from "node:fs";
 
-export const DIALOG_FAMILIES = ["state_usage_read", "trace_read", "self_ruling_refusal", "pi_scratch_read", "toolchain_probe", "own_run_dir", "own_bg_output", "own_bash_output_log", "owned_scratch", "hub_ledger_read", "other", "auto_review_allow"] as const;
+export const DIALOG_FAMILIES = ["state_usage_read", "trace_read", "self_ruling_refusal", "pi_scratch_read", "toolchain_probe", "own_run_dir", "own_bg_output", "own_bash_output_log", "owned_scratch", "hub_ledger_read", "other", "auto_review_allow", "permission_prompt", "child_dialogs", "checkpoint", "ask_user_question", "guard_ask", "drift_ask"] as const;
+/** The families that are no blocking dialog: an ask the auto reviewer allowed without one, and a refusal. Everything else counts in `total`. */
+const NOT_BLOCKING = new Set<string>(["auto_review_allow", "self_ruling_refusal"]);
+/** `dialog` record `surface` -> family. */
+const SURFACE_FAMILY: Record<string, DialogFamily> = { permission: "permission_prompt", child: "child_dialogs", checkpoint: "checkpoint", ask_user: "ask_user_question", drift: "drift_ask" };
 export type DialogFamily = (typeof DIALOG_FAMILIES)[number];
 
 /** The regression family of a dialog's command (raw text, before the trace scrubs it). */
@@ -27,7 +33,7 @@ export const dialogFields = (command: string): { class: DialogFamily } => ({ cla
 
 export type DialogReport = Record<string, { count: number; lines: string[] }>;
 
-/** The report of a trace file's overlay `ask-*` records, plus the self-ruling refusals (guard `self_ruling`), plus the asks the auto reviewer allowed without a dialog (`auto_review_allow`, R16); a missing or unreadable file reads as no records. */
+/** The report of a trace file: overlay `ask-*` records, `dialog` records (one family per `surface`), guard asks that were answered (`ask` approved|denied), the self-ruling refusals (guard `self_ruling`) and the asks the auto reviewer allowed without a dialog (`auto_review_allow`, R16); a missing or unreadable file reads as no records. */
 export function dialogReport(traceFile: string): DialogReport {
   const out: DialogReport = {};
   for (const f of DIALOG_FAMILIES) out[f] = { count: 0, lines: [] };
@@ -56,6 +62,19 @@ export function dialogReport(traceFile: string): DialogReport {
       out.self_ruling_refusal.lines.push(typeof rec.command === "string" ? rec.command : String(rec.toolFamily ?? ""));
       continue;
     }
+    if (rec.event === "dialog") {
+      const f = SURFACE_FAMILY[String(rec.surface)];
+      if (!f) continue;
+      out[f].count++;
+      out[f].lines.push(typeof rec.agent === "string" ? rec.agent : String(rec.surface));
+      continue;
+    }
+    // a guard's ask dialog that a human answered (no-ui and child outcomes opened none here)
+    if (rec.event === "ask" && (rec.decision === "approved" || rec.decision === "denied")) {
+      out.guard_ask.count++;
+      out.guard_ask.lines.push(`${String(rec.guard ?? "")}:${String(rec.toolFamily ?? "")}`);
+      continue;
+    }
     if (rec.event !== "overlay" || typeof rec.decision !== "string" || !rec.decision.startsWith("ask-")) continue;
     const fam = (DIALOG_FAMILIES as readonly string[]).includes(String(rec.class)) ? String(rec.class) : "other";
     out[fam].count++;
@@ -64,8 +83,12 @@ export function dialogReport(traceFile: string): DialogReport {
   return out;
 }
 
-/** The `/foreman dialogs --json` text: the report, or a plain statement when the trace is off (never zero counts). */
+/** Sum of the blocking families of a report (not `auto_review_allow`, not `self_ruling_refusal`). */
+const dialogTotal = (r: DialogReport): number => Object.entries(r).reduce((n, [f, v]) => (NOT_BLOCKING.has(f) ? n : n + v.count), 0);
+
+/** The `/foreman dialogs --json` text: the report and its `total`, or a plain statement when the trace is off (never zero counts). */
 export function dialogsJson(trace: { file: string } | null | undefined): string {
   if (!trace) return JSON.stringify({ trace: "off", message: "trace.enabled is not true: no dialogs are recorded; enable the trace to count dialogs" }, null, 2);
-  return JSON.stringify(dialogReport(trace.file), null, 2);
+  const report = dialogReport(trace.file);
+  return JSON.stringify({ ...report, total: dialogTotal(report) }, null, 2);
 }

@@ -6,7 +6,8 @@
 // approval comes back only from the parent's `ruling.md` (parentApproval restore mode: first line APPROVED, ctime newer
 // than the ctime of both `<scratch>/plan-<topic>.md` and `<handoff>/plan.md`, and both plan files of one version hash). Any other field (`approved: true`) is
 // ignored. A different handoff dir or plan hash discards the whole file (re-ceremony). Counters restore only as
-// non-negative integers; a chain with a bad one starts fresh. The rulings a chain used and its last refusal are not kept.
+// non-negative integers; a chain with a bad one starts fresh. The rulings a chain used and its last refusal are not kept; the caps-reset
+// watermark (`capsResetAt`, ms epoch of the last parent ruling/brief that lifted the caps) is, so a reload does not apply it twice.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { planVersionHash } from "./checkpoint.ts";
@@ -35,6 +36,8 @@ export interface PersistedRounds {
   chains: Record<string, { revisions: number; exempt: number; built: boolean; reviewOpen: boolean }>;
   reviewCount: number;
   planReviewCount: number;
+  /** Watermark of the last caps reset by a parent ruling/brief (index.ts capsReset); absent = none. */
+  capsResetAt?: number;
 }
 
 /** The session's handoff dir: PI_FOREMAN_HANDOFF_DIR when absolute, else null. */
@@ -73,6 +76,7 @@ export interface Restored {
   chains: Map<string, RoundState>;
   reviewCount: number;
   planReviewCount: number;
+  capsResetAt: number;
   /** The checkpoint approval, granted by the parent's ruling.md; null = re-ceremony. */
   approval: { topic: string; path: string; hash: string; ruling: string; at: number; review: PersistedReview | null } | null;
 }
@@ -111,7 +115,7 @@ export function restoreRoundState(dir: string, currentPlan: (topic: string) => {
     chains.set(k, { ...initialRounds(), built: c.built === true, reviewOpen: c.reviewOpen === true, used, ...(exempt > 0 ? { exempt } : {}) });
   }
   const chain = typeof raw.chain === "string" && CHAIN_KEY.test(raw.chain) ? raw.chain : "main";
-  return { chain, chains, reviewCount: count(raw.reviewCount) ?? 0, planReviewCount: count(raw.planReviewCount) ?? 0, approval: plan ? approvalOf(dir, plan, raw.planReview, self) : null };
+  return { chain, chains, reviewCount: count(raw.reviewCount) ?? 0, planReviewCount: count(raw.planReviewCount) ?? 0, capsResetAt: count(raw.capsResetAt) ?? 0, approval: plan ? approvalOf(dir, plan, raw.planReview, self) : null };
 }
 
 const ctimeOf = (f: string): number | null => {
