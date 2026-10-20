@@ -25,12 +25,15 @@
 // Chains: the count is kept per review chain (`RoundChains`), the key being the phase a launch's task names
 // (`P2`, `phase 2`; a launch naming none stays on the current chain). A new phase starts at zero, so a limit reached
 // in P1 does not block a P2 builder. A parent `ruling-*.md` with the line `revision-round: +1`, written after the
-// refusal it answers (ctime), resets that chain's count once (`rulingReset`).
+// refusal it answers (ctime), resets that chain's count once (`rulingReset`). The same scan with the `strict` options lifts the
+// review cap and the read budgets for a parent `ruling-<n>.md` / `brief-<x>.md` (ruling.ts isCapsResetName, index.ts capsReset).
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Tier } from "./ceremony.ts";
 import { isRulingName } from "./ruling.ts";
+
+const REVISION_LINE = /^revision-round:[ \t]*\+1[ \t]*$/m;
 
 export const NOTIFY_TYPE = "subagent-notify";
 export const REVIEW_ROLES = ["reviewer", "senior-reviewer"];
@@ -71,22 +74,33 @@ export function chainKey(input: Record<string, unknown>, current = DEFAULT_CHAIN
   return current;
 }
 
-/** A parent ruling in `dirs` with the line `revision-round: +1`, ctime newer than `afterMs` (the refusal) and not used yet. */
-export function rulingReset(dirs: string[], afterMs: number, used: Set<string>, self?: { has(file: string, mtime: number): boolean }): { file: string; id: string } | null {
+export interface ResetOpts {
+  /** Which file names count (default `isRulingName`). */
+  names?: (name: string) => boolean;
+  /** A line the file must hold (default `revision-round: +1`); null = none. */
+  line?: RegExp | null;
+  /** Regular files only (lstat, no symlink) and mtime newer than `afterMs` too (a chmod/mv changes only the ctime). */
+  strict?: boolean;
+}
+
+/** A parent ruling in `dirs` with the line `revision-round: +1`, ctime newer than `afterMs` (the refusal) and not used yet. `at`: the later of its ctime and mtime. */
+export function rulingReset(dirs: string[], afterMs: number, used: Set<string>, self?: { has(file: string, mtime: number): boolean }, opts: ResetOpts = {}): { file: string; id: string; at: number } | null {
+  const line = opts.line === undefined ? REVISION_LINE : opts.line;
   for (const dir of dirs) {
     let names: string[] = [];
     try {
-      names = fs.readdirSync(dir).filter(isRulingName);
+      names = fs.readdirSync(dir).filter(opts.names ?? isRulingName);
     } catch {
       continue;
     }
     for (const n of names) {
       const file = path.join(dir, n);
       try {
-        const st = fs.statSync(file);
+        const st = opts.strict ? fs.lstatSync(file) : fs.statSync(file);
         const id = `${file}:${st.ctimeMs}`;
+        if (opts.strict && (!st.isFile() || st.mtimeMs <= afterMs)) continue;
         if (st.ctimeMs <= afterMs || used.has(id) || self?.has(file, st.mtimeMs)) continue;
-        if (/^revision-round:[ \t]*\+1[ \t]*$/m.test(fs.readFileSync(file, "utf8"))) return { file, id };
+        if (!line || line.test(fs.readFileSync(file, "utf8"))) return { file, id, at: Math.max(st.ctimeMs, st.mtimeMs) };
       } catch {
         // vanished
       }

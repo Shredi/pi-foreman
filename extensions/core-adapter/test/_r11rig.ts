@@ -129,6 +129,12 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     },
     /** The tool_result of a foreman write that went through (marks a self-written ruling). */
     wrote: (file: string) => handlers.get("tool_result")!({ toolName: "write", toolCallId: `w${++calls}`, input: { path: file }, content: [{ type: "text", text: "ok" }], isError: false }, ctx),
+    /** A custom `subagent-notify` message (a child completion notice) as the foreman receives it. */
+    notice: (text: string) => handlers.get("message_end")!({ message: { role: "custom", customType: "subagent-notify", content: text } }, ctx),
+    /** turn_start: the foreman's calls that never got a tool_result (`call` is a tool_call only) are no longer in flight. */
+    turnStart: () => handlers.get("turn_start")!({}, ctx),
+    /** session_start again (a reload): the round-state file is restored. */
+    restart: () => handlers.get("session_start")!({ reason: "reload" }, ctx),
     ownerPrompt: (text = "next") => handlers.get("input")!({ source: "interactive", text }, ctx),
   };
 }

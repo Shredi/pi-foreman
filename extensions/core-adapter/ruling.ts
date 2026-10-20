@@ -13,8 +13,19 @@ const ASK_N_RE = /^ask-(\d{1,6})\s*$/;
 /** True for a `ruling.md` / `ruling-<n>.md` file name. */
 export const isRulingName = (name: string): boolean => RULING_RE.test(name);
 
-/** A ruling name for self-write tracking and refusals: `isRulingName` plus the plan checkpoint's `ruling-plan.md` (checkpoint.ts). */
-export const isTrackedRulingName = (name: string): boolean => isRulingName(name) || name === "ruling-plan.md";
+const BRIEF_RE = /^brief-[A-Za-z0-9._-]{1,64}\.md$/;
+
+/** True for a `brief-<x>.md` file name (a parent's brief to the session; not a ruling name for the ask contract). */
+export const isBriefName = (name: string): boolean => BRIEF_RE.test(name);
+
+/** A name for self-write tracking and refusals: `isRulingName`, the plan checkpoint's `ruling-plan.md` (checkpoint.ts) and `brief-<x>.md` (both lift the caps, index.ts capsReset). */
+export const isTrackedRulingName = (name: string): boolean => isRulingName(name) || name === "ruling-plan.md" || isBriefName(name);
+
+/** A parent file that lifts the review cap and the read budgets: `ruling-<n>.md` (n >= 1) or `brief-<x>.md`; never `ruling.md`, `ruling-plan.md`, `brief.md`. */
+export const isCapsResetName = (name: string): boolean => {
+  const n = RULING_RE.exec(name)?.[1];
+  return (n !== undefined && Number(n) >= 1) || isBriefName(name);
+};
 
 const mtimeOf = (p: string): number | null => {
   try {
@@ -154,7 +165,7 @@ const str = (v: unknown): string | null => (typeof v === "string" && v ? v : nul
 const shellOf = (toolName: string): "posix" | "powershell" => (toolName === "powershell" ? "powershell" : "posix");
 
 /**
- * Refusal reason when `toolName` writes a `ruling*.md` inside one of `childDirs` (the dirs where this session is the child) at a
+ * Refusal reason when `toolName` writes a `ruling*.md` or `brief-*.md` inside one of `childDirs` (the dirs where this session is the child) at a
  * literal path, else undefined: write/edit `path`, foreman_copy/foreman_move `dst`, or a write surface of a shell line
  * (permoverlay.ts shellWrites), resolved against `cwd` as written. R16 item 4a: no cd, variable or symlink tracking, no suffix
  * joins; what the literal path does not show is selfRulingAsk's. `*.ack` files are never ruling names; a copy source is a read.
@@ -171,13 +182,13 @@ export function selfRulingRefusal(toolName: string, input: Record<string, unknow
 
 /**
  * R16 item 4a (ruling D1): a FLAT ask trigger on the lexed line, no resolution. A shell line with a write surface anywhere
- * (shellWrites), the token `ruling` anywhere and a handoff-dir path anywhere (one of `childDirs`, or `handoffs/<its name>` in any
+ * (shellWrites), the token `ruling` or `brief` anywhere and a handoff-dir path anywhere (one of `childDirs`, or `handoffs/<its name>` in any
  * spelling: `~`, `$HOME`, relative) is an overlay ask: the auto reviewer judges it under the rules' hard_deny, the human on defer.
  * A pure read of a ruling never asks; a dir where this session is the parent (its child's rulings) is no trigger.
  */
 export function selfRulingAsk(toolName: string, input: Record<string, unknown>, childDirs: string[]): Decision | undefined {
   const cmd = SHELL_TOOLS.has(toolName) ? str(input.command) : null;
-  if (!cmd || childDirs.length === 0 || !/ruling/i.test(cmd)) return undefined;
+  if (!cmd || childDirs.length === 0 || !/ruling|brief/i.test(cmd)) return undefined;
   const fold = (s: string): string => s.replace(/\\/g, "/").toLowerCase();
   const line = fold(cmd);
   if (!childDirs.some((d) => [`handoffs/${path.basename(d)}`, d, realDir(d)].some((p) => line.includes(fold(p))))) return undefined;
