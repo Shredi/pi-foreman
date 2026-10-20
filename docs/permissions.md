@@ -13,7 +13,7 @@ The foreman's permission decisions come in two layers.
   and the secrets-in-commit check run after the overlay: they are later deterministic layers that an auto-review
   allow does not skip.
 - **Auto reviewer**: every other foreman overlay ask goes to the review model first, judged by the prose rules in
-  `config/permissions.rules.md`. Its verdict decides: an allow lets the call go on to the later layers.
+  `config/permissions.rules.md`. Its verdict decides: an allow lets the call go on to the later layers. A child's overlay ask (not a self-modification) goes there too, headless included: the prompt says `requester: subagent <role>`, an allow traces `auto_review_allow` with the child role, a high or critical deny blocks, and a defer keeps the child block "ask the foreman".
 
 What reaches a human: a reviewer deny is a block (the call is refused with its reason) only with riskLevel high or
 critical; a deny with riskLevel low, medium or missing, a defer, an error, a timeout or no review model is the dialog

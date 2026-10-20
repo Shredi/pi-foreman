@@ -573,7 +573,7 @@
     {
       "id": "auto-review-overlay",
       "title": "Auto reviewer for overlay asks",
-      "purpose": "Every foreman overlay ask that is no self-modification goes to the review model before the human dialog: an allow lets the call go on, a deny with riskLevel high or critical is a block, defers, errors, timeouts and a missing model fall back to the dialog. The deterministic basic blockers run first and are not judged.",
+      "purpose": "Every foreman overlay ask that is no self-modification (a child's included) goes to the review model before the human dialog: an allow lets the call go on, a deny with riskLevel high or critical is a block, defers, errors, timeouts and a missing model fall back to the dialog. The deterministic basic blockers run first and are not judged.",
       "doc": "docs/permissions.md#two-layers",
       "keys": [],
       "commands": [],
