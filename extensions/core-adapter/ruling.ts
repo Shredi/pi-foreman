@@ -13,6 +13,9 @@ const ASK_N_RE = /^ask-(\d{1,6})\s*$/;
 /** True for a `ruling.md` / `ruling-<n>.md` file name. */
 export const isRulingName = (name: string): boolean => RULING_RE.test(name);
 
+/** A ruling name for self-write tracking and refusals: `isRulingName` plus the plan checkpoint's `ruling-plan.md` (checkpoint.ts). */
+export const isTrackedRulingName = (name: string): boolean => isRulingName(name) || name === "ruling-plan.md";
+
 const mtimeOf = (p: string): number | null => {
   try {
     return fs.statSync(p).mtimeMs;
@@ -70,7 +73,7 @@ export function snapshotRulings(dirs: string[]): Map<string, number> {
   const out = new Map<string, number>();
   for (const dir of dirs) {
     try {
-      for (const n of fs.readdirSync(dir).filter(isRulingName)) {
+      for (const n of fs.readdirSync(dir).filter(isTrackedRulingName)) {
         const m = mtimeOf(path.join(dir, n));
         if (m !== null) out.set(path.join(dir, n), m);
       }
@@ -91,7 +94,7 @@ export class SelfRulings {
 
   /** A write/edit of `file`: remember its mtime (only ruling names). */
   mark(file: string): void {
-    if (!isRulingName(path.basename(file))) return;
+    if (!isTrackedRulingName(path.basename(file))) return;
     const m = mtimeOf(file);
     if (m !== null) this.written.set(realKey(file), m);
   }
@@ -159,7 +162,7 @@ const shellOf = (toolName: string): "posix" | "powershell" => (toolName === "pow
 export function selfRulingRefusal(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[]): string | undefined {
   if (childDirs.length === 0) return undefined;
   const dirs = new Set(childDirs.map(realDir));
-  const inChild = (p: string): boolean => (isRulingName(path.basename(p)) || path.basename(p) === "ruling-plan.md") && dirs.has(path.dirname(realKey(path.resolve(cwd, p))));
+  const inChild = (p: string): boolean => isTrackedRulingName(path.basename(p)) && dirs.has(path.dirname(realKey(path.resolve(cwd, p))));
   const words = toolName === "write" || toolName === "edit" ? [str(input.path)] : toolName === "foreman_copy" || toolName === "foreman_move" ? [str(input.dst)] : [];
   const cmd = SHELL_TOOLS.has(toolName) ? str(input.command) : null;
   if (cmd) words.push(...shellWrites(cmd, shellOf(toolName)).words);

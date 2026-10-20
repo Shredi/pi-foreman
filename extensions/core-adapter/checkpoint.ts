@@ -218,7 +218,7 @@ export function checkpointMode(configured: unknown, env: NodeJS.ProcessEnv): Che
  * `ruling.md` (first line `APPROVED`, same ctime binding, not written by this session: `self`) approves too.
  */
 export function readPlanVerdict(dir: string, planFile: string, self?: SelfRulings): PlanVerdict | null {
-  const own = readPlanVerdictFile(dir, planFile);
+  const own = readPlanVerdictFile(dir, planFile, self);
   if (own) return own;
   try {
     return parentApproval([dir], fs.statSync(planFile).ctimeMs, self, true) ? { kind: "approve" } : null;
@@ -227,11 +227,11 @@ export function readPlanVerdict(dir: string, planFile: string, self?: SelfRuling
   }
 }
 
-function readPlanVerdictFile(dir: string, planFile: string): PlanVerdict | null {
+function readPlanVerdictFile(dir: string, planFile: string, self?: SelfRulings): PlanVerdict | null {
   try {
     const file = path.join(dir, PLAN_VERDICT_FILE);
     const st = fs.lstatSync(file);
-    if (!st.isFile() || st.size > PLAN_MAX_BYTES || st.ctimeMs <= fs.statSync(planFile).ctimeMs) return null;
+    if (!st.isFile() || st.size > PLAN_MAX_BYTES || st.ctimeMs <= fs.statSync(planFile).ctimeMs || self?.has(file, st.mtimeMs)) return null;
     const text = fs.readFileSync(file, "utf8");
     const first = text.split(/\r?\n/, 1)[0].trim();
     if (first === "APPROVED") return { kind: "approve" };
