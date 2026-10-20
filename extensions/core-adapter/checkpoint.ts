@@ -13,6 +13,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { scratchRoot } from "./editmode.ts";
 import { resolveToolPath } from "./payload.ts";
+import { parentApproval } from "./ruling.ts";
+import type { SelfRulings } from "./ruling.ts";
 import { workspaceOf } from "./python.ts";
 import { realDeep, under } from "./triage.ts";
 
@@ -212,9 +214,20 @@ export function checkpointMode(configured: unknown, env: NodeJS.ProcessEnv): Che
 /**
  * The parent's verdict on the plan: first line `APPROVED`, `REVISE <text>` (the rest of the file joins the text) or `REJECT` in
  * `<dir>/ruling-plan.md`. A regular file whose ctime is newer than the plan file's ctime (neither can be set back, unlike an mtime): a plan edit after the
- * verdict makes it stale, so the edited plan needs a new one. Null = no usable verdict.
+ * verdict makes it stale, so the edited plan needs a new one. Null = no usable verdict. Without a usable `ruling-plan.md`, the parent's
+ * `ruling.md` (first line `APPROVED`, same ctime binding, not written by this session: `self`) approves too.
  */
-export function readPlanVerdict(dir: string, planFile: string): PlanVerdict | null {
+export function readPlanVerdict(dir: string, planFile: string, self?: SelfRulings): PlanVerdict | null {
+  const own = readPlanVerdictFile(dir, planFile);
+  if (own) return own;
+  try {
+    return parentApproval([dir], fs.statSync(planFile).ctimeMs, self, true) ? { kind: "approve" } : null;
+  } catch {
+    return null;
+  }
+}
+
+function readPlanVerdictFile(dir: string, planFile: string): PlanVerdict | null {
   try {
     const file = path.join(dir, PLAN_VERDICT_FILE);
     const st = fs.lstatSync(file);

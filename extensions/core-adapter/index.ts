@@ -3075,13 +3075,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // ceremony.checkpoint: `parent` (default for a session opened with a parent) takes the verdict from the parent-written ruling-plan.md, never a dialog.
         const parentMode = checkpointMode(get(s.config.config, "ceremony.checkpoint"), process.env) === "parent";
         const handoff = roundStateDir(process.env);
-        const verdict = parentMode && handoff ? readPlanVerdict(handoff, plan.path) : null;
+        const verdict = parentMode && handoff ? readPlanVerdict(handoff, plan.path, selfRulingsFor(s)) : null;
         let answer: string | undefined;
         if (verdict) {
           answer = verdict.kind === "approve" ? "approve" : verdict.kind;
         } else if (parentMode) {
           const file = handoff ? path.join(handoff, PLAN_VERDICT_FILE) : null;
-          return done("pending", null, `${pendingText}${file ? ` The parent answers in ${file} (first line APPROVED, REVISE <text> or REJECT, written after the last plan edit): wait with foreman_wait kind file on that path, then call ${CHECKPOINT_TOOL} again.` : ""}`);
+          return done("pending", null, `${pendingText}${file ? ` The parent answers in ${file} (first line APPROVED, REVISE <text> or REJECT, written after the last plan edit; a ruling.md APPROVED there counts as APPROVED): wait with foreman_wait kind file on that path, then call ${CHECKPOINT_TOOL} again.` : ""}`);
         } else {
           if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return done("pending", null, pendingText);
           const title = `pi-foreman checkpoint: ${name} (${hash8})`;
