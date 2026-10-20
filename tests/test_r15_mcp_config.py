@@ -93,6 +93,10 @@ class McpConfigTest(unittest.TestCase):
             self.assertIn("roles.%s.mcp: only child roles take mcp; the main session already loads every enabled "
                           "server in mcp.json" % rid, res["errors"])
 
+    def test_deny_glob_matches_the_name_pi_gives_a_tool_with_odd_characters(self):
+        res = self.load(l2={"roles": {"builder": {"mcp": ["fx/a.b"], "denyTools": ["mcp__fx__a_b"]}}})
+        self.assertIn(DENY_MSG.replace("mcp__*", "mcp__fx__a_b") % ("builder", "builder"), res["errors"])
+
     def test_builder_with_mcp_is_accepted(self):
         res = self.load(l2={"roles": {"builder": {"mcp": ["fx"]}}})
         self.assertEqual([e for e in res["errors"] if ".mcp" in e], [])

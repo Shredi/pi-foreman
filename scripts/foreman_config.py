@@ -705,7 +705,9 @@ def mcp_deny_issues(cfg):
             path = "roles.%s.mcp" % rid
             issues.append(("error", path, "%s: only child roles take mcp; the main session already loads every enabled server in mcp.json" % path))
             continue
-        samples = ["mcp__%s__%s" % (n.split("/", 1)[0].replace("-", "_"), n.split("/", 1)[1] if "/" in n else "*")
+        # Pi's createMcpToolName: every char outside [A-Za-z0-9_] becomes `_`; a bare server stands for any tool (`*`).
+        samples = [re.sub(r"[^A-Za-z0-9_]", "_", "mcp__%s__%s" % (n.split("/", 1)[0], n.split("/", 1)[1]))
+                   if "/" in n else re.sub(r"[^A-Za-z0-9_]", "_", "mcp__" + n) + "__*"
                    for n in names if isinstance(n, str) and n]
         for pat in role.get("denyTools") or []:
             if isinstance(pat, str) and any(fnmatch.fnmatchcase(s, pat) for s in samples):
