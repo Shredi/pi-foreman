@@ -172,6 +172,8 @@ export interface OverlayAsk {
   path?: string;
   /** The foreman session id (the `<session>` of the rules' environment paragraph). */
   session?: string;
+  /** Who asks, as the prompt's `requester:` line; unset = the main session. */
+  requester?: string;
 }
 
 /**
@@ -181,7 +183,7 @@ export interface OverlayAsk {
  */
 export function overlayRequestText(a: OverlayAsk, cwd: string, intent: string, systemLength: number, nonce = randomBytes(8).toString("hex")): string | null {
   const fence = (label: string, body: string): string[] => [`BEGIN UNTRUSTED ${label} ${nonce}`, body.split(nonce).join(""), `END UNTRUSTED ${label} ${nonce}`];
-  const head = ["## Permission request (pi-foreman overlay ask)", `surface: ${a.surface}`, `tool: ${a.tool}`, "requester: main session", `session: ${a.session ?? "-"}`, `cwd: ${cwd}`, "asked by:", ...fence("ASK", `rule: ${a.rule ?? "-"} | path: ${a.path ?? "-"} | surface: ${a.surface}`), "value:", ...fence("VALUE", a.value)];
+  const head = ["## Permission request (pi-foreman overlay ask)", `surface: ${a.surface}`, `tool: ${a.tool}`, `requester: ${a.requester ?? "main session"}`, `session: ${a.session ?? "-"}`, `cwd: ${cwd}`, "asked by:", ...fence("ASK", `rule: ${a.rule ?? "-"} | path: ${a.path ?? "-"} | surface: ${a.surface}`), "value:", ...fence("VALUE", a.value)];
   const end = ["", "Respond with your JSON verdict."];
   const bare = [...head, ...end].join("\n");
   if (systemLength + bare.length > MAX_OVERLAY_PROMPT) return null;
@@ -401,6 +403,8 @@ export interface OverlayAskEnv {
   mode: string;
   hasUI: boolean;
   session?: string;
+  /** The `requester:` line of the prompt for a child (`subagent <role>`); unset = the main session. */
+  requester?: string;
   rules: () => string;
 }
 
@@ -418,7 +422,7 @@ export function overlayValue(toolName: string, input: Record<string, unknown>): 
  * no model, over budget) and every other decision -> null, i.e. resolveDecision exactly as before.
  */
 export async function overlayAutoReview(review: ForemanReview, id: string, d: Decision | null, toolName: string, input: Record<string, unknown>, env: OverlayAskEnv): Promise<"allow" | { block: true; reason: string } | null> {
-  if (!d || d.kind !== "ask" || d.selfMod || !env.enabled || env.isChild || !env.hasUI || (env.mode !== "tui" && env.mode !== "rpc")) return null;
+  if (!d || d.kind !== "ask" || d.selfMod || !env.enabled || (!env.isChild && (!env.hasUI || (env.mode !== "tui" && env.mode !== "rpc")))) return null;
   try {
     let rules = "";
     try {
@@ -427,7 +431,7 @@ export async function overlayAutoReview(review: ForemanReview, id: string, d: De
       rules = "";
     }
     const shell = typeof input.command === "string";
-    const out = await review.reviewOverlayAsk(id, { surface: shell ? "bash" : "path", tool: toolName, value: overlayValue(toolName, input), ...(d.rule ? { rule: d.rule } : {}), ...(d.path ? { path: d.path } : {}), ...(env.session ? { session: env.session } : {}) }, rules);
+    const out = await review.reviewOverlayAsk(id, { surface: shell ? "bash" : "path", tool: toolName, value: overlayValue(toolName, input), ...(d.rule ? { rule: d.rule } : {}), ...(d.path ? { path: d.path } : {}), ...(env.session ? { session: env.session } : {}), ...(env.requester ? { requester: env.requester } : {}) }, rules);
     if (out.verdict.kind === "allow") return "allow";
     if (out.verdict.kind === "deny") return { block: true, reason: out.verdict.reason ?? "model review: denied" };
     return null;
@@ -534,7 +538,7 @@ export class ForemanReview {
 
   /**
    * R16 item 1: the model review of one of the foreman's own overlay asks, with the rules file text in place of the Allow/Deny/Defer
-   * paragraph. Never throws, never hangs past the review timeout; a child, no session, no rules, no model or a prompt over
+   * paragraph. Never throws, never hangs past the review timeout; no session, no rules, no model or a prompt over
    * MAX_OVERLAY_PROMPT defers. The caller keeps deny decisions and selfMod asks away from it.
    */
   async reviewOverlayAsk(id: string, a: OverlayAsk, rules: string): Promise<Outcome> {
@@ -544,12 +548,11 @@ export class ForemanReview {
     let auto = false;
     const s = this.sessions.get(id);
     try {
-      const target = s && !s.isChild ? reviewTarget(s.config(), s.provider) ?? autoReviewTarget(s.config(), s.provider, s.registry) : null;
+      const target = s ? reviewTarget(s.config(), s.provider) ?? autoReviewTarget(s.config(), s.provider, s.registry) : null;
       auto = target?.auto === true;
       const system = overlaySystemPrompt(rules);
       const text = s && rules.trim() ? overlayRequestText(a, s.cwd, s.intent, system.length) : null;
       if (!s) out = { verdict: { kind: "defer" }, label: "no-session" };
-      else if (s.isChild) out = { verdict: { kind: "defer" }, label: "child" };
       else if (!rules.trim()) out = { verdict: { kind: "defer" }, label: "no-rules" };
       else if (!target) out = { verdict: { kind: "defer" }, label: "no-model" };
       else if (text === null) out = { verdict: { kind: "defer" }, label: "truncated" };
