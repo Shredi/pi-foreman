@@ -58,7 +58,7 @@
       "title": "Role definitions",
       "purpose": "Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time limit of the neutral roles.",
       "doc": "docs/roles.md#further-role-and-provider-keys",
-      "keys": ["roles.<x>.file", "roles.<x>.promptAppend", "roles.<x>.tools", "roles.<x>.denyTools", "roles.<x>.mcp", "roles.<x>.launch", "roles.<x>.timeoutMinutes", "ceremony.childTimeoutSeconds"],
+      "keys": ["roles.<x>.file", "roles.<x>.promptAppend", "roles.<x>.tools", "roles.<x>.denyTools", "roles.<x>.mcp", "roles.<x>.skills", "roles.<x>.launch", "roles.<x>.timeoutMinutes", "ceremony.childTimeoutSeconds"],
       "commands": [],
       "switch": null,
       "state": "on",

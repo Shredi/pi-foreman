@@ -151,6 +151,7 @@ Switch: `providers` is non-empty.
 | `roles.<x>.tools` | `foreman`: `[]`, `session-foreman`: `[]`, `planner`: `["read", "ls", "grep", "find", "write", "edit"]`, `explorer`: `["read", "ls", "grep", "find", "bash"]`, ... (see `config/foreman.defaults.json`) | tighten-only (can only narrow the list) |
 | `roles.<x>.denyTools` | `planner`: `["mcp__*"]`, `explorer`: `["mcp__*"]`, `reviewer`: `["mcp__*"]`, `senior-reviewer`: `["mcp__*"]` | any layer |
 | `roles.<x>.mcp` | unset | not in project/session (an MCP server runs a command: user or overlay config only) |
+| `roles.<x>.skills` | `foreman`: `[]`, `session-foreman`: `[]`, `planner`: `[]`, `explorer`: `[]`, `builder`: `[]`, `reviewer`: `[]`, `senior-reviewer`: `[]`, `finalizer`: `[]` | not in project/session (the skills a role gets come from the user or overlay config) |
 | `roles.<x>.launch` | `planner`: `"detached"`, `explorer`: `"detached"`, `builder`: `"detached"`, `reviewer`: `"detached"`, `senior-reviewer`: `"detached"`, `finalizer`: `"detached"` | not in project/session (the launch mode comes from the user or overlay config) |
 | `roles.<x>.timeoutMinutes` | `planner`: `20`, `explorer`: `20`, `builder`: `60`, `reviewer`: `30`, `senior-reviewer`: `45`, `finalizer`: `30` | tighten-only (lower only, minimum 1) |
 | `ceremony.childTimeoutSeconds` | `1800` | tighten-only (lower only, minimum 1) |
@@ -767,6 +768,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `roles.*.launch` | the launch mode comes from the user or overlay config |
 | `roles.*.file` | a role file replaces the prompt: user or overlay config only |
 | `roles.*.mcp` | an MCP server runs a command: user or overlay config only |
+| `roles.*.skills` | the skills a role gets come from the user or overlay config |
 | `providers.*.roles.*.strong` | the strong model is picked in the user or overlay config |
 | `tools.prHost` | the PR host program comes from the user or overlay config |
 | `sync.repos` | the repository list comes from the user or overlay config |

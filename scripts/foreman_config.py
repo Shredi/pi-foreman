@@ -110,6 +110,7 @@ Keys outside safety that the project and session layers cannot loosen either
     roles.*.launch                   ignored
     roles.*.file                     ignored (a role file replaces the prompt)
     roles.*.mcp                      ignored (an MCP server runs a command: user or overlay config only)
+    roles.*.skills                   ignored (the skill list comes from the user or overlay config)
     roles.<id>.tools                 narrow only (intersection with the L1 -> L3 -> L2 list)
     roles.*.codemode                 only false is accepted (true adds the codemode tool)
     providers.*.roles.*.codemode     only false is accepted
@@ -128,7 +129,7 @@ ceiling (it costs money, it grants no access).
 
 Validation uses a supported subset of foreman.schema.json: type (also a list
 of types), enum, properties, additionalProperties (false = unknown-key warning,
-object = value schema), items, required, minimum, maximum. An unknown key is a
+object = value schema), items, required, minimum, maximum, pattern (strings; re.search). An unknown key is a
 warning. Every layer above L1 is validated on its own before it is merged: an
 invalid value under `safety` is dropped from that layer only (list items one by
 one), with a warning. An invalid `safety` value left after the merge (an L1 bug)
@@ -201,6 +202,7 @@ IGNORED_KEYS = [
     (("roles", "*", "launch"), "the launch mode comes from the user or overlay config"),
     (("roles", "*", "file"), "a role file replaces the prompt: user or overlay config only"),
     (("roles", "*", "mcp"), "an MCP server runs a command: user or overlay config only"),
+    (("roles", "*", "skills"), "the skills a role gets come from the user or overlay config"),
     (("providers", "*", "roles", "*", "strong"), "the strong model is picked in the user or overlay config"),
     (("tools", "prHost"), "the PR host program comes from the user or overlay config"),
     (("sync", "repos"), "the repository list comes from the user or overlay config"),
@@ -646,6 +648,9 @@ def validate_schema(value, schema, path, issues):
             return
     if "enum" in schema and value not in schema["enum"]:
         issues.append(("error", path, "%s: must be one of %s" % (label, ", ".join(map(str, schema["enum"])))))
+        return
+    if isinstance(value, str) and "pattern" in schema and not re.search(schema["pattern"], value):
+        issues.append(("error", path, "%s: %r does not match pattern %s" % (label, value, schema["pattern"])))
         return
     if _TYPES["number"](value):
         if "minimum" in schema and value < schema["minimum"]:
@@ -1110,6 +1115,9 @@ def generate_subagents(cfg):
         if cfg.get("roles", {}).get(role, {}).get("codemode") and "codemode" not in tools:
             tools.append("codemode")
         overrides[role] = {"tools": with_mcp(cfg, role, tools)}
+        skills = cfg.get("roles", {}).get(role, {}).get("skills")
+        if skills:
+            overrides[role]["skills"] = list(skills)
     for provider in sorted(cfg.get("providers") or {}):
         entries = {}
         for role in CHILD_ROLES:
