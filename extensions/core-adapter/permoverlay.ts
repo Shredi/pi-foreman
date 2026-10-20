@@ -102,6 +102,8 @@ export interface ProtectRule {
   readOk?: "main" | "child";
   /** Comes from the writeAsk lists (the foreman's owned-root skip applies to these only). */
   fromWriteAsk?: boolean;
+  /** Comes from protect.childDeny (MatchCtx.skillDirs lifts the `.agents` ones for a read of a named skill). */
+  fromChildDeny?: boolean;
 }
 
 /** Roots owned by the foreman session (owned.ts provides them); optional, today's behaviour without it. */
@@ -190,6 +192,8 @@ export interface MatchCtx {
    * rule `{agentDir}/pi-foreman/state/*` covers state/; a write there stays protected.
    */
   ownReads?: string[];
+  /** Child only: realpaths of the skill dirs (or flat skill files) its role names; a strictly read-only shell word inside them skips the childDeny `.agents` rules only. */
+  skillDirs?: string[];
   /** Variable names the checked line binds somewhere (boundNames): `expandWord` trusts no `$S` / `$HOME` among them. */
   bound?: ReadonlySet<string>;
 }
@@ -836,7 +840,7 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
       ...strs(mp.deny).map((pattern): PathRule => ({ pattern: sub(pattern), action: "deny" })),
     ],
     pathAsk: hasBase ? without(strs(mp.ask), strs(bp.ask)) : [],
-    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true, { readOk: "main" }), ...prot(pb?.childDeny, null, true), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false, { readOk: "child", fromWriteAsk: true }), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true })), ...(userRules ? prot([slash(userRules)], "ask", true, { readOk: "main" }) : [])],
+    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true, { readOk: "main" }), ...prot(pb?.childDeny, null, true, { fromChildDeny: true }), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false, { readOk: "child", fromWriteAsk: true }), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true })), ...(userRules ? prot([slash(userRules)], "ask", true, { readOk: "main" }) : [])],
     childBlock: [...CHILD_BLOCK.map(sub), ...CHILD_BLOCK_WORKTREES, ...(owned?.childScratchRoot ? [slash(owned.childScratchRoot), `${slash(owned.childScratchRoot)}/*`] : [])],
     childBlockExcept: CHILD_BLOCK_EXCEPT.map(sub),
     childBlockInWorkspace: CHILD_BLOCK_WORKTREES,
@@ -3145,12 +3149,19 @@ function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: bo
     const abs = cands.filter((x) => path.isAbsolute(x) || path.win32.isAbsolute(x));
     if (abs.length && abs.every((x) => ctx.ownTasks!.some((p) => pathMatches(p, x, ctx)))) return null;
   }
+  // a named skill is read, not written: only the childDeny `.agents` rules step aside, and only when every absolute candidate lies in a skill dir
+  let skillRead = false;
+  if (readOnly && shell && child && ctx.skillDirs?.length) {
+    const abs = cands.filter((x) => path.isAbsolute(x) || path.win32.isAbsolute(x));
+    skillRead = abs.length > 0 && abs.every((x) => ctx.skillDirs!.some((d) => insideDir(d, x, ctx)));
+  }
   const guessed = ctx.platform === "win32" ? shortNameVariants(cands, rules.map((r) => r.pattern)) : [];
   // the foreman's own roots (owned.ts): its writeAsk rules (the package root) do not ask below them, except the handoff files `parent`/`child`
   const owned = !child && ctx.owned?.readWrite.length ? ctx.owned.readWrite : [];
   const inOwned = (x: string): boolean => owned.some((o) => insideDir(o, x, ctx));
   for (const r of rules) {
     if (r.removeOnly && !remove) continue;
+    if (skillRead && r.fromChildDeny && r.pattern.includes(".agents")) continue;
     if (readOnly && r.readOk === (child ? "child" : "main")) continue;
     if (r.fromWriteAsk && owned.length && !r.pattern.includes("/handoffs/") && cands.length && cands.every(inOwned)) continue;
     if (shell && !r.shell && !(child && r.childShell)) continue;

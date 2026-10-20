@@ -21,6 +21,7 @@ import json
 import ntpath
 import os
 import posixpath
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,7 @@ import foreman_config as fc  # noqa: E402
 
 BASELINE_PATH = fc.ROOT / "config" / "permissions.baseline.json"
 REVIEW_LINK = "foreman-review"
+SKILL_NAME = re.compile(r"^(?!\.\.?$)[^/\\:*?\[\]{}]+$")  # roles.<id>.skills items in foreman.schema.json
 DENY_BASH_REASON = "pi-foreman safety policy: this command is denied (safety.permissions.deny / baseline)"
 DENY_PATH_REASON = "pi-foreman safety policy: this path is denied (safety.permissions.paths.deny / baseline)"
 
@@ -205,6 +207,18 @@ def read_roots_patterns(roots, home=None, platform=None):
     return out
 
 
+def skill_read_patterns(roles, agent_dir, home=None, platform=None):
+    """external_directory_read keys of the skills any role names (`roles.<id>.skills`): `~/.agents/skills/<n>` and `<agentDir>/skills/<n>` where the dir
+    exists, with the safety rules of `read_roots_patterns`. A name that is not one plain path segment is skipped (the schema's rule)."""
+    home = Path.home().as_posix() if home is None else home
+    dirs = []
+    for role in (roles.values() if isinstance(roles, dict) else []):
+        for n in strings(role.get("skills") if isinstance(role, dict) else None):
+            if SKILL_NAME.match(n):
+                dirs += [home.rstrip("/") + "/.agents/skills/" + n, Path(agent_dir).as_posix().rstrip("/") + "/skills/" + n]
+    return read_roots_patterns(dirs, home=home, platform=platform)
+
+
 def probe_read_patterns(probe, home=None, platform=None, env=None):
     """external_directory_read keys of `externalDirectory.probe` (toolchain bin dirs, the npx cache): each dir and its subtree. A leading `~` is the
     home dir, `%APPDATA%` resolves only on Windows (else the entry is dropped), a relative or unresolved entry is dropped. Read keys only."""
@@ -258,7 +272,7 @@ def external_rules(baseline, agent_dir, owned):
     return bare, read or None
 
 
-def render(perms, agent_dir, ledger_helper="tool", owned=None, hub=None):
+def render(perms, agent_dir, ledger_helper="tool", owned=None, hub=None, roles=None):
     baseline = load_baseline()
     if ledger_helper == "off":
         baseline = without_ledger_helper(baseline)
@@ -268,7 +282,7 @@ def render(perms, agent_dir, ledger_helper="tool", owned=None, hub=None):
     permission["path"] = pattern_map(path_rules(baseline, perms, agent_dir), DENY_PATH_REASON)
     bare, read = external_rules(baseline, agent_dir, default_owned() if owned is None else owned)
     permission["external_directory"] = bare
-    extra = hub_read_patterns(hub) + read_roots_patterns((perms or {}).get("readRoots"))
+    extra = hub_read_patterns(hub) + read_roots_patterns((perms or {}).get("readRoots")) + skill_read_patterns(roles, agent_dir)
     if extra:
         read = dict(read or {})
         read.update({p: "allow" for p in extra})
@@ -297,7 +311,7 @@ def main(argv=None):
     agent = fc.resolve_agent_dir(args.agent_dir)
     helper = (res["config"].get("ceremony") or {}).get("ledgerHelper", "tool")
     try:
-        config = render(perms, agent, helper, hub=(res["config"].get("paths") or {}).get("hubWorkflow"))
+        config = render(perms, agent, helper, hub=(res["config"].get("paths") or {}).get("hubWorkflow"), roles=res["config"].get("roles"))
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

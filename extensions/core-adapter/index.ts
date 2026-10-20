@@ -34,6 +34,7 @@ import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits } from "./childreads.ts";
 import { bgWaitLocations, finalizationCommand, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { roleToolDenied } from "./roledeny.ts";
+import { childSkillDirs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { CHILD_TRACE_EVENT, gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
@@ -176,6 +177,8 @@ interface Session {
   permissionSystemError?: string;
   /** Deny/ask rules enforced before the permission system; null = baseline unreadable (fail closed). */
   overlay: OverlayRules | null;
+  /** Child only: realpaths of the skills its role names (skilldirs.ts), resolved once. */
+  skillDirs?: Promise<string[]>;
   /** Dirs the foreman owns outside the workspace (owned.ts); the npm root joins once `npm root -g` resolved. */
   owned: OwnedRoots;
   registrationVia?: string;
@@ -1462,7 +1465,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // and the session cwd's `.pi/scratch` (log copies; a child's cwd is its worktree)
     const ownTasks = [...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...piScratchReadable([ctx.cwd, (() => { try { return fs.realpathSync(ctx.cwd); } catch { return ctx.cwd; } })()], platform), ...bashOutputLogs(s.bashLogs, platform)];
     const hub = hubWorkflowReadable(get(s.config.config, "paths.hubWorkflow"), platform);
-    const d0 = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, ...(s.usage.line.workspace ? { foremanRoot: workspaceOf(s.usage.line.workspace).root } : {}), readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub, ownReads: [...ownUsageReadable(s.agentDir, platform, s.id, { dir: get(s.config.config, "trace.dir"), stateDir: s.markerDir }), ...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...asyncResultReads(s.childFiles, platform)] }) });
+    if (s.isChild) s.skillDirs ??= childSkillDirs(get(s.config.config, "roles"), launchBinding?.role, ctx.cwd, os.homedir());
+    const skillDirs = s.isChild ? await s.skillDirs : undefined;
+    const d0 = checkToolCall(s.overlay, toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, ...(skillDirs?.length ? { skillDirs } : {}), ...(s.usage.line.workspace ? { foremanRoot: workspaceOf(s.usage.line.workspace).root } : {}), readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub, ownReads: [...ownUsageReadable(s.agentDir, platform, s.id, { dir: get(s.config.config, "trace.dir"), stateDir: s.markerDir }), ...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...asyncResultReads(s.childFiles, platform)] }) });
     // R16 item 4a: the self-ruling ask (ruling.ts selfRulingAsk) takes the place of an overlay ask that is no self-modification
     const d = d0 && (d0.kind === "deny" || d0.selfMod) ? d0 : (rulingAsk ?? d0);
     // R16 item 1: a foreman ask that is no self-modification goes to the auto reviewer first; allow lets the call go on to the later layers

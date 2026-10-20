@@ -236,6 +236,19 @@ spelling; relative or `..` entries, filesystem roots, the home dir and its ances
 a read root raises no directory ask. The policy layer does this because a review-link `allow` on the `external_directory` family is
 capped to `defer`. Re-run `foreman setup` after changing `readRoots`.
 
+Skill reads. For each name in any role's `roles.<id>.skills` (user or overlay config) whose dir exists, the policy layer renders
+`external_directory_read` keys (dir and `dir/*`, plus the realpath spelling) at `~/.agents/skills/<name>` and
+`<agentDir>/skills/<name>`, with the same drops as `readRoots`; a name that is not one plain path segment renders nothing.
+Re-run `foreman setup` after changing a role's `skills`.
+
+In the overlay, a child's strictly read-only shell word (`cat`, `grep`, `ls` and the other read verbs, no redirect or write target)
+whose every path candidate, after realpath, lies inside a skill dir its own role names skips the `protect.childDeny` `.agents` rules
+only. `protect.deny`, `protect.ask`, `writeAsk` and every other rule still apply, writes stay denied, and `..` or a link out of the
+dir is outside it. Scope, honestly: the shell read is per role (the overlay), but the `read` tool of any child can read the union
+of the skills any role names (the keys are per user; skills are instructions, not secrets). `protect.ask` `{cwd}/.agents/*` keeps
+a shell read of an in-repo named skill denied in a child (the `read` tool works there). Residual: package skills under
+`{agentDir}/npm/node_modules` and skills from the settings `skills` paths still ask.
+
 Last: `ask` for `<agentDir>/pi-foreman/handoffs/*/parent` and `.../child` stay on the write side (`protect.writeAsk`
 asks too). Reads of those two files are allowed by the read pattern above.
 
