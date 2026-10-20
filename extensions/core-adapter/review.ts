@@ -23,7 +23,9 @@ import { deterministicAllow, deterministicAllowInfo, hits } from "./timeoutallow
 import { classify, effectCtx } from "./effects.ts";
 import * as os from "node:os";
 import * as path from "node:path";
-import { ownStateRead } from "./permoverlay.ts";
+import * as fs from "node:fs";
+import { fileURLToPath } from "node:url";
+import { ownStateRead, parseShell, unitHasRedirect } from "./permoverlay.ts";
 import type { Decision } from "./permoverlay.ts";
 import { hubWorkflowDirs, isolationDir, mainWorkflowReadable, roundWorktreeAdd } from "./roundsurface.ts";
 import type { EffectClass, EffectCtx } from "./effects.ts";
@@ -250,6 +252,8 @@ export interface ReviewSession {
   readOnlyRoots?: () => string[];
   /** The foreman's own usage record patterns (roundsurface.ts ownUsageReadable): a line permoverlay.ts ownStateRead accepts (the overlay's own-read decision, R10 D1 / R12 / R14 item 1) is allowed without the model. */
   ownReads?: () => string[];
+  /** The install root whose `bin/foreman` is the session's own CLI (default: this package's root). */
+  foremanRoot?: () => string;
 }
 
 /** Deny text for a forwarded child ask that deferred with no human to ask: names what runs without approval. */
@@ -508,6 +512,7 @@ export class ForemanReview {
       else if (!s.isChild && surface.startsWith("external_directory") && (fixed = this.readRootPathAllow(s, d, surface))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (surface === "bash" && !d.forwarding && (fixed = this.readRootsBashAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (surface === "bash" && !d.forwarding && (fixed = this.ownUsageAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
+      else if (surface === "bash" && !d.forwarding && (fixed = this.ownCliAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (!REVIEW_SURFACES.includes(surface)) out = { verdict: { kind: "defer" }, label: "surface" };
       else if (surface === "bash" && d.forwarding && (fixed = this.fixedAllow(s, d, cls))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (surface === "bash" && !d.forwarding && (fixed = this.roundWorktreeAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
@@ -701,6 +706,37 @@ export class ForemanReview {
       const ctx = { cwd: s.cwd, home: os.homedir(), platform: process.platform, role: "main" as const, ownReads: pats };
       const read = (v: string): boolean => ownStateRead(v, ctx);
       return read(reviewValue(d)) && read(unitValue(d)) ? "own-usage" : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * "own-cli" for the foreman's own `<root>/bin/foreman` with a read-only or launch-only verb (`session open|brief|list|status`, `dialogs`, `findings list`):
+   * one simple command, a head that realpaths to the root's own entry inside the root, no `..`, no expansion, no redirect, no matching ask/deny rule.
+   * Recorded residual: `session open ... --cwd <other path>` launches in that path.
+   */
+  private ownCliAllow(s: ReviewSession, d: AskDetails): string | null {
+    try {
+      if (process.platform === "win32") return null;
+      const rules = s.bashRules?.();
+      const full = reviewValue(d);
+      if (!rules || hits(rules.ask, full, "") || hits(rules.deny, full, "")) return null;
+      const parsed = parseShell(full);
+      if (parsed.pipelines.length !== 1 || parsed.pipelines[0].length !== 1 || parsed.seps[0] !== "end" || parsed.subs.length) return null;
+      const w = parsed.pipelines[0][0];
+      if (unitHasRedirect(w) || w.some((x) => /[\n\r`$*?[\]{}]/.test(x))) return null;
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0]) || w[0].split(/[\\/]/).includes("..")) return null;
+      const [head, a, b] = w;
+      const verb = a === "session" ? ["open", "brief", "list", "status"].includes(b) : a === "dialogs" ? true : a === "findings" && b === "list";
+      if (!verb) return null;
+      const root = fs.realpathSync(s.foremanRoot?.() ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".."));
+      const own = fs.realpathSync(path.join(root, "bin", "foreman"));
+      const rel = path.relative(root, own);
+      if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
+      if (fs.realpathSync(path.resolve(s.cwd, head)) !== own) return null;
+      s.trace?.({ event: "overlay_allow", rule: "own_cli", role: d.agentName ?? "?" });
+      return "own-cli";
     } catch {
       return null;
     }

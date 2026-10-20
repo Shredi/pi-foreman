@@ -1245,6 +1245,11 @@ const LIVE_WORDS = new WeakMap<string[], Set<number>>();
 /** Source offsets [start, end) of each word of a parsed unit, in the string given to parseShell. */
 const WORD_SPANS = new WeakMap<string[], Array<[number, number]>>();
 
+/** True when a unit parsed by `parseShell` has a redirect (the operators are dropped from its words). */
+export function unitHasRedirect(unit: string[]): boolean {
+  return REDIRECTS.has(unit);
+}
+
 /** pipelines -> units -> words (quotes removed). */
 export function parseShell(src: string, shell: "posix" | "powershell" = "posix"): Parsed {
   const pipelines: string[][][] = [];
