@@ -232,7 +232,7 @@
     {
       "id": "read-budgets",
       "title": "Read budgets",
-      "purpose": "Warns and then refuses the foreman's own reads past a budget until an explorer runs, caps rechecks after a PASS, and gives child roles their own read budgets.",
+      "purpose": "Warns and then refuses the foreman's own reads past a budget until an explorer runs, caps rechecks after a PASS (a plan-review PASS does not start the recheck window), and gives child roles their own read budgets.",
       "doc": "docs/ceremony.md#triage-and-delegation",
       "keys": ["ceremony.foremanReads", "ceremony.childReads", "ceremony.recheckBudget"],
       "commands": ["/foreman budget"],
@@ -322,6 +322,17 @@
       "title": "Reads of Pi's install and run dirs",
       "purpose": "Shell reads (`ls`, `cat`) of Pi's own install releases and the pi-subagents run root need no dialog; setup renders them as read grants, as it does each `safety.permissions.readRoots` entry.",
       "doc": "docs/permissions.md#owned-paths",
+      "keys": [],
+      "commands": [],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
+      "id": "own-cli-allow",
+      "title": "Own CLI allow",
+      "purpose": "The foreman session's own `bin/foreman` (explicit path, realpath inside its root) with `session open|brief|list`, `dialogs` or `findings list` is allowed before the review model (trace `overlay_allow{rule: own_cli}`); children and forwarded asks, shell control, `VAR=`, `..` or a symlink out, and user ask/deny rules keep the normal path.",
+      "doc": "docs/permissions.md",
       "keys": [],
       "commands": [],
       "switch": null,

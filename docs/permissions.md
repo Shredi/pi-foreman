@@ -158,6 +158,7 @@ The `review` trace's `decision` is one of these when no model was called:
 | `own-handoff` | a chain segment `mkdir [-pv]`, `cp [-fpnv]` (no recursion), `cat [-n]` or `ls [-alh1d]` whose operands stay below this session's own handoff dirs (`parent`/`child` file matches, owned paths) or its round worktree: write operands (`mkdir` paths, the `cp` destination) contained there with symlinks resolved, never below `.git`, never a handoff dir's `parent` or `child` file; read operands the same or any contained read, a trailing `<dir>/*` accepted on a read; no redirects, `$`, `~` or `..`. Applies to a child's forwarded ask and to the foreman's own ask (without the model); every other segment of the chain must pass on its own |
 | `timeout-wrapper` | `timeout N <allowed segment>` in the chain |
 | `test-restore` | `git restore [--worktree\|-W] [--] <paths>` or `git checkout -- <paths>`, every path a relative test path (the `isTestPath` rule) inside the worktree, no `..`, no `--source`/`-s`/`--staged`, glob or `:` pathspec magic |
+| `own-cli` | the foreman session's own `<root>/bin/foreman` (explicit path, realpath inside the root) with `session open\|brief\|list`, `dialogs` or `findings list`; one simple command, never a forwarded child ask (see Own CLI below) |
 | `sed-read` | a print-only `sed -n '<addr>p' <file>` in the chain |
 | `effect-write-in`, `effect-build-test`, `effect-read` | a chain whose segments are of those classes |
 
