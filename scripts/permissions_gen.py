@@ -167,14 +167,18 @@ def hub_read_patterns(hub):
     return out
 
 
-def read_roots_patterns(roots, home=None):
+def read_roots_patterns(roots, home=None, platform=None):
     """external_directory_read keys of `safety.permissions.readRoots`: each absolute dir and its subtree, plus the realpath spelling. A leading `~` is
-    the home dir; a relative entry, one with `..`, a filesystem root, the home dir and any dir that holds it are dropped (as the TS `readRootsOf`)."""
+    the home dir; a relative entry, one with `..` or a glob character, one whose realpath does not resolve, a filesystem root, the home dir and any
+    dir that holds it (case folded on darwin and win32) are dropped (as the TS `readRootsOf`)."""
+    platform = platform or sys.platform
     home = Path.home().as_posix() if home is None else home
     real_home = Path(os.path.realpath(home)).as_posix()
+    fold = str.lower if platform == "darwin" or platform.startswith("win") else str
 
     def unsafe(p):
-        return not p or p.endswith(":") or home == p or real_home == p or home.startswith(p + "/") or real_home.startswith(p + "/")
+        p, h, rh = fold(p), fold(home), fold(real_home)
+        return not p or p.endswith(":") or h == p or rh == p or h.startswith(p + "/") or rh.startswith(p + "/")
 
     out = []
     for d in strings(roots):
@@ -182,11 +186,15 @@ def read_roots_patterns(roots, home=None):
             d = home + d[1:]
         if not (posixpath.isabs(d) or ntpath.isabs(d)) or ".." in d.replace("\\", "/").split("/"):
             continue
+        if any(c in d for c in "*?["):
+            continue
         p = Path(d).as_posix().rstrip("/")
         if unsafe(p):
             continue
         spellings = [p]
         if os.path.isabs(p):
+            if not os.path.exists(p):
+                continue
             real = Path(os.path.realpath(p)).as_posix().rstrip("/")
             if unsafe(real):
                 continue
