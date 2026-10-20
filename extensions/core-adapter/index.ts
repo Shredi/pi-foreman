@@ -1497,11 +1497,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const d = d0 && (d0.kind === "deny" || d0.selfMod) ? d0 : (rulingAsk ?? d0);
     // R16 item 1: a foreman ask that is no self-modification goes to the auto reviewer first; allow lets the call go on to the later layers
     const rulesFile = rulesFilePath(s.config.basePermissions, s.agentDir, PKG_ROOT);
-    const auto = await overlayAutoReview(review, s.id, d, toolName, input, { enabled: get(s.config.config, "safety.permissions.autoReview.enabled") !== false, isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, session: s.usage.line.foremanSession || s.id, rules: () => (rulesFile ? fs.readFileSync(rulesFile, "utf8") : "") });
+    // R18: a child's ask goes to the reviewer too, except its self-ruling ask (a ruling write is never a reviewer allow)
+    const childRole = s.usage.line.role;
+    const auto = await overlayAutoReview(review, s.id, s.isChild && d?.rule === "self-ruling" ? null : d, toolName, input, { enabled: get(s.config.config, "safety.permissions.autoReview.enabled") !== false, isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, session: s.usage.line.foremanSession || s.id, requester: s.isChild ? `subagent ${childRole}` : undefined, rules: () => (rulesFile ? fs.readFileSync(rulesFile, "utf8") : "") });
     if (d && auto) {
-      const df = denyFields(auto === "allow" ? d.reason : auto.reason, toolName, input, "foreman", [PKG_ROOT, ctx.cwd]);
+      const df = denyFields(auto === "allow" ? d.reason : auto.reason, toolName, input, s.isChild ? childRole : "foreman", [PKG_ROOT, ctx.cwd]);
       if (auto === "allow") {
-        s.trace?.emit({ event: "auto_review_allow", toolFamily: toolName, family: dialogFamily(df.command), rule: d.rule ?? null, command: df.command });
+        s.trace?.emit({ event: "auto_review_allow", toolFamily: toolName, family: dialogFamily(df.command), rule: d.rule ?? null, command: df.command, ...(s.isChild ? { role: childRole } : {}) });
         return undefined;
       }
       s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: "deny", by: "auto", ...df });

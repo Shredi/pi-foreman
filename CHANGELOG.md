@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Round 18
+- A child's overlay ask (kind ask, not a self-modification) now goes to the auto reviewer too, headless included; the prompt says `requester: subagent <role>`. An allow traces `auto_review_allow` with the child role, a high or critical deny blocks, a defer keeps the child block "ask the foreman", and deny decisions never reach the reviewer.
 - A parent-written `ruling-<n>.md` or `brief-<x>.md` in the session's handoff dir now also resets the review cap, the post-PASS recheck budget and the foreman read budget (trace `cap_reset`); a new owner prompt still does. Strict check: regular file, ctime and mtime newer than the last reset, not self-written.
 - `foreman_dialogs` / `/foreman dialogs --json` count every blocking surface as a family (`permission_prompt`, `child_dialogs`, `checkpoint`, `ask_user_question`, `guard_ask`, `drift_ask`, plus the overlay families and `trace_read`) and add a `total`; `self_ruling_refusal` and `auto_review_allow` are listed but not summed.
 

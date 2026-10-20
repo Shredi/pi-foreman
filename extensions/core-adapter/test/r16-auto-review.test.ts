@@ -228,12 +228,13 @@ test("r16 no UI: today's block, no dialog, no model call", async () => {
   }
 });
 
-test("r16 child: overlayAutoReview never calls the model", async () => {
+test("r16 child: overlayAutoReview reaches the model headless (R18 ruling: allowed)", async () => {
   const before = calls;
   const review = new ForemanReview();
   review.upsert("c", { isChild: true, cwd: rig.project, provider: "fake", config: () => reviewCfg, registry: modelRegistry as never, intent: "" });
-  const out = await overlayAutoReview(review, "c", { kind: "ask", reason: "x", rule: "toolchain-probe" }, "bash", { command: "ls ~/.local/bin | head -3" }, { enabled: true, isChild: true, mode: "tui", hasUI: true, rules: () => RULES_TEXT });
-  assert.deepEqual([out, calls - before], [null, 0]);
+  const out = await overlayAutoReview(review, "c", { kind: "ask", reason: "x", rule: "toolchain-probe" }, "bash", { command: "ls ~/.local/bin | head -3" }, { enabled: true, isChild: true, mode: "json", hasUI: false, requester: "subagent explorer", rules: () => RULES_TEXT });
+  assert.deepEqual([out, calls - before], ["allow", 1]);
+  assert.ok(sent[sent.length - 1].text.includes("requester: subagent explorer"));
 });
 
 test("r16 the splice in overlayBlock: allow, model deny, a later guard after an allow, defer", { skip: py.ok ? false : "no python for the later guards" }, async () => {
