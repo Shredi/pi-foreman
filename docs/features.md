@@ -54,6 +54,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [different-model-rule](#different-model-rule) | on | Moves a reviewer launch off the foreman's own model to the next differing rung, else to `ceremony.reviewModel`. | on by default | [review](review.md#different-model-rule) |
 | [review-overrides](#review-overrides) | opt-in | Sets the thinking level and/or model of a reviewer launch per occasion (`item`, `plan-review`, `pre-pr`, `second-opinion`). | `{"ceremony": {"reviewByOccasion": {"pre-pr": {"thinking": "high"}}}}` | [review](review.md#per-occasion-overrides) |
 | [self-planning](#self-planning) | on | `ceremony.planner: self` (default): the foreman writes the heavy plan itself and its approved checkpoint satisfies the planner step; `role` keeps the planner launch and falls back to `self` when the planner's rank is not below the foreman's. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
+| [checkpoint-verdict](#checkpoint-verdict) | on | A session opened with a parent takes the plan checkpoint verdict from the parent-written `ruling-plan.md` (APPROVED, REVISE <text> or REJECT) instead of a dialog; `human` keeps the dialog for an attended session. | on by default | [ceremony](ceremony.md) |
 | [plan-review](#plan-review) | off | Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan version (the body above any ruling, decision-log or addendum appendix, so an appended ruling needs no new review); on for heavy by default, opt-in for trivial and standard. | `{"ceremony": {"planReview": {"standard": true}}}` | [review](review.md#plan-review) |
 | [findings](#findings) | on | Records every reviewer run's located findings locally, with `foreman findings` to list, dismiss or export them and `foreman retro models` to compare reviewer models. | on by default | [review](review.md#findings-store) |
 | [bench](#bench) | opt-in | Measures harness changes over Harbor tasks in local Docker, and reviewer models over planted-defect diffs with `foreman bench review`. | `foreman bench review --tasks bench/review-samples --dry-run` | [bench](bench.md#running) |
@@ -263,6 +264,14 @@ Switch: `ceremony.reviewByOccasion` is non-empty.
 | Key | Default | Layer |
 |---|---|---|
 | `ceremony.planner` | `"self"` | any layer |
+
+### checkpoint-verdict
+
+**Plan checkpoint verdict by parent file.** A session opened with a parent takes the plan checkpoint verdict from the parent-written `ruling-plan.md` (APPROVED, REVISE <text> or REJECT) instead of a dialog; `human` keeps the dialog for an attended session.
+
+| Key | Default | Layer |
+|---|---|---|
+| `ceremony.checkpoint` | unset | not in project/session (who approves the plan checkpoint comes from the user or overlay config) |
 
 ### plan-review
 
@@ -766,6 +775,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `retro.panelThreshold` | the panel threshold comes from the user or overlay config |
 | `close.worktreeDir` | the worktree convention comes from the user or overlay config |
 | `close.childWaitMs` | the child close wait comes from the user or overlay config |
+| `ceremony.checkpoint` | who approves the plan checkpoint comes from the user or overlay config |
 | `ceremony.reviewModel` | the fallback reviewer model comes from the user or overlay config |
 | `ceremony.reviewByOccasion` | the per-occasion reviewer overrides come from the user or overlay config |
 | `compaction.priceTiers` | the price tiers come from the user or overlay config |

@@ -99,7 +99,7 @@ export class SteerWatch {
     if (!dir) return out;
     try {
       for (const n of fs.readdirSync(dir)) {
-        if (!NAME_RE.test(n)) continue;
+        if (!NAME_RE.test(n) || n === "ruling-plan.md") continue; // the checkpoint's own verdict file (checkpoint.ts), not a steer
         try {
           const st = fs.statSync(path.join(dir, n));
           if (st.isFile()) out.set(n, st.mtimeMs);

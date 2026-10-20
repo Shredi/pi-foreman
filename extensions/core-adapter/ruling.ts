@@ -159,7 +159,7 @@ const shellOf = (toolName: string): "posix" | "powershell" => (toolName === "pow
 export function selfRulingRefusal(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[]): string | undefined {
   if (childDirs.length === 0) return undefined;
   const dirs = new Set(childDirs.map(realDir));
-  const inChild = (p: string): boolean => isRulingName(path.basename(p)) && dirs.has(path.dirname(realKey(path.resolve(cwd, p))));
+  const inChild = (p: string): boolean => (isRulingName(path.basename(p)) || path.basename(p) === "ruling-plan.md") && dirs.has(path.dirname(realKey(path.resolve(cwd, p))));
   const words = toolName === "write" || toolName === "edit" ? [str(input.path)] : toolName === "foreman_copy" || toolName === "foreman_move" ? [str(input.dst)] : [];
   const cmd = SHELL_TOOLS.has(toolName) ? str(input.command) : null;
   if (cmd) words.push(...shellWrites(cmd, shellOf(toolName)).words);

@@ -103,7 +103,7 @@ import { UsageFooter, cacheStatus, lookupRate, waitNote } from "./footer.ts";
 import { symbolSet } from "./symbols.ts";
 import { blockedConfirm, installBlockedShim, PERMISSIONS_DECISION, PERMISSIONS_UI_PROMPT, withBlocked } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
-import { builderLaunchRefusal, changedPlans, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, planSnapshot, planSummary, planVersionHash, readPlan, sha256 } from "./checkpoint.ts";
+import { builderLaunchRefusal, changedPlans, checkpointMode, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, PLAN_VERDICT_FILE, planSnapshot, planSummary, planVersionHash, readPlan, readPlanVerdict, sha256 } from "./checkpoint.ts";
 import { effectivePlannerMode, PLANNER_SELF_MESSAGE, plannerNotBelow, selfPlanRequired } from "./plannerself.ts";
 import type { PlanRecord } from "./checkpoint.ts";
 import type { EventBus } from "./herdr.ts";
@@ -3072,14 +3072,25 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.plan = rec;
         s.waitingForParent = true; // pending: the owner/parent answers; the finish gate lets the turn end until the next input
         const pendingText = `No answer from the owner; the checkpoint of ${name} (${hash8}) stays pending — ask the owner in your reply. Builders stay refused at tier heavy until the owner approves (call ${CHECKPOINT_TOOL} again).`;
-        if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return done("pending", null, pendingText);
-        const title = `pi-foreman checkpoint: ${name} (${hash8})`;
+        // ceremony.checkpoint: `parent` (default for a session opened with a parent) takes the verdict from the parent-written ruling-plan.md, never a dialog.
+        const parentMode = checkpointMode(get(s.config.config, "ceremony.checkpoint"), process.env) === "parent";
+        const handoff = roundStateDir(process.env);
+        const verdict = parentMode && handoff ? readPlanVerdict(handoff, plan.path) : null;
         let answer: string | undefined;
-        try {
-          ctx.ui.notify(planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash) + (reviewed ? `\n${reviewed}` : ""), "info");
-          answer = await withBlocked(herdrEvents, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
-        } catch {
-          answer = undefined;
+        if (verdict) {
+          answer = verdict.kind === "approve" ? "approve" : verdict.kind;
+        } else if (parentMode) {
+          const file = handoff ? path.join(handoff, PLAN_VERDICT_FILE) : null;
+          return done("pending", null, `${pendingText}${file ? ` The parent answers in ${file} (first line APPROVED, REVISE <text> or REJECT, written after the last plan edit): wait with foreman_wait kind file on that path, then call ${CHECKPOINT_TOOL} again.` : ""}`);
+        } else {
+          if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return done("pending", null, pendingText);
+          const title = `pi-foreman checkpoint: ${name} (${hash8})`;
+          try {
+            ctx.ui.notify(planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash) + (reviewed ? `\n${reviewed}` : ""), "info");
+            answer = await withBlocked(herdrEvents, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
+          } catch {
+            answer = undefined;
+          }
         }
         // A newer checkpoint replaced this one while the dialog was open: this answer is not applied.
         if (s.plan !== rec || answer === undefined || !(CHECKPOINT_CHOICES as readonly string[]).includes(answer)) return done("pending", null, pendingText);
@@ -3091,22 +3102,25 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           }
           rec.status = "approved";
           rec.approvedAt = new Date().toISOString();
-          rec.by = ctx.mode === "tui" ? "user" : "rig";
+          rec.by = !verdict && ctx.mode === "tui" ? "user" : "rig";
           return done("approve", rec.by, `The owner approved ${name} (${hash8}). Builders may launch at tier heavy while the file stays unchanged; any edit needs a new ${CHECKPOINT_TOOL}.`);
         }
         if (answer === "revise") {
           let note: string | undefined;
-          try {
-            note = await withBlocked(herdrEvents, "What should change?", () => ctx.ui.input("What should change?", undefined, { signal }));
-          } catch {
-            note = undefined;
+          if (verdict?.kind === "revise") note = verdict.note;
+          else {
+            try {
+              note = await withBlocked(herdrEvents, "What should change?", () => ctx.ui.input("What should change?", undefined, { signal }));
+            } catch {
+              note = undefined;
+            }
           }
           rec.status = "revise";
           if (note && note.trim()) rec.note = note.trim();
           return done("revise", null, `The owner asked for a revision of ${name}. The owner's words:\n${rec.note ?? "(no note given)"}\nChange the plan (edit it or relaunch the planner), then call ${CHECKPOINT_TOOL} again. Builders stay refused at tier heavy until the owner approves.`);
         }
         rec.status = "rejected";
-        ctx.ui.notify(`pi-foreman: ${name} was rejected; the heavy path is stopped (no builder launches until a new plan is approved).`, "warning");
+        if (!verdict) ctx.ui.notify(`pi-foreman: ${name} was rejected; the heavy path is stopped (no builder launches until a new plan is approved).`, "warning");
         return done("reject", null, `The owner rejected ${name}. The heavy path is stopped: launch no builder; report to the owner and ask how to go on. A new plan needs a new ${CHECKPOINT_TOOL} approval.`);
       },
     } as never);

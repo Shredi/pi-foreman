@@ -198,6 +198,38 @@ export function builderLaunchRefusal(rec: PlanRecord | null | undefined, tier: s
   return currentHash === rec.hash ? null : "plan_changed";
 }
 
+/** The parent-written verdict file of the plan checkpoint, in the session's handoff dir. */
+export const PLAN_VERDICT_FILE = "ruling-plan.md";
+export type CheckpointMode = "parent" | "human";
+export type PlanVerdict = { kind: "approve" } | { kind: "revise"; note: string } | { kind: "reject" };
+
+/** `ceremony.checkpoint` when set, else `parent` for a session opened with a parent (handoff dir and parent intercom id in the env), else `human`. */
+export function checkpointMode(configured: unknown, env: NodeJS.ProcessEnv): CheckpointMode {
+  if (configured === "parent" || configured === "human") return configured;
+  return env.PI_FOREMAN_HANDOFF_DIR?.trim() && env.PI_FOREMAN_PARENT_INTERCOM?.trim() ? "parent" : "human";
+}
+
+/**
+ * The parent's verdict on the plan: first line `APPROVED`, `REVISE <text>` (the rest of the file joins the text) or `REJECT` in
+ * `<dir>/ruling-plan.md`. A regular file whose ctime (which a session cannot set back) is newer than the plan file's mtime: a plan edit after the
+ * verdict makes it stale, so the edited plan needs a new one. Null = no usable verdict.
+ */
+export function readPlanVerdict(dir: string, planFile: string): PlanVerdict | null {
+  try {
+    const file = path.join(dir, PLAN_VERDICT_FILE);
+    const st = fs.lstatSync(file);
+    if (!st.isFile() || st.size > PLAN_MAX_BYTES || st.ctimeMs <= fs.statSync(planFile).mtimeMs) return null;
+    const text = fs.readFileSync(file, "utf8");
+    const first = text.split(/\r?\n/, 1)[0].trim();
+    if (first === "APPROVED") return { kind: "approve" };
+    if (first === "REJECT") return { kind: "reject" };
+    if (/^REVISE(\s|$)/.test(first)) return { kind: "revise", note: (first.slice(6) + text.slice(text.indexOf("\n") < 0 ? text.length : text.indexOf("\n"))).trim() };
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** The refusal text for a builder launch. */
 export function launchRefusalText(reason: LaunchRefusal, rec: PlanRecord | null | undefined, scratchDir: string): string {
   const head = `pi-foreman: builder launch refused [launch_refused:${reason}]:`;
