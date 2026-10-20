@@ -50,7 +50,9 @@ afterEach(() => {
   rmTestTmp(tmp);
 });
 
-test("live line: tilde and absolute shell reads of the named skill pass, a write and an unnamed skill stay denied", async () => {
+const posix = process.platform !== "win32";
+
+test("live line: tilde and absolute shell reads of the named skill pass, a write and an unnamed skill stay denied", { skip: !posix && "carve-out is posix-only, falls back to deny on win32" }, async () => {
   writeSkill("x");
   writeSkill("other");
   const skillDirs = await childSkillDirs({ builder: { skills: ["x"] } }, "builder", repo, home);
@@ -67,7 +69,7 @@ test("live line: tilde and absolute shell reads of the named skill pass, a write
 });
 
 // The skill dir as users keep it: `~/.agents/skills/x` a link to a checkout elsewhere. The shell word names the link, its realpath lies outside `.agents`.
-test("live line: a named skill dir that is a link to a dir outside .agents is read by its link spelling", async (t) => {
+test("live line: a named skill dir that is a link to a dir outside .agents is read by its link spelling", { skip: !posix && "carve-out is posix-only, falls back to deny on win32" }, async (t) => {
   const store = path.join(tmp, "store", "x");
   fs.mkdirSync(store, { recursive: true });
   fs.writeFileSync(path.join(store, "SKILL.md"), "---\nname: x\ndescription: the x skill\n---\n\n# x\n");
