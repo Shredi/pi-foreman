@@ -2162,8 +2162,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.chains.state = onReviewDone(s.chains.state, verdict, verdict === "fail" && hasSecurityFinding(text));
     persistRounds(s);
     if (verdict === "pass") {
-      s.budget.enterPost();
-      s.trace?.emit({ event: "recheck_budget", count: 0, action: "start" });
+      // a plan-review pass is no counting review: the normal read budget stays
+      const planOnly = ids.length > 0 && ids.every((id) => s.reviewRuns.byRun.get(id)?.entries.some((e) => REVIEW_ROLES.includes(e.role) && e.occasion === "plan-review"));
+      if (!planOnly) {
+        s.budget.enterPost();
+        s.trace?.emit({ event: "recheck_budget", count: 0, action: "start" });
+      }
     } else if (verdict === "fail") resetRecheck(s, "fail");
   }
 
