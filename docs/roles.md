@@ -116,3 +116,5 @@ Design record for the ladder: `design/architecture.md`
 | `providers.<p>.strongOnRevision` | `true`: every revision round relaunches the builder on its strong model (reason `revision`); `false`: no climb, also not after a FAIL; unset: `ladder.strongOnRevision` decides. Project/session can only set false. |
 | `providers.<p>.review.timeoutMs` | Timeout of the model review of permission asks (default 15000 ms); a timeout defers to the human. |
 | `providers.<p>.fallback.provider`, `providers.<p>.fallback.confirm` | One explicit fallback provider for roles this provider does not map (auth failure or unavailability only), and whether to ask once per session first. |
+
+A skill's `SKILL.md` may carry extra frontmatter keys (`metadata`, `compatibility`, `allowed-tools`, `context`, `agent`); both Pi and pi-subagents tolerate and ignore them, so they change neither the catalog entry nor the role.

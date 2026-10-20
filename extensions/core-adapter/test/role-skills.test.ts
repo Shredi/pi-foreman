@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { buildSkillInjection, clearSkillCache, resolveSkills } from "../../../node_modules/pi-subagents/src/agents/skills.js";
 import { buildEffectiveSystemPrompt } from "../../../node_modules/pi-subagents/src/runs/shared/effective-system-prompt.js";
+import { loadSkills } from "@earendil-works/pi-coding-agent";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
 const ENV_KEYS = ["HOME", "USERPROFILE", "PI_CODING_AGENT_DIR"] as const;
@@ -72,4 +73,36 @@ test("the effective system prompt of an agent with one named skill lists no unna
   assert.match(prompt, /^Base prompt\./);
   assert.match(prompt, /<name>named-skill<\/name>/);
   assert.ok(!prompt.includes("other-skill"), prompt);
+});
+
+const EXTRA_FRONTMATTER = [
+  "metadata:",
+  "  author: someone",
+  "  tags:",
+  "    - a",
+  "    - b",
+  "compatibility: needs nothing special",
+  "allowed-tools: Read Grep",
+  "context: fork",
+  "agent: zz-agent-marker",
+  "",
+].join("\n");
+
+test("a SKILL.md with extra frontmatter keys loads through Pi's loadSkills without diagnostics", () => {
+  const file = writeSkill(path.join(home, ".agents", "skills"), "extra-keys", "Handles extra keys", EXTRA_FRONTMATTER);
+  const result = loadSkills({ cwd: repo, agentDir: process.env.PI_CODING_AGENT_DIR as string, skillPaths: [path.dirname(file)], includeDefaults: false });
+  assert.deepEqual(result.diagnostics, []);
+  assert.deepEqual(result.skills.map((s) => s.name), ["extra-keys"]);
+  assert.equal(result.skills[0].description, "Handles extra keys");
+});
+
+test("pi-subagents keeps the description of a SKILL.md with extra frontmatter keys and leaks none of them", () => {
+  writeSkill(path.join(home, ".agents", "skills"), "extra-keys", "Handles extra keys", EXTRA_FRONTMATTER);
+  const { resolved, missing } = resolveSkills(["extra-keys"], repo);
+  assert.deepEqual(missing, []);
+  assert.equal(resolved[0].description, "Handles extra keys");
+  const injection = buildSkillInjection(resolved);
+  assert.match(injection, /<description>Handles extra keys<\/description>/);
+  assert.ok(!injection.includes("fork"), injection);
+  assert.ok(!injection.includes("zz-agent-marker"), injection);
 });
