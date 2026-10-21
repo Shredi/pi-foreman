@@ -159,6 +159,7 @@ The `review` trace's `decision` is one of these when no model was called:
 | `timeout-wrapper` | `timeout N <allowed segment>` in the chain |
 | `test-restore` | `git restore [--worktree\|-W] [--] <paths>` or `git checkout -- <paths>`, every path a relative test path (the `isTestPath` rule) inside the worktree, no `..`, no `--source`/`-s`/`--staged`, glob or `:` pathspec magic |
 | `own-cli` | the foreman session's own `<root>/bin/foreman` (explicit path, realpath inside the root) with `session open\|brief\|list`, `dialogs` or `findings list`; one simple command, never a forwarded child ask (see Own CLI below) |
+| `npm-ci-worktree` | a child's exact `npm ci` (no flag, env prefix or chain; trace `overlay_allow{rule: npm-ci-worktree}`) whose cwd realpath lies in a `roundRoots` entry or in a pi-subagents managed worktree (`worktree: true`: nearest `.git` above is a file, directory name `pi-worktree-*`) and whose npm local prefix does too; never the parent checkout. POSIX only: win32 still asks. A Worktrunk leaf has no marker and still asks |
 | `sed-read` | a print-only `sed -n '<addr>p' <file>` in the chain |
 | `effect-write-in`, `effect-build-test`, `effect-read` | a chain whose segments are of those classes |
 
@@ -205,10 +206,12 @@ The foreman session owns a few places outside the workspace. Access to them is g
    children too; the child layer narrows them: a child's `git fetch`, `npm ci`, `npm install` and `npm i` ask
    (`npm install` rewrites `package-lock.json` and `node_modules`), the foreman keeps the two npm rows. `npm ci` and
    `npm install` run the project's lifecycle scripts without a prompt for the foreman. Exception: a child whose cwd is
-   its owned worktree root (a `roundRoots` entry, itself, not a subdir) runs a bare `npm ci` / `npm install` there unasked,
+   inside its owned worktree root (a `roundRoots` entry or a subdir of it, resolved by realpath) runs a bare `npm ci` / `npm install` there unasked,
    with only `--no-audit`, `--no-fund`, `--ignore-scripts`, `--prefer-offline`, `--offline`, `--legacy-peer-deps`,
    `--no-progress`, `--silent`, `--loglevel=x` and a `--prefix` that names that root; `-g`, a foreign `--prefix`, a package
-   name, any other option, a `cd`, another cwd, or a `git fetch` in the line ask as before. There is no `git fetch` row
+   name, any other option, a `cd` out of the root, another cwd, or a `git fetch` in the line ask as before. A pi-subagents managed
+   worktree is no `roundRoots` entry; there only the exact `npm ci` passes (label `npm-ci-worktree`, see above). Known gap: a
+   child's forwarded ask is judged by the review layer with the foreman's cwd, so it still ignores the child's worktree. There is no `git fetch` row
    (`--upload-pack=<cmd>` runs code): a `git fetch` asks for every role.
 
 The write-only protect rules (package root, `protect.ask`) are skipped for a shell command only when every unit is a

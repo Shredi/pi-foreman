@@ -2110,6 +2110,37 @@ function npmInstallOwned(c: Collected, ctx: MatchCtx): boolean {
 }
 
 /**
+ * The root of a pi-subagents managed worktree (`worktree: true`, `<repo>/../worktrees/<repo>/pi-worktree-<run>-<i>`) that holds `dir`: the
+ * nearest ancestor (itself included) with a `.git`, when that `.git` is a file (a linked worktree) and the directory name starts with `pi-worktree-`.
+ */
+function pSubagentsLeaf(dir: string, fsx: ReturnType<typeof defaults>): string | null {
+  for (let d = dir, n = 0; n < 64; n++) {
+    const g = path.join(d, ".git");
+    if (fsx.exists(g)) return !fsx.isDir(g) && path.basename(d).startsWith("pi-worktree-") ? d : null;
+    const up = path.dirname(d);
+    if (up === d) break;
+    d = up;
+  }
+  return null;
+}
+
+/**
+ * `npm-ci-worktree` (trace label): a child's exact `npm ci` (no flag, no env prefix, no chain) whose cwd lies in a `roundRoots` entry or in a
+ * pi-subagents managed worktree, and whose npm local prefix does too. POSIX only (win32 asks); never the parent checkout.
+ */
+export function npmCiWorktreeLabel(command: string, ctx: MatchCtx): "npm-ci-worktree" | null {
+  if (ctx.role !== "child" || ctx.platform === "win32" || !ctx.cwd || !/^npm[ \t]+ci$/.test(command.trim())) return null;
+  const fsx = defaults(ctx);
+  const cwd = fsx.realpath(ctx.cwd);
+  if (!cwd) return null;
+  const inside = (root: string, d: string): boolean => d === root || d.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
+  const roots = (ctx.roundRoots ?? []).map((r) => fsx.realpath(r)).filter((r): r is string => !!r);
+  const root = roots.find((r) => inside(r, cwd)) ?? pSubagentsLeaf(cwd, fsx);
+  if (!root) return null;
+  return inside(root, npmLocalPrefix(cwd, path, fsx.exists)) ? "npm-ci-worktree" : null;
+}
+
+/**
  * npmInstallOwned on win32: an 8.3 short name and its long name are one directory, so the cwd, the round roots and each `--prefix`
  * (forward or back slashes, resolved with path.win32) are compared case-folded in their JS-realpath and native-realpath (8.3 expanded)
  * spellings. A prefix's native spelling counts only when no symlink is on its way (the JS realpath leaves it unchanged): a link is no
@@ -2829,7 +2860,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   if (ctx.role === "child" && c.worktreeOp !== undefined) {
     return { kind: "deny", reason: `pi-foreman: denied by the permission policy (git worktree ${clip(c.worktreeOp)} is the foreman's; children may only list worktrees). Ask the foreman.` };
   }
-  if (ctx.role === "child" && c.childAsk !== undefined && !npmInstallOwned(c, ctx)) {
+  if (ctx.role === "child" && c.childAsk !== undefined && !npmInstallOwned(c, ctx) && !npmCiWorktreeLabel(command, ctx)) {
     return { kind: "ask", reason: `pi-foreman: ${c.childAsk} needs approval for a child (it writes the project or the network; the foreman may run it).` };
   }
   const words = [...new Set(c.words.flatMap((w) => [w, ...expandBraces(w)]))];
