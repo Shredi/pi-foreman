@@ -66,6 +66,7 @@
     "planReviewRounds": 2,
     "planner": "self",
     "childTimeoutSeconds": 1800,
+    "launchTimeoutCapMinutes": 120,
     "heavyThreshold": "strict"
   },
   "review": {

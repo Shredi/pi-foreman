@@ -218,10 +218,10 @@ class LayerRulesTest(unittest.TestCase):
                         proj={"ceremony": {"launchTimeoutCapMinutes": 30}}, session={})
         self.assertEqual(res["config"]["ceremony"]["launchTimeoutCapMinutes"], 30)
 
-    def test_launch_timeout_cap_without_earlier_layer(self):
+    def test_launch_timeout_cap_with_shipped_defaults(self):
         res = self.load(proj={"ceremony": {"launchTimeoutCapMinutes": 240}})
-        self.assertNotIn("launchTimeoutCapMinutes", res["config"]["ceremony"])
-        self.assertIn("project ceremony.launchTimeoutCapMinutes ignored: above the default 120",
+        self.assertEqual(res["config"]["ceremony"]["launchTimeoutCapMinutes"], 120)
+        self.assertIn("project ceremony.launchTimeoutCapMinutes ignored: it would loosen the policy",
                       "\n".join(res["warnings"]))
         res = self.load(proj={"ceremony": {"launchTimeoutCapMinutes": 30}})
         self.assertEqual(res["config"]["ceremony"]["launchTimeoutCapMinutes"], 30)
