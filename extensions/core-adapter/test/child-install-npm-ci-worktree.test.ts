@@ -25,31 +25,33 @@ fs.writeFileSync(path.join(leaf, "package.json"), "{}");
 const rules: OverlayRules = buildOverlayRules(baseline, {}, {}, ag, ws, undefined, false);
 const ctxOf = (cwd: string): MatchCtx => ({ cwd, home, platform: process.platform, role: "child", roundRoots: [round] });
 const run = (cwd: string, command: string): string => checkToolCall(rules, "bash", { command }, ctxOf(cwd))?.kind ?? "pass";
-const posix = process.platform === "win32" ? test.skip : test;
+const win = process.platform === "win32";
+const expected = win ? null : "npm-ci-worktree";
+const decision = win ? "ask" : "pass";
 
-posix("npm ci passes in a round worktree and in a pi-subagents leaf, with the label", () => {
-  assert.equal(run(round, "npm ci"), "pass");
-  assert.equal(run(leaf, "npm ci"), "pass");
-  assert.equal(run(path.join(leaf, "sub"), "npm ci"), "pass");
-  assert.equal(npmCiWorktreeLabel("npm ci", ctxOf(leaf)), "npm-ci-worktree");
-  assert.equal(npmCiWorktreeLabel("npm ci", ctxOf(round)), "npm-ci-worktree");
+test("npm ci passes in a round worktree and in a pi-subagents leaf, with the label (win32: ask)", () => {
+  assert.equal(run(round, "npm ci"), decision);
+  assert.equal(run(leaf, "npm ci"), decision);
+  assert.equal(run(path.join(leaf, "sub"), "npm ci"), decision);
+  assert.equal(npmCiWorktreeLabel("npm ci", ctxOf(leaf)), expected);
+  assert.equal(npmCiWorktreeLabel("npm ci", ctxOf(round)), expected);
 });
 
-posix("npm ci asks in the parent checkout and in an unrelated dir, no label", () => {
+test("npm ci asks in the parent checkout and in an unrelated dir, no label", () => {
   for (const cwd of [ws, other]) {
     assert.equal(run(cwd, "npm ci"), "ask", cwd);
     assert.equal(npmCiWorktreeLabel("npm ci", ctxOf(cwd)), null, cwd);
   }
 });
 
-posix("a leaf runs no npm ci with an extra flag, install, a chain or an env prefix", () => {
+test("a leaf runs no npm ci with an extra flag, install, a chain or an env prefix", () => {
   for (const cmd of ["npm ci --ignore-scripts", "npm ci --prefix ..", "npm install", "npm ci && git fetch origin", "npm_config_registry=http://x npm ci"]) {
     assert.equal(run(leaf, cmd), "ask", cmd);
     assert.equal(npmCiWorktreeLabel(cmd, ctxOf(leaf)), null, cmd);
   }
 });
 
-posix("a leaf is asked when the npm prefix would climb out of it", () => {
+test("a leaf is asked when the npm prefix would climb out of it", () => {
   const bare = path.join(w, "worktrees", "ws", "pi-worktree-abc-1");
   fs.mkdirSync(bare, { recursive: true });
   fs.writeFileSync(path.join(bare, ".git"), "gitdir: /nowhere\n");
