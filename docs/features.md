@@ -59,7 +59,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [findings](#findings) | on | Records every reviewer run's located findings locally, with `foreman findings` to list, dismiss or export them and `foreman retro models` to compare reviewer models. | on by default | [review](review.md#findings-store) |
 | [bench](#bench) | opt-in | Measures harness changes over Harbor tasks in local Docker, and reviewer models over planted-defect diffs with `foreman bench review`. | `foreman bench review --tasks bench/review-samples --dry-run` | [bench](bench.md#running) |
 | [bench-climb](#bench-climb) | opt-in | Explores cheap-to-strong reviewer climb policies offline over review-bench cells; the runtime has no climb on a finding. | `foreman bench review --tasks bench/review-samples --mode climb --rungs <cheap-model>,<strong-model> --dry-run` | [bench](bench.md#review-bench) |
-| [ceremony-tiers](#ceremony-tiers) | on | The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
+| [ceremony-tiers](#ceremony-tiers) | on | The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a clean work tree). | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [read-budgets](#read-budgets) | on | Warns and then refuses the foreman's own reads past a budget until an explorer runs, caps rechecks after a PASS (a plan-review PASS does not start the recheck window), and gives child roles their own read budgets. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [launch-wait](#launch-wait) | on | Holds a foreman launch until the child finishes or asks something, drops duplicate completion notices and caps concurrent children. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [waits](#waits) | on | The foreman-only `foreman_wait` tool waits on timers, files, processes and CI runs within a duration and concurrency limit, batching its notices. | on by default | [sessions](sessions.md#further-session-keys) |
@@ -311,7 +311,7 @@ No config key.
 
 ### ceremony-tiers
 
-**Tiers and finish gates.** The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met.
+**Tiers and finish gates.** The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a clean work tree).
 
 | Key | Default | Layer |
 |---|---|---|

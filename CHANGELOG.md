@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Round 20
+- A session that changed nothing finishes without a refusal: no completed builder run, no foreman project-file edit and an empty `git status --porcelain` (trace `ceremony_gate {reason: no_change}`, an info notice). A heavy session with a rejected plan still blocks; a dirty tree or a git failure keeps the refusal.
+
 ### Round 19
 - Own CLI allow: the foreman's one simple `<root>/bin/foreman` command with verbs `session open|brief|list`, `dialogs` or `findings list` is allowed without the auto reviewer (trace `overlay_allow{rule: own_cli}`); all other verbs take the normal path. Residual: `session open --cwd/--agent-dir` accepts any path. See docs/permissions.md.
 - A reviewer or senior-reviewer PASS on a plan review no longer starts the post-PASS recheck window, so the foreman keeps its normal read budget.

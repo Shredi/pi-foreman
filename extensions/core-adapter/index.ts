@@ -22,7 +22,7 @@ import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
-import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
+import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
 import { isBriefName, isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingAsk, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
@@ -44,7 +44,7 @@ import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isola
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
 import { autoReviewDoctorLine, autoReviewTarget, ForemanReview, overlayAutoReview, REVIEW_LINK, reviewTarget, userPromptOf } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
-import { ReviewFacts } from "./diffscan.ts";
+import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
@@ -2744,6 +2744,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const rejected = s.ceremony.tier === "heavy" && s.plan?.status === "rejected";
     if (rejected) missing.push("plan");
     if (missing.length === 0) return undefined;
+    // The no-change valve (ledger nochange-finish): git runs only when the counters already say nothing was built or edited.
+    if (!rejected && s.steps.builder === 0 && s.tally.files.length === 0) {
+      const porcelain = await git(ctx.cwd, ["status", "--porcelain"]);
+      if (noChange(s.steps, s.tally.files.length, porcelain)) {
+        s.trace?.emit({ event: "ceremony_gate", reason: "no_change", tier: s.ceremony.tier });
+        ctx.ui.notify("pi-foreman: finished without a change: no builder or reviewer required", "info");
+        return undefined;
+      }
+    }
     // Ladder (e): after a FAIL with the builder still on its bottom rung, the revision climbs; this
     // refusal does not count toward the two-refusal valve (at most 2 per user prompt).
     if (missing.includes("reviewer") && gate.last === "fail" && s.climbRefusals < 2 && (await builderClimbOpen(s, ctx))) {
