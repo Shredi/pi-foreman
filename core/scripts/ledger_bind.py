@@ -23,6 +23,11 @@ an existing ledger is therefore THE explicit way to continue it:
     in a `.workflow/` directory binds (or rebinds) this session to
     that exact path.
 
+Only a Write rebinds. While the bound ledger still exists, an Edit,
+MultiEdit or Bash `ledger -f` of another ledger keeps the binding (R24:
+ticking the backlog LEDGER-todo.md after writing the round ledger had
+rebound the session to the backlog); with no live binding they bind.
+
 The live-name filter is the same one `active_ledger_in()` in both
 guard scripts uses: `ledger[-._]*.md`, case-insensitive, "ledger" a
 whole leading segment (not `ledgers.md`), *-archive.md/_archive.md
@@ -228,6 +233,11 @@ def _bind(data):
         marker = {}
     if recreate:
         marker = {"started": round(time.time(), 3)}
+    # Only a Write rebinds: ticking another ledger (the backlog) with an
+    # Edit or `ledger -f` must not take over a live binding.
+    bound = marker.get("ledger")
+    if tool_name != "Write" and isinstance(bound, str) and os.path.isfile(bound):
+        return
     marker["ledger"] = real
 
     # Atomic replace: same pattern as inject_instructions.py's marker
