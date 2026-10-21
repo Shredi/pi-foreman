@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Round 23
+- A launch's `timeoutMs` (or `maxRuntimeMs`) now wins over the role's `timeoutMinutes` in both directions; every written deadline is capped at `ceremony.launchTimeoutCapMinutes` (default 120, the only hard ceiling), and a launch value above the cap is traced as `launch_timeout {role, requested_ms, written_ms, reason: cap}`. See docs/roles.md.
+
 ### Round 22
 - docs/close.md says where a removed child worktree's changes land: pi-subagents captures a patch under the launch's result dir (`worktree-diffs/step-N`) before it removes the worktree, so a turn-capped or timed-out builder's uncommitted work is recoverable from there; builders commit only when their brief says so.
 
