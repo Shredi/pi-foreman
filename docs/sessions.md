@@ -48,7 +48,7 @@ pi-intercom as the address. Spaces in a brief path or `--cwd` do not survive the
 `open` creates `<agent dir>/pi-foreman/handoffs/<YYYYmmdd-HHMMSS>-<slug>/` with:
 
 - `brief.md`: your brief plus a footer telling the child how to report back (below).
-- `parent`: the opener's intercom id, one line. The child's close check reads it every time.
+- `parent`: the opener's intercom id, one line. The child's close check reads it every time. The parent-id path works for a Pi parent only; other parents (for example a Claude session) are reached through the handoff files ([ask by file](#ask-by-file-parent-that-is-not-a-pi-session)).
 - `child`: the child's intercom id, `fm-<slug>-<6 hex>`. The child also gets it as `PI_INTERCOM_STABLE_ID`.
 - later, written by the child: `plan.md` (with `--plan-first`) and `result.md`.
 

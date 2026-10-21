@@ -401,6 +401,12 @@ class AskFooterTest(unittest.TestCase):
                 self.assertIn(needle, text)
             self.assertIn("Never ask by `herdr agent prompt`", text)
 
+    def test_footer_says_session_not_found_means_no_intercom_retry(self):
+        for plan_first in (True, False):
+            text = fsn.footer("demo", plan_first)
+            self.assertIn("On `Session not found`, do not retry intercom", text)
+            self.assertLess(text.index("On `Session not found`"), text.index("Write `ask.md`"))
+
 
 class PlanFirstFooterTest(unittest.TestCase):
     def test_plan_first_footer_names_the_ruling_handoff(self):

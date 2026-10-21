@@ -181,6 +181,7 @@ def footer(label, plan_first):
         "   `foreman:closed <path>` (or `pi-foreman: close refused: <reason>`) by itself.",
         "",
         "Ask by file: use this when the parent is not a Pi session or intercom to the parent says `Session not found`.",
+        "On `Session not found`, do not retry intercom: no retry reaches a parent that never registers with the broker.",
         "Write `ask.md` in the handoff dir; its first line is `# Ask <n>: <topic>` (n = 1, 2, ... in order). pi-foreman",
         "then touches `.ask` there and shows you as blocked in Herdr. The parent answers in `ruling-<n>.md` (same n).",
         "Wait with `foreman_wait` kind `file` on `ruling-<n>.md` in the handoff dir. When the wait wakes, the harness writes",
