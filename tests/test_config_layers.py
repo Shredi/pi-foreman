@@ -218,6 +218,14 @@ class LayerRulesTest(unittest.TestCase):
                         proj={"ceremony": {"launchTimeoutCapMinutes": 30}}, session={})
         self.assertEqual(res["config"]["ceremony"]["launchTimeoutCapMinutes"], 30)
 
+    def test_launch_timeout_cap_without_earlier_layer(self):
+        res = self.load(proj={"ceremony": {"launchTimeoutCapMinutes": 240}})
+        self.assertNotIn("launchTimeoutCapMinutes", res["config"]["ceremony"])
+        self.assertIn("project ceremony.launchTimeoutCapMinutes ignored: above the default 120",
+                      "\n".join(res["warnings"]))
+        res = self.load(proj={"ceremony": {"launchTimeoutCapMinutes": 30}})
+        self.assertEqual(res["config"]["ceremony"]["launchTimeoutCapMinutes"], 30)
+
     def test_lower_only_below_minimum_is_dropped_with_a_warning(self):
         res = self.load(proj={"roles": {"builder": {"timeoutMinutes": 0}}},
                         session={"ceremony": {"revisionRounds": {"standard": -1}}})

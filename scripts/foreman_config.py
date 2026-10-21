@@ -287,7 +287,7 @@ LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
                  "windowMinutes": 1, "childTimeoutSeconds": 1, "launchTimeoutCapMinutes": 1, "reviewRuns": 1, "budgetUsd": 0.01,
                  "maxLoadPerCore": 0.01}
 # lower_only values with no earlier layer value may not exceed this (the built-in default).
-LAYER_CAP = {"windowMinutes": 45}
+LAYER_CAP = {"windowMinutes": 45, "launchTimeoutCapMinutes": 120}
 # Built-in cache policy per provider (mirrors BUILTIN_CACHE in extensions/core-adapter/cachepolicy.ts).
 BUILTIN_CACHE = {
     "claude-bridge": {"ttlSeconds": 300, "billing": "token"},

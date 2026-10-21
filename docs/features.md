@@ -156,7 +156,7 @@ Switch: `providers` is non-empty.
 | `roles.<x>.launch` | `planner`: `"detached"`, `explorer`: `"detached"`, `builder`: `"detached"`, `reviewer`: `"detached"`, `senior-reviewer`: `"detached"`, `finalizer`: `"detached"` | not in project/session (the launch mode comes from the user or overlay config) |
 | `roles.<x>.timeoutMinutes` | `planner`: `20`, `explorer`: `20`, `builder`: `60`, `reviewer`: `30`, `senior-reviewer`: `45`, `finalizer`: `30` | tighten-only (lower only, minimum 1) |
 | `ceremony.childTimeoutSeconds` | `1800` | tighten-only (lower only, minimum 1) |
-| `ceremony.launchTimeoutCapMinutes` | unset | tighten-only (lower only, minimum 1) |
+| `ceremony.launchTimeoutCapMinutes` | unset | tighten-only (lower only, minimum 1, at most 120 without an earlier value) |
 
 ### display-names
 
