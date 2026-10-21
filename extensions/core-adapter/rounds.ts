@@ -243,9 +243,10 @@ export function hasSecurityFinding(text: string): boolean {
 /**
  * Where a FAIL's SECURITY exemption comes from: the full reviewer report of the run end (`reportRun`, set when a counting
  * FAIL there carries a `SECURITY:` line), else the notice text (capped by pi-subagents at 2 000 characters). null: none.
+ * `noticeIds`: the run ids the notice names; a flag of another run than those is stale and ignored (none named: the flag stands).
  */
-export function securityOf(reportRun: string | null, notice: string): "report" | "notice" | null {
-  if (reportRun !== null) return "report";
+export function securityOf(reportRun: string | null, notice: string, noticeIds: readonly string[] = []): "report" | "notice" | null {
+  if (reportRun !== null && (noticeIds.length === 0 || noticeIds.includes(reportRun))) return "report";
   return hasSecurityFinding(notice) ? "notice" : null;
 }
 
@@ -258,7 +259,7 @@ export function isOwnerPrompt(source: unknown, text: unknown): boolean {
   if (source === "interactive" || source === "rpc") return true;
   if (source !== "extension" || typeof text !== "string") return false;
   const t = text.trim();
-  return !(t.startsWith("pi-foreman") || t.startsWith("Background task") || isSubagentWakeText(t) || t === INTERCOM_WAKE_TEXT);
+  return !(t.startsWith("pi-foreman") || t.startsWith("Background task") || t.startsWith("<background-task-notification>") || isSubagentWakeText(t) || t === INTERCOM_WAKE_TEXT);
 }
 
 /** A review run finished. Only a review after a builder launch can open a round. `security`: the text carries a `SECURITY:` finding. */

@@ -2170,7 +2170,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // a second opinion, plan review or panel never marks items (occasion.ts); the run end marks the counting primary
     const launch = passed ? s.reviewRuns.byRun.get(passed.runId) : undefined;
     if (passed && !(launch && (launch.panel || launch.entries.some((e) => REVIEW_ROLES.includes(e.role) && (e.occasion === "second-opinion" || e.occasion === "plan-review"))))) markByReview(s, passed.runId, passed.text);
-    const security = verdict === "fail" ? securityOf(s.securityRun, text) : null;
+    const security = verdict === "fail" ? securityOf(s.securityRun, text, ids) : null;
     if (security) s.trace?.emit({ event: "security_exempt", runId: security === "report" ? s.securityRun ?? "?" : ids[0] ?? "?", kind: security });
     s.securityRun = null;
     s.chains.state = onReviewDone(s.chains.state, verdict, security !== null);

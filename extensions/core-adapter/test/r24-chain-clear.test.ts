@@ -14,6 +14,7 @@ test("isOwnerPrompt: owner prompts and harness texts", () => {
   assert.equal(isOwnerPrompt("extension", SUBAGENT_WAKE_TEXT), false);
   assert.equal(isOwnerPrompt("extension", INTERCOM_WAKE_TEXT), false);
   assert.equal(isOwnerPrompt("extension", "Background task completed: **reviewer**"), false);
+  assert.equal(isOwnerPrompt("extension", "<background-task-notification>\nrun done\n</background-task-notification>"), false);
   assert.equal(isOwnerPrompt("other", "why?"), false);
 });
 
@@ -24,4 +25,13 @@ test("input hook: [continue] from an extension clears the chains, a notice does 
   await a.input("extension", "[continue]");
   await a.input("interactive", "why?");
   assert.deepEqual(a.events("chain_clear").map((e) => e.kind), ["extension", "interactive"]);
+});
+
+test("input hook: a child session never clears the chains", async (t) => {
+  const a = await r11Rig(t, {}, { child: true });
+  await a.input("interactive", "why?");
+  await a.input("extension", "[continue]");
+  let cleared: unknown[] = [];
+  try { cleared = a.events("chain_clear"); } catch { /* a child may write no trace */ }
+  assert.deepEqual(cleared, []);
 });

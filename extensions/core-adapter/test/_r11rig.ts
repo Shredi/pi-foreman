@@ -12,7 +12,7 @@ export type Block = { block?: boolean; reason?: string } | undefined;
 let rigs = 0;
 
 /** `opts.ctx`: fields that replace the fake ctx's (ui, modelRegistry, ...); `opts.config`: top-level keys merged into the user foreman.json. */
-export async function r11Rig(t: { after(fn: () => void | Promise<void>): void }, ceremony: Record<string, unknown> = {}, opts: { ctx?: Record<string, unknown>; config?: Record<string, unknown> } = {}) {
+export async function r11Rig(t: { after(fn: () => void | Promise<void>): void }, ceremony: Record<string, unknown> = {}, opts: { ctx?: Record<string, unknown>; config?: Record<string, unknown>; child?: boolean } = {}) {
   const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE", "PI_INTERCOM_SESSION_ID", "PI_INTERCOM_STABLE_ID"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r11-p2-")));
@@ -36,7 +36,8 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
   process.env.PI_CODING_AGENT_DIR = agentDir;
   process.env.PI_INTERCOM_SESSION_ID = sessionId;
   delete process.env.PI_INTERCOM_STABLE_ID;
-  delete process.env.PI_SUBAGENT_CHILD;
+  if (opts.child) process.env.PI_SUBAGENT_CHILD = "1";
+  else delete process.env.PI_SUBAGENT_CHILD;
   delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;
   const roles = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
   const l2 = {

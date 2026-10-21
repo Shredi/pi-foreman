@@ -38,6 +38,26 @@ test("a SECURITY line past the notice cap still exempts the next builder revisio
   assert.equal(a.events("revision_security_exempt").length, 1);
 });
 
+test("securityOf: a flag of another run than the notice names is stale", () => {
+  assert.equal(securityOf("run-a", "Overall verdict: FAIL", ["run-b"]), null);
+  assert.equal(securityOf("run-a", "Overall verdict: FAIL", ["run-a"]), "report");
+});
+
+test("a stale flag from run A does not exempt the notice of run B", async (t) => {
+  const a = await r11Rig(t, { default: "standard", revisionRounds: { standard: 1 } });
+  const b = await a.launch(builder);
+  await a.started(b.id, builder, "run-b0");
+  a.end({ runId: "run-b0", agent: "builder", status: "completed", success: true, summary: "built" });
+  const r = await a.launch(reviewer);
+  await a.started(r.id, reviewer, "run-a");
+  // run A ends with a SECURITY FAIL but its notice never arrives
+  a.end({ runId: "run-a", agent: "reviewer", status: "completed", success: true, output: "Overall verdict: FAIL\nSECURITY: src/a.ts:3 path traversal\n" });
+  const r2 = await a.launch(reviewer);
+  await a.started(r2.id, reviewer, "run-b");
+  await a.notice("Background task completed: **reviewer**\n\nOverall verdict: FAIL\n1. minor nit\n\nRetention-managed async directory: /tmp/async/run-b");
+  assert.deepEqual(a.events("security_exempt"), []);
+});
+
 test("without a SECURITY line nothing is exempt", async (t) => {
   const a = await failedReview(t, false);
   assert.deepEqual(a.events("security_exempt"), []);
