@@ -31,6 +31,11 @@ def events(rig, sid, name):
     return [r for r in rig.traces().get("trace-" + safe, []) if r.get("event") == name]
 
 
+def pending_change(rig):
+    """An untracked project file: the finish sees a change, so the no-change valve does not apply."""
+    (rig.project / "src-change.txt").write_text("changed\n", "utf-8")
+
+
 def gate_messages(records):
     out = []
     for r in records:
@@ -85,6 +90,7 @@ class TestTrivialBound(ReplayCase):
 class TestRequiredSteps(ReplayCase):
     def test_finish_without_builder_refused_twice_then_forced_pass(self):
         rig = self.rig("cg-nobuild", script())
+        pending_change(rig)
         pi = rig.start()
         sid = pi.session_id()
         recs = pi.prompt("[[replay:nobuild]] build it", timeout=90)
@@ -95,6 +101,18 @@ class TestRequiredSteps(ReplayCase):
         self.assertEqual([(r["tier"], r["missing"]) for r in events(rig, sid, "finish_refused")], [("standard", "builder,reviewer")] * 2)
         self.assertEqual([(r["tier"], r["missing"]) for r in events(rig, sid, "ceremony_incomplete")], [("standard", "builder,reviewer")])
         self.assertTrue(any("finished with ceremony incomplete: missing builder, reviewer" in n for n in notifications(recs)), notifications(recs))
+
+    def test_no_change_session_finishes_without_refusal(self):
+        rig = self.rig("cg-nochange", script())
+        pi = rig.start()
+        sid = pi.session_id()
+        recs = pi.prompt("[[replay:nobuild]] nothing to change", timeout=90)
+        pi.close()
+        self.assertEqual(gate_messages(recs), [])
+        self.assertEqual(events(rig, sid, "finish_refused"), [])
+        self.assertEqual(events(rig, sid, "ceremony_incomplete"), [])
+        self.assertEqual([(r.get("reason"), r.get("tier")) for r in events(rig, sid, "ceremony_gate")], [("no_change", "standard")])
+        self.assertTrue(any("finished without a change" in n for n in notifications(recs)), notifications(recs))
 
     def test_builder_and_reviewer_let_the_finish_pass(self):
         rig = self.rig("cg-full", script())
@@ -138,6 +156,7 @@ class TestWaitingForParent(ReplayCase):
 
     def test_handoff_timer_wait_waives_the_gate_until_the_next_input(self):
         rig = self.rig("cg-parent", script(), config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")
+        pending_change(rig)
         self.handoff(rig)
         pi = rig.start(env={"PI_INTERCOM_STABLE_ID": self.ME})
         sid = pi.session_id()
@@ -155,6 +174,7 @@ class TestWaitingForParent(ReplayCase):
 
     def test_another_sessions_handoff_does_not_waive_the_gate(self):
         rig = self.rig("cg-other", script(), config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")
+        pending_change(rig)
         self.handoff(rig, child="fm-someone-else-111111")
         pi = rig.start(env={"PI_INTERCOM_STABLE_ID": self.ME})
         sid = pi.session_id()
@@ -165,6 +185,7 @@ class TestWaitingForParent(ReplayCase):
 
     def test_plain_timer_wait_without_handoff_context_is_refused(self):
         rig = self.rig("cg-plain", script(), config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")
+        pending_change(rig)
         pi = rig.start()
         sid = pi.session_id()
         recs = pi.prompt("[[replay:plainwait]] wait", timeout=90)
