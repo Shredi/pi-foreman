@@ -348,6 +348,7 @@ Direction: **tighten** keys may be set by every layer; the project file (`.pi/fo
 | `roles.planner.tools` | launch | adding `bash` loosens (the shell write guard then covers it) | only narrowing |
 | `ceremony`, `ceremony.revisionRounds` not an object | 6 | `null` drops every escalation | ignored |
 | `roles.*.timeoutMinutes` | launch | higher loosens | only a lower value |
+| `ceremony.launchTimeoutCapMinutes` | launch | higher loosens (the only hard ceiling on a child run) | only a lower value, minimum 1 |
 | `bridge.isolateClaudeConfig` | bridge | `false` loosens | ignored |
 | `trace.dir` | trace | writes outside the workspace | only inside the workspace (symlinks resolved) |
 
@@ -551,7 +552,7 @@ Every role is launched detached (`async: true` in the role frontmatter) with the
 - The required child extensions from §5. The policy extensions are required in every child.
 - A strict tool allowlist. Extension tools are not inherited and must be listed with their path. Hands-on 2026-10-03: an unlisted tool was absent, and a listed one ran.
 - A model resolved from the provider map. The foreman picks a strength with `model: "default"` or `"strong"` (an optional `:<level>` suffix applies only to a rung with no configured thinking; `strong` needs a reason or a ladder trigger, see Role ladder). Without a keyword the builder runs on `providers.<p>.roles.builder.strong` on a heavy tier, every other launch on the default model. `strong` without a mapped strong model launches the default model and says so in the tool result. The strong model comes from the provider the role's `model` came from: the fallback provider's strong applies only when the role's `model` is the fallback's too. A raw model id is replaced by the map.
-- A run-time limit: `timeoutMs` = `roles.<id>.timeoutMinutes`; a lower foreman value is kept. For tasks/chain it is the parent deadline (highest entry for tasks, sum of steps for a chain), since pi-subagents 0.75.0 reads no per-entry limit.
+- A run-time limit: `timeoutMs` = `roles.<id>.timeoutMinutes`; a launch value wins in both directions, and every written value is capped at `ceremony.launchTimeoutCapMinutes` (default 120). For tasks/chain it is the parent deadline (highest entry for tasks, sum of steps for a chain), since pi-subagents 0.75.0 reads no per-entry limit.
 
 An explicit `async: false` in a call would beat the frontmatter, so the adapter rewrites every `subagent` call to `async: true` (and drops `foregroundOnly`), and the generated `subagents` block sets `forceTopLevelAsync: true`.
 

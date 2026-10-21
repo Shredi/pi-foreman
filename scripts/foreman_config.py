@@ -90,6 +90,7 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.reviewRuns              lower only, minimum 1 (a higher cap allows more review runs per user prompt)
     ceremony.budgetUsd               lower only, minimum 0.01 (a higher cap, or none, lets a session spend more); unset = no cap
     ceremony.childTimeoutSeconds     lower only, minimum 1 (a higher limit lets a child tool call run longer)
+    ceremony.launchTimeoutCapMinutes lower only, minimum 1 (a higher cap lets a child run longer)
     ceremony.heavyThreshold          tighten only, eee843d < strict (may only move toward eee843d, which escalates more)
     ceremony.trivialBound.<field>    lower only, minimum 0 (a higher bound lets the foreman edit more)
     ceremony.trivialBound            not an object: ignored
@@ -254,6 +255,7 @@ LAYER_TIGHTEN = [
     # ceremony.childScratch.keep has no rule: any layer may set it, it only retains temp data.
     (("ceremony", "recheckBudget"), "lower_only"),
     (("ceremony", "childTimeoutSeconds"), "lower_only"),
+    (("ceremony", "launchTimeoutCapMinutes"), "lower_only"),
     (("ceremony", "reviewRuns"), "lower_only"),
     (("ceremony", "budgetUsd"), "lower_only_number"),
     (("ceremony", "launchWait"), ("ordered", ("block", "detach"))),
@@ -282,7 +284,7 @@ LAYER_TIGHTEN = [
 ]
 LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
                  "threshold": 0.3, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0,
-                 "windowMinutes": 1, "childTimeoutSeconds": 1, "reviewRuns": 1, "budgetUsd": 0.01,
+                 "windowMinutes": 1, "childTimeoutSeconds": 1, "launchTimeoutCapMinutes": 1, "reviewRuns": 1, "budgetUsd": 0.01,
                  "maxLoadPerCore": 0.01}
 # lower_only values with no earlier layer value may not exceed this (the built-in default).
 LAYER_CAP = {"windowMinutes": 45}

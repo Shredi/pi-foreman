@@ -206,6 +206,18 @@ class LayerRulesTest(unittest.TestCase):
         self.assertIn("project roles.builder.timeoutMinutes ignored: it would loosen", joined)
         self.assertIn("session roles.reviewer.timeoutMinutes ignored: it would loosen", joined)
 
+    def test_launch_timeout_cap_lower_only(self):
+        res = self.load(l2={"ceremony": {"launchTimeoutCapMinutes": 90}},
+                        proj={"ceremony": {"launchTimeoutCapMinutes": 240}},
+                        session={"ceremony": {"launchTimeoutCapMinutes": 100}})
+        self.assertEqual(res["config"]["ceremony"]["launchTimeoutCapMinutes"], 90)
+        joined = "\n".join(res["warnings"])
+        self.assertIn("project ceremony.launchTimeoutCapMinutes ignored: it would loosen", joined)
+        self.assertIn("session ceremony.launchTimeoutCapMinutes ignored: it would loosen", joined)
+        res = self.load(l2={"ceremony": {"launchTimeoutCapMinutes": 90}},
+                        proj={"ceremony": {"launchTimeoutCapMinutes": 30}}, session={})
+        self.assertEqual(res["config"]["ceremony"]["launchTimeoutCapMinutes"], 30)
+
     def test_lower_only_below_minimum_is_dropped_with_a_warning(self):
         res = self.load(proj={"roles": {"builder": {"timeoutMinutes": 0}}},
                         session={"ceremony": {"revisionRounds": {"standard": -1}}})
