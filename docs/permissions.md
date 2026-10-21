@@ -168,6 +168,14 @@ guard still decides `git restore`/`git checkout` first (tracked, modified test f
 
 Own CLI (`ForemanReview.authorize`, trace `overlay_allow{rule: own_cli}`): for the foreman session only, never a forwarded child ask, one simple bash command whose head is an explicit path (contains `/`, so a bare `foreman` via PATH is refused) and resolves by realpath to the session's own `<root>/bin/foreman` inside the root is allowed without the auto reviewer when its verbs are exactly `session open|brief|list`, `dialogs` or `findings list`. It is refused (normal path) for `..`, shell control, redirects, substitution, a `VAR=` prefix, `$VAR`, globs, or a matching user bash ask/deny rule. Every other verb (setup, config, `findings record|dismiss|export`, close, worktree, sync, retro, backlog, bench, radar, update-check) takes the normal path. Residual: `session open --cwd` / `--agent-dir` accepts any path.
 
+## Dialog keys
+
+The ask dialog is the bundled permission system's (`@gotgenes/pi-permission-system`), not the harness's. `y` (`approve`) approves and
+`n` (`deny`) denies. With its default `doublePressToConfirm: true` the first `y` only arms the choice and the second `y` confirms,
+which reads as an ignored key. Set `doublePressToConfirm: false` in the permission-system config to confirm on one press, or
+rebind keys with `permissionDialogKeys` (actions `approve`, `approveSession`, `approveSessionBoth`, `deny`, `denyWithReason`;
+defaults `y`, `s`, `b`, `n`, `r`).
+
 ## Traces
 
 - `review {decision, model, class, ...}`: `class` is the effect class of the full command (bash asks).
