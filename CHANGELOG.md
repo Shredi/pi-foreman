@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Round 22
+- docs/close.md says where a removed child worktree's changes land: pi-subagents captures a patch under the launch's result dir (`worktree-diffs/step-N`) before it removes the worktree, so a turn-capped or timed-out builder's uncommitted work is recoverable from there; builders commit only when their brief says so.
+
 ### Round 21
 - A child's session footer says that on `Session not found` it must not retry intercom and uses the handoff files (`ask.md`, `ruling-<n>.md`) instead; docs/sessions.md notes the parent-id path works only for a Pi parent.
 - A child's exact `npm ci` runs unasked in a pi-subagents managed worktree (`pi-worktree-*`) as well as a round worktree (trace `overlay_allow{rule: npm-ci-worktree}`); flags, other cwds and the parent checkout still ask, win32 too. Residual: a forwarded ask is still judged with the foreman's cwd. See docs/permissions.md.
