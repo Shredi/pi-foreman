@@ -183,18 +183,32 @@ export function roleTimeoutMs(configRoles: unknown, role: string): number | unde
 
 /**
  * Write the run-time limit into a `subagent` launch in place (D7): top-level `timeoutMs` = the
- * role's `timeoutMinutes`; a foreman `timeoutMs` (or its alias `maxRuntimeMs`, which is dropped)
- * stays only when it is lower. pi-subagents 0.75.0 honours the top-level value as the run
+ * role's `timeoutMinutes` when the launch sets none; a foreman `timeoutMs` (or its alias `maxRuntimeMs`, which is dropped)
+ * wins in either direction. Every written value is capped at `ceremony.launchTimeoutCapMinutes`. pi-subagents 0.75.0 honours the top-level value as the run
  * deadline of a detached single launch, and for tasks/chain as the parent deadline of the whole
  * run; it reads no per-entry `timeoutMs`, so none is written. A composite therefore gets the
  * deadline its slowest allowed run needs: `tasks` = the highest entry limit, `chain` = the sum
  * of its steps (a parallel step counts its highest entry). When an entry has no limit, a foreman
  * value is capped at the largest configured role limit; with no foreman value nothing is written.
  */
-export function applyLaunchTimeouts(input: Json, configRoles: unknown, childTimeoutSeconds?: unknown): void {
-  if (!isObj(input) || isActionCall(input)) return;
-  applyRoleTimeouts(input, configRoles);
-  applyChildTimeout(input, childTimeoutSeconds);
+export function applyLaunchTimeouts(input: Json, configRoles: unknown, childTimeoutSeconds?: unknown, capMinutes?: unknown): LaunchTimeoutClamp | undefined {
+  if (!isObj(input) || isActionCall(input)) return undefined;
+  const capMs = launchTimeoutCapMs(capMinutes);
+  const clamp = applyRoleTimeouts(input, configRoles, capMs);
+  applyChildTimeout(input, childTimeoutSeconds, capMs);
+  return clamp;
+}
+
+/** A launch timeout the cap clamped: `requested_ms` is the foreman's value, `written_ms` the cap. */
+export interface LaunchTimeoutClamp {
+  role: string;
+  requested_ms: number;
+  written_ms: number;
+}
+
+/** `ceremony.launchTimeoutCapMinutes` (default 120) in ms: the only hard ceiling on a child run deadline. */
+export function launchTimeoutCapMs(v: unknown): number {
+  return (posInt(v) ? v : 120) * 60_000;
 }
 
 /** Roles whose runs get `ceremony.childTimeoutSeconds` as their tool-call timeout. */
@@ -208,9 +222,9 @@ export function childTimeoutSeconds(v: unknown): number {
 /**
  * `ceremony.childTimeoutSeconds`: a launch of a planner, builder, reviewer, senior-reviewer or finalizer gets
  * `toolTimeoutMs` (pi-subagents' per-tool-call limit) unless the foreman set one, and a run deadline
- * `timeoutMs` that is set is raised to at least the same value.
+ * `timeoutMs` that is set is raised to at least the same value, up to the cap.
  */
-function applyChildTimeout(input: Json, seconds: unknown): void {
+function applyChildTimeout(input: Json, seconds: unknown, capMs: number): void {
   const ms = childTimeoutSeconds(seconds) * 1000;
   let hit = false;
   const visit = (list: unknown): void => {
@@ -226,10 +240,10 @@ function applyChildTimeout(input: Json, seconds: unknown): void {
   visit(input.chain);
   if (!hit) return;
   input.toolTimeoutMs ??= ms;
-  if (posInt(input.timeoutMs) && input.timeoutMs < ms) input.timeoutMs = ms;
+  if (posInt(input.timeoutMs) && input.timeoutMs < ms) input.timeoutMs = Math.min(ms, capMs);
 }
 
-function applyRoleTimeouts(input: Json, configRoles: unknown): void {
+function applyRoleTimeouts(input: Json, configRoles: unknown, capMs: number): LaunchTimeoutClamp | undefined {
   const limitOf = (o: unknown): number | undefined => (isObj(o) && typeof o.agent === "string" ? roleTimeoutMs(configRoles, o.agent) : undefined);
   const maxOf = (list: unknown[]): number | undefined => {
     const ms = list.map(limitOf);
@@ -246,15 +260,23 @@ function applyRoleTimeouts(input: Json, configRoles: unknown): void {
     limit = sum || undefined;
   } else limit = limitOf(input);
   const passed = input.timeoutMs ?? input.maxRuntimeMs;
-  if (limit === undefined) {
+  const launch = posInt(passed) ? passed : undefined;
+  let want: number;
+  if (limit !== undefined) want = launch ?? limit;
+  else {
     // MINOR-9: an entry without a role limit (no agent, empty parallel, a role without
     // timeoutMinutes) leaves no deadline of its own; a foreman value is still capped at the
     // largest configured role limit.
-    if (passed === undefined) return;
+    if (passed === undefined) return undefined;
     const all = isObj(configRoles) ? Object.keys(configRoles).map((r) => roleTimeoutMs(configRoles, r)).filter(posInt) : [];
-    if (all.length === 0) return;
-    limit = Math.max(...all);
+    if (all.length === 0) return undefined;
+    const ceiling = Math.max(...all);
+    want = launch === undefined ? ceiling : Math.min(launch, ceiling);
   }
   delete input.maxRuntimeMs;
-  input.timeoutMs = posInt(passed) && passed < limit ? passed : limit;
+  const written = Math.min(want, capMs);
+  input.timeoutMs = written;
+  // Traced only when the cap clamps the foreman's own value; a role default above the cap is silent.
+  if (launch === undefined || launch <= capMs || written !== capMs) return undefined;
+  return { role: typeof input.agent === "string" ? input.agent : Array.isArray(input.tasks) ? "tasks" : "chain", requested_ms: launch, written_ms: written };
 }

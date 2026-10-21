@@ -90,7 +90,7 @@ test("a raw model id on a heavy tier is replaced by the builder's strong model a
   assert.equal(input.model, "p1/big:high");
 });
 
-test("timeouts: the role limit is written, a lower foreman value kept, a higher one clamped", () => {
+test("timeouts: the role limit is written, a lower foreman value kept, a higher one kept up to the 120-minute cap", () => {
   const cfg = { explorer: { timeoutMinutes: 20 }, builder: { timeoutMinutes: 60 }, reviewer: { timeoutMinutes: 30 } };
   const single: Record<string, unknown> = { agent: "builder", task: "t" };
   applyLaunchTimeouts(single, cfg);
@@ -100,7 +100,7 @@ test("timeouts: the role limit is written, a lower foreman value kept, a higher 
   assert.equal(lower.timeoutMs, 60_000);
   const higher: Record<string, unknown> = { agent: "explorer", task: "t", maxRuntimeMs: 9_999_999 };
   applyLaunchTimeouts(higher, cfg);
-  assert.deepEqual(higher, { agent: "explorer", task: "t", timeoutMs: 1_200_000 });
+  assert.deepEqual(higher, { agent: "explorer", task: "t", timeoutMs: 7_200_000 });
   const tasks: Record<string, unknown> = { tasks: [{ agent: "explorer", task: "a" }, { agent: "reviewer", task: "b" }] };
   applyLaunchTimeouts(tasks, cfg);
   assert.equal(tasks.timeoutMs, 1_800_000);
