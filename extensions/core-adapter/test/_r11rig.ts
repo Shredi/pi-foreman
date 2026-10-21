@@ -137,6 +137,8 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     turnStart: () => handlers.get("turn_start")!({}, ctx),
     /** session_start again (a reload): the round-state file is restored. */
     restart: () => handlers.get("session_start")!({ reason: "reload" }, ctx),
+    /** An input event of any source. */
+    input: (source: string, text: string) => handlers.get("input")!({ source, text }, ctx),
     ownerPrompt: (text = "next") => handlers.get("input")!({ source: "interactive", text }, ctx),
   };
 }

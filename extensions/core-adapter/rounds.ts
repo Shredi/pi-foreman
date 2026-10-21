@@ -32,6 +32,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Tier } from "./ceremony.ts";
 import { isRulingName } from "./ruling.ts";
+import { isSubagentWakeText } from "./idlecustom.ts";
+import { INTERCOM_WAKE_TEXT } from "./usage.ts";
 
 const REVISION_LINE = /^revision-round:[ \t]*\+1[ \t]*$/m;
 
@@ -236,6 +238,27 @@ export function verdictOf(text: string): Verdict | null {
 /** True when a review text has a finding line starting `SECURITY:` (after an optional list marker or bold). */
 export function hasSecurityFinding(text: string): boolean {
   return /^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?\**SECURITY:/m.test(text);
+}
+
+/**
+ * Where a FAIL's SECURITY exemption comes from: the full reviewer report of the run end (`reportRun`, set when a counting
+ * FAIL there carries a `SECURITY:` line), else the notice text (capped by pi-subagents at 2 000 characters). null: none.
+ */
+export function securityOf(reportRun: string | null, notice: string): "report" | "notice" | null {
+  if (reportRun !== null) return "report";
+  return hasSecurityFinding(notice) ? "notice" : null;
+}
+
+/**
+ * True when a prompt is the owner's (revision chains start again): interactive and rpc always; an extension prompt unless it
+ * is a harness text (the foreman's own `pi-foreman ...` steer and retro prompts, the subagent and intercom wakes, a
+ * pi-subagents `Background task ...` notice).
+ */
+export function isOwnerPrompt(source: unknown, text: unknown): boolean {
+  if (source === "interactive" || source === "rpc") return true;
+  if (source !== "extension" || typeof text !== "string") return false;
+  const t = text.trim();
+  return !(t.startsWith("pi-foreman") || t.startsWith("Background task") || isSubagentWakeText(t) || t === INTERCOM_WAKE_TEXT);
 }
 
 /** A review run finished. Only a review after a builder launch can open a round. `security`: the text carries a `SECURITY:` finding. */

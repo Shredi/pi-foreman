@@ -112,7 +112,7 @@ import { claimCore, emitReady, installInert, missingBundled, setupInvocation } f
 
 /** pi.events of the loaded extension, for the Herdr blocked signal (set in the factory). */
 let herdrEvents: EventBus | undefined;
-import { chainKey, checkLaunch, completedAgents, CritiqueCounter, hasSecurityFinding, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, RoundChains, rulingReset, verdictOf } from "./rounds.ts";
+import { chainKey, checkLaunch, completedAgents, CritiqueCounter, hasSecurityFinding, isOwnerPrompt, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, RoundChains, rulingReset, securityOf, verdictOf } from "./rounds.ts";
 import type { LaunchRounds } from "./rounds.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
@@ -232,6 +232,8 @@ interface Session {
   trimmedLines: Map<string, number>;
   /** Foreman only: builder revision rounds per review chain since the last user prompt or /ceremony tier change (rounds.ts). */
   chains: RoundChains;
+  /** Foreman only: the run whose full reviewer report held a counting FAIL with a `SECURITY:` line; the next completion notice consumes it (rounds.ts securityOf). */
+  securityRun: string | null;
   /** Foreman only: session_start restored the reload file (roundstate.ts); from then on round state changes rewrite it. */
   roundStateOn: boolean;
   /** Foreman only, ceremony gate (bound.ts): own project-file changes at trivial, reset by /ceremony. */
@@ -536,6 +538,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       checksCache: { current: null },
       turn: { cause: "other", cacheRead: 0, cacheWrite: 0 },
       chains: new RoundChains(),
+      securityRun: null,
       roundStateOn: false,
       tally: emptyTally(),
       pendingChanges: new Map(),
@@ -1350,6 +1353,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const done = reviewResults.length > 0 ? reviewResults.map((r) => ({ role: r.role, decision: r.verdict ?? "no-verdict", shadow: r.shadow !== null })) : roles.filter((r) => REVIEW_ROLES.includes(r)).map((role) => ({ role, decision: "no-verdict", shadow: shadowRun(reviewLaunch) }));
             for (const d of done) s.trace?.emit({ event: "review_done", role: d.role, decision: d.decision, runId, ...(d.shadow ? { kind: "shadow" } : {}) });
             // Item-only re-review: the failed items of the latest FAIL verdict, cleared by a pass.
+            // SECURITY exemption from the full report (rounds.ts securityOf); the notice head is capped.
+            if (reviewResults.some((r) => r.counts && r.verdict === "fail" && hasSecurityFinding(r.text))) s.securityRun = runId;
             for (const r of reviewResults) if (r.counts) {
               s.trace?.emit(s.critique.onReview(r.text, r.role, runId, reviewLaunch?.lines));
               const items = failedItemsOf(r.text);
@@ -2117,7 +2122,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s && !s.isChild) s.turn.cause = isSubagentWake(event.source, event.text) ? idleCause ?? "child" : causeOfInput(event.source, event.text);
     if (s && !s.isChild && s.turn.cause === "intercom") s.turn.intercomFrom = lastIntercomSender(ctx.sessionManager.getBranch()) ?? s.turn.intercomFrom;
     // D3: the owner is back in the loop, so revision rounds count from zero again.
-    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.chains.clear();
+    if (s && !s.isChild && isOwnerPrompt(event.source, event.text)) {
+      s.chains.clear();
+      s.trace?.emit({ event: "chain_clear", kind: event.source });
+    }
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.waitingForParent = false), s.handoffWaits.clear();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.climbRefusals = 0), (s.reviewCount = 0), (s.planReviewCount = 0), persistRounds(s);
@@ -2162,7 +2170,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // a second opinion, plan review or panel never marks items (occasion.ts); the run end marks the counting primary
     const launch = passed ? s.reviewRuns.byRun.get(passed.runId) : undefined;
     if (passed && !(launch && (launch.panel || launch.entries.some((e) => REVIEW_ROLES.includes(e.role) && (e.occasion === "second-opinion" || e.occasion === "plan-review"))))) markByReview(s, passed.runId, passed.text);
-    s.chains.state = onReviewDone(s.chains.state, verdict, verdict === "fail" && hasSecurityFinding(text));
+    const security = verdict === "fail" ? securityOf(s.securityRun, text) : null;
+    if (security) s.trace?.emit({ event: "security_exempt", runId: security === "report" ? s.securityRun ?? "?" : ids[0] ?? "?", kind: security });
+    s.securityRun = null;
+    s.chains.state = onReviewDone(s.chains.state, verdict, security !== null);
     persistRounds(s);
     if (verdict === "pass") {
       // a plan-review pass is no counting review: the normal read budget stays
