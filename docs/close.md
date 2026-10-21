@@ -31,6 +31,8 @@ A close cancels the session's own pending `foreman_wait`s (trace `waits_cancelle
   `.workflow/scratch/<topic>/`. Files directly in `.workflow/scratch/` are never recorded and never removed.
 - Handoff dirs of `/foreman session open` are durable.
 
+A child's managed worktree (a `worktree: true` launch) is pi-subagents' to remove: at run end it captures a patch of the changes under `<run result dir>/worktree-diffs/step-N` (the "Result path" of the launch result is that dir) and then removes the worktree. A builder that hit its turn cap or its time limit therefore leaves its uncommitted work recoverable from that patch, not in the removed tree. `agents/builder.md` says the builder never commits unless its brief says so, so a brief that wants commits must say so.
+
 ## Manifest
 
 `<state>/sessions/<session>/manifest.json` (`<state>` = `<agent dir>/pi-foreman/state`, or `PI_FOREMAN_STATE_DIR`):
