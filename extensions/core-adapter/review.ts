@@ -236,6 +236,8 @@ export interface ReviewSession {
   recordUsage?: (message: unknown) => void;
   /** True when no human can answer a deferred ask (print/json mode, no UI, or `review.headless`): a forwarded child ask that defers is then denied with the allowed forms. */
   headless?: () => boolean;
+  /** What a forwarded child ask the review defers gets: `deny` (default, the reason names the forms a child can run without a forward) or `owner` (the human pane, the old path; it parks the parent's serial inbox). */
+  childDefer?: () => "deny" | "owner";
   /** Bash rules of the permission file (baseline + safety.permissions), for the `timeout N <allowed>` rule. */
   bashRules?: () => BashRules | null;
   /** Live child scratch dirs of this session, of one role when given (childscratch.ts). */
@@ -259,6 +261,9 @@ export interface ReviewSession {
 /** Deny text for a forwarded child ask that deferred with no human to ask: names what runs without approval. */
 export const HEADLESS_DENY =
   "pi-foreman: not approved - the model review deferred and no human is available to confirm. Runs without approval: read-only git (status, diff, log, show), ls, cat, head, tail, wc, rg, grep, find, print-only `sed -n '<addr>p' <file>` (no s, w, e, r commands, no -i or -f), `cd <dir inside the workspace> && <allowed command>`, the project's test and build commands, `timeout N <allowed command>`, `git restore`/`git checkout -- <test files>`, mkdir, touch, cp, mv, rm, tee and `sed -i 's/a/b/' <file>` on relative paths inside the workspace, chains of these joined by &&, ||, ; or | with redirects only to /dev/null, $FOREMAN_SCRATCH or /tmp, `cp`, `mkdir`, `rm -r` and `cd` inside your $FOREMAN_SCRATCH. Not allowed: $(...), backticks, subshells, xargs, sh -c, sed s/w/e/r print scripts, paths outside the workspace (~, .., absolute), network. Use the read, grep, find and ls tools for inspection.";
+
+export const CHILD_DEFER_DENY =
+  "pi-foreman: not approved - a child's command the model review could not clear is not put to the owner, so the run does not wait for it. Run tests as `node --test <file>` or `python3 -m unittest discover -s tests -p <file>`, with no `cd` prefix; use the read, grep, find and ls tools for inspection.";
 
 interface PermissionsServiceLike {
   registerAuthorizer(name: string, authorize: (details: AskDetails, query: unknown, log: ReviewLog) => Promise<Verdict>): () => void;
@@ -530,6 +535,11 @@ export class ForemanReview {
         s.trace?.({ event: "review_defer_headless", role: d.agentName ?? "?", cmd: reviewValue(d).replace(/\s+/g, " ").slice(0, 80) });
         out = { verdict: { kind: "deny", reason: HEADLESS_DENY }, label: "defer-headless", ...(out.errorKind ? { errorKind: out.errorKind } : {}) };
       }
+      if (s && out.verdict.kind === "defer" && d.forwarding && surface === "bash") {
+        const childDefer = this.childDefer(s);
+        s.trace?.({ event: "review_defer_child", decision: childDefer, role: d.agentName ?? "?", cmd: reviewValue(d).replace(/\s+/g, " ").slice(0, 80) });
+        if (childDefer === "deny") out = { verdict: { kind: "deny", reason: CHILD_DEFER_DENY }, label: "defer-child", ...(out.errorKind ? { errorKind: out.errorKind } : {}) };
+      }
     } catch {
       out = { verdict: { kind: "defer" }, label: "error", errorKind: "internal" };
     }
@@ -784,6 +794,14 @@ export class ForemanReview {
       return s.headless?.() === true;
     } catch {
       return false;
+    }
+  }
+
+  private childDefer(s: ReviewSession): "deny" | "owner" {
+    try {
+      return s.childDefer?.() === "owner" ? "owner" : "deny";
+    } catch {
+      return "deny";
     }
   }
 

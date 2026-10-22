@@ -4,11 +4,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ForemanReview, HEADLESS_DENY, reviewValue } from "../review.ts";
+import { CHILD_DEFER_DENY, ForemanReview, HEADLESS_DENY, reviewValue } from "../review.ts";
 import type { RegistryLike, ReviewSession } from "../review.ts";
 import { readBaseline } from "../permoverlay.ts";
 import { usageLine } from "../usage.ts";
-import { bashRules, deterministicAllow, timeoutCommandAllowed, unitAllowed, unwrapTimeout } from "../timeoutallow.ts";
+import { bashRules, deterministicAllow, reviewExtras, timeoutCommandAllowed, unitAllowed, unwrapTimeout } from "../timeoutallow.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(pkgRoot)!;
@@ -52,7 +52,7 @@ test("headless defer: forwarded child ask is denied with the allowed forms and t
   assert.equal(traces.find((t) => t.event === "review")?.reason, "unsure about /app");
   const human = new ForemanReview();
   human.upsert("s", session({ headless: () => false }, []));
-  assert.deepEqual(await human.authorize("s", ask), { kind: "defer" });
+  assert.deepEqual(await human.authorize("s", ask), { kind: "deny", reason: CHILD_DEFER_DENY });
   const main = new ForemanReview();
   main.upsert("s", session({ headless: () => true }, []));
   assert.deepEqual(await main.authorize("s", { ...ask, forwarding: undefined }), { kind: "defer" });
@@ -128,4 +128,39 @@ test("autoreview usage: zero-usage replies are recorded as a chars/4 estimate wi
     } else assert.equal(u.input, 7);
   }
   assert.equal("estimated" in usageLine({ workspace: "/w", foremanSession: "f", role: "x", launchId: null, kind: "foreman" }, { usage: { input: 1 } }), false);
+});
+
+test("childDefer: a forwarded child ask the review defers is denied by default with the forms a child can run, traced as review_defer_child", async () => {
+  const traces: Record<string, unknown>[] = [];
+  const r = new ForemanReview();
+  r.upsert("s", session({ headless: () => false }, traces));
+  assert.deepEqual(await r.authorize("s", ask), { kind: "deny", reason: CHILD_DEFER_DENY });
+  assert.match(CHILD_DEFER_DENY, /node --test <file>/);
+  assert.match(CHILD_DEFER_DENY, /python3 -m unittest discover -s tests -p <file>/);
+  assert.match(CHILD_DEFER_DENY, /no `cd` prefix/);
+  const ev = traces.find((t) => t.event === "review_defer_child");
+  assert.deepEqual([ev?.decision, ev?.role], ["deny", "builder"]);
+  assert.doesNotMatch(String(ev?.cmd), /\n/);
+  assert.ok(!traces.some((t) => t.event === "review_defer_headless"));
+});
+
+test("childDefer owner: a forwarded child ask the review defers still goes to the owner, traced with decision owner", async () => {
+  const traces: Record<string, unknown>[] = [];
+  const r = new ForemanReview();
+  r.upsert("s", session({ headless: () => false, childDefer: () => "owner" }, traces));
+  assert.deepEqual(await r.authorize("s", ask), { kind: "defer" });
+  assert.equal(traces.find((t) => t.event === "review_defer_child")?.decision, "owner");
+});
+
+test("childDefer: the foreman's own (non-forwarded) ask still defers to the human", async () => {
+  const r = new ForemanReview();
+  r.upsert("s", session({ headless: () => false }, []));
+  assert.deepEqual(await r.authorize("s", { ...ask, forwarding: undefined }), { kind: "defer" });
+});
+
+test("reviewExtras: childDefer reads review.childDefer and is deny unless it is owner", () => {
+  const cfgOf = (review?: Record<string, unknown>) => () => (review ? { review } : {});
+  assert.equal(reviewExtras(null, cfgOf(), {}).childDefer(), "deny");
+  assert.equal(reviewExtras(null, cfgOf({ childDefer: "deny" }), {}).childDefer(), "deny");
+  assert.equal(reviewExtras(null, cfgOf({ childDefer: "owner" }), {}).childDefer(), "owner");
 });
