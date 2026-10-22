@@ -2595,7 +2595,7 @@ const STDIN_WRITE = /open\([^)]*,\s*(?:mode\s*=\s*)?(['"])[rwax]*[wax+][^'"]*\1|
 
 /**
  * A child never writes files through a heredoc or a stdin script: `cat > f <<'EOF'`, `tee f <<EOF`, `python3 - <<EOF` / `node -e` fed from stdin
- * that open a file for write, and in-place edits (`perl -pi`, `ruby -i`, `awk -i inplace`) or inline code (`python3 -c`, `node -e`, `perl -e`) that do. The body is invisible to the path checks, so it is refused outright (deny-only, no dialog).
+ * that open a file for write, inline code (`python3 -c`, `node -e`, `perl -e`) that does, and in-place edits (`perl -pi`, `ruby -i`, `awk -i inplace`). Inline code always denies, since its code can name any path; an in-place edit may target only the child's own scratch dir. The body is invisible to the path checks, so it is refused outright (deny-only, no dialog).
  */
 function childStdinWriteDeny(command: string, ctx: MatchCtx): Decision | null {
   const heredoc = /<<(?!<)/.test(command);
@@ -2604,7 +2604,8 @@ function childStdinWriteDeny(command: string, ctx: MatchCtx): Decision | null {
     || ((heredoc || /\|\s*(python[\d.]*|node|perl|ruby)\b|\b(python[\d.]*|node|perl|ruby)\s+-(\s|$)|<<</.test(command)) && /\b(python[\d.]*|node|perl|ruby)\b/.test(command) && STDIN_WRITE.test(command));
   const deny: Decision = { kind: "deny", reason: "pi-foreman: denied for a child (heredoc or stdin-script file write): never heredoc or stdin-script file writes; use the write or edit tool." };
   if (writer) return deny;
-  if (!INPLACE_EDIT.test(command) && !(INLINE_CODE.test(command) && STDIN_WRITE.test(command))) return null;
+  if (INLINE_CODE.test(command) && STDIN_WRITE.test(command)) return deny;
+  if (!INPLACE_EDIT.test(command)) return null;
   return scratchOnlyWriter(command, ctx) ? null : deny;
 }
 
@@ -2616,8 +2617,8 @@ const SHELL_WORD = /(?:'[^']*'|"(?:[^"\\]|\\.)*"|\\.|[^\s|;&'"\\])+|[|;&\n]+/g;
 const unquote = (w: string): string => w.replace(/'([^']*)'|"((?:[^"\\]|\\.)*)"|\\(.)/g, (_m, a?: string, b?: string, c?: string) => a ?? b ?? c ?? "");
 
 /**
- * True when every unit that edits in place or runs inline write code names only file arguments inside the child's own scratch dir
- * (lexically and through links). The code itself is not read; a unit with no file argument, or no scratch dir, is not exempt.
+ * True when every unit that edits in place names only file arguments inside the child's own scratch dir (lexically and through links).
+ * The code itself is not read; a unit with no file argument, or no scratch dir, is not exempt. An awk program operand is not a file.
  */
 function scratchOnlyWriter(command: string, ctx: MatchCtx): boolean {
   const scratch = scratchOf(ctx);
@@ -2638,18 +2639,21 @@ function scratchOnlyWriter(command: string, ctx: MatchCtx): boolean {
   let found = false;
   for (const u of units) {
     const text = u.join(" ");
-    if (!INPLACE_EDIT.test(text) && !(INLINE_CODE.test(text) && STDIN_WRITE.test(text))) continue;
+    if (!INPLACE_EDIT.test(text)) continue;
     found = true;
     const words = u.map(unquote);
     const k = words.findIndex((w) => INTERP_NAME.test(w.split("/").pop() ?? ""));
     if (k < 0) return false;
-    const py = /^python/.test(words[k].split("/").pop() ?? "");
+    // awk's first operand is the program text, unless -f names a program file
+    let program = /awk$/.test(words[k].split("/").pop() ?? "") && !words.includes("-f");
     const args: string[] = [];
     for (let j = k + 1; j < words.length; j++) {
       const w = words[j];
       if (w === "-i" && words[j + 1] === "inplace") j++;
-      else if (!w.startsWith("-")) args.push(w);
-      else if (/^-[A-Za-z]*e$/.test(w) || (py && /^-[A-Za-z]*c$/.test(w))) j++;
+      else if (!w.startsWith("-")) {
+        if (program) program = false;
+        else args.push(w);
+      } else if (/^-[A-Za-z]*e$/.test(w)) j++;
     }
     if (!args.length || !args.every(inScratch)) return false;
   }

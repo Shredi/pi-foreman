@@ -56,3 +56,19 @@ test("an in-place edit of a relative workspace file is denied with the write or 
   assert.equal(d?.kind, "deny");
   assert.ok(d!.reason.includes("use the write or edit tool"), d!.reason);
 });
+
+test("inline write code is denied for a child even when its file argument lies in the scratch dir", { skip: !posix }, () => {
+  const d = checkToolCall(r, "bash", { command: `python3 -c "import os; os.remove('/ws/x')" ${scratch}/f` }, { cwd: scratch, home: "/nonexistent", platform: process.platform, role: "child", scratch });
+  assert.equal(d?.kind, "deny");
+  assert.ok(d!.reason.includes("use the write or edit tool"), d!.reason);
+});
+
+test("an in-place perl edit whose -e code calls system() passes from scratch (system( is not a write pattern)", { skip: !posix }, () => {
+  const d = checkToolCall(r, "bash", { command: `perl -pi -e 'system("rm x")' ${scratch}/f` }, { cwd: scratch, home: "/nonexistent", platform: process.platform, role: "child", scratch });
+  assert.notEqual(d?.kind, "deny", JSON.stringify(d));
+});
+
+test("an awk in-place edit of a scratch file passes from the scratch cwd (the program operand is not a path)", { skip: !posix }, () => {
+  const d = checkToolCall(r, "bash", { command: `awk -i inplace '{print}' ${scratch}/f` }, { cwd: scratch, home: "/nonexistent", platform: process.platform, role: "child", scratch });
+  assert.notEqual(d?.kind, "deny", JSON.stringify(d));
+});
