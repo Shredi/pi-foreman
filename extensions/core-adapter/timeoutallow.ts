@@ -155,6 +155,11 @@ function compose(rules: BashRules, text: string, deps: AllowDeps): { label: Allo
       if (hasGlobSentinel(seg.text)) return null; // the swapped glob is meaningful to the own-handoff rule only
       const e = segmentEffect(c, cwd, seg);
       if (e.unit !== seg.text && (hits(rules.ask, e.unit, "") || hits(rules.deny, e.unit, ""))) return null;
+      // a contained `cd` is a neutral prefix: it moves the cwd and carries no label, the units after it do
+      if (e.label === "cd") {
+        cwd = e.cwd;
+        continue;
+      }
       if (e.label && SAFE_CLASSES.includes(e.cls)) labels.add(e.label);
       else if (!e.known && unitAllowed(rules, e.unit)) labels.add("rules");
       else return null;

@@ -508,15 +508,43 @@ function manifestOf(c: EffectCtx): Manifest {
   return m;
 }
 
-const BUILD_TOOLS = new Set(["npm", "cargo", "go", "make", "pytest", "python", "python3"]);
+const BUILD_TOOLS = new Set(["npm", "cargo", "go", "make", "pytest", "python", "python3", "node", "npx"]);
 // publish and pack run the prepack/prepare scripts even with --dry-run: not a read
 const NPM_DRY = new Set(["install", "i", "ci", "uninstall", "update", "dedupe", "prune"]);
 /** Build options that write where they choose or name a program to run: refused outright (model review). */
 const BUILD_BAD = /^--?(o|exec|toolexec|basetemp|junit-?xml|result-?log|report-log|target-dir|out-dir|artifact-dir|manifest-path|prefix|script-shell|directory|C|f|file|makefile|config|userconfig|globalconfig|node-options|init-module|cache|cache-dir|modfile|overlay|pkgdir|outputdir|(cover|cpu|mem|block|mutex)profile|trace|override-ini|rootdir|log-file|html|cov-report)(=|$)/;
 
+/** The python run's arguments after its leading `-I`, `-B` or `-u` flags (isolated, no bytecode, unbuffered), or null for another program. */
+function pyArgs(prog: string, args: string[]): string[] | null {
+  if (prog !== "python" && prog !== "python3") return null;
+  let i = 0;
+  while (i < args.length && ["-I", "-B", "-u"].includes(args[i])) i++;
+  return args.slice(i);
+}
+
+/** `unittest [discover] [-v] [-s <contained dir>] [-p <pattern>]`: no other option, no module name. */
+function unittestRun(c: EffectCtx, cwd: string | null, rest: string[]): boolean {
+  const r = rest[0] === "discover" ? rest.slice(1) : rest;
+  for (let i = 0; i < r.length; i++) {
+    if (r[i] === "-v") continue;
+    if (r[i] === "-s" && i + 1 < r.length && contained(c, cwd, r[i + 1], false)) i++;
+    else if (r[i] === "-p" && i + 1 < r.length && !r[i + 1].startsWith("-")) i++;
+    else return false;
+  }
+  return true;
+}
+
+/** `--noEmit` (a type check writes nothing) with an optional `-p <contained file>`; the args after `tsc`. */
+function tscCheck(c: EffectCtx, cwd: string | null, rest: string[]): boolean {
+  if (rest[0] !== "--noEmit") return false;
+  const more = rest.slice(1);
+  return more.length === 0 || (more.length === 2 && (more[0] === "-p" || more[0] === "--project") && contained(c, cwd, more[1], false));
+}
+
 /** "build-test" / "read" (a dry run) for a manifest command run from the worktree root, "unknown" for a refused option, else null. */
 function buildTest(c: EffectCtx, cwd: string | null, prog: string, args: string[]): EffectClass | null {
-  const pytest = prog === "pytest" || ((prog === "python" || prog === "python3") && args[0] === "-m" && args[1] === "pytest");
+  const py = pyArgs(prog, args);
+  const pytest = prog === "pytest" || (py !== null && py[0] === "-m" && py[1] === "pytest");
   const checked = prog === "npm" || prog === "cargo" || prog === "go" || pytest;
   if (checked && args.some((a) => BUILD_BAD.test(a) || PROGRAM_OPT.test(a) || (pytest && /^-[op]/.test(a)))) return "unknown";
   if (!c.root || cwd === null || !within(c, c.root, cwd, false) || !within(c, cwd, c.root, false)) return null;
@@ -549,7 +577,11 @@ function buildTest(c: EffectCtx, cwd: string | null, prog: string, args: string[
     if (args.some((a) => a === "-n" || a === "--dry-run" || a === "--just-print" || a === "--recon")) return args.every((a) => !a.startsWith("-") || /^(-n|--dry-run|--just-print|--recon|-s|--silent|-k|--keep-going|-j\d*)$/.test(a)) ? "read" : "unknown";
     return args.every((a) => !a.startsWith("-") || /^(-j\d*|-k|-s|--keep-going|--silent)$/.test(a)) ? "build-test" : null;
   }
-  if (prog === "pytest" || ((prog === "python" || prog === "python3") && sub === "-m" && rest[0] === "pytest")) return m.pytest ? "build-test" : null;
+  if (prog === "pytest" || (py !== null && py[0] === "-m" && py[1] === "pytest")) return m.pytest ? "build-test" : null;
+  if (py !== null && py[0] === "-m" && py[1] === "unittest") return unittestRun(c, cwd, py.slice(2)) ? "build-test" : null;
+  // the built-in runner over contained test files: an option (a loader, an eval) is not a test run
+  if (prog === "node") return args[0] === "--test" && args.length > 1 && args.slice(1).every((a) => !a.startsWith("-") && contained(c, cwd, a, false)) ? "build-test" : null;
+  if (prog === "npx") return args[0] === "tsc" && tscCheck(c, cwd, args.slice(1)) ? "build-test" : null;
   return null;
 }
 
