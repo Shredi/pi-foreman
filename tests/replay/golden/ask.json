@@ -7,6 +7,9 @@
    "tier": "standard"
   },
   {
+   "event": "chain_clear"
+  },
+  {
    "event": "orientation"
   },
   {
@@ -37,6 +40,9 @@
    "toolFamily": "Stop",
    "guard": "ledger_guard_stop",
    "decision": "none"
+  },
+  {
+   "event": "chain_clear"
   },
   {
    "event": "llm",
@@ -77,6 +83,9 @@
     "tier": "standard"
    },
    {
+    "event": "chain_clear"
+   },
+   {
     "event": "orientation"
    },
    {
@@ -115,6 +124,9 @@
     "role": "foreman",
     "model": "foreman-fake/foreman",
     "tier": "standard"
+   },
+   {
+    "event": "chain_clear"
    },
    {
     "event": "orientation"
