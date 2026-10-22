@@ -2591,17 +2591,19 @@ const LOOP_START = new Set(["while", "until", "for", "select"]);
  * the old cwd revives only where the and-list ends (`;`, `||`, `&`, newline, grouping). Inside a loop a
  * relative cd, pushd and popd deny (they repeat). Deny-only: it never allows.
  */
-const STDIN_WRITE = /open\([^)]*,\s*(['"])[rwax]*[wax+][^'"]*\1|\b(write_text|write_bytes|writeFile\w*|appendFile\w*|createWriteStream|copyFile\w*|os\.(remove|rename|replace|unlink)|shutil\.|fs\.(write|rm|unlink|rename))/;
+const STDIN_WRITE = /open\([^)]*,\s*(?:mode\s*=\s*)?(['"])[rwax]*[wax+][^'"]*\1|\b(write_text|write_bytes|writeFile\w*|appendFile\w*|createWriteStream|copyFile\w*|os\.(remove|rename|replace|unlink)|shutil\.|fs\.(write|rm|unlink|rename))/;
 
 /**
  * A child never writes files through a heredoc or a stdin script: `cat > f <<'EOF'`, `tee f <<EOF`, `python3 - <<EOF` / `node -e` fed from stdin
- * that open a file for write. The body is invisible to the path checks, so it is refused outright (deny-only, no dialog).
+ * that open a file for write, and in-place edits (`perl -pi`, `ruby -i`, `awk -i inplace`) or inline code (`python3 -c`, `node -e`, `perl -e`) that do. The body is invisible to the path checks, so it is refused outright (deny-only, no dialog).
  */
 function childStdinWriteDeny(command: string): Decision | null {
   const heredoc = /<<(?!<)/.test(command);
   const stripped = command.replace(/\d*>&\d*-?|&>\s*\/dev\/null|\d*>>?\s*\/dev\/null/g, "");
   const writer = (heredoc && /\bcat\b[^|;&\n]*>|\btee\b|\bdd\b[^|;&\n]*\bof=/.test(stripped))
-    || ((heredoc || /\|\s*(python[\d.]*|node|perl|ruby)\b|\b(python[\d.]*|node|perl|ruby)\s+-(\s|$)|<<<|\bnode\s+-e\b/.test(command)) && /\b(python[\d.]*|node|perl|ruby)\b/.test(command) && STDIN_WRITE.test(command));
+    || ((heredoc || /\|\s*(python[\d.]*|node|perl|ruby)\b|\b(python[\d.]*|node|perl|ruby)\s+-(\s|$)|<<<|\bnode\s+-e\b/.test(command)) && /\b(python[\d.]*|node|perl|ruby)\b/.test(command) && STDIN_WRITE.test(command))
+    || /\b(perl|ruby)\b[^|;&\n]*(?<=\s)-(?![MIrCEFm])[A-Za-z0-9]*i[A-Za-z0-9.]*(?=\s|$)|\b\w*awk\b[^|;&\n]*\s-i\s*inplace\b/.test(command)
+    || (/\b(python[\d.]*|node|perl|ruby)\s+-[ce]\b/.test(command) && STDIN_WRITE.test(command));
   if (!writer) return null;
   return { kind: "deny", reason: "pi-foreman: denied for a child (heredoc or stdin-script file write): never heredoc or stdin-script file writes; use the write or edit tool." };
 }
