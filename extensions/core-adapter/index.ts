@@ -2659,6 +2659,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (outcome.kind === "failure") notifyOnce(s, ctx, `open:${guard}`, outcome.message);
       }
       const file = resolveToolPath(changed, ctx.cwd, os.homedir());
+      // R27 item 5: a ledger written is the round boundary; the next builder launch records a new diff base (diffscan.ts ReviewFacts).
+      if (file && !s.isChild && event.toolName === "write" && isLedgerTarget(file)) reviewFacts.reset();
       if (file && !s.isChild) {
         const heavy = Number(get(s.config.config, "ceremony.heavyFileCount"));
         setCeremony(s, onFileChanged(s.ceremony, file, Number.isFinite(heavy) ? heavy : 0));
