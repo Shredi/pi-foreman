@@ -2597,15 +2597,63 @@ const STDIN_WRITE = /open\([^)]*,\s*(?:mode\s*=\s*)?(['"])[rwax]*[wax+][^'"]*\1|
  * A child never writes files through a heredoc or a stdin script: `cat > f <<'EOF'`, `tee f <<EOF`, `python3 - <<EOF` / `node -e` fed from stdin
  * that open a file for write, and in-place edits (`perl -pi`, `ruby -i`, `awk -i inplace`) or inline code (`python3 -c`, `node -e`, `perl -e`) that do. The body is invisible to the path checks, so it is refused outright (deny-only, no dialog).
  */
-function childStdinWriteDeny(command: string): Decision | null {
+function childStdinWriteDeny(command: string, ctx: MatchCtx): Decision | null {
   const heredoc = /<<(?!<)/.test(command);
   const stripped = command.replace(/\d*>&\d*-?|&>\s*\/dev\/null|\d*>>?\s*\/dev\/null/g, "");
   const writer = (heredoc && /\bcat\b[^|;&\n]*>|\btee\b|\bdd\b[^|;&\n]*\bof=/.test(stripped))
-    || ((heredoc || /\|\s*(python[\d.]*|node|perl|ruby)\b|\b(python[\d.]*|node|perl|ruby)\s+-(\s|$)|<<<|\bnode\s+-e\b/.test(command)) && /\b(python[\d.]*|node|perl|ruby)\b/.test(command) && STDIN_WRITE.test(command))
-    || /\b(perl|ruby)\b[^|;&\n]*(?<=\s)-(?![MIrCEFm])[A-Za-z0-9]*i[A-Za-z0-9.]*(?=\s|$)|\b\w*awk\b[^|;&\n]*\s-i\s*inplace\b/.test(command)
-    || (/\b(python[\d.]*|node|perl|ruby)\s+-[ce]\b/.test(command) && STDIN_WRITE.test(command));
-  if (!writer) return null;
-  return { kind: "deny", reason: "pi-foreman: denied for a child (heredoc or stdin-script file write): never heredoc or stdin-script file writes; use the write or edit tool." };
+    || ((heredoc || /\|\s*(python[\d.]*|node|perl|ruby)\b|\b(python[\d.]*|node|perl|ruby)\s+-(\s|$)|<<</.test(command)) && /\b(python[\d.]*|node|perl|ruby)\b/.test(command) && STDIN_WRITE.test(command));
+  const deny: Decision = { kind: "deny", reason: "pi-foreman: denied for a child (heredoc or stdin-script file write): never heredoc or stdin-script file writes; use the write or edit tool." };
+  if (writer) return deny;
+  if (!INPLACE_EDIT.test(command) && !(INLINE_CODE.test(command) && STDIN_WRITE.test(command))) return null;
+  return scratchOnlyWriter(command, ctx) ? null : deny;
+}
+
+const INPLACE_EDIT = /\b(perl|ruby)\b[^|;&\n]*(?<=\s)-(?![MIrCEFm])[A-Za-z0-9]*i[A-Za-z0-9.]*(?=\s|$)|\b\w*awk\b[^|;&\n]*\s-i\s*inplace\b/;
+const INLINE_CODE = /\b(python[\d.]*|node|perl|ruby)\s+-[ce]\b/;
+const INTERP_NAME = /^(python[\d.]*|node|perl|ruby|\w*awk)$/;
+/** A command word (quotes kept) or an operator run (`|;&`, newline), which splits a command into units. */
+const SHELL_WORD = /(?:'[^']*'|"(?:[^"\\]|\\.)*"|\\.|[^\s|;&'"\\])+|[|;&\n]+/g;
+const unquote = (w: string): string => w.replace(/'([^']*)'|"((?:[^"\\]|\\.)*)"|\\(.)/g, (_m, a?: string, b?: string, c?: string) => a ?? b ?? c ?? "");
+
+/**
+ * True when every unit that edits in place or runs inline write code names only file arguments inside the child's own scratch dir
+ * (lexically and through links). The code itself is not read; a unit with no file argument, or no scratch dir, is not exempt.
+ */
+function scratchOnlyWriter(command: string, ctx: MatchCtx): boolean {
+  const scratch = scratchOf(ctx);
+  const cwd = ctx.cwd;
+  if (!scratch || !cwd) return false;
+  const fsx = defaults(ctx);
+  const realOf = (x: string): string => fsx.realpath(x) ?? (path.dirname(x) === x ? x : path.join(realOf(path.dirname(x)), path.basename(x)));
+  const realScratch = fsx.realpath(scratch) ?? scratch;
+  const inScratch = (w: string): boolean => {
+    const abs = path.resolve(cwd, expandWord(w, ctx));
+    return insideDir(scratch, abs, ctx) && insideDir(realScratch, realOf(abs), ctx);
+  };
+  const units: string[][] = [[]];
+  for (const m of command.matchAll(SHELL_WORD)) {
+    if (/^[|;&\n]/.test(m[0])) units.push([]);
+    else units[units.length - 1].push(m[0]);
+  }
+  let found = false;
+  for (const u of units) {
+    const text = u.join(" ");
+    if (!INPLACE_EDIT.test(text) && !(INLINE_CODE.test(text) && STDIN_WRITE.test(text))) continue;
+    found = true;
+    const words = u.map(unquote);
+    const k = words.findIndex((w) => INTERP_NAME.test(w.split("/").pop() ?? ""));
+    if (k < 0) return false;
+    const py = /^python/.test(words[k].split("/").pop() ?? "");
+    const args: string[] = [];
+    for (let j = k + 1; j < words.length; j++) {
+      const w = words[j];
+      if (w === "-i" && words[j + 1] === "inplace") j++;
+      else if (!w.startsWith("-")) args.push(w);
+      else if (/^-[A-Za-z]*e$/.test(w) || (py && /^-[A-Za-z]*c$/.test(w))) j++;
+    }
+    if (!args.length || !args.every(inScratch)) return false;
+  }
+  return found;
 }
 
 /**
@@ -2823,7 +2871,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   if (ctx.role === "child") {
     const cd = childCdDeny(command, ctx);
     if (cd) return cd;
-    const sw = childStdinWriteDeny(command);
+    const sw = childStdinWriteDeny(command, ctx);
     if (sw) return sw;
   }
   const scratch0 = scratchOf(ctx);

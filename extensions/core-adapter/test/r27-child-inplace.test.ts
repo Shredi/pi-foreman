@@ -1,9 +1,12 @@
 // R27 item 2: a child's in-place interpreter edits and inline write code are denied with the heredoc reason; reads with the same interpreters are not.
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(pkgRoot)!;
@@ -36,4 +39,20 @@ test("reads with the same interpreters are not this deny", { skip: !posix }, () 
     const d = child(cmd);
     assert.ok(!d || !d.reason.includes("never heredoc or stdin-script file writes"), cmd);
   }
+});
+
+const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r27-inplace-")));
+after(() => rmTestTmp(base));
+const scratch = path.join(base, "scratch");
+fs.mkdirSync(scratch, { recursive: true });
+
+test("an in-place edit whose file lies in the child's own scratch dir passes from the scratch cwd", { skip: !posix }, () => {
+  const d = checkToolCall(r, "bash", { command: `perl -pi -e s/x/y/ ${scratch}/f` }, { cwd: scratch, home: "/nonexistent", platform: process.platform, role: "child", scratch });
+  assert.notEqual(d?.kind, "deny", JSON.stringify(d));
+});
+
+test("an in-place edit of a relative workspace file is denied with the write or edit reason", { skip: !posix }, () => {
+  const d = checkToolCall(r, "bash", { command: "perl -pi -e s/x/y/ f" }, { cwd: pkgRoot, home: "/nonexistent", platform: process.platform, role: "child", scratch });
+  assert.equal(d?.kind, "deny");
+  assert.ok(d!.reason.includes("use the write or edit tool"), d!.reason);
 });
