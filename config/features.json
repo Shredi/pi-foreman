@@ -355,7 +355,7 @@
       "title": "Headless review defer",
       "purpose": "Treats the session as headless for forwarded child asks: one the review model would defer to you is denied with a text naming the allowed forms.",
       "doc": "docs/safety.md#permission-baseline-and-auto-review",
-      "keys": ["review.headless"],
+      "keys": ["review.headless", "review.childDefer"],
       "commands": [],
       "switch": {"key": "review.headless", "on": "true"},
       "state": "off",

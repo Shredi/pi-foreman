@@ -451,6 +451,7 @@ Switch: `review.headless` is true.
 | Key | Default | Layer |
 |---|---|---|
 | `review.headless` | `false` | any layer |
+| `review.childDefer` | `"deny"` | any layer |
 
 ### review-critic
 
