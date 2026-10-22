@@ -2591,7 +2591,7 @@ const LOOP_START = new Set(["while", "until", "for", "select"]);
  * the old cwd revives only where the and-list ends (`;`, `||`, `&`, newline, grouping). Inside a loop a
  * relative cd, pushd and popd deny (they repeat). Deny-only: it never allows.
  */
-const STDIN_WRITE = /open\([^)]*,\s*(?:mode\s*=\s*)?(['"])[rwax]*[wax+][^'"]*\1|\b(write_text|write_bytes|writeFile\w*|appendFile\w*|createWriteStream|copyFile\w*|os\.(remove|rename|replace|unlink)|shutil\.|fs\.(write|rm|unlink|rename))/;
+const STDIN_WRITE = /open\s*\([^)]*['"]\s*>>?|open\([^)]*,\s*(?:mode\s*=\s*)?(['"])[rwax]*[wax+][^'"]*\1|\b(write_text|write_bytes|writeFile\w*|appendFile\w*|createWriteStream|copyFile\w*|os\.(remove|rename|replace|unlink)|shutil\.|fs\.(write|rm|unlink|rename))/;
 
 /**
  * A child never writes files through a heredoc or a stdin script: `cat > f <<'EOF'`, `tee f <<EOF`, `python3 - <<EOF` / `node -e` fed from stdin

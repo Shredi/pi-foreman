@@ -22,6 +22,13 @@ test("in-place interpreter edits and inline write code are denied for a child wi
     "awk -i inplace '{print}' file.txt",
     "python3 -c \"open('x.txt', 'w').write('1')\"",
     "node -e \"require('fs').writeFileSync('x','1')\"",
+    "perl -pie 's/x/y/' f",
+    "ruby -i -e 's' f",
+    "python3 -c \"from pathlib import Path; Path('f').write_bytes(b'x')\"",
+    "node -e \"require('fs').writeFile('f','x',()=>{})\"",
+    "python -c \"open('f','w')\"",
+    "perl -e 'open(F,\">f\"); print F 1'",
+    "perl -e 'open(my $fh, \">>\", \"f\"); print $fh 1'",
   ]) {
     const d = child(cmd);
     assert.equal(d?.kind, "deny", cmd);
@@ -34,6 +41,8 @@ test("reads with the same interpreters are not this deny", { skip: !posix }, () 
     "perl -ne 'print if /x/' package.json",
     "python3 -c \"print(open('package.json').read())\"",
     "ruby -e 'puts 1'",
+    "perl -e 'open(F,\"f\"); print <F>'",
+    "perl -e 'open(F,\"<f\"); print <F>'",
     "awk '{print $1}' package.json",
   ]) {
     const d = child(cmd);
