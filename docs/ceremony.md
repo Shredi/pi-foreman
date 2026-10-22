@@ -47,7 +47,7 @@ The foreman records a tier (trivial, standard, heavy) before it changes files it
 | `roles.planner` | tools `read, ls, grep, find, write, edit`; `timeoutMinutes` 20; display "Hannibal" (classic) | project/session can only narrow `tools` |
 
 `reviewGate: pass` means the required reviewer step needs a current PASS (a FAIL, or a revision after the last
-PASS, re-opens it); `verdict` accepts any verdict. The orientation packet (tracked-file tree to depth 2,
+PASS, re-opens it); `verdict` accepts any verdict. A revision after a PASS is a project edit outside `.workflow/` or a builder launch; ledger notes, a push, notices and reviewer launches are not. The `foreman_ledger mark V` refusal and the finish hint name the run of the last counted PASS, or say none this round. The orientation packet (tracked-file tree to depth 2,
 head of AGENTS.md or README.md, detected build/test commands, explorer hint; at most `maxLines` lines) is added
 to the foreman's system prompt once per session and does not count against the read budget.
 

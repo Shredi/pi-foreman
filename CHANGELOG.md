@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Round 27
+- A child's shell-write deny covers in-place interpreter edits (`perl -pi`/`-i`, `ruby -i`, `python -c` writing files, `node -e` with `writeFileSync`/`writeFile(`, `awk -i inplace`) with the existing "use the write or edit tool" text; reads stay allowed (6aea5be). Test: `r27-child-inplace`.
+- `occasionOf` counts `[second-opinion]`, `[plan-review]` and `[pre-pr]` only as standalone tokens (not in backticks, fences or `[pi-foreman` lines); the reviewer `role_launch` trace carries `occasion`; the `mark V` refusal and the revision hint name the last counted PASS run (e5a658f). Test: `r27-occasion-tags`.
+- The reviewer launch result adds an `occasion: ...` line for a non-item occasion (16d9524). Test: `r27-occasion-launch-line`.
+- The reviewer diff-scan base resets when the session writes a new ledger. Test: `r27-diff-base-ledger`.
+
 ### Round 26
 - A subagent wake that only carries "needs attention" notices for runs that already ended is dropped before it starts a foreman turn (trace `notify_deduped {reason: "run_ended"}`); a notice for a live run passes. Test: `r26-stale-attention`.
 - A `reviewer` launched after a FAIL gets the first line `[pi-foreman re-review] Review the revision diff since <sha> ...` (targeted tests only, no tsc or full suites); `[plan-review]`, `[pre-pr]` and `[second-opinion]` tasks get none. It follows the last FAIL in the session until a PASS or an owner prompt. Test: `r26-rereview-line`.
