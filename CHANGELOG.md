@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Round 26
+- A subagent wake that only carries "needs attention" notices for runs that already ended is dropped before it starts a foreman turn (trace `notify_deduped {reason: "run_ended"}`); a notice for a live run passes. Test: `r26-stale-attention`.
+- A `reviewer` launched after a FAIL gets the first line `[pi-foreman re-review] Review the revision diff since <sha> ...` (targeted tests only, no tsc or full suites); `[plan-review]`, `[pre-pr]` and `[second-opinion]` tasks get none. It follows the last FAIL in the session until a PASS or an owner prompt. Test: `r26-rereview-line`.
+- A child's write-protection deny on a protected (write-ask) path says the foreman stages and commits that file, and every builder brief carries a `Protected files (...)` line. Test: `r26-protected-hint`.
+
 ### Round 25
 - A forwarded child ask that the review would defer is denied with a reason naming the allowed shapes instead of parking on the owner pane, where it blocked every later forwarded ask (the parent drains them serially). `review.childDefer` (`deny` default, `owner` = old behaviour); trace `review_defer_child {decision, role, cmd}`. The foreman's own asks still defer.
 - Deterministic allow (`effect-build-test`) for `node --test <contained files>`, `npx tsc --noEmit [-p <contained>]` and `python3 [-I|-B|-u] -m unittest discover ...`; a contained `cd` is a neutral chain prefix. A `cd` outside the worktree or an output redirect still asks. See docs/permissions.md, docs/safety.md.
