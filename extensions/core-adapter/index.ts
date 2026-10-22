@@ -72,7 +72,7 @@ import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
 import { appendReview, capSet, checksLine, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prGateRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
-import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, hideStaleNotice } from "./notices.ts";
+import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, hideStaleNotice, staleNoticeRunIds } from "./notices.ts";
 import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
 import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts";
 import { denyFields, openTrace, toolErrorRecord, traceFile } from "./trace.ts";
@@ -2114,9 +2114,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // pi-subagents 0.76.1+: notices and supervisor requests appended while idle carry no message_end (ledger 11).
     let idleCause: TurnCause | null = null;
     if (s && !s.isChild) {
-      for (const msg of s.customSeen.unseenTrailing(ctx.sessionManager.getBranch?.() ?? [])) {
+      const unseen = s.customSeen.unseenTrailing(ctx.sessionManager.getBranch?.() ?? []);
+      for (const msg of unseen) {
         onCustomMessage(s, msg);
         idleCause = causeOfCustom(msg.customType) ?? idleCause;
+      }
+      // R26 item 2: a wake that carries only needs-attention notices for runs already ended starts no turn
+      const stale = isSubagentWake(event.source, event.text) ? staleNoticeRunIds(unseen, s.attention.endedRuns) : null;
+      if (stale) {
+        for (const runId of stale) s.trace?.emit({ event: "notify_deduped", reason: "run_ended", runId });
+        return { action: "handled" as const };
       }
     }
     if (s && !s.isChild) s.turn.cause = isSubagentWake(event.source, event.text) ? idleCause ?? "child" : causeOfInput(event.source, event.text);

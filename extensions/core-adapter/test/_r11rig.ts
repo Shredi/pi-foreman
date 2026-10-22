@@ -48,10 +48,12 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
   };
   fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify(l2));
   const handlers = new Map<string, Handler>();
+  const inputHandlers: Handler[] = [];
   const channels = new Map<string, (d: unknown) => void>();
   const pi = {
     events: { on: (n: string, h: (d: unknown) => void) => void channels.set(n, h), emit: () => undefined },
     on: (n: string, h: Handler) => {
+      if (n === "input") inputHandlers.push(h);
       const prev = handlers.get(n);
       // tool_call: the first block wins; any other event runs every handler (the first result is kept)
       handlers.set(n, !prev ? h : n === "tool_call" ? async (e, c) => (await prev(e, c)) ?? (await h(e, c)) : async (e, c) => { const r = await prev(e, c); const r2 = await h(e, c); return r ?? r2; });
@@ -141,6 +143,14 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     /** An input event of any source. */
     input: (source: string, text: string) => handlers.get("input")!({ source, text }, ctx),
     ownerPrompt: (text = "next") => handlers.get("input")!({ source: "interactive", text }, ctx),
+    /** An input event run as pi runs it: every handler in order, the first `handled` ends it; otherwise `continue`. */
+    async inputRun(source: string, text: string): Promise<unknown> {
+      for (const h of inputHandlers) {
+        const res = (await h({ source, text }, ctx)) as { action?: string } | undefined;
+        if (res?.action === "handled") return res;
+      }
+      return { action: "continue" };
+    },
   };
 }
 

@@ -63,6 +63,21 @@ export function dropEndedRunNotices<M>(messages: readonly M[], endedRunIds: Read
 }
 
 /**
+ * Input filter (R26 item 2): the run ids of `messages` when every one is a `subagent_control_notice` for a run in `endedRunIds`
+ * (a wake that carries only stale notices starts no useful turn). Null for no message, any other message, or a live run's notice.
+ */
+export function staleNoticeRunIds<M>(messages: readonly M[], endedRunIds: ReadonlySet<string>): string[] | null {
+  if (messages.length === 0) return null;
+  const runIds: string[] = [];
+  for (const m of messages) {
+    const ev = isObj(m) && m.role === "custom" && m.customType === "subagent_control_notice" && isObj(m.details) && isObj(m.details.event) ? m.details.event : null;
+    if (!ev || typeof ev.runId !== "string" || !endedRunIds.has(ev.runId)) return null;
+    runIds.push(ev.runId);
+  }
+  return runIds;
+}
+
+/**
  * Visible path (R12 item 9): a finalized `subagent_control_notice` whose run already ended is returned with `display: false`; anything else is null (leave it).
  */
 export function hideStaleNotice<M>(att: AttentionNotices, m: M): M | null {
