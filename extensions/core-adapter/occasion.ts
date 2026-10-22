@@ -18,12 +18,21 @@ export const OCCASIONS: readonly Occasion[] = ["plan-review", "pre-pr", "second-
 type Json = Record<string, unknown>;
 const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
 
+/** The task text with fenced blocks, backtick code spans and `[pi-foreman ...]` harness lines removed: a tag there is a mention, not an occasion. */
+function prose(text: string): string {
+  return text.replace(/(```|~~~)[\s\S]*?\1/g, " ").replace(/`[^`\n]*`/g, " ").replace(/^[ \t]*\[pi-foreman[^\n]*/gim, "");
+}
+
+/** A tag is standalone when the start of the text, whitespace or an opening bracket comes before it. */
+const tagIn = (text: string, tag: string): boolean => new RegExp(`(^|[\\s(\\[])\\[${tag}\\]`, "i").test(text);
+
 /** The occasion a task text (or a launch's `reason`) names; `[second-opinion]` wins over the others, then plan-review, then pre-pr. */
 export function occasionOf(text: unknown, reason?: unknown): Occasion {
-  const t = typeof text === "string" ? text.toLowerCase() : "";
-  if (reason === "second-opinion" || t.includes("[second-opinion]")) return "second-opinion";
-  if (t.includes("[plan-review]")) return "plan-review";
-  if (t.includes("[pre-pr]")) return "pre-pr";
+  if (reason === "second-opinion") return "second-opinion";
+  const t = typeof text === "string" ? prose(text) : "";
+  if (tagIn(t, "second-opinion")) return "second-opinion";
+  if (tagIn(t, "plan-review")) return "plan-review";
+  if (tagIn(t, "pre-pr")) return "pre-pr";
   return "item";
 }
 

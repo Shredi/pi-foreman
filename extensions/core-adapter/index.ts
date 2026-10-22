@@ -1377,7 +1377,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (!s.isChild && stepsOfRunEnd(data).includes("finalizer")) s.budget.onFinalizer(); // R11 item 5: finalization starts
           for (const f of frictionOfRunEnd(data)) s.trace?.emit({ event: "friction", role: f.role, runId: f.runId, kind: f.kind, note: f.note });
           const verdicts = reviewVerdictsOfRunEnd(counted);
-          s.reviewGate = onReviewVerdicts(s.reviewGate, verdicts, Date.now());
+          s.reviewGate = onReviewVerdicts(s.reviewGate, verdicts, Date.now(), runId);
           if (!s.isChild) onRunEndReview(s, runId, counted, verdicts.length > 0);
           const cited = s.retro.launchItems.get(runId) ?? [];
           s.retro.launchItems.delete(runId);
@@ -1946,7 +1946,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (guard === "ledger_guard_spawn" && agents.length > 0) {
           setCeremony(s, afterSpawn(s.ceremony));
           const modelOf = roleModelsOf(input);
-          for (const role of agents) s.trace?.emit({ event: "role_launch", role, ...(modelOf.has(role) ? { model: modelOf.get(role) } : {}) });
+          for (const role of agents) s.trace?.emit({ event: "role_launch", role, ...(modelOf.has(role) ? { model: modelOf.get(role) } : {}), ...(REVIEW_ROLES.includes(role) ? { occasion: [...occasions].find(([e]) => e.agent === role)?.[1] ?? "item" } : {}) });
         }
       }
       if (event.toolName === "subagent" && !s.isChild) {

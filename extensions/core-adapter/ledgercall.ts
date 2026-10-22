@@ -133,6 +133,7 @@ export function isPermissionDeny(isError: boolean, text: string): boolean {
 export interface GateView {
   last: string | null;
   revised: boolean;
+  passRun?: string;
 }
 
 export type LedgerPlan = { error: string } | { calls: string[][]; items: string; attested: boolean; upsert?: { item: string | null; text: string } };
@@ -188,7 +189,7 @@ export function planLedgerCall(params: Record<string, unknown>, opts: { child: b
     case "mark": {
       if (items.length === 0) return { error: `${LEDGER_TOOL}: mark needs items.` };
       const v = items.includes("V");
-      if (v && !(opts.gate.last === "pass" && !opts.gate.revised)) return { error: `${LEDGER_TOOL}: refused: ${V_REFUSAL}. Launch a reviewer; after its PASS mark V again.` };
+      if (v && !(opts.gate.last === "pass" && !opts.gate.revised)) return { error: `${LEDGER_TOOL}: refused: ${V_REFUSAL} (${opts.gate.passRun ? `last counted PASS: run ${opts.gate.passRun}` : "no counted PASS this round"}). Launch a reviewer; after its PASS mark V again.` };
       const nums = items.filter((x) => x !== "V");
       const calls = nums.map((n) => ["mark", n, ...(text ? [text] : [])]);
       if (v) calls.push(["mark", "V", V_ATTESTED_NOTE, "--verifier"]);

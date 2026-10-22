@@ -258,6 +258,8 @@ export interface ReviewGate {
   revised: boolean;
   /** When `last` became FAIL (ms); a newer parent ruling is named in the refusal (R6 lane 4c), it never satisfies the gate. */
   failAt?: number;
+  /** The run id of the last counted PASS (kept across later verdicts); the V refusal and the finish hint name it. */
+  passRun?: string;
 }
 
 export function reviewGateMode(v: unknown): ReviewGateMode {
@@ -269,10 +271,12 @@ export function initialReviewGate(): ReviewGate {
 }
 
 /** Reviews ended: a single non-pass among them wins (like verdictOf). */
-export function onReviewVerdicts(g: ReviewGate, verdicts: (Verdict | null)[], now?: number): ReviewGate {
+export function onReviewVerdicts(g: ReviewGate, verdicts: (Verdict | null)[], now?: number, runId?: string): ReviewGate {
   if (verdicts.length === 0) return g;
   const last = verdicts.includes("fail") ? "fail" : verdicts.includes(null) ? "none" : "pass";
-  return last === "fail" && now !== undefined ? { last, revised: false, failAt: now } : { last, revised: false };
+  const passRun = last === "pass" && runId ? runId : g.passRun;
+  const next: ReviewGate = { last, revised: false, ...(passRun ? { passRun } : {}) };
+  return last === "fail" && now !== undefined ? { ...next, failAt: now } : next;
 }
 
 export function onRevision(g: ReviewGate): ReviewGate {
@@ -303,7 +307,7 @@ export function noChange(steps: StepCounts, foremanEdits: number, porcelain: str
 export function reviewHint(g: ReviewGate): string {
   const why = reopened(g);
   if (why === "fail") return "(re-review needed: last verdict FAIL)";
-  if (why === "revision") return g.last === "pass" ? "(re-review needed: revised after the last PASS)" : "(re-review needed: revised after the last review)";
+  if (why === "revision") return g.last === "pass" ? `(re-review needed: revised after the last PASS)${g.passRun ? ` (run ${g.passRun})` : ""}` : "(re-review needed: revised after the last review)";
   return "";
 }
 
