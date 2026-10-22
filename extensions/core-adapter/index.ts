@@ -1689,6 +1689,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     try {
       const s = await ensureSession(ctx);
       const input = event.input as Record<string, unknown>;
+      // The spawn gate measures the caller's task, read before this call's harness prepends (re-review line, shadow task, ledger block).
+      const callerTask = event.toolName === "subagent" ? subagentTaskText(input) : "";
       const blocked = childLaunchBlock(s, event.toolName);
       if (blocked) return { block: true, reason: blocked };
       let notices: string[] = [];
@@ -1922,6 +1924,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (guard === "git_guard") await s.reviewSync;
         const prGate = { enabled: get(s.config.config, "ceremony.reviewBeforePr") !== false, reviewed_heads: passHeads(s.reviews) };
         const payload = guard === "git_guard" ? gitGuardPayload(event.toolName, input, pc, get(s.config.config, "safety.git"), prGate) : preToolPayload(event.toolName, input, pc);
+        if (guard === "ledger_guard_spawn") (payload.tool_input as Record<string, unknown>).prompt = callerTask;
         const outcome = await run(s, ctx, guard, payload, mapping.coreName);
         if (guard === "destructive_guard" && outcome.kind === "decision" && dropDeadPathRewrite(outcome.d, input.command, os.homedir())) {
           s.trace?.emit({ event: "guard_rewrite_dropped", guard, toolFamily: mapping.coreName });
