@@ -28,7 +28,7 @@
 
 | Layer | Form | Pins | Owns |
 |---|---|---|---|
-| L1 pi-foreman (public) | npm Pi package `pi-foreman`: `extensions/`, `agents/`, `skills/`, `core/` (vendored), `scripts/` (own Python), `config/` (defaults + schema), `setup.mjs` | Pi 1.3.x, its third-party packages (§13), core tag | Mechanisms, neutral roles, default policy |
+| L1 pi-foreman (public) | npm Pi package `pi-foreman`: `extensions/`, `agents/`, `skills/`, `core/` (vendored), `scripts/` (own Python), `config/` (defaults + schema), `setup.mjs` | Pi 1.4.x, its third-party packages (§13), core tag | Mechanisms, neutral roles, default policy |
 | L2 private overlay | A user's own Pi package plus `foreman.json` in the Pi agent dir | `pi-foreman@x.y.z` exactly | Model maps, extra roles, MCP servers, repository list, personal preferences |
 | L3 organisation overlay | Organisation-owned Pi package declaring `pi.foreman.config` in its `package.json` | `pi-foreman@x.y.z` exactly | Provider gateways (via `registerProvider`), internal tools and skills, default policy for its users |
 
@@ -601,7 +601,7 @@ pi-foreman installs as a Pi package; details in `docs/install.md`.
 
 | Capability | Choice | Version tested | Evidence summary |
 |---|---|---|---|
-| Runtime | adopt Pi | `@earendil-works/pi-coding-agent` 1.3.0 | All runs; signatures read from installed types |
+| Runtime | adopt Pi | `@earendil-works/pi-coding-agent` 1.4.0 | All runs; signatures read from installed types |
 | Subagents | **adopt** `pi-subagents`, every role detached | 0.75.0 | Hands-on: package roles discovered and launched; provider switch changes child model; full-id thinking override; codemode in child; required child extension blocks; strict tool allowlist. FAIL: foreground ask forwarding. |
 | Subagents (fallback) | fallback `@gotgenes/pi-subagents`, used only if the primary blocks | 22.0.0 | Hands-on: forwards foreground asks. Role and provider features not tested. |
 | Permission map | **adopt** `@gotgenes/pi-permission-system` | 39.0.2 | Hands-on: ask rules, detached-child forwarding, authorizer chain resolves |

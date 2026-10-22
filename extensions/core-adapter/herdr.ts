@@ -7,7 +7,7 @@
 //   perm:<id>    pi-permission-system `permissions:ui_prompt` .. `permissions:decision` with the same requestId
 //   own:<n>      pi-foreman's own asks (`withBlocked` / `blockedConfirm`)
 // Own asks also reach `onOwn` hooks (the radar presence file), with or without Herdr: Pi suppresses
-// ui_prompt_start while an earlier dialog is still unsettled (uiPromptDepth > 0, e.g. an orphaned one).
+// ui_prompt_start for each one, the counter stays balanced however they nest.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

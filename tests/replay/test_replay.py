@@ -1,7 +1,7 @@
 """Golden replay scenarios on the fake provider (design section 10, ledger items 43, 60, 69).
 
 Run:  python -m unittest discover -s tests/replay -v
-Needs node, Pi 1.3.x (global npm install, Pi's managed install under ~/.pi/agent/install, or
+Needs node, Pi 1.4.x (global npm install, Pi's managed install under ~/.pi/agent/install, or
 FOREMAN_PI_CLI) and the repo's node_modules (npm install: pi-subagents, permission system, intercom).
 A missing Pi CLI is always an error naming the paths tried (driver.resolve_pi_cli), never a skip of
 every scenario. Other missing prerequisites skip, unless FOREMAN_REPLAY_REQUIRED=1 (CI).

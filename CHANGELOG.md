@@ -122,6 +122,9 @@
 - Windows replay expectations are recorded for the round.
 - The bench rig pins Pi 1.3.0 and `bench/pi-lock` is regenerated.
 
+### Pi 1.4.0
+- Pi 1.4.0 supported (range 1.4.x); no extension-surface change for this harness. Pi 1.4 stacks concurrent extension dialogs; the pi-permission-system forwarded-ask inbox is still serial upstream, so `review.childDefer` keeps its `deny` default. The herdr blocked counter is unchanged (it stays balanced under stacking). The bench rig pins Pi 1.4.0 and `bench/pi-lock` is regenerated.
+
 ### Pi 1.3.0
 - Pi 1.3.0 supported (range 1.3.x); no extension-surface change. Pi's `--model` ambiguity fix prefers the provider with credentials.
 
