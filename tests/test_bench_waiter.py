@@ -247,5 +247,25 @@ class PostStepsTest(unittest.TestCase):
         self.assertIn("WARNING post step 0", err_out.getvalue())
 
 
+class ReviewDenyCountTest(unittest.TestCase):
+    def test_child_and_headless_review_denies_count_as_denied_asks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Path(tmp) / "agent"
+            state = agent / "pi-foreman" / "state"
+            state.mkdir(parents=True)
+            lines = [
+                {"event": "review", "decision": "allow", "role": "builder"},
+                {"event": "review_defer_child", "decision": "allow", "role": "builder"},
+                {"event": "review_defer_child", "decision": "deny", "role": "builder", "cmd": "uname -s"},
+                {"event": "review_defer_headless", "role": "explorer", "cmd": "uname -s"},
+            ]
+            (state / "trace-s1.jsonl").write_text("\n".join(json.dumps(r) for r in lines) + "\n", "utf-8")
+            status = {"asks": 1, "asks_denied": [{"method": "confirm", "title": "", "role": "builder"}]}
+            ws.count_review_denies(agent, status)
+        self.assertEqual(status["asks"], 3)
+        self.assertEqual([d["method"] for d in status["asks_denied"]], ["confirm", "review_defer_child", "review_defer_headless"])
+        self.assertEqual(status["asks_denied"][1]["role"], "builder")
+
+
 if __name__ == "__main__":
     unittest.main()
