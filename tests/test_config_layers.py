@@ -316,14 +316,14 @@ class LayerRulesTest(unittest.TestCase):
         c = res["config"]["ceremony"]
         self.assertEqual(res["errors"], [])
         self.assertEqual(c["foremanReads"], {"before": {"warn": 4, "deny": 5}, "after": {"warn": 4, "deny": 8}})
-        self.assertEqual((c["recheckBudget"], c["launchWait"], c["dedupeNotify"]), (0, "block", True))
+        self.assertEqual((c["recheckBudget"], c["launchWait"], c["dedupeNotify"]), (0, "detach", True))
         joined = "\n".join(res["warnings"])
         self.assertIn("project ceremony.foremanReads.before.warn ignored: it would loosen", joined)
         self.assertIn("session ceremony.foremanReads.after.warn ignored: below the minimum 1", joined)
         self.assertIn("project ceremony.recheckBudget ignored: it would loosen", joined)
-        self.assertIn("project ceremony.launchWait ignored: it would loosen", joined)
+        self.assertNotIn("project ceremony.launchWait ignored", joined)
         self.assertIn("project ceremony.dedupeNotify ignored: it would loosen", joined)
-        res = self.load(l2={"ceremony": {"launchWait": "detach"}}, proj={"ceremony": {"launchWait": "block"}}, session={})
+        res = self.load(proj={"ceremony": {"launchWait": "block"}}, session={})
         self.assertEqual(res["config"]["ceremony"]["launchWait"], "block")
 
     def test_review_gate_tighten_only(self):

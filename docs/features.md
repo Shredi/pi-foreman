@@ -61,7 +61,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [bench-climb](#bench-climb) | opt-in | Explores cheap-to-strong reviewer climb policies offline over review-bench cells; the runtime has no climb on a finding. | `foreman bench review --tasks bench/review-samples --mode climb --rungs <cheap-model>,<strong-model> --dry-run` | [bench](bench.md#review-bench) |
 | [ceremony-tiers](#ceremony-tiers) | on | The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a clean work tree). | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [read-budgets](#read-budgets) | on | Warns and then refuses the foreman's own reads past a budget until an explorer runs, caps rechecks after a PASS (a plan-review PASS does not start the recheck window), and gives child roles their own read budgets. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
-| [launch-wait](#launch-wait) | on | Holds a foreman launch until the child finishes or asks something, drops duplicate completion notices and caps concurrent children. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
+| [launch-wait](#launch-wait) | on | Returns a foreman launch at once with its receipt (the completion notice starts the next turn; "block" holds it until the child ends, for replay rigs and bench), drops duplicate completion notices and caps concurrent children. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [waits](#waits) | on | The foreman-only `foreman_wait` tool waits on timers, files, processes and CI runs within a duration and concurrency limit, batching its notices. | on by default | [sessions](sessions.md#further-session-keys) |
 | [foreman-bg](#foreman-bg) | on | The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool. | on by default | [sessions](sessions.md#background-runs) |
 | [background-tasks-addon](#background-tasks-addon) | on | Detects the optional pi-background-tasks add-on (install: `PI_BG_FEATURES=process pi install npm:pi-background-tasks`): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it. | on by default | [herdr](herdr.md#optional-add-on-background-tasks) |
@@ -354,7 +354,7 @@ No config key.
 
 ### launch-wait
 
-**Launch wait and fan-out.** Holds a foreman launch until the child finishes or asks something, drops duplicate completion notices and caps concurrent children.
+**Launch wait and fan-out.** Returns a foreman launch at once with its receipt (the completion notice starts the next turn; "block" holds it until the child ends, for replay rigs and bench), drops duplicate completion notices and caps concurrent children.
 
 | Key | Default | Layer |
 |---|---|---|

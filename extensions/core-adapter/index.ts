@@ -117,7 +117,7 @@ import type { LaunchRounds } from "./rounds.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
-import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
+import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import type { CloseReport } from "./close.ts";
 import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, sessionModelOf } from "./session.ts";
@@ -2636,6 +2636,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const notices = modelLine || occasionLines.length > 0 ? [...(s?.launchNotices.get(event.toolCallId) ?? []), ...(modelLine ? [modelLine] : []), ...occasionLines] : s?.launchNotices.get(event.toolCallId);
       if (s && notices) s.launchNotices.delete(event.toolCallId);
       const held = s ? await holdLaunch(s, ctx, event.toolCallId, event.input, event.details, event.isError) : null;
+      // A detached launch (the default) returns its receipt and one line: the completion notice starts the next turn.
+      const detached = s && !held ? detachedLine(s, event.input, event.details, event.isError) : null;
       // A held launch's result carries the panel block of its run end (else it comes as its own message).
       const pb = s && held ? s.reviewRuns.blocks.get(launchId(event.input, event.details, event.isError) ?? "") : undefined;
       if (pb) pb.claimed = true;
@@ -2644,9 +2646,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (s && held?.path) recordChild(s, [held.path]);
       // subagent has no post guards (toolmap.ts), so the amended result can be returned here.
       // The held text stays the last block: deliveredRuns accepts the "done" marker only there.
-      const trim = held && !held.plain ? dropAsyncGuidance(event.content) : null;
+      const trim = (held && !held.plain) || detached !== null ? dropAsyncGuidance(event.content) : null;
       if (s && trim && trim.trimmed > 0) s.trimmedLines.set(launchId(event.input, event.details, event.isError) ?? "", trim.trimmed);
-      if (notices || held) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(trim ? trim.content : event.content), ...(held ? [{ type: "text" as const, text: held.text }] : [])] };
+      const tail = held ? held.text : detached;
+      if (notices || tail !== null) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(trim ? trim.content : event.content), ...(tail !== null ? [{ type: "text" as const, text: tail }] : [])] };
     }
     const mapping = mapTool(event.toolName);
     const changed = event.isError ? undefined : changedFileOf(event.toolName, event.input as Record<string, unknown>);
@@ -2729,6 +2732,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // a steer taken as the run ended is delivered only if it is shown here; otherwise it stays pending
     const shown = foldSteer(watch, steerText, climb && climb.runId === runId && !r.end?.policyBlock && !r.end?.repeatRefusal ? `${text}\n${climbHint(climb)}` : text, !ctx.signal?.aborted);
     return { text: steerFor(s).append(shown), path: r.end?.resultPath ?? asyncDir };
+  }
+
+  /** The receipt line of a detached launch (launchwait.ts detachedLaunchLine); null for a child session, an error or a launch with no known run. */
+  function detachedLine(s: Session, input: unknown, details: unknown, isError: boolean): string | null {
+    const runId = launchId(input, details, isError);
+    const run = runId ? s.runs.get(runId) : undefined;
+    if (s.isChild || !runId || !run) return null;
+    const raw = details && typeof details === "object" ? (details as { asyncDir?: unknown }).asyncDir : undefined;
+    return detachedLaunchLine({ runId, role: run.role, resultPath: typeof raw === "string" ? raw : null });
   }
 
   // Knob 5a (launchwait.ts): a completion notice whose result an earlier message delivered is dropped from the model context.

@@ -3,17 +3,23 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { worktreeOfRun, dedupeNotices, dropAsyncGuidance, dedupeOn, holdCap, LaunchBatch, openRequestLine, launchWaitMode, launchWaitText, LaunchWaits, noticeRuns, runEndOf } from "../launchwait.ts";
+import { worktreeOfRun, dedupeNotices, detachedLaunchLine, dropAsyncGuidance, dedupeOn, holdCap, LaunchBatch, openRequestLine, launchWaitMode, launchWaitText, LaunchWaits, noticeRuns, runEndOf } from "../launchwait.ts";
 
 const DIR = "/tmp/pi-subagents-uid-1/async-subagent-runs/run-a";
 const notice = (role: string, dir: string) => `Background task completed: **${role}**\n\n${role}:\nlong child report\n\nRetention-managed async directory: ${dir}\n\nSession file: /x/session.jsonl`;
 
-test("launchwait: config readers default to block and dedupe on", () => {
-  assert.equal(launchWaitMode(undefined), "block");
-  assert.equal(launchWaitMode("bogus"), "block");
+test("launchwait: config readers default to detach (R29 item 4); block is the test hook; dedupe on", () => {
+  assert.equal(launchWaitMode(undefined), "detach");
+  assert.equal(launchWaitMode("bogus"), "detach");
+  assert.equal(launchWaitMode("block"), "block");
   assert.equal(launchWaitMode("detach"), "detach");
   assert.equal(dedupeOn(undefined), true);
   assert.equal(dedupeOn(false), false);
+});
+
+test("launchwait: a detached receipt ends with the line that names the notice as the next turn's start", () => {
+  assert.equal(detachedLaunchLine({ runId: "r1", role: "builder", resultPath: DIR }), `pi-foreman: run r1 (builder) runs detached; its completion notice starts your next turn (read the report there or at ${DIR}). \`bg_wait r1\` only when you need the result in this turn.`);
+  assert.equal(detachedLaunchLine({ runId: "r1", role: "builder", resultPath: null }), "pi-foreman: run r1 (builder) runs detached; its completion notice starts your next turn (read the report there). `bg_wait r1` only when you need the result in this turn.");
 });
 
 test("launchwait: run end, supervisor request, timeout and abort end a wait", async () => {

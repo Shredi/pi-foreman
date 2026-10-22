@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Round 29
+- Child launches return at once with the receipt plus a detached-launch line; the completion notice starts the next foreman turn. `ceremony.launchWait` defaults to `detach` (`block` stays for replay rigs and bench); the foreman rules and docs/ceremony.md say launch, end the turn, act on the notice. Tests: `r29-async-launch`, `launchwait`.
+
 ### Round 27
 - A child's shell-write deny covers in-place interpreter edits (`perl -pi`/`-i`, `ruby -i`, `python -c` writing files, `node -e` with `writeFileSync`/`writeFile(`, `awk -i inplace`) with the existing "use the write or edit tool" text; reads stay allowed (6aea5be). Test: `r27-child-inplace`.
 - `occasionOf` counts `[second-opinion]`, `[plan-review]` and `[pre-pr]` only as standalone tokens (not in backticks, fences or `[pi-foreman` lines); the reviewer `role_launch` trace carries `occasion`; the `mark V` refusal and the revision hint name the last counted PASS run (e5a658f). Test: `r27-occasion-tags`.

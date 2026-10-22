@@ -1,8 +1,9 @@
 // Launch-wait (knob 3, ceremony.launchWait) and completion-notice dedupe (knob 5a, ceremony.dedupeNotify).
 //
-// Launch-wait: a foreman's single-child `subagent` launch (or resume) normally returns at once,
-// and the foreman then spends one whole turn on `bg_wait`. With `launchWait: "block"` the
-// adapter's tool_result handler holds that launch's result until the run ends (pi.events
+// Launch-wait: a foreman's `subagent` launch (or resume) returns at once with its receipt and one line
+// (detachedLaunchLine): the child's completion notice starts the next turn. `launchWait: "block"` is the
+// test hook of the replay rigs and bench: the adapter's tool_result handler then holds that launch's result
+// until the run ends (pi.events
 // RUN_END_EVENTS), a supervisor request of any run arrives (pi-subagents 0.75.0 emits
 // "pi-intercom:detach-request" {requestId, runId} when it surfaces a request that expects a
 // reply; it releases every held launch), the turn is aborted (Esc, session end: ctx.signal /
@@ -44,9 +45,9 @@ type Json = Record<string, unknown>;
 const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v : undefined);
 
-/** ceremony.launchWait: "detach" only when set so, else "block" (the default). */
+/** ceremony.launchWait: "block" only when set so (the replay rigs and bench), else "detach" (the default). */
 export function launchWaitMode(v: unknown): LaunchWaitMode {
-  return v === "detach" ? "detach" : "block";
+  return v === "block" ? "block" : "detach";
 }
 
 /** ceremony.dedupeNotify: on unless set to false. */
@@ -274,6 +275,12 @@ export function holdCap(maxSeconds: number, roleTimeoutMs: number | undefined): 
  */
 export function openRequestLine(openRequests: number, runId: string): string | null {
   return openRequests > 0 ? `pi-foreman launch-wait: a child's question is open: answer it, then bg_wait ${runId}.` : null;
+}
+
+/** The line a detached launch's receipt ends with: the completion notice starts the next turn; `bg_wait` only for a same-turn result. */
+export function detachedLaunchLine(o: { runId: string; role: string; resultPath: string | null }): string {
+  const where = o.resultPath ? `read the report there or at ${o.resultPath}` : "read the report there";
+  return `pi-foreman: run ${o.runId} (${o.role}) runs detached; its completion notice starts your next turn (${where}). \`bg_wait ${o.runId}\` only when you need the result in this turn.`;
 }
 
 const fmtSeconds = (ms: number): string => `${Math.max(0, Math.round(ms / 1000))}s`;
