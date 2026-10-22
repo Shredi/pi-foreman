@@ -72,6 +72,7 @@ Asks go through a model review link (`foreman-review`) using `providers.<p>.revi
 - Headless defer: with no UI, or `review.headless: true` (default false), a forwarded child ask is denied with a
   text naming the allowed forms, trace `review_defer_headless {role, cmd}`. The `review` trace carries the model's
   defer `reason`.
+- Child asks never reach the owner pane by default: a forwarded child ask the review defers is denied with the same text (`review.childDefer`, default `deny`, trace `review_defer_child {decision, role, cmd}`), because the parent drains forwarded asks one at a time and an owner dialog would hold every later child ask. `review.childDefer: "owner"` keeps the old defer. The foreman's own asks still defer to the owner.
 - Review model calls are logged to the usage log with role `autoreview`.
 
 Child traces: with the foreman's retro on, a bound child writes `trace-<launchId>.jsonl` and each record carries `role`

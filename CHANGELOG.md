@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Round 25
+- A forwarded child ask that the review would defer is denied with a reason naming the allowed shapes instead of parking on the owner pane, where it blocked every later forwarded ask (the parent drains them serially). `review.childDefer` (`deny` default, `owner` = old behaviour); trace `review_defer_child {decision, role, cmd}`. The foreman's own asks still defer.
+- Deterministic allow (`effect-build-test`) for `node --test <contained files>`, `npx tsc --noEmit [-p <contained>]` and `python3 [-I|-B|-u] -m unittest discover ...`; a contained `cd` is a neutral chain prefix. A `cd` outside the worktree or an output redirect still asks. See docs/permissions.md, docs/safety.md.
+
 ### Round 24
 - The SECURITY exemption of a reviewer FAIL is read from the full report at the run end, so a `SECURITY:` line past the notice's 2 000-character cap still exempts the revision (trace `security_exempt`); the notice text stays the fallback. Residual: a notice that arrives before its run-end event uses the notice text only.
 - Revision chains reset on every owner-typed prompt, including an extension-sourced one such as `[continue]`, but not on harness texts (`pi-foreman ...`, the subagent and intercom wakes, `Background task ...`); trace `chain_clear`.

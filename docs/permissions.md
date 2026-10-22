@@ -55,7 +55,7 @@ output file relative to the worktree (a `  log .pi/tasks/<id>-<pid>/<task>.outpu
 | Class | What | Goes to the model |
 |---|---|---|
 | read | `ls`, `cat`, `head`, `tail`, `wc`, `stat`, `file`, `tree`, `diff`, `grep`, `rg`, `find`; print-only sed; `git status/log/diff/show`; `git add/clean/mv/rm` with `-n`/`--dry-run`; `npm install/ci/update/... --dry-run` (not `publish`/`pack`), `make -n <test target>`; `cd` into an allowed place | no |
-| build-test | the project's own commands, from its manifest at the worktree root, run from that root | no |
+| build-test | the project's own commands, from its manifest at the worktree root, run from that root; also `node --test <contained files>`, `npx tsc --noEmit [-p <contained tsconfig>]` and `python3 [-I\|-B\|-u] -m unittest discover -s <contained dir> -p <pattern>` (and `-m pytest`) | no |
 | write-in | `mkdir`, `touch`, `cp`, `mv`, `rm`, `tee`, `sed -i ''`/`-i<suffix>` with one plain `s///` script given by `-e`, the test restore | no |
 | write-out | one of those writes, or a redirect, that reaches outside the allowed places | yes |
 | unknown | everything else, and every command the chain splitter refuses | yes |
@@ -163,6 +163,8 @@ The `review` trace's `decision` is one of these when no model was called:
 | `sed-read` | a print-only `sed -n '<addr>p' <file>` in the chain |
 | `effect-write-in`, `effect-build-test`, `effect-read` | a chain whose segments are of those classes |
 
+A `cd` to a contained directory is a neutral prefix of a chain: it carries no label of its own, so `cd <worktree> && node --test x.test.ts` is allowed with the label of the other segments (trace `chain_allow`). A `cd` outside the allowed places, or a redirect such as `node --test x > out.txt`, still asks.
+
 A chain takes the first label of the list above (after the scratch labels) that one of its segments carries. The git
 guard still decides `git restore`/`git checkout` first (tracked, modified test files only).
 
@@ -181,6 +183,7 @@ defaults `y`, `s`, `b`, `n`, `r`).
 - `review {decision, model, class, ...}`: `class` is the effect class of the full command (bash asks).
 - `chain_allow {segments, decision, role}`: a chain of two or more segments was allowed without the model.
 - `review_defer_headless {role, cmd}`: a forwarded ask deferred with no human to ask and was denied.
+- `review_defer_child {decision, role, cmd}`: a forwarded child ask the review would defer; `decision` is `deny` (default) or `owner`. `review.childDefer: "owner"` restores the old defer to the owner pane, which blocks every later forwarded ask until the owner answers; the default denies with a text naming the allowed shapes.
 
 ## Owned paths
 
