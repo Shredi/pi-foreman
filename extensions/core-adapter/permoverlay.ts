@@ -3552,7 +3552,7 @@ function ownScratch(ctx: MatchCtx, word: string, shell = false): boolean {
 function protectDecision(hit: ProtectHit, word: string, what: string, selfMod = true): Decision {
   const how = hit.shortName ? `matched '${clip(word)}' read as a Windows 8.3 short name, which may be the protected path,` : `matched '${clip(word)}'`;
   return hit.kind === "deny"
-    ? { kind: "deny", reason: `pi-foreman: denied by the write protection (rule '${hit.rule.pattern}' ${how} in a ${what}). Git internals, agent and harness configuration are off limits${hit.rule.main === "ask" ? " to subagents; ask the foreman" : ""}.` }
+    ? { kind: "deny", reason: `pi-foreman: denied by the write protection (rule '${hit.rule.pattern}' ${how} in a ${what}). Git internals, agent and harness configuration are off limits${hit.rule.main === "ask" ? " to subagents; ask the foreman" : ""}.${hit.rule.fromWriteAsk ? " The foreman stages and commits this file; report the needed change." : ""}` }
     : { kind: "ask", reason: `pi-foreman: this changes protected configuration (rule '${hit.rule.pattern}' ${how} in a ${what}) and needs approval.`, rule: hit.rule.pattern, path: clip(word), ...(selfMod ? { selfMod: true as const } : {}) };
 }
 

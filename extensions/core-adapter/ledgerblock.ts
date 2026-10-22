@@ -41,6 +41,9 @@ export function criticBlock(questions: readonly string[]): string {
   return ["[pi-foreman critic] Answer each question once per ledger item as a line `CRITIC: <item> Q<k>: <answer>`.", ...questions.map((q, i) => `Q${i + 1}. ${q.replace(/^\(\d+\)\s*/, "")}`), "[end of critic]", ""].join("\n");
 }
 
+/** The line every builder brief carries after the ledger block (R26 item 4): protected files are the foreman's to apply and commit. */
+const PROTECTED_LINE = "Protected files (config/foreman.defaults.json, config/permissions.baseline.json, package.json and the other write-ask paths): report the needed change; the foreman applies and commits it.\n";
+
 /**
  * The re-review line (R26 item 3): a reviewer launched after an open FAIL reviews the revision diff, not the whole change. `sha` is the
  * head that FAIL reviewed; null when it is unknown.
@@ -65,7 +68,8 @@ export function applyLedgerItems(input: Record<string, unknown>, ledger: string 
       // the critic questions go into every reviewer and senior-reviewer task (a rung-up handoff entry included), after the ledger block
       const cb = role === "builder" ? "" : criticBlock(critic);
       const re = role === "reviewer" && reReview && occasionOf(e.task) === "item" ? reReviewLine(reReview.sha) : "";
-      if (block || cb || re) e.task = re + block + cb + e.task;
+      const prot = role === "builder" && !skip.has(e) ? PROTECTED_LINE : "";
+      if (block || cb || re || prot) e.task = re + block + prot + cb + e.task;
       if (block) out.push({ event: "ledger_block", role, chars: block.length });
     }
     for (const k of ["tasks", "chain", "parallel"]) if (Array.isArray(e[k])) e[k].forEach(visit);
