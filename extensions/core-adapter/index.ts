@@ -132,7 +132,7 @@ import { familyWarnings, modelGaps } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { explicitModelAllowed, launchedModels, PLANNER_OWN_RUNG_HINT, rankRefusal, rankRefusalFor, ranksOf, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
-import { countingView, entryOccasions, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch } from "./occasion.ts";
+import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
@@ -2631,7 +2631,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_launched", role, exit: event.isError ? 1 : 0, pollBash: s.pollBash || undefined, ...(launchedOn.has(role) ? { model: launchedOn.get(role) } : {}) });
       if (s) s.pollBash = 0;
       const modelLine = s && !s.isChild && !event.isError && launchedOn.size > 0 ? `pi-foreman: launched ${[...launchedOn].map(([role, model]) => `${role} on ${model}`).join(", ")}.` : null;
-      const notices = modelLine ? [...(s?.launchNotices.get(event.toolCallId) ?? []), modelLine] : s?.launchNotices.get(event.toolCallId);
+      // R27 item 4: a non-item review occasion is named in the launch result, so a misclassified review is visible before it runs.
+      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(event.input as Record<string, unknown>) : [];
+      const notices = modelLine || occasionLines.length > 0 ? [...(s?.launchNotices.get(event.toolCallId) ?? []), ...(modelLine ? [modelLine] : []), ...occasionLines] : s?.launchNotices.get(event.toolCallId);
       if (s && notices) s.launchNotices.delete(event.toolCallId);
       const held = s ? await holdLaunch(s, ctx, event.toolCallId, event.input, event.details, event.isError) : null;
       // A held launch's result carries the panel block of its run end (else it comes as its own message).

@@ -39,6 +39,18 @@ export function occasionOf(text: unknown, reason?: unknown): Occasion {
 /** Whether a review of this occasion counts for items, the review gate, the climb and the PR gate. */
 export const countsForItems = (o: Occasion): boolean => o === "item" || o === "pre-pr";
 
+const OCCASION_LINES: Partial<Record<Occasion, string>> = {
+  "second-opinion": "occasion: second-opinion (advisory: marks no items, does not open the review gate)",
+  "plan-review": "occasion: plan-review (plan only: marks no items)",
+  "pre-pr": "occasion: pre-pr (counts for items and the PR gate)",
+};
+
+/** The launch-result line of each non-item occasion a review child of the launch names (a misclassified review is visible before it runs). */
+export function occasionLinesOf(input: Json): string[] {
+  const named = new Set([...entryOccasions(input)].filter(([e]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent)).map(([, o]) => o));
+  return [...named].flatMap((o) => OCCASION_LINES[o] ?? []);
+}
+
 /** One launched child, in launch order (launchEntries entries that name an agent). */
 export interface LaunchEntry {
   role: string;
