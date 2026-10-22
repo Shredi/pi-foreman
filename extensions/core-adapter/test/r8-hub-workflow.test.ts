@@ -59,7 +59,7 @@ test("hub .workflow is readable by the read tool and read-only bash for main and
 const posix = process.platform !== "win32";
 const DEFER = '{"verdict":"defer","reason":"outside the workspace"}';
 const registry = { find: () => ({}), complete: async () => ({ content: [{ type: "text", text: DEFER }], stopReason: "stop" }) } as never as RegistryLike;
-const reviewSession = (hubCfg: unknown): ReviewSession => ({ isChild: false, cwd: ws, provider: "a", config: () => ({ providers: { a: { review: { model: "a/small", timeoutMs: 500 } } }, paths: { hubWorkflow: hubCfg } }), registry, intent: "", bashRules: () => bashRules(baseline, {}), ownedRoots: () => [path.join(w, "scratch")], readOnlyRoots: () => [], roundDirs: () => [ws] });
+const reviewSession = (hubCfg: unknown): ReviewSession => ({ isChild: false, cwd: ws, provider: "a", config: () => ({ providers: { a: { review: { model: "a/small", timeoutMs: 500 } } }, paths: { hubWorkflow: hubCfg } }), registry, intent: "", bashRules: () => bashRules(baseline, {}), ownedRoots: () => [path.join(w, "scratch")], readOnlyRoots: () => [], roundDirs: () => [ws], childDefer: () => "owner" });
 const ask = (command: string, n: number) => ({ requestId: `h${n}`, surface: "bash", command, forwarding: true, agentName: "reviewer" });
 
 test("review: a forwarded child's bash read of the configured hub ledger is allowed, a write and an unconfigured sibling defer", { skip: !posix }, async () => {

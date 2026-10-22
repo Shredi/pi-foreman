@@ -31,7 +31,7 @@ if (posix) execFileSync("git", ["init", "-q", cwd], { stdio: "ignore" });
 const config = { providers: { a: { review: { model: "a/small", timeoutMs: 500 } } } };
 const DEFER = '{"verdict":"defer","reason":"writes outside the workspace"}';
 const registry = { find: () => ({}), complete: async () => ({ content: [{ type: "text", text: DEFER }], stopReason: "stop" }) } as never as RegistryLike;
-const session = (over: Partial<ReviewSession> = {}): ReviewSession => ({ isChild: false, cwd, provider: "a", config: () => config, registry, intent: "", bashRules: () => bashRules(baseline, {}), ownedRoots: () => [stateScratch, round], readOnlyRoots: () => [npmRoot, asyncRun], roundDirs: () => [round], ...over });
+const session = (over: Partial<ReviewSession> = {}): ReviewSession => ({ isChild: false, cwd, provider: "a", config: () => config, registry, intent: "", bashRules: () => bashRules(baseline, {}), ownedRoots: () => [stateScratch, round], readOnlyRoots: () => [npmRoot, asyncRun], roundDirs: () => [round], childDefer: () => "owner", ...over });
 const ask = (command: string, agentName = "reviewer", n = 1) => ({ requestId: `r${n}`, surface: "bash", command, forwarding: true, agentName });
 
 test("sessionOwnedSplit: the npm root and the async run dirs are read only, the rest read-write", () => {

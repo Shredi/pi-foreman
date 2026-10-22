@@ -27,7 +27,7 @@ fs.writeFileSync(path.join(asyncRun, "status.json"), "{}\n");
 const config = { providers: { a: { review: { model: "a/small", timeoutMs: 500 } } } };
 const DEFER = '{"verdict":"defer","reason":"reads a run dir outside the workspace"}';
 const registry = { find: () => ({}), complete: async () => ({ content: [{ type: "text", text: DEFER }], stopReason: "stop" }) } as unknown as RegistryLike;
-const session = (cwd: string): ReviewSession => ({ isChild: false, cwd, provider: "a", config: () => config, registry, intent: "", bashRules: () => bashRules(baseline, {}), ownedRoots: () => [asyncRun] });
+const session = (cwd: string): ReviewSession => ({ isChild: false, cwd, provider: "a", config: () => config, registry, intent: "", bashRules: () => bashRules(baseline, {}), ownedRoots: () => [asyncRun], childDefer: () => "owner" });
 
 test("2a: cat <owned>/status.json from a cwd outside any repository stays a defer; from a repository cwd it is allowed", async () => {
   if (workspaceTop(noRepo) !== null) return; // the temp base itself lies in a repository: no non-repository cwd to test

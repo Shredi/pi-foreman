@@ -40,7 +40,7 @@ const reply = (text: string): RegistryLike => ({
     return { content: [{ type: "text", text }], stopReason: "stop" };
   },
 }) as never;
-const session = (registry: RegistryLike, over: Partial<ReviewSession> = {}): ReviewSession => ({ isChild: false, cwd, provider: "a", config: () => config, registry, intent: "", bashRules: () => bashRules(baseline, {}), ownedRoots: () => owned, ...over });
+const session = (registry: RegistryLike, over: Partial<ReviewSession> = {}): ReviewSession => ({ isChild: false, cwd, provider: "a", config: () => config, registry, intent: "", bashRules: () => bashRules(baseline, {}), ownedRoots: () => owned, childDefer: () => "owner", ...over });
 const ask = (command: string, n = 1) => ({ requestId: `r${n}`, surface: "bash", command, forwarding: true, agentName: "reviewer" });
 const DEFER = '{"verdict":"defer","reason":"writes into a scratch directory under the run dir which is outside the workspace"}';
 
