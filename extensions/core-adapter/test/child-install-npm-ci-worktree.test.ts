@@ -30,7 +30,7 @@ const expected = win ? null : "npm-ci-worktree";
 const decision = win ? "ask" : "pass";
 
 test("npm ci passes in a round worktree and in a pi-subagents leaf, with the label (win32: ask)", () => {
-  assert.equal(run(round, "npm ci"), decision);
+  assert.equal(run(round, "npm ci"), "pass");
   assert.equal(run(leaf, "npm ci"), decision);
   assert.equal(run(path.join(leaf, "sub"), "npm ci"), decision);
   assert.equal(npmCiWorktreeLabel("npm ci", ctxOf(leaf)), expected);
@@ -61,4 +61,10 @@ test("a leaf is asked when the npm prefix would climb out of it", () => {
 
 test("win32 keeps the ask", () => {
   assert.equal(npmCiWorktreeLabel("npm ci", { ...ctxOf(leaf), platform: "win32" }), null);
+});
+
+test("win32 branch: a pi-subagents leaf asks, no label, on every platform", () => {
+  const ctx: MatchCtx = { ...ctxOf(leaf), platform: "win32" };
+  assert.equal(checkToolCall(rules, "bash", { command: "npm ci" }, ctx)?.kind, "ask");
+  assert.equal(npmCiWorktreeLabel("npm ci", ctx), null);
 });
