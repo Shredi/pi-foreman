@@ -71,6 +71,7 @@
   },
   "review": {
     "headless": false,
+    "childDefer": "deny",
     "critic": [
       "(1) Is this lean — how would Claude Code solve it, and is a deterministic rule, a classifier rule or a human the right layer?",
       "(2) Real repeated friction or a reviewer-invented edge case?",

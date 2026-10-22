@@ -132,6 +132,8 @@
       "node --test *",
       "python -m unittest *",
       "python3 -m unittest *",
+      "python3 -I -m unittest *",
+      "npx tsc --noEmit *",
       "pytest *",
       "ledger status *",
       "ledger mark *",
