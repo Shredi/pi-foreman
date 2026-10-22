@@ -282,6 +282,8 @@ interface Session {
   panels: PendingPanels;
   /** Foreman only: reviewer verdicts with the HEAD they covered, newest last, at most 50 (reviews.ts; the PR gate reads it). */
   reviews: ReviewRecord[];
+  /** R26 item 3: the latest counted review verdict is FAIL and no owner prompt came since; the next reviewer launch is a re-review (ledgerblock.ts reReviewLine). */
+  reviewFailOpen: boolean;
   /** Pending HEAD reads of `reviews`; the PR gate waits for it. */
   reviewSync: Promise<void>;
   /** Foreman only: review runs whose `N. PASS` items were marked (reviewmarks.ts), so each run marks once. */
@@ -561,6 +563,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewRuns: { byCall: new Map(), byRun: new Map(), blocks: new Map(), findings: new Map(), sync: Promise.resolve() },
       panels: new PendingPanels({ send: (text) => pi.sendMessage({ customType: "pi-foreman-panel", content: text, display: true }, { triggerTurn: false }), trace: (r) => s.trace?.emit(r), extra: () => prChecksLine(s) }),
       reviews: [],
+      reviewFailOpen: false,
       reviewSync: Promise.resolve(),
       reviewMarked: new Set(),
       passSnap: null,
@@ -1389,6 +1392,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const start = s.launchHeads.get(runId);
           s.launchHeads.delete(runId);
           for (const r of reviewsOfRunEnd(countingView(data, reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId))))) {
+            s.reviewFailOpen = r.verdict === "fail";
             s.reviewSync = s.reviewSync.then(async () => {
               const cwd = r.cwd ?? s.cwd;
               appendReview(s.reviews, { role: r.role, verdict: r.verdict, head: reviewedHead(start, cwd, await headOf(cwd)) });
@@ -1996,7 +2000,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === "subagent" && !s.isChild) {
         const lf = boundLedger(s.markerDir, s.id);
         const lg = (() => { try { return lf ? fs.readFileSync(lf, "utf8") : null; } catch { return null; } })();
-        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")))) s.trace?.emit(r);
+        // R26 item 3: a reviewer launched after an open FAIL names the head that FAIL reviewed (its record's head lands in reviewSync)
+        if (s.reviewFailOpen) await s.reviewSync;
+        const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null } : null;
+        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview)) s.trace?.emit(r);
       }
       if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input)) s.trace?.emit(r);
       if (event.toolName === "subagent" && climbs.length > 0) {
@@ -2131,6 +2138,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // D3: the owner is back in the loop, so revision rounds count from zero again.
     if (s && !s.isChild && isOwnerPrompt(event.source, event.text)) {
       s.chains.clear();
+      s.reviewFailOpen = false;
       s.trace?.emit({ event: "chain_clear", kind: event.source });
     }
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;

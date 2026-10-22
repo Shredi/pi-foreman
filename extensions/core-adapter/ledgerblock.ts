@@ -7,6 +7,7 @@
 // The rung-up path already carries the same lines in its handoff (ladder.ts handoffBlock), so an
 // entry that gets a handoff is skipped. Foreman side, in memory.
 import { ledgerLines } from "./ladder.ts";
+import { occasionOf } from "./occasion.ts";
 
 const CITES = /\bitems?\s+(?:\d+|V)\b|#\d+\b/i;
 
@@ -41,10 +42,19 @@ export function criticBlock(questions: readonly string[]): string {
 }
 
 /**
- * Prepend the block to the task of every fresh builder, reviewer and senior-reviewer step of a `subagent` input (single, tasks,
- * chain, parallel); a resume and the entries in `skip` (rung-up handoff) get none. Returns trace records.
+ * The re-review line (R26 item 3): a reviewer launched after an open FAIL reviews the revision diff, not the whole change. `sha` is the
+ * head that FAIL reviewed; null when it is unknown.
  */
-export function applyLedgerItems(input: Record<string, unknown>, ledger: string | null, skip: ReadonlySet<unknown> = new Set(), ledgerPath?: string | null, critic: readonly string[] = []): Record<string, unknown>[] {
+export function reReviewLine(sha: string | null): string {
+  return `[pi-foreman re-review] Review the revision diff since ${sha ?? "the reviewed head"} and run only the targeted tests the task names; do not run tsc or full suites (the foreman reports them).\n`;
+}
+
+/**
+ * Prepend the block to the task of every fresh builder, reviewer and senior-reviewer step of a `subagent` input (single, tasks,
+ * chain, parallel); a resume and the entries in `skip` (rung-up handoff) get none. A reviewer step gets the re-review line first when
+ * `reReview` is set (an open FAIL), except a `[plan-review]`, `[pre-pr]` or `[second-opinion]` task. Returns trace records.
+ */
+export function applyLedgerItems(input: Record<string, unknown>, ledger: string | null, skip: ReadonlySet<unknown> = new Set(), ledgerPath?: string | null, critic: readonly string[] = [], reReview: { sha: string | null } | null = null): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
   if (typeof input.action === "string") return out;
   const visit = (e: unknown): void => {
@@ -54,7 +64,8 @@ export function applyLedgerItems(input: Record<string, unknown>, ledger: string 
       const block = skip.has(e) ? "" : role === "builder" ? ledgerItemsBlock(ledger, e.task) : reviewLedgerBlock(ledger, e.task, ledgerPath);
       // the critic questions go into every reviewer and senior-reviewer task (a rung-up handoff entry included), after the ledger block
       const cb = role === "builder" ? "" : criticBlock(critic);
-      if (block || cb) e.task = block + cb + e.task;
+      const re = role === "reviewer" && reReview && occasionOf(e.task) === "item" ? reReviewLine(reReview.sha) : "";
+      if (block || cb || re) e.task = re + block + cb + e.task;
       if (block) out.push({ event: "ledger_block", role, chars: block.length });
     }
     for (const k of ["tasks", "chain", "parallel"]) if (Array.isArray(e[k])) e[k].forEach(visit);
