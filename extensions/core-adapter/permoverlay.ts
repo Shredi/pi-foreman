@@ -2014,6 +2014,12 @@ function protectedReader(core: string[], skip: Set<number>): boolean {
   const expands = (x: string): boolean => /[$`]/.test(x.replace(/^\$(?:\{HOME\}|HOME)(?=\/)/, ""));
   // an unresolved expansion in any quoting may supply an option or script (`I=-i; sed $I p D`, `P=--pre=x; rg $P p D`)
   if (args.some(expands)) return false;
+  // a read-only git subcommand (GIT_RO_SUBS) reads its path operands; `--output` names a file it writes
+  if (verb === "git") {
+    let k = 1;
+    while (k < core.length && core[k].startsWith("-")) k += /^-[Cc]$/.test(core[k]) ? 2 : 1;
+    return GIT_RO_SUBS.has(core[k] ?? "") && !has(/^--output\b/);
+  }
   if (!PROTECTED_READERS.has(verb)) return false;
   if (verb === "file") return !has(/^-[A-Za-z]*C|^--compile/);
   if (GREP_FAMILY.has(verb)) return !has(/^-[A-Za-z]*f|^--(pre|pre-glob|file|ignore-file|hostname-bin)/) && unitReadOnly(core, skip);
@@ -2257,7 +2263,8 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
         out.verbs?.push(off === 0 && v.core.length ? baseName(v.core[0]) : "");
         const reader = v.core.length > 0 && protectedReader(v.core, skip);
         if (!reader) out.rdr = false;
-        if (!PURE_VERBS.has(baseName(raw)) || !v.core.length || !PURE_VERBS.has(baseName(v.core[0]))) out.pure = false;
+        const gitRead = reader && baseName(v.core[0]) === "git";
+        if (!(PURE_VERBS.has(baseName(raw)) || gitRead) || !v.core.length || !(PURE_VERBS.has(baseName(v.core[0])) || gitRead)) out.pure = false;
         else if (!reader || !unitReadOnly(v.core, skip)) {
           if (!unitReadOnly(v.core, skip)) out.ro = false;
           // an output flag may carry its path attached (`gawk -oFILE`, `sort -k1 -oFILE`, `--output=FILE`, `-W dump-variables=FILE`): scan every tail of an option word
