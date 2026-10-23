@@ -10,6 +10,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { rmTestTmp } from "./_tmpbase.ts";
+import { dropBase, loadBase } from "./_r31c-base.ts";
 import { classify, effectCtx, SAFE_CLASSES } from "../effects.ts";
 import { deterministicAllow } from "../timeoutallow.ts";
 import type { BashRules } from "../timeoutallow.ts";
@@ -114,6 +115,31 @@ test("R4.3 / R5.3 bypasses ask (both roles)", { skip: !posix }, () => {
     assert.equal(allow(cmd), null, `orchestrator: ${cmd}`);
     assert.equal(allow(cmd, kidCtx()), null, `child: ${cmd}`);
   }
+});
+
+test("R4.2 / R5.2 the base asks: the base decides none of the BOTH shapes, and the orchestrator-only wget, with a net-read", { skip: !posix }, async (t) => {
+  const base = loadBase();
+  if (!base) return t.skip("base commit not in this clone");
+  try {
+    const oldAllow = (await base.load("timeoutallow")) as { deterministicAllow: (r: BashRules, c: string, o: unknown) => string | null };
+    const oldEff = (await base.load("effects")) as { classify: (c: string, x: unknown) => string; effectCtx: (...a: unknown[]) => unknown };
+    const octx = oldEff.effectCtx(repo, [], process.platform, [], "orchestrator", [orch]);
+    for (const cmd of [...BOTH, `curl -sSL -o ${orch}/f https://h.example/x`, "wget -q -O - https://h.example/x"]) {
+      assert.notEqual(oldAllow.deterministicAllow(rules, cmd, { effects: octx, scratchDirs: [orch] }), "net-read", `base: ${cmd}`);
+      assert.notEqual(oldEff.classify(cmd, octx), "net-read", `base class: ${cmd}`);
+      assert.equal(allow(cmd), "net-read", cmd);
+    }
+  } finally {
+    dropBase(base);
+  }
+});
+
+test("R4.3 npm tarball-like and file-like specs ask", { skip: !posix }, () => {
+  for (const cmd of ["npm view x.tgz", "npm view x@1.tgz", "npm view x.tar", "npm view x.tar.gz", "npm info x@1.0.0.tgz version", "npm ls x.tgz", "npm view @s/x.tgz", "npm view x@file:y", "npm view x@../y"]) {
+    assert.equal(allow(cmd), null, `orchestrator: ${cmd}`);
+    assert.equal(allow(cmd, kidCtx()), null, `child: ${cmd}`);
+  }
+  assert.equal(allow("npm view x@1.2.3 version"), "net-read");
 });
 
 test("R5.3 authority checks of netUrlOk", () => {

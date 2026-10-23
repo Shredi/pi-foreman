@@ -11,6 +11,7 @@ import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { buildOverlayRules, checkToolCall, ownStateRead, readBaseline } from "../permoverlay.ts";
 import type { MatchCtx, OverlayRules } from "../permoverlay.ts";
 import { ownUsageReadable } from "../roundsurface.ts";
+import { dropBase, loadBase } from "./_r31c-base.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(PKG)!;
@@ -114,4 +115,46 @@ test("R1.3 a child or a missing own-read set never passes", { skip: !posix }, ()
   assert.equal(ownStateRead(`grep x ${T}`, { ...main, ownReads: [] }), false);
   assert.notEqual(sh(`grep x ${T} | cut -c1-9`, { ...main, ownReads: undefined }), "pass");
   assert.equal(sh(`grep x ${T} | cut -c1-9`), "pass");
+});
+
+test("R1.2 the base asks: the base ownStateRead refuses the grep reads that pass now", { skip: !posix }, async (t) => {
+  const base = loadBase();
+  if (!base) return t.skip("base commit not in this clone");
+  try {
+    const old = (await base.load("permoverlay")) as { ownStateRead: (c: string, x: MatchCtx) => boolean };
+    for (const cmd of [`grep -c x ${T}`, `grep -n x ${U}`, `grep -nH -m 5 x ${T}`, `grep --color=never -iv x ${T}`, `grep x ${T} 2>&1 | head -5`]) {
+      assert.equal(old.ownStateRead(cmd, main), false, `base: ${cmd}`);
+      assert.equal(ownStateRead(cmd, main), true, cmd);
+    }
+  } finally {
+    dropBase(base);
+  }
+});
+
+test("R1.4 a chain naming another session's state file ends the allow (grep, cat, wc; ; && | )", { skip: !posix }, () => {
+  for (const verb of ["grep x", "cat", "wc -l", "head -3"]) {
+    const own = `${verb} ${T}`;
+    // the whole usage dir is an own record of cat/head/wc (base design); grep alone is narrowed to the exact own usage file
+    for (const other of [`${verb} ${TO}`, ...(verb.startsWith("grep") ? [`${verb} ${UO}`] : []), `${verb} ~/.pi/agent/pi-foreman/state/live/${OTHER}.json`, `${verb} ${T} ${TO}`]) {
+      for (const sep of [";", "&&", "||", "|"]) {
+        const cmd = `${own} ${sep} ${other}`;
+        assert.equal(ownStateRead(cmd, main), false, cmd);
+        assert.equal(ownStateRead(`${other} ${sep} ${own}`, main), false, `${other} ${sep} ${own}`);
+        assert.notEqual(sh(`${cmd} | cut -c1-9`), "pass", cmd);
+      }
+    }
+  }
+  // an own-only chain still passes
+  assert.equal(ownStateRead(`grep x ${T}; grep y ${U}`, main), true);
+  assert.equal(ownStateRead(`cat ${T} && wc -l ${T}`, main), true);
+});
+
+test("R1.5 quoting: $'..', a double quote with $, backtick or backslash end the grep allow; single quotes and plain double quotes pass", { skip: !posix }, () => {
+  for (const cmd of [`grep $'x' ${T}`, `grep $'a\\x41' ${T}`, `grep "a\\b" ${T}`, `grep "$X" ${T}`, `grep "a\`b" ${T}`, `grep a\\b ${T}`, `grep $"x" ${T}`, `grep "$(echo x)" ${T}`]) {
+    assert.equal(ownStateRead(cmd, main), false, cmd);
+    assert.notEqual(sh(`${cmd} | cut -c1-9`), "pass", cmd);
+  }
+  for (const cmd of [`grep 'a|b' ${T}`, `grep "ab" ${T}`, `grep 'a\\b' ${T}`, `grep -E "a|b" "$HOME/.pi/agent/pi-foreman/state/trace-${SID}.jsonl"`]) {
+    assert.equal(ownStateRead(cmd, main), true, cmd);
+  }
 });

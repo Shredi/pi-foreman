@@ -3120,6 +3120,29 @@ function ownReadOperands(words: string[]): string[] | null {
   return out;
 }
 
+/**
+ * R31c: the words of a parsed unit are written in plain quoting (the round-29 stop tokens): single-quoted text is literal, a double-quoted
+ * part has no `$` (but a leading `$HOME/`), backtick or backslash, and no ANSI-C `$'..'`, `$".."` or unquoted backslash appears.
+ */
+function plainQuoting(unit: string[], command: string): boolean {
+  return (WORD_SPANS.get(unit) ?? []).every(([s, e]) => {
+    const raw = command.slice(s, e);
+    // the parser starts a word at the quote of a leading `$".."` (the `$` is dropped), so look one character back
+    if (command[s - 1] === "$" && /^["']/.test(raw)) return false;
+    let q = "";
+    for (let i = 0; i < raw.length; i++) {
+      const c = raw[i];
+      if (q === "'") q = c === "'" ? "" : q;
+      else if (c === "'" || c === '"') {
+        if (!q) q = c;
+        else if (q === c) q = "";
+      } else if (c === "\\" || c === "`") return false;
+      else if (c === "$" && (raw[i + 1] === "'" || raw[i + 1] === '"' || (q === '"' && !/^\$\{?HOME\}?\//.test(raw.slice(i))))) return false;
+    }
+    return true;
+  });
+}
+
 const USAGE_PY = /^\s*(?:import\s+json\s*;\s*)?print\(\s*(?:open\(\s*(['"])([^'"\\$`]+)\1\s*\)\.read\(\s*\)|json\.load\(\s*open\(\s*(['"])([^'"\\$`]+)\3\s*\)\s*\))\s*\)\s*;?\s*$/;
 
 /**
@@ -3240,7 +3263,7 @@ export function ownStateRead(command: string, ctx0: MatchCtx): boolean {
         reads++;
         continue;
       }
-      if (USAGE_VERBS.has(verb) && protectedReader(words, new Set())) {
+      if (USAGE_VERBS.has(verb) && protectedReader(words, new Set()) && (verb !== "grep" || plainQuoting(unit0, command))) {
         const operands = ownReadOperands(words);
         if (operands?.length && operands.every(verb === "grep" ? grepOwn : own)) {
           reads++;
@@ -3252,6 +3275,8 @@ export function ownStateRead(command: string, ctx0: MatchCtx): boolean {
         continue;
       }
       if (words.slice(1).some(own)) return false;
+      // R31c: a chain unit that is not an own-record read names no other state or trace file (another session's trace, usage or presence record)
+      if (words.slice(1).some((w) => pathCandidates(w, ctx).some((x) => /\/pi-foreman\/state(?:\/|$)|\/trace-[^/]*\.jsonl$/.test(x.replace(/\\/g, "/"))))) return false;
       if (VERSION_PROBE.test(verb) && words.length === 2 && (words[1] === "--version" || words[1] === "-V" || words[1] === "-v")) continue;
       // R14 item 4: the chair's `…; git log --oneline -8` tail (plain history flags only, no pager/format/output option)
       if (verb === "git" && words[1] === "log" && words.slice(2).every((w, k, a) => /^(?:--oneline|--decorate|--graph|--stat|-\d{1,3}|--max-count=\d{1,3})$/.test(w) || (/^\d{1,3}$/.test(w) && a[k - 1] === "-n") || w === "-n")) continue;

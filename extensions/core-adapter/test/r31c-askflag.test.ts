@@ -99,3 +99,16 @@ test("A6 a flag never allows: the flagged shape still asks", () => {
     assert.ok(!fs.readFileSync(path.resolve(here, "..", n), "utf8").includes("ask_flag"), n);
   }
 });
+
+test("A7 the ask_flag event carries its time (ts) and lands in the session's own trace file", () => {
+  const f = new AskFlag();
+  f.overlay({ command: "git fetch origin", rule: "r", approved: true, session: "sess" });
+  const t = openTrace({ enabled: true, dir: w, stateDir: w, sessionId: "sess", now: () => new Date(Date.UTC(2026, 9, 23, 10, 0, 0)) })!;
+  t.emit(f.flag("sess")!);
+  assert.equal(path.basename(t.file), "trace-sess.jsonl");
+  const out = JSON.parse(fs.readFileSync(t.file, "utf8").trim().split("\n").pop()!) as Record<string, unknown>;
+  assert.equal(out.ts, "2026-10-23T10:00:00.000Z");
+  assert.equal(out.event, "ask_flag");
+  // a flag of another session writes nothing
+  assert.equal(f.flag("other"), null);
+});

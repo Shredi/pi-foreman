@@ -85,6 +85,49 @@ test("R6.3 smuggling and body probes still ask", { skip: !posix }, () => {
   assert.equal(ownHandoffHeredoc("bash", `cat > ${T} <<'EOF'\nEOF\nEOF\nx`, [own], w), false);
 });
 
+test("R6.4 more heredoc probes: terminators, extra text, targets and roles still ask", { skip: !posix }, () => {
+  const T = `${own}/plan.md`;
+  fs.mkdirSync(path.join(own, "update-dir.md"));
+  for (const cmd of [
+    // an early terminator: what follows the first terminator line runs as shell
+    `cat > ${T} <<'EOF'\nx\nEOF\nsh -c 'echo ruling > ${own}/ruling.md'\nEOF\n`,
+    `cat > ${T} <<'EOF'\nx\nEOF\n\ncp /tmp/r ${own}/brief-1.md\n`,
+    `cat > ${T} <<'EOF'\nruling\nEOF \n`,
+    `cat > ${T} <<'EOF'\nruling\n EOF`,
+    `cat > ${T} <<'EOF' extra\nruling\nEOF`,
+    `cat > ${T} <<'EOF' | sh\nruling\nEOF`,
+    `cat > ${T} <<'EOF' &\nruling\nEOF`,
+    `cat > ${T} <<'EOF'; cp /tmp/r ${own}/ruling.md\nruling\nEOF`,
+    `cat > ${T} <<'EOF'\nruling\nEOF\n;sh <<'EOF'\nx\nEOF\n`,
+    `cat > ${T} <<<'ruling'`,
+    `cat > ${T} <<'EOF' >> ${own}/result.md\nruling\nEOF`,
+    `cat ${own}/ruling.md > ${T} <<'EOF'\nruling\nEOF`,
+    `cd ${own} && cp /tmp/r plan.md <<'EOF'\nruling\nEOF`,
+    `cd ${own} && cat > ruling.md <<'EOF'\nruling\nEOF`,
+    `cat > ${own}/update-dir.md <<'EOF'\nruling\nEOF`,
+    `cat > ${own}/gone/plan.md <<'EOF'\nruling\nEOF`,
+    `cat > ${T}\x00 <<'EOF'\nruling\nEOF`,
+    `cat > ${T} <<'EOF'\nruling\nEOF\ncat > ${own}/ruling.md <<'EOF'\nruling\nEOF`,
+    `sh <<'EOF'\ncat > ${own}/ruling.md\nEOF`,
+    `cat > ${own}/steer-1.md <<'EOF'\nruling\nEOF`,
+    `cat > ${own}/ruling-final.md <<'EOF'\nruling\nEOF`,
+    `cat > ${own}/brief-3.md <<'EOF'\nbrief\nEOF`,
+  ]) {
+    assert.equal(ask(cmd), true, cmd);
+    assert.equal(ask(cmd, "foreman_bg"), true, `foreman_bg: ${cmd}`);
+  }
+  // the same grammar through ownHandoffHeredoc: a child session (orchestrator false) and a missing child dir never lift
+  assert.equal(ask(hd(T), "bash", false), true);
+  assert.equal(selfRulingAsk("bash", { command: hd(T) }, [], { cwd: w, orchestrator: true }), undefined);
+  assert.equal(ownHandoffHeredoc("powershell", hd(T), [own], w), false);
+  assert.equal(ownHandoffHeredoc("bash", `cat > ${T} <<'EOF'\r\nx\r\nEOF\r\n`, [own], w), false);
+  // a name that is not yet there is fine; a name in a dir that is not the session's child dir is not lifted
+  assert.equal(ownHandoffHeredoc("bash", hd(`${own}/ask-new.md`), [own], w), true);
+  assert.equal(ownHandoffHeredoc("bash", hd(`${other}/plan.md`), [own], w), false);
+  // a heredoc whose body holds quotes, `$(..)` and a `ruling` word is data: only the one command passes
+  assert.equal(ask(`cat > ${T} <<'EOF'\ndon't "ruling" $(touch x) \`id\`\nEOF\n`), false);
+});
+
 test("R2.1 the child npm ci ask names the bare form", { skip: !posix }, () => {
   const baseline = readBaseline(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", ".."))!;
   const rules = buildOverlayRules(baseline, {}, {}, path.join(w, "home", ".pi", "agent"), w, undefined, false);
