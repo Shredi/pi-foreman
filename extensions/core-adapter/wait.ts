@@ -63,7 +63,7 @@ export function waitLimits(read: (key: keyof WaitLimits) => unknown): WaitLimits
 export type ValidSpec =
   | { kind: "timer"; seconds: number; note: string }
   | { kind: "file"; path: string; note: string }
-  | { kind: "pid"; pid: number; note: string; log?: string }
+  | { kind: "pid"; pid: number; note: string; log?: string; bg?: true }
   | { kind: "ci"; runId: string; note: string; log?: string }
   | { kind: "child"; label: string; note: string }
   /** Adapter-started: critical = wake when the level drops below critical (or after `boundSeconds`); queue = wake when no run is active. */
@@ -288,6 +288,8 @@ interface Entry {
   log?: string;
   /** pid waits: the watched process (a second wait on it dedupes). */
   pid?: number;
+  /** pid waits of foreman_bg (bg.ts): the children widget shows them as bg rows. */
+  bg?: true;
   started: number;
   deadline: number;
   handles: unknown[];
@@ -349,6 +351,7 @@ export class WaitRuntime {
     if (spec.kind === "child") e.label = spec.label;
     else if ((spec.kind === "pid" || spec.kind === "ci") && spec.log) e.log = spec.log;
     if (spec.kind === "pid") e.pid = spec.pid;
+    if (spec.kind === "pid" && spec.bg) e.bg = true;
     if (spec.kind === "pressure") e.press = { mode: spec.mode, args: spec.args };
     this.waits.set(id, e);
     if (spec.kind === "pressure") {
@@ -462,9 +465,9 @@ export class WaitRuntime {
     return [...this.waits.keys()].filter((id) => this.cancel(id));
   }
 
-  list(): { id: string; kind: WaitKind; note: string; ageSeconds: number; leftSeconds: number; log?: string }[] {
+  list(): { id: string; kind: WaitKind; note: string; ageSeconds: number; leftSeconds: number; log?: string; bg?: true }[] {
     const now = this.d.now();
-    return [...this.waits.values()].map((e) => ({ id: e.id, kind: e.kind, note: e.note, ageSeconds: Math.round((now - e.started) / 1000), leftSeconds: Math.max(0, Math.round((e.deadline - now) / 1000)), ...(e.log ? { log: e.log } : {}) }));
+    return [...this.waits.values()].map((e) => ({ id: e.id, kind: e.kind, note: e.note, ageSeconds: Math.round((now - e.started) / 1000), leftSeconds: Math.max(0, Math.round((e.deadline - now) / 1000)), ...(e.log ? { log: e.log } : {}), ...(e.bg ? { bg: true as const } : {}) }));
   }
 
   private sendWake(outcomes: Outcome[]): void {
@@ -749,7 +752,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       const log = bgLogPath(path.join(s.agentDir, "pi-foreman", "state"), s.id, id);
       const run = spawnDetached(command, ctx.cwd, log, deps.platform);
       if ("error" in run) return refuse(run.error);
-      const spec: ValidSpec = { kind: "pid", pid: run.pid, note, log };
+      const spec: ValidSpec = { kind: "pid", pid: run.pid, note, log, bg: true };
       const r = rt.start(spec);
       if ("error" in r) {
         try {
