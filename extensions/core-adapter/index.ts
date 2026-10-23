@@ -139,6 +139,7 @@ import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEO
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { chainsOf, restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
+import { planSizing, prependProbe, rungOfModel, sizingConfig, sizingTrace, takeSizing, topModel as sizingTopModel, type EntryPlan, type RungContext } from "./sizing.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
 import { asyncResultReads, asyncRunDirs, bashOutputLogs, recordBashOutputLog, childReadable, childSurface, hubWorkflowDirs, hubWorkflowReadable, mainWorkflowReadable, ownTaskReadable, ownUsageReadable, piScratchReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { CustomSeen, isSubagentWake } from "./idlecustom.ts";
@@ -1162,6 +1163,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewPerRevision: get(s.config.config, "ceremony.reviewPerRevision") === false ? "off" : "on",
       trivialPath: trivialBuilderPath(get(s.config.config, "ceremony.required")) ? "builder" : "off",
       ladder: "on",
+      // Launch sizing (sizing.ts): the builder launch carries size and risk ("off" only renders the eee843d baseline).
+      sizing: sizingConfig(s.config.config).enabled ? "on" : "off",
       // Multi-session plan for a heavy task with several phases (sessions.md; "off" only renders the eee843d baseline).
       multiSession: "on",
       "tools.pr": s.prPack ? "on" : "off",
@@ -1378,6 +1381,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const items = failedItemsOf(r.text);
               if (items.length > 0) s.failItems = items;
               else if (r.verdict === "pass") s.failItems = [];
+              if (r.verdict === "pass" && (r.occasion === "item" || r.occasion === "pre-pr")) s.ladder.probeRisks.clear(); // R39: the bypass probes were asked for and the review passed
             }
             // Lane 3g: the real end of each role of the run, with the run's priced cost and duration from the presence row.
             const info = s.widget.runs.info(runId);
@@ -1722,6 +1726,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let ladderRoles: Record<string, Json> | undefined;
       let reviewerClimbs: ReviewerClimb[] = [];
       let reviewerTraces: Record<string, unknown>[] = [];
+      let sized: ReturnType<typeof takeSizing> | null = null;
+      let sizedPlans: EntryPlan[] = [];
+      let sizingClimbs: ReadonlySet<Json> = new Set();
+      let sizingTop: string | null = null;
       let occasions = new Map<Record<string, unknown>, Occasion>();
       let panel: ReturnType<typeof primaryPanel> = null;
       let shadow: ShadowDecision = { kind: "none" };
@@ -1729,6 +1737,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
         stripBinding(input);
         rawLaunch = JSON.parse(JSON.stringify(input)) as Record<string, unknown>; // the arguments as the model gave them, for a deferred or queued launch
+        // R39 launch sizing (sizing.ts): `size` and `risk` leave every launch here (after the copy, so a relaunch is sized again); malformed ones refuse only the foreman's own launches.
+        sized = takeSizing(input);
+        if (sized.error && !s.isChild && actionOf(input) === null && sizingConfig(s.config.config).enabled) {
+          s.trace?.emit({ event: "launch_refused", reason: "sizing_invalid", tier: s.ceremony.tier, ...launchDeny(input) });
+          return { block: true, reason: sized.error };
+        }
         const resolution = await currentRoles(s, ctx);
         const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
         const act = subagentActionCheck(input, { allowWorkflow, runs: s.runs, allowed: childRoleIds(get(s.config.config, "roles")), resolution, maxThinking: get(s.config.config, "maxThinking") });
@@ -1823,6 +1837,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return { block: true, reason: rc.text };
           }
           if (s.failItems.length > 0) for (const [e, occ] of occasions) if (occ === "item" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependReReview(e.task, s.failItems);
+          // R39: builders launched with a strong risk tag (sizing.ts): the next item or pre-pr reviewer is asked for bypass probes.
+          if (s.ladder.probeRisks.size > 0) for (const [e, occ] of occasions) if ((occ === "item" || occ === "pre-pr") && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependProbe(e.task, s.ladder.probeRisks);
           pendingReviews = Math.max(0, reviewCount);
           pendingPlanReviews = planCount;
         }
@@ -1855,7 +1871,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // Ladder (ladder.ts): a strong launch needs a reason or a trigger; rank policy (ranks.ts) after the models are written.
         // A panel shadow skips it: no climb, no live rung.
         if (!s.isChild && actionOf(input) === null && shadow.kind !== "launch") {
-          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined, ranks: ranksOf(s.config.config) });
+          // Launch sizing (sizing.ts): the rung of each builder entry from its measured size and risk; a climbing entry gets model "strong" and the ladder reason `sizing`.
+          if (sized && sizingConfig(s.config.config).enabled) {
+            const maxT = get(s.config.config, "maxThinking");
+            const childT = get(s.config.config, "childMaxThinking");
+            const wanted = sizingTopModel(s.config.config, resolution.roles, maxT, childT);
+            sizingTop = wanted && rankRefusalFor(s.config.config, foremanAt, wanted, ["builder"]) === null ? wanted : null;
+            const sp = planSizing(input, sized.entries, sized.carried, { config: s.config.config, roles: resolution.roles, ranks: ranksOf(s.config.config), cwd: ctx.cwd, tier: s.ceremony.tier, revisionClimb: revClimb !== null, pressureHigh: pressureHigh !== null, top: sizingTop });
+            if (sp.block) {
+              s.trace?.emit({ event: "launch_refused", reason: sp.block.includes("[sizing_below]") ? "sizing_below" : "sizing_invalid", tier: s.ceremony.tier, ...launchDeny(input) });
+              return { block: true, reason: sp.block };
+            }
+            sizedPlans = sp.plans;
+            sizingClimbs = sp.climbs;
+            if (pressureHigh && sizedPlans.some((p) => p.suppressed)) s.trace?.emit({ event: "climb_suppressed", level: "high", reasons: pressureHigh.join(","), reason: "sizing" });
+          }
+          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined, ranks: ranksOf(s.config.config), sizing: sizingClimbs });
           if (lp.block) {
             s.trace?.emit({ event: "launch_refused", reason: "strong_no_reason", tier: s.ceremony.tier, ...launchDeny(input) });
             return { block: true, reason: lp.block };
@@ -1877,6 +1908,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         const foremanAt0 = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null;
         const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking"), explicit: (role, m) => explicitModelAllowed(s.config.config, foremanAt0, m, role) });
+        if (sizedPlans.length > 0) {
+          // The top rung is written after the mapped models, like the research floor; its rung_up names it.
+          for (const p of sizedPlans) {
+            if (!p.combo.climb || p.suppressed || p.target !== "top" || !sizingTop) continue;
+            p.entry.model = sizingTop;
+            for (const c of climbs) if (c.entry === p.entry) c.to = splitLevel(sizingTop).base;
+          }
+          const rungs: RungContext = { roles: resolution.roles, ranks: ranksOf(s.config.config), top: sizingTop };
+          for (const p of sizedPlans) s.trace?.emit(sizingTrace(p, p.role === "builder" && typeof p.entry.model === "string" ? (rungOfModel(p.entry.model, rungs) ?? "default") : "default"));
+        }
         // A panel shadow runs on its own model (rank-checked in shadowLaunch): no occasion override, rank loop or different-model rule.
         if (shadow.kind === "launch") input.model = shadow.model;
         else if (!s.isChild && actionOf(input) === null) {
@@ -2039,7 +2080,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit(shadow.trace);
       }
       // The live rung of every launched role (ladder.ts LadderState.live): single, tasks, chain and parallel.
-      if (event.toolName === "subagent" && ladderRoles) s.ladder.noteLaunched(input);
+      if (event.toolName === "subagent" && ladderRoles) {
+        s.ladder.noteLaunched(input);
+        for (const p of sizedPlans) for (const t of p.probe) s.ladder.probeRisks.add(t);
+      }
       let limits: LadderLimits | undefined;
       const single = event.toolName === "subagent" && !s.isChild ? singleLaunchRole(input) : null;
       if (single && ladderRoles) {

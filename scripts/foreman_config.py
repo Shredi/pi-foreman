@@ -227,6 +227,7 @@ IGNORED_KEYS = [
     (("ladder", "reviewerClimb"), "the ladder and the child rank policy come from the user or overlay config"),
     (("ladder", "research"), "the fact-critical research rung comes from the user or overlay config"),
     (("ladder", "reviewPanel"), "the review panel's models come from the user or overlay config"),
+    (("ladder", "sizing"), "the launch sizing rules come from the user or overlay config"),
     (("providers", "*", "ranks"), "model ranks decide which children may launch: user or overlay config only"),
     (("providers", "*", "strongAbove"), "the ladder comes from the user or overlay config"),
     (("providers", "*", "childMaxTurns"), "the ladder comes from the user or overlay config"),
