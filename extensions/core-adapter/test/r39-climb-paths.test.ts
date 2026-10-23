@@ -151,14 +151,49 @@ test("(c) a counted reviewer FAIL, then a builder relaunch with no model, climbs
   assert.deepEqual(events(a, "rung_up").map((r) => [r.to, r.reason]), [["fake/strong", "review_fail"]]);
 });
 
-test("(d) high pressure keeps the bottom rung and the receipt names the suppression", async (t) => {
+test("(d) high pressure keeps an explicit strong climb: strong rung, receipt names it, no climb_suppressed", async (t) => {
   const a = await rig(t, { strong: true });
   a.setHigh();
   const input: Record<string, unknown> = { agent: "builder", task: "[[small]] item 1", model: "strong", reason: "bottom rung cannot do it" };
   assert.equal(await a.launch("c1", input), undefined);
-  assert.equal(input.model, "fake/bottom");
-  assert.equal(await a.receipt("c1", input, "run-1"), "pi-foreman: launched builder on fake/bottom (bottom rung: strong climb suppressed, pressure high).");
-  assert.equal(events(a, "climb_suppressed").length, 1);
+  assert.equal(input.model, "fake/strong");
+  assert.equal(await a.receipt("c1", input, "run-1"), "pi-foreman: launched builder on fake/strong.");
+  assert.deepEqual(events(a, "climb_suppressed"), []);
+  assert.deepEqual(events(a, "rung_up").map((r) => [r.to, r.reason]), [["fake/strong", "foreman"]]);
+});
+
+test("(d2) high pressure keeps the RUNG_UP: context relaunch on the strong rung", async (t) => {
+  const a = await rig(t, { strong: true });
+  a.setHigh();
+  const first: Record<string, unknown> = { agent: "builder", task: "[[small]] item 1" };
+  assert.equal(await a.launch("b1", first), undefined);
+  await a.receipt("b1", first, "run-b");
+  a.ended("run-b", "builder", "RUNG_UP: context\nDone: half\nRemaining: tests");
+  const relaunch: Record<string, unknown> = { agent: "builder", task: "continue item 1", model: "strong" };
+  assert.equal(await a.launch("b2", relaunch), undefined);
+  assert.equal(relaunch.model, "fake/strong");
+  assert.equal(await a.receipt("b2", relaunch, "run-b2"), "pi-foreman: launched builder on fake/strong.");
+  assert.deepEqual(events(a, "rung_up").map((r) => [r.to, r.reason]), [["fake/strong", "context"]]);
+  assert.deepEqual(events(a, "climb_suppressed"), []);
+});
+
+test("(d3) high pressure keeps the review-FAIL revision climb on the strong rung", async (t) => {
+  const a = await rig(t, { strong: true });
+  a.setHigh();
+  const build: Record<string, unknown> = { agent: "builder", task: "[[small]] item 1" };
+  assert.equal(await a.launch("b1", build), undefined);
+  await a.receipt("b1", build, "run-b");
+  a.ended("run-b", "builder", "done");
+  const review: Record<string, unknown> = { agent: "reviewer", task: "review item 1" };
+  assert.equal(await a.launch("r1", review), undefined);
+  await a.receipt("r1", review, "run-r");
+  a.ended("run-r", "reviewer", "Verdict: FAIL\n- a finding");
+  const rev: Record<string, unknown> = { agent: "builder", task: "fix the finding" };
+  assert.equal(await a.launch("b2", rev), undefined);
+  assert.equal(rev.model, "fake/strong");
+  assert.equal(await a.receipt("b2", rev, "run-b2"), "pi-foreman: launched builder on fake/strong.");
+  assert.deepEqual(events(a, "rung_up").map((r) => [r.to, r.reason]), [["fake/strong", "review_fail"]]);
+  assert.deepEqual(events(a, "climb_suppressed"), []);
 });
 
 test("(e) no strong rung mapped: a revision stays on the bottom rung, revision_no_strong is traced and the receipt says so", async (t) => {

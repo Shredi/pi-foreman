@@ -209,12 +209,12 @@ test("planSizing: strong climbs per entry, undeclared and not_builder are traced
   assert.deepEqual(sizingTrace(p.plans[0], "strong"), { event: "launch_sizing", role: "builder", rule: "large_file", rung: "strong", base: "default", files: 1, lines: 1700, declaredLines: 0, modules: 1, declaredModules: 0, outside: 0 });
   assert.equal(c.model, undefined);
   assert.equal(d.model, undefined);
-  // pressure drops the climb and says so
+  // the pressure option is gone: a climb is never dropped by planSizing
   const hi = mk();
   const t2 = takeSizing(hi);
-  const ph = planSizing(hi, t2.entries, t2.carried, { ...o, pressureHigh: true });
-  assert.equal((hi.tasks as Record<string, unknown>[])[0].model, undefined);
-  assert.deepEqual([ph.plans[0].suppressed, ph.plans[0].combo.note], [true, ["suppressed"]]);
+  const ph = planSizing(hi, t2.entries, t2.carried, o);
+  assert.equal((hi.tasks as Record<string, unknown>[])[0].model, "strong");
+  assert.deepEqual(ph.plans[0].combo.note, []);
   // below the rung
   const low = { agent: "builder", task: "x", model: "default", size: { files: ["scripts/big.py"] } };
   const t3 = takeSizing(low);

@@ -310,8 +310,6 @@ export interface EntryPlan {
   /** Strong risk tags the next item or pre-pr reviewer is asked to probe. */
   probe: string[];
   combo: Combination;
-  /** High host pressure: the climb is dropped. */
-  suppressed: boolean;
 }
 
 export interface SizingOptions {
@@ -322,7 +320,6 @@ export interface SizingOptions {
   tier: string | undefined;
   /** A revision climb (ladder.ts revisionClimb) applies to this call: the existing logic already gives strong. */
   revisionClimb: boolean;
-  pressureHigh: boolean;
   /** The vetted top model (rank policy passed), or null. */
   top: string | null;
 }
@@ -342,7 +339,7 @@ export function planSizing(input: Json, taken: Map<Json, Declared>, carried: Rea
     const role = e.agent as string;
     const none: Combination = { note: [] };
     if (role !== "builder") {
-      if (carried.has(e)) plans.push({ entry: e, role, rule: "not_builder", base: "default", target: "default", measured: null, risk: [], probe: [], combo: none, suppressed: false });
+      if (carried.has(e)) plans.push({ entry: e, role, rule: "not_builder", base: "default", target: "default", measured: null, risk: [], probe: [], combo: none });
       continue;
     }
     const passedRaw = e.model ?? input.model;
@@ -350,7 +347,7 @@ export function planSizing(input: Json, taken: Map<Json, Declared>, carried: Rea
     const passed: Rung | null | "none" = passedStr === null ? "none" : rungOfModel(passedStr, ctx);
     const base: Rung = passedStr !== null ? (passed === "none" || passed === null ? "default" : passed) : o.tier === "heavy" || o.revisionClimb ? "strong" : "default";
     if (!d.size && !d.risk) {
-      plans.push({ entry: e, role, rule: "undeclared", base, target: "default", measured: null, risk: [], probe: [], combo: none, suppressed: false });
+      plans.push({ entry: e, role, rule: "undeclared", base, target: "default", measured: null, risk: [], probe: [], combo: none });
       continue;
     }
     const risk = d.risk ?? [];
@@ -361,13 +358,11 @@ export function planSizing(input: Json, taken: Map<Json, Declared>, carried: Rea
     const reasonRaw = e.reason ?? input.reason;
     const combo = combine({ target, capped: target !== dec.rung, passed, base, reason: typeof reasonRaw === "string" && reasonRaw.trim() !== "", hasStrong: strongMapped });
     if (combo.refuse) return { block: belowMessage(dec.rule, target, m), plans: [], climbs };
-    const suppressed = combo.climb === true && o.pressureHigh;
-    if (suppressed) combo.note.push("suppressed");
-    else if (combo.climb) {
+    if (combo.climb) {
       e.model = "strong";
       climbs.add(e);
     }
-    plans.push({ entry: e, role, rule: dec.rule, base, target, measured: m, risk, probe: risk.filter((r) => cfg.strongRisks.includes(r)), combo, suppressed });
+    plans.push({ entry: e, role, rule: dec.rule, base, target, measured: m, risk, probe: risk.filter((r) => cfg.strongRisks.includes(r)), combo });
   }
   return { plans, climbs };
 }

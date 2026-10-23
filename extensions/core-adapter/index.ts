@@ -1723,7 +1723,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let rounds: LaunchRounds | undefined;
       let kind: LaunchKind | undefined;
       let climbs: Climb[] = [];
-      let pressureHigh: string[] | null = null;
       let rawLaunch: Record<string, unknown> = {};
       let ladderRoles: Record<string, Json> | undefined;
       let reviewerClimbs: ReviewerClimb[] = [];
@@ -1789,7 +1788,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return { block: true, reason: `${criticalReason(p.reasons)}${"error" in w ? ` (no wait could be started: ${w.error}; relaunch with: ${JSON.stringify(args)})` : ""}` };
           }
           if (p.level === "high") {
-            pressureHigh = p.reasons;
             const queued = await narrowLaunch(s, ctx, event.toolCallId, input, rawLaunch, p);
             if (queued) return { block: true, reason: queued };
           }
@@ -1853,7 +1851,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         let revClimb: "revision" | "review_fail" | null = null;
         const bottomWhy = new Map<string, string>();
         const noStrong = "no strong rung mapped";
-        const suppressed = "strong climb suppressed, pressure high";
         if (steps.length > 0) {
           s.chains.enter(chainKey(input, s.chains.key));
           if (s.chains.applyRuling(childDirsOf(s), selfRulingsFor(s))) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: "ruling_reset" });
@@ -1874,7 +1871,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           }
           if (revClimb === "review_fail" && !hasStrongRung(resolution.roles, "builder")) revClimb = null; // no strong rung: no-op
           preferStrong = revClimb !== null && !keyword;
-          if (pressureHigh && preferStrong) (preferStrong = false), bottomWhy.set("builder", suppressed); // no strong climb under high pressure (traced below)
           kind = revision ? (preferStrong ? "strong-relaunch" : "revision") : undefined;
         }
         // Ladder (ladder.ts): a strong launch needs a reason or a trigger; rank policy (ranks.ts) after the models are written.
@@ -1886,15 +1882,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const childT = get(s.config.config, "childMaxThinking");
             const wanted = sizingTopModel(s.config.config, resolution.roles, maxT, childT);
             sizingTop = wanted && rankRefusalFor(s.config.config, foremanAt, wanted, ["builder"]) === null ? wanted : null;
-            const sp = planSizing(input, sized.entries, sized.carried, { config: s.config.config, roles: resolution.roles, ranks: ranksOf(s.config.config), cwd: ctx.cwd, tier: s.ceremony.tier, revisionClimb: revClimb !== null, pressureHigh: pressureHigh !== null, top: sizingTop });
+            const sp = planSizing(input, sized.entries, sized.carried, { config: s.config.config, roles: resolution.roles, ranks: ranksOf(s.config.config), cwd: ctx.cwd, tier: s.ceremony.tier, revisionClimb: revClimb !== null, top: sizingTop });
             if (sp.block) {
               s.trace?.emit({ event: "launch_refused", reason: sp.block.includes("[sizing_below]") ? "sizing_below" : "sizing_invalid", tier: s.ceremony.tier, ...launchDeny(input) });
               return { block: true, reason: sp.block };
             }
             sizedPlans = sp.plans;
             sizingClimbs = sp.climbs;
-            for (const p of sizedPlans) if (pressureHigh && p.suppressed) bottomWhy.set(p.role, suppressed);
-            if (pressureHigh && sizedPlans.some((p) => p.suppressed)) s.trace?.emit({ event: "climb_suppressed", level: "high", reasons: pressureHigh.join(","), reason: "sizing" });
           }
           const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined, ranks: ranksOf(s.config.config), sizing: sizingClimbs });
           if (lp.block) {
@@ -1902,17 +1896,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return { block: true, reason: lp.block };
           }
           climbs = lp.climbs;
-          if (pressureHigh && (climbs.length > 0 || revClimb !== null)) {
-            // High pressure: the launch stays on the bottom rung; an explicit `strong` keyword is dropped, any other model the owner named stays.
-            for (const c of climbs) {
-              bottomWhy.set(c.role, suppressed);
-              if (typeof c.entry.model === "string" && splitLevel(c.entry.model.trim()).base === "strong") delete c.entry.model;
-            }
-            if (revClimb !== null && !bottomWhy.has("builder")) bottomWhy.set("builder", suppressed);
-            if (typeof input.model === "string" && splitLevel(input.model.trim()).base === "strong") delete input.model;
-            climbs = [];
-            s.trace?.emit({ event: "climb_suppressed", level: "high", reasons: pressureHigh.join(",") });
-          }
           ladderRoles = resolution.roles;
           // ladder.reviewerClimb (reviewerclimb.ts): the reviewer's diff is taken here, before its model is picked; the facts reuse it.
           await s.reviewRuns.sync; // earlier run ends' findings are recorded (and traced) first
@@ -1927,7 +1910,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (sizedPlans.length > 0) {
           // The top rung is written after the mapped models, like the research floor; its rung_up names it.
           for (const p of sizedPlans) {
-            if (!p.combo.climb || p.suppressed || p.target !== "top" || !sizingTop) continue;
+            if (!p.combo.climb || p.target !== "top" || !sizingTop) continue;
             p.entry.model = sizingTop;
             for (const c of climbs) if (c.entry === p.entry) c.to = splitLevel(sizingTop).base;
           }

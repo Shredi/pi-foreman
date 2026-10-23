@@ -145,7 +145,7 @@ test("ranks: a lower-ranked raw id is below, a raw id at or above passes", async
   assert.equal(up.model, "fake/huge");
 });
 
-test("high pressure drops the sizing climb: climb_suppressed reason sizing, launch_sizing suppressed", async (t) => {
+test("high pressure keeps the sizing climb: strong rung, rung_up sizing, no climb_suppressed", async (t) => {
   const a = await rig(t);
   big(a);
   const at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -153,10 +153,30 @@ test("high pressure drops the sizing climb: climb_suppressed reason sizing, laun
   fs.writeFileSync(pressurePath(a.agentDir), JSON.stringify({ level: "high", reasons: ["load"], at, host: {} }));
   const input = builder({ size: { files: ["big.py"] } });
   assert.equal((await a.launch(input)).res, undefined);
-  assert.equal(input.model, "fake/builder");
-  assert.deepEqual(a.events("climb_suppressed").map((r) => [r.level, r.reason]), [["high", "sizing"]]);
-  assert.equal(sizing(a)[0].note, "suppressed");
-  assert.deepEqual(a.events("rung_up"), []);
+  assert.equal(input.model, "fake/strong");
+  assert.deepEqual(a.events("climb_suppressed"), []);
+  assert.ok(!("note" in sizing(a)[0]));
+  assert.deepEqual(a.events("rung_up").map((r) => [r.role, r.reason]), [["builder", "sizing"]]);
+});
+
+test("high pressure keeps the sizing top rung; a refused top falls back to strong via capped only", async (t) => {
+  const high = async (a: Rig): Promise<void> => {
+    const at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+    fs.mkdirSync(path.dirname(pressurePath(a.agentDir)), { recursive: true });
+    fs.writeFileSync(pressurePath(a.agentDir), JSON.stringify({ level: "high", reasons: ["load"], at, host: {} }));
+  };
+  const a = await rig(t, { ranks: RANKS });
+  await high(a);
+  const input = builder({ risk: ["design"] });
+  assert.equal((await a.launch(input)).res, undefined);
+  assert.equal(input.model, "fake/huge");
+  assert.deepEqual(a.events("climb_suppressed"), []);
+  assert.deepEqual([sizing(a)[0].rung, sizing(a)[0].note], ["top", undefined]);
+  const none = await rig(t);
+  await high(none);
+  const f = builder({ risk: ["design"] });
+  await none.launch(f);
+  assert.deepEqual([f.model, sizing(none)[0].note, none.events("climb_suppressed")], ["fake/strong", "capped", []]);
 });
 
 test("trivial tier on the builder path: a sizing strong launch escalates to standard", async (t) => {
