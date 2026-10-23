@@ -45,7 +45,7 @@ The project layer can only tighten: it may lower `maxLoadPerCore` and raise `min
 ## Trace events
 
 `launch_narrowed` (width 1, reasons), `launch_deferred` (level, reasons), `climb_suppressed` (level `high`, reasons) and
-`pressure_sampler` (the first sampler failure, once).
+`pressure_sampler` (the first sampler failure, once). A climb suppressed by high pressure also shows in the launch receipt: `(bottom rung: strong climb suppressed, pressure high)`.
 
 ## Probes
 
