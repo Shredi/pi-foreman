@@ -25,11 +25,36 @@ export interface FooterView {
   statuses: string[];
 }
 
-const SGR_SPLIT = /(\x1b\[[0-9;]*[A-Za-z])/;
+// An escape sequence: a CSI (colour codes and the like) or an OSC (hyperlinks, titles) ended by BEL or ST.
+const ESCAPE_SPLIT = /(\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))/;
 
-/** Visible columns: escape sequences are zero-width, every other code point is one column. */
+// East Asian wide and emoji code points, which a terminal draws in two columns.
+const WIDE_RANGES: Array<[number, number]> = [
+  [0x1100, 0x115f], [0x231a, 0x231b], [0x23e9, 0x23ec], [0x23f0, 0x23f0], [0x23f3, 0x23f3],
+  [0x25fd, 0x25fe], [0x2614, 0x2615], [0x2648, 0x2653], [0x267f, 0x267f], [0x2693, 0x2693],
+  [0x26a1, 0x26a1], [0x26aa, 0x26ab], [0x26bd, 0x26be], [0x26c4, 0x26c5], [0x26ce, 0x26ce],
+  [0x26d4, 0x26d4], [0x26ea, 0x26ea], [0x26f2, 0x26f3], [0x26f5, 0x26f5], [0x26fa, 0x26fa],
+  [0x26fd, 0x26fd], [0x2705, 0x2705], [0x270a, 0x270b], [0x2728, 0x2728], [0x274c, 0x274c],
+  [0x274e, 0x274e], [0x2753, 0x2755], [0x2757, 0x2757], [0x2795, 0x2797], [0x27b0, 0x27b0],
+  [0x27bf, 0x27bf], [0x2b1b, 0x2b1c], [0x2b50, 0x2b50], [0x2b55, 0x2b55],
+  [0x2e80, 0x303e], [0x3041, 0x33ff], [0x3400, 0x4dbf], [0x4e00, 0x9fff], [0xa000, 0xa4cf],
+  [0xac00, 0xd7a3], [0xf900, 0xfaff], [0xfe30, 0xfe4f], [0xff00, 0xff60], [0xffe0, 0xffe6],
+  [0x1f300, 0x1f64f], [0x1f680, 0x1f6ff], [0x1f7e0, 0x1f7eb], [0x1f90c, 0x1f9ff], [0x1fa70, 0x1faff],
+  [0x20000, 0x3fffd],
+];
+
+function columnsOf(ch: string): number {
+  const cp = ch.codePointAt(0) ?? 0;
+  return WIDE_RANGES.some(([lo, hi]) => cp >= lo && cp <= hi) ? 2 : 1;
+}
+
+/** Visible columns: escape sequences are zero-width, a wide glyph is two columns, every other code point is one. */
 export function visibleWidth(text: string): number {
-  return [...text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")].length;
+  let columns = 0;
+  text.split(ESCAPE_SPLIT).forEach((part, i) => {
+    if (i % 2 === 0) for (const ch of part) columns += columnsOf(ch);
+  });
+  return columns;
 }
 
 /** Cuts `text` to `width` columns, ending with `…` when it was longer; colour codes are kept. */
@@ -38,15 +63,20 @@ export function fitWidth(text: string, width: number): string {
   const keep = Math.max(0, width - 1);
   let out = "";
   let count = 0;
-  text.split(SGR_SPLIT).forEach((part, i) => {
+  let full = false;
+  text.split(ESCAPE_SPLIT).forEach((part, i) => {
     if (i % 2 === 1) {
       out += part;
       return;
     }
     for (const ch of part) {
-      if (count >= keep) return;
+      const columns = columnsOf(ch);
+      if (full || count + columns > keep) {
+        full = true;
+        return;
+      }
       out += ch;
-      count++;
+      count += columns;
     }
   });
   return width > 0 ? `${out}…\x1b[0m` : "";

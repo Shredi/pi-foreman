@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CACHE_STATUS_KEY, FOOTER_KEY, UsageFooter, footerStyleOf } from "../footer.ts";
-import { renderFooter, visibleWidth, type FooterView } from "../footerview.ts";
+import { fitWidth, renderFooter, visibleWidth, type FooterView } from "../footerview.ts";
 import { r11Rig } from "./_r11rig.ts";
 
 // A fake theme: each colour is an SGR code, so a line's width ignores the colour like a real theme's.
@@ -148,4 +148,32 @@ test("a child session never installs a footer", async (t) => {
   let factories = 0;
   await r11Rig(t, {}, { child: true, ctx: { ui: usageCtx([], { setFooter: () => void factories++ }) } });
   assert.equal(factories, 0);
+});
+
+test("visibleWidth counts East Asian wide and emoji glyphs as two columns; box and dot glyphs stay one", () => {
+  assert.equal(visibleWidth("中文"), 4);
+  assert.equal(visibleWidth("가"), 2);
+  assert.equal(visibleWidth("Ａ"), 2);
+  assert.equal(visibleWidth("🚀 ok"), 5);
+  assert.equal(visibleWidth("■□ · …"), 6);
+});
+
+test("visibleWidth skips SGR and OSC escape sequences", () => {
+  assert.equal(visibleWidth("\x1b[31mred\x1b[0m"), 3);
+  assert.equal(visibleWidth("\x1b]8;;https://example.org\x07link\x1b]8;;\x07"), 4);
+  assert.equal(visibleWidth("\x1b]0;title\x1b\\ab"), 2);
+});
+
+test("fitWidth keeps escape sequences whole and never cuts a wide glyph in half", () => {
+  assert.equal(fitWidth("\x1b[31mabcdef\x1b[0m", 4), "\x1b[31mabc\x1b[0m…\x1b[0m");
+  assert.equal(fitWidth("\x1b]8;;https://x.y\x07ab\x1b]8;;\x07cd", 3), "\x1b]8;;https://x.y\x07ab\x1b]8;;\x07…\x1b[0m");
+  assert.equal(fitWidth("中文字", 4), "中…\x1b[0m");
+  const odd = fitWidth("a中b", 3);
+  assert.equal(odd, "a…\x1b[0m");
+  assert.ok(visibleWidth(odd) <= 3);
+});
+
+test("a wide-glyph status line fits the width", () => {
+  const line2 = renderFooter({ ...VIEW, usage: null, statuses: ["漢字漢字漢字"] }, 10, theme)[1];
+  assert.ok(visibleWidth(line2) <= 10, plain(line2));
 });
