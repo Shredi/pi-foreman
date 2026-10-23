@@ -59,8 +59,9 @@ test("headOf and prToolRefusal against a real repository, and head_unknown outsi
     g("branch", "feat");
     g("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "chore: y");
     const newer = g("rev-parse", "HEAD");
-    assert.equal((await prToolRefusal(dir, [newer], { head: "feat" }))?.reason, "stale_review");
-    assert.equal((await prToolRefusal(dir, [newer], { sourceBranch: "owner:feat" }))?.reason, "stale_review");
+    // r29 item 1: the reviewed HEAD accepts a branch argument whose own ref is older (the ruling).
+    assert.equal(await prToolRefusal(dir, [newer], { head: "feat" }), null);
+    assert.equal(await prToolRefusal(dir, [newer], { sourceBranch: "owner:feat" }), null);
     assert.equal(await prToolRefusal(dir, [head], { source_branch: "feat" }), null);
     assert.equal((await prToolRefusal(dir, [newer], { branch: "nosuch" }))?.reason, "head_unknown");
     assert.equal((await prToolRefusal(dir, [newer], { head_branch: 7 }))?.reason, "head_unknown");
@@ -110,6 +111,32 @@ test("prGateRefusal: child, gate off, and a pushed upstream that was not reviewe
     const gate = (reviewed: string[]) => prGateRefusal({ tool: "pr_create", isChild: false, gateOn: true, reviewed, cwd: dir });
     assert.equal((await gate([second]))?.reason, "stale_review");
     assert.equal(await gate([second, first]), null);
+  } finally {
+    rmTestTmp(dir);
+  }
+});
+
+test("prToolRefusal accepts the reviewed sha via the local ref, origin/<b>, or HEAD (r29 item 1)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-reviews-"));
+  try {
+    const g = (...a: string[]) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" }).trim();
+    g("init", "-q");
+    const commit = () => g("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "chore: x");
+    commit();
+    const a = g("rev-parse", "HEAD");
+    commit();
+    const b = g("rev-parse", "HEAD");
+    commit();
+    const c = g("rev-parse", "HEAD");
+    g("branch", "feat", a); // the local ref lags; HEAD is c
+    assert.equal(await prToolRefusal(dir, [a], { head: "feat" }), null, "local ref");
+    assert.equal(await prToolRefusal(dir, [c], { head: "feat" }), null, "HEAD only");
+    g("update-ref", "refs/remotes/origin/feat", b); // the push that carries b
+    assert.equal(await prToolRefusal(dir, [b], { head: "feat" }), null, "origin/feat only");
+    const f = "f".repeat(40);
+    const refused = await prToolRefusal(dir, [f], { head: "feat" });
+    assert.equal(refused?.reason, "stale_review");
+    assert.ok(refused?.message.includes(`PASS ${f}, head ${a}`), refused?.message);
   } finally {
     rmTestTmp(dir);
   }

@@ -115,6 +115,23 @@ export type PrRefusal = "no_review" | "stale_review" | "head_unknown";
 export const PR_BRANCH_ARGS = ["head", "source_branch", "sourceBranch", "branch", "head_branch"];
 
 /**
+ * The reviewed-head test for one branch argument: null when accepted, else the refusal with the shas it names.
+ * The PASS may be the branch's local ref, its remote-tracking ref (a push the local ref lags behind), its
+ * upstream, or HEAD of the workspace (`cur`). A reviewed local ref whose upstream is another, unreviewed
+ * commit is refused (B-M3).
+ */
+async function headRefusal(cwd: string, ref: string, reviewed: readonly string[], cur: string | null): Promise<{ reason: PrRefusal; passed: string; head: string } | null> {
+  const head = await commitOf(cwd, ref);
+  if (!head) return { reason: "head_unknown", passed: "", head: "" };
+  const branch = ref === "HEAD" ? "" : ref;
+  const up = await commitOf(cwd, branch + "@{upstream}");
+  if (reviewed.includes(head) && up && !reviewed.includes(up)) return { reason: "stale_review", passed: head, head: up };
+  const remote = branch ? await commitOf(cwd, "origin/" + branch) : null;
+  if ([head, remote, up, cur].some((s) => s !== null && reviewed.includes(s))) return null;
+  return { reason: reviewed.length === 0 ? "no_review" : "stale_review", passed: reviewed[reviewed.length - 1] ?? "", head };
+}
+
+/**
  * The same SHA test the git guard applies, for a PR tool call: each branch argument (`owner:branch`
  * reads as `branch`), else workspace HEAD, against the reviewed heads. A branch argument that does
  * not resolve in the workspace refuses (head_unknown).
@@ -122,23 +139,14 @@ export const PR_BRANCH_ARGS = ["head", "source_branch", "sourceBranch", "branch"
 export async function prToolRefusal(cwd: string, reviewed: readonly string[], input: Record<string, unknown> = {}): Promise<{ reason: PrRefusal; message: string } | null> {
   const named = PR_BRANCH_ARGS.filter((k) => input[k] !== undefined && input[k] !== null && input[k] !== "").map((k) => input[k]);
   const refs = named.length === 0 ? ["HEAD"] : named.map((v) => (typeof v === "string" ? v.split(":").pop() ?? "" : ""));
-  const heads = await Promise.all(refs.map((r) => commitOf(cwd, r)));
-  let reason: PrRefusal | null = null;
-  for (let i = 0; i < heads.length; i++) {
-    const head = heads[i];
-    if (head && reviewed.includes(head)) {
-      // B-M3: a pushed upstream that differs from the reviewed head is another commit than the one reviewed.
-      const up = await commitOf(cwd, (refs[i] === "HEAD" ? "" : refs[i]) + "@{upstream}");
-      if (!up || reviewed.includes(up)) continue;
-      reason = "stale_review";
-      break;
-    }
-    reason = !head ? "head_unknown" : reviewed.length === 0 ? "no_review" : "stale_review";
-    break;
+  const cur = await commitOf(cwd, "HEAD");
+  for (const ref of refs) {
+    const f = await headRefusal(cwd, ref, reviewed, cur);
+    if (!f) continue;
+    const why = { no_review: "no reviewer PASS is recorded in this session", stale_review: `the recorded reviewer PASS is for another commit than this head (PASS ${f.passed}, head ${f.head})`, head_unknown: "the head could not be resolved in the workspace" }[f.reason];
+    return { reason: f.reason, message: `pi-foreman: pull request creation refused [pr_refused:${f.reason}]: ${why}. Run a reviewer on this head (in the checkout the pull request comes from), then retry.` };
   }
-  if (!reason) return null;
-  const why = { no_review: "no reviewer PASS is recorded in this session", stale_review: "the recorded reviewer PASS is for another commit than this head", head_unknown: "the head could not be resolved in the workspace" }[reason];
-  return { reason, message: `pi-foreman: pull request creation refused [pr_refused:${reason}]: ${why}. Run a reviewer on this head (in the checkout the pull request comes from), then retry.` };
+  return null;
 }
 
 /** PR-creating package tool: a pr / mr / pull_request / merge_request name part (snake, kebab or camelCase) plus create or open. */
