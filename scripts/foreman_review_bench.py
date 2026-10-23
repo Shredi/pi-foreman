@@ -354,7 +354,7 @@ def blind_violations(texts, tree, task_dir):
 
 def child_env(agent, tmp, scratch, repo, launch_id, token=None, fake_script=None):
     env = {k: v for k, v in os.environ.items()
-           if not k.upper().startswith(("PI_", "FOREMAN_", "CLAUDE_", "ANTHROPIC_"))
+           if not k.upper().startswith(("PI_", "FOREMAN_", "CLAUDE_", "ANTHROPIC_", "HERDR_"))
            and k.upper() not in ("TMPDIR", "TEMP", "TMP")}
     binding = {"foremanSession": "review-bench", "workspace": str(repo), "role": "reviewer", "launchId": launch_id,
                "kind": "first", "model": None, "scratch": str(scratch)}
