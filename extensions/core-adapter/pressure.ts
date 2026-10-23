@@ -173,7 +173,7 @@ const num = (v: unknown, digits: number): string => (typeof v === "number" && Nu
 /** The `foreman doctor` line: INFO only, an unknown probe prints `unknown`. */
 export function pressureDoctorLine(p: PressureState): string {
   const h = p.host;
-  return `INFO pressure: ${p.level} (${p.reasons.join(", ") || "none"}) load/core=${num(h.loadPerCore, 2)} freeMem=${typeof h.freeMemMB === "number" && Number.isFinite(h.freeMemMB) ? `${num(h.freeMemMB, 0)}MB` : "unknown"} freeDisk=${typeof h.freeDiskGB === "number" && Number.isFinite(h.freeDiskGB) ? `${num(h.freeDiskGB, 1)}GB` : "unknown"}`;
+  return `INFO pressure: ${p.level} (${p.reasons.join(", ") || "none"}) load5/core=${num(h.loadPerCore, 2)} load1/core=${num(h.load1PerCore, 2)} freeMem=${typeof h.freeMemMB === "number" && Number.isFinite(h.freeMemMB) ? `${num(h.freeMemMB, 0)}MB` : "unknown"} freeDisk=${typeof h.freeDiskGB === "number" && Number.isFinite(h.freeDiskGB) ? `${num(h.freeDiskGB, 1)}GB` : "unknown"}`;
 }
 
 /** The `/foreman status` pressure line. */

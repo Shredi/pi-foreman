@@ -13,7 +13,7 @@ let rigs = 0;
 
 /** `opts.ctx`: fields that replace the fake ctx's (ui, modelRegistry, ...); `opts.config`: top-level keys merged into the user foreman.json. */
 export async function r11Rig(t: { after(fn: () => void | Promise<void>): void }, ceremony: Record<string, unknown> = {}, opts: { ctx?: Record<string, unknown>; config?: Record<string, unknown>; child?: boolean } = {}) {
-  const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE", "PI_INTERCOM_SESSION_ID", "PI_INTERCOM_STABLE_ID"];
+  const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE", "PI_INTERCOM_SESSION_ID", "PI_INTERCOM_STABLE_ID", "HERDR_PANE_ID", "HERDR_ENV"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r11-p2-")));
   let shutdown: (() => Promise<unknown>) | undefined;
@@ -39,6 +39,8 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
   if (opts.child) process.env.PI_SUBAGENT_CHILD = "1";
   else delete process.env.PI_SUBAGENT_CHILD;
   delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;
+  delete process.env.HERDR_PANE_ID; // the presence file would name the runner's pane
+  delete process.env.HERDR_ENV;
   const roles = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
   const l2 = {
     providers: { fake: { roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } },

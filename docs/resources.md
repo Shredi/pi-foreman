@@ -12,7 +12,7 @@ A sampler in the foreman session measures the host every `resources.sampleSecond
 
 | key | default | meaning |
 |---|---|---|
-| `resources.maxLoadPerCore` | 1.5 | 1-minute load average per core above which pressure is `high`. |
+| `resources.maxLoadPerCore` | 1.5 | 5-minute load average per core above which pressure is `high`. The 1-minute value is shown for information and never gates, so a short burst (parallel test runs) does not trip the limit. |
 | `resources.minFreeMemMB` | 1024 | Free memory (MB) below which pressure is `high`. |
 | `resources.minFreeDiskGB` | 5 | Free disk (GB) of the workspace below which pressure is `high`. |
 | `resources.sampleSeconds` | 30 | Sampling interval, integer of at least 5. User or overlay config only. |
@@ -36,7 +36,7 @@ The project layer can only tighten: it may lower `maxLoadPerCore` and raise `min
 
 ## Surfaces
 
-- `foreman doctor` / `/foreman doctor`: `INFO pressure: <level> (<reasons or none>) load/core=<x> freeMem=<n>MB freeDisk=<n>GB`
+- `foreman doctor` / `/foreman doctor`: `INFO pressure: <level> (<reasons or none>) load5/core=<x> load1/core=<y> freeMem=<n>MB freeDisk=<n>GB`
   from a fresh sample; unknown fields print `unknown`. It never fails on a missing probe.
 - `/foreman status`: `pressure: <level> (<reasons>) sampled <age>s ago`, the open waits count and the ceremony tier.
 - Herdr sidebar: the cost row gets ` ⚠ <reasons>` only when the level is not `ok` (the presence file carries a `pressure` field then).
@@ -51,8 +51,8 @@ The project layer can only tighten: it may lower `maxLoadPerCore` and raise `min
 
 | OS | load | free memory | free disk |
 |---|---|---|---|
-| Linux | `os.getloadavg` | `/proc/meminfo` `MemAvailable` | `shutil.disk_usage` of the workspace |
-| macOS | `os.getloadavg` | `vm_stat` free + inactive + speculative pages | `shutil.disk_usage` |
+| Linux | `os.getloadavg` (5-minute value gates, 1-minute is informational) | `/proc/meminfo` `MemAvailable` | `shutil.disk_usage` of the workspace |
+| macOS | `os.getloadavg` (same) | `vm_stat` free + inactive + speculative pages | `shutil.disk_usage` |
 | Windows | none (`unknown`) | `GlobalMemoryStatusEx` | `shutil.disk_usage` |
 
 A probe that fails reports `unknown` and takes no part in the level. Everything is standard library, no dependency.

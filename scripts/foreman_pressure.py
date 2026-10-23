@@ -16,12 +16,13 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 
 
-def _load_per_core():
+def _load_per_core(window=1):
+    """Load average per core; `window` indexes os.getloadavg(): 0 = 1 minute, 1 = 5 minutes (the gate)."""
     try:
         cores = os.cpu_count() or 0
         if cores < 1:
             return None
-        return os.getloadavg()[0] / cores
+        return os.getloadavg()[window] / cores
     except (AttributeError, OSError):
         return None
 
@@ -86,7 +87,7 @@ def _free_disk_gb(workspace):
 
 def sample(workspace):
     """Probe the host. Each field is None when its probe is unavailable; never raises."""
-    return {"loadPerCore": _load_per_core(), "freeMemMB": _free_mem_mb(),
+    return {"loadPerCore": _load_per_core(1), "load1PerCore": _load_per_core(0), "freeMemMB": _free_mem_mb(),
             "freeDiskGB": _free_disk_gb(workspace)}
 
 
