@@ -1,12 +1,14 @@
 import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "bench"))
@@ -111,6 +113,16 @@ class BuildWorldTest(unittest.TestCase):
         self.assertEqual(ws.foreman_config(row())["retro"]["workspaceKey"], "bench/r")
         self.assertEqual(ws.foreman_config(row(user_config={"retro": {"enabled": False}}))["retro"],
                          {"enabled": False, "workspaceKey": "bench/r"})
+
+    def test_pi_foreman_python_reaches_pi_through_python_path(self):
+        with mock.patch.dict(os.environ, {"PI_FOREMAN_PYTHON": "/usr/local/bin/python3.13"}):
+            cfg = ws.foreman_config(row())
+            env = ws.pi_env(mock.Mock(work=tempfile.gettempdir(), fake_script=None), Path("/agent"), None)
+        self.assertEqual(cfg["python"], {"path": "/usr/local/bin/python3.13"})
+        self.assertNotIn("PI_FOREMAN_PYTHON", env)  # the scrub stays intact
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PI_FOREMAN_PYTHON", None)
+            self.assertNotIn("python", ws.foreman_config(row()))
 
     def test_project_commands_reach_the_permission_config(self):
         cfg = ws.foreman_config(row(project_commands=["cargo test *"]))
