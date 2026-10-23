@@ -12,7 +12,8 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "r33-"));
 
 test("socket report framing: one JSON line with method, pane, source, tokens and the 15 s ttl; an error reply rejects", async () => {
   const d = tmp();
-  const sock = path.join(d, "h.sock");
+  const endpoint = (name: string) => (process.platform === "win32" ? `\\\\.\\pipe\\r33-${process.pid}-${Date.now()}-${name}` : path.join(d, `${name}.sock`));
+  const sock = endpoint("h");
   const seen: string[] = [];
   let reply = (id: string) => JSON.stringify({ id, result: {} });
   const server = net.createServer((c) => {
@@ -24,7 +25,10 @@ test("socket report framing: one JSON line with method, pane, source, tokens and
       c.write(reply(JSON.parse(buf).id) + "\n");
     });
   });
-  await new Promise<void>((r) => server.listen(sock, r));
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(sock, resolve);
+  });
   try {
     const tokens: Tokens = { fm_hd: "⠋⠀ job", fm_a1: null };
     await reportMetadata(sock, { pane_id: "w1:p1", source: "plugin:pi-foreman.sidebar", tokens, ttl_ms: 15000 });
@@ -39,7 +43,7 @@ test("socket report framing: one JSON line with method, pane, source, tokens and
   } finally {
     server.close();
   }
-  await assert.rejects(reportMetadata(path.join(d, "none.sock"), { pane_id: "p", source: "s", tokens: {}, ttl_ms: 1 }), "no server: rejects");
+  await assert.rejects(reportMetadata(endpoint("none"), { pane_id: "p", source: "s", tokens: {}, ttl_ms: 1 }), "no server: rejects");
 });
 
 test("socket path: HERDR_SOCKET_PATH, else <XDG_CONFIG_HOME>/herdr/herdr.sock, else ~/.config/herdr/herdr.sock", () => {
