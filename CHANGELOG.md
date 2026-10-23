@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Round 38
+- `foreman session open` takes `--first-command /CMD` (repeatable, at most 4) and `--plan-mode` (= `--first-command /plan`): the commands become positional messages before the brief prompt in the launch line (POSIX, PowerShell, fallback, dry run, `launch.txt`), and the registry entry records `firstCommands`. Without the flags the launch line is unchanged. `/foreman session open` parses and forwards both.
+- New foreman-only tool `foreman_session_open` runs the same open (validation, rank rule, opener id); refused in subagent children. `planMode` without a `plan` command in the opener's commands is refused with `session open refused [plan_mode_unavailable]`. instructions/foreman.md: design or new-topic sessions open in plan mode, sessions with an approved plan without. See docs/sessions.md.
+
 ### Round 30
 - The children widget shows the foreman's background rows after the active runs: a pending `foreman_wait` as `wait · note · age`, an active `pr_watch` as `pr #n · until · age` and a running `foreman_bg` command as `bg · note · age`. They show with or without child runs; the widget hides only when all are empty. Rows follow the same height rules (padding, at most 8 rows, a `+<n> more` fold), and `widget.children` off hides them too; no new key. Tests: `r30-widget-background`. See docs/sessions.md.
 
