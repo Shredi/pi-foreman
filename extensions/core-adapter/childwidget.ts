@@ -37,6 +37,23 @@ export interface SessionRow {
   at: number;
 }
 
+/** A background row of the foreman (index.ts): a foreman_wait wait (`wait`), a foreman_bg command (`bg`) or a PR watch (`pr #n`). */
+export interface BackgroundRow {
+  label: string;
+  detail: string;
+  /** ms epoch the row started. */
+  startedAt: number;
+}
+
+/** Per-request options: the `widget.children` gate, the agent dir, the presence id, the glyph set and the background rows (foreman only). */
+export interface WidgetOpts {
+  enabled: boolean;
+  agentDir: string;
+  intercomId: string | null;
+  symbols?: unknown;
+  background?: () => BackgroundRow[];
+}
+
 /** Rung of a single launch: bottom = the role's own model with a strong rung above it. */
 export function rungOf(roles: Record<string, unknown> | undefined, role: string, bottom: boolean): Rung {
   if (bottom) return "model";
@@ -252,18 +269,24 @@ export function doneLine(done: RunView[]): string {
   return [`${done.length} done`, `↑${abbrev(sum((r) => r.tokensIn))} ↓${abbrev(sum((r) => r.tokensOut))}`, usd(sum((r) => r.cost))].join(" · ");
 }
 
+/** At most MAX_ROWS lines: the first MAX_ROWS - 1, then one `+<n> more` row for the rest. */
+export function foldRows(lines: string[]): string[] {
+  return lines.length <= MAX_ROWS ? lines : [...lines.slice(0, MAX_ROWS - 1), `+${lines.length - MAX_ROWS + 1} more`];
+}
+
 /**
- * Active runs, then opened sessions, then one summary line for the runs that finished during the batch
- * (ended at or after `since`, the start of the oldest active run); at most 8 lines. With no active run
- * only the opened sessions remain.
+ * Active runs, then background rows, then opened sessions, then one summary line for the runs that finished during
+ * the batch (ended at or after `since`, the start of the oldest active run); at most 8 lines (foldRows). With no active
+ * run only the background rows and the opened sessions remain.
  */
-export function widgetLines(runs: RunView[], sessions: SessionRow[], now: number, since: number | null = null, symbols?: unknown): string[] {
+export function widgetLines(runs: RunView[], sessions: SessionRow[], now: number, since: number | null = null, symbols?: unknown, background: BackgroundRow[] = []): string[] {
   const active = runs.filter((r) => r.state !== "done");
+  const bg = background.map((b) => [b.label, b.detail, ageText(now - b.startedAt)].join(" · "));
   const opened = [...sessions].sort((a, b) => (b.at || 0) - (a.at || 0)).map((s) => sessionLine(s, now));
-  if (!active.length) return opened.slice(0, MAX_ROWS);
+  if (!active.length) return foldRows([...bg, ...opened]);
   const from = since ?? Math.min(...active.map((r) => r.startedAt));
   const done = runs.filter((r) => r.state === "done" && r.endedAt !== null && r.endedAt >= from);
-  return [...active.map((r) => runLine(r, symbols)), ...opened, ...(done.length ? [doneLine(done)] : [])].slice(0, MAX_ROWS);
+  return foldRows([...active.map((r) => runLine(r, symbols)), ...bg, ...opened, ...(done.length ? [doneLine(done)] : [])]);
 }
 
 /** Cut a line to the terminal width so a row never wraps (one widget line = one screen row). */
@@ -308,7 +331,7 @@ export interface WidgetCtx {
 }
 
 /**
- * Height is stable while a batch of runs is active: rows are reserved for the most lines shown in the batch
+ * Height is stable while a batch of runs or a background row is active: rows are reserved for the most lines shown in the batch
  * (blank padding, never shrinking), finished runs fold into one summary line, and updates swap the lines of the
  * same component. When the last active run ends the rows are released (only opened sessions stay, else cleared).
  * Unchanged content never reaches Pi: no setWidget, no requestRender.
@@ -322,17 +345,18 @@ export class ChildWidget {
   private tui: { requestRender(): void } | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private ctx: WidgetCtx | null = null;
-  private opts: { enabled: boolean; agentDir: string; intercomId: string | null; symbols?: unknown } | null = null;
+  private opts: WidgetOpts | null = null;
 
   constructor(usageFile: string, prices: PriceTable | null = null) {
     this.runs = new ChildRuns(new UsageTail(usageFile, prices));
   }
 
   /** Render now or, within a second of the last render, once at the end of that second. Never throws. */
-  request(ctx: WidgetCtx, opts: { enabled: boolean; agentDir: string; intercomId: string | null; symbols?: unknown }, now = Date.now()): void {
+  request(ctx: WidgetCtx, opts: WidgetOpts, now = Date.now()): void {
     this.ctx = ctx;
     this.opts = opts;
-    if (!opts.enabled || ctx.mode !== "tui") return;
+    if (!opts.enabled) return this.hide(ctx);
+    if (ctx.mode !== "tui") return;
     const wait = this.last + RENDER_GAP_MS - now;
     if (wait <= 0) return this.render(now);
     if (this.timer) return;
@@ -348,13 +372,25 @@ export class ChildWidget {
     if (this.ctx && this.opts) this.request(this.ctx, this.opts);
   }
 
+  /** `widget.children` off: a shown widget is removed and a pending render dropped (nothing is set when none was shown). */
+  private hide(ctx: WidgetCtx): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    if (!this.rows) return;
+    this.rows = null;
+    this.tui = null;
+    this.shown = "";
+    ctx.ui.setWidget(WIDGET_KEY, undefined, { placement: "belowEditor" });
+  }
+
   private render(now: number): void {
     this.last = now;
     try {
       if (!this.ctx || !this.opts) return;
       const views = this.runs.views();
-      const lines = widgetLines(views, readOpened(this.opts.agentDir, this.opts.intercomId), now, null, this.opts.symbols);
-      if (views.some((r) => r.state !== "done")) {
+      const background = this.opts.background?.() ?? [];
+      const lines = widgetLines(views, readOpened(this.opts.agentDir, this.opts.intercomId), now, null, this.opts.symbols, background);
+      if (views.some((r) => r.state !== "done") || background.length) {
         this.reserved = Math.max(this.reserved, lines.length);
         while (lines.length < this.reserved) lines.push("");
       } else this.reserved = 0;
