@@ -241,10 +241,10 @@
         "foremanReads": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Read budget of the foreman's own read-class calls (bash, read, grep, find, ls, codemode; a codemode script counts once) per phase: before = until the first child launch, after = since the latest launch. At warn the result tells the foreman to launch the explorer; above deny the call is refused. A project or session can only lower each value.",
+          "description": "Read budget of the foreman's own read-class calls (bash, read, grep, find, ls, codemode; a codemode script counts once) per phase: before = until the first child launch, after = since the latest launch. The foreman's reads are never refused: at warn the result carries a reminder to delegate, and again after every `every` further reads. A project or session can only lower each value. `deny` is deprecated and ignored (accepted so existing configs still validate).",
           "properties": {
-            "before": { "type": "object", "additionalProperties": false, "properties": { "warn": { "type": "integer", "minimum": 1 }, "deny": { "type": "integer", "minimum": 1 } } },
-            "after": { "type": "object", "additionalProperties": false, "properties": { "warn": { "type": "integer", "minimum": 1 }, "deny": { "type": "integer", "minimum": 1 } } }
+            "before": { "type": "object", "additionalProperties": false, "properties": { "warn": { "type": "integer", "minimum": 1, "description": "Reads before the first reminder." }, "every": { "type": "integer", "minimum": 1, "description": "Reads between reminders after warn." }, "deny": { "type": "integer", "minimum": 1, "deprecated": true, "description": "Deprecated and ignored: the read budget never refuses a read." } } },
+            "after": { "type": "object", "additionalProperties": false, "properties": { "warn": { "type": "integer", "minimum": 1, "description": "Reads before the first reminder." }, "every": { "type": "integer", "minimum": 1, "description": "Reads between reminders after warn." }, "deny": { "type": "integer", "minimum": 1, "deprecated": true, "description": "Deprecated and ignored: the read budget never refuses a read." } } }
           }
         },
         "childReads": {

@@ -48,7 +48,7 @@
     "foremanEdits": "scratchpad",
     "scratchDir": ".workflow/scratch",
     "reviewBeforePr": true,
-    "foremanReads": { "before": { "warn": 4, "deny": 8 }, "after": { "warn": 4, "deny": 8 } },
+    "foremanReads": { "before": { "warn": 8, "every": 8 }, "after": { "warn": 8, "every": 8 } },
     "childReads": { "builder": { "warn": 20, "deny": 40 }, "reviewer": { "warn": 15, "deny": 30 } },
     "childScratch": { "keep": false },
     "recheckBudget": 3,

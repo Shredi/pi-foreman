@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Round 37
+- The foreman's read budget reminds instead of refusing: at `warn` reads, then every `every` further reads, the result says to delegate to an explorer or builder (trace `read_budget {action: remind}`); a read is never denied. `ceremony.foremanReads.<phase>.{warn,every}` default 8/8 (`deny` is accepted and ignored); `/foreman budget lift` has nothing to lift. `foreman session ...` shell commands (also after `cd <dir> &&`) and `pr_status`, `pr_checks`, `pr_comments` do not count. Retro and bench count `remind` like the old `deny`. Tests: `r37-read-reminder`, `budget`.
+- A write outside the session's workspace (a child's handoff dir, another checkout) no longer counts toward the heavy file count and binds no ledger (trace `ledger_bind` skip `outside_workspace`); the `tier` trace event carries a `reason`. Test: `r37-out-of-workspace-write`.
+
 ### Round 30
 - The children widget shows the foreman's background rows after the active runs: a pending `foreman_wait` as `wait · note · age`, an active `pr_watch` as `pr #n · until · age` and a running `foreman_bg` command as `bg · note · age`. They show with or without child runs; the widget hides only when all are empty. Rows follow the same height rules (padding, at most 8 rows, a `+<n> more` fold), and `widget.children` off hides them too; no new key. Tests: `r30-widget-background`. See docs/sessions.md.
 

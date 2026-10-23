@@ -232,7 +232,7 @@
     {
       "id": "read-budgets",
       "title": "Read budgets",
-      "purpose": "Warns and then refuses the foreman's own reads past a budget until an explorer runs, caps rechecks after a PASS (a plan-review PASS does not start the recheck window), and gives child roles their own read budgets.",
+      "purpose": "Reminds the foreman to delegate once its own reads pass a budget (never refuses a read; coordination calls do not count), caps rechecks after a PASS (a plan-review PASS does not start the recheck window), and gives child roles their own read budgets.",
       "doc": "docs/ceremony.md#triage-and-delegation",
       "keys": ["ceremony.foremanReads", "ceremony.childReads", "ceremony.recheckBudget"],
       "commands": ["/foreman budget"],
