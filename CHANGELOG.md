@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Round 30
+- The children widget shows the foreman's background rows after the active runs: a pending `foreman_wait` as `wait · note · age`, an active `pr_watch` as `pr #n · until · age` and a running `foreman_bg` command as `bg · note · age`. They show with or without child runs; the widget hides only when all are empty. Rows follow the same height rules (padding, at most 8 rows, a `+<n> more` fold), and `widget.children` off hides them too; no new key. Tests: `r30-widget-background`. See docs/sessions.md.
+
 ### Round 29
 - A child's read-only shell unit that names a protected file passes the write protection (strict git read allowlist and plain readers only); an env prefix, wrapper, loop or assignment anywhere in the line ends the read and the file stays protected; docs/safety.md says the rule is no sandbox. Test: `r29-protected-read-only`.
 - The PR gate accepts a reviewed head that is the commit of the branch the PR opens from, of its `origin/<branch>` ref, of its upstream or of HEAD (the reviewed PASS sha, not only the local branch ref); the stale refusal names the PASS sha and the resolved head sha. Python (`git_guard.py`) and TS (`reviews.ts`) agree. Test: `reviews.test.ts`, `test_git_guard_pr_gate.py`.
