@@ -405,7 +405,54 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
   return reads.every((o) => contained(c, cwd, o, false)) && writes.every((o) => contained(c, cwd, o, true, where)) ? "write-in" : "write-out";
 }
 
-const GIT_READ = new Set(["status", "log", "diff", "show"]);
+export const GIT_READ = new Set(["status", "log", "diff", "show"]);
+
+const GIT_PROTECTED_OPTS = new Set([
+  "-p", "--patch", "--stat", "--numstat", "--shortstat", "--name-only", "--name-status", "--oneline", "--cached", "--staged",
+  "--no-color", "--color=never", "--no-ext-diff", "--no-textconv", "-s", "--short", "--porcelain", "-b", "--branch", "--graph",
+  "--decorate", "--no-decorate", "--all", "--reverse", "--first-parent", "--follow", "-w", "--ignore-all-space",
+]);
+const GIT_PROTECTED_NUM = /^(?:-n\d+|-\d+|-U\d+|--unified=\d+|--max-count=\d+)$/;
+const GIT_PLAIN_OPERAND = /^[A-Za-z0-9._\/:@^~-]+$/;
+
+/**
+ * A strict allowlist for the protected-reader git branch: `git [-C dir] status|log|diff|show` whose every word is a listed option,
+ * a plain operand (path, ref, `a..b`, `HEAD:file`) or `--`. Anything else (`--format`, `--output*`, brace or glob words) is no reader.
+ */
+export function gitProtectedRead(words: string[]): boolean {
+  if (words[0] !== "git") return false;
+  let k = 1;
+  if (words[k] === "-C") {
+    const dir = words[k + 1];
+    if (dir === undefined || dir.startsWith("-") || !GIT_PLAIN_OPERAND.test(dir)) return false;
+    k += 2;
+  }
+  if (!GIT_READ.has(words[k] ?? "")) return false;
+  const rest = words.slice(k + 1);
+  for (let i = 0; i < rest.length; i++) {
+    const w = rest[i];
+    if (w === "--" || GIT_PROTECTED_OPTS.has(w) || GIT_PROTECTED_NUM.test(w)) continue;
+    if (w === "-n" && /^\d+$/.test(rest[i + 1] ?? "")) {
+      i++;
+      continue;
+    }
+    if (!w.startsWith("-") && GIT_PLAIN_OPERAND.test(w)) continue;
+    return false;
+  }
+  return true;
+}
+
+/** An option of a GIT_READ subcommand that runs a program or names an output file: the call is not read-only. */
+export function gitReadWrites(rest: string[]): boolean {
+  // a brace word with a leading `-` expands to options (`--{output=F,stat}`)
+  if (rest.some((a) => /[{}]/.test(a) && a.startsWith("-"))) return true;
+  // git accepts any unambiguous prefix of a long option (`--ext-d`, `--outp=x`); an ambiguous one is an error, so a prefix counts as the option
+  const abbrev = (a: string): boolean => {
+    const name = a.split("=")[0];
+    return name.length > 2 && ["--output", "--ext-diff", "--textconv"].some((w) => w.startsWith(name));
+  };
+  return rest.some((a) => a === "-c" || a === "-o" || a.startsWith("--output") || a === "--ext-diff" || a.startsWith("--textconv") || abbrev(a));
+}
 const GIT_DRY = new Set(["add", "clean", "mv", "rm"]);
 
 function gitEffect(c: EffectCtx, cwd: string | null, args: string[]): { cls: EffectClass; known: boolean } {
@@ -413,7 +460,7 @@ function gitEffect(c: EffectCtx, cwd: string | null, args: string[]): { cls: Eff
   if (!sub || sub.startsWith("-")) return { cls: "unknown", known: true }; // git global options (-c, -C, ...)
   const rest = args.slice(1);
   if (GIT_READ.has(sub)) {
-    if (rest.some((a) => a === "-c" || a === "-o" || a.startsWith("--output") || a === "--ext-diff" || a.startsWith("--textconv"))) return { cls: "unknown", known: true };
+    if (gitReadWrites(rest)) return { cls: "unknown", known: true };
     return { cls: argsOk(c, cwd, rest) ? "read" : "unknown", known: true };
   }
   if (GIT_DRY.has(sub) && gitDryRun(sub, rest)) return { cls: argsOk(c, cwd, rest) ? "read" : "unknown", known: true };

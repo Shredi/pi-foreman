@@ -95,10 +95,36 @@ class PrGateTest(unittest.TestCase):
             self.assertIn("pr_refused:stale_review", d.reason, cmd)
 
     def test_head_ref_is_resolved(self):
-        # `--head feat` points at the older commit, so the review of HEAD does not cover it.
-        self.assertIn("stale_review", self.decide("gh pr create --head feat", [self.newer]).reason)
+        # r29 item 1: `--head feat` points at the older commit; the reviewed HEAD accepts it (the ruling).
+        self.assertEqual(self.decide("gh pr create --head feat", [self.newer]).level, gg.ALLOW)
         self.assertEqual(self.decide("gh pr create --head feat", [self.head]).level, gg.ALLOW)
         self.assertIn("head_unknown", self.decide("gh pr create --head nosuch", [self.head]).reason)
+
+    def test_reviewed_sha_via_local_ref_origin_or_head(self):
+        # r29 item 1: the PASS may be the local branch ref, its origin ref, its upstream or HEAD.
+        with tempfile.TemporaryDirectory(prefix="pf-gg-pr-") as repo:
+            git(repo, "init", "-q", "-b", "main")
+            git(repo, "config", "user.email", "t@example.invalid")
+            git(repo, "config", "user.name", "t")
+            shas = []
+            for m in ("chore: a", "chore: b", "chore: c"):
+                git(repo, "commit", "-q", "--allow-empty", "-m", m)
+                shas.append(git(repo, "rev-parse", "HEAD"))
+            a, b, c = shas
+            git(repo, "branch", "feat", a)  # the local ref lags; HEAD is c
+
+            def gate(heads):
+                return gg.decide("gh pr create --head feat", "main", cwd=repo,
+                                 pr_gate={"enabled": True, "reviewed_heads": heads})
+            self.assertEqual(gate([a]).level, gg.ALLOW, "local ref")
+            self.assertEqual(gate([c]).level, gg.ALLOW, "HEAD only")
+            git(repo, "update-ref", "refs/remotes/origin/feat", b)  # the push that carries b
+            self.assertEqual(gate([b]).level, gg.ALLOW, "origin/feat only")
+            f = "f" * 40
+            d = gate([f])
+            self.assertEqual(d.level, gg.DENY)
+            self.assertIn("pr_refused:stale_review", d.reason)
+            self.assertIn("PASS %s, head %s" % (f, a), d.reason)
 
     def test_head_unknown_outside_a_repository(self):
         with tempfile.TemporaryDirectory() as plain:

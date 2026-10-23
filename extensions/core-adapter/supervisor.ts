@@ -9,7 +9,9 @@
 //
 // The window opens on that message and closes on a successful `subagent_supervisor` reply
 // (tool_result details.replyTo) or when the child's run ends (pi.events
-// "subagent:async-complete" / "subagent:foreground-complete" with its runId).
+// "subagent:async-complete" / "subagent:foreground-complete" with its runId). A request message
+// of a run that is not live (ended, or never launched in this session) opens nothing, and an errored
+// reply to a request of a dead run closes it (ledger r29 item 6).
 //
 // LIMIT (heuristic, documented): the window only covers the time until the foreman answers.
 // After replying, the foreman can act on its own, including on what the child asked for; the
@@ -34,27 +36,51 @@ export interface OpenRequest {
   runId: string | null;
 }
 
+/** The request a `subagent_supervisor_request` message carries (`expectsReply: false` ones carry none). */
+function requestOf(message: unknown): ({ requestId: string } & OpenRequest) | null {
+  if (!isObj(message) || message.customType !== SUPERVISOR_REQUEST_TYPE) return null;
+  const d = isObj(message.details) ? message.details : {};
+  const requestId = typeof d.requestId === "string" && d.requestId ? d.requestId : typeof d.id === "string" && d.id ? d.id : null;
+  if (!requestId || d.expectsReply === false) return null;
+  const role = typeof d.agent === "string" && d.agent ? d.agent : "(unknown)";
+  const runId = typeof d.runId === "string" && d.runId ? d.runId : null;
+  return { requestId, role, runId };
+}
+
+/** A request of a run that is known and not live; a request without a run id is not judged stale. */
+function isStale(req: OpenRequest, isLive: (runId: string) => boolean): boolean {
+  return req.runId !== null && !isLive(req.runId);
+}
+
 export class SupervisorWindow {
   readonly open = new Map<string, OpenRequest>();
 
-  /** A message the foreman received; returns the opened request, or null when it is not one. */
-  onMessage(message: unknown): ({ requestId: string } & OpenRequest) | null {
-    if (!isObj(message) || message.customType !== SUPERVISOR_REQUEST_TYPE) return null;
-    const d = isObj(message.details) ? message.details : {};
-    const requestId = typeof d.requestId === "string" && d.requestId ? d.requestId : typeof d.id === "string" && d.id ? d.id : null;
-    if (!requestId) return null;
-    if (d.expectsReply === false) return null;
-    const role = typeof d.agent === "string" && d.agent ? d.agent : "(unknown)";
-    const runId = typeof d.runId === "string" && d.runId ? d.runId : null;
-    this.open.set(requestId, { role, runId });
-    return { requestId, role, runId };
+  /**
+   * A message the foreman received; returns the opened request, or null when it is not one or its run
+   * is not live (`staleRequest`). `isLive(runId)` tells whether the run is still running in this session.
+   */
+  onMessage(message: unknown, isLive: (runId: string) => boolean = () => true): ({ requestId: string } & OpenRequest) | null {
+    const req = requestOf(message);
+    if (!req || isStale(req, isLive)) return null;
+    this.open.set(req.requestId, { role: req.role, runId: req.runId });
+    return req;
   }
 
-  /** `subagent_supervisor` tool_result: a successful reply closes its request. */
-  onSupervisorResult(details: unknown, isError: boolean): OpenRequest | null {
-    if (isError || !isObj(details) || typeof details.replyTo !== "string") return null;
+  /** A request message whose run is known and not live (a re-injected request of an ended run): its role and run, else null. */
+  staleRequest(message: unknown, isLive: (runId: string) => boolean): OpenRequest | null {
+    const req = requestOf(message);
+    return req && isStale(req, isLive) ? { role: req.role, runId: req.runId } : null;
+  }
+
+  /**
+   * `subagent_supervisor` tool_result: a successful reply closes its request; an errored reply closes it
+   * too when its run is known and no longer live (the reply then has no request to answer).
+   */
+  onSupervisorResult(details: unknown, isError: boolean, isLive: (runId: string) => boolean = () => true): OpenRequest | null {
+    if (!isObj(details) || typeof details.replyTo !== "string") return null;
     const req = this.open.get(details.replyTo);
     if (!req) return null;
+    if (isError && !isStale(req, isLive)) return null;
     this.open.delete(details.replyTo);
     return req;
   }

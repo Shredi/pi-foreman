@@ -24,6 +24,7 @@ Running from a checkout instead of the installed package: [install](install.md#d
 python -m unittest discover -s tests -v          # npm test
 node --test "extensions/core-adapter/test/*.test.ts"   # npm run test:node
 node --test "tests/installer/*.test.mjs"          # npm run test:installer
+npm run test:ci                                   # pre-PR: what CI runs and npm test does not (replay, core conformance, installer, bench probe); about 25 minutes
 npm run typecheck                                 # tsc --noEmit
 node setup.mjs --dry-run                          # installer preview, writes nothing (exits 1 until pi-foreman is installed as a package; see install.md#developing)
 ```
@@ -40,6 +41,8 @@ adds only this repo as a package and filters intercom out for non-intercom rigs.
 ## CI
 
 GitHub Actions runs a matrix of Linux, macOS and Windows (Python 3.9 and 3.13) on every push and PR.
+
+`npm run test:ci` (`scripts/foreman_ci.mjs`) is the pre-PR check. It runs the CI steps that `npm test` does not, in CI's order: the replay suite against the `node_modules` Pi CLI, `pull_core.py --conformance` (skipped with a line when pytest is missing), the installer suite, and the bench smoke probe on the fake provider (skipped when `harbor` is not on PATH). It prints one line per step and exits 1 on any failure; `--only <step>` runs one step.
 
 ## Windows notes
 

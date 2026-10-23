@@ -2737,8 +2737,8 @@ PR_FORMS = (
 PR_ADVICE = {
     "no_review": "no reviewer PASS is recorded in this session. Run a reviewer on this head (HEAD %s) in the "
                  "checkout the pull request comes from, then retry.",
-    "stale_review": "the recorded reviewer PASS is for another commit than this head (%s). Run a reviewer on "
-                    "this head, then retry.",
+    "stale_review": "the recorded reviewer PASS is for another commit than this head (PASS %s, head %s). Run a "
+                    "reviewer on this head, then retry.",
     "head_unknown": "the head commit could not be resolved (no git repository here, the head ref does not "
                     "exist or is computed). Name an existing local branch and run a reviewer on it, then retry.",
     "pr_alias": "this is a gh alias or extension (or defines one); the guard cannot tell whether it creates a "
@@ -2791,43 +2791,54 @@ def pr_config_write(rest, ctx):
     return OK
 
 
-def pr_refuse(reason, what, sha=None):
+def pr_refuse(reason, what, sha=None, passed=None):
     if reason == "child":
         return deny("%s refused [pr_refused:child]: children may not create pull requests. Report back and let "
                     "the foreman do it after a review." % what)
     text = PR_ADVICE[reason]
-    if "%s" in text:
+    if reason == "stale_review":
+        text = text % (passed or "?", sha or "?")
+    elif "%s" in text:
         text = text % (sha[:12] if sha else "?")
     return deny("%s refused [pr_refused:%s]: %s" % (what, reason, text))
 
 
+def commit_of(call, ctx, envs, rev):
+    """The commit `rev` names (lowercase); "" when it does not resolve or looks like an option."""
+    if not rev or rev.startswith("-") or "\0" in rev:
+        return ""
+    out = run_git(call, ctx, ["rev-parse", "--verify", "--quiet", rev + "^{commit}"], envs)
+    sha = out.strip().lower() if out else ""
+    return sha if re.match(r"^[0-9a-f]{40,64}$", sha) else ""
+
+
 def pr_gate_check(ctx, call, refs, what, envs=None, upstream=False):
-    """`refs`: head refs of the pull request (None = HEAD, "" = unreadable). `upstream`: the
-    head's upstream branch, when it has one, must be a reviewed head too (gh opens the PR from
-    the remote branch, B-M3)."""
+    """`refs`: head refs of the pull request (None = HEAD, "" = unreadable). A head is reviewed when the
+    PASS is its local ref, its origin ref, its upstream or HEAD of the workspace. `upstream`: a reviewed
+    local ref whose upstream is another, unreviewed commit is refused (gh opens the PR from the remote
+    branch, B-M3)."""
     if ctx.mode == "child":
         return pr_refuse("child", what)
     gate = ctx.pr_gate
     if not isinstance(gate, dict) or not gate.get("enabled"):
         return OK
     heads = gate.get("reviewed_heads")
-    reviewed = set(h.lower() for h in heads if isinstance(h, str)) if isinstance(heads, list) else set()
+    listed = [h.lower() for h in heads if isinstance(h, str)] if isinstance(heads, list) else []
+    reviewed = set(listed)
+    passed = listed[-1] if listed else ""
+    cur = commit_of(call, ctx, envs, "HEAD")
     for ref in refs or [None]:
         ref = "HEAD" if ref is None else ref
-        out = None
-        if ref and not ref.startswith("-") and "\0" not in ref:
-            out = run_git(call, ctx, ["rev-parse", "--verify", "--quiet", ref + "^{commit}"], envs)
-        sha = out.strip().lower() if out else ""
-        if not re.match(r"^[0-9a-f]{40,64}$", sha):
+        sha = commit_of(call, ctx, envs, ref)
+        if not sha:
             return pr_refuse("head_unknown", what)
-        if sha not in reviewed:
-            return pr_refuse("stale_review" if reviewed else "no_review", what, sha)
-        if upstream:
-            up = run_git(call, ctx, ["rev-parse", "--verify", "--quiet",
-                                     ("" if ref == "HEAD" else ref) + "@{upstream}^{commit}"], envs)
-            up = up.strip().lower() if up else ""
-            if up and up not in reviewed:
-                return pr_refuse("stale_review", what, up)
+        branch = "" if ref == "HEAD" else ref
+        up = commit_of(call, ctx, envs, branch + "@{upstream}")
+        if upstream and sha in reviewed and up and up not in reviewed:
+            return pr_refuse("stale_review", what, up, sha)
+        remote = commit_of(call, ctx, envs, "origin/" + branch) if branch else ""
+        if not reviewed.intersection(c for c in (sha, remote, up, cur) if c):
+            return pr_refuse("stale_review" if reviewed else "no_review", what, sha, passed)
     return OK
 
 

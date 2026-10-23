@@ -38,7 +38,7 @@ import { childSkillDirs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { CHILD_TRACE_EVENT, gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
-import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
+import { branchMove, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
@@ -117,7 +117,7 @@ import type { LaunchRounds } from "./rounds.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
-import { dedupeNotices, dedupeOn, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
+import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import type { CloseReport } from "./close.ts";
 import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, sessionModelOf } from "./session.ts";
@@ -2101,10 +2101,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return undefined;
   });
 
+  /** A run of this session still going: not ended, and launched here (activeRuns) or a launch still in flight (pendingLaunches). */
+  function isLiveRun(s: Session | undefined, runId: string): boolean {
+    return !!s && !s.attention.endedRuns.has(runId) && (s.activeRuns.has(runId) || s.pendingLaunches.size > 0);
+  }
+
   /** A custom message the foreman received: at message_end, or appended while idle and found at the next input (idlecustom.ts). */
   function onCustomMessage(s: Session, message: unknown): void {
     const m = message as { customType?: string; details?: unknown; content?: unknown };
-    const opened = s.supervisor.onMessage(message);
+    const live = (runId: string): boolean => isLiveRun(s, runId);
+    const stale = s.supervisor.staleRequest(message, live);
+    if (stale) s.trace?.emit({ event: "supervisor_request", role: stale.role, decision: "stale" });
+    const opened = s.supervisor.onMessage(message, live);
     if (opened) s.trace?.emit({ event: "supervisor_request", role: opened.role, decision: "open" });
     if (s.isChild) return;
     const cause = causeOfCustom(m.customType);
@@ -2483,13 +2491,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const v = shellWriteVerdict(await runShellWriteGuard({ python: pyPath(s), pkgRoot: PKG_ROOT, payload, env, cwd: ctx.cwd, spawner }), pyPath(s));
       if (v.decision === "allow") return undefined;
       if (v.decision !== "refuse") return { block: true, reason: v.reason };
+      // r29: the foreman's branch-only git on a clean tree (a refusal names the precondition that failed)
+      const command = typeof input.command === "string" ? input.command : "";
+      const move = await branchMove(command, ctx.cwd, !s.isChild);
+      if (move?.allow) {
+        s.trace?.emit({ event: "shell_write_allow", reason: "branch_move", cmd: command });
+        return undefined;
+      }
+      const reason = move && "precondition" in move ? `${v.reason} branch move refused: ${move.precondition}.` : v.reason;
       if (planner) {
         s.trace?.emit({ event: "planner_write_refused", kind: "shell" });
-        return { block: true, reason: `${v.reason} ${PLANNER_SCOPE_NOTE(scratchDir)}` };
+        return { block: true, reason: `${reason} ${PLANNER_SCOPE_NOTE(scratchDir)}` };
       }
       s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode });
       const more = onEditRefused(s, mode, "shell");
-      return { block: true, reason: mode === "bounded" ? v.reason : `${v.reason} pi-foreman: ${editModeAdvice(mode, scratchDir)}.${more}` };
+      return { block: true, reason: mode === "bounded" ? reason : `${reason} pi-foreman: ${editModeAdvice(mode, scratchDir)}.${more}` };
     } catch (err) {
       return { block: true, reason: `pi-foreman: adapter error in the shell write guard (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
     }
@@ -2581,8 +2597,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (event.toolName === SUPERVISOR_TOOL) {
       const s = sessionFor(ctx);
-      const closed = s?.supervisor.onSupervisorResult(event.details, event.isError);
-      if (closed) s?.trace?.emit({ event: "supervisor_request", role: closed.role, decision: "replied" });
+      const closed = s?.supervisor.onSupervisorResult(event.details, event.isError, (runId) => isLiveRun(s, runId));
+      if (closed) s?.trace?.emit({ event: "supervisor_request", role: closed.role, decision: event.isError ? "closed_dead_run" : "replied" });
     }
     if (event.toolName === "subagent") {
       const s = sessionFor(ctx);
@@ -2636,6 +2652,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const notices = modelLine || occasionLines.length > 0 ? [...(s?.launchNotices.get(event.toolCallId) ?? []), ...(modelLine ? [modelLine] : []), ...occasionLines] : s?.launchNotices.get(event.toolCallId);
       if (s && notices) s.launchNotices.delete(event.toolCallId);
       const held = s ? await holdLaunch(s, ctx, event.toolCallId, event.input, event.details, event.isError) : null;
+      // A detached launch (the default) returns its receipt and one line: the completion notice starts the next turn.
+      const detached = s && !held ? detachedLine(s, event.input, event.details, event.isError) : null;
       // A held launch's result carries the panel block of its run end (else it comes as its own message).
       const pb = s && held ? s.reviewRuns.blocks.get(launchId(event.input, event.details, event.isError) ?? "") : undefined;
       if (pb) pb.claimed = true;
@@ -2644,9 +2662,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (s && held?.path) recordChild(s, [held.path]);
       // subagent has no post guards (toolmap.ts), so the amended result can be returned here.
       // The held text stays the last block: deliveredRuns accepts the "done" marker only there.
-      const trim = held && !held.plain ? dropAsyncGuidance(event.content) : null;
+      const trim = (held && !held.plain) || detached !== null ? dropAsyncGuidance(event.content) : null;
       if (s && trim && trim.trimmed > 0) s.trimmedLines.set(launchId(event.input, event.details, event.isError) ?? "", trim.trimmed);
-      if (notices || held) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(trim ? trim.content : event.content), ...(held ? [{ type: "text" as const, text: held.text }] : [])] };
+      const tail = held ? held.text : detached;
+      if (notices || tail !== null) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(trim ? trim.content : event.content), ...(tail !== null ? [{ type: "text" as const, text: tail }] : [])] };
     }
     const mapping = mapTool(event.toolName);
     const changed = event.isError ? undefined : changedFileOf(event.toolName, event.input as Record<string, unknown>);
@@ -2729,6 +2748,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // a steer taken as the run ended is delivered only if it is shown here; otherwise it stays pending
     const shown = foldSteer(watch, steerText, climb && climb.runId === runId && !r.end?.policyBlock && !r.end?.repeatRefusal ? `${text}\n${climbHint(climb)}` : text, !ctx.signal?.aborted);
     return { text: steerFor(s).append(shown), path: r.end?.resultPath ?? asyncDir };
+  }
+
+  /** The receipt line of a detached launch (launchwait.ts detachedLaunchLine); null for a child session, an error or a launch with no known run. */
+  function detachedLine(s: Session, input: unknown, details: unknown, isError: boolean): string | null {
+    const runId = launchId(input, details, isError);
+    const run = runId ? s.runs.get(runId) : undefined;
+    if (s.isChild || !runId || !run) return null;
+    const raw = details && typeof details === "object" ? (details as { asyncDir?: unknown }).asyncDir : undefined;
+    return detachedLaunchLine({ runId, role: run.role, resultPath: typeof raw === "string" ? raw : null });
   }
 
   // Knob 5a (launchwait.ts): a completion notice whose result an earlier message delivered is dropped from the model context.

@@ -63,6 +63,12 @@ test("a reviewer may write its own scratch dir", { skip: !posix }, () => {
   assert.equal(run("reviewer", `touch ${scratch}/x`), "pass");
 });
 
+test("git grep -O / --open-files-in-pager (any abbreviation) is no read in a reviewer; plain git grep is", { skip: !posix }, () => {
+  for (const cmd of ["git grep -Orm x -- f", "git grep -1Oecho x", "git grep -n1Oecho x", "git grep --open-files-in-pager=rm x", "git grep --op=rm x", "git grep --open=rm x"]) assert.equal(run("reviewer", cmd), "deny", cmd);
+  assert.equal(run("reviewer", "git grep x"), "pass");
+  assert.equal(run("reviewer", "git grep -n x -- f"), "pass");
+});
+
 test("the builder in the round worktree is not restricted by the read-only check", { skip: !posix }, () => {
   for (const cmd of ["rm f", "sed -i '' s/x/y/ f", "git checkout -- f", "truncate -s0 f"]) assert.notEqual(run("builder", cmd), "deny", cmd);
 });
