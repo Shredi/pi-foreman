@@ -37,6 +37,8 @@ The foreman records a tier (trivial, standard, heavy) before it changes files it
 | `ceremony.recheckBudget` | `3` | project/session can only lower (minimum 0) |
 | `ceremony.launchWait` | `detach` (`detach`, `block`: the test hook of the replay rigs and bench) | project/session can only move to `block` |
 | `ceremony.dedupeNotify` | `true` | project/session cannot turn it off |
+| `ceremony.childBashTimeoutSeconds` | `600` | free per layer; the default `timeout` of a child's `bash` call that names none (see [safety](safety.md#child-shell-time-limit)) |
+| `ceremony.childBashTimeoutMaxSeconds` | `3600` | free per layer; the cap of a child's explicit `bash` `timeout` |
 | `ceremony.ledgerHelper` | `tool` (`tool`, `bash`, `off`) | project/session can only move toward `off`; `off` is the eee843d-equivalent |
 | `ceremony.reviewPerRevision` | `true` | project/session cannot turn it off; `false` (the eee843d-equivalent) only from the user or package layer |
 | `ceremony.reviewRuns` | `3` | project/session can only lower (minimum 1) |

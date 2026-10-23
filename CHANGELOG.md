@@ -4,6 +4,7 @@
 
 ### Round 30
 - The children widget shows the foreman's background rows after the active runs: a pending `foreman_wait` as `wait · note · age`, an active `pr_watch` as `pr #n · until · age` and a running `foreman_bg` command as `bg · note · age`. They show with or without child runs; the widget hides only when all are empty. Rows follow the same height rules (padding, at most 8 rows, a `+<n> more` fold), and `widget.children` off hides them too; no new key. Tests: `r30-widget-background`. See docs/sessions.md.
+- A child's `bash` call with no `timeout` gets `ceremony.childBashTimeoutSeconds` (600); an explicit one above `ceremony.childBashTimeoutMaxSeconds` (3600) is capped. Trace `bash_timeout {action: applied|capped, requested}`; the foreman's calls are untouched. The role prompts (builder, reviewer, finalizer, explorer) say to set `timeout` on long commands. Tests: `r30-child-bash-timeout`. docs/safety.md and docs/ceremony.md document the keys.
 
 ### Round 29
 - A child's read-only shell unit that names a protected file passes the write protection (strict git read allowlist and plain readers only); an env prefix, wrapper, loop or assignment anywhere in the line ends the read and the file stays protected; docs/safety.md says the rule is no sandbox. Test: `r29-protected-read-only`.

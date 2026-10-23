@@ -126,6 +126,10 @@ outside it:
 - The harness removes the dir at run end only after a realpath check that it is a real directory below the
   `pi-foreman-scratch` root and neither inside nor around the repository.
 
+## Child shell time limit
+
+A child's `bash` call with no `timeout` gets `ceremony.childBashTimeoutSeconds` (600 s); an explicit `timeout` above `ceremony.childBashTimeoutMaxSeconds` (3600 s) is capped to it. The limit bounds a hung command, not a permission: the overlay and guards decide the same way with or without it. The foreman's own shell calls are not limited by these keys (trace `bash_timeout {action: applied|capped, requested}`).
+
 ## Child environment and extensions
 
 Subagent children get a stripped environment: `childenv.ts` removes the intercom identity variables, so a child
