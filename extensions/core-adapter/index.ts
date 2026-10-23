@@ -441,7 +441,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const radarTouch = (s: Session | undefined, ctx: ExtensionContext): void => {
     if (!s) return;
     s.live?.touch();
-    s.widget.request(ctx, { enabled: get(s.config.config, "widget.children") === true, agentDir: s.agentDir, intercomId: s.live?.intercomId ?? null, symbols: get(s.config.config, "ui.symbols"), background: () => backgroundOf(s) });
+    s.widget.request(ctx, { enabled: get(s.config.config, "widget.children") === true, agentDir: s.agentDir, intercomId: s.live?.intercomId ?? null, symbols: get(s.config.config, "ui.symbols"), background: () => backgroundOf(s), spinner: get(s.config.config, "ui.spinner") !== false });
   };
   pi.on("agent_start", async (_e, ctx) => {
     const s = sessionFor(ctx);
@@ -639,7 +639,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       })
       .catch(() => undefined);
     if (!isChild) {
-      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const n = sessions.get(id)?.prWatches.size() ?? 0; return n > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${n} pr watch`, ageSeconds: 0, leftSeconds: 0 }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; });
+      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const prs = sessions.get(id)?.prWatches.list().map((p) => p.n) ?? []; return prs.length > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; });
       const live = s.live;
       waits.onChange(id, () => {
         live?.touch();
@@ -926,7 +926,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       notifyOnce(s, ctx, "ps-project-file", `pi-foreman: ${psProjectConfigPath(s.cwd)} exists. A project permission file can loosen the permission system's rules (it applies once the project is trusted). pi-foreman still enforces its deny rules itself, but put your rules in foreman.json and remove this file. /foreman doctor fails while it exists.`);
     }
     herdrMeta.start(ctx, get(s.config.config, "herdr.groupTag") !== false);
-    sidebarLive.start(ctx, { python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, sessionId: s.id, symbols: get(s.config.config, "ui.symbols"), live: s.live });
+    sidebarLive.start(ctx, { python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, sessionId: s.id, symbols: get(s.config.config, "ui.symbols"), spinner: get(s.config.config, "ui.spinner") !== false, live: s.live });
     // Host pressure (pressure.ts): the foreman samples on a timer; the launch path only reads the file.
     if (!s.isChild && !s.pressureSampler) {
       s.pressureSampler = new PressureSampler({
