@@ -236,3 +236,28 @@ test("the probe line goes to the next item or pre-pr reviewer and is cleared by 
   await a.launch(next);
   assert.ok(!next.task.includes("[pi-foreman risk]"), "cleared by the item PASS");
 });
+
+test("high pressure: a queued builder entry is neither sized, refused nor probed; only the launched one is", async (t) => {
+  const a = await rig(t);
+  big(a);
+  const at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  fs.mkdirSync(path.dirname(pressurePath(a.agentDir)), { recursive: true });
+  fs.writeFileSync(pressurePath(a.agentDir), JSON.stringify({ level: "high", reasons: ["load"], at, host: {} }));
+  const first = builder({ size: { files: ["big.py"] } });
+  const queued = builder({ model: "default", size: { files: ["big.py"] }, risk: ["guard"] });
+  assert.equal((await a.launch({ tasks: [first, queued] })).res, undefined);
+  assert.equal(first.model, "fake/strong");
+  assert.deepEqual(sizing(a).map((r) => r.rule), ["large_file"]);
+  assert.deepEqual(a.events("launch_refused"), []);
+  const next = { agent: "reviewer", task: "[second-opinion] review items 1" };
+  await a.launch(next);
+  assert.ok(!next.task.includes("[pi-foreman risk]"), "no probe risk for the queued entry");
+});
+
+test("a launch refused by the rank policy traces no launch_sizing", async (t) => {
+  const a = await rig(t, { ranks: [{ match: "foreman*", tier: 0 }, { match: "builder", tier: 0 }, { match: "*", tier: 3 }] });
+  const res = (await a.launch(builder({ size: { files: ["new.py"] } }))).res;
+  assert.equal(res?.block, true);
+  assert.ok(a.events("launch_refused").some((r) => r.reason === "rank_policy"));
+  assert.deepEqual(sizing(a), []);
+});

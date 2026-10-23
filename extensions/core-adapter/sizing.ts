@@ -177,11 +177,12 @@ export function measure(d: Declared["size"], entryCwd: string, sessionCwd: strin
   let measuredLines = 0;
   d.files.forEach((f, i) => {
     const abs = path.resolve(entryCwd, f);
-    if (!insideRoot(root, realOfDeepest(abs))) {
+    const real = realOfDeepest(abs);
+    if (!insideRoot(root, real)) {
       out.outside++;
       return;
     }
-    const comp = componentOf(path.relative(root, abs));
+    const comp = componentOf(path.relative(root, real));
     if (comp) parts.add(comp);
     if (i >= MAX_FILES) {
       out.large = true;
@@ -335,7 +336,10 @@ export function planSizing(input: Json, taken: Map<Json, Declared>, carried: Rea
   const climbs = new Set<Json>();
   const ctx: RungContext = { roles: o.roles, ranks: o.ranks, top: o.top };
   const strongMapped = hasStrongRung(o.roles, "builder");
-  for (const [e, d] of taken) {
+  // Only the entries that launch now: `narrowLaunch` cut the others away and queued them; they are sized when they relaunch.
+  for (const e of launchEntries(input)) {
+    const d = taken.get(e);
+    if (!d) continue;
     const role = e.agent as string;
     const none: Combination = { note: [] };
     if (role !== "builder") {

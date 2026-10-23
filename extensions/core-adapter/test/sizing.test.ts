@@ -267,3 +267,14 @@ test("Declared type is exported for callers", () => {
   const d: Declared = { size: null, risk: null };
   assert.equal(d.size, null);
 });
+
+test("measure: a symlinked cwd still counts the components of three files (new files included)", (t) => {
+  const root = repo(t);
+  const links = fs.realpathSync(mkTestTmp("pf-sizing-link-"));
+  t.after(() => rmTestTmp(links));
+  const link = path.join(links, "lnk");
+  fs.symlinkSync(root, link);
+  put(root, "scripts/s.py", "x\n");
+  const m = measure({ files: ["scripts/s.py", "config/new.json", "extensions/core-adapter/new.ts"] }, link, link);
+  assert.deepEqual([m.modules, m.outside], [3, 0]);
+});

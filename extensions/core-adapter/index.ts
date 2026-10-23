@@ -1729,6 +1729,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let reviewerTraces: Record<string, unknown>[] = [];
       let sized: ReturnType<typeof takeSizing> | null = null;
       let sizedPlans: EntryPlan[] = [];
+      let sizingRecords: Record<string, unknown>[] = [];
+      let pendingBottom: Map<string, string> | null = null;
       let sizingClimbs: ReadonlySet<Json> = new Set();
       let sizingTop: string | null = null;
       let occasions = new Map<Record<string, unknown>, Occasion>();
@@ -1906,7 +1908,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const foremanAt0 = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null;
         const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking"), explicit: (role, m) => explicitModelAllowed(s.config.config, foremanAt0, m, role) });
         for (const n of launched.notices) bottomWhy.set(n.role, noStrong);
-        if (bottomWhy.size > 0) capSet(bottomNotes, event.toolCallId, bottomWhy);
+        if (bottomWhy.size > 0) pendingBottom = bottomWhy;
         if (sizedPlans.length > 0) {
           // The top rung is written after the mapped models, like the research floor; its rung_up names it.
           for (const p of sizedPlans) {
@@ -1915,7 +1917,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             for (const c of climbs) if (c.entry === p.entry) c.to = splitLevel(sizingTop).base;
           }
           const rungs: RungContext = { roles: resolution.roles, ranks: ranksOf(s.config.config), top: sizingTop };
-          for (const p of sizedPlans) s.trace?.emit(sizingTrace(p, p.role === "builder" && typeof p.entry.model === "string" ? (rungOfModel(p.entry.model, rungs) ?? "default") : "default"));
+          sizingRecords = sizedPlans.map((p) => sizingTrace(p, p.role === "builder" && typeof p.entry.model === "string" ? (rungOfModel(p.entry.model, rungs) ?? "default") : "default"));
         }
         // A panel shadow runs on its own model (rank-checked in shadowLaunch): no occasion override, rank loop or different-model rule.
         if (shadow.kind === "launch") input.model = shadow.model;
@@ -2038,6 +2040,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
       }
       // Kept for the tool result only once the launch passed every check.
+      if (pendingBottom) capSet(bottomNotes, event.toolCallId, pendingBottom);
+      for (const r of sizingRecords) s.trace?.emit(r);
       s.reviewCount += pendingReviews;
       s.planReviewCount += pendingPlanReviews;
       if (pendingWarn) {
