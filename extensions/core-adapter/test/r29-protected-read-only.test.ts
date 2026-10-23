@@ -103,6 +103,34 @@ test("plain git readers still pass on a protected file (new cases)", { skip: !po
   for (const c of ["git diff a..b -- package.json", "git log -p -- package.json", "git show HEAD:package.json", "git -C sub diff -- package.json"]) assert.equal(child(c), "pass", c);
 });
 
+test("git protected readers are a strict option allowlist: brace, format and unlisted options are denied", { skip: !posix }, () => {
+  const F = "package.json";
+  for (const c of [
+    `git diff --{output=${F},stat} -- x`,
+    `git diff --{out,}put=${F}`,
+    `git diff -- {${F},x}`,
+    `git log --format=%H -- ${F}`,
+    `git diff --word-diff -- ${F}`,
+    `git show --pretty=x HEAD:${F}`,
+    `git -C a -C b diff -- ${F}`,
+    `git diff --stat=1 -- ${F}`,
+    `git log -n x -- ${F}`,
+  ]) assert.equal(child(c), "deny", c);
+});
+
+test("git protected readers with listed options and plain operands pass", { skip: !posix }, () => {
+  const F = "package.json";
+  for (const c of [
+    `git diff a..b -- ${F}`,
+    `git diff --stat main..HEAD -- ${F}`,
+    `git log -p -n3 -- ${F}`,
+    `git log --oneline -5 -- ${F}`,
+    `git show HEAD:${F}`,
+    `git status --short ${F}`,
+    `git -C sub diff -- ${F}`,
+  ]) assert.equal(child(c), "pass", c);
+});
+
 test("a chain mixing a read and a write to a protected file is denied", { skip: !posix }, () => {
   assert.equal(child("git diff -- package.json && echo x > package.json"), "deny");
   assert.equal(child("cat package.json; tee package.json < /dev/null"), "deny");

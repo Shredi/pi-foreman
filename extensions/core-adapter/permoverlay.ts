@@ -79,7 +79,7 @@ import type { Json } from "./config.ts";
 import { workspaceOf } from "./python.ts";
 import { resolveVars } from "./shellvars.ts";
 import { probeFileHit } from "./splitliteral.ts";
-import { GIT_READ, gitReadWrites } from "./effects.ts";
+import { gitProtectedRead } from "./effects.ts";
 
 export interface PathRule {
   pattern: string;
@@ -2025,11 +2025,7 @@ function protectedReader(core: string[], skip: Set<number>): boolean {
   // an allowlist of git shapes that only read their path operands: effects.ts's GIT_READ without its writing options
   // (`grep` is no reader: `-O` runs a program); a global `-c` or any other subcommand is no reader
   if (verb === "git") {
-    let k = 1;
-    while (k < core.length && core[k] === "-C") k += 2;
-    const sub = core[k] ?? "";
-    const rest = args.slice(k);
-    return GIT_READ.has(sub) && !gitReadWrites(rest);
+    return gitProtectedRead(core);
   }
   if (!PROTECTED_READERS.has(verb)) return false;
   if (verb === "file") return !has(/^-[A-Za-z]*C|^--compile/);
