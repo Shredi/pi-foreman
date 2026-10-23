@@ -25,13 +25,25 @@ try:
 except ImportError:  # Python < 3.11
     tomllib = None
 
+BRAILLE = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 SYMS = {
     "unicode": {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗", "keepalive": "♨",
-                "waiting-owner": "\u270b", "waiting-external": "\u21bb", "idle": "\u23f8"},
+                "waiting-owner": "\u270b", "waiting-external": "\u21bb", "idle": "\u23f8",
+                "spinner": BRAILLE, "agent": "◆", "task": "⚙", "wait": "⧗", "ask": "?", "recent": "✓"},
+    "emoji": {"working": "⏳", "waiting": "⏸️", "asking": "❓", "blocked": "✋", "done": "✅", "lost": "❌",
+              "keepalive": "♨️", "waiting-owner": "✋", "waiting-external": "🔄", "idle": "⏸️",
+              "spinner": BRAILLE, "agent": "🤖", "task": "⚙️", "wait": "⏳", "ask": "❓", "recent": "✅"},
     "nerd": {"working": "\uf252", "waiting": "\uf04c", "asking": "\uf128", "blocked": "\uf256",
              "done": "\uf00c", "lost": "\uf00d", "keepalive": "\uf06d",
-             "waiting-owner": "\uf256", "waiting-external": "\uf017", "idle": "\uf04c"},
+             "waiting-owner": "\uf256", "waiting-external": "\uf017", "idle": "\uf04c",
+             "spinner": BRAILLE, "agent": "\uf544", "task": "\uf013", "wait": "\uf252", "ask": "\uf128",
+             "recent": "\uf00c"},
+    "ascii": {"working": "*", "waiting": ".", "asking": "?", "blocked": "#", "done": "+", "lost": "x",
+              "keepalive": "^", "waiting-owner": "#", "waiting-external": "@", "idle": ".",
+              "spinner": ["|", "/", "-", "\\"], "agent": ">", "task": "=", "wait": "~", "ask": "?", "recent": "+"},
 }
+# The glyphs a sidebar state shows (the keys that are not the footer's, a spinner or an activity mark).
+STATE_KEYS = ("working", "waiting", "asking", "blocked", "done", "lost", "waiting-owner", "waiting-external", "idle")
 
 
 def node(key, kind, name, sym, state, glyphs, pane=None, children=(), role=None, rung=None,
@@ -469,33 +481,33 @@ class SnippetTest(unittest.TestCase):
         self.assertLessEqual(len(rows), 16)
         glyphs = set()
         for s in SYMS.values():
-            glyphs.update(v for k, v in s.items() if k != "keepalive")  # footer glyph, not a sidebar state
+            glyphs.update(s[k] for k in STATE_KEYS)
         for row in rows:
             self.assertLessEqual(len(row), 16)
             for cell in row:
                 rules = cell.get("rules", []) if isinstance(cell, dict) else []
                 self.assertLessEqual(len(rules), 16)
                 for r in rules:
-                    self.assertTrue(r.get("contains") == "!" or r["equals"] in glyphs, r)
-        self.assertIsInstance(rows[0][0], dict)   # row 1 opens with $fm_sym (state_icon is a commented variant)
+                    self.assertTrue(r["contains"] == "!" or r["contains"] in glyphs, r)
         sym_file = ROOT / "config" / "symbols.json"
         if sym_file.is_file():
             with open(sym_file, encoding="utf-8") as fh:
                 shared = json.load(fh)
             self.assertEqual(shared, SYMS)
         self.assertNotIn("$fm_pre", json.dumps(rows))
-        sym_cell = rows[0][0]
-        self.assertEqual(sym_cell["token"], "$fm_sym")
-        sym_rules = sym_cell["rules"]
-        self.assertEqual(sym_rules[0], {"contains": "!", "fg": "#d9534f", "bold": True})  # late first
-        self.assertEqual(rows[0][1], "$fm_l1")
-        every = {s[k] for s in SYMS.values() for k in ("working", "waiting", "asking", "blocked", "done", "lost")}
-        self.assertEqual({r["equals"] for r in sym_rules[1:]}, every)   # one rule per state glyph, both sets
-        self.assertIn("state_icon", (PLUGIN / "config-snippet.toml").read_text(encoding="utf-8"))  # commented variant
-        self.assertNotIn("state_icon", json.dumps(rows))
-        for frame in "⣾⣽⣻⢿⡿⣟⣯⣷":
-            self.assertFalse(any(r.get("equals") == frame or r.get("contains", "\0") in frame
-                                 for r in sym_rules), frame)
+        self.assertEqual([[c["token"] for c in row] for row in rows],
+                         [["$" + k] for k in ("fm_hd", "fm_a1", "fm_a2", "fm_a3", "fm_meta")])
+        for old in ("$fm_sym", "$fm_l1", "$fm_l2", "$fm_l3", "$fm_cost", "state_icon"):
+            self.assertNotIn(old, json.dumps(rows))
+        hd_rules = rows[0][0]["rules"]
+        self.assertEqual(hd_rules[0], {"contains": "!", "fg": "#d9534f", "bold": True})  # late first
+        for row in rows[1:]:
+            self.assertTrue(row[0]["dim"] and "fg" not in row[0])   # detail rows follow the theme
+        # every state glyph of unicode, emoji and nerd that needs a colour has a rule
+        wanted = {s[k] for n, s in SYMS.items() if n != "ascii" for k in ("asking", "blocked", "lost", "done")}
+        self.assertEqual({r["contains"] for r in hd_rules[1:]}, wanted)
+        for frame in BRAILLE + ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]:
+            self.assertFalse(any(r["contains"] in frame for r in hd_rules), frame)
         with open(PLUGIN / "herdr-plugin.toml", "rb") as fh:
             manifest = tomllib.load(fh)
         self.assertEqual(manifest["id"], "pi-foreman.sidebar")
@@ -786,6 +798,57 @@ class PushTest(unittest.TestCase):
         self.assertEqual(self.herdr.reports(), [])
 
 
+@unittest.skipUnless(os.name == "posix" and hasattr(socket, "AF_UNIX"), "POSIX AF_UNIX socket")
+class PushFinalFinishedRootTest(unittest.TestCase):
+    """Round 33 root cause 6: `push --final` must publish the row of a finished root and drop its stamp."""
+
+    def iso(self, ago):
+        import datetime
+        return (datetime.datetime.now(datetime.timezone.utc)
+                - datetime.timedelta(seconds=ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def final_push(self, patch):
+        tmp = tempfile.mkdtemp(dir="/tmp" if os.path.isdir("/tmp") else None)
+        herdr = FakeHerdr(os.path.join(tmp, "h.sock"))
+        try:
+            adir = write_agent_dir(tmp)
+            live = os.path.join(adir, "pi-foreman", "state", "live", "sid-1.json")
+            with open(live, encoding="utf-8") as fh:
+                d = json.load(fh)
+            d.update(patch)
+            with open(live, "w", encoding="utf-8") as fh:
+                json.dump(d, fh)
+            stamp = os.path.join(tmp, "state", "push", "sid-1.stamp")
+            os.makedirs(os.path.dirname(stamp))
+            with open(stamp, "w", encoding="utf-8") as fh:
+                fh.write("p1")
+            env = dict(os.environ, HERDR_SOCKET_PATH=os.path.join(tmp, "h.sock"),
+                       HERDR_PLUGIN_STATE_DIR=os.path.join(tmp, "state"), HERDR_SIDEBAR_WIDTH="26")
+            res = subprocess.run([sys.executable, str(PLUGIN / "sidebar.py"), "push", "--session", "sid-1",
+                                  "--pane", "p1", "--agent-dir", adir, "--final"],
+                                 env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+            return res, herdr.reports(), os.path.exists(stamp)
+        finally:
+            herdr.close()
+            shutil.rmtree(tmp)
+
+    def test_final_publishes_done_and_lost_roots(self):
+        cases = {"done": {"state": "done"},
+                 "done, silent for 5 minutes": {"state": "done", "heartbeatAt": self.iso(300),
+                                                "lastEventAt": self.iso(300)},
+                 "lost": {"heartbeatAt": self.iso(300), "lastEventAt": self.iso(300)},
+                 "done over 24 h ago": {"state": "done", "heartbeatAt": self.iso(90000),
+                                        "lastEventAt": self.iso(90000)}}
+        for name, patch in cases.items():
+            with self.subTest(name):
+                res, reports, stamp_left = self.final_push(patch)
+                self.assertEqual((res.returncode, res.stderr), (0, b""))
+                self.assertEqual(len(reports), 1)
+                self.assertEqual(reports[0]["pane_id"], "p1")
+                self.assertTrue(reports[0]["tokens"]["fm_l1"].startswith("› demo"))
+                self.assertFalse(stamp_left)
+
+
 class DaemonTest(unittest.TestCase):
     def test_foreman_not_found_exits_2(self):
         tmp = tempfile.mkdtemp()
@@ -815,6 +878,572 @@ class LiveSmokeTest(unittest.TestCase):
                               "--foreman", str(ROOT / "bin" / "foreman")],
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
         self.assertEqual(res.returncode, 0, res.stderr)
+
+
+# ---------------------------------------------------------------- Round 33: tree rows
+
+B = sidebar.BLANK
+ROW_KEYS = ("fm_hd", "fm_a1", "fm_a2", "fm_a3", "fm_meta")
+
+
+def tnode(key, name, glyph, sym="working", state=None, age=12, children=(), symbols="unicode",
+          tot=(0, 0, 0.0), blocked=None, **extra):
+    """A session node whose glyph is shown as given (a spinner frame, say); pane "P-<key>"."""
+    n = node(key, "session", name, sym, state or sym, SYMS[symbols], pane="P-" + key, children=children,
+             age=age, sid=key, tot=tot, blocked=blocked)
+    n["glyph"] = glyph
+    n.update(extra)
+    return n
+
+
+def trun(key, role, model=None, state="working", sym="working", **extra):
+    n = node(key, "run", role, sym, state, SYMS["unicode"], role=role)
+    n["model"] = model
+    n.update(extra)
+    return n
+
+
+def rendered(snap, width):
+    """The Agents panel as lines: each pane's row tokens in order, blank cells shown as spaces."""
+    out = sidebar.compose(snap, width)
+    lines = []
+    for pane in sorted(out, key=lambda p: out[p]["fm_sort"]):
+        lines += [out[pane][k].replace(B, " ") for k in ROW_KEYS if out[pane][k] is not None]
+    return lines
+
+
+SONNET, OPUS = "claude-bridge/claude-sonnet-5-5", "anthropic/claude-opus-5-5"
+
+
+def mock_snapshot(reverse=False):
+    """The plan's mock-up: a root with three row children, one of which has a child of its own."""
+    perms = tnode("perms", "r31-perms", "✋", "blocked", age=60, blocked=60, asks=["rule scope"],
+                  tot=(0, 0, 0.12), started=4.0)
+    sidebar_ = tnode("sidebar", "r31-sidebar", "⠼", age=360, started=1.0, tot=(0, 0, 0.47),
+                     children=[trun("r6", "reviewer", OPUS), perms], done_children=1)
+    cache = tnode("cache", "r32-cache", "⏸", "waiting", age=120, started=2.0, tot=(0, 0, 1.02), done_children=2,
+                  waits=[{"id": "w", "kind": "child", "note": "child r32b", "age_s": 240, "left_s": 0}])
+    git = tnode("git", "r31-git", "✓", "done", age=2400, started=3.0, tot=(0, 0, 0.88), done_children=4)
+    kids = [trun("r1", "builder", SONNET), trun("r2", "builder", SONNET), trun("r3", "reviewer", OPUS),
+            sidebar_, cache, git]
+    if reverse:
+        kids[3:] = kids[:2:-1]   # the session siblings; the runs keep their order
+    root = tnode("root", "pi-foreman", "⠹", age=12, children=kids, tot=(287000, 7400, 3.32), done_children=3,
+                 waits=[{"id": "pr_watch", "kind": "pr", "note": "1 pr watch", "age_s": 0, "left_s": 0, "prs": [12]}],
+                 tasks=[{"id": "t1", "label": "npm test", "pid": 7, "ageSeconds": 180}])
+    return {"v": 1, "symbols": "unicode", "roots": [root]}
+
+
+MOCK_40 = """\
+⠹  pi-foreman                     12s
+│  ◆ builder sonnet-5.5 ×2 · reviewe…
+│  ⚙ pr #12 · npm test 3m
+│  ↑287k ↓7.4k · $3.32 · ✓3
+├─ ⠼  r31-sidebar                  6m
+│  │  ◆ reviewer opus-5.5
+│  │  $0.47 · ✓1
+│  └─ ✋ r31-perms                 1m
+│        ? ask 1: rule scope
+│        $0.12
+├─ ⏸  r32-cache                    2m
+│     ⧗ child r32b 4m
+│     $1.02 · ✓2
+└─ ✓  r31-git                     40m
+      $0.88 · ✓4
+""".splitlines()
+
+MOCK_26 = """\
+⠹  pi-foreman       12s
+│  ◆ builder sonnet-5.…
+│  ⚙ pr #12 · npm test…
+│  $3.32 · ✓3
+├─ ⠼  r31-sidebar    6m
+│  │  ◆ reviewer opus-…
+│  │  $0.47 · ✓1
+│  └─ ✋ r31-perms   1m
+│        ? ask 1: rule…
+│        $0.12
+├─ ⏸  r32-cache      2m
+│     ⧗ child r32b 4m
+│     $1.02 · ✓2
+└─ ✓  r31-git       40m
+      $0.88 · ✓4
+""".splitlines()
+
+
+class TreeSnapshotTest(unittest.TestCase):
+    def test_mock_ups_are_exact(self):
+        self.assertEqual(rendered(mock_snapshot(), 40), MOCK_40)
+        self.assertEqual(rendered(mock_snapshot(), 26), MOCK_26)
+
+    def test_input_order_of_siblings_does_not_matter(self):
+        for width in (18, 26, 40, 60):
+            self.assertEqual(rendered(mock_snapshot(reverse=True), width), rendered(mock_snapshot(), width), width)
+
+    def test_unknown_start_sorts_last_then_by_session_id(self):
+        a, b, c = (tnode(k, k, "⠼", sid=k, started=s) for k, s in (("c", None), ("b", 5.0), ("a", None)))
+        root = tnode("root", "root", "⠼", children=[c, a, b])
+        out = sidebar.compose({"roots": [root]}, 40)
+        self.assertEqual([out[p]["fm_sort"] for p in ("P-b", "P-a", "P-c")], ["r001.c001", "r001.c002", "r001.c003"])
+
+    def test_every_set_width_and_depth_fits_and_keeps_the_label_column(self):
+        for symbols in SYMS:
+            g = SYMS[symbols]
+            for depth in range(4):
+                chain = None
+                for d in range(depth, -1, -1):
+                    kids = [chain] if chain else []
+                    kids.append(tnode("x%d" % d, "sibling%d" % d, g["done"], "done", symbols=symbols))
+                    chain = tnode("n%d" % d, "level-%d-session" % d, g["working"], symbols=symbols,
+                                  children=kids, tot=(1500, 90, 0.25))
+                snap = {"symbols": symbols, "roots": [chain]}
+                for width in (18, 26, 40, 60):
+                    with self.subTest(symbols=symbols, depth=depth, width=width):
+                        out = sidebar.compose(snap, width)
+                        self.assertEqual(len(out), 2 * depth + 2)
+                        for tokens in out.values():
+                            for k in ROW_KEYS:
+                                if tokens[k] is not None:
+                                    self.assertLessEqual(sidebar.cell_width(tokens[k]), width - 3, tokens[k])
+                        root_hd = out["P-n0"]["fm_hd"]
+                        self.assertTrue(root_hd.startswith(g["working"]))
+
+    def test_late_blocked_mark_follows_the_age(self):
+        n = tnode("s", "slow", "✋", "blocked", age=1000, blocked=1000)
+        self.assertTrue(sidebar.compose({"roots": [n]}, 40)["P-s"]["fm_hd"].endswith("16m!"))
+        n["blocked_s"] = 60
+        self.assertTrue(sidebar.compose({"roots": [n]}, 40)["P-s"]["fm_hd"].endswith(" 1m"))
+
+    def test_label_is_cut_before_the_age_is_dropped_and_the_overflow_suffix_is_kept(self):
+        n = tnode("s", "a-very-long-session-label", "⠼", age=125)
+        n["tasks"] = [{"label": "task%d" % i, "ageSeconds": 60, "id": str(i)} for i in range(5)]
+        out = sidebar.compose({"roots": [n]}, 30)["P-s"]
+        self.assertEqual(out["fm_hd"].replace(B, " "), "⠼  a-very-long-session-… 2m")   # budget 27
+        self.assertTrue(out["fm_a2"].endswith("… +2"), out["fm_a2"])
+        self.assertEqual(sidebar.cell_width(out["fm_a2"]), 27)
+        # nested two deep at width 18: under four cells of label next to the age, so the age goes
+        leaf = tnode("c", "a-very-long-session-label", "⠼", age=125)
+        mid = tnode("b", "mid", "⠼", children=[leaf])
+        top = tnode("a", "top", "⠼", children=[mid])
+        out = sidebar.compose({"roots": [top]}, 18)["P-c"]
+        self.assertEqual(out["fm_hd"].replace(B, " "), "   └─ ⠼  a-ver…")
+
+    def test_deep_prefix_is_cut_at_a_unit_boundary_never_inside_a_connector(self):
+        n = None
+        for d in range(8, -1, -1):
+            n = tnode("n%d" % d, "l%d" % d, "⠼", children=[n, tnode("z%d" % d, "z", "✓", "done")] if n else [])
+        out = sidebar.compose({"roots": [n]}, 18)
+        for tokens in out.values():
+            for k in ROW_KEYS:
+                v = tokens[k]
+                if v is not None:
+                    self.assertLessEqual(sidebar.cell_width(v), 15)
+                    self.assertNotIn("…", v[:len(v) - len(v.lstrip("│├└─ " + B))])
+        deepest = out["P-n8"]["fm_hd"]
+        self.assertEqual(len(deepest) % 3, 0)
+        self.assertTrue(deepest.endswith("└─ ") or deepest.endswith("├─ ") or set(deepest) <= set("│├└─ " + B))
+
+    def test_legacy_tokens_stay_and_take_their_prefix_from_the_same_tree(self):
+        out = sidebar.compose(mock_snapshot(), 40)
+        self.assertTrue(out["P-sidebar"]["fm_l1"].startswith("├─ › r31-sidebar"))
+        self.assertTrue(out["P-perms"]["fm_l1"].startswith(sidebar.CONT_MID + "└─ › r31-perms"))
+        self.assertEqual(out["P-root"]["fm_sym"], "⠹")
+
+    def test_self_pushing_pane_keeps_only_fm_sort(self):
+        out = sidebar.compose(mock_snapshot(), 40, self_panes={"P-root"})
+        self.assertEqual(out["P-root"], {"fm_sort": "r001"})
+
+    def test_tree_out_and_tpl_out(self):
+        tree, tpl = {}, {}
+        sidebar.compose(mock_snapshot(), 40, tree_out=tree, tpl_out=tpl)
+        self.assertEqual(tree["P-root"] if "P-root" in tree else tree["root"], {"P": "", "conn": "", "own": ""})
+        self.assertEqual(tree["perms"], {"P": sidebar.CONT_MID, "conn": sidebar.CONN_LAST, "own": sidebar.CONT_LAST})
+        self.assertEqual(sorted(tpl), ["P-root", "P-sidebar"])   # the two working sessions
+        self.assertEqual(tpl["P-root"].replace(B, " "), "{spin}  pi-foreman                     12s")
+
+    def test_pushed_tree_position_places_a_root(self):
+        n = tnode("s", "nested", "⠼")
+        pos = {"s": {"P": sidebar.CONT_MID, "conn": sidebar.CONN_MID, "own": sidebar.CONT_MID}}
+        out = sidebar.compose({"roots": [n]}, 40, tree=pos)["P-s"]
+        self.assertTrue(out["fm_hd"].startswith(sidebar.CONT_MID + sidebar.CONN_MID + "⠼"))
+        self.assertEqual(out["fm_meta"][:9], sidebar.CONT_MID + sidebar.CONT_MID + sidebar.CONT_LAST)
+        bad = {"s": {"P": "x", "conn": "├─ ", "own": ""}}
+        self.assertTrue(sidebar.compose({"roots": [n]}, 40, tree=bad)["P-s"]["fm_hd"].startswith("⠼"))
+
+
+class TreePropertyTest(unittest.TestCase):
+    NAMES = ("alpha", "b", "r31-sidebar", "日本語の名前", "cafe\u0301-long-name", "x" * 40, "🤖bot", "r")
+    STATES = (("working", "working"), ("waiting", "waiting"), ("blocked", "blocked"), ("done", "done"))
+
+    def random_tree(self, rnd, symbols):
+        g = SYMS[symbols]
+        count = [0]
+
+        def make(depth):
+            count[0] += 1
+            i = count[0]
+            sym, state = rnd.choice(self.STATES)
+            kids = []
+            while depth < 5 and count[0] < 12 and rnd.random() < 0.55:
+                kids.append(make(depth + 1))
+            n = tnode("n%d" % i, rnd.choice(self.NAMES), g[sym], sym, state, age=rnd.choice((0, 59, 4000, 90000)),
+                      children=kids, symbols=symbols, started=rnd.choice((None, 1.0, 2.0)),
+                      tot=(rnd.choice((0, 1500, 99000)), 12, rnd.choice((0.0, 1.5, 120.0))))
+            if rnd.random() < 0.3:
+                n["tasks"] = [{"id": "t", "label": "npm test", "pid": 1, "ageSeconds": 70}]
+            if rnd.random() < 0.2:
+                n["asks"] = ["which scope"]
+            if rnd.random() < 0.15 and depth:
+                n["paneId"] = None   # an unjoined session: its row children attach to the nearest joined ancestor
+            return n
+        root = make(0)
+        root["paneId"] = "P-n1"
+        return {"symbols": symbols, "roots": [root]}
+
+    def check(self, snap, width, symbols):
+        joins = {n["key"]: "P-" + n["key"] for n in sidebar.walk(snap["roots"])
+                 if n["kind"] == "session" and n.get("paneId")}
+        tree = {}
+        out = sidebar.compose(snap, width, joins, tree_out=tree)
+        budget = width - 3
+        lines = []   # (key, kind, text)
+        for pane in sorted(out, key=lambda p: out[p]["fm_sort"]):
+            key = pane[2:]
+            for k in ROW_KEYS:
+                if out[pane][k] is not None:
+                    lines.append((key, k, out[pane][k]))
+        by_key = {key: i for i, (key, k, _) in reversed(list(enumerate(lines))) if k == "fm_hd"}
+        for key, k, text in lines:
+            self.assertLessEqual(sidebar.cell_width(text), budget, text)
+            stripped = text.lstrip("│├└─ " + B)
+            self.assertNotIn("…", text[:len(text) - len(stripped)])
+        col = lambda text, c: text[c] if len(text) > c else ""   # noqa: E731
+        headers = [(i, key, text) for i, (key, k, text) in enumerate(lines) if k == "fm_hd"]
+        for i, (key, k, text) in enumerate(lines):
+            if k != "fm_hd":
+                continue
+            pos = tree[key]
+            c = len(pos["P"])
+            if pos["conn"] and c + 3 <= budget:
+                self.assertEqual(text[c:c + 3].rstrip(), pos["conn"].rstrip())
+                # an unbroken chain of │/├ in this column back to the parent's own header
+                j = i - 1
+                while j >= 0 and col(lines[j][2], c) in ("│", "├"):
+                    j -= 1
+                self.assertTrue(j >= 0 and lines[j][1] == "fm_hd", (key, lines[j] if j >= 0 else None))
+                parent = tree[lines[j][0]]
+                self.assertEqual(len(parent["P"]) + len(parent["own"]), c, (key, lines[j]))
+            if pos["conn"] and c + 3 <= budget and pos["conn"] == sidebar.CONN_MID:
+                # a later sibling closes the column: │ runs on until a connector
+                j = i + 1
+                while j < len(lines) and col(lines[j][2], c) == "│":
+                    j += 1
+                self.assertTrue(j < len(lines) and col(lines[j][2], c) in ("├", "└"), (key, text))
+            if pos["conn"] == sidebar.CONN_LAST and c + 3 <= budget and i + 1 < len(lines):
+                self.assertNotEqual(col(lines[i + 1][2], c), "│", (key, lines[i + 1]))
+        for i, (key, k, text) in enumerate(lines):
+            pos = tree[key]
+            if k == "fm_hd":
+                want = len(pos["P"]) + (6 if pos["conn"] else 3)
+                if budget - want >= 2:
+                    rest = text[len(pos["P"]) + len(pos["conn"]):]   # slot, space, label
+                    self.assertEqual(sidebar.cell_width(rest[:rest.index(" ") + 1]), 3, text)
+            else:
+                want = len(pos["P"]) + len(pos["own"]) + 3
+                if budget - want >= 2:
+                    self.assertEqual(text[want - 3:want], sidebar.CONT_MID if self.has_kids(snap, joins, key)
+                                     else sidebar.CONT_LAST)
+                    self.assertTrue(text[want] not in (B, "│"), text)
+            c = len(pos["P"]) + len(pos["own"])
+            if k != "fm_hd" and c + 3 <= budget and text[c] == "│":
+                self.assertTrue(self.has_kids(snap, joins, key), (key, text))
+        # a │ anywhere is followed by a connector in its column further down
+        for i, (_, _, text) in enumerate(lines):
+            for c in range(0, min(len(text), budget), 3):
+                if text[c] == "│" and c + 3 <= budget:
+                    j = i + 1
+                    while j < len(lines) and col(lines[j][2], c) == "│":
+                        j += 1
+                    self.assertTrue(j < len(lines) and col(lines[j][2], c) in ("├", "└"), (c, text))
+        self.assertEqual(len(by_key), len(headers))
+
+    def has_kids(self, snap, joins, key):
+        node = next(n for n in sidebar.walk(snap["roots"]) if n["key"] == key)
+        return bool(sidebar._row_children(node.get("children") or [], joins))
+
+    def test_random_trees_at_every_width(self):
+        import random
+        rnd = random.Random(33)
+        for trial in range(60):
+            symbols = rnd.choice(sorted(SYMS))
+            snap = self.random_tree(rnd, symbols)
+            for width in (18, 19, 20, 24, 26, 30, 40, 60, 100):
+                with self.subTest(trial=trial, width=width, symbols=symbols):
+                    self.check(snap, width, symbols)
+
+
+class CellWidthTest(unittest.TestCase):
+    # width of every glyph of config/symbols.json (state glyphs, activity marks, spinner frames)
+    WIDTHS = {
+        "unicode": {"working": 2, "waiting": 1, "asking": 1, "blocked": 2, "done": 1, "lost": 1, "keepalive": 1,
+                    "waiting-owner": 2, "waiting-external": 1, "idle": 1, "agent": 1, "task": 1, "wait": 1,
+                    "ask": 1, "recent": 1},
+        "emoji": {"working": 2, "waiting": 2, "asking": 2, "blocked": 2, "done": 2, "lost": 2, "keepalive": 2,
+                  "waiting-owner": 2, "waiting-external": 2, "idle": 2, "agent": 2, "task": 2, "wait": 2,
+                  "ask": 2, "recent": 2},
+        "nerd": dict.fromkeys(("working", "waiting", "asking", "blocked", "done", "lost", "keepalive",
+                               "waiting-owner", "waiting-external", "idle", "agent", "task", "wait", "ask", "recent"), 1),
+        "ascii": dict.fromkeys(("working", "waiting", "asking", "blocked", "done", "lost", "keepalive",
+                                "waiting-owner", "waiting-external", "idle", "agent", "task", "wait", "ask", "recent"), 1),
+    }
+
+    def test_every_glyph_of_symbols_json_has_its_pinned_width(self):
+        with open(ROOT / "config" / "symbols.json", encoding="utf-8") as fh:
+            shared = json.load(fh)
+        self.assertEqual(set(shared), set(self.WIDTHS))
+        for name, table in shared.items():
+            frames = table["spinner"]
+            self.assertEqual(set(table) - {"spinner"}, set(self.WIDTHS[name]), name)
+            for key, want in self.WIDTHS[name].items():
+                self.assertEqual(sidebar.cell_width(table[key]), want, (name, key, table[key]))
+            self.assertTrue(frames and all(sidebar.cell_width(f) == 1 for f in frames), name)
+
+    def test_the_rule(self):
+        cw = sidebar.cell_width
+        self.assertEqual([cw("⏸"), cw("⏸\ufe0f"), cw("⚙"), cw("⚙\ufe0f"), cw("♨\ufe0f")], [1, 2, 1, 2, 2])
+        self.assertEqual([cw("⏳"), cw("✋"), cw("🤖"), cw("✅"), cw("❓")], [2, 2, 2, 2, 2])
+        self.assertEqual([cw("*"), cw("#"), cw("7"), cw("*\ufe0f"), cw("a\u0301")], [1, 1, 1, 2, 1])
+        self.assertEqual([cw("a\u200db"), cw("⏸\ufe0e"), cw("日本"), cw("⠀"), cw(""), cw("\ufe0f")], [2, 1, 4, 1, 1, 0])
+        self.assertEqual(sidebar.truncate("⏸\ufe0fabc", 3), "⏸\ufe0f…")
+
+
+class ActivityTest(unittest.TestCase):
+    def lines(self, symbols="unicode", sym="working", state=None, recent=8, **extra):
+        n = tnode("s", "sess", "⠼", sym, state, symbols=symbols, **extra)
+        out = sidebar.compose({"symbols": symbols, "recentRunSeconds": recent, "roots": [n]}, 60)["P-s"]
+        return [out[k] and out[k].replace(B, " ").strip() for k in ("fm_a1", "fm_a2", "fm_a3")]
+
+    def test_idle_session_shows_no_activity_lines(self):
+        self.assertEqual(self.lines(sym="waiting"), [None, None, None])
+
+    def test_runs_are_agents_and_just_finished_runs_show_a_tick(self):
+        kids = [trun("a", "builder"), trun("b", "builder"), trun("c", "explorer", state="done", sym="done", ended_s=2),
+                trun("d", "old", state="done", sym="done", ended_s=60)]
+        self.assertEqual(self.lines(children=kids)[0], "◆ builder ×2 · ✓ explorer")
+        self.assertEqual(self.lines(children=kids[2:3])[0], "✓ explorer")
+        self.assertEqual(self.lines(children=kids[3:])[0], None)
+
+    def test_tasks_bg_waits_ci_and_pr_are_one_line(self):
+        wait = lambda kind, note, **kw: dict({"id": kind, "kind": kind, "note": note, "age_s": 120, "left_s": 0}, **kw)  # noqa: E731
+        self.assertEqual(self.lines(tasks=[{"id": "t", "label": "npm test", "pid": 1, "ageSeconds": 180}])[1:],
+                         ["⚙ npm test 3m", None])
+        self.assertEqual(self.lines(waits=[wait("timer", "watch logs", bg=True)])[1:], ["⚙ watch logs 2m", None])
+        self.assertEqual(self.lines(waits=[wait("ci", "ci main")])[1:], ["⚙ ci main 2m", None])
+        self.assertEqual(self.lines(waits=[wait("pr", "2 pr watch", prs=[12, 14])])[1:], ["⚙ pr #12 · pr #14", None])
+        self.assertEqual(self.lines(waits=[wait("pr", "2 pr watch")])[1:], ["⚙ 2 pr watch", None])
+        both = self.lines(waits=[wait("timer", "bg cmd", bg=True), wait("pr", "1 pr watch", prs=[3])],
+                          tasks=[{"id": "t", "label": "lint", "pid": 1, "ageSeconds": 5}])
+        self.assertEqual(both[1], "⚙ pr #3 · bg cmd 2m · lint 5s")
+
+    def test_other_waits_and_asks(self):
+        wait = lambda kind, note: {"id": kind, "kind": kind, "note": note, "age_s": 60, "left_s": 0}  # noqa: E731
+        for kind, note in (("timer", "until 15:00"), ("file", "out.log"), ("child", "child r32b"), ("pid", "suites")):
+            self.assertEqual(self.lines(waits=[wait(kind, note)])[1:], [None, "⧗ %s 1m" % note], kind)
+        self.assertEqual(self.lines(asks=["rule scope"])[2], "? ask 1: rule scope")
+        self.assertEqual(self.lines(sym="blocked", state="ask")[2], "? ask 1")
+        self.assertEqual(self.lines(children=[trun("q", "builder", state="ask", sym="asking")])[2], "? ask 1")
+        mixed = self.lines(asks=["scope"], waits=[wait("timer", "nap")])
+        self.assertEqual(mixed[2], "? ask 1: scope · ⧗ nap 1m")
+
+    def test_overflow_counts_hidden_items(self):
+        tasks = [{"id": str(i), "label": "t%d" % i, "pid": 1, "ageSeconds": 60} for i in range(5)]
+        self.assertEqual(self.lines(tasks=tasks)[1], "⚙ t0 1m · t1 1m · t2 1m +2")
+
+    def test_done_and_lost_sessions(self):
+        runs = [trun("a", "builder", state="done", sym="done"), trun("b", "builder", state="done", sym="done")]
+        self.assertEqual(self.lines(sym="done", children=runs)[0], "done · 2 runs")
+        self.assertEqual(self.lines(sym="done", children=runs[:1])[0], "done · 1 run")
+        self.assertEqual(self.lines(sym="done")[0], None)
+        self.assertEqual(self.lines(sym="done", tasks=[{"label": "x", "ageSeconds": 1}]), [None, None, None])
+        lost = tnode("s", "sess", "✗", "waiting")
+        lost["sym"] = "lost"
+        self.assertEqual(sidebar.compose({"roots": [lost]}, 40)["P-s"]["fm_a1"].strip(B), "lost")
+
+    def test_older_versions_without_the_new_fields(self):
+        n = tnode("s", "sess", "⠼")
+        for gone in ("waits", "tasks", "asks", "started", "pressure"):
+            n.pop(gone, None)
+        out = sidebar.compose({"roots": [n]}, 40)["P-s"]
+        self.assertEqual([out[k] for k in ("fm_a1", "fm_a2", "fm_a3")], [None, None, None])
+        self.assertEqual(out["fm_meta"].strip(B), "$0.00")
+
+    def test_every_glyph_set_reaches_the_renderer(self):
+        tasks = [{"id": "t", "label": "x", "pid": 1, "ageSeconds": 60}]
+        waits = [{"id": "w", "kind": "timer", "note": "nap", "age_s": 60, "left_s": 0}]
+        for symbols in SYMS:
+            g = SYMS[symbols]
+            got = self.lines(symbols, children=[trun("a", "builder")], tasks=tasks, waits=waits, asks=["q"])
+            self.assertEqual(got, [g["agent"] + " builder", g["task"] + " x 1m",
+                                   "%s ask 1: q · %s nap 1m" % (g["ask"], g["wait"])], symbols)
+
+    def test_unknown_set_and_missing_file_fall_back_to_unicode(self):
+        self.assertEqual(sidebar.aux_symbols("klingon"), sidebar.aux_symbols("unicode"))
+        old = sidebar.SYMBOLS_FILE
+        sidebar._aux_cache.clear()
+        sidebar.SYMBOLS_FILE = os.path.join(tempfile.gettempdir(), "no-such-symbols.json")
+        try:
+            got = sidebar.aux_symbols("emoji")
+        finally:
+            sidebar.SYMBOLS_FILE = old
+            sidebar._aux_cache.clear()
+        self.assertEqual((got["agent"], got["spinner"]), ("◆", list(sidebar.SPINNER_FALLBACK)))
+
+    def test_legacy_wait_text_for_the_new_sets(self):
+        wait = {"id": "w1", "kind": "pid", "note": "suites", "age_s": 240, "left_s": 600}
+        for symbols, glyph in (("emoji", "⏳"), ("ascii", "~"), ("unicode", "⏳"), ("nerd", "\uf252")):
+            n = tnode("s", "s", "⠼", waits=[wait])
+            out = sidebar.compose({"symbols": symbols, "roots": [n]}, 40)["P-s"]
+            self.assertEqual(out["fm_l2"], "%s suites 4m" % glyph, symbols)
+
+
+class TreeFilesTest(unittest.TestCase):
+    def test_layout_and_tree_are_read_only_while_fresh(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            for name, reader in (("layout.json", sidebar.read_layout), ("tree.json", sidebar.read_tree)):
+                path = os.path.join(tmp, name)
+                self.assertEqual(reader(tmp), {})
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump({"k": {}}, fh)
+                self.assertEqual(reader(tmp), {"k": {}})
+                old = time.time() - sidebar.TREE_FRESH_S - 1
+                os.utime(path, (old, old))
+                self.assertEqual(reader(tmp), {})
+                self.assertEqual(reader(tmp, now=old + 1), {"k": {}})
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_daemon_publish_writes_layout_and_tree(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            pub = sidebar.Publisher(type("A", (), {"width": 40, "lead_cells": None, "no_view": True,
+                                                   "agent_dir": None})(), tmp)
+            pub._call = lambda method, params: {"agents": []} if method == "agent.list" else {}
+            pub.publish(mock_snapshot())
+            self.assertEqual(sidebar.read_tree(tmp), {})   # no agent.list pane for any session: nothing joined
+        finally:
+            shutil.rmtree(tmp)
+
+
+def write_child_session(adir, sid, intercom, parent, pane):
+    import datetime
+    iso = lambda ago: (datetime.datetime.now(datetime.timezone.utc)  # noqa: E731
+                       - datetime.timedelta(seconds=ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    d = {"v": 1, "sessionId": sid, "intercomId": intercom, "parentIntercom": parent, "label": sid, "cwd": "/x",
+         "pid": 1, "paneId": pane, "startedAt": iso(30), "heartbeatAt": iso(1), "lastEventAt": iso(1),
+         "state": "working", "runs": []}
+    with open(os.path.join(adir, "pi-foreman", "state", "live", sid + ".json"), "w", encoding="utf-8") as fh:
+        json.dump(d, fh)
+
+
+@unittest.skipUnless(os.name == "posix" and hasattr(socket, "AF_UNIX"), "POSIX AF_UNIX socket")
+class PushJsonTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(dir="/tmp" if os.path.isdir("/tmp") else None)
+        self.herdr = FakeHerdr(os.path.join(self.tmp, "h.sock"))
+        self.adir = write_agent_dir(self.tmp)
+        self.sdir = os.path.join(self.tmp, "state")
+        os.makedirs(os.path.join(self.sdir, "push"))
+        self.stamp = os.path.join(self.sdir, "push", "sid-1.stamp")
+        self.tokens_file = os.path.join(self.sdir, "push", "sid-1.tokens")
+
+    def tearDown(self):
+        self.herdr.close()
+        shutil.rmtree(self.tmp)
+
+    def push(self, *extra, session="sid-1", pane="p1"):
+        env = dict(os.environ, HERDR_SOCKET_PATH=os.path.join(self.tmp, "h.sock"),
+                   HERDR_PLUGIN_STATE_DIR=self.sdir, HERDR_SIDEBAR_WIDTH="26")
+        return subprocess.run([sys.executable, str(PLUGIN / "sidebar.py"), "push", "--session", session,
+                               "--pane", pane, "--agent-dir", self.adir] + list(extra),
+                              env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+
+    def write_fresh(self, name, data, age=0):
+        path = os.path.join(self.sdir, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        if age:
+            os.utime(path, (time.time() - age, time.time() - age))
+
+    def test_json_prints_the_bundle_reports_nothing_and_writes_no_stamp(self):
+        with open(self.tokens_file, "w", encoding="utf-8") as fh:
+            json.dump({"tokens": {}, "at": time.time()}, fh)
+        res = self.push("--json")
+        self.assertEqual((res.returncode, res.stderr), (0, b""))
+        doc = json.loads(res.stdout.decode("utf-8"))
+        self.assertEqual(set(doc), {"tokens", "fm_hd_tpl", "stamp", "pane"})
+        self.assertEqual((doc["pane"], doc["stamp"]), ("p1", self.stamp))
+        self.assertEqual(set(doc["tokens"]), set(sidebar.SESSION_KEYS))
+        self.assertTrue(doc["tokens"]["fm_hd"].startswith("⏳"))        # the static glyph
+        self.assertTrue(doc["fm_hd_tpl"].startswith("{spin}" + B + " demo"), doc["fm_hd_tpl"])
+        self.assertEqual(self.herdr.reports(), [])
+        self.assertFalse(os.path.exists(self.stamp))
+        self.assertFalse(os.path.exists(self.tokens_file))
+        # a plain push after --json reports at once
+        self.assertEqual(self.push().returncode, 0)
+        self.assertEqual(len(self.herdr.reports()), 1)
+        self.assertTrue(os.path.exists(self.stamp))
+
+    def test_no_template_while_the_session_is_not_working(self):
+        live = os.path.join(self.adir, "pi-foreman", "state", "live", "sid-1.json")
+        with open(live, encoding="utf-8") as fh:
+            d = json.load(fh)
+        d["state"] = "done"
+        with open(live, "w", encoding="utf-8") as fh:
+            json.dump(d, fh)
+        doc = json.loads(self.push("--json").stdout.decode("utf-8"))
+        self.assertIsNone(doc["fm_hd_tpl"])
+        self.assertTrue(doc["tokens"]["fm_hd"].startswith("✓"))
+
+    def test_unknown_session_and_a_losing_session_print_an_empty_object(self):
+        self.assertEqual(self.push("--json", session="nope").stdout, b"{}\n")
+        self.write_fresh("winners.json", {"p1": "another-session"})
+        res = self.push("--json")
+        self.assertEqual((res.returncode, res.stdout), (0, b"{}\n"))
+
+    def test_fresh_tree_json_places_the_row(self):
+        self.write_fresh("tree.json", {"fm-1": {"P": sidebar.CONT_MID, "conn": sidebar.CONN_LAST, "own": sidebar.CONT_LAST}})
+        doc = json.loads(self.push("--json").stdout.decode("utf-8"))
+        self.assertTrue(doc["tokens"]["fm_hd"].startswith(sidebar.CONT_MID + sidebar.CONN_LAST), doc["tokens"]["fm_hd"])
+        self.assertTrue(doc["fm_hd_tpl"].startswith(sidebar.CONT_MID + sidebar.CONN_LAST + "{spin}"))
+
+    def test_stale_or_missing_tree_json_builds_the_full_tree(self):
+        write_child_session(self.adir, "sid-2", "fm-2", "fm-1", "p2")
+        write_child_session(self.adir, "sid-3", "fm-3", "fm-1", "p3")
+        # the daemon's file claims the child is the root of its own tree; it is a minute old
+        self.write_fresh("tree.json", {"fm-3": {"P": "", "conn": "", "own": ""}}, age=60)
+        self.write_fresh("layout.json", {"fm-3": {"pre": "", "cont": ""}}, age=60)
+        hd = lambda sid, pane: json.loads(self.push("--json", session=sid, pane=pane).stdout)["tokens"]["fm_hd"]  # noqa: E731
+        self.assertTrue(hd("sid-2", "p2").startswith(sidebar.CONN_MID + "⏳"), hd("sid-2", "p2"))
+        self.assertTrue(hd("sid-3", "p3").startswith(sidebar.CONN_LAST + "⏳"), hd("sid-3", "p3"))
+        os.remove(os.path.join(self.sdir, "tree.json"))
+        self.assertTrue(hd("sid-3", "p3").startswith(sidebar.CONN_LAST))
+        # fresh files win over the fallback, for the keys they hold
+        self.write_fresh("tree.json", {"fm-3": {"P": "", "conn": sidebar.CONN_MID, "own": sidebar.CONT_MID}})
+        self.write_fresh("layout.json", {"fm-3": {"pre": "├─", "cont": "│" + B}})
+        self.assertTrue(hd("sid-3", "p3").startswith(sidebar.CONN_MID))
+
+    def test_every_glyph_set_is_a_symbols_choice(self):
+        want = {"unicode": "⏳", "emoji": "⏳", "nerd": "", "ascii": "*"}
+        for name, glyph in want.items():
+            doc = json.loads(self.push("--json", "--symbols", name).stdout.decode("utf-8"))
+            self.assertTrue(doc["tokens"]["fm_hd"].startswith(glyph), (name, doc["tokens"]["fm_hd"]))
+        self.assertEqual(self.push("--json", "--symbols", "klingon").returncode, 2)
+
+    def test_final_after_json_still_publishes(self):
+        self.push("--json")
+        self.assertEqual(self.push("--final").returncode, 0)
+        self.assertEqual(len(self.herdr.reports()), 1)
 
 
 if __name__ == "__main__":
