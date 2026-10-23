@@ -58,6 +58,7 @@ output file relative to the worktree (a `  log .pi/tasks/<id>-<pid>/<task>.outpu
 | build-test | the project's own commands, from its manifest at the worktree root, run from that root; also `node --test <contained files>`, `npx tsc --noEmit [-p <contained tsconfig>]` and `python3 [-I\|-B\|-u] -m unittest discover -s <contained dir> -p <pattern>` (and `-m pytest`) | no |
 | write-in | `mkdir`, `touch`, `cp`, `mv`, `rm`, `tee`, `sed -i ''`/`-i<suffix>` with one plain `s///` script given by `-e`, the test restore | no |
 | write-out | one of those writes, or a redirect, that reaches outside the allowed places | yes |
+| net-read | a network read in the exact grammar of [Network reads](#network-reads-r31c) (label `net-read`); never auto-allowed alone, it composes only with `read` segments | no (inside the grammar) |
 | unknown | everything else, and every command the chain splitter refuses | yes |
 
 Paths. Every path argument (operands, `--opt=value` values, input redirects) of a read or a write must resolve inside
@@ -511,6 +512,33 @@ and `package.json` under the package root still ask in the main session and are 
 checkout (docs, extensions, tests, scripts) pass. The child ban on naming a protected path in a shell narrows the same
 way, to these paths. Every other protect list is unchanged (`.git`, agent dir, `.pi`, handoffs). The session writes a `protect_selfhost` trace event and a top
 session shows one notice: "pi-foreman: dev checkout: package-root write protection narrowed".
+
+## R31c allowlist shapes
+
+Every shape below is an allowlist: a word outside it ends the allow and the command goes to the model review and the owner. The round-29 stop tokens end every allow: env prefixes, wrappers, loops, brace words, `$( )` and backticks. Single-quoted words are literal; double quotes count only without `$`, a backtick or a backslash; `$'..'` ends the allow. Each shape has positive and bypass tests (`r31c-*.test.ts`).
+
+### Own-record reads with `grep`
+
+The foreman may `grep` its own records (its own usage file `state/usage/<foreman session>.jsonl`, its own trace and presence file; never another session's file and never the whole usage dir). Options: bundles of `n c i w v x o h H l L s E F`, `-m N`, `-A N`, `-B N`, `-C N` and `--color=never`; any other option ends the allow. A dash word before `--` is an option, every word after `--` is an operand, and a digit word is an option value only after `-n`/`-c` (head/tail) or `-m/-A/-B/-C` (grep), otherwise it is an operand and must be an own record. The usage file name comes from the session's usage record (`usageFile`), not from a guess. A child gets none of this.
+
+### Child `npm ci` ask text
+
+The ask for a child's `npm ci` that carries a pipe, chain, background or flags says: run a bare `npm ci` in your worktree, or ask the foreman.
+
+### Network reads (R31c)
+
+Effect class `net-read`, label `net-read`, decided deterministically for foremen and children (`netread.ts`; the review link, the overlay and the timeout allow use the same predicate):
+
+- `gh`: `run view|list`, `pr view|list|checks|diff`, `issue view|list`, `repo view`, and `api <endpoint>` with GET only (no `-f`, `-F`, `--input`, header options or a non-GET method). Only the listed options per subcommand; a `--jq` expression that reads the environment, imports or reads input is refused.
+- `npm`: `view|info|search|ls` with `--json --depth N --all --long --parseable` and registry-name specs only.
+- `curl`: plain GET/HEAD with a fixed flag list (`-s -S -f -I -i -L -v` and their long forms), checked `http(s)` URLs on any host (no host list), no data, upload, config or `@file` option; output (`-o`/`-O`) only into the session scratch dir (orchestrators) or the role scratch dir (children).
+- `wget` (orchestrators only): exactly `wget -q -O - <url>` or `wget -q --spider <url>`.
+
+In the child deny branch a network read is no write: its output file lies in the bound scratch dir. A URL operand is not read as a path.
+
+### Handoff files an orchestrator writes (R31c)
+
+An orchestrator may write `plan.md`, `result.md`, `update*.md` and `ask*.md` in its own handoff dir (the dir where it is the child role) by any means, a shell heredoc included. The command must be exactly one `cat > T <<'D'` / `cat >> T <<'D'` / `cat <<'D' > T` / `cat <<'D' >> T` heredoc (POSIX shell tools) whose body runs to the one terminator line `D`, the last line; the body is never lexed. `T` has no `..`, lies directly in that dir (no symlinked spelling), is no symlink, has a single link when it exists, and has exactly such a name. A write in a parent-role dir needs no lift. The parent files (`ruling*`, `brief*`, `steer*`, `parent`) and the `child` files stay write-protected for everyone; children get no new write right.
 
 ## Known limits
 

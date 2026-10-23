@@ -80,6 +80,7 @@ import { workspaceOf } from "./python.ts";
 import { resolveVars } from "./shellvars.ts";
 import { probeFileHit } from "./splitliteral.ts";
 import { gitProtectedRead } from "./effects.ts";
+import { netReadCommand } from "./netread.ts";
 
 export interface PathRule {
   pattern: string;
@@ -2934,9 +2935,13 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     return { kind: "deny", reason: `pi-foreman: denied by the permission policy (git worktree ${clip(c.worktreeOp)} is the foreman's; children may only list worktrees). Ask the foreman.` };
   }
   if (ctx.role === "child" && c.childAsk !== undefined && !npmInstallOwned(c, ctx) && !npmCiWorktreeLabel(command, ctx)) {
-    return { kind: "ask", reason: `pi-foreman: ${c.childAsk} needs approval for a child (it writes the project or the network; the foreman may run it).` };
+    const ci = c.childAsk === "npm ci" ? " Run a bare `npm ci` in your worktree (no pipe, chain or background) or ask the foreman." : "";
+    return { kind: "ask", reason: `pi-foreman: ${c.childAsk} needs approval for a child (it writes the project or the network; the foreman may run it).${ci}` };
   }
-  const words = [...new Set(c.words.flatMap((w) => [w, ...expandBraces(w)]))];
+  // R31c: in a network read (netread.ts) a URL operand is no path (`https://h/x` would read as `<cwd>/https:/h/x`)
+  const netRead = shell === "posix" && netReadCommand(command, ctx.role === "child" ? "child" : "orchestrator", scratch0 ? [scratch0] : [], ctx.cwd);
+  const urlWord = (w: string): boolean => netRead && /^https?:\/\//.test(w);
+  const words = [...new Set(c.words.flatMap((w) => [w, ...expandBraces(w)]))].filter((w) => !urlWord(w));
   // Write protection sees path arguments only: pattern/script operands drop out when no unit can turn
   // text into a path (no substitution, process substitution or non-pure command), and bash words
   // follow bash globbing (item 4: `grep "x\|register\b" *.go` named /app/.git/... before).
@@ -2961,7 +2966,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   for (const w of c.msgFiles!) msgLeft.set(w, (msgLeft.get(w) ?? 0) - 1);
   const msgOnly = (w: string): boolean => c.msgFiles!.includes(w) && (msgLeft.get(w) ?? 0) <= 0 && !c.writeTargets!.has(w) && !c.tmpTargets?.has(w) && !c.roTargets?.has(w);
   // the message-file exemption is for the write protection only: the child read-block (handoffs, artifacts, siblings, other scratch) sees every word
-  const rwords = (pure ? [...new Set(c.protWords!.flatMap((w) => [w, ...expandBraces(w)]))] : words).filter(notFilter);
+  const rwords = (pure ? [...new Set(c.protWords!.flatMap((w) => [w, ...expandBraces(w)]))] : words).filter(notFilter).filter((w) => !urlWord(w));
   // R14 ruling 5: lifted are `{cwd}/.pi/*` and the writeAsk package-root pair (`{pkgRoot}`, `{pkgRoot}/*`: a read of a package file is no write);
   // every ask/deny/childDeny rule (another session's state, intercom, settings.json, .git) and the handoff parent/child writeAsk rules still see it
   const msgProtect = rules.protect.filter((r) => r.pattern !== "{cwd}/.pi/*" && !(r.fromWriteAsk && !r.pattern.includes("/handoffs/")));
@@ -3018,7 +3023,8 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
       const bad = roRunRefusal(c, command, pctx);
       if (bad) return { kind: "deny", reason: `pi-foreman: this run is denied for a child: ${bad}. The round worktree is read-only except for its builder; a test run or repo script there must not change directory or environment (cd, pushd, env, VAR=...) and a script must be git-tracked inside the round worktree.` };
     }
-    if (c.roUnknown !== undefined && childCwdReadOnly(pctx)) {
+    // R31c: a network read (netread.ts, the grammar the review link uses) is no write; its output files lie in the bound scratch dir only
+    if (c.roUnknown !== undefined && childCwdReadOnly(pctx) && !netReadCommand(command, "child", scratchOf(pctx) ? [scratchOf(pctx)!] : [], pctx.cwd)) {
       return { kind: "deny", reason: `pi-foreman: '${clip(c.roUnknown)}' denied for a child: the round worktree is read-only except for its builder, and this command is neither a known reader nor a test run, so it may write there. Use a read command or ask the foreman.` };
     }
   }
@@ -3075,7 +3081,44 @@ export function shellWrites(command: string, shell: "posix" | "powershell" = "po
 const PROBE_VERBS = new Set(["ls", "stat", "which"]);
 
 /** The shell verbs that may read the foreman's own usage records (MatchCtx.ownReads). */
-const USAGE_VERBS = new Set(["ls", "cat", "head", "tail", "wc", "stat"]);
+const USAGE_VERBS = new Set(["ls", "cat", "head", "tail", "wc", "stat", "grep"]);
+
+/** R31c: the grep options an own-record read may carry (bundles of the letters; `-m N -A N -B N -C N` and `--color=never` are handled in ownReadOperands). */
+const GREP_OWN_OPT = /^-([nciwvxohHlLsEF]*)(?:([mABC])(\d*))?$/;
+
+/**
+ * R31c: the file operands of an own-record read (USAGE_VERBS), or null when a grep option is outside the allowlist. A dash word before `--` is
+ * an option; a number is an option value only after `-n`/`-c` of head/tail or `-m/-A/-B/-C` of grep, otherwise an operand; every word after `--`
+ * is an operand; the first non-option word of grep is its pattern.
+ */
+function ownReadOperands(words: string[]): string[] | null {
+  const verb = words[0];
+  const out: string[] = [];
+  let ended = false;
+  let pattern = verb !== "grep";
+  for (let i = 1; i < words.length; i++) {
+    const w = words[i];
+    if (ended || !w.startsWith("-")) {
+      if (!pattern) pattern = true;
+      else out.push(w);
+      continue;
+    }
+    if (w === "--") {
+      ended = true;
+      continue;
+    }
+    if (verb === "grep") {
+      if (w === "--color=never" || w === "-") continue;
+      const m = GREP_OWN_OPT.exec(w);
+      if (!m) return null;
+      if (m[2] && !m[3]) {
+        if (!/^\d+$/.test(words[i + 1] ?? "")) return null;
+        i++;
+      }
+    } else if ((verb === "head" || verb === "tail") && /^-[A-Za-z]*[nc]$/.test(w) && /^[+-]?\d+$/.test(words[i + 1] ?? "")) i++;
+  }
+  return out;
+}
 
 const USAGE_PY = /^\s*(?:import\s+json\s*;\s*)?print\(\s*(?:open\(\s*(['"])([^'"\\$`]+)\1\s*\)\.read\(\s*\)|json\.load\(\s*open\(\s*(['"])([^'"\\$`]+)\3\s*\)\s*\))\s*\)\s*;?\s*$/;
 
@@ -3164,6 +3207,16 @@ export function ownStateRead(command: string, ctx0: MatchCtx): boolean {
     const abs = pathCandidates(w, ctx).filter((x) => path.isAbsolute(x) || path.win32.isAbsolute(x));
     return abs.length > 0 && abs.every((x) => pats.some((p) => pathMatches(p, x, ctx)));
   };
+  // R31c: grep reads only the session's own usage file (not the whole usage dir) and its own trace and presence files
+  // the session's own usage file is the one exact (glob-free) `.jsonl` pattern under state/usage (roundsurface.ts ownUsageReadable)
+  const ownUsage = new Set(pats.filter((p) => /\/pi-foreman\/state\/usage\/[^*?[\]{}/]+\.jsonl$/.test(p.replace(/\\/g, "/"))));
+  const grepOwn = (w: string): boolean => {
+    if (!own(w)) return false;
+    return pathCandidates(w, ctx).filter((x) => path.isAbsolute(x) || path.win32.isAbsolute(x)).every((x) => {
+      const m = /\/pi-foreman\/state\/usage(?:\/(.*))?$/.exec(x.replace(/\\/g, "/"));
+      return !m || ownUsage.has(x);
+    });
+  };
   const vars = new Map<string, string>();
   let reads = 0;
   for (let i = ctx === ctx0 ? 0 : 1; i < parsed.pipelines.length; i++) {
@@ -3188,8 +3241,8 @@ export function ownStateRead(command: string, ctx0: MatchCtx): boolean {
         continue;
       }
       if (USAGE_VERBS.has(verb) && protectedReader(words, new Set())) {
-        const operands = words.slice(1).filter((w) => !w.startsWith("-") && !/^\d+$/.test(w));
-        if (operands.length && operands.every(own)) {
+        const operands = ownReadOperands(words);
+        if (operands?.length && operands.every(verb === "grep" ? grepOwn : own)) {
           reads++;
           continue;
         }

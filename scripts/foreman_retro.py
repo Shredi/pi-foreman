@@ -560,6 +560,18 @@ def session_id_of(records):
 
 # ------------------------------------------------------------------ report
 
+def flagged_counts(trace):
+    """{family: count} of the owner's `ask_flag` trace events (None without a trace)."""
+    if trace is None:
+        return None
+    out = {}
+    for r in trace:
+        if isinstance(r, dict) and r.get("event") == "ask_flag":
+            fam = str(r.get("family") or "other")
+            out[fam] = out.get(fam, 0) + 1
+    return out
+
+
 def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
     sid = session_id_of(session)
     ranks = config = None
@@ -579,6 +591,7 @@ def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
         "explorer": explorer_metrics(trace, usage, sid, ranks),
         "cache": cache_metrics(trace, usage, sid, config),
         "session_tools": session_metrics(session) if session is not None else None,
+        "flagged_asks": flagged_counts(trace),
         "proposals": propose(asks, min_reviews, rules, load_protect_patterns(agent_dir)) if asks is not None else None,
     }
 
@@ -681,6 +694,9 @@ def render_text(rep, proposals_path=None):
     else:
         L.append("top tools: " + kv(s["top_tools"]))
         L.append("repeated bash families: " + kv(s["repeated_bash_families"]))
+    fl = rep.get("flagged_asks")
+    if fl:
+        L.append("Flagged asks: " + kv(fl))
     p = rep["proposals"]
     if p is None:
         L.append("proposals: no data")
@@ -828,6 +844,13 @@ def candidates(report, trace_events, usage_lines, session_tools, ask_threshold=D
             kind = e.get("kind") if e.get("kind") in FRICTION_KINDS else "prompt"
             role = _tag(e.get("role"), "agent")
             out.append({"kind": kind, "candidate": "%s: %s" % (role, e["note"]), "evidence": "Friction line reported by a %s run" % role})
+
+    # asks the owner flagged with /foreman flag-ask: filed into the global store only (foreman_backlog.store_path_for), complete command as evidence
+    for e in events:
+        if e.get("event") == "ask_flag" and str(e.get("command") or "").strip():
+            fam = _tag(e.get("family"), "other")
+            out.append({"kind": "flagged-ask", "family": fam, "candidate": "%s: %s via %s" % (fam, _tag(e.get("class"), "unknown"), str(e.get("rule") or "-")[:80]),
+                        "evidence": str(e["command"])})
     return out
 
 

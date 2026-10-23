@@ -730,7 +730,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [waits](#waits) | `/foreman waits` |
 | [sessions](#sessions) | `/foreman session`, `foreman session` |
 | [sync](#sync) | `/sync`, `foreman sync` |
-| [retro](#retro) | `/retro`, `foreman retro`, `foreman backlog` |
+| [retro](#retro) | `/retro`, `/foreman flag-ask`, `foreman retro`, `foreman backlog` |
 | [close](#close) | `/foreman close`, `foreman close`, `foreman worktree` |
 | [footer-ui](#footer-ui) | `/foreman cost`, `/foreman dialogs` |
 | [dialogs-cli](#dialogs-cli) | `foreman dialogs` |

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Round 31c
+- Allowlist shapes (docs/permissions.md, R31c allowlist shapes): the foreman's `grep` over its own usage, trace and presence files (option allowlist, `--` and digit operand hardening); a child's `npm ci` ask text says run a bare `npm ci`; effect class `net-read` for `gh` read subcommands, `npm view|info|search|ls`, plain GET/HEAD `curl` (any host) and minimal `wget`, deterministic for foremen and children; an orchestrator writes `plan.md`, `result.md`, `update*.md`, `ask*.md` in its own handoff dir by one heredoc. The round-29 stop tokens end every allow. Tests: `r31c-grep-own-read`, `r31c-net-read`, `r31c-handoff-heredoc`.
+- `/foreman flag-ask [note]` flags the last ask the owner answered as an `ask_flag` trace event (family, complete command with secret-looking values masked, class, rule); the retro run files it as backlog kind `flagged-ask`, shown by `/retro` and `foreman backlog list` by family; a flag never allows anything. Tests: `r31c-askflag`, `tests/test_foreman_flagged_ask.py`.
+
 ### Round 29
 - A child's read-only shell unit that names a protected file passes the write protection (strict git read allowlist and plain readers only); an env prefix, wrapper, loop or assignment anywhere in the line ends the read and the file stays protected; docs/safety.md says the rule is no sandbox. Test: `r29-protected-read-only`.
 - The PR gate accepts a reviewed head that is the commit of the branch the PR opens from, of its `origin/<branch>` ref, of its upstream or of HEAD (the reviewed PASS sha, not only the local branch ref); the stale refusal names the PASS sha and the resolved head sha. Python (`git_guard.py`) and TS (`reviews.ts`) agree. Test: `reviews.test.ts`, `test_git_guard_pr_gate.py`.
