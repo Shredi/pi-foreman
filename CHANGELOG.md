@@ -21,7 +21,7 @@
 ### Round 24
 - The SECURITY exemption of a reviewer FAIL is read from the full report at the run end, so a `SECURITY:` line past the notice's 2 000-character cap still exempts the revision (trace `security_exempt`); the notice text stays the fallback. Residual: a notice that arrives before its run-end event uses the notice text only.
 - Revision chains reset on every owner-typed prompt, including an extension-sourced one such as `[continue]`, but not on harness texts (`pi-foreman ...`, the subagent and intercom wakes, `Background task ...`); trace `chain_clear`.
-- Ledger binding: only a `write` (or Write) of a ledger rebinds a session that has a live bound ledger; an `edit` or shell `ledger -f` of another ledger, such as ticking `LEDGER-todo.md`, keeps it. See docs/ceremony.md.
+- Ledger binding: only a `write` (or Write) of a ledger rebinds a session that has a live bound ledger; an `edit` or shell `ledger -f` of another ledger, such as ticking `LEDGER-todo.md`, keeps it. The rule is enforced by the adapter (`extensions/core-adapter/index.ts`), not the core: the core's `ledger_bind.py` rebinds on every write and edit (re-vendored at c9522fb in R28). Test: `r28-ledger-bind-adapter`. See docs/ceremony.md.
 
 ### Round 23
 - A launch's `timeoutMs` (or `maxRuntimeMs`) now wins over the role's `timeoutMinutes` in both directions; every written deadline is capped at `ceremony.launchTimeoutCapMinutes` (default 120, the only hard ceiling), and a launch value above the cap is traced as `launch_timeout {role, requested_ms, written_ms, reason: cap}`. See docs/roles.md.
@@ -121,6 +121,9 @@
 - Self-ruling narrowing was attempted and reverted; its fixtures are kept.
 - Windows replay expectations are recorded for the round.
 - The bench rig pins Pi 1.3.0 and `bench/pi-lock` is regenerated.
+
+### Pi 1.4.0
+- Pi 1.4.0 supported (range 1.4.x); no extension-surface change for this harness. Pi 1.4 stacks concurrent extension dialogs; the pi-permission-system forwarded-ask inbox is still serial upstream, so `review.childDefer` keeps its `deny` default. The herdr blocked counter is unchanged (it stays balanced under stacking). The bench rig pins Pi 1.4.0 and `bench/pi-lock` is regenerated.
 
 ### Pi 1.3.0
 - Pi 1.3.0 supported (range 1.3.x); no extension-surface change. Pi's `--model` ambiguity fix prefers the provider with credentials.

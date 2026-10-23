@@ -2655,6 +2655,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const s = await ensureSession(ctx);
       const input = event.input as Record<string, unknown>;
       for (const guard of mapping.post) {
+        // R28: the core's ledger_bind rebinds on every Write/Edit; here only a Write rebinds a live binding (an Edit of the backlog keeps the round ledger).
+        if (guard === "ledger_bind" && event.toolName === "edit" && boundLedger(s.markerDir, s.id)) {
+          s.trace?.emit({ event: "guard", guard, toolFamily: event.toolName, decision: "skip", reason: "live_binding" });
+          continue;
+        }
         const outcome = await run(s, ctx, guard, postToolPayload(event.toolName, input, payloadCtx(s, ctx), event.isError), mapping.coreName);
         if (outcome.kind === "failure") notifyOnce(s, ctx, `open:${guard}`, outcome.message);
       }

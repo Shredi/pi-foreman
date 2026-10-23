@@ -7,6 +7,9 @@
    "tier": "standard"
   },
   {
+   "event": "chain_clear"
+  },
+  {
    "event": "orientation"
   },
   {
@@ -72,6 +75,9 @@
    "role": "foreman",
    "model": "foreman-fake-b/foreman",
    "tier": "standard"
+  },
+  {
+   "event": "chain_clear"
   },
   {
    "event": "orientation"

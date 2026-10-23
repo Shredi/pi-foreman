@@ -16,7 +16,7 @@ from test_replay import REASON, ReplayCase  # noqa: E402
 class TestChildBaseline(ReplayCase):
     def baseline_rig(self, name):
         rig = self.rig(name, load_fixture("child_baseline"), permissions="baseline",
-                       config={"safety": {"permissions": {"projectCommands": ["cargo test*"]}}})
+                       config={"safety": {"permissions": {"projectCommands": ["cargo test*"]}}, "review": {"childDefer": "owner"}})
         (rig.project / "sub").mkdir()
         return rig
 

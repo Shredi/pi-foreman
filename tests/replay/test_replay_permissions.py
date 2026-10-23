@@ -18,8 +18,8 @@ from test_replay import REASON, ReplayCase  # noqa: E402
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % (REASON,))
 class TestPermissionLayers(ReplayCase):
-    def baseline_rig(self, name):
-        rig = self.rig(name, load_fixture("permissions"), permissions="baseline")
+    def baseline_rig(self, name, **kw):
+        rig = self.rig(name, load_fixture("permissions"), permissions="baseline", **kw)
         (rig.project / ".env").write_text("TOKEN=not-a-real-secret\n", "utf-8")
         (rig.project / "notes.txt").write_text("hello\n", "utf-8")
         return rig
@@ -59,7 +59,7 @@ class TestPermissionLayers(ReplayCase):
         self.assertEqual(blocked, [{"active": True, "label": "bash uname"}, {"active": False}])
 
     def test_child_ask_is_forwarded_to_the_parent(self):
-        rig = self.baseline_rig("perm-ask")
+        rig = self.baseline_rig("perm-ask", config={"review": {"childDefer": "owner"}})
         pi = rig.start()
         pi.prompt("[[replay:c2]] go", timeout=60)
         notice, recs = pi.wait_child_notify(timeout=90, answers=[{"confirmed": True}, {"value": "Yes"}, {"value": "Yes"}])

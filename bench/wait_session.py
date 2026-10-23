@@ -49,6 +49,7 @@ from driver import PiRpc  # noqa: E402
 
 ACTIVE_STATES = ("queued", "running")
 DIALOGS = ("select", "confirm", "input", "editor")
+REVIEW_DEFERS = ("review_defer_child", "review_defer_headless")
 USAGE_LIMIT = re.compile(r"usage limit|limit reached|hit your (?:usage |session |weekly )?limit|quota exceeded", re.I)
 
 # A provider refusal (safety classifier) is an infrastructure error too, but it does not stop the run.
@@ -563,6 +564,22 @@ def drive_print(args, row, env, status):
     status["waiter_end_ms"] = int(time.time() * 1000)
 
 
+def count_review_denies(agent, status):
+    """A child defer that review.ts answers as a deny opens no dialog, so it is counted from the trace: `review_defer_child`
+    with decision deny, and every `review_defer_headless` (always a deny)."""
+    denies = []
+    for f in sorted((agent / "pi-foreman" / "state").glob("trace-*.jsonl")):
+        for line in f.read_text("utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if rec.get("event") in REVIEW_DEFERS and rec.get("decision", "deny") == "deny":
+                denies.append({"method": rec["event"], "title": "", "role": rec.get("role", "?")})
+    status["asks"] = status.get("asks", 0) + len(denies)
+    status.setdefault("asks_denied", []).extend(denies)
+
+
 def collect(args, agent, status):
     """Copy session files and traces to --out; scan child sessions for a usage-limit answer."""
     out = Path(args.out)
@@ -708,6 +725,7 @@ def main(argv=None):
         (drive_rpc if args.driver == "rpc" else drive_print)(args, row, env, status)
         run_bench_retro(args, row, agent, status)
         collect(args, agent, status)
+        count_review_denies(agent, status)
     write_json(Path(args.out) / "bench-run.json", status)
     print(json.dumps({k: status.get(k) for k in ("status", "infra_error", "pi_seconds")}))
     return 0

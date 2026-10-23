@@ -7,6 +7,9 @@
    "tier": "standard"
   },
   {
+   "event": "chain_clear"
+  },
+  {
    "event": "orientation"
   },
   {
@@ -64,6 +67,9 @@
    "toolFamily": "Stop",
    "guard": "ledger_guard_stop",
    "decision": "none"
+  },
+  {
+   "event": "chain_clear"
   },
   {
    "event": "llm",

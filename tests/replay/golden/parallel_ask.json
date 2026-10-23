@@ -7,6 +7,9 @@
    "tier": "standard"
   },
   {
+   "event": "chain_clear"
+  },
+  {
    "event": "orientation"
   },
   {
