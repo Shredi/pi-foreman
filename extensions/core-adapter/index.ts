@@ -2498,12 +2498,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "shell_write_allow", reason: "branch_move", cmd: command });
         return undefined;
       }
-      const reason = move && "precondition" in move ? `${v.reason} branch move refused: ${move.precondition}.` : v.reason;
+      const precondition = move && "precondition" in move ? move.precondition : undefined;
+      const reason = precondition ? `${v.reason} branch move refused: ${precondition}.` : v.reason;
       if (planner) {
         s.trace?.emit({ event: "planner_write_refused", kind: "shell" });
         return { block: true, reason: `${reason} ${PLANNER_SCOPE_NOTE(scratchDir)}` };
       }
-      s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode });
+      s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode, ...(precondition ? { precondition } : {}) });
       const more = onEditRefused(s, mode, "shell");
       return { block: true, reason: mode === "bounded" ? reason : `${reason} pi-foreman: ${editModeAdvice(mode, scratchDir)}.${more}` };
     } catch (err) {

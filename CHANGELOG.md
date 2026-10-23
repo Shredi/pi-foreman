@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Round 31b
+- The foreman's branch moves (`git switch|checkout <b>`, `git switch -C <b> <ref>`, `git reset --hard <ref>`) pass behind one leading `cd <dir> &&` when `<dir>` realpaths to the session cwd or its git toplevel; `switch -C` and `reset --hard` also pass when `<ref>` has HEAD's content (merge-tree tree equal, `git cherry` none unmerged, or a MERGED PR with HEAD as head via `gh`), and are refused when `<ref>` would overwrite an untracked or ignored file. The `shell_write_refused` trace carries `precondition`. Force flags, `--` and chains stay refused. Test: `r31-branch-moves`.
+- `.gitignore` ignores `node_modules` (also as a symlink). The `npm-ci-worktree` label and the owned-root install rule ask when the worktree's `node_modules` is a symlink; the foreman runs `npm ci` after `git worktree add`. Test: `child-install-npm-ci-symlink`.
+
 ### Round 29
 - A child's read-only shell unit that names a protected file passes the write protection (strict git read allowlist and plain readers only); an env prefix, wrapper, loop or assignment anywhere in the line ends the read and the file stays protected; docs/safety.md says the rule is no sandbox. Test: `r29-protected-read-only`.
 - The PR gate accepts a reviewed head that is the commit of the branch the PR opens from, of its `origin/<branch>` ref, of its upstream or of HEAD (the reviewed PASS sha, not only the local branch ref); the stale refusal names the PASS sha and the resolved head sha. Python (`git_guard.py`) and TS (`reviews.ts`) agree. Test: `reviews.test.ts`, `test_git_guard_pr_gate.py`.

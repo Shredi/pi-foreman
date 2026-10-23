@@ -159,7 +159,7 @@ The `review` trace's `decision` is one of these when no model was called:
 | `timeout-wrapper` | `timeout N <allowed segment>` in the chain |
 | `test-restore` | `git restore [--worktree\|-W] [--] <paths>` or `git checkout -- <paths>`, every path a relative test path (the `isTestPath` rule) inside the worktree, no `..`, no `--source`/`-s`/`--staged`, glob or `:` pathspec magic |
 | `own-cli` | the foreman session's own `<root>/bin/foreman` (explicit path, realpath inside the root) with `session open\|brief\|list`, `dialogs` or `findings list`; one simple command, never a forwarded child ask (see Own CLI below) |
-| `npm-ci-worktree` | a child's exact `npm ci` (no flag, env prefix or chain; trace `overlay_allow{rule: npm-ci-worktree}`) whose cwd realpath lies in a `roundRoots` entry or in a pi-subagents managed worktree (`worktree: true`: nearest `.git` above is a file, directory name `pi-worktree-*`) and whose npm local prefix does too; never the parent checkout. POSIX only: win32 still asks. A Worktrunk leaf has no marker and still asks |
+| `npm-ci-worktree` | a child's exact `npm ci` (no flag, env prefix or chain; trace `overlay_allow{rule: npm-ci-worktree}`) whose cwd realpath lies in a `roundRoots` entry or in a pi-subagents managed worktree (`worktree: true`: nearest `.git` above is a file, directory name `pi-worktree-*`) and whose npm local prefix does too; never the parent checkout. POSIX only: win32 still asks. Never when that prefix's `node_modules` is a symlink (lstat; `npm ci` would wipe the tree it points to): it asks, and so does the owned-root install rule for such a worktree. A Worktrunk leaf has no marker and still asks |
 | `sed-read` | a print-only `sed -n '<addr>p' <file>` in the chain |
 | `effect-write-in`, `effect-build-test`, `effect-read` | a chain whose segments are of those classes |
 
@@ -426,7 +426,9 @@ the same for the foreman and every child it launches, and nothing else is inheri
   `LEDGER-*.md` in its dir is a readable glob. Read only.
 - **Round worktree add by the foreman.** The foreman's own `git [-C <main>] worktree add <repo>.worktrees/<round> [-b
   <round>] [<base>]` is allowed without a question (label `round-worktree`); a child's `git worktree` stays denied, and
-  `git worktree remove` still asks.
+  `git worktree remove` still asks. After `worktree add` the foreman runs `npm ci` in the new worktree itself; never symlink
+  `node_modules` to another checkout (a later `npm ci` would wipe that checkout's tree). A child on POSIX may run the exact
+  `npm ci` in its own worktree (label `npm-ci-worktree`).
 - **Isolation worktree as the child's own root.** The worktree pi-subagents makes for a child
   (`<repo>.worktrees/worktrees/<round>/pi-worktree-*`) is that child's own workspace root; its writes there follow the
   normal child rules.
