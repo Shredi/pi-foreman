@@ -236,7 +236,7 @@ test("planSizing: a risk-top entry without a top model falls back to strong, cap
   const tk = takeSizing(input);
   const p = planSizing(input, tk.entries, tk.carried, o);
   assert.deepEqual([p.plans[0].rule, p.plans[0].target, p.plans[0].combo.note, p.plans[0].probe], ["risk_top", "strong", ["capped"], ["guard"]]);
-  const top = { agent: "builder", task: "x", risk: ["design"] };
+  const top: Record<string, unknown> = { agent: "builder", task: "x", risk: ["design"] };
   const t2 = takeSizing(top);
   const q = planSizing(top, t2.entries, t2.carried, { ...o, top: "p/big" });
   assert.deepEqual([q.plans[0].target, q.plans[0].combo.climb, top.model], ["top", true, "strong"]);
@@ -250,7 +250,7 @@ test("planSizing: the heavy tier keeps strong for a small task; no strong rung c
   const p = planSizing(input, tk.entries, tk.carried, o);
   assert.deepEqual([p.plans[0].rule, p.plans[0].base, p.plans[0].target], ["small", "strong", "default"]);
   const bare = { builder: { model: "p/small" } };
-  const risky = { agent: "builder", task: "x", risk: ["security"] };
+  const risky: Record<string, unknown> = { agent: "builder", task: "x", risk: ["security"] };
   const t2 = takeSizing(risky);
   const q = planSizing(risky, t2.entries, t2.carried, { ...o, roles: bare, tier: "standard" });
   assert.deepEqual([q.block, q.plans[0].combo, risky.model], [undefined, { note: ["capped"] }, undefined]);

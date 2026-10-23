@@ -19,7 +19,7 @@ interface Rig {
   trace(): Record<string, unknown>[];
   setHigh(): void;
   /** One launch: assistant message, tool_call, tool_result; returns the receipt lines. */
-  launch(id: string, input: Record<string, unknown>, runId: string): Promise<{ block?: boolean; reason?: string } | undefined>;
+  launch(id: string, input: Record<string, unknown>): Promise<{ block?: boolean; reason?: string } | undefined>;
   receipt(id: string, input: Record<string, unknown>, runId: string): Promise<string>;
   ended(runId: string, agent: string, summary: string): void;
 }
