@@ -2498,7 +2498,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "shell_write_allow", reason: "branch_move", cmd: command });
         return undefined;
       }
-      const reason = move && !move.allow ? `${v.reason} branch move refused: ${move.precondition}.` : v.reason;
+      const reason = move && "precondition" in move ? `${v.reason} branch move refused: ${move.precondition}.` : v.reason;
       if (planner) {
         s.trace?.emit({ event: "planner_write_refused", kind: "shell" });
         return { block: true, reason: `${reason} ${PLANNER_SCOPE_NOTE(scratchDir)}` };
