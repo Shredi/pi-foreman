@@ -2266,6 +2266,8 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
       const raw = unitWords.find((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
       // `printf -v f %s PATH`, `read f`, `declare f=PATH`, `mapfile f`: the words become a variable a later redirect may use
       if (ASSIGNERS.has(verb0) || (verb0 === "printf" && v.core.includes("-v"))) out.pure = false;
+      // an assignment-only unit (`PATH=/x; cat F`) may change what a later reader runs: the line is no protected read
+      if (!neutral && raw === undefined) out.rdr = false;
       if (!neutral && raw !== undefined) {
         out.verbs?.push(off === 0 && v.core.length ? baseName(v.core[0]) : "");
         // a git unit with an env prefix or wrapper (`GIT_EXTERNAL_DIFF=rm git diff`, `env … git`) is no reader: `off` counts the stripped words

@@ -131,6 +131,19 @@ test("git protected readers with listed options and plain operands pass", { skip
   ]) assert.equal(child(c), "pass", c);
 });
 
+test("an assignment unit anywhere in the line ends a protected read", { skip: !posix }, () => {
+  const F = "package.json";
+  for (const c of [
+    `PATH=/tmp/e; git diff -- ${F}`,
+    `PATH=/tmp/e; cat ${F}`,
+    `LD_PRELOAD=/tmp/x.so; git diff -- ${F}`,
+    `X=1; git log -- ${F}`,
+    `PATH=/tmp/e && cat ${F}`,
+    `true; PATH=/tmp/e; cat ${F}`,
+  ]) assert.equal(child(c), "deny", c);
+  for (const c of [`git diff a..b -- ${F}`, `cat ${F}`, `git -C sub diff -- ${F}`, `cd sub && git diff -- ../${F}`]) assert.equal(child(c), "pass", c);
+});
+
 test("a chain mixing a read and a write to a protected file is denied", { skip: !posix }, () => {
   assert.equal(child("git diff -- package.json && echo x > package.json"), "deny");
   assert.equal(child("cat package.json; tee package.json < /dev/null"), "deny");
