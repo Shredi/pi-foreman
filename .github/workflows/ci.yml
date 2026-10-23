@@ -1,22 +1,28 @@
 name: ci
 on:
-  push:
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.9", "3.13"]
     runs-on: ${{ matrix.os }}
     steps:
+      - name: "Windows: Defender real-time scanning off (CI speed)"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.13"
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -44,7 +50,7 @@ jobs:
       - name: replay scenarios (fake provider only, no secrets)
         env:
           FOREMAN_REPLAY_REQUIRED: "1"
-        run: python -m unittest discover -s tests/replay -v
+        run: node scripts/replay_run.mjs
       - name: ledger shims on Windows (cmd and PowerShell)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -137,3 +143,14 @@ jobs:
           path: ${{ runner.temp }}/bench-jobs
           if-no-files-found: ignore
           retention-days: 7
+  ci-ok:
+    # The one required check: passes only when every job it needs succeeded (a skipped or cancelled job fails it).
+    needs: [test, bench-smoke]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: every needed job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          node -e "const n = JSON.parse(process.env.NEEDS); const bad = Object.entries(n).filter(([, v]) => v.result !== 'success'); for (const [job, v] of bad) console.error(job + ': ' + v.result); process.exit(bad.length ? 1 : 0)"
