@@ -80,6 +80,16 @@ function runCmd(file: string, args: string[], cwd: string, timeout: number, env?
   });
 }
 
+/** The gh call prMerged makes: args and cwd in, `ok` false on any error or the timeout. */
+export type GhRunner = (args: string[], cwd: string) => Promise<{ ok: boolean; out: string }>;
+const realGh: GhRunner = (args, cwd) => runCmd("gh", args, cwd, GH_TIMEOUT_MS, { ...process.env, GH_PROMPT_DISABLED: "1" });
+let ghRunner: GhRunner = realGh;
+
+/** Test-only: replaces the gh call of prMerged; null restores the real gh. */
+export function setGhRunnerForTest(fn: GhRunner | null): void {
+  ghRunner = fn ?? realGh;
+}
+
 function runGit(cwd: string, args: string[]): Promise<{ ok: boolean; out: string }> {
   return runCmd("git", args, cwd, GIT_TIMEOUT_MS);
 }
@@ -135,7 +145,7 @@ async function prMerged(cwd: string): Promise<boolean> {
   const branch = await runGit(cwd, ["symbolic-ref", "--short", "-q", "HEAD"]);
   if (!branch.ok || !branch.out.trim()) return false;
   const head = await runGit(cwd, ["rev-parse", "HEAD"]);
-  const pr = await runCmd("gh", ["pr", "view", branch.out.trim(), "--json", "state,headRefOid"], cwd, GH_TIMEOUT_MS, { ...process.env, GH_PROMPT_DISABLED: "1" });
+  const pr = await ghRunner(["pr", "view", branch.out.trim(), "--json", "state,headRefOid"], cwd);
   if (!head.ok || !pr.ok) return false;
   try {
     const v = JSON.parse(pr.out) as { state?: unknown; headRefOid?: unknown };

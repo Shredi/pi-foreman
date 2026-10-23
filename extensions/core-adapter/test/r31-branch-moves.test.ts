@@ -1,37 +1,23 @@
 // r31: the foreman's branch moves after a `cd <dir> &&` prefix, after a squash or rebase merge, and the untracked-overwrite refusal.
-// Temp repositories with a bare origin; gh is replaced by a fake on PATH or absent, never the real one.
+// Temp repositories with a bare origin; gh is an injected runner (absent unless a test replies), never the real one.
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { branchMove } from "../shellwriteguard.ts";
+import { branchMove, setGhRunnerForTest } from "../shellwriteguard.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { r11Rig } from "./_r11rig.ts";
 
 const win = process.platform === "win32";
-const gitBin = (process.env.PATH ?? "").split(path.delimiter).map((d) => path.join(d, "git")).find((p) => fs.existsSync(p));
-const tools = mkTestTmp("pf-r31-tools-");
-const savedPath = process.env.PATH;
 
-// no gh on PATH for the file, unless a test puts a fake one first
+// gh reports absent (a failed call) unless a test injects a reply; PATH stays as it is, so git and python resolve
 before(() => {
-  if (!win && gitBin) fs.symlinkSync(fs.realpathSync(gitBin), path.join(tools, "git"));
-  process.env.PATH = tools;
+  setGhRunnerForTest(async () => ({ ok: false, out: "" }));
 });
 after(() => {
-  process.env.PATH = savedPath;
-  rmTestTmp(tools);
+  setGhRunnerForTest(null);
 });
-
-async function withPath<T>(dirs: string[], fn: () => Promise<T>): Promise<T> {
-  process.env.PATH = dirs.join(path.delimiter);
-  try {
-    return await fn();
-  } finally {
-    process.env.PATH = tools;
-  }
-}
 
 /** A work clone with one commit on main pushed to a bare origin (as r29-branch-moves). `g` runs git in the work tree. */
 function fixture() {
@@ -53,12 +39,12 @@ function fixture() {
   return { base, work, g, pushOrigin };
 }
 
-/** A fake `gh` in its own dir: prints `out` and exits with `code`. */
-function fakeGh(base: string, n: string, out: string, code = 0): string {
-  const dir = path.join(base, `gh-${n}`);
-  fs.mkdirSync(dir);
-  fs.writeFileSync(path.join(dir, "gh"), `#!/bin/sh\necho '${out}'\nexit ${code}\n`, { mode: 0o755 });
-  return dir;
+/** The next gh call answers `out`; `ok` false is a failing gh. The args must be the PR view of `round/31-g`. */
+function ghReply(out: string, ok = true): void {
+  setGhRunnerForTest(async (args) => {
+    assert.deepEqual(args, ["pr", "view", "round/31-g", "--json", "state,headRefOid"]);
+    return { ok, out };
+  });
 }
 
 test("cd prefix: a switch and a reset from the session cwd are allowed", async () => {
@@ -196,7 +182,7 @@ test("rebase-merged branch: reset --hard origin/main is allowed when every commi
   }
 });
 
-test("unmerged content is refused (no gh on PATH: no PR check)", async () => {
+test("unmerged content is refused (gh absent: no PR check)", async () => {
   const f = fixture();
   try {
     f.g("checkout", "-q", "-b", "round/31-n");
@@ -216,7 +202,7 @@ test("unmerged content is refused (no gh on PATH: no PR check)", async () => {
   }
 });
 
-test("gh: a MERGED PR whose head is HEAD allows the move; other state, other head, detached HEAD, a failing gh refuse", { skip: win }, async () => {
+test("gh: a MERGED PR whose head is HEAD allows the move; other state, other head, detached HEAD, a failing gh refuse", async () => {
   const f = fixture();
   try {
     f.g("checkout", "-q", "-b", "round/31-g");
@@ -225,16 +211,18 @@ test("gh: a MERGED PR whose head is HEAD allows the move; other state, other hea
     f.g("commit", "-q", "-m", "feat: g");
     const head = f.g("rev-parse", "HEAD");
     const refused = { allow: false, precondition: "HEAD is neither contained in origin/main nor in a pushed branch" };
-    const merged = fakeGh(f.base, "merged", `{"state":"MERGED","headRefOid":"${head}"}`);
-    await withPath([merged, tools], async () => assert.deepEqual(await branchMove("git reset --hard origin/main", f.work, true), { allow: true }));
-    const open = fakeGh(f.base, "open", `{"state":"OPEN","headRefOid":"${head}"}`);
-    await withPath([open, tools], async () => assert.deepEqual(await branchMove("git reset --hard origin/main", f.work, true), refused));
-    const other = fakeGh(f.base, "other", `{"state":"MERGED","headRefOid":"0000000000000000000000000000000000000000"}`);
-    await withPath([other, tools], async () => assert.deepEqual(await branchMove("git reset --hard origin/main", f.work, true), refused));
-    const failing = fakeGh(f.base, "fail", "gh: no pull request", 1);
-    await withPath([failing, tools], async () => assert.deepEqual(await branchMove("git reset --hard origin/main", f.work, true), refused));
+    const merged = `{"state":"MERGED","headRefOid":"${head}"}`;
+    ghReply(merged);
+    assert.deepEqual(await branchMove("git reset --hard origin/main", f.work, true), { allow: true });
+    ghReply(`{"state":"OPEN","headRefOid":"${head}"}`);
+    assert.deepEqual(await branchMove("git reset --hard origin/main", f.work, true), refused);
+    ghReply(`{"state":"MERGED","headRefOid":"0000000000000000000000000000000000000000"}`);
+    assert.deepEqual(await branchMove("git reset --hard origin/main", f.work, true), refused);
+    ghReply("gh: no pull request", false);
+    assert.deepEqual(await branchMove("git reset --hard origin/main", f.work, true), refused);
     f.g("checkout", "-q", "--detach");
-    await withPath([merged, tools], async () => assert.deepEqual(await branchMove("git reset --hard origin/main", f.work, true), refused));
+    ghReply(merged);
+    assert.deepEqual(await branchMove("git reset --hard origin/main", f.work, true), refused);
   } finally {
     rmTestTmp(f.base);
   }
