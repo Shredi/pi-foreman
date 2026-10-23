@@ -395,6 +395,8 @@ def check_first_commands(cmds):
             raise Refused("--first-command is longer than %d characters" % FIRST_LEN)
         if any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in c):
             raise Refused("--first-command must be one line without control characters")
+        if any(0x2018 <= ord(ch) <= 0x201b for ch in c):
+            raise Refused("--first-command must not contain typographic single quotes (PowerShell reads them as quotes)")
 
 
 def posix_command(env, model, prompt, first=()):
@@ -404,8 +406,12 @@ def posix_command(env, model, prompt, first=()):
     return " ".join(parts + [shlex.quote(c) for c in first] + [shlex.quote(prompt)])
 
 
+# ASCII apostrophe and the typographic single quotes U+2018-U+201B, which PowerShell also reads as quotes
+PS_SINGLE_QUOTES = "'\u2018\u2019\u201a\u201b"
+
+
 def ps_quote(v):
-    return "'" + v.replace("'", "''") + "'"
+    return "'" + "".join(ch * 2 if ch in PS_SINGLE_QUOTES else ch for ch in v) + "'"
 
 
 def powershell_command(env, model, prompt, first=()):

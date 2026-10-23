@@ -2995,17 +2995,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   // `/foreman session open|brief|close|list` (session.ts): user commands, foreman sessions only.
+  const sessionHost: Parameters<typeof registerSession>[1]["session"] = async (ctx) => {
+    const s = await ensureSession(ctx);
+    return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined, config: s.config.config };
+  };
   const sessionCmd = registerSession(pi, {
     spawner,
     pkgRoot: PKG_ROOT,
     onChildNotice: (sessionId, label, kind, notePath) => void waits.childNotice(sessionId, label, kind, notePath),
-    session: async (ctx) => {
-      const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined, config: s.config.config };
-    },
+    session: sessionHost,
   });
 
-  if (process.env.PI_SUBAGENT_CHILD !== "1") registerSessionOpenTool(pi, { spawner, pkgRoot: PKG_ROOT, session: async (ctx) => { const s = await ensureSession(ctx); return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined, config: s.config.config }; } });
+  if (process.env.PI_SUBAGENT_CHILD !== "1") registerSessionOpenTool(pi, { spawner, pkgRoot: PKG_ROOT, session: sessionHost });
 
   // D10: the foreman records its triage; children never get the tool.
   if (process.env.PI_SUBAGENT_CHILD !== "1") {

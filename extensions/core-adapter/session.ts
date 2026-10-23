@@ -275,7 +275,7 @@ export function cliModelOf(argv: readonly string[]): string | undefined {
 
 export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>): Promise<SessionResult> {
   if (!d.python) return { text: "foreman_session.py: no usable Python (run /foreman doctor).", ok: false };
-  if (c.planMode && !d.commands?.some((n) => /^plan(:\d+)?$/.test(n))) return { text: PLAN_MODE_UNAVAILABLE, ok: false };
+  if (c.planMode && !d.commands?.includes("plan")) return { text: PLAN_MODE_UNAVAILABLE, ok: false };
   const explicit = c.model ?? sessionForemanModel(d.config, d.model);
   const model = explicit ?? d.model;
   if (d.config && (model || d.model === undefined)) {

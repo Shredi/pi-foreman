@@ -81,7 +81,7 @@ test("foreman_session_open: the rank rule refuses a higher-ranked model", async 
 });
 
 test("plan_mode_unavailable: refused without a plan command, passes with one (command and tool)", async () => {
-  for (const commands of [undefined, [], ["foreman", "mcp"]]) {
+  for (const commands of [undefined, [], ["foreman", "mcp"], ["plan:2"]]) {
     const d = deps({ commands });
     for (const r of [await runSessionCommand(d, "open demo b.md --plan-mode"), await runSessionOpenTool(d, { label: "demo", brief: "b.md", planMode: true })]) {
       assert.deepEqual(r, { text: PLAN_MODE_UNAVAILABLE, ok: false });
@@ -89,7 +89,7 @@ test("plan_mode_unavailable: refused without a plan command, passes with one (co
     assert.equal(d.spawned.length, 0);
   }
   assert.match(PLAN_MODE_UNAVAILABLE, /^session open refused \[plan_mode_unavailable\]: /);
-  for (const commands of [["plan"], ["plan:2"]]) {
+  for (const commands of [["plan"]]) {
     const d = deps({ commands });
     assert.equal((await runSessionOpenTool(d, { label: "demo", brief: "b.md", planMode: true })).ok, true);
     assert.equal(d.spawned.length, 1);
