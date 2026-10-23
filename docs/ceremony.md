@@ -70,6 +70,10 @@ A parent ruling never satisfies the finish gate: a `ruling.md` or `ruling-<n>.md
 Design record: `design/architecture.md`
 [section 6](../design/architecture.md#6-ledger-gates-and-proportional-ceremony).
 
+## Round flow
+
+Every round goes through a PR. The foreman works on a branch `round/<n>-<topic>` cut from `main`; a reviewer pre-pr PASS on the branch head comes first, then `pr_create` opens the PR and `pr_watch` waits for its checks. When CI is green the foreman squash-merges it. `main` is branch-protected (the seven CI checks, strict), so nothing lands on it except through that merge. Run `npm run test:ci` before the PR (see [development](development.md#ci)).
+
 ## Further ceremony keys
 
 | Key | Default | Meaning and layer rule |
