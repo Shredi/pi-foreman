@@ -52,7 +52,7 @@
     "childReads": { "builder": { "warn": 20, "deny": 40 }, "reviewer": { "warn": 15, "deny": 30 } },
     "childScratch": { "keep": false },
     "recheckBudget": 3,
-    "launchWait": "detach",
+    "launchWait": "detach", "childBashTimeoutSeconds": 600, "childBashTimeoutMaxSeconds": 1800,
     "dedupeNotify": true,
     "reviewGate": "pass",
     "orientation": { "enabled": true, "maxLines": 120 },
