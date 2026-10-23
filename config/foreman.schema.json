@@ -453,7 +453,7 @@
       "description": "Host pressure limits. A project file may only tighten them.",
       "additionalProperties": false,
       "properties": {
-        "maxLoadPerCore": { "type": "number", "exclusiveMinimum": 0, "description": "1-minute load average per core above which pressure is high. A project can only lower it." },
+        "maxLoadPerCore": { "type": "number", "exclusiveMinimum": 0, "description": "5-minute load average per core above which pressure is high. A project can only lower it." },
         "minFreeMemMB": { "type": "integer", "minimum": 0, "description": "Free memory below which pressure is high. A project can only raise it." },
         "minFreeDiskGB": { "type": "number", "minimum": 0, "description": "Free workspace disk below which pressure is high. A project can only raise it." },
         "sampleSeconds": { "type": "integer", "minimum": 5, "description": "Sampling interval. A project file cannot set it." }

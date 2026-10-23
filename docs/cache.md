@@ -2,8 +2,10 @@
 
 > Covers the per-provider prompt-cache policy (`providers.<p>.cache`): TTL, billing, the keep-alive that stops an idle
 > session resuming cold, its spend budget and presence gate, the self-sent warms beyond Pi's 30-minute cap, and warm
-> compaction. On token-billed providers with a short cache TTL (`claude-bridge`: 300 s, keep-alive on by default) an idle
-> session otherwise pays for a cold prompt on resume. Layer rules are below; the idle model downshift is in [ladder](ladder.md#idle-rung-foreman-downshift).
+> compaction.
+
+On token-billed providers with a short cache TTL (`claude-bridge`: 300 s, keep-alive on by default) an idle
+session otherwise pays for a cold prompt on resume. Layer rules are below; the idle model downshift is in [ladder](ladder.md#idle-rung-foreman-downshift).
 
 ## Config
 

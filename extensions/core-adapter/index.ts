@@ -89,6 +89,7 @@ import { ASK_USER_TOOL, askUserQuestion } from "./askuser.ts";
 
 const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildWidget, rungOf } from "./childwidget.ts";
+import type { BackgroundRow } from "./childwidget.ts";
 import { LiveState, intercomIdOf } from "./livestate.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate } from "./compaction.ts";
@@ -486,10 +487,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     radarEvent((s) => s.widget.runs.onPrompt(d));
   });
   pi.events?.on(PERMISSIONS_DECISION, (d: unknown) => radarEvent((s) => s.widget.runs.onDecision(d)));
+  // Background rows of the children widget (childwidget.ts): the foreman's foreman_wait waits (pressure waits are not shown), its foreman_bg commands and its PR watches.
+  const backgroundOf = (s: Session): BackgroundRow[] => {
+    if (s.isChild) return [];
+    const now = Date.now();
+    const rows: BackgroundRow[] = waits.active(s.id).filter((w) => w.kind !== "pressure").map((w) => ({ label: w.bg ? "bg" : "wait", detail: w.note || w.kind, startedAt: now - w.ageSeconds * 1000 }));
+    for (const p of s.prWatches.list()) rows.push({ label: `pr #${p.n}`, detail: p.until, startedAt: p.startedAt });
+    return rows;
+  };
   const radarTouch = (s: Session | undefined, ctx: ExtensionContext): void => {
     if (!s) return;
     s.live?.touch();
-    s.widget.request(ctx, { enabled: get(s.config.config, "widget.children") === true, agentDir: s.agentDir, intercomId: s.live?.intercomId ?? null, symbols: get(s.config.config, "ui.symbols") });
+    s.widget.request(ctx, { enabled: get(s.config.config, "widget.children") === true, agentDir: s.agentDir, intercomId: s.live?.intercomId ?? null, symbols: get(s.config.config, "ui.symbols"), background: () => backgroundOf(s) });
   };
   pi.on("agent_start", async (_e, ctx) => {
     const s = sessionFor(ctx);
@@ -588,7 +597,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         trace: (r) => s.trace?.emit(r),
         intervalMs: () => (typeof get(s.config.config, "tools.prWatchSeconds") === "number" ? (get(s.config.config, "tools.prWatchSeconds") as number) : 60) * 1000,
         now: () => Date.now(),
-        changed: () => s.live?.touch(),
+        changed: () => {
+          s.live?.touch();
+          s.widget.refresh();
+        },
       }),
       claudeCfg: new ClaudeConfigWatch(),
       trace: ((t) => openTrace({ enabled: t.enabled, dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: t.id, base: t.base }))(sessionTrace(get(config.config, "trace.enabled"), get(config.config, "retro.enabled"), ctx.mode, id, b)),
@@ -691,7 +703,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!isChild) {
       s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const n = sessions.get(id)?.prWatches.size() ?? 0; return n > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${n} pr watch`, ageSeconds: 0, leftSeconds: 0 }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; });
       const live = s.live;
-      if (live) waits.onChange(id, () => live.touch());
+      waits.onChange(id, () => {
+        live?.touch();
+        s.widget.refresh();
+      });
     }
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
     try {
