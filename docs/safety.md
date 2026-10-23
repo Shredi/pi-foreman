@@ -128,7 +128,7 @@ outside it:
 
 ## Child shell time limit
 
-A child's `bash` call with no `timeout` gets `ceremony.childBashTimeoutSeconds` (600 s); an explicit `timeout` above `ceremony.childBashTimeoutMaxSeconds` (3600 s) is capped to it. The limit bounds a hung command, not a permission: the overlay and guards decide the same way with or without it. The foreman's own shell calls are not limited by these keys (trace `bash_timeout {action: applied|capped, requested}`).
+A child's `bash` call with no `timeout` gets `ceremony.childBashTimeoutSeconds` (600 s); an explicit `timeout` above `ceremony.childBashTimeoutMaxSeconds` (1800 s) is capped to it. The default is clamped to the cap too. The effective ceiling is the lower of `childBashTimeoutMaxSeconds` and `ceremony.childTimeoutSeconds` (1800 s), because pi-subagents stops any child tool call past that per-call limit. The limit bounds a hung command, not a permission: the overlay and guards decide the same way with or without it. The foreman's own shell calls are not limited by these keys (trace `bash_timeout {action: applied|capped, requested}`).
 
 ## Child environment and extensions
 

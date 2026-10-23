@@ -90,7 +90,7 @@ import { ASK_USER_TOOL, askUserQuestion } from "./askuser.ts";
 const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildWidget, rungOf } from "./childwidget.ts";
 import type { BackgroundRow } from "./childwidget.ts";
-import { childBashTimeout } from "./bashtimeout.ts";
+import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
 import { LiveState, intercomIdOf } from "./livestate.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate } from "./compaction.ts";
@@ -1596,6 +1596,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       capsReset(ms, event.toolCallId);
       if (MUTATING_TOOLS.has(event.toolName)) ms.mutating.add(event.toolCallId);
     }
+    let bashTimeout = null as ChildBashTimeout | null;
     const res = await (async () => {
     const stopped = ms?.isChild ? repeatStopped.get(ms.id) : undefined;
     if (stopped) return { block: true, reason: stopped };
@@ -1610,7 +1611,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const bt = childBashTimeout(event.input as Record<string, unknown>, { seconds: get(ms.config.config, "ceremony.childBashTimeoutSeconds"), max: get(ms.config.config, "ceremony.childBashTimeoutMaxSeconds") });
       if (bt) {
         (event.input as Record<string, unknown>).timeout = bt.timeout;
-        ms.trace?.emit({ event: "bash_timeout", action: bt.action, requested: bt.requested });
+        bashTimeout = bt;
       }
     }
     if (event.toolName === "bash") {
@@ -2070,6 +2071,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     })();
     // a blocked call gets no tool_result, so it is not in flight
     if (res && ms) ms.mutating.delete(event.toolCallId);
+    // R30 item 8: traced only once the guards let the child's bash call through
+    if (!res && bashTimeout && ms) ms.trace?.emit({ event: "bash_timeout", action: bashTimeout.action, requested: bashTimeout.requested });
     return res;
   });
 

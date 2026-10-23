@@ -1,5 +1,5 @@
 // R30 item 8: a child's `bash` call with no valid `timeout` gets ceremony.childBashTimeoutSeconds (600); an explicit one above
-// ceremony.childBashTimeoutMaxSeconds (3600) is capped; the foreman's calls are untouched. Trace `bash_timeout`.
+// ceremony.childBashTimeoutMaxSeconds (1800, the child tool timeout) is capped; the foreman's calls are untouched. Trace `bash_timeout`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { childBashTimeout } from "../bashtimeout.ts";
@@ -13,11 +13,17 @@ test("a missing timeout gets the default 600, applied", () => {
 
 test("a timeout within the cap is kept (no change)", () => {
   assert.equal(childBashTimeout({ command: "npm test", timeout: 1200 }, cfg), null);
-  assert.equal(childBashTimeout({ command: "npm test", timeout: 3600 }, cfg), null);
+  assert.equal(childBashTimeout({ command: "npm test", timeout: 1800 }, cfg), null);
 });
 
-test("a timeout above the cap is capped at 3600", () => {
-  assert.deepEqual(childBashTimeout({ command: "bench", timeout: 7200 }, cfg), { timeout: 3600, action: "capped", requested: 7200 });
+test("a timeout above the cap is capped at 1800", () => {
+  assert.deepEqual(childBashTimeout({ command: "bench", timeout: 3600 }, cfg), { timeout: 1800, action: "capped", requested: 3600 });
+  assert.deepEqual(childBashTimeout({ command: "bench", timeout: 7200 }, cfg), { timeout: 1800, action: "capped", requested: 7200 });
+});
+
+test("a configured default above the cap is clamped to the cap", () => {
+  assert.deepEqual(childBashTimeout({ command: "x" }, { seconds: 5000, max: 1800 }), { timeout: 1800, action: "applied", requested: null });
+  assert.deepEqual(childBashTimeout({ command: "x" }, { seconds: 5000 }), { timeout: 1800, action: "applied", requested: null });
 });
 
 test("a non-numeric, zero or negative timeout gets the default", () => {
@@ -31,7 +37,7 @@ test("custom keys are honoured; invalid config values fall back to the defaults"
   assert.deepEqual(childBashTimeout({ command: "x" }, { seconds: 300 }), { timeout: 300, action: "applied", requested: null });
   assert.deepEqual(childBashTimeout({ command: "x", timeout: 900 }, { max: 600 }), { timeout: 600, action: "capped", requested: 900 });
   assert.deepEqual(childBashTimeout({ command: "x" }, { seconds: 0 }), { timeout: 600, action: "applied", requested: null });
-  assert.deepEqual(childBashTimeout({ command: "x", timeout: 5000 }, { max: "big" }), { timeout: 3600, action: "capped", requested: 5000 });
+  assert.deepEqual(childBashTimeout({ command: "x", timeout: 5000 }, { max: "big" }), { timeout: 1800, action: "capped", requested: 5000 });
 });
 
 test("the adapter's child bash call gets the default and a bash_timeout trace; a cap is traced too", async (t) => {

@@ -4,8 +4,8 @@
 
 /** Seconds a child's shell command runs when it names no `timeout` (`ceremony.childBashTimeoutSeconds`). */
 export const DEFAULT_CHILD_BASH_TIMEOUT = 600;
-/** The largest `timeout` a child's shell command may name (`ceremony.childBashTimeoutMaxSeconds`). */
-export const DEFAULT_CHILD_BASH_TIMEOUT_MAX = 3600;
+/** The largest `timeout` a child's shell command may name (`ceremony.childBashTimeoutMaxSeconds`). Matches the child tool timeout. */
+export const DEFAULT_CHILD_BASH_TIMEOUT_MAX = 1800;
 
 export interface ChildBashTimeout {
   timeout: number;
@@ -18,11 +18,11 @@ const positive = (v: unknown): v is number => typeof v === "number" && Number.is
 
 /**
  * The timeout to set on a child's bash input, or null when it keeps its own valid one. A missing, non-numeric or non-positive
- * `timeout` gets `cfg.seconds`; a larger one is capped at `cfg.max`. Invalid config values fall back to the defaults above.
+ * `timeout` gets `cfg.seconds`, clamped to `cfg.max`; a larger one is capped at `cfg.max`. Invalid config values fall back to the defaults above.
  */
 export function childBashTimeout(input: Record<string, unknown>, cfg: { seconds?: unknown; max?: unknown }): ChildBashTimeout | null {
-  const seconds = positive(cfg.seconds) ? cfg.seconds : DEFAULT_CHILD_BASH_TIMEOUT;
   const max = positive(cfg.max) ? cfg.max : DEFAULT_CHILD_BASH_TIMEOUT_MAX;
+  const seconds = Math.min(positive(cfg.seconds) ? cfg.seconds : DEFAULT_CHILD_BASH_TIMEOUT, max);
   const requested = typeof input.timeout === "number" && Number.isFinite(input.timeout) ? input.timeout : null;
   if (!positive(input.timeout)) return { timeout: seconds, action: "applied", requested };
   if (input.timeout > max) return { timeout: max, action: "capped", requested };
