@@ -532,8 +532,8 @@ Switch: `safety.subagents.allowWorkflow` is true.
 
 | Key | Default | Layer |
 |---|---|---|
-| `ceremony.childBashTimeoutSeconds` | unset | any layer |
-| `ceremony.childBashTimeoutMaxSeconds` | unset | any layer |
+| `ceremony.childBashTimeoutSeconds` | `600` | any layer |
+| `ceremony.childBashTimeoutMaxSeconds` | `1800` | any layer |
 | `safety.requiredChildExtensions` | `[]` | tighten-only (entries are added, never removed) |
 | `safety.ops.copyMaxBytes` | `104857600` | tighten-only (lower only) |
 | `safety.ops.worktreeDisposable` | `["node_modules/", "target/", "dist/", "build/", "__pycache__/", ".venv/"]` | not in project/session (no tighten rule for this safety key) |
