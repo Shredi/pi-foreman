@@ -96,7 +96,7 @@ class StateTest(unittest.TestCase):
 class SampleTest(unittest.TestCase):
     def test_real_sample_never_raises_and_has_keys(self):
         got = fp.sample(tempfile.gettempdir())
-        self.assertEqual(set(got), {"loadPerCore", "freeMemMB", "freeDiskGB"})
+        self.assertEqual(set(got), {"loadPerCore", "load1PerCore", "freeMemMB", "freeDiskGB"})
 
     def test_each_probe_none(self):
         with mock.patch.object(fp.os, "getloadavg", side_effect=OSError, create=True), \
@@ -105,7 +105,7 @@ class SampleTest(unittest.TestCase):
                 mock.patch.object(fp, "_mem_windows", side_effect=RuntimeError), \
                 mock.patch.object(fp.shutil, "disk_usage", side_effect=OSError):
             self.assertEqual(fp.sample("/nonexistent"),
-                             {"loadPerCore": None, "freeMemMB": None, "freeDiskGB": None})
+                             {"loadPerCore": None, "load1PerCore": None, "freeMemMB": None, "freeDiskGB": None})
 
     def test_load_attribute_error_and_zero_cpus(self):
         with mock.patch.object(fp.os, "getloadavg", side_effect=AttributeError, create=True):
@@ -176,6 +176,32 @@ class CliTest(unittest.TestCase):
     def test_bad_limits(self):
         p = self.run_cli("sample", "--state", self.state, "--limits", "nope")
         self.assertEqual(p.returncode, 2)
+
+
+class FiveMinuteGateTest(unittest.TestCase):
+    def sample(self, loadavg, cores=4):
+        with mock.patch.object(fp.os, "getloadavg", return_value=loadavg, create=True), \
+                mock.patch.object(fp.os, "cpu_count", return_value=cores), \
+                mock.patch.object(fp, "_free_mem_mb", return_value=8000), \
+                mock.patch.object(fp.shutil, "disk_usage", return_value=mock.Mock(free=100 * 1024 ** 3)):
+            return fp.sample(tempfile.gettempdir())
+
+    def test_short_burst_stays_normal(self):
+        got = self.sample((12.0, 2.0, 1.0))  # 1-min 3.0/core, 5-min 0.5/core
+        self.assertEqual((got["loadPerCore"], got["load1PerCore"]), (0.5, 3.0))
+        rec = fp.classify(got, LIMITS, NOW)
+        self.assertEqual((rec["level"], rec["reasons"]), ("ok", []))
+        self.assertEqual(rec["host"]["load1PerCore"], 3.0)
+
+    def test_sustained_five_minute_load_fires(self):
+        got = self.sample((0.4, 8.0, 8.0))  # 5-min 2.0/core, 1-min 0.1/core
+        self.assertEqual((got["loadPerCore"], got["load1PerCore"]), (2.0, 0.1))
+        rec = fp.classify(got, LIMITS, NOW)
+        self.assertEqual((rec["level"], rec["reasons"]), ("high", ["load"]))
+
+    def test_one_minute_value_never_decides(self):
+        rec = fp.classify(host(load1PerCore=99.0), LIMITS, NOW)
+        self.assertEqual(rec["level"], "ok")
 
 
 if __name__ == "__main__":

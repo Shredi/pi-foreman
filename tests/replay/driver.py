@@ -234,7 +234,7 @@ class Rig:
 
     def env(self, extra=None):
         env = {k: v for k, v in os.environ.items()
-               if not k.upper().startswith(("PI_", "FOREMAN_")) and k.upper() not in ("TMPDIR", "TEMP", "TMP")}
+               if not k.upper().startswith(("PI_", "FOREMAN_", "HERDR_")) and k.upper() not in ("TMPDIR", "TEMP", "TMP")}
         env.update({"PI_CODING_AGENT_DIR": str(self.agent), "FOREMAN_FAKE_SCRIPT": str(self.script),
                     "TMPDIR": str(self.tmp), "TEMP": str(self.tmp), "TMP": str(self.tmp),
                     "PI_FOREMAN_PRESSURE_FIXTURE": str(self.ok_host)})
