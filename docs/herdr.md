@@ -117,6 +117,23 @@ A done session shows `done · n runs` on `fm_a1`, a lost one `lost`. A live, sel
 spinner frame in the glyph slot (see Spinner); waiting is working: while a `foreman_wait` or `foreman_bg` is pending the state stays `working`
 and Herdr's status stays working, and the wait shows on its activity line.
 
+### Data
+
+The live file (`state/live/<session>.json`) and `foreman_radar.py --json` carry these fields for the activity lines. They
+are additive: older readers ignore them, and each is present only when there is data.
+
+| Field | Where | Content |
+|---|---|---|
+| `started` | radar session node | start time, used for sibling order (oldest first within a rank) |
+| `bg` | a wait | `true` for a `foreman_bg` command |
+| `prs` | the `pr_watch` wait | the watched PR numbers |
+| `tasks` | live file, radar session node | this session's own `bg_run` add-on tasks: `id`, `label`, `pid`, `ageSeconds` |
+| `asks` | live file, radar session node | `[{n, topic}]` while the session's own handoff ask is open |
+
+The sidebar sorts them into lines: child runs go to `fm_a1` (agents); `tasks`, waits with `bg` and the `pr_watch` wait
+(with its `prs`) go to `fm_a2` (tasks and watches); other waits and `asks` go to `fm_a3` (`? ask <n>: <topic>`, then the
+waits).
+
 ### Header glyphs and colours
 
 | State | Glyph in `fm_hd` (`unicode`) |
