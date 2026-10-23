@@ -454,7 +454,7 @@
       "title": "Guards and safe operations",
       "purpose": "Loads the guard extensions into every child, sets the limits of the precondition-checked copy and worktree-remove tools, and picks the Python that runs every guard.",
       "doc": "docs/safety.md#further-safety-and-runtime-keys",
-      "keys": ["safety.requiredChildExtensions", "safety.preconditionOps", "safety.ops", "python.path"],
+      "keys": ["safety.requiredChildExtensions", "safety.preconditionOps", "safety.ops", "python.path", "ceremony.childBashTimeoutSeconds", "ceremony.childBashTimeoutMaxSeconds"],
       "commands": [],
       "switch": null,
       "state": "on",
