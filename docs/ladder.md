@@ -97,6 +97,36 @@ A launch entry (single, `tasks`, `chain` or `parallel`) whose task text carries 
 
 Use `[research]` on an explorer launch that reads the web or PDFs; add `[fact-critical]` only when a wrong fact is costly. Code search needs no tag. In the claude-bridge presets this moves the explorer from its bottom to its strong model, and a fact-critical one to the security rung.
 
+## Launch sizing
+
+A builder launch may carry two extra top-level fields (like `reason`, per `tasks`/`chain`/`parallel` entry too; the entry wins). The adapter strips them from every launch and picks the rung from them. A launch without them runs as before (`launch_sizing` rule `undeclared`).
+
+- `size: { files: string[], largestFileLines?: number, modules?: number }`: the files the builder will touch.
+- `risk: string[]`, from `guard, permission, parser, concurrency, security, design`.
+
+Malformed fields (wrong type, unknown tag, negative or non-integer number, a directory in `files`) refuse the foreman's launch with `[sizing_invalid]` and a one-line fix. Other roles ignore the fields.
+
+**Measurement.** The adapter reads at most 20 named files, each against the entry's `cwd` (else the session cwd), inside that checkout only. A missing file counts 0 lines (new file); a file over 1 MiB or an unreadable one counts as large; files past the 20th count as large. `modules` counts distinct components: the first two directory segments of each file, leaving out root files, `docs/`, `*.md` and test directories. The claim only raises: the rule sees `max(declared, measured)`.
+
+| Rule | Condition | Rung |
+|---|---|---|
+| `risk_top` | a risk in `topRisks` (design) | top |
+| `risk_strong` | a risk in `strongRisks` (guard, permission, parser, concurrency, security) | strong |
+| `large_file` | lines over `largeFileLines`, or a large file | strong |
+| `modules` | components over `maxModules` | strong |
+| `small` | anything else (docs, changelog, config keys, a small new test, 1-3 small files) | default |
+
+The first matching row wins. Sizing only raises the rung:
+
+- **Precedence.** With no `model`, the final rung is the higher of the usual logic (heavy tier, revision climb, handoff) and the sizing rung. A sizing climb needs no `reason` and traces `rung_up` reason `sizing`. An explicit `model` at or above the sizing rung keeps the usual logic; a lower one needs a `reason`, else the launch is refused (`[sizing_below]`); with a reason it wins (`override`). With no strong rung mapped nothing is refused and the trace says `capped`.
+- **Top rung.** `ladder.sizing.topRung`, else the next rank above the builder's strong rung (`providers.<p>.ranks`), else strong (`capped`). A top refused by `ladder.childPolicy` falls back to strong; the launch is never blocked.
+- **Pressure and trivial.** At high pressure the sizing climb is suppressed like every other climb (`climb_suppressed` reason `sizing`, `suppressed` in the record). At the trivial tier a sizing strong or top launch escalates to standard, like a `reason` strong launch.
+- **Bypass probes.** A builder launched with a `strongRisks` tag makes the next `item` or `pre-pr` reviewer launch carry a first line `[pi-foreman risk] <tags>: probe for bypasses ... and list each probe you ran.` An `item` or `pre-pr` PASS clears it.
+
+Keys (user or overlay config only; a project layer cannot change them): `ladder.sizing.enabled` (false: the fields are stripped and ignored), `largeFileLines` (1500), `maxModules` (2), `strongRisks`, `topRisks`, `topRung`.
+
+`foreman retro` lists per rule the launches, the final rungs, later climbs and later review FAILs. The join is heuristic: a record belongs to the last `launch_sizing` of the same role before it, so parallel builders and rounds that overlap can be misattributed. Read it as a trend, not a count per task.
+
 ## Trace records
 
 A child's records carry `role` and `runId` (the launch id) in its own `trace-<launchId>.jsonl`; see [retro](retro.md).
@@ -104,6 +134,8 @@ A child's records carry `role` and `runId` (the launch id) in its own `trace-<la
 | Event | Fields | When |
 |---|---|---|
 | `rung_up` | `role, from, to, reason` (+ `item` or `hits`, and `policy_override` for the reviewer) | A launch climbs from its live rung. |
+| `rung_up` reason `sizing` | `role, from, to, reason` | A builder launch climbed because its `size`/`risk` asked for a higher rung (see Launch sizing). |
+| `launch_sizing` | `role, rule, rung, base` (+ `files, lines, declaredLines, modules, declaredModules, outside, risk, note`) | Once per builder entry that carried `size` or `risk` or none (`undeclared`), and for another role that carried them (`not_builder`). `rung` is the final rung (`default`, `strong`, `top`), `base` the rung before sizing; `note` holds `capped`, `suppressed`, `override`, `explicit`. |
 | `rung_top` | `role, model, reason` (+ `item` or `hits`, `policy_override`) | A climb was due but the live rung already is the top one. |
 | `child_policy_block` | `role, runId, kind, outcome, exit, decision` | A child stopped on a permission-policy block: `kind` is `policy_block`, `decision` is `stopped`. It is never climb-eligible and the harness does not relaunch it; the report says so. |
 | `child_repeat_refusal` | child: `runId, role, reason, decision`; foreman: `role, runId, kind, outcome, exit, decision` | The child got the same overlay deny reason twice in one run and stopped it (`run failed: repeated guarded-token probe`, `decision` `stopped`); every later tool call of the run is blocked. The foreman's record (`kind` `repeat_refusal`) treats it like `child_policy_block`: failed, never climb-eligible, not relaunched. |

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Round 39
+- Launch sizing: a builder launch may carry `size: {files, largestFileLines?, modules?}` and `risk: [...]` (top level or per entry). The adapter strips both fields from every launch, measures the named files itself and picks the rung from a rule table (`risk_top`, `risk_strong`, `large_file`, `modules`, `small`); sizing only raises the rung, a lower explicit `model` needs a `reason` (`[sizing_below]`), and a sizing climb needs none (`rung_up` reason `sizing`). Keys `ladder.sizing.*` (user or overlay config only). docs/ladder.md. Test: `sizing.test.ts`, `sizing-launch.test.ts`.
+- Trace `launch_sizing {role, rule, rung, base, ...}` per builder entry; `foreman retro` lists per rule the launches, final rungs, later climbs and later review FAILs (a heuristic join). Test: `test_retro_sizing`.
+- The foreman prompt gets one `sizing` line (the two launch-brief lines merged to stay within 70 lines); with sizing off the rendering is unchanged. Test: `test_foreman_sizing_prompt`.
+
 ### Round 31a
 - Herdr sidebar: one row per pane. `join()` gives a pane to one session by a total order (fresh heartbeat before stale, live before done, the pane's foreground pid, youngest, session id), not by walk order, so a stale or finished presence record (an ended session, a reused pid) no longer alternates with the live one. The daemon publishes the winners (`winners.json` in its state dir) and `push` skips a pane another session won; `dedupe_panes` uses the same rank. Test rigs no longer inherit `HERDR_*` (the `test:node` preload, `_r11rig`, the replay driver and the review-bench child env), so they leave no presence file naming the runner's pane. Tests: `test_herdr_sidebar_winner`, `r31a-rig-herdr-scrub`.
 - Pressure gate: `loadPerCore` is the 5-minute load average; the 1-minute value is `load1PerCore` in the host record and the doctor line (`load5/core=... load1/core=...`), informational only. Thresholds and keys are unchanged. docs/resources.md. Tests: `test_pressure`, `pressure-surfaces`.
