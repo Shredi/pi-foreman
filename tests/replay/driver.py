@@ -445,17 +445,18 @@ class PiRpc:
             out.append(rec)
             self._answer(rec, answers)
 
-    def close(self, timeout=15.0):
+    def close(self, timeout=45.0):
         if self.proc.poll() is None:
             try:
                 self.proc.stdin.close()
             except OSError:
                 pass
-            try:
-                self.proc.wait(timeout)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-                self.proc.wait(5)
+            # Windows: Pi can exit slowly after EOF. Wait longer, then terminate, then kill; never raises.
+            if not _wait_exit(self.proc, timeout):
+                self.proc.terminate()
+                if not _wait_exit(self.proc, 15):
+                    self.proc.kill()
+                    _wait_exit(self.proc, 15)
         # Reader threads end at EOF; then release the pipes (ResourceWarning otherwise).
         for t in self._threads:
             t.join(5)
@@ -467,6 +468,15 @@ class PiRpc:
 
 
 # ------------------------------------------------------------------ helpers
+
+def _wait_exit(proc, timeout):
+    """True when `proc` exits within `timeout` seconds."""
+    try:
+        proc.wait(timeout)
+        return True
+    except subprocess.TimeoutExpired:
+        return False
+
 
 def tool_results(records, tool=None):
     """[(toolName, isError, text)] from tool_execution_end records."""
@@ -550,3 +560,17 @@ def trace_of(traces, role, model=None):
 
 def load_golden(name):
     return json.loads((HERE / "golden" / (name + ".json")).read_text("utf-8"))
+
+
+def wait_until(pred, timeout=30.0, describe=None, interval=0.25):
+    """Poll `pred()` until it returns a truthy value, and return that value. On timeout raise AssertionError
+    with the last value `pred` returned (`describe(last)` when given), so a slow CI run fails with the state it saw."""
+    deadline = time.time() + timeout
+    while True:
+        last = pred()
+        if last:
+            return last
+        if time.time() > deadline:
+            shown = describe(last) if describe else repr(last)
+            raise AssertionError("condition not met within %.0fs; last state: %s" % (timeout, str(shown)[:2000]))
+        time.sleep(interval)
