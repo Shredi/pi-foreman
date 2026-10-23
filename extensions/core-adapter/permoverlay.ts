@@ -79,6 +79,7 @@ import type { Json } from "./config.ts";
 import { workspaceOf } from "./python.ts";
 import { resolveVars } from "./shellvars.ts";
 import { probeFileHit } from "./splitliteral.ts";
+import { GIT_READ, gitReadWrites } from "./effects.ts";
 
 export interface PathRule {
   pattern: string;
@@ -2014,11 +2015,15 @@ function protectedReader(core: string[], skip: Set<number>): boolean {
   const expands = (x: string): boolean => /[$`]/.test(x.replace(/^\$(?:\{HOME\}|HOME)(?=\/)/, ""));
   // an unresolved expansion in any quoting may supply an option or script (`I=-i; sed $I p D`, `P=--pre=x; rg $P p D`)
   if (args.some(expands)) return false;
-  // a read-only git subcommand (GIT_RO_SUBS) reads its path operands; `--output` names a file it writes
+  // an allowlist of git shapes that only read their path operands: effects.ts's GIT_READ without its writing options, and `grep`
+  // without `-O` / `--open-files-in-pager` (which runs a program on the matched files); a global `-c` or any other subcommand is no reader
   if (verb === "git") {
     let k = 1;
-    while (k < core.length && core[k].startsWith("-")) k += /^-[Cc]$/.test(core[k]) ? 2 : 1;
-    return GIT_RO_SUBS.has(core[k] ?? "") && !has(/^--output\b/);
+    while (k < core.length && core[k] === "-C") k += 2;
+    const sub = core[k] ?? "";
+    const rest = args.slice(k);
+    if (GIT_READ.has(sub)) return !gitReadWrites(rest);
+    return sub === "grep" && !rest.some((x) => /^-[A-Za-z]*O|^--op/.test(x));
   }
   if (!PROTECTED_READERS.has(verb)) return false;
   if (verb === "file") return !has(/^-[A-Za-z]*C|^--compile/);

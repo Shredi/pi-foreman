@@ -405,7 +405,12 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
   return reads.every((o) => contained(c, cwd, o, false)) && writes.every((o) => contained(c, cwd, o, true, where)) ? "write-in" : "write-out";
 }
 
-const GIT_READ = new Set(["status", "log", "diff", "show"]);
+export const GIT_READ = new Set(["status", "log", "diff", "show"]);
+
+/** An option of a GIT_READ subcommand that runs a program or names an output file: the call is not read-only. */
+export function gitReadWrites(rest: string[]): boolean {
+  return rest.some((a) => a === "-c" || a === "-o" || a.startsWith("--output") || a === "--ext-diff" || a.startsWith("--textconv"));
+}
 const GIT_DRY = new Set(["add", "clean", "mv", "rm"]);
 
 function gitEffect(c: EffectCtx, cwd: string | null, args: string[]): { cls: EffectClass; known: boolean } {
@@ -413,7 +418,7 @@ function gitEffect(c: EffectCtx, cwd: string | null, args: string[]): { cls: Eff
   if (!sub || sub.startsWith("-")) return { cls: "unknown", known: true }; // git global options (-c, -C, ...)
   const rest = args.slice(1);
   if (GIT_READ.has(sub)) {
-    if (rest.some((a) => a === "-c" || a === "-o" || a.startsWith("--output") || a === "--ext-diff" || a.startsWith("--textconv"))) return { cls: "unknown", known: true };
+    if (gitReadWrites(rest)) return { cls: "unknown", known: true };
     return { cls: argsOk(c, cwd, rest) ? "read" : "unknown", known: true };
   }
   if (GIT_DRY.has(sub) && gitDryRun(sub, rest)) return { cls: argsOk(c, cwd, rest) ? "read" : "unknown", known: true };

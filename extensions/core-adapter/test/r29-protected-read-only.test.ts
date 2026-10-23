@@ -58,6 +58,22 @@ test("a git read that writes its output to a protected file is denied", { skip: 
   assert.equal(child("git diff -- package.json | tee package.json"), "deny");
 });
 
+test("git shapes that run a program or write stay denied on a protected file", { skip: !posix }, () => {
+  for (const c of [
+    "git grep -Otee x -- package.json",
+    "git grep -O tee x -- package.json",
+    "git grep --open-files-in-pager=tee x -- package.json",
+    "git diff --ext-diff -- package.json",
+    "git log --textconv -p -- package.json",
+    "git -c core.pager=tee log -- package.json",
+    "git config --file package.json a.b c",
+  ]) assert.equal(child(c), "deny", c);
+});
+
+test("read-only git shapes on a protected file pass", { skip: !posix }, () => {
+  for (const c of ["git diff a..b -- package.json", "git log -p -- package.json", "git show HEAD:package.json", "git grep x -- package.json"]) assert.equal(child(c), "pass", c);
+});
+
 test("a chain mixing a read and a write to a protected file is denied", { skip: !posix }, () => {
   assert.equal(child("git diff -- package.json && echo x > package.json"), "deny");
   assert.equal(child("cat package.json; tee package.json < /dev/null"), "deny");
