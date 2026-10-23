@@ -27,7 +27,7 @@ exit /b 2
 :check
 "%PF_PY%" %PF_PYARGS% -c "import sys; sys.exit(sys.version_info < (3, 13))" >nul 2>nul
 set "PF_RC=%ERRORLEVEL%"
-if "%PF_FOUND%"=="none" for /f "delims=" %%v in ('"%PF_PY%" %PF_PYARGS% -c "import sys; print(sys.version.split()[0])" 2^>nul') do set "PF_FOUND=%PF_PY% %PF_PYARGS% %%v"
+if "%PF_FOUND%"=="none" for /f "delims=" %%v in ('call "%PF_PY%" %PF_PYARGS% -c "import sys; print(sys.version.split()[0])" 2^>nul') do if defined PF_PYARGS (set "PF_FOUND=%PF_PY% %PF_PYARGS% %%v") else (set "PF_FOUND=%PF_PY% %%v")
 exit /b %PF_RC%
 :run
 "%PF_PY%" %PF_PYARGS% -E -s "%~dp0..\core\scripts\ledger.py" %*
