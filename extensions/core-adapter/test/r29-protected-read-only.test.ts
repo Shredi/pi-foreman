@@ -149,3 +149,21 @@ test("a chain mixing a read and a write to a protected file is denied", { skip: 
   assert.equal(child("cat package.json; tee package.json < /dev/null"), "deny");
   assert.equal(child("grep x package.json && sed -i 's/a/b/' package.json"), "deny");
 });
+
+test("an env prefix or wrapper on any reader, and a loop anywhere, end a protected read", { skip: !posix }, () => {
+  const F = "package.json";
+  for (const c of [
+    `PATH=/tmp/e cat ${F}`,
+    `PATH=/tmp/e grep x ${F}`,
+    `LD_PRELOAD=/tmp/x.so cat ${F}`,
+    `DYLD_INSERT_LIBRARIES=/tmp/x grep x ${F}`,
+    `env cat ${F}`,
+    `command cat ${F}`,
+    `nice cat ${F}`,
+    `for PATH in /tmp/e; do cat ${F}; done`,
+    `for PATH in /tmp/e; do git diff -- ${F}; done`,
+    `select PATH in /tmp/e; do grep x ${F}; done`,
+    `for x in a; do cat ${F}; done`,
+  ]) assert.equal(child(c), "deny", c);
+  for (const c of [`cat ${F}`, `grep x ${F}`, `git diff a..b -- ${F}`, `git -C sub diff -- ${F}`, `cd sub && git diff -- ../${F}`]) assert.equal(child(c), "pass", c);
+});

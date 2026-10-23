@@ -47,6 +47,11 @@ there is no `$(...)`, backtick or process substitution: `echo .git/HEAD | xargs 
 dot entries as in bash (unless the command mentions `dotglob` or `GLOBIGNORE`) and `\` is no path separator outside
 Windows. The secret path denies still check every word.
 
+Protected files guard against mistakes by children, not against a hostile child: a child may run its own scratch
+scripts, so the rule is not a sandbox. A protected file named by a read-only unit passes only for plain readers (cat,
+grep, and a strict allowlist of read-only git subcommands) with no env prefix, wrapper (`env`, `command`, `nice`), loop
+(`for`, `select`) or assignment anywhere in the line; any write form on the file stays denied.
+
 `codemode` is allowlisted: each call its script makes (`tools.read`, `tools.bash`, ...) passes the overlay, the
 guards and the permission system on its own, as a direct call would (`tests/replay/test_replay_codemode.py`).
 

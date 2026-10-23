@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Round 29
+- A child's read-only shell unit that names a protected file passes the write protection (strict git read allowlist and plain readers only); an env prefix, wrapper, loop or assignment anywhere in the line ends the read and the file stays protected; docs/safety.md says the rule is no sandbox. Test: `r29-protected-read-only`.
 - The PR gate accepts a reviewed head that is the commit of the branch the PR opens from, of its `origin/<branch>` ref, of its upstream or of HEAD (the reviewed PASS sha, not only the local branch ref); the stale refusal names the PASS sha and the resolved head sha. Python (`git_guard.py`) and TS (`reviews.ts`) agree. Test: `reviews.test.ts`, `test_git_guard_pr_gate.py`.
 - A `subagent_supervisor_request` of a run that ended (or is not live in this session) opens no window (trace `supervisor_request` `decision: stale`); an errored `subagent_supervisor` reply to a request of a dead run closes it (`decision: closed_dead_run`). Test: `r29-supervisor-stale`.
 - Child launches return at once with the receipt plus a detached-launch line; the completion notice starts the next foreman turn. `ceremony.launchWait` defaults to `detach` (`block` stays for replay rigs and bench); the foreman rules and docs/ceremony.md say launch, end the turn, act on the notice. Tests: `r29-async-launch`, `launchwait`.

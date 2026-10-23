@@ -2268,10 +2268,12 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
       if (ASSIGNERS.has(verb0) || (verb0 === "printf" && v.core.includes("-v"))) out.pure = false;
       // an assignment-only unit (`PATH=/x; cat F`) may change what a later reader runs: the line is no protected read
       if (!neutral && raw === undefined) out.rdr = false;
+      // a loop (`for PATH in /tmp/e; do cat F; done`) may bind a variable the reader runs under: the line is no protected read
+      if (unitWords[0] === "for" || unitWords[0] === "select") out.rdr = false;
       if (!neutral && raw !== undefined) {
         out.verbs?.push(off === 0 && v.core.length ? baseName(v.core[0]) : "");
-        // a git unit with an env prefix or wrapper (`GIT_EXTERNAL_DIFF=rm git diff`, `env … git`) is no reader: `off` counts the stripped words
-        const reader = v.core.length > 0 && (verb0 !== "git" || off === 0) && protectedReader(v.core, skip);
+        // a unit with an env prefix or wrapper (`PATH=/tmp/e cat`, `GIT_EXTERNAL_DIFF=rm git diff`, `env … git`) is no reader: `off` counts the stripped words
+        const reader = v.core.length > 0 && off === 0 && protectedReader(v.core, skip);
         if (!reader) out.rdr = false;
         const gitRead = reader && baseName(v.core[0]) === "git";
         if (!(PURE_VERBS.has(baseName(raw)) || gitRead) || !v.core.length || !(PURE_VERBS.has(baseName(v.core[0])) || gitRead)) out.pure = false;
