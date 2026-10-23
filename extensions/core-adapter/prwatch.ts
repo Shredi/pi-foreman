@@ -177,6 +177,7 @@ interface Watch {
   errors: number;
   lastError: string;
   ended: boolean;
+  started: number;
 }
 
 export class PrWatches {
@@ -208,8 +209,13 @@ export class PrWatches {
     return this.watches.size;
   }
 
+  /** The active watches (children widget rows): PR number, `until` and the start time (ms). */
+  list(): { n: number; until: WatchUntil; startedAt: number }[] {
+    return [...this.watches.values()].map((w) => ({ n: w.n, until: w.until, startedAt: w.started }));
+  }
+
   start(n: number, until: WatchUntil, baseline: Baseline, timeoutMs: number): void {
-    const w: Watch = { n, until, baseline, timeoutMs, deadline: this.deps.now() + timeoutMs, poller: null, stopper: null, busy: false, errors: 0, lastError: "", ended: false };
+    const w: Watch = { n, until, baseline, timeoutMs, started: this.deps.now(), deadline: this.deps.now() + timeoutMs, poller: null, stopper: null, busy: false, errors: 0, lastError: "", ended: false };
     this.reserved.delete(n);
     this.watches.set(n, w);
     w.stopper = this.timers.set(() => this.end(w, { outcome: "timeout", detail: String(Math.round(timeoutMs / 1000)) }), timeoutMs);
