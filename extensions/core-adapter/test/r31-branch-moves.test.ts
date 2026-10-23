@@ -24,7 +24,8 @@ after(() => {
 
 /** A work clone with one commit on main pushed to a bare origin (as r29-branch-moves). `g` runs git in the work tree. */
 function fixture() {
-  const base = mkTestTmp("pf-r31-branch-");
+  // the long-name path: on Windows os.tmpdir() may hold an 8.3 short name (RUNNER~1), which a cd word cannot carry
+  const base = fs.realpathSync.native(mkTestTmp("pf-r31-branch-"));
   const origin = path.join(base, "origin.git");
   const work = path.join(base, "work");
   const g = (...a: string[]) => execFileSync("git", ["-C", work, "-c", "user.name=t", "-c", "user.email=t@example.invalid", ...a], { encoding: "utf8" }).trim();
