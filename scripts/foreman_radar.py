@@ -452,6 +452,10 @@ def build(data, now):
                 n["tasks"].append({"id": str(t.get("id") or ""), "label": str(t.get("label") or ""),
                                    "pid": t["pid"] if isinstance(t.get("pid"), int) and not isinstance(t.get("pid"), bool) else None,
                                    "ageSeconds": int(num(t.get("ageSeconds")) + since_hb)})
+        asks = [{"n": a["n"], "topic": str(a.get("topic") or "")} for a in (d.get("asks") or [])
+                if isinstance(a, dict) and isinstance(a.get("n"), int) and not isinstance(a.get("n"), bool)]
+        if asks:
+            n["asks"] = asks
         u = data["usage"].get(sid)
         runs = [r for r in (d.get("runs") or []) if isinstance(r, dict)]
         for r in runs:
@@ -790,6 +794,8 @@ def to_json_node(n, now, symbols):
         out["started"] = n["started"]
         if n.get("tasks"):
             out["tasks"] = n["tasks"]
+        if n.get("asks"):
+            out["asks"] = n["asks"]
         if n.get("pressure"):
             out["pressure"] = n["pressure"]
     else:

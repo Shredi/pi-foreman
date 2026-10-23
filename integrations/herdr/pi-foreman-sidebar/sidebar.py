@@ -531,11 +531,15 @@ def _task_line(node, aux):
 def _wait_line(node, aux):
     """fm_a3: an open ask (`? ask 1: topic`), then the other waits (timer, file, child, pid)."""
     kids = node.get("children") or []
-    topics = [str(t) for t in node.get("asks") or [] if t]
-    n = len(topics) + sum(1 for k in kids if k.get("kind") == "run" and k.get("state") == "ask")
+    asks = [(a.get("n"), str(a.get("topic") or "")) if isinstance(a, dict) else (None, str(a))
+            for a in node.get("asks") or [] if a]
+    n = len(asks) + sum(1 for k in kids if k.get("kind") == "run" and k.get("state") == "ask")
     if not n and node.get("state") == "ask":
         n = 1
-    parts = ["%s ask %d%s" % (aux["ask"], n, ": " + topics[0] if topics else "")] if n else []
+    if asks and isinstance(asks[0][0], int) and not isinstance(asks[0][0], bool):
+        n = asks[0][0]
+    topic = asks[0][1] if asks else ""
+    parts = ["%s ask %d%s" % (aux["ask"], n, ": " + topic if topic else "")] if n else []
     waits = [w for w in node.get("waits") or [] if isinstance(w, dict)
              and not (w.get("bg") or _is_ci(w) or _is_pr(w))]
     line = _items(aux["wait"], [_wait_item(w) for w in waits])

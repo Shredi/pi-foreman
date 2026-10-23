@@ -522,6 +522,14 @@ class Round33Tests(Fixture):
         top["tasks"] = []
         self.assertNotIn("tasks", self.only_root(top))
 
+    def test_asks_are_copied_when_present(self):
+        top = live("s-t", "t", "fm-t", hb=5)
+        self.assertNotIn("asks", self.only_root(top))
+        top["asks"] = [{"n": 2, "topic": "rule scope", "x": 1}, {"n": "x", "topic": "bad"}, "junk"]
+        self.assertEqual(self.only_root(top)["asks"], [{"n": 2, "topic": "rule scope"}])
+        top["asks"] = []
+        self.assertNotIn("asks", self.only_root(top))
+
     def test_glyph_sets_emoji_and_ascii_reach_the_json(self):
         self.put_live(live("s-g", "g", "fm-g", state="blocked"))
         want = {"emoji": "\u270b", "ascii": "#", "nerd": "\uf256", "unicode": "\u270b"}

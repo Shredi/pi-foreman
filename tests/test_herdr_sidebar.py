@@ -1255,6 +1255,11 @@ class ActivityTest(unittest.TestCase):
         mixed = self.lines(asks=["scope"], waits=[wait("timer", "nap")])
         self.assertEqual(mixed[2], "? ask 1: scope · ⧗ nap 1m")
 
+    def test_ask_objects_render_number_and_topic(self):
+        self.assertEqual(self.lines(asks=[{"n": 3, "topic": "rule scope"}])[2], "? ask 3: rule scope")
+        self.assertEqual(self.lines(asks=[{"n": 3, "topic": ""}])[2], "? ask 3")
+        self.assertEqual(self.lines(asks=["plain"])[2], "? ask 1: plain")
+
     def test_overflow_counts_hidden_items(self):
         tasks = [{"id": str(i), "label": "t%d" % i, "pid": 1, "ageSeconds": 60} for i in range(5)]
         self.assertEqual(self.lines(tasks=tasks)[1], "⚙ t0 1m · t1 1m · t2 1m +2")
