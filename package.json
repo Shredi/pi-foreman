@@ -35,6 +35,7 @@
     "test": "python -m unittest discover -s tests -v",
     "test:node": "node --import ./extensions/core-adapter/test/_hermetic-env.mjs --test \"extensions/core-adapter/test/*.test.ts\" \"extensions/core-adapter/test/retired/*.test.ts\"",
     "test:installer": "node --test \"tests/installer/*.test.mjs\"",
+    "test:ci": "node scripts/foreman_ci.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "type": "module",
