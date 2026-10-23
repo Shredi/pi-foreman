@@ -11,6 +11,9 @@ import { r11Rig } from "./_r11rig.ts";
 
 const win = process.platform === "win32";
 
+// a dir as a `cd` word: forward slashes, so a Windows path is a plain word (`D:/a/...`); a backslash path is refused
+const cdWord = (dir: string) => dir.split(path.sep).join("/");
+
 // gh reports absent (a failed call) unless a test injects a reply; PATH stays as it is, so git and python resolve
 before(() => {
   setGhRunnerForTest(async () => ({ ok: false, out: "" }));
@@ -51,9 +54,9 @@ test("cd prefix: a switch and a reset from the session cwd are allowed", async (
   const f = fixture();
   try {
     f.g("branch", "round/31-x");
-    assert.deepEqual(await branchMove(`cd ${f.work} && git switch round/31-x`, f.work, true), { allow: true });
-    assert.deepEqual(await branchMove(`cd ${f.work} && git reset --hard origin/main`, f.work, true), { allow: true });
-    assert.deepEqual(await branchMove(`cd ${f.work} && git switch -C round/31-y origin/main`, f.work, true), { allow: true });
+    assert.deepEqual(await branchMove(`cd ${cdWord(f.work)} && git switch round/31-x`, f.work, true), { allow: true });
+    assert.deepEqual(await branchMove(`cd ${cdWord(f.work)} && git reset --hard origin/main`, f.work, true), { allow: true });
+    assert.deepEqual(await branchMove(`cd ${cdWord(f.work)} && git switch -C round/31-y origin/main`, f.work, true), { allow: true });
   } finally {
     rmTestTmp(f.base);
   }
@@ -91,16 +94,16 @@ test("chains, env prefixes and git -C / -c are not branch moves (null)", async (
   try {
     f.g("branch", "round/31-x");
     for (const c of [
-      `cd ${f.work} && git switch round/31-x && echo done`,
-      `cd ${f.work} && cd ${f.work} && git switch round/31-x`,
-      `cd ${f.work} ; git switch round/31-x`,
-      `cd ${f.work} && git reset --hard origin/main && echo`,
+      `cd ${cdWord(f.work)} && git switch round/31-x && echo done`,
+      `cd ${cdWord(f.work)} && cd ${cdWord(f.work)} && git switch round/31-x`,
+      `cd ${cdWord(f.work)} ; git switch round/31-x`,
+      `cd ${cdWord(f.work)} && git reset --hard origin/main && echo`,
       `(git switch round/31-x)`,
       "git switch round/31-x; echo x",
       "git switch round/31-x | cat",
       "git switch round/31-x & echo",
       "GIT_DIR=x git switch round/31-x",
-      `GIT_DIR=x cd ${f.work} && git switch round/31-x`,
+      `GIT_DIR=x cd ${cdWord(f.work)} && git switch round/31-x`,
       `git -C ${f.work} switch round/31-x`,
       `git -C ${f.work} reset --hard origin/main`,
       "git -c core.hooksPath=/x switch round/31-x",
@@ -134,7 +137,7 @@ test("force flags, merge/keep modes and path-shaped forms stay refused (null), w
       "git reset --hard -origin/main",
     ]) {
       assert.equal(await branchMove(c, f.work, true), null, c);
-      assert.equal(await branchMove(`cd ${f.work} && ${c}`, f.work, true), null, `cd ${c}`);
+      assert.equal(await branchMove(`cd ${cdWord(f.work)} && ${c}`, f.work, true), null, `cd ${c}`);
     }
   } finally {
     rmTestTmp(f.base);
@@ -193,7 +196,7 @@ test("unmerged content is refused (gh absent: no PR check)", async () => {
       allow: false,
       precondition: "HEAD is neither contained in origin/main nor in a pushed branch",
     });
-    assert.deepEqual(await branchMove(`cd ${f.work} && git switch -C round/31-m origin/main`, f.work, true), {
+    assert.deepEqual(await branchMove(`cd ${cdWord(f.work)} && git switch -C round/31-m origin/main`, f.work, true), {
       allow: false,
       precondition: "HEAD is neither contained in origin/main nor in a pushed branch",
     });
@@ -277,7 +280,7 @@ test("relative cd words other than '.' are refused (bash may use CDPATH or a log
       assert.equal(await branchMove(c, f.work, true), null, c);
     }
     assert.deepEqual(await branchMove("cd . && git switch round/31-c", f.work, true), { allow: true });
-    assert.deepEqual(await branchMove(`cd ${f.work} && git switch round/31-c`, f.work, true), { allow: true });
+    assert.deepEqual(await branchMove(`cd ${cdWord(f.work)} && git switch round/31-c`, f.work, true), { allow: true });
   } finally {
     rmTestTmp(f.base);
   }
