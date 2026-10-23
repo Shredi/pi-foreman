@@ -633,7 +633,7 @@ Switch: `retro.repoBacklog` is non-empty.
 | Key | Default | Layer |
 |---|---|---|
 | `footer.usage` | `true` | any layer |
-| `footer.style` | unset | any layer |
+| `footer.style` | `"foreman"` | any layer |
 | `ui.symbols` | `"unicode"` | any layer |
 | `ui.spinner` | `true` | any layer |
 | `widget.children` | `true` | any layer |
