@@ -359,7 +359,7 @@ No config key.
 | Key | Default | Layer |
 |---|---|---|
 | `fanout.max` | `3` | any layer |
-| `ceremony.launchWait` | `"block"` | tighten-only (toward block; tightest first: block, detach) |
+| `ceremony.launchWait` | `"detach"` | tighten-only (toward block; tightest first: block, detach) |
 | `ceremony.dedupeNotify` | `true` | tighten-only (only true is accepted) |
 
 ### waits
