@@ -1,8 +1,8 @@
-"""Replay: default read budget before the first launch (4/8) and the orientation packet
+"""Replay: default read reminder before the first launch (8/8) and the orientation packet
 (ceremony.orientation) on the fake provider.
 
-Nine reads before any launch: the ninth is denied with the explorer + `/foreman budget lift` text,
-a started explorer lifts it. The orientation packet is in the foreman's system prompt, byte-identical
+Nine reads before any launch: the eighth carries the reminder to delegate and no read is refused.
+The orientation packet is in the foreman's system prompt, byte-identical
 on every request, with an `orientation` trace event (lines > 0); `enabled: false` sends no packet and
 traces `lines: 0`.
 Same prerequisites and skips as test_replay.py.
@@ -26,16 +26,16 @@ def events(rig, name):
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestDefaultReadBudget(ReplayCase):
-    def test_ninth_read_denied_then_explorer_lifts(self):
+    def test_eighth_read_reminded_and_never_refused(self):
         rig = self.rig("or-budget", load_fixture("orient"), config={"ceremony": {"orientation": {"enabled": False}}})
         (rig.project / "a.txt").write_text("alpha\n", "utf-8")
         pi = rig.start()
         res = tool_results(pi.prompt("[[replay:nine]] go", timeout=120))
         pi.close()
-        self.assertEqual([(n, e) for n, e, _ in res], [("read", False)] * 8 + [("read", True), ("subagent", False), ("read", False)], res)
-        self.assertIn("[read_budget_exceeded] 8 read calls before the first launch (limit 8)", res[8][2])
-        self.assertIn("Launch the explorer", res[8][2])
-        self.assertIn("/foreman budget lift", res[8][2])
+        self.assertEqual([(n, e) for n, e, _ in res], [("read", False)] * 9 + [("subagent", False), ("read", False)], res)
+        self.assertIn("pi-foreman: you have read 8 times; you should have enough to delegate", res[7][2])
+        self.assertNotIn("you have read", res[8][2])
+        self.assertEqual([(e["phase"], e["count"], e["action"]) for e in events(rig, "read_budget")], [("before", 8, "remind")])
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
@@ -66,7 +66,7 @@ class TestOrientation(ReplayCase):
             self.assertIn("# Orientation", sys_text)
             self.assertIn("src/ (1)", sys_text)
             self.assertIn("be brief", sys_text)
-            self.assertIn("read budget before the first launch is 4/8", sys_text)
+            self.assertIn("Your read reminder before the first launch comes after 8 reads, then every 8 reads.", sys_text)
             self.assertNotIn(str(rig.project), sys_text, "relative paths only")
         self.assertEqual(self.system_text(reqs[0]), self.system_text(reqs[1]), "packet bytes do not change between turns")
         [ev] = events(rig, "orientation")
