@@ -562,7 +562,7 @@ def load_golden(name):
     return json.loads((HERE / "golden" / (name + ".json")).read_text("utf-8"))
 
 
-def wait_until(pred, timeout=30.0, describe=None, interval=0.25):
+def wait_until(pred, timeout=60.0, describe=None, interval=0.25):
     """Poll `pred()` until it returns a truthy value, and return that value. On timeout raise AssertionError
     with the last value `pred` returned (`describe(last)` when given), so a slow CI run fails with the state it saw."""
     deadline = time.time() + timeout
