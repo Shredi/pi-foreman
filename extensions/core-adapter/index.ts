@@ -2101,10 +2101,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return undefined;
   });
 
+  /** A run of this session still going: not ended, and launched here (activeRuns) or a launch still in flight (pendingLaunches). */
+  function isLiveRun(s: Session | undefined, runId: string): boolean {
+    return !!s && !s.attention.endedRuns.has(runId) && (s.activeRuns.has(runId) || s.pendingLaunches.size > 0);
+  }
+
   /** A custom message the foreman received: at message_end, or appended while idle and found at the next input (idlecustom.ts). */
   function onCustomMessage(s: Session, message: unknown): void {
     const m = message as { customType?: string; details?: unknown; content?: unknown };
-    const opened = s.supervisor.onMessage(message);
+    const live = (runId: string): boolean => isLiveRun(s, runId);
+    const stale = s.supervisor.staleRequest(message, live);
+    if (stale) s.trace?.emit({ event: "supervisor_request", role: stale.role, decision: "stale" });
+    const opened = s.supervisor.onMessage(message, live);
     if (opened) s.trace?.emit({ event: "supervisor_request", role: opened.role, decision: "open" });
     if (s.isChild) return;
     const cause = causeOfCustom(m.customType);
@@ -2581,8 +2589,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (event.toolName === SUPERVISOR_TOOL) {
       const s = sessionFor(ctx);
-      const closed = s?.supervisor.onSupervisorResult(event.details, event.isError);
-      if (closed) s?.trace?.emit({ event: "supervisor_request", role: closed.role, decision: "replied" });
+      const closed = s?.supervisor.onSupervisorResult(event.details, event.isError, (runId) => isLiveRun(s, runId));
+      if (closed) s?.trace?.emit({ event: "supervisor_request", role: closed.role, decision: event.isError ? "closed_dead_run" : "replied" });
     }
     if (event.toolName === "subagent") {
       const s = sessionFor(ctx);
