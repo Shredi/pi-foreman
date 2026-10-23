@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Session friction metrics and permission-allow proposals (stdlib, 3.9+).
+"""Session friction metrics and permission-allow proposals (stdlib, 3.13+).
 
     python scripts/foreman_retro.py [--session F] [--trace F ...] [--usage F] [--review-log F]
                                     [--proposals-out F] [--min-reviews N] [--agent-dir D] [--json]

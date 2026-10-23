@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Report newer versions of the pinned packages (stdlib, 3.9+). Changes nothing.
+"""Report newer versions of the pinned packages (stdlib, 3.13+). Changes nothing.
 
     python scripts/foreman_update_check.py [--lock FILE] [--json]
 

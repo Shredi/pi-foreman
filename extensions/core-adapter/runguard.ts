@@ -25,7 +25,7 @@ export interface RunGuardInput {
 }
 
 export async function runGuard(input: RunGuardInput): Promise<GuardRun> {
-  if (!input.python) return { status: "failed", failure: "no-python", detail: "no Python >= 3.9 found" };
+  if (!input.python) return { status: "failed", failure: "no-python", detail: "no Python >= 3.13 found" };
   const script = path.join(input.coreDir, "scripts", `${input.guard}.py`);
   // -E: ignore PYTHONPATH & co. (a stray json.py must not shadow the stdlib); -s: no user site.
   const r = await input.spawner(input.python, ["-E", "-s", script, ...(input.args ?? [])], {

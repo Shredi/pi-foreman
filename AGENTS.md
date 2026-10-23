@@ -18,7 +18,7 @@ overlays never patch the harness, and nothing from an overlay is ever copied bac
 ## Constraints
 
 - Must run on Linux, macOS and Windows.
-- Python (standard library only, 3.9+) for all scripts. TypeScript only for Pi extensions.
+- Python (standard library only, 3.13+) for all scripts. TypeScript only for Pi extensions.
 - No new Python outside `core/guards`; new harness code is TypeScript. The Python half is ported module by module later.
 - Pi's file formats are the single source: `AGENTS.md`, skills under `.agents/skills/`,
   role definitions in the package's `agents/` folder. `.claude/agents/` exists only for the

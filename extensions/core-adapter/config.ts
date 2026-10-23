@@ -93,7 +93,7 @@ function fallback(pkgRoot: string, why: string): MergedConfig {
 }
 
 export async function loadMergedConfig(input: LoadInput): Promise<MergedConfig> {
-  if (!input.python) return fallback(input.pkgRoot, "no Python ≥ 3.9");
+  if (!input.python) return fallback(input.pkgRoot, "no Python ≥ 3.13");
   const r = await input.spawner(input.python, configCliArgs(input), { timeoutMs: CONFIG_TIMEOUT_MS, env: input.env, cwd: input.projectDir });
   if (r.error) return fallback(input.pkgRoot, r.error.message);
   if (r.timedOut) return fallback(input.pkgRoot, "timed out");

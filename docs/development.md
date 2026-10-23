@@ -2,7 +2,7 @@
 
 > Covers the repo layout, test commands, the replay rig, CI, Windows notes and how the docs are kept current.
 > Read it when you change pi-foreman itself.
-> It must run on Linux, macOS and Windows: Python stdlib only (3.9+), TypeScript only for Pi extensions.
+> It must run on Linux, macOS and Windows: Python stdlib only (3.13+), TypeScript only for Pi extensions.
 
 ## Layout
 

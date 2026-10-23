@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Session close: ownership manifest, CLOSE report, cleanup and handovers (stdlib, 3.9+).
+"""Session close: ownership manifest, CLOSE report, cleanup and handovers (stdlib, 3.13+).
 
     foreman close [--session S] [--cwd D] [--state D] [--dry-run] [--result PATH] [--json]
                   [--trusted-project]

@@ -58,7 +58,7 @@ test("child extension fails closed: no Python, spawn error, timeout, garbage", a
   assert.match(r1!.reason, /git guard could not run/);
   // Python resolves, the guard itself times out / prints garbage.
   for (const answer of [{ code: null, stdout: "", stderr: "", timedOut: true }, { code: 0, stdout: "not json", stderr: "", timedOut: false }]) {
-    const sp: Spawner = async (_cmd, args) => (args.includes("-c") ? { code: 0, stdout: "3.12\n/usr/bin/python3\n", stderr: "", timedOut: false } : answer);
+    const sp: Spawner = async (_cmd, args) => (args.includes("-c") ? { code: 0, stdout: "3.13\n/usr/bin/python3\n", stderr: "", timedOut: false } : answer);
     const h = loadChildGuard({ spawner: sp, env: {}, platform: "linux" });
     const r = await h({ toolName: "bash", input: { command: "ls" } }, ctx(os.tmpdir()));
     assert.equal(r?.block, true);
@@ -67,7 +67,7 @@ test("child extension fails closed: no Python, spawn error, timeout, garbage", a
   assert.equal(await h1({ toolName: "read", input: { path: "x" } }, ctx(os.tmpdir())), undefined);
 });
 
-test("child extension with the real script blocks push shapes and passes plain git", { skip: !py.ok ? "no Python >= 3.9" : false }, async () => {
+test("child extension with the real script blocks push shapes and passes plain git", { skip: !py.ok ? "no Python >= 3.13" : false }, async () => {
   assert.ok(fs.existsSync(path.join(repo, "scripts", "git_guard.py")));
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pf-gg-"));
   try {
@@ -85,7 +85,7 @@ test("child extension with the real script blocks push shapes and passes plain g
   }
 });
 
-test("message_pattern_child_nonconventional_subject_refused (child extension, real script)", { skip: !py.ok ? "no Python >= 3.9" : false }, async () => {
+test("message_pattern_child_nonconventional_subject_refused (child extension, real script)", { skip: !py.ok ? "no Python >= 3.13" : false }, async () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pf-gg-"));
   try {
     const h = loadChildGuard({ env: { ...process.env, PI_FOREMAN_PYTHON: py.ok ? py.info.executable : "" } });
@@ -97,7 +97,7 @@ test("message_pattern_child_nonconventional_subject_refused (child extension, re
   }
 });
 
-test("child extension forwards an allowed test restore to pi.events as test_restore", { skip: !py.ok ? "no Python >= 3.9" : false }, async () => {
+test("child extension forwards an allowed test restore to pi.events as test_restore", { skip: !py.ok ? "no Python >= 3.13" : false }, async () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pf-gg-restore-"));
   try {
     const g = (...a: string[]) => execFileSync("git", ["-C", cwd, ...a], { stdio: "ignore" });

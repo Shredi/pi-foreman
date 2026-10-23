@@ -1,4 +1,4 @@
-"""Replay driver for pi-foreman (design section 10). Standard library only, Python 3.9+.
+"""Replay driver for pi-foreman (design section 10). Standard library only, Python 3.13+.
 
 Each Rig owns a fresh temp root with:
   agent/    PI_CODING_AGENT_DIR: settings.json (packages: this repo, which bundles pi-subagents, the permission system and pi-intercom; the

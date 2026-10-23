@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Radar: a read-only tree of the running pi-foreman sessions and their subagent runs (stdlib, 3.9+).
+"""Radar: a read-only tree of the running pi-foreman sessions and their subagent runs (stdlib, 3.13+).
 
     python scripts/foreman_radar.py [--once] [--agent-dir D] [--interval SECONDS] [--since HOURS] [--done-ttl MINUTES] [--no-color]
 
