@@ -38,7 +38,7 @@ import { childSkillDirs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { CHILD_TRACE_EVENT, gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
-import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
+import { branchMove, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
@@ -2491,13 +2491,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const v = shellWriteVerdict(await runShellWriteGuard({ python: pyPath(s), pkgRoot: PKG_ROOT, payload, env, cwd: ctx.cwd, spawner }), pyPath(s));
       if (v.decision === "allow") return undefined;
       if (v.decision !== "refuse") return { block: true, reason: v.reason };
+      // r29: the foreman's branch-only git on a clean tree (a refusal names the precondition that failed)
+      const command = typeof input.command === "string" ? input.command : "";
+      const move = await branchMove(command, ctx.cwd, !s.isChild);
+      if (move?.allow) {
+        s.trace?.emit({ event: "shell_write_allow", reason: "branch_move", cmd: command });
+        return undefined;
+      }
+      const reason = move ? `${v.reason} branch move refused: ${move.precondition}.` : v.reason;
       if (planner) {
         s.trace?.emit({ event: "planner_write_refused", kind: "shell" });
-        return { block: true, reason: `${v.reason} ${PLANNER_SCOPE_NOTE(scratchDir)}` };
+        return { block: true, reason: `${reason} ${PLANNER_SCOPE_NOTE(scratchDir)}` };
       }
       s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode });
       const more = onEditRefused(s, mode, "shell");
-      return { block: true, reason: mode === "bounded" ? v.reason : `${v.reason} pi-foreman: ${editModeAdvice(mode, scratchDir)}.${more}` };
+      return { block: true, reason: mode === "bounded" ? reason : `${reason} pi-foreman: ${editModeAdvice(mode, scratchDir)}.${more}` };
     } catch (err) {
       return { block: true, reason: `pi-foreman: adapter error in the shell write guard (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
     }
