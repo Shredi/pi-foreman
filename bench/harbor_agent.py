@@ -554,8 +554,8 @@ class _BenchPi(BaseInstalledAgent):
             for name in ("package.json", "package-lock.json"):
                 await environment.upload_file(PI_LOCK_DIR / name, R_PI + "/" + name)
         await self.exec_as_root(environment, command=pi_install_command(prebaked))
-        # Python 3.9+ runs the core, the guards and the waiter; fail the install, not the cell.
-        await self.exec_as_root(environment, command="python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)'")
+        # Python 3.13+ (PI_FOREMAN_PYTHON when the image sets it) runs the core, the guards and the waiter; fail the install, not the cell.
+        await self.exec_as_root(environment, command="\"${PI_FOREMAN_PYTHON:-python3}\" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 13) else 1)'")
         npm = ([SUBAGENTS, "%s@%s" % (PERMISSION_SYSTEM, locked_version(PERMISSION_SYSTEM))] if self.KIND == "foreman" else []) + ([] if self.fake else [BRIDGE, AGENT_SDK])
         if npm:
             await self.exec_as_root(environment, command="set -e; " + NVM + "mkdir -p %s; " % R_NPM + retry_sh(
@@ -627,7 +627,7 @@ class _BenchPi(BaseInstalledAgent):
         quiet = float(row.get("quiet_seconds") or (3 if self.fake else 10))
         out = str(self.environment_logs_dir)
         cmd = ("export HOME=%s USER=%s LOGNAME=%s; " % (AGENT_HOME, AGENT_USER, AGENT_USER) + NVM +
-               "python3 %s/bench/wait_session.py --row %s/row.json --instruction-file %s/instruction.md "
+               "\"${PI_FOREMAN_PYTHON:-python3}\" %s/bench/wait_session.py --row %s/row.json --instruction-file %s/instruction.md "
                '--cwd "$PWD" --work %s/w --out %s --driver %s --cap-seconds %s --quiet-seconds %s%s%s%s'
                % (R_REPO, R_WORK, R_WORK, R_WORK, shlex.quote(out), self.driver, cap, quiet,
                   " --fake-script %s/bench/fake_script.json" % R_REPO if self.fake else "", secret_arg,
