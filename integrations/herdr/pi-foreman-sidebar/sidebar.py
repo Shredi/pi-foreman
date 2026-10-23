@@ -378,10 +378,17 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
     return out
 
 
-def _rank(node):
-    """Live before done/lost, then the youngest."""
+def _rank(node, fg_pid=None):
+    """Total order for the sessions that claim one pane (smaller wins), independent
+    of input order: a fresh heartbeat before a stale one (so a reused pid cannot
+    revive a dead record), live before done, a pid that is the pane's foreground
+    process, the youngest, then the session id."""
     age = node.get("age_s")
-    return (node.get("state") in ("done", "lost"), float("inf") if age is None else age)
+    pid = node.get("pid")
+    state = node.get("state")
+    return (state in ("lost", "stale"), state in NOT_SELF_STATES,
+            fg_pid is None or pid is None or int(pid) != int(fg_pid),
+            float("inf") if age is None else age, node.get("sid") or "", node.get("key") or "")
 
 
 def dedupe_panes(roots, joins):
@@ -443,7 +450,9 @@ def join(nodes, agents, procinfo=None):
     a pane no live session claimed. Even then a finished, stale or lost session
     joins a pi pane only when Herdr's `agent_session` names that session: a pi pane
     with another (or no) agent_session may be a live child whose presence has no
-    pane id yet, so the pane stays unjoined rather than show a finished row."""
+    pane id yet, so the pane stays unjoined rather than show a finished row.
+    A pane goes to exactly one session, chosen by `_rank` (not by input order);
+    the other claimants get no join."""
     procinfo = procinfo or {}
     sessions = [n for n in walk(nodes) if n.get("kind") == "session"]
     joins, claimed = {}, set()
@@ -463,20 +472,20 @@ def join(nodes, agents, procinfo=None):
     for pane, pid in procinfo.items():
         if pid is not None:
             by_pid.setdefault(int(pid), pane)
-    for group in ([n for n in sessions if n.get("state") not in NOT_SELF_STATES],
-                  [n for n in sessions if n.get("state") in NOT_SELF_STATES]):
-        taken = set(claimed)
-        for n in group:
-            if n.get("paneId") and n["paneId"] in live and n["paneId"] not in taken and may_join(n, n["paneId"]):
-                joins[n["key"]] = n["paneId"]
-                claimed.add(n["paneId"])
-        for n in group:
-            if n["key"] in joins or n.get("pid") is None:
+    # Each session names at most one pane (its presence paneId while open, else
+    # its pid's pane); every pane then goes to its best-ranked claimant only.
+    claims = {}
+    for n in sessions:
+        pane = n.get("paneId")
+        if not (pane and pane in live and may_join(n, pane)):
+            pane = by_pid.get(int(n["pid"])) if n.get("pid") is not None else None
+            if not (pane and may_join(n, pane)):
                 continue
-            pane = by_pid.get(int(n["pid"]))
-            if pane and pane not in claimed and may_join(n, pane):
-                joins[n["key"]] = pane
-                claimed.add(pane)
+        claims.setdefault(pane, []).append(n)
+    for pane, claimants in claims.items():
+        winner = min(claimants, key=lambda m: _rank(m, procinfo.get(pane)))
+        joins[winner["key"]] = pane
+        claimed.add(pane)
     pi_panes = [a for a in agents or [] if a.get("agent") == "pi" and a.get("pane_id")]
     rest = [n for n in sessions if n["key"] not in joins and _norm(n.get("cwd"))
             and n.get("state") not in NOT_SELF_STATES]
@@ -587,6 +596,24 @@ def read_layout(sdir):
     except (OSError, ValueError):
         return {}
     return d if isinstance(d, dict) else {}
+
+
+def read_winners(sdir, now=None):
+    """{paneId: sid} the daemon published last, {} when absent or older than two push TTLs."""
+    path = os.path.join(sdir, "winners.json")
+    try:
+        if (time.time() if now is None else now) - os.path.getmtime(path) >= 2 * STAMP_FRESH_S:
+            return {}
+        with open(path, encoding="utf-8") as fh:
+            d = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def pane_winners(roots, joins):
+    return {pane: n["sid"] for n in walk(roots) for pane in [joins.get(n.get("key"))]
+            if n.get("kind") == "session" and pane and n.get("sid")}
 
 
 def view_retry_due(failed_at, now, every=None):
@@ -937,6 +964,8 @@ class Publisher:
         self.self_panes = self_panes_for(snapshot.get("roots") or [], joins, fresh,
                                          shown_tokens(agents))
         layout = {}
+        write_atomic(os.path.join(self.sdir, "winners.json"),
+                     json.dumps(pane_winners(snapshot.get("roots") or [], joins)))
         now = compose(snapshot, self.width(), joins, self.lead(), self.self_panes, layout_out=layout)
         write_atomic(os.path.join(self.sdir, "layout.json"), json.dumps(layout, ensure_ascii=False))
         self.log_joined(snapshot, agents, len(now))
@@ -1297,6 +1326,9 @@ def cmd_push(args):
         log("push needs --session <id> and --pane <id>")
         return 2
     sdir = state_dir()
+    owner = read_winners(sdir).get(args.pane)
+    if owner and owner != args.session and not args.dry_run:
+        return 0  # another session owns this pane; publishing would make the row flip
     stamp = os.path.join(sdir, "push", args.session + ".stamp")
     tokens_file = os.path.join(sdir, "push", args.session + ".tokens")
     if args.clear:
