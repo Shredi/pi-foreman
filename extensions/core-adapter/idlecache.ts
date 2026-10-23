@@ -5,9 +5,27 @@
 // re-armed to the next absolute deadline (the PendingPanels / PrWatches pattern); clear() at shutdown.
 import type { CachePolicy } from "./cachepolicy.ts";
 import type { Timers } from "./prwatch.ts";
+import { warmCompact } from "./warmcompact.ts";
 
 export type IdleState = "off" | "watching" | "ended";
-export type EndReason = "window" | "compact" | "activity" | "shutdown" | "warmer_stopped" | "error" | "hook_stop";
+export type EndReason = "window" | "compact" | "activity" | "shutdown" | "warmer_stopped" | "error" | "hook_stop" | "budget" | "away";
+
+/** Budget and presence gate of the warm policy (selfwarm.ts implements it); optional, absent = the legacy behaviour. */
+export interface WarmGate {
+  /** Verdict for the next Pi-sent warm, from the cached presence sample; synchronous, no side effects. */
+  verdict(): { ok: true } | { ok: false; reason: "budget" | "away"; budget?: { spent: number; cold: number; share: number } };
+  /** A budget can be computed (prompt size and rates known). */
+  budgetAvailable(): boolean;
+  /** Latest real request end or completed warm (either source), ms; null = unknown. */
+  lastCacheTouch(): number | null;
+  /** pi-foreman sends the warms itself; the idle cache stays out. */
+  owns(): boolean;
+  /** A warm was allowed (counts an away tick when the owner is away). */
+  noteWarm(): void;
+  /** Background presence probe shortly before `dueAt`. */
+  armProbe(dueAt: number): void;
+  disarm(): void;
+}
 
 export interface Busy {
   childRun: boolean;
@@ -40,13 +58,13 @@ export interface IdleCacheDeps {
   syncKeepalives(): KeepaliveSync;
   lastAssistantAt(): number | null;
   isChild: boolean;
+  gate?: WarmGate;
 }
 
 /** Pi stops idle warming this long after the last real request. */
 export const PI_IDLE_CAP_MS = 30 * 60 * 1000;
 const CONFIRM_MS = 90 * 1000;
 const WATCHDOG_SLACK_S = 60;
-const COLD_SHARE = 0.95;
 
 const realTimers: Timers = {
   set: (fn, ms) => {
@@ -74,6 +92,7 @@ export class IdleCache {
   private oldestUnconfirmedFireAt: number | undefined;
   private lastKeepaliveAt: number | null = null;
   private lastTurnStartAt: number | null = null;
+  private refusal: "budget" | "away" | null = null;
 
   constructor(deps: IdleCacheDeps) {
     this.deps = deps;
@@ -96,11 +115,11 @@ export class IdleCache {
     if (this.st !== "off") return;
     const policy = d.policy();
     if (!policy || policy.skip === "no_entry") return;
+    if (policy.selfWarm && d.gate?.owns()) return;
     if (!policy.active || policy.skip) return this.skipOnce(policy.skip ?? "disabled");
     if (!d.piIdleMode()) return this.skipOnce("pi_mode_not_idle");
     if (!d.hasPromptCache()) return this.skipOnce("no_prompt_cache");
-    const b = d.busy();
-    if (b.childRun || b.wait || b.launchWait || b.pendingMessages || b.notIdle) {
+    if (busyFor(d.busy(), policy)) {
       if (!this.busyTraced) {
         this.busyTraced = true;
         d.trace({ event: "keepalive", outcome: "skipped", reason: "busy" });
@@ -154,18 +173,26 @@ export class IdleCache {
     const was = this.st;
     this.timers.clear(this.timer);
     this.timer = null;
+    this.deps.gate?.disarm();
     this.setGlyph(false);
+    const stays = reason === "window" || reason === "compact" || reason === "budget" || reason === "away";
     if (was === "watching") {
       this.deps.trace({ event: "keepalive", outcome: "window_end", reason });
-      this.st = reason === "window" || reason === "compact" ? "ended" : "off";
-    } else if (reason !== "window" && reason !== "compact") this.st = "off";
+      this.st = stays ? "ended" : "off";
+    } else if (!stays) this.st = "off";
   }
 
   /** After Pi's `cache_warming_decision` hook answered. */
   noteDecision(action: "warm" | "stop" | undefined): void {
     if (this.st !== "watching") return;
-    if (action === "stop") return this.end("hook_stop");
+    if (action === "stop") {
+      const why = this.refusal;
+      this.refusal = null;
+      if (why) return this.refuse(why);
+      return this.end("hook_stop");
+    }
     if (action !== "warm") return;
+    this.deps.gate?.noteWarm();
     const now = this.deps.now();
     this.lastDecisionAt = now;
     if (this.oldestUnconfirmedFireAt === undefined) this.oldestUnconfirmedFireAt = now;
@@ -174,10 +201,28 @@ export class IdleCache {
 
   /** Answer for the hook (R1-R5); synchronous and side-effect free. */
   decide(busy: Busy): "warm" | "stop" | undefined {
-    if (busy.childRun || busy.wait || busy.launchWait || busy.pendingMessages || busy.notIdle) return undefined;
-    if (this.st === "watching") return this.deps.now() < this.windowEndAt && !this.compactedForIdle ? "warm" : undefined;
+    this.refusal = null;
+    if (busyFor(busy, this.deps.policy())) return undefined;
+    if (this.st === "watching") {
+      if (!(this.deps.now() < this.windowEndAt && !this.compactedForIdle)) return undefined;
+      const v = this.deps.gate?.verdict();
+      if (v && v.ok === false) {
+        this.refusal = v.reason;
+        if (v.budget) this.deps.trace({ event: "budget", ...v.budget });
+        return "stop";
+      }
+      return "warm";
+    }
     if (this.st === "ended") return "stop";
     return undefined;
+  }
+
+  /** The gate refused the next warm: say why, spend the last warm read on one compaction, end the window. */
+  private refuse(reason: "budget" | "away"): void {
+    const now = this.deps.now();
+    this.deps.trace({ event: "keepalive", outcome: "skipped", reason });
+    if (!this.compactedForIdle) this.tryCompact(now, reason);
+    this.end(reason);
   }
 
   private skipOnce(reason: string): void {
@@ -208,6 +253,9 @@ export class IdleCache {
     this.timers.clear(this.timer);
     this.timer = null;
     if (this.st !== "watching") return;
+    const g = this.deps.gate;
+    const p = this.deps.policy();
+    if (g && p) g.armProbe((this.lastDecisionAt ?? this.startedAt) + p.intervalSeconds * 1000);
     let next = Math.min(this.windowEndAt, this.watchdogAt());
     if (this.oldestUnconfirmedFireAt !== undefined) next = Math.min(next, this.oldestUnconfirmedFireAt + CONFIRM_MS);
     if (!this.compactChecked) next = Math.min(next, this.compactAt);
@@ -235,19 +283,25 @@ export class IdleCache {
     }
   }
 
-  private tryCompact(now: number): void {
+  private tryCompact(now: number, trigger?: "budget" | "away"): void {
     const d = this.deps;
     const p = d.policy();
-    const skip = (reason: string): void => d.trace({ event: "keepalive", outcome: "window_end", reason });
-    if (!p || !p.warmCompact) return skip("warm_compact_off");
-    if (this.compactedForIdle) return skip("already_compacted");
-    const b = d.busy();
-    if (b.childRun || b.wait || b.launchWait || b.pendingMessages || b.notIdle) return skip("busy");
-    const lastRead = Math.max(this.lastKeepaliveAt ?? 0, d.lastAssistantAt() ?? 0);
-    if (p.ttlSeconds === null || lastRead === 0 || now - lastRead > COLD_SHARE * p.ttlSeconds * 1000) return skip("cold");
-    const fired = d.compact();
-    if (!fired) return skip("below_floor");
-    this.compactedForIdle = true;
-    d.trace({ event: "compaction", reason: "warm_idle", tier: fired.tier, model: fired.model });
+    const fired = warmCompact({
+      policy: p,
+      alreadyCompacted: this.compactedForIdle,
+      busy: () => busyFor(d.busy(), p),
+      now,
+      lastTouch: Math.max(this.lastKeepaliveAt ?? 0, d.lastAssistantAt() ?? 0, d.gate?.lastCacheTouch() ?? 0),
+      compact: () => d.compact(),
+      trace: (r) => d.trace(r),
+      trigger: trigger ?? (p?.budgetShare !== undefined ? "window" : undefined),
+      skipOutcome: trigger ? "skipped" : "window_end",
+    });
+    if (fired) this.compactedForIdle = true;
   }
+}
+
+/** What keeps a warm from being sent; children, waits and launch waits only count unless the policy lets warming go on while waiting. */
+function busyFor(b: Busy, p: CachePolicy | null): boolean {
+  return b.pendingMessages || b.notIdle || (!p?.whileWaiting && (b.childRun || b.wait || b.launchWait));
 }

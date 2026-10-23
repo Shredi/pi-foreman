@@ -24,6 +24,8 @@ export interface KeepaliveSyncOptions {
   line: LineContext;
   registry?: PriceRegistry;
   trace?: (rec: Record<string, unknown>) => void;
+  /** Called per new Pi warm line (the warm budget counts it). */
+  onLine?: (line: UsageLine) => void;
 }
 
 /** Per session: the entry ids already in the log and the latest entry time. */
@@ -44,6 +46,7 @@ export class KeepaliveLog {
       const line = keepaliveLine(o.line, e, o.registry);
       if (!appendUsage(o.file, line)) continue;
       fresh += 1;
+      o.onLine?.(line);
       o.trace?.({ event: "keepalive", outcome: "fired", cacheRead: line.cacheRead, cacheWrite: line.cacheWrite, cost: line.cost.total });
     }
     return { newEntries: fresh, lastReadAt: this.last };
@@ -93,5 +96,6 @@ export function keepaliveLine(ctx: LineContext, entry: Json, registry?: PriceReg
     output: num(u.output),
     cost,
     entryId: typeof entry.id === "string" ? entry.id : undefined,
+    source: "pi",
   };
 }

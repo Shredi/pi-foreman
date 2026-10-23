@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Round 32
+- Warm budget: the keep-alive warms of one idle may cost at most `keepalive.budgetShare` (default 0.5) of a cold re-cache of the prompt; a refused warm compacts while the cache is warm (`compaction` trigger `budget`). Presence gate (`presence.*`, `keepalive.awayTicks`): while the owner is away at most `awayTicks` warms run. Self-warm beyond Pi's 30-minute idle cap for long TTLs (`keepalive.beyondPiCap`, `selfWarmWindowMinutes`) with a miss check; `keepalive.whileWaiting` keeps warming during child runs. Trace: `keepalive fired {source}`, `skipped`/`window_end` reasons `budget`, `budget_unavailable`, `away`, `not_replayable`, `self_warm_miss`, events `budget`, `presence`. Docs: docs/cache.md.
+- Idle model downshift: `providers.<p>.roles.foreman.idle` and `ladder.idleDownshift` run a notice turn that starts on a cold cache on a cheaper model and restore the base model on the owner's next input; gates compare against the base model; trace `foreman_model`; footer glyphs for cold and downshift; `/foreman cost` splits keep-alives into pi and foreman; `foreman retro` counts downshifted turns. Docs: docs/ladder.md, docs/sessions.md.
+- The claude-bridge presets carry the 1-hour subscription values (`byModel` `claude-*` 3600 s, keep-alive on, `awayTicks` 2, foreman idle rung on Sonnet 5.5); `foreman doctor` warns on a Pi `promptCache` tier that differs from `cache.ttlSeconds`, on `cacheWarming` not `idle` and on a self-warm miss, and notes an unset idle rung. Tests: `doctorcache.test.ts`, `test_preset_cache.py`, `test_retro_downshift.py`, replay `idle_cache`.
+
 ### Round 29
 - A child's read-only shell unit that names a protected file passes the write protection (strict git read allowlist and plain readers only); an env prefix, wrapper, loop or assignment anywhere in the line ends the read and the file stays protected; docs/safety.md says the rule is no sandbox. Test: `r29-protected-read-only`.
 - The PR gate accepts a reviewed head that is the commit of the branch the PR opens from, of its `origin/<branch>` ref, of its upstream or of HEAD (the reviewed PASS sha, not only the local branch ref); the stale refusal names the PASS sha and the resolved head sha. Python (`git_guard.py`) and TS (`reviews.ts`) agree. Test: `reviews.test.ts`, `test_git_guard_pr_gate.py`.

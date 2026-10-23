@@ -27,9 +27,11 @@ except ImportError:  # Python < 3.11
 
 SYMS = {
     "unicode": {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗", "keepalive": "♨",
+                "cold": "❄", "downshift": "↓",
                 "waiting-owner": "\u270b", "waiting-external": "\u21bb", "idle": "\u23f8"},
     "nerd": {"working": "\uf252", "waiting": "\uf04c", "asking": "\uf128", "blocked": "\uf256",
              "done": "\uf00c", "lost": "\uf00d", "keepalive": "\uf06d",
+             "cold": "\uf2dc", "downshift": "\uf063",
              "waiting-owner": "\uf256", "waiting-external": "\uf017", "idle": "\uf04c"},
 }
 
@@ -469,7 +471,7 @@ class SnippetTest(unittest.TestCase):
         self.assertLessEqual(len(rows), 16)
         glyphs = set()
         for s in SYMS.values():
-            glyphs.update(v for k, v in s.items() if k != "keepalive")  # footer glyph, not a sidebar state
+            glyphs.update(v for k, v in s.items() if k not in ("keepalive", "cold", "downshift"))  # footer glyphs, not sidebar states
         for row in rows:
             self.assertLessEqual(len(row), 16)
             for cell in row:

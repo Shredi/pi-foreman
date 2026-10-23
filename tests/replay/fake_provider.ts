@@ -31,6 +31,7 @@
 // JSON line (cache-prefix tests compare earlier requests with later ones byte for byte).
 // FOREMAN_FAKE_PROMPT_CACHE=1 declares `promptCache: {short: 20}` on every fake model (idle-cache replay); a step's
 // usage may carry `totalTokens` (the context size the foreman's compaction check reads).
+// FOREMAN_FAKE_COST=<in>,<out>,<cacheRead>,<cacheWrite> prices the fake models (warm-budget replay).
 import * as fs from "node:fs";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Model, SimpleStreamOptions, TranscriptContext } from "@earendil-works/pi-ai";
@@ -232,13 +233,22 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
   return stream;
 }
 
+// FOREMAN_FAKE_COST=<input>,<output>,<cacheRead>,<cacheWrite> ($ per million tokens) prices every fake model in the
+// registry (warm-budget replay); unset = zero cost, the bridge's behaviour.
+function fakeCost(): { input: number; output: number; cacheRead: number; cacheWrite: number } {
+  const [input = 0, output = 0, cacheRead = 0, cacheWrite = 0] = (process.env.FOREMAN_FAKE_COST ?? "").split(",").map(Number);
+  return { input, output, cacheRead, cacheWrite };
+}
+
 export default function fakeProvider(pi: ExtensionAPI): void {
   // `/replay-trigger <tag>` starts a run the way a detached child's completion notice does:
   // sendMessage with triggerTurn (no input / before_agent_start event).
   pi.registerCommand("replay-trigger", {
     description: "replay only: start a run through sendMessage(triggerTurn)",
     handler: async (args: string) => {
-      pi.sendMessage({ customType: "replay-trigger", content: `[[replay:${args.trim() || "t"}]] child finished`, display: true }, { triggerTurn: true });
+      // `/replay-trigger <tag> [customType]`: a real notice type (subagent-notify) gives the run a turn cause.
+      const [tag, customType] = args.trim().split(/\s+/);
+      pi.sendMessage({ customType: customType || "replay-trigger", content: `[[replay:${tag || "t"}]] child finished`, display: true }, { triggerTurn: true });
     },
   });
   // FOREMAN_FAKE_HERDR=<file> appends each `herdr:blocked` event (JSON per line), as Herdr would see it.
@@ -267,7 +277,9 @@ export default function fakeProvider(pi: ExtensionAPI): void {
   }
   // FOREMAN_FAKE_BRIDGE=1 also registers the fake under the claude-bridge provider name, so the
   // adapter treats the session as a claude-bridge session (the real bridge is never loaded).
-  for (const name of process.env.FOREMAN_FAKE_BRIDGE === "1" ? [...PROVIDERS, "claude-bridge"] : PROVIDERS) {
+  // The bridge is priced at anthropic registry rates (footer.ts lookupRate), so FOREMAN_FAKE_COST also registers `anthropic`.
+  const bridge = process.env.FOREMAN_FAKE_BRIDGE === "1" ? ["claude-bridge", ...(process.env.FOREMAN_FAKE_COST ? ["anthropic"] : [])] : [];
+  for (const name of [...PROVIDERS, ...bridge]) {
     pi.registerProvider(name, {
       name: `pi-foreman replay fake (${name})`,
       baseUrl: "http://127.0.0.1:9",
@@ -278,7 +290,7 @@ export default function fakeProvider(pi: ExtensionAPI): void {
         name: `${name} ${id}`,
         reasoning: false,
         input: ["text"],
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: fakeCost(),
         contextWindow: 200000,
         maxTokens: 8192,
         // Idle-cache replay: Pi's cache warmer only runs for a model that declares promptCache.

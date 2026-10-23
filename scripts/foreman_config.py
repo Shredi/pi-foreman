@@ -52,6 +52,16 @@ Keys outside safety that the project and session layers cannot loosen either
     providers.*.cache.keepalive.intervalSeconds   ignored (L1/L3/L2 only)
     providers.*.cache.keepalive.enabled   only false is accepted (true keeps the session warm at a cost)
     providers.*.cache.keepalive.windowMinutes   lower only, minimum 1; without an earlier value at most 45
+    providers.*.cache.keepalive.budgetShare   lower only (at most 0.5 without an earlier value)
+    providers.*.cache.keepalive.awayTicks   lower only (at most 0 without an earlier value)
+    providers.*.cache.keepalive.selfWarmWindowMinutes   lower only, minimum 1 (at most 180 without an earlier value)
+    ladder.idleDownshift.enabled     only false is accepted; .causes: intersect (a project can only remove causes)
+    providers.*.roles.*.idle         ignored (the idle model: L1/L3/L2 only)
+    providers.*.cache.keepalive.whileWaiting / beyondPiCap   only false is accepted
+    providers.*.roles.*.idle         ignored (picks the model of a cold idle turn; L1/L3/L2 only)
+    presence.enabled                 only true is accepted (more gating is the tightening direction)
+    presence.awayAfterMinutes        lower only, minimum 1; without an earlier value at most 11
+    presence.command                 ignored (SECURITY: it runs a program)
     providers.*.cache (or .keepalive)   not an object: ignored
     ladder.strongOnRevision, roles.*.strongOnRevision   only false is accepted (true climbs after a FAIL)
     tools.git                        only false is accepted (true adds tools)
@@ -198,6 +208,8 @@ IGNORED_KEYS = [
     (("providers", "*", "cache", "keepalive", "intervalSeconds"), "the cache policy comes from the user or overlay config"),
     (("providers", "*", "cache", "warmCompact"), "the cache policy comes from the user or overlay config"),
     (("providers", "*", "cache", "byModel"), "the cache policy comes from the user or overlay config"),
+    (("providers", "*", "roles", "*", "idle"), "the idle model is picked in the user or overlay config"),
+    (("presence", "command"), "SECURITY: it runs a program; user or overlay config only"),
     (("python", "path"), "it chooses the executable that runs every guard"),
     (("python", "*"), "interpreter settings come from the user or overlay config"),
     (("roles", "*", "launch"), "the launch mode comes from the user or overlay config"),
@@ -242,7 +254,16 @@ LAYER_TIGHTEN = [
     (("providers", "*", "strongOnRevision"), "false_only"),
     (("providers", "*", "cache", "keepalive", "enabled"), "false_only"),
     (("providers", "*", "cache", "keepalive", "windowMinutes"), "lower_only"),
+    (("providers", "*", "cache", "keepalive", "budgetShare"), "lower_only_number"),
+    (("providers", "*", "cache", "keepalive", "awayTicks"), "lower_only"),
+    (("providers", "*", "cache", "keepalive", "selfWarmWindowMinutes"), "lower_only"),
+    (("providers", "*", "cache", "keepalive", "whileWaiting"), "false_only"),
+    (("providers", "*", "cache", "keepalive", "beyondPiCap"), "false_only"),
+    (("presence", "enabled"), "true_only"),
+    (("presence", "awayAfterMinutes"), "lower_only"),
     (("ladder", "strongOnRevision"), "false_only"),
+    (("ladder", "idleDownshift", "enabled"), "false_only"),
+    (("ladder", "idleDownshift", "causes"), "intersect"),
     (("roles", "*", "strongOnRevision"), "false_only"),
     (("ceremony", "revisionRounds", "*"), "lower_only"),
     (("ceremony", "requireTriage"), "true_only"),
@@ -285,14 +306,17 @@ LAYER_TIGHTEN = [
 LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
                  "threshold": 0.3, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0,
                  "windowMinutes": 1, "childTimeoutSeconds": 1, "launchTimeoutCapMinutes": 1, "reviewRuns": 1, "budgetUsd": 0.01,
-                 "maxLoadPerCore": 0.01}
+                 "maxLoadPerCore": 0.01, "selfWarmWindowMinutes": 1, "awayAfterMinutes": 1}
 # lower_only values with no earlier layer value may not exceed this (the built-in default).
-LAYER_CAP = {"windowMinutes": 45, "launchTimeoutCapMinutes": 120}
+LAYER_CAP = {"windowMinutes": 45, "launchTimeoutCapMinutes": 120, "budgetShare": 0.5, "awayTicks": 0,
+             "selfWarmWindowMinutes": 180, "awayAfterMinutes": 11}
 # Built-in cache policy per provider (mirrors BUILTIN_CACHE in extensions/core-adapter/cachepolicy.ts).
 BUILTIN_CACHE = {
     "claude-bridge": {"ttlSeconds": 300, "billing": "token"},
     "github-copilot": {"ttlSeconds": None, "billing": "request"},
 }
+# Smallest TTL whose 0.9 x tick lies beyond Pi's 30-minute idle cap (mirrors SELF_WARM_MIN_TTL_SECONDS in cachepolicy.ts).
+SELF_WARM_MIN_TTL_SECONDS = 2001
 TIERS = ["trivial", "standard", "heavy"]
 # Steps ceremony.required.<tier> may name (the adapter counts each per session).
 REQUIRED_STEPS = ["planner", "builder", "reviewer", "finalizer"]
@@ -1044,8 +1068,9 @@ def with_mcp(cfg, role, tools):
 
 
 def resolve_role(cfg, role, provider):
-    """Return {model, thinking, codemode, tools[, strong]}; raise ConfigError if unresolvable.
+    """Return {model, thinking, codemode, tools[, strong][, idle]}; raise ConfigError if unresolvable.
 
+    `idle` ({model, thinking}) is the foreman's idle-downshift model, resolved like `strong`.
     `strong` ({model, thinking}) is the role's strong model, from the same provider `model`
     came from: the provider's own, or the fallback provider's only when `model` is the
     fallback's too; absent when that provider maps none.
@@ -1069,9 +1094,10 @@ def resolve_role(cfg, role, provider):
         tools.append("codemode")
     out = {"model": model, "thinking": cap_thinking(thinking, cfg.get("maxThinking")),
            "codemode": codemode, "tools": tools}
-    strong = source.get("strong")
-    if isinstance(strong, dict) and isinstance(strong.get("model"), str) and strong["model"]:
-        out["strong"] = {"model": strong["model"], "thinking": cap_thinking(strong.get("thinking"), cfg.get("maxThinking"))}
+    for rung in ("strong", "idle"):
+        ref = source.get(rung)
+        if isinstance(ref, dict) and isinstance(ref.get("model"), str) and ref["model"]:
+            out[rung] = {"model": ref["model"], "thinking": cap_thinking(ref.get("thinking"), cfg.get("maxThinking"))}
     return out
 
 
@@ -1226,6 +1252,7 @@ def _candidate_models(entry):
         if isinstance(role, dict):
             refs.append(role.get("model"))
             refs.append((role.get("strong") or {}).get("model") if isinstance(role.get("strong"), dict) else None)
+            refs.append((role.get("idle") or {}).get("model") if isinstance(role.get("idle"), dict) else None)
     refs.append((entry.get("review") or {}).get("model"))
     for ref in refs:
         if isinstance(ref, str) and ref:
@@ -1454,6 +1481,37 @@ def cache_policy(config, provider, model=None):
     if billing == "request":
         enabled = False
     return {"ttlSeconds": ttl, "billing": billing, "enabled": enabled}
+
+
+def warm_policy(config, provider, model=None):
+    """cache_policy plus the warm-policy fields (mirrors resolveWarmPolicy in cachepolicy.ts).
+
+    -> cache_policy's keys and budgetShare, awayTicks, whileWaiting, selfWarm, selfWarmWindowMinutes, or None.
+    """
+    base = cache_policy(config, provider, model)
+    if base is None:
+        return None
+    provs = config.get("providers") if isinstance(config, dict) else None
+    raw = provs.get(provider) if isinstance(provs, dict) else None
+    cfg = raw.get("cache") if isinstance(raw, dict) and isinstance(raw.get("cache"), dict) else {}
+    ka = cfg.get("keepalive") if isinstance(cfg.get("keepalive"), dict) else {}
+
+    def clamp(v, lo, hi, default):
+        return min(hi, max(lo, v)) if isinstance(v, (int, float)) and not isinstance(v, bool) else default
+
+    ttl = base["ttlSeconds"]
+    self_warm = bool(base["enabled"] and base["billing"] == "token" and ttl is not None
+                     and ka.get("beyondPiCap") is not False and ttl >= SELF_WARM_MIN_TTL_SECONDS)
+    default_window = min(1440, max(45, 3 * -(-(ttl or 0) // 60)))
+    out = dict(base)
+    out.update({
+        "budgetShare": clamp(ka.get("budgetShare"), 0, 1, 0.5),
+        "awayTicks": int(clamp(ka.get("awayTicks"), 0, 20, 0)),
+        "whileWaiting": ka.get("whileWaiting") if isinstance(ka.get("whileWaiting"), bool) else True,
+        "selfWarm": self_warm,
+        "selfWarmWindowMinutes": int(clamp(ka.get("selfWarmWindowMinutes"), 1, 1440, default_window)),
+    })
+    return out
 
 
 if __name__ == "__main__":

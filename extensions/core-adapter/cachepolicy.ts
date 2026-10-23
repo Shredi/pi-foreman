@@ -23,6 +23,16 @@ export interface CachePolicy {
   windowMinutes: number;
   effectiveWindowMinutes: number;
   warmCompact: boolean;
+  // Warm policy (resolveWarmPolicy); an absent field keeps the old behaviour.
+  /** Per-idle warm spend cap as a share of a cold re-cache; absent = no budget. */
+  budgetShare?: number;
+  /** Warms allowed while the owner is away (presence.ts). Absent = presence ignored. */
+  awayTicks?: number;
+  /** Children, waits and launch waits do not count as busy for warming. Absent = they do. */
+  whileWaiting?: boolean;
+  /** pi-foreman sends the warms itself beyond Pi's idle cap (selfwarm.ts). Absent = off. */
+  selfWarm?: boolean;
+  selfWarmWindowMinutes?: number;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -76,4 +86,33 @@ export function resolveCachePolicy(config: unknown, provider: string | undefined
   else if (ttlSeconds >= 3600) skip = "ttl_long";
   else if (!enabled) skip = "disabled";
   return skip ? { ...base, active: false, skip } : { ...base, active: true };
+}
+
+/** Smallest TTL whose 0.9 x tick lies beyond Pi's idle cap: Pi never warms it, pi-foreman may. */
+export const SELF_WARM_MIN_TTL_SECONDS = Math.floor((PI_IDLE_CAP_MINUTES * 60) / 0.9) + 1;
+
+/**
+ * resolveCachePolicy plus the warm-policy fields (budget, away ticks, waiting, self-warm) with their defaults.
+ * A separate function: resolveCachePolicy itself keeps its pinned shape.
+ */
+export function resolveWarmPolicy(config: unknown, provider: string | undefined | null, model?: string | null): CachePolicy {
+  const base = resolveCachePolicy(config, provider, model);
+  if (base.skip === "no_entry") return base;
+  const provs = isObj(config) ? config.providers : undefined;
+  const entry = isObj(provs) && provider ? provs[provider] : undefined;
+  const cfg = isObj(entry) && isObj(entry.cache) ? entry.cache : {};
+  const ka = isObj(cfg.keepalive) ? cfg.keepalive : {};
+  const clamp = (v: unknown, lo: number, hi: number, d: number): number => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
+  const ttl = base.ttlSeconds;
+  const enabled = typeof ka.enabled === "boolean" ? ka.enabled : base.billing === "token" && ttl !== null && ttl < 3600;
+  const selfWarm = enabled && base.billing === "token" && ttl !== null && ka.beyondPiCap !== false && ttl >= SELF_WARM_MIN_TTL_SECONDS;
+  const fallbackWindow = Math.min(1440, Math.max(45, 3 * Math.ceil((ttl ?? 0) / 60)));
+  return {
+    ...base,
+    budgetShare: clamp(ka.budgetShare, 0, 1, 0.5),
+    awayTicks: Math.trunc(clamp(ka.awayTicks, 0, 20, 0)),
+    whileWaiting: typeof ka.whileWaiting === "boolean" ? ka.whileWaiting : true,
+    selfWarm,
+    selfWarmWindowMinutes: Math.trunc(clamp(ka.selfWarmWindowMinutes, 1, 1440, fallbackWindow)),
+  };
 }

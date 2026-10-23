@@ -4,14 +4,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type SymbolKey = "working" | "waiting" | "asking" | "blocked" | "done" | "lost" | "keepalive" | PresenceKey;
+export type SymbolKey = "working" | "waiting" | "asking" | "blocked" | "done" | "lost" | "keepalive" | "cold" | "downshift" | PresenceKey;
 export type SymbolSet = Record<SymbolKey, string>;
 /** Presence-state icons (livestate.ts PresenceName; `working` and `done` reuse their own keys). */
 export type PresenceKey = "waiting-owner" | "waiting-external" | "idle";
 
 const KEEPALIVE: Record<"unicode" | "nerd", string> = { unicode: "♨", nerd: "" };
 
-const FALLBACK: Record<"unicode" | "nerd", Omit<SymbolSet, "keepalive">> = {
+/** Footer cache glyphs besides keepalive: a cold cache, and a downshifted model. */
+const CACHE_GLYPHS: Record<"unicode" | "nerd", { cold: string; downshift: string }> = { unicode: { cold: "❄", downshift: "↓" }, nerd: { cold: "\uf2dc", downshift: "\uf063" } };
+
+const FALLBACK: Record<"unicode" | "nerd", Omit<SymbolSet, "keepalive" | "cold" | "downshift">> = {
   unicode: { working: "⏳", waiting: "⏸", asking: "?", blocked: "✋", done: "✓", lost: "✗", "waiting-owner": "✋", "waiting-external": "↻", idle: "⏸" },
   nerd: { "waiting-owner": "\uf256", "waiting-external": "\uf017", idle: "\uf04c", working: "", waiting: "", asking: "", blocked: "", done: "", lost: "" },
 };
@@ -33,7 +36,7 @@ function table(): Record<string, Partial<SymbolSet>> {
 /** The glyph set for a `ui.symbols` value; a missing glyph falls back to the built-in one. */
 export function symbolSet(name: unknown): SymbolSet {
   const which = name === "nerd" ? "nerd" : "unicode";
-  return { ...FALLBACK[which], keepalive: KEEPALIVE[which], ...(table()[which] ?? {}) };
+  return { ...FALLBACK[which], keepalive: KEEPALIVE[which], ...CACHE_GLYPHS[which], ...(table()[which] ?? {}) };
 }
 
 /** Run state (childwidget RunState) -> symbol key. */
