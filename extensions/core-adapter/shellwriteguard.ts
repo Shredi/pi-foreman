@@ -106,9 +106,11 @@ async function headContained(cwd: string, ref: string): Promise<boolean> {
   return up.ok && up.out.trim() !== "";
 }
 
-/** The dir a `cd <word> &&` prefix enters, when it is the session cwd or its git toplevel (realpath compare); null otherwise. */
+/** The dir a `cd <word> &&` prefix enters, when it is the session cwd or its git toplevel (realpath compare); null otherwise.
+ *  Only `.`, `./` or an absolute word: bash may honour CDPATH or a logical $PWD for any other relative word, Node does not. */
 async function cdTarget(cwd: string, word: string): Promise<string | null> {
   if (!PLAIN_WORD.test(word) || word.startsWith("-")) return null;
+  if (word !== "." && word !== "./" && !path.isAbsolute(word)) return null;
   const target = realpathOf(path.resolve(cwd, word));
   const here = realpathOf(cwd);
   if (!target || !here) return null;
@@ -143,7 +145,16 @@ async function prMerged(cwd: string): Promise<boolean> {
   }
 }
 
-/** A path that `ref` adds (changed between HEAD and `ref`) exists in the worktree untracked or ignored: `reset --hard` would overwrite it. Null when none. */
+/** The entry at `p`, or null when nothing is there (or it cannot be read). */
+function lstatOf(p: string): fs.Stats | null {
+  try {
+    return fs.lstatSync(p);
+  } catch {
+    return null;
+  }
+}
+
+/** A path that `ref` changes against HEAD exists in the worktree untracked or ignored, or lies under a path that is not a directory (`d` a file, `ref` adds `d/f`): `reset --hard` or a switch would overwrite or block it. Null when none. */
 async function untrackedClash(cwd: string, ref: string): Promise<string | null> {
   const top = await runGit(cwd, ["rev-parse", "--show-toplevel"]);
   if (!top.ok) return "git rev-parse failed";
@@ -155,7 +166,17 @@ async function untrackedClash(cwd: string, ref: string): Promise<string | null> 
   const loose = await runGit(top.out.trim(), ["--literal-pathspecs", "ls-files", "--others", "-z", "--", ...paths]);
   if (!loose.ok) return "git ls-files failed";
   const clash = loose.out.split("\0").find(Boolean);
-  return clash ? `untracked or ignored file ${clash} would be overwritten` : null;
+  if (clash) return `untracked or ignored file ${clash} would be overwritten`;
+  // every ancestor directory of a changed path: an entry there that is not a directory blocks the path
+  for (const p of paths) {
+    const parts = p.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      const dir = parts.slice(0, i).join("/");
+      const st = lstatOf(path.join(top.out.trim(), dir));
+      if (st && !st.isDirectory()) return `${dir} is not a directory, so ${p} cannot be written`;
+    }
+  }
+  return null;
 }
 
 async function moveToRef(cwd: string, ref: string): Promise<BranchMove> {
@@ -191,7 +212,9 @@ export async function branchMove(command: string, cwd: string, foreman: boolean)
     const dirty = await cleanTree(dir);
     if (dirty) return { allow: false, precondition: dirty };
     if (!(await runGit(dir, ["show-ref", "--verify", "--quiet", `refs/heads/${args[1]}`])).ok) return { allow: false, precondition: `no local branch ${args[1]}` };
-    return { allow: true };
+    // git switch overwrites an ignored file that the branch adds, so the same clash check as a ref move
+    const clash = await untrackedClash(dir, args[1]);
+    return clash ? { allow: false, precondition: clash } : { allow: true };
   }
   if (args.length === 4 && args[0] === "switch" && args[1] === "-C" && !args[2].startsWith("-") && !args[3].startsWith("-")) return moveToRef(dir, args[3]);
   if (args.length === 3 && args[0] === "reset" && args[1] === "--hard" && !args[2].startsWith("-")) return moveToRef(dir, args[2]);

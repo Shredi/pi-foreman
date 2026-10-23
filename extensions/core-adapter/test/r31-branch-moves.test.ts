@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { branchMove } from "../shellwriteguard.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { r11Rig } from "./_r11rig.ts";
 
 const win = process.platform === "win32";
 const gitBin = (process.env.PATH ?? "").split(path.delimiter).map((d) => path.join(d, "git")).find((p) => fs.existsSync(p));
@@ -72,14 +73,14 @@ test("cd prefix: a switch and a reset from the session cwd are allowed", async (
   }
 });
 
-test("cd prefix: a relative dir that resolves to the cwd, or to its git toplevel from a subdir, is allowed", async () => {
+test("cd prefix: `.`/`./` allowed, `..` from a subdir refused", async () => {
   const f = fixture();
   try {
     f.g("branch", "round/31-x");
     fs.mkdirSync(path.join(f.work, "sub"));
     assert.deepEqual(await branchMove("cd . && git switch round/31-x", f.work, true), { allow: true });
     assert.deepEqual(await branchMove("cd ./ && git switch round/31-x", f.work, true), { allow: true });
-    assert.deepEqual(await branchMove("cd .. && git switch round/31-x", path.join(f.work, "sub"), true), { allow: true });
+    assert.equal(await branchMove("cd .. && git switch round/31-x", path.join(f.work, "sub"), true), null);
   } finally {
     rmTestTmp(f.base);
   }
@@ -277,4 +278,73 @@ test("ignored file that the ref adds refuses reset --hard (the exclude file coun
   } finally {
     rmTestTmp(f.base);
   }
+});
+
+test("relative cd words other than '.' are refused (bash may use CDPATH or a logical $PWD); '.' and an absolute dir are allowed", async () => {
+  const f = fixture();
+  try {
+    f.g("branch", "round/31-c");
+    fs.mkdirSync(path.join(f.work, "sub"));
+    for (const c of ["cd sub/.. && git switch main", "cd .. && git switch main", "cd sub && git switch main", "cd sub/../. && git switch main"]) {
+      assert.equal(await branchMove(c, f.work, true), null, c);
+    }
+    assert.deepEqual(await branchMove("cd . && git switch round/31-c", f.work, true), { allow: true });
+    assert.deepEqual(await branchMove(`cd ${f.work} && git switch round/31-c`, f.work, true), { allow: true });
+  } finally {
+    rmTestTmp(f.base);
+  }
+});
+
+test("a path that ref adds under an untracked file (a non-directory ancestor) refuses reset --hard, and names it", async () => {
+  const f = fixture();
+  try {
+    f.g("branch", "round/31-p");
+    fs.mkdirSync(path.join(f.work, "d"));
+    fs.writeFileSync(path.join(f.work, "d", "f"), "from main\n");
+    f.g("add", "d/f");
+    f.g("commit", "-q", "-m", "chore: d/f");
+    f.pushOrigin("-q", "origin", "main");
+    f.g("fetch", "-q", "origin");
+    f.g("reset", "-q", "--hard", "HEAD~1");
+    f.g("checkout", "-q", "round/31-p");
+    fs.writeFileSync(path.join(f.work, "d"), "a file, not a directory\n");
+    assert.deepEqual(await branchMove("git reset --hard origin/main", f.work, true), { allow: false, precondition: "d is not a directory, so d/f cannot be written" });
+    fs.rmSync(path.join(f.work, "d"));
+    fs.mkdirSync(path.join(f.work, "d"));
+    assert.deepEqual(await branchMove("git reset --hard origin/main", f.work, true), { allow: true });
+  } finally {
+    rmTestTmp(f.base);
+  }
+});
+
+test("plain switch|checkout to a branch that adds an ignored file refuses, and names it", async () => {
+  const f = fixture();
+  try {
+    f.g("branch", "round/31-w");
+    f.g("checkout", "-q", "round/31-w");
+    fs.writeFileSync(path.join(f.work, "ign.txt"), "from w\n");
+    f.g("add", "ign.txt");
+    f.g("commit", "-q", "-m", "chore: ign");
+    f.g("checkout", "-q", "main");
+    fs.appendFileSync(path.join(f.work, ".git", "info", "exclude"), "ign.txt\n");
+    fs.writeFileSync(path.join(f.work, "ign.txt"), "local\n");
+    assert.deepEqual(await branchMove("git switch round/31-w", f.work, true), { allow: false, precondition: "untracked or ignored file ign.txt would be overwritten" });
+    assert.deepEqual(await branchMove("git checkout round/31-w", f.work, true), { allow: false, precondition: "untracked or ignored file ign.txt would be overwritten" });
+    fs.rmSync(path.join(f.work, "ign.txt"));
+    assert.deepEqual(await branchMove("git switch round/31-w", f.work, true), { allow: true });
+  } finally {
+    rmTestTmp(f.base);
+  }
+});
+
+test("a refused branch move traces shell_write_refused with its precondition", async (t) => {
+  const a = await r11Rig(t);
+  execFileSync("git", ["-C", a.project, "init", "-q", "-b", "main"]);
+  execFileSync("git", ["-C", a.project, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "chore: one"]);
+  execFileSync("git", ["-C", a.project, "branch", "round/31-t"]);
+  fs.writeFileSync(path.join(a.project, "README.md"), "dirty\n");
+  execFileSync("git", ["-C", a.project, "add", "README.md"]);
+  const block = await a.call("bash", { command: "git switch round/31-t" });
+  assert.match(block?.reason ?? "", /branch move refused: working tree not clean/);
+  assert.deepEqual(a.events("shell_write_refused").map((r) => r.precondition), ["working tree not clean"]);
 });
