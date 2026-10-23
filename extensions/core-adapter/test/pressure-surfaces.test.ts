@@ -40,10 +40,10 @@ const state = (over: Partial<PressureState>): PressureState => ({ level: "ok", r
 
 test("doctor line: values, reasons and unknown fields", () => {
   assert.equal(
-    pressureDoctorLine(state({ level: "high", reasons: ["load", "mem"], host: { loadPerCore: 1.8, freeMemMB: 512, freeDiskGB: 40.25 } })),
-    "INFO pressure: high (load, mem) load/core=1.80 freeMem=512MB freeDisk=40.3GB",
+    pressureDoctorLine(state({ level: "high", reasons: ["load", "mem"], host: { loadPerCore: 1.8, load1PerCore: 3.25, freeMemMB: 512, freeDiskGB: 40.25 } })),
+    "INFO pressure: high (load, mem) load5/core=1.80 load1/core=3.25 freeMem=512MB freeDisk=40.3GB",
   );
-  assert.equal(pressureDoctorLine(state({ host: { loadPerCore: null, freeMemMB: 2048 } })), "INFO pressure: ok (none) load/core=unknown freeMem=2048MB freeDisk=unknown");
+  assert.equal(pressureDoctorLine(state({ host: { loadPerCore: null, freeMemMB: 2048 } })), "INFO pressure: ok (none) load5/core=unknown load1/core=unknown freeMem=2048MB freeDisk=unknown");
 });
 
 test("status line: level, reasons and the age of the sample", () => {
