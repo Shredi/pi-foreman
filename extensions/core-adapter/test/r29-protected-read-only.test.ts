@@ -71,7 +71,36 @@ test("git shapes that run a program or write stay denied on a protected file", {
 });
 
 test("read-only git shapes on a protected file pass", { skip: !posix }, () => {
-  for (const c of ["git diff a..b -- package.json", "git log -p -- package.json", "git show HEAD:package.json", "git grep x -- package.json"]) assert.equal(child(c), "pass", c);
+  for (const c of ["git diff a..b -- package.json", "git log -p -- package.json", "git show HEAD:package.json"]) assert.equal(child(c), "pass", c);
+});
+
+test("a git unit with an env prefix or wrapper is no protected reader", { skip: !posix }, () => {
+  for (const c of [
+    "GIT_EXTERNAL_DIFF=rm git diff -- package.json",
+    "env GIT_EXTERNAL_DIFF=rm git diff -- package.json",
+    "GIT_CONFIG_COUNT=1 git log -- package.json",
+    "command git diff -- package.json",
+    "nice git diff -- package.json",
+  ]) assert.equal(child(c), "deny", c);
+});
+
+test("git grep is no protected reader, and -O forms stay denied", { skip: !posix }, () => {
+  for (const c of [
+    "git grep x -- package.json",
+    "git grep -Orm x -- package.json",
+    "git grep -1Oecho x -- package.json",
+    "git grep -n1Oecho x -- package.json",
+    "git grep --open-files-in-pager=rm x -- package.json",
+    "git grep --op=rm x -- package.json",
+  ]) assert.equal(child(c), "deny", c);
+});
+
+test("abbreviated write options of a git read stay denied on a protected file", { skip: !posix }, () => {
+  for (const c of ["git diff --ext-d -- package.json", "git diff --ext -- package.json", "git log --textc -p -- package.json", "git diff --outp=x -- package.json"]) assert.equal(child(c), "deny", c);
+});
+
+test("plain git readers still pass on a protected file (new cases)", { skip: !posix }, () => {
+  for (const c of ["git diff a..b -- package.json", "git log -p -- package.json", "git show HEAD:package.json", "git -C sub diff -- package.json"]) assert.equal(child(c), "pass", c);
 });
 
 test("a chain mixing a read and a write to a protected file is denied", { skip: !posix }, () => {

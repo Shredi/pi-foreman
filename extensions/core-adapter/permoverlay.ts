@@ -1638,6 +1638,8 @@ function roEffect(core: string[], skip: Set<number>, inner: boolean): { targets:
     // a config write is denied whatever repository it names: the cwd (the round worktree) is always a target, next to -C, --git-dir and --work-tree
     // (a write also names `--global`/`--system` files, so a read-only child is denied it from any cwd: `deny`)
     if (sub === "config") return gitConfigRead(rest) ? { targets: outs } : { targets: [".", ...(dir ? [dir] : []), ...repoOpts, ...outs], deny: "git config" };
+    // `git grep -O<cmd>` / `--open-files-in-pager` (any `--op` prefix) runs a program on the matched files
+    if (sub === "grep" && rest.some((a) => GIT_GREP_PAGER.test(a))) return { targets: [], unknown: "git grep -O" };
     if (GIT_RO_SUBS.has(sub)) return { targets: outs };
     if (sub === "stash" && (rest[0] === "list" || rest[0] === "show")) return { targets: outs };
     if (sub === "apply" && rest.some((a) => /^--(check|stat|numstat|summary)$/.test(a)) && !rest.includes("--apply")) return { targets: outs };
@@ -1828,6 +1830,9 @@ function nonPathArgs(core: string[], skip: Set<number>): number[] {
   return scriptOperands(core, skip).filter((i) => readOnly(core[i]));
 }
 
+/** A `git grep` option cluster with `O` (digits included: `-1Oecho`) or `--open-files-in-pager` by any `--op` prefix. */
+const GIT_GREP_PAGER = /^-[^-]*O|^--op/;
+
 /** Options of `git commit` / `git tag` whose value is the next word (so a `-F` there is that value, not the message-file option). */
 const GIT_MSG_VALUE_OPTS = new Set(["-m", "-c", "-C", "-t", "-u", "--message", "--author", "--date", "--template", "--cleanup", "--fixup", "--squash", "--trailer", "--reuse-message", "--reedit-message", "--local-user", "--pathspec-from-file"]);
 
@@ -1871,6 +1876,8 @@ function scriptOperands(core: string[], skip: Set<number>): number[] {
     while (k < core.length && core[k].startsWith("-")) k += /^-[Cc]$/.test(core[k]) ? 2 : 1;
     if (core[k] === "log") return gitLogPatterns(core, k, skip);
     if (core[k] !== "grep") return [];
+    // `-O<cmd>` runs a program on the matched files and mis-sorts the operands (`-Orm x -- F` reads `x` as -m's value, F as the pattern): every word stays a path
+    if (core.slice(k).some((a) => GIT_GREP_PAGER.test(a))) return [];
     const rest = core.slice(k);
     return scriptOperands(rest, new Set([...skip].filter((i) => i > k).map((i) => i - k))).map((i) => i + k);
   }
@@ -2015,15 +2022,14 @@ function protectedReader(core: string[], skip: Set<number>): boolean {
   const expands = (x: string): boolean => /[$`]/.test(x.replace(/^\$(?:\{HOME\}|HOME)(?=\/)/, ""));
   // an unresolved expansion in any quoting may supply an option or script (`I=-i; sed $I p D`, `P=--pre=x; rg $P p D`)
   if (args.some(expands)) return false;
-  // an allowlist of git shapes that only read their path operands: effects.ts's GIT_READ without its writing options, and `grep`
-  // without `-O` / `--open-files-in-pager` (which runs a program on the matched files); a global `-c` or any other subcommand is no reader
+  // an allowlist of git shapes that only read their path operands: effects.ts's GIT_READ without its writing options
+  // (`grep` is no reader: `-O` runs a program); a global `-c` or any other subcommand is no reader
   if (verb === "git") {
     let k = 1;
     while (k < core.length && core[k] === "-C") k += 2;
     const sub = core[k] ?? "";
     const rest = args.slice(k);
-    if (GIT_READ.has(sub)) return !gitReadWrites(rest);
-    return sub === "grep" && !rest.some((x) => /^-[A-Za-z]*O|^--op/.test(x));
+    return GIT_READ.has(sub) && !gitReadWrites(rest);
   }
   if (!PROTECTED_READERS.has(verb)) return false;
   if (verb === "file") return !has(/^-[A-Za-z]*C|^--compile/);
@@ -2266,7 +2272,8 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
       if (ASSIGNERS.has(verb0) || (verb0 === "printf" && v.core.includes("-v"))) out.pure = false;
       if (!neutral && raw !== undefined) {
         out.verbs?.push(off === 0 && v.core.length ? baseName(v.core[0]) : "");
-        const reader = v.core.length > 0 && protectedReader(v.core, skip);
+        // a git unit with an env prefix or wrapper (`GIT_EXTERNAL_DIFF=rm git diff`, `env … git`) is no reader: `off` counts the stripped words
+        const reader = v.core.length > 0 && (verb0 !== "git" || off === 0) && protectedReader(v.core, skip);
         if (!reader) out.rdr = false;
         const gitRead = reader && baseName(v.core[0]) === "git";
         if (!(PURE_VERBS.has(baseName(raw)) || gitRead) || !v.core.length || !(PURE_VERBS.has(baseName(v.core[0])) || gitRead)) out.pure = false;

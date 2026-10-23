@@ -409,7 +409,12 @@ export const GIT_READ = new Set(["status", "log", "diff", "show"]);
 
 /** An option of a GIT_READ subcommand that runs a program or names an output file: the call is not read-only. */
 export function gitReadWrites(rest: string[]): boolean {
-  return rest.some((a) => a === "-c" || a === "-o" || a.startsWith("--output") || a === "--ext-diff" || a.startsWith("--textconv"));
+  // git accepts any unambiguous prefix of a long option (`--ext-d`, `--outp=x`); an ambiguous one is an error, so a prefix counts as the option
+  const abbrev = (a: string): boolean => {
+    const name = a.split("=")[0];
+    return name.length > 2 && ["--output", "--ext-diff", "--textconv"].some((w) => w.startsWith(name));
+  };
+  return rest.some((a) => a === "-c" || a === "-o" || a.startsWith("--output") || a === "--ext-diff" || a.startsWith("--textconv") || abbrev(a));
 }
 const GIT_DRY = new Set(["add", "clean", "mv", "rm"]);
 
