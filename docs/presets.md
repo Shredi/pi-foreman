@@ -15,6 +15,21 @@ result is validated against the schema and nothing is written when it fails. `--
 `--foreman` sets the foreman model of the preset's provider. Shipped presets: `claude-bridge`,
 `claude-bridge-sonnet-reviewer`, `google`, `openai` (fixed model maps) and `inexpensive` (rank tiers, below).
 
+## claude-bridge cache values
+
+`claude-bridge` and `claude-bridge-sonnet-reviewer` carry the values for a Claude subscription through the bridge:
+
+| key | value | why |
+|---|---|---|
+| `providers.claude-bridge.cache.byModel` row `claude-*` | `ttlSeconds: 3600`, note "subscription within plan usage; 300 on extra-usage credits or API key" | Claude Code gives a subscription turn within plan usage the 1-hour cache; on extra-usage credits or an API key it is 5 minutes (set 300 then). |
+| `providers.claude-bridge.cache.keepalive.enabled` | `true` | pi-foreman sends the warms beyond Pi's 30-minute cap itself ([cache](cache.md#self-warm-beyond-pis-cap)). |
+| `providers.claude-bridge.cache.keepalive.awayTicks` | `2` | While the owner is away at most two warms per idle ([presence gate](cache.md#presence-gate)). |
+| `providers.claude-bridge.roles.foreman.idle` | Sonnet 5.5, thinking `medium` | The foreman's idle rung ([ladder](ladder.md#idle-rung-foreman-downshift)). |
+
+The `claude-bridge` preset used to carry a 600 s row and switch the keep-alive off; apply it again to pick up the new
+values. Pi needs the matching `promptCache` tier for the model (`long: 3600`, with `PI_CACHE_RETENTION=long`) and
+`cacheWarming: "idle"`; `foreman doctor` warns when they differ.
+
 ## The inexpensive preset
 
 `inexpensive` names roles by rank tier, never a model id, and resolves them at apply time from
@@ -36,8 +51,8 @@ The tier template lives in the preset's `rankTiers` key (preset files only; `app
 writes it, the runtime does not read it).
 
 Static keys: `childMaxThinking: medium`, `retro.enabled: false`, `ladder.rolePolicy` (reviewers `at-or-below`,
-builders `below`), and `compaction.threshold` premium 0.5 / standard 0.65 (the existing threshold keys; the harness
-reads them).
+builders `below`), and `compaction.maxTokens` 100000 (the compaction cap `foreman setup` turns into Pi's per-model compaction point;
+see [cache](cache.md#where-compaction-fires)).
 
 `--dry-run` prints the resolved role map and writes nothing:
 

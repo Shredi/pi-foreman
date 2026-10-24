@@ -2,6 +2,7 @@
 // each assistant message_end. Cost is Pi's `usage.cost` (list price from Pi's model registry).
 import { tableRate } from "./cost.ts";
 import type { PriceTable } from "./cost.ts";
+import { symbolSet } from "./symbols.ts";
 import { renderFooter } from "./footerview.ts";
 import type { FooterTheme, FooterView } from "./footerview.ts";
 type Json = Record<string, unknown>;
@@ -107,10 +108,21 @@ export function cacheStatus(ctx: Pick<FooterCtx, "mode" | "ui">, active: boolean
   }
 }
 
+/** The footer's cache slot for the status glyph: cold and downshift carry their glyph, any other glyph means warm. */
+function cacheMark(glyph: string | undefined): Pick<FooterView, "warm" | "mark"> {
+  if (glyph === undefined) return { warm: false };
+  for (const name of ["unicode", "emoji", "nerd", "ascii"]) {
+    const set = symbolSet(name);
+    if (glyph === set.cold) return { warm: false, mark: { state: "cold", glyph } };
+    if (glyph === set.downshift) return { warm: false, mark: { state: "downshift", glyph } };
+  }
+  return { warm: true };
+}
+
 export interface FooterCtx {
   mode?: string;
   modelRegistry?: PriceRegistry;
-  model?: { id: string; reasoning?: boolean; contextWindow?: number };
+  model?: { id: string; provider?: string; reasoning?: boolean; contextWindow?: number };
   getContextUsage?(): { percent: number | null; contextWindow: number } | undefined;
   ui: { setStatus(key: string, text: string | undefined): void };
 }
@@ -138,9 +150,12 @@ export class UsageFooter {
   private mounts = new Map<string, FooterMount>();
   private texts = new Map<string, string>();
   private readonly prices: PriceTable | null;
+  private readonly pointOf: (model: FooterCtx["model"]) => number | null;
 
-  constructor(prices: PriceTable | null = null) {
+  /** `pointOf`: the compaction point Pi uses for a model (compaction-point.mjs runtimePoint), null when unknown. */
+  constructor(prices: PriceTable | null = null, pointOf: (model: FooterCtx["model"]) => number | null = () => null) {
     this.prices = prices;
+    this.pointOf = pointOf;
   }
 
   update(sessionId: string, ctx: FooterCtx, message: unknown, opts: { enabled: unknown; isChild: boolean; children: number; wait?: string | null; runsCost?: number }): void {
@@ -205,8 +220,9 @@ export class UsageFooter {
       branch: m.data.getGitBranch(),
       contextPercent: usage?.percent ?? null,
       contextWindow: usage?.contextWindow ?? model?.contextWindow ?? 0,
+      contextPoint: this.pointOf(model),
       cacheHit: this.cacheHitOf(sessionId),
-      warm: statuses.has(CACHE_STATUS_KEY),
+      ...cacheMark(statuses.get(CACHE_STATUS_KEY)),
       usage: this.texts.get(sessionId) ?? null,
       statuses: [...statuses].filter(([key]) => key !== FOOTER_KEY && key !== CACHE_STATUS_KEY).sort(([a], [b]) => a.localeCompare(b)).map(([, text]) => text),
     };

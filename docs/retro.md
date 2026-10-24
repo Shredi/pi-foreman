@@ -65,7 +65,7 @@ Besides the approval and trace lines, the report carries these lines when there 
   cold resumes. A cold resume is approximate: the first foreman turn after a gap longer than the provider's cache TTL
   (`providers.<p>.cache.ttlSeconds` or the built-in one) whose `cacheRead` is under 50 % of the previous foreman
   line's prompt (input + cacheRead + cacheWrite); keep-alive lines count as the previous line, so a bridged gap is
-  not cold. Without a TTL the count is 0. The line shows when a cache policy applies or any count is above 0; the JSON
+  not cold. When the idle model downshift ran, the line ends with `, downshifted turns K` (`foreman_model` trace events with reason `idle_cold`; the JSON key `downshiftedTurns` exists only then). Without a TTL the count is 0. The line shows when a cache policy applies or any count is above 0; the JSON
   report has `cache` (`keepalives`, `keepaliveCost`, `warmCompactions`, `coldResumes`, `ttlSeconds`).
 
 ## Critique counter
@@ -111,6 +111,14 @@ three lines, or `none`. When a child run ends, the foreman's extension reads the
   Retro treats it as a hint.
 - Only the foreman session emits it, from the run-end report. Subagents write the line; they never write the trace.
 - The trace allowlist admits `note` for `friction` events only.
+
+## Retro section of a compaction
+
+The summary of the idle warm compaction is asked to end with a `## Retro` section (at most 10 lines), which goes into
+`.workflow/retro/<session>.md` with a counters line. Only that compaction carries the instruction. A compaction Pi
+starts at its own threshold, on overflow, or a typed `/compact` cannot, so its summary has no Retro section; the
+entry is still written and says `(the compaction summary has no Retro section)`. See
+[cache](cache.md#where-compaction-fires).
 
 ## The store
 

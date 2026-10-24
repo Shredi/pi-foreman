@@ -98,6 +98,17 @@
       "enable": "{\"providers\": {\"<provider>\": {\"roles\": {\"builder\": {\"strong\": {\"model\": \"<provider>/<stronger-model>\"}}}}}}"
     },
     {
+      "id": "idle-downshift",
+      "title": "Idle model downshift",
+      "purpose": "A notice turn (child, wake, intercom, other) that starts on a cold cache runs on the foreman's idle rung; the owner's next input restores the base model. With no idle rung mapped nothing changes.",
+      "doc": "docs/ladder.md",
+      "keys": ["ladder.idleDownshift.enabled", "ladder.idleDownshift.causes"],
+      "commands": [],
+      "switch": {"key": "providers.*.roles.foreman.idle", "on": "nonnull"},
+      "state": "opt-in",
+      "enable": "{\"providers\": {\"<provider>\": {\"roles\": {\"foreman\": {\"idle\": {\"model\": \"<provider>/<cheaper-model>\"}}}}}}"
+    },
+    {
       "id": "rank-policy",
       "title": "Rank policy for child models",
       "purpose": "Ranks models into tiers so children may only launch below (or at) the foreman's tier; with no ranks anywhere the policy does nothing.",
@@ -638,10 +649,10 @@
     },
     {
       "id": "compaction",
-      "title": "Price-tiered compaction",
-      "purpose": "Compacts the context earlier on dearer models: the trigger fraction depends on the model's input price tier.",
-      "doc": "docs/sessions.md#further-session-keys",
-      "keys": ["compaction"],
+      "title": "Compaction cap",
+      "purpose": "Caps the context size at which Pi's own auto-compaction fires: `foreman setup` writes a per-model point (a price-tier boundary minus headroom, or this cap) as Pi's compaction.modelOverrides. The idle warm compaction and the footer context bar use the same point.",
+      "doc": "docs/cache.md",
+      "keys": ["compaction.maxTokens", "providers.<x>.models"],
       "commands": [],
       "switch": null,
       "state": "on",
@@ -661,9 +672,9 @@
     {
       "id": "idle-cache",
       "title": "Idle prompt-cache policy",
-      "purpose": "Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge preset sets a 600 s byModel row and turns the keep-alive off); off for request-billed providers; silent without an entry.",
+      "purpose": "Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge preset sets a 3600 s byModel row, noting that a subscription turn within plan usage gets the 1-hour cache and 300 applies on extra-usage credits or an API key, keeps the keep-alive on with awayTicks 2 and gives the foreman role an idle rung); off for request-billed providers; silent without an entry. A warm budget (half a cold re-cache per idle), a presence gate (warms while the owner is away are limited) and, for TTLs beyond Pi's 30-minute idle cap, warms sent by pi-foreman itself apply to the keep-alive.",
       "doc": "docs/cache.md#config",
-      "keys": ["providers.<x>.cache", "providers.<x>.cache.ttlSeconds", "providers.<x>.cache.billing", "providers.<x>.cache.byModel", "providers.<x>.cache.keepalive.enabled", "providers.<x>.cache.keepalive.intervalSeconds", "providers.<x>.cache.keepalive.windowMinutes", "providers.<x>.cache.warmCompact"],
+      "keys": ["providers.<x>.cache", "providers.<x>.cache.ttlSeconds", "providers.<x>.cache.billing", "providers.<x>.cache.byModel", "providers.<x>.cache.keepalive.enabled", "providers.<x>.cache.keepalive.intervalSeconds", "providers.<x>.cache.keepalive.windowMinutes", "providers.<x>.cache.keepalive.budgetShare", "providers.<x>.cache.keepalive.awayTicks", "providers.<x>.cache.keepalive.whileWaiting", "providers.<x>.cache.keepalive.beyondPiCap", "providers.<x>.cache.keepalive.selfWarmWindowMinutes", "providers.<x>.cache.keepalive.compactMinTokens", "providers.<x>.cache.warmCompact", "presence.enabled", "presence.awayAfterMinutes", "presence.command", "providers.<x>.roles.<x>.idle.model", "providers.<x>.roles.<x>.idle.thinking"],
       "commands": [],
       "switch": {"key": "providers.*.cache.keepalive.enabled", "on": "true"},
       "state": "off",

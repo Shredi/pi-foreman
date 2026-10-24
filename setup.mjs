@@ -10,6 +10,12 @@ import * as crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+// The shared point rule. Loaded softly: a copy of this script without the extension folder still installs, minus the compaction step.
+const pointModule = await import("./extensions/core-adapter/compaction-point.mjs").catch(() => null);
+const dataModule = await import("./extensions/core-adapter/pi-model-data.mjs").catch(() => null);
+const PI_DEFAULT_RESERVE = pointModule?.PI_DEFAULT_RESERVE ?? 16384;
+const PI_DEFAULT_KEEP_RECENT = pointModule?.PI_DEFAULT_KEEP_RECENT ?? 20000;
+
 const ROOT = fs.realpathSync(path.dirname(fileURLToPath(import.meta.url)));
 const WIN = process.platform === "win32";
 const MANAGED_KEYS = ["agentOverridesByProvider", "agentOverrides", "forceTopLevelAsync"]; // same keys as /foreman doctor
@@ -154,6 +160,12 @@ function unifiedDiff(label, before, after) {
 
 // ---------------------------------------------------------------- Pi
 
+/** The JS entry a Windows `pi.cmd` shim in `dir` launches, or null. */
+function shimScript(cmd, dir) {
+  const m = /%dp0%[\\/]+([^"\r\n]+?\.(?:c|m)?js)"/i.exec(fs.readFileSync(cmd, "utf8"));
+  return m ? path.resolve(dir, m[1]) : null;
+}
+
 /**
  * How to run `pi` without a shell. PI_FOREMAN_PI_BIN is a Node script run via this Node
  * (test stubs, or pi's cli.js). On Windows `pi` is a .cmd shim and Node refuses to spawn
@@ -170,14 +182,58 @@ function piCommand() {
     if (fs.existsSync(exe)) return { command: exe, prefix: [] };
     const cmd = path.join(dir, "pi.cmd");
     if (fs.existsSync(cmd)) {
-      const m = /%dp0%[\\/]+([^"\r\n]+?\.(?:c|m)?js)"/i.exec(fs.readFileSync(cmd, "utf8"));
-      const js = m ? path.resolve(dir, m[1]) : null;
+      const js = shimScript(cmd, dir);
       if (js && fs.existsSync(js)) return { command: process.execPath, prefix: [js] };
       throw new Fatal(`Found ${cmd} but could not read the script it launches. Set PI_FOREMAN_PI_BIN to pi's cli.js (inside the @earendil-works/pi-coding-agent package) and re-run.`);
     }
   }
   throw new Fatal("`pi` was not found on PATH. Install Pi first (npm install -g @earendil-works/pi-coding-agent).");
 }
+
+/** Pi's chat models of one provider: Map<id, { contextWindow, tiers }> from <dir>/<provider>.json ({"<api>":{"chat:<id>":{...}}}); other prefixes are skipped. */
+function readProviderModels(dir, provider) {
+  const text = readText(path.join(dir, `${provider}.json`));
+  const out = new Map();
+  if (text === null) return out;
+  const data = JSON.parse(text);
+  for (const apiBlock of isObj(data) ? Object.values(data) : []) {
+    if (!isObj(apiBlock)) continue;
+    for (const [key, m] of Object.entries(apiBlock)) {
+      if (!key.startsWith("chat:") || !isObj(m)) continue;
+      out.set(key.slice(5), { contextWindow: m.contextWindow, tiers: isObj(m.cost) && Array.isArray(m.cost.tiers) ? m.cost.tiers : [] });
+    }
+  }
+  return out;
+}
+
+const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+const stripLevel = (ref) => {
+  const i = ref.lastIndexOf(":");
+  return i > 0 && THINKING_LEVELS.has(ref.slice(i + 1)) ? ref.slice(0, i) : ref;
+};
+function globMatches(glob, text) {
+  const body = glob.replace(/[.+^$(){}|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+  return new RegExp(`^${body}$`).test(text);
+}
+
+function setOverride(obj, key, reserve) {
+  if (!isObj(obj.compaction)) obj.compaction = {};
+  if (!isObj(obj.compaction.modelOverrides)) obj.compaction.modelOverrides = {};
+  if (!isObj(obj.compaction.modelOverrides[key])) obj.compaction.modelOverrides[key] = {};
+  obj.compaction.modelOverrides[key].reserveTokens = reserve;
+}
+
+/** Delete modelOverrides[key].reserveTokens and any container that is empty because of it. */
+function dropOverride(obj, key) {
+  const c = obj.compaction;
+  if (!isObj(c) || !isObj(c.modelOverrides) || !isObj(c.modelOverrides[key])) return;
+  delete c.modelOverrides[key].reserveTokens;
+  if (Object.keys(c.modelOverrides[key]).length === 0) delete c.modelOverrides[key];
+  if (Object.keys(c.modelOverrides).length === 0) delete c.modelOverrides;
+  if (Object.keys(c).length === 0) delete obj.compaction;
+}
+
+const reserveOf = (obj, key) => (isObj(obj?.compaction?.modelOverrides?.[key]) ? obj.compaction.modelOverrides[key].reserveTokens : undefined);
 
 function runPi(pi, args, { agentDir, cwd, timeoutMs = 10 * 60_000 }) {
   const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir };
@@ -454,8 +510,16 @@ function main(argv) {
       next = structuredClone(settings);
       dropManaged(next);
       say("subagents block: unchanged since written, removing");
-      say(unifiedDiff(path.basename(settingsFile), settingsText, toJson(next)));
     } else say("subagents block: not ours or edited by hand, kept");
+    // compaction overrides: only the ones still equal to the recorded value are ours to delete
+    const derived = isObj(record?.compactionDerived) ? record.compactionDerived : {};
+    const ownedKeys = Object.keys(derived).filter((k) => reserveOf(settings, k) === derived[k]);
+    for (const k of Object.keys(derived)) say(ownedKeys.includes(k) ? `compaction ${k}: unchanged since written, removing` : `compaction ${k}: edited by you or already gone, kept`);
+    if (ownedKeys.length) {
+      next ??= structuredClone(settings);
+      for (const k of ownedKeys) dropOverride(next, k);
+    }
+    if (next) say(unifiedDiff(path.basename(settingsFile), settingsText, toJson(next)));
     const permText = readText(permFile);
     const permRecorded = isObj(managed.files) ? managed.files[permFile] : undefined;
     let dropPerm = false;
@@ -464,7 +528,7 @@ function main(argv) {
       dropPerm = true;
       say(`permission-system config: unchanged since written, removing ${permFile}`);
     } else say("permission-system config: not ours or edited by hand, kept");
-    if (!next && !dropPerm) {
+    if (!next && !dropPerm && !Object.keys(derived).length) {
       say("pi-foreman: up to date, nothing to remove.");
       say(`The package itself stays installed; to remove it run: ${removeLine}`);
       return;
@@ -474,7 +538,8 @@ function main(argv) {
     backup();
     if (next) {
       const fresh = parseJsonObject(readText(settingsFile), settingsFile) ?? {};
-      dropManaged(fresh);
+      if (Object.keys(cur).length > 0 && record && sha(cur) === record.subagentsHash) dropManaged(fresh);
+      for (const k of ownedKeys) if (reserveOf(fresh, k) === derived[k]) dropOverride(fresh, k);
       writeFile(settingsFile, toJson(fresh));
     }
     delete managed.entries[settingsFile];
@@ -598,6 +663,157 @@ function main(argv) {
     }
     if (opts.project) say("  note: project packages load only after the project is trusted; headless runs need `pi --approve` (or `-a`).");
 
+    /**
+     * Pi `compaction.modelOverrides["<provider>/<id>"].reserveTokens` for the covered models (role map, `ranks` matches in Pi's
+     * registry, overlay `providers.<p>.models`), derived with compactionPoint(). Ownership is recorded in managed.json
+     * (`compactionDerived`): a value equal to the record is ours, any other is the user's and stays.
+     */
+    function planCompaction() {
+      const out = { changed: false, recordChanged: false, record: {}, lines: [], apply: () => {} };
+      const derived0 = isObj(record?.compactionDerived) ? record.compactionDerived : {};
+      out.record = { ...derived0 };
+      if (!pointModule || !dataModule) {
+        out.lines.push("  warning: compaction: extensions/core-adapter/compaction-point.mjs or pi-model-data.mjs could not be loaded; compaction overrides skipped");
+        return out;
+      }
+      const { compactionPoint } = pointModule;
+      const cfg = runConfigCli(py, ["validate", "--json", "--agent-dir", agentDir, "--project-dir", projectDir, ...(opts.project ? ["--trusted-project"] : [])], projectDir).data?.config;
+      if (!isObj(cfg)) {
+        out.lines.push("  warning: compaction: config unreadable, overrides left as they are");
+        return out;
+      }
+      const providers = isObj(cfg.providers) ? cfg.providers : {};
+      const maxTokens = typeof cfg.compaction?.maxTokens === "number" ? cfg.compaction.maxTokens : null;
+      let globalSettings = {};
+      let globalDerived = {};
+      if (opts.project) {
+        const globalFile = path.join(agentDir, "settings.json");
+        try {
+          globalSettings = parseJsonObject(readText(globalFile), globalFile) ?? {};
+        } catch {
+          globalSettings = {};
+        }
+        const gr = managed.entries[globalFile];
+        if (isObj(gr) && isObj(gr.compactionDerived)) globalDerived = gr.compactionDerived;
+      }
+      // what Pi resolves for the model today, leaving out values this tool wrote earlier
+      const own = (obj, owned, key) => {
+        const v = reserveOf(obj, key);
+        return v !== undefined && v === owned[key] ? undefined : v;
+      };
+      const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+      const effectiveReserve = (key) =>
+        num(own(settings, derived0, key)) ?? num(own(globalSettings, globalDerived, key)) ??
+        num(settings.compaction?.reserveTokens) ?? num(globalSettings.compaction?.reserveTokens) ?? PI_DEFAULT_RESERVE;
+      const keepOf = (obj, key) => num(obj.compaction?.modelOverrides?.[key]?.keepRecentTokens);
+      const effectiveKeep = (key) =>
+        keepOf(settings, key) ?? keepOf(globalSettings, key) ??
+        num(settings.compaction?.keepRecentTokens) ?? num(globalSettings.compaction?.keepRecentTokens) ?? PI_DEFAULT_KEEP_RECENT;
+
+      // registry: looked up lazily, one warning on any failure
+      let dataDir;
+      let registryFailed = false;
+      const registryWarn = (why) => {
+        if (registryFailed) return;
+        registryFailed = true;
+        out.lines.push(`  warning: compaction: Pi model registry unavailable (${why}); registry models skipped, overrides for them left as they are`);
+      };
+      const registry = new Map();
+      const registryModels = (provider) => {
+        if (registry.has(provider)) return registry.get(provider);
+        let models = new Map();
+        if (dataDir === undefined) {
+          const r = dataModule.piModelDataDir();
+          dataDir = r.dir ?? null;
+          if (r.error) registryWarn(r.error);
+        }
+        if (dataDir) {
+          try {
+            models = readProviderModels(dataDir, provider);
+          } catch (err) {
+            registryWarn(`${provider}.json: ${err.message}`);
+          }
+        }
+        registry.set(provider, models);
+        return models;
+      };
+
+      const covered = new Set();
+      const declared = new Map();
+      for (const [p, block] of Object.entries(providers)) {
+        if (!isObj(block)) continue;
+        for (const [id, m] of Object.entries(isObj(block.models) ? block.models : {})) {
+          declared.set(`${p}/${id}`, m);
+          covered.add(`${p}/${id}`);
+        }
+        for (const role of Object.values(isObj(block.roles) ? block.roles : {})) {
+          if (!isObj(role)) continue;
+          for (const ref of [role.model, role.strong?.model]) if (typeof ref === "string" && ref.includes("/")) covered.add(stripLevel(ref));
+        }
+        const ranks = Array.isArray(block.ranks) ? block.ranks.filter((r) => isObj(r) && typeof r.match === "string") : [];
+        if (ranks.length) {
+          for (const id of registryModels(p).keys()) {
+            if (ranks.some((r) => globMatches(r.match, r.match.includes("/") ? `${p}/${id}` : id))) covered.add(`${p}/${id}`);
+          }
+        }
+      }
+
+      const data = (key) => {
+        if (declared.has(key)) return declared.get(key);
+        const slash = key.indexOf("/");
+        return registryModels(key.slice(0, slash)).get(key.slice(slash + 1));
+      };
+      const actions = [];
+      const keys = new Set([...covered, ...Object.keys(derived0)]);
+      for (const key of [...keys].sort()) {
+        const cur = num(reserveOf(settings, key));
+        const rec = derived0[key];
+        let want;
+        let judged = false;
+        if (covered.has(key)) {
+          const model = data(key);
+          if (model) {
+            const r = compactionPoint(
+              { contextWindow: model.contextWindow, tiers: model.tiers },
+              { maxTokens, effectiveReserve: effectiveReserve(key), effectiveKeepRecent: effectiveKeep(key) },
+            );
+            judged = r.reason !== "unknown-window";
+            if (r.write) want = { reserve: r.reserve, point: r.point };
+            if (r.reason === "below-minimum") out.lines.push(`  warning: compaction: ${key}: the point ${r.point} is below keepRecentTokens + 20000; no override written`);
+          }
+        } else judged = !registryFailed;
+        if (!judged) continue;
+        if (want) {
+          if (cur === undefined || cur === rec) {
+            if (cur !== want.reserve) {
+              actions.push({ key, set: want.reserve });
+              out.lines.push(`compaction ${key}: reserveTokens ${cur ?? "unset"} -> ${want.reserve} (compacts at ${want.point})`);
+            }
+            out.record[key] = want.reserve;
+          } else {
+            out.lines.push(`compaction ${key}: reserveTokens ${cur}, kept: user value`);
+            delete out.record[key];
+          }
+        } else if (rec !== undefined) {
+          if (cur === rec) {
+            actions.push({ key, drop: true });
+            out.lines.push(`compaction ${key}: reserveTokens ${cur} no longer needed, removing`);
+          }
+          delete out.record[key];
+        }
+      }
+      out.changed = actions.length > 0;
+      out.recordChanged = canonical(out.record) !== canonical(derived0);
+      out.apply = (obj) => {
+        for (const a of actions) {
+          if (a.drop) {
+            if (reserveOf(obj, a.key) === derived0[a.key]) dropOverride(obj, a.key);
+          } else setOverride(obj, a.key, a.set);
+        }
+      };
+      return out;
+    }
+
     // settings merge
     const gen = runConfigCli(py, ["generate-subagents", "--json", "--agent-dir", agentDir, "--project-dir", projectDir], projectDir);
     if (!gen.data || !isObj(gen.data.subagents)) throw new Fatal(`generate-subagents failed (exit ${gen.code}): ${gen.stderr || "no JSON output"}`);
@@ -611,17 +827,25 @@ function main(argv) {
       if (!isObj(obj.subagents)) obj.subagents = {};
       for (const k of MANAGED_KEYS) if (wanted[k] !== undefined) obj.subagents[k] = wanted[k];
     };
+    const comp = planCompaction();
     let next = settings;
-    if (!same) {
+    if (!same || comp.changed) {
       anyChange = true;
       next = structuredClone(settings);
-      applyWanted(next);
+      if (!same) applyWanted(next);
+      comp.apply(next);
+    }
+    if (comp.recordChanged) anyChange = true;
+    if (!same) {
       if (hasCur && record && sha(cur) !== record.subagentsHash) say("subagents block: edited by hand since the last install; backing it up and overwriting");
       else if (hasCur && !record) say("subagents block: present but not recorded as ours; backing it up and overwriting");
       else say("subagents block: writing the generated block");
+    } else say("subagents block: in sync");
+    for (const l of comp.lines) say(l);
+    if (next !== settings) {
       say(unifiedDiff(path.basename(settingsFile), settingsText, toJson(next)));
       if (installArgs.length) say("  (the diff leaves out `packages`, which `pi install` edits itself)");
-    } else say("subagents block: in sync");
+    }
     const needRecord = !record || record.subagentsHash !== sha(pick(next.subagents));
     if (needRecord) anyChange = true;
 
@@ -680,20 +904,24 @@ function main(argv) {
     if (dry) {
       for (const a of [...removeArgs, ...installArgs]) say(`would run: pi ${a.join(" ")}`);
       if (needRecord || permNeedRecord) say(`would record the managed hash in ${managedFile}`);
+      if (comp.recordChanged) say(`would update the compactionDerived record in ${managedFile}`);
     } else if (anyChange) {
-      if (removeArgs.length || installArgs.length || !same || filtered || reordered) backup();
+      if (removeArgs.length || installArgs.length || !same || filtered || reordered || comp.changed) backup();
       for (const a of [...removeArgs, ...installArgs]) runOrDie(a);
       let finalBlock = pick(next.subagents);
-      if (!same || filtered || reordered) {
+      if (!same || filtered || reordered || comp.changed) {
         // pi edits `packages` in the same file, so merge into what is on disk now
         const fresh = parseJsonObject(readText(settingsFile), settingsFile) ?? {};
         if (!same) applyWanted(fresh);
+        comp.apply(fresh);
         const filteredNow = applyFilter(fresh.packages);
         fresh.packages = foremanBeforeBridge(filteredNow, baseDir) ?? filteredNow;
         writeFile(settingsFile, toJson(fresh));
         if (!same) finalBlock = pick(fresh.subagents);
       }
-      managed.entries[settingsFile] = { subagentsHash: sha(finalBlock) };
+      managed.entries[settingsFile] = { ...(isObj(managed.entries[settingsFile]) ? managed.entries[settingsFile] : {}), subagentsHash: sha(finalBlock) };
+      if (Object.keys(comp.record).length) managed.entries[settingsFile].compactionDerived = comp.record;
+      else delete managed.entries[settingsFile].compactionDerived;
       if (!permSame) {
         if (permText !== null) {
           const file = `${permFile}.bak-${timestamp()}`;

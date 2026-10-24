@@ -66,7 +66,7 @@ and `foreman:ready`. There is no second handshake.
 | Point | How an overlay contributes |
 |---|---|
 | Roles | Role files in its package via `pi.subagents.agents`, listed in `roles.<id>.file`; `promptAppend` adds text to an existing role. Ids stay neutral. |
-| Providers and models | A `providers.<p>` block; the provider itself as a Pi extension (`registerProvider`); [presets](presets.md) resolve role models from its `ranks` |
+| Providers and models | A `providers.<p>` block; the provider itself as a Pi extension (`registerProvider`); [presets](presets.md) resolve role models from its `ranks`; `providers.<p>.models` gives context windows and price tiers for models Pi's registry lacks (see [Models Pi does not list](#models-pi-does-not-list)) |
 | Display names | `displayNames` preset or per-id map |
 | Skills | `skills/` in the overlay package (Pi skills format) |
 | Permission rules | `safety.permissions` entries (see [safety](safety.md)) |
@@ -77,6 +77,26 @@ and `foreman:ready`. There is no second handshake.
 | Retro backlog | `retro.backlogDir` points the central backlog elsewhere; `retro.repoBacklog` and `retro.workspaceKey` pick per-workspace stores and keys (see [retro](retro.md)). User or overlay config only. |
 | Ceremony, fan-out, fallback | `ceremony.*`, `fanout.max`, `providers.<p>.fallback` |
 | Host pressure limits | `resources.*` (see [resources](resources.md)); a project file may only tighten them |
+
+### Models Pi does not list
+
+`foreman setup` derives each model's compaction point from Pi's model registry. A model the registry lacks (a bridge
+provider, for example) gets no point unless an overlay declares it. The key is the model id without the provider prefix:
+
+```json
+{
+  "providers": {
+    "<provider>": {
+      "models": {
+        "<model-id>": { "contextWindow": 200000, "tiers": [{ "inputTokensAbove": 128000 }] }
+      }
+    }
+  }
+}
+```
+
+`providers.<p>.models.<id>.contextWindow` is required; `providers.<p>.models.<id>.tiers` is optional, and setup keeps the point 20000 tokens below the lowest `inputTokensAbove`. Numbers come from the
+provider's published limits: setup does not guess them. See [install](install.md#what-setup-writes-for-compaction).
 
 ### Reviewer rules file
 

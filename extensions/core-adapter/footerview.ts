@@ -15,10 +15,14 @@ export interface FooterView {
   /** Context usage in percent, null while unknown (right after compaction). */
   contextPercent: number | null;
   contextWindow: number;
+  /** Where Pi compacts, in tokens; the bar scales to it. Null or absent: the bar scales to the window. */
+  contextPoint?: number | null;
   /** Cache-read share of the session's prompt tokens, null before the first prompt. */
   cacheHit: number | null;
   /** The adapter's keep-alive marker is up: the prompt cache is warm. */
   warm: boolean;
+  /** The cold or downshift glyph in the status slot (warm is then false); absent otherwise. */
+  mark?: { state: "cold" | "downshift"; glyph: string };
   /** The usage text (footerText); null when the usage footer is off. */
   usage: string | null;
   /** Other extensions' status texts, in display order. */
@@ -89,26 +93,28 @@ export function sizeOf(tokens: number): string {
   return String(Math.round(tokens));
 }
 
-/** Context bar: green below 50%, yellow below 80%, red from 80%. */
-function contextBar(percent: number | null, contextWindow: number, cells: number, theme: FooterTheme): string {
+/** Context bar: green below 50%, yellow below 80%, red from 80%. Scaled to the compaction point when known, so a full bar means compaction fires. */
+function contextBar(windowPercent: number | null, contextWindow: number, point: number | null | undefined, cells: number, theme: FooterTheme): string {
+  const scale = typeof point === "number" && Number.isFinite(point) && point > 0 && contextWindow > 0 ? point : contextWindow;
+  const percent = windowPercent === null || scale === contextWindow ? windowPercent : (windowPercent * contextWindow) / scale;
   const color: FooterColor = percent === null ? "dim" : percent < 50 ? "success" : percent < 80 ? "warning" : "error";
   const filled = percent === null ? 0 : Math.min(cells, Math.max(0, Math.round((percent / 100) * cells)));
-  const label = percent === null ? `? of ${sizeOf(contextWindow)}` : `${Math.round(percent)}% of ${sizeOf(contextWindow)}`;
+  const label = percent === null ? `? of ${sizeOf(scale)}` : `${Math.round(percent)}% of ${sizeOf(scale)}`;
   return `${theme.fg(color, "■".repeat(filled) + "□".repeat(cells - filled))} ${theme.fg(color, label)}`;
 }
 
 /** `CH 98%` green from 80, yellow from 40, red below, then the warm or cold marker. */
-function cacheSegment(hit: number, warm: boolean, theme: FooterTheme): string {
+function cacheSegment(hit: number, warm: boolean, mark: FooterView["mark"], theme: FooterTheme): string {
   const color: FooterColor = hit >= 80 ? "success" : hit >= 40 ? "warning" : "error";
-  return `${theme.fg(color, `CH ${Math.round(hit)}%`)} ${warm ? "warm" : "cold"}`;
+  return `${theme.fg(color, `CH ${Math.round(hit)}%`)} ${mark ? `${mark.glyph} ${mark.state}` : warm ? "warm" : "cold"}`;
 }
 
 function headline(v: FooterView, theme: FooterTheme, opts: { branch: boolean; cells: number }): string {
   const model = v.model ?? "no-model";
   const segments = [v.thinking ? `${model} • ${v.thinking}` : model];
   if (opts.branch && v.branch) segments.push(v.branch);
-  segments.push(contextBar(v.contextPercent, v.contextWindow, opts.cells, theme));
-  if (v.cacheHit !== null) segments.push(cacheSegment(v.cacheHit, v.warm, theme));
+  segments.push(contextBar(v.contextPercent, v.contextWindow, v.contextPoint, opts.cells, theme));
+  if (v.cacheHit !== null) segments.push(cacheSegment(v.cacheHit, v.warm, v.mark, theme));
   return segments.join(" · ");
 }
 

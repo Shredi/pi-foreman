@@ -96,8 +96,16 @@ import type { BackgroundRow } from "./childwidget.ts";
 import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
 import { LiveState, intercomIdOf } from "./livestate.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
-import { CompactionGate } from "./compaction.ts";
-import { resolveCachePolicy } from "./cachepolicy.ts";
+import { CompactionGate, overIdleFloor } from "./compaction.ts";
+import { runtimePoint } from "./compaction-point.mjs";
+import { piModelDataDir } from "./pi-model-data.mjs";
+import { resolveCachePolicy, resolveWarmPolicy } from "./cachepolicy.ts";
+import { cacheDoctorLines } from "./doctorcache.ts";
+import type { Presence } from "./presence.ts";
+import type { SelfWarm } from "./selfwarm.ts";
+import { createWarm } from "./warmwire.ts";
+import { IDLE_ENTRY, IdleModel, ownerAnswered } from "./idlemodel.ts";
+import { coldAt as coldAtTouch } from "./warmcompact.ts";
 import { IdleCache, type Busy } from "./idlecache.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
 import { applyLedgerItems, criticOf } from "./ledgerblock.ts";
@@ -339,6 +347,9 @@ interface Session {
   /** Foreman only: idle prompt-cache keep-alive state (idlecache.ts), its usage sync (keepalive.ts), the latest event context and assistant message time. */
   idleCache: IdleCache;
   keepalive: KeepaliveLog;
+  /** Foreman only: warm owner (budget, cache touch, self-warm beyond Pi's idle cap) and the presence gate. */
+  selfWarm: SelfWarm;
+  presence: Presence;
   idleCtx: ExtensionContext | null;
   lastAssistantAt: number | null;
   /** Children widget and its run view (childwidget.ts). */
@@ -376,12 +387,60 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const sessions = new Map<string, Session>();
   let userPickedModel = false;
   let applyingModel = false;
+  /** Idle model downshift (idlemodel.ts): one instance per extension load, bound to the session and context of the latest event. */
+  let idleBind: { s: Session; ctx: ExtensionContext } | null = null;
+  const idleModel = new IdleModel({
+    now: () => Date.now(),
+    enabled: () => !!idleBind && !idleBind.s.isChild && get(idleBind.s.config.config, "ladder.idleDownshift.enabled") !== false,
+    causes: () => {
+      const c = idleBind ? get(idleBind.s.config.config, "ladder.idleDownshift.causes") : null;
+      return Array.isArray(c) ? c.map(String) : ["child", "wake", "intercom", "other"];
+    },
+    rung: () => {
+      const r = (idleBind?.s.config.roles.foreman as { idle?: { model?: unknown; thinking?: unknown } } | undefined)?.idle;
+      return r && typeof r.model === "string" && r.model ? { model: r.model, thinking: typeof r.thinking === "string" && r.thinking ? r.thinking : null } : null;
+    },
+    current: () => (idleBind?.ctx.model ? { provider: idleBind.ctx.model.provider, id: idleBind.ctx.model.id } : null),
+    thinking: () => pi.getThinkingLevel(),
+    find: (spec) => {
+      const slash = spec.indexOf("/");
+      return idleBind?.ctx.modelRegistry.find(slash > 0 ? spec.slice(0, slash) : idleBind.ctx.model?.provider ?? "", slash > 0 ? spec.slice(slash + 1) : spec) as never;
+    },
+    findRef: (r) => idleBind?.ctx.modelRegistry.find(r.provider, r.id) as never,
+    switchTo: async (model, thinking) => {
+      applyingModel = true;
+      try {
+        const ok = await pi.setModel(model as never);
+        if (ok && thinking) pi.setThinkingLevel(thinking as Parameters<ExtensionAPI["setThinkingLevel"]>[0]);
+        return ok;
+      } catch {
+        return false;
+      } finally {
+        applyingModel = false;
+      }
+    },
+    coldAt: () => {
+      const m = idleBind?.ctx.model;
+      const ttl = idleBind && m ? resolveWarmPolicy(idleBind.s.config.config, m.provider, m.id).ttlSeconds : null;
+      if (!idleBind || typeof ttl !== "number") return Infinity;
+      const touch = idleBind.s.selfWarm.lastCacheTouch();
+      return touch === null ? 0 : coldAtTouch(touch, ttl); // no touch = a compaction or model change dropped the cache
+    },
+    persist: (e) => pi.appendEntry(IDLE_ENTRY, e),
+    trace: (r) => idleBind?.s.trace?.emit(r),
+    glyph: (g) => {
+      const ctx = idleBind?.s.idleCtx ?? idleBind?.ctx;
+      if (ctx && idleBind) cacheStatus(ctx, g !== null, g ? symbolSet(get(idleBind.s.config.config, "ui.symbols"))[g] : "");
+    },
+  });
+  /** The model the foreman's gates (review rule, rank checks, panel) judge: the base while downshifted, else the current model. */
+  const foremanBaseModel = (ctx: ExtensionContext): string | null => idleModel.baseModel(ctx.model);
   let instructionsCache: string | null | undefined;
   let reviewerInstructionsCache: string | null | undefined;
   const bridgeIso = new BridgeIsolation();
   const review = new ForemanReview();
   const reviewFacts = new ReviewFacts();
-  const usageFooter = new UsageFooter(loadPrices(PKG_ROOT));
+  const usageFooter = new UsageFooter(loadPrices(PKG_ROOT), (model) => piRuntimePoint(model));
   /** Priced run cost per usage file, cached by size and mtime (the widget keeps only 64 rows and loses its total on restart). */
   const runsCostCache = new Map<string, { sig: string; runs: number }>();
   /** The summed estimate (lane 3b): the foreman's own list-price cost plus every run's priced cost, read from the session's usage file. */
@@ -524,6 +583,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const computeOwned = (npmRoot: string | null): OwnedRoots => ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot });
     const owned = computeOwned(null);
     const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o) : null);
+    const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), busy: () => idleBusy(s, s.idleCtx), piIdleMode: () => piCacheWarmingIdle(), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, aboveFloor: () => idleAboveFloor(s) });
     const s: Session = {
       id,
       cwd,
@@ -654,20 +714,26 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       scratch: new ChildScratch(),
       idleCache: new IdleCache({
         now: () => Date.now(),
-        policy: () => (s.idleCtx ? resolveCachePolicy(s.config.config, s.idleCtx.model?.provider, s.idleCtx.model?.id) : null),
+        policy: () => (s.idleCtx ? resolveWarmPolicy(s.config.config, s.idleCtx.model?.provider, s.idleCtx.model?.id) : null),
         piIdleMode: () => piCacheWarmingIdle(),
         hasPromptCache: () => !!s.idleCtx?.model?.promptCache,
         busy: () => idleBusy(s, s.idleCtx),
         trace: (r) => s.trace?.emit(r),
         compact: () => idleCompact(s),
+        contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null,
+        aboveFloor: () => idleAboveFloor(s),
         setGlyph: (on) => {
-          if (s.idleCtx) cacheStatus(s.idleCtx, on, symbolSet(get(s.config.config, "ui.symbols")).keepalive);
+          if (s.idleCtx) idleBind = { s, ctx: s.idleCtx };
+          idleModel.setWarming(on);
         },
         syncKeepalives: () => syncKeepalives(s, s.idleCtx),
         lastAssistantAt: () => s.lastAssistantAt,
         isChild,
+        gate: warm.selfWarm,
       }),
       keepalive: new KeepaliveLog(),
+      selfWarm: warm.selfWarm,
+      presence: warm.presence,
       idleCtx: null,
       lastAssistantAt: null,
       widget: new ChildWidget(usageFile(agentDir, foremanSession), loadPrices(PKG_ROOT)),
@@ -716,6 +782,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const bridgeCfgRisks = projectBridgeConfigRisks(cwd);
     if (bridgeCfgRisks.length) ctx.ui.notify(`pi-foreman: the project's claude-bridge config makes the bridge run what the project chose: ${bridgeCfgRisks.join(", ")}. Fix: ${PROJECT_BRIDGE_FIX}`, "error");
     s.trace?.emit({ event: "session_start", role: s.isChild ? "child" : "foreman", model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null, tier: s.ceremony.tier });
+    tracePoint(s, ctx.model);
     if (selfHost) {
       s.trace?.emit({ event: "protect_selfhost", reason: "dev checkout" });
       if (!s.isChild) notifyOnce(s, ctx, "selfhost", "pi-foreman: dev checkout: package-root write protection narrowed", "info");
@@ -972,6 +1039,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const s = await startSession(ctx);
     restoreRounds(s, ctx);
     emitReady(pi.events as EventBus | undefined, core.claim);
+    if (!s.isChild) {
+      idleBind = { s, ctx };
+      await idleModel.onSessionStart(ctx.sessionManager.getBranch?.() ?? []); // before applyForemanModel: a downshift left open is closed first
+    }
     review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [], recordUsage: (m) => { const x = sessions.get(s.id); if (x) appendUsage(x.usage.file, usageLine({ ...x.usage.line, role: "autoreview", launchId: null, kind: "foreman" }, m)); }, scratchDirs: (role) => sessions.get(s.id)?.scratch.live(role) ?? [], ownDirs: () => { const x = sessions.get(s.id); return x ? [...ownHandoffDirs(handoffsRoot(x), intercomIdOf(process.env, x.agentDir, x.id)), ...roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform)] : []; }, roundDirs: () => { const x = sessions.get(s.id); return x ? roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform) : []; }, ledgerFile: () => { const x = sessions.get(s.id); return x ? boundLedger(x.markerDir, x.usage.line.foremanSession) : null; }, ownedRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x).write : []; }, readOnlyRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x).read : []; }, ownReads: () => { const x = sessions.get(s.id); return x && !x.isChild ? [...ownUsageReadable(x.agentDir, platform, x.id, { dir: get(x.config.config, "trace.dir"), stateDir: x.markerDir }, x.usage.line.foremanSession), ...ownTaskReadable([x.cwd, workspaceOf(x.cwd).root, x.usage.line.workspace], x.usage.line.foremanSession, platform), ...asyncResultReads(x.childFiles, platform)] : []; }, ...reviewExtras(baseline, () => sessions.get(s.id)?.config.config, ctx) });
     if (!s.isChild && (event.reason === "startup" || event.reason === "new")) await applyForemanModel(s, ctx);
     await registerChildExtensions(s, ctx);
@@ -1024,6 +1095,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s.isChild) {
       syncKeepalives(s, ctx);
       s.idleCache.onShutdown();
+      s.selfWarm.onShutdown();
+      idleModel.stop();
     }
     sweepScratch(s);
     review.drop(s.id);
@@ -1039,6 +1112,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("model_select", async (event, ctx) => {
     const sid = sessionFor(ctx)?.id;
     if (sid) review.setProvider(sid, event.model?.provider);
+    const ps = sessionFor(ctx);
+    if (ps) tracePoint(ps, event.model);
+    const warmed = sessionFor(ctx);
+    if (warmed && !warmed.isChild) {
+      warmed.selfWarm.invalidate(); // a model change drops the provider cache and starts a new warm budget
+      warmed.selfWarm.onActivity();
+    }
     try {
       bridgeIso.apply(process.env, sessionFor(ctx)?.agentDir ?? piAgentDir(process.env, os.homedir()), isoSetting, event.model?.provider);
     } catch {
@@ -1048,6 +1128,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (risks.length) ctx.ui.notify(`pi-foreman: project Claude Code config runs in claude-bridge turns: ${risks.join(", ")}. Fix: ${PROJECT_CLAUDE_FIX}`, "error");
     if (applyingModel) return;
     if (event.source === "set" || event.source === "cycle") userPickedModel = true;
+    if (event.source === "set" || event.source === "cycle") idleModel.onUserPick(); // the user's pick is the base, not ours to restore
     const ms = sessionFor(ctx);
     if (ms && !ms.isChild && event.model?.provider === BRIDGE_PROVIDER && event.previousModel?.provider !== BRIDGE_PROVIDER) {
       const b = await ms.claudeCfg.check(ctx.cwd, "claude-bridge turns", driftAsk(ctx, ms.trace), (r) => ms.trace?.emit(r));
@@ -1099,20 +1180,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!r && s && !s.isChild) s.retro.prepare(boundLedger(s.markerDir, s.id));
     return r;
   });
-  pi.on("turn_end", async (_event, ctx) => {
-    const s = sessionFor(ctx);
-    if (!s) return;
-    const cls = compactionGate.decide(s.id, ctx.model, ctx.getContextUsage(), { tiers: get(s.config.config, "compaction.priceTiers"), thresholds: get(s.config.config, "compaction.threshold") });
-    if (!cls) return;
-    s.trace?.emit({ event: "compact_tier", tier: cls, model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null });
-    // D8 auto-retro: the foreman's summary ends with a Retro section (the same single summary call).
-    ctx.compact(s.isChild ? undefined : { customInstructions: RETRO_INSTRUCTIONS });
-  });
   pi.on("session_compact", async (event, ctx) => {
     const s = sessionFor(ctx);
     if (!s) return;
     compactionGate.reset(s.id);
     if (!s.isChild) s.idleCache.onCompact();
+    if (!s.isChild) s.selfWarm.onCompact();
     if (!s.isChild) void onForemanCompact(s, ctx, event.compactionEntry.summary, event.reason);
   });
   pi.on("session_compact_failed", async (_event, ctx) => {
@@ -1150,7 +1223,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.idleCache.noteDecision("stop");
       return { action: "stop" as const };
     }
-    if (!s || s.isChild || !resolveCachePolicy(s.config.config, ctx.model?.provider, ctx.model?.id).active) return undefined;
+    if (!s || s.isChild) return undefined;
+    const policy = resolveWarmPolicy(s.config.config, ctx.model?.provider, ctx.model?.id);
+    if (policy.selfWarm && s.selfWarm.owns()) return { action: "stop" as const }; // pi-foreman sends the warms beyond Pi's idle cap itself
+    if (!policy.active) return undefined;
     const action = s.idleCache.decide(idleBusy(s, ctx));
     s.idleCache.noteDecision(action);
     return action ? { action } : undefined;
@@ -1168,11 +1244,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.idleCtx = ctx;
     syncKeepalives(s, ctx);
     s.idleCache.onAgentStart();
+    s.selfWarm.onActivity();
+    idleBind = { s, ctx };
+    idleModel.setRunning(true);
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
     const s = await ensureSession(ctx);
     s.stopContinued = false;
+    if (!s.isChild) {
+      // Idle downshift: a custom message has not passed message_end yet, so its cause is read here; a user message carries the input handler's.
+      idleBind = { s, ctx };
+      const customType = (event as { message?: { customType?: unknown } }).message?.customType;
+      await idleModel.beforeTurn((event as { messageType?: string }).messageType === "custom" ? causeOfCustom(customType) : s.turn.cause);
+    }
     // Pi 1.2: a wake or child-notice run (messageType "custom") also lands here, without a prompt.
     // Only a user run sets the review intent and triages; the section below is built for every run.
     const prompt = userPromptOf(event);
@@ -1267,6 +1352,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const s = sessionFor(ctx);
     if (!s || s.isChild) return undefined;
     const messages = keepSection(event.messages, "pi-foreman", s.foremanSection);
+    s.selfWarm.capture(messages ?? event.messages);
     return messages ? { messages } : undefined;
   });
   // Review S12: each run (a wake or child-notice run too) gets its own single stop-gate continue.
@@ -1279,6 +1365,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.idleCtx = ctx;
       syncKeepalives(s, ctx);
       s.idleCache.start();
+      s.selfWarm.start();
+      idleBind = { s, ctx };
+      idleModel.setRunning(false);
     }
   });
 
@@ -1307,21 +1396,38 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       notIdle: ctx ? safe(() => !ctx.isIdle()) : false,
     };
   }
-  /** Warm compaction (item 7): the idle-floor gate, then the same compaction turn_end starts. */
-  function idleCompact(s: Session): { tier: string; model: string | null } | null {
+  /** The point Pi's own auto-compaction fires at for a model (window minus the effective reserve); null when off or unknown. */
+  function piRuntimePoint(model: { provider?: string; id?: string; contextWindow?: number } | null | undefined): number | null {
+    try {
+      return runtimePoint(model, pi.getSettings());
+    } catch {
+      return null;
+    }
+  }
+  /** Trace the runtime compaction point of the session's model (session start, model change). */
+  function tracePoint(s: Session, model: ExtensionContext["model"]): void {
+    s.trace?.emit({ event: "compaction_point", model: model ? `${model.provider}/${model.id}` : null, point: piRuntimePoint(model) });
+  }
+  /** The context is above half the runtime point (the idle floor); checked before compactMinTokens, no latch. */
+  function idleAboveFloor(s: Session): boolean {
     const ctx = s.idleCtx;
-    if (!ctx) return null;
-    const cls = compactionGate.decideIdle(s.id, ctx.model, ctx.getContextUsage(), { tiers: get(s.config.config, "compaction.priceTiers"), thresholds: get(s.config.config, "compaction.threshold") });
-    if (!cls) return null;
+    return !!ctx && !s.isChild && overIdleFloor(ctx.getContextUsage(), piRuntimePoint(ctx.model));
+  }
+  /** Warm compaction (item 7): the only ctx.compact() call; foreman sessions only, from half the runtime point. The Retro section rides on this compaction. */
+  function idleCompact(s: Session): { point: number | null; model: string | null } | null {
+    const ctx = s.idleCtx;
+    if (!ctx || s.isChild) return null;
+    const point = piRuntimePoint(ctx.model);
+    if (!compactionGate.decideIdle(s.id, ctx.getContextUsage(), point)) return null;
     ctx.compact({ customInstructions: RETRO_INSTRUCTIONS });
-    return { tier: cls, model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null };
+    return { point, model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null };
   }
   /** Copy new Pi cache-warming usage entries to the usage log (keepalive.ts); never throws. */
   function syncKeepalives(s: Session, ctx: ExtensionContext | null): KeepaliveResult {
     const none = { newEntries: 0, lastReadAt: null };
     if (s.isChild || !ctx) return none;
     try {
-      return s.keepalive.sync({ entries: ctx.sessionManager.getEntries(), file: s.usage.file, line: s.usage.line, registry: ctx.modelRegistry as never, trace: (r) => s.trace?.emit(r) });
+      return s.keepalive.sync({ entries: ctx.sessionManager.getEntries(), file: s.usage.file, line: s.usage.line, registry: ctx.modelRegistry as never, trace: (r) => s.trace?.emit(r), onLine: (l) => s.selfWarm.noteWarmLine(l) });
     } catch {
       return none;
     }
@@ -1886,7 +1992,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // Review occasions (occasion.ts) from the task markers, before any rewrite or facts block.
         if (!s.isChild && actionOf(input) === null) occasions = entryOccasions(input);
         // Review panel (panel.ts): a `[panel-shadow:<model>]` launch binds to a pending panel and gets the primary's task, or is refused.
-        const foremanAt = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null;
+        const foremanAt = foremanBaseModel(ctx);
         shadow = shadowLaunch(input, s.panels.views(), { config: s.config.config, isChild: s.isChild, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: (m) => rankRefusalFor(s.config.config, foremanAt, m, ["reviewer"])?.message ?? null });
         if (shadow.kind === "refused") {
           s.trace?.emit(shadow.trace);
@@ -1994,7 +2100,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           reviewerClimbs = rc.climbs;
           reviewerTraces = rc.traces;
         }
-        const foremanAt0 = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null;
+        const foremanAt0 = foremanBaseModel(ctx);
         const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking"), explicit: (role, m) => explicitModelAllowed(s.config.config, foremanAt0, m, role) });
         for (const n of launched.notices) bottomWhy.set(n.role, noStrong);
         if (bottomWhy.size > 0) pendingBottom = bottomWhy;
@@ -2017,7 +2123,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // [research] / [fact-critical] markers (research.ts): the floor is written before the rank check.
           const marked = markedEntries(input);
           const raised = applyResearchFloor(marked, resolution.roles, s.config.config, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
-          const foremanModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null;
+          const foremanModel = foremanBaseModel(ctx);
           for (const m of launchedModels(input)) {
             // ceremony.planner role: a planner on the foreman's own rung (or above) switches the session to self; no launch.
             if (!s.plannerSelf && effectivePlannerMode(s.config.config, false) === "role" && rolesOfModel(input, m).includes("planner") && plannerNotBelow(s.config.config, foremanModel, m)) {
@@ -2221,6 +2327,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.trace?.emit({ event: "llm", model: m.provider && m.model ? `${m.provider}/${m.model}` : null, tokensIn: m.usage?.input, tokensOut: m.usage?.output, cacheRead: m.usage?.cacheRead, cacheWrite: m.usage?.cacheWrite, cost: m.usage?.cost?.total, codemode: codemode || undefined });
     if (!s) return undefined;
     if (!s.isChild) s.lastAssistantAt = Date.now();
+    if (!s.isChild) s.selfWarm.noteRequest((Number(m.usage?.input) || 0) + (Number(m.usage?.cacheRead) || 0) + (Number(m.usage?.cacheWrite) || 0));
     if (!s.isChild) {
       s.launchBatch.onAssistant(content, isLaunchArgs);
       if (Array.isArray(content)) {
@@ -2270,7 +2377,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.isChild) return;
     const cause = causeOfCustom(m.customType);
     if (cause) s.turn.cause = cause;
-    if (cause) s.idleCache.onActivity();
+    if (cause) {
+      s.idleCache.onActivity();
+      s.selfWarm.onActivity();
+    }
     if (cause === "wake") s.turn.wakeKinds = [...new Set((m.details as { kinds?: unknown[] } | undefined)?.kinds ?? [])].map(String).join(",");
     // An inbound intercom message or a foreman_wait wake is the parent answering: the finish gate is active again.
     if (m.customType === INTERCOM_MESSAGE_TYPE || m.customType === WAKE_MESSAGE_TYPE) (s.waitingForParent = false), s.handoffWaits.clear();
@@ -2281,7 +2391,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // Turn cause (D9, measurement only): the last trigger before or during a foreman run.
   pi.on("input", async (event, ctx) => {
     const s = sessionFor(ctx);
-    if (s && !s.isChild) s.idleCache.onActivity();
+    if (s && !s.isChild) {
+      s.idleCache.onActivity();
+      s.selfWarm.onActivity();
+    }
     // pi-subagents 0.76.1+: notices and supervisor requests appended while idle carry no message_end (ledger 11).
     let idleCause: TurnCause | null = null;
     if (s && !s.isChild) {
@@ -2681,8 +2794,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // reaches tool_result, so the outcome is read here: allowed false = a permission refusal.
   pi.on("tool_execution_end", async (event, ctx) => {
     const s = sessionFor(ctx);
-    if (s && !s.isChild) s.idleCache.onActivity();
+    if (s && !s.isChild) {
+      s.idleCache.onActivity();
+      s.selfWarm.onActivity();
+    }
     s?.mutating.delete(event.toolCallId);
+    if (s && !s.isChild && !event.isError && ownerAnswered(event.toolName, (event.result as { details?: unknown } | undefined)?.details)) {
+      idleBind = { s, ctx };
+      await idleModel.onAnswer(); // the owner is back: the answer's next request runs on the base model
+    }
     if (!s || s.isChild || !s.ledgerBash.delete(event.toolCallId)) return;
     const res = event.result as { content?: { type?: string; text?: string }[] } | undefined;
     const text = (res?.content ?? []).map((c) => (c && c.type === "text" ? c.text ?? "" : "")).join("\n");
@@ -3741,6 +3861,28 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       else fail("subagents block in settings.json differs from generate-subagents", "run /foreman setup or the installer to regenerate it.");
     }
 
+    // compaction overrides setup wrote: for every settings file with a record, the recorded value must still be the one in the file
+    try {
+      const managed = JSON.parse(fs.readFileSync(path.join(s.agentDir, "pi-foreman", "managed.json"), "utf8")) as { entries?: Record<string, { compactionDerived?: Record<string, number> }> };
+      for (const [file, entry] of Object.entries(managed.entries ?? {})) {
+        const derived = entry?.compactionDerived;
+        if (!derived || !Object.keys(derived).length) continue;
+        let fileSettings: Record<string, unknown> | null = null;
+        try {
+          fileSettings = JSON.parse(fs.readFileSync(file, "utf8"));
+        } catch {
+          fileSettings = null;
+        }
+        const overrides = ((fileSettings?.compaction as { modelOverrides?: Record<string, { reserveTokens?: number }> } | undefined)?.modelOverrides) ?? {};
+        const drifted = Object.keys(derived).filter((k) => overrides[k]?.reserveTokens !== derived[k]);
+        if (drifted.length) fail(`compaction override in ${file} differs from what setup wrote: ${drifted.join(", ")}`, "run /foreman setup; it keeps a value you set yourself and records it as yours.");
+        else ok(`compaction overrides written by setup in ${file} are in sync (${Object.keys(derived).length})`);
+      }
+    } catch {
+      // no managed state yet: nothing to compare
+    }
+    if (piModelDataDir().error) out.push("INFO compaction: Pi model data not found; registry-derived overrides skipped (set PI_FOREMAN_PI_AI_DATA or PI_FOREMAN_PI_BIN)");
+
     for (const e of s.childExtensions) {
       if (fs.existsSync(e.path) && fs.statSync(e.path).isFile()) ok(`required child extension ${e.id}: ${e.path}`);
       else fail(`required child extension ${e.id} not found at ${e.path}`, "install the package or correct safety.requiredChildExtensions.");
@@ -3837,6 +3979,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (!ctx.model?.promptCache) missing.push(`models.json (${path.join(s.agentDir, "models.json")}) for ${ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "the model"}: ${reg.promptCacheSnippet(ctx.model?.provider, ctx.model?.id, cache.ttlSeconds ?? 300)}`);
       if (missing.length) out.push(`WARN idle cache keep-alive is on by default for ${ctx.model?.provider} but inactive: add ${missing.join(" and ")}, or switch it off with providers.${ctx.model?.provider}.cache.keepalive.enabled: false (docs/cache.md)`);
       else ok(`idle cache keep-alive: Pi cacheWarming idle and promptCache declared for ${ctx.model?.provider}`);
+    }
+    if (!s.isChild) {
+      out.push(...cacheDoctorLines({
+        provider: ctx.model?.provider,
+        policy: resolveWarmPolicy(s.config.config, ctx.model?.provider, ctx.model?.id),
+        promptCache: ctx.model?.promptCache,
+        retention: process.env.PI_CACHE_RETENTION,
+        cacheWarmingIdle: settings?.cacheWarming === "idle" || piCacheWarmingIdle(),
+        selfWarmMissed: s.selfWarm.missed(),
+        hasIdleRung: !!get(s.config.config, `providers.${ctx.model?.provider}.roles.foreman.idle.model`),
+      }));
     }
     const addonOn = addonPresent(pi.getAllTools().map((t) => t.name), { agentDir: s.agentDir, cwd: s.cwd });
     out.push(`INFO background-tasks: ${addonOn ? "present" : "absent"}`);

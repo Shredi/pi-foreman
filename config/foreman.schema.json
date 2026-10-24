@@ -67,6 +67,16 @@
                     "model": { "type": "string", "description": "Full model id, <provider>/<model>." },
                     "thinking": { "type": "string", "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"], "description": "Thinking level, capped by maxThinking." }
                   }
+                },
+                "idle": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["model"],
+                  "description": "Cheaper model for the foreman role while the cache is cold (idle downshift). User or overlay config only; a project or session value is ignored. Unset: off.",
+                  "properties": {
+                    "model": { "type": "string", "description": "Full model id, <provider>/<model>." },
+                    "thinking": { "type": "string", "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"], "description": "Thinking level, capped by maxThinking." }
+                  }
                 }
               }
             }
@@ -83,6 +93,28 @@
               "properties": {
                 "match": { "type": "string", "minLength": 1 },
                 "tier": { "type": "integer", "minimum": 0 }
+              }
+            }
+          },
+          "models": {
+            "type": "object",
+            "description": "Models Pi's own registry does not list, keyed by model id (no provider prefix): context window and optional price tiers. `foreman setup` derives a compaction point for each (docs/install.md, \"What setup writes\"). Any config layer; a project value reaches setup only with `--project`.",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["contextWindow"],
+              "properties": {
+                "contextWindow": { "type": "integer", "minimum": 1, "description": "Context window in tokens." },
+                "tiers": {
+                  "type": "array",
+                  "description": "Price tiers: a request above inputTokensAbove input tokens is billed at a higher rate.",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["inputTokensAbove"],
+                    "properties": { "inputTokensAbove": { "type": "integer", "minimum": 1 } }
+                  }
+                }
               }
             }
           },
@@ -116,7 +148,13 @@
                 "properties": {
                   "enabled": { "type": "boolean", "description": "Default true iff billing is token and ttlSeconds is below 3600. A project or session can only set false." },
                   "intervalSeconds": { "type": "integer", "minimum": 30, "maximum": 3600, "description": "Seconds between pings. Default 90% of ttlSeconds, at least 30. User or overlay config only." },
-                  "windowMinutes": { "type": "integer", "minimum": 1, "maximum": 60, "description": "Minutes of idleness after which the pings stop (default 45; Pi's own idle cap is 30). A project or session can only shorten it." }
+                  "windowMinutes": { "type": "integer", "minimum": 1, "maximum": 60, "description": "Minutes of idleness after which the pings stop (default 45; Pi's own idle cap is 30). A project or session can only shorten it." },
+                  "budgetShare": { "type": "number", "minimum": 0, "maximum": 1, "description": "Warm budget per idle: the warms may cost at most this share of one cold re-cache of the prompt (default 0.5). A project or session can only lower it (at most 0.5)." },
+                  "awayTicks": { "type": "integer", "minimum": 0, "maximum": 20, "description": "Warms allowed per idle while the owner is away (presence.awayAfterMinutes); default 0. A project or session can only lower it (at most 0)." },
+                  "whileWaiting": { "type": "boolean", "description": "Child runs, waits and launch waits do not stop the warms (default true). A project or session can only set false." },
+                  "beyondPiCap": { "type": "boolean", "description": "pi-foreman sends the warms itself past Pi's 30-minute idle cap for long TTLs (default true; needs keepalive.enabled). A project or session can only set false." },
+                  "selfWarmWindowMinutes": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Minutes of idleness after which the self-sent warms stop (default max(45, 3 x TTL minutes)). A project or session can only shorten it (at most 180)." },
+                  "compactMinTokens": { "type": "integer", "minimum": 0, "description": "Smallest context (tokens) at which a warm compaction (budget, away or window trigger) runs; below it the session goes cold instead. Default 100000; 0 = no minimum. A project or session can only raise it (at least 100000)." }
                 }
               },
               "warmCompact": { "type": "boolean", "description": "Warm the cache after a compaction (default true). User or overlay config only." }
@@ -157,6 +195,15 @@
         "strongAbove": { "type": "integer", "minimum": 1, "description": "Default context limit of a bottom-rung child (L1: 100000)." },
         "childMaxTurns": { "type": "integer", "minimum": 1, "description": "Default assistant-turn cap of a child (L1: 60)." },
         "strongOnRevision": { "type": "boolean", "description": "A builder revision launched after a reviewer FAIL goes to the builder's strong rung (rung_up reason review_fail; L1: true). No-op without a strong rung. Overridden by providers.<p>.strongOnRevision and roles.<id>.strongOnRevision. A project or session can only set false." },
+        "idleDownshift": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Idle model downshift (docs/cache.md; needs providers.<p>.roles.foreman.idle). A notice turn that starts on a cold cache runs on the idle rung; the owner's next input restores the base model.",
+          "properties": {
+            "enabled": { "type": "boolean", "description": "false switches the downshift off (L1: true). A project or session can only set false." },
+            "causes": { "type": "array", "items": { "type": "string", "enum": ["child", "wake", "intercom", "other"] }, "description": "Turn causes that may downshift (L1: child, wake, intercom, other). A project or session can only remove entries." }
+          }
+        },
         "sizing": { "type": "object", "additionalProperties": false, "description": "Launch sizing: a builder launch's size and risk fields pick its rung (docs/ladder.md; L1: enabled). Sizing only raises the rung; an explicit lower model needs a reason. User or overlay config only.", "properties": { "enabled": { "type": "boolean", "description": "Read size/risk on builder launches and apply the rules (L1: true). false: the fields are stripped and ignored." }, "largeFileLines": { "type": "integer", "minimum": 1, "description": "A named file over this many measured lines sends the builder to strong (L1: 1500)." }, "maxModules": { "type": "integer", "minimum": 1, "description": "More components than this (first two directory segments; root files, docs, *.md and test dirs excluded) send the builder to strong (L1: 2)." }, "strongRisks": { "type": "array", "items": { "type": "string", "enum": ["guard", "permission", "parser", "concurrency", "security", "design"] }, "description": "Risk tags that send the builder to strong and ask the next item or pre-pr reviewer for bypass probes (L1: guard, permission, parser, concurrency, security)." }, "topRisks": { "type": "array", "items": { "type": "string", "enum": ["guard", "permission", "parser", "concurrency", "security", "design"] }, "description": "Risk tags that send the builder to the top rung (L1: design)." }, "topRung": { "type": ["string", "null"], "minLength": 1, "description": "Model of the top rung, <provider>/<model>[:<level>]. Unset: the next rank above the builder's strong rung (providers.<p>.ranks), else strong. Subject to ladder.childPolicy; a refused top falls back to strong." } } },
         "maxTurns": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 }, "description": "Assistant-turn cap per role (L1: builder 100); wins over childMaxTurns, which stays the fallback for roles without an entry. A child that reaches it traces child_turn_limit. User or overlay config only." },
         "rolePolicy": { "type": "object", "additionalProperties": { "type": "string", "enum": ["below", "at-or-below", "any"] }, "description": "Per-role override of childPolicy, e.g. {\"reviewer\": \"at-or-below\", \"builder\": \"below\"}. Unset role = childPolicy. User or overlay config only." },
@@ -397,21 +444,10 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "priceTiers": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "USD per MTok input upper bounds; above standard is premium. User or overlay config only.",
-          "properties": { "cheap": { "type": "number", "minimum": 0 }, "standard": { "type": "number", "minimum": 0 } }
-        },
-        "threshold": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "Context fraction that triggers compaction, per price tier. A project or session can only lower each value.",
-          "properties": {
-            "cheap": { "type": "number", "minimum": 0.3, "maximum": 0.95 },
-            "standard": { "type": "number", "minimum": 0.3, "maximum": 0.95 },
-            "premium": { "type": "number", "minimum": 0.3, "maximum": 0.95 }
-          }
+        "maxTokens": {
+          "type": ["integer", "null"],
+          "minimum": 50000,
+          "description": "Cap in tokens on where `foreman setup` makes Pi compact (written as Pi's compaction.modelOverrides); null for no cap. A project can only lower it; a project null is dropped."
         }
       }
     },
@@ -423,6 +459,16 @@
         "maxSeconds": { "type": "integer", "minimum": 1, "description": "A project or session can only lower it." },
         "maxActive": { "type": "integer", "minimum": 1, "description": "A project or session can only lower it." },
         "ci": { "type": "boolean", "description": "A project or session can only set false." }
+      }
+    },
+    "presence": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Presence gate of the cache warms: the owner counts as away after awayAfterMinutes without keyboard or mouse input; warms while away are limited by providers.<p>.cache.keepalive.awayTicks. A failed probe counts as present.",
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Probe the idle input time (default true). A project or session can only set true." },
+        "awayAfterMinutes": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Minutes without input after which the owner counts as away (default 11). A project or session can only lower it." },
+        "command": { "type": "string", "description": "A command that prints the seconds since the last input, replacing the platform probe. User or overlay config only (it runs a program)." }
       }
     },
     "resources": {

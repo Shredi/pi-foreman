@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -24,11 +24,15 @@ function fresh() {
   return { base, agentDir, cwd, log: `${base}-calls.jsonl` };
 }
 
+// Hermetic: setup finds an empty model registry here, never the real global Pi (or `npm root -g`). Discovery tests override it.
+const EMPTY_DATA = fs.mkdtempSync(path.join(os.tmpdir(), "pf-pi-ai-data-"));
+after(() => fs.rmSync(EMPTY_DATA, { recursive: true, force: true }));
+
 function run(env, args, extraEnv = {}) {
   const r = spawnSync(process.execPath, [SETUP, ...args, "--agent-dir", env.agentDir], {
     cwd: env.cwd,
     encoding: "utf8",
-    env: { ...process.env, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log, ...extraEnv },
+    env: { ...process.env, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log, PI_FOREMAN_PI_AI_DATA: EMPTY_DATA, ...extraEnv },
   });
   return { code: r.status, out: `${r.stdout}${r.stderr}`, stdout: r.stdout, stderr: r.stderr };
 }
@@ -423,6 +427,279 @@ test("packages.lock.json bundled pins equal the package.json dependencies", () =
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
   const bundled = Object.fromEntries(lock.packages.filter((p) => p.mode === "bundled").map((p) => [p.name, p.version]));
   assert.deepEqual(bundled, pkg.dependencies);
+});
+
+// ---- compaction overrides (Pi compaction.modelOverrides derived from the model registry)
+
+const REGISTRY = {
+  "openai-completions": {
+    "chat:big": { contextWindow: 1000000, cost: { tiers: [{ inputTokensAbove: 272000 }] } },
+    "chat:mid-a": { contextWindow: 400000, cost: { tiers: [] } },
+    "chat:small": { contextWindow: 100000 },
+    "chat:other": { contextWindow: 400000 },
+    "classifier:mid-cls": { contextWindow: 400000 },
+    "image:mid-img": { contextWindow: 400000 },
+  },
+};
+
+function withRegistry(env, registry = REGISTRY) {
+  const dir = path.join(env.base, "pi-ai-data");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "tp.json"), JSON.stringify(registry));
+  return { PI_FOREMAN_PI_AI_DATA: dir };
+}
+
+function writeForeman(env, tp = {}, extra = {}) {
+  const base = { roles: { builder: { model: "tp/big" } }, ranks: [{ match: "mid-*", tier: 1 }] };
+  fs.writeFileSync(path.join(env.agentDir, "foreman.json"), JSON.stringify({ version: 1, providers: { tp: { ...base, ...tp } }, ...extra }));
+}
+
+const overrides = (s) => s.compaction?.modelOverrides ?? {};
+const managedFile = (env) => path.join(env.agentDir, "pi-foreman", "managed.json");
+const managedEntries = (env) => JSON.parse(fs.readFileSync(managedFile(env), "utf8")).entries;
+const derivedOf = (env, file = path.join(env.agentDir, "settings.json")) => managedEntries(env)[file]?.compactionDerived;
+
+test("compaction: derives reserveTokens for role-map and ranks models from a nested registry, skipping classifier: and image: entries", () => {
+  const env = fresh();
+  seed(env);
+  writeForeman(env);
+  const reg = withRegistry(env);
+  const r = run(env, [], reg);
+  assert.equal(r.code, 0, r.out);
+  const s = readSettings(env);
+  assert.deepEqual(overrides(s), { "tp/big": { reserveTokens: 800000 }, "tp/mid-a": { reserveTokens: 200000 } });
+  assert.deepEqual(derivedOf(env), { "tp/big": 800000, "tp/mid-a": 200000 });
+  assert.match(Object.values(managedEntries(env))[0].subagentsHash, /^[0-9a-f]{64}$/);
+  assert.match(r.out, /compaction tp\/big: reserveTokens unset -> 800000/);
+  assert.match(r.out, /^\+\s+"reserveTokens": 800000/m);
+  assert.equal(backups(env).length, 1);
+  assert.equal(s.theme, "dark");
+  // a second run changes nothing
+  const settled = snapshot(env.base);
+  const again = run(env, [], reg);
+  assert.match(again.out, /up to date/);
+  assert.deepEqual(snapshot(env.base), settled);
+});
+
+test("compaction: the lowest price tier (minus 20000) wins when the cap is off", () => {
+  const env = fresh();
+  seed(env);
+  writeForeman(env, {}, { compaction: { maxTokens: null } });
+  const r = run(env, [], withRegistry(env));
+  assert.equal(r.code, 0, r.out);
+  assert.equal(overrides(readSettings(env))["tp/big"].reserveTokens, 1000000 - (272000 - 20000));
+});
+
+test("compaction: nothing is written when Pi already compacts at the derived point", () => {
+  const env = fresh();
+  seed(env);
+  writeForeman(env, { roles: { builder: { model: "tp/small" } }, ranks: [] });
+  const r = run(env, [], withRegistry(env));
+  assert.equal(r.code, 0, r.out);
+  assert.equal(readSettings(env).compaction, undefined);
+  assert.equal(derivedOf(env), undefined);
+});
+
+test("compaction: a point below keepRecentTokens + 20000 warns naming the model and writes nothing", () => {
+  const env = fresh();
+  seed(env);
+  writeForeman(env, { roles: { builder: { model: "tp/tiny" } }, ranks: [] });
+  const reg = withRegistry(env, { api: { "chat:tiny": { contextWindow: 1000000, cost: { tiers: [{ inputTokensAbove: 55000 }] } } } });
+  const r = run(env, [], reg);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /warning: compaction: tp\/tiny: the point 35000 is below keepRecentTokens \+ 20000/);
+  assert.equal(readSettings(env).compaction, undefined);
+});
+
+test("compaction: a user value is kept and not recorded; enabled, global reserveTokens and keepRecentTokens are never touched", () => {
+  const env = fresh();
+  const mine = { enabled: false, reserveTokens: 20000, keepRecentTokens: 30000, modelOverrides: { "tp/big": { reserveTokens: 500000, keepRecentTokens: 25000 }, "other/x": { reserveTokens: 1 } } };
+  seed(env, { ...SEED, compaction: mine });
+  writeForeman(env);
+  const reg = withRegistry(env);
+  const r = run(env, [], reg);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /compaction tp\/big: reserveTokens 500000, kept: user value/);
+  const c = readSettings(env).compaction;
+  assert.deepEqual(c.modelOverrides["tp/big"], { reserveTokens: 500000, keepRecentTokens: 25000 });
+  assert.equal(c.enabled, false);
+  assert.equal(c.reserveTokens, 20000);
+  assert.equal(c.keepRecentTokens, 30000);
+  assert.deepEqual(c.modelOverrides["other/x"], { reserveTokens: 1 });
+  assert.deepEqual(derivedOf(env), { "tp/mid-a": 200000 });
+  // --remove: only the recorded entry goes
+  const rm = run(env, ["--remove"], reg);
+  assert.equal(rm.code, 0, rm.out);
+  const after = readSettings(env).compaction;
+  assert.deepEqual(after, { ...mine, modelOverrides: { "tp/big": mine.modelOverrides["tp/big"], "other/x": { reserveTokens: 1 } } });
+});
+
+test("compaction: an own earlier value is updated, a stale one removed, an edited one kept", () => {
+  const env = fresh();
+  seed(env);
+  writeForeman(env);
+  const reg = withRegistry(env);
+  assert.equal(run(env, [], reg).code, 0);
+  // lower cap: own values are updated
+  writeForeman(env, {}, { compaction: { maxTokens: 150000 } });
+  const up = run(env, [], reg);
+  assert.equal(up.code, 0, up.out);
+  assert.deepEqual(derivedOf(env), { "tp/big": 850000, "tp/mid-a": 250000 });
+  assert.equal(overrides(readSettings(env))["tp/big"].reserveTokens, 850000);
+  // the user edits one value; the ranks glob goes away: the edited value stays, the other one is removed
+  const s = readSettings(env);
+  s.compaction.modelOverrides["tp/mid-a"].reserveTokens = 123456;
+  fs.writeFileSync(path.join(env.agentDir, "settings.json"), `${JSON.stringify(s, null, 2)}\n`);
+  writeForeman(env, { ranks: [] }, { compaction: { maxTokens: 150000 } });
+  const stale = run(env, [], reg);
+  assert.equal(stale.code, 0, stale.out);
+  assert.deepEqual(overrides(readSettings(env)), { "tp/big": { reserveTokens: 850000 }, "tp/mid-a": { reserveTokens: 123456 } });
+  assert.deepEqual(derivedOf(env), { "tp/big": 850000 });
+  // the role goes away too: the last own value is removed and the empty containers with it
+  writeForeman(env, { roles: {}, ranks: [] }, { compaction: { maxTokens: 150000 } });
+  assert.equal(run(env, [], reg).code, 0);
+  assert.deepEqual(overrides(readSettings(env)), { "tp/mid-a": { reserveTokens: 123456 } });
+  assert.equal(derivedOf(env), undefined);
+});
+
+test("compaction: --remove deletes recorded entries and the record, and counts as something to remove", () => {
+  const env = fresh();
+  seed(env);
+  writeForeman(env);
+  const reg = withRegistry(env);
+  assert.equal(run(env, [], reg).code, 0);
+  // drop the subagents block from the record so only the compaction entries are left to remove
+  const s = readSettings(env);
+  delete s.subagents;
+  fs.writeFileSync(path.join(env.agentDir, "settings.json"), `${JSON.stringify(s, null, 2)}\n`);
+  const rm = run(env, ["--remove"], reg);
+  assert.equal(rm.code, 0, rm.out);
+  assert.doesNotMatch(rm.out, /nothing to remove/);
+  assert.equal(readSettings(env).compaction, undefined);
+  assert.equal(managedEntries(env)[path.join(env.agentDir, "settings.json")], undefined);
+  assert.match(run(env, ["--remove"], reg).out, /nothing to remove/);
+});
+
+test("compaction: --dry-run writes nothing but shows the diff", () => {
+  const env = fresh();
+  seed(env);
+  writeForeman(env);
+  const reg = withRegistry(env);
+  const before = snapshot(env.base);
+  const r = run(env, ["--dry-run"], reg);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /compaction tp\/big: reserveTokens unset -> 800000/);
+  assert.match(r.out, /^\+\s+"reserveTokens": 800000/m);
+  assert.deepEqual(snapshot(env.base), before);
+});
+
+test("compaction: --project writes the project file with its own record; the global entry survives; a user global per-model override wins", () => {
+  const env = fresh();
+  seed(env);
+  writeForeman(env);
+  const reg = withRegistry(env);
+  assert.equal(run(env, [], reg).code, 0);
+  const globalFile = path.join(env.agentDir, "settings.json");
+  const projFile = path.join(env.cwd, ".pi", "settings.json");
+  fs.mkdirSync(path.dirname(projFile));
+  fs.writeFileSync(projFile, `${JSON.stringify({ packages: [FOREMAN] })}\n`);
+  const p = run(env, ["--project"], reg);
+  assert.equal(p.code, 0, p.out);
+  const proj = JSON.parse(fs.readFileSync(projFile, "utf8"));
+  assert.deepEqual(overrides(proj), { "tp/big": { reserveTokens: 800000 }, "tp/mid-a": { reserveTokens: 200000 } });
+  const entries = managedEntries(env);
+  assert.deepEqual(entries[projFile].compactionDerived, { "tp/big": 800000, "tp/mid-a": 200000 });
+  assert.match(entries[projFile].subagentsHash, /^[0-9a-f]{64}$/);
+  assert.deepEqual(entries[globalFile].compactionDerived, { "tp/big": 800000, "tp/mid-a": 200000 });
+  assert.match(entries[globalFile].subagentsHash, /^[0-9a-f]{64}$/);
+  // a user's own earlier-compacting per-model value in the global file means the project run writes nothing for that model
+  const env2 = fresh();
+  seed(env2, { ...SEED, compaction: { modelOverrides: { "tp/big": { reserveTokens: 950000 } } } });
+  writeForeman(env2, { ranks: [] });
+  const reg2 = withRegistry(env2);
+  const proj2 = path.join(env2.cwd, ".pi", "settings.json");
+  fs.mkdirSync(path.dirname(proj2));
+  fs.writeFileSync(proj2, `${JSON.stringify({ packages: [FOREMAN] })}\n`);
+  const q = run(env2, ["--project"], reg2);
+  assert.equal(q.code, 0, q.out);
+  assert.equal(JSON.parse(fs.readFileSync(proj2, "utf8")).compaction, undefined);
+  assert.equal(readSettings(env2).compaction.modelOverrides["tp/big"].reserveTokens, 950000);
+});
+
+test("compaction: a global run never writes the project layer's cap", () => {
+  const env = fresh();
+  seed(env);
+  writeForeman(env, { ranks: [] });
+  fs.mkdirSync(path.join(env.cwd, ".pi"));
+  fs.writeFileSync(path.join(env.cwd, ".pi", "foreman.json"), JSON.stringify({ version: 1, compaction: { maxTokens: 60000 } }));
+  const r = run(env, [], withRegistry(env));
+  assert.equal(r.code, 0, r.out);
+  assert.equal(overrides(readSettings(env))["tp/big"].reserveTokens, 800000);
+});
+
+test("compaction: models an overlay declares under providers.<p>.models are covered, with their tiers", () => {
+  const env = fresh();
+  seed(env);
+  writeForeman(env, { roles: { builder: { model: "tp/ghost" } }, ranks: [], models: { ghost: { contextWindow: 500000, tiers: [{ inputTokensAbove: 300000 }] } } }, { compaction: { maxTokens: null } });
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(overrides(readSettings(env)), { "tp/ghost": { reserveTokens: 500000 - 280000 } });
+  assert.doesNotMatch(r.out, /registry unavailable/);
+});
+
+test("compaction: discovery finds the package when the first pi on PATH is a plain file, and in the hoisted layout", { skip: process.platform === "win32" }, () => {
+  const env = fresh();
+  seed(env);
+  writeForeman(env);
+  const pkg = path.join(env.base, "lib", "node_modules", "@earendil-works", "pi-coding-agent");
+  fs.mkdirSync(path.join(pkg, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(pkg, "bin", "pi.js"), "\n");
+  const data = path.join(pkg, "node_modules", "@earendil-works", "pi-ai", "dist", "providers", "data");
+  fs.mkdirSync(data, { recursive: true });
+  fs.writeFileSync(path.join(data, "tp.json"), JSON.stringify(REGISTRY));
+  const plain = path.join(env.base, "bin1");
+  const linked = path.join(env.base, "bin2");
+  fs.mkdirSync(plain);
+  fs.mkdirSync(linked);
+  fs.writeFileSync(path.join(plain, "pi"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  fs.symlinkSync(path.join(pkg, "bin", "pi.js"), path.join(linked, "pi"));
+  const r = run(env, [], { PI_FOREMAN_PI_AI_DATA: "", PATH: [plain, linked, process.env.PATH].join(path.delimiter) });
+  assert.equal(r.code, 0, r.out);
+  assert.equal(overrides(readSettings(env))["tp/big"].reserveTokens, 800000);
+
+  // hoisted: pi-ai sits next to pi-coding-agent under the same node_modules; PI_FOREMAN_PI_BIN points into the package
+  const env2 = fresh();
+  seed(env2);
+  writeForeman(env2);
+  const nm = path.join(env2.base, "hoist", "node_modules", "@earendil-works");
+  fs.mkdirSync(path.join(nm, "pi-coding-agent"), { recursive: true });
+  const hdata = path.join(nm, "pi-ai", "dist", "providers", "data");
+  fs.mkdirSync(hdata, { recursive: true });
+  fs.writeFileSync(path.join(hdata, "tp.json"), JSON.stringify(REGISTRY));
+  const cli = path.join(nm, "pi-coding-agent", "cli.js");
+  fs.copyFileSync(FAKE_PI, cli);
+  const r2 = run(env2, [], { PI_FOREMAN_PI_AI_DATA: "", PI_FOREMAN_PI_BIN: cli });
+  assert.equal(r2.code, 0, r2.out);
+  assert.equal(overrides(readSettings(env2))["tp/big"].reserveTokens, 800000);
+});
+
+test("compaction: a missing or unreadable registry is one warning, nothing is written for it, and own entries stay", () => {
+  const env = fresh();
+  seed(env);
+  writeForeman(env, { roles: { builder: { model: "tp/big" }, reviewer: { model: "tp/other" } } });
+  const reg = withRegistry(env);
+  assert.equal(run(env, [], reg).code, 0);
+  const kept = readSettings(env).compaction;
+  assert.ok(kept.modelOverrides["tp/big"]);
+  const gone = run(env, [], { PI_FOREMAN_PI_AI_DATA: path.join(env.base, "no-such-dir") });
+  assert.equal(gone.code, 0, gone.out);
+  assert.equal(gone.out.match(/Pi model registry unavailable/g).length, 1, gone.out);
+  assert.deepEqual(readSettings(env).compaction, kept);
+  fs.writeFileSync(path.join(env.base, "pi-ai-data", "tp.json"), "{ not json");
+  const bad = run(env, [], reg);
+  assert.equal(bad.code, 0, bad.out);
+  assert.equal(bad.out.match(/Pi model registry unavailable/g).length, 1, bad.out);
+  assert.deepEqual(readSettings(env).compaction, kept);
 });
 
 const hookConfig = (env) => path.join(env.agentDir, "extensions", "subagent", "config.json");
