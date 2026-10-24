@@ -27,8 +27,11 @@ import { splitChain } from "./shellchain.ts";
 import type { Redirect, Segment } from "./shellchain.ts";
 import { tmpDest } from "./tmpscratch.ts";
 import { unwrapTimeout } from "./timeoutallow.ts";
+import { netReadSegment } from "./netread.ts";
+import type { NetRole } from "./netread.ts";
 
-export type EffectClass = "read" | "build-test" | "write-in" | "write-out" | "unknown";
+/** `net-read` (netread.ts: gh / npm / curl / wget reads) is never in SAFE_CLASSES: it composes only with `read` segments (timeoutallow.ts compose). */
+export type EffectClass = "read" | "net-read" | "build-test" | "write-in" | "write-out" | "unknown";
 
 export interface EffectCtx {
   /** The asking process's cwd (a child runs in the foreman's cwd). */
@@ -50,10 +53,14 @@ export interface EffectCtx {
   isLink?: (p: string) => boolean;
   isDir?: (p: string) => boolean;
   readFile?: (p: string) => string | null;
+  /** Who asks: the session's own ask ("orchestrator") or a forwarded child's. A missing role counts as a child (fail closed): wget and every output file are for the orchestrator's named dirs only. */
+  role?: NetRole;
+  /** The dirs a network read may write an output file into (`curl -o`, `>`): the orchestrator's ceremony scratch dir, a child's role scratch. None = no output. */
+  netOut?: string[];
 }
 
-export function effectCtx(cwd: string, scratch: string[] = [], platform: string = process.platform, readRoots: unknown = []): EffectCtx {
-  return { cwd: path.resolve(cwd), root: workspaceTop(cwd), scratch, platform, readRoots: readRootsOf(readRoots, platform) };
+export function effectCtx(cwd: string, scratch: string[] = [], platform: string = process.platform, readRoots: unknown = [], role?: NetRole, netOut?: string[]): EffectCtx {
+  return { cwd: path.resolve(cwd), root: workspaceTop(cwd), scratch, platform, readRoots: readRootsOf(readRoots, platform), ...(role ? { role } : {}), ...(netOut ? { netOut } : {}) };
 }
 
 /** Programs that run other commands or change who/how they run: the whole command is refused. */
@@ -65,7 +72,7 @@ export function refusedProgram(words: string[]): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*=/.test(w) || RUNNERS.has(w.replace(/^.*\//, "").toLowerCase());
 }
 
-const RANK: Record<EffectClass, number> = { read: 0, "build-test": 1, "write-in": 2, "write-out": 3, unknown: 4 };
+const RANK: Record<EffectClass, number> = { read: 0, "net-read": 1, "build-test": 2, "write-in": 3, "write-out": 4, unknown: 5 };
 export const SAFE_CLASSES: readonly EffectClass[] = ["read", "build-test", "write-in"];
 
 // ------------------------------------------------------------------ paths
@@ -673,6 +680,8 @@ export function editorBackupCommand(command: unknown): boolean {
 export function segmentEffect(c: EffectCtx, cwd: string | null, seg: Segment): SegmentEffect {
   const no = (cls: EffectClass, known: boolean, unit = seg.text): SegmentEffect => ({ cls, known, cwd, unit });
   if (refusedProgram(seg.words)) return no("unknown", true);
+  // R31c: a network read has its own redirect rules (netread.ts), so it is judged before the generic redirect check
+  if (netReadSegment(seg, c.role, c.netOut ?? [], cwd)) return { cls: "net-read", known: true, label: "net-read", cwd, unit: seg.text };
   for (const r of seg.redirects) if (!redirectOk(r, c, cwd, c.scratch ?? [], plat(c))) return no(r.op === "<" ? "unknown" : "write-out", true);
   let words = seg.words;
   let unit = seg.text;

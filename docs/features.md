@@ -11,7 +11,7 @@
 Verbatim from [install](install.md#install):
 
 ```text
-Needs Node 22+, Pi 1.4.x on `PATH` and Python 3.9+.
+Needs Node 22+, Pi 1.4.x on `PATH` and Python 3.13+.
 pi install git:github.com/Shredi/pi-foreman            # global; pin with @<tag-or-commit>
 pi install -l git:github.com/Shredi/pi-foreman         # project scope (.pi/settings.json)
 /foreman setup --dry-run   # inside Pi: show the planned changes, write nothing
@@ -48,6 +48,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [display-names](#display-names) | on | Shows roles under a display-name preset (`classic` personal names, `plain` ids) or your own map; no code compares a display name. | on by default | [roles](roles.md#roles) |
 | [codemode](#codemode) | on | Gives a role the `codemode` tool, whose script calls each pass the guards and permissions on their own (on for the foreman and explorer by default). | `{"roles": {"builder": {"codemode": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
 | [ladder](#ladder) | opt-in | A child climbs to its role's strong model through the foreman after a context, turns, stuck or review-FAIL handoff; with no strong rung mapped nothing climbs. | `{"providers": {"<provider>": {"roles": {"builder": {"strong": {"model": "<provider>/<stronger-model>"}}}}}}` | [ladder](ladder.md#rungs-and-the-live-rung) |
+| [idle-downshift](#idle-downshift) | opt-in | A notice turn (child, wake, intercom, other) that starts on a cold cache runs on the foreman's idle rung; the owner's next input restores the base model. With no idle rung mapped nothing changes. | `{"providers": {"<provider>": {"roles": {"foreman": {"idle": {"model": "<provider>/<cheaper-model>"}}}}}}` | [ladder](ladder.md) |
 | [rank-policy](#rank-policy) | opt-in | Ranks models into tiers so children may only launch below (or at) the foreman's tier; with no ranks anywhere the policy does nothing. | `{"providers": {"<provider>": {"ranks": [{"match": "*big*", "tier": 0}, {"match": "*mid*", "tier": 1}]}}, "ladder": {"childPolicy": "below"}}` | [roles](roles.md#role-ladder-rank-policy-and-presets) |
 | [reviewer-climb](#reviewer-climb) | off | Sends the next reviewer launch to its strong rung after a second FAIL of one ledger item, and to a security rung on a security-shaped diff. | `{"ladder": {"reviewerClimb": {"enabled": true, "securityRung": "<provider>/<model>"}}}` | [ladder](ladder.md#reviewer-climb) |
 | [review-panel](#review-panel) | opt-in | Adds shadow reviewer models beside the primary on the named occasions; their findings are reported but never block, mark items or satisfy the PR gate. | `{"ladder": {"reviewPanel": {"shadows": ["<other-provider>/<other-model>"], "gates": ["pre-pr"]}}}` | [review](review.md#review-panel) |
@@ -99,7 +100,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [radar](#radar) | on | `foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files. | on by default | [sessions](sessions.md#radar) |
 | [compaction](#compaction) | on | Compacts the context earlier on dearer models: the trigger fraction depends on the model's input price tier. | on by default | [sessions](sessions.md#further-session-keys) |
 | [resources](#resources) | on | Samples load, free memory and free disk; at high pressure child launches run one at a time and the strong climb pauses, at critical pressure launches are deferred until the host recovers (10 minutes at most). `/foreman doctor` prints the current level and `/foreman status` the last sample. | on by default | [resources](resources.md) |
-| [idle-cache](#idle-cache) | off | Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge preset sets a 600 s byModel row and turns the keep-alive off); off for request-billed providers; silent without an entry. | `set providers.claude-bridge.cache.keepalive.enabled to false (off) or true (on) in user or overlay config, or foreman config apply-preset claude-bridge --dry-run   # or: {"providers": {"<provider>": {"cache": {"ttlSeconds": 300, "billing": "token", "keepalive": {"enabled": true}}}}}` | [cache](cache.md#config) |
+| [idle-cache](#idle-cache) | off | Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge preset sets a 3600 s byModel row, noting that a subscription turn within plan usage gets the 1-hour cache and 300 applies on extra-usage credits or an API key, keeps the keep-alive on with awayTicks 2 and gives the foreman role an idle rung); off for request-billed providers; silent without an entry. A warm budget (half a cold re-cache per idle), a presence gate (warms while the owner is away are limited) and, for TTLs beyond Pi's 30-minute idle cap, warms sent by pi-foreman itself apply to the keep-alive. | `set providers.claude-bridge.cache.keepalive.enabled to false (off) or true (on) in user or overlay config, or foreman config apply-preset claude-bridge --dry-run   # or: {"providers": {"<provider>": {"cache": {"ttlSeconds": 300, "billing": "token", "keepalive": {"enabled": true}}}}}` | [cache](cache.md#config) |
 
 ## Feature keys
 
@@ -198,8 +199,25 @@ Switch: `providers.*.roles.*.strong` is set.
 | `ladder.strongAbove` | `100000` | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
 | `ladder.childMaxTurns` | `60` | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
 | `ladder.strongOnRevision` | `true` | tighten-only (only false is accepted) |
+| `ladder.sizing.enabled` | `true` | not in project/session (the launch sizing rules come from the user or overlay config) |
+| `ladder.sizing.largeFileLines` | `1500` | not in project/session (the launch sizing rules come from the user or overlay config) |
+| `ladder.sizing.maxModules` | `2` | not in project/session (the launch sizing rules come from the user or overlay config) |
+| `ladder.sizing.strongRisks` | `["guard", "permission", "parser", "concurrency", "security"]` | not in project/session (the launch sizing rules come from the user or overlay config) |
+| `ladder.sizing.topRisks` | `["design"]` | not in project/session (the launch sizing rules come from the user or overlay config) |
+| `ladder.sizing.topRung` | `null` | not in project/session (the launch sizing rules come from the user or overlay config) |
 | `ladder.maxTurns` | `{"builder": 100}` | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
 | `ladder.research.factCriticalRung` | `null` | not in project/session (the fact-critical research rung comes from the user or overlay config) |
+
+### idle-downshift
+
+**Idle model downshift.** A notice turn (child, wake, intercom, other) that starts on a cold cache runs on the foreman's idle rung; the owner's next input restores the base model. With no idle rung mapped nothing changes.
+
+Switch: `providers.*.roles.foreman.idle` is set.
+
+| Key | Default | Layer |
+|---|---|---|
+| `ladder.idleDownshift.enabled` | `true` | tighten-only (only false is accepted) |
+| `ladder.idleDownshift.causes` | `["child", "wake", "intercom", "other"]` | tighten-only (can only narrow the list) |
 
 ### rank-policy
 
@@ -720,19 +738,30 @@ No config key.
 
 ### idle-cache
 
-**Idle prompt-cache policy.** Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge preset sets a 600 s byModel row and turns the keep-alive off); off for request-billed providers; silent without an entry.
+**Idle prompt-cache policy.** Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge preset sets a 3600 s byModel row, noting that a subscription turn within plan usage gets the 1-hour cache and 300 applies on extra-usage credits or an API key, keeps the keep-alive on with awayTicks 2 and gives the foreman role an idle rung); off for request-billed providers; silent without an entry. A warm budget (half a cold re-cache per idle), a presence gate (warms while the owner is away are limited) and, for TTLs beyond Pi's 30-minute idle cap, warms sent by pi-foreman itself apply to the keep-alive.
 
 Switch: `providers.*.cache.keepalive.enabled` is true.
 
 | Key | Default | Layer |
 |---|---|---|
+| `providers.<x>.roles.<x>.idle.model` | unset | not in project/session (the idle model is picked in the user or overlay config) |
+| `providers.<x>.roles.<x>.idle.thinking` | unset | not in project/session (the idle model is picked in the user or overlay config) |
 | `providers.<x>.cache.ttlSeconds` | unset | not in project/session (the cache policy comes from the user or overlay config) |
 | `providers.<x>.cache.billing` | unset | not in project/session (the cache policy comes from the user or overlay config) |
 | `providers.<x>.cache.byModel` | unset | not in project/session (the cache policy comes from the user or overlay config) |
 | `providers.<x>.cache.keepalive.enabled` | unset | tighten-only (only false is accepted) |
 | `providers.<x>.cache.keepalive.intervalSeconds` | unset | not in project/session (the cache policy comes from the user or overlay config) |
 | `providers.<x>.cache.keepalive.windowMinutes` | unset | tighten-only (lower only, minimum 1, at most 45 without an earlier value) |
+| `providers.<x>.cache.keepalive.budgetShare` | unset | tighten-only (lower only, at most 0.5 without an earlier value) |
+| `providers.<x>.cache.keepalive.awayTicks` | unset | tighten-only (lower only, at most 0 without an earlier value) |
+| `providers.<x>.cache.keepalive.whileWaiting` | unset | tighten-only (only false is accepted) |
+| `providers.<x>.cache.keepalive.beyondPiCap` | unset | tighten-only (only false is accepted) |
+| `providers.<x>.cache.keepalive.selfWarmWindowMinutes` | unset | tighten-only (lower only, minimum 1, at most 180 without an earlier value) |
+| `providers.<x>.cache.keepalive.compactMinTokens` | unset | tighten-only (raise only, at least 100000 without an earlier value) |
 | `providers.<x>.cache.warmCompact` | unset | not in project/session (the cache policy comes from the user or overlay config) |
+| `presence.enabled` | `true` | tighten-only (only true is accepted) |
+| `presence.awayAfterMinutes` | `11` | tighten-only (lower only, minimum 1, at most 11 without an earlier value) |
+| `presence.command` | unset | not in project/session (SECURITY: it runs a program; user or overlay config only) |
 
 ## Commands by feature
 
@@ -749,7 +778,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [sessions](#sessions) | `/foreman session`, `foreman session` |
 | [remote-sessions](#remote-sessions) | `foreman session remote` |
 | [sync](#sync) | `/sync`, `foreman sync` |
-| [retro](#retro) | `/retro`, `foreman retro`, `foreman backlog` |
+| [retro](#retro) | `/retro`, `/foreman flag-ask`, `foreman retro`, `foreman backlog` |
 | [close](#close) | `/foreman close`, `foreman close`, `foreman worktree` |
 | [footer-ui](#footer-ui) | `/foreman cost`, `/foreman dialogs` |
 | [dialogs-cli](#dialogs-cli) | `foreman dialogs` |
@@ -791,6 +820,8 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `providers.*.cache.keepalive.intervalSeconds` | the cache policy comes from the user or overlay config |
 | `providers.*.cache.warmCompact` | the cache policy comes from the user or overlay config |
 | `providers.*.cache.byModel` | the cache policy comes from the user or overlay config |
+| `providers.*.roles.*.idle` | the idle model is picked in the user or overlay config |
+| `presence.command` | SECURITY: it runs a program; user or overlay config only |
 | `python.path` | it chooses the executable that runs every guard |
 | `python.*` | interpreter settings come from the user or overlay config |
 | `roles.*.launch` | the launch mode comes from the user or overlay config |
@@ -821,6 +852,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `ladder.reviewerClimb` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.research` | the fact-critical research rung comes from the user or overlay config |
 | `ladder.reviewPanel` | the review panel's models come from the user or overlay config |
+| `ladder.sizing` | the launch sizing rules come from the user or overlay config |
 | `providers.*.ranks` | model ranks decide which children may launch: user or overlay config only |
 | `providers.*.strongAbove` | the ladder comes from the user or overlay config |
 | `providers.*.childMaxTurns` | the ladder comes from the user or overlay config |

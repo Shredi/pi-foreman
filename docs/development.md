@@ -2,7 +2,7 @@
 
 > Covers the repo layout, test commands, the replay rig, CI, Windows notes and how the docs are kept current.
 > Read it when you change pi-foreman itself.
-> It must run on Linux, macOS and Windows: Python stdlib only (3.9+), TypeScript only for Pi extensions.
+> It must run on Linux, macOS and Windows: Python stdlib only (3.13+), TypeScript only for Pi extensions.
 
 ## Layout
 
@@ -24,14 +24,14 @@ Running from a checkout instead of the installed package: [install](install.md#d
 python -m unittest discover -s tests -v          # npm test
 node --test "extensions/core-adapter/test/*.test.ts"   # npm run test:node
 node --test "tests/installer/*.test.mjs"          # npm run test:installer
-npm run test:ci                                   # pre-PR: what CI runs and npm test does not (replay, core conformance, installer, bench probe); about 25 minutes
+npm run test:ci                                   # pre-PR: what CI runs and npm test does not (replay, core conformance, installer, bench probe); replay is the slow step
 npm run typecheck                                 # tsc --noEmit
 node setup.mjs --dry-run                          # installer preview, writes nothing (exits 1 until pi-foreman is installed as a package; see install.md#developing)
 ```
 
 ## Replay rig
 
-`python -m unittest discover -s tests/replay -v` starts `pi --mode rpc` with
+`node scripts/replay_run.mjs` runs each `tests/replay/test_*.py` as its own `unittest` process, in parallel: `FOREMAN_REPLAY_JOBS` workers (default `min(4, availableParallelism)`), then the modules in its `SERIAL` list one by one. It prints a PASS or FAIL line per module, the 15 slowest, the wall time, and the last 80 lines of each failing module; exit 1 on a failure, 2 when no module is found. Each module starts `pi --mode rpc` with
 a temp `PI_CODING_AGENT_DIR` and temp project against a scripted fake provider and compares the trace to golden
 sequences. No real model calls. The Pi CLI comes from `FOREMAN_PI_CLI`, else the global npm root, else Pi's managed
 install (`~/.pi/agent/install/current-version`); none found is an error naming the paths tried, not a skip. pi-subagents, the permission system and pi-intercom come from the repo's `node_modules` (run `npm install` first); the rig
@@ -40,7 +40,7 @@ adds only this repo as a package and filters intercom out for non-intercom rigs.
 
 ## CI
 
-GitHub Actions runs a matrix of Linux, macOS and Windows (Python 3.9 and 3.13) on every push and PR.
+GitHub Actions runs a matrix of Linux, macOS and Windows on Python 3.13 for pull requests and after each merge to main, plus manual dispatch (no feature-branch push trigger). The run on main catches combination failures, because branch protection is non-strict (a PR need not be up to date with main). A new push to a PR cancels the superseded run; runs on main are not cancelled. The only required check is `ci-ok`, which passes only when the `test` and `bench-smoke` jobs all succeeded. The replay suite runs through `scripts/replay_run.mjs` in parallel (`FOREMAN_REPLAY_JOBS` sets the worker count; the Windows job uses 2 workers, the others the default 4, because 4 cold `pi` starts on a 4-vCPU Windows runner timed out; the first RPC after launch, `session_id()` in `tests/replay/driver.py`, has a 60 s startup deadline, every other request 15 s); the Windows job turns Defender real-time scanning off first for speed.
 
 `npm run test:ci` (`scripts/foreman_ci.mjs`) is the pre-PR check. It runs the CI steps that `npm test` does not, in CI's order: the replay suite against the `node_modules` Pi CLI, `pull_core.py --conformance` (skipped with a line when pytest is missing), the installer suite, and the bench smoke probe on the fake provider (skipped when `harbor` is not on PATH). It prints one line per step and exits 1 on any failure; `--only <step>` runs one step.
 

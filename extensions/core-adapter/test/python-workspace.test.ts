@@ -29,7 +29,7 @@ const out = (...lines: string[]) => ({ stdout: lines.join("\n") + "\n" });
 test("python.path inside the git workspace is rejected before it is probed", async (t) => {
   const repo = tempDir(t, true);
   const venvPy = path.join(repo, ".venv", "bin", "python");
-  const { spawner, calls } = fake({ python3: out("3.12", "/usr/bin/python3", "/usr/bin/python3", "/usr") });
+  const { spawner, calls } = fake({ python3: out("3.13", "/usr/bin/python3", "/usr/bin/python3", "/usr") });
   const r = await resolvePython({ configPath: venvPy, platform: "linux", spawner, cwd: path.join(repo, "sub"), env: { PATH: "" } });
   assert.ok(r.ok);
   assert.equal(r.info.source, "python3");
@@ -40,8 +40,8 @@ test("python.path inside the git workspace is rejected before it is probed", asy
 test("a symlinked venv (realpath outside) is caught by sys.prefix; the next candidate wins", async (t) => {
   const repo = tempDir(t, true);
   const { spawner } = fake({
-    python3: out("3.12", path.join(repo, ".venv", "bin", "python3"), "/usr/bin/python3.12", path.join(repo, ".venv")),
-    python: out("3.11", "/usr/bin/python", "/usr/bin/python", "/usr"),
+    python3: out("3.13", path.join(repo, ".venv", "bin", "python3"), "/usr/bin/python3.13", path.join(repo, ".venv")),
+    python: out("3.13", "/usr/bin/python", "/usr/bin/python", "/usr"),
   });
   const r = await resolvePython({ platform: "linux", spawner, cwd: repo, env: { PATH: "" } });
   assert.ok(r.ok);
@@ -53,7 +53,7 @@ test("outside a repo only a venv/.venv below the cwd is rejected", async (t) => 
   const dir = tempDir(t, false);
   const tool = path.join(dir, "tools", "python3");
   const venv = path.join(dir, "venv", "bin", "python3");
-  const { spawner } = fake({ [venv]: out("3.12", venv, "/usr/bin/python3", path.join(dir, "venv")), [tool]: out("3.12", tool, tool, path.join(dir, "tools")) });
+  const { spawner } = fake({ [venv]: out("3.13", venv, "/usr/bin/python3", path.join(dir, "venv")), [tool]: out("3.13", tool, tool, path.join(dir, "tools")) });
   const bad = await resolvePython({ configPath: venv, platform: "linux", spawner, cwd: dir, env: { PATH: "" } });
   assert.equal(bad.ok, false);
   const good = await resolvePython({ configPath: tool, platform: "linux", spawner, cwd: dir, env: { PATH: "" } });
@@ -68,7 +68,7 @@ test("a bare name found on PATH inside the workspace is not probed", { skip: pro
   const bin = path.join(repo, ".venv", "bin");
   fs.mkdirSync(bin, { recursive: true });
   fs.writeFileSync(path.join(bin, "python3"), "");
-  const { spawner, calls } = fake({ python: out("3.12", "/usr/bin/python", "/usr/bin/python", "/usr") });
+  const { spawner, calls } = fake({ python: out("3.13", "/usr/bin/python", "/usr/bin/python", "/usr") });
   const r = await resolvePython({ platform: "linux", spawner, cwd: repo, env: { PATH: bin } });
   assert.ok(r.ok);
   assert.deepEqual(calls, ["python"]);

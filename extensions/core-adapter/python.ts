@@ -1,4 +1,4 @@
-// Find a Python >= 3.9 for the core scripts (design §7 "Python resolution").
+// Find a Python >= 3.13 for the core scripts (design §7 "Python resolution").
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { workspaceTop } from "./gitdrift.ts";
@@ -21,7 +21,7 @@ export type PythonResolution =
   | { ok: true; info: PythonInfo; rejected: string[] }
   | { ok: false; rejected: string[] };
 
-export const MIN_VERSION: [number, number] = [3, 9];
+export const MIN_VERSION: [number, number] = [3, 13];
 export const PROBE_CODE =
   "import sys;print('%d.%d' % sys.version_info[:2]);print(sys.executable);print(getattr(sys,'_base_executable','') or sys.executable);print(sys.prefix)";
 const PROBE_TIMEOUT_MS = 10_000;
@@ -167,7 +167,7 @@ export async function resolvePython(input: CandidateInput & { spawner: Spawner; 
       continue;
     }
     if (!versionOk(probe.version)) {
-      rejected.push(`${label}: Python ${probe.version.join(".")} is older than 3.9`);
+      rejected.push(`${label}: Python ${probe.version.join(".")} is older than 3.13`);
       continue;
     }
     const executable = probe.executable || c.command;
@@ -202,4 +202,4 @@ export class PythonCache {
 }
 
 export const NO_PYTHON_FIX =
-  "Install Python 3.9+ or set python.path / PI_FOREMAN_PYTHON; run /foreman doctor.";
+  "Install Python 3.13+ or set python.path / PI_FOREMAN_PYTHON; run /foreman doctor.";

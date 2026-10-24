@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = fs.realpathSync(path.dirname(fileURLToPath(import.meta.url)));
 const WIN = process.platform === "win32";
 const MANAGED_KEYS = ["agentOverridesByProvider", "agentOverrides", "forceTopLevelAsync"]; // same keys as /foreman doctor
-const MIN_PY = [3, 9];
+const MIN_PY = [3, 13];
 const PROBE_CODE = "import sys;print('%d.%d' % sys.version_info[:2]);print(sys.executable)";
 const OVERLAY_RE = /^npm:(@[a-z0-9~][a-z0-9._~-]*\/)?[a-z0-9~][a-z0-9._~-]*@\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
 const FOREMAN_INSTALL = "pi install git:github.com/Shredi/pi-foreman";
@@ -251,7 +251,7 @@ function resolvePython(agentDir) {
     }
     const ver = [Number(m[1]), Number(m[2])];
     if (ver[0] < MIN_PY[0] || (ver[0] === MIN_PY[0] && ver[1] < MIN_PY[1])) {
-      rejected.push(`${label}: Python ${ver.join(".")} is older than 3.9`);
+      rejected.push(`${label}: Python ${ver.join(".")} is older than 3.13`);
       continue;
     }
     const executable = lines[1] || c.command;
@@ -262,11 +262,11 @@ function resolvePython(agentDir) {
     return { executable, version: ver, source: c.source };
   }
   const how = WIN
-    ? "Windows: install Python 3.9+ from https://www.python.org/downloads/ (or `winget install Python.Python.3.12`) with the py launcher. The Microsoft Store stub does not count."
+    ? "Windows: `winget install Python.Python.3.13` (or https://www.python.org/downloads/) with the py launcher. The Microsoft Store stub does not count."
     : process.platform === "darwin"
-      ? "macOS: `brew install python` (or https://www.python.org/downloads/)."
-      : "Linux: `sudo apt install python3` (Debian/Ubuntu) or `sudo dnf install python3` (Fedora).";
-  throw new Fatal(`No Python >= 3.9 found (tried: ${rejected.join("; ") || "nothing"}).\n${how}\nOr set python.path in foreman.json / PI_FOREMAN_PYTHON, then re-run.`);
+      ? "macOS: the Command Line Tools python3 is 3.9. Install 3.13 with `brew install python@3.13` (or https://www.python.org/downloads/)."
+      : "Linux: a python3.13 package from your distro (Debian/Ubuntu: the deadsnakes PPA), or `uv python install 3.13`.";
+  throw new Fatal(`No Python >= 3.13 found (tried: ${rejected.join("; ") || "nothing"}).\n${how}\nOr set python.path in foreman.json / PI_FOREMAN_PYTHON, then re-run.`);
 }
 
 function runConfigCli(py, args, cwd, script = "foreman_config.py") {

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """`foreman bench`: run the pi-foreman benchmark matrix through Harbor and tabulate it
-(stdlib, 3.9+). The Harbor side lives in bench/harbor_agent.py; this script never imports it.
+(stdlib, 3.13+). The Harbor side lives in bench/harbor_agent.py; this script never imports it.
 
     python scripts/foreman_bench.py run   --preset bench/presets/smoke.json [--tasks DIR] [--jobs-dir DIR]
                                           [--token-cap N] [--dry-run] [--setup-only]

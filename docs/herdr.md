@@ -7,25 +7,25 @@
 The plugin `integrations/herdr/pi-foreman-sidebar/` shows the pi-foreman session tree in Herdr's Agents panel: per Pi
 pane a header (tree connector, state glyph, label, age or blocked timer), one line each for what runs (agents),
 what it watches (tasks, PRs, CI) and what it waits on, and a line with tokens and cost. It needs Herdr
-0.9.0 or later on Linux or macOS and Python 3.9+. Pane-level session features (blocked shim, group tag) are in
+0.9.0 or later on Linux or macOS and Python 3.13+. Pane-level session features (blocked shim, group tag) are in
 [sessions](sessions.md#herdr).
 
 ```text
-⠹  pi-foreman                     12s
-│  ◆ builder sonnet-5.5 ×2 · reviewe…
-│  ⚙ pr #12 · npm test 3m
-│  ↑287k ↓7.4k · $3.32 · ✓3
-├─ ⠼  r31-sidebar                  6m
-│  │  ◆ reviewer opus-5.5
-│  │  $0.47 · ✓1
-│  └─ ✋ r31-perms                 1m
-│        ? ask 1: rule scope
-│        $0.12
-├─ ⏸  r32-cache                    2m
-│     ⧗ child r32b 4m
-│     $1.02 · ✓2
-└─ ✓  r31-git                     40m
-      $0.88 · ✓4
+  ⠹  pi-foreman                   12s
+  │  ◆ builder sonnet-5.5 ×2 · revie…
+  │  ⚙ pr #12 · npm test 3m
+  │  ↑287k ↓7.4k · $3.32 · ✓3
+  ├─ ⠼  r31-sidebar                6m
+  │  │  ◆ reviewer opus-5.5
+  │  │  $0.47 · ✓1
+  │  └─ ✋ r31-perms               1m
+  │        ? ask 1: rule scope
+  │        $0.12
+  ├─ ⏸  r32-cache                  2m
+  │     ⧗ child r32b 4m
+  │     $1.02 · ✓2
+  └─ ✓  r31-git                   40m
+        $0.88 · ✓4
 ```
 
 The mock-up is the `unicode` set at width 40 (blank cells shown as spaces); `⠹` and `⠼` are spinner frames of two
@@ -83,7 +83,10 @@ or ship row templates for `pi`; two owners of the view replace each other's sort
 
 Each row holds one token (`$fm_hd`, `$fm_a1`, `$fm_a2`, `$fm_a3`, `$fm_meta`), so Herdr draws no separator and the
 plugin owns every column of the line, including the tree. A row without a value is not drawn: an idle session is one or
-two lines. Rows are flush left; do not put a `state_icon` or another cell in front of `$fm_hd`.
+two lines. Do not put a `state_icon` or another cell in front of `$fm_hd`. Herdr 0.9.3 draws the second and later rows
+of an entry 2 cells further right than the first and has no setting for it, so `$fm_hd` starts with 2 blank cells
+(`DETAIL_INDENT` in `sidebar.py`) and the detail rows are 2 cells shorter: every `│` sits under the connector or glyph
+it continues.
 
 **Upgrading from an earlier snippet:** re-run `configure` (the action, or `python3 sidebar.py configure`), merge the new
 snippet over your old `pi = [...]` rows and run `herdr server reload-config`. The old three-row snippet is gone; the old
@@ -99,6 +102,9 @@ tokens still publish (see Tokens) but the new snippet does not use them. Nothing
   column. Siblings are ordered by start time, then session id, whatever order they arrive in.
 - A deep tree keeps its prefix whole: with little room the age drops first, then the label is cut to one character and `…`.
   Only the label or the line text is ever cut, with `…`.
+- The last child with a pane gets `└─` and a blank continuation. Sessions without a pane (closed ones whose presence
+  file still names a pane) take no slot; a session that builds the tree itself counts only the panes in the daemon's
+  fresh `winners.json`.
 - The daemon writes the tree positions (`layout.json`, `tree.json` in the state folder); a session that pushes itself
   uses them while they are younger than 10 s and otherwise builds the tree from all presence files itself, so a missing
   daemon no longer leaves stale connectors. Sibling connectors converge within one 5 s refresh; a session's own

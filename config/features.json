@@ -1,7 +1,7 @@
 {
   "version": 1,
   "install": [
-    "Needs Node 22+, Pi 1.4.x on `PATH` and Python 3.9+.",
+    "Needs Node 22+, Pi 1.4.x on `PATH` and Python 3.13+.",
     "pi install git:github.com/Shredi/pi-foreman            # global; pin with @<tag-or-commit>",
     "pi install -l git:github.com/Shredi/pi-foreman         # project scope (.pi/settings.json)",
     "/foreman setup --dry-run   # inside Pi: show the planned changes, write nothing",
@@ -91,11 +91,22 @@
       "title": "Role ladder (strong rung and climbs)",
       "purpose": "A child climbs to its role's strong model through the foreman after a context, turns, stuck or review-FAIL handoff; with no strong rung mapped nothing climbs.",
       "doc": "docs/ladder.md#rungs-and-the-live-rung",
-      "keys": ["providers.<x>.roles.<x>.strong", "ladder.strongAbove", "ladder.childMaxTurns", "ladder.maxTurns", "ladder.strongOnRevision", "ladder.research.factCriticalRung", "providers.<x>.strongAbove", "providers.<x>.childMaxTurns", "providers.<x>.strongOnRevision", "roles.<x>.strongAbove", "roles.<x>.childMaxTurns", "roles.<x>.strongOnRevision"],
+      "keys": ["providers.<x>.roles.<x>.strong", "ladder.strongAbove", "ladder.childMaxTurns", "ladder.maxTurns", "ladder.strongOnRevision", "ladder.sizing.enabled", "ladder.sizing.largeFileLines", "ladder.sizing.maxModules", "ladder.sizing.strongRisks", "ladder.sizing.topRisks", "ladder.sizing.topRung", "ladder.research.factCriticalRung", "providers.<x>.strongAbove", "providers.<x>.childMaxTurns", "providers.<x>.strongOnRevision", "roles.<x>.strongAbove", "roles.<x>.childMaxTurns", "roles.<x>.strongOnRevision"],
       "commands": [],
       "switch": {"key": "providers.*.roles.*.strong", "on": "nonnull"},
       "state": "opt-in",
       "enable": "{\"providers\": {\"<provider>\": {\"roles\": {\"builder\": {\"strong\": {\"model\": \"<provider>/<stronger-model>\"}}}}}}"
+    },
+    {
+      "id": "idle-downshift",
+      "title": "Idle model downshift",
+      "purpose": "A notice turn (child, wake, intercom, other) that starts on a cold cache runs on the foreman's idle rung; the owner's next input restores the base model. With no idle rung mapped nothing changes.",
+      "doc": "docs/ladder.md",
+      "keys": ["ladder.idleDownshift.enabled", "ladder.idleDownshift.causes"],
+      "commands": [],
+      "switch": {"key": "providers.*.roles.foreman.idle", "on": "nonnull"},
+      "state": "opt-in",
+      "enable": "{\"providers\": {\"<provider>\": {\"roles\": {\"foreman\": {\"idle\": {\"model\": \"<provider>/<cheaper-model>\"}}}}}}"
     },
     {
       "id": "rank-policy",
@@ -521,7 +532,7 @@
       "purpose": "`/retro` prints the session's friction metrics, writes permission-allow proposals and files findings to a local backlog read with `foreman backlog`.",
       "doc": "docs/retro.md#switches",
       "keys": ["retro.enabled", "retro.proposalMinReviews", "retro.workspaceKey", "retro.expireDays", "retro.askThreshold"],
-      "commands": ["/retro", "foreman retro", "foreman backlog"],
+      "commands": ["/retro", "/foreman flag-ask", "foreman retro", "foreman backlog"],
       "switch": null,
       "state": "on",
       "enable": ""
@@ -661,9 +672,9 @@
     {
       "id": "idle-cache",
       "title": "Idle prompt-cache policy",
-      "purpose": "Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge preset sets a 600 s byModel row and turns the keep-alive off); off for request-billed providers; silent without an entry.",
+      "purpose": "Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge preset sets a 3600 s byModel row, noting that a subscription turn within plan usage gets the 1-hour cache and 300 applies on extra-usage credits or an API key, keeps the keep-alive on with awayTicks 2 and gives the foreman role an idle rung); off for request-billed providers; silent without an entry. A warm budget (half a cold re-cache per idle), a presence gate (warms while the owner is away are limited) and, for TTLs beyond Pi's 30-minute idle cap, warms sent by pi-foreman itself apply to the keep-alive.",
       "doc": "docs/cache.md#config",
-      "keys": ["providers.<x>.cache", "providers.<x>.cache.ttlSeconds", "providers.<x>.cache.billing", "providers.<x>.cache.byModel", "providers.<x>.cache.keepalive.enabled", "providers.<x>.cache.keepalive.intervalSeconds", "providers.<x>.cache.keepalive.windowMinutes", "providers.<x>.cache.warmCompact"],
+      "keys": ["providers.<x>.cache", "providers.<x>.cache.ttlSeconds", "providers.<x>.cache.billing", "providers.<x>.cache.byModel", "providers.<x>.cache.keepalive.enabled", "providers.<x>.cache.keepalive.intervalSeconds", "providers.<x>.cache.keepalive.windowMinutes", "providers.<x>.cache.keepalive.budgetShare", "providers.<x>.cache.keepalive.awayTicks", "providers.<x>.cache.keepalive.whileWaiting", "providers.<x>.cache.keepalive.beyondPiCap", "providers.<x>.cache.keepalive.selfWarmWindowMinutes", "providers.<x>.cache.keepalive.compactMinTokens", "providers.<x>.cache.warmCompact", "presence.enabled", "presence.awayAfterMinutes", "presence.command", "providers.<x>.roles.<x>.idle.model", "providers.<x>.roles.<x>.idle.thinking"],
       "commands": [],
       "switch": {"key": "providers.*.cache.keepalive.enabled", "on": "true"},
       "state": "off",

@@ -149,6 +149,15 @@ The reader skip for protected operands (see Owned paths) covers a command whose 
 
 Protected files (the baseline's `protect.writeAsk` paths, such as `config/foreman.defaults.json`, `config/permissions.baseline.json` and `package.json`) are the foreman's to apply and commit. A child's `git add` or `git commit` naming one is denied with the text "The foreman stages and commits this file; report the needed change.", and every builder brief (not a rung-up handoff entry) ends its ledger block with one `Protected files (...)` line saying the same, so a builder reports the change instead of retrying.
 
+## Known limit: network reads (R31c)
+
+The `net-read` allow (docs/permissions.md, Network reads) takes any host, by owner decision. Residuals:
+
+- A GET to any host can carry data in its URL (path or query). The allow checks the command shape, not where the data goes.
+- `curl -L` follows redirects and the resolver may point a name anywhere; the allow sees the first URL only.
+- `~/.curlrc` (and the `wget` startup files and HSTS cache) still apply; the allow does not read them.
+- Output goes only into the session or the role scratch dir; each child role has its own scratch dir, so a child can read a file another child of the same role left there.
+
 ## Known limit: stale "needs attention" notices
 
 pi-subagents delivers `subagent_control_notice` custom messages with `pi.sendMessage` (`triggerTurn` for async runs), and a queued message cannot be withdrawn. The idle wake that carries them is handled at `input` (R26 item 2): when every unseen notice is for a run whose end event already arrived, the input returns `handled` and no turn starts (trace `notify_deduped {reason: "run_ended", runId}`). A wake that also carries a notice for a live run, or any owner prompt, still starts a turn, and the stale notice in it is hidden from the model and the display (`context`, `message_end`). `notices.ts` (`staleNoticeRunIds`, `dropEndedRunNotices`) holds the rules. Pi's hooks cannot cancel a queued custom message itself, so a mixed wake still runs; fixing that needs a Pi hook to withdraw a queued custom message (for example a `message_start` handler that can cancel it), or a run-end check in pi-subagents' `control-notices.js` before it calls `sendMessage`.
@@ -189,5 +198,5 @@ Key-by-key layer rules for `safety.*`: `design/architecture.md`
 | `close.from` | Sources a close request is accepted from (default `herdr`, `intercom-parent`); a project or session can only narrow it. |
 | `close.autoClean` | Remove manifest worktrees and scratch at close when the preconditions pass (default `true`); a project or session can only set false. See [close](close.md). |
 | `close.worktreeDir` | Worktree convention directory (default `../<repo>.worktrees`); user or overlay config only. |
-| `python.path` | Python 3.9+ interpreter; `null` auto-detects. It runs every guard, so a project or session value is ignored. |
+| `python.path` | Python 3.13+ interpreter; `null` auto-detects. It runs every guard, so a project or session value is ignored. |
 | `trace.enabled`, `trace.dir` | The allowlisted trace and its directory. `trace.enabled` defaults to `null`, which follows the effective `retro.enabled` (on in tui and rpc, off in json and print); an explicit `true` or `false` wins, so `false` always turns it off. The directory (`null` = the state dir; a project or session value must resolve inside the workspace). |

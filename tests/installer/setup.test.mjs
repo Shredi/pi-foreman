@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { writeFakePython } from "./fixtures/fake-python.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = fs.realpathSync(path.resolve(HERE, "..", ".."));
@@ -468,4 +469,38 @@ test("setup keeps the top-level bundled copies when a manifest entry does not re
   assert.match(out, /missing bundled entries under .*pkg: run npm ci in the checkout/);
   assert.deepEqual(installs(env), []);
   assert.deepEqual(readSettings(env).packages, ["npm:pi-subagents@0.75.0", "npm:keep-me@1.0.0", FOREMAN]);
+});
+
+test("setup refuses a python3 3.12 on PATH with the 3.13 message", posix, () => {
+  const env = fresh();
+  seed(env);
+  const fake = path.join(env.base, "fake");
+  fs.mkdirSync(fake);
+  writeFakePython(path.join(fake, "python3"), "3.12", `${env.base}-python.log`);
+  const r = spawnSync(process.execPath, [SETUP, "--agent-dir", env.agentDir], {
+    cwd: env.cwd,
+    encoding: "utf8",
+    env: { PATH: fake, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log },
+  });
+  const out = `${r.stdout}${r.stderr}`;
+  assert.notEqual(r.status, 0, out);
+  assert.match(out, /No Python >= 3\.13 found \(tried: .*python3.*Python 3\.12 is older than 3\.13/);
+  assert.deepEqual(installs(env), []);
+});
+
+test("setup accepts a 3.13 interpreter named by PI_FOREMAN_PYTHON, with no python3 on PATH", posix, () => {
+  const env = fresh();
+  seed(env);
+  const empty = path.join(env.base, "empty");
+  fs.mkdirSync(empty);
+  const py = writeFakePython(path.join(env.base, "py313"), "3.13", `${env.base}-python.log`);
+  const r = spawnSync(process.execPath, [SETUP, "--agent-dir", env.agentDir], {
+    cwd: env.cwd,
+    encoding: "utf8",
+    env: { PATH: empty, PI_FOREMAN_PYTHON: py, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log },
+  });
+  const out = `${r.stdout}${r.stderr}`;
+  assert.match(out, /python 3\.13 via PI_FOREMAN_PYTHON/);
+  assert.doesNotMatch(out, /No Python/);
+  assert.ok(fs.readFileSync(`${env.base}-python.log`, "utf8").includes("sys.executable"));
 });

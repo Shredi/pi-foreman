@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Session friction metrics and permission-allow proposals (stdlib, 3.9+).
+"""Session friction metrics and permission-allow proposals (stdlib, 3.13+).
 
     python scripts/foreman_retro.py [--session F] [--trace F ...] [--usage F] [--review-log F]
                                     [--proposals-out F] [--min-reviews N] [--agent-dir D] [--json]
@@ -402,6 +402,8 @@ def cache_metrics(trace, usage, sid, config=None):
     ka = [r for r in lines if r.get("kind") == "keepalive"]
     warm = sum(1 for e in trace or [] if isinstance(e, dict) and e.get("event") == "compaction"
                and e.get("reason") == "warm_idle")
+    down = sum(1 for e in trace or [] if isinstance(e, dict) and e.get("event") == "foreman_model"
+               and e.get("reason") == "idle_cold")
     fore = [(t, r) for r in lines if str(r.get("role", "?")) == "foreman" for t in [_ts(r)] if t is not None]
     fore.sort(key=lambda x: x[0])
     session_prov = next((p for p in (_line_provider(r) for _t, r in fore) if p), None)
@@ -424,15 +426,21 @@ def cache_metrics(trace, usage, sid, config=None):
     pol = policy(fore[0][1]) if fore else (pg.fc.cache_policy(config or {}, session_prov) if session_prov else None)
     if ttl is None and pol:
         ttl = pol.get("ttlSeconds")
-    if not (pol or ka or warm or cold):
+    if not (pol or ka or warm or cold or down):
         return None
-    return {"keepalives": len(ka), "keepaliveCost": round(sum(_line_cost(r) for r in ka), 4),
-            "warmCompactions": warm, "coldResumes": cold, "ttlSeconds": ttl}
+    out = {"keepalives": len(ka), "keepaliveCost": round(sum(_line_cost(r) for r in ka), 4),
+           "warmCompactions": warm, "coldResumes": cold, "ttlSeconds": ttl}
+    if down:
+        out["downshiftedTurns"] = down
+    return out
 
 
 def cache_line(c):
-    return "cache: keepalives %d ($%s), warm compactions %d, cold resumes %d" % (
+    text = "cache: keepalives %d ($%s), warm compactions %d, cold resumes %d" % (
         c["keepalives"], "%.2f" % c["keepaliveCost"], c["warmCompactions"], c["coldResumes"])
+    if c.get("downshiftedTurns"):
+        text += ", downshifted turns %d" % c["downshiftedTurns"]
+    return text
 
 
 def _rank_tier(ranks, model):
@@ -520,6 +528,38 @@ def render_explorer(e):
     return line
 
 
+SIZING_CLIMBS = ("context", "turns", "stuck", "checks_failed", "review_fail")
+
+
+def sizing_metrics(trace):
+    """Per sizing rule: launches, final-rung counts, later climbs and FAILs. Heuristic join: a launch_sizing owns the
+    trace records up to the next launch_sizing of the same role; its climb is a builder rung_up/rung_top with a
+    climb reason there, its FAIL a review_done with decision fail. None without launch_sizing events."""
+    recs = list(trace or [])
+    idx = [i for i, r in enumerate(recs) if r.get("event") == "launch_sizing"]
+    out = {}
+    for n, i in enumerate(idx):
+        r = recs[i]
+        m = out.setdefault(str(r.get("rule") or "?"), {"launches": 0, "rungs": collections.Counter(), "climbs": 0, "fails": 0})
+        m["launches"] += 1
+        m["rungs"][str(r.get("rung") or "?")] += 1
+        nxt = next((j for j in idx[n + 1:] if recs[j].get("role") == r.get("role")), len(recs))
+        window = recs[i + 1:nxt]
+        if any(w.get("event") in ("rung_up", "rung_top") and w.get("role") == "builder" and w.get("reason") in SIZING_CLIMBS for w in window):
+            m["climbs"] += 1
+        if any(w.get("event") == "review_done" and w.get("decision") == "fail" for w in window):
+            m["fails"] += 1
+    return {k: {**v, "rungs": dict(v["rungs"])} for k, v in out.items()} or None
+
+
+def render_sizing(s):
+    L = ["sizing (heuristic join): per rule launches, final rung, later climbs, FAILs"]
+    for rule in sorted(s):
+        v = s[rule]
+        L.append("  %s: %d launches, rung %s, climbs %d, fails %d" % (rule, v["launches"], kv(dict(sorted(v["rungs"].items()))), v["climbs"], v["fails"]))
+    return L
+
+
 def session_metrics(records):
     tools = collections.Counter()
     fams = collections.Counter()
@@ -560,6 +600,18 @@ def session_id_of(records):
 
 # ------------------------------------------------------------------ report
 
+def flagged_counts(trace):
+    """{family: count} of the owner's `ask_flag` trace events (None without a trace)."""
+    if trace is None:
+        return None
+    out = {}
+    for r in trace:
+        if isinstance(r, dict) and r.get("event") == "ask_flag":
+            fam = str(r.get("family") or "other")
+            out[fam] = out.get(fam, 0) + 1
+    return out
+
+
 def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
     sid = session_id_of(session)
     ranks = config = None
@@ -578,7 +630,9 @@ def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
         "usage": usage_metrics(usage, sid, rates) if usage is not None else None,
         "explorer": explorer_metrics(trace, usage, sid, ranks),
         "cache": cache_metrics(trace, usage, sid, config),
+        "sizing": sizing_metrics(trace),
         "session_tools": session_metrics(session) if session is not None else None,
+        "flagged_asks": flagged_counts(trace),
         "proposals": propose(asks, min_reviews, rules, load_protect_patterns(agent_dir)) if asks is not None else None,
     }
 
@@ -662,6 +716,8 @@ def render_text(rep, proposals_path=None):
             L.append(pl)
     if rep.get("explorer"):
         L.append(render_explorer(rep["explorer"]))
+    if rep.get("sizing"):
+        L.extend(render_sizing(rep["sizing"]))
     u = rep["usage"]
     if u is None:
         L.append("spawn cost: no data")
@@ -681,6 +737,9 @@ def render_text(rep, proposals_path=None):
     else:
         L.append("top tools: " + kv(s["top_tools"]))
         L.append("repeated bash families: " + kv(s["repeated_bash_families"]))
+    fl = rep.get("flagged_asks")
+    if fl:
+        L.append("Flagged asks: " + kv(fl))
     p = rep["proposals"]
     if p is None:
         L.append("proposals: no data")
@@ -828,6 +887,13 @@ def candidates(report, trace_events, usage_lines, session_tools, ask_threshold=D
             kind = e.get("kind") if e.get("kind") in FRICTION_KINDS else "prompt"
             role = _tag(e.get("role"), "agent")
             out.append({"kind": kind, "candidate": "%s: %s" % (role, e["note"]), "evidence": "Friction line reported by a %s run" % role})
+
+    # asks the owner flagged with /foreman flag-ask: filed into the global store only (foreman_backlog.store_path_for), complete command as evidence
+    for e in events:
+        if e.get("event") == "ask_flag" and str(e.get("command") or "").strip():
+            fam = _tag(e.get("family"), "other")
+            out.append({"kind": "flagged-ask", "family": fam, "candidate": "%s: %s via %s" % (fam, _tag(e.get("class"), "unknown"), str(e.get("rule") or "-")[:80]),
+                        "evidence": str(e["command"])})
     return out
 
 

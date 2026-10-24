@@ -228,7 +228,7 @@ test("high: a single launch is not narrowed; a tasks call keeps its first task a
   assert.match(a.wakes[0].content, /relaunch the queued launches one at a time with: \{"tasks":\[\{"agent":"explorer","task":"look 2"\},\{"agent":"explorer","task":"look 3"\}\]/);
 });
 
-test("high: a RUNG_UP strong relaunch stays on the bottom rung and is traced climb_suppressed; ok climbs", async (t) => {
+test("high: a RUNG_UP strong relaunch keeps the strong rung like ok (pressure delays, never downgrades)", async (t) => {
   for (const level of ["ok", "high"] as const) {
     const a = await rig(t, { strong: true });
     a.setLevel(level, level === "ok" ? [] : ["disk"]);
@@ -240,17 +240,10 @@ test("high: a RUNG_UP strong relaunch stays on the bottom rung and is traced cli
     const relaunch: Record<string, unknown> = { agent: "builder", task: "continue item 1", model: "strong" };
     await a.assistant(["b2"], () => relaunch);
     assert.equal(await a.launch("b2", relaunch), undefined, level);
-    if (level === "ok") {
-      assert.equal(relaunch.model, "fake/senior-reviewer");
-      assert.equal(events(a, "rung_up").length, 1);
-      assert.deepEqual(events(a, "climb_suppressed"), []);
-      assert.match(String(relaunch.task), /rung-up handoff/);
-    } else {
-      assert.equal(relaunch.model, "fake/builder", "bottom rung");
-      assert.deepEqual(events(a, "rung_up"), []);
-      assert.deepEqual(events(a, "climb_suppressed").map((r) => [r.level, r.reasons]), [["high", "disk"]]);
-      assert.doesNotMatch(String(relaunch.task), /rung-up handoff/);
-    }
+    assert.equal(relaunch.model, "fake/senior-reviewer", level);
+    assert.equal(events(a, "rung_up").length, 1, level);
+    assert.deepEqual(events(a, "climb_suppressed"), [], level);
+    assert.match(String(relaunch.task), /rung-up handoff/, level);
   }
 });
 

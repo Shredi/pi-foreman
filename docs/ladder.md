@@ -86,6 +86,36 @@ applies. The security rung is explicit config: it is written after the rank chec
 refuse it. Its thinking level is capped by `maxThinking` and `childMaxThinking`.
 When the rung goes beyond what `ladder.childPolicy` would allow, its `rung_up` (or `rung_top`) record carries `policy_override: true`.
 
+## Idle rung (foreman downshift)
+
+`providers.<p>.roles.foreman.idle` is a third rung of the foreman role, `{model, thinking}` like `strong`. It is user or
+overlay config only (a project or session value is ignored) and unset by default, which switches the downshift off. The
+`claude-bridge` presets map it to Sonnet 5.5 (medium).
+
+- **Rule.** A foreman turn that a notice starts (cause `child`, `wake`, `intercom` or `other`, the list
+  `ladder.idleDownshift.causes`) and that begins on a cold cache runs on the idle rung. The cache counts as cold when the
+  last cache touch is older than 0.95 x the TTL of the current model, or a compaction dropped it. The reason is cost:
+  the turn re-reads the whole prompt anyway, so it pays the cold price on a cheaper model. `ladder.idleDownshift.enabled`
+  (default true) switches the rule off; a project or session can only set it false, or remove causes.
+- **Restore.** The base model comes back on the owner's next input (cause `user`), on the answer to `ask_user_question`
+  or `foreman_checkpoint` (applies to the next request of that turn) and at every session start that finds an open
+  downshift. The model switch drops the provider cache once, so the restore pays one cold resume; the warm compaction
+  keeps that small ([cache](cache.md)).
+- **User `/model`.** A model the owner picks while downshifted becomes the base; the downshift stays enabled for later idles.
+- **Gates use the base model.** The reviewer different-model rule (`review_model`), the rank checks of child launches
+  and the shadow checks compare against the base model, never against the idle rung. Child role models are unaffected.
+- **Unavailable rung.** An idle rung that is not in the model registry, or a failed switch, leaves the base model in
+  place and traces `foreman_model {outcome: "unavailable"}` once per session.
+- **Cost.** While downshifted the idle model has its own keep-alive, TTL (its `cache.byModel` row) and warm budget.
+  `/foreman cost` and `foreman retro` book the turns to the idle model; the retro cache line counts them as
+  `downshifted turns K`. The footer shows a downshift glyph ([sessions](sessions.md)).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `providers.<p>.roles.foreman.idle.model`, `providers.<p>.roles.foreman.idle.thinking` | unset | The idle rung; the thinking level is capped by `maxThinking`, unset keeps the base level. User or overlay config only. |
+| `ladder.idleDownshift.enabled` | `true` | Switch the downshift on or off. A project or session can only set `false`. |
+| `ladder.idleDownshift.causes` | `child`, `wake`, `intercom`, `other` | Turn causes that may downshift. A project or session can only remove entries. |
+
 ## Research markers
 
 A launch entry (single, `tasks`, `chain` or `parallel`) whose task text carries a marker (case-insensitive) is routed on its own role:
@@ -97,6 +127,37 @@ A launch entry (single, `tasks`, `chain` or `parallel`) whose task text carries 
 
 Use `[research]` on an explorer launch that reads the web or PDFs; add `[fact-critical]` only when a wrong fact is costly. Code search needs no tag. In the claude-bridge presets this moves the explorer from its bottom to its strong model, and a fact-critical one to the security rung.
 
+## Launch sizing
+
+A builder launch may carry two extra top-level fields (like `reason`, per `tasks`/`chain`/`parallel` entry too; the entry wins). The adapter strips them from every launch and picks the rung from them. A launch without them runs as before (`launch_sizing` rule `undeclared`).
+
+- `size: { files: string[], largestFileLines?: number, modules?: number }`: the files the builder will touch.
+- `risk: string[]`, from `guard, permission, parser, concurrency, security, design`.
+
+Malformed fields (wrong type, unknown tag, negative or non-integer number, a directory in `files`) refuse the foreman's launch with `[sizing_invalid]` and a one-line fix. Other roles ignore the fields.
+
+**Measurement.** The adapter reads at most 20 named files, each against the entry's `cwd` (else the session cwd), inside that checkout only. A missing file counts 0 lines (new file); a file over 1 MiB or an unreadable one counts as large; files past the 20th count as large. `modules` counts distinct components: the first two directory segments of each file, leaving out root files, `docs/`, `*.md` and test directories. The claim only raises: the rule sees `max(declared, measured)`.
+
+| Rule | Condition | Rung |
+|---|---|---|
+| `risk_top` | a risk in `topRisks` (design) | top |
+| `risk_strong` | a risk in `strongRisks` (guard, permission, parser, concurrency, security) | strong |
+| `large_file` | lines over `largeFileLines`, or a large file | strong |
+| `modules` | components over `maxModules` | strong |
+| `small` | anything else (docs, changelog, config keys, a small new test, 1-3 small files) | default |
+
+The first matching row wins. Sizing only raises the rung:
+
+- **Precedence.** With no `model`, the final rung is the higher of the usual logic (heavy tier, revision climb, handoff) and the sizing rung. A sizing climb needs no `reason` and traces `rung_up` reason `sizing`. An explicit `model` at or above the sizing rung keeps the usual logic; a lower one needs a `reason`, else the launch is refused (`[sizing_below]`); with a reason it wins (`override`). With no strong rung mapped nothing is refused and the trace says `capped`.
+- **Top rung.** `ladder.sizing.topRung`, else the next rank above the builder's strong rung (`providers.<p>.ranks`), else strong (`capped`). A top refused by `ladder.childPolicy` falls back to strong; the launch is never blocked.
+- **Pressure and trivial.** Pressure delays, never downgrades: at high pressure (launches one at a time) and critical (launches deferred) every climb keeps its rung, the sizing strong or top climb included; a top falls back to strong only through `capped`, never through pressure. At the trivial tier a sizing strong or top launch escalates to standard, like a `reason` strong launch.
+- **Receipt rung note.** A launch that stays on the bottom rung although a strong climb was asked or wanted says why in its receipt: `builder on <bottom> (bottom rung: no strong rung mapped)`; a revision climb wanted with no strong rung also traces `revision_no_strong {role}`. Other receipts are unchanged.
+- **Bypass probes.** A builder launched with a `strongRisks` tag makes the next `item` or `pre-pr` reviewer launch carry a first line `[pi-foreman risk] <tags>: probe for bypasses ... and list each probe you ran.` An `item` or `pre-pr` PASS clears it.
+
+Keys (user or overlay config only; a project layer cannot change them): `ladder.sizing.enabled` (false: the fields are stripped and ignored), `ladder.sizing.largeFileLines` (1500), `ladder.sizing.maxModules` (2), `ladder.sizing.strongRisks`, `ladder.sizing.topRisks`, `ladder.sizing.topRung`.
+
+`foreman retro` lists per rule the launches, the final rungs, later climbs and later review FAILs. The join is heuristic: a record belongs to the last `launch_sizing` of the same role before it, so parallel builders and rounds that overlap can be misattributed. Read it as a trend, not a count per task.
+
 ## Trace records
 
 A child's records carry `role` and `runId` (the launch id) in its own `trace-<launchId>.jsonl`; see [retro](retro.md).
@@ -104,10 +165,13 @@ A child's records carry `role` and `runId` (the launch id) in its own `trace-<la
 | Event | Fields | When |
 |---|---|---|
 | `rung_up` | `role, from, to, reason` (+ `item` or `hits`, and `policy_override` for the reviewer) | A launch climbs from its live rung. |
+| `rung_up` reason `sizing` | `role, from, to, reason` | A builder launch climbed because its `size`/`risk` asked for a higher rung (see Launch sizing). |
+| `launch_sizing` | `role, rule, rung, base` (+ `files, lines, declaredLines, modules, declaredModules, outside, risk, note`) | Once per builder entry that carried `size` or `risk` or none (`undeclared`), and for another role that carried them (`not_builder`). `rung` is the final rung (`default`, `strong`, `top`), `base` the rung before sizing; `note` holds `capped`, `override`, `explicit`. |
 | `rung_top` | `role, model, reason` (+ `item` or `hits`, `policy_override`) | A climb was due but the live rung already is the top one. |
 | `child_policy_block` | `role, runId, kind, outcome, exit, decision` | A child stopped on a permission-policy block: `kind` is `policy_block`, `decision` is `stopped`. It is never climb-eligible and the harness does not relaunch it; the report says so. |
 | `child_repeat_refusal` | child: `runId, role, reason, decision`; foreman: `role, runId, kind, outcome, exit, decision` | The child got the same overlay deny reason twice in one run and stopped it (`run failed: repeated guarded-token probe`, `decision` `stopped`); every later tool call of the run is blocked. The foreman's record (`kind` `repeat_refusal`) treats it like `child_policy_block`: failed, never climb-eligible, not relaunched. |
 | `REPEAT_STOP_REASONS` (`launchwait.ts`, a constant, not a trace event) | — | The deny reasons a repeat may stop a child on (`child_repeat_refusal`): split or concatenated guarded literals, `HOME`/`FOREMAN_SCRATCH`/`$S` rebinding, a self-ruling write, and protected-config or credential path reads and writes. A repeated `cd` outside the workspace, worktree paths, npm/install asks, temp-dir writes, and read-budget or review-cap refusals never stop a run. |
+| `foreman_model` | `from, to, reason, cause` or `outcome` | The foreman model changed: `reason` `idle_cold` (downshift, with the turn `cause`), `owner` (restore on owner input), `answer` (restore after an owner answer), `session_start` (restore of an open downshift); `outcome: "unavailable"` when the idle rung cannot be used. |
 | `review_model` | `role, from, to, reason` | The different-model rule moved a reviewer off the foreman's model (`same_as_foreman`) or found no alternative (`no_alternative`). |
 | `review_occasion` | `occasion, thinking, model_overridden` | A reviewer launch for that occasion (`item`, `plan-review`, `pre-pr`, `second-opinion`); `ceremony.reviewByOccasion` applied (see [review](review.md#per-occasion-overrides)). |
 | `panel`, `finding` | see [review](review.md) | Shadow launch; a located finding. |

@@ -10,7 +10,10 @@ export type TraceField = (typeof TRACE_FIELDS)[number];
 export type TraceRecord = Partial<Record<TraceField, string | number | boolean | null>>;
 
 // `surface` (R18 `dialog` records: permission|child|checkpoint|ask_user|drift) is allowed beside the pinned TRACE_FIELDS list.
-const ALLOWED = new Set<string>([...TRACE_FIELDS, "surface"]);
+// `code` and `attempts` (`hint_write_failed`: the rename error code and the attempts made) likewise.
+// The warm-policy fields (budget, presence, self-warm source, compaction trigger) are allowed the same way: the pinned list stays as it is.
+// R39 `launch_sizing` keys likewise (base rung, declared and measured sizes, risk tags, files outside the workspace).
+const ALLOWED = new Set<string>([...TRACE_FIELDS, "surface", "code", "attempts", "source", "spent", "cold", "share", "idleSeconds", "trigger", "tokens", "min", "base", "declaredLines", "modules", "declaredModules", "risk", "outside"]);
 const MAX_STRING = 120;
 const MAX_COMMAND = 200; // a denied command (lane 3h)
 /** `command` is kept only on a deny trace: a refused launch, a read/recheck budget deny, an overlay deny. */
@@ -113,13 +116,13 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
   const out: Record<string, string | number | boolean | null> = {};
   for (const [k, v] of Object.entries(rec)) {
     if (!ALLOWED.has(k)) continue;
-    if (k === "command" && !isDeny(rec)) continue; // never a command outside a deny
+    if (k === "command" && !isDeny(rec) && rec.event !== "ask_flag") continue; // never a command outside a deny (and the owner's flagged ask, R31c)
     if (k === "message" && (rec.event !== "tool_error" || typeof v !== "string")) continue; // free text: only a tool_error's redacted message
     if (k === "message") {
       out[k] = scrubPaths(redactCommand(String(v))).slice(0, MAX_MESSAGE);
       continue;
     }
-    if (k === "note" && rec.event !== "friction") continue; // free text: only the scrubbed friction note
+    if (k === "note" && rec.event !== "friction" && rec.event !== "ask_flag" && rec.event !== "launch_sizing") continue; // free text: only the scrubbed friction / ask_flag note (and launch_sizing's fixed flag words)
     if (k === "file" && rec.event !== "finding") continue; // a path: only a finding's file, as its base name
     if (k === "file" && typeof v === "string") {
       out[k] = (v.split(/[\\/]/).pop() ?? "").slice(0, MAX_STRING);
@@ -130,6 +133,11 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
       if (Number.isFinite(v)) out[k] = v;
     } else if (typeof v === "string") {
       // every string field: secrets redacted, then every path, URL and file name replaced by `[path]` (a URL whole); model ids (`model`, `models`, a panel's `primary`, a climb's `from`/`to`) are config, not content
+      // R31c (owner ruling): a flagged ask keeps its COMPLETE command, only secret-looking values masked by redactCommand (no path scrub, no length cap)
+      if (k === "command" && rec.event === "ask_flag") {
+        out[k] = redactCommand(v);
+        continue;
+      }
       const s = UNSCRUBBED.has(k) ? v : k === "reason" && isDeny(rec) ? scrubReason(v) : scrubPaths(redactCommand(v));
       out[k] = s.slice(0, k === "command" ? MAX_COMMAND : k === "reason" && isDeny(rec) ? MAX_REASON : MAX_STRING);
     }

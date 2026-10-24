@@ -27,6 +27,7 @@
     "foreman_checkpoint": "allow",
     "foreman_ledger": "allow",
     "foreman_wait": "allow",
+    "foreman_session_open": "allow",
     "bg_wait": "allow",
     "bg_status": "allow",
     "bg_logs": "allow",

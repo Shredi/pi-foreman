@@ -20,20 +20,20 @@ test("candidate order: python.path, PI_FOREMAN_PYTHON, then per-OS defaults", ()
 });
 
 test("first working candidate wins and reports sys.executable", async () => {
-  const { spawner, calls } = fake({ "/opt/py": { stdout: "3.12\n/opt/py/bin/python3.12\n" } });
+  const { spawner, calls } = fake({ "/opt/py": { stdout: "3.13\n/opt/py/bin/python3.13\n" } });
   const r = await resolvePython({ configPath: "/opt/py", platform: "linux", spawner });
   assert.ok(r.ok);
-  assert.equal(r.info.executable, "/opt/py/bin/python3.12");
-  assert.deepEqual(r.info.version, [3, 12]);
+  assert.equal(r.info.executable, "/opt/py/bin/python3.13");
+  assert.deepEqual(r.info.version, [3, 13]);
   assert.deepEqual(calls, ["/opt/py"]);
 });
 
 test("too old or broken interpreters are skipped", async () => {
-  const { spawner } = fake({ python3: { stdout: "3.8\n/usr/bin/python3\n" }, python: { stdout: "3.9\n/usr/bin/python\n" } });
+  const { spawner } = fake({ python3: { stdout: "3.12\n/usr/bin/python3\n" }, python: { stdout: "3.13\n/usr/bin/python\n" } });
   const r = await resolvePython({ platform: "darwin", spawner });
   assert.ok(r.ok);
   assert.equal(r.info.source, "python");
-  assert.match(r.rejected[0], /3\.8 is older than 3\.9/);
+  assert.match(r.rejected[0], /3\.12 is older than 3\.13/);
 });
 
 test("Windows Store alias stub is rejected; a real Store install is not", async () => {
@@ -42,7 +42,7 @@ test("Windows Store alias stub is rejected; a real Store install is not", async 
   assert.equal(isStoreAliasStub("D:\\p\\AppData\\Local\\Microsoft\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_x\\python.exe", "win32"), false);
   const { spawner } = fake({
     "py -3": { error: new Error("ENOENT") },
-    python: { stdout: `3.12\n${stub}\n` },
+    python: { stdout: `3.13\n${stub}\n` },
   });
   const r = await resolvePython({ platform: "win32", spawner });
   assert.equal(r.ok, false);

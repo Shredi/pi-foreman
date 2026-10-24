@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Retro backlog: findings that survive sessions and age out (stdlib, 3.9+).
+"""Retro backlog: findings that survive sessions and age out (stdlib, 3.13+).
 
     python scripts/foreman_backlog.py [--agent-dir D] [--cwd DIR] [--json] <command> ...
         list   [--workspace KEY | --all] [--min-count N] [--kind K] [--status S]
@@ -45,7 +45,7 @@ sys.path.insert(0, HERE)
 import foreman_config as fc  # noqa: E402
 import safe_ops  # noqa: E402
 
-KINDS = ("agent", "routing", "skill", "rule", "permission", "prompt", "harness-bug", "review-model")
+KINDS = ("agent", "routing", "skill", "rule", "permission", "prompt", "harness-bug", "review-model", "flagged-ask")
 STATUSES = ("open", "planned", "done", "expired")
 FIELDS = ("id", "kind", "candidate", "workspace", "first_seen", "last_seen", "count", "sessions", "evidence", "status")
 MAX_SESSIONS = 20
@@ -88,8 +88,8 @@ def parse_time(val):
         return None
 
 
-def one_line(text):
-    return re.sub(r"\s+", " ", str(text or "")).strip()[:MAX_TEXT]
+def one_line(text, limit=MAX_TEXT):
+    return re.sub(r"\s+", " ", str(text or "")).strip()[:limit]
 
 
 def scrub(text):
@@ -165,7 +165,7 @@ def repo_store(workspace_root):
 def store_path_for(kind, *, workspace_root, key=None, cfg=None, agent_dir=None):
     """(store path, origin) for a finding of `kind`; origin is central, repo or global."""
     cdir = central_dir(cfg, agent_dir)
-    if kind == "harness-bug":
+    if kind in ("harness-bug", "flagged-ask"):  # a flagged ask keeps a complete command: never the repo store
         return os.path.join(cdir, GLOBAL + ".md"), "global"
     if repo_backlog_entry(workspace_root, cfg) is not None:
         return repo_store(workspace_root), "repo"
@@ -227,7 +227,8 @@ def render(entries, key):
                 v = "[%s]" % ", ".join(v or [])
             elif v is None:
                 continue
-            out.append("%s: %s" % (k, one_line(v)))
+            # a flagged ask keeps its complete (secret-masked) command as evidence: no length cap
+            out.append("%s: %s" % (k, one_line(v, None if k == "evidence" and e.get("kind") == "flagged-ask" else MAX_TEXT)))
         out.append(FENCE)
         out.append("")
     return "\n".join(out)
@@ -318,19 +319,24 @@ def record(candidates, *, workspace_root, key=None, session, cfg, agent_dir, now
         if kind not in KINDS or not text:
             continue
         path, origin = store_path_for(kind, workspace_root=workspace_root, key=key, cfg=cfg, agent_dir=agent_dir)
-        groups.setdefault(path, (origin, []))[1].append((kind, text, scrub(c.get("evidence"))))
+        flagged = kind == "flagged-ask"  # complete command as evidence: neither scrubbed nor cut
+        groups.setdefault(path, (origin, []))[1].append(
+            (kind, text, one_line(c.get("evidence"), None) if flagged else scrub(c.get("evidence")),
+             scrub(c.get("family")) if flagged else None))
     results = []
     for path, (origin, items) in groups.items():
         with locked(path):
             entries = load(path)
             by_id = {e["id"]: e for e in entries}
-            for kind, text, evidence in items:
+            for kind, text, evidence, family in items:
                 eid = entry_id(kind, text)
                 e = by_id.get(eid)
                 if e is None:
                     e = {"id": eid, "kind": kind, "candidate": text, "workspace": ws_key, "first_seen": ts,
                          "last_seen": ts, "count": 1, "sessions": [sid] if sid else [], "evidence": evidence,
                          "status": "open"}
+                    if family:
+                        e["family"] = family
                     entries.append(e)
                     by_id[eid] = e
                     results.append((eid, "created"))
@@ -459,8 +465,16 @@ def cmd_list(ctx, args):
     elif not rows:
         print("no backlog entries")
     else:
-        for e in rows:
+        flagged = [e for e in rows if e.get("kind") == "flagged-ask"]
+        for e in [e for e in rows if e not in flagged]:
             print(line_of(e, args.all or bool(args.workspace)))
+        families = {}
+        for e in flagged:
+            families.setdefault(e.get("family") or "other", []).append(e)
+        for fam, es in sorted(families.items(), key=lambda kv: -sum(x["count"] for x in kv[1])):
+            print("flagged asks: %s (x%d)" % (fam, sum(x["count"] for x in es)))
+            for e in es:  # entries by count (rows are sorted by count already)
+                print("  " + line_of(e, args.all or bool(args.workspace)))
     return 0
 
 

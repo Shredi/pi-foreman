@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Open a pi-foreman session in a new Herdr tab, or print the command for one (stdlib, 3.9+).
+"""Open a pi-foreman session in a new Herdr tab, or print the command for one (stdlib, 3.13+).
 
     python scripts/foreman_session.py open <label> <brief-file> [--cwd DIR] [--model ID]
                                       [--plan-first] [--focus] [--dry-run] [--print-all]
+                                      [--first-command CMD]... [--plan-mode]
                                       [--parent-id ID] [--own-model ID] [--agent-dir D]
     python scripts/foreman_session.py open <label> <brief-file> --machine NAME --cwd DIR [--trust] [...]
     python scripts/foreman_session.py list [--json] [--agent-dir D]
@@ -19,9 +20,11 @@
 and records the session in `<agent dir>/pi-foreman/state/sessions.json` (atomic write).
 
 `brief` resolves its target (a handoff dir with a `child` file, or a registry label / child id; the newest
-entry wins) and sends the text through pi-intercom's `cli.mjs send` (argv list, no shell). A single word that
-names a file is sent as `Brief from <opener id>: read <abs path> and act on it`. When node or the module is
-missing, or the broker refuses, it prints the manual message and exits 1; it never falls back to Herdr.
+entry wins) and writes the brief to `<handoff dir>/brief-<n>.md` (the lowest free n; an existing file is never
+overwritten and a target with no handoff dir is refused): a file argument is copied, any other text is written
+as is. It then sends `Brief from <opener id>: read <abs posix path> and act on it` through pi-intercom's
+`cli.mjs send` (argv list, no shell); text briefs stay on disk. When node or the module is missing, or the broker
+refuses, it prints the manual message and exits 1; it never falls back to Herdr.
 
 Herdr (HERDR_PANE_ID set and `herdr` on PATH, or HERDR_BIN): the workspace whose label is the
 basename of the git top level of --cwd (default: the current dir), else `workspace create`
@@ -35,6 +38,11 @@ the session is recorded as `pending`. After a Herdr open the child pane gets the
 PI_FOREMAN_PARENT_LABEL=<parent-slug> so its Pi refreshes the tag. Every PI_BG_* variable of the opener (PI_BG_FEATURES first;
 names and values checked, a failing one is skipped with a note) is passed to the child as well. --dry-run writes nothing and prints the handoff dir,
 child id and command; no Herdr call, no registry entry.
+
+`--first-command CMD` (repeatable, at most 4, each starting with `/`, one line, 200 characters at most) runs Pi's
+extension commands before the brief prompt: each is a positional message (`pi "/plan" "<brief prompt>"`), and Pi
+runs a `/` message to completion, awaited, before the next one. `--plan-mode` is `--first-command /plan`, placed first
+and never repeated. The child's Pi must provide the command (a plan-mode package); this CLI cannot check that.
 
 Agent dir: --agent-dir, else PI_CODING_AGENT_DIR, else ~/.pi/agent. Parent id: --parent-id, else
 PI_INTERCOM_SESSION_ID (the id pi-intercom publishes), else PI_INTERCOM_STABLE_ID, else `stableId` of
@@ -108,6 +116,9 @@ DELIVER_NAMES = {"ruling": re.compile(r"^(ruling|ruling-plan|ruling-[1-9]\d{0,2}
                  "brief": re.compile(r"^brief-[1-9]\d{0,2}\.md\Z")}
 NOTICE_FILES = {"plan": "plan.md", "result": "result.md", "update": "result.md", "ask": "ask.md"}
 NOTICE_HEADS = {"plan": "Plan", "result": "Result", "update": "Update", "ask": "Ask"}
+FIRST_MAX = 4
+FIRST_LEN = 200
+PLAN_COMMAND = "/plan"
 
 
 class Refused(Exception):
@@ -212,7 +223,7 @@ def footer(label, plan_first):
             "%d. Plan first: write `plan.md` in the handoff dir, send `Plan from %s: <absolute path of plan.md>`," % (n, label),
             "   then stop and wait for the parent's ruling. The parent writes `ruling.md` in the handoff dir (first",
             "   line `APPROVED` = go ahead; anything else = revise `plan.md` and send `Plan from %s: <path>` again)" % label,
-            "   and wakes you with a brief naming the ruling path (`foreman session brief %s <ruling path>`)." % label,
+            "   and wakes you with a brief naming `brief-<n>.md`, a copy of the ruling (`foreman session brief %s <ruling path>`)." % label,
         ]
         n += 1
     lines += [
@@ -468,29 +479,56 @@ def prompt_text(handoff):
     return "Read the handoff brief at %s and proceed." % (Path(handoff) / "brief.md").as_posix()
 
 
-def posix_command(env, model, prompt):
+def first_commands(cmds, plan_mode):
+    """The Pi messages before the brief prompt: /plan first with --plan-mode, then --first-command in order; no repeats."""
+    out = []
+    for c in ([PLAN_COMMAND] if plan_mode else []) + list(cmds):
+        if c not in out:
+            out.append(c)
+    return out
+
+
+def check_first_commands(cmds):
+    if len(cmds) > FIRST_MAX:
+        raise Refused("at most %d first commands (--plan-mode counts as %s)" % (FIRST_MAX, PLAN_COMMAND))
+    for c in cmds:
+        if not c.startswith("/"):
+            raise Refused("--first-command must start with /: %r" % c)
+        if len(c) > FIRST_LEN:
+            raise Refused("--first-command is longer than %d characters" % FIRST_LEN)
+        if any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in c):
+            raise Refused("--first-command must be one line without control characters")
+        if any(0x2018 <= ord(ch) <= 0x201b for ch in c):
+            raise Refused("--first-command must not contain typographic single quotes (PowerShell reads them as quotes)")
+
+
+def posix_command(env, model, prompt, first=()):
     parts = ["env"] + ["%s=%s" % (k, shlex.quote(v)) for k, v in env] + ["pi"]
     if model:
         parts += ["--model", shlex.quote(model)]
-    return " ".join(parts + [shlex.quote(prompt)])
+    return " ".join(parts + [shlex.quote(c) for c in first] + [shlex.quote(prompt)])
+
+
+# ASCII apostrophe and the typographic single quotes U+2018-U+201B, which PowerShell also reads as quotes
+PS_SINGLE_QUOTES = "'\u2018\u2019\u201a\u201b"
 
 
 def ps_quote(v):
-    return "'" + v.replace("'", "''") + "'"
+    return "'" + "".join(ch * 2 if ch in PS_SINGLE_QUOTES else ch for ch in v) + "'"
 
 
-def powershell_command(env, model, prompt):
+def powershell_command(env, model, prompt, first=()):
     sets = ["$env:%s=%s" % (k, ps_quote(v)) for k, v in env]
-    call = ["pi"] + (["--model", ps_quote(model)] if model else []) + [ps_quote(prompt)]
+    call = ["pi"] + (["--model", ps_quote(model)] if model else []) + [ps_quote(c) for c in first] + [ps_quote(prompt)]
     return "; ".join(sets + [" ".join(call)])
 
 
-def fallback_text(env, model, prompt, cwd, platform, print_all):
+def fallback_text(env, model, prompt, cwd, platform, print_all, first=()):
     out = ["No Herdr here. Run this in a new terminal in %s:" % cwd]
     if print_all or platform != "win32":
-        out += ["POSIX shell:"] * print_all + ["  " + posix_command(env, model, prompt)]
+        out += ["POSIX shell:"] * print_all + ["  " + posix_command(env, model, prompt, first)]
     if print_all or platform == "win32":
-        out += ["PowerShell:"] * print_all + ["  " + powershell_command(env, model, prompt)]
+        out += ["PowerShell:"] * print_all + ["  " + powershell_command(env, model, prompt, first)]
     return "\n".join(out)
 
 
@@ -519,6 +557,8 @@ def cmd_open(a):
     adir = agent_dir(a.agent_dir)
     if not LABEL_RE.match(a.label):
         raise Refused("label must be 1-40 characters of A-Z a-z 0-9 . _ - and start with a letter or digit")
+    first = first_commands(a.first_command or [], a.plan_mode)
+    check_first_commands(first)
     brief = Path(a.brief)
     if not brief.is_file():
         raise Refused("brief file not found: %s" % a.brief)
@@ -547,7 +587,7 @@ def cmd_open(a):
         raise Refused("cannot read the brief: %s" % e)
     params = {"adir": adir, "label": a.label, "text": text, "cwd": cwd, "model": a.model, "own_model": own_model,
               "plan_first": a.plan_first, "parent": parent, "focus": a.focus, "dry_run": a.dry_run,
-              "print_all": a.print_all}
+              "print_all": a.print_all, "first": first}
     return open_session(params)[0]
 
 
@@ -573,7 +613,8 @@ def open_session(p, remote=None):
         parent_slug = opener_slug(here, git_top(here))
     env = child_env(handoff, parent, child, parent_slug, model, remote=bool(remote))
     prompt = prompt_text(handoff)
-    command = posix_command(env, model, prompt)
+    first = p.get("first") or []
+    command = posix_command(env, model, prompt, first)
     if remote:
         found = herdr_bin()
         binary = found if found and herdr_server_up(found) else None
@@ -590,7 +631,7 @@ def open_session(p, remote=None):
         if binary:
             say("dry run: would open a tab %r in the Herdr workspace %r and run:\n  %s" % (label, ws_label, command))
         else:
-            say("dry run: " + fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"]))
+            say("dry run: " + fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first))
         return 0, dict(info, status="dryRun")
     handoff.mkdir(parents=True, exist_ok=False)
     brief_footer = remote_footer(label, p["plan_first"], remote["cap"]) if remote else footer(label, p["plan_first"])
@@ -598,12 +639,14 @@ def open_session(p, remote=None):
     (handoff / "parent").write_text(parent + "\n", "utf-8")
     (handoff / "child").write_text(child + "\n", "utf-8")
     # the exact launch line (Herdr's pane command, else this platform's fallback line): a relaunch is a copy
-    launch = command if binary or host_platform() != "win32" else powershell_command(env, model, prompt)
+    launch = command if binary or host_platform() != "win32" else powershell_command(env, model, prompt, first)
     (handoff / LAUNCH_FILE).write_text(launch + "\n", "utf-8")
     entry = {"label": label, "child": child, "parent": parent, "handoff": str(handoff), "cwd": str(cwd),
              "model": model or None, "opened": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": "pending", "last": None}
     if remote and remote.get("trusted"):
         entry["trusted"] = remote["trusted"]
+    if first:
+        entry["firstCommands"] = first
     if managed_worktree(cwd, adir):  # Pi would ask "Trust project folder?" for a fresh worktree
         import foreman_trust
         if foreman_trust.grant(adir, cwd):
@@ -619,10 +662,10 @@ def open_session(p, remote=None):
         except HerdrError as e:
             entry["status"] = "failed"
             warn(str(e))
-            say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"]))
+            say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first))
             code = 2
     else:
-        say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"]))
+        say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first))
     reg = read_registry(adir)
     reg["sessions"] = [s for s in reg["sessions"] if not (isinstance(s, dict) and s.get("child") == child)] + [entry]
     write_registry(adir, reg)
@@ -1243,16 +1286,18 @@ def cmd_list(a):
 
 
 def resolve_child(adir, target):
-    """A handoff dir (its `child` file) or a registry label / child id (newest entry wins) -> the child's intercom id."""
+    """A handoff dir (its `child` file) or a registry label / child id (newest entry wins) -> (the child's intercom id,
+    its handoff dir or None). The handoff dir is the target itself when it is one, else the entry's `handoff`."""
     p = Path(target)
     if p.is_dir() and (p / "child").is_file():
         child = (p / "child").read_text("utf-8").strip()
         if VALUE_RE.match(child):
-            return child
+            return child, p
         raise Refused("%s has no usable child id" % (p / "child"))
     for s in reversed(read_registry(adir)["sessions"]):
         if isinstance(s, dict) and target in (s.get("label"), s.get("child")) and VALUE_RE.match(str(s.get("child"))):
-            return s["child"]
+            handoff = s.get("handoff")
+            return s["child"], (Path(handoff) if isinstance(handoff, str) and handoff else None)
     raise Refused("no session with handoff dir, label or child id %r (see: foreman session list)" % target)
 
 
@@ -1279,20 +1324,44 @@ def send_intercom(to, text):
     return r.returncode == 0, detail
 
 
+def new_brief(handoff, data):
+    """Write `data` (bytes) to the lowest free `brief-<n>.md` in the handoff dir and return its path. The exclusive
+    create ("xb") never overwrites: a file that appears after the scan is refused."""
+    n = 1
+    while os.path.lexists(Path(handoff) / ("brief-%d.md" % n)):
+        n += 1
+    target = Path(handoff) / ("brief-%d.md" % n)
+    try:
+        with open(target, "xb") as f:
+            f.write(data)
+    except FileExistsError:
+        raise Refused("%s appeared meanwhile; not overwritten" % target.name)
+    except OSError as e:
+        raise Refused("cannot write the brief: %s" % e)
+    return target
+
+
 def cmd_brief(a):
     adir = agent_dir(a.agent_dir)
     entry = None if Path(a.target).is_dir() else find_entry(adir, a.target)
     if entry and entry.get("machine"):
         return remote_brief(a, adir, entry)
-    to = resolve_child(adir, a.target)
+    to, handoff = resolve_child(adir, a.target)
     opener = opener_id(a.parent_id, adir)
     if not opener or not VALUE_RE.match(opener):
         raise Refused("no opener intercom id: pass --parent-id")
+    if handoff is None:
+        raise Refused("%s has no handoff dir to write the brief to (see: foreman session list)" % a.target)
     given = Path(a.text)
-    if not re.search(r"\s", a.text) and given.is_file():  # same wording as /foreman session brief
-        message = "Brief from %s: read %s and act on it" % (opener, given.resolve())
+    if not re.search(r"\s", a.text) and given.is_file():  # a file argument: copied (same wording as /foreman session brief)
+        try:
+            data = given.read_bytes()
+        except OSError as e:
+            raise Refused("cannot read the brief file: %s" % e)
     else:
-        message = a.text
+        data = (a.text + "\n").encode("utf-8")
+    brief = new_brief(handoff, data).resolve()
+    message = "Brief from %s: read %s and act on it" % (opener, brief.as_posix())
     ok, detail = send_intercom(to, message)
     if ok:
         print("pi-foreman session: brief sent to %s." % to)
@@ -1314,6 +1383,8 @@ def main(argv=None):
     o.add_argument("--own-model")
     o.add_argument("--parent-id")
     o.add_argument("--plan-first", action="store_true")
+    o.add_argument("--first-command", action="append")
+    o.add_argument("--plan-mode", action="store_true")
     o.add_argument("--focus", action="store_true")
     o.add_argument("--dry-run", action="store_true")
     o.add_argument("--print-all", action="store_true")

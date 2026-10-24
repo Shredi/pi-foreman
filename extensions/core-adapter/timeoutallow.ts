@@ -17,6 +17,7 @@ import { expandScratchVar, scratchCommandAllowed } from "./childscratch.ts";
 import { isTmpScratch } from "./tmpscratch.ts";
 import type { TmpScratchDeps } from "./tmpscratch.ts";
 import { ChainWrites, contained, redirectOk, refusedProgram, SAFE_CLASSES, scratchExpansions, segmentEffect } from "./effects.ts";
+import { netReadSegment } from "./netread.ts";
 import type { EffectCtx } from "./effects.ts";
 import { splitChain } from "./shellchain.ts";
 import { hasGlobSentinel, ownHandoffSegment, withGlobSentinel } from "./ownhandoff.ts";
@@ -79,10 +80,10 @@ export function unwrapTimeout(unit: string): string | null {
   }
 }
 
-export type AllowLabel = "timeout-wrapper" | "test-restore" | "sed-read" | "tmp-scratch" | "child-scratch" | "own-handoff" | "effect-write-in" | "effect-build-test" | "effect-read";
+export type AllowLabel = "timeout-wrapper" | "test-restore" | "sed-read" | "tmp-scratch" | "child-scratch" | "own-handoff" | "effect-write-in" | "effect-build-test" | "effect-read" | "net-read";
 
 /** Label precedence when a chain mixes allowed segments (the first present wins). */
-const PRECEDENCE: AllowLabel[] = ["timeout-wrapper", "test-restore", "sed-read", "own-handoff", "effect-write-in", "effect-build-test", "effect-read", "child-scratch"];
+const PRECEDENCE: AllowLabel[] = ["timeout-wrapper", "test-restore", "net-read", "sed-read", "own-handoff", "effect-write-in", "effect-build-test", "effect-read", "child-scratch"];
 
 export interface AllowDeps extends TmpScratchDeps {
   scratchDirs?: string[];
@@ -145,9 +146,15 @@ function compose(rules: BashRules, text: string, deps: AllowDeps): { label: Allo
   const writes = c ? new ChainWrites(c) : null;
   for (const seg of chain.segments) {
     if (hits(rules.ask, seg.text, "") || hits(rules.deny, seg.text, "") || refusedProgram(seg.words)) return null;
-    if (!seg.redirects.every((r) => redirectOk(r, c, cwd, scratch, platform))) return null;
+    // R31c: a network read (netread.ts) has its own redirect rules; the generic scratch / /tmp acceptance is not used for it
+    const net = c ? netReadSegment(seg, c.role, c.netOut ?? [], cwd) : false;
+    if (!net && !seg.redirects.every((r) => redirectOk(r, c, cwd, scratch, platform))) return null;
     if (c) {
       if (!writes!.pass(cwd, seg)) return null; // a path under an earlier segment's write (effects.ts ChainWrites)
+      if (net) {
+        labels.add("net-read");
+        continue;
+      }
       if ((deps.ownDirs?.length || deps.ledger) && ownHandoffSegment(c, deps.ownDirs ?? [], cwd, seg, deps.ledger)) {
         labels.add("own-handoff");
         continue;
@@ -179,6 +186,8 @@ function compose(rules: BashRules, text: string, deps: AllowDeps): { label: Allo
     if (sedUnitAllowed(rules, unit)) labels.add("sed-read");
     else if (!unitAllowed(rules, unit)) return null;
   }
+  // a chain with a network read holds only reads: no write-in, build-test, own-handoff write, timeout wrapper or user-rule ("rules") segment
+  if (labels.has("net-read") && [...labels].some((l) => l !== "net-read" && l !== "effect-read" && l !== "sed-read")) return null;
   const label = PRECEDENCE.find((l) => labels.has(l));
   return label ? { label, segments: chain.segments.length } : null;
 }

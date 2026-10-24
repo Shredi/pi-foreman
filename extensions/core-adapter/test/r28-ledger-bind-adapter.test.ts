@@ -11,7 +11,7 @@ import { defaultSpawner } from "../spawn.ts";
 import { r11Rig } from "./_r11rig.ts";
 
 const py = await resolvePython({ envPath: process.env.PI_FOREMAN_PYTHON, platform: process.platform, spawner: defaultSpawner });
-const skip = !py.ok ? "no Python >= 3.9" : false;
+const skip = !py.ok ? "no Python >= 3.13" : false;
 
 test("R28: write rebinds, edit keeps a live binding, a write rebinds again", { skip }, async (t) => {
   const a = await r11Rig(t);

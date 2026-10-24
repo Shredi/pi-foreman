@@ -1,4 +1,4 @@
-"""Replay driver for pi-foreman (design section 10). Standard library only, Python 3.9+.
+"""Replay driver for pi-foreman (design section 10). Standard library only, Python 3.13+.
 
 Each Rig owns a fresh temp root with:
   agent/    PI_CODING_AGENT_DIR: settings.json (packages: this repo, which bundles pi-subagents, the permission system and pi-intercom; the
@@ -195,6 +195,8 @@ class Rig:
         l2 = {
             "providers": provider_map(providers, unmapped) if l2_providers else {},
             "trace": {"enabled": True},
+            # the presence probe never reads the host's keyboard state in a rig; a case that tests the gate sets presence itself
+            "presence": {"enabled": False},
             "safety": {"requiredChildExtensions": [str(FAKE_PROVIDER)]},
             # Scenarios written for detached launches keep them; launch-wait scenarios set "block".
             "ceremony": {"launchWait": "detach"},
@@ -413,8 +415,9 @@ class PiRpc:
                     raise RuntimeError("%s failed: %s" % (record.get("type"), rec.get("error")))
                 return rec.get("data") or {}
 
-    def session_id(self):
-        return self.request({"type": "get_state"})["sessionId"]
+    def session_id(self, timeout=60.0):
+        # The first RPC after launch also waits for pi to boot, which is slow on a loaded Windows runner.
+        return self.request({"type": "get_state"}, timeout)["sessionId"]
 
     def wait_child_notify(self, timeout=90.0, answers=None):
         """Wait for a detached child's completion notice and the parent run it triggers to settle.

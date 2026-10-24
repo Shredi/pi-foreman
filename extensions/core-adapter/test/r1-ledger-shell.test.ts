@@ -14,7 +14,7 @@ import { defaultSpawner } from "../spawn.ts";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const py = await resolvePython({ envPath: process.env.PI_FOREMAN_PYTHON, platform: process.platform, spawner: defaultSpawner });
-const skip = !py.ok ? "no Python >= 3.9" : false;
+const skip = !py.ok ? "no Python >= 3.13" : false;
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 

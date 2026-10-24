@@ -19,6 +19,7 @@ interface Row {
   output?: number;
   cache_read?: number;
   cache_write_5m?: number;
+  cache_write_1h?: number;
 }
 interface PriceRow extends Row {
   long_context?: Row & { above?: number };
@@ -61,7 +62,7 @@ export function loadPrices(pkgRoot: string): PriceTable | null {
 }
 
 /** The table's rate for a model id (provider prefix and a date suffix are tolerated) and one request's prompt size. */
-export function tableRate(table: PriceTable | null | undefined, model: unknown, promptTokens: number): Rate | null {
+export function tableRate(table: PriceTable | null | undefined, model: unknown, promptTokens: number, longWrite = false): Rate | null {
   if (!table || typeof model !== "string" || !model) return null;
   const bare = model.slice(model.lastIndexOf("/") + 1);
   let row = table.models[bare];
@@ -72,7 +73,7 @@ export function tableRate(table: PriceTable | null | undefined, model: unknown, 
   if (!row) return null;
   const lc = row.long_context;
   const t: Row = lc && promptTokens > num(lc.above) ? lc : row;
-  return { input: num(t.input), output: num(t.output), cacheRead: num(t.cache_read), cacheWrite: num(t.cache_write_5m) };
+  return { input: num(t.input), output: num(t.output), cacheRead: num(t.cache_read), cacheWrite: num(longWrite && t.cache_write_1h !== undefined ? t.cache_write_1h : t.cache_write_5m) };
 }
 
 export function costAt(tokens: Tokens, rate: Rate): Priced {
