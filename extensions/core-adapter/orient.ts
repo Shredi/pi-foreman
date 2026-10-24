@@ -19,7 +19,7 @@ export interface OrientInput {
   readmeMd: string | null;
   /** Raw package.json text, if tracked. */
   packageJson: string | null;
-  reads: { warn: number; deny: number };
+  reads: { warn: number; every: number };
   maxLines: number;
 }
 
@@ -79,7 +79,7 @@ export function buildOrientation(inp: OrientInput): string {
   const doc = inp.agentsMd !== null ? { name: "AGENTS.md", text: inp.agentsMd } : inp.readmeMd !== null ? { name: "README.md", text: inp.readmeMd } : null;
   const head = ["# Orientation (not a tool call; it does not count against your read budget)", "", "## Tracked files (dir, count; depth 2)"];
   const tool = toolchainLines(files, inp.packageJson);
-  const tail = [...(tool.length ? ["", "## Toolchain", ...tool.map((t) => `- ${t}`)] : []), "", `Deeper exploration: launch the explorer. Your read budget before the first launch is ${inp.reads.warn}/${inp.reads.deny} (warn/deny).`, `Bundled package roots (pi-foreman package root, not this repo; read there, never \`find\` over the agent dir): ${BUNDLED_PACKAGE_ROOTS.map((r) => `\`${r}\``).join(", ")}.`];
+  const tail = [...(tool.length ? ["", "## Toolchain", ...tool.map((t) => `- ${t}`)] : []), "", `Deeper exploration: launch the explorer. Your read reminder before the first launch comes after ${inp.reads.warn} reads, then every ${inp.reads.every} reads.`, `Bundled package roots (pi-foreman package root, not this repo; read there, never \`find\` over the agent dir): ${BUNDLED_PACKAGE_ROOTS.map((r) => `\`${r}\``).join(", ")}.`];
   const tree = treeLines(files);
   let docBlock: string[] = [];
   if (doc) {
@@ -111,7 +111,7 @@ function readHead(cwd: string, name: string): string | null {
 }
 
 /** Collect from `cwd` (the repo root is expected); "" when not a git repo or git is missing. */
-export async function collectOrientation(cwd: string, opts: { reads: { warn: number; deny: number }; maxLines: number }): Promise<string> {
+export async function collectOrientation(cwd: string, opts: { reads: { warn: number; every: number }; maxLines: number }): Promise<string> {
   const out = await git(cwd, ["ls-files", "-z"]);
   if (out === null) return "";
   const files = out.split("\0").filter(Boolean);

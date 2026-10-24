@@ -241,10 +241,10 @@
         "foremanReads": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Read budget of the foreman's own read-class calls (bash, read, grep, find, ls, codemode; a codemode script counts once) per phase: before = until the first child launch, after = since the latest launch. At warn the result tells the foreman to launch the explorer; above deny the call is refused. A project or session can only lower each value.",
+          "description": "Read budget of the foreman's own read-class calls (bash, read, grep, find, ls, codemode; a codemode script counts once) per phase: before = until the first child launch, after = since the latest launch. The foreman's reads are never refused: at warn the result carries a reminder to delegate, and again after every `every` further reads. A project or session can only lower each value. `deny` is deprecated and ignored (accepted so existing configs still validate).",
           "properties": {
-            "before": { "type": "object", "additionalProperties": false, "properties": { "warn": { "type": "integer", "minimum": 1 }, "deny": { "type": "integer", "minimum": 1 } } },
-            "after": { "type": "object", "additionalProperties": false, "properties": { "warn": { "type": "integer", "minimum": 1 }, "deny": { "type": "integer", "minimum": 1 } } }
+            "before": { "type": "object", "additionalProperties": false, "properties": { "warn": { "type": "integer", "minimum": 1, "description": "Reads before the first reminder." }, "every": { "type": "integer", "minimum": 1, "description": "Reads between reminders after warn." }, "deny": { "type": "integer", "minimum": 1, "deprecated": true, "description": "Deprecated and ignored: the read budget never refuses a read." } } },
+            "after": { "type": "object", "additionalProperties": false, "properties": { "warn": { "type": "integer", "minimum": 1, "description": "Reads before the first reminder." }, "every": { "type": "integer", "minimum": 1, "description": "Reads between reminders after warn." }, "deny": { "type": "integer", "minimum": 1, "deprecated": true, "description": "Deprecated and ignored: the read budget never refuses a read." } } }
           }
         },
         "childReads": {
@@ -285,6 +285,8 @@
         "planner": { "type": "string", "enum": ["self", "role"], "description": "Who writes the heavy plan. self (default) = the foreman writes .workflow/scratch/plan-<topic>.md itself and its approved checkpoint satisfies the planner step; role = a planner launch is required, but a planner whose rank tier is <= the foreman's (unranked counts as not below) switches the session to self at the launch attempt. [plan-review] stays mandatory at heavy on both paths. Free per layer." },
         "childTimeoutSeconds": { "type": "integer", "minimum": 1, "description": "Per-tool-call timeout of planner, builder, reviewer, senior-reviewer and finalizer runs (pi-subagents toolTimeoutMs); a run deadline timeoutMs below it is raised to it. Default 1800. A project or session can only lower it." },
         "launchTimeoutCapMinutes": { "type": "integer", "minimum": 1, "description": "The only hard ceiling on a child run deadline, in minutes: the role timeoutMinutes is the default and a launch timeoutMs wins, but no written deadline exceeds this. Default 120. A project or session can only lower it." },
+        "childBashTimeoutSeconds": { "type": "integer", "minimum": 1, "description": "Default timeout in seconds of a child's bash call that names no timeout. Capped at childBashTimeoutMaxSeconds. Default 600. Free per layer." },
+        "childBashTimeoutMaxSeconds": { "type": "integer", "minimum": 1, "description": "Cap in seconds on the timeout a child's bash call names. The effective ceiling is the lower of this and childTimeoutSeconds (the per-tool-call limit of the child run). Default 1800. Free per layer." },
         "heavyThreshold": { "type": "string", "enum": ["strict", "eee843d"], "description": "strict = heavy is for multi-component or risky changes (prompt criteria); heavySignals keyword hits in a request are only a hint to the foreman; heavyFileCount still escalates. eee843d = the old prompt line and keyword auto-escalation. A project or session can only move toward eee843d." }
       }
     },
