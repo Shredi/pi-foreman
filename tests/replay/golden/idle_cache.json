@@ -7,7 +7,7 @@
   {
    "event": "compaction",
    "reason": "warm_idle",
-   "tier": "cheap",
+   "point": 100000,
    "model": "claude-bridge/foreman"
   },
   {

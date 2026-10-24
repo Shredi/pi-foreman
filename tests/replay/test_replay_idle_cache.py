@@ -3,8 +3,10 @@
 The fake provider is registered as claude-bridge (FOREMAN_FAKE_BRIDGE=1) and declares `promptCache`
 (FOREMAN_FAKE_PROMPT_CACHE=1); Pi's `cacheWarming` is "idle". The cache policy has a 20 s TTL, a 30 s
 interval and a 1 minute window, so Pi ticks every 10 s and the warm-compaction check lands 30 s after
-the session settles. The last answer reports 90000 tokens (0.45 of the window): above the idle floor
-(0.3 = half of the 0.6 tier threshold), below the threshold, so only the idle check compacts. Expected
+the session settles. Pi's reserveTokens is 100000, so the runtime compaction point is the window minus
+100000 = 100000 tokens. The last answer reports 90000 tokens: above the idle floor (50000 = half of the
+point), below Pi's own threshold, so only the idle check compacts (turn_end never requests a compaction:
+there is no compact_tier event and the only compaction trace is warm_idle). Expected
 trace: keepalive fired (once or more), compaction warm_idle, keepalive window_end (reason compact),
 and Pi really ran the compaction (a compaction entry in the session file). Same prerequisites as
 test_replay.py.
@@ -28,17 +30,16 @@ CONFIG = {
     "providers": {BRIDGE: {"cache": {"ttlSeconds": 20, "billing": "token",
                                      "keepalive": {"enabled": True, "intervalSeconds": 30, "windowMinutes": 1},
                                      "warmCompact": True}}},
-    "compaction": {"threshold": {"cheap": 0.6}},
 }
-SETTINGS = {"cacheWarming": "idle", "compaction": {"keepRecentTokens": 1}}
-KEYS = ("event", "outcome", "reason", "tier", "model")
+SETTINGS = {"cacheWarming": "idle", "compaction": {"keepRecentTokens": 1, "reserveTokens": 100000}}
+KEYS = ("event", "outcome", "reason", "point", "model")
 
 
 def idle_events(recs):
-    """keepalive, compaction and compact_tier events; consecutive `fired` collapsed, timing and token fields dropped."""
+    """keepalive and compaction events; consecutive `fired` collapsed, timing and token fields dropped."""
     out = []
     for r in recs:
-        if r.get("event") not in ("keepalive", "compaction", "compact_tier"):
+        if r.get("event") not in ("keepalive", "compaction"):
             continue
         e = shape([r], KEYS)[0]
         if out and e == out[-1] and e.get("outcome") == "fired":
@@ -66,7 +67,9 @@ class TestIdleCache(ReplayCase):
         events = events[next(i for i, e in enumerate(events) if e.get("outcome") == "fired"):]
         kinds = [e["event"] for e in events]
         self.assertEqual(kinds.count("compaction"), 1, events)
-        self.assertNotIn("compact_tier", kinds, "turn_end must not compact below the threshold")
+        self.assertNotIn("compact_tier", [r.get("event") for r in recs], "turn_end no longer requests a compaction")
+        self.assertEqual([r.get("reason") for r in recs if r.get("event") == "compaction"], ["warm_idle"], "the idle warm compaction is the only compaction request")
+        self.assertEqual([r.get("point") for r in recs if r.get("event") == "compaction_point"][:1], [100000], "the runtime point is traced at session start")
         self.assertEqual(events[0].get("outcome"), "fired", events)
         self.assertEqual([(e["event"], e.get("outcome"), e.get("reason")) for e in events[-2:]],
                          [("compaction", None, "warm_idle"), ("keepalive", "window_end", "compact")], events)

@@ -96,7 +96,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [reviewer-rules-file](#reviewer-rules-file) | on | The auto reviewer judges overlay asks by the prose rules in `config/permissions.rules.md`; `safety.permissions.autoReview.rulesFile` in the user layer or an overlay replaces the file. | on by default | [overlays](overlays.md#reviewer-rules-file) |
 | [herdr](#herdr) | on | In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes. | on by default | [sessions](sessions.md#herdr) |
 | [radar](#radar) | on | `foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files. | on by default | [sessions](sessions.md#radar) |
-| [compaction](#compaction) | on | Compacts the context earlier on dearer models: the trigger fraction depends on the model's input price tier. | on by default | [sessions](sessions.md#further-session-keys) |
+| [compaction](#compaction) | on | Caps the context size at which Pi's own auto-compaction fires: `foreman setup` writes a per-model point (a price-tier boundary minus headroom, or this cap) as Pi's compaction.modelOverrides. The idle warm compaction and the footer context bar use the same point. | on by default | [cache](cache.md) |
 | [resources](#resources) | on | Samples load, free memory and free disk; at high pressure child launches run one at a time and the strong climb pauses, at critical pressure launches are deferred until the host recovers (10 minutes at most). `/foreman doctor` prints the current level and `/foreman status` the last sample. | on by default | [resources](resources.md) |
 | [idle-cache](#idle-cache) | off | Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge preset sets a 600 s byModel row and turns the keep-alive off); off for request-billed providers; silent without an entry. | `set providers.claude-bridge.cache.keepalive.enabled to false (off) or true (on) in user or overlay config, or foreman config apply-preset claude-bridge --dry-run   # or: {"providers": {"<provider>": {"cache": {"ttlSeconds": 300, "billing": "token", "keepalive": {"enabled": true}}}}}` | [cache](cache.md#config) |
 
@@ -690,15 +690,13 @@ No config key.
 
 ### compaction
 
-**Price-tiered compaction.** Compacts the context earlier on dearer models: the trigger fraction depends on the model's input price tier.
+**Compaction cap.** Caps the context size at which Pi's own auto-compaction fires: `foreman setup` writes a per-model point (a price-tier boundary minus headroom, or this cap) as Pi's compaction.modelOverrides. The idle warm compaction and the footer context bar use the same point.
 
 | Key | Default | Layer |
 |---|---|---|
-| `compaction.priceTiers.cheap` | `1` | not in project/session (the price tiers come from the user or overlay config) |
-| `compaction.priceTiers.standard` | `5` | not in project/session (the price tiers come from the user or overlay config) |
-| `compaction.threshold.cheap` | `0.85` | tighten-only (lower only, minimum 0.3) |
-| `compaction.threshold.standard` | `0.75` | tighten-only (lower only, minimum 0.3) |
-| `compaction.threshold.premium` | `0.6` | tighten-only (lower only, minimum 0.3) |
+| `providers.<x>.models.<x>.contextWindow` | unset | any layer |
+| `providers.<x>.models.<x>.tiers` | unset | any layer |
+| `compaction.maxTokens` | `200000` | tighten-only (lower only, minimum 50000) |
 
 ### resources
 
@@ -802,7 +800,6 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `ceremony.checkpoint` | who approves the plan checkpoint comes from the user or overlay config |
 | `ceremony.reviewModel` | the fallback reviewer model comes from the user or overlay config |
 | `ceremony.reviewByOccasion` | the per-occasion reviewer overrides come from the user or overlay config |
-| `compaction.priceTiers` | the price tiers come from the user or overlay config |
 | `resources.sampleSeconds` | the sampling interval comes from the user or overlay config |
 | `ladder.strongAbove` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.childMaxTurns` | the ladder and the child rank policy come from the user or overlay config |

@@ -112,6 +112,14 @@ three lines, or `none`. When a child run ends, the foreman's extension reads the
 - Only the foreman session emits it, from the run-end report. Subagents write the line; they never write the trace.
 - The trace allowlist admits `note` for `friction` events only.
 
+## Retro section of a compaction
+
+The summary of the idle warm compaction is asked to end with a `## Retro` section (at most 10 lines), which goes into
+`.workflow/retro/<session>.md` with a counters line. Only that compaction carries the instruction. A compaction Pi
+starts at its own threshold, on overflow, or a typed `/compact` cannot, so its summary has no Retro section; the
+entry is still written and says `(the compaction summary has no Retro section)`. See
+[cache](cache.md#where-compaction-fires).
+
 ## The store
 
 A backlog is a markdown file with one fenced block per entry:

@@ -36,8 +36,8 @@ The tier template lives in the preset's `rankTiers` key (preset files only; `app
 writes it, the runtime does not read it).
 
 Static keys: `childMaxThinking: medium`, `retro.enabled: false`, `ladder.rolePolicy` (reviewers `at-or-below`,
-builders `below`), and `compaction.threshold` premium 0.5 / standard 0.65 (the existing threshold keys; the harness
-reads them).
+builders `below`), and `compaction.maxTokens` 100000 (the compaction cap `foreman setup` turns into Pi's per-model compaction point;
+see [cache](cache.md#where-compaction-fires)).
 
 `--dry-run` prints the resolved role map and writes nothing:
 

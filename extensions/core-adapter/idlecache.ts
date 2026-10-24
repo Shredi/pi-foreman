@@ -34,8 +34,8 @@ export interface IdleCacheDeps {
   hasPromptCache(): boolean;
   busy(): Busy;
   trace(ev: Record<string, unknown>): void;
-  /** Gate decideIdle + start ctx.compact; the tier and model to trace when it started, else null (below the floor). */
-  compact(): { tier: string; model: string | null } | null;
+  /** Gate decideIdle + start ctx.compact; the runtime point and model to trace when it started, else null (below the floor). */
+  compact(): { point: number | null; model: string | null } | null;
   setGlyph(on: boolean): void;
   syncKeepalives(): KeepaliveSync;
   lastAssistantAt(): number | null;
@@ -248,6 +248,6 @@ export class IdleCache {
     const fired = d.compact();
     if (!fired) return skip("below_floor");
     this.compactedForIdle = true;
-    d.trace({ event: "compaction", reason: "warm_idle", tier: fired.tier, model: fired.model });
+    d.trace({ event: "compaction", reason: "warm_idle", point: fired.point, model: fired.model });
   }
 }

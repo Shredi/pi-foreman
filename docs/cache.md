@@ -51,11 +51,27 @@ Pi's native cache warmer does the work: while a session is idle it sends a hidde
 
 ## Warm compaction
 
-The last warm read can be spent on a compaction, so the summary call reads a warm cache. At most one compaction per idle runs, at `windowEnd - intervalSeconds` (halfway through a window shorter than the interval), and only above the idle floor. The floor is half the tier threshold (`compaction.threshold.<class>`): `turn_end` already compacts at the full threshold, so an idle session is always below it, and a floor at the full value would never fire.
+The last warm read can be spent on a compaction, so the summary call reads a warm cache. At most one compaction per idle runs, at `windowEnd - intervalSeconds` (halfway through a window shorter than the interval), and only above the idle floor. The floor is half the runtime compaction point (see "Where compaction fires"), in tokens: Pi compacts at the full point, so an idle session is always below it, and a floor at the full value would never fire. It reads the point Pi really uses, so a smaller reserve of your own lowers the floor too. With `compaction.enabled: false` in Pi's settings there is no point and no warm compaction.
 
-Gates, in order: `warmCompact` on, no compaction yet in this idle, not busy, not cold (the last cache read or answer is younger than 95% of the TTL), context usage over the floor. A gate that fails ends nothing; it traces `keepalive window_end` with its reason (below). When all pass, the adapter starts the compaction and traces `compaction {reason: "warm_idle", tier, model}`. The compaction takes the normal `session_before_compact` path (ledger digest, retro at compaction), and the window then ends with reason `compact`.
+Gates, in order: `warmCompact` on, no compaction yet in this idle, not busy, not cold (the last cache read or answer is younger than 95% of the TTL), context usage over the floor. A gate that fails ends nothing; it traces `keepalive window_end` with its reason (below). When all pass, the adapter starts the compaction and traces `compaction {reason: "warm_idle", point, model}`. The compaction takes the normal `session_before_compact` path (ledger digest, retro at compaction), and the window then ends with reason `compact`. Only foreman sessions run it; a child never requests a compaction.
 
 The savings of the warm summary call are not yet measured.
+
+## Where compaction fires
+
+Pi's own auto-compaction decides, in every session, foreman and child alike: it compacts when the context passes the model's window minus `reserveTokens`. pi-foreman no longer requests a compaction after a turn (that call aborted a running child loop). `foreman setup` shapes the point per model by writing Pi's `compaction.modelOverrides["provider/id"].reserveTokens` into the same settings file as its other managed keys, with a diff and a backup; a value you set yourself is kept. What setup writes, who owns it and how `--remove` treats it: [install](install.md#what-setup-writes-for-compaction).
+
+The point for a model is the lowest of:
+
+- window minus the reserve Pi already uses for it (nothing to write when that is the lowest);
+- the model's lowest price-tier boundary (`cost.tiers[].inputTokensAbove` in Pi's registry, or the `tiers` an overlay declares) minus `TIER_HEADROOM`, a constant of 20000 tokens, so a session stays below the dearer price tier;
+- `compaction.maxTokens` (default 200000, minimum 50000, null = no cap). A project can only lower it.
+
+The reserve written is window minus that point, and only when it is larger than the reserve Pi already uses for the model. A point below `keepRecentTokens` plus `TIER_HEADROOM` (40000 by default) is not written; setup warns instead, so a tiny cap cannot make Pi compact every turn. `compaction.priceTiers` and `compaction.threshold` are removed; a config that still has them gets a warning and the keys are ignored.
+
+The footer bar and the idle floor show and use the point Pi really uses (window minus the effective reserve), so a full bar means compaction fires. With `compaction.enabled: false` in Pi's settings the bar falls back to the window.
+
+Retro trade-off: Pi's own compaction cannot carry custom instructions, so a summary from a threshold compaction has no `## Retro` section; the retro entry notes that. The Retro section rides only on the idle warm compaction. A manual `/compact` never carried it either.
 
 ## Cost and privacy
 
@@ -95,4 +111,4 @@ A provider with no entry and no `cache` config is not traced at all. Add `provid
 | `window_end` | `warmer_stopped` | The watchdog or the confirm deadline passed without a warm request. |
 | `window_end` | `warm_compact_off`, `already_compacted`, `busy`, `cold`, `below_floor` | The warm-compaction check declined; the window continues. |
 
-`compaction {reason: "warm_idle", tier, model}`: a warm compaction was started.
+`compaction {reason: "warm_idle", point, model}`: a warm compaction was started. `compaction_point {model, point}`: the point Pi uses for the model (null when unknown or compaction is off), once at session start and on a model change.

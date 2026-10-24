@@ -107,7 +107,7 @@ class ApplyInexpensiveTest(unittest.TestCase):
         self.assertEqual(got["childMaxThinking"], "medium")
         self.assertEqual(got["ceremony"]["planner"], "self")
         self.assertIs(got["retro"]["enabled"], False)
-        self.assertEqual(got["compaction"]["threshold"], {"premium": 0.5, "standard": 0.65})
+        self.assertEqual(got["compaction"], {"maxTokens": 100000})
         self.assertEqual(got["ladder"]["rolePolicy"], {"reviewer": "at-or-below", "senior-reviewer": "at-or-below", "builder": "below"})
         prov = got["providers"]["claude-bridge"]
         self.assertEqual(prov["roles"]["builder"]["model"], "claude-bridge/claude-sonnet-5-5")

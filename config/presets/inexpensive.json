@@ -4,7 +4,7 @@
   "ladder": { "childPolicy": "below", "rolePolicy": { "reviewer": "at-or-below", "senior-reviewer": "at-or-below", "builder": "below" } },
   "ceremony": { "planner": "self", "planReview": { "heavy": true } },
   "retro": { "enabled": false },
-  "compaction": { "threshold": { "premium": 0.5, "standard": 0.65 } },
+  "compaction": { "maxTokens": 100000 },
   "rankTiers": {
     "foreman": { "tier": 1, "thinking": "high" },
     "session-foreman": { "tier": 1, "thinking": "high" },

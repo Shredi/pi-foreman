@@ -11,7 +11,8 @@ export type TraceRecord = Partial<Record<TraceField, string | number | boolean |
 
 // `surface` (R18 `dialog` records: permission|child|checkpoint|ask_user|drift) is allowed beside the pinned TRACE_FIELDS list.
 // R39 `launch_sizing` keys likewise (base rung, declared and measured sizes, risk tags, files outside the workspace).
-const ALLOWED = new Set<string>([...TRACE_FIELDS, "surface", "base", "declaredLines", "modules", "declaredModules", "risk", "outside"]);
+// R52 `point` (the runtime compaction point in `compaction_point` and `compaction` records).
+const ALLOWED = new Set<string>([...TRACE_FIELDS, "surface", "base", "declaredLines", "modules", "declaredModules", "risk", "outside", "point"]);
 const MAX_STRING = 120;
 const MAX_COMMAND = 200; // a denied command (lane 3h)
 /** `command` is kept only on a deny trace: a refused launch, a read/recheck budget deny, an overlay deny. */

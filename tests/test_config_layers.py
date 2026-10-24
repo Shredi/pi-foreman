@@ -247,24 +247,65 @@ class LayerRulesTest(unittest.TestCase):
 
     def test_phase4_keys_follow_their_layer_rules(self):
         res = self.load(proj={"wait": {"maxActive": 20, "maxSeconds": 100, "ci": True, "batchWindowSeconds": 10},
-                              "compaction": {"priceTiers": {"cheap": 9}, "threshold": {"cheap": 0.9, "standard": 0.1, "premium": 0.5}},
                               "sync": {"repos": [], "runRetro": False}, "retro": {"proposalMinReviews": 1},
                               "intercom": {"allowRemote": True}, "close": {"from": ["herdr", "other"]}},
                         session={"intercom": {"allowOpenPane": True}})
         cfg, joined = res["config"], "\n".join(res["warnings"])
         self.assertEqual((cfg["wait"]["maxActive"], cfg["wait"]["maxSeconds"], cfg["wait"]["batchWindowSeconds"]), (8, 100, 10))
-        self.assertEqual(cfg["compaction"]["threshold"], {"cheap": 0.85, "standard": 0.75, "premium": 0.5})
-        self.assertEqual(cfg["compaction"]["priceTiers"], {"cheap": 1, "standard": 5})
         self.assertEqual((cfg["retro"]["proposalMinReviews"], cfg["sync"]["runRetro"]), (5, False))
         self.assertIs(cfg["intercom"]["allowRemote"], False)
         self.assertIs(cfg["intercom"]["allowOpenPane"], False)
         self.assertEqual(cfg["close"]["from"], ["herdr"])
         self.assertIn("project wait.maxActive ignored: it would loosen", joined)
-        self.assertIn("project compaction.threshold.standard ignored: below the minimum 0.3", joined)
-        self.assertIn("project compaction.priceTiers ignored: the project may not set this key", joined)
         self.assertIn("project retro.proposalMinReviews ignored", joined)
         self.assertIn("project intercom.allowRemote ignored", joined)
         self.assertIn("project close.from: entries not extended: other", joined)
+
+    def test_compaction_max_tokens_default_and_lower_only(self):
+        self.assertEqual(self.load()["config"]["compaction"], {"maxTokens": 200000})
+        res = self.load(l2={"compaction": {"maxTokens": 300000}}, proj={"compaction": {"maxTokens": 400000}})
+        self.assertEqual(res["config"]["compaction"]["maxTokens"], 300000)
+        self.assertIn("project compaction.maxTokens ignored: it would loosen the policy", "\n".join(res["warnings"]))
+        res = self.load(l2={"compaction": {"maxTokens": 300000}}, proj={"compaction": {"maxTokens": 120000}})
+        self.assertEqual(res["config"]["compaction"]["maxTokens"], 120000)
+        self.assertEqual(res["errors"], [])
+
+    def test_compaction_max_tokens_null_both_directions(self):
+        # user null (no cap): a project number lowers from nothing and passes
+        res = self.load(l2={"compaction": {"maxTokens": None}}, proj={"compaction": {"maxTokens": 500000}})
+        self.assertEqual(res["config"]["compaction"]["maxTokens"], 500000)
+        # a project null would remove the cap: dropped
+        res = self.load(l2={"compaction": {"maxTokens": 300000}}, proj={"compaction": {"maxTokens": None}})
+        self.assertEqual(res["config"]["compaction"]["maxTokens"], 300000)
+        self.assertIn("project compaction.maxTokens ignored: not an integer", "\n".join(res["warnings"]))
+
+    def test_compaction_max_tokens_user_null_is_allowed(self):
+        res = self.load(l2={"compaction": {"maxTokens": None}})
+        self.assertIsNone(res["config"]["compaction"]["maxTokens"])
+        self.assertEqual((res["errors"], res["warnings"]), ([], []))
+
+    def test_compaction_max_tokens_minimum(self):
+        res = self.load(proj={"compaction": {"maxTokens": 49999}})
+        self.assertEqual(res["config"]["compaction"]["maxTokens"], 200000)
+        self.assertIn("project compaction.maxTokens ignored: below the minimum 50000", "\n".join(res["warnings"]))
+        res = self.load(l2={"compaction": {"maxTokens": 49999}})  # the user layer: the schema minimum
+        self.assertTrue(any("maxTokens" in e for e in res["errors"]), res)
+
+    def check_removed_compaction_warning(self, **layer):
+        res = self.load(**{k: {"compaction": {"priceTiers": {"cheap": 1}, "threshold": {"cheap": 0.9}}} for k in layer})
+        hits = [w for w in res["warnings"] if "removed in r52" in w]
+        self.assertEqual(len(hits), 1, res["warnings"])
+        self.assertIn("compaction.priceTiers, compaction.threshold", hits[0])
+        self.assertIn("docs/cache.md", hits[0])
+        self.assertEqual(res["config"]["compaction"], {"maxTokens": 200000})
+        self.assertEqual(res["errors"], [])
+        self.assertFalse(any("unknown" in w for w in res["warnings"]), res["warnings"])
+
+    def test_removed_compaction_keys_warn_once_in_the_user_layer(self):
+        self.check_removed_compaction_warning(l2=True)
+
+    def test_removed_compaction_keys_warn_once_in_the_project_layer(self):
+        self.check_removed_compaction_warning(proj=True)
 
     def test_retro_backlog_location_keys_not_from_project(self):
         res = self.load(proj={"retro": {"backlogDir": "x", "workspaceKey": "k", "repoBacklog": [{"path": "/x", "commit": True}],
