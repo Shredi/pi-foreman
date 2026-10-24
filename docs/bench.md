@@ -18,7 +18,7 @@ tokens (two consecutive infrastructure-error cells stop it with exit 5), `--setu
 
 ## Columns
 
-Trace-derived columns include `ceremony_incomplete`, `read_blocks`, `recheck_blocks`, `finish_refused`,
+Trace-derived columns include `ceremony_incomplete`, `read_blocks` (trace `read_budget` events with action `remind`, and `deny` from older traces; the read budget only reminds), `recheck_blocks`, `finish_refused`,
 `launch_waits`, `rereviews` (reviewer launches while the review step was re-opened) and `orient_lines`
 (lines in the orientation packet, 0 if none), `ledger_calls` and `ledger_denies` (the foreman's own `foreman_ledger` and shell `ledger` calls, and those refused; child denies stay in `asks_denied`; a child defer that review.ts answers as a deny opens no dialog, so `wait_session.py` counts it from the trace as `review_defer_child` or `review_defer_headless`), `dup_reviews` (reviewer launches refused as duplicates), `second_opinions` and `stop_hold`. `tier` is read from the foreman's own trace only (its `triage` event, else its last `tier` event); a trace file whose `session_start` has role `child` is ignored for it. A foreman row's user-layer `foreman.json` is generated from the row: `foreman_edits`, `foreman_reads`, `recheck_budget`, `launch_wait` and `dedupe_notify` map to their ceremony knobs, and a `user_config` object is deep-merged in last, so a row can set any knob (the eee843d-equivalent row: `"user_config": {"ceremony": {"ledgerHelper": "off", "reviewPerRevision": false, "heavyThreshold": "eee843d"}}`).
 
