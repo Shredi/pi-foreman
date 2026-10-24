@@ -1014,15 +1014,24 @@ test("compaction: a registry provider's unknown id has one exact line and spawns
   assert.deepEqual(linesFor(f.out, "tp/ghost"), ["compaction tp/ghost: reserveTokens unset -> 220000 (compacts at 280000)"]);
 });
 
+test("compaction: a declared key on a provider without a registry file spawns no listing while the registry works", () => {
+  const env = fresh();
+  seed(env, { ...SEED, defaultProvider: "gw", defaultModel: "vendor/model" });
+  writeCfg(env, { providers: { gw: { models: { "vendor/model": { contextWindow: 1000000, tiers: [{ inputTokensAbove: 272000 }] } } } } });
+  const r = run(env, [], { ...withRegistry(env), ...listing(env, []) });
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(linesFor(r.out, "gw/vendor/model"), ["compaction gw/vendor/model: reserveTokens unset -> 800000 (compacts at 200000)"]);
+  assert.deepEqual(overrides(readSettings(env)), { "gw/vendor/model": { reserveTokens: 800000 } });
+  assert.deepEqual(listCalls(env), []);
+});
+
 test("compaction: the listing's context cell is read like Pi's formatTokenCount", () => {
   const env = fresh();
   seed(env);
-  const ids = ["k-tenths", "k-small", "k-top", "bare", "m-int"];
   writeCfg(env, { ...CAP150, providers: { xb: { roles: { builder: { model: "xb/k-tenths", strong: { model: "xb/k-top" } }, reviewer: { model: "xb/m-int" }, planner: { model: "xb/bare", strong: { model: "xb/k-small" } } } } } });
   const rows = [["xb", "k-tenths", "262.1K"], ["xb", "k-small", "1.4K"], ["xb", "k-top", "1000.0K"], ["xb", "bare", "512"], ["xb", "m-int", "1M"]];
   const r = run(env, [], listing(env, rows));
   assert.equal(r.code, 0, r.out);
-  assert.ok(ids.length === 5);
   assert.match(r.out, /compaction xb\/k-tenths: reserveTokens unset -> 112150 \(compacts at 150000\) \(no price tiers known\)/);
   assert.match(r.out, /compaction xb\/k-top: reserveTokens unset -> 849999 \(compacts at 150000\)/);
   assert.match(r.out, /compaction xb\/m-int: reserveTokens unset -> 850000 \(compacts at 150000\)/);
