@@ -1,7 +1,10 @@
+import asyncio
 import contextlib
 import io
 import json
+import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -782,6 +785,26 @@ class FoldPresetTests(unittest.TestCase):
         cells = [l for l in out.getvalue().splitlines() if l.startswith("bench: [")]
         self.assertEqual(len(cells), 8, out.getvalue())
         self.assertIn("8 cell(s) in order", out.getvalue())
+
+
+class FakeUploadEnv:
+    def __init__(self):
+        self.modes = []
+
+    async def upload_file(self, src, remote):
+        self.modes.append(stat.S_IMODE(os.stat(src).st_mode))
+
+
+@unittest.skipIf(os.name == "nt", "POSIX file modes")
+class UploadModeTests(unittest.TestCase):
+    def test_uploaded_json_and_instruction_are_0644_under_umask_0077(self):
+        old = os.umask(0o077)
+        self.addCleanup(os.umask, old)
+        agent = ha.ForemanPi.__new__(ha.ForemanPi)  # _upload_json uses no instance state
+        env = FakeUploadEnv()
+        asyncio.run(agent._upload_json(env, {"id": "r1"}, "/tmp/pf-bench/row.json"))
+        asyncio.run(agent._upload_json(env, "# task\n", "/tmp/pf-bench/instruction.md"))
+        self.assertEqual(env.modes, [0o644, 0o644])
 
 
 if __name__ == "__main__":
