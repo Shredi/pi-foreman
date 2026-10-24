@@ -1,4 +1,4 @@
 {
-  "unicode": {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗", "keepalive": "♨", "waiting-owner": "✋", "waiting-external": "↻", "idle": "⏸"},
-  "nerd":    {"waiting-owner": "\uf256", "waiting-external": "\uf017", "idle": "\uf04c", "working": "", "waiting": "", "asking": "", "blocked": "", "done": "", "lost": "", "keepalive": ""}
+  "unicode": {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗", "keepalive": "♨", "cold": "❄", "downshift": "↓", "waiting-owner": "✋", "waiting-external": "↻", "idle": "⏸"},
+  "nerd":    {"waiting-owner": "\uf256", "waiting-external": "\uf017", "idle": "\uf04c", "working": "\uf252", "waiting": "\uf04c", "asking": "\uf128", "blocked": "\uf256", "done": "\uf00c", "lost": "\uf00d", "keepalive": "\uf06d", "cold": "\uf2dc", "downshift": "\uf063"}
 }

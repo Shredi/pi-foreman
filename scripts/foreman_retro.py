@@ -402,6 +402,8 @@ def cache_metrics(trace, usage, sid, config=None):
     ka = [r for r in lines if r.get("kind") == "keepalive"]
     warm = sum(1 for e in trace or [] if isinstance(e, dict) and e.get("event") == "compaction"
                and e.get("reason") == "warm_idle")
+    down = sum(1 for e in trace or [] if isinstance(e, dict) and e.get("event") == "foreman_model"
+               and e.get("reason") == "idle_cold")
     fore = [(t, r) for r in lines if str(r.get("role", "?")) == "foreman" for t in [_ts(r)] if t is not None]
     fore.sort(key=lambda x: x[0])
     session_prov = next((p for p in (_line_provider(r) for _t, r in fore) if p), None)
@@ -424,15 +426,21 @@ def cache_metrics(trace, usage, sid, config=None):
     pol = policy(fore[0][1]) if fore else (pg.fc.cache_policy(config or {}, session_prov) if session_prov else None)
     if ttl is None and pol:
         ttl = pol.get("ttlSeconds")
-    if not (pol or ka or warm or cold):
+    if not (pol or ka or warm or cold or down):
         return None
-    return {"keepalives": len(ka), "keepaliveCost": round(sum(_line_cost(r) for r in ka), 4),
-            "warmCompactions": warm, "coldResumes": cold, "ttlSeconds": ttl}
+    out = {"keepalives": len(ka), "keepaliveCost": round(sum(_line_cost(r) for r in ka), 4),
+           "warmCompactions": warm, "coldResumes": cold, "ttlSeconds": ttl}
+    if down:
+        out["downshiftedTurns"] = down
+    return out
 
 
 def cache_line(c):
-    return "cache: keepalives %d ($%s), warm compactions %d, cold resumes %d" % (
+    text = "cache: keepalives %d ($%s), warm compactions %d, cold resumes %d" % (
         c["keepalives"], "%.2f" % c["keepaliveCost"], c["warmCompactions"], c["coldResumes"])
+    if c.get("downshiftedTurns"):
+        text += ", downshifted turns %d" % c["downshiftedTurns"]
+    return text
 
 
 def _rank_tier(ranks, model):

@@ -85,6 +85,8 @@ export interface UsageLine {
   costEstimated?: true;
   /** Keep-alive lines only: id of the Pi session entry (dedupe on resume). */
   entryId?: string;
+  /** Keep-alive lines only: who sent the warm, Pi's CacheWarmer or pi-foreman's self-warm (selfwarm.ts). */
+  source?: "pi" | "foreman";
 }
 
 export function usageDir(agentDir: string): string {
@@ -288,6 +290,8 @@ export interface UsageSummary {
   byKind: Map<LaunchKind, { launches: number; calls: number }>;
   /** Keep-alive lines (kind "keepalive"), which are not part of the totals above. */
   keepalive: Totals;
+  /** Keep-alive calls by sender, set only when pi-foreman sent some itself (a log of Pi warms only keeps the plain line). */
+  keepaliveBySource?: { pi: number; foreman: number };
 }
 
 const zero = (): Totals => ({ calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
@@ -315,9 +319,13 @@ export function aggregate(lines: UsageLine[], prices?: PriceTable | null): Usage
   const launches = new Map<LaunchKind, Set<string>>();
   const byKind = new Map<LaunchKind, { launches: number; calls: number }>();
   const keepalive = zero();
+  const bySource = { pi: 0, foreman: 0 };
+  let sourced = false;
   for (const l of lines) {
     if (l.kind === "keepalive") {
       add(keepalive, l, prices);
+      if (l.source === "foreman") sourced = true;
+      bySource[l.source === "foreman" ? "foreman" : "pi"] += 1;
       continue;
     }
     const model = l.provider && l.model ? `${l.provider}/${l.model}` : l.model ?? "(unknown)";
@@ -336,7 +344,7 @@ export function aggregate(lines: UsageLine[], prices?: PriceTable | null): Usage
     launches.set(kind, ids);
   }
   for (const [kind, ids] of launches) byKind.get(kind)!.launches = ids.size;
-  return { byRole, byModel, total, byKind, keepalive };
+  return { byRole, byModel, total, byKind, keepalive, ...(sourced ? { keepaliveBySource: bySource } : {}) };
 }
 
 function cell(v: number, money = false): string {
@@ -354,7 +362,7 @@ export function formatSummary(sum: UsageSummary, title: string): string {
   };
   const sorted = (m: Map<string, Totals>): string[][] => [...m.keys()].sort().map((k) => row(k, m.get(k)!));
   const out = [title];
-  const ka = sum.keepalive.calls > 0 ? ["", `keep-alive: ${sum.keepalive.calls} call(s), $${sum.keepalive.cost.total.toFixed(4)}`] : [];
+  const ka = sum.keepalive.calls > 0 ? ["", `keep-alive: ${sum.keepalive.calls} call(s), $${sum.keepalive.cost.total.toFixed(4)}${sum.keepaliveBySource ? ` (pi ${sum.keepaliveBySource.pi}, foreman ${sum.keepaliveBySource.foreman})` : ""}`] : [];
   if (sum.total.calls === 0) return [...out, "no usage recorded", ...ka].join("\n");
   out.push("", ...table("role", [...sorted(sum.byRole), row("total", sum.total)]));
   out.push("", ...table("model", sorted(sum.byModel)));

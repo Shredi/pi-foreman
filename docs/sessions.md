@@ -269,7 +269,11 @@ and their layer rules are in the tables of [ceremony](ceremony.md) and [safety](
 
 While an idle prompt-cache keep-alive window is open (`providers.<p>.cache`, on by default for `claude-bridge`) the
 status line shows a keep-alive glyph (`♨`, or a nerd-font icon with `ui.symbols`). The refresh requests are not part of the
-per-turn cost; `/foreman cost` sums them on a `keep-alive` line ([cache](cache.md)).
+per-turn cost; `/foreman cost` sums them on a `keep-alive` line, split into Pi's and the foreman's own warms ([cache](cache.md)).
+The same status slot shows one glyph at a time, next to the keep-alive glyph: a cold-cache glyph (`❄`, nerd-font icon
+with `ui.symbols`) while the prompt cache has expired, and a downshift glyph (`↓`) while the foreman runs on its idle
+model ([ladder](ladder.md#idle-rung-foreman-downshift)). The glyphs live in `config/symbols.json` (`keepalive`, `cold`,
+`downshift`); the Herdr sidebar leaves all three out.
 
 ## Radar
 

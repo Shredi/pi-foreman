@@ -19,6 +19,8 @@ export interface FooterView {
   cacheHit: number | null;
   /** The adapter's keep-alive marker is up: the prompt cache is warm. */
   warm: boolean;
+  /** The cold or downshift glyph in the status slot (warm is then false); absent otherwise. */
+  mark?: { state: "cold" | "downshift"; glyph: string };
   /** The usage text (footerText); null when the usage footer is off. */
   usage: string | null;
   /** Other extensions' status texts, in display order. */
@@ -98,9 +100,9 @@ function contextBar(percent: number | null, contextWindow: number, cells: number
 }
 
 /** `CH 98%` green from 80, yellow from 40, red below, then the warm or cold marker. */
-function cacheSegment(hit: number, warm: boolean, theme: FooterTheme): string {
+function cacheSegment(hit: number, warm: boolean, mark: FooterView["mark"], theme: FooterTheme): string {
   const color: FooterColor = hit >= 80 ? "success" : hit >= 40 ? "warning" : "error";
-  return `${theme.fg(color, `CH ${Math.round(hit)}%`)} ${warm ? "warm" : "cold"}`;
+  return `${theme.fg(color, `CH ${Math.round(hit)}%`)} ${mark ? `${mark.glyph} ${mark.state}` : warm ? "warm" : "cold"}`;
 }
 
 function headline(v: FooterView, theme: FooterTheme, opts: { branch: boolean; cells: number }): string {
@@ -108,7 +110,7 @@ function headline(v: FooterView, theme: FooterTheme, opts: { branch: boolean; ce
   const segments = [v.thinking ? `${model} • ${v.thinking}` : model];
   if (opts.branch && v.branch) segments.push(v.branch);
   segments.push(contextBar(v.contextPercent, v.contextWindow, opts.cells, theme));
-  if (v.cacheHit !== null) segments.push(cacheSegment(v.cacheHit, v.warm, theme));
+  if (v.cacheHit !== null) segments.push(cacheSegment(v.cacheHit, v.warm, v.mark, theme));
   return segments.join(" · ");
 }
 
