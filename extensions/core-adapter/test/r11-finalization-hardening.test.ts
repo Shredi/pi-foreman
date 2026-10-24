@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { DEFAULT_READ_LIMITS, finalizationCommand } from "../budget.ts";
 import { r11Rig } from "./_r11rig.ts";
 
-const DENY = DEFAULT_READ_LIMITS.before.deny;
+const WARN = DEFAULT_READ_LIMITS.before.warn;
 const readDenied = (r: { block?: boolean; reason?: string } | undefined): boolean => r?.block === true && /\[read_budget_exceeded\]/.test(r.reason ?? "");
 const fin = (command: string) => finalizationCommand("bash", { command });
 
@@ -31,14 +31,15 @@ test("read_budget_finalizer_phase_ends_on_edit", async (t) => {
   assert.equal(l.res, undefined);
   await a.started(l.id, finalizer, "run-fin");
   a.end({ runId: "run-fin", agent: "finalizer", status: "completed", success: true, summary: "done" });
-  for (let i = 0; i < DENY + 2; i++) assert.ok(!readDenied(await a.call("bash", { command: `ls -la f${i}` })), "finalization: no read budget");
+  for (let i = 0; i < WARN + 2; i++) assert.ok(!readDenied(await a.call("bash", { command: `ls -la f${i}` })), "finalization: no read budget");
+  assert.deepEqual(a.events("read_budget"), [], "finalization: no reminder");
   // a project edit ends the finalization
   const file = path.join(a.project, "src", "x.ts");
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, "export const x = 1;\n");
   await a.wrote(file);
-  const out = [];
-  for (let i = 0; i < DENY + 1; i++) out.push(await a.call("bash", { command: `ls -la g${i}` }));
-  assert.ok(out.slice(0, DENY).every((r) => !readDenied(r)), "the window restarts from zero");
-  assert.ok(readDenied(out[DENY]), "the read budget applies again after the edit");
+  for (let i = 0; i < WARN - 1; i++) assert.ok(!readDenied(await a.call("bash", { command: `ls -la g${i}` })));
+  assert.deepEqual(a.events("read_budget"), [], "the window restarts from zero");
+  await a.call("bash", { command: "ls -la g-last" });
+  assert.equal(a.events("read_budget").filter((r) => r.action === "remind").length, 1, "the read budget applies again after the edit");
 });

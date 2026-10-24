@@ -310,12 +310,12 @@ class LayerRulesTest(unittest.TestCase):
         self.assertIn("project ceremony.trivialBound ignored: not an object", "\n".join(res["warnings"]))
 
     def test_frugality_keys_tighten_only(self):
-        res = self.load(proj={"ceremony": {"foremanReads": {"before": {"warn": 9, "deny": 5}}, "recheckBudget": 9,
+        res = self.load(proj={"ceremony": {"foremanReads": {"before": {"warn": 9, "every": 5}}, "recheckBudget": 9,
                                             "launchWait": "detach", "dedupeNotify": False}},
                         session={"ceremony": {"foremanReads": {"after": {"warn": 0}}, "recheckBudget": 0}})
         c = res["config"]["ceremony"]
         self.assertEqual(res["errors"], [])
-        self.assertEqual(c["foremanReads"], {"before": {"warn": 4, "deny": 5}, "after": {"warn": 4, "deny": 8}})
+        self.assertEqual(c["foremanReads"], {"before": {"warn": 8, "every": 5}, "after": {"warn": 8, "every": 8}})
         self.assertEqual((c["recheckBudget"], c["launchWait"], c["dedupeNotify"]), (0, "detach", True))
         joined = "\n".join(res["warnings"])
         self.assertIn("project ceremony.foremanReads.before.warn ignored: it would loosen", joined)
@@ -382,9 +382,9 @@ class LayerRulesTest(unittest.TestCase):
         self.assertIs(res["config"]["ceremony"]["reviewPerRevision"], True)
 
     def test_non_object_foreman_reads_dropped(self):
-        strict = {"before": {"warn": 2, "deny": 3}, "after": {"warn": 4, "deny": 8}}
+        strict = {"before": {"warn": 2, "every": 3}, "after": {"warn": 8, "every": 8}}
         for proj in ["x", None, {"before": "x"}, {"before": None}]:
-            res = self.load(l2={"ceremony": {"foremanReads": {"before": {"warn": 2, "deny": 3}}}},
+            res = self.load(l2={"ceremony": {"foremanReads": {"before": {"warn": 2, "every": 3}}}},
                             proj={"ceremony": {"foremanReads": proj}}, session={})
             self.assertEqual(res["config"]["ceremony"]["foremanReads"], strict, proj)
             self.assertEqual(res["errors"], [], proj)

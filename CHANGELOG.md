@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Round 37
+- The foreman's read budget reminds instead of refusing: at `warn` reads, then every `every` further reads, the result says to delegate to an explorer or builder (trace `read_budget {action: remind}`); a read is never denied. `ceremony.foremanReads.<phase>.{warn,every}` default 8/8 (`deny` is accepted and ignored); `/foreman budget lift` has nothing to lift. `foreman session ...` shell commands (also after `cd <dir> &&`) and `pr_status`, `pr_checks`, `pr_comments` do not count. Retro and bench count `remind` like the old `deny`. Tests: `r37-read-reminder`, `budget`.
+- A write outside the session's workspace (a child's handoff dir, another checkout) no longer counts toward the heavy file count and binds no ledger (trace `ledger_bind` skip `outside_workspace`); the `tier` trace event carries a `reason`. Test: `r37-out-of-workspace-write`.
 ### Round 31a
 - Herdr sidebar: one row per pane. `join()` gives a pane to one session by a total order (fresh heartbeat before stale, live before done, the pane's foreground pid, youngest, session id), not by walk order, so a stale or finished presence record (an ended session, a reused pid) no longer alternates with the live one. The daemon publishes the winners (`winners.json` in its state dir) and `push` skips a pane another session won; `dedupe_panes` uses the same rank. Test rigs no longer inherit `HERDR_*` (the `test:node` preload, `_r11rig`, the replay driver and the review-bench child env), so they leave no presence file naming the runner's pane. Tests: `test_herdr_sidebar_winner`, `r31a-rig-herdr-scrub`.
 - Pressure gate: `loadPerCore` is the 5-minute load average; the 1-minute value is `load1PerCore` in the host record and the doctor line (`load5/core=... load1/core=...`), informational only. Thresholds and keys are unchanged. docs/resources.md. Tests: `test_pressure`, `pressure-surfaces`.
