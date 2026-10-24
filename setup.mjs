@@ -48,6 +48,8 @@ const WORKTREE_HOOK_TIMEOUT_MS = 600000;
 const INTERCOM_CONFIG = { inboundTrigger: "always", busyDelivery: "human-first" };
 // Keys that change the program pi-intercom starts or enable sends over SSH: trusted overrides, warned about.
 const INTERCOM_RISKY_KEYS = ["brokerCommand", "brokerArgs", "crossMachine"];
+// Providers an extension registers at runtime (no Pi registry file) that serve another provider's model ids: price tiers come from the base.
+const BUILTIN_MODEL_DATA_FROM = { "claude-bridge": "anthropic" };
 
 class Fatal extends Error {
   constructor(message, code = 1) {
@@ -204,6 +206,52 @@ function readProviderModels(dir, provider) {
     }
   }
   return out;
+}
+
+/** Pi's formatTokenCount (cli/list-models.js): the `context` column of `pi --list-models`. */
+function formatTokenCount(count) {
+  if (count >= 1_000_000) {
+    const millions = count / 1_000_000;
+    return millions % 1 === 0 ? `${millions}M` : `${millions.toFixed(1)}M`;
+  }
+  if (count >= 1_000) {
+    const thousands = count / 1_000;
+    return thousands % 1 === 0 ? `${thousands}K` : `${thousands.toFixed(1)}K`;
+  }
+  return count.toString();
+}
+
+/**
+ * The context window a `context` cell stands for: the exact base window when it formats identically; else an integer K/M or a
+ * bare integer exactly; else a one-decimal N.NK as its upper bound (t*100+50 by tenths, 1000.0K capped at 999999, at most 100
+ * tokens above the true count). "inexact" for a one-decimal N.NM that matches no base window; null when unreadable.
+ */
+function windowFromListing(cell, baseWindow) {
+  if (typeof baseWindow === "number" && Number.isFinite(baseWindow) && formatTokenCount(baseWindow) === cell) return baseWindow;
+  let m;
+  if ((m = /^(\d+)K$/.exec(cell))) return Number(m[1]) * 1000;
+  if ((m = /^(\d+)M$/.exec(cell))) return Number(m[1]) * 1_000_000;
+  if ((m = /^(\d+)$/.exec(cell))) return Number(m[1]);
+  if ((m = /^(\d+)\.(\d)K$/.exec(cell))) return Math.min(Number(m[1] + m[2]) * 100 + 50, 999999);
+  if (/^\d+\.\dM$/.test(cell)) return "inexact";
+  return null;
+}
+
+/** `pi --list-models` as { rows: Map<provider, Map<id, context cell>> }, or { why } when it failed (non-zero exit, timeout, no header row). */
+function readModelListing(pi, { agentDir, cwd }) {
+  const r = runPi(pi, ["--list-models"], { agentDir, cwd, timeoutMs: 60_000 });
+  if (r.error) return { why: r.error.code === "ETIMEDOUT" ? "timed out" : r.error.message };
+  if (r.code !== 0) return { why: `exit ${r.code}` };
+  const lines = r.stdout.split(/\r?\n/).map((l) => l.trim().split(/\s+/));
+  const header = lines.findIndex((c) => c.length === 6 && c[0] === "provider" && c[1] === "model" && c[2] === "context");
+  if (header < 0) return { why: "no model list printed" };
+  const rows = new Map();
+  for (const c of lines.slice(header + 1)) {
+    if (c.length !== 6) continue;
+    if (!rows.has(c[0])) rows.set(c[0], new Map());
+    rows.get(c[0]).set(c[1], c[2]);
+  }
+  return { rows };
 }
 
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
@@ -664,9 +712,12 @@ function main(argv) {
     if (opts.project) say("  note: project packages load only after the project is trusted; headless runs need `pi --approve` (or `-a`).");
 
     /**
-     * Pi `compaction.modelOverrides["<provider>/<id>"].reserveTokens` for the covered models (role map, `ranks` matches in Pi's
-     * registry, overlay `providers.<p>.models`), derived with compactionPoint(). Ownership is recorded in managed.json
-     * (`compactionDerived`): a value equal to the record is ours, any other is the user's and stays.
+     * Pi `compaction.modelOverrides["<provider>/<id>"].reserveTokens` for the covered models (role map incl. strong and idle,
+     * review and security rungs, Pi's default model, `ranks` matches in Pi's registry or live model list, overlay
+     * `providers.<p>.models`), derived with compactionPoint(). Ownership is recorded in managed.json (`compactionDerived`): a
+     * value equal to the record is ours, any other is the user's and stays. Model data: declared, else the registry file, else
+     * (providers without a registry file) tiers from the `modelDataFrom` base and the window from `pi --list-models`.
+     * Phases: registry probes, at most one listing spawn, then the key loop; every covered or recorded key gets one line.
      */
     function planCompaction() {
       const out = { changed: false, recordChanged: false, record: {}, lines: [], apply: () => {} };
@@ -719,6 +770,7 @@ function main(argv) {
         out.lines.push(`  warning: compaction: Pi model registry unavailable (${why}); registry models skipped, overrides for them left as they are`);
       };
       const registry = new Map();
+      const registryFile = new Map();
       const registryModels = (provider) => {
         if (registry.has(provider)) return registry.get(provider);
         let models = new Map();
@@ -729,6 +781,7 @@ function main(argv) {
         }
         if (dataDir) {
           try {
+            registryFile.set(provider, fs.existsSync(path.join(dataDir, `${provider}.json`)));
             models = readProviderModels(dataDir, provider);
           } catch (err) {
             registryWarn(`${provider}.json: ${err.message}`);
@@ -737,9 +790,30 @@ function main(argv) {
         registry.set(provider, models);
         return models;
       };
+      const hasRegistry = (p) => {
+        registryModels(p);
+        return registryFile.get(p) === true;
+      };
+      const providerOf = (key) => {
+        const i = key.indexOf("/");
+        return i > 0 ? key.slice(0, i) : null;
+      };
+      const baseOf = (p) => {
+        const b = providers[p]?.modelDataFrom;
+        if (typeof b === "string" && b) return b;
+        return Object.hasOwn(BUILTIN_MODEL_DATA_FROM, p) ? BUILTIN_MODEL_DATA_FROM[p] : null;
+      };
 
+      // coverage that needs no model list
       const covered = new Set();
       const declared = new Map();
+      const rankProviders = [];
+      const addRef = (ref, bareOf) => {
+        if (typeof ref !== "string" || !ref) return;
+        const r = stripLevel(ref);
+        if (r.indexOf("/") > 0) covered.add(r);
+        else if (bareOf) covered.add(`${bareOf}/${r}`);
+      };
       for (const [p, block] of Object.entries(providers)) {
         if (!isObj(block)) continue;
         for (const [id, m] of Object.entries(isObj(block.models) ? block.models : {})) {
@@ -748,59 +822,130 @@ function main(argv) {
         }
         for (const role of Object.values(isObj(block.roles) ? block.roles : {})) {
           if (!isObj(role)) continue;
-          for (const ref of [role.model, role.strong?.model]) if (typeof ref === "string" && ref.includes("/")) covered.add(stripLevel(ref));
+          for (const ref of [role.model, role.strong?.model, role.idle?.model]) addRef(ref);
         }
+        addRef(block.review?.model, p);
         const ranks = Array.isArray(block.ranks) ? block.ranks.filter((r) => isObj(r) && typeof r.match === "string") : [];
-        if (ranks.length) {
-          for (const id of registryModels(p).keys()) {
-            if (ranks.some((r) => globMatches(r.match, r.match.includes("/") ? `${p}/${id}` : id))) covered.add(`${p}/${id}`);
-          }
+        if (ranks.length) rankProviders.push([p, ranks]);
+      }
+      addRef(cfg.ladder?.reviewerClimb?.securityRung);
+      // Pi's default model, each field resolved like Pi's merged settings (the target file, then the global one)
+      const settingField = (k) => [settings[k], globalSettings[k]].find((v) => typeof v === "string" && v);
+      if (settingField("defaultProvider") && settingField("defaultModel")) covered.add(`${settingField("defaultProvider")}/${settingField("defaultModel")}`);
+      const recordedKeys = Object.keys(derived0);
+
+      // phase 1: registry probes (covered, recorded and rank providers, and their bases), so registryFailed is final
+      const probe = new Set(rankProviders.map(([p]) => p));
+      for (const key of [...covered, ...recordedKeys]) {
+        const p = providerOf(key);
+        if (p) probe.add(p);
+      }
+      for (const p of [...probe]) {
+        const b = baseOf(p);
+        if (b) probe.add(b);
+      }
+      for (const p of probe) registryModels(p);
+
+      // phase 2: at most one live listing
+      const needsListing = (key) => {
+        const p = providerOf(key);
+        return p !== null && !declared.has(key) && !hasRegistry(p);
+      };
+      let listing = null;
+      if (!registryFailed && ([...covered, ...recordedKeys].some(needsListing) || rankProviders.some(([p]) => !hasRegistry(p)))) {
+        listing = readModelListing(pi, { agentDir, cwd: projectDir });
+        if (listing.why) out.lines.push(`  warning: compaction: Pi's model list unavailable (${listing.why}); keys that need it skipped`);
+      }
+
+      // phase 3: rank coverage, then the key loop
+      for (const [p, ranks] of rankProviders) {
+        const ids = hasRegistry(p) ? registryModels(p).keys() : (listing?.rows?.get(p)?.keys() ?? []);
+        for (const id of ids) {
+          if (ranks.some((r) => globMatches(r.match, r.match.includes("/") ? `${p}/${id}` : id))) covered.add(`${p}/${id}`);
         }
       }
 
-      const data = (key) => {
-        if (declared.has(key)) return declared.get(key);
-        const slash = key.indexOf("/");
-        return registryModels(key.slice(0, slash)).get(key.slice(slash + 1));
-      };
       const actions = [];
-      const keys = new Set([...covered, ...Object.keys(derived0)]);
+      const keys = new Set([...covered, ...recordedKeys]);
       for (const key of [...keys].sort()) {
         const cur = num(reserveOf(settings, key));
         const rec = derived0[key];
-        let want;
-        let judged = false;
+        const p = providerOf(key);
+        const id = key.slice(key.indexOf("/") + 1);
+        const line = (text) => out.lines.push(`compaction ${key}: ${text}`);
+        let r = null;
+        let noTiers = false;
         if (covered.has(key)) {
-          const model = data(key);
-          if (model) {
-            const r = compactionPoint(
-              { contextWindow: model.contextWindow, tiers: model.tiers },
-              { maxTokens, effectiveReserve: effectiveReserve(key), effectiveKeepRecent: effectiveKeep(key) },
-            );
-            judged = r.reason !== "unknown-window";
-            if (r.write) want = { reserve: r.reserve, point: r.point };
-            if (r.reason === "below-minimum") out.lines.push(`  warning: compaction: ${key}: the point ${r.point} is below keepRecentTokens + 20000; no override written`);
-          }
-        } else judged = !registryFailed;
-        if (!judged) continue;
-        if (want) {
-          if (cur === undefined || cur === rec) {
-            if (cur !== want.reserve) {
-              actions.push({ key, set: want.reserve });
-              out.lines.push(`compaction ${key}: reserveTokens ${cur ?? "unset"} -> ${want.reserve} (compacts at ${want.point})`);
+          let model;
+          let alsoBase = "";
+          if (declared.has(key)) model = declared.get(key);
+          else if (registryFailed) continue;
+          else if (hasRegistry(p)) {
+            model = registryModels(p).get(id);
+            if (!model) {
+              line(`skipped, no model data; declare providers.${p}.models.${id}`);
+              continue;
             }
-            out.record[key] = want.reserve;
           } else {
-            out.lines.push(`compaction ${key}: reserveTokens ${cur}, kept: user value`);
+            alsoBase = ` or providers.${p}.modelDataFrom`;
+            if (listing.why) {
+              line("skipped, Pi's model list unavailable");
+              continue;
+            }
+            const cell = listing.rows.get(p)?.get(id);
+            if (cell === undefined) {
+              line("skipped, not in Pi's model list (provider not logged in, its extension not loaded, or the project untrusted); log in and re-run setup");
+              continue;
+            }
+            const base = baseOf(p);
+            const baseModel = base ? registryModels(base).get(id) : undefined;
+            const window = base && !baseModel ? null : windowFromListing(cell, baseModel?.contextWindow);
+            if (window === "inexact") {
+              line(`skipped, window ${cell} is not exact; declare providers.${p}.models.${id}`);
+              continue;
+            }
+            model = { contextWindow: window, tiers: baseModel?.tiers ?? [] };
+            noTiers = !base;
+          }
+          r = compactionPoint(
+            { contextWindow: model.contextWindow, tiers: model.tiers },
+            { maxTokens, effectiveReserve: effectiveReserve(key), effectiveKeepRecent: effectiveKeep(key) },
+          );
+          if (r.reason === "unknown-window") {
+            line(`skipped, no model data; declare providers.${p}.models.${id}${alsoBase}`);
+            continue;
+          }
+        } else {
+          if (registryFailed) continue;
+          if (needsListing(key) && (listing.why || !listing.rows.has(p))) {
+            line(`recorded reserveTokens ${rec} kept (${listing.why ? "Pi's model list unavailable" : `${p} is not in Pi's model list`})`);
+            continue;
+          }
+        }
+        const tail = noTiers ? " (no price tiers known)" : "";
+        if (r?.write) {
+          if (cur === undefined || cur === rec) {
+            if (cur !== r.reserve) {
+              actions.push({ key, set: r.reserve });
+              line(`reserveTokens ${cur ?? "unset"} -> ${r.reserve} (compacts at ${r.point})${tail}`);
+            } else line(`reserveTokens ${cur}, unchanged (compacts at ${r.point})${tail}`);
+            out.record[key] = r.reserve;
+          } else {
+            line(`reserveTokens ${cur}, kept: user value`);
             delete out.record[key];
           }
-        } else if (rec !== undefined) {
-          if (cur === rec) {
-            actions.push({ key, drop: true });
-            out.lines.push(`compaction ${key}: reserveTokens ${cur} no longer needed, removing`);
-          }
-          delete out.record[key];
+          continue;
         }
+        // no override wanted
+        const own = rec !== undefined && cur === rec;
+        if (r?.reason === "below-minimum") {
+          out.lines.push(`  warning: compaction: ${key}: the point ${r.point} is below keepRecentTokens + 20000; no override written${own ? "; removing the earlier override" : ""}`);
+        } else if (rec === undefined) line(`no override needed (Pi already compacts at ${r.point})${tail}`);
+        else if (own) line(`reserveTokens ${cur} no longer needed, removing`);
+        else if (cur === undefined) line("recorded override already gone");
+        else line(`reserveTokens ${cur}, kept: user value`);
+        if (own) actions.push({ key, drop: true });
+        delete out.record[key];
       }
       out.changed = actions.length > 0;
       out.recordChanged = canonical(out.record) !== canonical(derived0);

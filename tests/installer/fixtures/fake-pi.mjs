@@ -1,5 +1,6 @@
 // Fake `pi` for installer tests. Run through Node (PI_FOREMAN_PI_BIN).
 // Records every call as one JSON line in $FAKE_PI_LOG; `--version` answers $FAKE_PI_VERSION (default 1.4.0).
+// `--list-models` answers from the file named by $FAKE_PI_LIST_MODELS.
 // `install` / `remove` edit `packages` in settings.json the way Pi does (local paths are stored
 // relative to the settings directory).
 import * as fs from "node:fs";
@@ -12,6 +13,18 @@ if (process.env.FAKE_PI_LOG) {
 if (args[0] === "--version") {
   console.log(process.env.FAKE_PI_VERSION || "1.4.0");
   process.exit(0);
+}
+if (args[0] === "--list-models") {
+  // $FAKE_PI_LIST_MODELS: JSON file {"output": "<printed text>", "code": <exit code, default 0>}; absent or unreadable: exit 1.
+  let spec = null;
+  try {
+    spec = JSON.parse(fs.readFileSync(process.env.FAKE_PI_LIST_MODELS, "utf8"));
+  } catch {
+    /* no listing */
+  }
+  if (!spec) process.exit(1);
+  process.stdout.write(spec.output ?? "");
+  process.exit(spec.code ?? 0);
 }
 const local = args.includes("-l");
 const source = args[1];

@@ -95,8 +95,32 @@ the window minus that point. Setup writes an override only when it makes Pi comp
 below `keepRecentTokens` + 20000 (such a model gets a warning naming it). It never touches `compaction.enabled`,
 `reserveTokens`, `keepRecentTokens` or other fields of an override.
 
-Models covered: the exact models of the role map, registry models of your providers that match a `providers.<p>.ranks`
-glob, and models an overlay declares under `providers.<p>.models` ([overlays](overlays.md#models-pi-does-not-list)).
+Models covered:
+
+- the role map, every rung (`model`, `strong.model`, `idle.model`), `providers.<p>.review.model` and `ladder.reviewerClimb.securityRung` (thinking suffixes dropped);
+- Pi's default model, `defaultProvider` + `defaultModel` joined as `<provider>/<model>` (with `--project` the project value wins per field);
+- models of your providers that match a `providers.<p>.ranks` glob: in Pi's registry, or in Pi's live model list for a provider without a registry file;
+- models an overlay declares under `providers.<p>.models` ([overlays](overlays.md#models-pi-does-not-list)).
+
+Where a model's data comes from, first hit wins:
+
+1. `providers.<p>.models.<id>` (window and tiers as declared).
+2. Pi's registry file for the provider (`<p>.json`). A registry provider that lacks the id is skipped: `no model data; declare providers.<p>.models.<id>`.
+3. A provider with no registry file, such as `claude-bridge` (an extension registers it at runtime), has a base: `providers.<p>.modelDataFrom` (user or overlay config only), else the built-in `claude-bridge` -> `anthropic`. Price tiers come from the base's registry entry; the context window comes from Pi's live list (`pi --list-models`), because the bridge registers 1M only for models it has measured and 200K for the rest. Borrowing the base's window would write a reserve far too large for a 200K runtime window.
+4. No registry file and no base: the live window with no price tiers (the line says `(no price tiers known)`; setup writes only when that compacts earlier than Pi does now).
+
+Setup runs `pi --list-models` at most once, only when a covered or recorded key needs it, also in `--dry-run` (Pi itself may migrate or refresh its own files when it runs). A one-decimal `262.1K` in the list is read as its upper bound (at most 100 tokens off, in the earlier-compacting direction); a one-decimal `N.NM` that does not match the base's window is skipped.
+
+Skip lines and the fix:
+
+- `no model data; declare providers.<p>.models.<id>` (with `or providers.<p>.modelDataFrom` for a provider without a registry file): declare the model's window and tiers, or point `modelDataFrom` at a provider that has the id.
+- `Pi's model list unavailable` (one warning names the reason; recorded entries stay and are not removed): `pi --list-models` failed, timed out, or printed no list because nothing is logged in. Log in and re-run setup.
+- `not in Pi's model list (provider not logged in, its extension not loaded, or the project untrusted)`: log in to the provider first and re-run setup after a plan change, since the bridge's windows depend on the credential. An untrusted project does not load project-local extensions.
+- `window <N.NM> is not exact; declare providers.<p>.models.<id>`: declare the window.
+
+Recorded entries of a provider without a registry file stay while the list is unavailable or has no row for the provider (`kept (...)`). Every covered or recorded model gets exactly one line.
+
+Haiku: `anthropic/claude-haiku-5-5` (window 1M, first tier above 100000) gets point 80000 (reserve 920000); `claude-bridge/claude-haiku-5-5` at its live 200K window with the same tier also gets point 80000 (reserve 120000). The other Claude models have their first tier at 220000 or higher, so the 200000 cap wins.
 
 Ownership: the values written are recorded per settings file in `<agent dir>/pi-foreman/managed.json`
 (`compactionDerived`). A `reserveTokens` equal to the recorded value is ours and is updated or removed when the model

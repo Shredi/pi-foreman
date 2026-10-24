@@ -663,7 +663,7 @@
       "title": "Compaction cap",
       "purpose": "Caps the context size at which Pi's own auto-compaction fires: `foreman setup` writes a per-model point (a price-tier boundary minus headroom, or this cap) as Pi's compaction.modelOverrides. The idle warm compaction and the footer context bar use the same point.",
       "doc": "docs/cache.md",
-      "keys": ["compaction.maxTokens", "providers.<x>.models"],
+      "keys": ["compaction.maxTokens", "providers.<x>.models", "providers.<x>.modelDataFrom"],
       "commands": [],
       "switch": null,
       "state": "on",

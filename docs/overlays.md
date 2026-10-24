@@ -99,6 +99,8 @@ provider, for example) gets no point unless an overlay declares it. The key is t
 `providers.<p>.models.<id>.contextWindow` is required; `providers.<p>.models.<id>.tiers` is optional, and setup keeps the point 20000 tokens below the lowest `inputTokensAbove`. Numbers come from the
 provider's published limits: setup does not guess them. See [install](install.md#what-setup-writes-for-compaction).
 
+A provider an extension registers at runtime (no registry file) can name another provider as its base with `providers.<p>.modelDataFrom` (user or overlay config only; `claude-bridge` uses `anthropic` built in, and both claude-bridge presets set it). Price tiers then come from the base's registry entry and the context window from Pi's live model list (`pi --list-models`); a declared `models` entry still wins.
+
 ### Reviewer rules file
 
 The foreman's own overlay asks (a project or session ask rule, a toolchain probe line, an unclear drive path) go to the
