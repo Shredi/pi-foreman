@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_foreman_config import render_prompt  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-BASE = "fe71c9b"  # origin/main: foreman.md as before the sizing fold
+BASE = "b228232"  # origin/main after #15: foreman.md as before the sizing fold
 
 
 class SizingPromptTest(unittest.TestCase):
