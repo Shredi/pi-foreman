@@ -144,7 +144,7 @@ export interface Timers {
   set(fn: () => void, ms: number): unknown;
   clear(h: unknown): void;
 }
-const realTimers: Timers = {
+export const realTimers: Timers = {
   set: (fn, ms) => {
     const t = setTimeout(fn, ms);
     (t as { unref?: () => void }).unref?.();
@@ -178,6 +178,7 @@ interface Watch {
   lastError: string;
   ended: boolean;
   started: number;
+  last: { at: number; checks: ChecksAnswer } | null;
 }
 
 export class PrWatches {
@@ -214,8 +215,14 @@ export class PrWatches {
     return [...this.watches.values()].map((w) => ({ n: w.n, until: w.until, startedAt: w.started }));
   }
 
+  /** The checks of the latest successful poll of watch `n` and its age in ms, or null (no watch, no poll yet, `until` comment). */
+  lastChecks(n: number): { checks: ChecksAnswer; ageMs: number } | null {
+    const w = this.watches.get(n);
+    return w?.last ? { checks: w.last.checks, ageMs: this.deps.now() - w.last.at } : null;
+  }
+
   start(n: number, until: WatchUntil, baseline: Baseline, timeoutMs: number): void {
-    const w: Watch = { n, until, baseline, timeoutMs, started: this.deps.now(), deadline: this.deps.now() + timeoutMs, poller: null, stopper: null, busy: false, errors: 0, lastError: "", ended: false };
+    const w: Watch = { n, until, baseline, timeoutMs, started: this.deps.now(), deadline: this.deps.now() + timeoutMs, poller: null, stopper: null, busy: false, errors: 0, lastError: "", ended: false, last: null };
     this.reserved.delete(n);
     this.watches.set(n, w);
     w.stopper = this.timers.set(() => this.end(w, { outcome: "timeout", detail: String(Math.round(timeoutMs / 1000)) }), timeoutMs);
@@ -256,6 +263,7 @@ export class PrWatches {
       if (w.errors >= MAX_ERRORS) return this.end(w, { outcome: "error", detail: w.lastError });
     } else {
       w.errors = 0;
+      if (r.checks) w.last = { at: this.deps.now(), checks: r.checks };
       const d = prDelta(w.baseline, r, w.until);
       if (d) return this.end(w, d);
     }

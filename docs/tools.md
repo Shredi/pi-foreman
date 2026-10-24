@@ -168,7 +168,8 @@ seconds, after taking a baseline. It ends at the first change (checks finished o
 `timeoutSeconds`, or after three polls in a row that failed. Each end sends exactly one `pi-foreman-pr` message with
 the summary, up to 10 failed checks and up to 10 new comments (cut to 4 KB), and clears the watch. It starts a turn
 when the foreman is idle and follows up when it is busy; the message is data, not an instruction. One watch per PR and
-session (`duplicate` otherwise). Watches are cleared at session shutdown.
+session (`duplicate` otherwise). Watches are cleared at session shutdown. The Herdr sidebar's PR dots poll at the same
+interval, `tools.prWatchSeconds` (floor 30 s; see [herdr](herdr.md#dots)).
 
 ### Limits
 

@@ -530,6 +530,38 @@ class Round33Tests(Fixture):
         top["asks"] = []
         self.assertNotIn("asks", self.only_root(top))
 
+    def test_dots_are_copied_when_present(self):
+        top = live("s-d", "d", "fm-d", hb=5)
+        self.assertNotIn("dots", self.only_root(top))   # an older live file without the field
+        good = [{"n": 17, "state": "fail", "label": "#17", "src": "pr"},
+                {"n": None, "state": "ok", "label": "deploy", "src": "ext", "extra": 1}]
+        top["dots"] = good
+        self.assertEqual(self.only_root(top)["dots"], [dict(good[0]), {k: v for k, v in good[1].items() if k != "extra"}])
+        top["dots"] = []
+        self.assertNotIn("dots", self.only_root(top))
+
+    def test_bad_dots_are_dropped_and_labels_cut(self):
+        top = live("s-d", "d", "fm-d", hb=5)
+        top["dots"] = [{"n": "x", "state": "ok", "label": "a", "src": "pr"},
+                       {"n": True, "state": "ok", "label": "a", "src": "pr"},
+                       {"n": 1, "state": "bogus", "label": "a", "src": "pr"},
+                       {"n": 1, "state": "ok", "label": "", "src": "pr"},
+                       {"n": 1, "state": "ok", "label": 5, "src": "pr"},
+                       {"n": 1, "state": "ok", "label": "a", "src": "other"},
+                       {"n": 1, "state": "ok", "label": "a"}, "junk", None,
+                       {"n": None, "state": "run", "label": "y" * 40, "src": "ext"}]
+        self.assertEqual(self.only_root(top)["dots"], [{"n": None, "state": "run", "label": "y" * 20, "src": "ext"}])
+        top["dots"] = [{"n": i, "state": "ok", "label": "#%d" % i, "src": "pr"} for i in range(20)]
+        self.assertEqual(len(self.only_root(top)["dots"]), 14)
+
+    def test_the_watch_prs_field_is_unchanged_by_dots(self):
+        top = live("s-d", "d", "fm-d", hb=5)
+        top["waits"] = [{"id": "w", "kind": "pr", "note": "n", "ageSeconds": 0, "leftSeconds": 0, "prs": [3, 4]}]
+        top["dots"] = [{"n": 9, "state": "ok", "label": "#9", "src": "pr"}]
+        root = self.only_root(top)
+        self.assertEqual(root["waits"][0]["prs"], [3, 4])
+        self.assertEqual(root["dots"][0]["n"], 9)
+
     def test_glyph_sets_emoji_and_ascii_reach_the_json(self):
         self.put_live(live("s-g", "g", "fm-g", state="blocked"))
         want = {"emoji": "\u270b", "ascii": "#", "nerd": "\uf256", "unicode": "\u270b"}

@@ -75,6 +75,7 @@ and `foreman:ready`. There is no second handshake.
 | MCP servers | Pi `mcp.json` or `registerMcpServer` from the overlay extension |
 | Events | `foreman:ready` on `pi.events` (see Handshake); no other `foreman:*` events are emitted |
 | Retro backlog | `retro.backlogDir` points the central backlog elsewhere; `retro.repoBacklog` and `retro.workspaceKey` pick per-workspace stores and keys (see [retro](retro.md)). User or overlay config only. |
+| Sidebar status | `sidebar.statusCommand` and `sidebar.statusSeconds` show a program's items as extra dots on the Herdr sidebar (see [External sidebar status](#external-sidebar-status)). User or overlay config only. |
 | Ceremony, fan-out, fallback | `ceremony.*`, `fanout.max`, `providers.<p>.fallback` |
 | Host pressure limits | `resources.*` (see [resources](resources.md)); a project file may only tighten them |
 
@@ -120,6 +121,24 @@ that script outside the workspace. Project configs cannot change `tools.prHost`.
 
 Conflict rules and rationale: `design/architecture.md`
 [section 2](../design/architecture.md#2-layers-and-the-overlay-contract).
+
+### External sidebar status
+
+An overlay can feed the Herdr sidebar's dots row from a program it ships. Set `sidebar.statusCommand` (and optionally
+`sidebar.statusSeconds`, default 60) in the overlay config; a project or session value is ignored. The program must be on
+`PATH` or an absolute path, outside the workspace, and print a JSON array on stdout:
+
+```json
+{ "sidebar": { "statusCommand": "example-status --short", "statusSeconds": 120 } }
+```
+
+```json
+[{"label": "build", "state": "ok"}, {"label": "deploy", "state": "run"}]
+```
+
+`state` is `fail`, `run`, `ok` or `none` (anything else is `none`), the label is cut to 20 characters, at most 8 items are
+kept. The items are display data only; they never reach the model. Run, limits, trace and doctor line:
+[herdr](herdr.md#external-status).
 
 ### Session model example
 

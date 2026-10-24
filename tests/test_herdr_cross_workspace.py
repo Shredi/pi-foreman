@@ -64,12 +64,12 @@ class CrossWorkspaceChildRowTest(unittest.TestCase):
         out = sidebar.compose(snap, WIDTH, joins)
         child = out["w7:p2"]
         # the label: the child's row 1 names it under the tree prefix
-        self.assertIsNotNone(child["fm_l1"])
-        self.assertTrue(child["fm_l1"].endswith("› round-x") or "› round-x " in child["fm_l1"], child["fm_l1"])
-        self.assertLessEqual(sidebar.cell_width(child["fm_l1"]), WIDTH - sidebar.INSET - sidebar.STATE_ICON_W)
-        # the icon: a working child shows the static working glyph in fm_sym (lane 7g) and fm_state carries the state
+        self.assertIsNotNone(child["fm_hd"])
+        self.assertIn(" round-x", child["fm_hd"])
+        self.assertLessEqual(sidebar.cell_width(child["fm_hd"]), WIDTH - sidebar.INSET - sidebar.SAFETY)
+        # the icon: a working child shows the static working glyph in fm_hd and fm_state carries the state
         self.assertEqual(child["fm_state"], "working")
-        self.assertEqual(child["fm_sym"], "⏳")
+        self.assertIn("⏳", child["fm_hd"])
 
     def _stale_setup(self, kid_pane):
         # an ended session of an earlier round left its presence file (pid gone, state done, hours old: inside the radar window) naming the pane id
@@ -92,12 +92,12 @@ class CrossWorkspaceChildRowTest(unittest.TestCase):
         joins = sidebar.join(snap["roots"], agents, {"w7:p2": 202})
         out = sidebar.compose(snap, WIDTH, joins)
         child = out["w7:p2"]
-        self.assertIn("› round-x", child["fm_l1"] or "")
+        self.assertIn(" round-x", child["fm_hd"] or "")
         self.assertEqual(child["fm_state"], "working")
         # the live file also wins when both name the pane
         snap, agents = self._stale_setup("w7:p2")
         out = sidebar.compose(snap, WIDTH, sidebar.join(snap["roots"], agents))
-        self.assertIn("› round-x", out["w7:p2"]["fm_l1"] or "")
+        self.assertIn(" round-x", out["w7:p2"]["fm_hd"] or "")
         self.assertEqual(out["w7:p2"]["fm_state"], "working")
 
     def test_finished_session_does_not_join_pi_pane_when_live_child_has_no_pane_or_pid(self):

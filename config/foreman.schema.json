@@ -415,6 +415,14 @@
       "additionalProperties": false,
       "properties": { "usage": { "type": "boolean", "description": "Show usage in the footer." }, "style": { "type": "string", "enum": ["foreman", "pi"], "description": "Footer in the tui: foreman (default, the two-line pi-foreman footer) or pi (Pi's own footer, the usage line in the one-line status)." } }
     },
+    "sidebar": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "statusCommand": { "type": "string", "minLength": 1, "description": "External status hook for the Herdr sidebar: one command line, split like a POSIX shell, no shell runs. It must print a JSON array of {label, state} objects (state fail, run, ok or none) and exit 0; the items show as extra dots (display data only, never sent to the model). The program must lie outside the workspace. Unset = off. User or overlay config only (the whole sidebar block)." },
+        "statusSeconds": { "type": "integer", "minimum": 10, "maximum": 3600, "description": "Seconds between two runs of sidebar.statusCommand (default 60). User or overlay config only." }
+      }
+    },
     "ui": {
       "type": "object",
       "additionalProperties": false,
