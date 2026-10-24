@@ -6,7 +6,7 @@
 
 The plugin `integrations/herdr/pi-foreman-sidebar/` shows the pi-foreman session tree in Herdr's Agents panel: per Pi
 pane a header (tree connector, state glyph, label, age or blocked timer), one line each for what runs (agents),
-what it watches (tasks, PRs, CI) and what it waits on, and a line with tokens and cost. It needs Herdr
+what it watches (tasks, PRs, CI) and what it waits on, a row of status dots for its pull requests, and a line with tokens and cost. It needs Herdr
 0.9.0 or later on Linux or macOS and Python 3.13+. Pane-level session features (blocked shim, group tag) are in
 [sessions](sessions.md#herdr).
 
@@ -14,6 +14,8 @@ what it watches (tasks, PRs, CI) and what it waits on, and a line with tokens an
   ⠹  pi-foreman                   12s
   │  ◆ builder sonnet-5.5 ×2 · revie…
   │  ⚙ pr #12 · npm test 3m
+  │  ⧗ timer 5m
+  │  ● #17 · ◉ #21 · ○ #19 · ○ deploy
   │  ↑287k ↓7.4k · $3.32 · ✓3
   ├─ ⠼  r31-sidebar                6m
   │  │  ◆ reviewer opus-5.5
@@ -29,7 +31,8 @@ what it watches (tasks, PRs, CI) and what it waits on, and a line with tokens an
 ```
 
 The mock-up is the `unicode` set at width 40 (blank cells shown as spaces); `⠹` and `⠼` are spinner frames of two
-working sessions.
+working sessions. The first session shows all six rows: header, agents, tasks and watches, waits, the dots row and the
+meta line.
 
 ## Install
 
@@ -85,14 +88,19 @@ does the same by itself, and `--dry-run` prints the sample for every glyph set (
 
 ## Rows
 
-The snippet adds five rows under `[ui.sidebar.agents.rows_by_agent]`, key `pi`, so only Pi panes use them; other
+The snippet adds six rows under `[ui.sidebar.agents.rows_by_agent]`, key `pi`, so only Pi panes use them; other
 agents keep your default rows. Herdr allows one rows table per key: if you already have
 `[ui.sidebar.agents.rows_by_agent]`, add the `pi = [...]` entry to it. Disable other plugins that set the Agents view
 or ship row templates for `pi`; two owners of the view replace each other's sort.
 
-Each row holds one token (`$fm_hd`, `$fm_a1`, `$fm_a2`, `$fm_a3`, `$fm_meta`), so Herdr draws no separator and the
+Five rows hold one token each (`$fm_hd`, `$fm_a1`, `$fm_a2`, `$fm_a3`, `$fm_meta`), so Herdr draws no separator and the
 plugin owns every column of the line, including the tree. A row without a value is not drawn: an idle session is one or
-two lines. Do not put a `state_icon` or another cell in front of `$fm_hd`. Herdr 0.9.3 draws the second and later rows
+two lines.
+
+The pr row holds four cells, `$fm_pr1` to `$fm_pr4`, one dot each, so a rule can colour each dot by its own glyph. Herdr
+puts its separator (` · `, 3 columns) between the non-empty cells of a row; an empty cell costs nothing. The first cell
+carries the row's tree continuation (the `│` or blank cells that keep the tree lines going) and takes the row's colour:
+Herdr styles whole cells, so that continuation takes the colour of the first dot too. Do not put a `state_icon` or another cell in front of `$fm_hd`. Herdr 0.9.3 draws the second and later rows
 of an entry 2 cells further right than the first and has no setting for it, so `$fm_hd` starts with 2 blank cells
 (`DETAIL_INDENT` in `sidebar.py`) and the detail rows are 2 cells shorter: every `│` sits under the connector or glyph
 it continues.
@@ -126,11 +134,36 @@ tokens still publish (see Tokens) but the new snippet does not use them. Nothing
 | `fm_a1` agents | `◆ builder sonnet-5.5 ×2 · reviewer opus-5.5`: running child runs by role and model; a finished run shows `✓ role` for `radar.recentRunSeconds` |
 | `fm_a2` tasks and watches | `⚙ pr #12 · npm test 3m`: PR watches, CI waits (`foreman_wait` kind `ci`), `foreman_bg` commands and the `bg_run` add-on's tasks of this session |
 | `fm_a3` waits | `? ask 1: topic` for an open ask, then `⧗ child r32b 4m`: timer, file, child and pid waits |
+| `fm_pr1`..`fm_pr4` | `● #17 · ◉ #21`: status dots of pull requests and external items (see Dots) |
 | `fm_meta` | `↑287k ↓7.4k · $3.32 · ✓3`, plus the host pressure suffix |
 
 A done session shows `done · n runs` on `fm_a1`, a lost one `lost`. A live, self-publishing working session shows a
 spinner frame in the glyph slot (see Spinner); waiting is working: while a `foreman_wait` or `foreman_bg` is pending the state stays `working`
 and Herdr's status stays working, and the wait shows on its activity line.
+
+#### Dots
+
+The dots row shows one circle and a short label per tracked item, in the glyph set's `pr-fail`, `pr-run`, `pr-ok` and
+`pr-none` keys (see Symbols). A pull request dot is labelled `#<number>`; an external item (see
+[External status](#external-status)) shows its own label.
+
+| State | Circle (`unicode`) | Meaning of a pull request |
+|---|---|---|
+| `fail` | ● | a check failed, or the PR has a merge conflict |
+| `run` | ◉ | checks are pending |
+| `ok` | ○ | checks are green and the PR is mergeable: only review or merge is left |
+| `none` | ◌ | no checks, or the state is unknown |
+
+The order is red, yellow, green, unknown, then by PR number (external items without a number after the PRs), then by
+label. At most four cells fit the row; when items are hidden by the cell count or by the width, the last placed cell
+becomes `+n` (n = items not shown). At most 14 dots reach the sidebar.
+
+Which PRs are tracked: a PR created with `pr_create`, a PR under `pr_watch`, and the PR of the current branch. At most six
+are tracked. A closed or merged PR disappears from the row.
+
+Cost: each tracked PR is polled with at most two host calls (checks and mergeability) every `tools.prWatchSeconds` (floor
+30 s), for at most six PRs, on top of the polls `pr_watch` makes itself. A PR that a watch covers reuses the watch's
+snapshot and costs no extra call. See [tools](tools.md#watch).
 
 ### Data
 
@@ -144,10 +177,11 @@ are additive: older readers ignore them, and each is present only when there is 
 | `prs` | the `pr_watch` wait | the watched PR numbers |
 | `tasks` | live file, radar session node | this session's own `bg_run` add-on tasks: `id`, `label`, `pid`, `ageSeconds` |
 | `asks` | live file, radar session node | `[{n, topic}]` while the session's own handoff ask is open |
+| `dots` | live file, radar session node | the dots row: `[{n, state, label, src}]`, at most 14; `n` is the PR number or `null`, `state` one of `fail`, `run`, `ok`, `none`, `label` at most 20 characters, `src` `pr` or `ext` (the external status hook). The radar copies it unchanged to the session node; the `prs` field of the `pr_watch` wait is separate and unchanged |
 
 The sidebar sorts them into lines: child runs go to `fm_a1` (agents); `tasks`, waits with `bg` and the `pr_watch` wait
 (with its `prs`) go to `fm_a2` (tasks and watches); other waits and `asks` go to `fm_a3` (`? ask <n>: <topic>`, then the
-waits).
+waits); `dots` go to the pr row (`fm_pr1`..`fm_pr4`), pull request and external items mixed in one order.
 
 ### Header glyphs and colours
 
@@ -331,6 +365,46 @@ Activity glyphs and the spinner:
 | `wait` | ⧗ | ⏳ | U+F252 | `~` |
 | `ask` | ? | ❓ | U+F128 | `?` |
 | `recent` | ✓ | ✅ | U+F00C | `+` |
+| `pr-fail` | ● | 🔴 | U+F111 | `x` |
+| `pr-run` | ◉ | 🟡 | U+F192 | `*` |
+| `pr-ok` | ○ | 🟢 | U+F10C | `o` |
+| `pr-none` | ◌ | ⚪ | U+F1DB | `.` |
+
+## External status
+
+The dots row can also show items from a program you run yourself, for example a deployment or build status that has no
+pull request. Two keys under `sidebar` in `foreman.json`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `sidebar.statusCommand` | unset (off) | one command line, split like a POSIX shell (quotes and backslashes, no expansion, no shell runs) |
+| `sidebar.statusSeconds` | `60` | seconds between two runs (integer 10..3600) |
+
+```json
+{ "sidebar": { "statusCommand": "/path/to/your-status-program --short", "statusSeconds": 60 } }
+```
+
+- **Where it may be set.** User config or an overlay only. A value in the project config or the session config is ignored
+  with a warning, because the command runs a program.
+- **The program.** The first word is looked up on `PATH`, or is an absolute path. Its real path (symlinks resolved)
+  must lie outside the workspace; a `.cmd` or `.bat` file is refused. Otherwise nothing runs (the trace says `program_missing`).
+- **The run.** In the session's working directory, without a shell and in its own process group, with the environment
+  plus `PI_FOREMAN_SESSION_ID` (the session id) and `PI_FOREMAN_BRANCH` (the current branch). After 10 s the whole process
+  group is killed. Stdout is read up to 16 KB and stderr up to 4 KB; more is cut or, for stdout, rejects the output.
+  The next run starts `sidebar.statusSeconds` after the previous one ended; only one runs at a time.
+- **The output.** Exit code 0 and a JSON array of objects `{label, state}` on stdout. The first 8 items are kept. The
+  label is cut to 20 characters and stripped of control characters (and secrets the trace redaction knows). `state` is
+  one of `fail`, `run`, `ok`, `none`; any other value is `none`. Other keys are ignored. Anything that is not such an
+  array (or a non-zero exit, or a timeout) is rejected: the previous items stay for one more interval, then the row
+  loses its external items.
+- **Display data only.** The items go to the sidebar and nowhere else: they never reach the model, never become a
+  message and keep no link. The program and its output are untrusted.
+- **Trace and doctor.** Each run writes a `sidebar_status` trace event with its outcome (`ok`, `bad_output`, `failed`,
+  `timeout` or `program_missing`) and the item count, plus the first line of stderr (redacted, at most 200 characters) when the program fails; never the
+  output. `foreman doctor` shows an INFO line `sidebar status: off` or `sidebar status: on (<program>)`.
+
+The items join the pull request dots in the same row and order (see Dots). Overlay authors: see
+[overlays](overlays.md#external-sidebar-status).
 
 ## Optional add-on: background tasks
 

@@ -55,7 +55,7 @@ function table(): Record<string, Partial<SymbolSet>> {
 
 /** The built-in tables of every set, before config/symbols.json is spread over them. */
 export function builtinSymbols(): Record<SetName, SymbolSet> {
-  const one = (which: SetName) => ({ ...FALLBACK[which], keepalive: KEEPALIVE[which], ...EXTRA[which] }) as SymbolSet;
+  const one = (which: SetName) => ({ ...FALLBACK[which], keepalive: KEEPALIVE[which], ...CACHE_GLYPHS[which], ...EXTRA[which] }) as SymbolSet;
   return { unicode: one("unicode"), emoji: one("emoji"), nerd: one("nerd"), ascii: one("ascii") };
 }
 

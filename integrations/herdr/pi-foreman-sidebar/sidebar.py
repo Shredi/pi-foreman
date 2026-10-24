@@ -48,12 +48,9 @@ STARTUP_GRACE_S = 10
 WATCHDOG_ENV = "PI_FOREMAN_SIDEBAR_WATCHDOG_S"  # hidden override (tests)
 # Herdr config reference: "`ui.sidebar_width` integer default `26`".
 DEFAULT_WIDTH = 26
-# Row 3 is [fm_l3][fm_cost]. A typical root row needs "↑287k ↓7.4k" (11) +
-# GAP (3) + "$0.25 ✓3" (8) = 22 columns inside width - INSET, so counts fit
-# from 24. Cost alone needs 8 + INSET = 10; 20 leaves room for the tree indent
-# of nested rows. Narrower panels (Herdr's minimum is 18) step down.
-NARROW_COUNTS = 24   # below: drop token counts from fm_l3
-NARROW_COST = 20     # below: clear fm_l3 and fm_cost
+# The meta line (fm_meta) shows cost and counts. Cost alone needs 8 + INSET = 10 columns; 20 leaves
+# room for the tree indent of nested rows. Narrower panels (Herdr's minimum is 18) hide it.
+NARROW_COST = 20     # below: no meta line
 LATE_S = 900         # blocked longer than this: glyph gets a "!"
 MAX_VALUE = 80
 # Columns the Agents panel takes from `ui.sidebar_width` for its frame and
@@ -63,22 +60,13 @@ INSET = 2
 # ` · ` and uses a single space after `state_icon`." Custom cells are not
 # state_icon, so two non-empty cells of a row cost 3 columns between them.
 GAP = 3
-# Cells the user puts before $fm_sym on row 1 besides Herdr's state_icon (an
-# icon token, say), each assumed 1 column wide plus its separator;
-# --lead-cells / HERDR_SIDEBAR_LEAD.
+# Cells the user puts before the first token of row 1 besides Herdr's state_icon; kept for
+# compatibility (--lead-cells / HERDR_SIDEBAR_LEAD), the header ignores it.
 DEFAULT_LEAD = 0
-LEAD_CELL_W = 1
-# Columns row 1 loses to a Herdr state_icon cell before $fm_sym: none, the
-# default row opens with $fm_sym (the optional variant in config-snippet.toml
-# adds 2: set --lead-cells / HERDR_SIDEBAR_LEAD for it).
-STATE_ICON_W = 0
 # An unchanged row is sent again only after this many seconds, to keep the TTL alive.
 REPUSH_S = 10
 # At this width and above the children line shows a run's model and its rung.
 WIDE_CHILDREN = 60
-# The glyph of a pending long wait on the legacy children line (fm_l2); the sets without an
-# entry use the `wait` key of config/symbols.json, like the new activity lines.
-WAIT_GLYPH = {"unicode": "⏳", "nerd": "\uf252"}
 # A pushed tree position (tree.json) and the legacy layout.json count as current this long: two
 # daemon intervals. Older, the session builds the tree itself.
 TREE_FRESH_S = 2 * INTERVAL_S
@@ -96,9 +84,6 @@ AUX_FALLBACK = {"agent": "◆", "task": "⚙", "wait": "⧗", "ask": "?", "recen
                 "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌"}
 SPINNER_FALLBACK = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 SYMBOL_SETS = ("unicode", "emoji", "nerd", "ascii")
-# Line 1 stops this many columns short of its budget, so a misjudged frame
-# or glyph width does not push the age into Herdr's ellipsis.
-L1_MARGIN = 2
 # Herdr trims token values at both ends, so a leading blank indent uses
 # U+2800 (renders blank, is not whitespace) instead of spaces.
 BLANK = "⠀"
@@ -130,8 +115,6 @@ SESSION_KEYS = tuple(k for k in KEYS if k != "fm_sort")
 STAMP_FRESH_S = TTL_MS / 1000.0
 NOT_SELF_STATES = ("lost", "stale", "done")
 SID_RE = re.compile(r"^[A-Za-z0-9._-]{1,200}$")  # no ":" (an NTFS stream on Windows)
-# Minimum line-1 label when the age is kept: "›…".
-L1_MIN_LABEL = 2
 SOCKET_FAILURES_MAX = 40
 VIEW_RETRY_S = 60
 VIEW_REFRESH_S = 60
@@ -209,18 +192,6 @@ def _pressure_suffix(p):
     return " ⚠ " + ",".join(reasons) if reasons else " ⚠"
 
 
-def spread(left, right, width):
-    """`left` + inner padding + `right`, right edge at `width` cells. When
-    `left` would get fewer than L1_MIN_LABEL cells (`›…`), `right` is dropped,
-    so the result never exceeds `width`."""
-    if not right or width - cell_width(right) - 1 < L1_MIN_LABEL:
-        return truncate(left, width)
-    room = width - cell_width(right) - 1
-    left = truncate(left, room)
-    pad = max(1, width - cell_width(left) - cell_width(right))
-    return left + " " * pad + right
-
-
 def _cap(value):
     if value is None:
         return None
@@ -290,44 +261,6 @@ def _run_label(k, width):
     if rung and rung != "model" and (not model or (width or 0) >= WIDE_CHILDREN):
         label += " " + rung
     return label
-
-
-def _wait_text(node, symbols):
-    waits = node.get("waits") or []
-    if not waits:
-        return None
-    w = waits[0]
-    glyph = WAIT_GLYPH.get(symbols or "unicode") or aux_symbols(symbols)["wait"]
-    text = "%s %s %s" % (glyph, w.get("note") or w.get("kind") or "wait", fmt_age(w.get("age_s")))
-    return text + (" +%d" % (len(waits) - 1) if len(waits) > 1 else "")
-
-
-def _children_text(node, joins, recent=None, width=None, symbols=None):
-    state = node.get("state")
-    kids = node.get("children") or []
-    if state == "lost":
-        return "lost"
-    if state == "done":
-        if not kids:
-            return "done"
-        return "done · %d child%s" % (len(kids), "" if len(kids) == 1 else "ren")
-    groups = []
-    counts = {}
-    for k in kids:
-        if _is_row(k, joins) or (k.get("state") == "done" and not _recent_run(k, recent)):
-            continue
-        label = _run_label(k, width)
-        item = (k.get("glyph") or "") + " " + label
-        if item not in counts:
-            groups.append(item)
-            counts[item] = 0
-        counts[item] += 1
-    if not groups:
-        waiting = _wait_text(node, symbols)
-        if waiting:
-            return waiting
-        return "no active children" if kids else "no children"
-    return " · ".join(g if counts[g] == 1 else "%s ×%d" % (g, counts[g]) for g in groups)
 
 
 _aux_cache = {}
@@ -654,7 +587,7 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
     """Snapshot (radar --json) -> {paneId: {fm_key: value or None}}.
 
     `joins` maps node key -> paneId; without it each node's own `paneId` is
-    used. `lead` counts the user's cells before $fm_sym on row 1 (legacy rows only).
+    used. `lead` is kept for compatibility (the header ignores it).
     None values clear the token. Panes in `self_panes` get only `fm_sort` (their
     session publishes the rest). `layout` ({key: {pre, cont}}) and `tree`
     ({key: {P, conn, own}}) place a root row at a tree position computed elsewhere
@@ -708,7 +641,7 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
         out[pane] = {k: _cap(tokens[k]) for k in KEYS}
 
     for n, sort, place in tree_rows(roots, joins, tree):
-        # legacy prefixes (fm_l1..fm_l3) come from the same placement; a pushed layout wins for a root
+        # the row prefixes come from the same placement; a pushed layout wins for a root
         pre, cont = place["P"] + place["conn"][:2], place["P"] + place["own"][:2]
         placed = (layout or {}).get(n.get("key")) if not sort.count(".") else None
         if isinstance(placed, dict):
@@ -1831,7 +1764,7 @@ def read_sample(sdir, pane, now=None):
         if not now < float(d["expires"]) < now + SAMPLE_MAX_S:
             return None
         tokens, tpl = d["tokens"], d.get("fm_hd_tpl")
-        got = {k: tokens[k] if isinstance(tokens.get(k), str) else None for k in SESSION_KEYS}
+        got = {k: _cap(tokens[k]) if isinstance(tokens.get(k), str) else None for k in SESSION_KEYS}
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
     return got, tpl if isinstance(tpl, str) else None

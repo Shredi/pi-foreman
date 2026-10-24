@@ -1920,5 +1920,56 @@ class PushClosedChildTest(PushWorld):
         self.assertTrue(meta().startswith(sidebar.CONT_MID), meta())          # a winner child keeps it
 
 
+class MixedSourcesTest(PushWorld):
+    def test_a_radar_node_with_pr_and_ext_dots_composes_one_ordered_row(self):
+        radar_dots = [dot(None, "ok", "deploy", "ext"), dot(21, "run"), dot(17, "fail"), dot(None, "fail", "lint", "ext")]
+        g = SYMS["unicode"]
+        self.assertEqual(pr_cells(radar_dots, 60),
+                         [sidebar.CONT_LAST + g["pr-fail"] + " #17", g["pr-fail"] + " lint", g["pr-run"] + " #21",
+                          g["pr-ok"] + " deploy"])
+
+    def test_every_daemon_report_holds_at_most_sixteen_keys(self):
+        self.assertEqual(sidebar.MAX_TOKENS, 16)
+        chunks = sidebar.split_tokens({"k%d" % i: "v" for i in range(18)})
+        self.assertEqual([len(c) for c in chunks], [16, 2])
+        self.assertEqual(sidebar.split_tokens({}), [{}])
+        reports = []
+
+        def fake(method, params, path=None, timeout=5.0):
+            if method == "pane.report_metadata":
+                reports.append(params)
+            return {"agents": [{"pane_id": "p1", "agent": "pi", "cwd": "/x"}]} if method == "agent.list" else {}
+
+        import argparse
+        args = argparse.Namespace(width=40, lead_cells=None, no_view=True)
+        snap = {"v": 1, "roots": [dict(node("s1", "session", "demo", "working", "working", SYMS["unicode"],
+                                           pane="p1", cwd="/x"), dots=FOUR)]}
+        old = sidebar.call
+        sidebar.call = fake
+        try:
+            pub = sidebar.Publisher(args, self.sdir)
+            pub.publish(snap)
+            pub.publish({"v": 1, "roots": []})   # the pane's keys are cleared: KEYS plus the retired keys
+        finally:
+            sidebar.call = old
+        self.assertGreaterEqual(len(reports), 3)
+        for report in reports:
+            self.assertLessEqual(len(report["tokens"]), 16, report)
+        cleared = {k for r in reports[1:] for k in r["tokens"]}
+        self.assertEqual(cleared, set(sidebar.KEYS + sidebar.STALE_KEYS))
+
+    def test_sample_values_pass_through_the_cap(self):
+        os.makedirs(os.path.dirname(self.sample_file()))
+        long = "x" * 200
+        with open(self.sample_file(), "w", encoding="utf-8") as fh:
+            json.dump({"tokens": {"fm_hd": long, "fm_meta": "a\u200bb\x07c", "fm_a1": "   ", "fm_a2": 7,
+                                  "fm_a3": ["x"]}, "expires": time.time() + 60}, fh)
+        got = sidebar.read_sample(self.sdir, "p1")[0]
+        self.assertEqual(got["fm_hd"], "x" * (sidebar.MAX_VALUE - 1) + "…")
+        self.assertEqual(got["fm_meta"], "abc")
+        for key in ("fm_a1", "fm_a2", "fm_a3", "fm_pr1"):
+            self.assertIsNone(got[key], key)
+
+
 if __name__ == "__main__":
     unittest.main()

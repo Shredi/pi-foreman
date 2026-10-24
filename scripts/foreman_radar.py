@@ -456,6 +456,20 @@ def build(data, now):
                 if isinstance(a, dict) and isinstance(a.get("n"), int) and not isinstance(a.get("n"), bool)]
         if asks:
             n["asks"] = asks
+        dots = []
+        for x in d.get("dots") or []:
+            if not isinstance(x, dict) or len(dots) >= 14:
+                continue
+            dn, label = x.get("n"), x.get("label")
+            if not (dn is None or (isinstance(dn, int) and not isinstance(dn, bool))):
+                continue
+            if x.get("state") not in ("fail", "run", "ok", "none") or x.get("src") not in ("pr", "ext"):
+                continue
+            if not isinstance(label, str) or not label:
+                continue
+            dots.append({"n": dn, "state": x["state"], "label": label[:20], "src": x["src"]})
+        if dots:
+            n["dots"] = dots
         u = data["usage"].get(sid)
         runs = [r for r in (d.get("runs") or []) if isinstance(r, dict)]
         for r in runs:
@@ -796,6 +810,8 @@ def to_json_node(n, now, symbols):
             out["tasks"] = n["tasks"]
         if n.get("asks"):
             out["asks"] = n["asks"]
+        if n.get("dots"):
+            out["dots"] = n["dots"]
         if n.get("pressure"):
             out["pressure"] = n["pressure"]
     else:
