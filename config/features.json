@@ -483,6 +483,17 @@
       "enable": ""
     },
     {
+      "id": "remote-sessions",
+      "title": "Remote child sessions over SSH",
+      "purpose": "`foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. The child reports back by cross-machine pi-intercom notices; the parent mirrors them into files. User or overlay config only.",
+      "doc": "docs/sessions.md#remote-child-sessions",
+      "keys": ["sessions"],
+      "commands": ["foreman session remote"],
+      "switch": {"key": "sessions.machines", "on": "nonempty"},
+      "state": "opt-in",
+      "enable": "{\"sessions\": {\"machines\": {\"alpha\": {}}}}"
+    },
+    {
       "id": "round-state",
       "title": "Reload-safe round state",
       "purpose": "In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns only from the parent's `ruling.md` newer than both the plan and the handoff plan.",

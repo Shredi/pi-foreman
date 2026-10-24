@@ -83,6 +83,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [guards](#guards) | on | Loads the guard extensions into every child, sets the limits of the precondition-checked copy and worktree-remove tools, and picks the Python that runs every guard. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
 | [bridge-isolation](#bridge-isolation) | on | With the Claude bridge, points `CLAUDE_CONFIG_DIR` at an empty folder so the host's Claude Code settings, hooks and plugins do not load into bridge turns. | on by default | [safety](safety.md#bridge-isolation) |
 | [sessions](#sessions) | on | `/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom. The session runs on the `session-foreman` role's model (default: the opening session's own model) and never on a higher rank. | on by default | [sessions](sessions.md#session-commands) |
+| [remote-sessions](#remote-sessions) | opt-in | `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. The child reports back by cross-machine pi-intercom notices; the parent mirrors them into files. User or overlay config only. | `{"sessions": {"machines": {"alpha": {}}}}` | [sessions](sessions.md#remote-child-sessions) |
 | [round-state](#round-state) | on | In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns only from the parent's `ruling.md` newer than both the plan and the handoff plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
 | [remote-intercom](#remote-intercom) | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [sync](#sync) | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
@@ -575,6 +576,18 @@ Switch: `safety.subagents.allowWorkflow` is true.
 
 No config key.
 
+### remote-sessions
+
+**Remote child sessions over SSH.** `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. The child reports back by cross-machine pi-intercom notices; the parent mirrors them into files. User or overlay config only.
+
+Switch: `sessions.machines` is non-empty.
+
+| Key | Default | Layer |
+|---|---|---|
+| `sessions.machines.<x>.foremanCommand` | unset | not in project/session (the machines a session may open on over SSH come from the user or overlay config) |
+| `sessions.machines.<x>.parentName` | unset | not in project/session (the machines a session may open on over SSH come from the user or overlay config) |
+| `sessions.remoteInlineMaxBytes` | `32768` | tighten-only (lower only, minimum 1024) |
+
 ### round-state
 
 **Reload-safe round state.** In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns only from the parent's `ruling.md` newer than both the plan and the handoff plan.
@@ -761,6 +774,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [read-budgets](#read-budgets) | `/foreman budget` |
 | [waits](#waits) | `/foreman waits` |
 | [sessions](#sessions) | `/foreman session`, `foreman session` |
+| [remote-sessions](#remote-sessions) | `foreman session remote` |
 | [sync](#sync) | `/sync`, `foreman sync` |
 | [retro](#retro) | `/retro`, `/foreman flag-ask`, `foreman retro`, `foreman backlog` |
 | [close](#close) | `/foreman close`, `foreman close`, `foreman worktree` |
@@ -822,6 +836,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `retro.panelThreshold` | the panel threshold comes from the user or overlay config |
 | `close.worktreeDir` | the worktree convention comes from the user or overlay config |
 | `close.childWaitMs` | the child close wait comes from the user or overlay config |
+| `sessions.machines` | the machines a session may open on over SSH come from the user or overlay config |
 | `ceremony.checkpoint` | who approves the plan checkpoint comes from the user or overlay config |
 | `ceremony.reviewModel` | the fallback reviewer model comes from the user or overlay config |
 | `ceremony.reviewByOccasion` | the per-occasion reviewer overrides come from the user or overlay config |
