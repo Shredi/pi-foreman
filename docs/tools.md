@@ -89,6 +89,7 @@ sets, and a templates object brings any other CLI. Nothing here merges a PR, fix
 |---|---|---|
 | `tools.pr` | `true` | tighten-only (only `false` is accepted) |
 | `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
+| `tools.prDots` | `true` | any layer (`false` keeps the PR status dots poller from starting; the PR tools stay on, see [herdr](herdr.md#dots)) |
 | `tools.prWatchSeconds` | `60` | any layer (integer 5..3600, seconds between two `pr_watch` polls) |
 
 `tools.prHost` is `"auto"` (`gh`, then `glab`, found on `PATH` outside the workspace), `"gh"`, `"glab"` or a templates

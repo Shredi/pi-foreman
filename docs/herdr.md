@@ -163,7 +163,8 @@ are tracked. A closed or merged PR disappears from the row.
 
 Cost: each tracked PR is polled with at most two host calls (checks and mergeability) every `tools.prWatchSeconds` (floor
 30 s), for at most six PRs, on top of the polls `pr_watch` makes itself. A PR that a watch covers reuses the watch's
-checks snapshot and costs only the status call. See [tools](tools.md#watch).
+checks snapshot and costs only the status call. See [tools](tools.md#watch). `tools.prDots: false` keeps the poller from
+starting at all (the PR tools stay on).
 
 ### Data
 
