@@ -13,7 +13,8 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // Modules that cannot share the machine with the pool: they start processes that wait on fixed timing windows.
-const SERIAL = ["test_replay_intercom", "test_replay_presence", "test_replay_session_tree"];
+// test_replay_parallel_ask: timing-sensitive event ordering under parallel load.
+const SERIAL = ["test_replay_intercom", "test_replay_presence", "test_replay_session_tree", "test_replay_parallel_ask"];
 const TAIL_LINES = 80;
 const SLOWEST = 15;
 
