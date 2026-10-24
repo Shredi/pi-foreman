@@ -719,6 +719,7 @@ No config key.
 
 | Key | Default | Layer |
 |---|---|---|
+| `providers.<x>.modelDataFrom` | unset | not in project/session (it decides the reserve setup writes: user or overlay config only) |
 | `providers.<x>.models.<x>.contextWindow` | unset | any layer |
 | `providers.<x>.models.<x>.tiers` | unset | any layer |
 | `compaction.maxTokens` | `200000` | tighten-only (lower only, minimum 50000) |
@@ -851,6 +852,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `ladder.reviewPanel` | the review panel's models come from the user or overlay config |
 | `ladder.sizing` | the launch sizing rules come from the user or overlay config |
 | `providers.*.ranks` | model ranks decide which children may launch: user or overlay config only |
+| `providers.*.modelDataFrom` | it decides the reserve setup writes: user or overlay config only |
 | `providers.*.strongAbove` | the ladder comes from the user or overlay config |
 | `providers.*.childMaxTurns` | the ladder comes from the user or overlay config |
 | `roles.*.strongAbove` | the ladder comes from the user or overlay config |

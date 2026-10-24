@@ -69,6 +69,7 @@ Keys outside safety that the project and session layers cannot loosen either
     tools.prHost                     ignored (it picks the program the PR tools run)
     childMaxThinking                 lower only (off < ... < max)
     ladder.* (but strongOnRevision), providers.*.ranks   ignored (the ladder and the child rank policy: L1/L3/L2 only)
+    providers.*.modelDataFrom        ignored (it decides the reserve setup writes: L1/L3/L2 only)
     providers.*.strongAbove / childMaxTurns, roles.*.strongAbove / childMaxTurns   ignored (ladder)
     ceremony.revisionRounds.<tier>   lower only (a higher limit loosens the review loop)
     ceremony.requireTriage           only true is accepted (false lets the foreman edit untriaged)
@@ -245,6 +246,7 @@ IGNORED_KEYS = [
     (("ladder", "reviewPanel"), "the review panel's models come from the user or overlay config"),
     (("ladder", "sizing"), "the launch sizing rules come from the user or overlay config"),
     (("providers", "*", "ranks"), "model ranks decide which children may launch: user or overlay config only"),
+    (("providers", "*", "modelDataFrom"), "it decides the reserve setup writes: user or overlay config only"),
     (("providers", "*", "strongAbove"), "the ladder comes from the user or overlay config"),
     (("providers", "*", "childMaxTurns"), "the ladder comes from the user or overlay config"),
     (("roles", "*", "strongAbove"), "the ladder comes from the user or overlay config"),

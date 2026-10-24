@@ -4,6 +4,7 @@
   "ladder": { "childPolicy": "below", "rolePolicy": { "reviewer": "at-or-below", "senior-reviewer": "at-or-below", "builder": "below" }, "strongAbove": 100000, "childMaxTurns": 60, "reviewerClimb": { "enabled": true, "securityRung": "claude-bridge/claude-opus-5-5:high" } },
   "providers": {
     "claude-bridge": {
+      "modelDataFrom": "anthropic",
       "strongAbove": 100000,
       "cache": { "byModel": [{ "match": "claude-*", "ttlSeconds": 3600, "note": "subscription within plan usage; 300 on extra-usage credits or API key" }], "keepalive": { "enabled": true, "awayTicks": 2 } },
       "ranks": [

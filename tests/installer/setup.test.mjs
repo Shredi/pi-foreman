@@ -702,6 +702,351 @@ test("compaction: a missing or unreadable registry is one warning, nothing is wr
   assert.deepEqual(readSettings(env).compaction, kept);
 });
 
+// ---- compaction overrides for providers Pi has no registry file for (live model list, modelDataFrom)
+
+const ANTHROPIC = {
+  api: {
+    "chat:claude-opus-5-5": { contextWindow: 1000000, cost: { tiers: [{ inputTokensAbove: 272000 }] } },
+    "chat:claude-sonnet-5-5": { contextWindow: 1000000, cost: { tiers: [{ inputTokensAbove: 272000 }] } },
+    "chat:claude-sonnet-4-9": { contextWindow: 1000000, cost: { tiers: [{ inputTokensAbove: 272000 }] } },
+    "chat:claude-fable-5-1": { contextWindow: 1000000, cost: { tiers: [{ inputTokensAbove: 272000 }] } },
+    "chat:claude-haiku-5-5": { contextWindow: 1000000, cost: { tiers: [{ inputTokensAbove: 100000 }] } },
+  },
+};
+
+function dataDir(env, files) {
+  const dir = path.join(env.base, "pi-ai-data");
+  fs.mkdirSync(dir, { recursive: true });
+  for (const [name, reg] of Object.entries(files)) fs.writeFileSync(path.join(dir, `${name}.json`), JSON.stringify(reg));
+  return { PI_FOREMAN_PI_AI_DATA: dir };
+}
+
+/** Env for run(): the fake `pi --list-models` prints a table of [provider, id, context] rows (or `raw` text), exit `code`. */
+function listing(env, rows, { code = 0, raw } = {}) {
+  const file = path.join(env.base, "list-models.json");
+  const header = "provider  model  context  max-out  thinking  images\n";
+  const output = raw ?? header + rows.map(([p, id, ctx]) => `${p}  ${id}  ${ctx}  8K  yes  no`).join("\n") + "\n";
+  fs.writeFileSync(file, JSON.stringify({ output, code }));
+  return { FAKE_PI_LIST_MODELS: file };
+}
+
+const writeCfg = (env, cfg) => fs.writeFileSync(path.join(env.agentDir, "foreman.json"), JSON.stringify({ version: 1, ...cfg }));
+const listCalls = (env) => calls(env).filter((a) => a[0] === "--list-models");
+const linesFor = (out, key) => out.split("\n").filter((l) => l.includes(`${key}:`) && /compaction/.test(l));
+const CAP150 = { compaction: { maxTokens: 150000 } };
+
+test("compaction: a role map on a bridge provider (model, strong, idle, review, security rung) gets keys from the live window and the base tiers", () => {
+  const env = fresh();
+  seed(env);
+  writeCfg(env, {
+    ...CAP150,
+    ladder: { reviewerClimb: { enabled: true, securityRung: "claude-bridge/claude-sonnet-4-9:high" } },
+    providers: {
+      "claude-bridge": {
+        roles: {
+          builder: { model: "claude-bridge/claude-sonnet-5-5:medium", strong: { model: "claude-bridge/claude-opus-5-5" } },
+          foreman: { model: "claude-bridge/claude-opus-5-5", idle: { model: "claude-bridge/claude-haiku-5-5" } },
+        },
+        review: { model: "claude-bridge/claude-fable-5-1" },
+      },
+    },
+  });
+  const ids = ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-fable-5-1", "claude-sonnet-4-9"];
+  const r = run(env, [], { ...dataDir(env, { anthropic: ANTHROPIC }), ...listing(env, ids.map((id) => ["claude-bridge", id, "200K"])) });
+  assert.equal(r.code, 0, r.out);
+  const o = overrides(readSettings(env));
+  assert.deepEqual(Object.keys(o).sort(), ids.map((id) => `claude-bridge/${id}`).sort());
+  for (const id of ids) assert.equal(o[`claude-bridge/${id}`].reserveTokens, id === "claude-haiku-5-5" ? 120000 : 50000, id);
+  assert.equal(listCalls(env).length, 1);
+  assert.doesNotMatch(r.out, /no price tiers known/);
+});
+
+test("compaction: a borrowed window is the live one, not the base's; a Haiku-shaped bridge model at 200K gets reserve 120000", () => {
+  const env = fresh();
+  seed(env);
+  writeCfg(env, { ...CAP150, providers: { "claude-bridge": { roles: { builder: { model: "claude-bridge/claude-sonnet-5-5" }, reviewer: { model: "claude-bridge/claude-haiku-5-5" } } } } });
+  const reg = dataDir(env, { anthropic: ANTHROPIC });
+  const r = run(env, [], { ...reg, ...listing(env, [["claude-bridge", "claude-sonnet-5-5", "200K"], ["claude-bridge", "claude-haiku-5-5", "200K"]]) });
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(overrides(readSettings(env)), { "claude-bridge/claude-haiku-5-5": { reserveTokens: 120000 }, "claude-bridge/claude-sonnet-5-5": { reserveTokens: 50000 } });
+  assert.match(r.out, /compaction claude-bridge\/claude-haiku-5-5: reserveTokens unset -> 120000 \(compacts at 80000\)/);
+  assert.deepEqual(derivedOf(env), { "claude-bridge/claude-haiku-5-5": 120000, "claude-bridge/claude-sonnet-5-5": 50000 });
+  // the same model at a 1M live window gets the 1M reserve
+  const env2 = fresh();
+  seed(env2);
+  writeCfg(env2, { ...CAP150, providers: { "claude-bridge": { roles: { builder: { model: "claude-bridge/claude-sonnet-5-5" } } } } });
+  assert.equal(run(env2, [], { ...dataDir(env2, { anthropic: ANTHROPIC }), ...listing(env2, [["claude-bridge", "claude-sonnet-5-5", "1M"]]) }).code, 0);
+  assert.equal(overrides(readSettings(env2))["claude-bridge/claude-sonnet-5-5"].reserveTokens, 850000);
+});
+
+test("compaction: ranks on a provider without a registry file match live-listed models of that provider only", () => {
+  const env = fresh();
+  seed(env);
+  writeCfg(env, { ...CAP150, providers: { "claude-bridge": { ranks: [{ match: "claude-opus-*", tier: 1 }] } } });
+  const rows = [["claude-bridge", "claude-opus-5-5", "200K"], ["claude-bridge", "claude-sonnet-5-5", "200K"], ["anthropic", "claude-opus-5-5", "1M"], ["other", "claude-opus-9", "200K"]];
+  const r = run(env, [], { ...dataDir(env, { anthropic: ANTHROPIC }), ...listing(env, rows) });
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(overrides(readSettings(env)), { "claude-bridge/claude-opus-5-5": { reserveTokens: 50000 } });
+  assert.equal(listCalls(env).length, 1);
+});
+
+test("compaction: config modelDataFrom overrides the built-in base and serves a custom bridge; a project-layer value is ignored", () => {
+  const env = fresh();
+  seed(env);
+  const other = { api: { "chat:claude-opus-5-5": { contextWindow: 1000000, cost: { tiers: [{ inputTokensAbove: 120000 }] } } } };
+  writeCfg(env, {
+    providers: {
+      "claude-bridge": { modelDataFrom: "other", roles: { builder: { model: "claude-bridge/claude-opus-5-5" } } },
+      "my-bridge": { modelDataFrom: "anthropic", roles: { reviewer: { model: "my-bridge/claude-opus-5-5" } } },
+    },
+  });
+  const reg = dataDir(env, { anthropic: ANTHROPIC, other });
+  const l = listing(env, [["claude-bridge", "claude-opus-5-5", "1M"], ["my-bridge", "claude-opus-5-5", "1M"]]);
+  const r = run(env, [], { ...reg, ...l });
+  assert.equal(r.code, 0, r.out);
+  // other: tier 120000 -> point 100000; anthropic: tier 272000 -> the 200000 cap
+  assert.deepEqual(overrides(readSettings(env)), { "claude-bridge/claude-opus-5-5": { reserveTokens: 900000 }, "my-bridge/claude-opus-5-5": { reserveTokens: 800000 } });
+  // a global run never reads the project layer
+  const env2 = fresh();
+  seed(env2);
+  writeCfg(env2, { providers: { "claude-bridge": { roles: { builder: { model: "claude-bridge/claude-opus-5-5" } } } } });
+  fs.mkdirSync(path.join(env2.cwd, ".pi"));
+  fs.writeFileSync(path.join(env2.cwd, ".pi", "foreman.json"), JSON.stringify({ version: 1, providers: { "claude-bridge": { modelDataFrom: "other" } } }));
+  const reg2 = dataDir(env2, { anthropic: ANTHROPIC, other });
+  const l2 = listing(env2, [["claude-bridge", "claude-opus-5-5", "1M"]]);
+  assert.equal(run(env2, [], { ...reg2, ...l2 }).code, 0);
+  assert.equal(overrides(readSettings(env2))["claude-bridge/claude-opus-5-5"].reserveTokens, 800000);
+  // --project honours only the user and overlay layers for it
+  const proj = path.join(env2.cwd, ".pi", "settings.json");
+  fs.writeFileSync(proj, `${JSON.stringify({ packages: [FOREMAN] })}\n`);
+  const p = run(env2, ["--project"], { ...reg2, ...l2 });
+  assert.equal(p.code, 0, p.out);
+  assert.equal(overrides(JSON.parse(fs.readFileSync(proj, "utf8")))["claude-bridge/claude-opus-5-5"].reserveTokens, 800000);
+});
+
+test("compaction: every skip has its own line and writes nothing", () => {
+  const env = fresh();
+  seed(env);
+  writeCfg(env, {
+    providers: { "claude-bridge": { roles: { builder: { model: "claude-bridge/claude-unknown-9" }, reviewer: { model: "claude-bridge/claude-opus-5-5" } } } },
+  });
+  const reg = dataDir(env, { anthropic: ANTHROPIC });
+  const r = run(env, [], { ...reg, ...listing(env, [["claude-bridge", "claude-unknown-9", "200K"]]) });
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /compaction claude-bridge\/claude-unknown-9: skipped, no model data; declare providers\.claude-bridge\.models\.claude-unknown-9 or providers\.claude-bridge\.modelDataFrom$/m);
+  assert.match(r.out, /compaction claude-bridge\/claude-opus-5-5: skipped, not in Pi's model list \(provider not logged in, its extension not loaded, or the project untrusted\); log in and re-run setup$/m);
+  assert.equal(readSettings(env).compaction, undefined);
+  // a failed listing: one warning, one skip line per live-dependent key
+  for (const l of [{}, listing(env, [], { code: 3 })]) {
+    const f = run(env, [], { ...reg, ...l });
+    assert.equal(f.code, 0, f.out);
+    assert.equal(f.out.match(/warning: compaction: Pi's model list unavailable \(exit \d\); keys that need it skipped/g).length, 1, f.out);
+    assert.equal(f.out.match(/: skipped, Pi's model list unavailable$/gm).length, 2, f.out);
+    assert.equal(readSettings(env).compaction, undefined);
+  }
+});
+
+test("compaction: a Haiku-shaped registry entry (window 1000000, tier 100000) compacts at 80000 with reserve 920000, without a listing", () => {
+  const env = fresh();
+  seed(env);
+  writeCfg(env, { providers: { anthropic: { roles: { reviewer: { model: "anthropic/claude-haiku-5-5" } } } } });
+  const r = run(env, [], dataDir(env, { anthropic: ANTHROPIC }));
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /compaction anthropic\/claude-haiku-5-5: reserveTokens unset -> 920000 \(compacts at 80000\)/);
+  assert.equal(overrides(readSettings(env))["anthropic/claude-haiku-5-5"].reserveTokens, 920000);
+  assert.deepEqual(listCalls(env), []);
+});
+
+test("compaction: Pi's default model is covered, joined as provider/model; --project merges the two fields", () => {
+  const env = fresh();
+  seed(env, { ...SEED, defaultProvider: "tp", defaultModel: "big" });
+  writeForeman(env, { roles: {}, ranks: [] });
+  assert.equal(run(env, [], withRegistry(env)).code, 0);
+  assert.deepEqual(overrides(readSettings(env)), { "tp/big": { reserveTokens: 800000 } });
+  // a model id with a slash is not split
+  const env2 = fresh();
+  seed(env2, { ...SEED, defaultProvider: "gw", defaultModel: "vendor/model" });
+  writeCfg(env2, { providers: { gw: { models: { "vendor/model": { contextWindow: 1000000, tiers: [{ inputTokensAbove: 272000 }] } } } } });
+  const r2 = run(env2, []);
+  assert.equal(r2.code, 0, r2.out);
+  assert.deepEqual(overrides(readSettings(env2)), { "gw/vendor/model": { reserveTokens: 800000 } });
+  // --project: provider from the global file, model from the project file; a project value wins per field
+  const env3 = fresh();
+  seed(env3, { ...SEED, defaultProvider: "tp", defaultModel: "mid-a" });
+  writeForeman(env3, { roles: {}, ranks: [] });
+  const proj = path.join(env3.cwd, ".pi", "settings.json");
+  fs.mkdirSync(path.dirname(proj));
+  fs.writeFileSync(proj, `${JSON.stringify({ packages: [FOREMAN], defaultModel: "big" })}\n`);
+  const p = run(env3, ["--project"], withRegistry(env3));
+  assert.equal(p.code, 0, p.out);
+  assert.deepEqual(overrides(JSON.parse(fs.readFileSync(proj, "utf8"))), { "tp/big": { reserveTokens: 800000 } });
+});
+
+test("compaction: --remove after a bridge run deletes only entries still equal to the record", () => {
+  const env = fresh();
+  seed(env);
+  writeCfg(env, { ...CAP150, providers: { "claude-bridge": { ranks: [{ match: "claude-*", tier: 1 }] } } });
+  const run1 = { ...dataDir(env, { anthropic: ANTHROPIC }), ...listing(env, [["claude-bridge", "claude-opus-5-5", "200K"], ["claude-bridge", "claude-sonnet-5-5", "200K"]]) };
+  assert.equal(run(env, [], run1).code, 0);
+  const s = readSettings(env);
+  s.compaction.modelOverrides["claude-bridge/claude-sonnet-5-5"].reserveTokens = 77777;
+  fs.writeFileSync(path.join(env.agentDir, "settings.json"), `${JSON.stringify(s, null, 2)}\n`);
+  const rm = run(env, ["--remove"], run1);
+  assert.equal(rm.code, 0, rm.out);
+  assert.deepEqual(overrides(readSettings(env)), { "claude-bridge/claude-sonnet-5-5": { reserveTokens: 77777 } });
+  assert.equal(listCalls(env).length, 1);
+});
+
+test("compaction: --dry-run prints exactly one line per key for every branch and writes nothing", () => {
+  const env = fresh();
+  seed(env, { ...SEED, compaction: { modelOverrides: { "tp/kept": { reserveTokens: 500000 } } } });
+  const wide = (ids) => Object.fromEntries(ids.map((id) => [`chat:${id}`, { contextWindow: 1000000, cost: { tiers: [{ inputTokensAbove: 272000 }] } }]));
+  writeCfg(env, {
+    providers: {
+      tp: {
+        roles: {
+          builder: { model: "tp/a", strong: { model: "tp/gone" } },
+          reviewer: { model: "tp/rm", strong: { model: "tp/bm" } },
+          planner: { model: "tp/kept" },
+        },
+      },
+    },
+  });
+  assert.equal(run(env, [], dataDir(env, { tp: { api: wide(["a", "gone", "rm", "bm", "kept"]) } })).code, 0);
+  assert.deepEqual(derivedOf(env), { "tp/a": 800000, "tp/gone": 800000, "tp/rm": 800000, "tp/bm": 800000 });
+  const s = readSettings(env);
+  delete s.compaction.modelOverrides["tp/gone"];
+  fs.writeFileSync(path.join(env.agentDir, "settings.json"), `${JSON.stringify(s, null, 2)}\n`);
+  writeCfg(env, {
+    providers: {
+      tp: {
+        roles: {
+          builder: { model: "tp/a", strong: { model: "tp/new" } },
+          reviewer: { model: "tp/bm", strong: { model: "tp/kept" } },
+          planner: { model: "tp/small", strong: { model: "tp/missing" } },
+        },
+      },
+    },
+  });
+  const reg = dataDir(env, {
+    tp: { api: { ...wide(["a", "new", "kept"]), "chat:bm": { contextWindow: 1000000, cost: { tiers: [{ inputTokensAbove: 55000 }] } }, "chat:small": { contextWindow: 100000 } } },
+  });
+  const before = snapshot(env.base);
+  const r = run(env, ["--dry-run"], reg);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(snapshot(env.base), before);
+  const want = {
+    "tp/a": /reserveTokens 800000, unchanged \(compacts at 200000\)/,
+    "tp/new": /reserveTokens unset -> 800000 \(compacts at 200000\)/,
+    "tp/small": /no override needed \(Pi already compacts at 83616\)/,
+    "tp/kept": /reserveTokens 500000, kept: user value/,
+    "tp/gone": /recorded override already gone/,
+    "tp/rm": /reserveTokens 800000 no longer needed, removing/,
+    "tp/bm": /the point 35000 is below keepRecentTokens \+ 20000; no override written; removing the earlier override/,
+    "tp/missing": /skipped, no model data; declare providers\.tp\.models\.missing$/,
+  };
+  for (const [key, re] of Object.entries(want)) {
+    const ls = linesFor(r.out, key);
+    assert.equal(ls.length, 1, `${key}: ${JSON.stringify(ls)}\n${r.out}`);
+    assert.match(ls[0], re, key);
+  }
+});
+
+function bridgeRecorded() {
+  const env = fresh();
+  seed(env);
+  const cfg = (bridge, tp) => writeCfg(env, { ...CAP150, providers: { "claude-bridge": bridge, tp: tp } });
+  cfg({ ranks: [{ match: "claude-*", tier: 1 }] }, { roles: { builder: { model: "tp/big" } } });
+  const reg = dataDir(env, { anthropic: ANTHROPIC, tp: REGISTRY });
+  const first = run(env, [], { ...reg, ...listing(env, [["claude-bridge", "claude-opus-5-5", "200K"]]) });
+  assert.equal(first.code, 0, first.out);
+  assert.deepEqual(derivedOf(env), { "claude-bridge/claude-opus-5-5": 50000, "tp/big": 850000 });
+  cfg({}, {});
+  return { env, reg };
+}
+
+test("compaction: recorded bridge entries stay while the live list fails or lacks the provider; a registry provider's stale entry is still removed", () => {
+  const failed = bridgeRecorded();
+  const a = run(failed.env, [], { ...failed.reg, ...listing(failed.env, [], { code: 1 }) });
+  assert.equal(a.code, 0, a.out);
+  assert.match(a.out, /compaction claude-bridge\/claude-opus-5-5: recorded reserveTokens 50000 kept \(Pi's model list unavailable\)/);
+  assert.deepEqual(overrides(readSettings(failed.env)), { "claude-bridge/claude-opus-5-5": { reserveTokens: 50000 } });
+  assert.deepEqual(derivedOf(failed.env), { "claude-bridge/claude-opus-5-5": 50000 });
+  const absent = bridgeRecorded();
+  const b = run(absent.env, [], { ...absent.reg, ...listing(absent.env, [["other", "x", "200K"]]) });
+  assert.equal(b.code, 0, b.out);
+  assert.match(b.out, /compaction claude-bridge\/claude-opus-5-5: recorded reserveTokens 50000 kept \(claude-bridge is not in Pi's model list\)/);
+  assert.match(b.out, /compaction tp\/big: reserveTokens 850000 no longer needed, removing/);
+  assert.deepEqual(overrides(readSettings(absent.env)), { "claude-bridge/claude-opus-5-5": { reserveTokens: 50000 } });
+  // with the provider listed but the model gone, the record is judged and removed
+  const gone = bridgeRecorded();
+  assert.equal(run(gone.env, [], { ...gone.reg, ...listing(gone.env, [["claude-bridge", "claude-haiku-5-5", "200K"]]) }).code, 0);
+  assert.equal(overrides(readSettings(gone.env))["claude-bridge/claude-opus-5-5"], undefined);
+});
+
+test("compaction: a registry provider's unknown id has one exact line and spawns no listing; declared keys never spawn; a registry failure skips bridge keys", () => {
+  const env = fresh();
+  seed(env);
+  writeCfg(env, { providers: { tp: { roles: { builder: { model: "tp/nope" } } } } });
+  const reg = withRegistry(env);
+  const r = run(env, [], reg);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(linesFor(r.out, "tp/nope"), ["compaction tp/nope: skipped, no model data; declare providers.tp.models.nope"]);
+  writeCfg(env, { providers: { tp: { modelDataFrom: "anthropic", roles: { builder: { model: "tp/nope" } } } } });
+  const again = run(env, [], { ...reg, ...dataDir(env, { anthropic: ANTHROPIC, tp: REGISTRY }) });
+  assert.deepEqual(linesFor(again.out, "tp/nope"), ["compaction tp/nope: skipped, no model data; declare providers.tp.models.nope"]);
+  assert.deepEqual(listCalls(env), []);
+  // a registry failure: one warning, no listing, no line for the bridge keys, the declared key still judged
+  const env2 = fresh();
+  seed(env2);
+  writeCfg(env2, {
+    compaction: { maxTokens: null },
+    providers: {
+      "claude-bridge": { roles: { builder: { model: "claude-bridge/claude-opus-5-5" } } },
+      tp: { models: { ghost: { contextWindow: 500000, tiers: [{ inputTokensAbove: 300000 }] } } },
+    },
+  });
+  const f = run(env2, [], { PI_FOREMAN_PI_AI_DATA: path.join(env2.base, "no-such-dir"), ...listing(env2, [["claude-bridge", "claude-opus-5-5", "200K"]]) });
+  assert.equal(f.code, 0, f.out);
+  assert.equal(f.out.match(/Pi model registry unavailable/g).length, 1, f.out);
+  assert.deepEqual(listCalls(env2), []);
+  assert.deepEqual(linesFor(f.out, "claude-bridge/claude-opus-5-5").filter((l) => !l.includes("registry unavailable")), []);
+  assert.deepEqual(linesFor(f.out, "tp/ghost"), ["compaction tp/ghost: reserveTokens unset -> 220000 (compacts at 280000)"]);
+});
+
+test("compaction: the listing's context cell is read like Pi's formatTokenCount", () => {
+  const env = fresh();
+  seed(env);
+  const ids = ["k-tenths", "k-small", "k-top", "bare", "m-int"];
+  writeCfg(env, { ...CAP150, providers: { xb: { roles: { builder: { model: "xb/k-tenths", strong: { model: "xb/k-top" } }, reviewer: { model: "xb/m-int" }, planner: { model: "xb/bare", strong: { model: "xb/k-small" } } } } } });
+  const rows = [["xb", "k-tenths", "262.1K"], ["xb", "k-small", "1.4K"], ["xb", "k-top", "1000.0K"], ["xb", "bare", "512"], ["xb", "m-int", "1M"]];
+  const r = run(env, [], listing(env, rows));
+  assert.equal(r.code, 0, r.out);
+  assert.ok(ids.length === 5);
+  assert.match(r.out, /compaction xb\/k-tenths: reserveTokens unset -> 112150 \(compacts at 150000\) \(no price tiers known\)/);
+  assert.match(r.out, /compaction xb\/k-top: reserveTokens unset -> 849999 \(compacts at 150000\)/);
+  assert.match(r.out, /compaction xb\/m-int: reserveTokens unset -> 850000 \(compacts at 150000\)/);
+  assert.match(r.out, /compaction xb\/k-small: no override needed \(Pi already compacts at -14934\)/);
+  assert.match(r.out, /compaction xb\/bare: no override needed \(Pi already compacts at -15872\)/);
+  // 1.0M matches a base window that formats identically (1048576), else it is skipped
+  const env2 = fresh();
+  seed(env2);
+  writeCfg(env2, { compaction: { maxTokens: null }, providers: { "claude-bridge": { roles: { builder: { model: "claude-bridge/claude-opus-5-5", strong: { model: "claude-bridge/claude-sonnet-5-5" } } } } } });
+  const exact = { api: { "chat:claude-opus-5-5": { contextWindow: 1048576, cost: { tiers: [{ inputTokensAbove: 272000 }] } }, "chat:claude-sonnet-5-5": { contextWindow: 1000000, cost: { tiers: [] } } } };
+  const m = run(env2, [], { ...dataDir(env2, { anthropic: exact }), ...listing(env2, [["claude-bridge", "claude-opus-5-5", "1.0M"], ["claude-bridge", "claude-sonnet-5-5", "1.0M"]]) });
+  assert.equal(m.code, 0, m.out);
+  assert.match(m.out, /compaction claude-bridge\/claude-opus-5-5: reserveTokens unset -> 796576 \(compacts at 252000\)/);
+  assert.match(m.out, /compaction claude-bridge\/claude-sonnet-5-5: skipped, window 1\.0M is not exact; declare providers\.claude-bridge\.models\.claude-sonnet-5-5$/m);
+  // the no-models message (exit 0, no header) is a failed listing
+  const env3 = fresh();
+  seed(env3);
+  writeCfg(env3, { providers: { xb: { roles: { builder: { model: "xb/some" } } } } });
+  const n = run(env3, [], listing(env3, [], { raw: "No models available. Set an API key or log in.\n" }));
+  assert.equal(n.code, 0, n.out);
+  assert.match(n.out, /warning: compaction: Pi's model list unavailable \(no model list printed\); keys that need it skipped/);
+  assert.match(n.out, /compaction xb\/some: skipped, Pi's model list unavailable$/m);
+});
+
 const hookConfig = (env) => path.join(env.agentDir, "extensions", "subagent", "config.json");
 const posix = { skip: process.platform === "win32" };
 

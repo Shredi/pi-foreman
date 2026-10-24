@@ -96,6 +96,7 @@
               }
             }
           },
+          "modelDataFrom": { "type": "string", "minLength": 1, "description": "Provider whose Pi registry file supplies price tiers for this provider's models when Pi has no registry file for it (a bridge provider an extension registers at runtime); the context window comes from Pi's live model list (`pi --list-models`). Built in: claude-bridge uses anthropic. `foreman setup` reads it (docs/install.md, \"What setup writes for compaction\"). User or overlay config only." },
           "models": {
             "type": "object",
             "description": "Models Pi's own registry does not list, keyed by model id (no provider prefix): context window and optional price tiers. `foreman setup` derives a compaction point for each (docs/install.md, \"What setup writes\"). Any config layer; a project value reaches setup only with `--project`.",
