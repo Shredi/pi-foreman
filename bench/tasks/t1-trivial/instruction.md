@@ -1,0 +1,1 @@
+Trivial task for this repository: is_even(n) in mathx.py returns the wrong answer. Fix the one-line bug so test_mathx.py passes, and change nothing else. Follow your foreman rules for this task: write the ledger first, do the change, mark the ledger items with the ledger command as they are verified, and stop when every item is closed. Keep every child task short.
