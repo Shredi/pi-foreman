@@ -29,7 +29,18 @@ $script = Join-Path $PSScriptRoot "..\scripts\$name"
 $py = $env:PI_FOREMAN_PYTHON
 $pre = @()
 if (-not $py) {
-    if (Get-Command py -ErrorAction SilentlyContinue) { $py = 'py'; $pre = @('-3') } else { $py = 'python' }
+    $found = 'none'
+    foreach ($cand in @(@{ Name = 'py'; Pre = @('-3') }, @{ Name = 'python'; Pre = @() })) {
+        if (-not (Get-Command $cand.Name -ErrorAction SilentlyContinue)) { continue }
+        $ver = & $cand.Name @($cand.Pre) -c 'import sys; print(sys.version.split()[0])' 2>$null
+        if ($found -eq 'none') { $found = "$($cand.Name) $ver" }
+        & $cand.Name @($cand.Pre) -c 'import sys; sys.exit(sys.version_info < (3, 13))' 2>$null
+        if ($LASTEXITCODE -eq 0) { $py = $cand.Name; $pre = $cand.Pre; break }
+    }
+    if (-not $py) {
+        [Console]::Error.WriteLine("pi-foreman needs Python 3.13+; found $found. Set PI_FOREMAN_PYTHON or install Python 3.13 (macOS: brew install python@3.13).")
+        exit 2
+    }
 }
 & $py @pre -E -s $script @rest
 exit $LASTEXITCODE

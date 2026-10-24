@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Retro backlog: findings that survive sessions and age out (stdlib, 3.9+).
+"""Retro backlog: findings that survive sessions and age out (stdlib, 3.13+).
 
     python scripts/foreman_backlog.py [--agent-dir D] [--cwd DIR] [--json] <command> ...
         list   [--workspace KEY | --all] [--min-count N] [--kind K] [--status S]

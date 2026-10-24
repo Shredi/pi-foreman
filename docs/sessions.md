@@ -9,15 +9,17 @@
 `/foreman session` opens a second pi-foreman session on a brief, talks to it over pi-intercom and closes it
 again. All four subcommands are yours to type; a subagent child refuses every one of them.
 
-- `/foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--focus] [--dry-run]`
+- `/foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run]`
   writes a handoff dir (below), starts `pi` in a new Herdr tab (or prints the command to run in a terminal)
   and records the session. The label is 1 to 40 characters of `A-Z a-z 0-9 . _ -`. `--plan-first` makes the
   brief ask for a `plan.md` and a stop before any work; `--focus` focuses the new tab; `--dry-run` writes nothing
   (no handoff dir, brief, parent, child or registry entry) and prints the handoff path, the child id, the session
   model (`session model: <id>`, when `--model` is given) and the command it would run; no Herdr call.
   Example: `/foreman session open docs ./brief-docs.md --cwd ../site --model anthropic/claude-sonnet-4-5 --plan-first`
-- `/foreman session brief <target> <file|text…>` sends a brief to a session. A single word naming an existing
-  file is sent as `Brief from <your id>: read <absolute path> and act on it`; anything else is sent as typed.
+  `--first-command /CMD` (repeatable, at most 4) and `--plan-mode` are described under [First commands and plan mode](#first-commands-and-plan-mode).
+- `/foreman session brief <target> <file|text…>` writes a brief into the session's handoff dir as `brief-<n>.md` and sends
+  `Brief from <your id>: read <absolute path> and act on it` (the message names that file). A single word naming an
+  existing file is copied; anything else is written as typed. See the message contract below.
   Example: `/foreman session brief docs ./more-context.md`, `/foreman session brief docs also cover the CLI flags`
 - `/foreman session close <target> [result-path]` sends `foreman:close [result-path]` (see the contract below)
   and marks the registry entry `closing` once the send went out. The result path may use only `A-Z a-z 0-9 . _ / -`,
@@ -31,17 +33,31 @@ pi-intercom as the address. Spaces in a brief path or `--cwd` do not survive the
 
 `bin/foreman session open|list` (`.cmd` and `.ps1` on Windows) runs `scripts/foreman_session.py`:
 
-- `foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--focus] [--dry-run] [--print-all] [--parent-id ID] [--own-model ID] [--agent-dir DIR]`.
+- `foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--print-all] [--parent-id ID] [--own-model ID] [--agent-dir DIR]`.
   `--print-all` prints both the POSIX and the PowerShell command. The parent id is `--parent-id`, else
   `PI_INTERCOM_SESSION_ID`, else `PI_INTERCOM_STABLE_ID`, else `stableId` in `<agent dir>/intercom/config.json`; without any, `open` is refused.
 - `foreman session list [--json] [--agent-dir DIR]` prints label, model (`-` when none was given), state, handoff dir and child id.
 - `foreman session brief <handoff dir|label|child id> <text|file> [--parent-id ID] [--agent-dir DIR]` delivers a brief to the
   child through pi-intercom (`cli.mjs send`, run without a shell). A handoff dir resolves through its `child` file, a label
-  to the newest registry entry. A single word naming a file is sent as `Brief from <opener id>: read <abs path> and act on it`
-  (the opener id as for `open`), anything else as is. If node or pi-intercom is missing, or the broker refuses, the message
+  to the newest registry entry; a target with no handoff dir is refused. The brief is written to `<handoff dir>/brief-<n>.md`
+  (n = the lowest free number from 1; the file is created exclusively, so an existing `brief-<n>.md` is never overwritten and
+  a refusal is printed). A single word naming a file is copied there; anything else is written as is. The message is
+  `Brief from <opener id>: read <abs posix path> and act on it` (the opener id as for `open`). Text briefs stay on disk. If node or pi-intercom is missing, or the broker refuses, the message
   is printed for you to send by hand and the exit code is 1; it never falls back to `herdr agent prompt`.
 - The agent dir is `--agent-dir`, else `PI_CODING_AGENT_DIR`, else `~/.pi/agent`.
 - Exit codes: 0 ok, 1 usage error or refused, 2 Herdr failure (the command is then printed and the entry marked `failed`).
+
+### First commands and plan mode
+
+`--first-command /CMD` (repeatable, at most 4; each starts with `/`, is one line of at most 200 characters without control characters, else `open` is refused) makes the new session run Pi extension commands before the brief prompt. `--plan-mode` is shorthand for `--first-command /plan`: it comes first and is never repeated. `--plan-first` is unchanged and independent (it changes the brief, not the launch line). Without these flags the launch line is the same as before.
+
+Mechanism: the commands are positional messages of the launch line, ahead of the brief prompt: `pi "/plan" "Read the handoff brief at … and proceed."`. Pi runs the messages in order and awaits each; a message starting with `/` runs as an extension command. The commands are quoted for POSIX and PowerShell, appear in the printed fallback, the dry run and `launch.txt`, and the registry entry gets `firstCommands` when there are any.
+
+Requirement and residual risk: `--plan-mode` needs a `plan` command in the new session (a plan-mode package). The CLI cannot check that; the `/foreman session open` command and the tool refuse with `session open refused [plan_mode_unavailable]` when the opening session has no `/plan` command. If a `/plan` handler starts a turn without awaiting it, the brief prompt that follows may fail to start.
+
+### The foreman_session_open tool
+
+A foreman session can open a session without bash: `foreman_session_open({label, brief, cwd?, model?, planFirst?, planMode?, firstCommand?: string[], focus?, dryRun?})` runs the same open as the command (same validation, rank rule and opener id). It is refused in subagent children, which never get the tool. Design or new-topic sessions open with `planMode: true`; a session with an approved plan opens without.
 
 ### Handoff dir and registry
 
@@ -72,6 +88,10 @@ Plain pi-intercom text, one line each:
   `N child run(s) still active; let them finish (a close never cancels them), then close again` or
   `N foreman_wait pending (…)` (only when a wait cannot be cancelled).
 - The child's brief footer tells it to re-read `parent` before each message (the parent can change).
+- Parent to child brief: `Brief from <opener id>: read <absolute path> and act on it`, the path being `<handoff dir>/brief-<n>.md`.
+  `n` starts at 1 per handoff dir and takes the lowest free number (a gap is filled); an existing `brief-<n>.md` is never
+  overwritten, and a name that appears during the write is refused. A text brief is written to the same kind of file and stays
+  on disk. A parent-written `brief-<n>.md` lifts the child's review cap, recheck and read budgets (see [ceremony](ceremony.md)).
 
 ### Closing the children with the parent
 
@@ -164,7 +184,7 @@ While a foreman's launch-wait holds a child's result, the adapter polls `$PI_FOR
 A heavy task with several phases may run as a multi-session plan: one child session per phase, each in its own worktree, opened with `foreman session open <label> <brief> --plan-first`. The parent reviews each phase before the next.
 
 - **Model.** The session runs on `--model`, else the mapped `session-foreman` model (`providers.<p>.roles.session-foreman.model`, the own provider then its fallback), else the opener's own model; `open` prints `session model: <model>`. Only an explicit choice (`--model` or the mapped `session-foreman` model) is passed on as `--model`; the opener's-model fallback is displayed but not passed, so that child does not get `PI_FOREMAN_SESSION_MODEL` and keeps its role thinking. An explicit `--model` wins over the overlay/preset foreman role model (model and thinking) in the child: it gets `PI_FOREMAN_SESSION_MODEL=<model>` and keeps the model it started on. The CLI (`foreman session open`, `--own-model ID` or `PI_FOREMAN_SESSION_MODEL` naming the opener's model) applies the same rank rule as `/foreman session open` when the opener's model is known; when it is unknown (a parent that is not Pi) the check is skipped and `rank check skipped: own model unknown` is printed. A child never opens a session ranked above its own: the open is refused (`session open refused [session_rank]`, nothing spawned). See [roles](roles.md).
-- **Plan review.** The child writes `plan.md`, sends `Plan from <label>: <path>` and waits. The parent writes `<handoff dir>/ruling.md` (first line `APPROVED`, else a revision note) and sends it with `foreman session brief <label> <ruling path>`, which wakes the child. The child works only after an `APPROVED` ruling; otherwise it revises `plan.md` and sends `Plan from` again. The parent reviews `result.md` before it opens the next phase, then closes the child with `foreman:close`.
+- **Plan review.** The child writes `plan.md`, sends `Plan from <label>: <path>` and waits. The parent writes `<handoff dir>/ruling.md` (first line `APPROVED`, else a revision note) and sends it with `foreman session brief <label> <ruling path>`, which copies it to the child's `brief-<n>.md` and wakes the child. The child works only after an `APPROVED` ruling; otherwise it revises `plan.md` and sends `Plan from` again. The parent reviews `result.md` before it opens the next phase, then closes the child with `foreman:close`.
 - **Reload in a round session.** With `PI_FOREMAN_HANDOFF_DIR` set, the adapter keeps `<handoff dir>/round-state.json` itself: the handoff dir, the topic and version hash of the checkpointed `.workflow/scratch/plan-<topic>.md`, that plan's `[plan-review]` verdict and round count, the review counters (`ceremony.reviewRuns`) and the revision rounds per chain. It never keeps an approval. On `/reload` the file counts only when its handoff dir is this one and its hash equals the plan file now; else it is discarded and the plan goes through the ceremony again (plan review, `foreman_checkpoint`). The checkpoint approval comes back only from the parent's `ruling.md` (never `ruling-<n>.md`) with first line `APPROVED` and a ctime newer than the ctime of both `.workflow/scratch/plan-<topic>.md` and `<handoff dir>/plan.md`, and only when both files have the same plan version hash (the body above any `## Ruling`, `## Decision log` or `## Addendum` tail); a session cannot set a ctime back, so a plan edited after the ruling, or a file with `approved: true`, grants nothing. Counters come back only as non-negative integers; the rulings a chain already used, its last refusal and the security-exempt flag do not. An owner prompt or a tier change rewrites the file, so cleared counters stay cleared. The restored approval lets builders launch; the finish gate still needs a reviewer PASS. Without `PI_FOREMAN_HANDOFF_DIR` nothing is written or restored.
 - **Message contract.** Besides `Plan from|Result from|Update from <label>: <path>`, a registry child may send the aliases `foreman:plan <path>` and `foreman:result <path>`; the label is taken from the registry entry of the sender. `foreman:closed <path>` is as before.
 - **Waiting.** `foreman_wait({action: "start", kind: "child", label})` resolves on the next plan, result, update or closed notice of the registry child `label` (or of any child with `label: any`; a wait naming the label wins over `any`). The wake line is `child <label>: plan|result|update|closed <path>`. A child's refusal of a close (`pi-foreman: close refused: <reason>`) wakes the same wait with `child <label>: refused <reason>`. Race: a notice that arrives before the wait starts is not replayed; check `/foreman session list` (the registry's `last`) first.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PR operations of the git tool pack (design/pr-ops.md section 2). Stdlib only, 3.9+.
+"""PR operations of the git tool pack (design/pr-ops.md section 2). Stdlib only, 3.13+.
 
 Loaded by scripts/safe_ops.py for the ops pr_create, pr_status, pr_checks and pr_comments; the
 request and answer envelopes are the ones documented there. `config` is the `safety.ops` object

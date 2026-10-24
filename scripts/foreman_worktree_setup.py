@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""pi-subagents worktree setup hook (stdlib, 3.9+).
+"""pi-subagents worktree setup hook (stdlib, 3.13+).
 
 pi-subagents links the main checkout's node_modules into every managed worktree BEFORE it runs the
 post-create hook, so a builder that runs `npm ci` there rewrites the main checkout. This hook turns

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic session-end sync of the configured repositories (stdlib, 3.9+, no model).
+"""Deterministic session-end sync of the configured repositories (stdlib, 3.13+, no model).
 
     python scripts/foreman_sync.py --cwd <workspace> --state <agentDir>/pi-foreman/state
                                    --session <id> [--dry-run] [--json] [--trusted-project]

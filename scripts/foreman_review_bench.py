@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`foreman bench review`: score reviewer models on diffs with planted defects (stdlib, 3.9+).
+"""`foreman bench review`: score reviewer models on diffs with planted defects (stdlib, 3.13+).
 
     python scripts/foreman_bench.py review --tasks DIR [--models id[,id]] [--repeats 2] [--out DIR]
                                            [--jobs 3] [--token-cap N] [--timeout 900] [--dry-run]
