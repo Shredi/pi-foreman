@@ -90,10 +90,7 @@
   "ui": { "symbols": "unicode", "spinner": true },
   "herdr": { "blockedShim": true, "groupTag": true },
   "sessions": { "machines": {}, "remoteInlineMaxBytes": 32768 },
-  "compaction": {
-    "priceTiers": { "cheap": 1, "standard": 5 },
-    "threshold": { "cheap": 0.85, "standard": 0.75, "premium": 0.6 }
-  },
+  "compaction": { "maxTokens": 200000 },
   "wait": { "batchWindowSeconds": 300, "maxSeconds": 86400, "maxActive": 8, "ci": true },
   "resources": { "maxLoadPerCore": 1.5, "minFreeMemMB": 1024, "minFreeDiskGB": 5, "sampleSeconds": 30 },
   "paths": { "hubWorkflow": [] },

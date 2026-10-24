@@ -96,6 +96,28 @@
               }
             }
           },
+          "models": {
+            "type": "object",
+            "description": "Models Pi's own registry does not list, keyed by model id (no provider prefix): context window and optional price tiers. `foreman setup` derives a compaction point for each (docs/install.md, \"What setup writes\"). Any config layer; a project value reaches setup only with `--project`.",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["contextWindow"],
+              "properties": {
+                "contextWindow": { "type": "integer", "minimum": 1, "description": "Context window in tokens." },
+                "tiers": {
+                  "type": "array",
+                  "description": "Price tiers: a request above inputTokensAbove input tokens is billed at a higher rate.",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["inputTokensAbove"],
+                    "properties": { "inputTokensAbove": { "type": "integer", "minimum": 1 } }
+                  }
+                }
+              }
+            }
+          },
           "strongOnRevision": { "type": "boolean", "description": "true: relaunch the builder on its strong model for every revision round (rung_up reason revision); false: no climb, also not after a reviewer FAIL. Unset: ladder.strongOnRevision decides. Wins over ladder.strongOnRevision. A project or session can only set false." },
           "cache": {
             "type": "object",
@@ -433,21 +455,10 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "priceTiers": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "USD per MTok input upper bounds; above standard is premium. User or overlay config only.",
-          "properties": { "cheap": { "type": "number", "minimum": 0 }, "standard": { "type": "number", "minimum": 0 } }
-        },
-        "threshold": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "Context fraction that triggers compaction, per price tier. A project or session can only lower each value.",
-          "properties": {
-            "cheap": { "type": "number", "minimum": 0.3, "maximum": 0.95 },
-            "standard": { "type": "number", "minimum": 0.3, "maximum": 0.95 },
-            "premium": { "type": "number", "minimum": 0.3, "maximum": 0.95 }
-          }
+        "maxTokens": {
+          "type": ["integer", "null"],
+          "minimum": 50000,
+          "description": "Cap in tokens on where `foreman setup` makes Pi compact (written as Pi's compaction.modelOverrides); null for no cap. A project can only lower it; a project null is dropped."
         }
       }
     },

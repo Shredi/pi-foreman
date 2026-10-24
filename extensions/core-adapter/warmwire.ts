@@ -27,7 +27,9 @@ export interface WarmWireOpts {
   /** Pi's `cacheWarming` setting is "idle". */
   piIdleMode(): boolean;
   /** Idle-floor gate + ctx.compact (idleCompact in index.ts). */
-  compact(): { tier: string; model: string | null } | null;
+  compact(): { point: number | null; model: string | null } | null;
+  /** The context is above the idle floor (0.5 x runtime point); no side effects. */
+  aboveFloor?(): boolean;
   /** Context tokens of the foreman session (compactMinTokens gate). */
   contextTokens?(): number | null;
 }
@@ -60,6 +62,7 @@ export function createWarm(o: WarmWireOpts): { presence: Presence; selfWarm: Sel
     piIdleMode: () => o.piIdleMode(),
     compact: () => o.compact(),
     contextTokens: o.contextTokens,
+    aboveFloor: o.aboveFloor,
     trace: (r) => o.trace(r),
     rates: (promptTokens) => {
       const ctx = o.ctx();

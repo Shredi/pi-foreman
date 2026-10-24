@@ -32,9 +32,11 @@ export interface SelfWarmDeps {
   /** Rates for the current model and a prompt size; null = budget unavailable. */
   rates(promptTokens: number): Rates | null;
   /** The compaction gate behind ctx.compact (idle floor, latch); null = below the floor. */
-  compact(): { tier: string; model: string | null } | null;
+  compact(): { point: number | null; model: string | null } | null;
   /** Context tokens for the compactMinTokens gate; absent or null = unknown. */
   contextTokens?(): number | null;
+  /** The context is above the idle floor (0.5 x runtime point); no side effects. */
+  aboveFloor?(): boolean;
   trace(r: Record<string, unknown>): void;
   /** Pi's `cacheWarming` setting is "idle" (absent = true; Pi sends no hook and no warm otherwise, and neither does this class). */
   piIdleMode?(): boolean;
@@ -250,7 +252,7 @@ export class SelfWarm implements WarmGate {
     if (this.compactedForIdle) return;
     const d = this.deps;
     const p = d.policy();
-    if (warmCompact({ policy: p, alreadyCompacted: false, busy: () => this.isBusy(), now: d.now(), lastTouch: this.touch ?? 0, contextTokens: d.contextTokens ? () => d.contextTokens!() : undefined, compact: () => d.compact(), trace: (r) => d.trace(r), trigger, skipOutcome: "skipped" })) this.compactedForIdle = true;
+    if (warmCompact({ policy: p, alreadyCompacted: false, busy: () => this.isBusy(), now: d.now(), lastTouch: this.touch ?? 0, contextTokens: d.contextTokens ? () => d.contextTokens!() : undefined, aboveFloor: d.aboveFloor ? () => d.aboveFloor!() : undefined, compact: () => d.compact(), trace: (r) => d.trace(r), trigger, skipOutcome: "skipped" })) this.compactedForIdle = true;
   }
 
   /** A running turn or a queued message; children, waits and launch waits too unless the policy warms while waiting. */

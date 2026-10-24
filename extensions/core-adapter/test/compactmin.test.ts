@@ -21,7 +21,7 @@ function gate(tokens: number | null, min: number | undefined, trigger: CompactTr
     contextTokens: () => tokens,
     compact: () => {
       compacts += 1;
-      return { tier: "premium", model: "p/m" };
+      return { point: 100000, model: "p/m" };
     },
     trace: (r) => void traces.push(r),
     trigger,
@@ -89,7 +89,7 @@ function idle(tokens: number, min: number) {
     trace: (r) => void traces.push(r),
     compact: () => {
       compacts += 1;
-      return { tier: "premium", model: "p/m" };
+      return { point: 100000, model: "p/m" };
     },
     contextTokens: () => tokens,
     setGlyph: () => {},

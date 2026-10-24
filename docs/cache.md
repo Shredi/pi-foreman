@@ -109,13 +109,29 @@ The last warm read can be spent on a compaction, so the summary call reads a war
 - `away`: the next warm was refused by the presence gate.
 - `window`: the older rule, at `windowEnd - intervalSeconds` (halfway through a window shorter than the interval); it applies when no budget is available.
 
-Below the floor the session goes cold uncompacted. After a compaction the idle counts as cold. The floor is half the tier threshold (`compaction.threshold.<class>`): `turn_end` already compacts at the full threshold, so an idle session is always below it, and a floor at the full value would never fire.
+Below the floor the session goes cold uncompacted. After a compaction the idle counts as cold. The floor is half the runtime compaction point (see "Where compaction fires"), in tokens: Pi compacts at the full point, so an idle session is always below it, and a floor at the full value would never fire. It reads the point Pi really uses, so a smaller reserve of your own lowers the floor too. With `compaction.enabled: false` in Pi's settings there is no point and no warm compaction. Only foreman sessions run the warm compaction; a child never requests a compaction.
 
-Gates, in order: `warmCompact` on, no compaction yet in this idle, not busy, not cold (the last cache read or answer is younger than 95% of the TTL), context usage over the floor. A gate that fails ends nothing; it traces `keepalive window_end` with its reason (below), except for the budget and away triggers, where it traces `keepalive skipped` with that reason. When all pass, the adapter starts the compaction and traces `compaction {reason: "warm_idle", tier, model}`. The compaction takes the normal `session_before_compact` path (ledger digest, retro at compaction), and the window then ends with reason `compact`.
+Gates, in order: `warmCompact` on, no compaction yet in this idle, not busy, not cold (the last cache read or answer is younger than 95% of the TTL), context usage over the floor (`window_end` reason `below_floor`), then the minimum context below. A gate that fails ends nothing; it traces `keepalive window_end` with its reason (below), except for the budget and away triggers, where it traces `keepalive skipped` with that reason. When all pass, the adapter starts the compaction and traces `compaction {reason: "warm_idle", point, model, trigger}`. The compaction takes the normal `session_before_compact` path (ledger digest, retro at compaction), and the window then ends with reason `compact`.
 
-**Minimum context.** `keepalive.compactMinTokens` (integer >= 0, default 100000, 0 = no minimum) keeps warm compaction off small contexts: compacting loses detail for little saving, and a cold reload of a small context is cheap. It is checked after the gates above and before the compaction starts, on all three triggers (`budget`, `away` and `window`; the `window` trigger exists for the near expiry of Pi's warm window, not for a near-full context, so the same minimum applies). Below it nothing is compacted, the session goes cold as after a declined gate (the idle model downshift still applies) and the adapter traces `compaction_skipped {reason: "below_min", tokens, min}`. A project or session can only raise the key.
+**Minimum context.** The warm compaction runs only when both hold: the context tokens are above half the runtime compaction point (the relative floor above) and at least `keepalive.compactMinTokens` (integer >= 0, default 100000, 0 = no minimum). The relative floor is checked first (a miss is `window_end` / `skipped` `below_floor`), then the minimum. `compactMinTokens` keeps warm compaction off small contexts: compacting loses detail for little saving, and a cold reload of a small context is cheap. It is checked after the gates above and before the compaction starts, on all three triggers (`budget`, `away` and `window`; the `window` trigger exists for the near expiry of Pi's warm window, not for a near-full context, so the same minimum applies). Below it nothing is compacted, the session goes cold as after a declined gate (the idle model downshift still applies) and the adapter traces `compaction_skipped {reason: "below_min", tokens, min}`. A project or session can only raise the key.
 
 The savings of the warm summary call are not yet measured. Through the bridge the summary call takes an isolated path, so its warm savings stay unmeasured there; the compaction still pays off through the smaller cold resume.
+
+## Where compaction fires
+
+Pi's own auto-compaction decides, in every session, foreman and child alike: it compacts when the context passes the model's window minus `reserveTokens`. pi-foreman no longer requests a compaction after a turn (that call aborted a running child loop). `foreman setup` shapes the point per model by writing Pi's `compaction.modelOverrides["provider/id"].reserveTokens` into the same settings file as its other managed keys, with a diff and a backup; a value you set yourself is kept. What setup writes, who owns it and how `--remove` treats it: [install](install.md#what-setup-writes-for-compaction).
+
+The point for a model is the lowest of:
+
+- window minus the reserve Pi already uses for it (nothing to write when that is the lowest);
+- the model's lowest price-tier boundary (`cost.tiers[].inputTokensAbove` in Pi's registry, or the `tiers` an overlay declares) minus `TIER_HEADROOM`, a constant of 20000 tokens, so a session stays below the dearer price tier;
+- `compaction.maxTokens` (default 200000, minimum 50000, null = no cap). A project can only lower it.
+
+The reserve written is window minus that point, and only when it is larger than the reserve Pi already uses for the model. A point below `keepRecentTokens` plus `TIER_HEADROOM` (40000 by default) is not written; setup warns instead, so a tiny cap cannot make Pi compact every turn. `compaction.priceTiers` and `compaction.threshold` are removed; a config that still has them gets a warning and the keys are ignored.
+
+The footer bar and the idle floor show and use the point Pi really uses (window minus the effective reserve), so a full bar means compaction fires. With `compaction.enabled: false` in Pi's settings the bar falls back to the window.
+
+Retro trade-off: Pi's own compaction cannot carry custom instructions, so a summary from a threshold compaction has no `## Retro` section; the retro entry notes that. The Retro section rides only on the idle warm compaction. A manual `/compact` never carried it either.
 
 ## Cost and privacy
 
@@ -156,7 +172,7 @@ A provider with no entry and no `cache` config is not traced at all. Add `provid
 | `window_end` | `warmer_stopped` | The watchdog or the confirm deadline passed without a warm request. |
 | `window_end` | `warm_compact_off`, `already_compacted`, `busy`, `cold`, `below_floor` | The warm-compaction check declined; the window continues. |
 
-`compaction {reason: "warm_idle", tier, model, trigger}`: a warm compaction was started; `trigger` is `budget`, `away` or `window`.
+`compaction {reason: "warm_idle", point, model, trigger}`: a warm compaction was started; `trigger` is `budget`, `away` or `window`. `compaction_point {model, point}`: the point Pi uses for the model (null when unknown or compaction is off), once at session start and on a model change.
 
 `compaction_skipped {reason: "below_min", tokens, min, trigger}`: the context is below `keepalive.compactMinTokens`, so no warm compaction ran (see Minimum context above).
 

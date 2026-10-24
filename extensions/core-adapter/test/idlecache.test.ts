@@ -22,7 +22,7 @@ interface Slot {
   dead: boolean;
 }
 
-function make(over: { policy?: CachePolicy | null; isChild?: boolean; compactImpl?: () => { tier: string; model: string | null } | null } = {}) {
+function make(over: { policy?: CachePolicy | null; isChild?: boolean; compactImpl?: () => { point: number | null; model: string | null } | null } = {}) {
   const clock = { t: 1_000_000 };
   const slots: Slot[] = [];
   let sets = 0;
@@ -46,7 +46,7 @@ function make(over: { policy?: CachePolicy | null; isChild?: boolean; compactImp
     busy: { ...NOT_BUSY },
     sync: { newEntries: 0, lastReadAt: null as number | null },
     assistantAt: null as number | null,
-    compactResult: { tier: "premium", model: "p/m" } as { tier: string; model: string | null } | null,
+    compactResult: { point: 183_616, model: "p/m" } as { point: number | null; model: string | null } | null,
     compactCalls: 0,
     order: [] as string[],
     throwSync: false,
@@ -233,7 +233,7 @@ test("compactAt is windowEnd - interval: window 45 -> 30 min checks at 25.5 min,
   assert.equal(h.f.compactCalls, 0);
   h.advanceTo(25.5 * MIN);
   assert.equal(h.f.compactCalls, 1);
-  assert.deepEqual(h.traces.filter((r) => r.event === "compaction"), [{ event: "compaction", reason: "warm_idle", tier: "premium", model: "p/m" }]);
+  assert.deepEqual(h.traces.filter((r) => r.event === "compaction"), [{ event: "compaction", reason: "warm_idle", point: 183_616, model: "p/m" }]);
   assert.equal(h.ic.decide(NOT_BUSY), undefined, "watching after the compaction started");
   h.ic.onCompact();
   assert.equal(h.ic.state(), "ended");
@@ -330,25 +330,20 @@ test("sync runs before the cold check: a fresh keep-alive entry makes it warm", 
 
 test("decideIdle is evaluated last: a failing cheaper gate leaves the latch unset", () => {
   const gate = new CompactionGate();
-  const cfg = { tiers: { cheap: 1, standard: 5 }, thresholds: { premium: 0.6 } };
-  const model = { cost: { input: 15 } };
   const usage = { tokens: 40_000, contextWindow: 100_000 };
-  const compactImpl = () => {
-    const tier = gate.decideIdle("s", model, usage, cfg);
-    return tier ? { tier, model: "p/m" } : null;
-  };
+  const compactImpl = () => (gate.decideIdle("s", usage, 60_000) ? { point: 60_000, model: "p/m" } : null);
   const cold = make({ policy: SHORT, compactImpl });
   cold.f.assistantAt = cold.clock.t - 400_000;
   cold.ic.start();
   cold.advanceTo(30_000);
   assert.deepEqual(cold.reasons(), ["cold"]);
-  assert.equal(gate.decideIdle("s", model, { tokens: 1, contextWindow: 100_000 }, cfg), null);
+  assert.equal(gate.decideIdle("s", { tokens: 1, contextWindow: 100_000 }, 60_000), false);
   const ok = make({ policy: SHORT, compactImpl });
   ok.f.assistantAt = ok.clock.t;
   ok.ic.start();
   ok.advanceTo(30_000);
   assert.equal(ok.traces.filter((r) => r.event === "compaction").length, 1);
-  assert.equal(gate.decideIdle("s", model, usage, cfg), null, "latched by the warm compaction");
+  assert.equal(gate.decideIdle("s", usage, 60_000), false, "latched by the warm compaction");
 });
 
 test("hook rules R1-R5", () => {
@@ -435,7 +430,7 @@ test("trace records use only TRACE_FIELDS", () => {
   h.advanceTo(60_000);
   const b = make({ policy: { ...POLICY, active: false, skip: "ttl_long" } });
   b.ic.start();
-  const allowed = new Set<string>(TRACE_FIELDS);
+  const allowed = new Set<string>([...TRACE_FIELDS, "point"]); // `point` is allowed beside the pinned list (trace.ts)
   for (const r of [...h.traces, ...b.traces]) for (const k of Object.keys(r)) assert.ok(allowed.has(k), k);
   assert.ok(h.traces.length >= 2);
 });

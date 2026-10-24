@@ -107,7 +107,7 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.foremanReads[.<phase>]  not an object: ignored
     ceremony.required.<tier>         union only (a project can add required steps, not remove one)
     ceremony.required                not an object: ignored; unknown steps dropped
-    sync.repos, retro.proposalMinReviews, retro.panelThreshold, compaction.priceTiers   ignored (L1/L3/L2 only)
+    sync.repos, retro.proposalMinReviews, retro.panelThreshold   ignored (L1/L3/L2 only)
     intercom.allowRemote, intercom.allowOpenPane, wait.ci         only false is accepted
     close.from                       intersect (a project can only narrow the allowed sources)
     close.autoClean                  only false is accepted (true removes worktrees and scratch at close)
@@ -115,7 +115,9 @@ Keys outside safety that the project and session layers cannot loosen either
     close.childWaitMs                ignored (how long a close waits for child sessions: L1/L3/L2 only)
     sessions.machines                ignored (the machines a session may open on over SSH: user or overlay config only)
     sessions.remoteInlineMaxBytes    lower only, minimum 1024 (a higher cap sends more of a remote result inline)
-    compaction.threshold.<tier>      lower only, minimum 0.3 (a higher threshold compacts later)
+    compaction.maxTokens             lower only, minimum 50000 (a higher cap compacts later); a null is dropped;
+                                     the session layer is ignored with a warning (setup applies it)
+    compaction.priceTiers, compaction.threshold   removed in r52: a warning, the keys are dropped (see REMOVED_COMPACTION_KEYS)
     wait.maxSeconds, wait.maxActive  lower only, minimum 1
     roles.*.timeoutMinutes           lower only (a higher limit lets a child run longer)
     python.path                      ignored (it chooses the executable that runs every guard)
@@ -232,7 +234,6 @@ IGNORED_KEYS = [
     (("ceremony", "checkpoint"), "who approves the plan checkpoint comes from the user or overlay config"),
     (("ceremony", "reviewModel"), "the fallback reviewer model comes from the user or overlay config"),
     (("ceremony", "reviewByOccasion"), "the per-occasion reviewer overrides come from the user or overlay config"),
-    (("compaction", "priceTiers"), "the price tiers come from the user or overlay config"),
     (("resources", "sampleSeconds"), "the sampling interval comes from the user or overlay config"),
     (("ladder", "strongAbove"), "the ladder and the child rank policy come from the user or overlay config"),
     (("ladder", "childMaxTurns"), "the ladder and the child rank policy come from the user or overlay config"),
@@ -299,7 +300,7 @@ LAYER_TIGHTEN = [
     (("close", "from"), "intersect"),
     (("close", "autoClean"), "false_only"),
     (("sessions", "remoteInlineMaxBytes"), "lower_only"),
-    (("compaction", "threshold", "*"), "lower_only_number"),
+    (("compaction", "maxTokens"), "lower_only"),
     (("wait", "maxSeconds"), "lower_only"),
     (("wait", "maxActive"), "lower_only"),
     (("resources", "maxLoadPerCore"), "lower_only_number"),
@@ -310,7 +311,7 @@ LAYER_TIGHTEN = [
     (("tools", "pr"), "false_only"),
 ]
 LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
-                 "threshold": 0.3, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0,
+                 "maxTokens": 50000, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0,
                  "windowMinutes": 1, "childTimeoutSeconds": 1, "launchTimeoutCapMinutes": 1, "reviewRuns": 1, "budgetUsd": 0.01,
                  "maxLoadPerCore": 0.01, "selfWarmWindowMinutes": 1, "awayAfterMinutes": 1,
                  "remoteInlineMaxBytes": 1024}
@@ -346,6 +347,20 @@ def _non_dict_cache(node, name, path, who, warnings):
     del node[name]
     warnings.append("%s %s ignored: expected an object" % (who, ".".join(path)))
     return True
+
+
+REMOVED_COMPACTION_KEYS = ("priceTiers", "threshold")
+
+
+def warn_removed_compaction(name, data, warnings):
+    """One migration warning per config layer that still has compaction.priceTiers or compaction.threshold; the keys are dropped."""
+    comp = data.get("compaction") if isinstance(data, dict) else None
+    found = [k for k in REMOVED_COMPACTION_KEYS if isinstance(comp, dict) and k in comp]
+    for k in found:
+        del comp[k]
+    if found:
+        warnings.append("%s config: %s removed in r52; `foreman setup` writes Pi's compaction.modelOverrides; see docs/cache.md"
+                        % (name, ", ".join("compaction." + k for k in found)))
 
 
 def _drop_pattern(node, keys, done, who, why, warnings):
@@ -963,6 +978,7 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
         if not isinstance(data, dict):
             errors.append("%s config is not a JSON object (%s)" % (name, path))
             return None
+        warn_removed_compaction(name, data, warnings)
         drop_invalid_safety(name, data, schema, warnings)
         fix_malformed_ceremony(name, data, l1, errors)
         return data
@@ -992,6 +1008,11 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
             data = json.loads(session_json)
             if not isinstance(data, dict):
                 raise ValueError("not an object")
+            warn_removed_compaction("session", data, warnings)
+            comp = data.get("compaction")
+            if isinstance(comp, dict) and "maxTokens" in comp:
+                del comp["maxTokens"]
+                warnings.append("session compaction.maxTokens ignored: session layer ignored: setup applies maxTokens")
             drop_invalid_safety("session", data, schema, warnings)
             fix_malformed_ceremony("session", data, l1, errors)
             drop_loosening(data, "session", warnings)
