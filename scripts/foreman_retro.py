@@ -302,7 +302,7 @@ def trace_metrics(records):
             m["supervisor_requests"] += 1
         elif ev == "rereview":
             m["rereviews"] += 1
-        elif ev in ("read_budget", "recheck_budget") and r.get("action") == "deny":
+        elif ev in ("read_budget", "recheck_budget") and r.get("action") in ("deny", "remind"):
             m["budget_hits"] += 1
         elif ev == "rung_up":
             m["rung_up"] += 1
@@ -776,7 +776,7 @@ def candidates(report, trace_events, usage_lines, session_tools, ask_threshold=D
         ev = e.get("event")
         if ev == "child_read_budget" and e.get("action") in ("warn", "deny"):
             by["child_read_budget"][_tag(e.get("role"))] += 1
-        elif ev in ("read_budget", "recheck_budget") and e.get("action") == "deny":
+        elif ev in ("read_budget", "recheck_budget") and e.get("action") in ("deny", "remind"):
             by[ev]["session"] += 1
         elif ev == "rereview":
             by["rereview"][_tag(e.get("role"))] += 1

@@ -11,7 +11,7 @@ import { r11Rig, writeAt } from "./_r11rig.ts";
 const review = (n: number) => ({ agent: "reviewer", task: `review items ${n}` });
 const capRefused = (r: { block?: boolean; reason?: string } | undefined): boolean => r?.block === true && /\[review_cap\]/.test(r.reason ?? "");
 const readDenied = (r: { block?: boolean; reason?: string } | undefined): boolean => r?.block === true && /\[read_budget_exceeded\]/.test(r.reason ?? "");
-const DENY = DEFAULT_READ_LIMITS.before.deny;
+const WARN = DEFAULT_READ_LIMITS.before.warn;
 const fin = (command: string) => finalizationCommand("bash", { command });
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
@@ -35,11 +35,9 @@ test("ruling_no_effect_rewrite_mtime_restored", async (t) => {
     fs.utimesSync(file, st.atime, st.mtime);
   });
   assert.ok(capRefused((await a.launch(review(2))).res), "the rewritten ruling does not lift the cap");
-  const out = [];
-  for (let i = 0; i < DENY + 1; i++) out.push(await a.call("bash", { command: `ls -la r${i}` }));
-  assert.ok(readDenied(out[DENY]), "nor the read budget");
+  for (let i = 0; i < WARN; i++) assert.ok(!readDenied(await a.call("bash", { command: `ls -la r${i}` })));
+  assert.deepEqual(a.events("read_budget").map((r) => r.action), ["remind"], "nor the read budget: the count runs on");
   assert.deepEqual(a.events("review_cap_lift"), []);
-  assert.deepEqual(a.events("read_budget").filter((r) => r.action === "lift"), []);
 });
 
 test("ruling_no_effect_write_via_symlink", async (t) => {
@@ -51,9 +49,8 @@ test("ruling_no_effect_write_via_symlink", async (t) => {
   assert.equal(res, undefined, `write: ${res?.reason}`);
   assert.equal(fs.readFileSync(path.join(dir, "ruling.md"), "utf8"), text, "the write landed on the ruling");
   assert.ok(capRefused((await a.launch(review(2))).res), "a ruling written through a symlink does not lift the cap");
-  const out = [];
-  for (let i = 0; i < DENY + 1; i++) out.push(await a.call("bash", { command: `ls -la s${i}` }));
-  assert.ok(readDenied(out[DENY]), "nor the read budget");
+  for (let i = 0; i < WARN; i++) assert.ok(!readDenied(await a.call("bash", { command: `ls -la s${i}` })));
+  assert.deepEqual(a.events("read_budget").map((r) => r.action), ["remind"], "nor the read budget: the count runs on");
   assert.deepEqual(a.events("review_cap_lift"), []);
 });
 

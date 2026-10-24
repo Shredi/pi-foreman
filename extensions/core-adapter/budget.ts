@@ -4,9 +4,8 @@
 // Read class: bash, read, grep, find, ls, codemode. A call counts by its distinct top-level
 // call id: a nested codemode call `<outer>/<n>` maps to `<outer>`, so a script is one unit.
 // Phase `before` lasts until the first child launch that started, `after` from the latest one;
-// the count restarts at each started launch. At `warn` the result carries a notice; above `deny`
-// the call is refused. After a deny, only a fresh explorer launch that started (not a resume) lifts it, once per phase;
-// then only the user's `/foreman budget lift`. Knob 2: after a reviewer PASS the foreman gets
+// the count restarts at each started launch. The foreman's own reads are never refused: at `warn` the
+// result carries a reminder to delegate, and again after every `every` further reads. Knob 2: after a reviewer PASS the foreman gets
 // `recheckBudget` read-class calls, then is told to finish (the read budget does not apply).
 // Finalization (R11 item 5): after a reviewer PASS or a completed finalizer, until the next started launch, the
 // read budget never refuses and a plain git commit/add/status/log is exempt from both budgets while no child run
@@ -17,7 +16,7 @@ import { PACK_READ_TOOL_NAMES } from "./gitpack.ts";
 export type Phase = "before" | "after";
 export interface PhaseLimits {
   warn: number;
-  deny: number;
+  every: number;
 }
 export type ReadLimits = Record<Phase, PhaseLimits>;
 
@@ -29,7 +28,7 @@ export function isReadCall(name: string, input: unknown): boolean {
   const action = (input as Record<string, unknown>).action;
   return action === "get" || action === "guide";
 }
-export const DEFAULT_READ_LIMITS: ReadLimits = { before: { warn: 4, deny: 8 }, after: { warn: 4, deny: 8 } };
+export const DEFAULT_READ_LIMITS: ReadLimits = { before: { warn: 8, every: 8 }, after: { warn: 8, every: 8 } };
 export const DEFAULT_RECHECK = 3;
 const MAX_FILES = 200;
 
@@ -40,8 +39,7 @@ export function readLimits(v: unknown): ReadLimits {
   const o = v && typeof v === "object" ? (v as Record<string, unknown>) : {};
   const one = (p: Phase): PhaseLimits => {
     const e = o[p] && typeof o[p] === "object" ? (o[p] as Record<string, unknown>) : {};
-    const deny = posInt(e.deny, 1) ?? DEFAULT_READ_LIMITS[p].deny;
-    return { warn: Math.min(posInt(e.warn, 1) ?? DEFAULT_READ_LIMITS[p].warn, deny), deny };
+    return { warn: posInt(e.warn, 1) ?? DEFAULT_READ_LIMITS[p].warn, every: posInt(e.every, 1) ?? DEFAULT_READ_LIMITS[p].every };
   };
   return { before: one("before"), after: one("after") };
 }
@@ -58,19 +56,12 @@ export function topLevelId(id: string): string {
 
 export type BudgetDecision =
   | { kind: "allow" }
-  | { kind: "warn"; phase: Phase; count: number; text: string }
-  | { kind: "deny"; reason: string; event: "read_budget" | "recheck_budget"; phase?: Phase; count: number };
-
-export interface LaunchEffect {
-  /** The launch lifted a deny (an explorer run started). */
-  lift?: { phase: Phase; count: number };
-}
+  | { kind: "remind"; phase: Phase; count: number; text: string }
+  | { kind: "deny"; reason: string; event: "recheck_budget"; count: number };
 
 export class ReadBudget {
   phase: Phase = "before";
   private ids = new Set<string>();
-  private denied = false;
-  private liftUsed: Record<Phase, boolean> = { before: false, after: false };
   private post: { ids: Set<string> } | null = null;
   private final = false;
   /** The latest review verdict (index.ts sets it from the review gate before each check); undefined keeps the default "the reviewer passed" text. */
@@ -97,10 +88,9 @@ export class ReadBudget {
   }
 
   /** Decide one tool call. `exempt`: supervisor reply window or a read of a recorded child result file. */
-  check(toolName: string, toolCallId: string, limits: ReadLimits, recheck: number, exempt: boolean): BudgetDecision {
+  check(toolName: string, toolCallId: string, limits: ReadLimits, recheck: number, exempt: boolean, coordination = false): BudgetDecision {
     if (!READ_CLASS.has(toolName) || exempt) return { kind: "allow" };
     const top = topLevelId(toolCallId);
-    const nested = top !== toolCallId;
     if (this.post) {
       if (this.post.ids.has(top)) return { kind: "allow" };
       if (this.post.ids.size >= recheck) {
@@ -109,17 +99,12 @@ export class ReadBudget {
       this.post.ids.add(top);
       return { kind: "allow" };
     }
-    if (this.ids.has(top)) {
-      // a nested call of a script admitted earlier: refused once the window is over deny
-      return nested && this.denied ? this.deny(limits, this.ids.size) : { kind: "allow" };
-    }
+    if (coordination || this.ids.has(top)) return { kind: "allow" };
     const n = this.ids.size + 1;
     const lim = limits[this.phase];
-    if (this.denied || n > lim.deny) return this.deny(limits, n - 1);
     this.ids.add(top);
-    if (n >= lim.warn) {
-      const since = this.phase === "before" ? "before the first launch" : "since the last launch";
-      return { kind: "warn", phase: this.phase, count: n, text: `pi-foreman: read budget ${n} of ${lim.deny} read calls ${since}. Launch the explorer for the rest of the research instead of reading yourself.` };
+    if (n >= lim.warn && (n - lim.warn) % lim.every === 0) {
+      return { kind: "remind", phase: this.phase, count: n, text: `pi-foreman: you have read ${n} times; you should have enough to delegate: launch an explorer or builder for further exploration.` };
     }
     return { kind: "allow" };
   }
@@ -132,37 +117,11 @@ export class ReadBudget {
     return `${head} the reviewer passed; finish now. You have used your ${checks} after the pass; report the result instead of checking again.`;
   }
 
-  private deny(limits: ReadLimits, count: number): BudgetDecision {
-    this.denied = true;
-    const lim = limits[this.phase];
-    const since = this.phase === "before" ? "before the first launch" : "since the last launch";
-    const how = this.liftUsed[this.phase] ? "The explorer already lifted this once in this phase; ask the owner to run /foreman budget lift." : "Launch the explorer: a started explorer run lifts the limit (or ask the owner to run /foreman budget lift).";
-    return { kind: "deny", event: "read_budget", phase: this.phase, count, reason: `pi-foreman: [read_budget_exceeded] ${count} read calls ${since} (limit ${lim.deny}). ${how}` };
-  }
-
-  /** A child launch recorded as started; `fresh` false for a resume (it never lifts a deny). */
-  onLaunch(roles: readonly string[], fresh = true): LaunchEffect {
-    const was = this.phase;
-    const effect: LaunchEffect = {};
+  /** A child launch recorded as started: the count restarts and the phase becomes `after`. */
+  onLaunch(): void {
     this.phase = "after";
     this.final = false;
-    if (this.denied) {
-      // only a fresh explorer launch lifts a deny, once per phase; any other launch leaves it standing
-      if (!fresh || !roles.includes("explorer") || this.liftUsed[was]) return effect;
-      this.liftUsed[was] = true;
-      effect.lift = { phase: was, count: this.ids.size };
-    }
     this.ids = new Set();
-    this.denied = false;
-    return effect;
-  }
-
-  /** `/foreman budget lift`: the user starts a fresh window in the current phase. */
-  userLift(): { phase: Phase; count: number } {
-    const r = { phase: this.phase, count: this.ids.size };
-    this.ids = new Set();
-    this.denied = false;
-    return r;
   }
 
   /** A new user prompt: back to phase before with a fresh count (the post-PASS state is left separately). */
@@ -170,9 +129,7 @@ export class ReadBudget {
     const n = this.ids.size;
     this.phase = "before";
     this.ids = new Set();
-    this.denied = false;
     this.final = false;
-    this.liftUsed = { before: false, after: false };
     return n;
   }
 
@@ -209,6 +166,25 @@ export function finalizationCommand(toolName: string, input: unknown): boolean {
   const command = (input as Record<string, unknown>).command;
   if (typeof command !== "string") return false;
   return FINAL_RE.test(command);
+}
+
+const PR_COORDINATION: ReadonlySet<string> = new Set(["pr_status", "pr_checks", "pr_comments"]);
+const FOREMAN_SESSION_SEG = /^(?:\S*\/)?foreman session(?:\s|$)/;
+const CD_SEG = /^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*$/;
+
+/**
+ * A coordination call, not a read of the project: a PR status tool, or a bash command whose every command is
+ * `foreman session ...` (`bin/foreman session ...` too), after an optional leading `cd <dir> &&`. Command substitution
+ * never qualifies.
+ */
+export function coordinationCall(toolName: string, input: unknown): boolean {
+  if (PR_COORDINATION.has(toolName)) return true;
+  if (toolName !== "bash" || !input || typeof input !== "object") return false;
+  const command = (input as Record<string, unknown>).command;
+  if (typeof command !== "string" || /\$\(|`/.test(command)) return false;
+  const segs = command.split(/&&|\|\||;|\||\n/).map((s) => s.trim());
+  if (segs.length > 1 && CD_SEG.test(segs[0])) segs.shift();
+  return segs.length > 0 && segs.every((s) => FOREMAN_SESSION_SEG.test(s));
 }
 
 // Child result locations: taken only from structured places, never from free text (a child's

@@ -1,12 +1,11 @@
-"""Replay: foreman read budget and recheck budget (ceremony.foremanReads, ceremony.recheckBudget)
+"""Replay: foreman read budget reminders and recheck budget (ceremony.foremanReads, ceremony.recheckBudget)
 on the fake provider.
 
-Warn notice in the result; deny, a refused explorer launch does not lift it, a started explorer
-lifts it once per phase, the second deny needs `/foreman budget lift`; a codemode script with
-several nested reads counts once; a nested call is refused once the window is over deny; a
-supervisor reply window is exempt; after a reviewer PASS the foreman gets recheckBudget reads
-and is told to finish, a reviewer FAIL resets, a .workflow/ write does not; the triage result
-names the finish steps.
+The read budget only reminds: at warn the result carries a reminder and again every `every` reads, and
+no read is ever refused; a started explorer restarts the count in phase after; a codemode script with
+several nested reads counts once; a supervisor reply window is exempt; `/foreman budget lift` has nothing
+to lift. After a reviewer PASS the foreman gets recheckBudget reads and is told to finish, a reviewer FAIL
+resets, a .workflow/ write does not; the triage result names the finish steps.
 Same prerequisites and skips as test_replay.py.
 """
 from __future__ import annotations
@@ -22,7 +21,11 @@ from test_replay import REASON, ReplayCase  # noqa: E402
 
 
 def budget(before=(2, 3), after=(1, 2), recheck=1):
-    return {"ceremony": {"foremanReads": {"before": {"warn": before[0], "deny": before[1]}, "after": {"warn": after[0], "deny": after[1]}}, "recheckBudget": recheck}}
+    return {"ceremony": {"foremanReads": {"before": {"warn": before[0], "every": before[1]}, "after": {"warn": after[0], "every": after[1]}}, "recheckBudget": recheck}}
+
+
+def reminded(res):
+    return [i for i, (_, _, text) in enumerate(res) if "you have read" in text]
 
 
 def events(rig, name):
@@ -40,48 +43,48 @@ class TestReadBudget(ReplayCase):
         (rig.project / "a.txt").write_text("alpha\n", "utf-8")
         return rig, rig.start()
 
-    def test_warn_deny_lift_and_user_command(self):
+    def test_reminders_repeat_and_no_read_is_refused(self):
         rig, pi = self.start("rb-flow", budget())
         res = tool_results(pi.prompt("[[replay:warn]] go", timeout=60))
         self.assertEqual([e for _, e, _ in res], [False, False], res)
-        self.assertNotIn("read budget", res[0][2])
-        self.assertTrue(res[1][2].startswith("pi-foreman: read budget 2 of 3 read calls before the first launch. Launch the explorer"), res[1][2])
+        self.assertNotIn("you have read", res[0][2])
+        self.assertTrue(res[1][2].startswith("pi-foreman: you have read 2 times; you should have enough to delegate: launch an explorer or builder for further exploration."), res[1][2])
 
-        res = tool_results(pi.prompt("[[replay:deny]] go", timeout=90))
+        res = tool_results(pi.prompt("[[replay:remind]] go", timeout=90))
         names = [(n, e) for n, e, _ in res]
-        self.assertEqual(names, [("read", False)] * 3 + [("read", True), ("subagent", True), ("read", True), ("subagent", False)] + [("read", False)] * 2 + [("read", True), ("subagent", False)] + [("read", False)] * 1 + [("read", False), ("read", True)], res)
-        self.assertIn("[read_budget_exceeded]", res[3][2])
-        self.assertIn("a started explorer run lifts the limit", res[3][2])
-        self.assertIn("[read_budget_exceeded]", res[5][2], "a refused explorer launch does not lift")
-        self.assertIn("ask the owner to run /foreman budget lift", res[-1][2], "second deny in the phase")
+        # the first launch names an output file and is refused by the launch guard: it starts no run, so the count goes on
+        self.assertEqual(names, [("read", False)] * 4 + [("subagent", True)] + [("read", False)] + [("subagent", False)] + [("read", False)] * 3 + [("subagent", False)] + [("read", False)] * 3, res)
+        self.assertEqual(reminded(res), [1, 5, 7, 9, 11, 13], res)
+        self.assertNotIn("[read_budget_exceeded]", "".join(t for _, _, t in res))
 
         notes = notifications(pi.prompt("/foreman budget lift", timeout=30))
-        self.assertTrue(any("read budget lifted" in n for n in notes), notes)
+        self.assertTrue(any("nothing to lift" in n for n in notes), notes)
         res = tool_results(pi.prompt("[[replay:after]] go", timeout=60))
         self.assertEqual([e for _, e, _ in res], [False], res)
+        self.assertEqual(reminded(res), [], res)
         pi.close()
         got = short(events(rig, "read_budget"))
-        self.assertEqual(got[0], ("before", 2, "warn", None))
-        self.assertEqual([g for g in got if g[2] == "lift"], [("before", 3, "lift", "explorer"), ("after", 2, "lift", "explorer"), ("after", 2, "lift", "user")])
-        self.assertIn(("before", 3, "deny", None), got)
+        self.assertEqual([g for g in got if g[2] == "remind"], [("before", 2, "remind", None), ("before", 2, "remind", None), ("before", 5, "remind", None), ("after", 1, "remind", None), ("after", 3, "remind", None), ("after", 1, "remind", None), ("after", 3, "remind", None)])
+        self.assertEqual([g for g in got if g[2] not in ("remind", "reset_user")], [], "no deny and no lift")
 
     def test_codemode_script_counts_once(self):
-        rig, pi = self.start("rb-script", budget(before=(3, 4)))
+        rig, pi = self.start("rb-script", budget(before=(3, 3)))
         res = tool_results(pi.prompt("[[replay:script]] go", timeout=90))
+        pi.close()
         outer = [t for n, e, t in res if n == "codemode"]
         self.assertTrue(outer and "three reads" in outer[0], res)
-        denied = [t for n, e, t in res if e and "[read_budget_exceeded]" in t]
-        pi.close()
-        self.assertEqual(len(denied), 1, res)
-        counts = [r["count"] for r in events(rig, "read_budget") if r["action"] == "deny"]
-        self.assertEqual(counts, [4], "script + three reads = 4 units, the fifth call is denied")
+        self.assertEqual([e for _, e, _ in res], [False] * len(res), res)
+        self.assertEqual(reminded(res), [5], "the script's three nested reads are one unit, so the reminder falls on the second top-level read")
+        self.assertEqual(short(events(rig, "read_budget")), [("before", 3, "remind", None)])
 
-    def test_nested_call_refused_over_deny(self):
-        rig, pi = self.start("rb-nested", budget(before=(3, 4)))
+    def test_nested_call_is_never_refused(self):
+        rig, pi = self.start("rb-nested", budget(before=(3, 3)))
         res = tool_results(pi.prompt("[[replay:nested]] go", timeout=90))
         pi.close()
         texts = [t for n, e, t in res if n == "codemode"]
-        self.assertTrue(texts and "[read_budget_exceeded]" in texts[0], res)
+        self.assertTrue(texts and "nested read ok" in texts[0], res)
+        self.assertEqual([e for _, e, _ in res], [False] * len(res), res)
+        self.assertEqual(reminded(res), [2], res)
 
     def test_supervisor_window_is_exempt(self):
         rig, pi = self.start("rb-supervisor", budget(after=(1, 1)))
@@ -95,7 +98,7 @@ class TestReadBudget(ReplayCase):
         res = tool_results(wait_records(pi, done, 120))
         pi.close()
         self.assertEqual([(n, e) for n, e, _ in res], [("read", False)] * 3 + [("subagent_supervisor", False)], res)
-        self.assertEqual([r for r in events(rig, "read_budget") if r["action"] == "deny"], [])
+        self.assertEqual([r for r in events(rig, "read_budget") if r["action"] == "remind"], [], "the supervisor window is not counted")
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
@@ -145,9 +148,11 @@ class TestUserPromptReset(ReplayCase):
         (rig.project / "a.txt").write_text("alpha\n", "utf-8")
         pi = rig.start()
         res = tool_results(pi.prompt("[[replay:usr]] go", timeout=60))
-        self.assertEqual([e for _, e, _ in res], [False, False, True], res)
+        self.assertEqual([e for _, e, _ in res], [False, False, False], res)
+        self.assertEqual(reminded(res), [0, 2], res)
         res = tool_results(pi.prompt("[[replay:usr]] again", timeout=60))
-        self.assertEqual([e for _, e, _ in res], [False, False, True], res)
+        self.assertEqual([e for _, e, _ in res], [False, False, False], res)
+        self.assertEqual(reminded(res), [0, 2], "the new prompt restarts the count")
         pi.close()
         self.assertEqual([r["action"] for r in events(rig, "read_budget") if r["action"] == "reset_user"], ["reset_user"])
 
