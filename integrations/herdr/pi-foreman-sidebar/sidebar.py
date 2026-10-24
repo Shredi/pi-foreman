@@ -7,7 +7,7 @@ rows that render those tokens live in config-snippet.toml (`configure` prints
 it). Standard library only, Python 3.13+. Imports on every OS; the daemon's
 POSIX parts (flock, AF_UNIX) are reached only inside functions.
 
-Subcommands: start | stop | run | status | configure | push.
+Subcommands: start | stop | run | status | configure | push | sample.
 
 `push` is the session's own fast path: it composes the tokens of one session
 (radar imported in-process) and reports them for its pane, then touches a push
@@ -15,6 +15,9 @@ stamp. While a pane's stamp is fresh and its session is live, the daemon
 publishes only `fm_sort` for that pane and leaves the other keys to the session.
 `push --json` composes the same tokens but reports nothing: it prints them with
 the header template (`{spin}` for the animated glyph) for the session's own publisher.
+
+`sample` overrides one pane's tokens with a synthetic session for a while (`sample/<pane>.json` in
+the state folder): `push` and the daemon use that file for the pane until it expires or `--clear`.
 """
 
 import argparse
@@ -45,12 +48,9 @@ STARTUP_GRACE_S = 10
 WATCHDOG_ENV = "PI_FOREMAN_SIDEBAR_WATCHDOG_S"  # hidden override (tests)
 # Herdr config reference: "`ui.sidebar_width` integer default `26`".
 DEFAULT_WIDTH = 26
-# Row 3 is [fm_l3][fm_cost]. A typical root row needs "↑287k ↓7.4k" (11) +
-# GAP (3) + "$0.25 ✓3" (8) = 22 columns inside width - INSET, so counts fit
-# from 24. Cost alone needs 8 + INSET = 10; 20 leaves room for the tree indent
-# of nested rows. Narrower panels (Herdr's minimum is 18) step down.
-NARROW_COUNTS = 24   # below: drop token counts from fm_l3
-NARROW_COST = 20     # below: clear fm_l3 and fm_cost
+# The meta line (fm_meta) shows cost and counts. Cost alone needs 8 + INSET = 10 columns; 20 leaves
+# room for the tree indent of nested rows. Narrower panels (Herdr's minimum is 18) hide it.
+NARROW_COST = 20     # below: no meta line
 LATE_S = 900         # blocked longer than this: glyph gets a "!"
 MAX_VALUE = 80
 # Columns the Agents panel takes from `ui.sidebar_width` for its frame and
@@ -60,22 +60,13 @@ INSET = 2
 # ` · ` and uses a single space after `state_icon`." Custom cells are not
 # state_icon, so two non-empty cells of a row cost 3 columns between them.
 GAP = 3
-# Cells the user puts before $fm_sym on row 1 besides Herdr's state_icon (an
-# icon token, say), each assumed 1 column wide plus its separator;
-# --lead-cells / HERDR_SIDEBAR_LEAD.
+# Cells the user puts before the first token of row 1 besides Herdr's state_icon; kept for
+# compatibility (--lead-cells / HERDR_SIDEBAR_LEAD), the header ignores it.
 DEFAULT_LEAD = 0
-LEAD_CELL_W = 1
-# Columns row 1 loses to a Herdr state_icon cell before $fm_sym: none, the
-# default row opens with $fm_sym (the optional variant in config-snippet.toml
-# adds 2: set --lead-cells / HERDR_SIDEBAR_LEAD for it).
-STATE_ICON_W = 0
 # An unchanged row is sent again only after this many seconds, to keep the TTL alive.
 REPUSH_S = 10
 # At this width and above the children line shows a run's model and its rung.
 WIDE_CHILDREN = 60
-# The glyph of a pending long wait on the legacy children line (fm_l2); the sets without an
-# entry use the `wait` key of config/symbols.json, like the new activity lines.
-WAIT_GLYPH = {"unicode": "⏳", "nerd": "\uf252"}
 # A pushed tree position (tree.json) and the legacy layout.json count as current this long: two
 # daemon intervals. Older, the session builds the tree itself.
 TREE_FRESH_S = 2 * INTERVAL_S
@@ -89,12 +80,10 @@ CONN_MID, CONN_LAST = "├─ ", "└─ "
 # Private-use stand-in for the animated glyph while the header template is built (one cell wide).
 SPIN_MARK = "\ue000"
 SYMBOLS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "config", "symbols.json")
-AUX_FALLBACK = {"agent": "◆", "task": "⚙", "wait": "⧗", "ask": "?", "recent": "✓"}
+AUX_FALLBACK = {"agent": "◆", "task": "⚙", "wait": "⧗", "ask": "?", "recent": "✓", "working": "⏳",
+                "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌"}
 SPINNER_FALLBACK = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 SYMBOL_SETS = ("unicode", "emoji", "nerd", "ascii")
-# Line 1 stops this many columns short of its budget, so a misjudged frame
-# or glyph width does not push the age into Herdr's ellipsis.
-L1_MARGIN = 2
 # Herdr trims token values at both ends, so a leading blank indent uses
 # U+2800 (renders blank, is not whitespace) instead of spaces.
 BLANK = "⠀"
@@ -103,10 +92,22 @@ CONT_MID, CONT_LAST = "│" + BLANK * 2, BLANK * 3
 # row (no config key changes it). The header (first row) gets the same number of blank cells in
 # front, and the detail rows lose them from their budget, so connectors and `│` share a column.
 DETAIL_INDENT = 2
-KEYS = ("fm_sym", "fm_l1", "fm_l2", "fm_l3", "fm_cost",
-        "fm_hd", "fm_a1", "fm_a2", "fm_a3", "fm_meta",
-        "fm_state", "fm_block_s", "fm_sort")
-STALE_KEYS = ("fm_pre",)  # published by older versions; nulled at shutdown
+# The PR dots row: up to four cells, one token each, so Herdr can colour each dot by its own rules.
+PR_KEYS = ("fm_pr1", "fm_pr2", "fm_pr3", "fm_pr4")
+DOT_STATES = ("fail", "run", "ok", "none")  # shown in this order: red, yellow, green, unknown
+# The circle glyphs of the unicode and nerd sets (the sets with colour rules) never appear in a label.
+DOT_CIRCLES = "●◉○◌\uf111\uf192\uf10c\uf1db"
+_CIRCLES_TO_Q = {ord(c): "?" for c in DOT_CIRCLES}
+PANE_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,100}")
+SAMPLE_MINUTES = 10
+SAMPLE_MAX_S = 7 * 86400
+KEYS = ("fm_hd", "fm_a1", "fm_a2", "fm_a3") + PR_KEYS + ("fm_meta", "fm_state", "fm_block_s", "fm_sort")
+# Published by older versions (the first row layout and its prefix); nulled at shutdown and on clears,
+# and by a session's final or clearing push (SESSION_KEYS plus LEGACY_KEYS are 16 tokens).
+LEGACY_KEYS = ("fm_sym", "fm_l1", "fm_l2", "fm_l3", "fm_cost")
+STALE_KEYS = LEGACY_KEYS + ("fm_pre",)
+# Herdr takes at most this many tokens in one pane report.
+MAX_TOKENS = 16
 # Keys a self-pushing session owns; the daemon keeps fm_sort (tree order).
 SESSION_KEYS = tuple(k for k in KEYS if k != "fm_sort")
 # A pane is self-pushing while its push stamp is younger than this (the TTL)
@@ -114,8 +115,6 @@ SESSION_KEYS = tuple(k for k in KEYS if k != "fm_sort")
 STAMP_FRESH_S = TTL_MS / 1000.0
 NOT_SELF_STATES = ("lost", "stale", "done")
 SID_RE = re.compile(r"^[A-Za-z0-9._-]{1,200}$")  # no ":" (an NTFS stream on Windows)
-# Minimum line-1 label when the age is kept: "›…".
-L1_MIN_LABEL = 2
 SOCKET_FAILURES_MAX = 40
 VIEW_RETRY_S = 60
 VIEW_REFRESH_S = 60
@@ -193,22 +192,10 @@ def _pressure_suffix(p):
     return " ⚠ " + ",".join(reasons) if reasons else " ⚠"
 
 
-def spread(left, right, width):
-    """`left` + inner padding + `right`, right edge at `width` cells. When
-    `left` would get fewer than L1_MIN_LABEL cells (`›…`), `right` is dropped,
-    so the result never exceeds `width`."""
-    if not right or width - cell_width(right) - 1 < L1_MIN_LABEL:
-        return truncate(left, width)
-    room = width - cell_width(right) - 1
-    left = truncate(left, room)
-    pad = max(1, width - cell_width(left) - cell_width(right))
-    return left + " " * pad + right
-
-
 def _cap(value):
     if value is None:
         return None
-    value = "".join(ch for ch in value if unicodedata.category(ch) != "Cc").strip()
+    value = "".join(ch for ch in value if unicodedata.category(ch) not in ("Cc", "Cf")).strip()
     if not value:
         return None
     if len(value) > MAX_VALUE:
@@ -274,44 +261,6 @@ def _run_label(k, width):
     if rung and rung != "model" and (not model or (width or 0) >= WIDE_CHILDREN):
         label += " " + rung
     return label
-
-
-def _wait_text(node, symbols):
-    waits = node.get("waits") or []
-    if not waits:
-        return None
-    w = waits[0]
-    glyph = WAIT_GLYPH.get(symbols or "unicode") or aux_symbols(symbols)["wait"]
-    text = "%s %s %s" % (glyph, w.get("note") or w.get("kind") or "wait", fmt_age(w.get("age_s")))
-    return text + (" +%d" % (len(waits) - 1) if len(waits) > 1 else "")
-
-
-def _children_text(node, joins, recent=None, width=None, symbols=None):
-    state = node.get("state")
-    kids = node.get("children") or []
-    if state == "lost":
-        return "lost"
-    if state == "done":
-        if not kids:
-            return "done"
-        return "done · %d child%s" % (len(kids), "" if len(kids) == 1 else "ren")
-    groups = []
-    counts = {}
-    for k in kids:
-        if _is_row(k, joins) or (k.get("state") == "done" and not _recent_run(k, recent)):
-            continue
-        label = _run_label(k, width)
-        item = (k.get("glyph") or "") + " " + label
-        if item not in counts:
-            groups.append(item)
-            counts[item] = 0
-        counts[item] += 1
-    if not groups:
-        waiting = _wait_text(node, symbols)
-        if waiting:
-            return waiting
-        return "no active children" if kids else "no children"
-    return " · ".join(g if counts[g] == 1 else "%s ×%d" % (g, counts[g]) for g in groups)
 
 
 _aux_cache = {}
@@ -405,7 +354,7 @@ def _slot(glyph):
 
 def _prefix_only(prefix, budget, indent=""):
     """`indent` and `prefix` cut at a unit boundary to fit `budget`; None when not even one unit fits."""
-    cut = prefix[:(budget - cell_width(indent)) // UNIT * UNIT]
+    cut = prefix[:max(0, (budget - cell_width(indent)) // UNIT * UNIT)]
     return indent + cut if cut else None
 
 
@@ -444,6 +393,72 @@ def _detail(place, text, budget):
     if room - cell_width(suffix) < 2:
         return _prefix_only(left, budget)
     return left + truncate(body, room - cell_width(suffix)) + suffix
+
+
+def pane_id_ok(pane):
+    """A pane id safe to put in a file name: 1 to 100 of letters, digits and `._:-`, not `.` or `..`
+    (the plugin is Linux and macOS only, so `:` is fine)."""
+    return isinstance(pane, str) and bool(PANE_ID_RE.fullmatch(pane)) and pane not in (".", "..")
+
+
+def _dot_label(label):
+    """A dot label without control and format characters (bidi overrides, zero-width), the circle
+    glyphs replaced by `?`; None for no label."""
+    if not isinstance(label, str):
+        return None
+    label = "".join(ch for ch in label if unicodedata.category(ch) not in ("Cc", "Cf"))
+    return label.translate(_CIRCLES_TO_Q).strip() or None
+
+
+def _dot_items(dots, aux):
+    """[(circle, label)] of a session's `dots` ([{n, state, label, src}]): red, yellow, green, unknown,
+    then by number (external items without one last), then label; items without a label are dropped."""
+    items = []
+    for d in dots if isinstance(dots, list) else []:
+        label = _dot_label(d.get("label")) if isinstance(d, dict) else None
+        if label is None:
+            continue
+        state = d.get("state") if d.get("state") in DOT_STATES else "none"
+        n = d.get("n") if isinstance(d.get("n"), int) and not isinstance(d.get("n"), bool) else None
+        items.append((DOT_STATES.index(state), n is None, n or 0, label, aux["pr-" + state]))
+    items.sort(key=lambda i: i[:4])
+    return [(i[4], i[3]) for i in items]
+
+
+def _dots(place, dots, budget, aux):
+    """The four fm_pr cells: `<circle> <label>` per item, cell 1 behind the continuation. Cells are
+    placed left to right while they fit (GAP columns of Herdr separator each); when items are hidden
+    the last placed cell becomes `+n` (n = items not shown). Cell 1 is never dropped: it is cut
+    with `…`, or the token is the continuation prefix when not even circle and `…` fit. No items,
+    no value."""
+    items = _dot_items(dots, aux)
+    out = [None] * len(PR_KEYS)
+    if not items:
+        return out
+    budget -= DETAIL_INDENT  # Herdr draws this row that many cells right
+    left = _detail_left(place)
+    room = budget - cell_width(left)
+    if room < cell_width(items[0][0]) + 1:
+        out[0] = _prefix_only(left, budget)
+        return out
+    cells = [c + " " + label for c, label in items[:len(PR_KEYS)]]
+    row = [truncate(cells[0], room)]
+    used = cell_width(row[0])
+    for cell in cells[1:]:
+        if used + GAP + cell_width(cell) > room:
+            break
+        used += GAP + cell_width(cell)
+        row.append(cell)
+    if len(row) > 1:
+        if len(row) < len(items):
+            row[-1] = "+%d" % (len(items) - len(row) + 1)
+    elif len(items) > 1:
+        more = "+%d" % (len(items) - 1)
+        if used + GAP + cell_width(more) <= room:
+            row.append(more)
+    row[0] = left + row[0]
+    out[:len(row)] = row
+    return out
 
 
 def _meta(node, recent, width, place, budget):
@@ -572,7 +587,7 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
     """Snapshot (radar --json) -> {paneId: {fm_key: value or None}}.
 
     `joins` maps node key -> paneId; without it each node's own `paneId` is
-    used. `lead` counts the user's cells before $fm_sym on row 1 (legacy rows only).
+    used. `lead` is kept for compatibility (the header ignores it).
     None values clear the token. Panes in `self_panes` get only `fm_sort` (their
     session publishes the rest). `layout` ({key: {pre, cont}}) and `tree`
     ({key: {P, conn, own}}) place a root row at a tree position computed elsewhere
@@ -605,37 +620,6 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
             out[pane] = {"fm_sort": _cap(sort)}
             return
         blocked_s = node.get("blocked_s")
-        # fm_sym is the static glyph of the presence state (no frames); "!" marks a session
-        # blocked for too long
-        sym = node.get("glyph") or ""
-        if blocked_s is not None and blocked_s > LATE_S:
-            sym += "!"
-        # row 1: [state_icon][lead cells][sym][l1], l1 = [tree prefix ]› name ... age
-        used = (INSET + STATE_ICON_W + lead * (LEAD_CELL_W + GAP)
-                + (cell_width(sym) + GAP if sym else 0))
-        right = fmt_age(blocked_s if blocked_s is not None else node.get("age_s"))
-        left = (pre + " " if pre else "") + "› " + (node.get("name") or "?")
-        l1 = spread(left, right, width - used - L1_MARGIN)
-        # rows 2 and 3 indent under the glyph with the tree continuation
-        indent = (cont + " ") if cont else ""
-        room = width - INSET - cell_width(indent)
-        l2 = indent + truncate(_children_text(node, joins, recent, width, symbols), room)
-        tot = node.get("tot") or {}
-        l3 = cost = None
-        if width >= NARROW_COST:
-            shown = sum(1 for k in node.get("children") or [] if _recent_run(k, recent))
-            done = max(0, (node.get("done_children") or 0) - shown)
-            cost_text, tick = fmt_cost(tot.get("cost")), ("✓%d" % done if done else "")
-            cost_text += _pressure_suffix(node.get("pressure"))
-            cost_w = cell_width(cost_text) + (1 + cell_width(tick) if tick else 0)
-            counts = ""
-            if width >= NARROW_COUNTS:
-                counts = fmt_counts(tot)
-                if cell_width(indent + counts) + GAP + cost_w > width - INSET:
-                    counts = ""  # the cost outranks the counts
-            l3 = indent + counts if counts else (indent or None)
-            cost_room = width - INSET - (cell_width(l3) + GAP if l3 else 0)
-            cost = spread(cost_text, tick, cost_room)
         age = fmt_age(blocked_s if blocked_s is not None else node.get("age_s"))
         if blocked_s is not None and blocked_s > LATE_S:
             age += "!"
@@ -644,11 +628,6 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
             tpl_out[pane] = _cap(_header(place, SPIN_MARK, label, age, budget).replace(SPIN_MARK, "{spin}"))
         a1, a2, a3 = _activity(node, joins, recent, width, aux)
         tokens = {
-            "fm_sym": sym or None,
-            "fm_l1": l1,
-            "fm_l2": l2,
-            "fm_l3": l3,
-            "fm_cost": cost,
             "fm_hd": _header(place, node.get("glyph") or "", label, age, budget),
             "fm_a1": _detail(place, a1, budget),
             "fm_a2": _detail(place, a2, budget),
@@ -658,10 +637,11 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
             "fm_block_s": str(int(blocked_s)) if blocked_s is not None else None,
             "fm_sort": sort,
         }
+        tokens.update(zip(PR_KEYS, _dots(place, node.get("dots"), budget, aux)))
         out[pane] = {k: _cap(tokens[k]) for k in KEYS}
 
     for n, sort, place in tree_rows(roots, joins, tree):
-        # legacy prefixes (fm_l1..fm_l3) come from the same placement; a pushed layout wins for a root
+        # the row prefixes come from the same placement; a pushed layout wins for a root
         pre, cont = place["P"] + place["conn"][:2], place["P"] + place["own"][:2]
         placed = (layout or {}).get(n.get("key")) if not sort.count(".") else None
         if isinstance(placed, dict):
@@ -793,10 +773,16 @@ def join(nodes, agents, procinfo=None):
     return joins
 
 
+def split_tokens(tokens):
+    """`tokens` as dicts of at most MAX_TOKENS keys, in order."""
+    items = list(tokens.items())
+    return [dict(items[i:i + MAX_TOKENS]) for i in range(0, len(items), MAX_TOKENS)] or [{}]
+
+
 def clears(prev, now, keep=()):
     """Null patches for panes published before and absent now; for panes in
     `keep` (fresh push stamp: the session owns its keys) only fm_sort."""
-    return {pane: ({"fm_sort": None} if pane in keep else {k: None for k in KEYS})
+    return {pane: ({"fm_sort": None} if pane in keep else {k: None for k in KEYS + STALE_KEYS})
             for pane in prev if pane not in now}
 
 
@@ -829,7 +815,7 @@ def self_panes_for(roots, joins, fresh, shown=None):
     """Panes whose session pushes its own tokens: fresh stamp naming the pane
     the session is joined to, and the session neither lost, stale nor done.
     `shown` ({paneId: tokens} from agent.list) lets the daemon see a pane whose
-    stamp is fresh but that carries no session row (no fm_l1): the daemon
+    stamp is fresh but that carries no session row (no fm_hd): the daemon
     composes that one itself instead of leaving it blank."""
     out = set()
     for n in walk(roots):
@@ -837,7 +823,7 @@ def self_panes_for(roots, joins, fresh, shown=None):
         sid = n.get("sid")
         if (n.get("kind") == "session" and pane and sid and fresh.get(sid) == pane
                 and n.get("state") not in NOT_SELF_STATES):
-            if shown is not None and pane in shown and not (shown[pane] or {}).get("fm_l1"):
+            if shown is not None and pane in shown and not (shown[pane] or {}).get("fm_hd"):
                 continue
             out.add(pane)
     return out
@@ -861,10 +847,10 @@ def blanks(agents, now, fresh_panes, done):
         if a.get("agent") != "pi" or not pane or pane in now or pane in fresh_panes or pane in done:
             continue
         tokens = a.get("tokens")
-        if isinstance(tokens, dict) and not any(k in tokens for k in KEYS):
+        if isinstance(tokens, dict) and not any(k in tokens for k in KEYS + STALE_KEYS):
             continue
         done.add(pane)
-        out[pane] = {k: None for k in KEYS}
+        out[pane] = {k: None for k in KEYS + STALE_KEYS}
     return out
 
 
@@ -1277,6 +1263,10 @@ class Publisher:
         write_atomic(os.path.join(self.sdir, "layout.json"), json.dumps(layout, ensure_ascii=False))
         write_atomic(os.path.join(self.sdir, "tree.json"), json.dumps(tree, ensure_ascii=False))
         self.log_joined(snapshot, agents, len(now))
+        for pane in list(now):  # a fresh sample file stands in for the real row of its pane
+            sample = None if pane in self.self_panes else read_sample(self.sdir, pane)
+            if sample:
+                now[pane] = dict(sample[0], fm_sort=now[pane].get("fm_sort"))
         patches = dict(now)
         patches.update(clears(self.published, now, set(fresh.values())))
         for pane, tokens in blanks(agents, now, set(fresh.values()), self.blanked).items():
@@ -1284,8 +1274,9 @@ class Publisher:
         results = {}
         for pane, tokens in patches.items():
             try:
-                self._call("pane.report_metadata", {"pane_id": pane, "source": SOURCE,
-                                                    "tokens": tokens, "ttl_ms": self.ttl_ms})
+                for chunk in split_tokens(tokens):
+                    self._call("pane.report_metadata", {"pane_id": pane, "source": SOURCE,
+                                                        "tokens": chunk, "ttl_ms": self.ttl_ms})
                 results[pane] = "ok"
             except HerdrError as exc:
                 results[pane] = "error: %s" % exc
@@ -1306,8 +1297,8 @@ class Publisher:
             # a self-pushing session keeps its keys; its own TTL ends them
             keys = ("fm_sort",) + STALE_KEYS if pane in self.self_panes else KEYS + STALE_KEYS
             try:
-                call("pane.report_metadata", {"pane_id": pane, "source": SOURCE,
-                                              "tokens": {k: None for k in keys}})
+                for chunk in split_tokens({k: None for k in keys}):
+                    call("pane.report_metadata", {"pane_id": pane, "source": SOURCE, "tokens": chunk})
             except (OSError, ValueError, HerdrError):
                 pass
         self.published = {}
@@ -1611,6 +1602,9 @@ def push_compose(radar, args, sdir, now=None):
     else from a tree built here. Usage totals resume from a per-session byte-offset cache in the
     state dir, so a push reads only the usage lines appended since the last one."""
     now = time.time() if now is None else now
+    sample = read_sample(sdir, args.pane, now)
+    if sample:
+        return sample
     adir = radar.agent_dir(args.agent_dir)
     sym_name = args.symbols or radar.config_symbols(adir)
     cache_file = _cache_path(sdir, args.session)
@@ -1632,8 +1626,16 @@ def push_compose(radar, args, sdir, now=None):
     symbols, recent = radar.load_symbols(sym_name), radar.config_recent_runs(adir)
     snap = radar.json_doc([own], now, sym_name, symbols, recent)
     root = snap["roots"][0]
-    joins = {n["key"]: n["paneId"] for n in walk([root])
-             if n.get("kind") == "session" and n.get("paneId") and n["paneId"] != args.pane}
+    # row children are the sessions the daemon's fresh winners.json joined to a pane (as in
+    # _full_placements), so a closed child whose presence file still names a pane takes no slot
+    by_sid = {sid: pane for pane, sid in read_winners(sdir, now).items()}
+    joins = {}
+    for n in walk([root]):
+        if n.get("kind") != "session":
+            continue
+        pane = by_sid.get(n.get("sid")) if by_sid else n.get("paneId")
+        if pane and pane != args.pane:
+            joins[n["key"]] = pane
     joins[root["key"]] = args.pane
     width = read_width(args, os.environ, os.path.join(herdr_config_dir(), "config.toml"))
     tree, layout = read_tree(sdir, now), read_layout(sdir, now)
@@ -1669,7 +1671,7 @@ def _unchanged(tokens_file, tokens, now=None):
 def cmd_push(args):
     """Best effort: exit 0 and quiet when Herdr is unreachable; 2 on bad usage
     or a missing radar. --dry-run prints the tokens and reports nothing."""
-    if not args.session or not SID_RE.match(args.session) or not args.pane:
+    if not args.session or not SID_RE.match(args.session) or not pane_id_ok(args.pane):
         log("push needs --session <id> and --pane <id>")
         return 2
     sdir = state_dir()
@@ -1698,7 +1700,7 @@ def cmd_push(args):
                           "pane": args.pane}, ensure_ascii=False))
         return 0
     if args.clear:
-        patch = {args.pane: {k: None for k in SESSION_KEYS}}
+        patch = {args.pane: {k: None for k in SESSION_KEYS + LEGACY_KEYS}}
         if args.dry_run:
             print(json.dumps(patch))
             return 0
@@ -1720,9 +1722,12 @@ def cmd_push(args):
         if not args.final and _unchanged(tokens_file, patch[args.pane]):
             write_atomic(stamp, args.pane)  # still ours; no report
             return 0
+    report = patch[args.pane]
+    if args.final:  # the last row also ends what an older version left on the pane
+        report = dict(report, **{k: None for k in LEGACY_KEYS})
     try:
         call("pane.report_metadata", {"pane_id": args.pane, "source": SOURCE,
-                                      "tokens": patch[args.pane], "ttl_ms": TTL_MS}, timeout=2.0)
+                                      "tokens": report, "ttl_ms": TTL_MS}, timeout=2.0)
     except (OSError, ValueError, HerdrError):
         return 0
     if args.final:
@@ -1741,6 +1746,125 @@ def cmd_push(args):
     return 0
 
 
+# ---------------------------------------------------------------- sample
+
+def sample_path(sdir, pane):
+    return os.path.join(sdir, "sample", pane + ".json")
+
+
+def read_sample(sdir, pane, now=None):
+    """(session tokens, fm_hd template) of the pane's sample file while it has not expired, else None.
+    The pane id is checked before the path is built."""
+    if not pane_id_ok(pane):
+        return None
+    now = time.time() if now is None else now
+    try:
+        with open(sample_path(sdir, pane), encoding="utf-8") as fh:
+            d = json.load(fh)
+        if not now < float(d["expires"]) < now + SAMPLE_MAX_S:
+            return None
+        tokens, tpl = d["tokens"], d.get("fm_hd_tpl")
+        got = {k: _cap(tokens[k]) if isinstance(tokens.get(k), str) else None for k in SESSION_KEYS}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    return got, tpl if isinstance(tpl, str) else None
+
+
+def sample_snapshot(variant, symbols):
+    """A synthetic radar snapshot of one working session: two live agents, a PR watch and a task, an
+    open ask, the pressure suffix and the PR dots of `variant` (`pr`: one dot per state; `mixed`: PRs,
+    an external item and three more PRs that overflow)."""
+    aux = aux_symbols(symbols)
+    dot = lambda n, state, label=None, src="pr": {"n": n, "state": state, "src": src,  # noqa: E731
+                                                  "label": label or "#%d" % n}
+    if variant == "mixed":
+        dots = [dot(17, "fail"), dot(21, "run"), dot(None, "ok", "deploy", "ext"),
+                dot(12, "none"), dot(13, "none"), dot(14, "none")]
+    else:
+        dots = [dot(17, "fail"), dot(21, "run"), dot(19, "ok"), dot(12, "none")]
+    agents = [{"key": "sample-r%d" % i, "kind": "run", "role": "builder", "name": "builder", "state": "working",
+               "sym": "working", "glyph": aux["working"], "model": "claude-bridge/claude-sonnet-5-5",
+               "children": []} for i in (1, 2)]
+    root = {"key": "sample", "kind": "session", "sid": "sample", "name": "r53-sidebar", "state": "working",
+            "sym": "working", "glyph": aux["working"], "age_s": 12, "blocked_s": None, "children": agents,
+            "done_children": 3, "tot": {"in": 300000, "out": 7400, "cost": 3.32, "uncached": 287000},
+            "pressure": {"level": "high", "reasons": ["mem"]}, "dots": dots,
+            "waits": [{"id": "w", "kind": "pr", "note": "1 pr watch", "age_s": 0, "left_s": 0, "prs": [21]}],
+            "tasks": [{"id": "t", "label": "npm test", "pid": 1, "ageSeconds": 180}],
+            "asks": [{"n": 1, "topic": "rule scope"}]}
+    return {"v": 1, "symbols": symbols, "roots": [root]}
+
+
+def sample_tokens(variant, symbols, width, pane):
+    """(session tokens, fm_hd template) of the sample, composed like real data."""
+    tpl = {}
+    out = compose(sample_snapshot(variant, symbols), width, {"sample": pane}, tpl_out=tpl)[pane]
+    return {k: out.get(k) for k in SESSION_KEYS}, tpl.get(pane)
+
+
+def sample_preview(tokens, tpl, symbols):
+    """The sample as Herdr draws it: the header, then the detail rows DETAIL_INDENT right; the dot
+    cells share one line with Herdr's separator."""
+    lines = [(tpl or tokens["fm_hd"] or "").replace("{spin}", aux_symbols(symbols)["spinner"][2])]
+    for k in ("fm_a1", "fm_a2", "fm_a3", PR_KEYS, "fm_meta"):
+        text = " · ".join(tokens[c] for c in k if tokens[c]) if isinstance(k, tuple) else tokens[k]
+        if text:
+            lines.append(" " * DETAIL_INDENT + text)
+    return [line.replace(BLANK, " ") for line in lines]
+
+
+def cmd_sample(args):
+    """Override one pane's tokens with the sample: write sample/<pane>.json and publish once.
+    --dry-run prints the sample per glyph set and writes nothing; --clear removes the file."""
+    pane = args.pane or os.environ.get("HERDR_PANE_ID")
+    if not pane_id_ok(pane) and not (args.dry_run and not pane):
+        log("sample needs a valid pane id (--pane or HERDR_PANE_ID: 1-100 of A-Za-z0-9._:-)")
+        return 2
+    pane = pane or "pane"
+    minutes = SAMPLE_MINUTES if args.minutes is None else args.minutes
+    if not 0 < minutes <= SAMPLE_MAX_S / 60:
+        log("sample --minutes must be between 0 and %d" % (SAMPLE_MAX_S // 60))
+        return 2
+    variant = args.variant or "pr"
+    width = read_width(args, os.environ, os.path.join(herdr_config_dir(), "config.toml"))
+    if args.dry_run:
+        for name in [args.symbols] if args.symbols else SYMBOL_SETS:
+            tokens, tpl = sample_tokens(variant, name, width, pane)
+            print("== %s, variant %s, width %d ==" % (name, variant, width))
+            print("\n".join(sample_preview(tokens, tpl, name)))
+        return 0
+    sdir = state_dir()
+    path = sample_path(sdir, pane)
+    if args.clear:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        print("%s sample cleared" % pane)
+        return 0
+    name = args.symbols
+    if not name:
+        radar = _import_radar()
+        name = radar.config_symbols(radar.agent_dir(args.agent_dir)) if radar else "unicode"
+    name = name if name in SYMBOL_SETS else "unicode"
+    tokens, tpl = sample_tokens(variant, name, width, pane)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    write_atomic(path, json.dumps({"tokens": tokens, "fm_hd_tpl": tpl, "expires": time.time() + minutes * 60},
+                                  ensure_ascii=False))
+    if not os.path.isfile(path):
+        log("could not write %s" % path)
+        return 1
+    try:
+        call("pane.report_metadata", {"pane_id": pane, "source": SOURCE, "tokens": tokens,
+                                      "ttl_ms": ONCE_TTL_MS}, timeout=2.0)
+    except (OSError, ValueError, HerdrError) as exc:
+        log("sample written, but Herdr did not take it: %s" % exc)
+        return 1
+    print("%s ok (%s, variant %s, width %d, %g min)" % (pane, name, variant, width, minutes))
+    print("\n".join(sample_preview(tokens, tpl, name)))
+    return 0
+
+
 def cmd_configure():
     with open(os.path.join(HERE, "config-snippet.toml"), encoding="utf-8") as fh:
         sys.stdout.write(fh.read())
@@ -1749,7 +1873,7 @@ def cmd_configure():
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sidebar.py", description=__doc__.splitlines()[0])
-    ap.add_argument("command", choices=("start", "stop", "run", "status", "configure", "push"))
+    ap.add_argument("command", choices=("start", "stop", "run", "status", "configure", "push", "sample"))
     ap.add_argument("--width", type=int)
     ap.add_argument("--no-view", action="store_true")
     ap.add_argument("--lead-cells", type=int)
@@ -1758,11 +1882,13 @@ def main(argv=None):
     ap.add_argument("--foreman")
     ap.add_argument("--agent-dir")
     ap.add_argument("--session", help="with push: the session id")
-    ap.add_argument("--pane", help="with push: the session's Herdr pane id")
-    ap.add_argument("--symbols", choices=SYMBOL_SETS, help="with push: glyph set; default ui.symbols")
+    ap.add_argument("--pane", help="with push: the session's Herdr pane id; with sample: the pane (default HERDR_PANE_ID)")
+    ap.add_argument("--symbols", choices=SYMBOL_SETS, help="with push or sample: glyph set; default ui.symbols")
+    ap.add_argument("--variant", choices=("pr", "mixed"), help="with sample: the dots shown (default pr)")
+    ap.add_argument("--minutes", type=float, help="with sample: how long the override lasts (default %d)" % SAMPLE_MINUTES)
     ap.add_argument("--json", action="store_true",
                     help="with push: print {tokens, fm_hd_tpl, stamp, pane}; report nothing, write no stamp")
-    ap.add_argument("--clear", action="store_true", help="with push: clear the session's keys")
+    ap.add_argument("--clear", action="store_true", help="with push: clear the session's keys; with sample: end the override")
     ap.add_argument("--final", action="store_true", help="with push: publish the final row, then drop only the stamp")
     argv = sys.argv[1:] if argv is None else argv
     args = ap.parse_args(argv)
@@ -1776,6 +1902,8 @@ def main(argv=None):
         return cmd_configure()
     if args.command == "push":
         return cmd_push(args)
+    if args.command == "sample":
+        return cmd_sample(args)
     foreman = find_foreman(args.foreman, os.environ, plugin_root())
     if not foreman:
         log("foreman not found (set --foreman or PI_FOREMAN_BIN, or put foreman on PATH)")

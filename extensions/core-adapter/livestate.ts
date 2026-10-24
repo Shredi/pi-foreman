@@ -15,6 +15,7 @@ export const HEARTBEAT_MS = 30_000;
 const WRITE_GAP_MS = 1000;
 const MAX_RUNS = 20;
 const MAX_WAITS = 20;
+const MAX_DOTS = 14;
 
 export type LiveMode = "tui" | "rpc" | "json" | "print";
 export type LiveStateName = "working" | "blocked" | "waiting" | "idle" | "done";
@@ -36,6 +37,14 @@ export interface LiveWait {
 export interface LiveAsk {
   n: number;
   topic: string;
+}
+
+/** One sidebar dot: a tracked PR (`src` pr, `n` its number) or an item of the external status hook (`src` ext, `n` null). */
+export interface LiveDot {
+  n: number | null;
+  state: "fail" | "run" | "ok" | "none";
+  label: string;
+  src: "pr" | "ext";
 }
 
 export interface LiveRun {
@@ -73,6 +82,8 @@ export interface LiveFile {
   tasks?: AddonTask[];
   /** Open asks of the own handoff; present only while one is open. */
   asks?: LiveAsk[];
+  /** Sidebar dots (PR states, external status items), at most 14; present only when there are any. */
+  dots?: LiveDot[];
   /** env HERDR_PANE_ID, else null. */
   paneId: string | null;
   /** The session's own usage as the footer shows it: in = input + cache read + cache write, out = output; cost = list price. */
@@ -150,10 +161,10 @@ export class LiveState {
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   /** Null when the mode writes no file (print, json, or unknown). */
-  static start(init: LiveInit, runs: () => RunView[], totals?: () => SessionTotals | null, waits?: () => LiveWait[], pressure?: () => { level: string; reasons: string[] } | null): LiveState | null {
+  static start(init: LiveInit, runs: () => RunView[], totals?: () => SessionTotals | null, waits?: () => LiveWait[], pressure?: () => { level: string; reasons: string[] } | null, dots?: () => LiveDot[]): LiveState | null {
     const mode = init.mode;
     if (mode !== "tui" && mode !== "rpc") return null;
-    const l = new LiveState(init, mode, runs, totals, waits, pressure);
+    const l = new LiveState(init, mode, runs, totals, waits, pressure, dots);
     l.write();
     l.interval = setInterval(() => l.write(), HEARTBEAT_MS);
     l.interval.unref?.();
@@ -164,8 +175,10 @@ export class LiveState {
   private readonly totals: (() => SessionTotals | null) | undefined;
   private readonly waits: (() => LiveWait[]) | undefined;
   private readonly pressure: (() => { level: string; reasons: string[] } | null) | undefined;
-  private constructor(init: LiveInit, mode: LiveMode, runs: () => RunView[], totals?: () => SessionTotals | null, waits?: () => LiveWait[], pressure?: () => { level: string; reasons: string[] } | null) {
+  private readonly dotsOf: (() => LiveDot[]) | undefined;
+  private constructor(init: LiveInit, mode: LiveMode, runs: () => RunView[], totals?: () => SessionTotals | null, waits?: () => LiveWait[], pressure?: () => { level: string; reasons: string[] } | null, dots?: () => LiveDot[]) {
     this.runs = runs;
+    this.dotsOf = dots;
     this.pressure = pressure;
     this.totals = totals;
     this.waits = waits;
@@ -243,6 +256,15 @@ export class LiveState {
       return readOwnAddonTasks(this.cwd, this.sessionId).slice(0, MAX_WAITS).map((t) => ({ ...t, tail: [] }));
     } catch {
       return []; // tasks are best effort
+    }
+  }
+
+  private dotList(): LiveDot[] {
+    try {
+      const states = ["fail", "run", "ok", "none"];
+      return (this.dotsOf?.() ?? []).filter((d) => states.includes(d.state)).slice(0, MAX_DOTS).map((d) => ({ n: d.src === "pr" && Number.isInteger(d.n) ? d.n : null, state: d.state, label: short(String(d.label), 20), src: d.src === "pr" ? "pr" : "ext" }));
+    } catch {
+      return []; // dots are best effort
     }
   }
 
@@ -334,7 +356,8 @@ export class LiveState {
     }
     const asks = this.askList();
     const tasks = this.taskList();
-    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(asks.length ? { asks } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(pressure ? { pressure } : {}) };
+    const dots = this.dotList();
+    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(asks.length ? { asks } : {}), ...(dots.length ? { dots } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(pressure ? { pressure } : {}) };
   }
 
   private schedule(): void {

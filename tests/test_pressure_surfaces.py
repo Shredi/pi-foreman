@@ -23,7 +23,7 @@ class SidebarPressure(unittest.TestCase):
         snap = ts.snapshot()
         if pressure is not None:
             snap["roots"][0]["pressure"] = pressure
-        return sidebar.compose(snap, width)["w1:p1"]["fm_cost"]
+        return sidebar.compose(snap, width)["w1:p1"]["fm_meta"]
 
     def test_no_glyph_without_pressure_or_when_ok(self):
         base = self.cost_row(None)
@@ -33,7 +33,7 @@ class SidebarPressure(unittest.TestCase):
     def test_glyph_and_reasons_when_high_or_critical(self):
         row = self.cost_row({"level": "high", "reasons": ["load", "mem"]})
         self.assertIn(" ⚠ load,mem", row)
-        self.assertTrue(row.startswith("$0.47"))
+        self.assertIn("$0.47 ⚠", row)
         self.assertIn("⚠ disk", self.cost_row({"level": "critical", "reasons": ["disk"]}))
 
     def test_row_fits_the_width(self):
