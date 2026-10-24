@@ -16,7 +16,7 @@ const pc = { sessionId: "s1", cwd: os.tmpdir(), home: os.homedir() };
 
 // win32: the bash line spells the native paths as Git Bash keeps them (bashPath: `C:/...`, bashQuoted: `"C:\..."`); the python
 // guard's grammar resolves those forms there (r8 item 6), an unquoted `C:\...` stays unresolved (refused).
-test("H=<handoff dir>; cp <plan> \"$H/plan.md\" is allowed for an allowed dir; the prefix form stays refused", { skip: !py.ok ? "no Python >= 3.9" : false }, async () => {
+test("H=<handoff dir>; cp <plan> \"$H/plan.md\" is allowed for an allowed dir; the prefix form stays refused", { skip: !py.ok ? "no Python >= 3.13" : false }, async () => {
   const ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-swg-vars-")));
   try {
     const handoff = path.join(ws, "handoffs", "s1");

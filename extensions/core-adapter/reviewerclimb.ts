@@ -101,8 +101,13 @@ export class ReviewerFails {
  * ranks or such a model. A literal rank match (no `*`/`?`) counts as a model of its provider too.
  */
 export function defaultSecurityRung(config: Json | undefined, roles: Record<string, Json>): string | null {
+  return nextRankAboveStrong(config, roles, "reviewer");
+}
+
+/** The mapped strong rung (of any role) in the next rank above `role`'s strong rung (its model without one); see defaultSecurityRung. */
+export function nextRankAboveStrong(config: Json | undefined, roles: Record<string, Json>, role: string): string | null {
   const ranks = ranksOf(config);
-  const r = roles.reviewer;
+  const r = roles[role];
   if (ranks.size === 0 || !isObj(r) || typeof r.model !== "string") return null;
   const own = isObj(r.strong) && typeof r.strong.model === "string" && r.strong.model ? r.strong.model : r.model;
   const tier = tierOf(ranks, own);

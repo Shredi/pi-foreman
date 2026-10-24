@@ -1,5 +1,5 @@
 """Benchmark waiter: runs one Pi session inside a task container and returns only when the
-whole session is done. Standard library only, Python 3.9+. Started by bench/harbor_agent.py.
+whole session is done. Standard library only, Python 3.13+. Started by bench/harbor_agent.py.
 
 Done means all of:
   1. Pi is idle: the newest run ended with `agent_settled`, and `get_state` reports
@@ -189,6 +189,8 @@ def foreman_config(row):
         block["review"] = {"model": review}
     l2 = {"version": 1, "providers": {provider: block}, "trace": {"enabled": True},
           "retro": {"enabled": True, "workspaceKey": bench_key(row)}}
+    if os.environ.get("PI_FOREMAN_PYTHON"):  # the PI_ scrub drops the env var; the user layer carries the 3.13 interpreter
+        l2["python"] = {"path": os.environ["PI_FOREMAN_PYTHON"]}
     if row.get("_required_child_extensions"):
         l2["safety"] = {"requiredChildExtensions": row["_required_child_extensions"]}
     if row.get("foreman_edits"):
@@ -646,7 +648,7 @@ def setup_check(args, row, env):
     import glob
     import stat as stat_mod
     res = {"claude_config_dir_before": empty_dir_check(env["CLAUDE_CONFIG_DIR"])}
-    res["python"] = {"version": "%d.%d.%d" % sys.version_info[:3], "ok": sys.version_info >= (3, 9)}
+    res["python"] = {"version": "%d.%d.%d" % sys.version_info[:3], "ok": sys.version_info >= (3, 13)}
     res["permission_system_config"] = (Path(env["PI_CODING_AGENT_DIR"]) / "extensions" / "pi-permission-system" / "config.json").is_file()
 
     def run(cmd):

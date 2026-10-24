@@ -291,7 +291,11 @@ class SessionTest(unittest.TestCase):
             self.assertEqual(code, 0, err)
             code, _, err = self.run_main("brief", entry["handoff"], "second", "--parent-id", "parent-1")
         self.assertEqual(code, 0, err)
-        self.assertEqual(sent, [(entry["child"], "go ahead with B"), (entry["child"], "second")])
+        brief = Path(entry["handoff"])
+        self.assertEqual(sent, [(entry["child"], "Brief from parent-1: read %s and act on it" % (brief / "brief-1.md").resolve().as_posix()),
+                                (entry["child"], "Brief from parent-1: read %s and act on it" % (brief / "brief-2.md").resolve().as_posix())])
+        self.assertEqual((brief / "brief-1.md").read_text("utf-8"), "go ahead with B\n")
+        self.assertEqual((brief / "brief-2.md").read_text("utf-8"), "second\n")
         self.assertIn("brief sent to %s" % entry["child"], out)
 
     def test_brief_with_a_file_uses_the_brief_from_wording(self):
@@ -302,7 +306,9 @@ class SessionTest(unittest.TestCase):
         with mock.patch.object(fsn, "send_intercom", side_effect=lambda to, text: (sent.append((to, text)), (True, ""))[1]):
             code, _, err = self.run_main("brief", "demo", str(note), "--parent-id", "parent-1")
         self.assertEqual(code, 0, err)
-        self.assertEqual(sent, [(entry["child"], "Brief from parent-1: read %s and act on it" % note.resolve())])
+        copy = (Path(entry["handoff"]) / "brief-1.md").resolve()
+        self.assertEqual(sent, [(entry["child"], "Brief from parent-1: read %s and act on it" % copy.as_posix())])
+        self.assertEqual(copy.read_text("utf-8"), "APPROVED\n")
 
     def test_brief_failure_prints_the_manual_fallback_and_never_calls_herdr(self):
         entry = self.open_one()
@@ -329,6 +335,64 @@ class SessionTest(unittest.TestCase):
         self.assertNotIn("shell", run.call_args[1])
         with mock.patch.object(fsn, "intercom_cli", return_value=None):
             self.assertFalse(fsn.send_intercom("fm-x-abc123", "hi")[0])
+
+    # -- r49: a brief is written to <handoff dir>/brief-<n>.md (never overwritten), then the message names it -----------
+
+    def sent_brief(self, *argv):
+        sent = []
+        with mock.patch.object(fsn, "send_intercom", side_effect=lambda to, text: (sent.append((to, text)), (True, ""))[1]):
+            code, _, err = self.run_main("brief", *argv, "--parent-id", "parent-1")
+        return code, err, sent
+
+    def test_file_briefs_are_copied_to_brief_1_then_brief_2(self):
+        entry = self.open_one()
+        handoff = Path(entry["handoff"])
+        note = self.tmp / "notes.md"
+        note.write_text("first\n", "utf-8")
+        code, err, sent = self.sent_brief("demo", str(note))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sent, [(entry["child"], "Brief from parent-1: read %s and act on it" % (handoff / "brief-1.md").resolve().as_posix())])
+        note.write_text("second\n", "utf-8")
+        code, err, sent = self.sent_brief("demo", str(note))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sent, [(entry["child"], "Brief from parent-1: read %s and act on it" % (handoff / "brief-2.md").resolve().as_posix())])
+        self.assertEqual((handoff / "brief-1.md").read_text("utf-8"), "first\n")
+        self.assertEqual((handoff / "brief-2.md").read_text("utf-8"), "second\n")
+
+    def test_text_brief_is_written_to_brief_n_and_stays_on_disk(self):
+        entry = self.open_one()
+        code, err, sent = self.sent_brief("demo", "also cover the CLI flags")
+        self.assertEqual(code, 0, err)
+        copy = (Path(entry["handoff"]) / "brief-1.md").resolve()
+        self.assertEqual(copy.read_text("utf-8"), "also cover the CLI flags\n")
+        self.assertEqual(sent, [(entry["child"], "Brief from parent-1: read %s and act on it" % copy.as_posix())])
+
+    def test_new_brief_takes_the_lowest_free_n_and_never_overwrites(self):
+        handoff = self.tmp / "h"
+        handoff.mkdir()
+        (handoff / "brief-2.md").write_text("keep", "utf-8")
+        self.assertEqual(fsn.new_brief(handoff, b"a"), handoff / "brief-1.md")  # a gap below an existing file
+        self.assertEqual(fsn.new_brief(handoff, b"b"), handoff / "brief-3.md")
+        self.assertEqual((handoff / "brief-2.md").read_text("utf-8"), "keep")
+        self.assertEqual((handoff / "brief-1.md").read_text("utf-8"), "a")
+
+    def test_new_brief_refuses_a_name_that_appears_after_the_scan(self):
+        handoff = self.tmp / "h"
+        handoff.mkdir()
+        (handoff / "brief-1.md").write_text("keep", "utf-8")
+        with mock.patch.object(fsn.os.path, "lexists", return_value=False):  # the scan saw brief-1.md as free
+            with self.assertRaises(fsn.Refused):
+                fsn.new_brief(handoff, b"x")
+        self.assertEqual((handoff / "brief-1.md").read_text("utf-8"), "keep")
+
+    def test_brief_without_a_handoff_dir_is_refused_and_nothing_is_sent(self):
+        state = self.agent / "pi-foreman" / "state"
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "sessions.json").write_text(json.dumps({"version": 1, "sessions": [{"label": "bare", "child": "fm-bare-abc123", "status": "open"}]}), "utf-8")
+        code, err, sent = self.sent_brief("bare", "hello")
+        self.assertEqual(code, 1)
+        self.assertIn("has no handoff dir", err)
+        self.assertEqual(sent, [])
 
     # -- ledger 9: the opener's PI_BG_* reach the child; launch.txt holds the exact launch line --------------------
 

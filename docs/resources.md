@@ -29,7 +29,7 @@ The project layer can only tighten: it may lower `maxLoadPerCore` and raise `min
 
 - `high`: child launches run one at a time. The first launch of an assistant message runs; the others are refused with a
   queued reason and a `pressure` wait wakes the foreman, with their arguments, once no run is active so it can relaunch them.
-  A `tasks` call keeps its first task and queues the rest. No strong-rung climb happens while pressure is high.
+  A `tasks` call keeps its first task and queues the rest. Pressure delays a launch, it never downgrades one: every climb (explicit strong, RUNG_UP handoff, revision after a FAIL, sizing) keeps its strong or top rung.
 - `critical`: a launch is deferred (refused with a reason). A `pressure` wait wakes the foreman with the launch arguments when the
   level drops, or after 10 minutes at the latest.
 - `foreman_bg` and the add-on's `bg_run` are not gated: they are your own shell commands.
@@ -44,8 +44,8 @@ The project layer can only tighten: it may lower `maxLoadPerCore` and raise `min
 
 ## Trace events
 
-`launch_narrowed` (width 1, reasons), `launch_deferred` (level, reasons), `climb_suppressed` (level `high`, reasons) and
-`pressure_sampler` (the first sampler failure, once).
+`launch_narrowed` (width 1, reasons), `launch_deferred` (level, reasons), and
+`pressure_sampler` (the first sampler failure, once). `climb_suppressed` is no longer emitted (the trace key stays, unused).
 
 ## Probes
 

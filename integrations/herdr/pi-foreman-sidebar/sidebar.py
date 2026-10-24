@@ -4,7 +4,7 @@
 Reads `foreman radar --json --follow` snapshots, joins each foreman session to
 its Herdr pane and publishes `fm_*` tokens per pane over Herdr's socket. The
 rows that render those tokens live in config-snippet.toml (`configure` prints
-it). Standard library only, Python 3.9+. Imports on every OS; the daemon's
+it). Standard library only, Python 3.13+. Imports on every OS; the daemon's
 POSIX parts (flock, AF_UNIX) are reached only inside functions.
 
 Subcommands: start | stop | run | status | configure | push.

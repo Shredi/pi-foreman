@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""pi-foreman shell write guard (stdlib, Python 3.9+).
+"""pi-foreman shell write guard (stdlib, Python 3.13+).
 
 The foreman changes project files only through its edit/write tools, which the trivial
 bound measures, or through a builder. This guard closes the shell path: it reads the

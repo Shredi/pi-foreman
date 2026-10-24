@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Findings extraction shared by the review bench and the live reviewer climb (stdlib, 3.9+).
+"""Findings extraction shared by the review bench and the live reviewer climb (stdlib, 3.13+).
 
 Pure text parsing of a reviewer report: verdict, per-item lines, FAIL evidence units, which repo file a unit names,
 line spans, class words. `located_findings` needs no ground truth: it lists the defects a report names in the diff's

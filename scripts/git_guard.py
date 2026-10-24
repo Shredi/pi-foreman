@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""pi-foreman git guard (stdlib, Python 3.9+).
+"""pi-foreman git guard (stdlib, Python 3.13+).
 
 Reads a Claude-hook-shaped PreToolUse payload on stdin and prints the same decision
 JSON the core guards print:

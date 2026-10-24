@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Session friction metrics and permission-allow proposals (stdlib, 3.9+).
+"""Session friction metrics and permission-allow proposals (stdlib, 3.13+).
 
     python scripts/foreman_retro.py [--session F] [--trace F ...] [--usage F] [--review-log F]
                                     [--proposals-out F] [--min-reviews N] [--agent-dir D] [--json]
@@ -520,6 +520,38 @@ def render_explorer(e):
     return line
 
 
+SIZING_CLIMBS = ("context", "turns", "stuck", "checks_failed", "review_fail")
+
+
+def sizing_metrics(trace):
+    """Per sizing rule: launches, final-rung counts, later climbs and FAILs. Heuristic join: a launch_sizing owns the
+    trace records up to the next launch_sizing of the same role; its climb is a builder rung_up/rung_top with a
+    climb reason there, its FAIL a review_done with decision fail. None without launch_sizing events."""
+    recs = list(trace or [])
+    idx = [i for i, r in enumerate(recs) if r.get("event") == "launch_sizing"]
+    out = {}
+    for n, i in enumerate(idx):
+        r = recs[i]
+        m = out.setdefault(str(r.get("rule") or "?"), {"launches": 0, "rungs": collections.Counter(), "climbs": 0, "fails": 0})
+        m["launches"] += 1
+        m["rungs"][str(r.get("rung") or "?")] += 1
+        nxt = next((j for j in idx[n + 1:] if recs[j].get("role") == r.get("role")), len(recs))
+        window = recs[i + 1:nxt]
+        if any(w.get("event") in ("rung_up", "rung_top") and w.get("role") == "builder" and w.get("reason") in SIZING_CLIMBS for w in window):
+            m["climbs"] += 1
+        if any(w.get("event") == "review_done" and w.get("decision") == "fail" for w in window):
+            m["fails"] += 1
+    return {k: {**v, "rungs": dict(v["rungs"])} for k, v in out.items()} or None
+
+
+def render_sizing(s):
+    L = ["sizing (heuristic join): per rule launches, final rung, later climbs, FAILs"]
+    for rule in sorted(s):
+        v = s[rule]
+        L.append("  %s: %d launches, rung %s, climbs %d, fails %d" % (rule, v["launches"], kv(dict(sorted(v["rungs"].items()))), v["climbs"], v["fails"]))
+    return L
+
+
 def session_metrics(records):
     tools = collections.Counter()
     fams = collections.Counter()
@@ -578,6 +610,7 @@ def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
         "usage": usage_metrics(usage, sid, rates) if usage is not None else None,
         "explorer": explorer_metrics(trace, usage, sid, ranks),
         "cache": cache_metrics(trace, usage, sid, config),
+        "sizing": sizing_metrics(trace),
         "session_tools": session_metrics(session) if session is not None else None,
         "proposals": propose(asks, min_reviews, rules, load_protect_patterns(agent_dir)) if asks is not None else None,
     }
@@ -662,6 +695,8 @@ def render_text(rep, proposals_path=None):
             L.append(pl)
     if rep.get("explorer"):
         L.append(render_explorer(rep["explorer"]))
+    if rep.get("sizing"):
+        L.extend(render_sizing(rep["sizing"]))
     u = rep["usage"]
     if u is None:
         L.append("spawn cost: no data")

@@ -86,7 +86,7 @@ export function parseHookStdout(stdout: string): { ok: true; d: HookDecision } |
 export function failureMessage(guard: GuardName, run: GuardRun, python: string | null): string {
   const what = `pi-foreman: ${LABEL[guard]} could not run`;
   if (run.status === "failed") {
-    if (run.failure === "no-python") return `${what} (no Python ≥ 3.9 found). ${NO_PYTHON_FIX}`;
+    if (run.failure === "no-python") return `${what} (no Python ≥ 3.13 found). ${NO_PYTHON_FIX}`;
     if (run.failure === "timeout") return `${what} (${run.detail}). Check that ${python ?? "Python"} starts quickly (antivirus scans, slow disk) and run /foreman doctor.`;
     return `${what} (could not start ${python ?? "Python"}: ${run.detail}). Set python.path or PI_FOREMAN_PYTHON to a working interpreter; run /foreman doctor.`;
   }

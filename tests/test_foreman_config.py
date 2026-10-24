@@ -89,7 +89,7 @@ class ConfigTest(unittest.TestCase):
         res = self.load(trusted_project=True)
         self.assertEqual(res["errors"], [])
         cfg = res["config"]
-        self.assertEqual(cfg["ladder"], {"childPolicy": "at-or-below", "strongAbove": 5000, "childMaxTurns": 9, "maxTurns": {"builder": 100}, "strongOnRevision": True, "reviewerClimb": {"enabled": False}, "research": {"factCriticalRung": None}, "reviewPanel": {"shadows": [], "gates": ["pre-pr"], "visible": True, "waitSeconds": 600}})
+        self.assertEqual(cfg["ladder"], {"childPolicy": "at-or-below", "strongAbove": 5000, "childMaxTurns": 9, "maxTurns": {"builder": 100}, "strongOnRevision": True, "sizing": {"enabled": True, "largeFileLines": 1500, "maxModules": 2, "strongRisks": ["guard", "permission", "parser", "concurrency", "security"], "topRisks": ["design"], "topRung": None}, "reviewerClimb": {"enabled": False}, "research": {"factCriticalRung": None}, "reviewPanel": {"shadows": [], "gates": ["pre-pr"], "visible": True, "waitSeconds": 600}})
         self.assertEqual((cfg["providers"]["p1"]["ranks"], cfg["providers"]["p1"]["strongAbove"]), (p1["ranks"], 6000))
         self.assertEqual(cfg["roles"]["builder"]["childMaxTurns"], 4)
         self.assertIn("project ladder.childPolicy ignored", "\n".join(res["warnings"]))
@@ -101,7 +101,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(self.load(trusted_project=True)["config"]["childMaxThinking"], "low")
         self.l2({})
         self.assertNotIn("childMaxThinking", self.load()["config"])
-        self.assertEqual(self.load()["config"]["ladder"], {"strongAbove": 100000, "childMaxTurns": 60, "maxTurns": {"builder": 100}, "strongOnRevision": True, "reviewerClimb": {"enabled": False}, "research": {"factCriticalRung": None}, "reviewPanel": {"shadows": [], "gates": ["pre-pr"], "visible": True, "waitSeconds": 600}})
+        self.assertEqual(self.load()["config"]["ladder"], {"strongAbove": 100000, "childMaxTurns": 60, "maxTurns": {"builder": 100}, "strongOnRevision": True, "sizing": {"enabled": True, "largeFileLines": 1500, "maxModules": 2, "strongRisks": ["guard", "permission", "parser", "concurrency", "security"], "topRisks": ["design"], "topRung": None}, "reviewerClimb": {"enabled": False}, "research": {"factCriticalRung": None}, "reviewPanel": {"shadows": [], "gates": ["pre-pr"], "visible": True, "waitSeconds": 600}})
         self.l2({"ladder": {"childPolicy": "sometimes"}})
         self.assertTrue(self.load()["errors"])
         presets = sorted((ROOT / "config" / "presets").glob("*.json"))
@@ -541,7 +541,11 @@ class PackageFilesTest(unittest.TestCase):
         old_reads = "Your own reads are budgeted (`ceremony.foremanReads`) and refused past the limit until an explorer has started;"
         new_reads = "Your own reads are budgeted (`ceremony.foremanReads`): past the limit you get a reminder to delegate, never a refusal;"
         self.assertIn(old_reads, expected)
-        self.assertEqual(render_prompt(text, knobs), expected.replace(old_wait, new_wait).replace(old_reads, new_reads))
+        # round 43: the PR body carries the changelog section; PRs never edit CHANGELOG.md
+        old_pr = "Children never open PRs."
+        new_pr = "Children never open PRs. The PR body carries a `## Changelog` section (one to three user-facing bullets): the finalizer drafts it at heavy tier, you draft it otherwise. PRs never edit CHANGELOG.md."
+        self.assertIn(old_pr, expected)
+        self.assertEqual(render_prompt(text, knobs), expected.replace(old_wait, new_wait).replace(old_reads, new_reads).replace(old_pr, new_pr))
 
     def test_defaults_validate(self):
         res = fc.load_config(agent_dir=tempfile.gettempdir() + os.sep + "pf-no-such-agent-dir")

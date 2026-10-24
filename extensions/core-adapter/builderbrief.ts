@@ -4,7 +4,7 @@
 // over once. Composes with ladder.ts: the rung-up handoff is prepended after this (handoff first).
 import type { RunEnd } from "./launchwait.ts";
 
-export const BRIEF_MAX = 8_000;
+export const BRIEF_MAX = 16_000;
 
 export interface Brief {
   runId: string;
@@ -16,7 +16,8 @@ export interface Brief {
 
 export function briefBlock(b: Brief): string {
   const cut = b.summary.length > BRIEF_MAX;
-  const note = !cut ? "" : b.briefPath ? `\n[... cut at ${BRIEF_MAX} characters]\n[full brief at ${b.briefPath}]` : `\n[... cut at ${BRIEF_MAX} characters${b.resultPath ? "; the full report is under the result path" : ""}]`;
+  const cutNote = !cut ? "" : b.briefPath ? `\n[... cut at ${BRIEF_MAX} characters]` : `\n[... cut at ${BRIEF_MAX} characters${b.resultPath ? "; the full report is under the result path" : ""}]`;
+  const note = cutNote + (b.briefPath ? `\n[full brief at ${b.briefPath}]` : "");
   const s = (cut ? b.summary.slice(0, BRIEF_MAX) : b.summary) + note;
   return [`[pi-foreman explorer brief] Findings of the explorer run ${b.runId}; use them instead of exploring again.`, s, ...(b.resultPath ? [`Full result: ${b.resultPath}`] : []), "[end of brief]", ""].join("\n");
 }

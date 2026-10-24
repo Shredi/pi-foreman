@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Precondition-checked file and worktree operations (design section 5). Stdlib only, 3.9+.
+"""Precondition-checked file and worktree operations (design section 5). Stdlib only, 3.13+.
 
 CLI: one JSON request on stdin, one JSON answer on stdout, exit 0.
 

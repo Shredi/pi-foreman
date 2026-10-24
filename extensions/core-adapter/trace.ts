@@ -10,8 +10,9 @@ export type TraceField = (typeof TRACE_FIELDS)[number];
 export type TraceRecord = Partial<Record<TraceField, string | number | boolean | null>>;
 
 // `surface` (R18 `dialog` records: permission|child|checkpoint|ask_user|drift) is allowed beside the pinned TRACE_FIELDS list, as are
-// `code` and `attempts` (`hint_write_failed`: the rename error code and the attempts made).
-const ALLOWED = new Set<string>([...TRACE_FIELDS, "surface", "code", "attempts"]);
+// `code` and `attempts` (`hint_write_failed`: the rename error code and the attempts made), and the R39 `launch_sizing` keys
+// (base rung, declared and measured sizes, risk tags, files outside the workspace).
+const ALLOWED = new Set<string>([...TRACE_FIELDS, "surface", "code", "attempts", "base", "declaredLines", "modules", "declaredModules", "risk", "outside"]);
 const MAX_STRING = 120;
 const MAX_COMMAND = 200; // a denied command (lane 3h)
 /** `command` is kept only on a deny trace: a refused launch, a read/recheck budget deny, an overlay deny. */
@@ -120,7 +121,7 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
       out[k] = scrubPaths(redactCommand(String(v))).slice(0, MAX_MESSAGE);
       continue;
     }
-    if (k === "note" && rec.event !== "friction") continue; // free text: only the scrubbed friction note
+    if (k === "note" && rec.event !== "friction" && rec.event !== "launch_sizing") continue; // free text: only the scrubbed friction note (and launch_sizing's fixed flag words)
     if (k === "file" && rec.event !== "finding") continue; // a path: only a finding's file, as its base name
     if (k === "file" && typeof v === "string") {
       out[k] = (v.split(/[\\/]/).pop() ?? "").slice(0, MAX_STRING);
