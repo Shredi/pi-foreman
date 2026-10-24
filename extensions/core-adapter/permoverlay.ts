@@ -2116,8 +2116,12 @@ function npmInstallOwned(c: Collected, ctx: MatchCtx): boolean {
   };
   const root = (ctx.roundRoots ?? []).map((r) => fsx.realpath(r)).find((r): r is string => !!r && inRoot(r, ctx.cwd));
   const dirs = npmCwds(ctx.cwd, c.npmCds ?? [], path);
-  const into = (r: string): boolean => (c.npmUnits ?? [[]]).every((prefixes) => dirs.every((d) => (prefixes.length ? prefixes.every((p) => inRoot(r, path.resolve(d, p))) : inRoot(r, npmLocalPrefix(d, path, fsx.exists)))));
-  if (root && dirs.every((d) => inRoot(root, d)) && into(root)) return true;
+  const into = (r: string, noLink = false): boolean => {
+    const ok = (t: string): boolean => inRoot(r, t) && !(noLink && linksNodeModules(fsx.realpath(t) ?? t));
+    return (c.npmUnits ?? [[]]).every((prefixes) => dirs.every((d) => (prefixes.length ? prefixes.every((p) => ok(path.resolve(d, p))) : ok(npmLocalPrefix(d, path, fsx.exists)))));
+  };
+  // never into a worktree whose node_modules is a symlink: npm would write through it into another checkout's tree
+  if (root && dirs.every((d) => inRoot(root, d)) && into(root, true)) return true;
   // the foreman's own `bench/pi-lock` (R11 item 10): every dir npm may install into is inside it, wherever the child's cwd is
   const lock = ctx.foremanRoot ? fsx.realpath(path.join(ctx.foremanRoot, "bench", "pi-lock")) : undefined;
   return !!lock && into(lock);
@@ -2141,6 +2145,7 @@ function pSubagentsLeaf(dir: string, fsx: ReturnType<typeof defaults>): string |
 /**
  * `npm-ci-worktree` (trace label): a child's exact `npm ci` (no flag, no env prefix, no chain) whose cwd lies in a `roundRoots` entry or in a
  * pi-subagents managed worktree, and whose npm local prefix does too. POSIX only (win32 asks); never the parent checkout.
+ * Never when that prefix's `node_modules` is a symlink: npm ci would wipe the tree it points to (another checkout's).
  */
 export function npmCiWorktreeLabel(command: string, ctx: MatchCtx): "npm-ci-worktree" | null {
   if (ctx.role !== "child" || ctx.platform === "win32" || !ctx.cwd || !/^npm[ \t]+ci$/.test(command.trim())) return null;
@@ -2151,7 +2156,17 @@ export function npmCiWorktreeLabel(command: string, ctx: MatchCtx): "npm-ci-work
   const roots = (ctx.roundRoots ?? []).map((r) => fsx.realpath(r)).filter((r): r is string => !!r);
   const root = roots.find((r) => inside(r, cwd)) ?? pSubagentsLeaf(cwd, fsx);
   if (!root) return null;
-  return inside(root, npmLocalPrefix(cwd, path, fsx.exists)) ? "npm-ci-worktree" : null;
+  const prefix = npmLocalPrefix(cwd, path, fsx.exists);
+  return inside(root, prefix) && !linksNodeModules(prefix) ? "npm-ci-worktree" : null;
+}
+
+/** `<dir>/node_modules` is a symlink (lstat): npm ci would wipe the tree it points to. */
+function linksNodeModules(dir: string): boolean {
+  try {
+    return fs.lstatSync(path.join(dir, "node_modules")).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 /**

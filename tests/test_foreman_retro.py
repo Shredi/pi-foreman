@@ -153,6 +153,7 @@ class RetroTest(unittest.TestCase):
         trace = [
             {"event": "rereview", "role": "reviewer"},
             {"event": "read_budget", "action": "deny"}, {"event": "read_budget", "action": "warn"},
+            {"event": "read_budget", "action": "remind"},
             {"event": "recheck_budget", "action": "deny"},
             {"event": "rung_up", "role": "builder"},
             {"event": "child_read_budget", "action": "warn"}, {"event": "child_read_budget", "action": "deny"},
@@ -161,9 +162,9 @@ class RetroTest(unittest.TestCase):
         ]
         t = fr.build(None, trace, None, None, 5, str(self.tmp))["trace"]
         self.assertEqual({k: t[k] for k in ("rereviews", "budget_hits", "rung_up", "child_read_budget", "review_defer_headless", "turns")},
-                         {"rereviews": 1, "budget_hits": 2, "rung_up": 1, "child_read_budget": 2, "review_defer_headless": 1, "turns": 2})
+                         {"rereviews": 1, "budget_hits": 3, "rung_up": 1, "child_read_budget": 2, "review_defer_headless": 1, "turns": 2})
         out = self.run_cli("--trace", self.write("t.jsonl", trace))
-        self.assertIn("friction: rereviews=1 budget_hits=2 rung_up=1 child_read_budget=2 review_defer_headless=1 turns=2", out)
+        self.assertIn("friction: rereviews=1 budget_hits=3 rung_up=1 child_read_budget=2 review_defer_headless=1 turns=2", out)
 
     def test_proposal_threshold_deny_and_baseline(self):
         recs = []

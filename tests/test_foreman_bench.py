@@ -526,16 +526,17 @@ class BenchTest(unittest.TestCase):
         child = [{"type": "session_info", "name": "subagent-builder-%s-0001-x" % ("a" * 8)}, msg([]), msg([("bg_wait", {})])]
         d = self.logs(**{"sessions__w__f.jsonl": foreman, "sessions__w__c.jsonl": child, "state__trace-s1.jsonl": [
             {"event": "read_budget", "phase": "pre", "count": 4, "action": "deny"}, {"event": "read_budget", "action": "warn"},
+            {"event": "read_budget", "action": "remind"},
             {"event": "recheck_budget", "count": 2, "action": "deny"}, {"event": "finish_refused"},
             {"event": "launch_wait", "runId": "r", "outcome": "done", "ms": 5}, {"event": "launch_wait", "outcome": "timeout"}]})
         t = ha.summarize_logs(d)["triage"]
         self.assertEqual((t["wait_turns"], t["text_only_turns"], t["codemode_turns"]), (2, 1, 1))
-        self.assertEqual((t["read_blocks"], t["recheck_blocks"], t["finish_refused"], t["launch_waits"]), (1, 1, 1, 2))
+        self.assertEqual((t["read_blocks"], t["recheck_blocks"], t["finish_refused"], t["launch_waits"]), (2, 1, 1, 2))
         rec = trial()
         rec["agent_result"]["metadata"]["bench"]["counters"] = dict(ha.summarize_logs(d), tokens={"total": 1})
         self.job("R2__beta__r1__a", rec)
         row = [r for r in fb.table(fb.load_preset(self.preset), self.root / "tasks", self.jobs) if r["row"] == "R2" and r["task"] == "beta"][0]
-        self.assertEqual((row["read_blocks"]["median"], row["wait_turns"]["median"]), (1, 2))
+        self.assertEqual((row["read_blocks"]["median"], row["wait_turns"]["median"]), (2, 2))
         self.assertIn("read_blocks", fb.format_table([row]))
 
     def test_frugality_row_keys_forwarded_to_ceremony(self):

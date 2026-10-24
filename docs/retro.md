@@ -24,7 +24,7 @@ Retro files a candidate for these classes, from these inputs:
   and `runId`), and the candidate is per role: "runs hit >= N permission asks" when at least one of that role's runs
   has `retro.askThreshold` asks (default 2). The foreman's own asks (no role or runId) count as one `session` bucket;
 - denials the user later overrode (`permission`; the review log);
-- read-budget hits (`agent`; trace `read_budget` and `recheck_budget` denials, and `child_read_budget` warn or deny
+- read-budget hits (`agent`; trace `read_budget` reminders (and old denials) and `recheck_budget` denials, and `child_read_budget` warn or deny
   per role);
 - rereviews (`agent`; trace `rereview`, per role);
 - rung-ups (`routing`; trace `rung_up`, per role and reason; see [ladder](ladder.md));

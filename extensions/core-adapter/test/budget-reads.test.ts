@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { isReadCall, ReadBudget, readLimits } from "../budget.ts";
 import { SupervisorWindow, SUPERVISOR_REQUEST_TYPE } from "../supervisor.ts";
 
-const L = readLimits({ before: { warn: 2, deny: 3 }, after: { warn: 1, deny: 2 } });
+const L = readLimits({ before: { warn: 2, every: 2 }, after: { warn: 1, every: 2 } });
 
 test("isReadCall: READ_CLASS names, mcp__*, subagent get|guide only", () => {
   assert.ok(isReadCall("read", {}));
@@ -21,7 +21,7 @@ test("mcp and subagent get calls count against the budget under the name read", 
   const b = new ReadBudget();
   const calls: [string, unknown][] = [["mcp__fake__probe", {}], ["subagent", { action: "get" }], ["subagent", { action: "guide" }], ["mcp__fake__probe", {}]];
   const kinds = calls.map(([n, i], k) => (isReadCall(n, i) ? b.check("read", `c${k}`, L, 3, false).kind : "skipped"));
-  assert.deepEqual(kinds, ["allow", "warn", "warn", "deny"]);
+  assert.deepEqual(kinds, ["allow", "remind", "allow", "remind"]);
 });
 
 test("supervisor window closes at the reply and at run end, then reads count", () => {
@@ -33,10 +33,11 @@ test("supervisor window closes at the reply and at run end, then reads count", (
     assert.equal(b.check("read", "a", L, 3, w.open.size > 0).kind, "allow");
     assert.equal(b.check("read", "b", L, 3, w.open.size > 0).kind, "allow");
     assert.equal(b.check("read", "c", L, 3, w.open.size > 0).kind, "allow");
+    assert.equal(b.count, 0, "the window counts nothing");
     if (close === "reply") assert.ok(w.onSupervisorResult({ replyTo: "r1" }, false));
     else assert.equal(w.onRunEnd({ runId: "run1" }).length, 1);
     assert.equal(w.open.size, 0);
     assert.equal(b.check("read", "d", L, 3, w.open.size > 0).kind, "allow");
-    assert.equal(b.check("read", "e", L, 3, w.open.size > 0).kind, "warn");
+    assert.equal(b.check("read", "e", L, 3, w.open.size > 0).kind, "remind");
   }
 });

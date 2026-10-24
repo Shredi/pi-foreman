@@ -32,7 +32,7 @@ import { dormantDoctorLine } from "./features.ts";
 import { collectOrientation } from "./orient.ts";
 import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits } from "./childreads.ts";
-import { bgWaitLocations, finalizationCommand, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
+import { bgWaitLocations, coordinationCall, finalizationCommand, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { roleToolDenied } from "./roledeny.ts";
 import { childSkillDirs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
@@ -91,6 +91,7 @@ import { ASK_USER_TOOL, askUserQuestion } from "./askuser.ts";
 const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildWidget, rungOf } from "./childwidget.ts";
 import type { BackgroundRow } from "./childwidget.ts";
+import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
 import { LiveState, intercomIdOf } from "./livestate.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate } from "./compaction.ts";
@@ -102,7 +103,7 @@ import { citedItems, ledgerHint, writeHint } from "./hints.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, sessionTrace, withDigest } from "./retro.ts";
 import { frictionOfRunEnd } from "./friction.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
-import { UsageFooter, cacheStatus, lookupRate, waitNote } from "./footer.ts";
+import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, waitNote } from "./footer.ts";
 import { symbolSet } from "./symbols.ts";
 import { blockedConfirm, installBlockedShim, PERMISSIONS_DECISION, PERMISSIONS_UI_PROMPT, withBlocked } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
@@ -646,6 +647,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       })
       .catch(() => undefined);
     if (!isChild) {
+      if (ctx.mode === "tui" && footerStyleOf(get(s.config.config, "footer.style")) === "foreman") {
+        try {
+          ctx.ui.setFooter((tui, theme, data) => usageFooter.mount(id, ctx, tui, theme, data, () => pi.getThinkingLevel()));
+        } catch {
+          // the footer is cosmetic: Pi's own footer stays
+        }
+      }
       s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const n = sessions.get(id)?.prWatches.size() ?? 0; return n > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${n} pr watch`, ageSeconds: 0, leftSeconds: 0 }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; });
       const live = s.live;
       waits.onChange(id, () => {
@@ -710,9 +718,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Every tier change goes through here so the trace sees it. Only a change by the user (/ceremony) resets the revision rounds. */
   function setCeremony(s: Session, next: CeremonyState): void {
     const before = s.ceremony.tier;
+    // The reason of the change: the reason an escalation or override appended, else the source (a triage without one).
+    const reason = next.reasons.length > s.ceremony.reasons.length ? next.reasons[next.reasons.length - 1] : `source ${next.source}`;
     s.ceremony = next;
     if (next.tier !== before) {
-      if (!s.isChild) s.trace?.emit({ event: "tier", tier: next.tier }); // D7: a tier event is the foreman's triage
+      if (!s.isChild) s.trace?.emit({ event: "tier", tier: next.tier, reason }); // D7: a tier event is the foreman's triage
       s.chains.clear(onTierChange(s.chains.state, next.source));
       persistRounds(s);
     }
@@ -1282,6 +1292,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   const knownRun = (s: Session) => (runId: string): boolean => s.launchedRoles.has(runId) || s.runs.has(runId);
 
+  /** Item 4: a path the session's own work may change, inside its workspace root and outside the owned roots (handoff dirs, agent state). */
+  const ownWorkPath = (s: Session, file: string): boolean => {
+    const realOf = (p: string): string => {
+      try {
+        return path.join(fs.realpathSync(path.dirname(p)), path.basename(p));
+      } catch {
+        return p;
+      }
+    };
+    const ws = workspaceOf(s.cwd).root;
+    const targets = [file, realOf(file)];
+    if (![ws, realOf(ws)].some((r) => targets.some((t) => underOwned(r, t, platform)))) return false;
+    return ![...s.owned.readWrite, ...s.owned.readOnly].some((o) => [o, realOf(o)].some((r) => targets.some((t) => underOwned(r, t, platform))));
+  };
+
   /** Read budget (budget.ts): foreman only; undefined = let the call go on. */
   function readBudgetCheck(s: Session | undefined, ctx: ExtensionContext, toolName: string, callId: string, input: unknown) {
     if (!s || s.isChild || !isReadCall(toolName, input)) return undefined;
@@ -1300,13 +1325,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const exempt = ledgerOnly || handoff || finalExempt || s.supervisor.open.size > 0 || (file !== null && inRecorded(s.childFiles, normFile(file)));
     // MCP and subagent get|guide calls are counted under the name `read`, after the exemptions above.
     s.budget.verdict = s.reviewGate.last; // R12 item 8: the recheck refusal names the real verdict
-    const d = s.budget.check(READ_CLASS.has(toolName) ? toolName : "read", callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt);
-    if (d.kind === "warn") {
+    const d = s.budget.check(READ_CLASS.has(toolName) ? toolName : "read", callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt, coordinationCall(toolName, input));
+    if (d.kind === "remind") {
       s.readNotices.set(callId, d.text);
-      s.trace?.emit({ event: "read_budget", phase: d.phase, count: d.count, action: "warn" });
+      s.trace?.emit({ event: "read_budget", phase: d.phase, count: d.count, action: "remind" });
     } else if (d.kind === "deny") {
       const deny = denyFields(d.reason, toolName, input, "foreman");
-      s.trace?.emit(d.event === "read_budget" ? { event: "read_budget", phase: d.phase, count: d.count, action: "deny", ...deny } : { event: "recheck_budget", count: d.count, action: "deny", ...deny });
+      s.trace?.emit({ event: "recheck_budget", count: d.count, action: "deny", ...deny });
       return { block: true as const, reason: d.reason };
     }
     return undefined;
@@ -1603,6 +1628,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       capsReset(ms, event.toolCallId);
       if (MUTATING_TOOLS.has(event.toolName)) ms.mutating.add(event.toolCallId);
     }
+    let bashTimeout = null as ChildBashTimeout | null;
     const res = await (async () => {
     const stopped = ms?.isChild ? repeatStopped.get(ms.id) : undefined;
     if (stopped) return { block: true, reason: stopped };
@@ -1611,6 +1637,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (event.toolName === "bash" || event.toolName === "powershell") {
       const ps = sessionFor(ctx);
       if (ps && !ps.isChild) bashRulingSnaps.set(event.toolCallId, snapshotRulings(childDirsOf(ps)));
+    }
+    // R30 item 8: a child's bash call with no valid `timeout` gets the default, a larger one is capped (bashtimeout.ts).
+    if (ms?.isChild && event.toolName === "bash" && event.input && typeof event.input === "object") {
+      const bt = childBashTimeout(event.input as Record<string, unknown>, { seconds: get(ms.config.config, "ceremony.childBashTimeoutSeconds"), max: get(ms.config.config, "ceremony.childBashTimeoutMaxSeconds") });
+      if (bt) {
+        (event.input as Record<string, unknown>).timeout = bt.timeout;
+        bashTimeout = bt;
+      }
     }
     if (event.toolName === "bash") {
       const ps = sessionFor(ctx);
@@ -2069,6 +2103,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     })();
     // a blocked call gets no tool_result, so it is not in flight
     if (res && ms) ms.mutating.delete(event.toolCallId);
+    // R30 item 8: traced only once the guards let the child's bash call through
+    if (!res && bashTimeout && ms) ms.trace?.emit({ event: "bash_timeout", action: bashTimeout.action, requested: bashTimeout.requested });
     return res;
   });
 
@@ -2521,12 +2557,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "shell_write_allow", reason: "branch_move", cmd: command });
         return undefined;
       }
-      const reason = move && "precondition" in move ? `${v.reason} branch move refused: ${move.precondition}.` : v.reason;
+      const precondition = move && "precondition" in move ? move.precondition : undefined;
+      const reason = precondition ? `${v.reason} branch move refused: ${precondition}.` : v.reason;
       if (planner) {
         s.trace?.emit({ event: "planner_write_refused", kind: "shell" });
         return { block: true, reason: `${reason} ${PLANNER_SCOPE_NOTE(scratchDir)}` };
       }
-      s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode });
+      s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode, ...(precondition ? { precondition } : {}) });
       const more = onEditRefused(s, mode, "shell");
       return { block: true, reason: mode === "bounded" ? reason : `${reason} pi-foreman: ${editModeAdvice(mode, scratchDir)}.${more}` };
     } catch (err) {
@@ -2654,8 +2691,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const cited = citedItems(subagentTaskText(event.input as Record<string, unknown>));
             s.retro.launchItems.set(runId, cited);
             writeHint(boundLedger(s.markerDir, s.id), cited, `${roles.join("+") || "child"} launched (run ${runId.slice(0, 8)})`, s.retro.hints);
-            const eff = s.budget.onLaunch(roles, actionOf(event.input as Record<string, unknown>) === null);
-            if (eff.lift) s.trace?.emit({ event: "read_budget", phase: eff.lift.phase, count: eff.lift.count, action: "lift", by: "explorer" });
+            s.budget.onLaunch();
             if (roles.includes("builder")) {
               resetRecheck(s, "builder");
               if (s.reviewGate.last === "pass" && !s.reviewGate.revised && !roles.some((r) => REVIEW_ROLES.includes(r))) s.touchUps.add(runId);
@@ -2696,7 +2732,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     try {
       const s = await ensureSession(ctx);
       const input = event.input as Record<string, unknown>;
+      const file = resolveToolPath(changed, ctx.cwd, os.homedir());
+      // Item 4: a path outside the session's workspace (a child's handoff dir, another checkout) binds no ledger and changes no tier.
+      const outside = !!file && !ownWorkPath(s, file);
       for (const guard of mapping.post) {
+        if (guard === "ledger_bind" && outside) {
+          s.trace?.emit({ event: "guard", guard, toolFamily: event.toolName, decision: "skip", reason: "outside_workspace" });
+          continue;
+        }
         // R28: the core's ledger_bind rebinds on every Write/Edit; here only a Write rebinds a live binding (an Edit of the backlog keeps the round ledger).
         if (guard === "ledger_bind" && event.toolName === "edit" && boundLedger(s.markerDir, s.id)) {
           s.trace?.emit({ event: "guard", guard, toolFamily: event.toolName, decision: "skip", reason: "live_binding" });
@@ -2705,10 +2748,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const outcome = await run(s, ctx, guard, postToolPayload(event.toolName, input, payloadCtx(s, ctx), event.isError), mapping.coreName);
         if (outcome.kind === "failure") notifyOnce(s, ctx, `open:${guard}`, outcome.message);
       }
-      const file = resolveToolPath(changed, ctx.cwd, os.homedir());
       // R27 item 5: a ledger written is the round boundary; the next builder launch records a new diff base (diffscan.ts ReviewFacts).
-      if (file && !s.isChild && event.toolName === "write" && isLedgerTarget(file)) reviewFacts.reset();
-      if (file && !s.isChild) {
+      if (file && !outside && !s.isChild && event.toolName === "write" && isLedgerTarget(file)) reviewFacts.reset();
+      if (file && !outside && !s.isChild) {
         const heavy = Number(get(s.config.config, "ceremony.heavyFileCount"));
         setCeremony(s, onFileChanged(s.ceremony, file, Number.isFinite(heavy) ? heavy : 0));
       }
@@ -3480,9 +3522,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           ctx.ui.notify("Usage: /foreman budget lift (foreman session only)", "warning");
           return;
         }
-        const r = s.budget.userLift();
-        s.trace?.emit({ event: "read_budget", phase: r.phase, count: r.count, action: "lift", by: "user" });
-        ctx.ui.notify(`pi-foreman: read budget lifted (phase ${r.phase}); the count starts again.`, "info");
+        ctx.ui.notify("pi-foreman: the read budget only reminds; it never refuses a read, so there is nothing to lift.", "info");
         return;
       }
       if (sub === "flag-ask") {

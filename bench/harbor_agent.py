@@ -294,7 +294,7 @@ def summarize_logs(logs_dir, main_role="main"):
                 foreman_edit_refused += 1
             elif ev == "pr_refused":
                 pr_refused += 1
-            elif ev == "read_budget" and rec.get("action") == "deny":
+            elif ev == "read_budget" and rec.get("action") in ("deny", "remind"):
                 read_blocks += 1
             elif ev == "recheck_budget" and rec.get("action") == "deny":
                 recheck_blocks += 1
