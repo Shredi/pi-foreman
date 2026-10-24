@@ -13,25 +13,14 @@ from __future__ import annotations
 import json
 import re
 import sys
-import time
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture  # noqa: E402
+from driver import load_fixture, wait_until  # noqa: E402
 from test_replay import REASON, ReplayCase  # noqa: E402
 
 HINT = r"\n  > \d{4}-\d{2}-\d{2} "
-
-
-def wait_for(fn, timeout=60.0):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        v = fn()
-        if v:
-            return v
-        time.sleep(0.25)
-    return fn()
 
 
 def read(p):
@@ -53,23 +42,25 @@ class TestRetro(ReplayCase):
         pi.wait_child_notify(timeout=180)
 
         retro_dir = rig.project / ".workflow" / "retro"
-        files = wait_for(lambda: list(retro_dir.glob("*.md")) if retro_dir.is_dir() else [])
+        files = wait_until(lambda: list(retro_dir.glob("*.md")) if retro_dir.is_dir() else [])
         self.assertEqual(len(files), 1, files)
-        text = read(files[0])
+        # the file is appended to: wait until the Retro section it carries is complete, not just present
+        text = wait_until(lambda: (lambda t: t if "- fake: enhance the brief" in t else "")(read(files[0])),
+                          describe=lambda t: t)
         self.assertIn("compaction (manual)", text)
         self.assertRegex(text, r"counters: denies=\d+ rereviews=\d+ budget_hits=\d+ rung_up=\d+")
         self.assertIn("- fake: missing an allow rule\n- fake: enhance the brief", text)
 
         ledger = rig.project / ".workflow" / "LEDGER-rt.md"
-        led = wait_for(lambda: (lambda t: t if "retro written" in t else "")(read(ledger)))
+        led = wait_until(lambda: (lambda t: t if "retro written" in t else "")(read(ledger)), describe=lambda t: t)
         self.assertRegex(led, r"- \[x\] 1\. a" + HINT + r"ledger mark\n")
         self.assertRegex(led, r"- \[ \] 2\. b" + HINT + r"reviewer launched \(run \S+\)" + HINT + r"review PASS \(run \S+\)\n")
         self.assertRegex(led, r"- \[ \] V\. fresh-eyes verification passed" + HINT + r"retro written\n")
 
         before = len(read(reqs).splitlines())
         pi.prompt("[[replay:rt3]] next", timeout=60)
-        last = read(reqs).splitlines()[before:]
-        self.assertTrue(last, "the rt3 request reached the provider")
+        last = wait_until(lambda: read(reqs).splitlines()[before:],
+                          describe=lambda _: "request log lines: %d" % len(read(reqs).splitlines()))
         req = last[0]
         self.assertIn("## Compaction digest", req)
         self.assertIn("LEDGER-rt.md is the source of truth", req)
@@ -77,7 +68,7 @@ class TestRetro(ReplayCase):
 
         pi.prompt("/retro --model", timeout=30)
         state = rig.state_dir / "retro" / ("retro-%s.md" % re.sub(r"[^A-Za-z0-9._-]", "_", sid))
-        out = wait_for(lambda: (lambda t: t if "### Model retro" in t else "")(read(state)))
+        out = wait_until(lambda: (lambda t: t if "### Model retro" in t else "")(read(state)), describe=lambda t: t)
         pi.close()
         self.assertIn("/retro", out)
         self.assertIn("friction: rereviews=", out)

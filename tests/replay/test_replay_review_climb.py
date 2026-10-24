@@ -21,7 +21,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import PROVIDER_A, load_fixture, trace_of, notifications, shape, tool_results  # noqa: E402
+from driver import PROVIDER_A, load_fixture, trace_of, notifications, shape, tool_results, wait_until  # noqa: E402
 from test_replay import REASON, ReplayCase  # noqa: E402
 from test_replay_ceremony_gate import events  # noqa: E402
 from test_replay_diff_facts import git  # noqa: E402
@@ -76,7 +76,15 @@ class TestReviewClimb(ReplayCase):
         recs = pi.prompt("[[replay:p1]] fix add", timeout=60)
         for _ in range(2):
             recs += pi.wait_child_notify(timeout=180)[1]
-        recs += pi.drain(3)
+
+        def shadow_ended():
+            # the composed panel block follows the shadow's end; its trace events are written by then
+            recs.extend(pi.drain(0.5))
+            composed = any("pi-foreman-panel" in json.dumps(r) and "Shadow findings (do not block)" in json.dumps(r) for r in recs)
+            traced = any(r.get("kind") == "shadow" for r in events(rig, sid, "review_done")) and any(not r["primary"] for r in events(rig, sid, "finding"))
+            return composed and traced
+
+        wait_until(shadow_ended, timeout=60, describe=lambda _: "panel: %s; review_done: %s" % (json.dumps(events(rig, sid, "panel")), json.dumps(events(rig, sid, "review_done"))))
         [pr] = tool_results(pi.prompt("[[replay:pr-gh]] open the PR", timeout=60))
         pi.close()
         self.assertEqual([(r["gate"], r["models"], r["primary"], r["decision"]) for r in events(rig, sid, "panel")], [("pre-pr", STRONG, CHEAP, "launched")])
