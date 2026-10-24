@@ -52,9 +52,9 @@ export interface IdleCacheDeps {
   hasPromptCache(): boolean;
   busy(): Busy;
   trace(ev: Record<string, unknown>): void;
-  /** Gate decideIdle + start ctx.compact; the tier and model to trace when it started, else null (below the floor). */
   /** Context tokens for the compactMinTokens gate; absent or null = unknown. */
   contextTokens?(): number | null;
+  /** Gate decideIdle + start ctx.compact; the tier and model to trace when it started, else null (below the floor). */
   compact(): { tier: string; model: string | null } | null;
   setGlyph(on: boolean): void;
   syncKeepalives(): KeepaliveSync;

@@ -158,6 +158,8 @@ A provider with no entry and no `cache` config is not traced at all. Add `provid
 
 `compaction {reason: "warm_idle", tier, model, trigger}`: a warm compaction was started; `trigger` is `budget`, `away` or `window`.
 
+`compaction_skipped {reason: "below_min", tokens, min, trigger}`: the context is below `keepalive.compactMinTokens`, so no warm compaction ran (see Minimum context above).
+
 Other events:
 
 | event | fields | meaning |
