@@ -7,6 +7,10 @@
    "tier": "standard"
   },
   {
+   "event": "compaction_point",
+   "model": "foreman-fake/foreman"
+  },
+  {
    "event": "chain_clear"
   },
   {
@@ -67,6 +71,10 @@
    "toolFamily": "Stop",
    "guard": "ledger_guard_stop",
    "decision": "none"
+  },
+  {
+   "event": "compaction_point",
+   "model": "foreman-fake-b/foreman"
   },
   {
    "event": "chain_clear"
