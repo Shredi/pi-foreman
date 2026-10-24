@@ -29,19 +29,34 @@ def is_stop(e):
     return e["event"] == "guard" and e.get("toolFamily") == "Stop"
 
 
+CHILD_EVENTS = {"child_scratch", "role_result"}
+
+
+def stops_last(run):
+    return [e for e in run if not is_stop(e)] + [e for e in run if is_stop(e)]
+
+
 def canonical_span(events):
-    """From the `replied` supervisor_request to the last role_result, the Stop guards move after the other
-    events of that span. Whether the supervisor-reply wake's Stop guard lands before or after the first child's
-    child_scratch is a race (the wake and the child's last writes run concurrently), so both the actual trace and
-    the golden are canonicalised the same way. The multiset of events, the Stop count and each child's
-    child_scratch -> role_result order are kept; events outside the span are untouched."""
+    """From the `replied` supervisor_request to the last role_result, a Stop guard may move only across the
+    child_scratch / role_result events next to it: whether the supervisor-reply wake's Stop guard lands before or after
+    a child's child_scratch is a race (the wake and the child's last writes run concurrently). Each maximal run of
+    consecutive Stop / child_scratch / role_result events in the span is reordered with its Stops last, relative order
+    kept; no Stop crosses an llm, turn, supervisor_request or any other event. The actual trace and the golden are
+    canonicalised the same way; events outside the span are untouched."""
     start = next((i for i, e in enumerate(events) if e["event"] == "supervisor_request" and e.get("decision") == "replied"), None)
     res = [i for i, e in enumerate(events) if e["event"] == "role_result"]
     if start is None or not res or res[-1] < start:
         return events
     end = res[-1] + 1
-    span = events[start:end]
-    return events[:start] + [e for e in span if not is_stop(e)] + [e for e in span if is_stop(e)] + events[end:]
+    out, run = [], []
+    for e in events[start:end]:
+        if is_stop(e) or e["event"] in CHILD_EVENTS:
+            run.append(e)
+            continue
+        out += stops_last(run) + [e]
+        run = []
+    out += stops_last(run)
+    return events[:start] + out + events[end:]
 
 
 def finished(traces, foreman_key):
@@ -128,6 +143,13 @@ class TestCanonicalSpan(unittest.TestCase):
     def test_two_children_order_kept(self):
         ev = [self.REPLIED, self.CS, self.S, self.RR, self.CS, self.RR]
         self.assertEqual(canonical_span(ev), [self.REPLIED, self.CS, self.RR, self.CS, self.RR, self.S])
+
+    def test_stop_moved_across_turn_or_llm_is_not_canonicalised(self):
+        for ev_name in ("turn", "llm"):
+            with self.subTest(event=ev_name):
+                golden = [self.REPLIED, {"event": ev_name}, self.S, self.CS, self.RR]
+                moved = [self.REPLIED, self.S, {"event": ev_name}, self.CS, self.RR]
+                self.assertNotEqual(canonical_span(moved), canonical_span(golden))
 
 
 if __name__ == "__main__":

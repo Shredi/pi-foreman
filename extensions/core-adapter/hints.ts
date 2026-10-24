@@ -125,7 +125,7 @@ const RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
 /** Sleep before each retry, ms: 8 rename attempts, 127 ms in all. */
 const BACKOFF_MS = [1, 2, 4, 8, 16, 32, 64];
 
-/** A hint the ledger did not take: the error code of the failing step and the rename attempts made. */
+/** A hint the ledger did not take: the error code of the failing step and the rename calls made (0 when the temp file could not be written). */
 export interface HintFailure {
   code: string;
   attempts: number;
@@ -144,7 +144,7 @@ export interface HintWriteOpts {
  * fs.renameSync with a bounded, synchronous retry on the sharing errors (EPERM, EACCES, EBUSY). Any
  * other error, or the last retryable one, is returned with the attempts made.
  */
-export function renameRetry(from: string, to: string, rename: (a: string, b: string) => void = fs.renameSync): { attempts: number; error?: NodeJS.ErrnoException } {
+function renameRetry(from: string, to: string, rename: (a: string, b: string) => void = fs.renameSync): { attempts: number; error?: NodeJS.ErrnoException } {
   for (let attempts = 1; ; attempts++) {
     try {
       rename(from, to);
@@ -186,7 +186,7 @@ export function writeHint(ledgerPath: string | null, cited: readonly string[], t
   try {
     fs.writeFileSync(tmp, r.file, "utf8");
   } catch (err) {
-    return fail(err, 1);
+    return fail(err, 0);
   }
   try {
     fs.chmodSync(tmp, fs.statSync(ledgerPath).mode & 0o7777);

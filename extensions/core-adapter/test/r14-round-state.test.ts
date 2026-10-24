@@ -134,7 +134,6 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
       ownerPrompt: () => handlers.get("input")!({ source: "interactive", text: "next" }, ctx),
     };
   }
-  /** The parent writes its ruling (a plain file write: not this session's). */
   /** Writes a ruling; a ruling.md ctime must be strictly newer than both plan files (roundstate.ts): rewrite until the clock moved past them. */
   const rule = (name: string, text: string) => {
     const f = path.join(handoff, name);
