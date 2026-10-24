@@ -149,7 +149,7 @@ stuck: the report says `STATUS: stuck` or "own checks failed"; (d) the foreman p
 (`launch_refused` reason `strong_no_reason`); a heavy-tier builder and a `strongOnRevision` revision count as
 triggers. The child learns its limits and rung from the launch binding (`usage.ts`), so only single launches are
 checked. The foreman relaunches: the launch-wait result of a climb-eligible run ends with a hint, and the next
-`strong` launch of that role gets the prior report (bounded at 4000 characters), its result path and the ledger
+`strong` launch of that role gets the prior report (bounded at 8000 characters), its result path and the ledger
 item lines the task names (else the open items) prepended; the trace records `rung_up {role, from, to, reason}`.
 A rung's configured `thinking` (or model suffix) wins over the foreman's level, so the bottom rung never
 escalates thinking; the climb is by model.
@@ -169,8 +169,10 @@ launch. A refusal is traced `launch_refused {reason: rank_policy, policy, forema
 
 ### Builder frugality (explorer brief, child read budget, child prompt)
 
-- **Explorer brief.** The latest completed explorer report of the session (bounded 4000 characters, cut with a marker,
-  plus its result path) is prepended once to the next fresh builder launch's task, after any rung-up handoff
+- **Explorer brief.** The latest completed explorer report of the session (first 16000 characters, plus its result path; the
+  harness writes the full report to `explorer-brief.md` in a session scratch dir that children read without an ask,
+  and the brief always names `[full brief at <path>]` when that file was written, a cut brief adds
+  `[... cut at 16000 characters]` before it) is prepended once to the next fresh builder launch's task, after any rung-up handoff
   (handoff, brief, task); a resume gets none. Trace `explorer_brief {role, chars}`.
 - **Child read budget.** `ceremony.childReads.<role>.{warn,deny}` (defaults builder 20/40, reviewer 15/30, explorer and
   others none) counts a child's read, grep, find, ls and read-only bash calls (`childreads.ts`; a test or build bash

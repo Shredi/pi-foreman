@@ -28,6 +28,10 @@
    "model": "foreman-fake/builder"
   },
   {
+   "event": "launch_sizing",
+   "role": "builder"
+  },
+  {
    "event": "guard",
    "toolFamily": "Agent",
    "guard": "ledger_guard_spawn",
@@ -37,6 +41,10 @@
    "event": "role_launch",
    "role": "builder",
    "model": "foreman-fake/builder"
+  },
+  {
+   "event": "launch_sizing",
+   "role": "builder"
   },
   {
    "event": "role_launched",

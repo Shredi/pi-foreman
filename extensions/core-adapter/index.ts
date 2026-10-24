@@ -146,6 +146,7 @@ import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEO
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { chainsOf, restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
+import { planSizing, prependProbe, rungOfModel, sizingConfig, sizingTrace, takeSizing, topModel as sizingTopModel, type EntryPlan, type RungContext } from "./sizing.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
 import { asyncResultReads, asyncRunDirs, bashOutputLogs, recordBashOutputLog, childReadable, childSurface, hubWorkflowDirs, hubWorkflowReadable, mainWorkflowReadable, ownTaskReadable, ownUsageReadable, piScratchReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { CustomSeen, isSubagentWake } from "./idlecustom.ts";
@@ -451,6 +452,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { foreman, runs, total: foreman + runs };
   }
   const compactionGate = new CompactionGate();
+  /** R39: per launch call, the roles that stayed on the bottom rung although a strong climb was asked or wanted, with the reason the receipt shows. */
+  const bottomNotes = new Map<string, Map<string, string>>();
   herdrEvents = pi.events as EventBus | undefined;
   // Herdr blocked shim (herdr.ts); `blockedShim.onChange((active) => ...)` can feed other consumers.
   const blockedShim = installBlockedShim(pi, { enabled: () => [...sessions.values()].every((x) => get(x.config.config, "herdr.blockedShim") !== false) });
@@ -499,7 +502,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const radarTouch = (s: Session | undefined, ctx: ExtensionContext): void => {
     if (!s) return;
     s.live?.touch();
-    s.widget.request(ctx, { enabled: get(s.config.config, "widget.children") === true, agentDir: s.agentDir, intercomId: s.live?.intercomId ?? null, symbols: get(s.config.config, "ui.symbols"), background: () => backgroundOf(s) });
+    s.widget.request(ctx, { enabled: get(s.config.config, "widget.children") === true, agentDir: s.agentDir, intercomId: s.live?.intercomId ?? null, symbols: get(s.config.config, "ui.symbols"), background: () => backgroundOf(s), spinner: get(s.config.config, "ui.spinner") !== false });
   };
   pi.on("agent_start", async (_e, ctx) => {
     const s = sessionFor(ctx);
@@ -710,7 +713,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // the footer is cosmetic: Pi's own footer stays
         }
       }
-      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const n = sessions.get(id)?.prWatches.size() ?? 0; return n > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${n} pr watch`, ageSeconds: 0, leftSeconds: 0 }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; });
+      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const prs = sessions.get(id)?.prWatches.list().map((p) => p.n) ?? []; return prs.length > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; });
       const live = s.live;
       waits.onChange(id, () => {
         live?.touch();
@@ -759,7 +762,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (first.length) ctx.ui.notify(`pi-foreman: first session on this workspace: took the baseline snapshot of ${first.join(" and ")}. Later changes ask before the foreman's git runs, child launches and claude-bridge requests.`, "info");
     }
 
-    if (!python.ok) ctx.ui.notify(`pi-foreman: no Python ≥ 3.9 found — shell commands and subagent launches are blocked until it is fixed. ${NO_PYTHON_FIX}`, "error");
+    if (!python.ok) ctx.ui.notify(`pi-foreman: no Python ≥ 3.13 found — shell commands and subagent launches are blocked until it is fixed. ${NO_PYTHON_FIX}`, "error");
     for (const e of config.errors) ctx.ui.notify(e, "error");
     if (config.safetyFallback && config.source === "cli") ctx.ui.notify("pi-foreman: invalid safety config; L1 safety values apply.", "warning");
     for (const w of config.warnings) ctx.ui.notify(`pi-foreman config: ${w}`, "warning");
@@ -1003,7 +1006,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       notifyOnce(s, ctx, "ps-project-file", `pi-foreman: ${psProjectConfigPath(s.cwd)} exists. A project permission file can loosen the permission system's rules (it applies once the project is trusted). pi-foreman still enforces its deny rules itself, but put your rules in foreman.json and remove this file. /foreman doctor fails while it exists.`);
     }
     herdrMeta.start(ctx, get(s.config.config, "herdr.groupTag") !== false);
-    sidebarLive.start(ctx, { python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, sessionId: s.id, symbols: get(s.config.config, "ui.symbols"), live: s.live });
+    sidebarLive.start(ctx, { python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, sessionId: s.id, symbols: get(s.config.config, "ui.symbols"), spinner: get(s.config.config, "ui.spinner") !== false, live: s.live });
     // Host pressure (pressure.ts): the foreman samples on a timer; the launch path only reads the file.
     if (!s.isChild && !s.pressureSampler) {
       s.pressureSampler = new PressureSampler({
@@ -1260,6 +1263,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewPerRevision: get(s.config.config, "ceremony.reviewPerRevision") === false ? "off" : "on",
       trivialPath: trivialBuilderPath(get(s.config.config, "ceremony.required")) ? "builder" : "off",
       ladder: "on",
+      // Launch sizing (sizing.ts): the builder launch carries size and risk ("off" only renders the eee843d baseline).
+      sizing: sizingConfig(s.config.config).enabled ? "on" : "off",
       // Multi-session plan for a heavy task with several phases (sessions.md; "off" only renders the eee843d baseline).
       multiSession: "on",
       "tools.pr": s.prPack ? "on" : "off",
@@ -1495,6 +1500,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const items = failedItemsOf(r.text);
               if (items.length > 0) s.failItems = items;
               else if (r.verdict === "pass") s.failItems = [];
+              if (r.verdict === "pass" && (r.occasion === "item" || r.occasion === "pre-pr")) s.ladder.probeRisks.clear(); // R39: the bypass probes were asked for and the review passed
             }
             // Lane 3g: the real end of each role of the run, with the run's priced cost and duration from the presence row.
             const info = s.widget.runs.info(runId);
@@ -1843,11 +1849,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let rounds: LaunchRounds | undefined;
       let kind: LaunchKind | undefined;
       let climbs: Climb[] = [];
-      let pressureHigh: string[] | null = null;
       let rawLaunch: Record<string, unknown> = {};
       let ladderRoles: Record<string, Json> | undefined;
       let reviewerClimbs: ReviewerClimb[] = [];
       let reviewerTraces: Record<string, unknown>[] = [];
+      let sized: ReturnType<typeof takeSizing> | null = null;
+      let sizedPlans: EntryPlan[] = [];
+      let sizingRecords: Record<string, unknown>[] = [];
+      let pendingBottom: Map<string, string> | null = null;
+      let sizingClimbs: ReadonlySet<Json> = new Set();
+      let sizingTop: string | null = null;
       let occasions = new Map<Record<string, unknown>, Occasion>();
       let panel: ReturnType<typeof primaryPanel> = null;
       let shadow: ShadowDecision = { kind: "none" };
@@ -1855,6 +1866,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
         stripBinding(input);
         rawLaunch = JSON.parse(JSON.stringify(input)) as Record<string, unknown>; // the arguments as the model gave them, for a deferred or queued launch
+        // R39 launch sizing (sizing.ts): `size` and `risk` leave every launch here (after the copy, so a relaunch is sized again); malformed ones refuse only the foreman's own launches.
+        sized = takeSizing(input);
+        if (sized.error && !s.isChild && actionOf(input) === null && sizingConfig(s.config.config).enabled) {
+          s.trace?.emit({ event: "launch_refused", reason: "sizing_invalid", tier: s.ceremony.tier, ...launchDeny(input) });
+          return { block: true, reason: sized.error };
+        }
         const resolution = await currentRoles(s, ctx);
         const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
         const act = subagentActionCheck(input, { allowWorkflow, runs: s.runs, allowed: childRoleIds(get(s.config.config, "roles")), resolution, maxThinking: get(s.config.config, "maxThinking") });
@@ -1899,7 +1916,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return { block: true, reason: `${criticalReason(p.reasons)}${"error" in w ? ` (no wait could be started: ${w.error}; relaunch with: ${JSON.stringify(args)})` : ""}` };
           }
           if (p.level === "high") {
-            pressureHigh = p.reasons;
             const queued = await narrowLaunch(s, ctx, event.toolCallId, input, rawLaunch, p);
             if (queued) return { block: true, reason: queued };
           }
@@ -1949,6 +1965,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return { block: true, reason: rc.text };
           }
           if (s.failItems.length > 0) for (const [e, occ] of occasions) if (occ === "item" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependReReview(e.task, s.failItems);
+          // R39: builders launched with a strong risk tag (sizing.ts): the next item or pre-pr reviewer is asked for bypass probes.
+          if (s.ladder.probeRisks.size > 0) for (const [e, occ] of occasions) if ((occ === "item" || occ === "pre-pr") && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependProbe(e.task, s.ladder.probeRisks);
           pendingReviews = Math.max(0, reviewCount);
           pendingPlanReviews = planCount;
         }
@@ -1959,6 +1977,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const steps = s.isChild ? [] : roundSteps(input, s.runs);
         let preferStrong = false;
         let revClimb: "revision" | "review_fail" | null = null;
+        const bottomWhy = new Map<string, string>();
+        const noStrong = "no strong rung mapped";
         if (steps.length > 0) {
           s.chains.enter(chainKey(input, s.chains.key));
           if (s.chains.applyRuling(childDirsOf(s), selfRulingsFor(s))) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: "ruling_reset" });
@@ -1973,27 +1993,37 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // ladder.ts revisionClimb: review_fail while the review gate's latest verdict is FAIL (s.reviewGate.last, not the run's own
           // verdict), else only with providers.<p>.strongOnRevision true. LadderState.plan targets max(current, strong) by rank.
           revClimb = revision && !resumed ? revisionClimb(s.config.config, resolution.provider, s.reviewGate.last === "fail") : null;
+          if (revClimb !== null && !hasStrongRung(resolution.roles, "builder")) {
+            s.trace?.emit({ event: "revision_no_strong", role: "builder" });
+            bottomWhy.set("builder", noStrong);
+          }
           if (revClimb === "review_fail" && !hasStrongRung(resolution.roles, "builder")) revClimb = null; // no strong rung: no-op
           preferStrong = revClimb !== null && !keyword;
-          if (pressureHigh && preferStrong) preferStrong = false; // no strong climb under high pressure (traced below)
           kind = revision ? (preferStrong ? "strong-relaunch" : "revision") : undefined;
         }
         // Ladder (ladder.ts): a strong launch needs a reason or a trigger; rank policy (ranks.ts) after the models are written.
         // A panel shadow skips it: no climb, no live rung.
         if (!s.isChild && actionOf(input) === null && shadow.kind !== "launch") {
-          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined, ranks: ranksOf(s.config.config) });
+          // Launch sizing (sizing.ts): the rung of each builder entry from its measured size and risk; a climbing entry gets model "strong" and the ladder reason `sizing`.
+          if (sized && sizingConfig(s.config.config).enabled) {
+            const maxT = get(s.config.config, "maxThinking");
+            const childT = get(s.config.config, "childMaxThinking");
+            const wanted = sizingTopModel(s.config.config, resolution.roles, maxT, childT);
+            sizingTop = wanted && rankRefusalFor(s.config.config, foremanAt, wanted, ["builder"]) === null ? wanted : null;
+            const sp = planSizing(input, sized.entries, sized.carried, { config: s.config.config, roles: resolution.roles, ranks: ranksOf(s.config.config), cwd: ctx.cwd, tier: s.ceremony.tier, revisionClimb: revClimb !== null, top: sizingTop });
+            if (sp.block) {
+              s.trace?.emit({ event: "launch_refused", reason: sp.block.includes("[sizing_below]") ? "sizing_below" : "sizing_invalid", tier: s.ceremony.tier, ...launchDeny(input) });
+              return { block: true, reason: sp.block };
+            }
+            sizedPlans = sp.plans;
+            sizingClimbs = sp.climbs;
+          }
+          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined, ranks: ranksOf(s.config.config), sizing: sizingClimbs });
           if (lp.block) {
             s.trace?.emit({ event: "launch_refused", reason: "strong_no_reason", tier: s.ceremony.tier, ...launchDeny(input) });
             return { block: true, reason: lp.block };
           }
           climbs = lp.climbs;
-          if (pressureHigh && (climbs.length > 0 || revClimb !== null)) {
-            // High pressure: the launch stays on the bottom rung; an explicit `strong` keyword is dropped, any other model the owner named stays.
-            for (const c of climbs) if (typeof c.entry.model === "string" && splitLevel(c.entry.model.trim()).base === "strong") delete c.entry.model;
-            if (typeof input.model === "string" && splitLevel(input.model.trim()).base === "strong") delete input.model;
-            climbs = [];
-            s.trace?.emit({ event: "climb_suppressed", level: "high", reasons: pressureHigh.join(",") });
-          }
           ladderRoles = resolution.roles;
           // ladder.reviewerClimb (reviewerclimb.ts): the reviewer's diff is taken here, before its model is picked; the facts reuse it.
           await s.reviewRuns.sync; // earlier run ends' findings are recorded (and traced) first
@@ -2003,6 +2033,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         const foremanAt0 = foremanBaseModel(ctx);
         const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking"), explicit: (role, m) => explicitModelAllowed(s.config.config, foremanAt0, m, role) });
+        for (const n of launched.notices) bottomWhy.set(n.role, noStrong);
+        if (bottomWhy.size > 0) pendingBottom = bottomWhy;
+        if (sizedPlans.length > 0) {
+          // The top rung is written after the mapped models, like the research floor; its rung_up names it.
+          for (const p of sizedPlans) {
+            if (!p.combo.climb || p.target !== "top" || !sizingTop) continue;
+            p.entry.model = sizingTop;
+            for (const c of climbs) if (c.entry === p.entry) c.to = splitLevel(sizingTop).base;
+          }
+          const rungs: RungContext = { roles: resolution.roles, ranks: ranksOf(s.config.config), top: sizingTop };
+          sizingRecords = sizedPlans.map((p) => sizingTrace(p, p.role === "builder" && typeof p.entry.model === "string" ? (rungOfModel(p.entry.model, rungs) ?? "default") : "default"));
+        }
         // A panel shadow runs on its own model (rank-checked in shadowLaunch): no occasion override, rank loop or different-model rule.
         if (shadow.kind === "launch") input.model = shadow.model;
         else if (!s.isChild && actionOf(input) === null) {
@@ -2124,6 +2166,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
       }
       // Kept for the tool result only once the launch passed every check.
+      if (pendingBottom) capSet(bottomNotes, event.toolCallId, pendingBottom);
+      for (const r of sizingRecords) s.trace?.emit(r);
       s.reviewCount += pendingReviews;
       s.planReviewCount += pendingPlanReviews;
       if (pendingWarn) {
@@ -2165,7 +2209,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit(shadow.trace);
       }
       // The live rung of every launched role (ladder.ts LadderState.live): single, tasks, chain and parallel.
-      if (event.toolName === "subagent" && ladderRoles) s.ladder.noteLaunched(input);
+      if (event.toolName === "subagent" && ladderRoles) {
+        s.ladder.noteLaunched(input);
+        for (const p of sizedPlans) for (const t of p.probe) s.ladder.probeRisks.add(t);
+      }
       let limits: LadderLimits | undefined;
       const single = event.toolName === "subagent" && !s.isChild ? singleLaunchRole(input) : null;
       if (single && ladderRoles) {
@@ -2803,7 +2850,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const launchedOn = roleModelsOf(event.input);
       for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_launched", role, exit: event.isError ? 1 : 0, pollBash: s.pollBash || undefined, ...(launchedOn.has(role) ? { model: launchedOn.get(role) } : {}) });
       if (s) s.pollBash = 0;
-      const modelLine = s && !s.isChild && !event.isError && launchedOn.size > 0 ? `pi-foreman: launched ${[...launchedOn].map(([role, model]) => `${role} on ${model}`).join(", ")}.` : null;
+      const modelLine = s && !s.isChild && !event.isError && launchedOn.size > 0 ? `pi-foreman: launched ${[...launchedOn].map(([role, model]) => `${role} on ${model}${bottomNotes.get(event.toolCallId)?.has(role) ? ` (bottom rung: ${bottomNotes.get(event.toolCallId)!.get(role)})` : ""}`).join(", ")}.` : null;
+      bottomNotes.delete(event.toolCallId);
       // R27 item 4: a non-item review occasion is named in the launch result, so a misclassified review is visible before it runs.
       const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(event.input as Record<string, unknown>) : [];
       const notices = modelLine || occasionLines.length > 0 ? [...(s?.launchNotices.get(event.toolCallId) ?? []), ...(modelLine ? [modelLine] : []), ...occasionLines] : s?.launchNotices.get(event.toolCallId);
@@ -3698,7 +3746,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const fail = (m: string, fix: string): void => void out.push(`FAIL ${m} — fix: ${fix}`);
 
     if (s.python.ok) ok(`Python ${s.python.info.version.join(".")} at ${s.python.info.executable} (${s.python.info.source})`);
-    else fail(`no Python ≥ 3.9 (tried: ${s.python.rejected.join("; ") || "nothing"})`, NO_PYTHON_FIX.replace(/; run \/foreman doctor\.$/, "."));
+    else fail(`no Python ≥ 3.13 (tried: ${s.python.rejected.join("; ") || "nothing"})`, NO_PYTHON_FIX.replace(/; run \/foreman doctor\.$/, "."));
     for (const r of s.python.rejected) if (r.includes("inside the workspace")) out.push(`INFO Python candidate ${r}: the guards never run on an interpreter or venv a child can write; use one outside the project (python.path in your user foreman.json or PI_FOREMAN_PYTHON).`);
 
     if (fs.existsSync(path.join(CORE_DIR, "scripts", "destructive_guard.py"))) ok(`core scripts at ${CORE_DIR}`);

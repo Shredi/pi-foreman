@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Worktree housekeeping (stdlib, 3.9+).
+"""Worktree housekeeping (stdlib, 3.13+).
 
     foreman worktree sweep [--cwd D] [--dry-run] [--session S] [--state D]
 

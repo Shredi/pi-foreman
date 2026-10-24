@@ -49,7 +49,7 @@ test("ExplorerBrief: prepended once to fresh builder steps, bounded, handoff com
   const task = input.task as string;
   assert.match(task, /^\[pi-foreman explorer brief\]/);
   assert.match(task, new RegExp(`cut at ${BRIEF_MAX} characters`));
-  assert.equal(BRIEF_MAX, 8000);
+  assert.equal(BRIEF_MAX, 16000);
   assert.equal(recs[0].cut, true);
   assert.equal(recs[0].action, "file");
   assert.match(task, /\[full brief at \/s\/brief\/explorer-brief\.md\]/);
@@ -60,6 +60,23 @@ test("ExplorerBrief: prepended once to fresh builder steps, bounded, handoff com
   // ladder handoff goes in front of the brief
   const h = { role: "builder", runId: "b0", cause: "context" as const, summary: "half", resultPath: null };
   assert.ok((handoffBlock(h, []) + task).indexOf("rung-up handoff") < (handoffBlock(h, []) + task).indexOf("explorer brief"));
+});
+
+test("ExplorerBrief: an uncut brief with a stored file names its path and no cut marker; without a store neither line", () => {
+  const b = new ExplorerBrief();
+  b.onRunEnd(end("e4", "explorer", "short findings"), undefined, () => "/s/brief/explorer-brief.md");
+  const input: Record<string, unknown> = { agent: "builder", task: "do it" };
+  const recs = b.apply(input);
+  assert.equal(recs[0].cut, false);
+  assert.equal(recs[0].action, "file");
+  const task = input.task as string;
+  assert.match(task, /\[full brief at \/s\/brief\/explorer-brief\.md\]/);
+  assert.doesNotMatch(task, /cut at /);
+  const plain = new ExplorerBrief();
+  plain.onRunEnd(end("e5", "explorer", "short findings"));
+  const bare: Record<string, unknown> = { agent: "builder", task: "do it" };
+  assert.equal(plain.apply(bare)[0].action, "none");
+  assert.doesNotMatch(bare.task as string, /full brief at|cut at /);
 });
 
 test("ExplorerBrief: other roles, failed runs, resumes and non-builder steps get no brief", () => {

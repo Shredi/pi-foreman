@@ -11,7 +11,8 @@ export type TraceRecord = Partial<Record<TraceField, string | number | boolean |
 
 // `surface` (R18 `dialog` records: permission|child|checkpoint|ask_user|drift) is allowed beside the pinned TRACE_FIELDS list.
 // The warm-policy fields (budget, presence, self-warm source, compaction trigger) are allowed the same way: the pinned list stays as it is.
-const ALLOWED = new Set<string>([...TRACE_FIELDS, "surface", "source", "spent", "cold", "share", "idleSeconds", "trigger", "tokens", "min"]);
+// R39 `launch_sizing` keys likewise (base rung, declared and measured sizes, risk tags, files outside the workspace).
+const ALLOWED = new Set<string>([...TRACE_FIELDS, "surface", "source", "spent", "cold", "share", "idleSeconds", "trigger", "tokens", "min", "base", "declaredLines", "modules", "declaredModules", "risk", "outside"]);
 const MAX_STRING = 120;
 const MAX_COMMAND = 200; // a denied command (lane 3h)
 /** `command` is kept only on a deny trace: a refused launch, a read/recheck budget deny, an overlay deny. */
@@ -120,7 +121,7 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
       out[k] = scrubPaths(redactCommand(String(v))).slice(0, MAX_MESSAGE);
       continue;
     }
-    if (k === "note" && rec.event !== "friction") continue; // free text: only the scrubbed friction note
+    if (k === "note" && rec.event !== "friction" && rec.event !== "launch_sizing") continue; // free text: only the scrubbed friction note (and launch_sizing's fixed flag words)
     if (k === "file" && rec.event !== "finding") continue; // a path: only a finding's file, as its base name
     if (k === "file" && typeof v === "string") {
       out[k] = (v.split(/[\\/]/).pop() ?? "").slice(0, MAX_STRING);

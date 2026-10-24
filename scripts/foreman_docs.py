@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generated docs for pi-foreman (stdlib, 3.9+).
+"""Generated docs for pi-foreman (stdlib, 3.13+).
 
     python scripts/foreman_docs.py features [--check]
         Write docs/features.md from config/features.json, the L1 defaults and the layer

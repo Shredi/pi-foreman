@@ -16,8 +16,9 @@ again. All four subcommands are yours to type; a subagent child refuses every on
   (no handoff dir, brief, parent, child or registry entry) and prints the handoff path, the child id, the session
   model (`session model: <id>`, when `--model` is given) and the command it would run; no Herdr call.
   Example: `/foreman session open docs ./brief-docs.md --cwd ../site --model anthropic/claude-sonnet-4-5 --plan-first`
-- `/foreman session brief <target> <file|text…>` sends a brief to a session. A single word naming an existing
-  file is sent as `Brief from <your id>: read <absolute path> and act on it`; anything else is sent as typed.
+- `/foreman session brief <target> <file|text…>` writes a brief into the session's handoff dir as `brief-<n>.md` and sends
+  `Brief from <your id>: read <absolute path> and act on it` (the message names that file). A single word naming an
+  existing file is copied; anything else is written as typed. See the message contract below.
   Example: `/foreman session brief docs ./more-context.md`, `/foreman session brief docs also cover the CLI flags`
 - `/foreman session close <target> [result-path]` sends `foreman:close [result-path]` (see the contract below)
   and marks the registry entry `closing` once the send went out. The result path may use only `A-Z a-z 0-9 . _ / -`,
@@ -37,8 +38,10 @@ pi-intercom as the address. Spaces in a brief path or `--cwd` do not survive the
 - `foreman session list [--json] [--agent-dir DIR]` prints label, model (`-` when none was given), state, handoff dir and child id.
 - `foreman session brief <handoff dir|label|child id> <text|file> [--parent-id ID] [--agent-dir DIR]` delivers a brief to the
   child through pi-intercom (`cli.mjs send`, run without a shell). A handoff dir resolves through its `child` file, a label
-  to the newest registry entry. A single word naming a file is sent as `Brief from <opener id>: read <abs path> and act on it`
-  (the opener id as for `open`), anything else as is. If node or pi-intercom is missing, or the broker refuses, the message
+  to the newest registry entry; a target with no handoff dir is refused. The brief is written to `<handoff dir>/brief-<n>.md`
+  (n = the lowest free number from 1; the file is created exclusively, so an existing `brief-<n>.md` is never overwritten and
+  a refusal is printed). A single word naming a file is copied there; anything else is written as is. The message is
+  `Brief from <opener id>: read <abs posix path> and act on it` (the opener id as for `open`). Text briefs stay on disk. If node or pi-intercom is missing, or the broker refuses, the message
   is printed for you to send by hand and the exit code is 1; it never falls back to `herdr agent prompt`.
 - The agent dir is `--agent-dir`, else `PI_CODING_AGENT_DIR`, else `~/.pi/agent`.
 - Exit codes: 0 ok, 1 usage error or refused, 2 Herdr failure (the command is then printed and the entry marked `failed`).
@@ -72,6 +75,10 @@ Plain pi-intercom text, one line each:
   `N child run(s) still active; let them finish (a close never cancels them), then close again` or
   `N foreman_wait pending (…)` (only when a wait cannot be cancelled).
 - The child's brief footer tells it to re-read `parent` before each message (the parent can change).
+- Parent to child brief: `Brief from <opener id>: read <absolute path> and act on it`, the path being `<handoff dir>/brief-<n>.md`.
+  `n` starts at 1 per handoff dir and takes the lowest free number (a gap is filled); an existing `brief-<n>.md` is never
+  overwritten, and a name that appears during the write is refused. A text brief is written to the same kind of file and stays
+  on disk. A parent-written `brief-<n>.md` lifts the child's review cap, recheck and read budgets (see [ceremony](ceremony.md)).
 
 ### Closing the children with the parent
 
@@ -164,7 +171,7 @@ While a foreman's launch-wait holds a child's result, the adapter polls `$PI_FOR
 A heavy task with several phases may run as a multi-session plan: one child session per phase, each in its own worktree, opened with `foreman session open <label> <brief> --plan-first`. The parent reviews each phase before the next.
 
 - **Model.** The session runs on `--model`, else the mapped `session-foreman` model (`providers.<p>.roles.session-foreman.model`, the own provider then its fallback), else the opener's own model; `open` prints `session model: <model>`. Only an explicit choice (`--model` or the mapped `session-foreman` model) is passed on as `--model`; the opener's-model fallback is displayed but not passed, so that child does not get `PI_FOREMAN_SESSION_MODEL` and keeps its role thinking. An explicit `--model` wins over the overlay/preset foreman role model (model and thinking) in the child: it gets `PI_FOREMAN_SESSION_MODEL=<model>` and keeps the model it started on. The CLI (`foreman session open`, `--own-model ID` or `PI_FOREMAN_SESSION_MODEL` naming the opener's model) applies the same rank rule as `/foreman session open` when the opener's model is known; when it is unknown (a parent that is not Pi) the check is skipped and `rank check skipped: own model unknown` is printed. A child never opens a session ranked above its own: the open is refused (`session open refused [session_rank]`, nothing spawned). See [roles](roles.md).
-- **Plan review.** The child writes `plan.md`, sends `Plan from <label>: <path>` and waits. The parent writes `<handoff dir>/ruling.md` (first line `APPROVED`, else a revision note) and sends it with `foreman session brief <label> <ruling path>`, which wakes the child. The child works only after an `APPROVED` ruling; otherwise it revises `plan.md` and sends `Plan from` again. The parent reviews `result.md` before it opens the next phase, then closes the child with `foreman:close`.
+- **Plan review.** The child writes `plan.md`, sends `Plan from <label>: <path>` and waits. The parent writes `<handoff dir>/ruling.md` (first line `APPROVED`, else a revision note) and sends it with `foreman session brief <label> <ruling path>`, which copies it to the child's `brief-<n>.md` and wakes the child. The child works only after an `APPROVED` ruling; otherwise it revises `plan.md` and sends `Plan from` again. The parent reviews `result.md` before it opens the next phase, then closes the child with `foreman:close`.
 - **Reload in a round session.** With `PI_FOREMAN_HANDOFF_DIR` set, the adapter keeps `<handoff dir>/round-state.json` itself: the handoff dir, the topic and version hash of the checkpointed `.workflow/scratch/plan-<topic>.md`, that plan's `[plan-review]` verdict and round count, the review counters (`ceremony.reviewRuns`) and the revision rounds per chain. It never keeps an approval. On `/reload` the file counts only when its handoff dir is this one and its hash equals the plan file now; else it is discarded and the plan goes through the ceremony again (plan review, `foreman_checkpoint`). The checkpoint approval comes back only from the parent's `ruling.md` (never `ruling-<n>.md`) with first line `APPROVED` and a ctime newer than the ctime of both `.workflow/scratch/plan-<topic>.md` and `<handoff dir>/plan.md`, and only when both files have the same plan version hash (the body above any `## Ruling`, `## Decision log` or `## Addendum` tail); a session cannot set a ctime back, so a plan edited after the ruling, or a file with `approved: true`, grants nothing. Counters come back only as non-negative integers; the rulings a chain already used, its last refusal and the security-exempt flag do not. An owner prompt or a tier change rewrites the file, so cleared counters stay cleared. The restored approval lets builders launch; the finish gate still needs a reviewer PASS. Without `PI_FOREMAN_HANDOFF_DIR` nothing is written or restored.
 - **Message contract.** Besides `Plan from|Result from|Update from <label>: <path>`, a registry child may send the aliases `foreman:plan <path>` and `foreman:result <path>`; the label is taken from the registry entry of the sender. `foreman:closed <path>` is as before.
 - **Waiting.** `foreman_wait({action: "start", kind: "child", label})` resolves on the next plan, result, update or closed notice of the registry child `label` (or of any child with `label: any`; a wait naming the label wins over `any`). The wake line is `child <label>: plan|result|update|closed <path>`. A child's refusal of a close (`pi-foreman: close refused: <reason>`) wakes the same wait with `child <label>: refused <reason>`. Race: a notice that arrives before the wait starts is not replayed; check `/foreman session list` (the registry's `last`) first.
@@ -307,7 +314,7 @@ tree lines dim; the age of a blocked row turns amber after 5 minutes and red aft
 `c` cost on/off, `↑`/`↓` select a row (inverted band), `enter` shows the selected session's path (presence `cwd`, else the
 handoff dir) under the footer.
 
-Glyphs come from the `ui.symbols` set (`unicode` shown; `nerd` uses Nerd Font icons, table in
+Glyphs come from the `ui.symbols` set (`unicode` shown; `emoji`, `nerd` (Nerd Font icons) and `ascii` are the others, tables in
 [Herdr sidebar](herdr.md#symbols)):
 
 | Glyph | Meaning |
@@ -328,7 +335,7 @@ reads it): `{"v":1,"now","symbols","roots":[node]}`, each node with `key`, `kind
 `sym`, `glyph`, `paneId`, `pid`, `cwd`, `age_s`, `blocked_s`, `own` and `tot` (`in`, `out`, `uncached`, `cost`), `done_children` and
 `children`. The header also has `recentRunSeconds` (`radar.recentRunSeconds`, default 8: how long a finished run stays visible
 as `✓ role` before it joins the done count), run nodes have `ended_s` (seconds since the run ended, or `null`) and session
-nodes have `sid` (session id). `uncached` is fresh input plus cache writes; `in` still includes cache reads. `--symbols unicode|nerd` overrides `ui.symbols`. `--agent-dir` (default `PI_CODING_AGENT_DIR`, else `~/.pi/agent`). `--since HOURS`
+nodes have `sid` (session id). `uncached` is fresh input plus cache writes; `in` still includes cache reads. `--symbols unicode|emoji|nerd|ascii` overrides `ui.symbols`. `--agent-dir` (default `PI_CODING_AGENT_DIR`, else `~/.pi/agent`). `--since HOURS`
 (default 24) hides finished or lost sessions whose last activity is older, unless a descendant is still shown.
 `--no-color` or `NO_COLOR` turns off colors (and with them the selection band).
 
@@ -389,7 +396,7 @@ it as plain text `foreman:close`, accepted only from the recorded parent session
 Herdr's Pi integration (`herdr integration install pi`, installed by you, never by the installer) shows a session
 as working, idle or blocked. pi-foreman emits `herdr:blocked` on `pi.events` while any dialog waits for you, so
 the pane reads blocked ("?") instead of working. The foreman tree in Herdr's Agents panel is a separate plugin:
-[Herdr sidebar](herdr.md). In a Herdr pane the session also pushes its own sidebar tokens (`sidebar.py push`, on every state change and every 5 s; Herdr's own `state_icon` shows the working state, `ui.spinner` is deprecated and ignored); see [who publishes what](herdr.md#who-publishes-what). Design record: `design/architecture.md`
+[Herdr sidebar](herdr.md). In a Herdr pane the session also pushes its own sidebar tokens (`sidebar.py push`, on every state change and every 5 s; the header carries Pi's spinner frame while it works, `ui.spinner: false` turns that off); see [who publishes what](herdr.md#who-publishes-what). Design record: `design/architecture.md`
 [session features](../design/architecture.md#session-features-phase-4).
 
 ### Blocked shim
@@ -477,5 +484,6 @@ add-on's `bg_run` tool; `/foreman waits` then also lists its running tasks, and 
 | `close.autoClean`, `close.worktreeDir` | Cleanup at close and the worktree convention directory (see [close](close.md)). `autoClean` can only be turned off by a project or session; `worktreeDir` is user or overlay config only. |
 | `herdr.blockedShim` | Show any open dialog or permission ask as blocked in Herdr (default `true`); any layer may set it. |
 | `herdr.groupTag` | Herdr group tag on opened child and parent panes (default `true`); any layer may set it. |
-| `ui.symbols` | Glyph set for radar, the children widget and the Herdr sidebar plugin: `unicode` (default) or `nerd` (Nerd Font); any layer may set it. |
+| `ui.symbols` | Glyph set for radar, the children widget and the Herdr sidebar plugin: `unicode` (default, broadest support), `emoji`, `nerd` (Nerd Font) or `ascii`; an unknown value reads as `unicode`; any layer may set it. |
+| `ui.spinner` | Animate the working glyph (Pi's braille frames, 250 ms steps) in the children widget and the Herdr sidebar (default `true`); `false` shows static glyphs everywhere; any layer may set it. |
 | `widget.children` | Children widget below the editor in the TUI (default `true`); any layer may set it. |

@@ -5,6 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Rung, RunState, RunView } from "./childwidget.ts";
 import { openerIntercomId } from "./session.ts";
+import { parseAskHeader, ASK_FILE } from "./askcontract.ts";
+import { readOwnAddonTasks } from "./bg.ts";
+import type { AddonTask } from "./bg.ts";
+import { askOpen } from "./ruling.ts";
+import { childHandoffDirs } from "./owned.ts";
 
 export const HEARTBEAT_MS = 30_000;
 const WRITE_GAP_MS = 1000;
@@ -21,6 +26,16 @@ export interface LiveWait {
   note: string;
   ageSeconds: number;
   leftSeconds: number;
+  /** A foreman_bg command (the sidebar lists it with the tasks). */
+  bg?: boolean;
+  /** The synthetic `pr_watch` entry: the PR numbers being watched. */
+  prs?: number[];
+}
+
+/** An open ask of this session's own handoff (`# Ask <n>: <topic>` in ask.md). */
+export interface LiveAsk {
+  n: number;
+  topic: string;
 }
 
 export interface LiveRun {
@@ -54,6 +69,10 @@ export interface LiveFile {
   runs: LiveRun[];
   /** Active long waits; ageSeconds is as of heartbeatAt. */
   waits: LiveWait[];
+  /** This session's running bg_run add-on tasks (no log tails); present only while one runs. */
+  tasks?: AddonTask[];
+  /** Open asks of the own handoff; present only while one is open. */
+  asks?: LiveAsk[];
   /** env HERDR_PANE_ID, else null. */
   paneId: string | null;
   /** The session's own usage as the footer shows it: in = input + cache read + cache write, out = output; cost = list price. */
@@ -113,9 +132,12 @@ export interface LiveInit {
 
 export class LiveState {
   private readonly file: string;
-  private readonly base: Omit<LiveFile, "heartbeatAt" | "lastEventAt" | "state" | "runs" | "waits" | "intercomId" | "tokensIn" | "tokensOut" | "cost" | "blockedSince" | "presence">;
+  private readonly base: Omit<LiveFile, "heartbeatAt" | "lastEventAt" | "state" | "runs" | "waits" | "tasks" | "asks" | "intercomId" | "tokensIn" | "tokensOut" | "cost" | "blockedSince" | "presence">;
   private readonly idOf: () => string;
   private readonly startedMs = Date.now();
+  private readonly cwd: string;
+  private readonly sessionId: string;
+  private readonly agentDir: string;
   private lastEventMs = this.startedMs;
   private working = false;
   /** Open blocking sources: "ui" (Pi's ui_prompt_start..end, released by typed input) and own:<n> (own asks). */
@@ -147,6 +169,9 @@ export class LiveState {
     this.pressure = pressure;
     this.totals = totals;
     this.waits = waits;
+    this.cwd = init.cwd;
+    this.sessionId = init.sessionId;
+    this.agentDir = init.agentDir;
     this.file = path.join(liveDir(init.agentDir), `${init.sessionId}.json`);
     const handoff = (init.env.PI_FOREMAN_HANDOFF_DIR ?? "").trim() || null;
     // Re-read on each write: pi-intercom publishes PI_INTERCOM_SESSION_ID after session_start.
@@ -207,9 +232,32 @@ export class LiveState {
 
   private waitList(): LiveWait[] {
     try {
-      return (this.waits?.() ?? []).slice(0, MAX_WAITS).map((w) => ({ id: short(w.id, 40), kind: short(w.kind, 20), note: short(w.note, 80), ageSeconds: Math.round(w.ageSeconds), leftSeconds: Math.round(w.leftSeconds) }));
+      return (this.waits?.() ?? []).slice(0, MAX_WAITS).map((w) => ({ id: short(w.id, 40), kind: short(w.kind, 20), note: short(w.note, 80), ageSeconds: Math.round(w.ageSeconds), leftSeconds: Math.round(w.leftSeconds), ...(w.bg === true ? { bg: true } : {}), ...(Array.isArray(w.prs) ? { prs: w.prs.filter((n) => Number.isInteger(n)).slice(0, MAX_WAITS) } : {}) }));
     } catch {
       return []; // waits are best effort
+    }
+  }
+
+  private taskList(): AddonTask[] {
+    try {
+      return readOwnAddonTasks(this.cwd, this.sessionId).slice(0, MAX_WAITS).map((t) => ({ ...t, tail: [] }));
+    } catch {
+      return []; // tasks are best effort
+    }
+  }
+
+  /** The open asks of the dirs where this session is the child (the ask signal's own source). */
+  private askList(): LiveAsk[] {
+    try {
+      const out: LiveAsk[] = [];
+      for (const dir of childHandoffDirs(path.join(this.agentDir, "pi-foreman", "handoffs"), this.idOf())) {
+        if (!askOpen(dir)) continue;
+        const head = parseAskHeader(fs.readFileSync(path.join(dir, ASK_FILE), "utf8"));
+        if (head) out.push({ n: head.n, topic: short(head.topic, 80) });
+      }
+      return out.slice(0, 4);
+    } catch {
+      return []; // asks are best effort
     }
   }
 
@@ -284,7 +332,9 @@ export class LiveState {
     } catch {
       // pressure is best effort
     }
-    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(pressure ? { pressure } : {}) };
+    const asks = this.askList();
+    const tasks = this.taskList();
+    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(asks.length ? { asks } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(pressure ? { pressure } : {}) };
   }
 
   private schedule(): void {

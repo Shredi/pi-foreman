@@ -30,6 +30,8 @@ which relaunches it with `model: "strong"`:
 - **Foreman**: `model: "strong"` plus a `reason` passed as an extra top-level field of the `subagent` call (the
   published tool schema does not list it; the adapter reads and removes it). A strong launch with no reason and no
   trigger is refused (`strong_no_reason`); a heavy-tier builder and `strongOnRevision` count as triggers.
+  A builder launch may also carry `size` and `risk`; the adapter reads and removes them and a large or risky
+  task goes strong without a `reason` (see [ladder](ladder.md#launch-sizing)).
 - **Review FAIL**: a builder revision launched while the latest reviewer verdict is FAIL goes to the builder's
   strong rung without a keyword or reason (`rung_up` reason `review_fail`) when `strongOnRevision` resolves true:
   `roles.<id>.strongOnRevision`, else `providers.<p>.strongOnRevision`, else `ladder.strongOnRevision` (default

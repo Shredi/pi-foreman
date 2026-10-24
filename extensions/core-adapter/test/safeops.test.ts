@@ -92,7 +92,7 @@ test("safeops: worktree_remove refuses in a child session without running anythi
 const py = await resolvePython({ envPath: process.env.PI_FOREMAN_PYTHON, platform: process.platform, spawner: defaultSpawner });
 const git = spawnSync("git", ["--version"]).status === 0;
 
-test("safeops: real safe_ops.py moves once, then reports dst_exists", { skip: !py.ok ? "no Python >= 3.9" : !git ? "no git" : false }, async () => {
+test("safeops: real safe_ops.py moves once, then reports dst_exists", { skip: !py.ok ? "no Python >= 3.13" : !git ? "no git" : false }, async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pf-safeops-"));
   try {
     assert.equal(spawnSync("git", ["init", "-q"], { cwd: tmp }).status, 0);

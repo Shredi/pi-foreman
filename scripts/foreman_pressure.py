@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host pressure sampler: load per core, free memory, free workspace disk. Stdlib only, Python 3.9+.
+"""Host pressure sampler: load per core, free memory, free workspace disk. Stdlib only, Python 3.13+.
 
 sample() never raises: a probe that fails yields None. classify() turns a sample and the
 resources limits into {level, reasons, at, host}; write_state()/read_state() keep it in

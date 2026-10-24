@@ -4,7 +4,7 @@
 Reads `foreman radar --json --follow` snapshots, joins each foreman session to
 its Herdr pane and publishes `fm_*` tokens per pane over Herdr's socket. The
 rows that render those tokens live in config-snippet.toml (`configure` prints
-it). Standard library only, Python 3.9+. Imports on every OS; the daemon's
+it). Standard library only, Python 3.13+. Imports on every OS; the daemon's
 POSIX parts (flock, AF_UNIX) are reached only inside functions.
 
 Subcommands: start | stop | run | status | configure | push.
@@ -13,6 +13,8 @@ Subcommands: start | stop | run | status | configure | push.
 (radar imported in-process) and reports them for its pane, then touches a push
 stamp. While a pane's stamp is fresh and its session is live, the daemon
 publishes only `fm_sort` for that pane and leaves the other keys to the session.
+`push --json` composes the same tokens but reports nothing: it prints them with
+the header template (`{spin}` for the animated glyph) for the session's own publisher.
 """
 
 import argparse
@@ -71,15 +73,34 @@ STATE_ICON_W = 0
 REPUSH_S = 10
 # At this width and above the children line shows a run's model and its rung.
 WIDE_CHILDREN = 60
-# The glyph of a pending long wait on the children line, per symbol set.
+# The glyph of a pending long wait on the legacy children line (fm_l2); the sets without an
+# entry use the `wait` key of config/symbols.json, like the new activity lines.
 WAIT_GLYPH = {"unicode": "⏳", "nerd": "\uf252"}
+# A pushed tree position (tree.json) and the legacy layout.json count as current this long: two
+# daemon intervals. Older, the session builds the tree itself.
+TREE_FRESH_S = 2 * INTERVAL_S
+# fm_hd tokens stop this many columns short of the sidebar width: INSET plus one safety column.
+SAFETY = 1
+# Activity lines show this many items, then ` +n`.
+MAX_ITEMS = 3
+# One tree level is three cells: a connector `├─ `/`└─ `, a continuation or a child marker.
+UNIT = 3
+CONN_MID, CONN_LAST = "├─ ", "└─ "
+# Private-use stand-in for the animated glyph while the header template is built (one cell wide).
+SPIN_MARK = "\ue000"
+SYMBOLS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "config", "symbols.json")
+AUX_FALLBACK = {"agent": "◆", "task": "⚙", "wait": "⧗", "ask": "?", "recent": "✓"}
+SPINNER_FALLBACK = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+SYMBOL_SETS = ("unicode", "emoji", "nerd", "ascii")
 # Line 1 stops this many columns short of its budget, so a misjudged frame
 # or glyph width does not push the age into Herdr's ellipsis.
 L1_MARGIN = 2
 # Herdr trims token values at both ends, so a leading blank indent uses
 # U+2800 (renders blank, is not whitespace) instead of spaces.
 BLANK = "⠀"
+CONT_MID, CONT_LAST = "│" + BLANK * 2, BLANK * 3
 KEYS = ("fm_sym", "fm_l1", "fm_l2", "fm_l3", "fm_cost",
+        "fm_hd", "fm_a1", "fm_a2", "fm_a3", "fm_meta",
         "fm_state", "fm_block_s", "fm_sort")
 STALE_KEYS = ("fm_pre",)  # published by older versions; nulled at shutdown
 # Keys a self-pushing session owns; the daemon keeps fm_sort (tree order).
@@ -101,12 +122,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # ---------------------------------------------------------------- formatting
 
 def cell_width(text):
-    """Terminal cells: East-Asian wide/full = 2, combining marks = 0."""
-    w = 0
+    """Terminal cells, as wcwidth and Rust's unicode-width count them: a VS16 (U+FE0F) after a
+    character makes it 2; otherwise East-Asian wide/full = 2; combining marks, ZWJ and VS15 = 0."""
+    w = prev = 0
     for ch in text:
-        if unicodedata.combining(ch):
+        if ch == "\ufe0f":
+            if prev == 1:
+                w += 1
+                prev = 2
             continue
-        w += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        if ch == "\u200d" or unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Me"):
+            continue
+        prev = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        w += prev
     return w
 
 
@@ -249,8 +277,8 @@ def _wait_text(node, symbols):
     if not waits:
         return None
     w = waits[0]
-    text = "%s %s %s" % (WAIT_GLYPH.get(symbols, WAIT_GLYPH["unicode"]),
-                         w.get("note") or w.get("kind") or "wait", fmt_age(w.get("age_s")))
+    glyph = WAIT_GLYPH.get(symbols or "unicode") or aux_symbols(symbols)["wait"]
+    text = "%s %s %s" % (glyph, w.get("note") or w.get("kind") or "wait", fmt_age(w.get("age_s")))
     return text + (" +%d" % (len(waits) - 1) if len(waits) > 1 else "")
 
 
@@ -282,15 +310,267 @@ def _children_text(node, joins, recent=None, width=None, symbols=None):
     return " · ".join(g if counts[g] == 1 else "%s ×%d" % (g, counts[g]) for g in groups)
 
 
+_aux_cache = {}
+
+
+def aux_symbols(name):
+    """Activity glyphs (agent, task, wait, ask, recent) and the spinner frames of one glyph set, from
+    config/symbols.json; a key the file lacks (or a missing file) falls back to the unicode set."""
+    name = name if name in SYMBOL_SETS else "unicode"
+    if name not in _aux_cache:
+        try:
+            with open(SYMBOLS_FILE, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            data = {}
+        data = data if isinstance(data, dict) else {}
+
+        def table(which):
+            t = data.get(which)
+            return t if isinstance(t, dict) else {}
+
+        def pick(key, fallback):
+            for t in (table(name), table("unicode")):
+                if isinstance(t.get(key), str) and t[key]:
+                    return t[key]
+            return fallback
+
+        got = {k: pick(k, v) for k, v in AUX_FALLBACK.items()}
+        frames = table(name).get("spinner") or table("unicode").get("spinner")
+        ok = isinstance(frames, list) and frames and all(isinstance(f, str) and f for f in frames)
+        got["spinner"] = list(frames) if ok else list(SPINNER_FALLBACK)
+        _aux_cache[name] = got
+    return _aux_cache[name]
+
+
+_UNITS = re.compile("^(?:" + re.escape(CONT_MID) + "|" + re.escape(CONT_LAST) + ")*$")
+
+
+def _placement(t):
+    """A pushed tree position ({P, conn, own}) when well formed, else None."""
+    if not isinstance(t, dict):
+        return None
+    p, conn, own = t.get("P", ""), t.get("conn", ""), t.get("own", "")
+    if (isinstance(p, str) and _UNITS.match(p) and conn in ("", CONN_MID, CONN_LAST)
+            and own in ("", CONT_MID, CONT_LAST)):
+        return {"P": p, "conn": conn, "own": own}
+    return None
+
+
+def _child_order(n):
+    s = n.get("started")
+    return (s is None, s if s is not None else 0, n.get("sid") or "", n.get("key") or "")
+
+
+def tree_rows(roots, joins, tree=None):
+    """The one tree function: [(node, sort, place)] in display order for the joined rows.
+
+    `place` = {P, conn, own, kids}. P is the ancestors' continuations below the root, conn the
+    node's connector (`├─ `/`└─ `, empty for a root), own the continuation under its own
+    connector (empty for a root), kids whether it has row children. All units are three cells.
+    Roots keep their order; children are ordered by start time, then session id, then key.
+    `tree` ({key: {P, conn, own}}) positions a root row inside a tree built elsewhere."""
+    out = []
+
+    def walk_rows(nodes, sort_prefix, prefix, depth):
+        rows = _row_children(nodes, joins)
+        if depth:
+            rows = sorted(rows, key=_child_order)
+        for i, n in enumerate(rows, 1):
+            last = i == len(rows)
+            if depth == 0:
+                sort = "r%03d" % i
+                place = _placement((tree or {}).get(n.get("key"))) or {"P": "", "conn": "", "own": ""}
+            else:
+                sort = "%s.c%03d" % (sort_prefix, i)
+                place = {"P": prefix, "conn": CONN_LAST if last else CONN_MID,
+                         "own": CONT_LAST if last else CONT_MID}
+            place["kids"] = bool(_row_children(n.get("children") or [], joins))
+            out.append((n, sort, place))
+            walk_rows(n.get("children") or [], sort, place["P"] + place["own"], depth + 1)
+
+    walk_rows(roots, "", "", 0)
+    return out
+
+
+def _slot(glyph):
+    """The glyph cell of a header: always two cells, so the label never moves."""
+    w = cell_width(glyph)
+    return glyph + BLANK if w == 1 else glyph if w == 2 else BLANK * 2
+
+
+def _prefix_only(prefix, budget):
+    """`prefix` cut at a unit boundary to fit `budget`; None when not even one unit fits."""
+    return prefix[:budget // UNIT * UNIT] or None
+
+
+def _header(place, glyph, label, age, budget):
+    """`P conn slot label ... age`. Room is short: the age drops when the label would get under
+    four cells, then the label shrinks to one character and `…`; with less room the token is the
+    prefix cut at a unit boundary."""
+    left = place["P"] + place["conn"] + _slot(glyph) + " "
+    room = budget - cell_width(left)
+    if room < 2:
+        return _prefix_only(place["P"] + place["conn"], budget)
+    if age and room - cell_width(age) - 1 >= 4:
+        lab = truncate(label, room - cell_width(age) - 1)
+        return left + lab + " " * (room - cell_width(lab) - cell_width(age)) + age
+    return left + truncate(label, room)
+
+
+def _detail_left(place):
+    return place["P"] + place["own"] + (CONT_MID if place["kids"] else CONT_LAST)
+
+
+def _detail(place, text, budget):
+    """A detail line: `P own marker text`. `text` is a string, or (body, hidden) whose ` +hidden`
+    suffix is kept when the body is cut. None gives no line."""
+    if not text:
+        return None
+    body, hidden = (text, 0) if isinstance(text, str) else text
+    left = _detail_left(place)
+    room = budget - cell_width(left)
+    suffix = " +%d" % hidden if hidden else ""
+    if suffix and room - cell_width(suffix) < 2:
+        suffix = ""
+    if room - cell_width(suffix) < 2:
+        return _prefix_only(left, budget)
+    return left + truncate(body, room - cell_width(suffix)) + suffix
+
+
+def _meta(node, recent, width, place, budget):
+    """`↑in ↓out · $cost · ✓n`: the token counts drop as a whole when the line would not fit.
+    Hidden on a panel narrower than NARROW_COST."""
+    if width < NARROW_COST:
+        return None
+    tot = node.get("tot") or {}
+    shown = sum(1 for k in node.get("children") or [] if _recent_run(k, recent))
+    done = max(0, (node.get("done_children") or 0) - shown)
+    parts = [fmt_cost(tot.get("cost")) + _pressure_suffix(node.get("pressure"))]
+    if done:
+        parts.append("✓%d" % done)
+    if not (tot.get("in") or tot.get("out") or tot.get("uncached")):
+        return " · ".join(parts)
+    full = " · ".join([fmt_counts(tot)] + parts)
+    if cell_width(_detail_left(place)) + cell_width(full) <= budget:
+        return full
+    return " · ".join(parts)
+
+
+def _wait_item(w):
+    return "%s %s" % (w.get("note") or w.get("kind") or "wait", fmt_age(w.get("age_s")))
+
+
+def _is_ci(w):
+    return w.get("kind") == "ci"
+
+
+def _is_pr(w):
+    return w.get("kind") == "pr"
+
+
+def _items(glyph, items):
+    """(`glyph item · item`, hidden count): at most MAX_ITEMS items; None for no item."""
+    if not items:
+        return None
+    return "%s %s" % (glyph, " · ".join(items[:MAX_ITEMS])), max(0, len(items) - MAX_ITEMS)
+
+
+def _agent_line(node, joins, recent, width, aux):
+    """fm_a1: the running child runs (`◆ builder sonnet-5.5 ×2 · reviewer`), then the runs that
+    just finished (`✓ role`); a done session shows its run count, a lost one `lost`."""
+    state = node.get("state")
+    kids = node.get("children") or []
+    if node.get("sym") == "lost" or state == "lost":
+        return "lost"
+    if state in ("done", "closed"):
+        runs = sum(1 for k in kids if k.get("kind") == "run")
+        return "done · %d run%s" % (runs, "" if runs == 1 else "s") if runs else None
+    groups, counts = [], {}
+    for k in kids:
+        if _is_row(k, joins):
+            continue
+        finished = k.get("state") == "done"
+        if finished and not _recent_run(k, recent):
+            continue
+        item = (finished, _run_label(k, width))
+        if item not in counts:
+            groups.append(item)
+            counts[item] = 0
+        counts[item] += 1
+    text = lambda g: g[1] if counts[g] == 1 else "%s ×%d" % (g[1], counts[g])  # noqa: E731
+    running = [text(g) for g in groups if not g[0]]
+    recents = [aux["recent"] + " " + text(g) for g in groups if g[0]]
+    shown = (running + recents)[:MAX_ITEMS]
+    hidden = len(running) + len(recents) - len(shown)
+    parts = []
+    if running and shown[:len(running)]:
+        parts.append(aux["agent"] + " " + " · ".join(shown[:len(running)]))
+    parts.extend(shown[len(running):])
+    return (" · ".join(parts), hidden) if parts else None
+
+
+def _task_line(node, aux):
+    """fm_a2: PR watches, CI waits, background commands (waits flagged `bg`), then the bg_run tasks."""
+    waits = [w for w in node.get("waits") or [] if isinstance(w, dict)]
+    items = []
+    for w in waits:
+        if _is_pr(w):
+            prs = [p for p in w.get("prs") or [] if isinstance(p, int) and not isinstance(p, bool)]
+            if prs:
+                items.extend("pr #%d" % p for p in prs)
+            else:
+                items.append(w.get("note") or "pr")
+    items += [_wait_item(w) for w in waits if _is_ci(w) and not _is_pr(w)]
+    items += [_wait_item(w) for w in waits if w.get("bg") and not _is_ci(w) and not _is_pr(w)]
+    items += ["%s %s" % (t.get("label") or t.get("id") or "task", fmt_age(t.get("ageSeconds")))
+              for t in node.get("tasks") or [] if isinstance(t, dict)]
+    return _items(aux["task"], items)
+
+
+def _wait_line(node, aux):
+    """fm_a3: an open ask (`? ask 1: topic`), then the other waits (timer, file, child, pid)."""
+    kids = node.get("children") or []
+    asks = [(a.get("n"), str(a.get("topic") or "")) if isinstance(a, dict) else (None, str(a))
+            for a in node.get("asks") or [] if a]
+    n = len(asks) + sum(1 for k in kids if k.get("kind") == "run" and k.get("state") == "ask")
+    if not n and node.get("state") == "ask":
+        n = 1
+    if asks and isinstance(asks[0][0], int) and not isinstance(asks[0][0], bool):
+        n = asks[0][0]
+    topic = asks[0][1] if asks else ""
+    parts = ["%s ask %d%s" % (aux["ask"], n, ": " + topic if topic else "")] if n else []
+    waits = [w for w in node.get("waits") or [] if isinstance(w, dict)
+             and not (w.get("bg") or _is_ci(w) or _is_pr(w))]
+    line = _items(aux["wait"], [_wait_item(w) for w in waits])
+    if line:
+        parts.append(line[0])
+    if not parts:
+        return None
+    return " · ".join(parts), line[1] if line else 0
+
+
+def _activity(node, joins, recent, width, aux):
+    """(fm_a1, fm_a2, fm_a3) texts of one session: what runs (agents), what it watches (tasks, PRs,
+    CI, background commands) and what it waits on (an ask, timers, children). None = nothing to show."""
+    if node.get("sym") == "lost" or node.get("state") in ("lost", "done", "closed"):
+        return _agent_line(node, joins, recent, width, aux), None, None
+    return (_agent_line(node, joins, recent, width, aux), _task_line(node, aux),
+            _wait_line(node, aux))
+
+
 def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, layout=None,
-            layout_out=None):
+            layout_out=None, tree=None, tree_out=None, tpl_out=None):
     """Snapshot (radar --json) -> {paneId: {fm_key: value or None}}.
 
     `joins` maps node key -> paneId; without it each node's own `paneId` is
-    used. `lead` counts the user's cells before $fm_sym on row 1. None values
-    clear the token. Panes in `self_panes` get only `fm_sort` (their session
-    publishes the rest). `layout` ({key: {pre, cont}}) places a root row at a
-    tree position computed elsewhere; `layout_out` collects every row's.
+    used. `lead` counts the user's cells before $fm_sym on row 1 (legacy rows only).
+    None values clear the token. Panes in `self_panes` get only `fm_sort` (their
+    session publishes the rest). `layout` ({key: {pre, cont}}) and `tree`
+    ({key: {P, conn, own}}) place a root row at a tree position computed elsewhere
+    (legacy prefixes and the new rows); `layout_out` and `tree_out` collect every
+    row's. `tpl_out` collects, per pane of a working session, the fm_hd header with
+    its glyph slot as `{spin}` + blank.
     """
     if joins is None:
         joins = {}
@@ -303,12 +583,16 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
     recent = snapshot.get("recentRunSeconds")
     symbols = snapshot.get("symbols")
     self_panes = self_panes or ()
+    aux = aux_symbols(symbols)
+    budget = max(0, width - INSET - SAFETY)
     out = {}
 
-    def emit(node, sort, pre, cont):
+    def emit(node, sort, place, pre, cont):
         pane = joins[node["key"]]
         if layout_out is not None:
             layout_out[node["key"]] = {"pre": pre, "cont": cont}
+        if tree_out is not None:
+            tree_out[node["key"]] = {k: place[k] for k in ("P", "conn", "own")}
         if pane in self_panes:
             out[pane] = {"fm_sort": _cap(sort)}
             return
@@ -344,37 +628,37 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
             l3 = indent + counts if counts else (indent or None)
             cost_room = width - INSET - (cell_width(l3) + GAP if l3 else 0)
             cost = spread(cost_text, tick, cost_room)
+        age = fmt_age(blocked_s if blocked_s is not None else node.get("age_s"))
+        if blocked_s is not None and blocked_s > LATE_S:
+            age += "!"
+        label = node.get("name") or "?"
+        if tpl_out is not None and node.get("sym") == "working":
+            tpl_out[pane] = _cap(_header(place, SPIN_MARK, label, age, budget).replace(SPIN_MARK, "{spin}"))
+        a1, a2, a3 = _activity(node, joins, recent, width, aux)
         tokens = {
             "fm_sym": sym or None,
             "fm_l1": l1,
             "fm_l2": l2,
             "fm_l3": l3,
             "fm_cost": cost,
+            "fm_hd": _header(place, node.get("glyph") or "", label, age, budget),
+            "fm_a1": _detail(place, a1, budget),
+            "fm_a2": _detail(place, a2, budget),
+            "fm_a3": _detail(place, a3, budget),
+            "fm_meta": _detail(place, _meta(node, recent, width, place, budget), budget),
             "fm_state": node.get("sym") or node.get("state"),
             "fm_block_s": str(int(blocked_s)) if blocked_s is not None else None,
             "fm_sort": sort,
         }
         out[pane] = {k: _cap(tokens[k]) for k in KEYS}
 
-    def walk_rows(nodes, sort_prefix, prefix_cont, depth):
-        rows = _row_children(nodes, joins)
-        for i, n in enumerate(rows, 1):
-            last = i == len(rows)
-            if depth == 0:
-                sort, pre, cont, child_cont = "r%03d" % i, "", "", ""
-                placed = (layout or {}).get(n.get("key"))
-                if isinstance(placed, dict):
-                    pre, cont = str(placed.get("pre") or ""), str(placed.get("cont") or "")
-                    child_cont = cont
-            else:
-                sort = "%s.c%03d" % (sort_prefix, i)
-                pre = prefix_cont + ("└─" if last else "├─")
-                cont = prefix_cont + (BLANK * 2 if last else "│" + BLANK)
-                child_cont = cont
-            emit(n, sort, pre, cont)
-            walk_rows(n.get("children") or [], sort, child_cont, depth + 1)
-
-    walk_rows(roots, "", "", 0)
+    for n, sort, place in tree_rows(roots, joins, tree):
+        # legacy prefixes (fm_l1..fm_l3) come from the same placement; a pushed layout wins for a root
+        pre, cont = place["P"] + place["conn"][:2], place["P"] + place["own"][:2]
+        placed = (layout or {}).get(n.get("key")) if not sort.count(".") else None
+        if isinstance(placed, dict):
+            pre, cont = str(placed.get("pre") or ""), str(placed.get("cont") or "")
+        emit(n, sort, place, pre, cont)
     return out
 
 
@@ -589,13 +873,27 @@ def write_atomic(path, text):
             pass
 
 
-def read_layout(sdir):
+def _read_fresh(sdir, name, now=None):
+    """The JSON object in `name` when the file is at most TREE_FRESH_S old, else {}."""
+    path = os.path.join(sdir, name)
     try:
-        with open(os.path.join(sdir, "layout.json"), encoding="utf-8") as fh:
+        if (time.time() if now is None else now) - os.path.getmtime(path) > TREE_FRESH_S:
+            return {}
+        with open(path, encoding="utf-8") as fh:
             d = json.load(fh)
     except (OSError, ValueError):
         return {}
     return d if isinstance(d, dict) else {}
+
+
+def read_layout(sdir, now=None):
+    """{key: {pre, cont}} the daemon wrote last; {} when absent or older than TREE_FRESH_S."""
+    return _read_fresh(sdir, "layout.json", now)
+
+
+def read_tree(sdir, now=None):
+    """{key: {P, conn, own}} the daemon wrote last; {} when absent or older than TREE_FRESH_S."""
+    return _read_fresh(sdir, "tree.json", now)
 
 
 def read_winners(sdir, now=None):
@@ -963,11 +1261,13 @@ class Publisher:
         fresh = fresh_stamps(self.sdir)
         self.self_panes = self_panes_for(snapshot.get("roots") or [], joins, fresh,
                                          shown_tokens(agents))
-        layout = {}
+        layout, tree = {}, {}
         write_atomic(os.path.join(self.sdir, "winners.json"),
                      json.dumps(pane_winners(snapshot.get("roots") or [], joins)))
-        now = compose(snapshot, self.width(), joins, self.lead(), self.self_panes, layout_out=layout)
+        now = compose(snapshot, self.width(), joins, self.lead(), self.self_panes,
+                      layout_out=layout, tree_out=tree)
         write_atomic(os.path.join(self.sdir, "layout.json"), json.dumps(layout, ensure_ascii=False))
+        write_atomic(os.path.join(self.sdir, "tree.json"), json.dumps(tree, ensure_ascii=False))
         self.log_joined(snapshot, agents, len(now))
         patches = dict(now)
         patches.update(clears(self.published, now, set(fresh.values())))
@@ -1273,11 +1573,31 @@ def _cache_path(sdir, sid):
     return os.path.join(sdir, "push", sid + ".usage.json")
 
 
-def push_tokens(radar, args, sdir, now=None):
-    """{paneId: tokens} for the session `args.session` on pane `args.pane`
-    (session-owned keys only); {} when radar does not know the session.
-    Usage totals resume from a per-session byte-offset cache in the state dir,
-    so a push reads only the usage lines appended since the last one."""
+def _full_placements(radar, data, now, sym_name, symbols, recent, sdir, width):
+    """({key: {P, conn, own}}, {key: {pre, cont}}) of the whole tree, built here from every presence
+    file and the registry when the daemon's files are stale or lack the session. Rows are the
+    sessions with a presence paneId, plus the panes the daemon's fresh winners.json gave by pid or cwd."""
+    roots = [r for r in radar.build(data, now) if radar.finish(r, now, 24.0)]
+    roots.sort(key=lambda c: (radar.rank(c), c["started"] if c["started"] is not None else float("inf")))
+    snap = radar.json_doc(roots, now, sym_name, symbols, recent)
+    by_sid = {sid: pane for pane, sid in read_winners(sdir, now).items()}
+    joins = {}
+    for n in walk(snap["roots"]):
+        pane = n.get("paneId") or by_sid.get(n.get("sid")) if n.get("kind") == "session" else None
+        if pane:
+            joins[n["key"]] = pane
+    layout, tree = {}, {}
+    compose(snap, width, joins, 0, layout_out=layout, tree_out=tree)
+    return tree, layout
+
+
+def push_compose(radar, args, sdir, now=None):
+    """(tokens, header template) of the session `args.session` on pane `args.pane`: the session-owned
+    keys, and the fm_hd line with `{spin}` for the glyph while it works (None otherwise);
+    (None, None) when radar does not know the session.
+    The tree position comes from the daemon's tree.json and layout.json while they are fresh,
+    else from a tree built here. Usage totals resume from a per-session byte-offset cache in the
+    state dir, so a push reads only the usage lines appended since the last one."""
     now = time.time() if now is None else now
     adir = radar.agent_dir(args.agent_dir)
     sym_name = args.symbols or radar.config_symbols(adir)
@@ -1287,25 +1607,39 @@ def push_tokens(radar, args, sdir, now=None):
             cache = radar.UsageCache(json.load(fh))
     except (OSError, ValueError):
         cache = radar.UsageCache()
-    roots = radar.snapshot(adir, now, 24.0, cache, None, only=args.session)
+    data = radar.load(adir, cache, now, None, args.session)
     if not args.dry_run:
         try:
             os.makedirs(os.path.dirname(cache_file), exist_ok=True)
             write_atomic(cache_file, json.dumps(cache.files))
         except OSError:
             pass
-    if not roots:
-        return {}
-    snap = radar.json_doc(roots, now, sym_name, radar.load_symbols(sym_name),
-                          radar.config_recent_runs(adir))
+    own = radar.find_sid(radar.build(data, now), args.session)
+    if own is None or not radar.finish(own, now, float("inf")):  # a finished session is still ours
+        return None, None
+    symbols, recent = radar.load_symbols(sym_name), radar.config_recent_runs(adir)
+    snap = radar.json_doc([own], now, sym_name, symbols, recent)
     root = snap["roots"][0]
     joins = {n["key"]: n["paneId"] for n in walk([root])
              if n.get("kind") == "session" and n.get("paneId") and n["paneId"] != args.pane}
     joins[root["key"]] = args.pane
     width = read_width(args, os.environ, os.path.join(herdr_config_dir(), "config.toml"))
-    out = compose(snap, width, joins, read_lead(args, os.environ), layout=read_layout(sdir))
+    tree, layout = read_tree(sdir, now), read_layout(sdir, now)
+    if root["key"] not in tree or root["key"] not in layout:
+        full_tree, full_layout = _full_placements(radar, data, now, sym_name, symbols, recent, sdir, width)
+        tree = tree if root["key"] in tree else full_tree
+        layout = layout if root["key"] in layout else full_layout
+    tpl = {}
+    out = compose(snap, width, joins, read_lead(args, os.environ), layout=layout, tree=tree, tpl_out=tpl)
     tokens = out.get(args.pane) or {}
-    return {args.pane: {k: tokens.get(k) for k in SESSION_KEYS}}
+    return {k: tokens.get(k) for k in SESSION_KEYS}, tpl.get(args.pane)
+
+
+def push_tokens(radar, args, sdir, now=None):
+    """{paneId: tokens} for the session `args.session` on pane `args.pane`
+    (session-owned keys only); {} when radar does not know the session."""
+    tokens, _ = push_compose(radar, args, sdir, now)
+    return {args.pane: tokens} if tokens is not None else {}
 
 
 def _unchanged(tokens_file, tokens, now=None):
@@ -1326,11 +1660,30 @@ def cmd_push(args):
         log("push needs --session <id> and --pane <id>")
         return 2
     sdir = state_dir()
+    as_json = getattr(args, "json", False) and not args.clear
     owner = read_winners(sdir).get(args.pane)
     if owner and owner != args.session and not args.dry_run:
+        if as_json:
+            print("{}")
         return 0  # another session owns this pane; publishing would make the row flip
     stamp = os.path.join(sdir, "push", args.session + ".stamp")
     tokens_file = os.path.join(sdir, "push", args.session + ".tokens")
+    if as_json:
+        radar = _import_radar()
+        if radar is None:
+            return 2
+        tokens, tpl = push_compose(radar, args, sdir)
+        if tokens is None:
+            print("{}")
+            return 0
+        if not args.dry_run:
+            try:
+                os.remove(tokens_file)  # a later plain push must report, not be short-cut
+            except OSError:
+                pass
+        print(json.dumps({"tokens": tokens, "fm_hd_tpl": tpl, "stamp": os.path.abspath(stamp),
+                          "pane": args.pane}, ensure_ascii=False))
+        return 0
     if args.clear:
         patch = {args.pane: {k: None for k in SESSION_KEYS}}
         if args.dry_run:
@@ -1393,7 +1746,9 @@ def main(argv=None):
     ap.add_argument("--agent-dir")
     ap.add_argument("--session", help="with push: the session id")
     ap.add_argument("--pane", help="with push: the session's Herdr pane id")
-    ap.add_argument("--symbols", choices=("unicode", "nerd"), help="with push: glyph set; default ui.symbols")
+    ap.add_argument("--symbols", choices=SYMBOL_SETS, help="with push: glyph set; default ui.symbols")
+    ap.add_argument("--json", action="store_true",
+                    help="with push: print {tokens, fm_hd_tpl, stamp, pane}; report nothing, write no stamp")
     ap.add_argument("--clear", action="store_true", help="with push: clear the session's keys")
     ap.add_argument("--final", action="store_true", help="with push: publish the final row, then drop only the stamp")
     argv = sys.argv[1:] if argv is None else argv

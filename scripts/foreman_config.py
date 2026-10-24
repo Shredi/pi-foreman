@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""pi-foreman config loader, validator and settings generator (stdlib, 3.9+).
+"""pi-foreman config loader, validator and settings generator (stdlib, 3.13+).
 
 Layers, in merge order (plain last-wins for every key, objects deep-merge,
 scalars and lists are replaced):
@@ -239,6 +239,7 @@ IGNORED_KEYS = [
     (("ladder", "reviewerClimb"), "the ladder and the child rank policy come from the user or overlay config"),
     (("ladder", "research"), "the fact-critical research rung comes from the user or overlay config"),
     (("ladder", "reviewPanel"), "the review panel's models come from the user or overlay config"),
+    (("ladder", "sizing"), "the launch sizing rules come from the user or overlay config"),
     (("providers", "*", "ranks"), "model ranks decide which children may launch: user or overlay config only"),
     (("providers", "*", "strongAbove"), "the ladder comes from the user or overlay config"),
     (("providers", "*", "childMaxTurns"), "the ladder comes from the user or overlay config"),
