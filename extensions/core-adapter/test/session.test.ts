@@ -83,21 +83,23 @@ test("session: open passes the opener id and absolute paths to the script", asyn
 
 test("session: brief and close resolve registry targets and send the contract texts", async () => {
   const agent = path.join(root, "agent-send");
-  seed(agent);
+  const handoff = path.join(root, "h-brief");
+  fs.mkdirSync(handoff, { recursive: true });
+  writeRegistry(agent, { version: 1, sessions: [{ label: "demo", child: "fm-demo-abc123", status: "open", handoff }] });
   const file = path.join(root, "brief2.md");
   fs.writeFileSync(file, "x");
   const d = deps(agent, { env: { PI_INTERCOM_STABLE_ID: "opener-1" } });
   await runSessionCommand(d, "brief demo brief2.md");
-  await runSessionCommand(d, "brief other-session decision: use B");
+  assert.equal((await runSessionCommand(d, "brief other-session decision: use B")).ok, false, "no handoff dir: refused");
   await runSessionCommand(d, "close fm-demo-abc123 .workflow/r.md");
   assert.deepEqual(d.sent, [
-    ["fm-demo-abc123", `Brief from opener-1: read ${file} and act on it`],
-    ["other-session", "decision: use B"],
+    ["fm-demo-abc123", `Brief from opener-1: read ${path.join(handoff, "brief-1.md")} and act on it`],
     ["fm-demo-abc123", "foreman:close .workflow/r.md"],
   ]);
+  assert.equal(fs.readFileSync(path.join(handoff, "brief-1.md"), "utf8"), "x");
   assert.equal(readRegistry(agent).sessions[0].status, "closing");
   assert.equal((await runSessionCommand(d, "close demo ../r.txt")).ok, false);
-  assert.equal(d.sent.length, 3);
+  assert.equal(d.sent.length, 2);
 });
 
 test("session: command sends through the pi-intercom outbox event", async () => {

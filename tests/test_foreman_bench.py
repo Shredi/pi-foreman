@@ -739,5 +739,50 @@ class RetryAndPrebakedTests(unittest.TestCase):
         self.assertEqual([r["id"] for r in rows if not ha.pi_prebaked(r)], [])
 
 
+class FoldPresetTests(unittest.TestCase):
+    FOLD = ROOT / "bench" / "presets" / "fold.json"
+
+    def preset(self):
+        return fb.load_preset(self.FOLD)
+
+    def test_fold_preset_parses_and_names_existing_tasks(self):
+        preset = self.preset()
+        tdir = fb.tasks_dir(preset)
+        self.assertEqual(preset["bench"]["tasks"], ["m1-recheck", "t1-trivial"])
+        self.assertEqual(fb.ordered_tasks(preset, tdir), ["m1-recheck", "t1-trivial"])
+        for name in preset["bench"]["tasks"]:
+            self.assertTrue((tdir / name / "task.toml").is_file(), name)
+        self.assertEqual([r["id"] for r in preset["rows"]], ["fold-a-default", "fold-b-reads24", "fold-c-trivial-bounded", "fold-d-both"])
+
+    def test_fold_row_knobs_map_to_ceremony_keys(self):
+        defaults = json.loads((ROOT / "config" / "foreman.defaults.json").read_text("utf-8"))["ceremony"]
+        reads = {"before": {"warn": 24}, "after": {"warn": 24}}
+        expected = {"fold-a-default": None,
+                    "fold-b-reads24": {"foremanReads": reads},
+                    "fold-c-trivial-bounded": {"foremanEdits": "bounded", "required": {"trivial": []}},
+                    "fold-d-both": {"foremanReads": reads, "foremanEdits": "bounded", "required": {"trivial": []}}}
+        for row in self.preset()["rows"]:
+            cfg = ws.foreman_config(dict(row, roles={}))
+            if expected[row["id"]] is None:
+                self.assertNotIn("ceremony", cfg, row["id"])
+                continue
+            self.assertEqual(cfg["ceremony"], expected[row["id"]], row["id"])
+            for key in cfg["ceremony"]:
+                self.assertIn(key, defaults, "%s: ceremony.%s is not a known key" % (row["id"], key))
+        self.assertIn("trivial", defaults["required"])
+
+    def test_fold_dry_run_lists_eight_cells(self):
+        jobs = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, jobs, True)
+        args = Namespace(preset=str(self.FOLD), tasks=None, jobs_dir=jobs, rows=None, task=None, repeats=None,
+                         harbor="harbor", dry_run=True, token_cap=None, setup_only=False)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(fb.run(args), 0)
+        cells = [l for l in out.getvalue().splitlines() if l.startswith("bench: [")]
+        self.assertEqual(len(cells), 8, out.getvalue())
+        self.assertIn("8 cell(s) in order", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

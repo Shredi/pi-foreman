@@ -14,7 +14,9 @@ Harbor agents live in `bench/harbor_agent.py` and are not part of the installed 
 
 `--dry-run` prints the cell order, `--token-cap N` stops cleanly (exit 4) once finished cells used N
 tokens (two consecutive infrastructure-error cells stop it with exit 5), `--setup-only` installs one cell's agent and runs zero-model checks without a prompt.
-`bench/tasks/m1-recheck` re-checks the M1 standard task (ledger, explorer, builder, reviewer).
+`bench/tasks/m1-recheck` re-checks the M1 standard task (ledger, explorer, builder, reviewer); `bench/tasks/t1-trivial` is a one-line fix in one file covered by a visible test (the trivial path).
+
+Fold preset (`bench/presets/fold.json`): a fold-vs-keep measurement of two ceremony choices on the m1-recheck and t1-trivial tasks. Fold asks whether the foreman reads the code itself (its own read budget) or hands the reading to an explorer first; trivial asks whether a trivial task goes to a trivial builder or to the foreman's bounded self-edit. Four rows: `fold-a-default` (default knobs), `fold-b-reads24` (`foreman_reads` warn 24 in both phases, so the read reminder comes later), `fold-c-trivial-bounded` (`foreman_edits: bounded` and `user_config` `ceremony.required.trivial: []`, which drops the trivial builder step), and `fold-d-both` (b and c). Compare them on the existing columns only: `read_blocks` (reads that drew a reminder), `tokens`, `wall s`, `tier`, `ceremony_incomplete` and the pass column `success` (the task's hidden tests; the reviewer's verdict is not a column). No new columns are added. One repeat is one sample: run the preset more than once (`repeats` or a second `run` with a new jobs dir) before reading a difference as real. The preset uses the `foreman-fake` provider like the smoke preset, so its numbers only show the harness wiring; a real measurement sets `model` (`provider/model`) on each row, and nothing in the preset names an account or a provider.
 
 ## Columns
 
