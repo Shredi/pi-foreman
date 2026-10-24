@@ -521,7 +521,7 @@ Every shape below is an allowlist: a word outside it ends the allow and the comm
 
 ### Own-record reads with `grep`
 
-The foreman may `grep` its own records (its own usage file `state/usage/<foreman session>.jsonl`, its own trace and presence file; never another session's file and never the whole usage dir). Options: bundles of `n c i w v x o h H l L s E F`, `-m N`, `-A N`, `-B N`, `-C N` and `--color=never`; any other option ends the allow. A dash word before `--` is an option, every word after `--` is an operand, and a digit word is an option value only after `-n`/`-c` (head/tail) or `-m/-A/-B/-C` (grep), otherwise it is an operand and must be an own record. The usage file name comes from the session's usage record (`usageFile`), not from a guess. A child gets none of this. A chain with other units (`;`, `&&`, `||`, `|`) may not name another state or trace file in any unit; a grep word written with `$'..'`, `$".."`, a backslash, or a double quote holding `$` (other than a leading `$HOME/`) or a backtick ends the allow.
+The foreman may `grep` its own records (its own usage file `state/usage/<foreman session>.jsonl`, its own trace and presence file; never another session's file and never the whole usage dir). Options: bundles of `n c i w v x o h H l L s E F`, `-m N`, `-A N`, `-B N`, `-C N` and `--color=never`; any other option ends the allow. A dash word before `--` is an option, every word after `--` is an operand, and a digit word is an option value only after `-n`/`-c` (head/tail) or `-m/-A/-B/-C` (grep), otherwise it is an operand and must be an own record. The usage file name comes from the session's usage record (`usageFile`), not from a guess. A child gets none of this. A chain with other units (`;`, `&&`, `||`, `|`) may not name another state or trace file in any unit, and a `grep` unit in such a chain is no recursive read (`-r`, `-R`, `-d`, `--recursive`, `--directories`) and names no directory; a grep word written with `$'..'`, `$".."`, a backslash, or a double quote holding `$` (other than a leading `$HOME/`) or a backtick ends the allow.
 
 ### Child `npm ci` ask text
 
@@ -532,7 +532,7 @@ The ask for a child's `npm ci` that carries a pipe, chain, background or flags s
 Effect class `net-read`, label `net-read`, decided deterministically for foremen and children (`netread.ts`; the review link, the overlay and the timeout allow use the same predicate):
 
 - `gh`: `run view|list`, `pr view|list|checks|diff`, `issue view|list`, `repo view`, and `api <endpoint>` with GET only (no `-f`, `-F`, `--input`, header options or a non-GET method). Only the listed options per subcommand; a `--jq` expression that reads the environment, imports or reads input is refused.
-- `npm`: `view|info|search|ls` with `--json --depth N --all --long --parseable` and registry-name specs only (a name or version that npm reads as a tarball or file, such as `x.tgz` or `x@1.tgz`, asks).
+- `npm`: `view|info|search|ls` with `--json --depth N --all --long --parseable` and registry-name specs only (a name or version that npm reads as a tarball or file asks: a loose `.tgz`, `.tar`, `.tar<any char>gz` such as `x.tar-gz`, `.tar.bz2` or `.zip` ending, or a version starting with `.`; the same ending test applies to `search` terms).
 - `curl`: plain GET/HEAD with a fixed flag list (`-s -S -f -I -i -L -v` and their long forms), checked `http(s)` URLs on any host (no host list), no data, upload, config or `@file` option; output (`-o`/`-O`) only into the session scratch dir (orchestrators) or the role scratch dir (children).
 - `wget` (orchestrators only): exactly `wget -q -O - <url>` or `wget -q --spider <url>`.
 
@@ -540,7 +540,7 @@ In the child deny branch a network read is no write: its output file lies in the
 
 ### Handoff files an orchestrator writes (R31c)
 
-An orchestrator may write `plan.md`, `result.md`, `update*.md` and `ask*.md` in its own handoff dir (the dir where it is the child role) by any means, a shell heredoc included. The command must be exactly one `cat > T <<'D'` / `cat >> T <<'D'` / `cat <<'D' > T` / `cat <<'D' >> T` heredoc (POSIX shell tools) whose body runs to the one terminator line `D`, the last line; the body is never lexed. `T` has no `..`, lies directly in that dir (no symlinked spelling), is no symlink, has a single link when it exists, and has exactly such a name. A write in a parent-role dir needs no lift. The parent files (`ruling*`, `brief*`, `steer*`, `parent`) and the `child` files stay write-protected for everyone; children get no new write right.
+An orchestrator may write `plan.md`, `result.md`, `update*.md` and `ask*.md` in its own handoff dir (the dir where it is the child role) by any means, a shell heredoc included. The command must be exactly one `cat > T <<'D'` / `cat >> T <<'D'` / `cat <<'D' > T` / `cat <<'D' >> T` heredoc (POSIX shell tools) whose body runs to the one terminator line `D`, the last line; the body is never lexed. A command holding a CR or NUL byte is no handoff write. `T` has no `..`, lies directly in that dir (no symlinked spelling), is no symlink, has a single link when it exists, and has exactly such a name. A write in a parent-role dir needs no lift. The parent files (`ruling*`, `brief*`, `steer*`, `parent`) and the `child` files stay write-protected for everyone; children get no new write right.
 
 ## Known limits
 
