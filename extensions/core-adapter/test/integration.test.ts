@@ -16,7 +16,7 @@ import { evaluateRun, translateToolCall } from "../translate.ts";
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const coreDir = [process.env.PI_FOREMAN_TEST_CORE, path.join(repo, "core")].find((d) => d && fs.existsSync(path.join(d, "scripts", "destructive_guard.py")));
 const py = await resolvePython({ envPath: process.env.PI_FOREMAN_PYTHON, platform: process.platform, spawner: defaultSpawner });
-const skip = !coreDir ? "no core checkout" : !py.ok ? "no Python >= 3.9" : false;
+const skip = !coreDir ? "no core checkout" : !py.ok ? "no Python >= 3.13" : false;
 
 async function decide(command: string) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pf-int-"));

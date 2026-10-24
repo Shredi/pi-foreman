@@ -37,7 +37,7 @@ const py = await resolvePython({ envPath: process.env.PI_FOREMAN_PYTHON, platfor
 // The planted filter is a `sh -c` marker command; Windows hosts may have no sh.
 const skipReal = !hasGit ? "no git" : process.platform === "win32" ? "sh marker filter" : false;
 
-test("HIGH-1: foreman_move is drift-gated; a planted clean filter does not run without approval", { skip: skipReal || (!py.ok ? "no Python >= 3.9" : false) }, async (t) => {
+test("HIGH-1: foreman_move is drift-gated; a planted clean filter does not run without approval", { skip: skipReal || (!py.ok ? "no Python >= 3.13" : false) }, async (t) => {
   const dir = tmp(t, "pf-h1-");
   g(dir, "init", "-q");
   fs.writeFileSync(path.join(dir, ".gitattributes"), "*.txt filter=pf\n");

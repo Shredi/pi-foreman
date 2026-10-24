@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""pi-foreman config loader, validator and settings generator (stdlib, 3.9+).
+"""pi-foreman config loader, validator and settings generator (stdlib, 3.13+).
 
 Layers, in merge order (plain last-wins for every key, objects deep-merge,
 scalars and lists are replaced):

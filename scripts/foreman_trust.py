@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pi's project-trust store for round worktrees (stdlib, 3.9+).
+"""Pi's project-trust store for round worktrees (stdlib, 3.13+).
 
 Pi asks "Trust project folder?" when it starts in a folder with project resources (`.pi/*`, `.agents/skills`)
 and no decision is stored. The store is `<agent dir>/trust.json`: absolute path -> true / false / null, looked up

@@ -64,7 +64,7 @@ test("destructive guard fails closed: missing python, timeout, crash, garbage", 
     assert.match(t.result!.reason, /pi-foreman: destructive guard could not run/);
   }
   const noPy = await translateToolCall({ guard: "destructive_guard", outcome: evaluateRun("destructive_guard", cases[0], null), piTool: "bash", input: {}, ask: tui });
-  assert.match(noPy.result!.reason, /no Python ≥ 3\.9 found\). Install Python 3\.9\+ or set python\.path \/ PI_FOREMAN_PYTHON; run \/foreman doctor\./);
+  assert.match(noPy.result!.reason, /no Python ≥ 3\.13 found\). Install Python 3\.13\+ or set python\.path \/ PI_FOREMAN_PYTHON; run \/foreman doctor\./);
 });
 
 test("runGuard maps a 5 s timeout and a spawn error to failures", async () => {

@@ -134,7 +134,7 @@ test("a child session gets no branch move (null) even on a clean tree", async ()
   }
 });
 
-test("real script: the branch-move shapes are refused by the guard (so the adapter is reached), branch -f and fetch are not", { skip: !py.ok ? "no Python >= 3.9" : false }, async () => {
+test("real script: the branch-move shapes are refused by the guard (so the adapter is reached), branch -f and fetch are not", { skip: !py.ok ? "no Python >= 3.13" : false }, async () => {
   const f = fixture();
   try {
     const python = py.ok ? py.info.executable : null;
