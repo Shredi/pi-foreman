@@ -23,9 +23,10 @@
 # a session label colours its line too. "!" after the age marks a session
 # blocked for more than 15 minutes, so that rule comes first. First match wins.
 # The hex values are placeholders: pick the ones that suit your theme.
-# Rows are always flush left: the plugin draws the tree itself (the connectors
-# and the blank cells U+2800 that keep Herdr from trimming them), so do not put
-# a state_icon or other cell in front of $fm_hd.
+# The plugin draws the tree itself (the connectors and the blank cells U+2800
+# that keep Herdr from trimming them), so do not put a state_icon or other cell
+# in front of $fm_hd. Herdr 0.9.3 draws every row after the first 2 cells to the
+# right; $fm_hd starts with 2 blank cells so the tree lines still meet.
 
 [ui.sidebar.agents.rows_by_agent]
 pi = [
