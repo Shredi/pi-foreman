@@ -9,8 +9,9 @@ export const TRACE_FIELDS = ["ts", "event", "role", "toolFamily", "guard", "deci
 export type TraceField = (typeof TRACE_FIELDS)[number];
 export type TraceRecord = Partial<Record<TraceField, string | number | boolean | null>>;
 
-// `surface` (R18 `dialog` records: permission|child|checkpoint|ask_user|drift) is allowed beside the pinned TRACE_FIELDS list.
-const ALLOWED = new Set<string>([...TRACE_FIELDS, "surface"]);
+// `surface` (R18 `dialog` records: permission|child|checkpoint|ask_user|drift) is allowed beside the pinned TRACE_FIELDS list, as are
+// `code` and `attempts` (`hint_write_failed`: the rename error code and the attempts made).
+const ALLOWED = new Set<string>([...TRACE_FIELDS, "surface", "code", "attempts"]);
 const MAX_STRING = 120;
 const MAX_COMMAND = 200; // a denied command (lane 3h)
 /** `command` is kept only on a deny trace: a refused launch, a read/recheck budget deny, an overlay deny. */

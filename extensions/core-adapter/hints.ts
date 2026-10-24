@@ -120,11 +120,49 @@ export class HintLog {
   }
 }
 
+/** Rename errors that Windows gives while another process holds the ledger open (a test poll, antivirus, an editor). */
+const RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+/** Sleep before each retry, ms: 8 rename attempts, 127 ms in all. */
+const BACKOFF_MS = [1, 2, 4, 8, 16, 32, 64];
+
+/** A hint the ledger did not take: the error code of the failing step and the rename attempts made. */
+export interface HintFailure {
+  code: string;
+  attempts: number;
+}
+
+export interface HintWriteOpts {
+  /** Date of the hint line (default: now). */
+  now?: Date;
+  /** The rename (default fs.renameSync); injected by tests. */
+  rename?: (from: string, to: string) => void;
+  /** Called once when the hint could not be written; the ledger is left as it was. */
+  onFail?: (f: HintFailure) => void;
+}
+
+/**
+ * fs.renameSync with a bounded, synchronous retry on the sharing errors (EPERM, EACCES, EBUSY). Any
+ * other error, or the last retryable one, is returned with the attempts made.
+ */
+export function renameRetry(from: string, to: string, rename: (a: string, b: string) => void = fs.renameSync): { attempts: number; error?: NodeJS.ErrnoException } {
+  for (let attempts = 1; ; attempts++) {
+    try {
+      rename(from, to);
+      return { attempts };
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (!RETRY_CODES.has(e.code ?? "") || attempts > BACKOFF_MS.length) return { attempts, error: e };
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, BACKOFF_MS[attempts - 1]);
+    }
+  }
+}
+
 /**
  * Write a hint under the cited items of the ledger file (V when none is cited or found). Best
- * effort: an unreadable or vanished ledger is skipped. Returns the item ids that got the hint.
+ * effort: an unreadable or vanished ledger is skipped. Returns the item ids that got the hint. A
+ * write that fails after the retries is reported through `opts.onFail`, never swallowed.
  */
-export function writeHint(ledgerPath: string | null, cited: readonly string[], text: string, log?: HintLog, now = new Date()): string[] {
+export function writeHint(ledgerPath: string | null, cited: readonly string[], text: string, log?: HintLog, opts: HintWriteOpts = {}): string[] {
   if (!ledgerPath) return [];
   let file: string;
   try {
@@ -132,26 +170,31 @@ export function writeHint(ledgerPath: string | null, cited: readonly string[], t
   } catch {
     return [];
   }
-  const hint = hintText(now.toISOString().slice(0, 10), text);
+  const hint = hintText((opts.now ?? new Date()).toISOString().slice(0, 10), text);
   const r = addHints(file, hintTargets(cited, file), hint);
   if (!r.added.length) return [];
   const tmp = path.join(path.dirname(ledgerPath), `.ledger-hint-${process.pid}-${Date.now()}.tmp`);
-  try {
-    fs.writeFileSync(tmp, r.file, "utf8");
-    try {
-      fs.chmodSync(tmp, fs.statSync(ledgerPath).mode & 0o7777);
-    } catch {
-      // keep the default mode
-    }
-    fs.renameSync(tmp, ledgerPath);
-  } catch {
+  const fail = (err: unknown, attempts: number): string[] => {
     try {
       fs.rmSync(tmp, { force: true });
     } catch {
       // best effort
     }
+    opts.onFail?.({ code: (err as NodeJS.ErrnoException).code ?? "UNKNOWN", attempts });
     return [];
+  };
+  try {
+    fs.writeFileSync(tmp, r.file, "utf8");
+  } catch (err) {
+    return fail(err, 1);
   }
+  try {
+    fs.chmodSync(tmp, fs.statSync(ledgerPath).mode & 0o7777);
+  } catch {
+    // keep the default mode
+  }
+  const res = renameRetry(tmp, ledgerPath, opts.rename);
+  if (res.error) return fail(res.error, res.attempts);
   for (const id of r.added) log?.push(id, hint);
   return r.added;
 }
