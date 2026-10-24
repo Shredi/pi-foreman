@@ -241,6 +241,10 @@ Not in v1. The equivalents would be tmux `new-window -c DIR -n LABEL CMD` and Wi
 A `foreman_session` model tool as an opt-in of the user layer. The functions behind the commands take plain
 dependencies so a tool could call them; none is registered.
 
+## Remote child sessions
+
+`foreman session open <label> <brief> --machine <name> --cwd <dir on that machine> [--trust]` opens the child on a machine saved in Herdr, over SSH. The machine must be a key of `sessions.machines` (user or overlay config only); each entry may set `sessions.machines.<name>.foremanCommand` (the foreman command on that machine, no spaces) and `sessions.machines.<name>.parentName` (this machine's name there). `sessions.remoteInlineMaxBytes` (default 32768, at most 49152) caps the result text a remote child's notice carries inline; a project or session can only lower it. The remote side runs `foreman session remote probe|open|deliver --json`. The full description is still to come.
+
 ## Commands
 
 In a Pi session (the foreman, not children):

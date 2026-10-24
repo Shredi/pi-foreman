@@ -103,6 +103,8 @@ Keys outside safety that the project and session layers cannot loosen either
     close.autoClean                  only false is accepted (true removes worktrees and scratch at close)
     close.worktreeDir                ignored (the worktree convention: L1/L3/L2 only)
     close.childWaitMs                ignored (how long a close waits for child sessions: L1/L3/L2 only)
+    sessions.machines                ignored (the machines a session may open on over SSH: user or overlay config only)
+    sessions.remoteInlineMaxBytes    lower only, minimum 1024 (a higher cap sends more of a remote result inline)
     compaction.threshold.<tier>      lower only, minimum 0.3 (a higher threshold compacts later)
     wait.maxSeconds, wait.maxActive  lower only, minimum 1
     roles.*.timeoutMinutes           lower only (a higher limit lets a child run longer)
@@ -214,6 +216,7 @@ IGNORED_KEYS = [
     (("retro", "panelThreshold"), "the panel threshold comes from the user or overlay config"),
     (("close", "worktreeDir"), "the worktree convention comes from the user or overlay config"),
     (("close", "childWaitMs"), "the child close wait comes from the user or overlay config"),
+    (("sessions", "machines"), "the machines a session may open on over SSH come from the user or overlay config"),
     (("ceremony", "checkpoint"), "who approves the plan checkpoint comes from the user or overlay config"),
     (("ceremony", "reviewModel"), "the fallback reviewer model comes from the user or overlay config"),
     (("ceremony", "reviewByOccasion"), "the per-occasion reviewer overrides come from the user or overlay config"),
@@ -272,6 +275,7 @@ LAYER_TIGHTEN = [
     (("wait", "ci"), "false_only"),
     (("close", "from"), "intersect"),
     (("close", "autoClean"), "false_only"),
+    (("sessions", "remoteInlineMaxBytes"), "lower_only"),
     (("compaction", "threshold", "*"), "lower_only_number"),
     (("wait", "maxSeconds"), "lower_only"),
     (("wait", "maxActive"), "lower_only"),
@@ -285,7 +289,7 @@ LAYER_TIGHTEN = [
 LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
                  "threshold": 0.3, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0,
                  "windowMinutes": 1, "childTimeoutSeconds": 1, "launchTimeoutCapMinutes": 1, "reviewRuns": 1, "budgetUsd": 0.01,
-                 "maxLoadPerCore": 0.01}
+                 "maxLoadPerCore": 0.01, "remoteInlineMaxBytes": 1024}
 # lower_only values with no earlier layer value may not exceed this (the built-in default).
 LAYER_CAP = {"windowMinutes": 45, "launchTimeoutCapMinutes": 120}
 # Built-in cache policy per provider (mirrors BUILTIN_CACHE in extensions/core-adapter/cachepolicy.ts).
@@ -700,7 +704,18 @@ def semantic_issues(cfg):
                         issues.append(("error", path, "%s: invalid regular expression %r (%s)" % (path, pat, exc)))
     issues.extend(pr_host_issues((cfg.get("tools") or {}).get("prHost")))
     issues.extend(mcp_deny_issues(cfg))
+    sessions = cfg.get("sessions")
+    issues.extend(machine_issues(sessions.get("machines") if isinstance(sessions, dict) else None))
     return issues
+
+
+MACHINE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def machine_issues(machines):
+    """sessions.machines keys are Herdr saved-machine names (the schema cannot constrain map keys)."""
+    return [("error", "sessions.machines." + str(k), "sessions.machines: %r is not a valid machine name (A-Z a-z 0-9 . _ -, at most 64, starting with a letter or digit)" % (k,))
+            for k in (machines if isinstance(machines, dict) else {}) if not MACHINE_NAME_RE.match(str(k))]
 
 
 def mcp_deny_issues(cfg):

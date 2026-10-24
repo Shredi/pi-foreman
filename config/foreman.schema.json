@@ -384,6 +384,25 @@
         "groupTag": { "type": "boolean", "description": "Tag opened sessions' Herdr panes with their parent and the parent's pane with its child count." }
       }
     },
+    "sessions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machines": {
+          "type": "object",
+          "description": "Machines `foreman session open --machine` may open a child on, keyed by the Herdr saved-machine name (A-Z a-z 0-9 . _ -, at most 64 characters, starting with a letter or digit). User or overlay config only.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "foremanCommand": { "type": "string", "pattern": "^[A-Za-z0-9._:/\\\\][A-Za-z0-9._:/\\\\-]{0,199}$", "description": "The foreman command on the remote machine, run over SSH (default `foreman`); no spaces, no leading dash. Use an absolute path when the SSH PATH does not hold it." },
+              "parentName": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", "description": "This machine's name as the remote machine's Herdr and pi-intercom know it (default: pi-intercom's `crossMachine.machineName`, else the lowercased short hostname)." }
+            }
+          }
+        },
+        "remoteInlineMaxBytes": { "type": "integer", "minimum": 1024, "maximum": 49152, "description": "Bytes of a result or plan a remote child's notice carries inline (default 32768); a project or session can only lower it." }
+      }
+    },
     "compaction": {
       "type": "object",
       "additionalProperties": false,
