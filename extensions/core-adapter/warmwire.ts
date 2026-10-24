@@ -28,6 +28,8 @@ export interface WarmWireOpts {
   piIdleMode(): boolean;
   /** Idle-floor gate + ctx.compact (idleCompact in index.ts). */
   compact(): { tier: string; model: string | null } | null;
+  /** Context tokens of the foreman session (compactMinTokens gate). */
+  contextTokens?(): number | null;
 }
 
 export function createWarm(o: WarmWireOpts): { presence: Presence; selfWarm: SelfWarm } {
@@ -57,6 +59,7 @@ export function createWarm(o: WarmWireOpts): { presence: Presence; selfWarm: Sel
     busy: () => o.busy(),
     piIdleMode: () => o.piIdleMode(),
     compact: () => o.compact(),
+    contextTokens: o.contextTokens,
     trace: (r) => o.trace(r),
     rates: (promptTokens) => {
       const ctx = o.ctx();

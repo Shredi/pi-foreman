@@ -24,6 +24,7 @@ Built-in values exist for `claude-bridge` (`ttlSeconds` 300, `billing` `token`) 
 | `providers.<p>.cache.keepalive.whileWaiting` | true | Child runs, waits and launch waits no longer stop the warms. |
 | `providers.<p>.cache.keepalive.beyondPiCap` | true | pi-foreman sends the warms itself where Pi stops (TTL above about 33 minutes); needs `keepalive.enabled`. |
 | `providers.<p>.cache.keepalive.selfWarmWindowMinutes` | `max(45, 3 x TTL minutes)` | Minutes of idleness after which the self-sent warms stop (1..1440). |
+| `providers.<p>.cache.keepalive.compactMinTokens` | 100000 | Smallest context (tokens) at which a warm compaction runs; 0 = no minimum. |
 | `providers.<p>.cache.warmCompact` | true | Warm the cache after a compaction. |
 | `presence.enabled` | true | Probe the idle input time for the presence gate. |
 | `presence.awayAfterMinutes` | 11 | Minutes without keyboard or mouse input after which the owner counts as away (1..1440). |
@@ -47,7 +48,7 @@ The request-billed rows document the TTL a `byModel` row such as `{"match": "gpt
 
 ## Layers
 
-The user and overlay layers may set every cache key. The project and session layers can only tighten: `keepalive.enabled`, `keepalive.whileWaiting` and `keepalive.beyondPiCap` accept only `false`; `keepalive.windowMinutes` only a lower value (minimum 1; with no earlier value, at most 45); `keepalive.budgetShare` only a lower value (at most 0.5), `keepalive.awayTicks` only a lower value (at most 0) and `keepalive.selfWarmWindowMinutes` only a lower value (at most its default); `presence.enabled` accepts only `true` (more gating is the tightening direction), `presence.awayAfterMinutes` only a lower value (at most 11). `presence.command` (it runs a program), `ttlSeconds`, `billing`, `keepalive.intervalSeconds` and `warmCompact` are ignored there. An ignored or loosening value is dropped with a warning, and a `cache` or `keepalive` value that is not an object is dropped with an "expected an object" warning.
+The user and overlay layers may set every cache key. The project and session layers can only tighten: `keepalive.enabled`, `keepalive.whileWaiting` and `keepalive.beyondPiCap` accept only `false`; `keepalive.windowMinutes` only a lower value (minimum 1; with no earlier value, at most 45); `keepalive.budgetShare` only a lower value (at most 0.5), `keepalive.awayTicks` only a lower value (at most 0) and `keepalive.selfWarmWindowMinutes` only a lower value (at most its default); `keepalive.compactMinTokens` only a higher value (at least 100000 without an earlier value); `presence.enabled` accepts only `true` (more gating is the tightening direction), `presence.awayAfterMinutes` only a lower value (at most 11). `presence.command` (it runs a program), `ttlSeconds`, `billing`, `keepalive.intervalSeconds` and `warmCompact` are ignored there. An ignored or loosening value is dropped with a warning, and a `cache` or `keepalive` value that is not an object is dropped with an "expected an object" warning.
 
 ## Keep-alive
 
@@ -111,6 +112,8 @@ The last warm read can be spent on a compaction, so the summary call reads a war
 Below the floor the session goes cold uncompacted. After a compaction the idle counts as cold. The floor is half the tier threshold (`compaction.threshold.<class>`): `turn_end` already compacts at the full threshold, so an idle session is always below it, and a floor at the full value would never fire.
 
 Gates, in order: `warmCompact` on, no compaction yet in this idle, not busy, not cold (the last cache read or answer is younger than 95% of the TTL), context usage over the floor. A gate that fails ends nothing; it traces `keepalive window_end` with its reason (below), except for the budget and away triggers, where it traces `keepalive skipped` with that reason. When all pass, the adapter starts the compaction and traces `compaction {reason: "warm_idle", tier, model}`. The compaction takes the normal `session_before_compact` path (ledger digest, retro at compaction), and the window then ends with reason `compact`.
+
+**Minimum context.** `keepalive.compactMinTokens` (integer >= 0, default 100000, 0 = no minimum) keeps warm compaction off small contexts: compacting loses detail for little saving, and a cold reload of a small context is cheap. It is checked after the gates above and before the compaction starts, on all three triggers (`budget`, `away` and `window`; the `window` trigger exists for the near expiry of Pi's warm window, not for a near-full context, so the same minimum applies). Below it nothing is compacted, the session goes cold as after a declined gate (the idle model downshift still applies) and the adapter traces `compaction_skipped {reason: "below_min", tokens, min}`. A project or session can only raise the key.
 
 The savings of the warm summary call are not yet measured. Through the bridge the summary call takes an isolated path, so its warm savings stay unmeasured there; the compaction still pays off through the smaller cold resume.
 

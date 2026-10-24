@@ -53,6 +53,8 @@ export interface IdleCacheDeps {
   busy(): Busy;
   trace(ev: Record<string, unknown>): void;
   /** Gate decideIdle + start ctx.compact; the tier and model to trace when it started, else null (below the floor). */
+  /** Context tokens for the compactMinTokens gate; absent or null = unknown. */
+  contextTokens?(): number | null;
   compact(): { tier: string; model: string | null } | null;
   setGlyph(on: boolean): void;
   syncKeepalives(): KeepaliveSync;
@@ -292,6 +294,7 @@ export class IdleCache {
       busy: () => busyFor(d.busy(), p),
       now,
       lastTouch: Math.max(this.lastKeepaliveAt ?? 0, d.lastAssistantAt() ?? 0, d.gate?.lastCacheTouch() ?? 0),
+      contextTokens: d.contextTokens ? () => d.contextTokens!() : undefined,
       compact: () => d.compact(),
       trace: (r) => d.trace(r),
       trigger: trigger ?? (p?.budgetShare !== undefined ? "window" : undefined),

@@ -735,6 +735,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | `providers.<x>.cache.keepalive.whileWaiting` | unset | tighten-only (only false is accepted) |
 | `providers.<x>.cache.keepalive.beyondPiCap` | unset | tighten-only (only false is accepted) |
 | `providers.<x>.cache.keepalive.selfWarmWindowMinutes` | unset | tighten-only (lower only, minimum 1, at most 180 without an earlier value) |
+| `providers.<x>.cache.keepalive.compactMinTokens` | unset | tighten-only (raise only, at least 100000 without an earlier value) |
 | `providers.<x>.cache.warmCompact` | unset | not in project/session (the cache policy comes from the user or overlay config) |
 | `presence.enabled` | `true` | tighten-only (only true is accepted) |
 | `presence.awayAfterMinutes` | `11` | tighten-only (lower only, minimum 1, at most 11 without an earlier value) |

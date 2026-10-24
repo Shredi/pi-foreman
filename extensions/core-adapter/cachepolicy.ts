@@ -33,6 +33,8 @@ export interface CachePolicy {
   /** pi-foreman sends the warms itself beyond Pi's idle cap (selfwarm.ts). Absent = off. */
   selfWarm?: boolean;
   selfWarmWindowMinutes?: number;
+  /** Smallest context (tokens) a warm compaction runs at; 0 = no minimum. Absent = 0. */
+  compactMinTokens?: number;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -114,5 +116,6 @@ export function resolveWarmPolicy(config: unknown, provider: string | undefined 
     whileWaiting: typeof ka.whileWaiting === "boolean" ? ka.whileWaiting : true,
     selfWarm,
     selfWarmWindowMinutes: Math.trunc(clamp(ka.selfWarmWindowMinutes, 1, 1440, fallbackWindow)),
+    compactMinTokens: Math.trunc(clamp(ka.compactMinTokens, 0, Number.MAX_SAFE_INTEGER, 100000)),
   };
 }

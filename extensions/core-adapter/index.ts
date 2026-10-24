@@ -563,7 +563,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const computeOwned = (npmRoot: string | null): OwnedRoots => ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot });
     const owned = computeOwned(null);
     const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o) : null);
-    const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), busy: () => idleBusy(s, s.idleCtx), piIdleMode: () => piCacheWarmingIdle(), compact: () => idleCompact(s) });
+    const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), busy: () => idleBusy(s, s.idleCtx), piIdleMode: () => piCacheWarmingIdle(), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null });
     const s: Session = {
       id,
       cwd,
@@ -667,6 +667,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         busy: () => idleBusy(s, s.idleCtx),
         trace: (r) => s.trace?.emit(r),
         compact: () => idleCompact(s),
+        contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null,
         setGlyph: (on) => {
           if (s.idleCtx) idleBind = { s, ctx: s.idleCtx };
           idleModel.setWarming(on);

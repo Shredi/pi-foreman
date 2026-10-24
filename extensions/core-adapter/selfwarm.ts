@@ -33,6 +33,8 @@ export interface SelfWarmDeps {
   rates(promptTokens: number): Rates | null;
   /** The compaction gate behind ctx.compact (idle floor, latch); null = below the floor. */
   compact(): { tier: string; model: string | null } | null;
+  /** Context tokens for the compactMinTokens gate; absent or null = unknown. */
+  contextTokens?(): number | null;
   trace(r: Record<string, unknown>): void;
   /** Pi's `cacheWarming` setting is "idle" (absent = true; Pi sends no hook and no warm otherwise, and neither does this class). */
   piIdleMode?(): boolean;
@@ -248,7 +250,7 @@ export class SelfWarm implements WarmGate {
     if (this.compactedForIdle) return;
     const d = this.deps;
     const p = d.policy();
-    if (warmCompact({ policy: p, alreadyCompacted: false, busy: () => this.isBusy(), now: d.now(), lastTouch: this.touch ?? 0, compact: () => d.compact(), trace: (r) => d.trace(r), trigger, skipOutcome: "skipped" })) this.compactedForIdle = true;
+    if (warmCompact({ policy: p, alreadyCompacted: false, busy: () => this.isBusy(), now: d.now(), lastTouch: this.touch ?? 0, contextTokens: d.contextTokens ? () => d.contextTokens!() : undefined, compact: () => d.compact(), trace: (r) => d.trace(r), trigger, skipOutcome: "skipped" })) this.compactedForIdle = true;
   }
 
   /** A running turn or a queued message; children, waits and launch waits too unless the policy warms while waiting. */

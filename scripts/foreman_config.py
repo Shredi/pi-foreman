@@ -55,6 +55,7 @@ Keys outside safety that the project and session layers cannot loosen either
     providers.*.cache.keepalive.budgetShare   lower only (at most 0.5 without an earlier value)
     providers.*.cache.keepalive.awayTicks   lower only (at most 0 without an earlier value)
     providers.*.cache.keepalive.selfWarmWindowMinutes   lower only, minimum 1 (at most 180 without an earlier value)
+    providers.*.cache.keepalive.compactMinTokens   higher only (at least 100000 without an earlier value)
     ladder.idleDownshift.enabled     only false is accepted; .causes: intersect (a project can only remove causes)
     providers.*.cache.keepalive.whileWaiting / beyondPiCap   only false is accepted
     providers.*.roles.*.idle         ignored (picks the model of a cold idle turn; L1/L3/L2 only)
@@ -256,6 +257,7 @@ LAYER_TIGHTEN = [
     (("providers", "*", "cache", "keepalive", "budgetShare"), "lower_only_number"),
     (("providers", "*", "cache", "keepalive", "awayTicks"), "lower_only"),
     (("providers", "*", "cache", "keepalive", "selfWarmWindowMinutes"), "lower_only"),
+    (("providers", "*", "cache", "keepalive", "compactMinTokens"), "higher_only"),
     (("providers", "*", "cache", "keepalive", "whileWaiting"), "false_only"),
     (("providers", "*", "cache", "keepalive", "beyondPiCap"), "false_only"),
     (("presence", "enabled"), "true_only"),
@@ -309,6 +311,8 @@ LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
 # lower_only values with no earlier layer value may not exceed this (the built-in default).
 LAYER_CAP = {"windowMinutes": 45, "launchTimeoutCapMinutes": 120, "budgetShare": 0.5, "awayTicks": 0,
              "selfWarmWindowMinutes": 180, "awayAfterMinutes": 11}
+# higher_only values with no earlier layer value may not fall below this (the built-in default).
+LAYER_FLOOR = {"compactMinTokens": 100000}
 # Built-in cache policy per provider (mirrors BUILTIN_CACHE in extensions/core-adapter/cachepolicy.ts).
 BUILTIN_CACHE = {
     "claude-bridge": {"ttlSeconds": 300, "billing": "token"},
@@ -412,6 +416,8 @@ def _tighten_pattern(node, base, keys, rule, done, who, warnings, minimum=0):
                 why = "below the minimum 0"
             elif isnum(have) and val < have:
                 why = "it would loosen the policy"
+            elif not isnum(have) and val < LAYER_FLOOR.get(name, val):
+                why = "below the default %g" % LAYER_FLOOR[name]
             else:
                 continue
         else:  # lower_only, lower_only_number
@@ -1485,7 +1491,7 @@ def cache_policy(config, provider, model=None):
 def warm_policy(config, provider, model=None):
     """cache_policy plus the warm-policy fields (mirrors resolveWarmPolicy in cachepolicy.ts).
 
-    -> cache_policy's keys and budgetShare, awayTicks, whileWaiting, selfWarm, selfWarmWindowMinutes, or None.
+    -> cache_policy's keys and budgetShare, awayTicks, whileWaiting, selfWarm, selfWarmWindowMinutes, compactMinTokens, or None.
     """
     base = cache_policy(config, provider, model)
     if base is None:
@@ -1509,6 +1515,7 @@ def warm_policy(config, provider, model=None):
         "whileWaiting": ka.get("whileWaiting") if isinstance(ka.get("whileWaiting"), bool) else True,
         "selfWarm": self_warm,
         "selfWarmWindowMinutes": int(clamp(ka.get("selfWarmWindowMinutes"), 1, 1440, default_window)),
+        "compactMinTokens": int(clamp(ka.get("compactMinTokens"), 0, 2 ** 53 - 1, 100000)),
     })
     return out
 

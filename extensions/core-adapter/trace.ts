@@ -11,7 +11,7 @@ export type TraceRecord = Partial<Record<TraceField, string | number | boolean |
 
 // `surface` (R18 `dialog` records: permission|child|checkpoint|ask_user|drift) is allowed beside the pinned TRACE_FIELDS list.
 // The warm-policy fields (budget, presence, self-warm source, compaction trigger) are allowed the same way: the pinned list stays as it is.
-const ALLOWED = new Set<string>([...TRACE_FIELDS, "surface", "source", "spent", "cold", "share", "idleSeconds", "trigger"]);
+const ALLOWED = new Set<string>([...TRACE_FIELDS, "surface", "source", "spent", "cold", "share", "idleSeconds", "trigger", "tokens", "min"]);
 const MAX_STRING = 120;
 const MAX_COMMAND = 200; // a denied command (lane 3h)
 /** `command` is kept only on a deny trace: a refused launch, a read/recheck budget deny, an overlay deny. */

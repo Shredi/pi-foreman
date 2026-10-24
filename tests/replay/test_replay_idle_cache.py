@@ -29,7 +29,8 @@ SCRIPT = {"*": {
 }}
 CONFIG = {
     "providers": {BRIDGE: {"cache": {"ttlSeconds": 20, "billing": "token",
-                                     "keepalive": {"enabled": True, "intervalSeconds": 30, "windowMinutes": 1},
+                                     "keepalive": {"enabled": True, "intervalSeconds": 30, "windowMinutes": 1,
+                                                   "compactMinTokens": 0},  # the fake contexts are tiny
                                      "warmCompact": True}}},
     "compaction": {"threshold": {"cheap": 0.6}},
 }

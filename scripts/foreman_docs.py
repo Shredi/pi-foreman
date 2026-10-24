@@ -211,6 +211,10 @@ def _rule_text(rule, keys):
         cap = next((fc.LAYER_CAP[k] for k in keys if k in fc.LAYER_CAP), None)
         if cap is not None:
             text += ", at most %g without an earlier value" % cap
+    if rule.startswith("higher_only"):
+        floor = next((fc.LAYER_FLOOR[k] for k in keys if k in fc.LAYER_FLOOR), None)
+        if floor is not None:
+            text += ", at least %g without an earlier value" % floor
     return text
 
 
