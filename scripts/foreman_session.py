@@ -67,9 +67,9 @@ import tempfile
 import time
 from pathlib import Path
 
-LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")
+LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}\Z")
 # Ids and model names (argv values that end up in the pane command).
-VALUE_RE = re.compile(r"^[A-Za-z0-9._:/@-]{1,200}$")
+VALUE_RE = re.compile(r"^[A-Za-z0-9._:/@-]{1,200}\Z")
 # Paths in the pane command: no quotes (also typographic ones, which PowerShell treats as quotes), no shell or
 # PowerShell metacharacters, no control chars.
 PATH_BAD = re.compile(r"[\x00-\x1f\x7f\u2018-\u201e'\"`$;|&<>(){}\[\]*?!#%^,]")
@@ -96,16 +96,16 @@ DISCOVERY_TIMEOUT = 5
 WIN_CMDLINE_MAX = 32000
 DEFAULT_INLINE_MAX = 32768
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-UUID_RE = re.compile("^" + UUID + "$")
+UUID_RE = re.compile("^" + UUID + r"\Z")
 SESSION_ID_IN_PATH = re.compile("_(" + UUID + r")\.jsonl$", re.I)
-MACHINE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-ADDRESS_RE = re.compile("^(" + UUID + ")@([A-Za-z0-9][A-Za-z0-9._-]{0,63})$")
-FOREMAN_CMD_RE = re.compile(r"^[A-Za-z0-9._:/\\][A-Za-z0-9._:/\\-]{0,199}$")
-TARGET_RE = re.compile(r"^[A-Za-z0-9._@:-]{1,200}$")
-HANDOFF_NAME_RE = re.compile(r"^\d{8}-\d{6}-[A-Za-z0-9._-]+$")
-DELIVER_NAMES = {"ruling": re.compile(r"^(ruling|ruling-plan|ruling-[1-9]\d{0,2})\.md$"),
-                 "steer": re.compile(r"^steer-[1-9]\d{0,2}\.md$"),
-                 "brief": re.compile(r"^brief-[1-9]\d{0,2}\.md$")}
+MACHINE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+ADDRESS_RE = re.compile("^(" + UUID + r")@([A-Za-z0-9][A-Za-z0-9._-]{0,63})\Z")
+FOREMAN_CMD_RE = re.compile(r"^[A-Za-z0-9._:/\\][A-Za-z0-9._:/\\-]{0,199}\Z")
+TARGET_RE = re.compile(r"^[A-Za-z0-9._@:-]{1,200}\Z")
+HANDOFF_NAME_RE = re.compile(r"^\d{8}-\d{6}-[A-Za-z0-9._-]+\Z")
+DELIVER_NAMES = {"ruling": re.compile(r"^(ruling|ruling-plan|ruling-[1-9]\d{0,2})\.md\Z"),
+                 "steer": re.compile(r"^steer-[1-9]\d{0,2}\.md\Z"),
+                 "brief": re.compile(r"^brief-[1-9]\d{0,2}\.md\Z")}
 NOTICE_FILES = {"plan": "plan.md", "result": "result.md", "update": "result.md", "ask": "ask.md"}
 NOTICE_HEADS = {"plan": "Plan", "result": "Result", "update": "Update", "ask": "Ask"}
 

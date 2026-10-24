@@ -120,7 +120,9 @@ def lines_of(path):
     return [json.loads(l) for l in path.read_text("utf-8").splitlines()] if path.exists() else []
 
 
-@unittest.skipIf(sys.platform == "win32", "fake ssh, herdr and node are POSIX scripts")
+posix_only = unittest.skipIf(sys.platform == "win32", "fake ssh, herdr and node are POSIX scripts")
+
+
 class RemoteBase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="session_remote_")).resolve()
@@ -293,6 +295,7 @@ class ConfigTest(unittest.TestCase):
         self.assertTrue(fd.switch_on(feature, self.load(l2={"sessions": {"machines": {"alpha": {}}}})["config"]))
 
 
+@posix_only
 class ProbeTest(RemoteBase):
     def probe(self, **env):
         return self.remote("probe", {"parentName": "beta", "parentAddress": ADDRESS}, **env)
@@ -367,6 +370,18 @@ class ProbeTest(RemoteBase):
         self.assertEqual((code, r["code"]), (1, "too_large"))
 
 
+class Win32LaunchTest(RemoteBase):
+    def test_win32_launch_line_is_the_powershell_form(self):
+        with mock.patch.object(fsn, "host_platform", return_value="win32"), mock.patch.object(fsn, "herdr_bin", return_value=None):
+            code, reply = self.remote("open", self.open_params())
+        self.assertEqual(code, 0)
+        self.assertEqual(reply["status"], "pending")
+        self.assertTrue(reply["launch"].startswith("$env:PI_FOREMAN_HANDOFF_DIR="), reply["launch"])
+        self.assertIn("$env:PI_FOREMAN_REMOTE_PARENT='1'", reply["launch"])
+        self.assertEqual((self.handoff(reply) / "launch.txt").read_text("utf-8").strip(), reply["launch"])
+
+
+@posix_only
 class RemoteOpenTest(RemoteBase):
     def test_open_writes_the_remote_handoff(self):
         reply = self.remote_open()
@@ -401,14 +416,6 @@ class RemoteOpenTest(RemoteBase):
         self.assertTrue(reply["launch"].startswith("env "), reply["launch"])
         self.assertEqual((self.handoff(reply) / "launch.txt").read_text("utf-8").strip(), reply["launch"])
         self.assertEqual(self.remote_registry()[0]["status"], "pending")
-
-    def test_win32_launch_line_is_the_powershell_form(self):
-        with mock.patch.object(fsn, "host_platform", return_value="win32"):
-            code, reply = self.remote("open", self.open_params(), FAKE_HERDR_DOWN="1")
-        self.assertEqual(code, 0)
-        self.assertTrue(reply["launch"].startswith("$env:PI_FOREMAN_HANDOFF_DIR="), reply["launch"])
-        self.assertIn("$env:PI_FOREMAN_REMOTE_PARENT='1'", reply["launch"])
-        self.assertEqual((self.handoff(reply) / "launch.txt").read_text("utf-8").strip(), reply["launch"])
 
     def test_dry_run_writes_nothing(self):
         code, reply = self.remote("open", self.open_params(dryRun=True))
@@ -475,6 +482,7 @@ class RemoteOpenTest(RemoteBase):
         self.assertFalse((self.radir / "trust.json").exists())
 
 
+@posix_only
 class DeliverTest(RemoteBase):
     def setUp(self):
         super().setUp()
@@ -568,6 +576,7 @@ class DeliverTest(RemoteBase):
         self.assertEqual(self.deliver(content=5)[1]["code"], "bad_request")
 
 
+@posix_only
 class ParentTest(RemoteBase):
     def ssh_calls(self):
         return lines_of(self.logs["ssh"])
@@ -709,8 +718,7 @@ class ParentTest(RemoteBase):
 
     def test_protocol_mismatch_names_both_values(self):
         err = self.refused(*self.open_args(), code="remote_protocol", FAKE_SSH_PROTOCOL="2")
-        self.assertIn("protocol 2", err)
-        self.assertIn("protocol 1" if "protocol 1" in err else "speaks 1", err)
+        self.assertIn("remote alpha speaks protocol 2, this side speaks 1;", err)
 
     def test_remote_refusals_are_passed_through(self):
         (self.rproj / ".pi").mkdir()
@@ -776,6 +784,7 @@ class ParentTest(RemoteBase):
         self.assertTrue(out.startswith("handoff: "))
 
 
+@posix_only
 class BriefTest(RemoteBase):
     def setUp(self):
         super().setUp()
@@ -864,7 +873,7 @@ class BriefTest(RemoteBase):
         self.assertEqual((rc, sent), (0, [("fm-loc-abc123", "hi there")]))
 
 
-class NoticeTest(RemoteBase):
+class NoticeBase(RemoteBase):
     def setUp(self):
         super().setUp()
         self.reply = self.remote_open()
@@ -880,6 +889,9 @@ class NoticeTest(RemoteBase):
     def sent(self):
         return lines_of(self.logs["node"])
 
+
+@posix_only
+class NoticeTest(NoticeBase):
     def test_result_notice(self):
         data = "# Result\n\nAll done \u2713\n".encode("utf-8")
         (self.dir / "result.md").write_bytes(data)
@@ -917,41 +929,6 @@ class NoticeTest(RemoteBase):
         code, r = self.notice("result")
         self.assertTrue(r["truncated"])
         self.assertEqual(len(self.sent()[0]["argv"][5].split("\n---\n", 1)[1]), 32768)
-
-    def test_win32_cut_keeps_the_command_line_under_the_limit(self):
-        self.write_config({}, {"sessions": {"remoteInlineMaxBytes": 49152}}, adir=self.radir)
-        data = b"x" * 49152
-        (self.dir / "result.md").write_bytes(data)
-        captured = []
-
-        def fake_run(argv, **kw):
-            captured.append(argv)
-            return subprocess.CompletedProcess(argv, 0, b"", b"")
-
-        with mock.patch.object(fsn, "host_platform", return_value="win32"), \
-                mock.patch.object(fsn.shutil, "which", return_value="C:/tools/node.exe"), \
-                mock.patch.object(fsn.subprocess, "run", side_effect=fake_run):
-            code, r = self.notice("result")
-        argv = captured[0]
-        self.assertEqual(code, 0)
-        self.assertLessEqual(len(subprocess.list2cmdline(argv)), 32000)
-        head = "Result from demo: %s sha256:%s bytes:%d truncated" % (self.dir / "result.md", r["sha256"], len(data))
-
-        def fits(n):  # the rule: the longest cut whose command line is within 32000 characters
-            text = "%s\n---\n%s" % (head, "x" * n)
-            return len(subprocess.list2cmdline(argv[:6] + [text])) <= 32000
-
-        body = len(argv[6].split("\n---\n", 1)[1])
-        self.assertTrue(fits(body) and not fits(body + 1), body)
-        self.assertTrue(r["truncated"])
-
-    def test_win32_node_must_be_an_exe(self):
-        (self.dir / "result.md").write_text("x", "utf-8")
-        with mock.patch.object(fsn, "host_platform", return_value="win32"), \
-                mock.patch.object(fsn.shutil, "which", return_value="C:/tools/node.cmd"):
-            code, r = self.notice("result")
-        self.assertEqual((code, r["code"]), (1, "node_shim"))
-        self.assertEqual(self.sent(), [])
 
     def test_closed_notice(self):
         code, r = self.notice("closed", "--close", "ready")
@@ -1030,9 +1007,55 @@ class NoticeTest(RemoteBase):
         self.assertEqual(self.run_main(*closed[4:])[0], 0)
         self.assertTrue(self.sent()[-1]["argv"][5].endswith("CLOSE: ready"))
 
+
+class NoticeWin32Test(NoticeBase):
+    """Patched-platform and pure-function cases: no fake POSIX executable runs, so they run on every platform."""
+
+    def setUp(self):
+        patch = mock.patch.object(fsn, "herdr_bin", return_value=None)  # the remote open is then pending, no herdr call
+        patch.start()
+        self.addCleanup(patch.stop)
+        super().setUp()
+
+    def test_win32_cut_keeps_the_command_line_under_the_limit(self):
+        self.write_config({}, {"sessions": {"remoteInlineMaxBytes": 49152}}, adir=self.radir)
+        data = b"x" * 49152
+        (self.dir / "result.md").write_bytes(data)
+        captured = []
+
+        def fake_run(argv, **kw):
+            captured.append(argv)
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+        with mock.patch.object(fsn, "host_platform", return_value="win32"), \
+                mock.patch.object(fsn.shutil, "which", return_value="C:/tools/node.exe"), \
+                mock.patch.object(fsn.subprocess, "run", side_effect=fake_run):
+            code, r = self.notice("result")
+        argv = captured[0]
+        self.assertEqual(code, 0)
+        self.assertLessEqual(len(subprocess.list2cmdline(argv)), 32000)
+        head = "Result from demo: %s sha256:%s bytes:%d truncated" % (self.dir / "result.md", r["sha256"], len(data))
+
+        def fits(n):  # the rule: the longest cut whose command line is within 32000 characters
+            text = "%s\n---\n%s" % (head, "x" * n)
+            return len(subprocess.list2cmdline(argv[:6] + [text])) <= 32000
+
+        body = len(argv[6].split("\n---\n", 1)[1])
+        self.assertTrue(fits(body) and not fits(body + 1), body)
+        self.assertTrue(r["truncated"])
+
+    def test_win32_node_must_be_an_exe(self):
+        (self.dir / "result.md").write_text("x", "utf-8")
+        with mock.patch.object(fsn, "host_platform", return_value="win32"), \
+                mock.patch.object(fsn.shutil, "which", return_value="C:/tools/node.cmd"):
+            code, r = self.notice("result")
+        self.assertEqual((code, r["code"]), (1, "node_shim"))
+        self.assertEqual(self.sent(), [])
+
     def test_footer_forms(self):
         for plan_first in (False, True):
-            text = fsn.remote_footer("demo", plan_first, 32768)
+            with mock.patch.object(fsn, "host_platform", return_value="win32"):
+                text = fsn.remote_footer("demo", plan_first, 32768)
             cmds = [l.strip() for l in text.splitlines() if " remote notice " in l]
             self.assertTrue(cmds)
             for c in cmds:
@@ -1044,6 +1067,24 @@ class NoticeTest(RemoteBase):
             self.assertIn("the owner closes this pane on this machine", text)
             self.assertIn("ruling-<n>.md", text)
             self.assertEqual("`ruling.md`" in text, plan_first)
+
+
+class TrailingNewlineTest(unittest.TestCase):
+    def test_validation_patterns_refuse_a_trailing_newline(self):
+        ok = {"MACHINE_RE": "alpha", "UUID_RE": PARENT, "ADDRESS_RE": ADDRESS, "FOREMAN_CMD_RE": "foreman",
+              "TARGET_RE": "alpha-host", "HANDOFF_NAME_RE": "20261024-120000-demo", "LABEL_RE": "demo", "VALUE_RE": "model-1"}
+        for name, value in ok.items():
+            rx = getattr(fsn, name)
+            self.assertTrue(rx.match(value), name)
+            self.assertIsNone(rx.match(value + "\n"), name)
+        for kind, value in ("ruling", "ruling.md"), ("ruling", "ruling-plan.md"), ("ruling", "ruling-2.md"), \
+                ("steer", "steer-1.md"), ("brief", "brief-3.md"):
+            self.assertTrue(fsn.DELIVER_NAMES[kind].match(value), value)
+            self.assertIsNone(fsn.DELIVER_NAMES[kind].match(value + "\n"), value)
+
+    def test_machine_keys_with_a_trailing_newline_are_refused(self):
+        self.assertEqual(fc.machine_issues({"alpha": {}}), [])
+        self.assertEqual(len(fc.machine_issues({"alpha\n": {}})), 1)
 
 
 if __name__ == "__main__":

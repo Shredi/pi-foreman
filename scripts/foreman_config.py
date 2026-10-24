@@ -709,7 +709,7 @@ def semantic_issues(cfg):
     return issues
 
 
-MACHINE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+MACHINE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 
 
 def machine_issues(machines):

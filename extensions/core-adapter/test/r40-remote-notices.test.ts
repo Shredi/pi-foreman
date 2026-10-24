@@ -293,6 +293,21 @@ test("session brief for a remote entry runs the script's brief, no intercom send
   assert.deepEqual(d.sent, [["fm-loc", "hello"]]);
 });
 
+test("session brief resolves the newest entry of a label of any kind: a newer local entry wins over an older remote one", async () => {
+  const agent = mk("brief-newest");
+  writeRegistry(agent, regOf(entry(agent), { label: "demo", child: "fm-demo-local", status: "open" }));
+  const d = deps(agent);
+  const r = await runSessionCommand(d, "brief demo hello");
+  assert.ok(r.ok);
+  assert.equal(d.spawned.length, 0);
+  assert.deepEqual(d.sent, [["fm-demo-local", "hello"]]);
+  writeRegistry(agent, regOf({ label: "demo", child: "fm-demo-local", status: "open" }, entry(agent)));
+  const d2 = deps(agent);
+  await runSessionCommand(d2, "brief demo hello");
+  assert.equal(d2.sent.length, 0);
+  assert.equal(d2.spawned.length, 1);
+});
+
 test("session close and closeChildren skip remote entries with the not-closed line", async () => {
   const agent = mk("close");
   const e = entry(agent);

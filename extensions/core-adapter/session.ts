@@ -307,8 +307,8 @@ async function sendTo(d: SessionDeps, to: string, message: string, what: string)
 
 export async function sessionBrief(d: SessionDeps, target: string, body: string): Promise<SessionResult> {
   const reg = readRegistry(d.agentDir);
-  const remote = [...reg.sessions].reverse().find((s) => (s.label === target || s.child === target) && typeof s.machine === "string");
-  if (remote) {
+  const newest = [...reg.sessions].reverse().find((s) => s.label === target || s.child === target); // as find_entry in the script
+  if (newest && typeof newest.machine === "string") {
     // a remote child is briefed over ssh by the script (`remote deliver`), not over the local intercom
     if (!d.python) return { text: "foreman_session.py: no usable Python (run /foreman doctor).", ok: false };
     const file = /\s/.test(body) ? body : path.resolve(d.cwd, body);
