@@ -327,3 +327,19 @@ test("session close and closeChildren skip remote entries with the not-closed li
   assert.equal(sent.length, 0);
   assert.equal(readRegistry(agent).sessions[0].status, "open");
 });
+
+// --plan-mode/--first-command/--focus with --machine: the TS side forwards them unchanged and the script refuses (remote_option) before any SSH; its text is passed through
+test("session open --machine forwards the flags the script refuses with remote_option; a local open with --plan-mode is unchanged", async () => {
+  const refusal = "pi-foreman session: refused [remote_option]: --plan-mode is not supported with --machine in this version";
+  const d = deps(mk("remote-option"), { commands: ["plan"], spawner: async (_c, args) => (d.spawned.push(args), { code: 1, stdout: "", stderr: refusal, timedOut: false }) });
+  const r = await runSessionCommand(d, "open demo b.md --machine alpha --cwd /home/u/p --plan-mode --first-command /x --focus");
+  assert.equal(r.ok, false);
+  assert.match(r.text, /\[remote_option\]: --plan-mode is not supported with --machine/);
+  const argv = d.spawned[0];
+  assert.ok(argv.includes("--plan-mode") && argv.includes("--focus"));
+  assert.equal(argv[argv.indexOf("--first-command") + 1], "/x");
+  const local = deps(mk("remote-option-local"), { commands: ["plan"] });
+  const ok = await runSessionCommand(local, "open demo b.md --plan-mode");
+  assert.ok(ok.ok);
+  assert.ok(local.spawned[0].includes("--plan-mode") && !local.spawned[0].includes("--machine"));
+});

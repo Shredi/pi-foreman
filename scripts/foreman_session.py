@@ -551,6 +551,9 @@ def open_in_herdr(binary, label, cwd, workspace_label, command, focus):
 
 def cmd_open(a):
     if getattr(a, "machine", None):
+        for flag, given in (("--plan-mode", a.plan_mode), ("--first-command", a.first_command), ("--focus", a.focus), ("--print-all", a.print_all)):
+            if given:
+                raise Refused("%s is not supported with --machine in this version" % flag, "remote_option")
         return cmd_open_remote(a)
     if getattr(a, "trust", False):
         raise Refused("--trust needs --machine")

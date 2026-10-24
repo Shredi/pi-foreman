@@ -1072,6 +1072,28 @@ class NoticeWin32Test(NoticeBase):
             self.assertEqual("`ruling.md`" in text, plan_first)
 
 
+class RemoteOptionTest(RemoteBase):
+    def test_unsupported_flags_are_refused_with_machine(self):
+        for flag in ("--plan-mode", "--first-command", "--focus", "--print-all"):
+            extra = (flag, "/x") if flag == "--first-command" else (flag,)
+            rc, out, err = self.run_main(*self.open_args(*extra))
+            self.assertEqual(rc, 1, flag)
+            self.assertIn("[remote_option]", err)
+            self.assertIn("%s is not supported with --machine" % flag, err)
+            self.assertEqual(lines_of(self.logs["ssh"]), [], flag)
+            self.assertEqual(lines_of(self.logs["herdr"]), [], flag)
+            self.assertEqual(self.parent_registry(), [], flag)
+            self.assertFalse((self.padir / "pi-foreman").exists(), flag)
+            self.assertFalse((self.radir / "pi-foreman").exists(), flag)
+
+    def test_local_open_with_plan_mode_still_works(self):
+        rc, out, err = self.run_main("open", "demo", str(self.brief), "--cwd", str(self.rproj), "--parent-id", PARENT,
+                                     "--plan-mode", "--dry-run")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("pi /plan ", out)
+        self.assertEqual(lines_of(self.logs["ssh"]), [])
+
+
 class TrailingNewlineTest(unittest.TestCase):
     def test_validation_patterns_refuse_a_trailing_newline(self):
         ok = {"MACHINE_RE": "alpha", "UUID_RE": PARENT, "ADDRESS_RE": ADDRESS, "FOREMAN_CMD_RE": "foreman",
