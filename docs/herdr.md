@@ -74,6 +74,15 @@ herdr agent list                   # within 60 s the pi pane carries the fm_* to
 touches the Agents view and exits 1 when a report failed. When nothing joined, the `joined 0 of …` line on stderr says
 why.
 
+`python3 sidebar.py sample [--pane <id>] [--variant pr|mixed] [--symbols <set>] [--width <n>] [--minutes <m>] [--dry-run] [--clear]`
+shows a synthetic session (live agents, a PR watch, an open ask, the pressure suffix and the PR dots: `pr` one dot per
+state, `mixed` PRs, an external item and `+3`) on one pane so you can judge the colour rules in the snippet live. The pane
+is `--pane`, else `HERDR_PANE_ID` (1 to 100 of `A-Za-z0-9._:-`, not `.` or `..`). It composes the session through the
+same code as real data, writes `sample/<pane>.json` (the session tokens and the expiry, default 10 minutes) into the
+plugin state folder and publishes once; while that file is fresh, `push` and the daemon use it for that pane instead of
+the real row, and the Agents view is untouched. `--clear` removes the file (the next push restores the real row), expiry
+does the same by itself, and `--dry-run` prints the sample for every glyph set (or the one `--symbols` names) and writes nothing.
+
 ## Rows
 
 The snippet adds five rows under `[ui.sidebar.agents.rows_by_agent]`, key `pi`, so only Pi panes use them; other
@@ -187,14 +196,14 @@ every 5 s by the session or, for a pane it does not push, the daemon; values are
 | `fm_a1` | agents (see Activity lines) |
 | `fm_a2` | tasks and watches |
 | `fm_a3` | waits and an open ask |
+| `fm_pr1`..`fm_pr4` | PR status dots, one cell each: a circle (`pr-fail`, `pr-run`, `pr-ok`, `pr-none` of the glyph set) and the label (`#21`), ordered red, yellow, green, unknown; cells that do not fit collapse into a last `+n` cell |
 | `fm_meta` | `↑in ↓out · $cost · ✓n` and the pressure suffix; `in` counts uncached input only (fresh input plus cache writes, from the usage file), `↑~n` marks the raw total incl. cache reads when no usage file has the split; radar and its JSON keep the raw total. When it does not fit, the `↑↓` counts drop as a whole first, then the text is cut; hidden below 20 columns |
 | `fm_state` | `working`, `waiting`, `asking`, `blocked`, `done` or `lost`, for your own rules |
 | `fm_block_s` | seconds blocked, set only while blocked, for your own `gt`/`lt` rules |
 | `fm_sort` | parent-first sort key (`r001`, `r001.c001`) |
 
-**Deprecated tokens** (still published with their old meaning, for rules of your own; the snippet does not use them and
-they go in a later round): `fm_sym` (static state glyph), `fm_l1` (tree prefix, `› label`, age), `fm_l2` (children),
-`fm_l3` (`↑in ↓out`), `fm_cost` (`$cost` and `✓n`).
+The older tokens `fm_sym`, `fm_l1`, `fm_l2`, `fm_l3` and `fm_cost` were removed in Round 53 (a pane takes at most 16 tokens);
+the daemon nulls them once at shutdown and on clears, and a session's final push nulls them too.
 
 Width: `--width`, else `HERDR_SIDEBAR_WIDTH`, else `ui.sidebar_width` from Herdr's `config.toml` (read only), else 26
 (Herdr's default). Herdr may auto-scale the panel between `ui.sidebar_min_width` and `ui.sidebar_max_width`; set the
@@ -209,7 +218,7 @@ daemon clears the `fm_*` keys of a Pi pane no session is joined to (once), so a 
 session does not show that session's row. When a session leaves radar its tokens are cleared at once; if the
 daemon dies they expire with the TTL.
 
-A pane whose push stamp is fresh but that carries no `fm_l1` (agent.list shows none) is composed by the daemon instead
+A pane whose push stamp is fresh but that carries no `fm_hd` (agent.list shows none) is composed by the daemon instead
 of staying blank.
 
 ## Who publishes what
@@ -230,7 +239,7 @@ next tick and the row never goes blank. `--clear` is for the hand smoke and the 
 found. Both publishers use the source `plugin:pi-foreman.sidebar`. Herdr token reports are per-key patches with a TTL
 per key (15 s here), so each publisher owns fixed keys and omits the others.
 
-| Session | Daemon | Session keys (`fm_hd` `fm_a1` `fm_a2` `fm_a3` `fm_meta`, the deprecated `fm_sym` `fm_l1` `fm_l2` `fm_l3` `fm_cost`, `fm_state` `fm_block_s`) |
+| Session | Daemon | Session keys (`fm_hd` `fm_a1` `fm_a2` `fm_a3` `fm_pr1`..`fm_pr4` `fm_meta` `fm_state` `fm_block_s`) |
 |---|---|---|
 | pushed under 15 s ago, radar sees it live | only `fm_sort`, and the tree layout (`layout.json` in the state folder, read by `push` for the `├─`/`└─` prefix) | published by the session |
 | older session without push, no push for 15 s (hung), lost, stale or done | every key, as before | not published |
@@ -250,7 +259,7 @@ turns the animation off everywhere: static glyphs in the sidebar and the widget.
 [sessions](sessions.md#further-session-keys).
 
 Recent runs: a run that ended shows as `✓ role` on line 2 for `radar.recentRunSeconds` (default 8), then moves into
-the `✓n` count. Tokens: line 3 counts uncached input (see `fm_l3`); radar's TUI and JSON keep the raw totals.
+the `✓n` count. Tokens: `fm_meta` counts uncached input (see its row above); radar's TUI and JSON keep the raw totals.
 
 Opened sessions: a registry entry (`sessions.json`) whose handoff dir matches a live session is merged into that node, so
 a working child shows once under its parent, never as a second `✗ lost` row. An `open` entry with a `result.md` and no

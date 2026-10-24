@@ -8,7 +8,7 @@ export type SymbolKey = "working" | "waiting" | "asking" | "blocked" | "done" | 
 export type SymbolSet = Record<SymbolKey, string> & { spinner: string[] };
 export type SetName = "unicode" | "nerd" | "emoji" | "ascii";
 /** Activity icons of the sidebar tree and the children widget. */
-export type ActivityKey = "agent" | "task" | "wait" | "ask" | "recent";
+export type ActivityKey = "agent" | "task" | "wait" | "ask" | "recent" | "pr-fail" | "pr-run" | "pr-ok" | "pr-none";
 /** Presence-state icons (livestate.ts PresenceName; `working` and `done` reuse their own keys). */
 export type PresenceKey = "waiting-owner" | "waiting-external" | "idle";
 
@@ -18,10 +18,10 @@ const BRAILLE = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", 
 
 /** The activity keys and spinner frames when config/symbols.json lacks them. */
 const EXTRA: Record<SetName, Record<ActivityKey, string> & { spinner: string[] }> = {
-  unicode: { spinner: BRAILLE, agent: "◆", task: "⚙", wait: "⧗", ask: "?", recent: "✓" },
-  emoji: { spinner: BRAILLE, agent: "🤖", task: "⚙️", wait: "⏳", ask: "❓", recent: "✅" },
-  nerd: { spinner: BRAILLE, agent: "\uf544", task: "\uf013", wait: "\uf252", ask: "\uf128", recent: "\uf00c" },
-  ascii: { spinner: ["|", "/", "-", "\\"], agent: ">", task: "=", wait: "~", ask: "?", recent: "+" },
+  unicode: { spinner: BRAILLE, agent: "◆", task: "⚙", wait: "⧗", ask: "?", recent: "✓", "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌" },
+  emoji: { spinner: BRAILLE, agent: "🤖", task: "⚙️", wait: "⏳", ask: "❓", recent: "✅", "pr-fail": "🔴", "pr-run": "🟡", "pr-ok": "🟢", "pr-none": "⚪" },
+  nerd: { spinner: BRAILLE, agent: "\uf544", task: "\uf013", wait: "\uf252", ask: "\uf128", recent: "\uf00c", "pr-fail": "\uf111", "pr-run": "\uf192", "pr-ok": "\uf10c", "pr-none": "\uf1db" },
+  ascii: { spinner: ["|", "/", "-", "\\"], agent: ">", task: "=", wait: "~", ask: "?", recent: "+", "pr-fail": "x", "pr-run": "*", "pr-ok": "o", "pr-none": "." },
 };
 
 const FALLBACK: Record<SetName, Omit<Record<SymbolKey, string>, "keepalive" | ActivityKey>> = {
@@ -45,6 +45,12 @@ function table(): Record<string, Partial<SymbolSet>> {
   return (cache = FALLBACK);
 }
 
+/** The built-in tables of every set, before config/symbols.json is spread over them. */
+export function builtinSymbols(): Record<SetName, SymbolSet> {
+  const one = (which: SetName) => ({ ...FALLBACK[which], keepalive: KEEPALIVE[which], ...EXTRA[which] }) as SymbolSet;
+  return { unicode: one("unicode"), emoji: one("emoji"), nerd: one("nerd"), ascii: one("ascii") };
+}
+
 /** The glyph set for a `ui.symbols` value; a missing glyph falls back to the built-in one. */
 export function symbolSet(name: unknown): SymbolSet {
   const which: SetName = name === "nerd" || name === "emoji" || name === "ascii" ? name : "unicode";
@@ -66,7 +72,7 @@ const WIDE: ReadonlyArray<readonly [number, number]> = [
   [0x26f5, 0x26f5], [0x26fa, 0x26fa], [0x26fd, 0x26fd], [0x2705, 0x2705], [0x270a, 0x270b], [0x2728, 0x2728],
   [0x274c, 0x274c], [0x274e, 0x274e], [0x2753, 0x2755], [0x2757, 0x2757], [0x2795, 0x2797], [0x27b0, 0x27b0],
   [0x27bf, 0x27bf], [0x2b1b, 0x2b1c], [0x2b50, 0x2b50], [0x2b55, 0x2b55], [0x2e80, 0xa4cf], [0xac00, 0xd7a3],
-  [0xf900, 0xfaff], [0xfe30, 0xfe6f], [0xff00, 0xff60], [0xffe0, 0xffe6], [0x1f300, 0x1f64f], [0x1f900, 0x1f9ff],
+  [0xf900, 0xfaff], [0xfe30, 0xfe6f], [0xff00, 0xff60], [0xffe0, 0xffe6], [0x1f300, 0x1f64f], [0x1f7e0, 0x1f7eb], [0x1f900, 0x1f9ff],
   [0x20000, 0x3fffd],
 ];
 
