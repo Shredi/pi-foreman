@@ -199,7 +199,7 @@ export class IdleCache {
     this.arm();
   }
 
-  /** Answer for the hook (R1-R5); synchronous and side-effect free. */
+  /** Answer for the hook (R1-R5); synchronous. A gate refusal sets `refusal` and, for the budget, emits a `budget` trace. */
   decide(busy: Busy): "warm" | "stop" | undefined {
     this.refusal = null;
     if (busyFor(busy, this.deps.policy())) return undefined;

@@ -24,6 +24,8 @@ export interface WarmWireOpts {
   usage(): { file: string; line: LineContext };
   trace(r: Record<string, unknown>): void;
   busy(): Busy;
+  /** Pi's `cacheWarming` setting is "idle". */
+  piIdleMode(): boolean;
   /** Idle-floor gate + ctx.compact (idleCompact in index.ts). */
   compact(): { tier: string; model: string | null } | null;
 }
@@ -53,6 +55,7 @@ export function createWarm(o: WarmWireOpts): { presence: Presence; selfWarm: Sel
     policy,
     presence,
     busy: () => o.busy(),
+    piIdleMode: () => o.piIdleMode(),
     compact: () => o.compact(),
     trace: (r) => o.trace(r),
     rates: (promptTokens) => {

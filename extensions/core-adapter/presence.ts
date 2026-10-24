@@ -84,9 +84,13 @@ export const runProbe: RunProbe = (cmd, args, timeoutMs, shell) =>
     let child: ReturnType<typeof spawn> | undefined;
     const timer = setTimeout(() => {
       try {
-        child?.kill();
+        if (child?.pid !== undefined) process.kill(-child.pid); // detached: the shell and its children share the group
       } catch {
-        // already gone
+        try {
+          child?.kill();
+        } catch {
+          // already gone
+        }
       }
       finish(null);
     }, timeoutMs);

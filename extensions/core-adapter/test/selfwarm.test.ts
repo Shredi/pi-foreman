@@ -488,3 +488,52 @@ test("the Pi hook path reads the cached presence sample: decide never probes, an
   assert.equal(gateIc.ic.decide(NOT_BUSY), "stop");
   assert.equal(h.f.probes, 1);
 });
+
+test("Pi cacheWarming not idle: no ownership, no stream call, skipped pi_mode_not_idle traced once", async () => {
+  const traces: Record<string, unknown>[] = [];
+  let replays = 0;
+  let idle = false;
+  const clock = { t: 10_000_000 };
+  const slots: { fn: () => void; at: number; dead: boolean }[] = [];
+  const timers = {
+    set: (fn: () => void, ms: number) => {
+      const s = { fn, at: clock.t + ms, dead: false };
+      slots.push(s);
+      return s;
+    },
+    clear: (h: unknown) => {
+      if (h) (h as { dead: boolean }).dead = true;
+    },
+  };
+  const sw = new SelfWarm({
+    now: () => clock.t,
+    timers,
+    isChild: false,
+    policy: () => LONG,
+    presence: new Presence({ now: () => clock.t, timers, config: () => ({ enabled: false, awayAfterMinutes: 11, command: null }), trace: () => {} }),
+    busy: () => NOT_BUSY,
+    piIdleMode: () => idle,
+    rates: () => RATES,
+    compact: () => null,
+    trace: (r) => void traces.push(r),
+    replayable: () => true,
+    replay: async () => {
+      replays += 1;
+      return HIT;
+    },
+    record: () => null,
+  });
+  sw.capture([{ role: "system", content: "sys" }]);
+  for (let i = 0; i < 2; i++) {
+    sw.noteRequest(100_000);
+    sw.start();
+  }
+  assert.equal(sw.owns(), false);
+  assert.equal(slots.length, 0);
+  assert.equal(replays, 0);
+  assert.deepEqual(traces.filter((r) => r.outcome === "skipped").map((r) => r.reason), ["pi_mode_not_idle"]);
+  idle = true;
+  assert.equal(sw.owns(), true);
+  sw.start();
+  assert.equal(sw.state(), "watching");
+});

@@ -118,6 +118,24 @@ class TestIdleCache(ReplayCase):
         self.golden_key("budget", events)
         pi.close()
 
+    def test_away_owner_refuses_warm_and_compacts_with_trigger_away(self):
+        """A fake probe reports an hour of idle input (awayAfterMinutes 1): the first warm is refused (away)
+        and the compaction runs with trigger away."""
+        cfg = json.loads(json.dumps(CONFIG))
+        cfg["presence"] = {"enabled": True, "awayAfterMinutes": 1, "command": "echo 3600"}
+        rig = self.rig("idleaway", SCRIPT, providers=(BRIDGE,), config=cfg, settings=SETTINGS)
+        pi = rig.start(provider=BRIDGE, env=ENV)
+        pi.prompt("[[replay:p1]] hello", timeout=60)
+        pi.prompt("[[replay:p2]] again", timeout=60)
+        rig.wait_trace(lambda t: any(r.get("event") == "compaction" for recs in t.values() for r in recs), timeout=180)
+        pi.drain(3)
+        events = kept(self.session_trace(rig), ("keepalive", "compaction", "presence"))
+        events = [e for e in events if not (e["event"] == "keepalive" and e.get("reason") == "activity")]
+        self.assertIn({"event": "keepalive", "outcome": "skipped", "reason": "away"}, events)
+        self.assertIn({"event": "compaction", "reason": "warm_idle", "trigger": "away"}, events)
+        self.golden_key("away", events)
+        pi.close()
+
     def test_cold_downshift_on_child_notice_and_restore_on_prompt(self):
         """Cache gone cold (keep-alive off, TTL 20 s): a triggerTurn notice runs on the idle rung, the next
         owner prompt restores the base model."""

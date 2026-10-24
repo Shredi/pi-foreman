@@ -110,7 +110,7 @@ The last warm read can be spent on a compaction, so the summary call reads a war
 
 Below the floor the session goes cold uncompacted. After a compaction the idle counts as cold. The floor is half the tier threshold (`compaction.threshold.<class>`): `turn_end` already compacts at the full threshold, so an idle session is always below it, and a floor at the full value would never fire.
 
-Gates, in order: `warmCompact` on, no compaction yet in this idle, not busy, not cold (the last cache read or answer is younger than 95% of the TTL), context usage over the floor. A gate that fails ends nothing; it traces `keepalive window_end` with its reason (below). When all pass, the adapter starts the compaction and traces `compaction {reason: "warm_idle", tier, model}`. The compaction takes the normal `session_before_compact` path (ledger digest, retro at compaction), and the window then ends with reason `compact`.
+Gates, in order: `warmCompact` on, no compaction yet in this idle, not busy, not cold (the last cache read or answer is younger than 95% of the TTL), context usage over the floor. A gate that fails ends nothing; it traces `keepalive window_end` with its reason (below), except for the budget and away triggers, where it traces `keepalive skipped` with that reason. When all pass, the adapter starts the compaction and traces `compaction {reason: "warm_idle", tier, model}`. The compaction takes the normal `session_before_compact` path (ledger digest, retro at compaction), and the window then ends with reason `compact`.
 
 The savings of the warm summary call are not yet measured. Through the bridge the summary call takes an isolated path, so its warm savings stay unmeasured there; the compaction still pays off through the smaller cold resume.
 

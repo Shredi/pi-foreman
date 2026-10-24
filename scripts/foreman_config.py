@@ -56,7 +56,6 @@ Keys outside safety that the project and session layers cannot loosen either
     providers.*.cache.keepalive.awayTicks   lower only (at most 0 without an earlier value)
     providers.*.cache.keepalive.selfWarmWindowMinutes   lower only, minimum 1 (at most 180 without an earlier value)
     ladder.idleDownshift.enabled     only false is accepted; .causes: intersect (a project can only remove causes)
-    providers.*.roles.*.idle         ignored (the idle model: L1/L3/L2 only)
     providers.*.cache.keepalive.whileWaiting / beyondPiCap   only false is accepted
     providers.*.roles.*.idle         ignored (picks the model of a cold idle turn; L1/L3/L2 only)
     presence.enabled                 only true is accepted (more gating is the tightening direction)

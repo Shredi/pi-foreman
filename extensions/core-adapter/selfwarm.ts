@@ -34,6 +34,8 @@ export interface SelfWarmDeps {
   /** The compaction gate behind ctx.compact (idle floor, latch); null = below the floor. */
   compact(): { tier: string; model: string | null } | null;
   trace(r: Record<string, unknown>): void;
+  /** Pi's `cacheWarming` setting is "idle" (absent = true; Pi sends no hook and no warm otherwise, and neither does this class). */
+  piIdleMode?(): boolean;
   /** Pi's isReplayable rule for the current model and thinking level. */
   replayable(): boolean;
   /** Send the replay with maxTokens 1; null when it errored or was aborted. */
@@ -70,6 +72,7 @@ export class SelfWarm implements WarmGate {
   private compactedForIdle = false;
   private unavailableTraced = false;
   private notReplayableTraced = false;
+  private notIdleModeTraced = false;
 
   constructor(deps: SelfWarmDeps) {
     this.deps = deps;
@@ -88,7 +91,15 @@ export class SelfWarm implements WarmGate {
   // ---- WarmGate -------------------------------------------------------------------------------------------
 
   owns(): boolean {
+    return this.eligible() && this.idleMode();
+  }
+
+  private eligible(): boolean {
     return !this.deps.isChild && !this.disabled && !!this.deps.policy()?.selfWarm;
+  }
+
+  private idleMode(): boolean {
+    return this.deps.piIdleMode?.() ?? true;
   }
 
   lastCacheTouch(): number | null {
@@ -177,7 +188,14 @@ export class SelfWarm implements WarmGate {
 
   /** `agent_settled`: open the self-warm window when this session owns the warming. */
   start(): void {
-    if (this.st !== "off" || !this.owns() || this.touch === null) return;
+    if (this.st !== "off" || !this.eligible() || this.touch === null) return;
+    if (!this.idleMode()) {
+      if (!this.notIdleModeTraced) {
+        this.notIdleModeTraced = true;
+        this.deps.trace({ event: "keepalive", outcome: "skipped", reason: "pi_mode_not_idle" });
+      }
+      return;
+    }
     const p = this.deps.policy();
     if (!p) return;
     if (!this.deps.replayable()) {
