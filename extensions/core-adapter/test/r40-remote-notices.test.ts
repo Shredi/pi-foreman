@@ -292,7 +292,7 @@ test("session brief for a remote entry runs the script's brief, no intercom send
   assert.deepEqual(a.slice(a.indexOf("brief")), ["brief", "demo", "go ahead with B"]);
   await runSessionCommand(d, "brief loc hello");
   assert.deepEqual(d.sent, [["fm-loc", `Brief from sess-1: read ${path.join(locDir, "brief-1.md").split(path.sep).join("/")} and act on it`]]);
-  assert.equal(fs.readFileSync(path.join(locDir, "brief-1.md"), "utf8"), "hello");
+  assert.equal(fs.readFileSync(path.join(locDir, "brief-1.md"), "utf8"), "hello\n");
 });
 
 test("session brief resolves the newest entry of a label of any kind: a newer local entry wins over an older remote one", async () => {
