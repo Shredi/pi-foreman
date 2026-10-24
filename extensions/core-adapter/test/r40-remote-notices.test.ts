@@ -282,7 +282,8 @@ test("session open --machine: refuses a missing --cwd, passes the remote cwd ver
 
 test("session brief for a remote entry runs the script's brief, no intercom send; a local entry still sends", async () => {
   const agent = mk("brief");
-  writeRegistry(agent, regOf(entry(agent), { label: "loc", child: "fm-loc", status: "open" }));
+  const locDir = mk("loc-handoff");
+  writeRegistry(agent, regOf(entry(agent), { label: "loc", child: "fm-loc", status: "open", handoff: locDir }));
   const d = deps(agent);
   const r = await runSessionCommand(d, "brief demo go ahead with B");
   assert.ok(r.ok);
@@ -290,18 +291,20 @@ test("session brief for a remote entry runs the script's brief, no intercom send
   const a = d.spawned[0];
   assert.deepEqual(a.slice(a.indexOf("brief")), ["brief", "demo", "go ahead with B"]);
   await runSessionCommand(d, "brief loc hello");
-  assert.deepEqual(d.sent, [["fm-loc", "hello"]]);
+  assert.deepEqual(d.sent, [["fm-loc", `Brief from sess-1: read ${path.join(locDir, "brief-1.md").split(path.sep).join("/")} and act on it`]]);
+  assert.equal(fs.readFileSync(path.join(locDir, "brief-1.md"), "utf8"), "hello");
 });
 
 test("session brief resolves the newest entry of a label of any kind: a newer local entry wins over an older remote one", async () => {
   const agent = mk("brief-newest");
-  writeRegistry(agent, regOf(entry(agent), { label: "demo", child: "fm-demo-local", status: "open" }));
+  const locDir = mk("newest-handoff");
+  writeRegistry(agent, regOf(entry(agent), { label: "demo", child: "fm-demo-local", status: "open", handoff: locDir }));
   const d = deps(agent);
   const r = await runSessionCommand(d, "brief demo hello");
   assert.ok(r.ok);
   assert.equal(d.spawned.length, 0);
-  assert.deepEqual(d.sent, [["fm-demo-local", "hello"]]);
-  writeRegistry(agent, regOf({ label: "demo", child: "fm-demo-local", status: "open" }, entry(agent)));
+  assert.deepEqual(d.sent, [["fm-demo-local", `Brief from sess-1: read ${path.join(locDir, "brief-1.md").split(path.sep).join("/")} and act on it`]]);
+  writeRegistry(agent, regOf({ label: "demo", child: "fm-demo-local", status: "open", handoff: locDir }, entry(agent)));
   const d2 = deps(agent);
   await runSessionCommand(d2, "brief demo hello");
   assert.equal(d2.sent.length, 0);

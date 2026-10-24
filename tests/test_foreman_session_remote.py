@@ -865,12 +865,15 @@ class BriefTest(RemoteBase):
     def test_a_local_entry_still_goes_through_intercom(self):
         reg = self.padir / "pi-foreman" / "state" / "sessions.json"
         data = json.loads(reg.read_text("utf-8"))
-        data["sessions"].append({"label": "loc", "child": "fm-loc-abc123", "parent": "p", "handoff": str(self.tmp), "status": "open"})
+        loc = self.tmp / "loc-handoff"
+        loc.mkdir()
+        data["sessions"].append({"label": "loc", "child": "fm-loc-abc123", "parent": "p", "handoff": str(loc), "status": "open"})
         reg.write_text(json.dumps(data), "utf-8")
         sent = []
         with mock.patch.object(fsn, "send_intercom", side_effect=lambda to, text: (sent.append((to, text)), (True, ""))[1]):
             rc, out, err = self.run_main("brief", "loc", "hi there", "--parent-id", PARENT)
-        self.assertEqual((rc, sent), (0, [("fm-loc-abc123", "hi there")]))
+        self.assertEqual((rc, sent), (0, [("fm-loc-abc123", "Brief from %s: read %s and act on it" % (PARENT, (loc / "brief-1.md").resolve().as_posix()))]))
+        self.assertEqual((loc / "brief-1.md").read_text("utf-8"), "hi there\n")
 
 
 class NoticeBase(RemoteBase):

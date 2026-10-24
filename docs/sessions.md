@@ -9,7 +9,7 @@
 `/foreman session` opens a second pi-foreman session on a brief, talks to it over pi-intercom and closes it
 again. All four subcommands are yours to type; a subagent child refuses every one of them.
 
-- `/foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run]`
+- `/foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--machine NAME [--trust]]`
   writes a handoff dir (below), starts `pi` in a new Herdr tab (or prints the command to run in a terminal)
   and records the session. The label is 1 to 40 characters of `A-Z a-z 0-9 . _ -`. `--plan-first` makes the
   brief ask for a `plan.md` and a stop before any work; `--focus` focuses the new tab; `--dry-run` writes nothing
@@ -33,7 +33,7 @@ pi-intercom as the address. Spaces in a brief path or `--cwd` do not survive the
 
 `bin/foreman session open|list` (`.cmd` and `.ps1` on Windows) runs `scripts/foreman_session.py`:
 
-- `foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--print-all] [--parent-id ID] [--own-model ID] [--agent-dir DIR]`.
+- `foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--machine NAME [--trust]] [--print-all] [--parent-id ID] [--own-model ID] [--agent-dir DIR]`.
   `--print-all` prints both the POSIX and the PowerShell command. The parent id is `--parent-id`, else
   `PI_INTERCOM_SESSION_ID`, else `PI_INTERCOM_STABLE_ID`, else `stableId` in `<agent dir>/intercom/config.json`; without any, `open` is refused.
 - `foreman session list [--json] [--agent-dir DIR]` prints label, model (`-` when none was given), state, handoff dir and child id.
