@@ -89,6 +89,23 @@ def _locked(path, fn):
             pass
 
 
+def decision(adir, cwd):
+    """The stored decision for `cwd`: the nearest entry of the store from its realpath upwards (Pi's lookup).
+    True, False, or None when there is no entry, a null entry or an unreadable store."""
+    data = _read(trust_path(adir))
+    if not data:
+        return None
+    keys = {os.path.normcase(k): v for k, v in data.items()}
+    path = os.path.realpath(str(cwd))
+    while True:
+        if os.path.normcase(path) in keys:
+            return keys[os.path.normcase(path)]
+        parent = os.path.dirname(path)
+        if parent == path:
+            return None
+        path = parent
+
+
 def grant(adir, cwd):
     """Trust exactly `cwd` (its realpath). True when this call added the entry, False when it changed nothing."""
     path = trust_path(adir)
