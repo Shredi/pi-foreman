@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Open a pi-foreman session in a new Herdr tab, or print the command for one (stdlib, 3.9+).
+"""Open a pi-foreman session in a new Herdr tab, or print the command for one (stdlib, 3.13+).
 
     python scripts/foreman_session.py open <label> <brief-file> [--cwd DIR] [--model ID]
                                       [--plan-first] [--focus] [--dry-run] [--print-all]

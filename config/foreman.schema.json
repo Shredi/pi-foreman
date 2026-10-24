@@ -516,7 +516,7 @@
     "python": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "path": { "type": ["string", "null"], "description": "Python interpreter (3.9 or newer). null means auto-detect. It runs every guard, so a project or session value is ignored." } }
+      "properties": { "path": { "type": ["string", "null"], "description": "Python interpreter (3.13 or newer). null means auto-detect. It runs every guard, so a project or session value is ignored." } }
     },
     "trace": {
       "type": "object",

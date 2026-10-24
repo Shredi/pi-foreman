@@ -8,7 +8,7 @@
 
 Setting up with an agent: point it at [features.md](features.md).
 
-Needs Node 22+, Pi 1.4.x on `PATH` and Python 3.9+. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
+Needs Node 22+, Pi 1.4.x on `PATH` and Python 3.13+. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
 
 ```sh
 pi install git:github.com/Shredi/pi-foreman            # global; pin with @<tag-or-commit>
@@ -148,11 +148,20 @@ once-guard: a second core copy registers nothing and posts one notice naming bot
 narrows only when the checkout copy is the active one (see [permissions](permissions.md)). Tests and the replay rig:
 [development](development.md).
 
+## Python on macOS
+
+The Command Line Tools `/usr/bin/python3` is Python 3.9, which pi-foreman refuses. Install 3.13 with
+`brew install python@3.13` or from [python.org](https://www.python.org/downloads/). The POSIX launchers (`bin/foreman`,
+`bin/ledger`, `bin/foreman-worktree-setup`) use `PI_FOREMAN_PYTHON` as it is when it is set; otherwise they take the
+first of `python3`, `python3.14`, `python3.13`, `python` that is Python 3.13+. None found: exit 2 with
+`pi-foreman needs Python 3.13+; found <cmd> <version>`. To pin an interpreter, set `PI_FOREMAN_PYTHON` or `python.path`
+in `foreman.json` (`null` auto-detects; the adapter tries `python.path` before `PI_FOREMAN_PYTHON`).
+
 ## Windows
 
 `pi` is a `.cmd` shim there and Node cannot spawn `.cmd` directly, so setup reads the shim and runs Pi's JS entry with
 Node. Python is found as `py -3`, then `python`; the Microsoft Store alias stub is rejected. If none works, install
-Python 3.9+ from python.org (or `winget install Python.Python.3.12`) with the py launcher.
+Python 3.13+ from python.org (or `winget install Python.Python.3.13`) with the py launcher.
 
 ## Claude bridge: log in once
 

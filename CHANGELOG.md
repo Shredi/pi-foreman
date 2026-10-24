@@ -4,6 +4,9 @@ From round 30 on, changes are listed in the GitHub release notes (generated from
 
 ## [Unreleased]
 
+### Round 36
+- CI runs on pull requests and pushes to main (no feature-branch push or schedule trigger), with a concurrency group that cancels the superseded PR run (main runs are not cancelled). The test matrix is Python 3.13 on Linux, macOS and Windows (the 3.9 leg is gone); the replay suite runs in parallel through `scripts/replay_run.mjs` (serial modules after the pool). One required check, `ci-ok`, aggregates the test jobs and the bench smoke. See docs/development.md.
+- The Python floor is 3.13+. The POSIX launchers (`bin/foreman`, `bin/ledger`, `bin/foreman-worktree-setup`) and the Windows launchers pick the first Python 3.13+ (`PI_FOREMAN_PYTHON` is used as it is) and otherwise exit 2 at once with `pi-foreman needs Python 3.13+; found <cmd> <version>`. `setup.mjs` and the adapter's Python resolver check 3.13 with per-OS install hints (macOS: the Command Line Tools python3 is 3.9). Tests: `launcher_floor`, `setup.test.mjs`.
 ### Round 39
 - Launch sizing: a builder launch may carry `size: {files, largestFileLines?, modules?}` and `risk: [...]` (top level or per entry). The adapter strips both fields from every launch, measures the named files itself and picks the rung from a rule table (`risk_top`, `risk_strong`, `large_file`, `modules`, `small`); sizing only raises the rung, a lower explicit `model` needs a `reason` (`[sizing_below]`), and a sizing climb needs none (`rung_up` reason `sizing`). Keys `ladder.sizing.*` (user or overlay config only). docs/ladder.md. Test: `sizing.test.ts`, `sizing-launch.test.ts`.
 - Trace `launch_sizing {role, rule, rung, base, ...}` per builder entry; `foreman retro` lists per rule the launches, final rungs, later climbs and later review FAILs (a heuristic join). Test: `test_retro_sizing`.

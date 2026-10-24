@@ -7,7 +7,7 @@
 The plugin `integrations/herdr/pi-foreman-sidebar/` shows the pi-foreman session tree in Herdr's Agents panel: per Pi
 pane a header (tree connector, state glyph, label, age or blocked timer), one line each for what runs (agents),
 what it watches (tasks, PRs, CI) and what it waits on, and a line with tokens and cost. It needs Herdr
-0.9.0 or later on Linux or macOS and Python 3.9+. Pane-level session features (blocked shim, group tag) are in
+0.9.0 or later on Linux or macOS and Python 3.13+. Pane-level session features (blocked shim, group tag) are in
 [sessions](sessions.md#herdr).
 
 ```text

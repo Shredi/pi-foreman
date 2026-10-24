@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // `npm run test:ci`: the checks CI runs that `npm test` does not, in CI's order. One line per step; exits 1 when a step fails.
-// Replay takes about 25 minutes. `--only <step>` runs one step (replay, conformance, installer or bench).
+// Replay is the slow step (scripts/replay_run.mjs runs the modules in parallel and prints its wall time). `--only <step>` runs one step (replay, conformance, installer or bench).
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -28,9 +28,9 @@ const tail = (out) => out.trimEnd().split("\n").slice(-60).join("\n");
 function replay() {
   const cli = path.join(root, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js");
   if (!fs.existsSync(cli)) return { status: "fail", line: `Pi CLI missing at ${cli} (run npm install)`, out: "" };
-  const r = exec(py, ["-m", "unittest", "discover", "-s", "tests/replay", "-v"], { FOREMAN_PI_CLI: cli, FOREMAN_REPLAY_REQUIRED: "1" });
-  const ran = /Ran (\d+) tests? in ([\d.]+)s/.exec(r.out);
-  return { status: r.ok ? "pass" : "fail", line: ran ? `${ran[1]} tests` : `exit ${r.status}`, out: r.out };
+  const r = exec(process.execPath, ["scripts/replay_run.mjs"], { FOREMAN_PI_CLI: cli, FOREMAN_REPLAY_REQUIRED: "1" });
+  const counts = /replay modules: (\d+) passed, (\d+) failed/.exec(r.out);
+  return { status: r.ok ? "pass" : "fail", line: counts ? `${counts[1]} modules passed, ${counts[2]} failed` : `exit ${r.status}`, out: r.out };
 }
 
 function conformance() {
