@@ -18,7 +18,7 @@ function line1(status: string | undefined): string {
   return mount.render(200)[0];
 }
 
-for (const which of ["unicode", "nerd"] as const) {
+for (const which of ["unicode", "emoji", "nerd", "ascii"] as const) {
   const sym = symbolSet(which);
   test(`footer cache slot (${which}): keep-alive glyph shows warm`, () => {
     const l = line1(sym.keepalive);

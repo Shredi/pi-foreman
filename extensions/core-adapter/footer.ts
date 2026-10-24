@@ -111,7 +111,7 @@ export function cacheStatus(ctx: Pick<FooterCtx, "mode" | "ui">, active: boolean
 /** The footer's cache slot for the status glyph: cold and downshift carry their glyph, any other glyph means warm. */
 function cacheMark(glyph: string | undefined): Pick<FooterView, "warm" | "mark"> {
   if (glyph === undefined) return { warm: false };
-  for (const name of ["unicode", "nerd"]) {
+  for (const name of ["unicode", "emoji", "nerd", "ascii"]) {
     const set = symbolSet(name);
     if (glyph === set.cold) return { warm: false, mark: { state: "cold", glyph } };
     if (glyph === set.downshift) return { warm: false, mark: { state: "downshift", glyph } };
