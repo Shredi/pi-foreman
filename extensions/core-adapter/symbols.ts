@@ -1,17 +1,32 @@
-// State glyphs (config/symbols.json, switch `ui.symbols`: "unicode" | "nerd"; unknown -> unicode) and a
-// terminal cell-width helper for the glyphs that take two cells.
+// State glyphs (config/symbols.json, switch `ui.symbols`: "unicode" | "nerd" | "emoji" | "ascii"; unknown -> unicode),
+// the spinner frames and a terminal cell-width helper for the glyphs that take two cells.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type SymbolKey = "working" | "waiting" | "asking" | "blocked" | "done" | "lost" | "keepalive" | PresenceKey;
-export type SymbolSet = Record<SymbolKey, string>;
+export type SymbolKey = "working" | "waiting" | "asking" | "blocked" | "done" | "lost" | "keepalive" | PresenceKey | ActivityKey;
+export type SymbolSet = Record<SymbolKey, string> & { spinner: string[] };
+export type SetName = "unicode" | "nerd" | "emoji" | "ascii";
+/** Activity icons of the sidebar tree and the children widget. */
+export type ActivityKey = "agent" | "task" | "wait" | "ask" | "recent";
 /** Presence-state icons (livestate.ts PresenceName; `working` and `done` reuse their own keys). */
 export type PresenceKey = "waiting-owner" | "waiting-external" | "idle";
 
-const KEEPALIVE: Record<"unicode" | "nerd", string> = { unicode: "♨", nerd: "" };
+const KEEPALIVE: Record<SetName, string> = { emoji: "♨️", ascii: "^", unicode: "♨", nerd: "" };
 
-const FALLBACK: Record<"unicode" | "nerd", Omit<SymbolSet, "keepalive">> = {
+const BRAILLE = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/** The activity keys and spinner frames when config/symbols.json lacks them. */
+const EXTRA: Record<SetName, Record<ActivityKey, string> & { spinner: string[] }> = {
+  unicode: { spinner: BRAILLE, agent: "◆", task: "⚙", wait: "⧗", ask: "?", recent: "✓" },
+  emoji: { spinner: BRAILLE, agent: "🤖", task: "⚙️", wait: "⏳", ask: "❓", recent: "✅" },
+  nerd: { spinner: BRAILLE, agent: "\uf544", task: "\uf013", wait: "\uf252", ask: "\uf128", recent: "\uf00c" },
+  ascii: { spinner: ["|", "/", "-", "\\"], agent: ">", task: "=", wait: "~", ask: "?", recent: "+" },
+};
+
+const FALLBACK: Record<SetName, Omit<Record<SymbolKey, string>, "keepalive" | ActivityKey>> = {
+  emoji: { working: "⏳", waiting: "⏸️", asking: "❓", blocked: "✋", done: "✅", lost: "❌", "waiting-owner": "✋", "waiting-external": "🔄", idle: "⏸️" },
+  ascii: { working: "*", waiting: ".", asking: "?", blocked: "#", done: "+", lost: "x", "waiting-owner": "#", "waiting-external": "@", idle: "." },
   unicode: { working: "⏳", waiting: "⏸", asking: "?", blocked: "✋", done: "✓", lost: "✗", "waiting-owner": "✋", "waiting-external": "↻", idle: "⏸" },
   nerd: { "waiting-owner": "\uf256", "waiting-external": "\uf017", idle: "\uf04c", working: "", waiting: "", asking: "", blocked: "", done: "", lost: "" },
 };
@@ -32,9 +47,13 @@ function table(): Record<string, Partial<SymbolSet>> {
 
 /** The glyph set for a `ui.symbols` value; a missing glyph falls back to the built-in one. */
 export function symbolSet(name: unknown): SymbolSet {
-  const which = name === "nerd" ? "nerd" : "unicode";
-  return { ...FALLBACK[which], keepalive: KEEPALIVE[which], ...(table()[which] ?? {}) };
+  const which: SetName = name === "nerd" || name === "emoji" || name === "ascii" ? name : "unicode";
+  return { ...FALLBACK[which], keepalive: KEEPALIVE[which], ...EXTRA[which], ...(table()[which] ?? {}) } as SymbolSet;
 }
+
+/** Spinner frame of a clock reading: every pane and the Pi TUI show the same frame at the same time (250 ms steps). */
+export const SPINNER_MS = 250;
+export const spinnerFrame = (frames: readonly string[], nowMs: number): string => frames[Math.floor(nowMs / SPINNER_MS) % frames.length];
 
 /** Run state (childwidget RunState) -> symbol key. */
 export const runSymbol = (state: "working" | "ask" | "done"): SymbolKey => (state === "ask" ? "asking" : state);

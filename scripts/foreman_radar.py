@@ -42,6 +42,10 @@ SYM_COLORS = {"working": "32", "waiting": "90", "asking": "33", "blocked": "33",
 PRESENCE_KEYS = ("waiting-owner", "waiting-external", "idle")  # R11 P4 state icons; header counts stay on SYM_ORDER
 FALLBACK_SYMBOLS = {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗",
                     "waiting-owner": "✋", "waiting-external": "↻", "idle": "⏸"}
+SYMBOL_SETS = ("unicode", "emoji", "nerd", "ascii")
+# Activity glyphs of the sidebar rows (agent run, task, wait, ask, finished run); the spinner is a list of frames.
+FALLBACK_ACTIVITY = {"agent": "◆", "task": "⚙", "wait": "⧗", "ask": "?", "recent": "✓"}
+FALLBACK_SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 COLORS = {"working": "32", "blocked": "33", "starting": "36", "idle": "90", "lost": "31"}
 ACTIVE = ("working", "blocked", "starting")
 
@@ -170,12 +174,12 @@ def config_recent_runs(adir):
 
 
 def config_symbols(adir):
-    """ui.symbols of the merged config: "nerd" or "unicode" (default, also for any unknown value or failure)."""
+    """ui.symbols of the merged config: one of SYMBOL_SETS ("unicode" is the default, also for any unknown value or failure)."""
     try:
         import foreman_config
         v = (foreman_config.load_config(agent_dir=str(adir))["config"].get("ui") or {}).get("symbols")
-        if v == "nerd":
-            return "nerd"
+        if v in SYMBOL_SETS:
+            return v
     except Exception:  # noqa: BLE001 - display tool: a broken config must not stop the radar
         pass
     return "unicode"
@@ -187,7 +191,12 @@ def load_symbols(name="unicode"):
     table = d.get(name) if isinstance(d, dict) and isinstance(d.get(name), dict) else None
     if table is None:
         table = d.get("unicode") if isinstance(d, dict) and isinstance(d.get("unicode"), dict) else {}
-    return {k: table[k] if isinstance(table.get(k), str) else FALLBACK_SYMBOLS[k] for k in SYM_ORDER + PRESENCE_KEYS}
+    out = {k: table[k] if isinstance(table.get(k), str) else FALLBACK_SYMBOLS[k] for k in SYM_ORDER + PRESENCE_KEYS}
+    out.update({k: table[k] if isinstance(table.get(k), str) else v for k, v in FALLBACK_ACTIVITY.items()})
+    frames = table.get("spinner")
+    out["spinner"] = list(frames) if isinstance(frames, list) and frames and all(isinstance(f, str) and f for f in frames) \
+        else list(FALLBACK_SPINNER)
+    return out
 
 
 def sym_key(n):
@@ -220,10 +229,16 @@ def icon_key(n):
 def cell_width(text):
     """Terminal cells of a string: wide and fullwidth characters count 2, combining marks 0."""
     w = 0
+    prev = 0
     for ch in str(text):
+        if ch == "\ufe0f":  # VS16 makes the character before it 2 cells
+            w += 2 - prev if prev == 1 else 0
+            prev = 2
+            continue
         if unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Me", "Cf"):
             continue
-        w += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        prev = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        w += prev
     return w
 
 
@@ -358,7 +373,7 @@ def new_node(kind, key, name):
     # own/tot: [in, out, cost, uncached]; uncached None = unknown (no usage file with the cache split)
     return {"kind": kind, "key": key, "name": name, "glyph": "idle", "state": "", "last": None, "started": None,
             "own": [0, 0, 0.0, 0], "children": [], "tot": [0, 0, 0.0, 0], "parent": None, "path": "",
-            "role": None, "rung": None, "model": None, "waits": [], "pane": None, "pid": None, "cwd": None, "blockedSince": None, "pressure": None,
+            "role": None, "rung": None, "model": None, "waits": [], "tasks": [], "pane": None, "pid": None, "cwd": None, "blockedSince": None, "pressure": None,
             "sid": None, "ended": None, "unc_self": 0}
 
 
@@ -422,10 +437,25 @@ def build(data, now):
         since_hb = max(0.0, now - hb) if hb is not None else 0.0
         for w in d.get("waits") or []:
             if isinstance(w, dict):  # ageSeconds is as of the heartbeat
-                n["waits"].append({"id": str(w.get("id") or ""), "kind": str(w.get("kind") or ""),
-                                   "note": str(w.get("note") or ""),
-                                   "age_s": int(num(w.get("ageSeconds")) + since_hb),
-                                   "left_s": max(0, int(num(w.get("leftSeconds")) - since_hb))})
+                wn = {"id": str(w.get("id") or ""), "kind": str(w.get("kind") or ""),
+                      "note": str(w.get("note") or ""),
+                      "age_s": int(num(w.get("ageSeconds")) + since_hb),
+                      "left_s": max(0, int(num(w.get("leftSeconds")) - since_hb))}
+                if w.get("bg") is True:  # additive fields, copied only when present
+                    wn["bg"] = True
+                prs = [p for p in (w.get("prs") or []) if isinstance(p, int) and not isinstance(p, bool)]
+                if prs:
+                    wn["prs"] = prs
+                n["waits"].append(wn)
+        for t in d.get("tasks") or []:
+            if isinstance(t, dict):
+                n["tasks"].append({"id": str(t.get("id") or ""), "label": str(t.get("label") or ""),
+                                   "pid": t["pid"] if isinstance(t.get("pid"), int) and not isinstance(t.get("pid"), bool) else None,
+                                   "ageSeconds": int(num(t.get("ageSeconds")) + since_hb)})
+        asks = [{"n": a["n"], "topic": str(a.get("topic") or "")} for a in (d.get("asks") or [])
+                if isinstance(a, dict) and isinstance(a.get("n"), int) and not isinstance(a.get("n"), bool)]
+        if asks:
+            n["asks"] = asks
         u = data["usage"].get(sid)
         runs = [r for r in (d.get("runs") or []) if isinstance(r, dict)]
         for r in runs:
@@ -761,6 +791,11 @@ def to_json_node(n, now, symbols):
     if n["kind"] == "session":
         out["sid"] = n["sid"]
         out["waits"] = n["waits"]
+        out["started"] = n["started"]
+        if n.get("tasks"):
+            out["tasks"] = n["tasks"]
+        if n.get("asks"):
+            out["asks"] = n["asks"]
         if n.get("pressure"):
             out["pressure"] = n["pressure"]
     else:
@@ -867,7 +902,7 @@ def main(argv=None):
     ap.add_argument("--no-color", action="store_true")
     ap.add_argument("--json", action="store_true", help="print one JSON snapshot line and exit")
     ap.add_argument("--follow", action="store_true", help="print one JSON line per --interval until interrupted")
-    ap.add_argument("--symbols", choices=("unicode", "nerd"), help="state symbol set; default ui.symbols")
+    ap.add_argument("--symbols", choices=SYMBOL_SETS, help="state symbol set; default ui.symbols")
     ap.add_argument("--max-ticks", type=int, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     for stream in (sys.stdout,):

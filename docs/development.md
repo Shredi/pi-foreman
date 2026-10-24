@@ -44,6 +44,10 @@ GitHub Actions runs a matrix of Linux, macOS and Windows on Python 3.13 for pull
 
 `npm run test:ci` (`scripts/foreman_ci.mjs`) is the pre-PR check. It runs the CI steps that `npm test` does not, in CI's order: the replay suite against the `node_modules` Pi CLI, `pull_core.py --conformance` (skipped with a line when pytest is missing), the installer suite, and the bench smoke probe on the fake provider (skipped when `harbor` is not on PATH). It prints one line per step and exits 1 on any failure; `--only <step>` runs one step.
 
+## Releases
+
+Cut a release with `gh release create <tag> --generate-notes`. The notes come from the merged PRs' titles and their `## Changelog` sections (one to three user-facing bullets each). PRs do not edit CHANGELOG.md; it is kept as history. Overlays read the GitHub release page to see what changed.
+
 ## Windows notes
 
 Use `path.resolve` on drive-letter paths before comparing, `realpathSync.native` for short runner names, quote or
