@@ -1,5 +1,7 @@
 # Changelog
 
+From round 30 on, changes are listed in the GitHub release notes (generated from the merged pull requests); entries below are kept for history.
+
 ## [Unreleased]
 
 ### Round 31c
