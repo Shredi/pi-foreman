@@ -158,3 +158,11 @@ test("R1.5 quoting: $'..', a double quote with $, backtick or backslash end the 
     assert.equal(ownStateRead(cmd, main), true, cmd);
   }
 });
+
+test("R1.6 a grep chain unit after an own read is no recursive read and names no directory", { skip: !posix }, () => {
+  for (const cmd of [
+    `grep x ${T}; grep -R x ${ws}`, `grep x ${T}; grep -r x ${ws}`, `grep x ${T}; grep --recursive x ${ws}`, `grep x ${T}; grep -rn x ${ws}`,
+    `grep x ${T}; grep x ${ws}`, `grep x ${T}; grep x ${ws}/..`, `grep x ${T} && grep -d recurse x ${ws}`, `cat ${T}; grep -r x ..`, `grep x ${T}; grep x ~/.pi/agent/pi-foreman/state`,
+  ]) assert.equal(ownStateRead(cmd, main), false, cmd);
+  assert.equal(ownStateRead(`grep x ${T}; grep -c y ${U}`, main), true);
+});

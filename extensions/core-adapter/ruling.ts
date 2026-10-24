@@ -212,7 +212,7 @@ const HEREDOC_B = new RegExp(`^cat[ \\t]+<<'([A-Za-z_][A-Za-z0-9_]*)'[ \\t]+(>>?
  * named like a child-role file (CHILD_ROLE_NAME).
  */
 export function ownHandoffHeredoc(toolName: string, cmd: string, childDirs: string[], cwd: string): boolean {
-  if (toolName === "powershell" || !SHELL_TOOLS.has(toolName) || /\r/.test(cmd)) return false;
+  if (toolName === "powershell" || !SHELL_TOOLS.has(toolName) || /[\r\0]/.test(cmd)) return false;
   const lines = cmd.split("\n");
   const a = HEREDOC_A.exec(lines[0]);
   const b = a ? null : HEREDOC_B.exec(lines[0]);

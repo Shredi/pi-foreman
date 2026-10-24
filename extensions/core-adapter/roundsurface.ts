@@ -11,6 +11,7 @@ import * as path from "node:path";
 import { splitChain } from "./shellchain.ts";
 import { workspaceTop } from "./gitdrift.ts";
 import { traceFile } from "./trace.ts";
+import { usageFile } from "./usage.ts";
 
 const px = (platform: string): path.PlatformPath => (platform === "win32" ? path.win32 : path.posix);
 
@@ -170,7 +171,7 @@ export function ownUsageReadable(agentDir: string, platform: string = process.pl
   const tf = sid && trace?.stateDir ? traceFile(trace.dir, trace.stateDir, sid) : "";
   const own = tf && x.isAbsolute(tf) && !/[*?[\]{}]/.test(tf) ? [tf] : [];
   // R31c: and the exact name of its own usage file (usage.ts usageFile), the only usage file `grep` may name
-  const uf = foremanSession ? [x.join(d, `${foremanSession.replace(/[^A-Za-z0-9_-]/g, "") || "session"}.jsonl`)] : [];
+  const uf = foremanSession ? [usageFile(agentDir, foremanSession)] : [];
   return [d, `${d}/*`, ...live, ...own, ...uf];
 }
 

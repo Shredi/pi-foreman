@@ -138,3 +138,10 @@ test("R2.1 the child npm ci ask names the bare form", { skip: !posix }, () => {
   assert.equal(g?.kind, "ask");
   assert.doesNotMatch(g?.reason ?? "", /bare `npm ci`/);
 });
+
+test("R6.5 a NUL byte in the command never lifts", { skip: !posix }, () => {
+  const T = `${own}/plan.md`;
+  assert.equal(ownHandoffHeredoc("bash", `cat > ${T} <<'EOF'\nx\nEOF\n`, [own], w), true);
+  assert.equal(ownHandoffHeredoc("bash", `cat > ${T} <<'EOF'\nx\0y\nEOF\n`, [own], w), false);
+  assert.equal(ownHandoffHeredoc("bash", `cat > ${T}\0 <<'EOF'\nx\nEOF\n`, [own], w), false);
+});

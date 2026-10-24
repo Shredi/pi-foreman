@@ -199,3 +199,16 @@ test("R4.6 / R4.7 the child overlay: a read-only worktree child may run a networ
   assert.equal(kind("gh pr merge 1"), "deny");
   assert.equal(kind("gh pr view 1 > out.txt"), "deny");
 });
+
+test("R4.3 npm-package-arg file and directory specs ask (all four subcommands)", { skip: !posix }, () => {
+  const specs = ["x@.", "x@..", "x@./y", "x@/y", "x@~/y", "x@file:y", "x.tar-gz", "x@1.tar_gz", "x@1.tarxgz", "x@1.TGZ", "x.zip", "x@1.tar.bz2", "@s/x@.", "@s/x.tar-gz", "x@C:y"];
+  for (const s of specs) {
+    for (const sub of ["view", "info", "ls", "search"]) {
+      const cmd = `npm ${sub} ${s}`;
+      assert.equal(allow(cmd), null, `orchestrator: ${cmd}`);
+      assert.equal(allow(cmd, kidCtx()), null, `child: ${cmd}`);
+    }
+  }
+  assert.equal(allow("npm view x@1.2.3"), "net-read");
+  assert.equal(allow("npm ls left-pad@1.0.0"), "net-read");
+});

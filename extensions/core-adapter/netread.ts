@@ -99,15 +99,19 @@ function ghOk(w: string[]): boolean {
 const NPM_SPEC = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(@[A-Za-z0-9._^~<>=-]+)?$/;
 const NPM_OPTS: Record<string, OptSpec> = { "--json": { value: null }, "--all": { value: null }, "--long": { value: null }, "--parseable": { value: null }, "--depth": { value: DIGITS } };
 
-/** A registry spec: npm-package-arg reads a tarball-like name or version (`x.tgz`, `x@1.tgz`) as a local file, so it is no spec. */
-const npmSpecOk = (p: string): boolean => NPM_SPEC.test(p) && !/\.(?:tgz|tar|tar\.gz|tar\.bz2|zip)$/i.test(p);
+/**
+ * A registry spec. npm-package-arg reads a name or version as a local file when it matches its loose `/[.](?:tgz|tar.gz|tar)$/i` (the dot after
+ * `tar` is any character: `x.tar-gz`), and a version starting with `.` as a directory; the charset of NPM_SPEC already excludes `/`, `:` and `~/`.
+ */
+const NPM_FILE = /[.](?:tgz|tar.gz|tar)$|\.(?:tar\.bz2|zip)$/i;
+const npmSpecOk = (p: string): boolean => NPM_SPEC.test(p) && !NPM_FILE.test(p) && !/@[.]/.test(p.slice(1));
 
 function npmOk(w: string[]): boolean {
   const sub = w[1];
   if (!["view", "info", "search", "ls"].includes(sub)) return false;
   const pos = parseOpts(w.slice(2), NPM_OPTS, false);
   if (!pos) return false;
-  if (sub === "search") return pos.length >= 1 && pos.length <= 4 && pos.every((p) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(p));
+  if (sub === "search") return pos.length >= 1 && pos.length <= 4 && pos.every((p) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(p) && !NPM_FILE.test(p));
   if (sub === "ls") return pos.length <= 3 && pos.every(npmSpecOk);
   return pos.length >= 1 && pos.length <= 2 && npmSpecOk(pos[0]) && (pos.length === 1 || /^[A-Za-z0-9_.-]+$/.test(pos[1]));
 }

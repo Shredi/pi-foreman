@@ -3296,6 +3296,8 @@ export function ownStateRead(command: string, ctx0: MatchCtx): boolean {
       // R14 item 4: the chair's `…; git log --oneline -8` tail (plain history flags only, no pager/format/output option)
       if (verb === "git" && words[1] === "log" && words.slice(2).every((w, k, a) => /^(?:--oneline|--decorate|--graph|--stat|-\d{1,3}|--max-count=\d{1,3})$/.test(w) || (/^\d{1,3}$/.test(w) && a[k - 1] === "-n") || w === "-n")) continue;
       if (!CHAIN_READERS.has(verb)) return false;
+      // R31c: a grep chain unit is no recursive read and names no directory (as the own-read grep unit), so no link or ancestor dir is followed
+      if (verb === "grep" && words.slice(1).some((w) => /^-[A-Za-z]*[rRd]|^--(?:dereference-)?recursive$|^--directories/.test(w) || pathCandidates(w, ctx).some((x) => { try { return fs.statSync(x).isDirectory(); } catch { return false; } }))) return false;
       if (PROTECTED_READERS.has(verb) ? !protectedReader(words, new Set()) : !unitReadOnly(words, new Set())) return false;
     }
   }
