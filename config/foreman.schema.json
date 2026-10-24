@@ -88,7 +88,7 @@
           },
           "models": {
             "type": "object",
-            "description": "Models Pi's own registry does not list, keyed by model id (no provider prefix): context window and optional price tiers. `foreman setup` derives a compaction point for each (docs/install.md, \"What setup writes\"). User or overlay config only.",
+            "description": "Models Pi's own registry does not list, keyed by model id (no provider prefix): context window and optional price tiers. `foreman setup` derives a compaction point for each (docs/install.md, \"What setup writes\"). Any config layer; a project value reaches setup only with `--project`.",
             "additionalProperties": {
               "type": "object",
               "additionalProperties": false,

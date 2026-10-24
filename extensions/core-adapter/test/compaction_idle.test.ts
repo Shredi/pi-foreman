@@ -9,7 +9,7 @@ const model = { provider: "p", id: "m", contextWindow: 200_000 };
 
 test("overIdleFloor is half the runtime point in tokens", () => {
   assert.equal(IDLE_FLOOR_FACTOR, 0.5);
-  assert.equal(overIdleFloor(at(50_000), 100_000), false);
+  assert.equal(overIdleFloor(at(49_999), 100_000), false);
   assert.equal(overIdleFloor(at(50_000), 100_000), false); // not strictly above
   assert.equal(overIdleFloor(at(50_001), 100_000), true);
   assert.equal(overIdleFloor(null, 100_000), false);

@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 // The shared point rule. Loaded softly: a copy of this script without the extension folder still installs, minus the compaction step.
 const pointModule = await import("./extensions/core-adapter/compaction-point.mjs").catch(() => null);
+const dataModule = await import("./extensions/core-adapter/pi-model-data.mjs").catch(() => null);
 const PI_DEFAULT_RESERVE = pointModule?.PI_DEFAULT_RESERVE ?? 16384;
 const PI_DEFAULT_KEEP_RECENT = pointModule?.PI_DEFAULT_KEEP_RECENT ?? 20000;
 
@@ -187,62 +188,6 @@ function piCommand() {
     }
   }
   throw new Fatal("`pi` was not found on PATH. Install Pi first (npm install -g @earendil-works/pi-coding-agent).");
-}
-
-/** The @earendil-works/pi-coding-agent folder `file` (after symlinks) lies in, or null. */
-function piPackageOf(file) {
-  let d;
-  try {
-    d = fs.realpathSync(file);
-  } catch {
-    return null;
-  }
-  for (;;) {
-    if (path.basename(d) === "pi-coding-agent" && path.basename(path.dirname(d)) === "@earendil-works") return d;
-    if (path.dirname(d) === d) return null;
-    d = path.dirname(d);
-  }
-}
-
-/**
- * Pi's model data folder (<provider>.json files), found by plain path lookup: no module resolution, no network.
- * Order: PI_FOREMAN_PI_AI_DATA (the folder itself; also the test hook), PI_FOREMAN_PI_BIN, every `pi` on PATH that
- * resolves into the pi-coding-agent package (a plain-file launcher is skipped), then `npm root -g`.
- * Returns { dir } or { error }.
- */
-function piModelDataDir() {
-  const override = (process.env.PI_FOREMAN_PI_AI_DATA || "").trim();
-  if (override) return fs.existsSync(override) ? { dir: path.resolve(override) } : { error: `PI_FOREMAN_PI_AI_DATA ${override} does not exist` };
-  const found = () => {
-    const bin = process.env.PI_FOREMAN_PI_BIN;
-    const fromBin = bin ? piPackageOf(path.resolve(bin)) : null;
-    if (fromBin) return fromBin;
-    for (const dir of (process.env.PATH || process.env.Path || "").split(path.delimiter).filter(Boolean)) {
-      for (const name of WIN ? ["pi.exe", "pi.cmd", "pi"] : ["pi"]) {
-        const file = path.join(dir, name);
-        if (!fs.existsSync(file)) continue;
-        let target = file;
-        if (name === "pi.cmd") {
-          try {
-            target = shimScript(file, dir);
-          } catch {
-            target = null;
-          }
-        }
-        const pkg = target ? piPackageOf(target) : null;
-        if (pkg) return pkg;
-      }
-    }
-    const r = spawnSync(WIN ? "npm.cmd" : "npm", ["root", "-g"], { encoding: "utf8", timeout: 30_000, shell: WIN, windowsHide: true });
-    const root = r.status === 0 ? (r.stdout || "").trim().split(/\r?\n/).pop() : "";
-    const pkg = root ? path.join(root, "@earendil-works", "pi-coding-agent") : null;
-    return pkg && fs.existsSync(pkg) ? pkg : null;
-  };
-  const pkg = found();
-  if (!pkg) return { error: "the Pi package (@earendil-works/pi-coding-agent) was not found; set PI_FOREMAN_PI_BIN to its cli.js" };
-  const rel = path.join("@earendil-works", "pi-ai", "dist", "providers", "data");
-  for (const dir of [path.join(pkg, "node_modules", rel), path.join(path.dirname(path.dirname(pkg)), rel)]) if (fs.existsSync(dir)) return { dir };
-  return { error: `no pi-ai model data under ${pkg}` };
 }
 
 /** Pi's chat models of one provider: Map<id, { contextWindow, tiers }> from <dir>/<provider>.json ({"<api>":{"chat:<id>":{...}}}); other prefixes are skipped. */
@@ -727,7 +672,10 @@ function main(argv) {
       const out = { changed: false, recordChanged: false, record: {}, lines: [], apply: () => {} };
       const derived0 = isObj(record?.compactionDerived) ? record.compactionDerived : {};
       out.record = { ...derived0 };
-      if (!pointModule) return out;
+      if (!pointModule || !dataModule) {
+        out.lines.push("  warning: compaction: extensions/core-adapter/compaction-point.mjs or pi-model-data.mjs could not be loaded; compaction overrides skipped");
+        return out;
+      }
       const { compactionPoint } = pointModule;
       const cfg = runConfigCli(py, ["validate", "--json", "--agent-dir", agentDir, "--project-dir", projectDir, ...(opts.project ? ["--trusted-project"] : [])], projectDir).data?.config;
       if (!isObj(cfg)) {
@@ -775,7 +723,7 @@ function main(argv) {
         if (registry.has(provider)) return registry.get(provider);
         let models = new Map();
         if (dataDir === undefined) {
-          const r = piModelDataDir();
+          const r = dataModule.piModelDataDir();
           dataDir = r.dir ?? null;
           if (r.error) registryWarn(r.error);
         }
@@ -956,6 +904,7 @@ function main(argv) {
     if (dry) {
       for (const a of [...removeArgs, ...installArgs]) say(`would run: pi ${a.join(" ")}`);
       if (needRecord || permNeedRecord) say(`would record the managed hash in ${managedFile}`);
+      if (comp.recordChanged) say(`would update the compactionDerived record in ${managedFile}`);
     } else if (anyChange) {
       if (removeArgs.length || installArgs.length || !same || filtered || reordered || comp.changed) backup();
       for (const a of [...removeArgs, ...installArgs]) runOrDie(a);

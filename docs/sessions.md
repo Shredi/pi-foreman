@@ -485,7 +485,7 @@ add-on's `bg_run` tool; `/foreman waits` then also lists its running tasks, and 
 | `radar.doneTtlMinutes` | Minutes after which `foreman radar` hides a finished session and deletes its presence file (default 30). Radar reads the harness, organisation and user layers, no project file. |
 | `retro.proposalMinReviews` | Reviews needed before a retro proposal (default 5). User or overlay config only. |
 | `retro.enabled`, `retro.workspaceKey`, `retro.backlogDir`, `retro.repoBacklog`, `retro.expireDays`, `retro.askThreshold` | Retro backlog switches and store (see [retro](retro.md)). `retro.enabled` null is on in tui and rpc, off in json and print. `workspaceKey`, `backlogDir` and `repoBacklog` are user or overlay config only. |
-| `compaction.maxTokens` | Cap in tokens on where `foreman setup` makes Pi compact (default 200000, minimum 50000, null = no cap); a project or session can only lower it. See [cache](cache.md#where-compaction-fires). `compaction.priceTiers` and `compaction.threshold` were removed: a warning, the keys are ignored. |
+| `compaction.maxTokens` | Cap in tokens on where `foreman setup` makes Pi compact (default 200000, minimum 50000, null = no cap); a project can only lower it, and a session layer value is ignored with a warning (setup applies it). See [cache](cache.md#where-compaction-fires). `compaction.priceTiers` and `compaction.threshold` were removed: a warning, the keys are ignored. |
 | `wait.batchWindowSeconds` | Window in which wait notices are batched (default 300). |
 | `wait.maxActive` | Concurrent waits allowed (default 8); a project or session can only lower it. |
 | `wait.ci` | CI waits on or off (default `true`); a project or session can only set false. |

@@ -270,6 +270,12 @@ class LayerRulesTest(unittest.TestCase):
         self.assertEqual(res["config"]["compaction"]["maxTokens"], 120000)
         self.assertEqual(res["errors"], [])
 
+    def test_compaction_max_tokens_session_layer_ignored(self):
+        res = self.load(l2={"compaction": {"maxTokens": 300000}}, session={"compaction": {"maxTokens": 120000}})
+        self.assertEqual(res["config"]["compaction"]["maxTokens"], 300000)
+        self.assertIn("session layer ignored: setup applies maxTokens", "\n".join(res["warnings"]))
+        self.assertEqual(res["errors"], [])
+
     def test_compaction_max_tokens_null_both_directions(self):
         # user null (no cap): a project number lowers from nothing and passes
         res = self.load(l2={"compaction": {"maxTokens": None}}, proj={"compaction": {"maxTokens": 500000}})

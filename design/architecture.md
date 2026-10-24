@@ -520,7 +520,7 @@ The `foreman` CLI (`bin/foreman`, `.cmd`, `.ps1`; `foreman update-check|retro|sy
 | `close.worktreeDir` | `../<repo>.worktrees` | neutral (names the sweep convention) | L1, L3, L2; project ignored |
 | `close.childWaitMs` | `60000` | neutral (how long a close waits for its child sessions) | L1, L3, L2; project ignored |
 | `footer.usage` | `true` | neutral | any |
-| `compaction.maxTokens` | `200000` (`null` = no cap) | higher compacts later (loosens) | any; project and session only lower, minimum 50000; a null is dropped |
+| `compaction.maxTokens` | `200000` (`null` = no cap) | higher compacts later (loosens) | user or overlay sets it; project only lowers, minimum 50000; a null is dropped; the session layer is ignored with a warning (setup applies it) |
 | `wait.batchWindowSeconds` | `300` | neutral | any |
 | `wait.maxSeconds`, `wait.maxActive` | `86400`, `8` | higher loosens | any; project and session only lower, minimum 1 |
 | `wait.ci` | `true` | `true` loosens (runs `gh`) | any; project and session only false |

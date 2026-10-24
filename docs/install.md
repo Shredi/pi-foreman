@@ -80,6 +80,9 @@ default model, and each interactive top-level session start shows one notice nam
 command. It never appears in rpc, print or child sessions. The top-level key `quiet` (boolean, default `false`)
 set to `true` hides it.
 
+Then re-run `foreman setup` to regenerate the block, and run `/foreman doctor` in Pi. Tests:
+`node --test "tests/installer/*.test.mjs"`.
+
 ### What setup writes for compaction
 
 Pi decides when to compact; pi-foreman only sets the point. Setup derives one point per model and writes it as
@@ -98,17 +101,14 @@ glob, and models an overlay declares under `providers.<p>.models` ([overlays](ov
 Ownership: the values written are recorded per settings file in `<agent dir>/pi-foreman/managed.json`
 (`compactionDerived`). A `reserveTokens` equal to the recorded value is ours and is updated or removed when the model
 is no longer covered; any other value is yours and stays (`kept: user value`). `foreman setup --remove` deletes only the
-entries still equal to their recorded value, then the record. `/foreman doctor` reports a derived entry that drifted.
+entries still equal to their recorded value, then the record. `/foreman doctor` reports a derived entry that drifted, in the global and the project settings file.
 
 The model registry is read from the npm-global Pi package, found by path (no network): `PI_FOREMAN_PI_AI_DATA` (the
 `pi-ai/dist/providers/data` folder), the folder of `PI_FOREMAN_PI_BIN`, every `pi` on `PATH` that resolves into
-`@earendil-works/pi-coding-agent`, then `npm root -g`. That package can differ in version from the `pi` that runs. Only
+`@earendil-works/pi-coding-agent`, then `npm root -g` (the same lookup serves `/foreman doctor`, which prints an INFO line when nothing is found). That package can differ in version from the `pi` that runs. Only
 `chat:` entries count; `classifier:`, `image:` and other prefixes are skipped. If the folder is not found or unreadable,
 setup prints one warning and writes no registry-derived override. On Windows, `npm root -g` is not used when `npm.cmd`
 is missing; set `PI_FOREMAN_PI_BIN` to Pi's `cli.js`. See [cache](cache.md) for where compaction fires.
-
-Then re-run `foreman setup` to regenerate the block, and run `/foreman doctor` in Pi. Tests:
-`node --test "tests/installer/*.test.mjs"`.
 
 Roles, ladders and the opt-in presets for the model map are in [roles](roles.md).
 

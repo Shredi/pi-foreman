@@ -17,7 +17,7 @@ test("percent and cells divide by the point: 140k of a 1M window at a 200k point
   assert.equal(bar(line), "■■■■■■■□□□");
 });
 
-test("a point larger than the window never overfills; colour bands unchanged", () => {
+test("a percent past the point never overfills the bar; colour bands unchanged", () => {
   const line = renderFooter({ ...base, contextPercent: 90, contextWindow: 200_000, contextPoint: 183_616 }, 200, theme)[0];
   assert.match(plain(line), /98% of 184k/);
   assert.ok(line.includes("\x1b[31m"), "red from 80%");

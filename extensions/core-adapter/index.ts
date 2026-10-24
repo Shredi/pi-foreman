@@ -95,6 +95,7 @@ import { LiveState, intercomIdOf } from "./livestate.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate } from "./compaction.ts";
 import { runtimePoint } from "./compaction-point.mjs";
+import { piModelDataDir } from "./pi-model-data.mjs";
 import { resolveCachePolicy } from "./cachepolicy.ts";
 import { IdleCache, type Busy } from "./idlecache.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
@@ -1249,7 +1250,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     };
   }
   /** The point Pi's own auto-compaction fires at for a model (window minus the effective reserve); null when off or unknown. */
-  function piRuntimePoint(model: ExtensionContext["model"]): number | null {
+  function piRuntimePoint(model: { provider?: string; id?: string; contextWindow?: number } | null | undefined): number | null {
     try {
       return runtimePoint(model, pi.getSettings());
     } catch {
@@ -3681,17 +3682,27 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       else fail("subagents block in settings.json differs from generate-subagents", "run /foreman setup or the installer to regenerate it.");
     }
 
-    // compaction overrides setup wrote: the recorded value must still be the one in settings.json
+    // compaction overrides setup wrote: for every settings file with a record, the recorded value must still be the one in the file
     try {
       const managed = JSON.parse(fs.readFileSync(path.join(s.agentDir, "pi-foreman", "managed.json"), "utf8")) as { entries?: Record<string, { compactionDerived?: Record<string, number> }> };
-      const derived = managed.entries?.[path.join(s.agentDir, "settings.json")]?.compactionDerived ?? {};
-      const overrides = ((settings?.compaction as { modelOverrides?: Record<string, { reserveTokens?: number }> } | undefined)?.modelOverrides) ?? {};
-      const drifted = Object.keys(derived).filter((k) => overrides[k]?.reserveTokens !== derived[k]);
-      if (drifted.length) fail(`compaction override in settings.json differs from what setup wrote: ${drifted.join(", ")}`, "run /foreman setup; it keeps a value you set yourself and records it as yours.");
-      else if (Object.keys(derived).length) ok(`compaction overrides written by setup are in sync (${Object.keys(derived).length})`);
+      for (const [file, entry] of Object.entries(managed.entries ?? {})) {
+        const derived = entry?.compactionDerived;
+        if (!derived || !Object.keys(derived).length) continue;
+        let fileSettings: Record<string, unknown> | null = null;
+        try {
+          fileSettings = JSON.parse(fs.readFileSync(file, "utf8"));
+        } catch {
+          fileSettings = null;
+        }
+        const overrides = ((fileSettings?.compaction as { modelOverrides?: Record<string, { reserveTokens?: number }> } | undefined)?.modelOverrides) ?? {};
+        const drifted = Object.keys(derived).filter((k) => overrides[k]?.reserveTokens !== derived[k]);
+        if (drifted.length) fail(`compaction override in ${file} differs from what setup wrote: ${drifted.join(", ")}`, "run /foreman setup; it keeps a value you set yourself and records it as yours.");
+        else ok(`compaction overrides written by setup in ${file} are in sync (${Object.keys(derived).length})`);
+      }
     } catch {
       // no managed state yet: nothing to compare
     }
+    if (piModelDataDir().error) out.push("INFO compaction: Pi model data not found; registry-derived overrides skipped (set PI_FOREMAN_PI_AI_DATA or PI_FOREMAN_PI_BIN)");
 
     for (const e of s.childExtensions) {
       if (fs.existsSync(e.path) && fs.statSync(e.path).isFile()) ok(`required child extension ${e.id}: ${e.path}`);

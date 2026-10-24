@@ -103,7 +103,8 @@ Keys outside safety that the project and session layers cannot loosen either
     close.autoClean                  only false is accepted (true removes worktrees and scratch at close)
     close.worktreeDir                ignored (the worktree convention: L1/L3/L2 only)
     close.childWaitMs                ignored (how long a close waits for child sessions: L1/L3/L2 only)
-    compaction.maxTokens             lower only, minimum 50000 (a higher cap compacts later); a null is dropped
+    compaction.maxTokens             lower only, minimum 50000 (a higher cap compacts later); a null is dropped;
+                                     the session layer is ignored with a warning (setup applies it)
     compaction.priceTiers, compaction.threshold   removed in r52: a warning, the keys are dropped (see REMOVED_COMPACTION_KEYS)
     wait.maxSeconds, wait.maxActive  lower only, minimum 1
     roles.*.timeoutMinutes           lower only (a higher limit lets a child run longer)
@@ -963,6 +964,10 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
             if not isinstance(data, dict):
                 raise ValueError("not an object")
             warn_removed_compaction("session", data, warnings)
+            comp = data.get("compaction")
+            if isinstance(comp, dict) and "maxTokens" in comp:
+                del comp["maxTokens"]
+                warnings.append("session compaction.maxTokens ignored: session layer ignored: setup applies maxTokens")
             drop_invalid_safety("session", data, schema, warnings)
             fix_malformed_ceremony("session", data, l1, errors)
             drop_loosening(data, "session", warnings)

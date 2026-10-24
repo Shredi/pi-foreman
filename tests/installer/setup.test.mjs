@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -26,6 +26,7 @@ function fresh() {
 
 // Hermetic: setup finds an empty model registry here, never the real global Pi (or `npm root -g`). Discovery tests override it.
 const EMPTY_DATA = fs.mkdtempSync(path.join(os.tmpdir(), "pf-pi-ai-data-"));
+after(() => fs.rmSync(EMPTY_DATA, { recursive: true, force: true }));
 
 function run(env, args, extraEnv = {}) {
   const r = spawnSync(process.execPath, [SETUP, ...args, "--agent-dir", env.agentDir], {
