@@ -1,0 +1,13 @@
+{
+ "bench": {"tasks_dir": "../tasks", "repeats": 1, "tasks": ["m1-recheck", "t1-trivial"]},
+ "rows": [
+  {"id": "fold-a-default", "agent": "foreman", "provider": "foreman-fake", "permission_tools_allow": ["bash"], "cap_seconds": 1200, "bench": {"pi_prebaked": true}},
+  {"id": "fold-b-reads24", "agent": "foreman", "provider": "foreman-fake", "permission_tools_allow": ["bash"], "cap_seconds": 1200, "bench": {"pi_prebaked": true},
+   "foreman_reads": {"before": {"warn": 24}, "after": {"warn": 24}}},
+  {"id": "fold-c-trivial-bounded", "agent": "foreman", "provider": "foreman-fake", "permission_tools_allow": ["bash"], "cap_seconds": 1200, "bench": {"pi_prebaked": true},
+   "foreman_edits": "bounded", "user_config": {"ceremony": {"required": {"trivial": []}}}},
+  {"id": "fold-d-both", "agent": "foreman", "provider": "foreman-fake", "permission_tools_allow": ["bash"], "cap_seconds": 1200, "bench": {"pi_prebaked": true},
+   "foreman_reads": {"before": {"warn": 24}, "after": {"warn": 24}},
+   "foreman_edits": "bounded", "user_config": {"ceremony": {"required": {"trivial": []}}}}
+ ]
+}

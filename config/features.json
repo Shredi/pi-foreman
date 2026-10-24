@@ -91,7 +91,7 @@
       "title": "Role ladder (strong rung and climbs)",
       "purpose": "A child climbs to its role's strong model through the foreman after a context, turns, stuck or review-FAIL handoff; with no strong rung mapped nothing climbs.",
       "doc": "docs/ladder.md#rungs-and-the-live-rung",
-      "keys": ["providers.<x>.roles.<x>.strong", "ladder.strongAbove", "ladder.childMaxTurns", "ladder.maxTurns", "ladder.strongOnRevision", "ladder.research.factCriticalRung", "providers.<x>.strongAbove", "providers.<x>.childMaxTurns", "providers.<x>.strongOnRevision", "roles.<x>.strongAbove", "roles.<x>.childMaxTurns", "roles.<x>.strongOnRevision"],
+      "keys": ["providers.<x>.roles.<x>.strong", "ladder.strongAbove", "ladder.childMaxTurns", "ladder.maxTurns", "ladder.strongOnRevision", "ladder.sizing.enabled", "ladder.sizing.largeFileLines", "ladder.sizing.maxModules", "ladder.sizing.strongRisks", "ladder.sizing.topRisks", "ladder.sizing.topRung", "ladder.research.factCriticalRung", "providers.<x>.strongAbove", "providers.<x>.childMaxTurns", "providers.<x>.strongOnRevision", "roles.<x>.strongAbove", "roles.<x>.childMaxTurns", "roles.<x>.strongOnRevision"],
       "commands": [],
       "switch": {"key": "providers.*.roles.*.strong", "on": "nonnull"},
       "state": "opt-in",

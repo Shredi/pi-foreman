@@ -2,8 +2,9 @@
 //
 // open   runs scripts/foreman_session.py (handoff dir, brief + report-back footer, Herdr tab or
 //        the printed command for a new terminal, registry entry) with the opener's intercom id.
-// brief  sends `Brief from <opener id>: read <abs path> and act on it` (a file) or the text as is
-//        through the pi-intercom outbox. Peer messages carry no authority.
+// brief  writes the file (or the text) to `<handoff dir>/brief-<n>.md` (the lowest free n, never overwritten),
+//        then sends `Brief from <opener id>: read <abs path> and act on it` through the pi-intercom outbox.
+//        Peer messages carry no authority.
 // close  sends `foreman:close [path]`; the target's close flow checks the sender against its
 //        parent and replies `foreman:closed <path>` or `pi-foreman: close refused: <reason>`.
 // list   prints the registry `<agent dir>/pi-foreman/state/sessions.json`.
@@ -142,6 +143,27 @@ export function resolveTarget(reg: Registry, target: string): string {
     if (s.label === target || s.child === target) return s.child;
   }
   return target;
+}
+
+/** The handoff dir of the newest registry entry for a label or child id; undefined when none is recorded. */
+export function resolveHandoff(reg: Registry, target: string): string | undefined {
+  for (let i = reg.sessions.length - 1; i >= 0; i--) {
+    const s = reg.sessions[i];
+    if (s.label === target || s.child === target) return s.handoff;
+  }
+  return undefined;
+}
+
+/**
+ * Writes `data` to the lowest free `brief-<n>.md` in `dir` (flag "wx": an existing file is never overwritten, the write
+ * throws instead). Returns the file path with posix separators.
+ */
+export function writeBrief(dir: string, data: string | Uint8Array): string {
+  let n = 1;
+  while (fs.existsSync(path.join(dir, `brief-${n}.md`))) n++;
+  const file = path.join(dir, `brief-${n}.md`);
+  fs.writeFileSync(file, data, { flag: "wx" });
+  return file.split(path.sep).join("/");
 }
 
 export const briefText = (opener: string, file: string): string => `Brief from ${opener}: read ${file} and act on it`;
@@ -305,12 +327,29 @@ async function sendTo(d: SessionDeps, to: string, message: string, what: string)
   return { text: `pi-foreman session: ${what} to ${to} not sent (${status}). Is pi-intercom installed and the target connected?`, ok: false };
 }
 
+/** A handoff dir (its `child` file, as the Python side reads it), else a registry label or child id. */
+function briefTarget(reg: Registry, dir: string, target: string): { to: string; handoff?: string } {
+  let child: string | undefined;
+  try {
+    child = fs.readFileSync(path.join(dir, "child"), "utf8").trim() || undefined;
+  } catch {
+    child = undefined; // not a handoff dir
+  }
+  return child ? { to: child, handoff: dir } : { to: resolveTarget(reg, target), handoff: resolveHandoff(reg, target) };
+}
+
 export async function sessionBrief(d: SessionDeps, target: string, body: string): Promise<SessionResult> {
-  const to = resolveTarget(readRegistry(d.agentDir), target);
+  const { to, handoff } = briefTarget(readRegistry(d.agentDir), path.resolve(d.cwd, target), target);
+  if (!handoff) return { text: `pi-foreman session: brief to ${target} refused: no handoff dir to write it to (see: /foreman session list)`, ok: false };
   const file = /\s/.test(body) ? null : path.resolve(d.cwd, body);
   const isFile = file !== null && fs.existsSync(file) && fs.statSync(file).isFile();
-  const message = isFile ? briefText(openerIntercomId(d.env, d.agentDir, d.piSessionId), file!) : body;
-  return sendTo(d, to, message, isFile ? "brief file" : "message");
+  let brief: string;
+  try {
+    brief = writeBrief(handoff, isFile ? fs.readFileSync(file!) : `${body}\n`);
+  } catch (err) {
+    return { text: `pi-foreman session: brief to ${target} refused: ${(err as Error).message}`, ok: false };
+  }
+  return sendTo(d, to, briefText(openerIntercomId(d.env, d.agentDir, d.piSessionId), brief), "brief");
 }
 
 export async function sessionClose(d: SessionDeps, target: string, resultPath?: string): Promise<SessionResult> {

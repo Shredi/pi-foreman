@@ -17,9 +17,11 @@
 and records the session in `<agent dir>/pi-foreman/state/sessions.json` (atomic write).
 
 `brief` resolves its target (a handoff dir with a `child` file, or a registry label / child id; the newest
-entry wins) and sends the text through pi-intercom's `cli.mjs send` (argv list, no shell). A single word that
-names a file is sent as `Brief from <opener id>: read <abs path> and act on it`. When node or the module is
-missing, or the broker refuses, it prints the manual message and exits 1; it never falls back to Herdr.
+entry wins) and writes the brief to `<handoff dir>/brief-<n>.md` (the lowest free n; an existing file is never
+overwritten and a target with no handoff dir is refused): a file argument is copied, any other text is written
+as is. It then sends `Brief from <opener id>: read <abs posix path> and act on it` through pi-intercom's
+`cli.mjs send` (argv list, no shell); text briefs stay on disk. When node or the module is missing, or the broker
+refuses, it prints the manual message and exits 1; it never falls back to Herdr.
 
 Herdr (HERDR_PANE_ID set and `herdr` on PATH, or HERDR_BIN): the workspace whose label is the
 basename of the git top level of --cwd (default: the current dir), else `workspace create`
@@ -178,7 +180,7 @@ def footer(label, plan_first):
             "%d. Plan first: write `plan.md` in the handoff dir, send `Plan from %s: <absolute path of plan.md>`," % (n, label),
             "   then stop and wait for the parent's ruling. The parent writes `ruling.md` in the handoff dir (first",
             "   line `APPROVED` = go ahead; anything else = revise `plan.md` and send `Plan from %s: <path>` again)" % label,
-            "   and wakes you with a brief naming the ruling path (`foreman session brief %s <ruling path>`)." % label,
+            "   and wakes you with a brief naming `brief-<n>.md`, a copy of the ruling (`foreman session brief %s <ruling path>`)." % label,
         ]
         n += 1
     lines += [
@@ -559,16 +561,18 @@ def cmd_list(a):
 
 
 def resolve_child(adir, target):
-    """A handoff dir (its `child` file) or a registry label / child id (newest entry wins) -> the child's intercom id."""
+    """A handoff dir (its `child` file) or a registry label / child id (newest entry wins) -> (the child's intercom id,
+    its handoff dir or None). The handoff dir is the target itself when it is one, else the entry's `handoff`."""
     p = Path(target)
     if p.is_dir() and (p / "child").is_file():
         child = (p / "child").read_text("utf-8").strip()
         if VALUE_RE.match(child):
-            return child
+            return child, p
         raise Refused("%s has no usable child id" % (p / "child"))
     for s in reversed(read_registry(adir)["sessions"]):
         if isinstance(s, dict) and target in (s.get("label"), s.get("child")) and VALUE_RE.match(str(s.get("child"))):
-            return s["child"]
+            handoff = s.get("handoff")
+            return s["child"], (Path(handoff) if isinstance(handoff, str) and handoff else None)
     raise Refused("no session with handoff dir, label or child id %r (see: foreman session list)" % target)
 
 
@@ -595,17 +599,41 @@ def send_intercom(to, text):
     return r.returncode == 0, detail
 
 
+def new_brief(handoff, data):
+    """Write `data` (bytes) to the lowest free `brief-<n>.md` in the handoff dir and return its path. The exclusive
+    create ("xb") never overwrites: a file that appears after the scan is refused."""
+    n = 1
+    while os.path.lexists(Path(handoff) / ("brief-%d.md" % n)):
+        n += 1
+    target = Path(handoff) / ("brief-%d.md" % n)
+    try:
+        with open(target, "xb") as f:
+            f.write(data)
+    except FileExistsError:
+        raise Refused("%s appeared meanwhile; not overwritten" % target.name)
+    except OSError as e:
+        raise Refused("cannot write the brief: %s" % e)
+    return target
+
+
 def cmd_brief(a):
     adir = agent_dir(a.agent_dir)
-    to = resolve_child(adir, a.target)
+    to, handoff = resolve_child(adir, a.target)
     opener = opener_id(a.parent_id, adir)
     if not opener or not VALUE_RE.match(opener):
         raise Refused("no opener intercom id: pass --parent-id")
+    if handoff is None:
+        raise Refused("%s has no handoff dir to write the brief to (see: foreman session list)" % a.target)
     given = Path(a.text)
-    if not re.search(r"\s", a.text) and given.is_file():  # same wording as /foreman session brief
-        message = "Brief from %s: read %s and act on it" % (opener, given.resolve())
+    if not re.search(r"\s", a.text) and given.is_file():  # a file argument: copied (same wording as /foreman session brief)
+        try:
+            data = given.read_bytes()
+        except OSError as e:
+            raise Refused("cannot read the brief file: %s" % e)
     else:
-        message = a.text
+        data = (a.text + "\n").encode("utf-8")
+    brief = new_brief(handoff, data).resolve()
+    message = "Brief from %s: read %s and act on it" % (opener, brief.as_posix())
     ok, detail = send_intercom(to, message)
     if ok:
         print("pi-foreman session: brief sent to %s." % to)
