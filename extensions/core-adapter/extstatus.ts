@@ -89,7 +89,7 @@ export function resolveProgram(first: string, input: ResolveInput): string | nul
   }
   if (/\.(cmd|bat)$/i.test(real)) return null;
   if (under(realDeep(input.workspace), real, input.platform)) return null;
-  return found;
+  return real;
 }
 
 const CONTROL = /[\p{Cc}\p{Cf}]/gu;

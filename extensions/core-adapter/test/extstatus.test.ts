@@ -68,7 +68,7 @@ test("a valid list is shown; the run gets the program, args, cwd, timeout, caps 
   await h.fire();
   assert.deepEqual(h.x.items(), [{ label: "deploy", state: "ok" }, { label: "ci", state: "run" }]);
   const r = h.runs[0];
-  assert.equal(r.program, h.t.tool);
+  assert.equal(r.program, fs.realpathSync.native(h.t.tool));
   assert.deepEqual(r.args, ["--flag", "two words"]);
   assert.equal(r.o.cwd, h.t.ws);
   assert.equal(r.o.timeoutMs, 10_000);
@@ -169,8 +169,9 @@ test("a child (gate closed) never runs the command; an unset command is off", { 
 test("program rules: PATH lookup outside the workspace; inside, through a symlink, relative, .cmd and missing are refused", { skip: win }, () => {
   const t = tree();
   const input = { workspace: t.ws, env: { PATH: t.bin }, platform: process.platform };
-  assert.equal(resolveProgram("statuscmd", input), t.tool);
-  assert.equal(resolveProgram(t.tool, input), t.tool);
+  const realTool = fs.realpathSync.native(t.tool);
+  assert.equal(resolveProgram("statuscmd", input), realTool);
+  assert.equal(resolveProgram(t.tool, input), realTool);
   assert.equal(resolveProgram("nothere", input), null);
   assert.equal(resolveProgram("./statuscmd", input), null, "a separator needs an absolute path");
   assert.equal(resolveProgram("bin/statuscmd", input), null);
