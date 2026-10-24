@@ -10,7 +10,8 @@
 // list   prints the registry `<agent dir>/pi-foreman/state/sessions.json`.
 // Inbound `Plan from|Result from|Update from <label>: <path>`, `foreman:plan|result <path>` and `foreman:closed <path>`
 // from a registry child update its registry entry and show a notice (a `foreman_wait kind:child` wait resolves on it);
-// nothing is acted on.
+// nothing is acted on. A remote child (`open --machine`, entry field `machine`) reports through pi-intercom's cross-machine
+// relay: remotesession.ts matches the structured origin to the entry, mirrors the file and wakes the same waits.
 // Subagent children refuse every subcommand. The functions below take plain deps; the `foreman_session_open` tool
 // (registerSessionOpenTool) runs the same sessionOpen; children never get it.
 // open --first-command /cmd (repeatable) and --plan-mode (= --first-command /plan) are Pi extension commands the new
@@ -22,20 +23,21 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { CLOSE_TEXT, CLOSED_TEXT, outboxSend, validResultPathText } from "./close.ts";
 import type { Json } from "./config.ts";
 import { INTERCOM_MESSAGE_TYPE, intercomConfigPath, lastIntercomDetails } from "./intercomguard.ts";
+import { applyRemoteNotice, parseRemoteNotice, remoteOrigin } from "./remotesession.ts";
 import { sessionRankRefusal } from "./ranks.ts";
 import { SESSION_FOREMAN } from "./roles.ts";
 import type { Spawner } from "./spawn.ts";
 import { INTERCOM_WAKE_TEXT } from "./usage.ts";
 
 export const SESSION_USAGE =
-  "Usage: /foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] | /foreman session brief <target> <file|text…> | /foreman session close <target> [result-path] | /foreman session list";
+  "Usage: /foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--machine NAME [--trust]] | /foreman session brief <target> <file|text…> | /foreman session close <target> [result-path] | /foreman session list";
 export const CHILD_REFUSAL = "/foreman session is for a top-level foreman session only; refused in subagent children.";
 /** Seconds an outbox send waits for pi-intercom's result (a confirmation dialog may be open). */
 export const SEND_WAIT_MS = 15_000;
 const OPEN_TIMEOUT_MS = 180_000;
 
 export type SessionCommand =
-  | { sub: "open"; label: string; brief: string; cwd?: string; model?: string; planFirst: boolean; focus: boolean; dryRun: boolean; planMode?: boolean; firstCommands?: string[] }
+  | { sub: "open"; label: string; brief: string; cwd?: string; model?: string; planFirst: boolean; focus: boolean; dryRun: boolean; planMode?: boolean; firstCommands?: string[]; machine?: string; trust?: boolean }
   | { sub: "brief"; target: string; body: string }
   | { sub: "close"; target: string; path?: string }
   | { sub: "list" }
@@ -62,11 +64,13 @@ export function parseSessionArgs(args: string): SessionCommand {
     if (a === "--plan-first") out.planFirst = true;
     else if (a === "--focus") out.focus = true;
     else if (a === "--dry-run") out.dryRun = true;
+    else if (a === "--trust") out.trust = true;
     else if (a === "--plan-mode") out.planMode = true;
-    else if (a === "--cwd" || a === "--model" || a === "--first-command") {
+    else if (a === "--cwd" || a === "--model" || a === "--machine" || a === "--first-command") {
       const v = rest[++i];
       if (!v || v.startsWith("--")) return { error: `${a} needs a value. ${SESSION_USAGE}` };
       if (a === "--cwd") out.cwd = v;
+      else if (a === "--machine") out.machine = v;
       else if (a === "--first-command") (out.firstCommands ??= []).push(v);
       else out.model = v;
     } else if (a.startsWith("--")) return { error: `unknown option ${a}. ${SESSION_USAGE}` };
@@ -145,6 +149,9 @@ export function resolveTarget(reg: Registry, target: string): string {
   return target;
 }
 
+/** The close line for a remote entry: P1 cannot close a remote session. */
+export const remoteNotClosed = (s: SessionEntry): string => `${s.label}@${String(s.machine)}: not closed (remote close comes in P2; close it on ${String(s.machine)})`;
+
 /** The handoff dir of the newest registry entry for a label or child id; undefined when none is recorded. */
 export function resolveHandoff(reg: Registry, target: string): string | undefined {
   for (let i = reg.sessions.length - 1; i >= 0; i--) {
@@ -188,7 +195,7 @@ export function parseInbound(text: unknown): Inbound | null {
 
 /** Record an inbound report from a registry child (matched by sender id); the updated entry or null. */
 export function applyInbound(reg: Registry, sender: string, msg: Inbound, now: Date): SessionEntry | null {
-  const entry = [...reg.sessions].reverse().find((s) => s.child === sender);
+  const entry = [...reg.sessions].reverse().find((s) => s.child === sender && s.machine === undefined); // remote entries take only cross-machine notices (remotesession.ts)
   if (!entry) return null;
   entry.last = { kind: msg.kind, path: msg.path, at: now.toISOString() };
   if (msg.kind === "closed") {
@@ -305,7 +312,12 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
     if (refused) return { text: refused, ok: false };
   }
   const opener = openerIntercomId(d.env, d.agentDir, d.piSessionId);
-  const argv = [path.join(d.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", d.agentDir, "open", c.label, path.resolve(d.cwd, c.brief), "--cwd", path.resolve(d.cwd, c.cwd ?? "."), "--parent-id", opener];
+  if (c.machine && !c.cwd) return { text: "pi-foreman session: open --machine needs --cwd (the directory on the remote machine).", ok: false };
+  // a remote cwd is a path on the other machine: passed verbatim, never resolved here; the brief file is local
+  const cwdArg = c.machine ? c.cwd! : path.resolve(d.cwd, c.cwd ?? ".");
+  const argv = [path.join(d.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", d.agentDir, "open", c.label, path.resolve(d.cwd, c.brief), "--cwd", cwdArg, "--parent-id", opener];
+  if (c.machine) argv.push("--machine", c.machine);
+  if (c.trust) argv.push("--trust");
   if (d.model) argv.push("--own-model", d.model);
   // only an explicit choice (--model or the session-foreman mapping) sets PI_FOREMAN_SESSION_MODEL in the child; the opener's own model is just displayed
   if (explicit) argv.push("--model", explicit);
@@ -339,7 +351,17 @@ function briefTarget(reg: Registry, dir: string, target: string): { to: string; 
 }
 
 export async function sessionBrief(d: SessionDeps, target: string, body: string): Promise<SessionResult> {
-  const { to, handoff } = briefTarget(readRegistry(d.agentDir), path.resolve(d.cwd, target), target);
+  const reg = readRegistry(d.agentDir);
+  const newest = [...reg.sessions].reverse().find((s) => s.label === target || s.child === target); // as find_entry in the script
+  if (newest && typeof newest.machine === "string") {
+    // a remote child is briefed over ssh by the script (`remote deliver`), not over the local intercom
+    if (!d.python) return { text: "foreman_session.py: no usable Python (run /foreman doctor).", ok: false };
+    const file = /\s/.test(body) ? body : path.resolve(d.cwd, body);
+    const r = await d.spawner(d.python, ["-E", "-s", path.join(d.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", d.agentDir, "brief", target, fs.existsSync(file) ? file : body], { timeoutMs: OPEN_TIMEOUT_MS, cwd: d.cwd });
+    const text = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? r.error.message : r.timedOut ? "foreman_session.py timed out" : "foreman_session.py produced no output.");
+    return { text, ok: !r.error && !r.timedOut && r.code === 0 };
+  }
+  const { to, handoff } = briefTarget(reg, path.resolve(d.cwd, target), target);
   if (!handoff) return { text: `pi-foreman session: brief to ${target} refused: no handoff dir to write it to (see: /foreman session list)`, ok: false };
   const file = /\s/.test(body) ? null : path.resolve(d.cwd, body);
   const isFile = file !== null && fs.existsSync(file) && fs.statSync(file).isFile();
@@ -356,6 +378,8 @@ export async function sessionClose(d: SessionDeps, target: string, resultPath?: 
   if (resultPath !== undefined && !validResultPathText(resultPath)) return { text: "pi-foreman session: the result path may use only A-Z a-z 0-9 . _ / - (at most 200 characters) and must end in .md", ok: false };
   const reg = readRegistry(d.agentDir);
   const to = resolveTarget(reg, target);
+  const remote = [...reg.sessions].reverse().find((s) => s.child === to && typeof s.machine === "string");
+  if (remote) return { text: remoteNotClosed(remote), ok: false };
   const r = await sendTo(d, to, closeText(resultPath), "close request");
   const entry = reg.sessions.find((s) => s.child === to);
   if (r.ok && entry && entry.status !== "closed") {
@@ -421,6 +445,30 @@ export function registerSession(
   const seen = new Set<string>();
   const onInbound = async (ctx: ExtensionContext, details: unknown): Promise<void> => {
     const d = (details && typeof details === "object" ? details : {}) as { from?: { id?: unknown }; message?: { id?: unknown; content?: { text?: unknown } } };
+    const origin = remoteOrigin(details);
+    if (origin) {
+      // a cross-machine sender: only the remote branch, never the local route (matching, not authentication)
+      const notice = parseRemoteNotice(d.message?.content?.text);
+      if (!notice) return;
+      const key = typeof d.message?.id === "string" ? d.message.id : `${origin.machine}|${origin.sessionId}|${String(d.message?.content?.text)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const s = await deps.session(ctx);
+      if (s.isChild) return;
+      const reg = readRegistry(s.agentDir);
+      const hit = applyRemoteNotice(reg, origin, notice);
+      if (!hit) return;
+      if (hit.changed) {
+        try {
+          writeRegistry(s.agentDir, reg);
+        } catch (err) {
+          ctx.ui.notify(`pi-foreman session: could not update the registry: ${(err as Error).message}`, "warning");
+        }
+      }
+      ctx.ui.notify(hit.message ?? `pi-foreman session ${hit.entry.label}@${String(hit.entry.machine)}: ${hit.kind}${hit.path ? ` ${hit.path}` : ""}`, hit.changed ? "info" : "warning");
+      if (hit.changed) deps.onChildNotice?.(s.id, hit.entry.label, hit.kind, hit.path);
+      return;
+    }
     const msg = parseInbound(d.message?.content?.text);
     const sender = typeof d.from?.id === "string" ? d.from.id : undefined;
     if (!msg || !sender) return;

@@ -449,14 +449,14 @@ export class WaitRuntime {
   }
 
   /**
-   * A plan, result, update or closed notice of the registry child `label`: resolves the first child wait
+   * A plan, result, update, ask or closed notice of the registry child `label` (a remote child passes its mirror path): resolves the first child wait
    * naming that label (else the first naming `any`). A notice before the wait starts is not replayed.
    */
   childNotice(label: string, kind: string, notePath: string): boolean {
     const waits = [...this.waits.values()].filter((e) => e.kind === "child");
     const hit = waits.find((e) => e.label === label) ?? waits.find((e) => e.label === "any");
     if (!hit) return false;
-    this.resolve(hit.id, `child ${label}: ${kind} ${oneLine(notePath, 300)}`);
+    this.resolve(hit.id, `child ${label}: ${kind}${notePath ? ` ${oneLine(notePath, 300)}` : ""}`);
     return true;
   }
 
@@ -595,7 +595,7 @@ const PARAMS = {
     path: { type: "string", description: "file: resolves when this file exists (inside the workspace, its .workflow/ or <agentDir>/pi-foreman/state/wait/)." },
     pid: { type: "integer", minimum: 2, description: "pid: resolves when this process has exited." },
     runId: { type: "string", description: "ci: GitHub Actions run id (digits); resolves when the run completes." },
-    label: { type: "string", description: "child: the label of a session opened by `foreman session open`, or any; resolves on its next plan, result, update or closed notice (a notice that came before the wait started is not replayed)." },
+    label: { type: "string", description: "child: the label of a session opened by `foreman session open`, or any; resolves on its next plan, result, update, ask or closed notice (a remote child's wake names its mirror path; a notice that came before the wait started is not replayed)." },
     note: { type: "string", maxLength: NOTE_MAX, description: "start: shown back in the wake message." },
     log: { type: "string", description: "start, pid or ci: a log file shown by `/foreman waits` (last 5 lines) and named in the wake message." },
     id: { type: "string", description: "cancel: the wait id." },
