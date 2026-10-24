@@ -10,8 +10,11 @@
 // Inbound `Plan from|Result from|Update from <label>: <path>`, `foreman:plan|result <path>` and `foreman:closed <path>`
 // from a registry child update its registry entry and show a notice (a `foreman_wait kind:child` wait resolves on it);
 // nothing is acted on.
-// Subagent children refuse every subcommand. The functions below take plain deps, so a later
-// user-layer opt-in `foreman_session` tool can call them; no model tool is registered here.
+// Subagent children refuse every subcommand. The functions below take plain deps; the `foreman_session_open` tool
+// (registerSessionOpenTool) runs the same sessionOpen; children never get it.
+// open --first-command /cmd (repeatable) and --plan-mode (= --first-command /plan) are Pi extension commands the new
+// session runs before the brief prompt; --plan-mode needs a `plan` command in the opener's pi.getCommands()
+// (else `session open refused [plan_mode_unavailable]`).
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -24,14 +27,14 @@ import type { Spawner } from "./spawn.ts";
 import { INTERCOM_WAKE_TEXT } from "./usage.ts";
 
 export const SESSION_USAGE =
-  "Usage: /foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--focus] [--dry-run] | /foreman session brief <target> <file|text…> | /foreman session close <target> [result-path] | /foreman session list";
+  "Usage: /foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] | /foreman session brief <target> <file|text…> | /foreman session close <target> [result-path] | /foreman session list";
 export const CHILD_REFUSAL = "/foreman session is for a top-level foreman session only; refused in subagent children.";
 /** Seconds an outbox send waits for pi-intercom's result (a confirmation dialog may be open). */
 export const SEND_WAIT_MS = 15_000;
 const OPEN_TIMEOUT_MS = 180_000;
 
 export type SessionCommand =
-  | { sub: "open"; label: string; brief: string; cwd?: string; model?: string; planFirst: boolean; focus: boolean; dryRun: boolean }
+  | { sub: "open"; label: string; brief: string; cwd?: string; model?: string; planFirst: boolean; focus: boolean; dryRun: boolean; planMode?: boolean; firstCommands?: string[] }
   | { sub: "brief"; target: string; body: string }
   | { sub: "close"; target: string; path?: string }
   | { sub: "list" }
@@ -58,10 +61,12 @@ export function parseSessionArgs(args: string): SessionCommand {
     if (a === "--plan-first") out.planFirst = true;
     else if (a === "--focus") out.focus = true;
     else if (a === "--dry-run") out.dryRun = true;
-    else if (a === "--cwd" || a === "--model") {
+    else if (a === "--plan-mode") out.planMode = true;
+    else if (a === "--cwd" || a === "--model" || a === "--first-command") {
       const v = rest[++i];
       if (!v || v.startsWith("--")) return { error: `${a} needs a value. ${SESSION_USAGE}` };
       if (a === "--cwd") out.cwd = v;
+      else if (a === "--first-command") (out.firstCommands ??= []).push(v);
       else out.model = v;
     } else if (a.startsWith("--")) return { error: `unknown option ${a}. ${SESSION_USAGE}` };
     else pos.push(a);
@@ -219,7 +224,11 @@ export interface SessionDeps {
   model?: string;
   /** Merged config (providers.<p>.roles.session-foreman.model, ranks, ladder.childPolicy). */
   config?: Json;
+  /** Names of this session's slash commands (pi.getCommands()); planMode needs `plan` among them. */
+  commands?: string[];
 }
+
+export const PLAN_MODE_UNAVAILABLE = "session open refused [plan_mode_unavailable]: this session has no /plan command (install a plan-mode package), so the new session cannot open in plan mode. Open it without planMode, or pass the first command your setup provides.";
 
 export type SessionResult = { text: string; ok: boolean };
 
@@ -266,6 +275,7 @@ export function cliModelOf(argv: readonly string[]): string | undefined {
 
 export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>): Promise<SessionResult> {
   if (!d.python) return { text: "foreman_session.py: no usable Python (run /foreman doctor).", ok: false };
+  if (c.planMode && !d.commands?.includes("plan")) return { text: PLAN_MODE_UNAVAILABLE, ok: false };
   const explicit = c.model ?? sessionForemanModel(d.config, d.model);
   const model = explicit ?? d.model;
   if (d.config && (model || d.model === undefined)) {
@@ -278,6 +288,8 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
   // only an explicit choice (--model or the session-foreman mapping) sets PI_FOREMAN_SESSION_MODEL in the child; the opener's own model is just displayed
   if (explicit) argv.push("--model", explicit);
   if (c.planFirst) argv.push("--plan-first");
+  if (c.planMode) argv.push("--plan-mode");
+  for (const f of c.firstCommands ?? []) argv.push("--first-command", f);
   if (c.focus) argv.push("--focus");
   if (c.dryRun) argv.push("--dry-run");
   const r = await d.spawner(d.python, ["-E", "-s", ...argv], { timeoutMs: OPEN_TIMEOUT_MS, cwd: d.cwd });
@@ -329,6 +341,27 @@ export async function runSessionCommand(d: SessionDeps, args: string): Promise<S
   return sessionList(d);
 }
 
+/** The `foreman_session_open` tool call: the same sessionOpen as the command; refused in subagent children. */
+export async function runSessionOpenTool(d: SessionDeps, params: Record<string, unknown>): Promise<SessionResult> {
+  if (d.isChild || d.env.PI_SUBAGENT_CHILD === "1") return { text: CHILD_REFUSAL, ok: false };
+  const str = (k: string): string | undefined => (typeof params[k] === "string" && params[k] !== "" ? (params[k] as string) : undefined);
+  const label = str("label");
+  const brief = str("brief");
+  if (!label || !brief) return { text: `${SESSION_OPEN_TOOL}: label and brief are required.`, ok: false };
+  const first = params.firstCommand;
+  if (first !== undefined && (!Array.isArray(first) || first.some((f) => typeof f !== "string"))) return { text: `${SESSION_OPEN_TOOL}: firstCommand must be an array of strings.`, ok: false };
+  const c: Extract<SessionCommand, { sub: "open" }> = { sub: "open", label, brief, planFirst: params.planFirst === true, focus: params.focus === true, dryRun: params.dryRun === true };
+  const cwd = str("cwd");
+  const model = str("model");
+  if (cwd) c.cwd = cwd;
+  if (model) c.model = model;
+  if (params.planMode === true) c.planMode = true;
+  if (Array.isArray(first) && first.length) c.firstCommands = first as string[];
+  return sessionOpen(d, c);
+}
+
+export const SESSION_OPEN_TOOL = "foreman_session_open";
+
 export interface SessionHost {
   id: string;
   isChild: boolean;
@@ -338,6 +371,8 @@ export interface SessionHost {
   model?: string;
   config?: Json;
 }
+
+const commandNames = (pi: ExtensionAPI): string[] => pi.getCommands?.().map((c) => c.name) ?? [];
 
 /** Inbound report recognition plus the `/foreman session` handler. */
 export function registerSession(
@@ -396,10 +431,63 @@ export function registerSession(
           send: (to, text) => outboxSend(pi.events, to, text, "session", SEND_WAIT_MS),
           model: s.model,
           config: s.config,
+          commands: commandNames(pi),
         },
         args,
       );
       ctx.ui.notify(r.text, r.ok ? "info" : "warning");
     },
   };
+}
+
+const OPEN_PARAMS = {
+  type: "object",
+  properties: {
+    label: { type: "string", description: "Session label: 1-40 characters of A-Z a-z 0-9 . _ -." },
+    brief: { type: "string", description: "Path of the brief file the new session reads." },
+    cwd: { type: "string", description: "Directory the new session runs in (default: this session's)." },
+    model: { type: "string", description: "Model of the new session, <provider>/<id>; the rank rule applies." },
+    planFirst: { type: "boolean", description: "The brief asks the session to write a plan first." },
+    planMode: { type: "boolean", description: "Open the session in plan mode (first command /plan); refused when this session has no /plan command." },
+    firstCommand: { type: "array", items: { type: "string" }, maxItems: 4, description: "Extension commands (each starting with /) the new session runs before the brief prompt." },
+    focus: { type: "boolean", description: "Focus the new Herdr tab." },
+    dryRun: { type: "boolean", description: "Print the handoff dir, child id and command; open nothing." },
+  },
+  required: ["label", "brief"],
+  additionalProperties: false,
+};
+
+/** Register the `foreman_session_open` tool (foreman sessions only; the caller skips it in children). */
+export function registerSessionOpenTool(
+  pi: ExtensionAPI,
+  deps: { session: (ctx: ExtensionContext) => Promise<SessionHost>; spawner: Spawner; pkgRoot: string },
+): void {
+  pi.registerTool({
+    name: SESSION_OPEN_TOOL,
+    label: "Open a session",
+    description:
+      "Open a new foreman session in a Herdr tab (or print the command for a new terminal) with a brief file: same as `/foreman session open`. Design or new-topic sessions: planMode true; a session with an approved plan: no planMode. Refused in subagent children.",
+    parameters: OPEN_PARAMS as never,
+    async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+      const s = await deps.session(ctx);
+      const r = await runSessionOpenTool(
+        {
+          isChild: s.isChild,
+          env: process.env,
+          agentDir: s.agentDir,
+          cwd: s.cwd,
+          piSessionId: s.id,
+          pkgRoot: deps.pkgRoot,
+          python: s.python,
+          spawner: deps.spawner,
+          send: async () => "unavailable",
+          model: s.model,
+          config: s.config,
+          commands: commandNames(pi),
+        },
+        params,
+      );
+      return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.ok ? "opened" : "refused" }, ...(r.ok ? {} : { isError: true }) };
+    },
+  } as never);
 }
