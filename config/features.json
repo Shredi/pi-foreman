@@ -521,7 +521,7 @@
       "purpose": "`/retro` prints the session's friction metrics, writes permission-allow proposals and files findings to a local backlog read with `foreman backlog`.",
       "doc": "docs/retro.md#switches",
       "keys": ["retro.enabled", "retro.proposalMinReviews", "retro.workspaceKey", "retro.expireDays", "retro.askThreshold"],
-      "commands": ["/retro", "foreman retro", "foreman backlog"],
+      "commands": ["/retro", "/foreman flag-ask", "foreman retro", "foreman backlog"],
       "switch": null,
       "state": "on",
       "enable": ""

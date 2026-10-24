@@ -9,13 +9,14 @@
 `/foreman session` opens a second pi-foreman session on a brief, talks to it over pi-intercom and closes it
 again. All four subcommands are yours to type; a subagent child refuses every one of them.
 
-- `/foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--focus] [--dry-run]`
+- `/foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run]`
   writes a handoff dir (below), starts `pi` in a new Herdr tab (or prints the command to run in a terminal)
   and records the session. The label is 1 to 40 characters of `A-Z a-z 0-9 . _ -`. `--plan-first` makes the
   brief ask for a `plan.md` and a stop before any work; `--focus` focuses the new tab; `--dry-run` writes nothing
   (no handoff dir, brief, parent, child or registry entry) and prints the handoff path, the child id, the session
   model (`session model: <id>`, when `--model` is given) and the command it would run; no Herdr call.
   Example: `/foreman session open docs ./brief-docs.md --cwd ../site --model anthropic/claude-sonnet-4-5 --plan-first`
+  `--first-command /CMD` (repeatable, at most 4) and `--plan-mode` are described under [First commands and plan mode](#first-commands-and-plan-mode).
 - `/foreman session brief <target> <file|text…>` writes a brief into the session's handoff dir as `brief-<n>.md` and sends
   `Brief from <your id>: read <absolute path> and act on it` (the message names that file). A single word naming an
   existing file is copied; anything else is written as typed. See the message contract below.
@@ -32,7 +33,7 @@ pi-intercom as the address. Spaces in a brief path or `--cwd` do not survive the
 
 `bin/foreman session open|list` (`.cmd` and `.ps1` on Windows) runs `scripts/foreman_session.py`:
 
-- `foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--focus] [--dry-run] [--print-all] [--parent-id ID] [--own-model ID] [--agent-dir DIR]`.
+- `foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--print-all] [--parent-id ID] [--own-model ID] [--agent-dir DIR]`.
   `--print-all` prints both the POSIX and the PowerShell command. The parent id is `--parent-id`, else
   `PI_INTERCOM_SESSION_ID`, else `PI_INTERCOM_STABLE_ID`, else `stableId` in `<agent dir>/intercom/config.json`; without any, `open` is refused.
 - `foreman session list [--json] [--agent-dir DIR]` prints label, model (`-` when none was given), state, handoff dir and child id.
@@ -45,6 +46,18 @@ pi-intercom as the address. Spaces in a brief path or `--cwd` do not survive the
   is printed for you to send by hand and the exit code is 1; it never falls back to `herdr agent prompt`.
 - The agent dir is `--agent-dir`, else `PI_CODING_AGENT_DIR`, else `~/.pi/agent`.
 - Exit codes: 0 ok, 1 usage error or refused, 2 Herdr failure (the command is then printed and the entry marked `failed`).
+
+### First commands and plan mode
+
+`--first-command /CMD` (repeatable, at most 4; each starts with `/`, is one line of at most 200 characters without control characters, else `open` is refused) makes the new session run Pi extension commands before the brief prompt. `--plan-mode` is shorthand for `--first-command /plan`: it comes first and is never repeated. `--plan-first` is unchanged and independent (it changes the brief, not the launch line). Without these flags the launch line is the same as before.
+
+Mechanism: the commands are positional messages of the launch line, ahead of the brief prompt: `pi "/plan" "Read the handoff brief at … and proceed."`. Pi runs the messages in order and awaits each; a message starting with `/` runs as an extension command. The commands are quoted for POSIX and PowerShell, appear in the printed fallback, the dry run and `launch.txt`, and the registry entry gets `firstCommands` when there are any.
+
+Requirement and residual risk: `--plan-mode` needs a `plan` command in the new session (a plan-mode package). The CLI cannot check that; the `/foreman session open` command and the tool refuse with `session open refused [plan_mode_unavailable]` when the opening session has no `/plan` command. If a `/plan` handler starts a turn without awaiting it, the brief prompt that follows may fail to start.
+
+### The foreman_session_open tool
+
+A foreman session can open a session without bash: `foreman_session_open({label, brief, cwd?, model?, planFirst?, planMode?, firstCommand?: string[], focus?, dryRun?})` runs the same open as the command (same validation, rank rule and opener id). It is refused in subagent children, which never get the tool. Design or new-topic sessions open with `planMode: true`; a session with an approved plan opens without.
 
 ### Handoff dir and registry
 

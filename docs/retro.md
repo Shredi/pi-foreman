@@ -220,6 +220,10 @@ backlog candidate). `retro.workspaceKey`,
 `retro.backlogDir` and `retro.repoBacklog` come from user or overlay config only; a project or session value is
 ignored.
 
+## Flagged asks
+
+`/foreman flag-ask [note]` flags the last ask you answered in this session as unnecessary (the Permission System dialog choices are fixed, so the flag is a command). It writes one `ask_flag` trace event: command family, the complete command (only secret-looking values are masked by the trace redactor), effect class, asking rule, session and time. The session is the trace file the event is written to (one file per session, `trace-<session>.jsonl`; the trace field list has no session key) and the time is the event's `ts`. The session of a Permission System prompt is the process's first session (pi runs one at a time); a flag only matches an answer of the same session. A forwarded child prompt carries no evidence of the full line, so its stored command is the offending unit. A flag never allows anything: no rule reads it back. The retro run files each flag into the backlog as kind `flagged-ask`; `/retro` (section "Flagged asks") and `foreman backlog list` show them grouped by family.
+
 ## Bench
 
 A bench cell has its own workspace key, `bench/<task-id>`, so its findings do not mix with real work. The bench
@@ -231,5 +235,5 @@ waiter runs retro after the session ends; it calls no model and spends no tokens
 - Retro reads local files and writes local files. Nothing is sent anywhere.
 - The trace carries allowlisted fields only (`note` for `friction` events, 120 characters, paths reduced to basenames).
 - `retro models` reads local findings records only; the trace carries a finding's file as a basename.
-- Backlog evidence holds counts, family names and basenames, not command lines or file contents.
+- Backlog evidence holds counts, family names and basenames, not command lines or file contents. The one exception is a `flagged-ask` entry: it keeps the complete command (secret-looking values masked) and is stored in the global store only, never in a repository store.
 - Nothing is committed unless a `retro.repoBacklog` entry says `commit: true` and `/sync` covers that repository.

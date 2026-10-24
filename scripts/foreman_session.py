@@ -3,6 +3,7 @@
 
     python scripts/foreman_session.py open <label> <brief-file> [--cwd DIR] [--model ID]
                                       [--plan-first] [--focus] [--dry-run] [--print-all]
+                                      [--first-command CMD]... [--plan-mode]
                                       [--parent-id ID] [--own-model ID] [--agent-dir D]
     python scripts/foreman_session.py list [--json] [--agent-dir D]
     python scripts/foreman_session.py brief <handoff dir|label|child id> <text|file> [--parent-id ID] [--agent-dir D]
@@ -34,6 +35,11 @@ the session is recorded as `pending`. After a Herdr open the child pane gets the
 PI_FOREMAN_PARENT_LABEL=<parent-slug> so its Pi refreshes the tag. Every PI_BG_* variable of the opener (PI_BG_FEATURES first;
 names and values checked, a failing one is skipped with a note) is passed to the child as well. --dry-run writes nothing and prints the handoff dir,
 child id and command; no Herdr call, no registry entry.
+
+`--first-command CMD` (repeatable, at most 4, each starting with `/`, one line, 200 characters at most) runs Pi's
+extension commands before the brief prompt: each is a positional message (`pi "/plan" "<brief prompt>"`), and Pi
+runs a `/` message to completion, awaited, before the next one. `--plan-mode` is `--first-command /plan`, placed first
+and never repeated. The child's Pi must provide the command (a plan-mode package); this CLI cannot check that.
 
 Agent dir: --agent-dir, else PI_CODING_AGENT_DIR, else ~/.pi/agent. Parent id: --parent-id, else
 PI_INTERCOM_SESSION_ID (the id pi-intercom publishes), else PI_INTERCOM_STABLE_ID, else `stableId` of
@@ -77,6 +83,9 @@ BG_VALUE_RE = re.compile(r"^[A-Za-z0-9._:/@,=+ -]{0,200}$")
 LAUNCH_FILE = "launch.txt"
 META_SOURCE = "user:pi-foreman"
 META_TTL_MS = 180000
+FIRST_MAX = 4
+FIRST_LEN = 200
+PLAN_COMMAND = "/plan"
 
 
 class Refused(Exception):
@@ -369,29 +378,56 @@ def prompt_text(handoff):
     return "Read the handoff brief at %s and proceed." % (Path(handoff) / "brief.md").as_posix()
 
 
-def posix_command(env, model, prompt):
+def first_commands(cmds, plan_mode):
+    """The Pi messages before the brief prompt: /plan first with --plan-mode, then --first-command in order; no repeats."""
+    out = []
+    for c in ([PLAN_COMMAND] if plan_mode else []) + list(cmds):
+        if c not in out:
+            out.append(c)
+    return out
+
+
+def check_first_commands(cmds):
+    if len(cmds) > FIRST_MAX:
+        raise Refused("at most %d first commands (--plan-mode counts as %s)" % (FIRST_MAX, PLAN_COMMAND))
+    for c in cmds:
+        if not c.startswith("/"):
+            raise Refused("--first-command must start with /: %r" % c)
+        if len(c) > FIRST_LEN:
+            raise Refused("--first-command is longer than %d characters" % FIRST_LEN)
+        if any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in c):
+            raise Refused("--first-command must be one line without control characters")
+        if any(0x2018 <= ord(ch) <= 0x201b for ch in c):
+            raise Refused("--first-command must not contain typographic single quotes (PowerShell reads them as quotes)")
+
+
+def posix_command(env, model, prompt, first=()):
     parts = ["env"] + ["%s=%s" % (k, shlex.quote(v)) for k, v in env] + ["pi"]
     if model:
         parts += ["--model", shlex.quote(model)]
-    return " ".join(parts + [shlex.quote(prompt)])
+    return " ".join(parts + [shlex.quote(c) for c in first] + [shlex.quote(prompt)])
+
+
+# ASCII apostrophe and the typographic single quotes U+2018-U+201B, which PowerShell also reads as quotes
+PS_SINGLE_QUOTES = "'\u2018\u2019\u201a\u201b"
 
 
 def ps_quote(v):
-    return "'" + v.replace("'", "''") + "'"
+    return "'" + "".join(ch * 2 if ch in PS_SINGLE_QUOTES else ch for ch in v) + "'"
 
 
-def powershell_command(env, model, prompt):
+def powershell_command(env, model, prompt, first=()):
     sets = ["$env:%s=%s" % (k, ps_quote(v)) for k, v in env]
-    call = ["pi"] + (["--model", ps_quote(model)] if model else []) + [ps_quote(prompt)]
+    call = ["pi"] + (["--model", ps_quote(model)] if model else []) + [ps_quote(c) for c in first] + [ps_quote(prompt)]
     return "; ".join(sets + [" ".join(call)])
 
 
-def fallback_text(env, model, prompt, cwd, platform, print_all):
+def fallback_text(env, model, prompt, cwd, platform, print_all, first=()):
     out = ["No Herdr here. Run this in a new terminal in %s:" % cwd]
     if print_all or platform != "win32":
-        out += ["POSIX shell:"] * print_all + ["  " + posix_command(env, model, prompt)]
+        out += ["POSIX shell:"] * print_all + ["  " + posix_command(env, model, prompt, first)]
     if print_all or platform == "win32":
-        out += ["PowerShell:"] * print_all + ["  " + powershell_command(env, model, prompt)]
+        out += ["PowerShell:"] * print_all + ["  " + powershell_command(env, model, prompt, first)]
     return "\n".join(out)
 
 
@@ -416,6 +452,8 @@ def cmd_open(a):
     adir = agent_dir(a.agent_dir)
     if not LABEL_RE.match(a.label):
         raise Refused("label must be 1-40 characters of A-Z a-z 0-9 . _ - and start with a letter or digit")
+    first = first_commands(a.first_command or [], a.plan_mode)
+    check_first_commands(first)
     brief = Path(a.brief)
     if not brief.is_file():
         raise Refused("brief file not found: %s" % a.brief)
@@ -454,7 +492,7 @@ def cmd_open(a):
     parent_slug = opener_slug(here, git_top(here))
     env = child_env(handoff, parent, child, parent_slug, a.model)
     prompt = prompt_text(handoff)
-    command = posix_command(env, a.model, prompt)
+    command = posix_command(env, a.model, prompt, first)
     binary = herdr_bin() if os.environ.get("HERDR_PANE_ID") else None
     print("handoff: %s" % handoff)
     print("child intercom id: %s" % child)
@@ -466,17 +504,19 @@ def cmd_open(a):
         if binary:
             print("dry run: would open a tab %r in the Herdr workspace %r and run:\n  %s" % (a.label, ws_label, command))
         else:
-            print("dry run: " + fallback_text(env, a.model, prompt, cwd, sys.platform, a.print_all))
+            print("dry run: " + fallback_text(env, a.model, prompt, cwd, sys.platform, a.print_all, first))
         return 0
     handoff.mkdir(parents=True, exist_ok=False)
     (handoff / "brief.md").write_text(text.rstrip("\n") + "\n" + footer(a.label, a.plan_first), "utf-8")
     (handoff / "parent").write_text(parent + "\n", "utf-8")
     (handoff / "child").write_text(child + "\n", "utf-8")
     # the exact launch line (Herdr's pane command, else this platform's fallback line): a relaunch is a copy
-    launch = command if binary or sys.platform != "win32" else powershell_command(env, a.model, prompt)
+    launch = command if binary or sys.platform != "win32" else powershell_command(env, a.model, prompt, first)
     (handoff / LAUNCH_FILE).write_text(launch + "\n", "utf-8")
     entry = {"label": a.label, "child": child, "parent": parent, "handoff": str(handoff), "cwd": str(cwd),
              "model": a.model or None, "opened": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": "pending", "last": None}
+    if first:
+        entry["firstCommands"] = first
     if managed_worktree(cwd, adir):  # Pi would ask "Trust project folder?" for a fresh worktree
         import foreman_trust
         if foreman_trust.grant(adir, cwd):
@@ -492,10 +532,10 @@ def cmd_open(a):
         except HerdrError as e:
             entry["status"] = "failed"
             sys.stderr.write("pi-foreman session: %s\n" % e)
-            print(fallback_text(env, a.model, prompt, cwd, sys.platform, a.print_all))
+            print(fallback_text(env, a.model, prompt, cwd, sys.platform, a.print_all, first))
             code = 2
     else:
-        print(fallback_text(env, a.model, prompt, cwd, sys.platform, a.print_all))
+        print(fallback_text(env, a.model, prompt, cwd, sys.platform, a.print_all, first))
     reg = read_registry(adir)
     reg["sessions"] = [s for s in reg["sessions"] if not (isinstance(s, dict) and s.get("child") == child)] + [entry]
     write_registry(adir, reg)
@@ -615,6 +655,8 @@ def main(argv=None):
     o.add_argument("--own-model")
     o.add_argument("--parent-id")
     o.add_argument("--plan-first", action="store_true")
+    o.add_argument("--first-command", action="append")
+    o.add_argument("--plan-mode", action="store_true")
     o.add_argument("--focus", action="store_true")
     o.add_argument("--dry-run", action="store_true")
     o.add_argument("--print-all", action="store_true")

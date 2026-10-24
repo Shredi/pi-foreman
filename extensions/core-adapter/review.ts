@@ -21,6 +21,7 @@ import type { BashRules } from "./timeoutallow.ts";
 import { insideScratch } from "./childscratch.ts";
 import { deterministicAllow, deterministicAllowInfo, hits } from "./timeoutallow.ts";
 import { classify, effectCtx } from "./effects.ts";
+import { workspaceTop } from "./gitdrift.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
@@ -521,7 +522,7 @@ export class ForemanReview {
       else if (!REVIEW_SURFACES.includes(surface)) out = { verdict: { kind: "defer" }, label: "surface" };
       else if (surface === "bash" && d.forwarding && (fixed = this.fixedAllow(s, d, cls))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (surface === "bash" && !d.forwarding && (fixed = this.roundWorktreeAllow(s, d))) out = { verdict: { kind: "allow" }, label: fixed };
-      else if (surface === "bash" && !d.forwarding && (fixed = this.fixedAllow(s, d, cls, "own-handoff"))) out = { verdict: { kind: "allow" }, label: fixed };
+      else if (surface === "bash" && !d.forwarding && (fixed = this.fixedAllow(s, d, cls, ["own-handoff", "net-read"]))) out = { verdict: { kind: "allow" }, label: fixed };
       else if (!target) out ={ verdict: { kind: "defer" }, label: "no-model" };
       else if (reviewValue(d).length > MAX_VALUE) out = { verdict: { kind: "defer" }, label: "truncated" };
       else {
@@ -594,7 +595,9 @@ export class ForemanReview {
       const roots = get(s.config(), "safety.permissions.readRoots");
       const ledger = this.ledgerOf(s);
       const flow = d.forwarding ? this.mainFlowOf(s) : [];
-      const ctx = effectCtx(s.cwd, this.scratchOf(s, d), process.platform, [...(Array.isArray(roots) ? roots : []), ...(ledger ? [ledger] : []), ...flow]);
+      const scratch = this.scratchOf(s, d);
+      // R31c: the role is explicit (a forwarded ask is a child's); a network read may write only into the orchestrator's ceremony scratch dir or the child's role scratch
+      const ctx = effectCtx(s.cwd, scratch, process.platform, [...(Array.isArray(roots) ? roots : []), ...(ledger ? [ledger] : []), ...flow], d.forwarding ? "child" : "orchestrator", this.netOutDirs(s, d, scratch));
       return { ctx, cls: classify(reviewValue(d), ctx) };
     } catch {
       return null;
@@ -602,7 +605,20 @@ export class ForemanReview {
   }
 
   /** A deterministic label (timeoutallow.ts) when the forwarded command is allowed without the model; traces `chain_allow {segments}` for a chain. */
-  private fixedAllow(s: ReviewSession, d: AskDetails, cls: { ctx: EffectCtx } | null, only?: string): string | null {
+  /** The dirs a network read (`curl -o`, `>`) may write into: a forwarded child's role scratch, else the session's `ceremony.scratchDir` below its workspace (default `.workflow/scratch`). */
+  private netOutDirs(s: ReviewSession, d: AskDetails, scratch: string[]): string[] {
+    if (d.forwarding) return scratch;
+    try {
+      const sd = get(s.config(), "ceremony.scratchDir");
+      const rel = typeof sd === "string" && sd.trim() && !path.isAbsolute(sd.trim()) && !sd.split(/[\\/]/).includes("..") ? sd.trim() : ".workflow/scratch";
+      const root = workspaceTop(s.cwd);
+      return root ? [path.join(root, rel)] : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private fixedAllow(s: ReviewSession, d: AskDetails, cls: { ctx: EffectCtx } | null, only?: readonly string[]): string | null {
     try {
       const rules = s.bashRules?.();
       if (!rules) return null;
@@ -611,8 +627,8 @@ export class ForemanReview {
       const full = reviewValue(d);
       const ledger = this.ledgerOf(s);
       const deps = { scratchDirs: this.scratchOf(s, d), ownDirs: this.ownDirsOf(s, d), ...(ledger ? { ledger } : {}), ...(cls ? { effects: cls.ctx } : {}) };
-      // the session's own asks (not forwarded from a child) get only the own-handoff allow without the model
-      if (only && (deterministicAllow(rules, unit, deps) !== only || deterministicAllow(rules, full, deps) !== only)) return null;
+      // the session's own asks (not forwarded from a child) get only the labels in `only` (own-handoff, net-read) without the model
+      if (only && [unit, full].some((v) => !only.includes(deterministicAllow(rules, v, deps) ?? ""))) return null;
       if (!deterministicAllow(rules, unit, deps)) return null;
       const info = deterministicAllowInfo(rules, full, deps);
       if (info && info.segments >= 2) s.trace?.({ event: "chain_allow", segments: info.segments, decision: info.label, role: d.agentName ?? "?" });
@@ -654,7 +670,7 @@ export class ForemanReview {
       const roots = get(s.config(), "safety.permissions.readRoots");
       const ledger = this.ledgerOf(s);
       const readable = [...(Array.isArray(roots) ? roots : []), ...ownedRead, ...(ledger ? [ledger] : []), ...(d.forwarding ? this.mainFlowOf(s) : [])];
-      const ctx = { ...effectCtx(s.cwd, [...this.scratchOf(s, d), ...owned], process.platform, readable), noTmp: true };
+      const ctx = { ...effectCtx(s.cwd, [...this.scratchOf(s, d), ...owned], process.platform, readable, d.forwarding ? "child" : "orchestrator"), noTmp: true };
       const full = reviewValue(d);
       const deps = { effects: ctx };
       return deterministicAllow(rules, unitValue(d), deps) && deterministicAllow(rules, full, deps) ? "owned-roots" : null;
@@ -697,7 +713,7 @@ export class ForemanReview {
       const read = rootList(s.readOnlyRoots);
       const rules = s.bashRules?.();
       if (!read.length || !rules) return null;
-      const ctx = { ...effectCtx(s.cwd, [], process.platform, read), noTmp: true };
+      const ctx = { ...effectCtx(s.cwd, [], process.platform, read, "orchestrator"), noTmp: true };
       // `$TMPDIR/pi-subagents-uid-<uid>/...` (the chair's spelling of a run's output log) is read as the foreman's own tmp dir; none when the command sets TMPDIR itself
       const tmp = (v: string): string => expandTmpdir(v, (process.env.TMPDIR || os.tmpdir()).replace(/(.)\/+$/, "$1"), process.platform);
       const full = tmp(reviewValue(d));
