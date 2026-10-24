@@ -6,14 +6,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { buildOrientation, collectOrientation } from "../orient.ts";
 
-const reads = { warn: 4, deny: 8 };
+const reads = { warn: 4, every: 6 };
 const files = ["src/a/x.ts", "src/a/y.ts", "src/b/z.ts", "src/top.ts", "tests/t.py", "README.md", "package.json", "Cargo.toml", "pyproject.toml"];
 const base = { files, agentsMd: null, readmeMd: "# Title\nline2", packageJson: '{"scripts":{"test":"x","build":"y"}}', reads, maxLines: 120 };
 
 test("orient: tree with counts, depth 2, root files, hint with the budget", () => {
   const t = buildOrientation(base);
   assert.ok(t.includes("src/ (4)\n  src/a/ (2)\n  src/b/ (1)\ntests/ (1)\nroot files: Cargo.toml, README.md, package.json, pyproject.toml"));
-  assert.ok(t.includes("launch the explorer. Your read budget before the first launch is 4/8"));
+  assert.ok(t.includes("launch the explorer. Your read reminder before the first launch comes after 4 reads, then every 6 reads."));
 });
 
 test("orient: tree is capped with a +N more line", () => {

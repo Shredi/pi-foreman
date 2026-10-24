@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import { DEFAULT_READ_LIMITS } from "../budget.ts";
 import { r11Rig } from "./_r11rig.ts";
 
-const DENY = DEFAULT_READ_LIMITS.before.deny;
+const WARN = DEFAULT_READ_LIMITS.before.warn;
+const reminds = (a: Awaited<ReturnType<typeof r11Rig>>): number => a.events("read_budget").filter((r) => r.action === "remind").length;
 const readDenied = (r: { block?: boolean; reason?: string } | undefined): boolean => r?.block === true && /\[read_budget_exceeded\]/.test(r.reason ?? "");
 
 async function finalized(t: Parameters<typeof r11Rig>[0]) {
@@ -16,7 +17,8 @@ async function finalized(t: Parameters<typeof r11Rig>[0]) {
   assert.equal(l.res, undefined);
   await a.started(l.id, finalizer, "run-fin");
   a.end({ runId: "run-fin", agent: "finalizer", status: "completed", success: true, summary: "done" });
-  for (let i = 0; i < DENY + 2; i++) assert.ok(!readDenied(await a.call("bash", { command: `ls -la f${i}` })), "finalization: no read budget");
+  for (let i = 0; i < WARN + 2; i++) assert.ok(!readDenied(await a.call("bash", { command: `ls -la f${i}` })), "finalization: no read budget");
+  assert.equal(reminds(a), 0);
   return a;
 }
 
@@ -25,10 +27,9 @@ test("read_budget_finalization_ends_on_accepted_launch", async (t) => {
   const builder = { agent: "builder", task: "fix item 5" };
   const l = await a.launch(builder);
   assert.equal(l.res, undefined, "the builder launch is accepted");
-  // no tool_result yet: reads past the budget are refused
-  const out = [];
-  for (let i = 0; i < DENY + 1; i++) out.push(await a.call("bash", { command: `ls -la g${i}` }));
-  assert.ok(out.some(readDenied), "the read budget applies while the accepted launch has no result");
+  // no tool_result yet: reads past the budget raise the reminder
+  for (let i = 0; i < WARN; i++) assert.ok(!readDenied(await a.call("bash", { command: `ls -la g${i}` })));
+  assert.equal(reminds(a), 1, "the read budget applies while the accepted launch has no result");
 });
 
 test("read_budget_finalization_resumes_after_errored_launch_with_no_run", async (t) => {
@@ -36,8 +37,10 @@ test("read_budget_finalization_resumes_after_errored_launch_with_no_run", async 
   const builder = { agent: "builder", task: "fix item 5" };
   const l = await a.launch(builder);
   assert.equal(l.res, undefined);
-  assert.ok(readDenied(await (async () => { let r; for (let i = 0; i < DENY + 1; i++) r = await a.call("bash", { command: `ls -la h${i}` }); return r; })()), "pending launch: budget applies");
+  for (let i = 0; i < WARN; i++) await a.call("bash", { command: `ls -la h${i}` });
+  assert.equal(reminds(a), 1, "pending launch: budget applies");
   // the launch's tool_result is an error and no run started: no budget state changed, finalization holds again
   await a.errored(l.id, builder);
-  for (let i = 0; i < DENY + 2; i++) assert.ok(!readDenied(await a.call("bash", { command: `ls -la k${i}` })), "finalization holds after a launch that never started");
+  for (let i = 0; i < WARN + 2; i++) assert.ok(!readDenied(await a.call("bash", { command: `ls -la k${i}` })), "finalization holds after a launch that never started");
+  assert.equal(reminds(a), 1, "no further reminder: the reads are exempt again");
 });

@@ -25,7 +25,7 @@
     "text": "Warned."
    }
   ],
-  "deny": [
+  "remind": [
    {
     "tools": [
      {
@@ -171,7 +171,7 @@
     ]
    },
    {
-    "text": "Denied."
+    "text": "Reminded."
    }
   ],
   "after": [
@@ -186,7 +186,7 @@
     ]
    },
    {
-    "text": "Lifted."
+    "text": "Read again."
    }
   ],
   "script": [
@@ -292,7 +292,7 @@
     ]
    },
    {
-    "text": "Nested refused."
+    "text": "Nested read done."
    }
   ],
   "sup1": [
