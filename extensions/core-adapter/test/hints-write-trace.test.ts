@@ -1,11 +1,11 @@
 // A ledger hint the rename keeps refusing reaches the trace as a `hint_write_failed` record with its `code` and `attempts`.
-// The onFail callback mirrors the adapter's hintOpts (index.ts): it emits through the session trace writer, which sanitises
-// every record (trace.ts), so this also covers the field allowance for `code` and `attempts`.
+// The options come from hintFailTrace, the factory the adapter's hintOpts (index.ts) uses, and emit through the session trace
+// writer, which sanitises every record (trace.ts), so this also covers the field allowance for `code` and `attempts`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { writeHint } from "../hints.ts";
+import { hintFailTrace, writeHint } from "../hints.ts";
 import { openTrace } from "../trace.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
@@ -21,8 +21,7 @@ test("hint write give-up: the trace gets a hint_write_failed record with code an
     const rename = (): void => {
       throw Object.assign(new Error("EBUSY: refused"), { code: "EBUSY" });
     };
-    const onFail = (f: { code: string; attempts: number }): void => trace.emit({ event: "hint_write_failed", code: f.code, attempts: f.attempts });
-    assert.deepEqual(writeHint(ledger, ["1"], "ledger mark", undefined, { rename, onFail }), []);
+    assert.deepEqual(writeHint(ledger, ["1"], "ledger mark", undefined, { ...hintFailTrace((rec) => trace.emit(rec)), rename }), []);
     const recs = fs.readFileSync(trace.file, "utf8").trim().split("\n").map((l) => JSON.parse(l));
     assert.equal(recs.length, 1);
     assert.equal(recs[0].event, "hint_write_failed");

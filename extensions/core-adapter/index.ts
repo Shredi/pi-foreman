@@ -98,7 +98,7 @@ import { resolveCachePolicy } from "./cachepolicy.ts";
 import { IdleCache, type Busy } from "./idlecache.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
 import { applyLedgerItems, criticOf } from "./ledgerblock.ts";
-import { citedItems, ledgerHint, writeHint, type HintWriteOpts } from "./hints.ts";
+import { citedItems, hintFailTrace, ledgerHint, writeHint, type HintWriteOpts } from "./hints.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, sessionTrace, withDigest } from "./retro.ts";
 import { frictionOfRunEnd } from "./friction.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
@@ -162,7 +162,7 @@ const GIT_GUARD_ENTRY = path.join(PKG_ROOT, "extensions", "git-guard", "index.ts
 const ORIGINAL_PI_FOREMAN_PYTHON = process.env.PI_FOREMAN_PYTHON;
 
 /** A ledger hint that failed after the rename retries: a `hint_write_failed` trace record, not a silent drop. */
-const hintOpts = (s: Session): HintWriteOpts => ({ onFail: (f) => s.trace?.emit({ event: "hint_write_failed", code: f.code, attempts: f.attempts }) });
+const hintOpts = (s: Session): HintWriteOpts => hintFailTrace((rec) => s.trace?.emit(rec));
 
 interface Session {
   id: string;

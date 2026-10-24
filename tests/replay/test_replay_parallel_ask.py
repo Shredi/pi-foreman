@@ -29,34 +29,20 @@ def is_stop(e):
     return e["event"] == "guard" and e.get("toolFamily") == "Stop"
 
 
-CHILD_EVENTS = {"child_scratch", "role_result"}
+def stop_after_child_scratch(golden):
+    """The golden foreman list with the one post-reply Stop guard moved to directly after the child_scratch that follows it."""
+    reply = next(i for i, e in enumerate(golden) if e["event"] == "supervisor_request" and e.get("decision") == "replied")
+    stop = next(i for i in range(reply, len(golden)) if is_stop(golden[i]))
+    scratch = next(i for i in range(stop, len(golden)) if golden[i]["event"] == "child_scratch")
+    assert not any(is_stop(e) or e["event"] == "child_scratch" for e in golden[reply:stop]), "unexpected golden shape"
+    return golden[:stop] + golden[stop + 1:scratch + 1] + [golden[stop]] + golden[scratch + 1:]
 
 
-def stops_last(run):
-    return [e for e in run if not is_stop(e)] + [e for e in run if is_stop(e)]
-
-
-def canonical_span(events):
-    """From the `replied` supervisor_request to the last role_result, a Stop guard may move only across the
-    child_scratch / role_result events next to it: whether the supervisor-reply wake's Stop guard lands before or after
-    a child's child_scratch is a race (the wake and the child's last writes run concurrently). Each maximal run of
-    consecutive Stop / child_scratch / role_result events in the span is reordered with its Stops last, relative order
-    kept; no Stop crosses an llm, turn, supervisor_request or any other event. The actual trace and the golden are
-    canonicalised the same way; events outside the span are untouched."""
-    start = next((i for i, e in enumerate(events) if e["event"] == "supervisor_request" and e.get("decision") == "replied"), None)
-    res = [i for i, e in enumerate(events) if e["event"] == "role_result"]
-    if start is None or not res or res[-1] < start:
-        return events
-    end = res[-1] + 1
-    out, run = [], []
-    for e in events[start:end]:
-        if is_stop(e) or e["event"] in CHILD_EVENTS:
-            run.append(e)
-            continue
-        out += stops_last(run) + [e]
-        run = []
-    out += stops_last(run)
-    return events[:start] + out + events[end:]
+def allowed_foreman_orders(golden):
+    """The two orderings the foreman trace may have. The supervisor reply wakes the child and ends the foreman's turn
+    at the same moment, so the foreman's Stop guard and the child's child_scratch are written concurrently; both
+    orders are correct behaviour: (a) the golden as is, (b) the Stop guard right after the child_scratch."""
+    return [golden, stop_after_child_scratch(golden)]
 
 
 def finished(traces, foreman_key):
@@ -114,42 +100,37 @@ class TestParallelAsk(ReplayCase):
         if os.environ.get("FOREMAN_REPLAY_UPDATE_GOLDEN") == "1":
             self.golden("parallel_ask", {"foreman": foreman, "children": children})
         want = json.loads((Path(__file__).resolve().parent / "golden" / "parallel_ask.json").read_text("utf-8"))
-        self.assertEqual(canonical_span(foreman), canonical_span(want["foreman"]))
+        self.assertIn(foreman, allowed_foreman_orders(want["foreman"]))
         self.assertEqual(children, want["children"])
 
 
-class TestCanonicalSpan(unittest.TestCase):
+class TestAllowedOrders(unittest.TestCase):
     S = {"event": "guard", "toolFamily": "Stop"}
     OPEN = {"event": "supervisor_request", "decision": "open"}
     REPLIED = {"event": "supervisor_request", "decision": "replied"}
+    LLM = {"event": "llm"}
+    TURN = {"event": "turn"}
     CS = {"event": "child_scratch"}
     RR = {"event": "role_result"}
-    EV = [{"event": "turn"}, S, OPEN, REPLIED, {"event": "turn"}, S, CS, RR, {"event": "turn"}, S]
+    GOLDEN = [TURN, S, OPEN, REPLIED, LLM, TURN, S, CS, RR, CS, RR, TURN, S]
 
-    def test_no_reply_unchanged(self):
-        ev = [e for e in self.EV if e is not self.REPLIED]
-        self.assertEqual(canonical_span(ev), ev)
+    def test_variant_moves_only_the_post_reply_stop(self):
+        want = [self.TURN, self.S, self.OPEN, self.REPLIED, self.LLM, self.TURN, self.CS, self.S, self.RR, self.CS, self.RR, self.TURN, self.S]
+        self.assertEqual(stop_after_child_scratch(self.GOLDEN), want)
 
-    def test_span_stop_guards_move_after_the_other_span_events(self):
-        want = [{"event": "turn"}, self.S, self.OPEN, self.REPLIED, {"event": "turn"}, self.CS, self.RR, self.S, {"event": "turn"}, self.S]
-        self.assertEqual(canonical_span(self.EV), want)
+    def test_golden_matches_first_ordering(self):
+        self.assertEqual(allowed_foreman_orders(self.GOLDEN)[0], self.GOLDEN)
 
-    def test_multiset_stop_count_and_child_order_kept(self):
-        got = canonical_span(self.EV)
-        self.assertEqual(sorted(map(repr, got)), sorted(map(repr, self.EV)))
-        self.assertEqual(sum(is_stop(e) for e in got), 3)
-        self.assertLess(got.index(self.CS), got.index(self.RR))
-
-    def test_two_children_order_kept(self):
-        ev = [self.REPLIED, self.CS, self.S, self.RR, self.CS, self.RR]
-        self.assertEqual(canonical_span(ev), [self.REPLIED, self.CS, self.RR, self.CS, self.RR, self.S])
-
-    def test_stop_moved_across_turn_or_llm_is_not_canonicalised(self):
-        for ev_name in ("turn", "llm"):
-            with self.subTest(event=ev_name):
-                golden = [self.REPLIED, {"event": ev_name}, self.S, self.CS, self.RR]
-                moved = [self.REPLIED, self.S, {"event": ev_name}, self.CS, self.RR]
-                self.assertNotEqual(canonical_span(moved), canonical_span(golden))
+    def test_stop_moved_across_turn_llm_or_request_matches_neither(self):
+        S, T, L, O, R = self.S, self.TURN, self.LLM, self.OPEN, self.REPLIED
+        moved = {
+            "turn": [T, S, O, R, L, S, T, self.CS, self.RR, self.CS, self.RR, T, S],
+            "llm": [T, S, O, R, S, L, T, self.CS, self.RR, self.CS, self.RR, T, S],
+            "supervisor_request": [T, S, O, S, R, L, T, self.CS, self.RR, self.CS, self.RR, T, S],
+        }
+        for name, trace in moved.items():
+            with self.subTest(moved_across=name):
+                self.assertNotIn(trace, allowed_foreman_orders(self.GOLDEN))
 
 
 if __name__ == "__main__":

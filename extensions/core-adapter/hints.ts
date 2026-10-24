@@ -140,6 +140,11 @@ export interface HintWriteOpts {
   onFail?: (f: HintFailure) => void;
 }
 
+/** HintWriteOpts whose give-up is emitted as a `hint_write_failed {code, attempts}` trace record. */
+export function hintFailTrace(emit: (rec: Record<string, unknown>) => void): HintWriteOpts {
+  return { onFail: (f) => emit({ event: "hint_write_failed", code: f.code, attempts: f.attempts }) };
+}
+
 /**
  * fs.renameSync with a bounded, synchronous retry on the sharing errors (EPERM, EACCES, EBUSY). Any
  * other error, or the last retryable one, is returned with the attempts made.
