@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { BUNDLED_PACKAGE_ROOTS, buildOrientation } from "../orient.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const input = { files: ["a/x.ts"], agentsMd: null, readmeMd: null, packageJson: null, reads: { warn: 4, deny: 8 }, maxLines: 120 };
+const input = { files: ["a/x.ts"], agentsMd: null, readmeMd: null, packageJson: null, reads: { warn: 4, every: 8 }, maxLines: 120 };
 
 test("orient: one line names the bundled package roots", () => {
   const lines = buildOrientation(input).split("\n").filter((l) => l.startsWith("Bundled package roots"));

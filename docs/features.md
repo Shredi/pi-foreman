@@ -60,7 +60,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [bench](#bench) | opt-in | Measures harness changes over Harbor tasks in local Docker, and reviewer models over planted-defect diffs with `foreman bench review`. | `foreman bench review --tasks bench/review-samples --dry-run` | [bench](bench.md#running) |
 | [bench-climb](#bench-climb) | opt-in | Explores cheap-to-strong reviewer climb policies offline over review-bench cells; the runtime has no climb on a finding. | `foreman bench review --tasks bench/review-samples --mode climb --rungs <cheap-model>,<strong-model> --dry-run` | [bench](bench.md#review-bench) |
 | [ceremony-tiers](#ceremony-tiers) | on | The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a clean work tree). | on by default | [ceremony](ceremony.md#triage-and-delegation) |
-| [read-budgets](#read-budgets) | on | Warns and then refuses the foreman's own reads past a budget until an explorer runs, caps rechecks after a PASS (a plan-review PASS does not start the recheck window), and gives child roles their own read budgets. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
+| [read-budgets](#read-budgets) | on | Reminds the foreman to delegate once its own reads pass a budget (never refuses a read; coordination calls do not count), caps rechecks after a PASS (a plan-review PASS does not start the recheck window), and gives child roles their own read budgets. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [launch-wait](#launch-wait) | on | Returns a foreman launch at once with its receipt (the completion notice starts the next turn; "block" holds it until the child ends, for replay rigs and bench), drops duplicate completion notices and caps concurrent children. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [waits](#waits) | on | The foreman-only `foreman_wait` tool waits on timers, files, processes and CI runs within a duration and concurrency limit, batching its notices. | on by default | [sessions](sessions.md#further-session-keys) |
 | [foreman-bg](#foreman-bg) | on | The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool. | on by default | [sessions](sessions.md#background-runs) |
@@ -340,14 +340,16 @@ No config key.
 
 ### read-budgets
 
-**Read budgets.** Warns and then refuses the foreman's own reads past a budget until an explorer runs, caps rechecks after a PASS (a plan-review PASS does not start the recheck window), and gives child roles their own read budgets.
+**Read budgets.** Reminds the foreman to delegate once its own reads pass a budget (never refuses a read; coordination calls do not count), caps rechecks after a PASS (a plan-review PASS does not start the recheck window), and gives child roles their own read budgets.
 
 | Key | Default | Layer |
 |---|---|---|
-| `ceremony.foremanReads.before.warn` | `4` | tighten-only (lower only, minimum 1) |
-| `ceremony.foremanReads.before.deny` | `8` | tighten-only (lower only, minimum 1) |
-| `ceremony.foremanReads.after.warn` | `4` | tighten-only (lower only, minimum 1) |
-| `ceremony.foremanReads.after.deny` | `8` | tighten-only (lower only, minimum 1) |
+| `ceremony.foremanReads.before.warn` | `8` | tighten-only (lower only, minimum 1) |
+| `ceremony.foremanReads.before.every` | `8` | tighten-only (lower only, minimum 1) |
+| `ceremony.foremanReads.before.deny` | unset | tighten-only (lower only, minimum 1) |
+| `ceremony.foremanReads.after.warn` | `8` | tighten-only (lower only, minimum 1) |
+| `ceremony.foremanReads.after.every` | `8` | tighten-only (lower only, minimum 1) |
+| `ceremony.foremanReads.after.deny` | unset | tighten-only (lower only, minimum 1) |
 | `ceremony.childReads.<x>.warn` | `builder`: `20`, `reviewer`: `15` | tighten-only (lower only) |
 | `ceremony.childReads.<x>.deny` | `builder`: `40`, `reviewer`: `30` | tighten-only (lower only) |
 | `ceremony.recheckBudget` | `3` | tighten-only (lower only, minimum 0) |
@@ -532,6 +534,8 @@ Switch: `safety.subagents.allowWorkflow` is true.
 
 | Key | Default | Layer |
 |---|---|---|
+| `ceremony.childBashTimeoutSeconds` | `600` | any layer |
+| `ceremony.childBashTimeoutMaxSeconds` | `1800` | any layer |
 | `safety.requiredChildExtensions` | `[]` | tighten-only (entries are added, never removed) |
 | `safety.ops.copyMaxBytes` | `104857600` | tighten-only (lower only) |
 | `safety.ops.worktreeDisposable` | `["node_modules/", "target/", "dist/", "build/", "__pycache__/", ".venv/"]` | not in project/session (no tighten rule for this safety key) |

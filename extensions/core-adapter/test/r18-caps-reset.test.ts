@@ -14,10 +14,9 @@ import { r11Rig, writeAt } from "./_r11rig.ts";
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
 type Res = { block?: boolean; reason?: string } | undefined;
 
-const DENY = DEFAULT_READ_LIMITS.before.deny;
+const WARN = DEFAULT_READ_LIMITS.before.warn;
 const review = (n: number) => ({ agent: "reviewer", task: `review items ${n}` });
 const capRefused = (r: Res): boolean => r?.block === true && /\[review_cap\]/.test(r.reason ?? "");
-const readDenied = (r: Res): boolean => r?.block === true && /\[read_budget_exceeded\]/.test(r.reason ?? "");
 const recheckDenied = (r: Res): boolean => r?.block === true && /\[recheck_budget_exceeded\]/.test(r.reason ?? "");
 const PASS = "Background task completed: **reviewer**\nOverall verdict: PASS";
 
@@ -39,11 +38,16 @@ async function reviewCapped(a: Rig): Promise<void> {
 }
 /** A shell read that runs to its tool_result (nothing stays in flight). */
 const bash = (a: Rig, command: string): Promise<Res> => a.toolDoing("bash", { command }, () => undefined);
-/** Read budget used up: the call past the limit is denied. */
-async function readsDenied(a: Rig): Promise<void> {
-  const out: Res[] = [];
-  for (let i = 0; i < DENY + 1; i++) out.push(await bash(a, `ls -la src${i}`));
-  assert.ok(readDenied(out[DENY]), "denied past the limit");
+const reminds = (a: Rig): number => a.events("read_budget").filter((r) => r.action === "remind").length;
+/** Read budget used up (WARN + 3 reads, one reminder). */
+async function readsReminded(a: Rig): Promise<void> {
+  for (let i = 0; i < WARN + 3; i++) assert.equal(await bash(a, `ls -la src${i}`), undefined);
+  assert.equal(reminds(a), 1, "reminded at the limit");
+}
+/** After a reset the count restarted: WARN - 1 reads raise no new reminder (without the reset the 16th read would). */
+async function readsFresh(a: Rig): Promise<void> {
+  for (let i = 0; i < WARN - 1; i++) assert.equal(await bash(a, `ls fresh${i}`), undefined);
+  assert.equal(reminds(a), 1, "the count restarted");
 }
 /** recheckBudget 1: a PASS, one read allowed, the next refused. */
 async function recheckDeniedState(a: Rig): Promise<void> {
@@ -78,12 +82,12 @@ test("parent_ruling_file_lifts_recheck_budget", async (t) => {
   assert.equal(a.events("cap_reset").length, 1);
 });
 
-test("parent_ruling_file_lifts_read_budget", async (t) => {
+test("parent_ruling_file_resets_read_budget", async (t) => {
   const a = await rig(t);
   const dir = a.handoff("round", "child");
-  await readsDenied(a);
+  await readsReminded(a);
   writeAt(path.join(dir, "ruling-2.md"), "go on\n", Date.now());
-  assert.ok(!readDenied(await bash(a, "ls next")), "the read budget is lifted");
+  await readsFresh(a);
   assert.equal(a.events("cap_reset").length, 1);
 });
 
@@ -91,9 +95,9 @@ test("parent_brief_file_lifts_the_caps", async (t) => {
   const a = await rig(t, { reviewRuns: 1 });
   const dir = a.handoff("round", "child");
   await reviewCapped(a);
-  await readsDenied(a);
+  await readsReminded(a);
   writeAt(path.join(dir, "brief-1.md"), "more work\n", Date.now());
-  assert.ok(!readDenied(await bash(a, "ls next")), "the read budget is lifted");
+  await readsFresh(a);
   assert.equal((await a.launch(review(2))).res, undefined, "the review cap is lifted");
   assert.deepEqual(a.events("cap_reset").map((r) => [r.by, r.count]), [["brief", 1]]);
 });
@@ -219,10 +223,10 @@ test("owner_prompt_still_resets_all_three", async (t) => {
   const a = await rig(t, { reviewRuns: 1, recheckBudget: 1 });
   a.handoff("round", "child");
   await reviewCapped(a);
-  await readsDenied(a);
+  await readsReminded(a);
   await a.ownerPrompt();
   assert.equal((await a.launch(review(3))).res, undefined, "review cap");
-  assert.ok(!readDenied(await a.call("bash", { command: "ls next" })), "read budget");
+  await readsFresh(a);
   await recheckDeniedState(a);
   await a.ownerPrompt();
   assert.equal(await a.call("bash", { command: "ls again" }), undefined, "recheck budget");
