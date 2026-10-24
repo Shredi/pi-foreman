@@ -28,18 +28,21 @@ except ImportError:  # Python < 3.11
 BRAILLE = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 SYMS = {
     "unicode": {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗", "keepalive": "♨",
+                "cold": "❄", "downshift": "↓",
                 "waiting-owner": "\u270b", "waiting-external": "\u21bb", "idle": "\u23f8",
                 "spinner": BRAILLE, "agent": "◆", "task": "⚙", "wait": "⧗", "ask": "?", "recent": "✓"},
     "emoji": {"working": "⏳", "waiting": "⏸️", "asking": "❓", "blocked": "✋", "done": "✅", "lost": "❌",
-              "keepalive": "♨️", "waiting-owner": "✋", "waiting-external": "🔄", "idle": "⏸️",
+              "keepalive": "♨️", "cold": "❄️", "downshift": "⬇️",
+              "waiting-owner": "✋", "waiting-external": "🔄", "idle": "⏸️",
               "spinner": BRAILLE, "agent": "🤖", "task": "⚙️", "wait": "⏳", "ask": "❓", "recent": "✅"},
     "nerd": {"working": "\uf252", "waiting": "\uf04c", "asking": "\uf128", "blocked": "\uf256",
              "done": "\uf00c", "lost": "\uf00d", "keepalive": "\uf06d",
+             "cold": "\uf2dc", "downshift": "\uf063",
              "waiting-owner": "\uf256", "waiting-external": "\uf017", "idle": "\uf04c",
              "spinner": BRAILLE, "agent": "\uf544", "task": "\uf013", "wait": "\uf252", "ask": "\uf128",
              "recent": "\uf00c"},
     "ascii": {"working": "*", "waiting": ".", "asking": "?", "blocked": "#", "done": "+", "lost": "x",
-              "keepalive": "^", "waiting-owner": "#", "waiting-external": "@", "idle": ".",
+              "keepalive": "^", "cold": "_", "downshift": "v", "waiting-owner": "#", "waiting-external": "@", "idle": ".",
               "spinner": ["|", "/", "-", "\\"], "agent": ">", "task": "=", "wait": "~", "ask": "?", "recent": "+"},
 }
 # The glyphs a sidebar state shows (the keys that are not the footer's, a spinner or an activity mark).
@@ -1224,14 +1227,14 @@ class CellWidthTest(unittest.TestCase):
     # width of every glyph of config/symbols.json (state glyphs, activity marks, spinner frames)
     WIDTHS = {
         "unicode": {"working": 2, "waiting": 1, "asking": 1, "blocked": 2, "done": 1, "lost": 1, "keepalive": 1,
-                    "waiting-owner": 2, "waiting-external": 1, "idle": 1, "agent": 1, "task": 1, "wait": 1,
+                    "cold": 1, "downshift": 1, "waiting-owner": 2, "waiting-external": 1, "idle": 1, "agent": 1, "task": 1, "wait": 1,
                     "ask": 1, "recent": 1},
         "emoji": {"working": 2, "waiting": 2, "asking": 2, "blocked": 2, "done": 2, "lost": 2, "keepalive": 2,
-                  "waiting-owner": 2, "waiting-external": 2, "idle": 2, "agent": 2, "task": 2, "wait": 2,
+                  "cold": 2, "downshift": 2, "waiting-owner": 2, "waiting-external": 2, "idle": 2, "agent": 2, "task": 2, "wait": 2,
                   "ask": 2, "recent": 2},
-        "nerd": dict.fromkeys(("working", "waiting", "asking", "blocked", "done", "lost", "keepalive",
+        "nerd": dict.fromkeys(("working", "waiting", "asking", "blocked", "done", "lost", "keepalive", "cold", "downshift",
                                "waiting-owner", "waiting-external", "idle", "agent", "task", "wait", "ask", "recent"), 1),
-        "ascii": dict.fromkeys(("working", "waiting", "asking", "blocked", "done", "lost", "keepalive",
+        "ascii": dict.fromkeys(("working", "waiting", "asking", "blocked", "done", "lost", "keepalive", "cold", "downshift",
                                 "waiting-owner", "waiting-external", "idle", "agent", "task", "wait", "ask", "recent"), 1),
     }
 

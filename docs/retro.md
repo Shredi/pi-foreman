@@ -65,7 +65,7 @@ Besides the approval and trace lines, the report carries these lines when there 
   cold resumes. A cold resume is approximate: the first foreman turn after a gap longer than the provider's cache TTL
   (`providers.<p>.cache.ttlSeconds` or the built-in one) whose `cacheRead` is under 50 % of the previous foreman
   line's prompt (input + cacheRead + cacheWrite); keep-alive lines count as the previous line, so a bridged gap is
-  not cold. Without a TTL the count is 0. The line shows when a cache policy applies or any count is above 0; the JSON
+  not cold. When the idle model downshift ran, the line ends with `, downshifted turns K` (`foreman_model` trace events with reason `idle_cold`; the JSON key `downshiftedTurns` exists only then). Without a TTL the count is 0. The line shows when a cache policy applies or any count is above 0; the JSON
   report has `cache` (`keepalives`, `keepaliveCost`, `warmCompactions`, `coldResumes`, `ttlSeconds`).
 
 ## Critique counter

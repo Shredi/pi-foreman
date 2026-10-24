@@ -195,6 +195,8 @@ class Rig:
         l2 = {
             "providers": provider_map(providers, unmapped) if l2_providers else {},
             "trace": {"enabled": True},
+            # the presence probe never reads the host's keyboard state in a rig; a case that tests the gate sets presence itself
+            "presence": {"enabled": False},
             "safety": {"requiredChildExtensions": [str(FAKE_PROVIDER)]},
             # Scenarios written for detached launches keep them; launch-wait scenarios set "block".
             "ceremony": {"launchWait": "detach"},

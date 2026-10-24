@@ -1,6 +1,7 @@
 {
   "version": 1,
   "displayNames": "classic",
+  "presence": { "enabled": true, "awayAfterMinutes": 11 },
   "displayPresets": {
     "classic": {
       "foreman": "Picard",
@@ -33,7 +34,7 @@
   },
   "providers": {},
   "fanout": { "max": 3 },
-  "ladder": { "strongAbove": 100000, "childMaxTurns": 60, "maxTurns": { "builder": 100 }, "strongOnRevision": true, "sizing": { "enabled": true, "largeFileLines": 1500, "maxModules": 2, "strongRisks": ["guard", "permission", "parser", "concurrency", "security"], "topRisks": ["design"], "topRung": null }, "reviewerClimb": { "enabled": false }, "research": { "factCriticalRung": null }, "reviewPanel": { "shadows": [], "gates": ["pre-pr"], "visible": true, "waitSeconds": 600 } },
+  "ladder": { "strongAbove": 100000, "childMaxTurns": 60, "maxTurns": { "builder": 100 }, "strongOnRevision": true, "sizing": { "enabled": true, "largeFileLines": 1500, "maxModules": 2, "strongRisks": ["guard", "permission", "parser", "concurrency", "security"], "topRisks": ["design"], "topRung": null }, "reviewerClimb": { "enabled": false }, "idleDownshift": { "enabled": true, "causes": ["child", "wake", "intercom", "other"] }, "research": { "factCriticalRung": null }, "reviewPanel": { "shadows": [], "gates": ["pre-pr"], "visible": true, "waitSeconds": 600 } },
   "maxThinking": "high",
   "quiet": false,
   "ceremony": {
