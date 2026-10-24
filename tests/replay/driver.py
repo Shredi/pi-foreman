@@ -413,8 +413,9 @@ class PiRpc:
                     raise RuntimeError("%s failed: %s" % (record.get("type"), rec.get("error")))
                 return rec.get("data") or {}
 
-    def session_id(self):
-        return self.request({"type": "get_state"})["sessionId"]
+    def session_id(self, timeout=60.0):
+        # The first RPC after launch also waits for pi to boot, which is slow on a loaded Windows runner.
+        return self.request({"type": "get_state"}, timeout)["sessionId"]
 
     def wait_child_notify(self, timeout=90.0, answers=None):
         """Wait for a detached child's completion notice and the parent run it triggers to settle.

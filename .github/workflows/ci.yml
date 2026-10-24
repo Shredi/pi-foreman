@@ -52,6 +52,7 @@ jobs:
       - name: replay scenarios (fake provider only, no secrets)
         env:
           FOREMAN_REPLAY_REQUIRED: "1"
+          FOREMAN_REPLAY_JOBS: ${{ runner.os == 'Windows' && '2' || '' }}
         run: node scripts/replay_run.mjs
       - name: ledger shims on Windows (cmd and PowerShell)
         if: runner.os == 'Windows'
