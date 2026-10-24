@@ -1,4 +1,10 @@
 {
-  "unicode": {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗", "keepalive": "♨", "waiting-owner": "✋", "waiting-external": "↻", "idle": "⏸"},
-  "nerd":    {"waiting-owner": "\uf256", "waiting-external": "\uf017", "idle": "\uf04c", "working": "", "waiting": "", "asking": "", "blocked": "", "done": "", "lost": "", "keepalive": ""}
+  "unicode": {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗", "keepalive": "♨", "waiting-owner": "✋", "waiting-external": "↻", "idle": "⏸",
+              "spinner": ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], "agent": "◆", "task": "⚙", "wait": "⧗", "ask": "?", "recent": "✓"},
+  "emoji":   {"working": "⏳", "waiting": "⏸️", "asking": "❓", "blocked": "✋", "done": "✅", "lost": "❌", "keepalive": "♨️", "waiting-owner": "✋", "waiting-external": "🔄", "idle": "⏸️",
+              "spinner": ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], "agent": "🤖", "task": "⚙️", "wait": "⏳", "ask": "❓", "recent": "✅"},
+  "nerd":    {"waiting-owner": "\uf256", "waiting-external": "\uf017", "idle": "\uf04c", "working": "\uf252", "waiting": "\uf04c", "asking": "\uf128", "blocked": "\uf256", "done": "\uf00c", "lost": "\uf00d", "keepalive": "\uf06d",
+              "spinner": ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], "agent": "\uf544", "task": "\uf013", "wait": "\uf252", "ask": "\uf128", "recent": "\uf00c"},
+  "ascii":   {"working": "*", "waiting": ".", "asking": "?", "blocked": "#", "done": "+", "lost": "x", "keepalive": "^", "waiting-owner": "#", "waiting-external": "@", "idle": ".",
+              "spinner": ["|", "/", "-", "\\"], "agent": ">", "task": "=", "wait": "~", "ask": "?", "recent": "+"}
 }
