@@ -257,6 +257,20 @@ handoff dir, pi-foreman touches `<handoff>/.ask` and opens a blocked source, so 
 dir, or shutdown, releases it. A parent that is not a Pi session polls `*.md` and `.ask`; the file contract is in
 [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session).
 
+## Remote clients and Pi pane status
+
+Herdr holds one `agent_status` per pane. A remote client (a phone or web app installed as a Herdr plugin, or `herdr --remote`
+over SSH) shows that status for each pane. It does not read pi-foreman's state directly.
+
+- Herdr learns working and idle for a Pi pane from its Pi integration. That is a setting on the machine that runs Herdr:
+  `herdr integration install pi` (check with `herdr integration status`). Nothing is installed or configured on the phone
+  or the remote client for this.
+- pi-foreman adds the blocked state (a child's ask, a guard prompt, any dialog) through its `herdr:blocked` event on
+  `pi.events`. See [blocked shim](sessions.md#blocked-shim), which also covers when the shim steps aside.
+- Known gap: Pi's trust dialog before the session starts is not covered, so it does not show as blocked
+  ([blocked shim](sessions.md#blocked-shim)).
+- The sidebar plugin's `fm_*` metadata tokens are display-only. Remote clients do not use them for agent status.
+
 ## Agents view
 
 While at least one foreman session is joined, the daemon sets the Agents view (`agent.view.set`, label `pi-foreman`)

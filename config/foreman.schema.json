@@ -364,7 +364,7 @@
     "footer": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "usage": { "type": "boolean", "description": "Show usage in the footer." } }
+      "properties": { "usage": { "type": "boolean", "description": "Show usage in the footer." }, "style": { "type": "string", "enum": ["foreman", "pi"], "description": "Footer in the tui: foreman (default, the two-line pi-foreman footer) or pi (Pi's own footer, the usage line in the one-line status)." } }
     },
     "ui": {
       "type": "object",

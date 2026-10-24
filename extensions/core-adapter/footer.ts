@@ -2,6 +2,8 @@
 // each assistant message_end. Cost is Pi's `usage.cost` (list price from Pi's model registry).
 import { tableRate } from "./cost.ts";
 import type { PriceTable } from "./cost.ts";
+import { renderFooter } from "./footerview.ts";
+import type { FooterTheme, FooterView } from "./footerview.ts";
 type Json = Record<string, unknown>;
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
@@ -108,12 +110,33 @@ export function cacheStatus(ctx: Pick<FooterCtx, "mode" | "ui">, active: boolean
 export interface FooterCtx {
   mode?: string;
   modelRegistry?: PriceRegistry;
+  model?: { id: string; reasoning?: boolean; contextWindow?: number };
+  getContextUsage?(): { percent: number | null; contextWindow: number } | undefined;
   ui: { setStatus(key: string, text: string | undefined): void };
+}
+
+/** The parts of Pi's footer data (git branch, extension statuses) the foreman footer reads. */
+export interface FooterData {
+  getGitBranch(): string | null;
+  getExtensionStatuses(): ReadonlyMap<string, string>;
+}
+
+/** `footer.style`: "pi" keeps Pi's footer and the one-line status; any other value is the foreman footer. */
+export const footerStyleOf = (value: unknown): "foreman" | "pi" => (value === "pi" ? "pi" : "foreman");
+
+interface FooterMount {
+  tui: { requestRender(): void };
+  theme: FooterTheme;
+  data: FooterData;
+  thinking: () => string;
+  ctx: FooterCtx;
 }
 
 /** Per-session totals; `update` never throws and does nothing unless enabled in a tui/rpc session. */
 export class UsageFooter {
   private totals = new Map<string, FooterTotals>();
+  private mounts = new Map<string, FooterMount>();
+  private texts = new Map<string, string>();
   private readonly prices: PriceTable | null;
 
   constructor(prices: PriceTable | null = null) {
@@ -125,8 +148,16 @@ export class UsageFooter {
       const t = this.totals.get(sessionId) ?? zeroTotals();
       this.totals.set(sessionId, t);
       addMessage(t, message, ctx.modelRegistry, this.prices);
+      const mount = this.mounts.get(sessionId);
+      if (mount) mount.ctx = ctx;
       if (opts.enabled !== true || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return;
-      ctx.ui.setStatus(FOOTER_KEY, footerText(t, opts.isChild ? null : opts.children, opts.isChild ? null : opts.wait ?? null, opts.isChild ? null : opts.runsCost ?? null));
+      const text = footerText(t, opts.isChild ? null : opts.children, opts.isChild ? null : opts.wait ?? null, opts.isChild ? null : opts.runsCost ?? null);
+      if (!mount) {
+        ctx.ui.setStatus(FOOTER_KEY, text);
+        return;
+      }
+      this.texts.set(sessionId, text);
+      mount.tui.requestRender();
     } catch {
       // the footer is cosmetic
     }
@@ -138,7 +169,52 @@ export class UsageFooter {
     return t ? { tokensIn: t.input + t.cacheRead + t.cacheWrite, tokensOut: t.output, cost: t.cost } : null;
   }
 
+  /** Cache-read share of the session's prompt tokens (in = input + cache read + cache write); null before any prompt. */
+  cacheHitOf(sessionId: string): number | null {
+    const t = this.totals.get(sessionId);
+    const prompt = t ? t.input + t.cacheRead + t.cacheWrite : 0;
+    return t && prompt > 0 ? (t.cacheRead / prompt) * 100 : null;
+  }
+
+  /** The foreman footer of a tui session (footer.style "foreman"): Pi renders this component and it reads the live data each frame. */
+  mount(sessionId: string, ctx: FooterCtx, tui: { requestRender(): void }, theme: FooterTheme, data: FooterData, thinking: () => string): { render(width: number): string[]; invalidate(): void; dispose(): void } {
+    const entry: FooterMount = { tui, theme, data, thinking, ctx };
+    this.mounts.set(sessionId, entry);
+    return {
+      render: (width) => {
+        try {
+          return renderFooter(this.viewOf(sessionId, entry), width, theme);
+        } catch {
+          return [this.texts.get(sessionId) ?? ""]; // the plain status segment
+        }
+      },
+      invalidate: () => undefined,
+      dispose: () => {
+        if (this.mounts.get(sessionId) === entry) this.mounts.delete(sessionId);
+      },
+    };
+  }
+
+  private viewOf(sessionId: string, m: FooterMount): FooterView {
+    const model = m.ctx.model;
+    const usage = m.ctx.getContextUsage?.();
+    const statuses = m.data.getExtensionStatuses();
+    return {
+      model: model?.id ?? null,
+      thinking: model?.reasoning ? m.thinking() : null,
+      branch: m.data.getGitBranch(),
+      contextPercent: usage?.percent ?? null,
+      contextWindow: usage?.contextWindow ?? model?.contextWindow ?? 0,
+      cacheHit: this.cacheHitOf(sessionId),
+      warm: statuses.has(CACHE_STATUS_KEY),
+      usage: this.texts.get(sessionId) ?? null,
+      statuses: [...statuses].filter(([key]) => key !== FOOTER_KEY && key !== CACHE_STATUS_KEY).sort(([a], [b]) => a.localeCompare(b)).map(([, text]) => text),
+    };
+  }
+
   drop(sessionId: string): void {
     this.totals.delete(sessionId);
+    this.texts.delete(sessionId);
+    this.mounts.delete(sessionId);
   }
 }

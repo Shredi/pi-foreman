@@ -102,7 +102,7 @@ import { citedItems, ledgerHint, writeHint } from "./hints.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, sessionTrace, withDigest } from "./retro.ts";
 import { frictionOfRunEnd } from "./friction.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
-import { UsageFooter, cacheStatus, lookupRate, waitNote } from "./footer.ts";
+import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, waitNote } from "./footer.ts";
 import { symbolSet } from "./symbols.ts";
 import { blockedConfirm, installBlockedShim, PERMISSIONS_DECISION, PERMISSIONS_UI_PROMPT, withBlocked } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
@@ -640,6 +640,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       })
       .catch(() => undefined);
     if (!isChild) {
+      if (ctx.mode === "tui" && footerStyleOf(get(s.config.config, "footer.style")) === "foreman") {
+        try {
+          ctx.ui.setFooter((tui, theme, data) => usageFooter.mount(id, ctx, tui, theme, data, () => pi.getThinkingLevel()));
+        } catch {
+          // the footer is cosmetic: Pi's own footer stays
+        }
+      }
       s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const prs = sessions.get(id)?.prWatches.list().map((p) => p.n) ?? []; return prs.length > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; });
       const live = s.live;
       waits.onChange(id, () => {
@@ -2542,12 +2549,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "shell_write_allow", reason: "branch_move", cmd: command });
         return undefined;
       }
-      const reason = move && "precondition" in move ? `${v.reason} branch move refused: ${move.precondition}.` : v.reason;
+      const precondition = move && "precondition" in move ? move.precondition : undefined;
+      const reason = precondition ? `${v.reason} branch move refused: ${precondition}.` : v.reason;
       if (planner) {
         s.trace?.emit({ event: "planner_write_refused", kind: "shell" });
         return { block: true, reason: `${reason} ${PLANNER_SCOPE_NOTE(scratchDir)}` };
       }
-      s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode });
+      s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode, ...(precondition ? { precondition } : {}) });
       const more = onEditRefused(s, mode, "shell");
       return { block: true, reason: mode === "bounded" ? reason : `${reason} pi-foreman: ${editModeAdvice(mode, scratchDir)}.${more}` };
     } catch (err) {
