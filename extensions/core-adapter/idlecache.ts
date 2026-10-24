@@ -54,8 +54,10 @@ export interface IdleCacheDeps {
   trace(ev: Record<string, unknown>): void;
   /** Context tokens for the compactMinTokens gate; absent or null = unknown. */
   contextTokens?(): number | null;
-  /** Gate decideIdle + start ctx.compact; the tier and model to trace when it started, else null (below the floor). */
-  compact(): { tier: string; model: string | null } | null;
+  /** The context is above the idle floor (0.5 x runtime point); no side effects. */
+  aboveFloor?(): boolean;
+  /** Gate decideIdle + start ctx.compact; the runtime point and model to trace when it started, else null (below the floor). */
+  compact(): { point: number | null; model: string | null } | null;
   setGlyph(on: boolean): void;
   syncKeepalives(): KeepaliveSync;
   lastAssistantAt(): number | null;
@@ -295,6 +297,7 @@ export class IdleCache {
       now,
       lastTouch: Math.max(this.lastKeepaliveAt ?? 0, d.lastAssistantAt() ?? 0, d.gate?.lastCacheTouch() ?? 0),
       contextTokens: d.contextTokens ? () => d.contextTokens!() : undefined,
+      aboveFloor: d.aboveFloor ? () => d.aboveFloor!() : undefined,
       compact: () => d.compact(),
       trace: (r) => d.trace(r),
       trigger: trigger ?? (p?.budgetShare !== undefined ? "window" : undefined),

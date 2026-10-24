@@ -122,7 +122,7 @@ function cacheMark(glyph: string | undefined): Pick<FooterView, "warm" | "mark">
 export interface FooterCtx {
   mode?: string;
   modelRegistry?: PriceRegistry;
-  model?: { id: string; reasoning?: boolean; contextWindow?: number };
+  model?: { id: string; provider?: string; reasoning?: boolean; contextWindow?: number };
   getContextUsage?(): { percent: number | null; contextWindow: number } | undefined;
   ui: { setStatus(key: string, text: string | undefined): void };
 }
@@ -150,9 +150,12 @@ export class UsageFooter {
   private mounts = new Map<string, FooterMount>();
   private texts = new Map<string, string>();
   private readonly prices: PriceTable | null;
+  private readonly pointOf: (model: FooterCtx["model"]) => number | null;
 
-  constructor(prices: PriceTable | null = null) {
+  /** `pointOf`: the compaction point Pi uses for a model (compaction-point.mjs runtimePoint), null when unknown. */
+  constructor(prices: PriceTable | null = null, pointOf: (model: FooterCtx["model"]) => number | null = () => null) {
     this.prices = prices;
+    this.pointOf = pointOf;
   }
 
   update(sessionId: string, ctx: FooterCtx, message: unknown, opts: { enabled: unknown; isChild: boolean; children: number; wait?: string | null; runsCost?: number }): void {
@@ -217,6 +220,7 @@ export class UsageFooter {
       branch: m.data.getGitBranch(),
       contextPercent: usage?.percent ?? null,
       contextWindow: usage?.contextWindow ?? model?.contextWindow ?? 0,
+      contextPoint: this.pointOf(model),
       cacheHit: this.cacheHitOf(sessionId),
       ...cacheMark(statuses.get(CACHE_STATUS_KEY)),
       usage: this.texts.get(sessionId) ?? null,

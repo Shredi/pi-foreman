@@ -26,7 +26,7 @@ const flush = async (): Promise<void> => {
   for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
 };
 
-function make(over: { policy?: Partial<CachePolicy>; idle?: number | null; compact?: { tier: string; model: string | null } | null; replayable?: boolean; rates?: typeof RATES | null; reply?: () => Promise<WarmReply | null>; isChild?: boolean } = {}) {
+function make(over: { policy?: Partial<CachePolicy>; idle?: number | null; compact?: { point: number | null; model: string | null } | null; replayable?: boolean; rates?: typeof RATES | null; reply?: () => Promise<WarmReply | null>; isChild?: boolean } = {}) {
   const clock = { t: 10_000_000 };
   const t0 = clock.t;
   const slots: Slot[] = [];
@@ -62,7 +62,7 @@ function make(over: { policy?: Partial<CachePolicy>; idle?: number | null; compa
     rates: () => (over.rates === undefined ? RATES : over.rates),
     compact: () => {
       f.compacts += 1;
-      return over.compact === undefined ? { tier: "premium", model: "p/m" } : over.compact;
+      return over.compact === undefined ? { point: 100000, model: "p/m" } : over.compact;
     },
     trace: (r) => void traces.push(r),
     replayable: () => over.replayable ?? true,
@@ -312,7 +312,7 @@ test("noteWarmLine (a Pi-sent warm) moves the cache touch and counts toward spen
 
 const PI: CachePolicy = { active: true, ttlSeconds: 300, billing: "token", intervalSeconds: 270, windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true };
 
-function makeIdle(policy: CachePolicy, gate?: ConstructorParameters<typeof IdleCache>[0]["gate"], compact: { tier: string; model: string | null } | null = { tier: "premium", model: "p/m" }) {
+function makeIdle(policy: CachePolicy, gate?: ConstructorParameters<typeof IdleCache>[0]["gate"], compact: { point: number | null; model: string | null } | null = { point: 100000, model: "p/m" }) {
   const clock = { t: 1_000_000 };
   const slots: Slot[] = [];
   const traces: Record<string, unknown>[] = [];
@@ -363,7 +363,7 @@ test("Pi path: a budget refusal answers stop, compacts with trigger budget and e
   assert.equal(a, "stop");
   h.ic.noteDecision(a);
   assert.deepEqual(h.traces.filter((r) => r.event === "budget"), [{ event: "budget", spent: 0.4, cold: 1, share: 0.5 }]);
-  assert.deepEqual(h.traces.filter((r) => r.event === "compaction"), [{ event: "compaction", reason: "warm_idle", tier: "premium", model: "p/m", trigger: "budget" }]);
+  assert.deepEqual(h.traces.filter((r) => r.event === "compaction"), [{ event: "compaction", reason: "warm_idle", point: 100000, model: "p/m", trigger: "budget" }]);
   assert.deepEqual(h.traces.filter((r) => r.event === "keepalive").map((r) => [r.outcome, r.reason]), [["skipped", "budget"], ["window_end", "budget"]]);
   assert.equal(h.ic.decide(NOT_BUSY), "stop", "ended");
 });
