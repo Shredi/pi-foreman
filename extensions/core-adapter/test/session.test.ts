@@ -93,7 +93,7 @@ test("session: brief and close resolve registry targets and send the contract te
   assert.equal((await runSessionCommand(d, "brief other-session decision: use B")).ok, false, "no handoff dir: refused");
   await runSessionCommand(d, "close fm-demo-abc123 .workflow/r.md");
   assert.deepEqual(d.sent, [
-    ["fm-demo-abc123", `Brief from opener-1: read ${path.join(handoff, "brief-1.md")} and act on it`],
+    ["fm-demo-abc123", `Brief from opener-1: read ${path.join(handoff, "brief-1.md").split(path.sep).join("/")} and act on it`],
     ["fm-demo-abc123", "foreman:close .workflow/r.md"],
   ]);
   assert.equal(fs.readFileSync(path.join(handoff, "brief-1.md"), "utf8"), "x");

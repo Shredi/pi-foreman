@@ -99,7 +99,7 @@ import { resolveCachePolicy } from "./cachepolicy.ts";
 import { IdleCache, type Busy } from "./idlecache.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
 import { applyLedgerItems, criticOf } from "./ledgerblock.ts";
-import { citedItems, ledgerHint, writeHint } from "./hints.ts";
+import { citedItems, hintFailTrace, ledgerHint, writeHint, type HintWriteOpts } from "./hints.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, sessionTrace, withDigest } from "./retro.ts";
 import { frictionOfRunEnd } from "./friction.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
@@ -162,6 +162,9 @@ const ADAPTER_ID = "pi-foreman-core-adapter";
 const GIT_GUARD_ID = "pi-foreman-git-guard";
 const GIT_GUARD_ENTRY = path.join(PKG_ROOT, "extensions", "git-guard", "index.ts");
 const ORIGINAL_PI_FOREMAN_PYTHON = process.env.PI_FOREMAN_PYTHON;
+
+/** A ledger hint that failed after the rename retries: a `hint_write_failed` trace record, not a silent drop. */
+const hintOpts = (s: Session): HintWriteOpts => hintFailTrace((rec) => s.trace?.emit(rec));
 
 interface Session {
   id: string;
@@ -1087,7 +1090,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     try {
       appendCompactionRetro(s.cwd, s.id, { reason, counters, retro: extractRetro(summary) });
-      writeHint(boundLedger(s.markerDir, s.id), ["V"], "retro written", s.retro.hints);
+      writeHint(boundLedger(s.markerDir, s.id), ["V"], "retro written", s.retro.hints, hintOpts(s));
     } catch (err) {
       notifyOnce(s, ctx, "retro-file", `pi-foreman: could not write the compaction retro: ${(err as Error).message}`);
     }
@@ -1434,7 +1437,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (!s.isChild) onRunEndReview(s, runId, counted, verdicts.length > 0);
           const cited = s.retro.launchItems.get(runId) ?? [];
           s.retro.launchItems.delete(runId);
-          if (!s.isChild && verdicts.length) writeHint(boundLedger(s.markerDir, s.id), cited, `review ${verdicts.map((v) => (v ?? "no verdict").toUpperCase()).join(", ")} (run ${runId.slice(0, 8)})`, s.retro.hints);
+          if (!s.isChild && verdicts.length) writeHint(boundLedger(s.markerDir, s.id), cited, `review ${verdicts.map((v) => (v ?? "no verdict").toUpperCase()).join(", ")} (run ${runId.slice(0, 8)})`, s.retro.hints, hintOpts(s));
         }
         if (!s.isChild && typeof runId === "string" && s.launchedRoles.has(runId)) {
           // plan_written: plan-*.md files a planner run added or changed (snapshot taken at its launch).
@@ -2737,7 +2740,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const roles = s.launchedRoles.get(runId) ?? subagentAgents(event.input as Record<string, unknown>);
             const cited = citedItems(subagentTaskText(event.input as Record<string, unknown>));
             s.retro.launchItems.set(runId, cited);
-            writeHint(boundLedger(s.markerDir, s.id), cited, `${roles.join("+") || "child"} launched (run ${runId.slice(0, 8)})`, s.retro.hints);
+            writeHint(boundLedger(s.markerDir, s.id), cited, `${roles.join("+") || "child"} launched (run ${runId.slice(0, 8)})`, s.retro.hints, hintOpts(s));
             s.budget.onLaunch();
             if (roles.includes("builder")) {
               resetRecheck(s, "builder");
@@ -3193,7 +3196,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const file = childLedgerFile(s, params.path);
         if ("error" in file) return refuse(file.error);
         const r = await runLedger(s, plan.calls[0], file.path);
-        if (r.ok) writeHint(file.path, ["V"], `ledger mark by ${s.usage.line.role}`);
+        if (r.ok) writeHint(file.path, ["V"], `ledger mark by ${s.usage.line.role}`, undefined, hintOpts(s));
         const st = await runLedger(s, ["status"], file.path);
         return { content: [{ type: "text" as const, text: [r.text, st.text].filter(Boolean).join("\n") }], details: { decision: r.ok ? "done" : "failed" }, ...(r.ok ? {} : { isError: true }) };
       }
@@ -3267,7 +3270,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ok = ok && st.ok;
       s.trace?.emit({ event: "ledger_call", kind, allowed: true, items: traceItems || undefined, attested: plan.attested || undefined });
       const hint = ok ? ledgerHint(kind, traceItems, out.join("\n"), params.text) : null;
-      if (hint) writeHint(boundLedger(s.markerDir, s.id), hint.ids, hint.text, s.retro.hints);
+      if (hint) writeHint(boundLedger(s.markerDir, s.id), hint.ids, hint.text, s.retro.hints, hintOpts(s));
       return { content: [{ type: "text" as const, text: out.join("\n") }], details: { decision: ok ? "done" : "failed" }, ...(ok ? {} : { isError: true }) };
     },
   } as never);
