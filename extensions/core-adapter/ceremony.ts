@@ -77,9 +77,9 @@ export function beforeSpawn(s: CeremonyState, agents: string[], builderPath = fa
   return s;
 }
 
-/** Trivial builder path: a `strong` launch the foreman asked for without a ladder trigger (ladder reason "foreman") leaves trivial. */
+/** Trivial builder path: a `strong` launch the foreman asked for without a ladder trigger (ladder reason "foreman", or "sizing" from the launch size and risk) leaves trivial. */
 export function onStrongLaunch(s: CeremonyState, reasons: string[]): CeremonyState {
-  if (s.tier !== "trivial" || !reasons.includes("foreman")) return s;
+  if (s.tier !== "trivial" || !(reasons.includes("foreman") || reasons.includes("sizing"))) return s;
   return escalate(s, "standard", "auto", "strong launch without a ladder trigger");
 }
 

@@ -197,6 +197,12 @@ Switch: `providers.*.roles.*.strong` is set.
 | `ladder.strongAbove` | `100000` | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
 | `ladder.childMaxTurns` | `60` | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
 | `ladder.strongOnRevision` | `true` | tighten-only (only false is accepted) |
+| `ladder.sizing.enabled` | `true` | not in project/session (the launch sizing rules come from the user or overlay config) |
+| `ladder.sizing.largeFileLines` | `1500` | not in project/session (the launch sizing rules come from the user or overlay config) |
+| `ladder.sizing.maxModules` | `2` | not in project/session (the launch sizing rules come from the user or overlay config) |
+| `ladder.sizing.strongRisks` | `["guard", "permission", "parser", "concurrency", "security"]` | not in project/session (the launch sizing rules come from the user or overlay config) |
+| `ladder.sizing.topRisks` | `["design"]` | not in project/session (the launch sizing rules come from the user or overlay config) |
+| `ladder.sizing.topRung` | `null` | not in project/session (the launch sizing rules come from the user or overlay config) |
 | `ladder.maxTurns` | `{"builder": 100}` | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
 | `ladder.research.factCriticalRung` | `null` | not in project/session (the fact-critical research rung comes from the user or overlay config) |
 
@@ -806,6 +812,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `ladder.reviewerClimb` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.research` | the fact-critical research rung comes from the user or overlay config |
 | `ladder.reviewPanel` | the review panel's models come from the user or overlay config |
+| `ladder.sizing` | the launch sizing rules come from the user or overlay config |
 | `providers.*.ranks` | model ranks decide which children may launch: user or overlay config only |
 | `providers.*.strongAbove` | the ladder comes from the user or overlay config |
 | `providers.*.childMaxTurns` | the ladder comes from the user or overlay config |

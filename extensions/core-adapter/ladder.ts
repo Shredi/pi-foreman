@@ -208,7 +208,7 @@ export interface Climb {
   role: string;
   from: string;
   to: string;
-  /** context | stuck | checks_failed | foreman | heavy | revision | review_fail | already above strong rung */
+  /** context | stuck | checks_failed | foreman | sizing | heavy | revision | review_fail | already above strong rung */
   reason: string;
   handoff?: Handoff;
   /** The live model already is the strong rung: traced as rung_top, not rung_up. */
@@ -223,10 +223,12 @@ export interface LadderOptions {
   revisionReason?: "revision" | "review_fail";
   /** Provider ranks (ranks.ts ranksOf): a review_fail climb targets max(current, strong) by rank. */
   ranks?: Map<string, Rank[]>;
+  /** Builder entries whose launch sizing (sizing.ts) asks for the strong rung: reason `sizing`, no `reason` field needed. */
+  sizing?: ReadonlySet<Json>;
 }
 
 /** Whether model `a` ranks strictly above `b` (lower tier number); null when either is unranked. */
-function ranksAbove(ranks: Map<string, Rank[]> | undefined, a: string, b: string): boolean | null {
+export function ranksAbove(ranks: Map<string, Rank[]> | undefined, a: string, b: string): boolean | null {
   if (!ranks || ranks.size === 0) return null;
   const ta = tierOf(ranks, a);
   const tb = tierOf(ranks, b);
@@ -240,6 +242,8 @@ export class LadderState {
   readonly eligible = new Map<string, Handoff>();
   /** Per role: the model of its latest launch (the live rung). */
   readonly live = new Map<string, string>();
+  /** Risk tags of builder launches (sizing.ts) that the next item or pre-pr reviewer is asked to probe for bypasses. */
+  readonly probeRisks = new Set<string>();
 
   /** A launch passed every check (models written): record each entry's model as its role's live rung. */
   noteLaunched(input: Json): void {
@@ -328,7 +332,7 @@ export class LadderState {
         continue;
       }
       const h = this.eligible.get(role);
-      const why = h ? h.cause : typeof reason === "string" && reason.trim() ? "foreman" : role === "builder" && opts.tier === "heavy" ? "heavy" : role === "builder" && opts.preferStrong ? (opts.revisionReason ?? "revision") : null;
+      const why = h ? h.cause : opts.sizing?.has(e) ? "sizing" : typeof reason === "string" && reason.trim() ? "foreman" : role === "builder" && opts.tier === "heavy" ? "heavy" : role === "builder" && opts.preferStrong ? (opts.revisionReason ?? "revision") : null;
       if (!why) return { block: `pi-foreman: strong launch of ${role} refused [strong_no_reason]: pass \`reason\` as an extra top-level field of the subagent call (the tool schema does not list it) with model "strong", saying why the bottom rung ${bottom} cannot do it, or launch on the default model; a climb-eligible run of ${role} (context, STATUS: stuck, own checks failed) also allows it.`, climbs: [] };
       climbs.push({ entry: e, role, from, to, reason: why, handoff: h, top });
     }
