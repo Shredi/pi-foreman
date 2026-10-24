@@ -537,7 +537,11 @@ class PackageFilesTest(unittest.TestCase):
         new_wait = "- A launch returns at once with its receipt. Launch, then end your turn: the child's completion notice (or its question) starts your next turn, and you read the report there or at the result path. Several children may run at once, with one writer per checkout. Call `bg_wait <id>` only for a result you need in this same turn. Never poll with bash."
         expected = old.stdout.decode("utf-8")
         self.assertIn(old_wait, expected)
-        self.assertEqual(render_prompt(text, knobs), expected.replace(old_wait, new_wait))
+        # round 37: the read-budget rule reminds instead of refusing
+        old_reads = "Your own reads are budgeted (`ceremony.foremanReads`) and refused past the limit until an explorer has started;"
+        new_reads = "Your own reads are budgeted (`ceremony.foremanReads`): past the limit you get a reminder to delegate, never a refusal;"
+        self.assertIn(old_reads, expected)
+        self.assertEqual(render_prompt(text, knobs), expected.replace(old_wait, new_wait).replace(old_reads, new_reads))
 
     def test_defaults_validate(self):
         res = fc.load_config(agent_dir=tempfile.gettempdir() + os.sep + "pf-no-such-agent-dir")

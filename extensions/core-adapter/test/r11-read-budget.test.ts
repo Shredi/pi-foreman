@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { DEFAULT_READ_LIMITS, finalizationCommand, ReadBudget } from "../budget.ts";
 import { r11Rig, writeAt } from "./_r11rig.ts";
 
-const DENY = DEFAULT_READ_LIMITS.before.deny; // 8, the same for both phases
+const WARN = DEFAULT_READ_LIMITS.before.warn; // 8, the same for both phases
 const readDenied = (r: { block?: boolean; reason?: string } | undefined): boolean => r?.block === true && /\[read_budget_exceeded\]/.test(r.reason ?? "");
 const finalizer = { agent: "finalizer", task: "write the changelog and result" };
 const explorer = { agent: "explorer", task: "look around" };
@@ -32,8 +32,9 @@ async function finalize(a: Rig, runId: string): Promise<void> {
 test("read_budget_finalization_git_commit_allowed", async (t) => {
   const a = await r11Rig(t);
   await finalize(a, "run-fin");
-  const out = await reads(a, DENY + 4);
+  const out = await reads(a, WARN + 4);
   assert.ok(!out.some(readDenied), "no read_budget_exceeded in finalization");
+  assert.deepEqual(a.events("read_budget"), [], "finalization reads are exempt: no reminder either");
   for (const command of ["git status --short", "git add CHANGELOG.md docs/ceremony.md", "git log --oneline -3", 'git commit -m "fix(budget): finalization; reads exempt"']) {
     const r = await a.call("bash", { command });
     assert.equal(r, undefined, `${command}: ${r?.reason}`);
@@ -44,7 +45,7 @@ test("read_budget_finalization_git_commit_allowed", async (t) => {
 test("read_budget_finalization_git_commit_allowed: a reviewer PASS (post-PASS) exempts git commit from the recheck budget", () => {
   const b = new ReadBudget();
   const lim = DEFAULT_READ_LIMITS;
-  b.onLaunch(["reviewer"]);
+  b.onLaunch();
   assert.equal(b.finalized, false);
   b.enterPost();
   assert.equal(b.finalized, true);
@@ -59,7 +60,7 @@ test("read_budget_finalization_git_commit_allowed: a reviewer PASS (post-PASS) e
   }
   assert.equal(finalizationCommand("read", { path: "x" }), false);
   // a started launch, a FAIL/edit (resetPost) or a user prompt ends finalization
-  b.onLaunch(["builder"]);
+  b.onLaunch();
   assert.equal(b.finalized, false);
   b.onFinalizer();
   b.resetPost();
@@ -69,38 +70,42 @@ test("read_budget_finalization_git_commit_allowed: a reviewer PASS (post-PASS) e
   assert.equal(b.finalized, false);
 });
 
-test("ruling_read_budget_line_has_no_effect_but_ruling_file_lifts", async (t) => {
+const reminds = (a: Rig): number => a.events("read_budget").filter((r) => r.action === "remind").length;
+
+test("ruling_read_budget_line_has_no_effect_but_ruling_file_resets", async (t) => {
   const a = await r11Rig(t);
   const dir = a.handoff("round", "child");
   const now = Date.now();
   writeAt(path.join(dir, "ask.md"), "ask: more reads?\n", now - 60_000);
-  const out = await reads(a, DENY + 1);
-  assert.ok(out.slice(0, DENY).every((r) => !readDenied(r)));
-  assert.ok(readDenied(out[DENY]), "denied past the limit");
+  const out = await reads(a, WARN + 1);
+  assert.ok(!out.some(readDenied), "a read is never denied");
+  assert.equal(reminds(a), 1);
   // a parent-written ruling.md with the line, newer than the ask: nothing changes (no text parser, ruling.md is no reset file)
   writeAt(path.join(dir, "ruling.md"), "APPROVED\nread-budget: +3\n", now - 1000);
-  assert.ok((await reads(a, 2)).every(readDenied), "the ruling line does not lift the read budget");
-  assert.deepEqual(a.events("read_budget").filter((r) => r.action === "lift"), []);
-  // a parent-written ruling-2.md resets the read budget
+  assert.ok(!(await reads(a, 2)).some(readDenied));
+  assert.equal(reminds(a), 1, "the ruling line changes nothing");
+  // a parent-written ruling-2.md resets the read budget: the count restarts, so WARN - 1 further reads raise no reminder
   writeAt(path.join(dir, "ruling-2.md"), "go on\n", Date.now());
   await a.turnStart(); // the reads above were tool_calls only: none is in flight on the next turn
-  assert.ok(!readDenied(await a.call("bash", { command: "ls next" })), "a parent ruling-<n>.md lifts the read budget");
+  await reads(a, WARN - 1);
+  assert.equal(reminds(a), 1, "a parent ruling-<n>.md resets the read count");
   assert.equal(a.events("cap_reset").length, 1);
 });
 
-test("read_budget_still_refused_with_launch_pending", async (t) => {
+test("read_budget_still_reminds_with_launch_pending", async (t) => {
   const a = await r11Rig(t);
   // an explorer run still active while the finalizer completes: no finalization exemption
   const e = await a.launch(explorer);
   await a.started(e.id, explorer, "run-exp");
   await finalize(a, "run-fin");
-  const out = await reads(a, DENY + 1);
-  assert.ok(readDenied(out[DENY]), "denied with a launch pending");
+  const out = await reads(a, WARN + 1);
+  assert.ok(!out.some(readDenied), "never denied");
+  assert.equal(reminds(a), 1, "counted with a launch pending");
   // the explorer ends: finalization holds now; a later started launch ends it again
   a.end({ runId: "run-exp", agent: "explorer", status: "completed", success: true, summary: "done" });
   assert.ok(!readDenied(await a.call("bash", { command: "git commit -m done" })), "finalization once nothing is pending");
   const b = await a.launch({ agent: "builder", task: "touch up" });
   await a.started(b.id, { agent: "builder", task: "touch up" }, "run-b");
-  const after = await reads(a, DENY + 1);
-  assert.ok(readDenied(after[DENY]), "a started launch ends finalization");
+  await reads(a, WARN);
+  assert.equal(reminds(a), 2, "a started launch ends finalization: reads count again");
 });

@@ -1,29 +1,28 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bgWaitLocations, detailLocations, inRecorded, noticeLocations, ReadBudget, readLimits, recheckLimit, recordFiles, topLevelId } from "../budget.ts";
+import { bgWaitLocations, coordinationCall, detailLocations, inRecorded, noticeLocations, ReadBudget, readLimits, recheckLimit, recordFiles, topLevelId } from "../budget.ts";
 import { finishLine } from "../bound.ts";
 import { CHILD_READ_TOOLS } from "../childreads.ts";
 import { READ_CLASS } from "../budget.ts";
 import { PACK_READ_TOOL_NAMES } from "../gitpack.ts";
 
-const L = readLimits({ before: { warn: 2, deny: 3 }, after: { warn: 1, deny: 2 } });
+const L = readLimits({ before: { warn: 2, every: 3 }, after: { warn: 1, every: 2 } });
 const kinds = (b: ReadBudget, ids: string[], tool = "read") => ids.map((id) => b.check(tool, id, L, 3, false).kind);
 
 test("budget: limits fall back to the defaults on malformed config", () => {
-  assert.deepEqual(readLimits(undefined), { before: { warn: 4, deny: 8 }, after: { warn: 4, deny: 8 } });
-  assert.deepEqual(readLimits({ before: { warn: "x", deny: 0 } }).before, { warn: 4, deny: 8 });
+  assert.deepEqual(readLimits(undefined), { before: { warn: 8, every: 8 }, after: { warn: 8, every: 8 } });
+  assert.deepEqual(readLimits({ before: { warn: "x", every: 0, deny: 3 } }).before, { warn: 8, every: 8 });
   assert.equal(recheckLimit(0), 0);
   assert.equal(recheckLimit(-1), 3);
   assert.equal(topLevelId("call_1/4"), "call_1");
 });
 
-test("budget: warn at warn, deny above deny, non-read tools never counted", () => {
+test("budget: remind at warn and every K reads after, never deny, non-read tools never counted", () => {
   const b = new ReadBudget();
-  assert.deepEqual(kinds(b, ["a", "b", "c", "d"]), ["allow", "warn", "warn", "deny"]);
-  assert.equal(b.check("edit", "e", L, 3, false).kind, "allow");
-  const d = b.check("grep", "f", L, 3, false);
-  assert.ok(d.kind === "deny" && d.reason.includes("[read_budget_exceeded]") && d.count === 3);
-  assert.ok(d.kind === "deny" && d.reason.includes("explorer") && d.reason.includes("/foreman budget lift"));
+  assert.deepEqual(kinds(b, ["a", "b", "c", "d", "e", "f", "g"]), ["allow", "remind", "allow", "allow", "remind", "allow", "allow"]);
+  assert.equal(b.check("edit", "x", L, 3, false).kind, "allow");
+  const d = b.check("grep", "h", L, 3, false);
+  assert.ok(d.kind === "remind" && d.count === 8 && d.text.includes("you have read 8 times") && d.text.includes("explorer or builder"));
 });
 
 test("budget: a codemode script counts once, nested calls of it are free", () => {
@@ -33,40 +32,30 @@ test("budget: a codemode script counts once, nested calls of it are free", () =>
   assert.equal(b.count, 1);
 });
 
-test("budget: a nested call is refused once the window is over deny; exempt calls are not counted", () => {
+test("budget: a nested call of an admitted script and an exempt call are not counted", () => {
   const b = new ReadBudget();
   b.check("codemode", "s1", L, 3, false);
   b.check("read", "r2", L, 3, false);
   b.check("read", "r3", L, 3, false);
-  assert.equal(b.check("read", "r4", L, 3, false).kind, "deny");
-  assert.equal(b.check("bash", "s1/1", L, 3, false).kind, "deny");
+  assert.equal(b.check("bash", "s1/1", L, 3, false).kind, "allow");
   assert.equal(b.check("read", "r5", L, 3, true).kind, "allow");
   assert.equal(b.count, 3);
 });
 
-test("budget: a started explorer lifts once per phase, then only the user command", () => {
+test("budget: a launch restarts the count and the reminder cadence", () => {
   const b = new ReadBudget();
-  kinds(b, ["a", "b", "c", "d"]);
-  assert.deepEqual(b.onLaunch(["builder"]), {}, "a non-explorer launch does not lift a deny");
+  assert.deepEqual(kinds(b, ["a", "b", "c", "d"]), ["allow", "remind", "allow", "allow"]);
+  b.onLaunch();
+  assert.equal(b.count, 0);
   assert.equal(b.phase, "after");
-  assert.equal(b.check("read", "e", L, 3, false).kind, "deny");
-  assert.deepEqual(b.onLaunch(["explorer"], false), {}, "a resumed explorer run does not lift a deny");
-  assert.equal(b.check("read", "e2", L, 3, false).kind, "deny");
-  assert.deepEqual(b.onLaunch(["explorer"]), { lift: { phase: "after", count: 3 } });
-  assert.deepEqual(kinds(b, ["f", "g"]), ["warn", "warn"]);
-  assert.equal(b.check("read", "h", L, 3, false).kind, "deny");
-  assert.deepEqual(b.onLaunch(["explorer"]), {}, "the second explorer lift in the phase is not granted");
-  const d = b.check("read", "i", L, 3, false);
-  assert.ok(d.kind === "deny" && d.reason.includes("/foreman budget lift"));
-  b.userLift();
-  assert.equal(b.check("read", "j", L, 3, false).kind, "warn");
+  assert.deepEqual(kinds(b, ["e", "f", "g"]), ["remind", "allow", "remind"]);
 });
 
-test("budget: a launch restarts the count when nothing was denied", () => {
+test("budget: a launch restarts the count", () => {
   const b = new ReadBudget();
   kinds(b, ["a", "b"]);
   assert.equal(b.phase, "before");
-  b.onLaunch(["explorer"]);
+  b.onLaunch();
   assert.equal(b.count, 0);
   assert.equal(b.phase, "after");
 });
@@ -87,11 +76,39 @@ test("recheck: N reads after a PASS, then refused; reset leaves the state", () =
 test("budget: a new user prompt restarts at phase before with a fresh count", () => {
   const b = new ReadBudget();
   kinds(b, ["a", "b", "c", "d"]);
-  b.onLaunch(["explorer"]);
+  b.onLaunch();
   assert.equal(b.phase, "after");
   assert.equal(b.resetAll(), 0);
   assert.equal(b.phase, "before");
-  assert.deepEqual(kinds(b, ["e", "f", "g", "h"]), ["allow", "warn", "warn", "deny"]);
+  assert.deepEqual(kinds(b, ["e", "f", "g", "h"]), ["allow", "remind", "allow", "allow"]);
+});
+
+test("budget: a coordination call is not counted and never reminds; the recheck window still counts it", () => {
+  const b = new ReadBudget();
+  for (const id of ["a", "b", "c", "d"]) assert.equal(b.check("bash", id, L, 3, false, true).kind, "allow");
+  assert.equal(b.count, 0);
+  b.enterPost();
+  assert.deepEqual(["a", "b", "c"].map((id) => b.check("bash", id, L, 3, false, true).kind), ["allow", "allow", "allow"]);
+  assert.equal(b.check("bash", "d", L, 3, false, true).kind, "deny");
+});
+
+test("coordinationCall: foreman session bash (also after cd), pr_* tools; nothing else", () => {
+  const bash = (command: string) => coordinationCall("bash", { command });
+  assert.equal(bash("foreman session list"), true);
+  assert.equal(bash("bin/foreman session brief x"), true);
+  assert.equal(bash("./bin/foreman session open && foreman session list"), true);
+  assert.equal(bash("cd /tmp/x && foreman session list"), true);
+  assert.equal(bash("cd '/tmp/a b' && bin/foreman session close"), true);
+  assert.equal(bash("foreman session list | cat"), false);
+  assert.equal(bash("foreman session list; cat secret"), false);
+  assert.equal(bash("foreman session $(cat x)"), false);
+  assert.equal(bash("foreman sessions"), false);
+  assert.equal(bash("cat foreman session"), false);
+  assert.equal(bash("cd /tmp/x"), false);
+  assert.equal(bash("git log"), false);
+  for (const n of ["pr_status", "pr_checks", "pr_comments"]) assert.equal(coordinationCall(n, {}), true, n);
+  assert.equal(coordinationCall("git_log", {}), false);
+  assert.equal(coordinationCall("read", { path: "x" }), false);
 });
 
 test("budget: child result locations come from structured places only, and the finish line", () => {

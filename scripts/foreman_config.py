@@ -73,7 +73,7 @@ Keys outside safety that the project and session layers cannot loosen either
                                      no symlink below the root. Both keys: a malformed value in
                                      any layer is a config error, replaced by the L1 default
     ceremony.reviewBeforePr          only true is accepted (false lets a PR open unreviewed)
-    ceremony.foremanReads.<phase>.<warn|deny>   lower only, minimum 1 (a higher budget lets the foreman read more)
+    ceremony.foremanReads.<phase>.<warn|every>  lower only, minimum 1 (a higher value lets the foreman read more before a reminder)
     ceremony.recheckBudget           lower only, minimum 0
     ceremony.launchWait              tighten only, detach < block (may only move to block)
     ceremony.dedupeNotify            only true is accepted
