@@ -55,7 +55,7 @@ test("verdict fails closed: no Python, spawn error, timeout, exit 2, garbage", (
   }
 });
 
-test("real script: project write refused, .workflow write allowed", { skip: !py.ok ? "no Python >= 3.9" : false }, async () => {
+test("real script: project write refused, .workflow write allowed", { skip: !py.ok ? "no Python >= 3.13" : false }, async () => {
   const ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-swg-")));
   try {
     fs.mkdirSync(path.join(ws, ".workflow"));
@@ -76,7 +76,7 @@ test("real script: project write refused, .workflow write allowed", { skip: !py.
   }
 });
 
-test("owned dirs: the payload carries allow_dirs; a write strictly below one passes, the dir itself and others do not", { skip: !py.ok ? "no Python >= 3.9" : false }, async () => {
+test("owned dirs: the payload carries allow_dirs; a write strictly below one passes, the dir itself and others do not", { skip: !py.ok ? "no Python >= 3.13" : false }, async () => {
   const ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-swg-own-")));
   try {
     const owned = path.join(ws, "out");

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Count permission decisions per session from the permission system's review log (stdlib, 3.9+).
+"""Count permission decisions per session from the permission system's review log (stdlib, 3.13+).
 
     python scripts/review_log_stats.py [LOG] [--agent-dir DIR] [--json]
 

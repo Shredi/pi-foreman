@@ -18,7 +18,7 @@ type Tool = { name: string; execute: (...a: unknown[]) => Promise<{ content: { t
 
 const py = await resolvePython({ envPath: process.env.PI_FOREMAN_PYTHON, platform: process.platform, spawner: defaultSpawner });
 const git = spawnSync("git", ["--version"]).status === 0;
-const SKIP = !py.ok ? "no Python >= 3.9" : !git ? "no git" : false;
+const SKIP = !py.ok ? "no Python >= 3.13" : !git ? "no git" : false;
 
 function setup(opts: { handoffDirs?: string[]; sessionChild?: boolean; isChild?: boolean; real?: boolean }) {
   const tools = new Map<string, Tool>();
