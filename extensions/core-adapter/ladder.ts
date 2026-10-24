@@ -43,7 +43,7 @@ export const ABOVE_STRONG_REASON = "already above strong rung";
 export const DEFAULT_STRONG_ABOVE = 100_000;
 export const RUNG_UP_MARKER = "RUNG_UP:";
 export const DEFAULT_CHILD_MAX_TURNS = 60;
-export const HANDOFF_MAX = 4_000;
+export const HANDOFF_MAX = 8_000;
 const LEDGER_LINES_MAX = 12;
 
 export type ClimbCause = "context" | "turns" | "stuck" | "checks_failed";

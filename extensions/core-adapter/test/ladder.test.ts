@@ -153,5 +153,5 @@ test("ledgerLines: named items, else the open ones; bounded handoff summary", ()
   l.onRunEnd(end("r", `RUNG_UP: context\n${"x".repeat(9000)}`));
   const input: Record<string, unknown> = { agent: "builder", task: "t", model: "strong" };
   l.apply(l.plan(input, ROLES).climbs, () => []);
-  assert.ok((input.task as string).length < 4500 && (input.task as string).includes("cut at 4000 characters"));
+  assert.ok((input.task as string).length < 8500 && (input.task as string).includes("cut at 8000 characters"));
 });
