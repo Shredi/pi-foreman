@@ -370,7 +370,7 @@
     "ui": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "symbols": { "type": "string", "enum": ["unicode", "nerd"], "description": "State glyph set for the children widget, radar and the Herdr sidebar: unicode (default) or nerd (Nerd Font icons)." }, "spinner": { "type": "boolean", "description": "Deprecated, accepted and ignored: the Herdr sidebar no longer cycles a spinner (Herdr's built-in state_icon cell shows the working state)." } }
+      "properties": { "symbols": { "type": "string", "enum": ["unicode", "emoji", "nerd", "ascii"], "description": "Glyph set for the children widget, radar and the Herdr sidebar: unicode (default, broadest support), emoji, nerd (Nerd Font icons) or ascii." }, "spinner": { "type": "boolean", "description": "Animate the working glyph in the children widget and the Herdr sidebar (Pi's braille frames, 250 ms steps). false shows static glyphs everywhere; absent or true animates." } }
     },
     "widget": {
       "type": "object",

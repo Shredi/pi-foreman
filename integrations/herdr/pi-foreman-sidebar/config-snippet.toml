@@ -5,43 +5,46 @@
 # `pi = [...]` entry to it), then run `herdr server reload-config`.
 # Only `pi` panes use these rows; other agents keep your default rows.
 #
-# Colours are neutral placeholders: pick the ones that suit your theme.
-# $fm_sym is a STATIC glyph per presence state, pushed only when the state
-# changes (no spinner, no frames; an unchanged row is re-sent every 10 s, before
-# the 15 s token TTL): working and waiting (a pending foreman_wait is
-# work), idle, ask open, blocked, done, lost. "…!" marks a session blocked for
-# more than 15 minutes, so that rule comes first.
-# Rules test the glyph cell's own value; the first match wins.
-# Glyphs: unicode set as characters, nerd set as \u escapes (ui.symbols).
-# Nested sessions carry their tree prefix (├─ / └─) at the start of $fm_l1.
-# Width: each cell you add before $fm_sym (an icon token, say) costs its
-# width plus Herdr's " · " separator. The plugin reserves none by default; set
-# HERDR_SIDEBAR_LEAD (or --lead-cells) to the number you add.
+# Five rows per session, one token each, so no Herdr separator (" · ") is drawn
+# and the plugin owns every column of the line:
+#   $fm_hd    tree connector, state glyph, label, age (the glyph animates in a live session)
+#   $fm_a1    agents: running child runs, runs that just finished
+#   $fm_a2    tasks and watches: PR watches, CI, background commands
+#   $fm_a3    waits and an open ask
+#   $fm_meta  tokens, cost, finished runs
+# A row without a value is not drawn, so an idle session is one or two lines.
+# The older tokens ($fm_sym, $fm_l1, $fm_l2, $fm_l3, $fm_cost) are still published
+# for rows of your own, but this snippet no longer uses them.
 #
-# Optional variant: Herdr's built-in state_icon cell (a plain string, no `$`,
-# Herdr 0.9.3 and later) in front of $fm_sym. Herdr draws its own working/idle
-# icon, which a waiting pi pane does not always show as working; use it only if
-# you prefer that icon. It costs 2 columns: set HERDR_SIDEBAR_LEAD=2 (or
-# --lead-cells 2) when you use it.
-#   ["state_icon", { token = "$fm_sym", ... same rules ... }, "$fm_l1"],
+# Colours: the detail rows are dim and follow your theme. The header rules below
+# colour the whole header line by the glyph it contains (rules match substrings
+# of the value), for the unicode, emoji and nerd sets at once; the ascii set has
+# no rules, its glyphs would collide with label text. A "!" or a state glyph in
+# a session label colours its line too. "!" after the age marks a session
+# blocked for more than 15 minutes, so that rule comes first. First match wins.
+# The hex values are placeholders: pick the ones that suit your theme.
+# Rows are always flush left: the plugin draws the tree itself (the connectors
+# and the blank cells U+2800 that keep Herdr from trimming them), so do not put
+# a state_icon or other cell in front of $fm_hd.
 
 [ui.sidebar.agents.rows_by_agent]
 pi = [
-  [{ token = "$fm_sym", fg = "#6aa84f", rules = [
+  [{ token = "$fm_hd", rules = [
       { contains = "!", fg = "#d9534f", bold = true },
-      { equals = "⏳", fg = "#6aa84f" },
-      { equals = "\uf252", fg = "#6aa84f" },
-      { equals = "⏸", fg = "#8a8a8a" },
-      { equals = "\uf04c", fg = "#8a8a8a" },
-      { equals = "?", fg = "#e0a030" },
-      { equals = "\uf128", fg = "#e0a030" },
-      { equals = "✋", fg = "#e0a030" },
-      { equals = "\uf256", fg = "#e0a030" },
-      { equals = "✓", fg = "#5b8def" },
-      { equals = "\uf00c", fg = "#5b8def" },
-      { equals = "✗", fg = "#d9534f" },
-      { equals = "\uf00d", fg = "#d9534f" },
-  ] }, "$fm_l1"],
-  [{ token = "$fm_l2", dim = true }],
-  [{ token = "$fm_l3", dim = true }, { token = "$fm_cost", fg = "#5b8def" }],
+      { contains = "✋", fg = "#e0a030" },
+      { contains = "\uf256", fg = "#e0a030" },
+      { contains = "?", fg = "#e0a030" },
+      { contains = "❓", fg = "#e0a030" },
+      { contains = "\uf128", fg = "#e0a030" },
+      { contains = "✗", fg = "#d9534f" },
+      { contains = "❌", fg = "#d9534f" },
+      { contains = "\uf00d", fg = "#d9534f" },
+      { contains = "✓", fg = "#8a8a8a" },
+      { contains = "✅", fg = "#8a8a8a" },
+      { contains = "\uf00c", fg = "#8a8a8a" },
+  ] }],
+  [{ token = "$fm_a1", dim = true }],
+  [{ token = "$fm_a2", dim = true }],
+  [{ token = "$fm_a3", dim = true }],
+  [{ token = "$fm_meta", dim = true }],
 ]

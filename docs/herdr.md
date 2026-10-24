@@ -1,22 +1,35 @@
 # Herdr sidebar plugin
 
 > Covers the `pi-foreman.sidebar` Herdr plugin: install, the rows snippet to merge into Herdr's config,
-> the `fm_*` pane tokens, the Agents view sort, the `ui.symbols` glyph sets,
-> and the known limits of Herdr's plugin API.
+> the `fm_*` pane tokens, the activity lines, the spinner, who publishes, the Agents view sort, the `ui.symbols`
+> glyph sets, and the known limits of Herdr's plugin API.
 
 The plugin `integrations/herdr/pi-foreman-sidebar/` shows the pi-foreman session tree in Herdr's Agents panel: per Pi
-pane a state glyph, the label, age or blocked timer, the children (subagent runs) and tokens and cost. It needs Herdr
+pane a header (tree connector, state glyph, label, age or blocked timer), one line each for what runs (agents),
+what it watches (tasks, PRs, CI) and what it waits on, and a line with tokens and cost. It needs Herdr
 0.9.0 or later on Linux or macOS and Python 3.9+. Pane-level session features (blocked shim, group tag) are in
 [sessions](sessions.md#herdr).
 
 ```text
-⏳ · › pi-foreman… 12s
-⏳ builder · ✓ explorer
-↑38k ↓2.3k · $0.47    ✓1
-✋ · └─ › ladder-p… 6m
-⠀⠀ ⏳ explorer
-⠀⠀ ↑9.1k ↓700 · $0.12
+⠹  pi-foreman                     12s
+│  ◆ builder sonnet-5.5 ×2 · reviewe…
+│  ⚙ pr #12 · npm test 3m
+│  ↑287k ↓7.4k · $3.32 · ✓3
+├─ ⠼  r31-sidebar                  6m
+│  │  ◆ reviewer opus-5.5
+│  │  $0.47 · ✓1
+│  └─ ✋ r31-perms                 1m
+│        ? ask 1: rule scope
+│        $0.12
+├─ ⏸  r32-cache                    2m
+│     ⧗ child r32b 4m
+│     $1.02 · ✓2
+└─ ✓  r31-git                     40m
+      $0.88 · ✓4
 ```
+
+The mock-up is the `unicode` set at width 40 (blank cells shown as spaces); `⠹` and `⠼` are spinner frames of two
+working sessions.
 
 ## Install
 
@@ -63,25 +76,81 @@ why.
 
 ## Rows
 
-The snippet adds three rows under `[ui.sidebar.agents.rows_by_agent]`, key `pi`, so only Pi panes use them; other
+The snippet adds five rows under `[ui.sidebar.agents.rows_by_agent]`, key `pi`, so only Pi panes use them; other
 agents keep your default rows. Herdr allows one rows table per key: if you already have
 `[ui.sidebar.agents.rows_by_agent]`, add the `pi = [...]` entry to it. Disable other plugins that set the Agents view
 or ship row templates for `pi`; two owners of the view replace each other's sort.
 
-Row 1 opens with `$fm_sym`, a static glyph of the session state; there is no spinner, no timer and no frames. The sidebar
-pushes the glyph when the state changes (and re-sends an unchanged row after 10 s only because tokens expire after the
-15 s TTL). Waiting is working: while a `foreman_wait` or `foreman_bg` is pending the state stays `working` (⏳) and
-Herdr's status stays working; the wait shows on line 2 (below).
+Each row holds one token (`$fm_hd`, `$fm_a1`, `$fm_a2`, `$fm_a3`, `$fm_meta`), so Herdr draws no separator and the
+plugin owns every column of the line, including the tree. A row without a value is not drawn: an idle session is one or
+two lines. Rows are flush left; do not put a `state_icon` or another cell in front of `$fm_hd`.
 
-| State | Glyph in `fm_sym` |
+**Upgrading from an earlier snippet:** re-run `configure` (the action, or `python3 sidebar.py configure`), merge the new
+snippet over your old `pi = [...]` rows and run `herdr server reload-config`. The old three-row snippet is gone; the old
+tokens still publish (see Tokens) but the new snippet does not use them. Nothing else changes in your `config.toml`.
+
+### The tree
+
+- Each nesting level is 3 cells: a connector (`├─ ` or `└─ `), a continuation (`│` plus two blank cells, or three
+  blank cells after a last child) and, under a session that has row children, a child marker (`│`).
+- The glyph slot is always 2 cells wide (a 1-cell glyph gets a blank cell, U+2800, which Herdr does not trim), so the
+  label column never moves when a session switches between the spinner and a static glyph.
+- The label and the activity lines start at the same column; every `│` leads to a later `├─` or `└─` in the same
+  column. Siblings are ordered by start time, then session id, whatever order they arrive in.
+- A deep tree keeps its prefix whole: with little room the age drops first, then the label is cut to one character and `…`.
+  Only the label or the line text is ever cut, with `…`.
+- The daemon writes the tree positions (`layout.json`, `tree.json` in the state folder); a session that pushes itself
+  uses them while they are younger than 10 s and otherwise builds the tree from all presence files itself, so a missing
+  daemon no longer leaves stale connectors. Sibling connectors converge within one 5 s refresh; a session's own
+  changes show at once.
+
+### Activity lines
+
+| Line | Content |
 |---|---|
-| working, or waiting on a `foreman_wait` | ⏳ |
-| idle | ⏸ |
+| `fm_a1` agents | `◆ builder sonnet-5.5 ×2 · reviewer opus-5.5`: running child runs by role and model; a finished run shows `✓ role` for `radar.recentRunSeconds` |
+| `fm_a2` tasks and watches | `⚙ pr #12 · npm test 3m`: PR watches, CI waits (`foreman_wait` kind `ci`), `foreman_bg` commands and the `bg_run` add-on's tasks of this session |
+| `fm_a3` waits | `? ask 1: topic` for an open ask, then `⧗ child r32b 4m`: timer, file, child and pid waits |
+| `fm_meta` | `↑287k ↓7.4k · $3.32 · ✓3`, plus the host pressure suffix |
+
+A done session shows `done · n runs` on `fm_a1`, a lost one `lost`. A live, self-publishing working session shows a
+spinner frame in the glyph slot (see Spinner); waiting is working: while a `foreman_wait` or `foreman_bg` is pending the state stays `working`
+and Herdr's status stays working, and the wait shows on its activity line.
+
+### Data
+
+The live file (`state/live/<session>.json`) and `foreman_radar.py --json` carry these fields for the activity lines. They
+are additive: older readers ignore them, and each is present only when there is data.
+
+| Field | Where | Content |
+|---|---|---|
+| `started` | radar session node | start time, used for sibling order (oldest first within a rank) |
+| `bg` | a wait | `true` for a `foreman_bg` command |
+| `prs` | the `pr_watch` wait | the watched PR numbers |
+| `tasks` | live file, radar session node | this session's own `bg_run` add-on tasks: `id`, `label`, `pid`, `ageSeconds` |
+| `asks` | live file, radar session node | `[{n, topic}]` while the session's own handoff ask is open |
+
+The sidebar sorts them into lines: child runs go to `fm_a1` (agents); `tasks`, waits with `bg` and the `pr_watch` wait
+(with its `prs`) go to `fm_a2` (tasks and watches); other waits and `asks` go to `fm_a3` (`? ask <n>: <topic>`, then the
+waits).
+
+### Header glyphs and colours
+
+| State | Glyph in `fm_hd` (`unicode`) |
+|---|---|
+| working | spinner frame (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) in a live session, ⏳ in a session the daemon publishes |
+| waiting, idle | ⏸ |
 | ask open (a run waits for you) | ? |
 | blocked | ✋ |
-| blocked longer than 15 minutes | `!` (red, `contains = "!"`) |
+| blocked longer than 15 minutes | `!` right after the age (`16m!`), red |
 | done | ✓ |
 | lost | ✗ |
+
+The snippet colours the whole header line by a glyph it contains (Herdr rules match substrings of the value): `!` red and
+bold, blocked and ask yellow, lost red, done dim; the rules cover the `unicode`, `emoji` and `nerd` sets at once. The `ascii`
+set has no colour rules, because its glyphs would collide with label text. A `!` or `?` in a label also triggers its
+rule (labels are slugs, so this is rare). `fm_a1`, `fm_a2`, `fm_a3` and `fm_meta` are dim with no colour, so they follow
+your theme. The hex values are placeholders; pick the ones that suit your theme.
 
 ### Presence states and their `state_icon` glyphs
 
@@ -98,10 +167,8 @@ session is `done` whatever else is still open). The legacy `state` field is unch
 | `idle` | ⏸ / `\uf04c` | none of the above |
 | `done` | ✓ / `\uf00c` | the session ended |
 
-With `ui.symbols: nerd` the glyphs follow the table at the end of this page. The optional variant in the snippet puts Herdr's
-`state_icon` cell in front (set `--lead-cells`). A nested session's tree prefix (`├─`, `└─`)
-starts its `fm_l1`. The colours in the snippet are placeholders. After updating, merge the new snippet again and run
-`herdr server reload-config`; your own `config.toml` is never edited by pi-foreman.
+With another `ui.symbols` set the glyphs follow the tables in Symbols. After updating, re-run `configure`, merge the new
+snippet again and run `herdr server reload-config`; your own `config.toml` is never edited by pi-foreman.
 
 ## Tokens
 
@@ -110,23 +177,24 @@ every 5 s by the session or, for a pane it does not push, the daemon; values are
 
 | Token | Value |
 |---|---|
-| `fm_sym` | static state glyph (⏳ ⏸ ? ✋ ✓ ✗, see Rows), `!` when blocked longer than 15 minutes |
-| `fm_l1` | tree prefix of a nested session (`├─`, `└─`), `› label`, the age or blocked timer right-aligned to the width |
-| `fm_l2` | children: glyph, role and short model per active run (`builder sonnet-5.5 ×2`; the rung is shown only when no model is, or on panels 60 columns or wider; the base rung `model` never), a finished run as `✓ role` for `radar.recentRunSeconds` (default 8) before it joins the `✓n` count; with no active run and a pending `foreman_wait`: `⏳ <note> 4m` (`+n` for more waits); else `no children`, `no active children`, `done · n children` or `lost` |
-| `fm_l3` | `↑in ↓out` of the session and its children; `in` counts uncached input only (fresh input plus cache writes, from the usage file), `↑~n` marks the raw total incl. cache reads when no usage file has the split; radar and its JSON keep the raw total. Dropped before the cost when the row is too narrow |
-| `fm_cost` | `$cost` and `✓n` finished children |
+| `fm_hd` | tree prefix, 2-cell glyph slot, label; the age or blocked timer right-aligned, `!` right after it when blocked longer than 15 minutes |
+| `fm_a1` | agents (see Activity lines) |
+| `fm_a2` | tasks and watches |
+| `fm_a3` | waits and an open ask |
+| `fm_meta` | `↑in ↓out · $cost · ✓n` and the pressure suffix; `in` counts uncached input only (fresh input plus cache writes, from the usage file), `↑~n` marks the raw total incl. cache reads when no usage file has the split; radar and its JSON keep the raw total. When it does not fit, the `↑↓` counts drop as a whole first, then the text is cut; hidden below 20 columns |
 | `fm_state` | `working`, `waiting`, `asking`, `blocked`, `done` or `lost`, for your own rules |
 | `fm_block_s` | seconds blocked, set only while blocked, for your own `gt`/`lt` rules |
 | `fm_sort` | parent-first sort key (`r001`, `r001.c001`) |
 
+**Deprecated tokens** (still published with their old meaning, for rules of your own; the snippet does not use them and
+they go in a later round): `fm_sym` (static state glyph), `fm_l1` (tree prefix, `› label`, age), `fm_l2` (children),
+`fm_l3` (`↑in ↓out`), `fm_cost` (`$cost` and `✓n`).
+
 Width: `--width`, else `HERDR_SIDEBAR_WIDTH`, else `ui.sidebar_width` from Herdr's `config.toml` (read only), else 26
 (Herdr's default). Herdr may auto-scale the panel between `ui.sidebar_min_width` and `ui.sidebar_max_width`; set the
-width you see when it differs. Below 24 columns `fm_l3` drops the token counts; below 20 `fm_l3` and `fm_cost` are
-cleared. The layout counts 2 columns of panel frame and Herdr's ` · ` separator (3 columns) between two cells of a row.
-Row 1 reserves 2 columns for `state_icon` and also the cells you put before `$fm_sym` (an icon token, say): none by default, each counted 1 column
-plus a separator; set `--lead-cells N` or `HERDR_SIDEBAR_LEAD` to the number you add. Line 1 stops
-2 columns short of its budget; when it is short of room the label is cut (`…`), down to `›…`, and only then the age is
-dropped.
+width you see when it differs. Each token has `width − 2 (panel frame) − 1 (safety column)` cells; the plugin measures
+glyphs like `wcwidth` and Herdr's renderer (a variation selector makes a glyph 2 cells; `⏳` and `✋` are 2, `⏸` and `⚙`
+are 1). Nothing wraps.
 
 A session is joined to its pane by the presence file's `paneId` (pi-foreman writes `HERDR_PANE_ID` there), else by the
 pane's foreground pid, else by a working directory only one Pi pane has. When several presence files name the same pane
@@ -141,15 +209,22 @@ of staying blank.
 ## Who publishes what
 
 The Pi session publishes its own pane, so a spawn, a finished run or a state change shows within a fraction of a second
-instead of after the next poll. It runs `python3 sidebar.py push --session <id> --pane <pane>` (also `--symbols`,
-`--final`, `--clear`) on run start and end, ask open and close, state change, its own asks, permission prompts and decisions, and
-every 5 s. Pushes are debounced to at most 4 per second with one in flight, and take well under a second. At session end `push --final` publishes a last composed row (done
+instead of after the next poll. The composing stays in Python and the publishing is TypeScript: on run start and end, ask open and close, state change, its own asks,
+permission prompts and decisions, and every 5 s the session runs `python3 sidebar.py push --json --session <id> --pane <pane>`
+(also `--symbols`, `--agent-dir`), which prints `{tokens, fm_hd_tpl, stamp, pane}` and reports nothing, and then sends
+`pane.report_metadata` over Herdr's socket itself (JSON lines; `HERDR_SOCKET_PATH`, else
+`<XDG_CONFIG_HOME or ~/.config>/herdr/herdr.sock`; source `plugin:pi-foreman.sidebar`, TTL 15 s). Only after a successful
+report it writes the push stamp (atomically, with the pane id as content); `push --json` writes no stamp and removes
+the session's `.tokens` file. The session keeps its own last-sent map and sends an unchanged set again after 10 s. If
+the socket report fails, it runs a plain `push` (which reports from Python) for that cycle, so a pane with a fresh stamp
+is always published by one of the two. Pushes are debounced to at most 4 per second with one in flight, and take well
+under a second. At session end `push --final` publishes a last composed row (done
 glyph, done count, totals; normal 15 s TTL) and removes only the push stamp, so the daemon takes the keys over at its
 next tick and the row never goes blank. `--clear` is for the hand smoke and the daemon's cleanup of a lost pane. The session pushes only when `HERDR_ENV=1` and `HERDR_PANE_ID` are set, in TUI mode, with Python
 found. Both publishers use the source `plugin:pi-foreman.sidebar`. Herdr token reports are per-key patches with a TTL
 per key (15 s here), so each publisher owns fixed keys and omits the others.
 
-| Session | Daemon | Session keys (`fm_sym` `fm_l1` `fm_l2` `fm_l3` `fm_cost` `fm_state` `fm_block_s`) |
+| Session | Daemon | Session keys (`fm_hd` `fm_a1` `fm_a2` `fm_a3` `fm_meta`, the deprecated `fm_sym` `fm_l1` `fm_l2` `fm_l3` `fm_cost`, `fm_state` `fm_block_s`) |
 |---|---|---|
 | pushed under 15 s ago, radar sees it live | only `fm_sort`, and the tree layout (`layout.json` in the state folder, read by `push` for the `├─`/`└─` prefix) | published by the session |
 | older session without push, no push for 15 s (hung), lost, stale or done | every key, as before | not published |
@@ -157,7 +232,16 @@ per key (15 s here), so each publisher owns fixed keys and omits the others.
 The push stamp is `push/<session id>.stamp` in the state folder; the daemon takes a pane over within one tick when it
 goes stale. A usage byte-offset cache (`push/<session id>.usage.json`) keeps the push short on long sessions.
 
-Spinner: removed. `ui.spinner` is deprecated, still accepted and ignored; `fm_sym` is a static glyph.
+### Spinner
+
+A live session that is working shows Pi's own braille frames (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`, the default Pi loader; `| / - \` in the `ascii`
+set) in the glyph slot of `fm_hd`, in the sidebar and in the children widget of the Pi TUI alike. The frame is
+`floor(epoch ms / 250) mod frames`, so every pane and the TUI show the same frame at the same time; the rate is bounded
+at 4 frames a second. Python composes the header with a `{spin}` slot (`fm_hd_tpl`); the TypeScript publisher swaps the
+current frame in and, every 250 ms while the session is working, sends only `fm_hd`. The timer stops when the session
+is not working and at shutdown. Panes the daemon publishes keep the static glyph. `ui.spinner: false` (in `foreman.json`)
+turns the animation off everywhere: static glyphs in the sidebar and the widget. See
+[sessions](sessions.md#further-session-keys).
 
 Recent runs: a run that ended shows as `✓ role` on line 2 for `radar.recentRunSeconds` (default 8), then moves into
 the `✓n` count. Tokens: line 3 counts uncached input (see `fm_l3`); radar's TUI and JSON keep the raw totals.
@@ -199,20 +283,39 @@ folder and reapplied at startup, because Herdr forgets the view on a server rest
 ## Symbols
 
 `ui.symbols` in `foreman.json` picks the glyph set for radar, the children widget and this plugin (via
-`foreman radar --json`): `unicode` (default) or `nerd`. See [sessions](sessions.md#further-session-keys).
+`foreman radar --json`): `unicode` (default, the broadest terminal support), `emoji`, `nerd` or `ascii`; an unknown value
+reads as `unicode`. See [sessions](sessions.md#further-session-keys). The sets live in `config/symbols.json`.
 
 `nerd` needs a terminal font that contains the Nerd Font symbols (a patched Nerd Font, or the symbols-only font as a
-fallback); otherwise the glyphs render blank. Test the terminal Herdr runs in with `printf '\uf252\n'` (zsh,
-bash 4.2+): an hourglass means `nerd` works. `unicode` is the safe default. The plugin installs no fonts.
+fallback); otherwise the glyphs render blank. `emoji` needs a font with colour emoji. `ascii` works everywhere but
+has no colour rules in the snippet. The plugin installs no fonts. Check the glyphs of a set in your terminal (zsh, bash 4.2+;
+each glyph must show between its bars, with no blank or box):
 
-| State | `unicode` | `nerd` |
-|---|---|---|
-| working | ⏳ | U+F252 |
-| waiting (idle, stale) | ⏸ | U+F04C |
-| asking (a run waits for you) | ? | U+F128 |
-| blocked | ✋ | U+F256 |
-| done | ✓ | U+F00C |
-| lost | ✗ | U+F00D |
+```sh
+python3 -c 'import json,sys; s=json.load(open(sys.argv[1]))[sys.argv[2]]; print("".join("|%s|" % v if isinstance(v, str) else "|%s|" % "".join(v) for v in s.values()))' config/symbols.json emoji
+```
+
+| State | `unicode` | `emoji` | `nerd` | `ascii` |
+|---|---|---|---|---|
+| working (no spinner) | ⏳ | ⏳ | U+F252 | `*` |
+| waiting, idle | ⏸ | ⏸️ | U+F04C | `.` |
+| asking (a run waits for you) | ? | ❓ | U+F128 | `?` |
+| blocked, waiting-owner | ✋ | ✋ | U+F256 | `#` |
+| done | ✓ | ✅ | U+F00C | `+` |
+| lost | ✗ | ❌ | U+F00D | `x` |
+| keep-alive | ♨ | ♨️ | U+F06D | `^` |
+| waiting-external | ↻ | 🔄 | U+F017 | `@` |
+
+Activity glyphs and the spinner:
+
+| Key | `unicode` | `emoji` | `nerd` | `ascii` |
+|---|---|---|---|---|
+| `spinner` (frames) | `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` | same | same | `\| / - \` |
+| `agent` | ◆ | 🤖 | U+F544 | `>` |
+| `task` | ⚙ | ⚙️ | U+F013 | `=` |
+| `wait` | ⧗ | ⏳ | U+F252 | `~` |
+| `ask` | ? | ❓ | U+F128 | `?` |
+| `recent` | ✓ | ✅ | U+F00C | `+` |
 
 ## Optional add-on: background tasks
 

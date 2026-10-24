@@ -303,7 +303,7 @@ tree lines dim; the age of a blocked row turns amber after 5 minutes and red aft
 `c` cost on/off, `↑`/`↓` select a row (inverted band), `enter` shows the selected session's path (presence `cwd`, else the
 handoff dir) under the footer.
 
-Glyphs come from the `ui.symbols` set (`unicode` shown; `nerd` uses Nerd Font icons, table in
+Glyphs come from the `ui.symbols` set (`unicode` shown; `emoji`, `nerd` (Nerd Font icons) and `ascii` are the others, tables in
 [Herdr sidebar](herdr.md#symbols)):
 
 | Glyph | Meaning |
@@ -324,7 +324,7 @@ reads it): `{"v":1,"now","symbols","roots":[node]}`, each node with `key`, `kind
 `sym`, `glyph`, `paneId`, `pid`, `cwd`, `age_s`, `blocked_s`, `own` and `tot` (`in`, `out`, `uncached`, `cost`), `done_children` and
 `children`. The header also has `recentRunSeconds` (`radar.recentRunSeconds`, default 8: how long a finished run stays visible
 as `✓ role` before it joins the done count), run nodes have `ended_s` (seconds since the run ended, or `null`) and session
-nodes have `sid` (session id). `uncached` is fresh input plus cache writes; `in` still includes cache reads. `--symbols unicode|nerd` overrides `ui.symbols`. `--agent-dir` (default `PI_CODING_AGENT_DIR`, else `~/.pi/agent`). `--since HOURS`
+nodes have `sid` (session id). `uncached` is fresh input plus cache writes; `in` still includes cache reads. `--symbols unicode|emoji|nerd|ascii` overrides `ui.symbols`. `--agent-dir` (default `PI_CODING_AGENT_DIR`, else `~/.pi/agent`). `--since HOURS`
 (default 24) hides finished or lost sessions whose last activity is older, unless a descendant is still shown.
 `--no-color` or `NO_COLOR` turns off colors (and with them the selection band).
 
@@ -385,7 +385,7 @@ it as plain text `foreman:close`, accepted only from the recorded parent session
 Herdr's Pi integration (`herdr integration install pi`, installed by you, never by the installer) shows a session
 as working, idle or blocked. pi-foreman emits `herdr:blocked` on `pi.events` while any dialog waits for you, so
 the pane reads blocked ("?") instead of working. The foreman tree in Herdr's Agents panel is a separate plugin:
-[Herdr sidebar](herdr.md). In a Herdr pane the session also pushes its own sidebar tokens (`sidebar.py push`, on every state change and every 5 s; Herdr's own `state_icon` shows the working state, `ui.spinner` is deprecated and ignored); see [who publishes what](herdr.md#who-publishes-what). Design record: `design/architecture.md`
+[Herdr sidebar](herdr.md). In a Herdr pane the session also pushes its own sidebar tokens (`sidebar.py push`, on every state change and every 5 s; the header carries Pi's spinner frame while it works, `ui.spinner: false` turns that off); see [who publishes what](herdr.md#who-publishes-what). Design record: `design/architecture.md`
 [session features](../design/architecture.md#session-features-phase-4).
 
 ### Blocked shim
@@ -473,5 +473,6 @@ add-on's `bg_run` tool; `/foreman waits` then also lists its running tasks, and 
 | `close.autoClean`, `close.worktreeDir` | Cleanup at close and the worktree convention directory (see [close](close.md)). `autoClean` can only be turned off by a project or session; `worktreeDir` is user or overlay config only. |
 | `herdr.blockedShim` | Show any open dialog or permission ask as blocked in Herdr (default `true`); any layer may set it. |
 | `herdr.groupTag` | Herdr group tag on opened child and parent panes (default `true`); any layer may set it. |
-| `ui.symbols` | Glyph set for radar, the children widget and the Herdr sidebar plugin: `unicode` (default) or `nerd` (Nerd Font); any layer may set it. |
+| `ui.symbols` | Glyph set for radar, the children widget and the Herdr sidebar plugin: `unicode` (default, broadest support), `emoji`, `nerd` (Nerd Font) or `ascii`; an unknown value reads as `unicode`; any layer may set it. |
+| `ui.spinner` | Animate the working glyph (Pi's braille frames, 250 ms steps) in the children widget and the Herdr sidebar (default `true`); `false` shows static glyphs everywhere; any layer may set it. |
 | `widget.children` | Children widget below the editor in the TUI (default `true`); any layer may set it. |

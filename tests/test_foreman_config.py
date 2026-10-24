@@ -541,7 +541,11 @@ class PackageFilesTest(unittest.TestCase):
         old_reads = "Your own reads are budgeted (`ceremony.foremanReads`) and refused past the limit until an explorer has started;"
         new_reads = "Your own reads are budgeted (`ceremony.foremanReads`): past the limit you get a reminder to delegate, never a refusal;"
         self.assertIn(old_reads, expected)
-        self.assertEqual(render_prompt(text, knobs), expected.replace(old_wait, new_wait).replace(old_reads, new_reads))
+        # round 43: the PR body carries the changelog section; PRs never edit CHANGELOG.md
+        old_pr = "Children never open PRs."
+        new_pr = "Children never open PRs. The PR body carries a `## Changelog` section (one to three user-facing bullets): the finalizer drafts it at heavy tier, you draft it otherwise. PRs never edit CHANGELOG.md."
+        self.assertIn(old_pr, expected)
+        self.assertEqual(render_prompt(text, knobs), expected.replace(old_wait, new_wait).replace(old_reads, new_reads).replace(old_pr, new_pr))
 
     def test_defaults_validate(self):
         res = fc.load_config(agent_dir=tempfile.gettempdir() + os.sep + "pf-no-such-agent-dir")
