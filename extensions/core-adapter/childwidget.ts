@@ -7,7 +7,7 @@ import { abbrev } from "./footer.ts";
 import { parseLines } from "./usage.ts";
 import { priceRecord } from "./cost.ts";
 import type { PriceTable } from "./cost.ts";
-import { cellWidth, runSymbol, symbolSet } from "./symbols.ts";
+import { cellWidth, runSymbol, SPINNER_MS, spinnerFrame, symbolSet } from "./symbols.ts";
 
 export const WIDGET_KEY = "foreman-children";
 export const MAX_ROWS = 8;
@@ -52,6 +52,8 @@ export interface WidgetOpts {
   intercomId: string | null;
   symbols?: unknown;
   background?: () => BackgroundRow[];
+  /** Opt-in: a running run shows the spinner frame of the clock (250 ms steps) and a render tick runs while a run is active. Off = static glyphs. */
+  spinner?: boolean;
 }
 
 /** Rung of a single launch: bottom = the role's own model with a strong rung above it. */
@@ -227,8 +229,10 @@ export class ChildRuns {
 const usd = (v: number): string => `$${v.toFixed(2)}`;
 
 /** State glyph (ui.symbols set) + the run's fields. */
-export function runLine(r: RunView, symbols?: unknown): string {
-  return symbolSet(symbols)[runSymbol(r.state)] + " " + [r.role, ...(r.rung ? [r.rung] : []), r.state, `↑${abbrev(r.tokensIn)} ↓${abbrev(r.tokensOut)}`, usd(r.cost)].join(" · ");
+export function runLine(r: RunView, symbols?: unknown, now?: number): string {
+  const set = symbolSet(symbols);
+  const glyph = now !== undefined && r.state === "working" ? spinnerFrame(set.spinner, now) : set[runSymbol(r.state)];
+  return glyph + " " + [r.role, ...(r.rung ? [r.rung] : []), r.state, `↑${abbrev(r.tokensIn)} ↓${abbrev(r.tokensOut)}`, usd(r.cost)].join(" · ");
 }
 
 export function ageText(ms: number): string {
@@ -279,14 +283,14 @@ export function foldRows(lines: string[]): string[] {
  * the batch (ended at or after `since`, the start of the oldest active run); at most 8 lines (foldRows). With no active
  * run only the background rows and the opened sessions remain.
  */
-export function widgetLines(runs: RunView[], sessions: SessionRow[], now: number, since: number | null = null, symbols?: unknown, background: BackgroundRow[] = []): string[] {
+export function widgetLines(runs: RunView[], sessions: SessionRow[], now: number, since: number | null = null, symbols?: unknown, background: BackgroundRow[] = [], spin = false): string[] {
   const active = runs.filter((r) => r.state !== "done");
   const bg = background.map((b) => [b.label, b.detail, ageText(now - b.startedAt)].join(" · "));
   const opened = [...sessions].sort((a, b) => (b.at || 0) - (a.at || 0)).map((s) => sessionLine(s, now));
   if (!active.length) return foldRows([...bg, ...opened]);
   const from = since ?? Math.min(...active.map((r) => r.startedAt));
   const done = runs.filter((r) => r.state === "done" && r.endedAt !== null && r.endedAt >= from);
-  return foldRows([...active.map((r) => runLine(r, symbols)), ...bg, ...opened, ...(done.length ? [doneLine(done)] : [])]);
+  return foldRows([...active.map((r) => runLine(r, symbols, spin ? now : undefined)), ...bg, ...opened, ...(done.length ? [doneLine(done)] : [])]);
 }
 
 /** Cut a line to the terminal width so a row never wraps (one widget line = one screen row). */
@@ -344,6 +348,7 @@ export class ChildWidget {
   private rows: WidgetRows | null = null;
   private tui: { requestRender(): void } | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private tick: ReturnType<typeof setTimeout> | null = null;
   private ctx: WidgetCtx | null = null;
   private opts: WidgetOpts | null = null;
 
@@ -376,11 +381,17 @@ export class ChildWidget {
   private hide(ctx: WidgetCtx): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.stopTick();
     if (!this.rows) return;
     this.rows = null;
     this.tui = null;
     this.shown = "";
     ctx.ui.setWidget(WIDGET_KEY, undefined, { placement: "belowEditor" });
+  }
+
+  private stopTick(): void {
+    if (this.tick) clearTimeout(this.tick);
+    this.tick = null;
   }
 
   private render(now: number): void {
@@ -389,7 +400,16 @@ export class ChildWidget {
       if (!this.ctx || !this.opts) return;
       const views = this.runs.views();
       const background = this.opts.background?.() ?? [];
-      const lines = widgetLines(views, readOpened(this.opts.agentDir, this.opts.intercomId), now, null, this.opts.symbols, background);
+      const spin = this.opts.spinner === true;
+      this.stopTick();
+      if (spin && views.some((r) => r.state === "working")) {
+        this.tick = setTimeout(() => {
+          this.tick = null;
+          this.render(Date.now());
+        }, SPINNER_MS);
+        this.tick.unref?.();
+      }
+      const lines = widgetLines(views, readOpened(this.opts.agentDir, this.opts.intercomId), now, null, this.opts.symbols, background, spin);
       if (views.some((r) => r.state !== "done") || background.length) {
         this.reserved = Math.max(this.reserved, lines.length);
         while (lines.length < this.reserved) lines.push("");
@@ -422,6 +442,7 @@ export class ChildWidget {
   dispose(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.stopTick();
     this.ctx = null;
   }
 }

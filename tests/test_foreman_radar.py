@@ -375,7 +375,7 @@ class JsonTests(Fixture):
         api = top["children"][3]["children"][1]
         self.assertEqual((api["blocked_s"], api["tot"]), (12, {"in": 600, "out": 20, "cost": 0.25, "uncached": 300}))
         self.assertEqual(set(api), {"key", "kind", "name", "role", "rung", "state", "sym", "glyph", "paneId", "pid",
-                                    "cwd", "age_s", "blocked_s", "own", "tot", "done_children", "children", "sid", "waits"})
+                                    "cwd", "age_s", "blocked_s", "own", "tot", "done_children", "children", "sid", "waits", "started"})
 
     def test_models_and_waits_in_json(self):
         top = live("s-w", "waiter", "fm-w", state="waiting", hb=0, runs=[
@@ -465,6 +465,114 @@ class JsonTests(Fixture):
 
     def lines_plain(self):
         return fr.render(self.snap(), NOW, 80)
+
+
+class Round33Tests(Fixture):
+    """Additive JSON fields (started, bg, prs, tasks) and the emoji and ascii glyph sets."""
+
+    def cli(self, *args, symbols=None):
+        if symbols:
+            self.adir.mkdir(parents=True, exist_ok=True)
+            (self.adir / "foreman.json").write_text(json.dumps({"ui": {"symbols": symbols}}), "utf-8")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), mock.patch.object(fr.time, "time", return_value=NOW):
+            self.assertEqual(fr.main(["--agent-dir", str(self.adir)] + list(args)), 0)
+        return out.getvalue()
+
+    def only_root(self, d):
+        self.put_live(d)
+        (root,) = json.loads(self.cli("--json"))["roots"]
+        return root
+
+    def test_session_nodes_carry_started_and_runs_do_not(self):
+        top = live("s-a", "a", "fm-a", started=3600, runs=[run("L1", "builder")])
+        root = self.only_root(top)
+        self.assertAlmostEqual(root["started"], NOW - 3600, delta=1)
+        self.assertNotIn("started", root["children"][0])
+        gone = live("s-b", "b", "fm-b")
+        del gone["startedAt"]
+        self.put_live(gone)
+        node = next(r for r in json.loads(self.cli("--json"))["roots"] if r["key"] == "fm-b")
+        self.assertIsNone(node["started"])
+
+    def test_waits_copy_bg_and_prs_only_when_present(self):
+        top = live("s-w", "w", "fm-w", state="waiting", hb=0)
+        top["waits"] = [
+            {"id": "w1", "kind": "timer", "note": "old", "ageSeconds": 10, "leftSeconds": 5},
+            {"id": "w2", "kind": "timer", "note": "cmd", "ageSeconds": 10, "leftSeconds": 5, "bg": True},
+            {"id": "w3", "kind": "timer", "note": "no", "ageSeconds": 10, "leftSeconds": 5, "bg": False},
+            {"id": "pr_watch", "kind": "pr", "note": "2 pr watch", "ageSeconds": 0, "leftSeconds": 0,
+             "prs": [12, 14, "x", True]},
+            {"id": "w5", "kind": "pr", "note": "empty", "ageSeconds": 0, "leftSeconds": 0, "prs": []}]
+        waits = self.only_root(top)["waits"]
+        self.assertEqual(waits[0], {"id": "w1", "kind": "timer", "note": "old", "age_s": 10, "left_s": 5})
+        self.assertIs(waits[1]["bg"], True)
+        self.assertNotIn("bg", waits[2])
+        self.assertEqual(waits[3]["prs"], [12, 14])
+        self.assertNotIn("prs", waits[4])
+
+    def test_tasks_are_copied_when_present(self):
+        top = live("s-t", "t", "fm-t", hb=5)
+        self.assertNotIn("tasks", self.only_root(top))
+        top["tasks"] = [{"id": "s-t-1", "label": "npm test", "pid": 99, "ageSeconds": 60},
+                        {"id": "s-t-2", "label": "lint", "pid": "x", "ageSeconds": 1, "tail": ["secret"]}, "junk"]
+        tasks = self.only_root(top)["tasks"]
+        self.assertEqual(tasks, [{"id": "s-t-1", "label": "npm test", "pid": 99, "ageSeconds": 65},
+                                 {"id": "s-t-2", "label": "lint", "pid": None, "ageSeconds": 6}])
+        top["tasks"] = []
+        self.assertNotIn("tasks", self.only_root(top))
+
+    def test_asks_are_copied_when_present(self):
+        top = live("s-t", "t", "fm-t", hb=5)
+        self.assertNotIn("asks", self.only_root(top))
+        top["asks"] = [{"n": 2, "topic": "rule scope", "x": 1}, {"n": "x", "topic": "bad"}, "junk"]
+        self.assertEqual(self.only_root(top)["asks"], [{"n": 2, "topic": "rule scope"}])
+        top["asks"] = []
+        self.assertNotIn("asks", self.only_root(top))
+
+    def test_glyph_sets_emoji_and_ascii_reach_the_json(self):
+        self.put_live(live("s-g", "g", "fm-g", state="blocked"))
+        want = {"emoji": "\u270b", "ascii": "#", "nerd": "\uf256", "unicode": "\u270b"}
+        for name, glyph in want.items():
+            d = json.loads(self.cli("--json", "--symbols", name))
+            self.assertEqual((d["symbols"], d["roots"][0]["glyph"]), (name, glyph))
+        for name in ("emoji", "ascii"):   # also through ui.symbols
+            d = json.loads(self.cli("--json", symbols=name))
+            self.assertEqual(d["symbols"], name)
+            self.assertEqual(fr.config_symbols(self.adir), name)
+        (self.adir / "foreman.json").write_text(json.dumps({"ui": {"symbols": "klingon"}}), "utf-8")
+        self.assertEqual(fr.config_symbols(self.adir), "unicode")
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            fr.main(["--agent-dir", str(self.adir), "--json", "--symbols", "klingon"])
+
+    def test_load_symbols_has_the_activity_keys_and_spinner_of_every_set(self):
+        for name, agent, spinner0 in (("unicode", "\u25c6", "\u280b"), ("emoji", "\U0001f916", "\u280b"),
+                                      ("nerd", "\uf544", "\u280b"), ("ascii", ">", "|")):
+            table = fr.load_symbols(name)
+            self.assertEqual((table["agent"], table["spinner"][0]), (agent, spinner0), name)
+            self.assertTrue(all(isinstance(table[k], str) and table[k] for k in
+                                ("working", "waiting", "asking", "blocked", "done", "lost", "task", "wait", "ask", "recent")))
+        self.assertEqual(fr.load_symbols("ascii")["spinner"], ["|", "/", "-", "\\"])
+        self.assertEqual(len(fr.load_symbols("unicode")["spinner"]), 10)
+        self.assertEqual(fr.load_symbols("klingon"), fr.load_symbols("unicode"))
+        with mock.patch.object(fr, "SYMBOLS_PATH", Path(self.tmp) / "missing.json"):
+            table = fr.load_symbols("emoji")
+        self.assertEqual((table["agent"], table["working"], len(table["spinner"])), ("\u25c6", "\u23f3", 10))
+
+    def test_config_accepts_the_four_sets_and_rejects_others(self):
+        import foreman_config
+        for name, ok in (("unicode", True), ("emoji", True), ("nerd", True), ("ascii", True), ("klingon", False)):
+            self.adir.mkdir(parents=True, exist_ok=True)
+            (self.adir / "foreman.json").write_text(json.dumps({"ui": {"symbols": name}}), "utf-8")
+            res = foreman_config.load_config(agent_dir=str(self.adir))
+            self.assertEqual(res["errors"] == [], ok, (name, res["errors"]))
+
+    def test_radar_table_measures_vs16_glyphs_as_two_cells(self):
+        self.assertEqual([fr.cell_width(x) for x in ("\u23f8", "\u23f8\ufe0f", "\u2699\ufe0f", "\U0001f916", "\u2705")],
+                         [1, 2, 2, 2, 2])
+        self.put_live(live("s-e", "e", "fm-e", state="waiting"))
+        text = self.cli("--once", symbols="emoji")
+        self.assertIn("\u23f8\ufe0f", text)
 
 
 if __name__ == "__main__":
