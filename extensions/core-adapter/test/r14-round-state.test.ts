@@ -60,8 +60,18 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
   fs.writeFileSync(path.join(handoff, "plan.md"), PLAN);
   const stateFile = path.join(handoff, ROUND_STATE_FILE);
 
-  /** One adapter instance (a session start; a second call over the same world is the reload). */
-  async function adapter() {
+  /**
+   * Until the clock is past every file the session will read. steerwatch.ts baseline counts a file as seen only when its mtime is
+   * before the session start (an integer ms): a ruling written in the same ms as the start would be delivered as new.
+   */
+  async function clockPastWorld() {
+    const newest = Math.max(...[planFile, ...fs.readdirSync(handoff).map((n) => path.join(handoff, n))].map((f) => fs.statSync(f).mtimeMs));
+    while (Date.now() <= Math.ceil(newest)) await new Promise((r) => setTimeout(r, 1));
+  }
+
+  /** One adapter instance (a session start; a second call over the same world is the reload). `settle: false` starts it without the clock wait. */
+  async function adapter(settle = true) {
+    if (settle) await clockPastWorld();
     const handlers = new Map<string, Handler>();
     const tools = new Map<string, { execute: Fn }>();
     const channels = new Map<string, (d: unknown) => void>();
@@ -125,7 +135,16 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
     };
   }
   /** The parent writes its ruling (a plain file write: not this session's). */
-  const rule = (name: string, text: string) => fs.writeFileSync(path.join(handoff, name), text);
+  /** Writes a ruling; a ruling.md ctime must be strictly newer than both plan files (roundstate.ts): rewrite until the clock moved past them. */
+  const rule = (name: string, text: string) => {
+    const f = path.join(handoff, name);
+    const planCtime = Math.max(...[planFile, path.join(handoff, "plan.md")].map((p) => fs.statSync(p).ctimeMs));
+    fs.writeFileSync(f, text);
+    while (fs.statSync(f).ctimeMs <= planCtime) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);
+      fs.writeFileSync(f, text);
+    }
+  };
   const stored = () => JSON.parse(fs.readFileSync(stateFile, "utf8")) as Record<string, unknown>;
   const forge = (data: Record<string, unknown>) => fs.writeFileSync(stateFile, JSON.stringify(data));
   const hash = () => planVersionHash(fs.readFileSync(planFile));
@@ -315,4 +334,18 @@ test("negative / non-integer counters -> discarded", async (t) => {
   assert.equal(await b.launch("reviewer"), undefined);
   assert.deepEqual(w.stored().chains, { P4: { revisions: 2, exempt: 1, built: false, reviewOpen: true } });
   assert.equal(w.stored().reviewCount, 1);
+});
+
+test("a ruling whose mtime is not before the session start is delivered before the launch, not as plan_required (flake cause)", async (t) => {
+  const w = world(t);
+  const a = await w.adapter();
+  assert.equal(await a.checkpoint(), "approve");
+  await a.down();
+  w.rule("ruling.md", "APPROVED\n");
+  const future = (Date.now() + 60_000) / 1000;
+  fs.utimesSync(path.join(w.handoff, "ruling.md"), future, future);
+  const b = await w.adapter(false);
+  const r = await b.launch("builder");
+  assert.ok(r?.block && /a newer ruling arrived before this launch/.test(r.reason ?? ""), JSON.stringify(r));
+  assert.equal(planRequired(r), false);
 });
