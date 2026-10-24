@@ -53,8 +53,8 @@ test("r49: session briefs write brief-1 and brief-2, and the parent's brief-2.md
   assert.equal((await sessionBrief(d, "demo", "go on with B")).ok, true);
   assert.equal((await sessionBrief(d, "demo", "note.md")).ok, true);
   assert.deepEqual(sent, [
-    ["fm-demo-r49", `Brief from opener-r49: read ${path.join(dir, "brief-1.md")} and act on it`],
-    ["fm-demo-r49", `Brief from opener-r49: read ${path.join(dir, "brief-2.md")} and act on it`],
+    ["fm-demo-r49", `Brief from opener-r49: read ${path.join(dir, "brief-1.md").split(path.sep).join("/")} and act on it`],
+    ["fm-demo-r49", `Brief from opener-r49: read ${path.join(dir, "brief-2.md").split(path.sep).join("/")} and act on it`],
   ]);
   assert.equal(fs.readFileSync(path.join(dir, "brief-1.md"), "utf8"), "go on with B\n");
   assert.equal(fs.readFileSync(path.join(dir, "brief-2.md"), "utf8"), "APPROVED\n");

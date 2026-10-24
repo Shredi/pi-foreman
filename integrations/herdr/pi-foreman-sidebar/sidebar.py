@@ -99,6 +99,10 @@ L1_MARGIN = 2
 # U+2800 (renders blank, is not whitespace) instead of spaces.
 BLANK = "⠀"
 CONT_MID, CONT_LAST = "│" + BLANK * 2, BLANK * 3
+# Herdr 0.9.3 draws the second and later rows of an agent entry this many cells right of the first
+# row (no config key changes it). The header (first row) gets the same number of blank cells in
+# front, and the detail rows lose them from their budget, so connectors and `│` share a column.
+DETAIL_INDENT = 2
 KEYS = ("fm_sym", "fm_l1", "fm_l2", "fm_l3", "fm_cost",
         "fm_hd", "fm_a1", "fm_a2", "fm_a3", "fm_meta",
         "fm_state", "fm_block_s", "fm_sort")
@@ -399,19 +403,22 @@ def _slot(glyph):
     return glyph + BLANK if w == 1 else glyph if w == 2 else BLANK * 2
 
 
-def _prefix_only(prefix, budget):
-    """`prefix` cut at a unit boundary to fit `budget`; None when not even one unit fits."""
-    return prefix[:budget // UNIT * UNIT] or None
+def _prefix_only(prefix, budget, indent=""):
+    """`indent` and `prefix` cut at a unit boundary to fit `budget`; None when not even one unit fits."""
+    cut = prefix[:(budget - cell_width(indent)) // UNIT * UNIT]
+    return indent + cut if cut else None
 
 
 def _header(place, glyph, label, age, budget):
     """`P conn slot label ... age`. Room is short: the age drops when the label would get under
     four cells, then the label shrinks to one character and `…`; with less room the token is the
-    prefix cut at a unit boundary."""
-    left = place["P"] + place["conn"] + _slot(glyph) + " "
+    prefix cut at a unit boundary. The row starts with DETAIL_INDENT blank cells, which Herdr adds
+    to the rows below it."""
+    indent = BLANK * DETAIL_INDENT
+    left = indent + place["P"] + place["conn"] + _slot(glyph) + " "
     room = budget - cell_width(left)
     if room < 2:
-        return _prefix_only(place["P"] + place["conn"], budget)
+        return _prefix_only(place["P"] + place["conn"], budget, indent)
     if age and room - cell_width(age) - 1 >= 4:
         lab = truncate(label, room - cell_width(age) - 1)
         return left + lab + " " * (room - cell_width(lab) - cell_width(age)) + age
@@ -428,6 +435,7 @@ def _detail(place, text, budget):
     if not text:
         return None
     body, hidden = (text, 0) if isinstance(text, str) else text
+    budget -= DETAIL_INDENT  # Herdr draws this row that many cells right
     left = _detail_left(place)
     room = budget - cell_width(left)
     suffix = " +%d" % hidden if hidden else ""
@@ -452,7 +460,7 @@ def _meta(node, recent, width, place, budget):
     if not (tot.get("in") or tot.get("out") or tot.get("uncached")):
         return " · ".join(parts)
     full = " · ".join([fmt_counts(tot)] + parts)
-    if cell_width(_detail_left(place)) + cell_width(full) <= budget:
+    if cell_width(_detail_left(place)) + cell_width(full) <= budget - DETAIL_INDENT:
         return full
     return " · ".join(parts)
 
@@ -1573,17 +1581,21 @@ def _cache_path(sdir, sid):
     return os.path.join(sdir, "push", sid + ".usage.json")
 
 
-def _full_placements(radar, data, now, sym_name, symbols, recent, sdir, width):
+def _full_placements(radar, data, now, sym_name, symbols, recent, sdir, width, own=None):
     """({key: {P, conn, own}}, {key: {pre, cont}}) of the whole tree, built here from every presence
     file and the registry when the daemon's files are stale or lack the session. Rows are the
-    sessions with a presence paneId, plus the panes the daemon's fresh winners.json gave by pid or cwd."""
+    sessions the daemon's fresh winners.json joined to a pane (by paneId, pid or cwd), so a closed
+    session whose presence file still names a pane takes no tree slot; without winners, the
+    sessions with a presence paneId. `own` ({key: pane}) is always a row."""
     roots = [r for r in radar.build(data, now) if radar.finish(r, now, 24.0)]
     roots.sort(key=lambda c: (radar.rank(c), c["started"] if c["started"] is not None else float("inf")))
     snap = radar.json_doc(roots, now, sym_name, symbols, recent)
     by_sid = {sid: pane for pane, sid in read_winners(sdir, now).items()}
-    joins = {}
+    joins = dict(own or {})
     for n in walk(snap["roots"]):
-        pane = n.get("paneId") or by_sid.get(n.get("sid")) if n.get("kind") == "session" else None
+        if n.get("kind") != "session" or n["key"] in joins:
+            continue
+        pane = by_sid.get(n.get("sid")) if by_sid else n.get("paneId")
         if pane:
             joins[n["key"]] = pane
     layout, tree = {}, {}
@@ -1626,7 +1638,8 @@ def push_compose(radar, args, sdir, now=None):
     width = read_width(args, os.environ, os.path.join(herdr_config_dir(), "config.toml"))
     tree, layout = read_tree(sdir, now), read_layout(sdir, now)
     if root["key"] not in tree or root["key"] not in layout:
-        full_tree, full_layout = _full_placements(radar, data, now, sym_name, symbols, recent, sdir, width)
+        full_tree, full_layout = _full_placements(radar, data, now, sym_name, symbols, recent, sdir, width,
+                                                  {root["key"]: args.pane})
         tree = tree if root["key"] in tree else full_tree
         layout = layout if root["key"] in layout else full_layout
     tpl = {}
