@@ -274,6 +274,38 @@ export function readAddonTasks(cwd: string, now: number = Date.now()): AddonTask
   return out.sort((a, b) => b.start - a.start).slice(0, MAX_ADDON_TASKS).map(({ start: _s, ...t }) => t);
 }
 
+/** Running add-on tasks of one Pi session only: the directories `<sessionId>-<pid>` under `<cwd>/.pi/tasks`; no log tails (`tail` is always empty). */
+export function readOwnAddonTasks(cwd: string, sessionId: string, now: number = Date.now()): AddonTask[] {
+  const root = path.join(cwd, ".pi", "tasks");
+  const own = new RegExp(`^${sessionId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d+$`);
+  const out: (AddonTask & { start: number })[] = [];
+  let dirs: string[] = [];
+  try {
+    dirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && own.test(d.name)).map((d) => d.name);
+  } catch {
+    return [];
+  }
+  for (const dir of dirs) {
+    let files: string[] = [];
+    try {
+      files = fs.readdirSync(path.join(root, dir)).filter((f) => f.endsWith(".json"));
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      try {
+        const rec = JSON.parse(fs.readFileSync(path.join(root, dir, f), "utf8")) as Record<string, unknown>;
+        if (rec.status !== "running" || typeof rec.id !== "string") continue;
+        const start = typeof rec.startTime === "number" && Number.isFinite(rec.startTime) ? rec.startTime : now;
+        out.push({ id: oneLine(rec.id, 40), label: oneLine(rec.name ?? rec.description ?? rec.command, 80), ...(typeof rec.pid === "number" ? { pid: rec.pid } : {}), ageSeconds: Math.max(0, Math.round((now - start) / 1000)), tail: [], start });
+      } catch {
+        // a record being rewritten or foreign: skip
+      }
+    }
+  }
+  return out.sort((a, b) => b.start - a.start).slice(0, MAX_ADDON_TASKS).map(({ start: _s, ...t }) => t);
+}
+
 export interface WaitRow {
   id: string;
   kind: string;
