@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type SymbolKey = "working" | "waiting" | "asking" | "blocked" | "done" | "lost" | "keepalive" | PresenceKey | ActivityKey;
+export type SymbolKey = "working" | "waiting" | "asking" | "blocked" | "done" | "lost" | "keepalive" | "cold" | "downshift" | PresenceKey | ActivityKey;
 export type SymbolSet = Record<SymbolKey, string> & { spinner: string[] };
 export type SetName = "unicode" | "nerd" | "emoji" | "ascii";
 /** Activity icons of the sidebar tree and the children widget. */
@@ -24,7 +24,15 @@ const EXTRA: Record<SetName, Record<ActivityKey, string> & { spinner: string[] }
   ascii: { spinner: ["|", "/", "-", "\\"], agent: ">", task: "=", wait: "~", ask: "?", recent: "+" },
 };
 
-const FALLBACK: Record<SetName, Omit<Record<SymbolKey, string>, "keepalive" | ActivityKey>> = {
+/** Footer cache glyphs besides keepalive: a cold cache, and a downshifted model. */
+const CACHE_GLYPHS: Record<SetName, { cold: string; downshift: string }> = {
+  unicode: { cold: "❄", downshift: "↓" },
+  nerd: { cold: "\uf2dc", downshift: "\uf063" },
+  emoji: { cold: "❄️", downshift: "⬇️" },
+  ascii: { cold: "_", downshift: "v" },
+};
+
+const FALLBACK: Record<SetName, Omit<Record<SymbolKey, string>, "keepalive" | "cold" | "downshift" | ActivityKey>> = {
   emoji: { working: "⏳", waiting: "⏸️", asking: "❓", blocked: "✋", done: "✅", lost: "❌", "waiting-owner": "✋", "waiting-external": "🔄", idle: "⏸️" },
   ascii: { working: "*", waiting: ".", asking: "?", blocked: "#", done: "+", lost: "x", "waiting-owner": "#", "waiting-external": "@", idle: "." },
   unicode: { working: "⏳", waiting: "⏸", asking: "?", blocked: "✋", done: "✓", lost: "✗", "waiting-owner": "✋", "waiting-external": "↻", idle: "⏸" },
@@ -48,7 +56,7 @@ function table(): Record<string, Partial<SymbolSet>> {
 /** The glyph set for a `ui.symbols` value; a missing glyph falls back to the built-in one. */
 export function symbolSet(name: unknown): SymbolSet {
   const which: SetName = name === "nerd" || name === "emoji" || name === "ascii" ? name : "unicode";
-  return { ...FALLBACK[which], keepalive: KEEPALIVE[which], ...EXTRA[which], ...(table()[which] ?? {}) } as SymbolSet;
+  return { ...FALLBACK[which], keepalive: KEEPALIVE[which], ...CACHE_GLYPHS[which], ...EXTRA[which], ...(table()[which] ?? {}) } as SymbolSet;
 }
 
 /** Spinner frame of a clock reading: every pane and the Pi TUI show the same frame at the same time (250 ms steps). */

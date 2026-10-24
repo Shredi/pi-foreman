@@ -28,18 +28,21 @@ except ImportError:  # Python < 3.11
 BRAILLE = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 SYMS = {
     "unicode": {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗", "keepalive": "♨",
+                "cold": "❄", "downshift": "↓",
                 "waiting-owner": "\u270b", "waiting-external": "\u21bb", "idle": "\u23f8",
                 "spinner": BRAILLE, "agent": "◆", "task": "⚙", "wait": "⧗", "ask": "?", "recent": "✓"},
     "emoji": {"working": "⏳", "waiting": "⏸️", "asking": "❓", "blocked": "✋", "done": "✅", "lost": "❌",
-              "keepalive": "♨️", "waiting-owner": "✋", "waiting-external": "🔄", "idle": "⏸️",
+              "keepalive": "♨️", "cold": "❄️", "downshift": "⬇️",
+              "waiting-owner": "✋", "waiting-external": "🔄", "idle": "⏸️",
               "spinner": BRAILLE, "agent": "🤖", "task": "⚙️", "wait": "⏳", "ask": "❓", "recent": "✅"},
     "nerd": {"working": "\uf252", "waiting": "\uf04c", "asking": "\uf128", "blocked": "\uf256",
              "done": "\uf00c", "lost": "\uf00d", "keepalive": "\uf06d",
+             "cold": "\uf2dc", "downshift": "\uf063",
              "waiting-owner": "\uf256", "waiting-external": "\uf017", "idle": "\uf04c",
              "spinner": BRAILLE, "agent": "\uf544", "task": "\uf013", "wait": "\uf252", "ask": "\uf128",
              "recent": "\uf00c"},
     "ascii": {"working": "*", "waiting": ".", "asking": "?", "blocked": "#", "done": "+", "lost": "x",
-              "keepalive": "^", "waiting-owner": "#", "waiting-external": "@", "idle": ".",
+              "keepalive": "^", "cold": "_", "downshift": "v", "waiting-owner": "#", "waiting-external": "@", "idle": ".",
               "spinner": ["|", "/", "-", "\\"], "agent": ">", "task": "=", "wait": "~", "ask": "?", "recent": "+"},
 }
 # The glyphs a sidebar state shows (the keys that are not the footer's, a spinner or an activity mark).
@@ -883,6 +886,7 @@ class LiveSmokeTest(unittest.TestCase):
 # ---------------------------------------------------------------- Round 33: tree rows
 
 B = sidebar.BLANK
+IND = B * sidebar.DETAIL_INDENT   # a header's leading blank cells
 ROW_KEYS = ("fm_hd", "fm_a1", "fm_a2", "fm_a3", "fm_meta")
 
 
@@ -904,11 +908,13 @@ def trun(key, role, model=None, state="working", sym="working", **extra):
 
 
 def rendered(snap, width):
-    """The Agents panel as lines: each pane's row tokens in order, blank cells shown as spaces."""
+    """The Agents panel as lines: each pane's row tokens in order, blank cells shown as spaces.
+    Herdr draws every row but the first of an entry DETAIL_INDENT cells right; so do these lines."""
     out = sidebar.compose(snap, width)
     lines = []
     for pane in sorted(out, key=lambda p: out[p]["fm_sort"]):
-        lines += [out[pane][k].replace(B, " ") for k in ROW_KEYS if out[pane][k] is not None]
+        lines += [(" " * sidebar.DETAIL_INDENT * (k != "fm_hd")) + out[pane][k].replace(B, " ")
+                  for k in ROW_KEYS if out[pane][k] is not None]
     return lines
 
 
@@ -935,39 +941,39 @@ def mock_snapshot(reverse=False):
 
 
 MOCK_40 = """\
-⠹  pi-foreman                     12s
-│  ◆ builder sonnet-5.5 ×2 · reviewe…
-│  ⚙ pr #12 · npm test 3m
-│  ↑287k ↓7.4k · $3.32 · ✓3
-├─ ⠼  r31-sidebar                  6m
-│  │  ◆ reviewer opus-5.5
-│  │  $0.47 · ✓1
-│  └─ ✋ r31-perms                 1m
-│        ? ask 1: rule scope
-│        $0.12
-├─ ⏸  r32-cache                    2m
-│     ⧗ child r32b 4m
-│     $1.02 · ✓2
-└─ ✓  r31-git                     40m
-      $0.88 · ✓4
+  ⠹  pi-foreman                   12s
+  │  ◆ builder sonnet-5.5 ×2 · revie…
+  │  ⚙ pr #12 · npm test 3m
+  │  ↑287k ↓7.4k · $3.32 · ✓3
+  ├─ ⠼  r31-sidebar                6m
+  │  │  ◆ reviewer opus-5.5
+  │  │  $0.47 · ✓1
+  │  └─ ✋ r31-perms               1m
+  │        ? ask 1: rule scope
+  │        $0.12
+  ├─ ⏸  r32-cache                  2m
+  │     ⧗ child r32b 4m
+  │     $1.02 · ✓2
+  └─ ✓  r31-git                   40m
+        $0.88 · ✓4
 """.splitlines()
 
 MOCK_26 = """\
-⠹  pi-foreman       12s
-│  ◆ builder sonnet-5.…
-│  ⚙ pr #12 · npm test…
-│  $3.32 · ✓3
-├─ ⠼  r31-sidebar    6m
-│  │  ◆ reviewer opus-…
-│  │  $0.47 · ✓1
-│  └─ ✋ r31-perms   1m
-│        ? ask 1: rule…
-│        $0.12
-├─ ⏸  r32-cache      2m
-│     ⧗ child r32b 4m
-│     $1.02 · ✓2
-└─ ✓  r31-git       40m
-      $0.88 · ✓4
+  ⠹  pi-foreman     12s
+  │  ◆ builder sonnet-…
+  │  ⚙ pr #12 · npm te…
+  │  $3.32 · ✓3
+  ├─ ⠼  r31-sidebar  6m
+  │  │  ◆ reviewer opu…
+  │  │  $0.47 · ✓1
+  │  └─ ✋ r31-perms 1m
+  │        ? ask 1: ru…
+  │        $0.12
+  ├─ ⏸  r32-cache    2m
+  │     ⧗ child r32b 4m
+  │     $1.02 · ✓2
+  └─ ✓  r31-git     40m
+        $0.88 · ✓4
 """.splitlines()
 
 
@@ -1006,7 +1012,7 @@ class TreeSnapshotTest(unittest.TestCase):
                                 if tokens[k] is not None:
                                     self.assertLessEqual(sidebar.cell_width(tokens[k]), width - 3, tokens[k])
                         root_hd = out["P-n0"]["fm_hd"]
-                        self.assertTrue(root_hd.startswith(g["working"]))
+                        self.assertTrue(root_hd.startswith(IND + g["working"]))
 
     def test_late_blocked_mark_follows_the_age(self):
         n = tnode("s", "slow", "✋", "blocked", age=1000, blocked=1000)
@@ -1018,15 +1024,15 @@ class TreeSnapshotTest(unittest.TestCase):
         n = tnode("s", "a-very-long-session-label", "⠼", age=125)
         n["tasks"] = [{"label": "task%d" % i, "ageSeconds": 60, "id": str(i)} for i in range(5)]
         out = sidebar.compose({"roots": [n]}, 30)["P-s"]
-        self.assertEqual(out["fm_hd"].replace(B, " "), "⠼  a-very-long-session-… 2m")   # budget 27
+        self.assertEqual(out["fm_hd"].replace(B, " "), "  ⠼  a-very-long-sessio… 2m")   # budget 27
         self.assertTrue(out["fm_a2"].endswith("… +2"), out["fm_a2"])
-        self.assertEqual(sidebar.cell_width(out["fm_a2"]), 27)
+        self.assertEqual(sidebar.cell_width(out["fm_a2"]), 25)   # budget 27 less Herdr's row indent
         # nested two deep at width 18: under four cells of label next to the age, so the age goes
         leaf = tnode("c", "a-very-long-session-label", "⠼", age=125)
         mid = tnode("b", "mid", "⠼", children=[leaf])
         top = tnode("a", "top", "⠼", children=[mid])
         out = sidebar.compose({"roots": [top]}, 18)["P-c"]
-        self.assertEqual(out["fm_hd"].replace(B, " "), "   └─ ⠼  a-ver…")
+        self.assertEqual(out["fm_hd"].replace(B, " "), "     └─ ⠼  a-v…")
 
     def test_deep_prefix_is_cut_at_a_unit_boundary_never_inside_a_connector(self):
         n = None
@@ -1040,6 +1046,8 @@ class TreeSnapshotTest(unittest.TestCase):
                     self.assertLessEqual(sidebar.cell_width(v), 15)
                     self.assertNotIn("…", v[:len(v) - len(v.lstrip("│├└─ " + B))])
         deepest = out["P-n8"]["fm_hd"]
+        self.assertEqual(deepest[:len(IND)], IND)
+        deepest = deepest[len(IND):]
         self.assertEqual(len(deepest) % 3, 0)
         self.assertTrue(deepest.endswith("└─ ") or deepest.endswith("├─ ") or set(deepest) <= set("│├└─ " + B))
 
@@ -1059,16 +1067,43 @@ class TreeSnapshotTest(unittest.TestCase):
         self.assertEqual(tree["P-root"] if "P-root" in tree else tree["root"], {"P": "", "conn": "", "own": ""})
         self.assertEqual(tree["perms"], {"P": sidebar.CONT_MID, "conn": sidebar.CONN_LAST, "own": sidebar.CONT_LAST})
         self.assertEqual(sorted(tpl), ["P-root", "P-sidebar"])   # the two working sessions
-        self.assertEqual(tpl["P-root"].replace(B, " "), "{spin}  pi-foreman                     12s")
+        self.assertEqual(tpl["P-root"].replace(B, " "), "  {spin}  pi-foreman                   12s")
+
+    def test_continuations_share_the_column_of_the_connector_or_glyph_they_continue(self):
+        # Herdr draws the rows below a header DETAIL_INDENT cells right of it; `rendered` does the same
+        lines = rendered(mock_snapshot(), 40)
+        self.assertEqual(sidebar.DETAIL_INDENT, 2)
+        for i, line in enumerate(lines):
+            for c, ch in enumerate(line):
+                if ch != "│":
+                    continue
+                above = next(l for l in reversed(lines[:i]) if len(l) > c and l[c] != " ")
+                below = next(l for l in lines[i + 1:] if len(l) > c and l[c] != " ")
+                self.assertIn(above[c], "│├⠹⠼", (c, line, above))
+                self.assertIn(below[c], "│├└", (c, line, below))
+        self.assertEqual(lines[0].index("⠹"), lines[1].index("│"))   # the root's glyph over its trunk
+        self.assertEqual(lines[4].index("├"), lines[1].index("│"))   # a child's connector in the trunk's column
+
+    def test_last_joined_child_gets_the_last_connector_whatever_follows_unjoined(self):
+        a = tnode("a", "a", "⠼", started=1.0)
+        b = tnode("b", "b", "⠼", started=2.0)
+        closed = tnode("c", "c", "✓", "done", started=3.0)
+        closed["paneId"] = None
+        root = tnode("root", "root", "⠼", children=[a, b, closed])
+        tree = {}
+        sidebar.compose({"roots": [root]}, 40, tree_out=tree)
+        self.assertEqual((tree["a"]["conn"], tree["b"]["conn"]), (sidebar.CONN_MID, sidebar.CONN_LAST))
+        self.assertEqual(tree["b"]["own"], sidebar.CONT_LAST)
+        self.assertNotIn("c", tree)
 
     def test_pushed_tree_position_places_a_root(self):
         n = tnode("s", "nested", "⠼")
         pos = {"s": {"P": sidebar.CONT_MID, "conn": sidebar.CONN_MID, "own": sidebar.CONT_MID}}
         out = sidebar.compose({"roots": [n]}, 40, tree=pos)["P-s"]
-        self.assertTrue(out["fm_hd"].startswith(sidebar.CONT_MID + sidebar.CONN_MID + "⠼"))
+        self.assertTrue(out["fm_hd"].startswith(IND + sidebar.CONT_MID + sidebar.CONN_MID + "⠼"))
         self.assertEqual(out["fm_meta"][:9], sidebar.CONT_MID + sidebar.CONT_MID + sidebar.CONT_LAST)
         bad = {"s": {"P": "x", "conn": "├─ ", "own": ""}}
-        self.assertTrue(sidebar.compose({"roots": [n]}, 40, tree=bad)["P-s"]["fm_hd"].startswith("⠼"))
+        self.assertTrue(sidebar.compose({"roots": [n]}, 40, tree=bad)["P-s"]["fm_hd"].startswith(IND + "⠼"))
 
 
 class TreePropertyTest(unittest.TestCase):
@@ -1105,13 +1140,19 @@ class TreePropertyTest(unittest.TestCase):
                  if n["kind"] == "session" and n.get("paneId")}
         tree = {}
         out = sidebar.compose(snap, width, joins, tree_out=tree)
-        budget = width - 3
+        # Herdr draws detail rows DETAIL_INDENT cells right of the header, which carries those cells
+        # as a blank indent: both are compared on one grid, the header without its indent
+        budget = width - 3 - sidebar.DETAIL_INDENT
         lines = []   # (key, kind, text)
         for pane in sorted(out, key=lambda p: out[p]["fm_sort"]):
             key = pane[2:]
             for k in ROW_KEYS:
                 if out[pane][k] is not None:
-                    lines.append((key, k, out[pane][k]))
+                    text = out[pane][k]
+                    if k == "fm_hd":
+                        self.assertEqual(text[:sidebar.DETAIL_INDENT], B * sidebar.DETAIL_INDENT)
+                        text = text[sidebar.DETAIL_INDENT:]
+                    lines.append((key, k, text))
         by_key = {key: i for i, (key, k, _) in reversed(list(enumerate(lines))) if k == "fm_hd"}
         for key, k, text in lines:
             self.assertLessEqual(sidebar.cell_width(text), budget, text)
@@ -1186,14 +1227,14 @@ class CellWidthTest(unittest.TestCase):
     # width of every glyph of config/symbols.json (state glyphs, activity marks, spinner frames)
     WIDTHS = {
         "unicode": {"working": 2, "waiting": 1, "asking": 1, "blocked": 2, "done": 1, "lost": 1, "keepalive": 1,
-                    "waiting-owner": 2, "waiting-external": 1, "idle": 1, "agent": 1, "task": 1, "wait": 1,
+                    "cold": 1, "downshift": 1, "waiting-owner": 2, "waiting-external": 1, "idle": 1, "agent": 1, "task": 1, "wait": 1,
                     "ask": 1, "recent": 1},
         "emoji": {"working": 2, "waiting": 2, "asking": 2, "blocked": 2, "done": 2, "lost": 2, "keepalive": 2,
-                  "waiting-owner": 2, "waiting-external": 2, "idle": 2, "agent": 2, "task": 2, "wait": 2,
+                  "cold": 2, "downshift": 2, "waiting-owner": 2, "waiting-external": 2, "idle": 2, "agent": 2, "task": 2, "wait": 2,
                   "ask": 2, "recent": 2},
-        "nerd": dict.fromkeys(("working", "waiting", "asking", "blocked", "done", "lost", "keepalive",
+        "nerd": dict.fromkeys(("working", "waiting", "asking", "blocked", "done", "lost", "keepalive", "cold", "downshift",
                                "waiting-owner", "waiting-external", "idle", "agent", "task", "wait", "ask", "recent"), 1),
-        "ascii": dict.fromkeys(("working", "waiting", "asking", "blocked", "done", "lost", "keepalive",
+        "ascii": dict.fromkeys(("working", "waiting", "asking", "blocked", "done", "lost", "keepalive", "cold", "downshift",
                                 "waiting-owner", "waiting-external", "idle", "agent", "task", "wait", "ask", "recent"), 1),
     }
 
@@ -1389,8 +1430,8 @@ class PushJsonTest(unittest.TestCase):
         self.assertEqual(set(doc), {"tokens", "fm_hd_tpl", "stamp", "pane"})
         self.assertEqual((doc["pane"], doc["stamp"]), ("p1", self.stamp))
         self.assertEqual(set(doc["tokens"]), set(sidebar.SESSION_KEYS))
-        self.assertTrue(doc["tokens"]["fm_hd"].startswith("⏳"))        # the static glyph
-        self.assertTrue(doc["fm_hd_tpl"].startswith("{spin}" + B + " demo"), doc["fm_hd_tpl"])
+        self.assertTrue(doc["tokens"]["fm_hd"].startswith(IND + "⏳"))        # the static glyph
+        self.assertTrue(doc["fm_hd_tpl"].startswith(IND + "{spin}" + B + " demo"), doc["fm_hd_tpl"])
         self.assertEqual(self.herdr.reports(), [])
         self.assertFalse(os.path.exists(self.stamp))
         self.assertFalse(os.path.exists(self.tokens_file))
@@ -1408,7 +1449,7 @@ class PushJsonTest(unittest.TestCase):
             json.dump(d, fh)
         doc = json.loads(self.push("--json").stdout.decode("utf-8"))
         self.assertIsNone(doc["fm_hd_tpl"])
-        self.assertTrue(doc["tokens"]["fm_hd"].startswith("✓"))
+        self.assertTrue(doc["tokens"]["fm_hd"].startswith(IND + "✓"))
 
     def test_unknown_session_and_a_losing_session_print_an_empty_object(self):
         self.assertEqual(self.push("--json", session="nope").stdout, b"{}\n")
@@ -1419,8 +1460,8 @@ class PushJsonTest(unittest.TestCase):
     def test_fresh_tree_json_places_the_row(self):
         self.write_fresh("tree.json", {"fm-1": {"P": sidebar.CONT_MID, "conn": sidebar.CONN_LAST, "own": sidebar.CONT_LAST}})
         doc = json.loads(self.push("--json").stdout.decode("utf-8"))
-        self.assertTrue(doc["tokens"]["fm_hd"].startswith(sidebar.CONT_MID + sidebar.CONN_LAST), doc["tokens"]["fm_hd"])
-        self.assertTrue(doc["fm_hd_tpl"].startswith(sidebar.CONT_MID + sidebar.CONN_LAST + "{spin}"))
+        self.assertTrue(doc["tokens"]["fm_hd"].startswith(IND + sidebar.CONT_MID + sidebar.CONN_LAST), doc["tokens"]["fm_hd"])
+        self.assertTrue(doc["fm_hd_tpl"].startswith(IND + sidebar.CONT_MID + sidebar.CONN_LAST + "{spin}"))
 
     def test_stale_or_missing_tree_json_builds_the_full_tree(self):
         write_child_session(self.adir, "sid-2", "fm-2", "fm-1", "p2")
@@ -1429,20 +1470,29 @@ class PushJsonTest(unittest.TestCase):
         self.write_fresh("tree.json", {"fm-3": {"P": "", "conn": "", "own": ""}}, age=60)
         self.write_fresh("layout.json", {"fm-3": {"pre": "", "cont": ""}}, age=60)
         hd = lambda sid, pane: json.loads(self.push("--json", session=sid, pane=pane).stdout)["tokens"]["fm_hd"]  # noqa: E731
-        self.assertTrue(hd("sid-2", "p2").startswith(sidebar.CONN_MID + "⏳"), hd("sid-2", "p2"))
-        self.assertTrue(hd("sid-3", "p3").startswith(sidebar.CONN_LAST + "⏳"), hd("sid-3", "p3"))
+        self.assertTrue(hd("sid-2", "p2").startswith(IND + sidebar.CONN_MID + "⏳"), hd("sid-2", "p2"))
+        self.assertTrue(hd("sid-3", "p3").startswith(IND + sidebar.CONN_LAST + "⏳"), hd("sid-3", "p3"))
         os.remove(os.path.join(self.sdir, "tree.json"))
-        self.assertTrue(hd("sid-3", "p3").startswith(sidebar.CONN_LAST))
+        self.assertTrue(hd("sid-3", "p3").startswith(IND + sidebar.CONN_LAST))
         # fresh files win over the fallback, for the keys they hold
         self.write_fresh("tree.json", {"fm-3": {"P": "", "conn": sidebar.CONN_MID, "own": sidebar.CONT_MID}})
         self.write_fresh("layout.json", {"fm-3": {"pre": "├─", "cont": "│" + B}})
-        self.assertTrue(hd("sid-3", "p3").startswith(sidebar.CONN_MID))
+        self.assertTrue(hd("sid-3", "p3").startswith(IND + sidebar.CONN_MID))
+
+    def test_full_tree_skips_a_closed_session_so_the_last_joined_child_gets_the_last_connector(self):
+        write_child_session(self.adir, "sid-2", "fm-2", "fm-1", "p2")
+        write_child_session(self.adir, "sid-3", "fm-3", "fm-1", "p3")
+        write_child_session(self.adir, "sid-4", "fm-4", "fm-1", "p4")   # its pane is closed: not in winners
+        self.write_fresh("winners.json", {"p1": "sid-1", "p2": "sid-2", "p3": "sid-3"})
+        hd = lambda sid, pane: json.loads(self.push("--json", session=sid, pane=pane).stdout)["tokens"]["fm_hd"]  # noqa: E731
+        self.assertTrue(hd("sid-2", "p2").startswith(IND + sidebar.CONN_MID), hd("sid-2", "p2"))
+        self.assertTrue(hd("sid-3", "p3").startswith(IND + sidebar.CONN_LAST), hd("sid-3", "p3"))
 
     def test_every_glyph_set_is_a_symbols_choice(self):
         want = {"unicode": "⏳", "emoji": "⏳", "nerd": "", "ascii": "*"}
         for name, glyph in want.items():
             doc = json.loads(self.push("--json", "--symbols", name).stdout.decode("utf-8"))
-            self.assertTrue(doc["tokens"]["fm_hd"].startswith(glyph), (name, doc["tokens"]["fm_hd"]))
+            self.assertTrue(doc["tokens"]["fm_hd"].startswith(IND + glyph), (name, doc["tokens"]["fm_hd"]))
         self.assertEqual(self.push("--json", "--symbols", "klingon").returncode, 2)
 
     def test_final_after_json_still_publishes(self):

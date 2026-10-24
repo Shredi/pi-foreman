@@ -402,6 +402,8 @@ def cache_metrics(trace, usage, sid, config=None):
     ka = [r for r in lines if r.get("kind") == "keepalive"]
     warm = sum(1 for e in trace or [] if isinstance(e, dict) and e.get("event") == "compaction"
                and e.get("reason") == "warm_idle")
+    down = sum(1 for e in trace or [] if isinstance(e, dict) and e.get("event") == "foreman_model"
+               and e.get("reason") == "idle_cold")
     fore = [(t, r) for r in lines if str(r.get("role", "?")) == "foreman" for t in [_ts(r)] if t is not None]
     fore.sort(key=lambda x: x[0])
     session_prov = next((p for p in (_line_provider(r) for _t, r in fore) if p), None)
@@ -424,15 +426,21 @@ def cache_metrics(trace, usage, sid, config=None):
     pol = policy(fore[0][1]) if fore else (pg.fc.cache_policy(config or {}, session_prov) if session_prov else None)
     if ttl is None and pol:
         ttl = pol.get("ttlSeconds")
-    if not (pol or ka or warm or cold):
+    if not (pol or ka or warm or cold or down):
         return None
-    return {"keepalives": len(ka), "keepaliveCost": round(sum(_line_cost(r) for r in ka), 4),
-            "warmCompactions": warm, "coldResumes": cold, "ttlSeconds": ttl}
+    out = {"keepalives": len(ka), "keepaliveCost": round(sum(_line_cost(r) for r in ka), 4),
+           "warmCompactions": warm, "coldResumes": cold, "ttlSeconds": ttl}
+    if down:
+        out["downshiftedTurns"] = down
+    return out
 
 
 def cache_line(c):
-    return "cache: keepalives %d ($%s), warm compactions %d, cold resumes %d" % (
+    text = "cache: keepalives %d ($%s), warm compactions %d, cold resumes %d" % (
         c["keepalives"], "%.2f" % c["keepaliveCost"], c["warmCompactions"], c["coldResumes"])
+    if c.get("downshiftedTurns"):
+        text += ", downshifted turns %d" % c["downshiftedTurns"]
+    return text
 
 
 def _rank_tier(ranks, model):
@@ -592,6 +600,18 @@ def session_id_of(records):
 
 # ------------------------------------------------------------------ report
 
+def flagged_counts(trace):
+    """{family: count} of the owner's `ask_flag` trace events (None without a trace)."""
+    if trace is None:
+        return None
+    out = {}
+    for r in trace:
+        if isinstance(r, dict) and r.get("event") == "ask_flag":
+            fam = str(r.get("family") or "other")
+            out[fam] = out.get(fam, 0) + 1
+    return out
+
+
 def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
     sid = session_id_of(session)
     ranks = config = None
@@ -612,6 +632,7 @@ def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
         "cache": cache_metrics(trace, usage, sid, config),
         "sizing": sizing_metrics(trace),
         "session_tools": session_metrics(session) if session is not None else None,
+        "flagged_asks": flagged_counts(trace),
         "proposals": propose(asks, min_reviews, rules, load_protect_patterns(agent_dir)) if asks is not None else None,
     }
 
@@ -716,6 +737,9 @@ def render_text(rep, proposals_path=None):
     else:
         L.append("top tools: " + kv(s["top_tools"]))
         L.append("repeated bash families: " + kv(s["repeated_bash_families"]))
+    fl = rep.get("flagged_asks")
+    if fl:
+        L.append("Flagged asks: " + kv(fl))
     p = rep["proposals"]
     if p is None:
         L.append("proposals: no data")
@@ -863,6 +887,13 @@ def candidates(report, trace_events, usage_lines, session_tools, ask_threshold=D
             kind = e.get("kind") if e.get("kind") in FRICTION_KINDS else "prompt"
             role = _tag(e.get("role"), "agent")
             out.append({"kind": kind, "candidate": "%s: %s" % (role, e["note"]), "evidence": "Friction line reported by a %s run" % role})
+
+    # asks the owner flagged with /foreman flag-ask: filed into the global store only (foreman_backlog.store_path_for), complete command as evidence
+    for e in events:
+        if e.get("event") == "ask_flag" and str(e.get("command") or "").strip():
+            fam = _tag(e.get("family"), "other")
+            out.append({"kind": "flagged-ask", "family": fam, "candidate": "%s: %s via %s" % (fam, _tag(e.get("class"), "unknown"), str(e.get("rule") or "-")[:80]),
+                        "evidence": str(e["command"])})
     return out
 
 

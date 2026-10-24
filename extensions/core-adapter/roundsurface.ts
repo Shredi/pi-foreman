@@ -11,6 +11,7 @@ import * as path from "node:path";
 import { splitChain } from "./shellchain.ts";
 import { workspaceTop } from "./gitdrift.ts";
 import { traceFile } from "./trace.ts";
+import { usageFile } from "./usage.ts";
 
 const px = (platform: string): path.PlatformPath => (platform === "win32" ? path.win32 : path.posix);
 
@@ -159,7 +160,7 @@ export function recordBashOutputLog(logs: Set<string>, details: unknown, platfor
  * may name them although the protect rule `{agentDir}/pi-foreman/state/*` covers state/; a write there and another session's files stay
  * protected. Never given to a child.
  */
-export function ownUsageReadable(agentDir: string, platform: string = process.platform, sessionId?: string, trace?: { dir: unknown; stateDir: string }): string[] {
+export function ownUsageReadable(agentDir: string, platform: string = process.platform, sessionId?: string, trace?: { dir: unknown; stateDir: string }, foremanSession?: string): string[] {
   const x = px(platform);
   if (!agentDir || !x.isAbsolute(agentDir)) return [];
   const d = x.join(x.resolve(agentDir), "pi-foreman", "state", "usage");
@@ -169,7 +170,9 @@ export function ownUsageReadable(agentDir: string, platform: string = process.pl
   // R14 item 1: and its own trace file, by the name the trace writer uses; a glob character in it would widen the pattern
   const tf = sid && trace?.stateDir ? traceFile(trace.dir, trace.stateDir, sid) : "";
   const own = tf && x.isAbsolute(tf) && !/[*?[\]{}]/.test(tf) ? [tf] : [];
-  return [d, `${d}/*`, ...live, ...own];
+  // R31c: and the exact name of its own usage file (usage.ts usageFile), the only usage file `grep` may name
+  const uf = foremanSession ? [usageFile(agentDir, foremanSession)] : [];
+  return [d, `${d}/*`, ...live, ...own, ...uf];
 }
 
 /**

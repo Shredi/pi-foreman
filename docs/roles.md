@@ -16,7 +16,9 @@ provider in `foreman.json` (see [install](install.md)). Design record: `design/a
 
 ## Role ladder, rank policy and presets
 
-Each role has two rungs: `model` (bottom) and an optional `strong`. A child climbs only through the foreman,
+Each role has two rungs: `model` (bottom) and an optional `strong`. The foreman role has a third, `idle`: a cheaper
+model for notice-driven turns that start on a cold cache, restored on the owner's next input (see
+[ladder](ladder.md#idle-rung-foreman-downshift)). A child climbs only through the foreman,
 which relaunches it with `model: "strong"`:
 
 - **Context**: a bottom-rung child whose last call's context (input + cacheRead + cacheWrite) passes
@@ -67,7 +69,8 @@ keeps your other keys, backs up the old file; see [install](install.md)), or cop
   (high) on Sonnet 5.5; auto-review on Haiku 5.5 (Haiku is an explicit opt-in: map a role to it yourself);
   `childPolicy: below` with `rolePolicy` reviewer and senior-reviewer `at-or-below`, builder `below`, so an Opus
   foreman launches Opus reviewers but an Opus builder or explorer strong rung needs a Fable foreman or
-  `rolePolicy.<role>: at-or-below`; `childMaxThinking: high`.
+  `rolePolicy.<role>: at-or-below`; `childMaxThinking: high`; the foreman idle rung on Sonnet 5.5 (medium) and the
+  1-hour cache values ([presets](presets.md#claude-bridge-cache-values)).
 - `claude-bridge-sonnet-reviewer.json`: the same with the reviewer on Sonnet 5.5 (medium) and no strong rung;
   explorer, builder and auto-review unchanged. Opt-in, not the default: the bench rows decide whether it pays.
 - `openai.json` (astra > sol > luna: `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-luna`) and `google.json`
@@ -110,6 +113,8 @@ Design record for the ladder: `design/architecture.md`
 | `providers.<p>.costTier` | Relative cost tier; a fallback to a higher tier needs one confirmation per session. |
 | `providers.<p>.roles.<role>.model`, `providers.<p>.roles.<role>.thinking`, `providers.<p>.roles.<role>.codemode` | The provider's model for the role as `<provider>/<model>`, its thinking level (capped by `maxThinking`) and a per-provider codemode override. |
 | `providers.<p>.roles.<role>.strong.model`, `providers.<p>.roles.<role>.strong.thinking` | Stronger model for the role, picked by the strength keyword `strong` (the builder also on a heavy tier). User or overlay config only. |
+| `providers.<p>.roles.foreman.idle.model`, `providers.<p>.roles.foreman.idle.thinking` | The idle rung of the foreman: the model (and thinking level) a notice turn on a cold cache runs on. Unset: no downshift. The reviewer different-model rule and the rank checks keep using the base model. User or overlay config only. |
+| `ladder.idleDownshift.enabled`, `ladder.idleDownshift.causes` | The idle downshift on or off (default true) and the turn causes that may use it (default `child`, `wake`, `intercom`, `other`); a project or session can only set false or remove causes. |
 | `providers.<p>.childMaxTurns` | `childMaxTurns` for every role of this provider. User or overlay config only. |
 | `ladder.maxTurns` | Per-role turn limit, `{role: turns}` (default `{builder: 100}`); wins over `childMaxTurns`, which stays the fallback. User or overlay config only. |
 | `ladder.rolePolicy` | Per-role rank policy, `{role: below\|at-or-below\|any}`, overriding `ladder.childPolicy`. User or overlay config only. |

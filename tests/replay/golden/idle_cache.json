@@ -15,5 +15,61 @@
    "outcome": "window_end",
    "reason": "compact"
   }
+ ],
+ "budget": [
+  {
+   "event": "budget"
+  },
+  {
+   "event": "keepalive",
+   "outcome": "skipped",
+   "reason": "budget"
+  },
+  {
+   "event": "compaction",
+   "reason": "warm_idle",
+   "trigger": "budget"
+  },
+  {
+   "event": "keepalive",
+   "outcome": "window_end",
+   "reason": "budget"
+  }
+ ],
+ "downshift": [
+  {
+   "event": "foreman_model",
+   "reason": "idle_cold",
+   "from": "claude-bridge/foreman",
+   "to": "claude-bridge/planner",
+   "cause": "child"
+  },
+  {
+   "event": "foreman_model",
+   "reason": "owner",
+   "from": "claude-bridge/planner",
+   "to": "claude-bridge/foreman"
+  }
+ ],
+ "away": [
+  {
+   "event": "presence",
+   "outcome": "away"
+  },
+  {
+   "event": "keepalive",
+   "outcome": "skipped",
+   "reason": "away"
+  },
+  {
+   "event": "compaction",
+   "reason": "warm_idle",
+   "trigger": "away"
+  },
+  {
+   "event": "keepalive",
+   "outcome": "window_end",
+   "reason": "away"
+  }
  ]
 }

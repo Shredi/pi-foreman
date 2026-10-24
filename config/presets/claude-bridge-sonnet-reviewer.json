@@ -5,6 +5,7 @@
   "providers": {
     "claude-bridge": {
       "strongAbove": 100000,
+      "cache": { "byModel": [{ "match": "claude-*", "ttlSeconds": 3600, "note": "subscription within plan usage; 300 on extra-usage credits or API key" }], "keepalive": { "enabled": true, "awayTicks": 2 } },
       "ranks": [
         { "match": "claude-fable-*", "tier": 0 },
         { "match": "claude-opus-*", "tier": 1 },
@@ -12,7 +13,7 @@
         { "match": "claude-haiku-*", "tier": 3 }
       ],
       "roles": {
-        "foreman": { "model": "claude-bridge/claude-opus-5-5", "thinking": "high" },
+        "foreman": { "model": "claude-bridge/claude-opus-5-5", "thinking": "high", "idle": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium" } },
         "session-foreman": { "model": "claude-bridge/claude-opus-5-5", "thinking": "high" },
         "planner": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium" },
         "explorer": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium", "strong": { "model": "claude-bridge/claude-opus-5-5", "thinking": "medium" } },

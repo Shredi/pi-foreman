@@ -13,13 +13,16 @@ test_replay.py.
 """
 from __future__ import annotations
 
+import json
+import os
 import sys
+import time
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from driver import shape  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
+from test_replay import GOLDEN, REASON, ReplayCase  # noqa: E402
 
 BRIDGE = "claude-bridge"
 SCRIPT = {"*": {
@@ -28,11 +31,14 @@ SCRIPT = {"*": {
 }}
 CONFIG = {
     "providers": {BRIDGE: {"cache": {"ttlSeconds": 20, "billing": "token",
-                                     "keepalive": {"enabled": True, "intervalSeconds": 30, "windowMinutes": 1},
+                                     "keepalive": {"enabled": True, "intervalSeconds": 30, "windowMinutes": 1,
+                                                   "compactMinTokens": 0},  # the fake contexts are tiny
                                      "warmCompact": True}}},
 }
 SETTINGS = {"cacheWarming": "idle", "compaction": {"keepRecentTokens": 1, "reserveTokens": 100000}}
 KEYS = ("event", "outcome", "reason", "point", "model")
+NEW_KEYS = ("event", "outcome", "reason", "trigger", "from", "to", "cause")
+ENV = {"FOREMAN_FAKE_BRIDGE": "1", "FOREMAN_FAKE_PROMPT_CACHE": "1"}
 
 
 def idle_events(recs):
@@ -48,8 +54,26 @@ def idle_events(recs):
     return out
 
 
+def kept(recs, names, keys=NEW_KEYS):
+    """Shaped events of the given names, in order."""
+    return [shape([r], keys)[0] for r in recs if r.get("event") in names]
+
+
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestIdleCache(ReplayCase):
+    def golden_key(self, key, actual):
+        """Compare one scenario of golden/idle_cache.json (the file holds one key per scenario)."""
+        path = GOLDEN / "idle_cache.json"
+        data = json.loads(path.read_text("utf-8"))
+        if os.environ.get("FOREMAN_REPLAY_UPDATE_GOLDEN") == "1":
+            data[key] = actual
+            path.write_text(json.dumps(data, indent=1) + "\n", "utf-8")
+        self.assertEqual(actual, data[key])
+
+    def session_trace(self, rig):
+        [recs] = [v for v in rig.traces().values() if v and v[0].get("event") == "session_start"]
+        return recs
+
     def test_keepalive_then_one_warm_compaction(self):
         rig = self.rig("idlecache", SCRIPT, providers=(BRIDGE,), config=CONFIG, settings=SETTINGS)
         pi = rig.start(provider=BRIDGE, env={"FOREMAN_FAKE_BRIDGE": "1", "FOREMAN_FAKE_PROMPT_CACHE": "1"})
@@ -73,11 +97,67 @@ class TestIdleCache(ReplayCase):
         self.assertEqual(events[0].get("outcome"), "fired", events)
         self.assertEqual([(e["event"], e.get("outcome"), e.get("reason")) for e in events[-2:]],
                          [("compaction", None, "warm_idle"), ("keepalive", "window_end", "compact")], events)
-        self.golden("idle_cache", {"events": events})
+        self.golden_key("events", events)
 
         # Pi ran the compaction: a compaction entry in the session file.
         sessions = [f for f in rig.agent.rglob("*.jsonl") if "sessions" in f.parts]
         self.assertTrue(any('"type":"compaction"' in f.read_text("utf-8").replace(": ", ":") for f in sessions), sessions)
+        pi.close()
+
+    def test_budget_exhaustion_compacts_with_trigger_budget(self):
+        """Priced fake models: a warm costs more than the budget's remainder, so the next one is refused
+        (budget) and the compaction runs while the cache is still warm (trigger budget)."""
+        cfg = json.loads(json.dumps(CONFIG))
+        cfg["providers"][BRIDGE]["cache"]["keepalive"]["budgetShare"] = 0.5
+        rig = self.rig("idlebudget", SCRIPT, providers=(BRIDGE,), config=cfg, settings=SETTINGS)
+        # cold = 16 tokens x 10 = 160e-6, budget 80e-6; the first warm is estimated at 16 x 5 + 1 output (15) = 95e-6: refused.
+        pi = rig.start(provider=BRIDGE, env=dict(ENV, FOREMAN_FAKE_COST="3,15,5,10"))
+        pi.prompt("[[replay:p1]] hello", timeout=60)
+        pi.prompt("[[replay:p2]] again", timeout=60)
+        rig.wait_trace(lambda t: any(r.get("event") == "compaction" for recs in t.values() for r in recs), timeout=180)
+        pi.drain(3)
+        events = kept(self.session_trace(rig), ("keepalive", "compaction", "budget"))
+        events = [e for e in events if not (e["event"] == "keepalive" and e.get("reason") == "activity")]
+        self.assertIn({"event": "compaction", "reason": "warm_idle", "trigger": "budget"}, events)
+        self.golden_key("budget", events)
+        pi.close()
+
+    def test_away_owner_refuses_warm_and_compacts_with_trigger_away(self):
+        """A fake probe reports an hour of idle input (awayAfterMinutes 1): the first warm is refused (away)
+        and the compaction runs with trigger away."""
+        cfg = json.loads(json.dumps(CONFIG))
+        cfg["presence"] = {"enabled": True, "awayAfterMinutes": 1, "command": "echo 3600"}
+        rig = self.rig("idleaway", SCRIPT, providers=(BRIDGE,), config=cfg, settings=SETTINGS)
+        pi = rig.start(provider=BRIDGE, env=ENV)
+        pi.prompt("[[replay:p1]] hello", timeout=60)
+        pi.prompt("[[replay:p2]] again", timeout=60)
+        rig.wait_trace(lambda t: any(r.get("event") == "compaction" for recs in t.values() for r in recs), timeout=180)
+        pi.drain(3)
+        events = kept(self.session_trace(rig), ("keepalive", "compaction", "presence"))
+        events = [e for e in events if not (e["event"] == "keepalive" and e.get("reason") == "activity")]
+        self.assertIn({"event": "keepalive", "outcome": "skipped", "reason": "away"}, events)
+        self.assertIn({"event": "compaction", "reason": "warm_idle", "trigger": "away"}, events)
+        self.golden_key("away", events)
+        pi.close()
+
+    def test_cold_downshift_on_child_notice_and_restore_on_prompt(self):
+        """Cache gone cold (keep-alive off, TTL 20 s): a triggerTurn notice runs on the idle rung, the next
+        owner prompt restores the base model."""
+        cfg = json.loads(json.dumps(CONFIG))
+        cfg["providers"][BRIDGE]["cache"]["keepalive"] = {"enabled": False}
+        cfg["providers"][BRIDGE]["roles"] = {"foreman": {"idle": {"model": BRIDGE + "/planner"}}}
+        script = {"*": dict(SCRIPT["*"], t1=[{"text": "fake: notice handled"}], p3=[{"text": "fake: owner back"}])}
+        rig = self.rig("idledownshift", script, providers=(BRIDGE,), config=cfg, settings=SETTINGS)
+        pi = rig.start(provider=BRIDGE, env=ENV)
+        pi.prompt("[[replay:p1]] hello", timeout=60)
+        time.sleep(24)  # past the 20 s TTL: the next turn starts cold
+        pi.send({"id": pi.next_id(), "type": "prompt", "message": "/replay-trigger t1 subagent-notify"})
+        pi.drain(5)
+        pi.prompt("[[replay:p3]] back", timeout=60)
+        pi.drain(2)
+        events = kept(self.session_trace(rig), ("foreman_model",))
+        self.assertEqual([(e.get("reason"), e.get("cause")) for e in events], [("idle_cold", "child"), ("owner", None)], events)
+        self.golden_key("downshift", events)
         pi.close()
 
 
