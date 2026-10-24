@@ -171,7 +171,7 @@ A heavy task with several phases may run as a multi-session plan: one child sess
 
 ### Parallel rounds
 
-Every orchestrator session works in its own worktree (`git worktree add …`) and never switches the shared main checkout. Merges happen from the session's worktree, so two sessions running in parallel cannot move each other's branch or working tree.
+Every orchestrator session works in its own worktree (`git worktree add …`) and never switches the shared main checkout. Merges happen from the session's worktree, so two sessions running in parallel cannot move each other's branch or working tree. Run `npm ci` in the new worktree after `git worktree add`; never symlink `node_modules` to another checkout (`.gitignore` ignores `node_modules` either way, but a later `npm ci` would wipe the linked tree and the permission overlay asks for it). Children on POSIX may run the exact `npm ci` in their own worktree.
 
 A security revision after the final review is cap-exempt: one more Opus builder is allowed.
 Builders commit per numbered item.
