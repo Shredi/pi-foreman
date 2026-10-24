@@ -1,7 +1,7 @@
 // `/foreman close` also closes the session's own child sessions (R3b point 4): each registry entry (sessions.json)
 // whose `parent` is this session's opener id and whose status is open or pending gets `foreman:close`; the registry
 // is polled until every sent child reports `closed` (or the bounded wait ends). One report line per child. Never throws.
-import { closeText, readRegistry, writeRegistry } from "./session.ts";
+import { closeText, readRegistry, remoteNotClosed, writeRegistry } from "./session.ts";
 
 export const CHILD_POLL_MS = 1_000;
 
@@ -21,8 +21,11 @@ type Outcome = "closed" | "refused" | "timeout" | "not sent";
 
 export async function closeChildren(d: CloseChildrenDeps): Promise<string[]> {
   try {
-    const open = readRegistry(d.agentDir).sessions.filter((s) => s.parent === d.opener && s.child !== d.opener && (s.status === undefined || s.status === "open" || s.status === "pending"));
-    if (open.length === 0) return [];
+    const mine = readRegistry(d.agentDir).sessions.filter((s) => s.parent === d.opener && s.child !== d.opener && (s.status === undefined || s.status === "open" || s.status === "pending"));
+    // a remote child is not closed in P1: no send, no status change
+    const skipped = mine.filter((s) => typeof s.machine === "string").map(remoteNotClosed);
+    const open = mine.filter((s) => typeof s.machine !== "string");
+    if (open.length === 0) return skipped;
     const outcome = new Map<string, Outcome | "sent">();
     const reasons = new Map<string, string>();
     for (const s of open) {
@@ -64,11 +67,11 @@ export async function closeChildren(d: CloseChildrenDeps): Promise<string[]> {
       await d.sleep(step);
       waited += step;
     }
-    return open.map((s) => {
+    return [...skipped, ...open.map((s) => {
       const o = outcome.get(s.child) as Outcome;
       const why = reasons.get(s.child);
       return `child ${s.label} (${s.child}): ${o}${o === "timeout" ? ` after ${waited} ms` : why ? ` (${why})` : ""}`;
-    });
+    })];
   } catch (err) {
     return [`child sessions: could not be closed (${(err as Error).message})`];
   }
