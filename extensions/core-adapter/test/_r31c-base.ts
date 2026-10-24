@@ -23,6 +23,7 @@ export function loadBase(): BaseModules | null {
     execFileSync("tar", ["-x", "-C", dir, "--exclude", "test"], { input: tar });
     return { dir, load: (name) => import(pathToFileURL(path.join(dir, "extensions", "core-adapter", `${name}.ts`)).href) };
   } catch {
+    console.warn(`r31c: base commit ${BASE_SHA} is missing from this clone (shallow clone? run git fetch --unshallow); the base-asks tests are skipped`);
     return null;
   }
 }
