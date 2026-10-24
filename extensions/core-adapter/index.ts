@@ -64,6 +64,8 @@ import type { PythonResolution } from "./python.ts";
 import { runGuard } from "./runguard.ts";
 import { applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrPack } from "./gitpack.ts";
 import { PrWatches, pollSnapshot } from "./prwatch.ts";
+import { PrDots, branchOf } from "./prdots.ts";
+import { ExtStatus } from "./extstatus.ts";
 import { registerSafeOps, runSafeOp } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
 import type { Spawner } from "./spawn.ts";
@@ -221,6 +223,9 @@ interface Session {
   prPack: boolean;
   prWatches: PrWatches;
   prCtx: ExtensionContext | null;
+  /** Foreman only: PR state dots for the sidebar (prdots.ts) and the external status hook (extstatus.ts); both feed the live file's `dots`. */
+  prDots: PrDots;
+  extStatus: ExtStatus;
   /** Project Claude Code config snapshot, checked before claude-bridge prompts (claudedrift.ts). */
   claudeCfg: ClaudeConfigWatch;
   /** Usage log (usage.ts): file and the fields every line of this session carries. */
@@ -558,6 +563,39 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           s.widget.refresh();
         },
       }),
+      prDots: new PrDots({
+        enabled: () => s.prPack && !s.isChild,
+        preflight: () => safeOpDriftPreflight(s.gitDrift, s.isChild, s.cwd, os.homedir(), "foreman_pr_dots", { mode: "print", hasUI: false }, (r) => s.trace?.emit(r), "pr-dots"),
+        branch: () => branchOf(s.prCtx?.cwd ?? s.cwd),
+        run: (op, args) => prRun(s, s.prCtx?.cwd ?? s.cwd, op, args, 30_000),
+        watched: () => s.prWatches.list().map((p) => p.n).reverse(),
+        watchChecks: (n) => s.prWatches.lastChecks(n),
+        intervalMs: () => (typeof get(s.config.config, "tools.prWatchSeconds") === "number" ? (get(s.config.config, "tools.prWatchSeconds") as number) : 60) * 1000,
+        trace: (r) => s.trace?.emit(r),
+        changed: () => {
+          s.live?.touch();
+          s.widget.refresh();
+        },
+      }),
+      extStatus: new ExtStatus({
+        enabled: () => !s.isChild && s.live !== null,
+        command: () => {
+          const c = get(s.config.config, "sidebar.statusCommand");
+          return typeof c === "string" && c.trim() ? c : null;
+        },
+        intervalMs: () => (typeof get(s.config.config, "sidebar.statusSeconds") === "number" ? Math.min(3600, Math.max(10, get(s.config.config, "sidebar.statusSeconds") as number)) : 60) * 1000,
+        workspace: () => workspaceOf(s.cwd).root,
+        cwd: () => s.cwd,
+        sessionId: () => s.id,
+        branch: () => branchOf(s.cwd),
+        env: process.env,
+        platform,
+        trace: (r) => s.trace?.emit(r),
+        changed: () => {
+          s.live?.touch();
+          s.widget.refresh();
+        },
+      }),
       claudeCfg: new ClaudeConfigWatch(),
       trace: ((t) => openTrace({ enabled: t.enabled, dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: t.id, base: t.base }))(sessionTrace(get(config.config, "trace.enabled"), get(config.config, "retro.enabled"), ctx.mode, id, b)),
       usage: { file: usageFile(agentDir, foremanSession), line },
@@ -660,7 +698,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // the footer is cosmetic: Pi's own footer stays
         }
       }
-      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const prs = sessions.get(id)?.prWatches.list().map((p) => p.n) ?? []; return prs.length > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; });
+      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const prs = sessions.get(id)?.prWatches.list().map((p) => p.n) ?? []; return prs.length > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? [...x.prDots.dots().map((d) => ({ n: d.n, state: d.state, label: `#${d.n}`, src: "pr" as const })), ...x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const }))] : []; });
       const live = s.live;
       waits.onChange(id, () => {
         live?.touch();
@@ -950,6 +988,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     herdrMeta.start(ctx, get(s.config.config, "herdr.groupTag") !== false);
     sidebarLive.start(ctx, { python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, sessionId: s.id, symbols: get(s.config.config, "ui.symbols"), spinner: get(s.config.config, "ui.spinner") !== false, live: s.live });
+    if (!s.isChild && s.live) {
+      s.prDots.start();
+      s.extStatus.start();
+    }
     // Host pressure (pressure.ts): the foreman samples on a timer; the launch path only reads the file.
     if (!s.isChild && !s.pressureSampler) {
       s.pressureSampler = new PressureSampler({
@@ -977,6 +1019,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.registration = undefined;
     s.panels.clear();
     s.prWatches.clear();
+    s.prDots.clear();
+    s.extStatus.clear();
     if (!s.isChild) {
       syncKeepalives(s, ctx);
       s.idleCache.onShutdown();
@@ -2680,6 +2724,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       bashRulingSnaps.delete(event.toolCallId);
       selfRulingsFor(owner).markChanged(bashSnap, childDirsOf(owner));
     }
+    // A PR this session created joins the sidebar dots (prdots.ts).
+    if (owner && !owner.isChild && !event.isError && event.toolName === "pr_create") {
+      const d = event.details as { decision?: unknown; result?: { action?: unknown; number?: unknown } } | undefined;
+      if (d?.decision === "ran" && d.result?.action === "pr_create" && typeof d.result.number === "number") owner.prDots.onCreated(d.result.number);
+    }
     owner?.mutating.delete(event.toolCallId);
     // A `.seen` written by a shell command ends the ask too: the blocked state is recomputed from the files (R6 lane 4a).
     if (owner && !owner.isChild && event.toolName === "bash") askContractFor(owner).recheck();
@@ -3779,6 +3828,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (fs.existsSync(markerPath(s.markerDir, s.id))) ok(`session marker in ${s.markerDir}`);
     else fail("session marker missing", `make ${s.markerDir} writable and restart the session.`);
     out.push(`INFO ceremony: ${tierLine(s.ceremony)}`);
+    out.push(`INFO sidebar status: ${s.extStatus.describe()}`);
     out.push(`INFO PR tools: ${s.prPack ? prHostLabel(get(s.config.config, "tools.prHost") ?? "auto", workspaceOf(s.cwd).root, process.env, platform) : "off (tools.pr)"}`);
     const cache = resolveCachePolicy(s.config.config, ctx.model?.provider, ctx.model?.id);
     if (cache.active && !s.isChild) {

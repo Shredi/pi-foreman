@@ -406,6 +406,17 @@
       "enable": "{\"tools\": {\"pr\": true}}"
     },
     {
+      "id": "sidebar-status",
+      "title": "External sidebar status",
+      "purpose": "Runs a command you configure on an interval and shows its JSON items (label and state) as extra dots on the Herdr sidebar; the items are display data only, the program must lie outside the workspace, and the setting is read from user or overlay config only.",
+      "doc": "docs/herdr.md#external-status",
+      "keys": ["sidebar.statusCommand", "sidebar.statusSeconds"],
+      "commands": [],
+      "switch": {"key": "sidebar.statusCommand", "on": "nonempty"},
+      "state": "opt-in",
+      "enable": "{\"sidebar\": {\"statusCommand\": \"/path/to/your-status-program\", \"statusSeconds\": 60}}"
+    },
+    {
       "id": "children-may-push",
       "title": "Children may push",
       "purpose": "Lets subagent children push; by default they may commit but never push, and they never open PRs.",
