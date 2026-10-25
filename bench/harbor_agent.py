@@ -582,8 +582,14 @@ class _BenchPi(BaseInstalledAgent):
         with tempfile.TemporaryDirectory(prefix="pf-bench-") as tmp:
             p = Path(tmp) / "f"
             fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            # The host umask strips group/other bits from the create mode (0077 gives 0600) and the copy keeps it,
+            # so the agent user could not read the upload: set the mode explicitly.
+            if hasattr(os, "fchmod"):
+                os.fchmod(fd, 0o644)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(data if isinstance(data, str) else json.dumps(data, indent=1))
+            if not hasattr(os, "fchmod"):
+                os.chmod(p, 0o644)
             await environment.upload_file(p, remote)
 
     def task_id(self):
