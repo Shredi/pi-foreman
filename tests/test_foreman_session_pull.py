@@ -6,6 +6,7 @@ need a fake binary, or real lstat/uid/mode/symlink behaviour, are `posix_only`; 
 """
 from __future__ import annotations
 
+import argparse
 import contextlib
 import datetime
 import io
@@ -405,7 +406,7 @@ class PullCommandTest(PullCommandBase):
         self.assertEqual(sorted(out), ["errors", "pulled"])
         self.assertEqual(out["errors"], [])
         (item,) = out["pulled"]
-        self.assertEqual(sorted(item), ["child", "entries", "label", "live", "machine", "more", "next"])
+        self.assertEqual(sorted(item), ["child", "entries", "label", "live", "machine", "more", "next", "skipped"])
         self.assertEqual((item["child"], item["label"], item["machine"], item["next"], item["more"], item["live"]),
                          (self.row["child"], "demo", "alpha", 2, False, None))
         self.assertEqual([e["seq"] for e in item["entries"]], [1, 2])
@@ -715,6 +716,58 @@ class PullConfigTest(unittest.TestCase):
                     {"ssh": {"controlMaster": "yes"}}, {"ssh": {"other": True}},
                     {"machines": {"alpha": {"returnPath": "both"}}}):
             self.assertTrue(self.issues({"sessions": bad}), bad)
+
+
+@posix_only
+class OutboxSkippedCursorTest(PullBase):
+    def test_a_trailing_bad_line_is_counted_once(self):
+        reply, d = self.pull_open()
+        self.write_outbox(d, entry(1), entry(2), "garbage")
+        self.assertEqual(self.outbox_call(reply, after=0)[1]["skipped"], 1)
+        self.assertEqual(self.outbox_call(reply, after=2)[1]["skipped"], 0)
+
+
+class PullForwardingTest(PullBase):
+    def row(self, **over):
+        return dict({"machine": "alpha", "returnPath": "pull", "status": "open", "handoffName": "20260101-000000-x",
+                     "parentAddress": STABLE_ADDRESS, "parent": STABLE, "handoff": "h", "last": None, "label": "demo",
+                     "child": "fm-demo-000001", "ask": {"n": 2, "topic": "t", "at": "x"}}, **over)
+
+    def test_pull_one_forwards_the_remote_skipped_count(self):
+        reply = {"ok": True, "entries": [], "next": 0, "more": False, "skipped": 3, "live": None}
+        with mock.patch.object(fsn, "ssh_verb", return_value=reply), mock.patch.object(fsn, "machine_target", return_value="h"):
+            got = fsn.pull_one(self.padir, self.row(), {})
+        self.assertEqual(got["skipped"], 3)
+        del reply["skipped"]
+        with mock.patch.object(fsn, "ssh_verb", return_value=reply), mock.patch.object(fsn, "machine_target", return_value="h"):
+            self.assertEqual(fsn.pull_one(self.padir, self.row(), {})["skipped"], 0)
+
+    def test_a_ruling_deliver_clears_ask_only_from_the_same_number(self):
+        fsn.write_registry(self.padir, {"version": 1, "sessions": [self.row()]})
+        files = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, str(files), True)
+
+        def deliver(name):
+            (files / name).write_text("r", "utf-8")
+            a = argparse.Namespace(text=str(files / name))
+            with mock.patch.object(fsn, "ssh_verb", return_value={"bytes": 1, "woke": True}), \
+                    mock.patch.object(fsn, "machine_target", return_value="h"):
+                self.assertEqual(fsn.remote_brief(a, self.padir, self.row()), 0)
+            return fsn.read_registry(self.padir)["sessions"][0]
+
+        self.assertEqual(deliver("ruling-1.md")["ask"]["n"], 2)
+        self.assertEqual(deliver("steer-5.md")["ask"]["n"], 2)
+        self.assertIsNone(deliver("ruling-2.md")["ask"])
+
+
+class PullArgvTest(PullBase):
+    def test_a_dash_leading_child_id_after_double_dash_is_a_target(self):
+        reg = self.padir / "pi-foreman" / "state" / "sessions.json"
+        reg.parent.mkdir(parents=True)
+        reg.write_text(json.dumps({"version": 1, "sessions": []}), "utf-8")
+        rc, out, err = self.run_main("pull", "--json", "--", "-h")
+        self.assertEqual(rc, 1)
+        self.assertIn("no session with label or child id '-h'", err)
 
 
 class Item17Test(unittest.TestCase):

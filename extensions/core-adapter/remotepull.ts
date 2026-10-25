@@ -150,7 +150,7 @@ export function createRemotePull(deps: PullDeps): RemotePull {
     if (!e0) return { ok: false, entries: 0, skipped: 0, error: "no registry entry" };
     if (!h.python) return fail(h, child, "no usable Python (run /foreman doctor)");
     const after = isAge(e0.outboxSeq) ? e0.outboxSeq : 0;
-    const r = await deps.spawner(h.python, ["-E", "-s", script, "--agent-dir", h.agentDir, "pull", child, "--json"], { timeoutMs: PULL_TIMEOUT_MS });
+    const r = await deps.spawner(h.python, ["-E", "-s", script, "--agent-dir", h.agentDir, "pull", "--json", "--", child], { timeoutMs: PULL_TIMEOUT_MS });
     if (r.error) return fail(h, child, r.error.message);
     if (r.timedOut) return fail(h, child, "pull timed out");
     let data: { pulled?: unknown; errors?: unknown } | null = null;
@@ -178,7 +178,7 @@ export function createRemotePull(deps: PullDeps): RemotePull {
     const origin = { machine: typeof e.originMachine === "string" ? e.originMachine : "", sessionId: e.child };
     const wakes: [string, string][] = [];
     const notes: [string, "info" | "warning"][] = [];
-    let skipped = 0;
+    let skipped = isInt(item.skipped) ? item.skipped : 0; // remote-side skips, counted by the outbox verb
     let applied = 0;
     let closed = false;
     let high = after;

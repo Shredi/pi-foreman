@@ -234,7 +234,8 @@ export function markOwnClosed(agentDir: string, env: Record<string, string | und
   return changed;
 }
 
-export function formatList(reg: Registry, nowMs: number = Date.now()): string {
+export function formatList(reg: Registry): string {
+  const nowMs = Date.now();
   if (!reg.sessions.length) return "pi-foreman sessions: none opened yet.";
   const rows = reg.sessions.map((s) => {
     const last = s.last ? ` · last: ${s.last.kind}${s.last.path ? ` ${s.last.path}` : ""} (${s.last.at})` : "";

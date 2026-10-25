@@ -973,7 +973,7 @@ def remote_deliver(adir, params):
     spec = {"handoffName": str, "parentAddress": str, "kind": str, "name": str, "content": str}
     check_fields(params, spec, tuple(spec))
     if not ADDRESS_RE.match(params["parentAddress"]):
-        raise Refused("parentAddress must be <session uuid>@<machine>", "bad_request")
+        raise Refused("parentAddress must be <id>@<machine>", "bad_request")
     d = deliver_dir(adir, params["handoffName"])
     if read_small(d / "parent") != params["parentAddress"]:
         raise Refused("the session behind this handoff dir does not belong to %s" % params["parentAddress"], "wrong_session")
@@ -1086,7 +1086,7 @@ def remote_outbox(adir, params):
         text = e.get("text") if isinstance(e, dict) else None
         if (isinstance(seq, bool) or not isinstance(seq, int) or seq <= prev or not isinstance(text, str)
                 or len(text.encode("utf-8")) > OUTBOX_TEXT_MAX):
-            skipped += prev >= after  # a bad line before the cursor was counted by an earlier poll
+            skipped += prev > after  # a bad line before the cursor was counted by an earlier poll
             continue
         prev = seq
         if seq <= after:
@@ -1569,6 +1569,10 @@ def remote_brief(a, adir, entry):
             s["briefs"] = int(s.get("briefs") or 0) + 1
             s["lastError"] = None
             s["lastDeliverAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            ruling = re.fullmatch(r"ruling-(\d+)\.md", file_name)
+            ask = s.get("ask")
+            if ruling and isinstance(ask, dict) and isinstance(ask.get("n"), int) and int(ruling.group(1)) >= ask["n"]:
+                s["ask"] = None
     write_registry(adir, reg)
     print("pi-foreman session: %s delivered to %s@%s (%s bytes%s)." % (
         file_name, entry.get("label"), name, reply.get("bytes"), "" if reply.get("woke") else "; the child was not woken"))
@@ -1589,7 +1593,8 @@ def pull_one(adir, entry, targets):
     if not isinstance(reply.get("entries"), list) or not isinstance(reply.get("next"), int) or not isinstance(reply.get("more"), bool):
         raise Unreachable("remote %s unreachable: its outbox reply is malformed" % name)
     return {"child": entry.get("child"), "label": entry.get("label"), "machine": name, "entries": reply["entries"],
-            "next": reply["next"], "more": reply["more"], "live": reply.get("live")}
+            "next": reply["next"], "more": reply["more"], "live": reply.get("live"),
+            "skipped": reply["skipped"] if isinstance(reply.get("skipped"), int) and not isinstance(reply.get("skipped"), bool) else 0}
 
 
 def cmd_pull(a):

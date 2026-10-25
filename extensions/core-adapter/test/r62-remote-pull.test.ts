@@ -71,7 +71,7 @@ test("pullNow applies mirror and sha256, advances the cursor, records pulledAt/r
   r2.script.next = () => ok(reply([{ seq: 1, at: "x", text: noteText("Result", "result.md", "done ✓\n") }, { seq: 2, at: "x", text: noteText("Ask", "ask.md", ask) }], 2));
   const out = await r2.pull.pullNow(CHILD);
   assert.deepEqual([out.ok, out.entries, out.skipped], [true, 2, 0]);
-  assert.deepEqual(r2.calls[0].slice(-5), ["--agent-dir", r2.agent, "pull", CHILD, "--json"]);
+  assert.deepEqual(r2.calls[0].slice(-6), ["--agent-dir", r2.agent, "pull", "--json", "--", CHILD]);
   assert.equal(fs.readFileSync(path.join(dir, "mirror", "result.md"), "utf8"), "done ✓\n");
   assert.equal(fs.readFileSync(path.join(dir, "mirror", "ask.md"), "utf8"), ask);
   const got = stored(r2);
@@ -216,7 +216,7 @@ test("ask: an unparsable header sets {n: 0, topic: ''}; a new ask replaces the o
   assert.equal((stored(r).ask as { n: number }).n, 1);
   r.script.next = () => ok(reply([], 1));
   await r.pull.pullNow(CHILD);
-  assert.equal((stored(r).ask as { n: number }).n, 1, "cleared only by a ruling deliver (Python)");
+  assert.equal((stored(r).ask as { n: number }).n, 1, "cleared only by a ruling deliver of the same or a later number (Python remote_brief)");
   r.script.next = () => ok(reply([{ seq: 2, at: "x", text: noteText("Ask", "ask.md", "no header here\n") }], 2));
   await r.pull.pullNow(CHILD);
   const ask = stored(r).ask as { n: number; topic: string; at: string };
@@ -301,8 +301,8 @@ test("tick: polls only eligible entries when due; backoff after a failure and re
     E("i-closing", { status: "closing" }),
   ];
   const r = rig(rows);
-  const polled = (): string[] => r.calls.map((c) => c[c.indexOf("pull") + 1]);
-  r.script.next = (args) => ok(reply([], 0, { child: args[args.indexOf("pull") + 1] }));
+  const polled = (): string[] => r.calls.map((c) => c[c.length - 1]);
+  r.script.next = (args) => ok(reply([], 0, { child: args[args.length - 1] }));
   await r.pull.tick();
   assert.deepEqual(polled().sort(), ["a-pull", "h-pending", "i-closing"]);
   await r.pull.tick();
@@ -319,7 +319,7 @@ test("tick: polls only eligible entries when due; backoff after a failure and re
   assert.equal(readRegistry(r.agent).sessions[0].pullFailures, 1);
   r.calls.length = 0;
   r.clock.t += 21_000; // a-pull: 20 s * 2 = 40 s backoff, not due; i-closing: 5 s * 2 = 10 s, due
-  r.script.next = (args) => ok(reply([], 0, { child: args[args.indexOf("pull") + 1] }));
+  r.script.next = (args) => ok(reply([], 0, { child: args[args.length - 1] }));
   await r.pull.tick();
   assert.deepEqual(polled(), ["i-closing"]);
   r.calls.length = 0;
@@ -426,14 +426,14 @@ test("/foreman session pull [label] polls now and prints the result", async () =
 });
 
 test("session list and the widget show the pull age and the last error", () => {
-  const e = entry(mk("list"), { pulledAt: new Date(T0 - 12_000).toISOString(), pullError: "ssh: down\u001b[0m" });
+  const e = entry(mk("list"), { pulledAt: new Date(Date.now() - 12_000).toISOString(), pullError: "ssh: down\u001b[0m" });
   const push = entry(mk("list2"), { child: "c2", label: "pushy", returnPath: "push" });
-  const text = formatList(regOf(e, push), T0);
+  const text = formatList(regOf(e, push));
   const [line1, line2] = text.split("\n").slice(1);
-  assert.match(line1, / · pull 12s ago · pull error: ssh: down \[0m$/);
+  assert.match(line1, / · pull 1[2-9]s ago · pull error: ssh: down \[0m$/);
   assert.ok(!/\u001b/.test(text));
   assert.ok(!/ · pull /.test(line2));
-  assert.match(formatList(regOf(entry(mk("list3"))), T0), / · pull never$/);
+  assert.match(formatList(regOf(entry(mk("list3")))), / · pull never$/);
   const agent = mk("widget");
   writeRegistry(agent, regOf({ ...e, pulledAt: new Date().toISOString() }, { ...push, parent: "sess-1" }));
   const rows = readOpened(agent, "sess-1");

@@ -1103,7 +1103,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const s = await startSession(ctx);
     restoreRounds(s, ctx);
     emitReady(pi.events as EventBus | undefined, core.claim);
-    if (!s.isChild && process.env.PI_SUBAGENT_CHILD !== "1") {
+    if (!s.isChild && process.env.PI_SUBAGENT_CHILD !== "1" && (ctx.mode === "tui" || ctx.mode === "rpc")) {
       pullBind = { s, ctx };
       remotePull.start();
     }
