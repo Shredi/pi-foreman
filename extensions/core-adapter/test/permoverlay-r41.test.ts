@@ -271,3 +271,112 @@ test("r41: an allowed write inside the worktree is unchanged", () => {
     assert.notEqual(bash(cmd)?.rule, "floor", cmd);
   }
 });
+
+// rev3: one path rule for every program; the folders /pf41/agent/pi-foreman/... do not exist, so no stat decides a result
+test("r41 rev3: archivers, patch, transfers and cwd changes aimed at a floored folder are a floor deny (main and child)", () => {
+  const cmds = [
+    `bsdtar -xf a.tar -C ${PF}`,
+    `gtar -xf a.tar -C ${PF}`,
+    `gtar -xf a.tar --directory=${PF}`,
+    `tar -xf a.tar -C${PF}`,
+    `7z x a.7z -o${PF}`,
+    `patch -d ${PF} -i a.diff`,
+    `cd ${PF} && cpio -idm < a.cpio`,
+    `pushd ${PF}; tar -xf a.tar`,
+    `pushd ${PF} && unzip a.zip`,
+    `scp -r h:d ${PF}`,
+    `rclone copy r:d ${PF}`,
+    `rclone copy r:d ${PF}//state/../`,
+    `rm -rf ${PF}`,
+    `rm -rf ${PF}/`,
+    `rm -rf ${PF}/state`,
+    `rm -rf ${PF}/state/approvals`,
+    `rm -rf ${agentDir}/pi-foreman/../pi-foreman/state`,
+    `rm -rf ${PF}/*`,
+    `rm -rf ${PF}/s*`,
+    `mv ${PF}/state /tmp/x`,
+    `mv ${PF} ${agentDir}/old`,
+    `mv ${PF}/managed.json /tmp/x`,
+    `find ${PF} -delete`,
+    `find ${PF} -name x -exec rm {} +`,
+    `chmod 000 ${PF}/managed.json`,
+    `chattr +i ${PF}/policy.md`,
+    `truncate -s 0 ${PF}/managed.json`,
+    `rename s/a/b/ ${PF}/managed.json`,
+    `frobnicate ${PF}`,
+    `frobnicate --out=${PF}/managed.json`,
+    `frobnicate -o${PF}/managed.json`,
+    `frobnicate ${custom}`,
+    `frobnicate ${cwd}/.workflow`,
+    `frobnicate ${pkg}/config/permissions.policy.md`,
+    `frobnicate ${agentDir}`,
+    `cd ${PF}/state/gate && frobnicate x`,
+    `cd ${PF} && rm managed.json`,
+    `cd ${PF} && sed -i s/a/b/ policy.md`,
+    `git -C ${PF} clean -fdx`,
+    `tar -xf a.tar -C ${agentDir}`,
+    `python3 -c "import shutil; shutil.rmtree('${PF}')"`,
+  ];
+  for (const role of ["main", "child"] as const) {
+    for (const cmd of cmds) {
+      const d = bash(cmd, role);
+      assert.equal(d?.kind, "deny", `${role} ${cmd}`);
+      // a child's cd outside the workspace and inline interpreters are refused by an earlier child rule: a deny either way
+      if (role === "main" || !/^(?:cd|pushd) |python3 -c/.test(cmd)) assert.equal(d!.rule, "floor", `${role} ${cmd}`);
+      if (d!.rule === "floor") assert.match(d!.reason, /no review or approval lifts this/, cmd);
+    }
+  }
+});
+
+test("r41 rev3: an unknown program is a floor deny only when it names a floored path", () => {
+  for (const role of ["main", "child"] as const) {
+    assert.equal(bash(`frobnicate ${PF}`, role)?.rule, "floor", role);
+    assert.notEqual(bash("frobnicate /tmp/x", role)?.rule, "floor", role);
+    assert.notEqual(bash(`frobnicate ${cwd}/x`, role)?.rule, "floor", role);
+    assert.notEqual(bash(`rm -rf ${cwd}/x`, role)?.rule, "floor", role);
+    assert.notEqual(bash(`mv ${cwd}/a /tmp/x`, role)?.rule, "floor", role);
+  }
+});
+
+test("r41 rev3: plain reads, copies out and git status of floored paths are no floor deny", () => {
+  const cmds = [
+    `ls ${PF}`,
+    `ls -la ${PF}/state`,
+    `cat ${PF}/managed.json`,
+    `head -3 ${PF}/policy.md`,
+    `grep x ${PF}/state/gate/log.jsonl`,
+    `stat ${PF}/managed.json`,
+    `wc -l ${PF}/managed.json`,
+    `diff ${PF}/managed.json /tmp/x`,
+    `du -sh ${PF}`,
+    `test -e ${PF}/managed.json`,
+    `find ${PF} -name x`,
+    `find ${PF} -name x -print`,
+    `cp ${PF}/managed.json /tmp/x`,
+    `cp -r ${PF} /tmp/x`,
+    `rsync -a ${PF}/ /tmp/x/`,
+    `git -C ${cwd} status`,
+    `git -C ${PF} status`,
+    `git status`,
+    `git diff`,
+    `cd ${PF} && ls`,
+    `cd ${PF} && cat managed.json`,
+    `cat ${PF}/managed.json < ${PF}/policy.md`,
+    `grep -rn x ${cwd}/src`,
+  ];
+  for (const role of ["main", "child"] as const) {
+    for (const cmd of cmds) assert.notEqual(bash(cmd, role)?.rule, "floor", `${role} ${cmd}`);
+  }
+  // a read program with a write redirect to a floored word, or an output option, is a floor deny
+  for (const cmd of [`cat a > ${PF}/managed.json`, `ls ${PF} > ${PF}/state/round-parents.json`, `git -C ${cwd} log --output=${PF}/managed.json`, `cp /tmp/x ${PF}/managed.json`, `cp -t ${PF} /tmp/x`, `cp -l ${PF}/managed.json /tmp/x`, `rsync --remove-source-files ${PF}/ /tmp/x/`]) {
+    for (const role of ["main", "child"] as const) assert.equal(bash(cmd, role)?.rule, "floor", `${role} ${cmd}`);
+  }
+});
+
+test("r41 rev3: a path tool that moves or removes a floored folder is a floor deny", () => {
+  for (const role of ["main", "child"] as const) {
+    assert.equal(tool("foreman_move", { src: PF, dst: "/tmp/x" }, role)?.rule, "floor", role);
+    assert.equal(tool("foreman_move", { src: `${PF}/state`, dst: `${cwd}/x` }, role)?.rule, "floor", role);
+    assert.notEqual(tool("foreman_copy", { src: `${PF}/managed.json`, dst: `${cwd}/x` }, role)?.rule, "floor", role);
+  }
+});

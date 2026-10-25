@@ -79,7 +79,7 @@ import type { Json } from "./config.ts";
 import { workspaceOf } from "./python.ts";
 import { resolveVars } from "./shellvars.ts";
 import { probeFileHit } from "./splitliteral.ts";
-import { gitProtectedRead } from "./effects.ts";
+import { gitProtectedRead, gitReadWrites } from "./effects.ts";
 import { parseShell as parseAst } from "./shellast.ts";
 import { netReadCommand } from "./netread.ts";
 
@@ -2937,231 +2937,175 @@ function floorDecision(rules: OverlayRules, words: string[], text: string, ctx: 
   return null;
 }
 
-/** The values of the options `short` (letters, also inside a cluster like `-sSo f` or attached like `-of`) and `long` (`--x v`, `--x=v`) in `args`. */
-function optValues(args: string[], short: string[], long: string[]): string[] {
-  const out: string[] = [];
+/**
+ * R41 rev3: the floored set, matched by path alone (no program list). It holds the floored files, the folders that hold them (the agent dir's
+ * pi-foreman, its state/, state/approvals, state/gate, the folder of every layer's policy file but the session cwd and workspace root) and every
+ * parent of the pi-foreman ones up to and including the agent dir. `word` is true when a shell word (an option value `--o=p`, `-Cp`, a brace or
+ * glob word, `~`, `..`, a relative name against `cwd`) names a member or a file below state/approvals or state/gate; `folder` when `cwd` is a folder member.
+ */
+function floorMatcher(rules: OverlayRules, ctx: MatchCtx): { word: (w: string, cwd: string | null, unknownCwd: boolean) => boolean; folder: (cwd: string | null) => boolean; config: (w: string, cwd: string | null) => boolean } {
+  const fold = foldsCase(ctx.platform);
+  const norm = (s: string): string => {
+    const n = s.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/+$/, "");
+    return fold ? n.toLowerCase() : n;
+  };
+  const pats = floorPatterns(rules, ctx);
+  const agent = rules.floors?.agentDir ? norm(rules.floors.agentDir) : undefined;
+  const bases = ctx.cwd ? new Set([norm(ctx.cwd), norm(workspaceOf(ctx.cwd).root)]) : new Set<string>();
+  const exact = new Set<string>();
+  for (const p of pats.filter((x) => !x.includes("*"))) {
+    const n = norm(p);
+    exact.add(n);
+    let d = path.posix.dirname(n);
+    if (agent && n.startsWith(`${agent}/`)) {
+      while (d.length >= agent.length) {
+        exact.add(d);
+        if (d === agent) break;
+        d = path.posix.dirname(d);
+      }
+    } else if (d.length > 1 && !bases.has(d)) exact.add(d);
+  }
+  const members = [...exact];
+  const variants = (w: string): string[] => {
+    const out = new Set<string>([w]);
+    // `--out=p`, `of=p`: an option or key before the `=`, not a sed or awk expression like `s/=.*//`
+    const eq = /^-{0,2}[\w-]+=/.exec(w);
+    if (eq) out.add(w.slice(eq[0].length));
+    if (/^-[A-Za-z]/.test(w) && !w.startsWith("--")) {
+      out.add(w.slice(2));
+      const at = w.search(/[/~]/);
+      if (at > 0) out.add(w.slice(at));
+    }
+    return [...out].filter(Boolean).flatMap((v) => [v, ...expandBraces(v)]);
+  };
+  const pp = ctx.platform === "win32" ? path.win32 : path.posix;
+  const cwdsOf = (cwd: string | null, unknown: boolean): string[] => (cwd ? [cwd] : unknown ? [ctx.cwd, ...members] : [ctx.cwd]);
+  const cands = (w: string, cwd: string | null, unknown: boolean): string[] => variants(w).flatMap((v) => cwdsOf(cwd, unknown).flatMap((cw) => pathCandidates(v, { ...ctx, cwd: cw })));
+  return {
+    word: (w, cwd, unknown) =>
+      variants(w).some((v) =>
+        cwdsOf(cwd, unknown).some((cw) => {
+          // a glob matches the floored set lexically; a glob a spelling like `s/=.*//` yields inside pathCandidates is not trusted as a path
+          const anchored = /^[/~$]/.test(v);
+          const lexical = GLOB.test(v) && !anchored ? [pp.resolve(cw, v)] : [];
+          return [...pathCandidates(v, { ...ctx, cwd: cw }), ...lexical].some((c) => exact.has(norm(c)) || pats.some((p) => pathMatches(p, c, ctx)) || (GLOB.test(c) && (anchored || lexical.includes(c)) && members.some((m) => pathMatches(c, m, ctx))));
+        }),
+      ),
+    folder: (cwd) => !!cwd && exact.has(norm(cwd)),
+    config: (w, cwd) => cands(w, cwd, false).some((c) => CONFIG_FILE.test(c)),
+  };
+}
+
+const floorReason = (w: string): string => `pi-foreman: denied by the permission policy (floor: a non-read use of '${clip(w)}', a policy file, a harness state file or a folder that holds one). No tool or shell write, remove, move, extract or change of directory into a policy file (any layer), managed.json, state/round-parents.json, state/bridge-trust.json, state/approvals or state/gate is allowed, and no review or approval lifts this. Ask the user to change it.`;
+
+const READ_PROGS = new Set(["ls", "cat", "head", "tail", "cut", "wc", "stat", "file", "tree", "diff", "grep", "egrep", "fgrep", "rg", "find", "du", "test", "["]);
+
+/** A plain read: a program of the read class with no option that writes or runs a program (`find -delete`, `git log --output`). */
+function plainRead(prog: string, args: string[]): boolean {
+  if (prog === "git") {
+    let k = 0;
+    while (args[k] === "-C" && args[k + 1] !== undefined) k += 2;
+    return /^(?:status|diff|log|show)$/.test(args[k] ?? "") && !gitReadWrites(args.slice(k + 1));
+  }
+  if (!READ_PROGS.has(prog)) return false;
+  const opts = args.slice(0, args.indexOf("--") < 0 ? args.length : args.indexOf("--"));
+  if (prog === "find") return !args.some((a) => /^-(?:exec|execdir|ok|okdir|delete|fprint\w*|fls)$/.test(a));
+  if (prog === "rg") return !opts.some((a) => a.startsWith("--pre"));
+  if (prog === "tree") return !opts.some((a) => a === "-o" || a.startsWith("--output"));
+  if (prog === "file") return !opts.some((a) => a === "-C" || a === "--compile");
+  return true;
+}
+
+/** The argv indexes of the source operands of a plain `cp`/`rsync`/`ditto` copy (reading a floored file out is no write to it). */
+function copySources(prog: string, args: string[]): Set<number> {
+  const out = new Set<number>();
+  if (!/^(?:cp|rsync|ditto)$/.test(prog)) return out;
+  const flag = prog === "cp" ? /^--(?:link|symbolic-link)$|^-[A-Za-z]*[ls]/ : /^--remove-source-files$/;
+  if (args.some((a) => flag.test(a))) return out;
+  const ops: number[] = [];
+  let tdir = false;
+  let ended = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === "--") break;
-    if (a.startsWith("--")) {
-      for (const l of long) {
-        if (a === l && args[i + 1] !== undefined) out.push(args[i + 1]);
-        else if (a.startsWith(`${l}=`)) out.push(a.slice(l.length + 1));
-      }
-    } else if (/^-[A-Za-z]/.test(a)) {
-      const body = a.slice(1);
-      const j = [...body].findIndex((ch) => short.includes(ch));
-      if (j >= 0) {
-        const rest = body.slice(j + 1);
-        if (rest) out.push(rest);
-        else if (args[i + 1] !== undefined) out.push(args[i + 1]);
-      }
-    }
+    if (!ended && a === "--") ended = true;
+    else if (!ended && (a === "-t" || a === "--target-directory")) {
+      tdir = true;
+      i++;
+    } else if (!ended && /^(?:--target-directory=|-t.)/.test(a)) tdir = true;
+    else if (ended || !a.startsWith("-") || a === "-") ops.push(i);
   }
+  for (const i of tdir ? ops : ops.slice(0, -1)) out.add(i);
   return out;
 }
 
-/** The non-option words of `args` (everything after `--`). */
-function plainOperands(args: string[]): string[] {
-  const i = args.indexOf("--");
-  return [...args.slice(0, i < 0 ? args.length : i).filter((a) => !a.startsWith("-") || a === "-"), ...(i < 0 ? [] : args.slice(i + 1))];
-}
-
-const urlName = (u: string): string => u.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split(/[?#]/)[0].split("/").slice(1).filter(Boolean).pop() ?? "index.html";
-const isUrl = (w: string): boolean => /^[a-z][a-z0-9+.-]*:\/\//i.test(w);
-const baseOf = (w: string): string => w.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? w;
-const INLINE_FLAG = /^-[A-Za-z]*[cerp]$|^--(?:eval|print|command)(?:=|$)/;
-const SCRIPT_RUNNERS = /^(?:python[\d.]*|node(?:js)?|perl|ruby|php|deno|bun|lua|rscript)$/;
-
-/** The write targets one program names through its output options or destination operand (`words`), and the program text of an inline script (`texts`). */
-function writerTargets(prog: string, args: string[], words: string[], texts: string[], dirs: string[], cwd: string | null): void {
-  const ops = plainOperands(args);
-  const isDir = (s: string): boolean => {
-    try {
-      return fs.statSync(path.resolve(cwd ?? ".", s)).isDirectory();
-    } catch {
-      return false;
-    }
-  };
-  // a source that stands for many files: a glob, `d/.`, `d/` or an existing directory
-  const bulkSrc = (s: string): boolean => /[*?[{]/.test(s) || /(?:^|[\\/])\.$/.test(s) || /[\\/]$/.test(s) || isDir(s);
-  const into = (dir: string, srcs: string[]): void => {
-    words.push(dir);
-    for (const s of srcs) words.push(`${dir.replace(/[\\/]+$/, "")}/${baseOf(isUrl(s) ? urlName(s) : s)}`);
-  };
-  switch (prog) {
-    case "curl": {
-      const dirs = optValues(args, [], ["--output-dir"]);
-      const outs = optValues(args, ["o", "D", "c"], ["--output", "--dump-header", "--cookie-jar", "--trace", "--trace-ascii", "--stderr", "--libcurl"]);
-      const remote = args.some((a) => /^-[A-Za-z]*O/.test(a) || a === "--remote-name" || a === "--remote-name-all");
-      const names = remote ? ops.filter(isUrl).map(urlName) : [];
-      for (const w of [...outs, ...names]) {
-        words.push(w);
-        for (const d of dirs) words.push(`${d.replace(/[\\/]+$/, "")}/${w}`);
-      }
-      words.push(...dirs);
-      return;
-    }
-    case "wget": {
-      const dirs = optValues(args, ["P"], ["--directory-prefix"]);
-      words.push(...optValues(args, ["O", "o", "a"], ["--output-document", "--output-file", "--append-output"]), ...dirs);
-      for (const u of ops.filter(isUrl)) {
-        words.push(urlName(u));
-        for (const d of dirs) words.push(`${d.replace(/[\\/]+$/, "")}/${urlName(u)}`);
-      }
-      return;
-    }
-    case "tee":
-    case "touch":
-    case "truncate":
-    case "shred":
-    case "mkdir":
-    case "chmod":
-    case "chown":
-      words.push(...ops);
-      return;
-    case "cp":
-    case "install":
-    case "rsync":
-    case "mv":
-    case "ln":
-    case "ditto": {
-      const t = optValues(args, ["t"], ["--target-directory"]);
-      const recursive = args.some((a) => /^-[A-Za-z]*[rRa]/.test(a) && !a.startsWith("--")) || args.includes("--recursive") || args.includes("--archive");
-      const bulk = (srcs: string[]): boolean => prog === "rsync" || prog === "ditto" || (prog === "install" && t.length > 0) || ((prog === "cp" || prog === "mv") && ((prog === "cp" && recursive) || srcs.some(bulkSrc)));
-      if (t.length) {
-        into(t[0], ops);
-        if (bulk(ops)) dirs.push(t[0]);
-      } else if (ops.length >= 2) {
-        into(ops[ops.length - 1], ops.slice(0, -1));
-        if (bulk(ops.slice(0, -1))) dirs.push(ops[ops.length - 1]);
-        if (prog === "mv") words.push(...ops.slice(0, -1));
-      } else if (prog === "ln" && ops.length === 1) words.push(baseOf(ops[0]));
-      return;
-    }
-    case "dd":
-      for (const a of args) if (a.startsWith("of=")) words.push(a.slice(3));
-      return;
-    case "tar": {
-      const first = args[0] && !args[0].startsWith("-") ? [`-${args[0]}`, ...args.slice(1)] : args;
-      const cdirs = optValues(first, ["C"], ["--directory"]);
-      words.push(...cdirs);
-      if (first.some((a) => /^-[A-Za-z]*[xX]/.test(a) && !a.startsWith("--")) || first.includes("--extract") || first.includes("--get")) {
-        if (cdirs.length) dirs.push(...cdirs);
-        else if (cwd) dirs.push(cwd);
-      }
-      if (first.some((a) => /^-[A-Za-z]*[cru]/.test(a) && !a.startsWith("--")) || first.includes("--create")) words.push(...optValues(first, ["f"], ["--file"]));
-      return;
-    }
-    case "unzip":
-      {
-        const d = optValues(args, ["d"], []);
-        words.push(...d);
-        if (d.length) dirs.push(...d);
-        else if (cwd) dirs.push(cwd);
-      }
-      return;
-    case "zip":
-      if (ops[0]) words.push(ops[0]);
-      return;
-    case "git": {
-      const j = args.findIndex((a) => /^(?:checkout|restore|switch|reset|pull|merge)$/.test(a));
-      if (j >= 0) {
-        const c = optValues(args.slice(0, j), ["C"], []);
-        if (c.length) dirs.push(...c);
-        else if (cwd) dirs.push(cwd);
-      }
-      const i = args.indexOf("clone");
-      if (i < 0) return;
-      const valued = new Set(["--depth", "-b", "--branch", "-o", "--origin", "--template", "--reference", "-c", "--config", "--separate-git-dir", "-j", "--jobs", "--filter", "--upload-pack", "-u"]);
-      const opd: string[] = [];
-      for (let k = i + 1; k < args.length; k++) {
-        if (valued.has(args[k])) k++;
-        else if (!args[k].startsWith("-")) opd.push(args[k]);
-      }
-      words.push(...optValues(args.slice(i + 1), [], ["--separate-git-dir"]));
-      if (opd.length >= 2) words.push(opd[1]);
-      else if (opd.length === 1) words.push(baseOf(opd[0]).replace(/\.git$/, ""));
-      dirs.push(...words.slice(-1));
-      return;
-    }
-    case "sed":
-    case "perl":
-      if (args.some((a) => /^-[A-Za-z]*i/.test(a) || a.startsWith("--in-place"))) words.push(...ops);
-      if (SCRIPT_RUNNERS.test(prog) && args.some((a) => INLINE_FLAG.test(a))) texts.push(args.join(" "));
-      return;
-    default:
-      if (SCRIPT_RUNNERS.test(prog) && args.some((a) => INLINE_FLAG.test(a))) texts.push(args.join(" "));
-  }
-}
-
-/** R41: every path a downloader or writer in the line names as an output (curl -o, wget -O, tee, cp/mv/install/rsync/ln destination, dd of=, tar -C, unzip -d, git clone dir, sed -i), and the text of inline scripts. */
-function outputTargets(command: string, ctx: MatchCtx): { words: string[]; texts: string[]; dirs: string[] } {
-  const words: string[] = [];
-  const texts: string[] = [];
-  const dirs: string[] = [];
-  // a line parseShell cannot parse: the raw words (split on whitespace and quotes) stand in for its targets and destination folders
-  const raw = (): void => {
-    for (const w of command.split(/[\s'"`]+/).filter(Boolean)) {
-      words.push(w);
-      dirs.push(w);
-    }
-  };
-  const x = ctx.platform === "win32" ? path.win32 : path.posix;
-  const scratch = scratchOf(ctx);
+/**
+ * R41 rev3: the one path-based floor rule for a shell line, whatever the program. Every word of every segment (option values and attached forms
+ * included) that names a floored file, a folder holding one or a parent of those up to the agent dir is a floor deny, unless the segment is a
+ * plain read (read-class program, the word an operand) or the word is a source of a plain cp/rsync. A segment whose cwd (cd, pushd) is a floored
+ * folder is a floor deny unless it is a plain read.
+ */
+function pathFloor(rules: OverlayRules, command: string, ctx: MatchCtx): Decision | null {
+  const m = floorMatcher(rules, ctx);
+  const keys = FLOOR_KEYS.test(command);
   let segs: ReturnType<typeof parseAst> = [];
   try {
+    const scratch = scratchOf(ctx);
     segs = parseAst(command, { cwd: ctx.cwd || null, platform: ctx.platform, ...(scratch ? { env: { FOREMAN_SCRATCH: scratch } } : {}) });
   } catch {
-    raw();
-    return { words, texts, dirs };
+    segs = [{ program: "", argv: [], redirects: [], heredoc: false, cwd: null, wrappers: [], opaque: "parse_error" }];
   }
+  let moved = false;
+  let inFloor = false;
   for (const s of segs) {
-    const found: string[] = [];
-    const sdirs: string[] = [];
-    if (s.opaque === "parse_error" && !s.program && !s.argv.length) raw();
-    // a runner the walker leaves opaque (sudo, exec, ionice ...) or a program in the segment: every argv position may start the real program
-    writerTargets(baseOf(s.program).toLowerCase().replace(/\.exe$/, ""), s.argv, found, texts, sdirs, s.cwd);
-    if (s.opaque) for (let i = 0; i < s.argv.length; i++) writerTargets(baseOf(s.argv[i]).toLowerCase().replace(/\.exe$/, ""), s.argv.slice(i + 1), found, texts, sdirs, s.cwd);
-    for (const w of sdirs) dirs.push(s.cwd && !x.isAbsolute(w) && !w.startsWith("~") && !w.startsWith("$") ? x.join(s.cwd, w) : w);
-    for (const r of s.redirects) if (r.op !== "<" && r.op !== "dup") found.push(r.target);
-    for (const w of found) words.push(s.cwd && !x.isAbsolute(w) && !w.startsWith("~") && !w.startsWith("$") ? x.join(s.cwd, w) : w);
-  }
-  return { words, texts, dirs };
-}
-
-/** R41: a deny when a bulk writer's destination folder (`dirs`) is a floored path or holds one (rsync d/ <agentDir>/, tar -x -C <agentDir>/pi-foreman). */
-function dirFloor(rules: OverlayRules, dirs: string[], ctx: MatchCtx): Decision | null {
-  const fold = foldsCase(ctx.platform);
-  const lit = floorPatterns(rules, ctx, false).map((p) => p.replace(/\/\*$/, "")).filter((p) => !p.includes("*"));
-  const norm = (s: string): string => {
-    const n = s.split(path.sep).join("/").replace(/\\/g, "/").replace(/\/+$/, "");
-    return fold ? n.toLowerCase() : n;
-  };
-  for (const d of dirs) {
-    for (const c of pathCandidates(d, ctx)) {
-      const n = norm(c);
-      if (/[*?[{]/.test(n)) continue;
-      if (lit.some((p) => norm(p) === n || norm(p).startsWith(`${n}/`))) {
-        return { kind: "deny", rule: "floor", path: clip(d), reason: `pi-foreman: denied by the permission policy (floor: a bulk write into '${clip(d)}', a folder that is or holds a policy file or a harness state file). No tool or shell write to a policy file (any layer), managed.json, state/round-parents.json, state/bridge-trust.json, state/approvals or state/gate is allowed, and no review or approval lifts this. Ask the user to change it.` };
-      }
+    if (s.opaque === "parse_error") {
+      // not parseable: the raw words stand in; only a lone read-class line with no operator or redirect passes
+      const raw = command.split(/[\s'"`]+/).filter(Boolean);
+      const w = raw.find((x) => m.word(x, null, false));
+      if (w !== undefined && !(READ_PROGS.has(baseName(raw[0])) && !/[;&|<>`(]|\$\(/.test(command))) return { kind: "deny", rule: "floor", path: clip(w), reason: floorReason(w) };
+      continue;
+    }
+    // `G=grep -rn x` runs a command named `-rn` (it only fails): no program
+    if (s.program.startsWith("-")) continue;
+    const prog = baseName(s.program);
+    const cwd = s.cwd;
+    for (const r of s.redirects) {
+      if (r.op !== "<" && r.op !== "dup" && m.word(r.target, cwd, moved && !cwd)) return { kind: "deny", rule: "floor", path: clip(r.target), reason: floorReason(r.target) };
+    }
+    if (/^(?:cd|pushd|popd)$/.test(prog)) {
+      moved = true;
+      if (prog === "popd") inFloor = false;
+      else inFloor = s.argv.some((a) => m.word(a, cwd, !cwd));
+      continue;
+    }
+    if (prog === "echo" || prog === "printf" || plainRead(prog, s.argv)) continue;
+    const unknown = moved && !cwd;
+    if (inFloor || m.folder(cwd ?? ctx.cwd)) {
+      const at = inFloor ? "a floored folder" : cwd ?? ctx.cwd;
+      return { kind: "deny", rule: "floor", path: clip(at), reason: floorReason(at) };
+    }
+    const src = copySources(prog, s.argv);
+    for (let i = 0; i < s.argv.length; i++) {
+      const w = s.argv[i];
+      if (!src.has(i) && m.word(w, cwd, unknown)) return { kind: "deny", rule: "floor", path: clip(w), reason: floorReason(w) };
+    }
+    if (keys && !(prog === "git" && /^(?:add|commit|mv|rm)$/.test(s.argv.find((a) => !a.startsWith("-")) ?? ""))) {
+      const w = s.argv.find((a) => m.config(a, cwd));
+      if (w !== undefined) return { kind: "deny", rule: "floor", path: clip(w), reason: `pi-foreman: denied by the permission policy (floor: this shell command writes the safety.permissions*, safety.policy* or gate.* keys of the foreman config file '${clip(w)}'). The agent never changes these keys, and no review or approval lifts this. Ask the user to change them.` };
     }
   }
   return null;
 }
 
-/** R41: the floor for a shell line: redirect, remove and output-option targets, and the literal floored paths named in an inline script. */
+/** The floored-path decision for one path-tool operand that is written, removed or moved (the shell rule's word test, for the same set). */
+function pathWordFloor(rules: OverlayRules, words: string[], ctx: MatchCtx): Decision | null {
+  const m = floorMatcher(rules, ctx);
+  const w = words.find((x) => m.word(x, ctx.cwd || null, false));
+  return w === undefined ? null : { kind: "deny", rule: "floor", path: clip(w), reason: floorReason(w) };
+}
+
+/** R41: the floor for a shell line: the redirect, remove and tool-write targets (floored files and config keys), then the one path rule over all words. */
 function shellFloor(rules: OverlayRules, targets: string[], command: string, ctx: MatchCtx): Decision | null {
-  const extra = outputTargets(command, ctx);
-  const floor = floorDecision(rules, [...new Set([...targets, ...extra.words].flatMap((t) => [t, ...expandBraces(t)]))], command, ctx, "this shell command");
-  if (floor) return floor;
-  const dirHit = dirFloor(rules, extra.dirs, ctx);
-  if (dirHit) return dirHit;
-  if (!extra.texts.length) return null;
-  const literal = floorPatterns(rules, ctx).map((p) => p.replace(/\/\*$/, "")).filter((p) => !p.includes("*"));
-  const hit = literal.find((p) => extra.texts.some((t) => t.replace(/\\+/g, "/").includes(p)));
-  if (hit === undefined) return null;
-  return { kind: "deny", rule: "floor", path: clip(hit), reason: `pi-foreman: denied by the permission policy (floor: an inline script names '${clip(hit)}', a policy file or a harness state file). No tool or shell write to a policy file (any layer), managed.json, state/round-parents.json, state/bridge-trust.json, state/approvals or state/gate is allowed, and no review or approval lifts this. Ask the user to change it.` };
+  return floorDecision(rules, [...new Set(targets.flatMap((t) => [t, ...expandBraces(t)]))], command, ctx, "this shell command") ?? pathFloor(rules, command, ctx);
 }
 
 const SCAN_VALUE_FLAGS: Record<string, Set<string>> = {
@@ -4146,7 +4090,7 @@ export function checkPathTool(rules: OverlayRules, toolName: string, input: Reco
   const written = paths.filter((x) => x.write).map((x) => x.value);
   if (written.length) {
     const { path: _p, file_path: _f, filePath: _fp, oldText: _o, old_string: _os, ...rest } = input;
-    const floor = floorDecision(rules, written, JSON.stringify(rest), ctx, `this ${toolName} call`);
+    const floor = floorDecision(rules, written, JSON.stringify(rest), ctx, `this ${toolName} call`) ?? pathWordFloor(rules, written, ctx);
     if (floor) return floor;
   }
   if (toolName === "find" || toolName === "grep") {
