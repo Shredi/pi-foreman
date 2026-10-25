@@ -21,7 +21,7 @@ test("four glyph sets (unknown -> unicode) with the new keys and the spinner fra
   assert.equal(symbolSet("ascii").keepalive, "^");
   assert.equal(symbolSet("emoji").keepalive, "♨️");
   assert.equal(symbolSet("nerd").task, "\uf013");
-  assert.equal(symbolSet("unicode").spinner.length, 10);
+  assert.equal(symbolSet("unicode").spinner.length, 8);
   const frames = ["a", "b", "c"];
   assert.equal(spinnerFrame(frames, 0), "a");
   assert.equal(spinnerFrame(frames, 249), "a");
@@ -31,7 +31,7 @@ test("four glyph sets (unknown -> unicode) with the new keys and the spinner fra
 
 test("runLine: the spinner frame only for a running run and only when a clock is given", () => {
   assert.ok(runLine(run).startsWith("⏳ b"));
-  assert.ok(runLine(run, "unicode", 250).startsWith("⠙ b"));
+  assert.ok(runLine(run, "unicode", 250).startsWith("⣽ b"));
   assert.ok(runLine({ ...run, state: "done" }, "unicode", 250).startsWith("✓ b"));
 });
 

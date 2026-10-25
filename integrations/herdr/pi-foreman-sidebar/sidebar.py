@@ -80,9 +80,15 @@ CONN_MID, CONN_LAST = "├─ ", "└─ "
 # Private-use stand-in for the animated glyph while the header template is built (one cell wide).
 SPIN_MARK = "\ue000"
 SYMBOLS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "config", "symbols.json")
-AUX_FALLBACK = {"agent": "◆", "task": "⚙", "wait": "⧗", "ask": "?", "recent": "✓", "working": "⏳",
+AUX_FALLBACK = {"review": "◎", "agent": "◆", "task": "⚙", "wait": "◷", "ask": "?", "recent": "✓", "working": "⏳",
+                "waiting": "⏸", "blocked": "✋", "done": "✓", "lost": "✗", "waiting-owner": "✋",
+                "waiting-external": "↻", "idle": "⏸",
                 "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌"}
-SPINNER_FALLBACK = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+# The reasons a two-part state cell can show (first match wins), and the static state glyphs that set its width.
+REASONS = ("ask", "review", "agent", "task", "wait")
+STATE_KEYS = ("working", "waiting", "blocked", "done", "lost", "waiting-owner", "waiting-external", "idle")
+REVIEW_ROLES = ("reviewer", "senior-reviewer")
+SPINNER_FALLBACK = ("⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷")
 SYMBOL_SETS = ("unicode", "emoji", "nerd", "ascii")
 # Herdr trims token values at both ends, so a leading blank indent uses
 # U+2800 (renders blank, is not whitespace) instead of spaces.
@@ -267,7 +273,7 @@ _aux_cache = {}
 
 
 def aux_symbols(name):
-    """Activity glyphs (agent, task, wait, ask, recent) and the spinner frames of one glyph set, from
+    """Activity glyphs (review, agent, task, wait, ask, recent), the state glyphs and the spinner frames of one glyph set, from
     config/symbols.json; a key the file lacks (or a missing file) falls back to the unicode set."""
     name = name if name in SYMBOL_SETS else "unicode"
     if name not in _aux_cache:
@@ -346,10 +352,59 @@ def tree_rows(roots, joins, tree=None):
     return out
 
 
-def _slot(glyph):
-    """The glyph cell of a header: always two cells, so the label never moves."""
+def slot_width(aux):
+    """Cells of the state slot of one glyph set: the spinner plus the widest reason icon, or the widest
+    static state glyph, whichever is wider (2 for unicode, nerd and ascii; 3 for emoji)."""
+    return max([1 + max(cell_width(aux[k]) for k in REASONS)] + [cell_width(aux[k]) for k in STATE_KEYS])
+
+
+def _slot(glyph, width=2):
+    """The glyph cell of a header: always `width` cells, so the label never moves."""
     w = cell_width(glyph)
-    return glyph + BLANK if w == 1 else glyph if w == 2 else BLANK * 2
+    return glyph + BLANK * (width - w) if 0 < w <= width else BLANK * width
+
+
+def _live_kid(k):
+    """A child session without its own pane row that still runs: not idle, waiting, done or lost, and
+    not closed, closing or done."""
+    return (k.get("sym") not in ("idle", "waiting", "done", "lost")
+            and k.get("state") not in ("closed", "closing", "done"))
+
+
+def _reason(node, joins):
+    """What a session waits on, first match wins: ask (a child run asks), review (a reviewer runs), agent
+    (another run, or a live child session without a pane row), task (PR, CI or bg wait, or a task),
+    wait (any other wait); None for the session's own turn."""
+    kids = node.get("children") or []
+    runs = [k for k in kids if k.get("kind") == "run" and k.get("state") != "done"]
+    if any(k.get("state") == "ask" for k in runs):
+        return "ask"
+    if any(k.get("role") in REVIEW_ROLES for k in runs):
+        return "review"
+    if runs or any(k.get("kind") == "session" and not _is_row(k, joins) and _live_kid(k) for k in kids):
+        return "agent"
+    waits = [w for w in node.get("waits") or [] if isinstance(w, dict)]
+    if node.get("tasks") or any(_is_pr(w) or _is_ci(w) or w.get("bg") for w in waits):
+        return "task"
+    return "wait" if waits else None
+
+
+def _state_cell(node, joins, aux):
+    """(static cell, ticking cell or None) of a header's state slot, before padding. Sym `working`,
+    `waiting-external` and `idle` with a reason animate: `SPIN_MARK` + the reason icon. The static cell
+    of an animated session (daemon-published pane, spinner off) is the state glyph plus the icon when both
+    fit the slot, else the glyph alone (the icon alone for an idle session, so it never looks idle)."""
+    sym = node.get("sym")
+    reason = _reason(node, joins)
+    icon = aux[reason] if reason else ""
+    if not (sym in ("working", "waiting-external") or (sym == "idle" and reason)):
+        return node.get("glyph") or "", None
+    glyph = node.get("glyph") or aux.get(sym) or ""
+    if cell_width(glyph + icon) <= slot_width(aux):
+        static = glyph + icon
+    else:
+        static = icon if sym == "idle" else glyph
+    return static, SPIN_MARK + icon
 
 
 def _prefix_only(prefix, budget, indent=""):
@@ -358,13 +413,13 @@ def _prefix_only(prefix, budget, indent=""):
     return indent + cut if cut else None
 
 
-def _header(place, glyph, label, age, budget):
+def _header(place, glyph, label, age, budget, slot=2):
     """`P conn slot label ... age`. Room is short: the age drops when the label would get under
     four cells, then the label shrinks to one character and `…`; with less room the token is the
     prefix cut at a unit boundary. The row starts with DETAIL_INDENT blank cells, which Herdr adds
     to the rows below it."""
     indent = BLANK * DETAIL_INDENT
-    left = indent + place["P"] + place["conn"] + _slot(glyph) + " "
+    left = indent + place["P"] + place["conn"] + _slot(glyph, slot) + " "
     room = budget - cell_width(left)
     if room < 2:
         return _prefix_only(place["P"] + place["conn"], budget, indent)
@@ -592,8 +647,8 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
     session publishes the rest). `layout` ({key: {pre, cont}}) and `tree`
     ({key: {P, conn, own}}) place a root row at a tree position computed elsewhere
     (legacy prefixes and the new rows); `layout_out` and `tree_out` collect every
-    row's. `tpl_out` collects, per pane of a working session, the fm_hd header with
-    its glyph slot as `{spin}` + blank.
+    row's. `tpl_out` collects, per pane of an animated session (working, waiting on something external,
+    idle with a reason), the fm_hd header with its state slot as `{spin}` + the reason icon.
     """
     if joins is None:
         joins = {}
@@ -607,6 +662,7 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
     symbols = snapshot.get("symbols")
     self_panes = self_panes or ()
     aux = aux_symbols(symbols)
+    slot = slot_width(aux)
     budget = max(0, width - INSET - SAFETY)
     out = {}
 
@@ -624,11 +680,12 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
         if blocked_s is not None and blocked_s > LATE_S:
             age += "!"
         label = node.get("name") or "?"
-        if tpl_out is not None and node.get("sym") == "working":
-            tpl_out[pane] = _cap(_header(place, SPIN_MARK, label, age, budget).replace(SPIN_MARK, "{spin}"))
+        static, spin = _state_cell(node, joins, aux)
+        if tpl_out is not None and spin:
+            tpl_out[pane] = _cap(_header(place, spin, label, age, budget, slot).replace(SPIN_MARK, "{spin}"))
         a1, a2, a3 = _activity(node, joins, recent, width, aux)
         tokens = {
-            "fm_hd": _header(place, node.get("glyph") or "", label, age, budget),
+            "fm_hd": _header(place, static, label, age, budget, slot),
             "fm_a1": _detail(place, a1, budget),
             "fm_a2": _detail(place, a2, budget),
             "fm_a3": _detail(place, a3, budget),
@@ -1770,7 +1827,30 @@ def read_sample(sdir, pane, now=None):
     return got, tpl if isinstance(tpl, str) else None
 
 
-def sample_snapshot(variant, symbols):
+SAMPLE_REASONS = ("none", "ask", "review", "agent", "task", "wait", "blocked", "idle", "done")
+
+
+def _sample_reason(root, reason, aux):
+    """`root` (the mixed sample session) changed so that its header shows `reason`: a reason icon next to the
+    spinner, or a static state."""
+    run = lambda role, state="working": {"key": "sample-" + role, "kind": "run", "role": role,  # noqa: E731
+                                         "name": role, "state": state, "sym": state, "children": []}
+    root.update(children=[], waits=[], tasks=[], asks=[])
+    if reason in ("blocked", "idle", "done"):
+        root.update(sym=reason, state=reason, glyph=aux[reason])
+        if reason == "blocked":
+            root["blocked_s"] = 60
+    elif reason == "ask":
+        root["children"] = [run("builder", "ask")]
+    elif reason in ("review", "agent"):
+        root["children"] = [run("reviewer" if reason == "review" else "builder")]
+    elif reason == "task":
+        root["tasks"] = [{"id": "t", "label": "npm test", "pid": 1, "ageSeconds": 180}]
+    elif reason == "wait":
+        root["waits"] = [{"id": "w", "kind": "timer", "note": "timer", "age_s": 60, "left_s": 240}]
+
+
+def sample_snapshot(variant, symbols, reason=None):
     """A synthetic radar snapshot of one working session: two live agents, a PR watch and a task, an
     open ask, the pressure suffix and the PR dots of `variant` (`pr`: one dot per state; `mixed`: PRs,
     an external item and three more PRs that overflow)."""
@@ -1792,13 +1872,15 @@ def sample_snapshot(variant, symbols):
             "waits": [{"id": "w", "kind": "pr", "note": "1 pr watch", "age_s": 0, "left_s": 0, "prs": [21]}],
             "tasks": [{"id": "t", "label": "npm test", "pid": 1, "ageSeconds": 180}],
             "asks": [{"n": 1, "topic": "rule scope"}]}
+    if reason:
+        _sample_reason(root, reason, aux)
     return {"v": 1, "symbols": symbols, "roots": [root]}
 
 
-def sample_tokens(variant, symbols, width, pane):
+def sample_tokens(variant, symbols, width, pane, reason=None):
     """(session tokens, fm_hd template) of the sample, composed like real data."""
     tpl = {}
-    out = compose(sample_snapshot(variant, symbols), width, {"sample": pane}, tpl_out=tpl)[pane]
+    out = compose(sample_snapshot(variant, symbols, reason), width, {"sample": pane}, tpl_out=tpl)[pane]
     return {k: out.get(k) for k in SESSION_KEYS}, tpl.get(pane)
 
 
@@ -1827,9 +1909,22 @@ def cmd_sample(args):
         return 2
     variant = args.variant or "pr"
     width = read_width(args, os.environ, os.path.join(herdr_config_dir(), "config.toml"))
+    if args.reason == "all" and not args.dry_run:
+        log("sample --reason all needs --dry-run")
+        return 2
+    if args.dry_run and args.reason == "all":
+        for name in [args.symbols] if args.symbols else SYMBOL_SETS:
+            frame = aux_symbols(name)["spinner"][2]
+            print("== %s, width %d: reason, ticking header (one frame), non-ticking header ==" % (name, width))
+            for reason in SAMPLE_REASONS:
+                tokens, tpl = sample_tokens(variant, name, width, pane, reason)
+                ticking = (tpl or tokens["fm_hd"]).replace("{spin}", frame)
+                print(("%-8s %s   %s" % (reason, ticking, tokens["fm_hd"])).replace(BLANK, " "))
+        return 0
+    reason = args.reason
     if args.dry_run:
         for name in [args.symbols] if args.symbols else SYMBOL_SETS:
-            tokens, tpl = sample_tokens(variant, name, width, pane)
+            tokens, tpl = sample_tokens(variant, name, width, pane, reason)
             print("== %s, variant %s, width %d ==" % (name, variant, width))
             print("\n".join(sample_preview(tokens, tpl, name)))
         return 0
@@ -1847,7 +1942,7 @@ def cmd_sample(args):
         radar = _import_radar()
         name = radar.config_symbols(radar.agent_dir(args.agent_dir)) if radar else "unicode"
     name = name if name in SYMBOL_SETS else "unicode"
-    tokens, tpl = sample_tokens(variant, name, width, pane)
+    tokens, tpl = sample_tokens(variant, name, width, pane, reason)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     write_atomic(path, json.dumps({"tokens": tokens, "fm_hd_tpl": tpl, "expires": time.time() + minutes * 60},
                                   ensure_ascii=False))
@@ -1865,9 +1960,44 @@ def cmd_sample(args):
     return 0
 
 
-def cmd_configure():
-    with open(os.path.join(HERE, "config-snippet.toml"), encoding="utf-8") as fh:
-        sys.stdout.write(fh.read())
+SNIPPET_SET_LINE = "# Glyph set of this snippet: unicode."
+
+
+def snippet_for(name, text=None):
+    """config-snippet.toml (written for the unicode set) mapped to glyph set `name`: every glyph inside a
+    `contains` string becomes the set's glyph in one pass over the distinct unicode glyphs. The ascii set
+    loses its `rules` and the cell `fg` (its glyphs would collide with label text) and keeps `dim`."""
+    name = name if name in SYMBOL_SETS else "unicode"
+    if text is None:
+        with open(os.path.join(HERE, "config-snippet.toml"), encoding="utf-8") as fh:
+            text = fh.read()
+    text = text.replace(SNIPPET_SET_LINE, "# Glyph set of this snippet: %s." % name)
+    if name == "unicode":
+        return text
+    if name == "ascii":
+        text = re.sub(r',\s*rules = \[.*?\n\s*\]', "", text, flags=re.S)
+        return re.sub(r', fg = "[^"]*"', "", text)
+    src, dst = aux_symbols("unicode"), aux_symbols(name)
+    glyphs = {}
+    for key, glyph in src.items():
+        if key != "spinner" and key in dst:
+            glyphs.setdefault(glyph, dst[key])
+    pattern = re.compile("|".join(re.escape(g) for g in sorted(glyphs, key=len, reverse=True)))
+
+    def contains(m):
+        mapped = pattern.sub(lambda g: glyphs[g.group()], m.group(1))
+        return 'contains = "%s"' % "".join("\\u%04x" % ord(c) if unicodedata.category(c) == "Co" else c
+                                          for c in mapped)
+
+    return re.sub(r'contains = "([^"]*)"', contains, text)
+
+
+def cmd_configure(args):
+    name = args.symbols
+    if not name:
+        radar = _import_radar()
+        name = radar.config_symbols(radar.agent_dir(args.agent_dir)) if radar else "unicode"
+    sys.stdout.write(snippet_for(name))
     return 0
 
 
@@ -1883,8 +2013,10 @@ def main(argv=None):
     ap.add_argument("--agent-dir")
     ap.add_argument("--session", help="with push: the session id")
     ap.add_argument("--pane", help="with push: the session's Herdr pane id; with sample: the pane (default HERDR_PANE_ID)")
-    ap.add_argument("--symbols", choices=SYMBOL_SETS, help="with push or sample: glyph set; default ui.symbols")
+    ap.add_argument("--symbols", choices=SYMBOL_SETS, help="with push, sample or configure: glyph set; default ui.symbols")
     ap.add_argument("--variant", choices=("pr", "mixed"), help="with sample: the dots shown (default pr)")
+    ap.add_argument("--reason", choices=SAMPLE_REASONS + ("all",),
+                    help="with sample: the state cell to show (default: the mixed sample); all with --dry-run lists them")
     ap.add_argument("--minutes", type=float, help="with sample: how long the override lasts (default %d)" % SAMPLE_MINUTES)
     ap.add_argument("--json", action="store_true",
                     help="with push: print {tokens, fm_hd_tpl, stamp, pane}; report nothing, write no stamp")
@@ -1899,7 +2031,7 @@ def main(argv=None):
     if args.command == "status":
         return cmd_status()
     if args.command == "configure":
-        return cmd_configure()
+        return cmd_configure(args)
     if args.command == "push":
         return cmd_push(args)
     if args.command == "sample":

@@ -17,15 +17,26 @@
 # A row without a value is not drawn, so an idle session is one or two lines.
 # The older tokens ($fm_sym, $fm_l1, $fm_l2, $fm_l3, $fm_cost) are no longer published.
 #
-# Colours: the detail rows are dim and follow your theme. The header rules below
-# colour the whole header line by the glyph it contains (rules match substrings
-# of the value), for the unicode, emoji and nerd sets at once; the ascii set has
-# no rules, its glyphs would collide with label text. A "!" or a state glyph in
-# a session label colours its line too. "!" after the age marks a session
-# blocked for more than 15 minutes, so that rule comes first. First match wins.
-# The pr cells are coloured by their circle for the unicode and nerd sets; the
-# emoji circles carry their colour and the ascii set has no rules. The unknown
-# circle has no rule: it keeps your theme colour.
+# Glyph set of this snippet: unicode.
+# Herdr takes at most 16 rules per token, so a
+# snippet is written for ONE glyph set: `python3 sidebar.py configure [--symbols
+# <set>]` prints it for unicode, emoji, nerd or ascii (default: your ui.symbols).
+# Rerun it and merge again after you change ui.symbols.
+#
+# Colours: the detail rows are dim and follow your theme. The header cell has a
+# base colour (green: a session working on its own turn); its rules colour the
+# whole header line by the reason icon or state glyph it contains (rules match
+# substrings of the value): blocked and ask yellow, review and agent blue, task
+# and wait cyan, lost red, done and idle grey. The ascii set has no rules and no
+# base colour, its glyphs would collide with label text. A "!" or a reason or
+# state glyph in a session label colours its line too. "!" after the age marks a
+# session blocked for more than 15 minutes, so that rule comes first. First
+# match wins. If your Herdr rejects the cell-level `fg`, delete it: the own-turn
+# line then keeps your theme colour and the rules still apply.
+# The pr cells are coloured by their circle; the emoji set gets pr rules on
+# purpose (the circles carry their colour, the rule colours the label too) and
+# the ascii set has none. The unknown circle has no rule: it keeps your theme
+# colour.
 # The hex values are placeholders: pick the ones that suit your theme.
 # The plugin draws the tree itself (the connectors and the blank cells U+2800
 # that keep Herdr from trimming them), so do not put a state_icon or other cell
@@ -37,64 +48,46 @@
 
 [ui.sidebar.agents.rows_by_agent]
 pi = [
-  [{ token = "$fm_hd", rules = [
+  [{ token = "$fm_hd", fg = "#5cb85c", rules = [
       { contains = "!", fg = "#d9534f", bold = true },
       { contains = "✋", fg = "#e0a030" },
-      { contains = "\uf256", fg = "#e0a030" },
       { contains = "?", fg = "#e0a030" },
-      { contains = "❓", fg = "#e0a030" },
-      { contains = "\uf128", fg = "#e0a030" },
+      { contains = "◎", fg = "#6fa8dc" },
+      { contains = "◆", fg = "#6fa8dc" },
+      { contains = "⚙", fg = "#5bc0de" },
+      { contains = "◷", fg = "#5bc0de" },
       { contains = "✗", fg = "#d9534f" },
-      { contains = "❌", fg = "#d9534f" },
-      { contains = "\uf00d", fg = "#d9534f" },
       { contains = "✓", fg = "#8a8a8a" },
-      { contains = "✅", fg = "#8a8a8a" },
-      { contains = "\uf00c", fg = "#8a8a8a" },
+      { contains = "⏸", fg = "#8a8a8a" },
   ] }],
   # Optional: colours the agents row while child runs are live; strike it to keep the row plain.
   [{ token = "$fm_a1", dim = true, rules = [
       { contains = "◆", fg = "#6fa8dc" },
-      { contains = "🤖", fg = "#6fa8dc" },
-      { contains = "\uf544", fg = "#6fa8dc" },
   ] }],
   [{ token = "$fm_a2", dim = true }],
   # Optional: colours the waits row yellow while an ask is open; strike it to keep the row plain.
   [{ token = "$fm_a3", dim = true, rules = [
       { contains = "? ask ", fg = "#e0a030" },
-      { contains = "❓ ask ", fg = "#e0a030" },
-      { contains = "\uf128 ask ", fg = "#e0a030" },
   ] }],
   [{ token = "$fm_pr1", rules = [
       { contains = "●", fg = "#d9534f" },
       { contains = "◉", fg = "#e0a030" },
       { contains = "○", fg = "#5cb85c" },
-      { contains = "\uf111", fg = "#d9534f" },
-      { contains = "\uf192", fg = "#e0a030" },
-      { contains = "\uf10c", fg = "#5cb85c" },
   ] },
   { token = "$fm_pr2", rules = [
       { contains = "●", fg = "#d9534f" },
       { contains = "◉", fg = "#e0a030" },
       { contains = "○", fg = "#5cb85c" },
-      { contains = "\uf111", fg = "#d9534f" },
-      { contains = "\uf192", fg = "#e0a030" },
-      { contains = "\uf10c", fg = "#5cb85c" },
   ] },
   { token = "$fm_pr3", rules = [
       { contains = "●", fg = "#d9534f" },
       { contains = "◉", fg = "#e0a030" },
       { contains = "○", fg = "#5cb85c" },
-      { contains = "\uf111", fg = "#d9534f" },
-      { contains = "\uf192", fg = "#e0a030" },
-      { contains = "\uf10c", fg = "#5cb85c" },
   ] },
   { token = "$fm_pr4", rules = [
       { contains = "●", fg = "#d9534f" },
       { contains = "◉", fg = "#e0a030" },
       { contains = "○", fg = "#5cb85c" },
-      { contains = "\uf111", fg = "#d9534f" },
-      { contains = "\uf192", fg = "#e0a030" },
-      { contains = "\uf10c", fg = "#5cb85c" },
   ] }],
   # Optional: colours the meta row yellow while the host is under pressure; strike it to keep the row plain.
   [{ token = "$fm_meta", dim = true, rules = [
