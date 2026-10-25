@@ -789,19 +789,20 @@ class FoldPresetTests(unittest.TestCase):
 
 
 class TaskImagePythonTests(unittest.TestCase):
-    FOLD_TASKS = ("m1-recheck", "t1-trivial")
+    UV_PIN = r"ghcr\.io/astral-sh/uv:(\S+)"
 
-    def dockerfile(self, name):
-        return (ROOT / "bench" / "tasks" / name / "environment" / "Dockerfile").read_text("utf-8")
-
-    def test_fold_task_images_install_foreman_python_with_same_uv_pin(self):
-        pins = {}
-        for name in self.FOLD_TASKS:
-            text = self.dockerfile(name)
-            self.assertIn("ENV PI_FOREMAN_PYTHON=", text, name)
-            pins[name] = re.findall(r"ghcr\.io/astral-sh/uv:(\S+)", text)
-        self.assertTrue(pins["m1-recheck"], "m1-recheck has no uv image pin")
-        self.assertEqual(pins["t1-trivial"], pins["m1-recheck"])
+    def test_every_task_image_installs_foreman_python_with_shared_uv_pin(self):
+        files = sorted((ROOT / "bench" / "tasks").glob("*/environment/Dockerfile"))
+        self.assertTrue(files, "no task Dockerfiles found")
+        ref = ROOT / "bench" / "tasks" / "m1-recheck" / "environment" / "Dockerfile"
+        ref_pin = re.findall(self.UV_PIN, ref.read_text("utf-8"))
+        self.assertTrue(ref_pin, "m1-recheck has no uv image pin")
+        for path in files:
+            name = path.parents[1].name
+            with self.subTest(task=name):
+                text = path.read_text("utf-8")
+                self.assertIn("ENV PI_FOREMAN_PYTHON=", text)
+                self.assertEqual(re.findall(self.UV_PIN, text), ref_pin)
 
 
 class FakeUploadEnv:
