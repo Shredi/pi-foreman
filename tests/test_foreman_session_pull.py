@@ -483,8 +483,6 @@ class PullAllTest(PullCommandBase):
         self.assertEqual([p["label"] for p in out["pulled"]], ["open", "pending", "closing"])
         self.assertEqual(out["errors"], [])
         self.assertEqual({a[1:] for a in asked}, {("outbox", "20260101-000000-x", fsn.OUTBOX_TIMEOUT)})
-        before = reg.read_bytes()
-        self.assertEqual(reg.read_bytes(), before)
 
     def test_a_push_or_closed_target_is_not_pullable(self):
         reg = self.padir / "pi-foreman" / "state" / "sessions.json"

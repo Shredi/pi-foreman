@@ -400,6 +400,14 @@ test("pullNow works without the timer and traces remote_pull with the allowed ke
   assert.equal((sanitizeTrace(r.traces[1]) as Record<string, unknown>).error, "malformed reply");
 });
 
+test("a remote_pull trace error is scrubbed like a message and cut at 120 characters", () => {
+  const rec = sanitizeTrace({ event: "remote_pull", error: "ssh: /home/someone/.ssh/config line 3: bad option" }) as Record<string, unknown>;
+  assert.equal(typeof rec.error, "string");
+  assert.equal(String(rec.error).includes("/home/someone"), false);
+  assert.match(String(rec.error), /\[path\]/);
+  assert.equal(String((sanitizeTrace({ event: "remote_pull", error: "x ".repeat(200) }) as Record<string, unknown>).error).length <= 120, true);
+});
+
 function sessionDeps(agent: string, over: Partial<SessionDeps> = {}): SessionDeps {
   return { isChild: false, env: {}, agentDir: agent, cwd: root, piSessionId: "sess-1", pkgRoot: "/pkg", python: null, spawner: async () => ok(""), send: async () => "sent", ...over };
 }

@@ -120,6 +120,10 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
     if (!ALLOWED.has(k)) continue;
     if (k === "command" && !isDeny(rec) && rec.event !== "ask_flag") continue; // never a command outside a deny (and the owner's flagged ask, R31c)
     if (k === "message" && (rec.event !== "tool_error" || typeof v !== "string")) continue; // free text: only a tool_error's redacted message
+    if (k === "error") {
+      if (typeof v === "string") out[k] = scrubPaths(redactCommand(v)).slice(0, MAX_STRING);
+      continue;
+    }
     if (k === "message") {
       out[k] = scrubPaths(redactCommand(String(v))).slice(0, MAX_MESSAGE);
       continue;

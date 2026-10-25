@@ -186,7 +186,7 @@ A pull-mode remote child (`sessions.machines.<name>.returnPath` `pull`, the defa
 
 ## Known limit: corrupt last outbox line
 
-A remote child appends one notice line to `outbox.jsonl` under a lock on `outbox.lock`. A crash in the middle of that append can leave a last line that is not a complete notice. Later notices then refuse with `outbox_corrupt` ("the last line of … is not a notice entry; remove it by hand") until the line is removed by hand on the remote machine. The child's notice command exits 1 with that code, so no later notice reaches the outbox, and the parent's poll keeps running without a pull error: it skips the bad line when it lies past the cursor and counts it as `skipped`. The parent never truncates or rewrites the outbox.
+A remote child appends one notice line to `outbox.jsonl` under a lock on `outbox.lock`. A crash in the middle of that append can leave a last line that is not a complete notice. Later notices then refuse with `outbox_corrupt` ("the last line of … is not a notice entry; remove it by hand") until the line is removed by hand on the remote machine. The child's notice command exits 1 with that code, so no later notice reaches the outbox, and the parent's poll keeps running without a pull error: it skips the bad line when it lies past the cursor. The line is counted as `skipped` only by a poll that also returns an entry before it; a corrupt last line written after the parent has caught up (a crash during the append of an entry the parent had already fetched, cursor at that entry) is not counted, so the poll shows nothing wrong and only the child's next `remote notice` refuses with `outbox_corrupt`. The parent never truncates or rewrites the outbox.
 
 ## Further safety and runtime keys
 
