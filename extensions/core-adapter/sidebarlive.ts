@@ -3,7 +3,8 @@
 // trailing push when requests arrived meanwhile); a 5 s timer keeps the 15 s token TTL alive. With a socket
 // reporter the push runs as `push --json` and this file sends `pane.report_metadata` itself (only when the tokens
 // changed, or after 10 s), then writes the stamp; a failed report falls back to a plain `push` for that cycle.
-// While the session works (and `ui.spinner` is not false) a 250 ms timer sends only `fm_hd` with the current
+// While the session may tick (live state neither blocked nor done, `ui.spinner` not false, and Python's template
+// carries `{spin}`: working, waiting-external, idle with a reason) a 250 ms timer sends only `fm_hd` with the current
 // spinner frame in place of `{spin}`. session_shutdown stops the timers and runs `push --final` (the daemon takes the keys
 // over). Only with HERDR_ENV=1, HERDR_PANE_ID, mode tui, a Python interpreter, the sidebar.py file and a
 // LiveState for the session.
@@ -102,7 +103,7 @@ export interface SidebarDeps {
   writeStamp?: (file: string, pane: string) => void;
   /** `ui.spinner` (false = static glyphs; default on). */
   spinner?: boolean;
-  /** The session is working now (LiveState.stateName). */
+  /** The session may tick now (see `sidebarMayTick`); the `{spin}` template still decides whether it does. */
   working?: () => boolean;
   /** Spinner frames (default: the unicode set's). */
   frames?: readonly string[];
@@ -324,6 +325,9 @@ export interface SidebarStart {
   live: { onChange: (cb: () => void) => () => void; flush: () => void; stop: () => void; stateName: LiveStateName } | null;
 }
 
+/** Live states that never tick whatever the template says; Python's `fm_hd_tpl` picks the rest. */
+export const sidebarMayTick = (state: LiveStateName): boolean => state !== "blocked" && state !== "done";
+
 /** Wire the session-owned sidebar row; `start(ctx, cfg)` runs at the end of session_start, shutdown stops it. */
 export function installSidebarLive(pi: Pick<ExtensionAPI, "on">, opts: { env?: Env } = {}): { start: (ctx: ExtensionContext, cfg: SidebarStart) => void } {
   const env = opts.env ?? process.env;
@@ -350,7 +354,7 @@ export function installSidebarLive(pi: Pick<ExtensionAPI, "on">, opts: { env?: E
       push: (args, done) => execQuiet(python, ["-E", "-s", script, ...args], 10_000, done),
       report: (tokens) => reportMetadata(socketPath(env), { pane_id: env.HERDR_PANE_ID!.trim(), source: SIDEBAR_SOURCE, tokens, ttl_ms: TTL_MS }),
       spinner: cfg.spinner !== false,
-      working: () => live.stateName === "working",
+      working: () => sidebarMayTick(live.stateName),
       frames: symbolSet(cfg.symbols).spinner,
       flush: () => live.flush(),
       finish: () => live.stop(),
