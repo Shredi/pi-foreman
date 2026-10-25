@@ -496,10 +496,10 @@
     {
       "id": "remote-sessions",
       "title": "Remote child sessions over SSH",
-      "purpose": "`foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. The child reports back by cross-machine pi-intercom notices; the parent mirrors them into files. User or overlay config only.",
+      "purpose": "`foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. By default (`returnPath` `pull`) the child appends its notices to an outbox file on that machine and the parent fetches them over its own SSH call, so the remote never connects back; `push` sends them by cross-machine pi-intercom notices instead. The parent mirrors the notices into files. User or overlay config only.",
       "doc": "docs/sessions.md#remote-child-sessions",
       "keys": ["sessions"],
-      "commands": ["foreman session remote"],
+      "commands": ["foreman session remote", "foreman session pull"],
       "switch": {"key": "sessions.machines", "on": "nonempty"},
       "state": "opt-in",
       "enable": "{\"sessions\": {\"machines\": {\"alpha\": {}}}}"

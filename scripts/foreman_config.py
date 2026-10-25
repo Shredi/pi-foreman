@@ -118,6 +118,7 @@ Keys outside safety that the project and session layers cannot loosen either
     close.worktreeDir                ignored (the worktree convention: L1/L3/L2 only)
     close.childWaitMs                ignored (how long a close waits for child sessions: L1/L3/L2 only)
     sessions.machines                ignored (the machines a session may open on over SSH: user or overlay config only)
+    sessions.pull, sessions.ssh      ignored (the pull poll periods and SSH multiplexing: user or overlay config only)
     sessions.remoteInlineMaxBytes    lower only, minimum 1024 (a higher cap sends more of a remote result inline)
     compaction.maxTokens             lower only, minimum 50000 (a higher cap compacts later); a null is dropped;
                                      the session layer is ignored with a warning (setup applies it)
@@ -239,6 +240,8 @@ IGNORED_KEYS = [
     (("close", "worktreeDir"), "the worktree convention comes from the user or overlay config"),
     (("close", "childWaitMs"), "the child close wait comes from the user or overlay config"),
     (("sessions", "machines"), "the machines a session may open on over SSH come from the user or overlay config"),
+    (("sessions", "pull"), "the remote pull poll periods come from the user or overlay config"),
+    (("sessions", "ssh"), "the SSH multiplexing switch comes from the user or overlay config"),
     (("ceremony", "checkpoint"), "who approves the plan checkpoint comes from the user or overlay config"),
     (("ceremony", "reviewModel"), "the fallback reviewer model comes from the user or overlay config"),
     (("ceremony", "reviewByOccasion"), "the per-occasion reviewer overrides come from the user or overlay config"),
