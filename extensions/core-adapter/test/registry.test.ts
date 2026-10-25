@@ -69,8 +69,13 @@ test("/foreman setup runs this node on the package's setup.mjs with the session 
   const inv = setupInvocation(pkg, "  --dry-run   --no-intercom ", path.join(tmp, "agent"), { PATH: "p", PI_CODING_AGENT_DIR: "other" }, "/n/node");
   assert.equal(inv.command, "/n/node");
   assert.deepEqual(inv.args, [path.join(pkg, "setup.mjs"), "--dry-run", "--no-intercom"]);
-  assert.deepEqual(inv.env, { PATH: "p", PI_CODING_AGENT_DIR: path.join(tmp, "agent") });
+  assert.deepEqual(inv.env, { PATH: "p", PI_CODING_AGENT_DIR: path.join(tmp, "agent"), PI_FOREMAN_PICKER: "off" });
   assert.deepEqual(setupInvocation(pkg, "", "a", {}, "n").args, [path.join(pkg, "setup.mjs")]);
+});
+
+test("/foreman setup switches the picker off in the child, even when the parent env says force", () => {
+  const inv = setupInvocation(pkg, "--profile standard", "a", { PI_FOREMAN_PICKER: "force" }, "n");
+  assert.equal(inv.env.PI_FOREMAN_PICKER, "off");
 });
 
 test("missingBundled names the bundled packages without a package.json under node_modules", () => {

@@ -367,7 +367,7 @@ test("pi-foreman is placed before pi-claude-bridge in packages: dry run shows it
   const dry = run(env, ["--dry-run"]);
   assert.equal(dry.code, 0, dry.out);
   assert.match(dry.out, /packages: would move pi-foreman before pi-claude-bridge/);
-  assert.match(dry.out, /^-\s+"npm:pi-claude-bridge@0\.9\.1",$/m);
+  assert.match(dry.out, /^\+\s+"git:github\.com\/Shredi\/pi-foreman",$/m); // the LCS diff shows the move as an insert and a removal
   assert.deepEqual(snapshot(env.base), before, "dry run writes nothing");
 
   const r = run(env, []);
@@ -394,6 +394,8 @@ test("--develop writes <checkout>/.pi/settings.json (override of the installed p
   for (const f of ["setup.mjs", "packages.lock.json", "package.json"]) fs.copyFileSync(path.join(ROOT, f), path.join(checkout, f));
   fs.cpSync(path.join(ROOT, "scripts"), path.join(checkout, "scripts"), { recursive: true });
   fs.cpSync(path.join(ROOT, "config"), path.join(checkout, "config"), { recursive: true });
+  fs.mkdirSync(path.join(checkout, "extensions", "core-adapter"), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "profiles.mjs"), path.join(checkout, "extensions", "core-adapter", "profiles.mjs"));
   const file = path.join(checkout, ".pi", "settings.json");
   fs.mkdirSync(path.dirname(file));
   fs.writeFileSync(file, JSON.stringify({ theme: "light", packages: [FOREMAN, "npm:keep-me@1.0.0"] }));
@@ -1089,6 +1091,8 @@ test("setup keeps the top-level bundled copies when a manifest entry does not re
   fs.mkdirSync(root);
   for (const f of ["setup.mjs", "package.json", "packages.lock.json"]) fs.copyFileSync(path.join(ROOT, f), path.join(root, f));
   for (const d of ["scripts", "config", "core", "agents"]) fs.symlinkSync(path.join(ROOT, d), path.join(root, d));
+  fs.mkdirSync(path.join(root, "extensions", "core-adapter"), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "profiles.mjs"), path.join(root, "extensions", "core-adapter", "profiles.mjs"));
   seed(env, { packages: ["npm:pi-subagents@0.75.0", "npm:keep-me@1.0.0", FOREMAN] });
   const r = spawnSync(process.execPath, [path.join(root, "setup.mjs"), "--agent-dir", env.agentDir], {
     cwd: env.cwd,
@@ -1134,4 +1138,282 @@ test("setup accepts a 3.13 interpreter named by PI_FOREMAN_PYTHON, with no pytho
   assert.match(out, /python 3\.13 via PI_FOREMAN_PYTHON/);
   assert.doesNotMatch(out, /No Python/);
   assert.ok(fs.readFileSync(`${env.base}-python.log`, "utf8").includes("sys.executable"));
+});
+
+// ---------------------------------------------------------------- profiles, features and add-ons
+
+const foremanJson = (env) => JSON.parse(fs.readFileSync(path.join(env.agentDir, "foreman.json"), "utf8"));
+const foremanBackups = (env) => fs.readdirSync(env.agentDir).filter((f) => f.startsWith("foreman.json.bak-"));
+const writeUser = (env, cfg) => fs.writeFileSync(path.join(env.agentDir, "foreman.json"), `${JSON.stringify({ version: 1, providers: {}, ...cfg }, null, 2)}\n`);
+const NO_PICKER = { PI_FOREMAN_PICKER: undefined };
+const HINT = "features: no profile chosen yet; run foreman setup --pick in a terminal, or pass --profile <name> [--enable/--disable <id>]";
+
+test("profile flags: every exit-2 combination names the rule and writes nothing", () => {
+  const env = fresh();
+  seed(env);
+  const before = snapshot(env.base);
+  const cases = [
+    [["--profile", "nope"], /unknown profile nope; valid: orchestration, standard, full/],
+    [["--enable", "nope"], /unknown feature id nope; toggleable: codemode/],
+    [["--disable", "codemode,nope"], /unknown feature id nope/],
+    [["--enable", "setup"], /setup is not toggleable.*docs\/features\.md/],
+    [["--enable", "codemode", "--disable", "codemode"], /codemode is in both enable and disable/],
+    [["--addon", "nope"], /unknown add-on nope; valid: polish, background-tasks/],
+    [["--pick", "--profile", "standard"], /--pick cannot be combined with --profile/],
+    [["--pick", "--enable", "codemode"], /--pick cannot be combined with --enable/],
+    [["--pick", "--addon", "polish"], /--pick cannot be combined with --addon/],
+    [["--pick"], /--pick needs a terminal/],
+    [["--remove", "--profile", "standard"], /--profile cannot be combined with --remove/],
+    [["--remove", "--enable", "codemode"], /--enable cannot be combined with --remove/],
+    [["--remove", "--disable", "codemode"], /--disable cannot be combined with --remove/],
+    [["--remove", "--addon", "polish"], /--addon cannot be combined with --remove/],
+    [["--remove", "--pick"], /--pick cannot be combined with --remove/],
+  ];
+  for (const [args, re] of cases) {
+    const r = run(env, args, NO_PICKER);
+    assert.equal(r.code, 2, `${args.join(" ")}: ${r.out}`);
+    assert.match(r.out, re, args.join(" "));
+  }
+  const off = run(env, ["--pick"], { PI_FOREMAN_PICKER: "off" });
+  assert.equal(off.code, 2, off.out);
+  assert.match(off.out, /PI_FOREMAN_PICKER=off/);
+  assert.deepEqual(snapshot(env.base), before);
+  assert.deepEqual(calls(env), []);
+});
+
+test("--profile orchestration writes toggles, profile key, backup and diff; the generated block reflects it in the same run; a second run is a no-op", () => {
+  const plain = fresh();
+  seed(plain);
+  assert.equal(run(plain, [], NO_PICKER).code, 0);
+  const env = fresh();
+  seed(env);
+  const mine = { fanout: { max: 2 }, providers: { tp: { roles: { builder: { model: "tp/big" } } } } };
+  writeUser(env, mine);
+  const r = run(env, ["--profile", "orchestration"], NO_PICKER);
+  assert.equal(r.code, 0, r.out);
+  const cfg = foremanJson(env);
+  assert.equal(cfg.profile, "orchestration");
+  assert.equal(cfg.tools.pr, false);
+  assert.equal(cfg.herdr.blockedShim, false);
+  assert.equal(cfg.herdr.groupTag, false);
+  assert.equal(cfg.footer.usage, false);
+  assert.equal(cfg.widget.children, false);
+  assert.equal(cfg.ladder.idleDownshift.enabled, false);
+  assert.equal(cfg.retro.enabled, false);
+  assert.equal(cfg.trace.enabled, false);
+  assert.equal(cfg.providers.tp.cache.keepalive.enabled, false);
+  assert.equal(cfg.roles, undefined, "features in their shipped state write nothing");
+  assert.deepEqual(cfg.fanout, { max: 2 });
+  assert.equal(foremanBackups(env).length, 1);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(env.agentDir, foremanBackups(env)[0]), "utf8")), { version: 1, ...mine });
+  assert.match(r.out, /^--- a\/foreman\.json/m);
+  assert.match(r.out, /^\+\+\+ b\/foreman\.json/m);
+  assert.match(r.out, /feature pr-ops -> off \(tools\.pr=false\)/);
+  assert.doesNotMatch(r.out, /WARN safety relaxations/);
+  assert.doesNotMatch(r.out, new RegExp(HINT.replace(/[[\]<>/]/g, ".")));
+  // same run: the pr tools are gone from the generated block
+  const reviewer = (e) => readSettings(e).subagents.agentOverrides.reviewer.tools;
+  assert.ok(reviewer(plain).includes("pr_status"));
+  assert.ok(!reviewer(env).includes("pr_status"));
+  assert.deepEqual(pythonValidate(env).data.errors, []);
+  // second run changes nothing
+  const before = snapshot(env.base);
+  fs.rmSync(env.log);
+  const again = run(env, ["--profile", "orchestration"], NO_PICKER);
+  assert.equal(again.code, 0, again.out);
+  assert.match(again.out, /foreman\.json: up to date \(profile orchestration\)/);
+  assert.match(again.out, /pi-foreman: up to date, nothing to change/);
+  assert.deepEqual(snapshot(env.base), before);
+  assert.deepEqual(installs(env), []);
+});
+
+test("--enable and --disable after a profile win over it and keep the recorded profile", () => {
+  const env = fresh();
+  seed(env);
+  assert.equal(run(env, ["--profile", "orchestration"], NO_PICKER).code, 0);
+  assert.equal(foremanJson(env).tools.pr, false);
+  const r = run(env, ["--enable", "pr-ops,herdr", "--disable", "codemode"], NO_PICKER);
+  assert.equal(r.code, 0, r.out);
+  const cfg = foremanJson(env);
+  assert.equal(cfg.tools.pr, true);
+  assert.equal(cfg.herdr.blockedShim, true);
+  assert.equal(cfg.roles.foreman.codemode, false);
+  assert.equal(cfg.footer.usage, false);
+  assert.equal(cfg.profile, "orchestration");
+  assert.equal(foremanBackups(env).length, 1);
+  // repeatable flags give the same result
+  const env2 = fresh();
+  seed(env2);
+  assert.equal(run(env2, ["--profile", "orchestration"], NO_PICKER).code, 0);
+  assert.equal(run(env2, ["--enable", "pr-ops", "--enable", "herdr", "--disable", "codemode"], NO_PICKER).code, 0);
+  assert.deepEqual(foremanJson(env2), cfg);
+});
+
+test("--profile full warns about the safety relaxations; --profile standard afterwards turns them back off", () => {
+  const env = fresh();
+  seed(env);
+  const full = run(env, ["--profile", "full"], NO_PICKER);
+  assert.equal(full.code, 0, full.out);
+  assert.match(full.out, /WARN safety relaxations on: git-tools, children-may-push, workflow-scripts, remote-intercom/);
+  let cfg = foremanJson(env);
+  assert.equal(cfg.tools.git, true);
+  assert.equal(cfg.safety.children.mayPush, true);
+  assert.equal(cfg.safety.subagents.allowWorkflow, true);
+  assert.equal(cfg.intercom.allowRemote, true);
+  assert.deepEqual(pythonValidate(env).data.errors, []);
+  const std = run(env, ["--profile", "standard"], NO_PICKER);
+  assert.equal(std.code, 0, std.out);
+  assert.doesNotMatch(std.out, /WARN safety relaxations/);
+  cfg = foremanJson(env);
+  assert.equal(cfg.profile, "standard");
+  assert.equal(cfg.tools.git, false);
+  assert.equal(cfg.safety.children.mayPush, false);
+  assert.equal(cfg.safety.subagents.allowWorkflow, false);
+  assert.equal(cfg.intercom.allowRemote, false);
+  assert.equal(cfg.ladder.reviewerClimb.enabled, false);
+});
+
+test("a non-interactive run prints the no-profile hint and never prompts, even with PI_FOREMAN_PICKER=off", () => {
+  const env = fresh();
+  seed(env);
+  const r = run(env, [], NO_PICKER);
+  assert.equal(r.code, 0, r.out);
+  assert.ok(r.out.includes(HINT), r.out);
+  assert.doesNotMatch(r.out, /Profiles:|Adjust features/);
+  assert.deepEqual(foremanJson(env), { version: 1, providers: {} });
+  const off = run(env, [], { PI_FOREMAN_PICKER: "off" });
+  assert.ok(off.out.includes(HINT));
+  assert.doesNotMatch(off.out, /Profiles:/);
+  // a recorded profile silences the hint
+  assert.equal(run(env, ["--profile", "standard"], NO_PICKER).code, 0);
+  assert.ok(!run(env, [], NO_PICKER).out.includes(HINT));
+});
+
+test("a recorded unknown profile warns and skips the picker", () => {
+  const env = fresh();
+  seed(env);
+  writeUser(env, { profile: "bogus" });
+  const r = run(env, [], { PI_FOREMAN_PICKER: "force", CI: undefined });
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /WARN profile bogus unknown \(valid: orchestration, standard, full\).*--profile/);
+  assert.doesNotMatch(r.out, /Profiles:|nothing written/);
+  assert.ok(!r.out.includes(HINT));
+  assert.equal(foremanJson(env).profile, "bogus");
+});
+
+test("--addon background-tasks runs the exact pi install, records managed.addons and prints the shell-profile env hint", () => {
+  const env = fresh();
+  seed(env);
+  const r = run(env, ["--addon", "background-tasks"], NO_PICKER);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(installs(env), [["install", "npm:pi-background-tasks@2.6.10"]]);
+  assert.match(r.out, /PI_BG_FEATURES=process permanently in your shell profile; Pi reads it when it starts/);
+  const s = readSettings(env);
+  assert.ok(s.packages.includes("npm:pi-background-tasks@2.6.10"));
+  assert.ok(s.subagents.agentOverrides, "the settings write kept the generated block next to the new package");
+  const managed = JSON.parse(fs.readFileSync(managedFile(env), "utf8"));
+  assert.equal(managed.addons["background-tasks"].spec, "npm:pi-background-tasks@2.6.10");
+  assert.match(managed.addons["background-tasks"].installedAt, /^\d{4}-\d\d-\d\dT/);
+  assert.doesNotMatch(r.out, /optional add-on background-tasks/);
+  // installed now: a second consent installs nothing
+  fs.rmSync(env.log);
+  const again = run(env, ["--addon", "background-tasks"], NO_PICKER);
+  assert.match(again.out, /add-on background-tasks: already installed \(npm:pi-background-tasks@2\.6\.10\), no command/);
+  assert.deepEqual(installs(env), []);
+});
+
+test("without --addon nothing is installed; the hint lines name the add-ons", () => {
+  const env = fresh();
+  seed(env);
+  const r = run(env, [], NO_PICKER);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(installs(env), []);
+  assert.match(r.out, /optional add-on polish: .*npm:pi-polish@0\.1\.2.*foreman setup --addon polish/);
+  assert.match(r.out, /optional add-on background-tasks: .*npm:pi-background-tasks@2\.6\.10.*PI_BG_FEATURES=process.*foreman setup --addon background-tasks/);
+  assert.doesNotMatch(r.out, /pi install npm:pi-background-tasks\)/);
+});
+
+test("--project --addon installs nothing when the add-on is installed globally", () => {
+  const env = fresh();
+  seed(env, { packages: [FOREMAN, "npm:pi-background-tasks@2.5.0"] });
+  const projFile = path.join(env.cwd, ".pi", "settings.json");
+  fs.mkdirSync(path.dirname(projFile));
+  fs.writeFileSync(projFile, `${JSON.stringify({ packages: [FOREMAN] })}\n`);
+  const r = run(env, ["--project", "--addon", "background-tasks"], NO_PICKER);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /add-on background-tasks: already installed \(npm:pi-background-tasks@2\.5\.0\), no command/);
+  assert.deepEqual(installs(env), []);
+  assert.deepEqual(JSON.parse(fs.readFileSync(projFile, "utf8")).packages, [FOREMAN]);
+  // not installed anywhere: the project run installs with -l
+  const env2 = fresh();
+  const projFile2 = path.join(env2.cwd, ".pi", "settings.json");
+  fs.mkdirSync(path.dirname(projFile2));
+  fs.writeFileSync(projFile2, `${JSON.stringify({ packages: [FOREMAN] })}\n`);
+  assert.equal(run(env2, ["--project", "--addon", "polish"], NO_PICKER).code, 0);
+  assert.deepEqual(installs(env2), [["install", "npm:pi-polish@0.1.2", "-l"]]);
+});
+
+test("--remove lists installed add-ons with their pi remove lines and removes none", () => {
+  const env = fresh();
+  seed(env, { packages: [FOREMAN, "npm:pi-polish@0.1.2"] });
+  const r = run(env, ["--remove"], NO_PICKER);
+  assert.equal(r.code, 0, r.out);
+  assert.ok(r.out.includes("add-ons installed: polish (npm:pi-polish@0.1.2); kept, remove with: pi remove npm:pi-polish@0.1.2"), r.out);
+  assert.deepEqual(installs(env), []);
+  assert.ok(readSettings(env).packages.includes("npm:pi-polish@0.1.2"));
+});
+
+test("--dry-run with a profile and an add-on writes nothing and runs nothing", () => {
+  const env = fresh();
+  seed(env);
+  writeUser(env, {});
+  const before = snapshot(env.base);
+  const r = run(env, ["--dry-run", "--profile", "orchestration", "--addon", "polish"], NO_PICKER);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(snapshot(env.base), before);
+  assert.deepEqual(calls(env).filter((a) => a[0] !== "--version"), []);
+  assert.match(r.out, /foreman\.json: would write changes/);
+  assert.match(r.out, /^\+\+\+ b\/foreman\.json/m);
+  assert.match(r.out, /would run: pi install npm:pi-polish@0\.1\.2/);
+  // an absent foreman.json is not created either
+  const env2 = fresh();
+  seed(env2);
+  const before2 = snapshot(env2.base);
+  assert.equal(run(env2, ["--dry-run", "--profile", "full"], NO_PICKER).code, 0);
+  assert.deepEqual(snapshot(env2.base), before2);
+});
+
+test("a pre-existing validation error does not block a profile change", () => {
+  const env = fresh();
+  seed(env);
+  writeUser(env, { displayNames: "nope" });
+  assert.ok(pythonValidate(env).data.errors.length > 0);
+  const r = run(env, ["--profile", "orchestration"], NO_PICKER);
+  assert.equal(r.code, 0, r.out);
+  assert.equal(foremanJson(env).profile, "orchestration");
+  assert.equal(foremanJson(env).displayNames, "nope");
+});
+
+test("a new validation error writes nothing and exits 1", posix, () => {
+  const env = fresh();
+  seed(env);
+  writeUser(env, {});
+  // answers the version probe itself; reports an extra error for any validation of a candidate file (--user-file)
+  const py = path.join(env.base, "pywrap");
+  fs.writeFileSync(
+    py,
+    `#!/bin/sh
+case "$*" in *sys.executable*) echo 3.13; echo "$0"; exit 0;; esac
+case "$*" in *"validate --json"*"--user-file"*) echo '{"config":{},"warnings":[],"errors":["injected: new problem"]}'; exit 1;; esac
+exec python3 "$@"
+`,
+    { mode: 0o755 },
+  );
+  const before = snapshot(env.base);
+  const r = run(env, ["--profile", "orchestration"], { ...NO_PICKER, PI_FOREMAN_PYTHON: py });
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /foreman\.json error: injected: new problem/);
+  assert.match(r.out, /nothing was written/);
+  assert.deepEqual(snapshot(env.base), before);
+  assert.deepEqual(installs(env), []);
 });
