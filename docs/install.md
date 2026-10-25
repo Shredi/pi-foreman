@@ -65,14 +65,18 @@ needs every picker precondition below except "no profile recorded"; the message 
 
 ### The picker
 
-The picker is a numbered terminal menu (`node:readline`). It opens only when stdin and stdout are terminals, `CI` is unset,
+The picker is an arrow-key menu (select, checkbox and confirm prompts from `@inquirer/prompts`, a runtime dependency pinned in
+`package.json`). `setup.mjs` loads it with a dynamic `import()` only when the picker opens, so flag-driven and non-interactive
+runs need no `node_modules`. Without a real terminal, `PI_FOREMAN_PICKER=force` uses a plain numbered readline menu
+(`node:readline`) that asks the same questions and prints the same summary; so does a run where the import fails, after one
+note line telling you to run `npm ci` (checkout) or reinstall the package. It opens only when stdin and stdout are terminals, `CI` is unset,
 none of `--profile/--enable/--disable/--addon` is given, and either no profile is recorded yet or `--pick` is given.
 `PI_FOREMAN_PICKER=force` overrides the terminal and `CI` tests and `PI_FOREMAN_PICKER=off` disables the picker; both are a
 test and automation aid. `/foreman setup` inside Pi runs setup with piped output and sets `PI_FOREMAN_PICKER=off` for it, so
 it stays flag-driven. A run that never prompts and has no recorded profile prints one hint naming `--pick` and `--profile`.
 
 Steps: (1) pick a profile, with its summary and off-list; the recorded or `standard` one is preselected and Enter keeps it;
-(2) "Adjust features?" (default no): per area, flip toggles by number, safety relaxations in a last group with a warning;
+(2) "Adjust features?" (default no): per area, one checkbox list each (space flips; the readline menu flips by number), safety relaxations in a last group with a warning;
 (3) add-ons not yet installed: purpose, exact spec, clash notes, `y/N` (default no); (4) summary with the `foreman.json` diff,
 the planned `pi install` lines and the equivalent flag line, then `y/N`. Ctrl-C, end of input or "no" prints "nothing
 written" and exits 0.

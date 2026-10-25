@@ -467,11 +467,126 @@ function foremanBeforeBridge(list, baseDir) {
 
 class Aborted extends Error {}
 
+/** The profile line of a picker menu: title, summary and the features the profile turns off. */
+function profileDescription(profiles, name) {
+  const off = Object.entries(profiles[name].features ?? {}).filter(([, v]) => !v).map(([k]) => k);
+  return `${profiles[name].title}. ${profiles[name].summary}${off.length ? ` Off: ${off.join(", ")}.` : ""}`;
+}
+
+const RELAX_WARNING = "WARNING: each of these loosens a safety guard; leave them off unless you know you need them.";
+
+/** The toggle groups of the picker: one per area, then the safety relaxations last. */
+function toggleGroups(features) {
+  const toggles = toggleable(features);
+  const areas = [...new Set(toggles.filter((f) => !f.toggle.relaxes).map((f) => f.area))];
+  const groups = areas.map((area) => ({ title: area, list: toggles.filter((f) => f.area === area && !f.toggle.relaxes) }));
+  groups.push({ title: "safety relaxations", list: toggles.filter((f) => f.toggle.relaxes), warn: RELAX_WARNING });
+  return groups;
+}
+
+/** A feature that is on and whose "on" leaves include a null (the setting is removed and pi-foreman decides) is shown as "auto". */
+const isAuto = (f, state) => state === "on" && Object.values(f.toggle.on).some((v) => v === null);
+
+/** The add-on step shared by both pickers: what is installed, or what an add-on does and what it clashes with. */
+function describeAddon(a, have) {
+  if (have) return [`Add-on ${a.id}: already installed (${have.source}, ${have.scope})`];
+  return [`Add-on ${a.id}: ${a.purpose}`, `  installs npm:${a.package}@${a.version}`, ...a.clashes.map((c) => `  note: ${c}`)];
+}
+
+/** The summary both pickers print before the final confirm: line-level diff, planned installs, relaxations, equivalent flag line. */
+function printPickerSummary({ currentText, currentConfig, profile, enable, disable, addons, project }) {
+  const plan = planChanges(currentConfig, { profile, enable, disable });
+  say("Summary:");
+  say(`  profile: ${profile}`);
+  say(canonical(plan.config) === canonical(currentConfig) && currentText !== null ? "  foreman.json: no change" : unifiedDiff("foreman.json", currentText, toJson(plan.config)));
+  for (const id of addons) {
+    const a = loadAddons().addons.find((x) => x.id === id);
+    say(`  would run: pi install npm:${a.package}@${a.version}${project ? " -l" : ""}`);
+  }
+  if (plan.relaxations.length) say(`WARN safety relaxations on: ${plan.relaxations.join(", ")}`);
+  say(`  equivalent: ${equivalentCommand({ profile, enable, disable, addons, project })}`);
+}
+
+/** enable/disable relative to the profile's own assignment. */
+function diffStates(base, states) {
+  return {
+    enable: Object.keys(states).filter((id) => states[id] === "on" && base[id] === "off"),
+    disable: Object.keys(states).filter((id) => states[id] === "off" && base[id] === "on"),
+  };
+}
+
+/** Which picker a run gets: the arrow-key menu on a real terminal, the readline menu for PI_FOREMAN_PICKER=force without one. */
+export function pickerKind({ tty }) {
+  return tty ? "inquirer" : "readline";
+}
+
+export const INQUIRER_MISSING_NOTE = "picker: @inquirer/prompts missing, run npm ci (checkout) or reinstall the package; using the basic menu";
+
+/** The picker dispatch. `load` is the dynamic import (replaceable in tests). Same result shape either way. */
+export async function runPicker(ctx, { tty = !!(process.stdin.isTTY && process.stdout.isTTY), load = () => import("@inquirer/prompts") } = {}) {
+  if (pickerKind({ tty }) === "inquirer") {
+    let prompts;
+    try {
+      prompts = await load();
+    } catch {
+      say(INQUIRER_MISSING_NOTE);
+    }
+    if (prompts) return runPickerInquirer(ctx, prompts);
+  }
+  return runPickerReadline(ctx);
+}
+
 /**
- * The terminal picker (plain readline, numbered ASCII menus): profile, optional per-area toggles, add-on consent, summary, confirm.
+ * The arrow-key picker on @inquirer/prompts: select (profile), confirm (adjust), checkbox per area, confirm per add-on, summary, confirm.
+ * Resolves like runPickerReadline; Ctrl-C (ExitPromptError) and a declined confirm give null.
+ */
+async function runPickerInquirer({ currentText, currentConfig, recorded, installed, project }, { select, checkbox, confirm }) {
+  const features = loadFeatures();
+  const profiles = loadProfiles().profiles;
+  const names = Object.keys(profiles);
+  try {
+    const preset = names.includes(recorded) ? recorded : "standard";
+    const profile = await select({
+      message: "Profile",
+      default: preset,
+      choices: names.map((n) => ({ name: n, value: n, description: profileDescription(profiles, n) })),
+    });
+    const base = assignment(profile);
+    const states = { ...base };
+    if (await confirm({ message: "Adjust features?", default: false })) {
+      for (const g of toggleGroups(features)) {
+        if (g.warn) say(g.warn);
+        const on = await checkbox({
+          message: g.title,
+          choices: g.list.map((f) => ({ name: `${f.id}${isAuto(f, "on") ? " (auto)" : ""} - ${f.title}`, value: f.id, checked: states[f.id] === "on" })),
+        });
+        for (const f of g.list) states[f.id] = on.includes(f.id) ? "on" : "off";
+      }
+    }
+    const { enable, disable } = diffStates(base, states);
+    const addons = [];
+    for (const a of loadAddons().addons) {
+      const have = installed.find((i) => i.id === a.id);
+      for (const l of describeAddon(a, have)) say(l);
+      if (!have && (await confirm({ message: `Install ${a.id}?`, default: false }))) addons.push(a.id);
+    }
+    printPickerSummary({ currentText, currentConfig, profile, enable, disable, addons, project });
+    if (!(await confirm({ message: "Apply?", default: false }))) return null;
+    return { profile, enable, disable, addons };
+  } catch (err) {
+    if (err && err.name === "ExitPromptError") {
+      say("");
+      return null;
+    }
+    throw err;
+  }
+}
+
+/**
+ * The fallback picker (plain readline, numbered ASCII menus): profile, optional per-area toggles, add-on consent, summary, confirm.
  * Resolves to { profile, enable, disable, addons } (enable/disable relative to the profile), or null on "no", EOF or Ctrl-C.
  */
-async function runPicker({ currentText, currentConfig, recorded, installed, project }) {
+async function runPickerReadline({ currentText, currentConfig, recorded, installed, project }) {
   const features = loadFeatures();
   const profiles = loadProfiles().profiles;
   const names = Object.keys(profiles);
@@ -489,8 +604,7 @@ async function runPicker({ currentText, currentConfig, recorded, installed, proj
   try {
     say("Profiles:");
     names.forEach((n, i) => {
-      const off = Object.entries(profiles[n].features ?? {}).filter(([, v]) => !v).map(([k]) => k);
-      say(`  ${i + 1}) ${n} - ${profiles[n].title}. ${profiles[n].summary}${off.length ? ` Off: ${off.join(", ")}.` : ""}`);
+      say(`  ${i + 1}) ${n} - ${profileDescription(profiles, n)}`);
     });
     const preset = names.includes(recorded) ? recorded : "standard";
     let profile = null;
@@ -502,17 +616,12 @@ async function runPicker({ currentText, currentConfig, recorded, installed, proj
     const base = assignment(profile);
     const states = { ...base };
     if (await yes("Adjust features? [y/N]: ")) {
-      const toggles = toggleable(features);
-      const areas = [...new Set(toggles.filter((f) => !f.toggle.relaxes).map((f) => f.area))];
-      const groups = areas.map((area) => ({ title: area, list: toggles.filter((f) => f.area === area && !f.toggle.relaxes) }));
-      groups.push({ title: "safety relaxations", list: toggles.filter((f) => f.toggle.relaxes), warn: "WARNING: each of these loosens a safety guard; leave them off unless you know you need them." });
-      for (const g of groups) {
+      for (const g of toggleGroups(features)) {
         say(`${g.title}:`);
         if (g.warn) say(`  ${g.warn}`);
         for (;;) {
           g.list.forEach((f, i) => {
-            const auto = states[f.id] === "on" && Object.values(f.toggle.on).some((v) => v === null);
-            say(`  ${i + 1}) [${states[f.id] === "on" ? "x" : " "}] ${f.id}${auto ? " (auto)" : ""} - ${f.title}`);
+            say(`  ${i + 1}) [${states[f.id] === "on" ? "x" : " "}] ${f.id}${isAuto(f, states[f.id]) ? " (auto)" : ""} - ${f.title}`);
           });
           const picks = (await ask("Flip (numbers, Enter to continue): ")).split(/[\s,]+/).filter(Boolean);
           if (!picks.length) break;
@@ -524,30 +633,14 @@ async function runPicker({ currentText, currentConfig, recorded, installed, proj
         }
       }
     }
-    const enable = Object.keys(states).filter((id) => states[id] === "on" && base[id] === "off");
-    const disable = Object.keys(states).filter((id) => states[id] === "off" && base[id] === "on");
+    const { enable, disable } = diffStates(base, states);
     const addons = [];
     for (const a of loadAddons().addons) {
       const have = installed.find((i) => i.id === a.id);
-      if (have) {
-        say(`Add-on ${a.id}: already installed (${have.source}, ${have.scope})`);
-        continue;
-      }
-      say(`Add-on ${a.id}: ${a.purpose}`);
-      say(`  installs npm:${a.package}@${a.version}`);
-      for (const c of a.clashes) say(`  note: ${c}`);
-      if (await yes(`Install ${a.id}? [y/N]: `)) addons.push(a.id);
+      for (const l of describeAddon(a, have)) say(l);
+      if (!have && (await yes(`Install ${a.id}? [y/N]: `))) addons.push(a.id);
     }
-    const plan = planChanges(currentConfig, { profile, enable, disable });
-    say("Summary:");
-    say(`  profile: ${profile}`);
-    say(canonical(plan.config) === canonical(currentConfig) && currentText !== null ? "  foreman.json: no change" : unifiedDiff("foreman.json", currentText, toJson(plan.config)));
-    for (const id of addons) {
-      const a = loadAddons().addons.find((x) => x.id === id);
-      say(`  would run: pi install npm:${a.package}@${a.version}${project ? " -l" : ""}`);
-    }
-    if (plan.relaxations.length) say(`WARN safety relaxations on: ${plan.relaxations.join(", ")}`);
-    say(`  equivalent: ${equivalentCommand({ profile, enable, disable, addons, project })}`);
+    printPickerSummary({ currentText, currentConfig, profile, enable, disable, addons, project });
     if (!(await yes("Apply? [y/N]: "))) return null;
     return { profile, enable, disable, addons };
   } catch (err) {

@@ -24,7 +24,7 @@ export interface OrientInput {
 }
 
 /** Bundled packages under the pi-foreman package root (package.json dependencies). */
-export const BUNDLED_PACKAGE_ROOTS = ["node_modules/@gotgenes/pi-permission-system", "node_modules/pi-subagents", "node_modules/pi-intercom"];
+export const BUNDLED_PACKAGE_ROOTS = ["node_modules/@gotgenes/pi-permission-system", "node_modules/@inquirer/prompts", "node_modules/pi-subagents", "node_modules/pi-intercom"];
 
 const byteOrder = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
