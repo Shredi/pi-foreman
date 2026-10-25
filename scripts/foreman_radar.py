@@ -44,8 +44,8 @@ FALLBACK_SYMBOLS = {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked"
                     "waiting-owner": "✋", "waiting-external": "↻", "idle": "⏸"}
 SYMBOL_SETS = ("unicode", "emoji", "nerd", "ascii")
 # Activity glyphs of the sidebar rows (agent run, task, wait, ask, finished run); the spinner is a list of frames.
-FALLBACK_ACTIVITY = {"agent": "◆", "task": "⚙", "wait": "⧗", "ask": "?", "recent": "✓"}
-FALLBACK_SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+FALLBACK_ACTIVITY = {"review": "◎", "agent": "◆", "task": "⚙", "wait": "◷", "ask": "?", "recent": "✓"}
+FALLBACK_SPINNER = ("⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷")
 COLORS = {"working": "32", "blocked": "33", "starting": "36", "idle": "90", "lost": "31"}
 ACTIVE = ("working", "blocked", "starting")
 
