@@ -413,7 +413,7 @@
     "footer": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "usage": { "type": "boolean", "description": "Show usage in the footer." }, "style": { "type": "string", "enum": ["foreman", "pi"], "description": "Footer in the tui: foreman (default, the two-line pi-foreman footer) or pi (Pi's own footer, the usage line in the one-line status)." } }
+      "properties": { "usage": { "type": "boolean", "description": "Show usage in the footer." }, "cacheBar": { "type": "boolean", "description": "Show the cache-timer bar in the foreman footer: time to cold, warms left and the next idle step." }, "style": { "type": "string", "enum": ["foreman", "pi"], "description": "Footer in the tui: foreman (default, the two-line pi-foreman footer) or pi (Pi's own footer, the usage line in the one-line status)." } }
     },
     "sidebar": {
       "type": "object",

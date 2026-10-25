@@ -4,7 +4,10 @@ import { tableRate } from "./cost.ts";
 import type { PriceTable } from "./cost.ts";
 import { symbolSet } from "./symbols.ts";
 import { renderFooter } from "./footerview.ts";
-import type { FooterTheme, FooterView } from "./footerview.ts";
+import type { CacheBarView, FooterTheme, FooterView } from "./footerview.ts";
+import { cacheBar, formatLeft } from "./cachebar.ts";
+import type { CachePolicy } from "./cachepolicy.ts";
+import { realTimers, type Timers } from "./prwatch.ts";
 type Json = Record<string, unknown>;
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
@@ -108,16 +111,49 @@ export function cacheStatus(ctx: Pick<FooterCtx, "mode" | "ui">, active: boolean
   }
 }
 
-/** The footer's cache slot for the status glyph: cold and downshift carry their glyph, any other glyph means warm. */
-function cacheMark(glyph: string | undefined): Pick<FooterView, "warm" | "mark"> {
-  if (glyph === undefined) return { warm: false };
-  for (const name of ["unicode", "emoji", "nerd", "ascii"]) {
-    const set = symbolSet(name);
-    if (glyph === set.cold) return { warm: false, mark: { state: "cold", glyph } };
-    if (glyph === set.downshift) return { warm: false, mark: { state: "downshift", glyph } };
-  }
-  return { warm: true };
+/** Raw state behind the cache bar, read by the adapter when the footer renders (no side effects, no requests). */
+export interface CacheSource {
+  /** Warm policy of the current model (resolveWarmPolicy); null = none. */
+  policy: CachePolicy | null;
+  now: number;
+  lastTouch: number | null;
+  /** Window end, next warm and tick (ms) of the path that owns the warming; nextWarmAt null = no warm pending. */
+  windowEndAt: number;
+  nextWarmAt: number | null;
+  tickMs: number;
+  budget: { spent: number; cold: number; next: number; share: number } | null;
+  away: { isAway: boolean; used: number; ticks: number } | null;
+  /** A turn runs: the bar shows the countdown without warms. */
+  running: boolean;
+  downshifted: boolean;
+  /** Id of the configured idle rung; null = none. */
+  idleRung: string | null;
+  /** `footer.cacheBar`. */
+  enabled: boolean;
+  /** `ui.symbols` set name. */
+  symbols: string;
 }
+
+/** The bar of a source, or null when it is hidden (no entry, unknown TTL, per-request billing, switched off). */
+function cacheViewOf(src: CacheSource | null): CacheBarView | null {
+  const p = src?.policy;
+  if (!src || !src.enabled || !p || p.billing === "request" || p.ttlSeconds === null) return null;
+  if (p.skip === "no_entry" || p.skip === "ttl_unknown" || p.skip === "billing_request") return null;
+  const warming = (!p.skip || (p.skip === "ttl_long" && p.selfWarm)) && !src.running;
+  const bar = cacheBar({ now: src.now, lastTouch: src.lastTouch, ttlSeconds: p.ttlSeconds, nextWarmAt: warming ? src.nextWarmAt : null, windowEndAt: src.windowEndAt, tickMs: src.tickMs, budget: src.budget, away: src.away });
+  const set = symbolSet(src.symbols);
+  return {
+    share: bar.share,
+    left: bar.leftMs === null ? null : formatLeft(bar.leftMs),
+    cold: !src.running && (bar.leftMs === null || bar.leftMs <= 0),
+    warms: bar.warmsLeft > 0 ? { count: bar.warmsLeft, limiter: bar.limiter === "budget" || bar.limiter === "away" ? bar.limiter : null } : null,
+    step: !src.downshifted ? src.idleRung : null,
+    glyphs: { keepalive: set.keepalive, cold: set.cold, downshift: set.downshift },
+  };
+}
+
+/** The countdown runs: a known time left that has not reached cold. */
+const counting = (c: CacheBarView | null): boolean => c !== null && !c.cold && c.left !== null;
 
 export interface FooterCtx {
   mode?: string;
@@ -142,6 +178,7 @@ interface FooterMount {
   data: FooterData;
   thinking: () => string;
   ctx: FooterCtx;
+  cacheSource?: (model: FooterCtx["model"]) => CacheSource | null;
 }
 
 /** Per-session totals; `update` never throws and does nothing unless enabled in a tui/rpc session. */
@@ -151,11 +188,15 @@ export class UsageFooter {
   private texts = new Map<string, string>();
   private readonly prices: PriceTable | null;
   private readonly pointOf: (model: FooterCtx["model"]) => number | null;
+  private readonly timers: Timers;
+  /** One 1-second re-armed timer per mounted session while the cache bar counts down. */
+  private ticks = new Map<string, unknown>();
 
   /** `pointOf`: the compaction point Pi uses for a model (compaction-point.mjs runtimePoint), null when unknown. */
-  constructor(prices: PriceTable | null = null, pointOf: (model: FooterCtx["model"]) => number | null = () => null) {
+  constructor(prices: PriceTable | null = null, pointOf: (model: FooterCtx["model"]) => number | null = () => null, timers: Timers = realTimers) {
     this.prices = prices;
     this.pointOf = pointOf;
+    this.timers = timers;
   }
 
   update(sessionId: string, ctx: FooterCtx, message: unknown, opts: { enabled: unknown; isChild: boolean; children: number; wait?: string | null; runsCost?: number }): void {
@@ -173,6 +214,7 @@ export class UsageFooter {
       }
       this.texts.set(sessionId, text);
       mount.tui.requestRender();
+      this.armTick(sessionId, mount);
     } catch {
       // the footer is cosmetic
     }
@@ -192,22 +234,57 @@ export class UsageFooter {
   }
 
   /** The foreman footer of a tui session (footer.style "foreman"): Pi renders this component and it reads the live data each frame. */
-  mount(sessionId: string, ctx: FooterCtx, tui: { requestRender(): void }, theme: FooterTheme, data: FooterData, thinking: () => string): { render(width: number): string[]; invalidate(): void; dispose(): void } {
-    const entry: FooterMount = { tui, theme, data, thinking, ctx };
+  mount(sessionId: string, ctx: FooterCtx, tui: { requestRender(): void }, theme: FooterTheme, data: FooterData, thinking: () => string, cacheSource?: FooterMount["cacheSource"]): { render(width: number): string[]; invalidate(): void; dispose(): void } {
+    const entry: FooterMount = { tui, theme, data, thinking, ctx, cacheSource };
     this.mounts.set(sessionId, entry);
+    this.armTick(sessionId, entry);
     return {
       render: (width) => {
         try {
-          return renderFooter(this.viewOf(sessionId, entry), width, theme);
+          const view = this.viewOf(sessionId, entry);
+          this.armTick(sessionId, entry);
+          return renderFooter(view, width, theme);
         } catch {
           return [this.texts.get(sessionId) ?? ""]; // the plain status segment
         }
       },
       invalidate: () => undefined,
       dispose: () => {
-        if (this.mounts.get(sessionId) === entry) this.mounts.delete(sessionId);
+        if (this.mounts.get(sessionId) === entry) {
+          this.mounts.delete(sessionId);
+          this.stopTick(sessionId);
+        }
       },
     };
+  }
+
+  private cacheOf(m: FooterMount): CacheBarView | null {
+    try {
+      return cacheViewOf(m.cacheSource?.(m.ctx.model) ?? null);
+    } catch {
+      return null; // the bar is cosmetic
+    }
+  }
+
+  /** Re-render once a second while the bar counts down; only `requestRender`, no requests and no model turns. */
+  private armTick(sessionId: string, m: FooterMount): void {
+    if (this.ticks.has(sessionId) || this.mounts.get(sessionId) !== m || !counting(this.cacheOf(m))) return;
+    this.ticks.set(sessionId, this.timers.set(() => {
+      this.ticks.delete(sessionId);
+      if (this.mounts.get(sessionId) !== m) return;
+      try {
+        m.tui.requestRender();
+      } catch {
+        // cosmetic
+      }
+      this.armTick(sessionId, m);
+    }, 1000));
+  }
+
+  private stopTick(sessionId: string): void {
+    if (!this.ticks.has(sessionId)) return;
+    this.timers.clear(this.ticks.get(sessionId));
+    this.ticks.delete(sessionId);
   }
 
   private viewOf(sessionId: string, m: FooterMount): FooterView {
@@ -222,7 +299,7 @@ export class UsageFooter {
       contextWindow: usage?.contextWindow ?? model?.contextWindow ?? 0,
       contextPoint: this.pointOf(model),
       cacheHit: this.cacheHitOf(sessionId),
-      ...cacheMark(statuses.get(CACHE_STATUS_KEY)),
+      cache: this.cacheOf(m) ?? undefined,
       usage: this.texts.get(sessionId) ?? null,
       statuses: [...statuses].filter(([key]) => key !== FOOTER_KEY && key !== CACHE_STATUS_KEY).sort(([a], [b]) => a.localeCompare(b)).map(([, text]) => text),
     };
@@ -232,5 +309,6 @@ export class UsageFooter {
     this.totals.delete(sessionId);
     this.texts.delete(sessionId);
     this.mounts.delete(sessionId);
+    this.stopTick(sessionId);
   }
 }

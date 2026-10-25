@@ -95,7 +95,7 @@ overlay config only (a project or session value is ignored) and unset by default
 - **Rule.** A foreman turn that a notice starts (cause `child`, `wake`, `intercom` or `other`, the list
   `ladder.idleDownshift.causes`) and that begins on a cold cache runs on the idle rung. The cache counts as cold when the
   last cache touch is older than 0.95 x the TTL of the current model, or a compaction dropped it. The reason is cost:
-  the turn re-reads the whole prompt anyway, so it pays the cold price on a cheaper model. `ladder.idleDownshift.enabled`
+  the turn re-reads the whole prompt anyway, so it pays the cold price on a cheaper model. The foreman footer shows `↓ <id>` after the warms as this step, and no step while downshifted. `ladder.idleDownshift.enabled`
   (default true) switches the rule off; a project or session can only set it false, or remove causes.
 - **Restore.** The base model comes back on the owner's next input (cause `user`), on the answer to `ask_user_question`
   or `foreman_checkpoint` (applies to the next request of that turn) and at every session start that finds an open

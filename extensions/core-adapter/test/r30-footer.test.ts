@@ -18,7 +18,6 @@ const VIEW: FooterView = {
   contextPercent: 12,
   contextWindow: 1_000_000,
   cacheHit: 98,
-  warm: true,
   usage: "↑1.2M ↓2.3k tok · $0.90 list (warm $0.50 / cold $0.30) · children 3",
   statuses: ["ext ok"],
 };
@@ -32,7 +31,7 @@ test("the footer is two lines that fit widths 200, 80 and 40; a cut line ends wi
     for (const line of lines) assert.ok(visibleWidth(line) <= width, `${width}: ${plain(line)}`);
   }
   const wide = plain(renderFooter(VIEW, 200, theme)[0]);
-  assert.equal(wide, "claude-opus-5-5 • high · round/30-footer · ■□□□□□□□□□ 12% of 1.0M · CH 98% warm");
+  assert.equal(wide, "claude-opus-5-5 • high · round/30-footer · ■□□□□□□□□□ 12% of 1.0M · CH 98%");
   assert.ok(plain(renderFooter(VIEW, 40, theme)[0]).endsWith("…"));
 });
 
@@ -57,12 +56,11 @@ test("the context bar is green below 50%, yellow below 80%, red from 80%", () =>
   assert.match(plain(renderFooter({ ...VIEW, contextPercent: null }, 200, theme)[0]), /\? of 1\.0M/);
 });
 
-test("CH is green from 80, yellow from 40, red below; warm and cold follow the keep-alive marker", () => {
-  const chCode = (hit: number | null, warm = true): string | undefined => renderFooter({ ...VIEW, cacheHit: hit, warm }, 200, theme)[0].match(/\x1b\[(\d+)mCH /)?.[1];
+test("CH is green from 80, yellow from 40, red below", () => {
+  const chCode = (hit: number | null): string | undefined => renderFooter({ ...VIEW, cacheHit: hit }, 200, theme)[0].match(/\x1b\[(\d+)mCH /)?.[1];
   assert.equal(chCode(80), CODE.success);
   assert.equal(chCode(40), CODE.warning);
   assert.equal(chCode(39), CODE.error);
-  assert.ok(plain(renderFooter({ ...VIEW, warm: false }, 200, theme)[0]).endsWith("CH 98% cold"));
   assert.ok(!plain(renderFooter({ ...VIEW, cacheHit: null }, 200, theme)[0]).includes("CH "));
 });
 

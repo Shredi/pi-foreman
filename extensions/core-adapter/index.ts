@@ -116,7 +116,7 @@ import { citedItems, hintFailTrace, ledgerHint, writeHint, type HintWriteOpts } 
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, sessionTrace, withDigest } from "./retro.ts";
 import { frictionOfRunEnd } from "./friction.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
-import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, waitNote } from "./footer.ts";
+import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, waitNote, type CacheSource } from "./footer.ts";
 import { symbolSet } from "./symbols.ts";
 import { blockedConfirm, installBlockedShim, PERMISSIONS_DECISION, PERMISSIONS_UI_PROMPT, withBlocked } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
@@ -357,6 +357,8 @@ interface Session {
   presence: Presence;
   idleCtx: ExtensionContext | null;
   lastAssistantAt: number | null;
+  /** A turn is running (agent_start .. agent_settled); the footer's cache bar shows no warms. */
+  running: boolean;
   /** Children widget and its run view (childwidget.ts). */
   widget: ChildWidget;
   /** PR widget above the editor (prwidget.ts); never mounted in a child. */
@@ -442,6 +444,31 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
   /** The model the foreman's gates (review rule, rank checks, panel) judge: the base while downshifted, else the current model. */
   const foremanBaseModel = (ctx: ExtensionContext): string | null => idleModel.baseModel(ctx.model);
+  /** Raw state for the footer's cache bar (footer.ts CacheSource): read-only, nothing is sent. */
+  const cacheSourceOf = (s: Session, model: { id: string; provider?: string } | undefined): CacheSource | null => {
+    if (!model) return null;
+    const policy = resolveWarmPolicy(s.config.config, model.provider, model.id);
+    const snap = s.selfWarm.snapshot();
+    const owner = !!policy.selfWarm && s.selfWarm.owns();
+    const pi = s.idleCache.snapshot();
+    const ttl = policy.ttlSeconds ?? 0;
+    const rung = idleModel.idleRung();
+    return {
+      policy,
+      now: Date.now(),
+      lastTouch: s.selfWarm.lastCacheTouch(),
+      windowEndAt: owner ? snap.windowEndAt : pi.windowEndAt,
+      nextWarmAt: owner ? (snap.state === "watching" ? snap.nextWarmAt : null) : pi.nextWarmAt,
+      tickMs: (owner ? 0.9 * ttl : Math.min(0.9 * ttl, ttl - 10)) * 1000,
+      budget: snap.budget && policy.budgetShare !== undefined ? { spent: snap.budget.spent, cold: snap.budget.cold, next: snap.budget.next, share: policy.budgetShare } : null,
+      away: policy.awayTicks !== undefined && s.presence.away() ? { isAway: true, used: snap.awayUsed, ticks: policy.awayTicks } : null,
+      running: s.running,
+      downshifted: idleModel.downshifted(),
+      idleRung: rung ? rung.id : null,
+      enabled: get(s.config.config, "footer.cacheBar") !== false,
+      symbols: String(get(s.config.config, "ui.symbols") ?? "unicode"),
+    };
+  };
   let instructionsCache: string | null | undefined;
   let reviewerInstructionsCache: string | null | undefined;
   const bridgeIso = new BridgeIsolation();
@@ -781,6 +808,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       presence: warm.presence,
       idleCtx: null,
       lastAssistantAt: null,
+      running: false,
       widget: new ChildWidget(usageFile(agentDir, foremanSession), loadPrices(PKG_ROOT)),
       prBot: new PrBot({
         active: () => s.prPack && !s.isChild,
@@ -816,7 +844,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!isChild) {
       if (ctx.mode === "tui" && footerStyleOf(get(s.config.config, "footer.style")) === "foreman") {
         try {
-          ctx.ui.setFooter((tui, theme, data) => usageFooter.mount(id, ctx, tui, theme, data, () => pi.getThinkingLevel()));
+          ctx.ui.setFooter((tui, theme, data) => usageFooter.mount(id, ctx, tui, theme, data, () => pi.getThinkingLevel(), (model) => cacheSourceOf(s, model)));
         } catch {
           // the footer is cosmetic: Pi's own footer stays
         }
@@ -1307,6 +1335,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.idleCache.onAgentStart();
     s.selfWarm.onActivity();
     idleBind = { s, ctx };
+    s.running = true;
     idleModel.setRunning(true);
   });
 
@@ -1428,6 +1457,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.idleCache.start();
       s.selfWarm.start();
       idleBind = { s, ctx };
+      s.running = false;
       idleModel.setRunning(false);
     }
   });

@@ -9,7 +9,7 @@ import type { Busy, WarmGate } from "./idlecache.ts";
 import type { Presence } from "./presence.ts";
 import type { Timers } from "./prwatch.ts";
 import type { UsageLine } from "./usage.ts";
-import { WarmBudget, type Rates } from "./warmbudget.ts";
+import { WarmBudget, type BudgetCheck, type Rates } from "./warmbudget.ts";
 import { warmCompact, type CompactTrigger } from "./warmcompact.ts";
 
 /** Pi's warm tick: this share of the TTL after the last touch. */
@@ -108,6 +108,13 @@ export class SelfWarm implements WarmGate {
 
   lastCacheTouch(): number | null {
     return this.touch;
+  }
+
+  /** Read-only state for the footer's cache bar: no presence probe, no trace. */
+  snapshot(): { state: St; touch: number | null; windowEndAt: number; nextWarmAt: number | null; budget: BudgetCheck | null; awayUsed: number } {
+    const share = this.deps.policy()?.budgetShare;
+    const budget = share === undefined ? null : this.budget.check(this.deps.rates(this.budget.promptTokens()), share);
+    return { state: this.st, touch: this.touch, windowEndAt: this.windowEndAt, nextWarmAt: this.dueAt(), budget, awayUsed: this.awayUsed };
   }
 
   budgetAvailable(): boolean {
