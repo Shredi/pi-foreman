@@ -72,6 +72,10 @@ A parent ruling never satisfies the finish gate: a `ruling.md` or `ruling-<n>.md
 Design record: `design/architecture.md`
 [section 6](../design/architecture.md#6-ledger-gates-and-proportional-ceremony).
 
+## Pushed branches at finish
+
+When a triaged session finishes with no child run active (and is not waiting for its parent), the finish gate starts a background check of the branches the session pushed. A branch with no tracked PR of any state, not the base branch and not already merged into it, gets one display-only warning, `pi-foreman: pushed branch <name> has no tracked PR (open one, or pr_track <number> once it exists)`. The check runs after the gate's early returns, never blocks the finish, never reaches the model, and re-runs a branch at most every 10 minutes until it has an answer. A session that was never triaged passes the gate's first early return and gets the notice only from `/foreman close`. The evaluation order and the `merged` subcommand of `foreman_close.py` are in [close](close.md#pushed-branches-without-a-pr).
+
 ## Round flow
 
 Every round goes through a PR. The foreman works on a branch `round/<n>-<topic>` cut from `main`; a reviewer pre-pr PASS on the branch head comes first, then `pr_create` opens the PR and `pr_watch` waits for its checks. When CI is green the foreman squash-merges it. `main` is branch-protected (the seven CI checks, strict), so nothing lands on it except through that merge. Run `npm run test:ci` before the PR (see [development](development.md#ci)).

@@ -144,8 +144,11 @@ and Herdr's status stays working, and the wait shows on its activity line.
 #### Dots
 
 The dots row shows one circle and a short label per tracked item, in the glyph set's `pr-fail`, `pr-run`, `pr-ok` and
-`pr-none` keys (see Symbols). A pull request dot is labelled `#<number>`; an external item (see
-[External status](#external-status)) shows its own label.
+`pr-none` keys (see Symbols). A pull request dot is labelled `#<number>`; a PR of another repository than the current one
+is labelled `owner/name#<number>`, cut to 20 characters; an external item (see
+[External status](#external-status)) shows its own label. The PR widget above the editor is the detailed view of the same
+data (checks by name, review state, the shared watch); see [tools](tools.md#pr-widget). Sidebar tokens stay plain text:
+no hyperlinks and no colour codes.
 
 | State | Circle (`unicode`) | Meaning of a pull request |
 |---|---|---|
@@ -158,13 +161,17 @@ The order is red, yellow, green, unknown, then by PR number (external items with
 label. At most four cells fit the row; when items are hidden by the cell count or by the width, the last placed cell
 becomes `+n` (n = items not shown). At most 14 dots reach the sidebar.
 
-Which PRs are tracked: a PR created with `pr_create`, a PR under `pr_watch`, and the PR of the current branch. At most six
-are tracked. A closed or merged PR disappears from the row.
+Which PRs are tracked: a PR registered by any of the paths in [tools](tools.md#registration-paths): a branch this session
+pushed, an author search, a command that acted on a PR, the user's events feed, `pr_create`, a PR URL in a result,
+`pr_track`, a PR under `pr_watch` and the PR of the current branch. A PR is identified by host, owner, repo and number. At
+most six are tracked. A closed or merged PR disappears from the row.
 
-Cost: each tracked PR is polled with at most two host calls (checks and mergeability) every `tools.prWatchSeconds` (floor
-30 s), for at most six PRs, on top of the polls `pr_watch` makes itself. A PR that a watch covers reuses the watch's
-checks snapshot and costs only the status call. See [tools](tools.md#watch). `tools.prDots: false` keeps the poller from
-starting at all (the PR tools stay on).
+Cost: on gh one GraphQL batch per tick and host covers every tracked PR (state, mergeability, review and checks), every
+`tools.prWatchSeconds` (floor 30 s), plus a few `pr_find` lookups for pushed branches and one author search every second
+tick, on top of the polls `pr_watch` makes itself. On glab and template hosts each tracked PR costs two calls (checks and
+mergeability), at most 12 for six PRs. A PR that a watch covers reuses the watch's checks snapshot. See
+[tools](tools.md#call-budget) and [tools](tools.md#watch). `tools.prDots: false` keeps the poller from starting at all (the
+PR tools stay on).
 
 ### Data
 
