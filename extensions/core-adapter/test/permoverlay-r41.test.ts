@@ -307,7 +307,6 @@ test("r41 rev3: archivers, patch, transfers and cwd changes aimed at a floored f
     `frobnicate --out=${PF}/managed.json`,
     `frobnicate -o${PF}/managed.json`,
     `frobnicate ${custom}`,
-    `frobnicate ${cwd}/.workflow`,
     `frobnicate ${pkg}/config/permissions.policy.md`,
     `frobnicate ${agentDir}`,
     `cd ${PF}/state/gate && frobnicate x`,
@@ -379,4 +378,39 @@ test("r41 rev3: a path tool that moves or removes a floored folder is a floor de
     assert.equal(tool("foreman_move", { src: `${PF}/state`, dst: `${cwd}/x` }, role)?.rule, "floor", role);
     assert.notEqual(tool("foreman_copy", { src: `${PF}/managed.json`, dst: `${cwd}/x` }, role)?.rule, "floor", role);
   }
+});
+
+// rev3 narrowing: folders are floored only under the agent dir; a workspace policy file is floored as a file only
+const bashIn = (dir: string, command: string, role: "main" | "child" = "main"): Decision | null => checkToolCall(rules, "bash", { command }, { cwd: dir, home, platform: process.platform, role });
+
+test("r41 narrowing 1: the folder of a workspace policy file is no floor deny, the file still is", () => {
+  const proj = `${home}/code/proj`;
+  for (const role of ["main", "child"] as const) {
+    for (const [dir, cmd] of [
+      [proj, "git add config/foreman.schema.json"],
+      [`${pkg}/config`, "git add foreman.schema.json"],
+      [`${pkg}/config`, "ls"],
+      [proj, "rm -rf .workflow/scratch/x"],
+      [proj, "rm -rf .*"],
+      [proj, `frobnicate ${proj}/.workflow`],
+      [proj, "frobnicate .workflow"],
+    ] as const) assert.notEqual(bashIn(dir, cmd, role)?.rule, "floor", `${role} ${dir} ${cmd}`);
+    for (const cmd of ["echo x > .workflow/policy.md", "rm .workflow/policy.md", "mv .workflow/policy.md y", `cp y ${pkg}/config/permissions.policy.md`, `frobnicate ${custom}`]) {
+      assert.equal(bashIn(proj, cmd, role)?.rule, "floor", `${role} ${cmd}`);
+    }
+  }
+});
+
+test("r41 narrowing 2: the agent dir is a floored destination word, not a floored cwd", () => {
+  for (const role of ["main", "child"] as const) {
+    for (const cmd of [`rsync -a d/ ${agentDir}/`, `rm -rf ${agentDir}`, `mv ${agentDir} x`, `tar -xf a.tar -C ${agentDir}`, `find ${agentDir} -delete`]) {
+      assert.equal(bash(cmd, role)?.rule, "floor", `${role} ${cmd}`);
+    }
+  }
+  assert.notEqual(bashIn(agentDir, "cp x settings.json")?.rule, "floor");
+  assert.notEqual(bash(`cd ${agentDir} && cp x settings.json`)?.rule, "floor");
+  assert.equal(bash(`cd ${agentDir} && cp x ${PF}/managed.json`)?.rule, "floor");
+  assert.equal(bash(`cd ${agentDir} && cp x ${PF}/managed.json`, "child")?.kind, "deny");
+  assert.equal(bashIn(PF, "cp x settings.json")?.rule, "floor");
+  assert.equal(bash(`cd ${PF}/state && cp x y`)?.rule, "floor");
 });

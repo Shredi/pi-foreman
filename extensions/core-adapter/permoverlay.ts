@@ -2939,11 +2939,11 @@ function floorDecision(rules: OverlayRules, words: string[], text: string, ctx: 
 
 /**
  * R41 rev3: the floored set, matched by path alone (no program list). It holds the floored files, the folders that hold them (the agent dir's
- * pi-foreman, its state/, state/approvals, state/gate, the folder of every layer's policy file but the session cwd and workspace root) and every
- * parent of the pi-foreman ones up to and including the agent dir. `word` is true when a shell word (an option value `--o=p`, `-Cp`, a brace or
- * glob word, `~`, `..`, a relative name against `cwd`) names a member or a file below state/approvals or state/gate; `folder` when `cwd` is a folder member.
+ * pi-foreman, its state/, state/approvals, state/gate, the folder of a layer policy file only under the agent dir; a workspace policy file is
+ * floored as a file only) and every parent of the pi-foreman ones up to and including the agent dir (a destination word, never a cwd). `word` is true when a shell word (an option value `--o=p`, `-Cp`, a brace or
+ * glob word, `~`, `..`, a relative name against `cwd`) names a member or a file below state/approvals or state/gate; `folder` when `cwd` is a holding folder.
  */
-function floorMatcher(rules: OverlayRules, ctx: MatchCtx): { word: (w: string, cwd: string | null, unknownCwd: boolean) => boolean; folder: (cwd: string | null) => boolean; config: (w: string, cwd: string | null) => boolean } {
+function floorMatcher(rules: OverlayRules, ctx: MatchCtx): { word: (w: string, cwd: string | null, unknownCwd: boolean, cdTarget?: boolean) => boolean; folder: (cwd: string | null) => boolean; config: (w: string, cwd: string | null) => boolean } {
   const fold = foldsCase(ctx.platform);
   const norm = (s: string): string => {
     const n = s.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/+$/, "");
@@ -2953,21 +2953,29 @@ function floorMatcher(rules: OverlayRules, ctx: MatchCtx): { word: (w: string, c
   const agent = rules.floors?.agentDir ? norm(rules.floors.agentDir) : undefined;
   const bases = ctx.cwd ? new Set([norm(ctx.cwd), norm(workspaceOf(ctx.cwd).root)]) : new Set<string>();
   const exact = new Set<string>();
+  const holding = new Set<string>();
   for (const p of pats.filter((x) => !x.includes("*"))) {
     const n = norm(p);
     exact.add(n);
-    let d = path.posix.dirname(n);
+    // folders are floored only under the agent dir; a policy file in a workspace is floored as a file only
     if (agent && n.startsWith(`${agent}/`)) {
+      if (pats.includes(`${p}/*`)) holding.add(n);
+      let d = path.posix.dirname(n);
+      holding.add(d);
       while (d.length >= agent.length) {
         exact.add(d);
         if (d === agent) break;
         d = path.posix.dirname(d);
       }
-    } else if (d.length > 1 && !bases.has(d)) exact.add(d);
+    }
   }
-  const members = [...exact];
+  holding.delete(agent ?? "");
+  // a glob word is matched against the members under the agent dir only (`rm -rf .*` in a project does not reach a workspace policy file)
+  const members = [...exact].filter((x) => !!agent && (x === agent || x.startsWith(`${agent}/`)));
   const variants = (w: string): string[] => {
     const out = new Set<string>([w]);
+    // an unresolved-variable word keeps its quotes
+    if (/^(["'])[^"']*\1$/.test(w)) out.add(w.slice(1, -1));
     // `--out=p`, `of=p`: an option or key before the `=`, not a sed or awk expression like `s/=.*//`
     const eq = /^-{0,2}[\w-]+=/.exec(w);
     if (eq) out.add(w.slice(eq[0].length));
@@ -2982,16 +2990,16 @@ function floorMatcher(rules: OverlayRules, ctx: MatchCtx): { word: (w: string, c
   const cwdsOf = (cwd: string | null, unknown: boolean): string[] => (cwd ? [cwd] : unknown ? [ctx.cwd, ...members] : [ctx.cwd]);
   const cands = (w: string, cwd: string | null, unknown: boolean): string[] => variants(w).flatMap((v) => cwdsOf(cwd, unknown).flatMap((cw) => pathCandidates(v, { ...ctx, cwd: cw })));
   return {
-    word: (w, cwd, unknown) =>
+    word: (w, cwd, unknown, cdTarget = false) =>
       variants(w).some((v) =>
         cwdsOf(cwd, unknown).some((cw) => {
           // a glob matches the floored set lexically; a glob a spelling like `s/=.*//` yields inside pathCandidates is not trusted as a path
           const anchored = /^[/~$]/.test(v);
           const lexical = GLOB.test(v) && !anchored ? [pp.resolve(cw, v)] : [];
-          return [...pathCandidates(v, { ...ctx, cwd: cw }), ...lexical].some((c) => exact.has(norm(c)) || pats.some((p) => pathMatches(p, c, ctx)) || (GLOB.test(c) && (anchored || lexical.includes(c)) && members.some((m) => pathMatches(c, m, ctx))));
+          return [...pathCandidates(v, { ...ctx, cwd: cw }), ...lexical].some((c) => (exact.has(norm(c)) && !(cdTarget && norm(c) === agent)) || pats.some((p) => pathMatches(p, c, ctx)) || (GLOB.test(c) && (anchored || lexical.includes(c)) && members.some((m) => pathMatches(c, m, ctx))));
         }),
       ),
-    folder: (cwd) => !!cwd && exact.has(norm(cwd)),
+    folder: (cwd) => !!cwd && holding.has(norm(cwd)),
     config: (w, cwd) => cands(w, cwd, false).some((c) => CONFIG_FILE.test(c)),
   };
 }
@@ -3074,7 +3082,7 @@ function pathFloor(rules: OverlayRules, command: string, ctx: MatchCtx): Decisio
     if (/^(?:cd|pushd|popd)$/.test(prog)) {
       moved = true;
       if (prog === "popd") inFloor = false;
-      else inFloor = s.argv.some((a) => m.word(a, cwd, !cwd));
+      else inFloor = s.argv.some((a) => m.word(a, cwd, !cwd, true));
       continue;
     }
     if (prog === "echo" || prog === "printf" || plainRead(prog, s.argv)) continue;
