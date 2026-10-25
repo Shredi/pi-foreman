@@ -337,7 +337,7 @@ another repo and the shared watch (every label is a hyperlink):
 ○ #55 r55: ladder docs · approved · ✓12
 ○ acme/tools#204 fix: retry on 502 · review? · ✓6
 watch: 2 need review · 1 failing
-  ● acme/web#118 renovate: lockfile maintenance
+  ● acme/web#118 chore: lockfile maintenance
 ```
 
 At 40 columns (below the 60-column breakpoint) the review word goes first, a title is cut with `…` only when the line would
@@ -373,7 +373,7 @@ One leader session per machine polls the PR host for what no single session sees
 session renders in the widget. It is off by default and read from the user or overlay config only.
 
 ```json
-{"tools": {"prShared": {"enabled": true, "authors": ["ci-bot", "dependabot[bot]"], "seconds": 180, "events": true}}}
+{"tools": {"prShared": {"enabled": true, "authors": ["ci-bot", "ci-bot[bot]"], "seconds": 180, "events": true}}}
 ```
 
 | Key | Default | Meaning |

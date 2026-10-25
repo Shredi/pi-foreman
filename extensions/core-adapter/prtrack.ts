@@ -237,8 +237,13 @@ export function chainSegments(command: string): Segment[] {
     if (words.length === 0) continue;
     if (words[0] === "cd") {
       const d = words.length === 2 ? words[1] : null;
-      cdBad = d === null || d === "-" || /^~|\$/.test(d);
-      cd = d;
+      const bad = d === null || d === "-" || /^~|\$/.test(d);
+      if (!bad && cd !== null && !d.startsWith("/")) {
+        cd = `${cd.replace(/\/+$/, "")}/${d}`;
+      } else {
+        cdBad = bad;
+        cd = d;
+      }
       continue;
     }
     out.push({ words, env, text: text.trim().slice(0, 4096), cd, cdBad: cd !== null && cdBad });

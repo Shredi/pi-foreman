@@ -785,6 +785,20 @@ class FindTemplateTest(PrCase):
         self.assertEqual(argv_of(self.calls()[1])[:4], ["gh", "x", "author", "u"])
 
 
+class OptionalTemplateKeyTest(PrCase):
+    def test_find_and_search_without_key_are_unsupported_status_still_missing(self):
+        self.hosts("gh")
+        self.ready()
+        h = {"status": "gh x {number}"}
+        res = safe_ops.handle({"op": "pr_find", "args": {"head": "feat"}, "cwd": self.repo, "config": {"prHost": h}})
+        self.assertEqual(res["precondition"], "pr_unsupported")
+        res = safe_ops.handle({"op": "pr_find", "args": {"author": "u"}, "cwd": self.repo, "config": {"prHost": h}})
+        self.assertEqual(res["precondition"], "pr_unsupported")
+        res = safe_ops.handle({"op": "pr_search", "args": {"author": "u"}, "cwd": self.repo, "config": {"prHost": h}})
+        self.assertEqual(res["precondition"], "pr_unsupported")
+        self.refused(self.pr("pr_status", host={"find": "gh x"}), "pr_host_missing")
+
+
 class ReplessSetTest(unittest.TestCase):
     def test_repoless_ops_are_pr_ops(self):
         self.assertEqual(set(safe_ops.REPOLESS_PR_OPS), {"pr_search", "pr_batch", "pr_poll", "pr_login"})

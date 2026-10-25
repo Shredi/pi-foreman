@@ -499,11 +499,11 @@ class PrConfigTest(unittest.TestCase):
         self.assertEqual(tools["prShared"], {"enabled": False, "authors": [], "seconds": 180, "events": True})
 
     def test_user_layer_values_are_accepted_and_merged(self):
-        res = self.load(user={"tools": {"prShared": {"enabled": True, "authors": ["ci-bot", "dependabot[bot]"], "seconds": 300},
+        res = self.load(user={"tools": {"prShared": {"enabled": True, "authors": ["ci-bot", "ci-bot[bot]"], "seconds": 300},
                                         "prInteractions": [{"pattern": "deploy (?<n>\\d+)"}]}})
         self.assertEqual(res["errors"], [])
         tools = res["config"]["tools"]
-        self.assertEqual(tools["prShared"], {"enabled": True, "authors": ["ci-bot", "dependabot[bot]"], "seconds": 300, "events": True})
+        self.assertEqual(tools["prShared"], {"enabled": True, "authors": ["ci-bot", "ci-bot[bot]"], "seconds": 300, "events": True})
         self.assertEqual(tools["prInteractions"], [{"pattern": "deploy (?<n>\\d+)"}])
 
     def test_invalid_values_are_errors(self):

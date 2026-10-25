@@ -935,6 +935,12 @@ def _gh_only(pr_host, root, key):
     return host
 
 
+def _optional_key(pr_host, key):
+    """A templates object without the optional `find`/`search` key: the op is unsupported, not a missing host."""
+    if isinstance(pr_host, dict) and pr_host.get(key) is None:
+        raise Precondition("pr_unsupported", "tools.prHost templates have no '%s' key" % key)
+
+
 def _url_host(url):
     """The host (with port) of an https URL without user info, else None."""
     if not isinstance(url, str) or not HTTPS_RE.match(url):
@@ -991,6 +997,7 @@ def op_pr_find(req):
     repo, hostname = arg_repo(args), arg_host(args)
     root = workspace_root(req.get("cwd"))
     head = check_branch(args["head"], "head", root) if args.get("head") is not None else None
+    _optional_key(pr_host, "find")
     host = resolve_host(pr_host, "find", root)
     if host.kind == "template":
         values = _values(root, head=head, author=author, state=state, mode="head" if head else "author",
@@ -1047,6 +1054,7 @@ def op_pr_search(req):
     hostname = arg_host(args)
     root = _repoless_root(req)
     if isinstance(pr_host, dict):
+        _optional_key(pr_host, "search")
         host = resolve_host(pr_host, "search", root)
         values = {"author": author, "host": hostname}
         d = template_json(run_template(host, "search", values, root), "search", list)

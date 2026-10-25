@@ -46,7 +46,7 @@ const shared = (over: Partial<PrShared> = {}): PrShared => ({
   intervalSeconds: 180,
   degraded: false,
   review: [item(7), item(9)],
-  failing: [item(118, "acme/web", "renovate: lockfile maintenance")],
+  failing: [item(118, "acme/web", "chore: lockfile maintenance")],
   touched: [],
   ...over,
 });
@@ -64,7 +64,7 @@ test("mock-up at width 80 and 120: eight own lines, the watch summary and one wa
     "○ #55 r55: ladder docs · approved · ✓12",
     "○ acme/tools#204 fix: retry on 502 · review? · ✓6",
     "watch: 2 need review · 1 failing",
-    "  ● acme/web#118 renovate: lockfile maintenance",
+    "  ● acme/web#118 chore: lockfile maintenance",
   ];
   assert.deepEqual(render(mockViews(), shared(), 80), expected);
   assert.deepEqual(render(mockViews(), shared(), 120), expected);
@@ -171,15 +171,15 @@ test("colours: fail red, run yellow, missing dim, ok line dim", () => {
 });
 
 test("watch section: failing first, review with the ask glyph, at most two items, ten lines in total, touched never rendered", () => {
-  const sh = shared({ review: [item(1), item(2), item(3)], failing: [item(118, "acme/web", "renovate: lockfile")], touched: [{ host: HOST, repo: "acme/pi", n: 99, url: `https://${HOST}/acme/pi/pull/99`, at: NOW }] });
+  const sh = shared({ review: [item(1), item(2), item(3)], failing: [item(118, "acme/web", "chore: lockfile")], touched: [{ host: HOST, repo: "acme/pi", n: 99, url: `https://${HOST}/acme/pi/pull/99`, at: NOW }] });
   const lines = render([], sh, 80);
-  assert.deepEqual(lines, ["watch: 3 need review · 1 failing", "  ● acme/web#118 renovate: lockfile", "  ? acme/web#1 item 1"]);
+  assert.deepEqual(lines, ["watch: 3 need review · 1 failing", "  ● acme/web#118 chore: lockfile", "  ? acme/web#1 item 1"]);
   assert.ok(!lines.join("\n").includes("99"));
   const own = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => view(n, { counts: { passed: 1 } }));
   const full = render(own, sh, 80);
   assert.equal(full.length, 10);
   assert.equal(full[8], "watch: 3 need review · 1 failing");
-  assert.equal(full[9], "  ● acme/web#118 renovate: lockfile");
+  assert.equal(full[9], "  ● acme/web#118 chore: lockfile");
   const only = render([], shared({ failing: [] }), 80);
   assert.equal(only[0], "watch: 2 need review");
   assert.equal(render([], shared({ review: [] }), 80)[0], "watch: 1 failing");
@@ -261,7 +261,7 @@ test("collapsed line and /foreman prs list text", () => {
   assert.ok(text.includes("github.com acme/tools#204"));
   assert.ok(text.includes("shared watch: 2 need review · 1 failing · 1 touched"));
   assert.ok(text.includes("  touched:\n    github.com acme/pi#99 · https://github.com/acme/pi/pull/99"));
-  assert.ok(text.includes("  failing:\n    github.com acme/web#118 · renovate: lockfile maintenance · https://github.com/acme/web/pull/118"));
+  assert.ok(text.includes("  failing:\n    github.com acme/web#118 · chore: lockfile maintenance · https://github.com/acme/web/pull/118"));
   assert.ok(prsListText([], null).includes("none tracked") && prsListText([], null).includes("no snapshot"));
 });
 
@@ -367,7 +367,7 @@ test("PrWidget: a watch-only snapshot mounts, widget.prs off removes, a non-tui 
   const r = rig([], shared({ at: 5_000_000 }));
   r.widget.request(r.ctx(), opts);
   assert.equal(r.calls.length, 1);
-  assert.deepEqual(r.mount()!.render(80), ["watch: 2 need review · 1 failing", "  ● acme/web#118 renovate: lockfile maintenance", "  ? acme/web#7 item 7"]);
+  assert.deepEqual(r.mount()!.render(80), ["watch: 2 need review · 1 failing", "  ● acme/web#118 chore: lockfile maintenance", "  ? acme/web#7 item 7"]);
   r.widget.request(r.ctx(), { ...opts, enabled: false });
   assert.deepEqual(r.calls.map((c) => c.removed), [false, true]);
   r.widget.request(r.ctx(), { ...opts, enabled: false });

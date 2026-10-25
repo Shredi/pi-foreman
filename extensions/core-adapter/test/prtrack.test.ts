@@ -82,6 +82,13 @@ test("registry: a repeated create moves to the front; ignored blocks automatic p
   assert.deepEqual(r.register(k(3), "url"), { added: false, skipped: true, reason: "gone" });
 });
 
+test("chainSegments: a relative second cd resolves against the first, an absolute one replaces it", () => {
+  assert.equal(seg("cd a && cd b && git push")[0].cd, "a/b");
+  assert.equal(seg("cd a && cd /abs && git push")[0].cd, "/abs");
+  assert.equal(seg("cd /abs/ && cd b && git push")[0].cd, "/abs/b");
+  assert.equal(seg("cd ~/x && cd b && git push")[0].cdBad, true);
+});
+
 test("chainSegments: operators, quotes, redirects, env words and a leading cd", () => {
   const s = seg("cd sub && GH_REPO=acme/x gh pr comment 5 -b 'a && b' 2>&1 | tail -n 3; git status");
   assert.deepEqual(s.map((x) => x.words), [["gh", "pr", "comment", "5", "-b", "a && b"], ["tail", "-n", "3"], ["git", "status"]]);
@@ -329,6 +336,18 @@ test("events: onTouched registers the current repo's items and traces path event
   await flush();
   h.d.onTouched([{ host: "github.com", repo: "acme/app", n: 30, at: 1_000_000 - 1000 }, { host: "github.com", repo: "acme/web", n: 31, at: 1_000_000 }]);
   assert.deepEqual(h.tracks.map((t) => t.path), ["create", "events"]);
+});
+
+test("events: the same snapshot on two ticks writes one trace record", async () => {
+  const h = rig();
+  await flush();
+  h.d.onCreated(1);
+  await flush();
+  const items = [{ host: "github.com", repo: "acme/app", n: 30, at: 1_000_000 - 1000 }];
+  h.tracks.length = 0;
+  h.d.onTouched(items);
+  h.d.onTouched(items);
+  assert.deepEqual(h.tracks.map((t) => t.path), ["events"]);
 });
 
 test("a pr_batch not-found drops the PR to gone", async () => {

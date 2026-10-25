@@ -181,6 +181,8 @@ export class PrDots {
   /** Branch name -> the PR key of its open PR (null = none); hits and misses both cached. */
   private branchPr = new Map<string, PrKey | null>();
   private currentBranch = "";
+  /** pr_watch number -> the key from its first pr_status answer's URL (null: not found). */
+  private watchKeys = new Map<number, PrKey | null>();
   private states = new Map<string, Slot>();
   private closed = new Map<string, PrView>();
   private order: PrKey[] = [];
@@ -341,7 +343,7 @@ export class PrDots {
   onTouched(items: unknown): void {
     const cur = this.currentNow();
     const rs = registerTouched(this.reg, items, { current: cur && cur !== NO_REPO ? cur : null, pushed: this.pushed, now: this.now() });
-    for (const r of rs) this.trackTrace("events", r, null);
+    for (const r of rs) if (r.added) this.trackTrace("events", r, null);
     if (rs.some((r) => r.added)) this.wake();
   }
 
@@ -610,7 +612,22 @@ export class PrDots {
       if (d === "failed") failed = true;
     }
     const w = this.deps.watched();
-    if (w.length > 0 && cur) for (const n of [...w].reverse()) this.track({ host: cur.host, repo: cur.repo, n }, "watch", { quiet: true });
+    for (const n of [...this.watchKeys.keys()]) if (!w.includes(n)) this.watchKeys.delete(n);
+    for (const n of [...w].reverse()) {
+      if (!this.watchKeys.has(n)) {
+        const g = classify(await this.deps.run("pr_status", { number: n }));
+        if (g.kind === "halt") return "halted";
+        if (g.kind === "gone") this.watchKeys.set(n, null);
+        else if (g.kind === "ok") {
+          const k = this.keyFrom(g.result.url, n, cur);
+          this.watchKeys.set(n, k);
+          if (k) fresh.set(keyString(k), g.result);
+        }
+        else failed = failed || g.kind === "fail";
+      }
+      const wk = this.watchKeys.get(n);
+      if (wk) this.track(wk, "watch", { quiet: true });
+    }
     this.order = this.tracked();
     const ids = new Set(this.order.map(keyString));
     for (const id of [...this.states.keys()]) if (!ids.has(id)) this.states.delete(id);

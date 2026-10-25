@@ -223,13 +223,45 @@ test("a merged PR keeps a view for 60 s, its dot goes at once", async () => {
   assert.equal(h.d.views().length, 0);
 });
 
-test("watched numbers are keyed on the current repository and the tick sees them", async () => {
+test("watched numbers are keyed by the URL of their first pr_status answer (one call per new number)", async () => {
   const h = rig({ branch: "", watched: () => [7] });
-  h.state.handle = (c) => (c.op === "pr_batch" ? ran({ prs: (c.args.prs as { n: number }[]).map((p) => entry(p.n)), errors: [] }) : undefined);
+  h.state.handle = (c) => {
+    if (c.op === "pr_status") return ran({ number: 7, url: url("acme/up", 7), state: "open" });
+    return c.op === "pr_batch" ? ran({ prs: (c.args.prs as { n: number }[]).map((p) => entry(p.n, { repo: "acme/up", url: url("acme/up", p.n) })), errors: [] }) : undefined;
+  };
+  h.d.start();
+  await h.fire();
+  assert.deepEqual(h.callsOf("pr_batch")[0].args.prs, [{ repo: "acme/up", n: 7 }]);
+  assert.equal(h.d.views()[0].source, "watch");
+  await h.fire();
+  assert.equal(h.callsOf("pr_status").filter((c) => c.args.number === 7).length, 1, "asked once");
+});
+
+test("a watched number whose answer has no URL falls back to the current repository", async () => {
+  const h = rig({ branch: "", watched: () => [7] });
+  h.state.handle = (c) => {
+    if (c.op === "pr_status") return ran({ number: 7, state: "open" });
+    return c.op === "pr_batch" ? ran({ prs: (c.args.prs as { n: number }[]).map((p) => entry(p.n)), errors: [] }) : undefined;
+  };
   h.d.start();
   await h.fire();
   assert.deepEqual(h.callsOf("pr_batch")[0].args.prs, [{ repo: "acme/app", n: 7 }]);
-  assert.equal(h.d.views()[0].source, "watch");
+});
+
+test("a templates host without find: discovery is skipped, the poller keeps ticking and the dots stay", async () => {
+  const h = rig({ branch: "" });
+  await push(h, "feat");
+  h.d.onCreated(1, url("acme/app", 1));
+  h.state.handle = (c) => {
+    if (c.op === "pr_find") return pre("pr_unsupported");
+    return c.op === "pr_batch" ? ran({ prs: [entry(1)], errors: [] }) : undefined;
+  };
+  h.d.start();
+  for (let i = 0; i < 4; i++) await h.fire();
+  assert.equal(h.callsOf("pr_batch").length, 4);
+  assert.equal(h.d.dots().length, 1);
+  assert.equal(h.d.dots()[0].state, "ok");
+  assert.ok(!h.traces.some((t) => t.outcome === "stopped"));
 });
 
 test("the repository comes from pr_repo once per cwd; a child (gate closed) calls nothing", async () => {
