@@ -2027,7 +2027,7 @@ def pr_rule_check(text, name):
         return 2, "check needs Python 3.11+ (tomllib)"
     try:
         data = tomllib.loads(text)
-    except ValueError:
+    except tomllib.TOMLDecodeError:
         return 2, "unreadable: not valid TOML"
     rows = data
     for key in ("ui", "sidebar", "agents", "rows_by_agent", "pi"):
@@ -2077,6 +2077,7 @@ def cmd_check(args):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sidebar.py", description=__doc__.splitlines()[0])
     ap.add_argument("command", choices=("start", "stop", "run", "status", "configure", "check", "push", "sample"))
+    ap.add_argument("--check", action="store_true", help="with configure: only check the PR rules in --config (alias: the check command)")
     ap.add_argument("--width", type=int)
     ap.add_argument("--no-view", action="store_true")
     ap.add_argument("--lead-cells", type=int)
@@ -2104,9 +2105,9 @@ def main(argv=None):
         return cmd_stop()
     if args.command == "status":
         return cmd_status()
-    if args.command == "configure":
+    if args.command == "configure" and not args.check:
         return cmd_configure(args)
-    if args.command == "check":
+    if args.command in ("configure", "check"):
         return cmd_check(args)
     if args.command == "push":
         return cmd_push(args)

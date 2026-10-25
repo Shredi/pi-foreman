@@ -2,6 +2,8 @@
 
 Exit 0 when the $fm_pr rules match the set's glyphs, 1 when stale or a token is missing, 2 when unreadable."""
 import argparse
+import contextlib
+import io
 import sys
 import tempfile
 import unittest
@@ -64,6 +66,52 @@ class PrRuleCheckTest(unittest.TestCase):
             self.assertEqual(code, 2, line)
             self.assertFalse(missing.exists())
             self.assertEqual(list(Path(tmp).iterdir()), [])
+
+
+class ConfigureCheckFlagTest(unittest.TestCase):
+    def run_main(self, text, *extra):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name, "config.toml")
+        if text is not None:
+            path.write_text(text, encoding="utf-8")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = sidebar.main(["configure", "--check", "--symbols", "unicode", "--config", str(path), *extra])
+        return code, out.getvalue(), tmp.name
+
+    def test_ok_config_exits_0(self):
+        code, out, _ = self.run_main(SNIPPET)
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.startswith("ok"), out)
+
+    def test_stale_config_exits_1_and_writes_nothing(self):
+        old = SNIPPET
+        for glyph, dot in EMOJI_DOTS.items():
+            old = old.replace(glyph, dot)
+        code, out, tmp = self.run_main(old)
+        self.assertEqual(code, 1, out)
+        self.assertTrue(out.startswith("stale:"), out)
+        self.assertEqual([p.name for p in Path(tmp).iterdir()], ["config.toml"])
+
+    def test_missing_file_exits_2(self):
+        code, out, _ = self.run_main(None)
+        self.assertEqual(code, 2, out)
+
+    def test_check_command_is_an_alias(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "config.toml")
+            path.write_text(SNIPPET, encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(sidebar.main(["check", "--symbols", "unicode", "--config", str(path)]), 0)
+
+
+class CurrentSnippetEverySetTest(unittest.TestCase):
+    def test_configure_snippet_passes_for_every_set(self):
+        for name in sidebar.SYMBOL_SETS:
+            with self.subTest(set=name):
+                code, line = sidebar.pr_rule_check(sidebar.snippet_for(name), name)
+                self.assertEqual(code, 0, line)
 
 
 class DaemonStartCheckTest(unittest.TestCase):

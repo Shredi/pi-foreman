@@ -194,6 +194,7 @@ export function dividerLine(open: number, width: number, theme: FooterTheme, sym
   const rule = sym.rule;
   if (width < 12) return theme.fg("dim", rule.repeat(width));
   const title = `${rule}${rule} PRs${open ? ` (${open})` : ""} `;
+  if (vw(title) > width) return theme.fg("dim", rule.repeat(width));
   return theme.fg("dim", title + rule.repeat(width - vw(title)));
 }
 

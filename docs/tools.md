@@ -328,7 +328,7 @@ The widget at 80 columns, one failing PR, one running PR with a queued required 
 another repo and the shared watch (every label is a hyperlink):
 
 ```text
-── PRs (4) ───────────────────────────────────────────
+── PRs (4) ────────────────────────────────────────────────────────────────────
 ● #58 r58: PR widget, reliable tracking, bot watch · review? · ✗ 1 ◉ 2 ✓ 9
   ✗ failed: test (ubuntu)
   ◉ running: bench-smoke, test (windows)

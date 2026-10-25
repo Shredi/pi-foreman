@@ -65,6 +65,15 @@ test("divider below 12 columns is a plain rule of the exact width", () => {
   assert.equal(dividerLine(0, 1, PLAIN, symbolSet("unicode")), FILL(1));
 });
 
+test("divider whose title does not fit falls back to a plain rule of the exact width", () => {
+  let d = "";
+  assert.doesNotThrow(() => {
+    d = dividerLine(100, 12, PLAIN, symbolSet("unicode"));
+  });
+  assert.equal(d, FILL(12));
+  assert.equal(visibleWidth(d), 12);
+});
+
 test("divider at 12 columns carries the title; no count when no view is open", () => {
   assert.equal(dividerLine(2, 12, PLAIN, symbolSet("unicode")), `── PRs (2) ${FILL(1)}`);
   assert.equal(dividerLine(0, 72, PLAIN, symbolSet("unicode")), `── PRs ${FILL(65)}`);
