@@ -579,6 +579,8 @@ Switch: `safety.subagents.allowWorkflow` is true.
 | `safety.ops.copyMaxBytes` | `104857600` | tighten-only (lower only) |
 | `safety.ops.worktreeDisposable` | `["node_modules/", "target/", "dist/", "build/", "__pycache__/", ".venv/"]` | not in project/session (no tighten rule for this safety key) |
 | `safety.ops.baseBranch` | `null` | not in project/session (no tighten rule for this safety key) |
+| `safety.preBash.hooks` | unset | not in project/session (no tighten rule for this safety key) |
+| `safety.preBash.strict` | unset | not in project/session (no tighten rule for this safety key) |
 | `safety.preconditionOps` | unset | not in project/session (no tighten rule for this safety key) |
 | `python.path` | `null` | not in project/session (it chooses the executable that runs every guard) |
 
@@ -795,6 +797,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [read-budgets](#read-budgets) | `/foreman budget` |
 | [waits](#waits) | `/foreman waits` |
 | [pr-ops](#pr-ops) | `/foreman prs` |
+| [bridge-isolation](#bridge-isolation) | `/foreman trust bridge` |
 | [sessions](#sessions) | `/foreman session`, `foreman session` |
 | [remote-sessions](#remote-sessions) | `foreman session remote` |
 | [sync](#sync) | `/sync`, `foreman sync` |

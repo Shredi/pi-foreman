@@ -465,7 +465,7 @@
       "title": "Guards and safe operations",
       "purpose": "Loads the guard extensions into every child, sets the limits of the precondition-checked copy and worktree-remove tools, and picks the Python that runs every guard.",
       "doc": "docs/safety.md#further-safety-and-runtime-keys",
-      "keys": ["safety.requiredChildExtensions", "safety.preconditionOps", "safety.ops", "python.path", "ceremony.childBashTimeoutSeconds", "ceremony.childBashTimeoutMaxSeconds"],
+      "keys": ["safety.requiredChildExtensions", "safety.preconditionOps", "safety.ops", "safety.preBash", "python.path", "ceremony.childBashTimeoutSeconds", "ceremony.childBashTimeoutMaxSeconds"],
       "commands": [],
       "switch": null,
       "state": "on",
@@ -477,7 +477,7 @@
       "purpose": "With the Claude bridge, points `CLAUDE_CONFIG_DIR` at an empty folder so the host's Claude Code settings, hooks and plugins do not load into bridge turns.",
       "doc": "docs/safety.md#bridge-isolation",
       "keys": ["bridge.isolateClaudeConfig"],
-      "commands": [],
+      "commands": ["/foreman trust bridge"],
       "switch": null,
       "state": "on",
       "enable": ""

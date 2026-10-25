@@ -76,7 +76,9 @@ test("A5 secrets are masked, paths stay, a long command stays complete; other ev
   assert.ok(c.includes("[redacted]"));
   assert.ok(c.includes("/some/long/path"), "paths are not scrubbed");
   // the exception is for ask_flag only: any other event drops the command, a deny keeps the old cap and scrub
-  assert.equal(sanitizeTrace({ event: "dialog", command: "ls" }).command, undefined);
+  // R41 item 15: a dialog record keeps its command, redacted and not cut
+  const dlg = String(sanitizeTrace({ event: "dialog", command: `curl -H "Authorization: Bearer abcdefghijklmnop12345" ${"y".repeat(600)}` }).command);
+  assert.ok(dlg.includes("[redacted]") && !dlg.includes("abcdefghijklmnop12345") && dlg.length > 400);
   assert.ok(String(sanitizeTrace({ event: "overlay", decision: "deny", command: "x".repeat(500) }).command).length <= 200);
   assert.equal(sanitizeTrace({ event: "tool_error", note: "n" }).note, undefined);
 });

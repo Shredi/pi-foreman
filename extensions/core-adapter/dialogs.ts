@@ -66,7 +66,9 @@ export function dialogReport(traceFile: string): DialogReport {
       const f = SURFACE_FAMILY[String(rec.surface)];
       if (!f) continue;
       out[f].count++;
-      out[f].lines.push(typeof rec.agent === "string" ? rec.agent : String(rec.surface));
+      // R41 item 15: the full command (redacted at the writer, never cut) when the record carries one
+      const who = typeof rec.agent === "string" ? rec.agent : String(rec.surface);
+      out[f].lines.push(typeof rec.command === "string" && rec.command ? (typeof rec.agent === "string" ? `${who}: ${rec.command}` : rec.command) : who);
       continue;
     }
     // a guard's ask dialog that a human answered (no-ui and child outcomes opened none here)

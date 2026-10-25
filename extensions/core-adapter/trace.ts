@@ -22,6 +22,8 @@ const DENY_EVENTS = new Set(["read_budget", "recheck_budget", "child_read_budget
 const MAX_MESSAGE = 200; // a tool_error message (lane 7f)
 const UNSCRUBBED = new Set(["model", "models", "primary", "from", "to"]);
 const isDeny = (rec: Record<string, unknown>): boolean => (DENY_EVENTS.has(String(rec.event)) && (rec.event === "launch_refused" || rec.action === "deny" || rec.decision === "deny")) || (rec.event === "guard" && rec.guard === "self_ruling" && rec.decision === "blocked") || (rec.event === "overlay" && typeof rec.decision === "string" && rec.decision.startsWith("ask-")) || rec.event === "auto_review_allow"; // the overlay's ask dialogs and the auto reviewer's allows (R16) keep their command (`/foreman dialogs`)
+/** R41 item 15: a blocking dialog (a `dialog` record, an overlay `ask-*`) and the owner's flagged ask keep the COMPLETE command, only secret-looking values masked by redactCommand. */
+const fullCommand = (rec: Record<string, unknown>): boolean => rec.event === "ask_flag" || rec.event === "dialog" || (rec.event === "overlay" && typeof rec.decision === "string" && rec.decision.startsWith("ask-"));
 const MAX_REASON = 320; // a deny reason keeps its rule pattern, which sits after the lead-in
 
 /**
@@ -117,7 +119,7 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
   const out: Record<string, string | number | boolean | null> = {};
   for (const [k, v] of Object.entries(rec)) {
     if (!ALLOWED.has(k)) continue;
-    if (k === "command" && !isDeny(rec) && rec.event !== "ask_flag") continue; // never a command outside a deny (and the owner's flagged ask, R31c)
+    if (k === "command" && !isDeny(rec) && !fullCommand(rec)) continue; // never a command outside a deny (and the owner's flagged ask, R31c)
     if (k === "message" && (rec.event !== "tool_error" || typeof v !== "string")) continue; // free text: only a tool_error's redacted message
     if (k === "message") {
       out[k] = scrubPaths(redactCommand(String(v))).slice(0, MAX_MESSAGE);
@@ -135,7 +137,7 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
     } else if (typeof v === "string") {
       // every string field: secrets redacted, then every path, URL and file name replaced by `[path]` (a URL whole); model ids (`model`, `models`, a panel's `primary`, a climb's `from`/`to`) are config, not content
       // R31c (owner ruling): a flagged ask keeps its COMPLETE command, only secret-looking values masked by redactCommand (no path scrub, no length cap)
-      if (k === "command" && rec.event === "ask_flag") {
+      if (k === "command" && fullCommand(rec)) {
         out[k] = redactCommand(v);
         continue;
       }

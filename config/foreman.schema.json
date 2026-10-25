@@ -579,6 +579,15 @@
           "additionalProperties": false,
           "properties": { "allowWorkflow": { "type": "boolean", "description": "Let subagent workflow scripts and schedule.* actions through; they can launch any agent with any model, unchecked by the role allowlist and the role map. Loosening key: L1, overlays and the user file only; project and session values are ignored." } }
         },
+        "preBash": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Pre-bash hook extension point. A project or session cannot set it (a hook runs code).",
+          "properties": {
+            "hooks": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Ordered hooks run before every bash tool call. An entry ending .mjs, .cjs or .js is a module (absolute path, or relative to the agent dir) whose default export or preBash(input) returns { block: true, reason } to block; any other entry is a command (split on whitespace, no shell) that gets the input JSON {command, cwd, tool, session, role} on stdin and blocks with exit 2 (stderr = reason). A hook can only block, never allow." },
+            "strict": { "type": "boolean", "description": "false (default) = fail-open: a hook error (throw, other exit code, start failure, 5 s timeout) is traced as prebash_hook_error and ignored. true = a hook error blocks the bash call." }
+          }
+        },
         "preconditionOps": { "type": "object", "description": "Settings for the precondition-checked operations. A project cannot set it." }
       }
     },

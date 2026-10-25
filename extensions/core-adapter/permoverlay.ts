@@ -116,6 +116,8 @@ export interface OwnedRoots {
   childScratch?: string;
   /** `<tmp>/pi-foreman-scratch`: a child may use only its own subdir (`childScratch` / `ctx.scratch`). */
   childScratchRoot?: string;
+  /** The global npm root when resolved (named in the whole-filesystem scan deny). */
+  npmRoot?: string;
 }
 
 export interface OverlayRules {

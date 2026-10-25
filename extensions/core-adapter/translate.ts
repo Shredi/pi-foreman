@@ -103,6 +103,24 @@ export function evaluateRun(guard: GuardName, run: GuardRun, python: string | nu
   return { kind: "decision", d: parsed.d };
 }
 
+/**
+ * Plan mode (R41 item 18): a Pi plan-mode package appends a `plan-mode` custom entry `{ enabled }` to the session at each toggle; the latest
+ * one on the branch decides. Plan mode lets a session write only under `.workflow/`, so it cannot write a ledger first: a read-only explorer
+ * launch then passes the spawn gate without one (the core gate's `permission_mode: plan` exemption); every other launch is unchanged.
+ */
+export function planModeOn(entries: readonly unknown[]): boolean {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i] as { type?: unknown; customType?: unknown; data?: { enabled?: unknown } } | null;
+    if (e && e.type === "custom" && e.customType === "plan-mode") return e.data?.enabled === true;
+  }
+  return false;
+}
+
+/** `permission_mode` of the spawn gate's payload: `plan` only in plan mode and only when every launched agent is the read-only explorer. */
+export function spawnPermissionMode(planMode: boolean, agents: readonly string[]): "plan" | "default" {
+  return planMode && agents.length > 0 && agents.every((a) => a === "explorer") ? "plan" : "default";
+}
+
 export interface AskEnv {
   /** True inside a pi-subagents child (PI_SUBAGENT_CHILD=1). */
   isChild: boolean;

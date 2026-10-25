@@ -145,6 +145,26 @@ plugins and `CLAUDE.md` do not load into bridge turns (`bridge.isolateClaudeConf
 Login steps are in [install](install.md). Rationale: `design/architecture.md`
 [bridge isolation](../design/architecture.md#bridge-isolation).
 
+### Bridge project-config trust
+
+A project `.pi/claude-bridge.json` that sets an executable path, `AskClaude` or `strictMcpConfig: false` raises an error notice at session start and a
+doctor FAIL. The owner can trust the file as it is with the slash command `/foreman trust bridge`: a confirm dialog shows the risky keys and the
+file's sha256, and a yes writes the record `<agentDir>/pi-foreman/state/bridge-trust.json` (user layer). While the hash of the file matches, the notice
+and the FAIL stay silent; any edit of the file is untrusted again. The dialog is the owner's alone (no model answer, no auto review), there is no CLI
+subcommand, and the file is a policy floor: a tool or shell write to it is refused.
+
+## Pre-bash hooks
+
+`safety.preBash.hooks` is an ordered list run before every `bash` tool call (user and overlay config only; a project or session value is ignored,
+because a hook runs code). An entry ending `.mjs`, `.cjs` or `.js` is a module (absolute path, or relative to the agent dir) whose default export
+(or `preBash`) takes `{command, cwd, tool, session, role}` and returns `{ block: true, reason }` to block. Any other entry is a command, split on
+whitespace and run without a shell, with the same JSON on stdin; exit 2 blocks (stderr is the reason), exit 0 passes. A hook can only block, never
+allow: the guards and the permission checks run after it. **Fail-open by default:** a hook error (a throw, any other exit code, a start failure, the
+5 s timeout) is traced as `prebash_hook_error` and ignored. **Strict mode** (`safety.preBash.strict: true`): a hook error blocks the call. An explicit
+block blocks in both modes.
+
+Plan mode (a read-only explorer launch needs no ledger) is detected from the latest `plan-mode` custom entry (`{ enabled }`) on the session branch.
+
 ## Known limit: a reader chained with `find`
 
 The reader skip for protected operands (see Owned paths) covers a command whose every unit is a minimal reader. A read-only line chained with `find` (`cat protected/file; find . -name x`) loses the skip for the protected file, because `find` is not in the reader set. The set is not widened; split the line or use the read tool.
@@ -196,6 +216,7 @@ Key-by-key layer rules for `safety.*`: `design/architecture.md`
 | `safety.ops.worktreeDisposable` | Path components whose ignored files `foreman_worktree_remove` may delete (`name/` = a directory); not settable by a project. |
 | `safety.ops.baseBranch` | Base branch for the merged check of `foreman_worktree_remove`; `null` = origin HEAD, else main, else master. |
 | `safety.preconditionOps` | Settings container for the precondition-checked operations; a project cannot set it. |
+| `safety.preBash.hooks`, `safety.preBash.strict` | Hooks run before each bash call and the strict switch; see [Pre-bash hooks](#pre-bash-hooks). A project or session cannot set them. |
 | `intercom.allowRemote`, `intercom.allowOpenPane` | Allow remote intercom / opening a pane (both default `false`); a project or session can only set false. |
 | `close.from` | Sources a close request is accepted from (default `herdr`, `intercom-parent`); a project or session can only narrow it. |
 | `close.autoClean` | Remove manifest worktrees and scratch at close when the preconditions pass (default `true`); a project or session can only set false. See [close](close.md). |

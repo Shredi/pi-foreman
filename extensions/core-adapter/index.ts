@@ -29,7 +29,11 @@ import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { firstRunNotice, presetNames, presetProviders, providerGapNotice } from "./firstrun.ts";
 import { dormantDoctorLine } from "./features.ts";
+import { bridgeTrusted, trustBridgeCommand } from "./bridgetrust.ts";
+import { preBashConfigOf, runPreBashHooks } from "./prebash.ts";
 import { collectOrientation } from "./orient.ts";
+import type { PiRoots } from "./orient.ts";
+import { applyRootsBlock } from "./childbrief.ts";
 import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits } from "./childreads.ts";
 import { bgWaitLocations, coordinationCall, finalizationCommand, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
@@ -42,7 +46,7 @@ import { branchMove, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdi
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
-import { autoReviewDoctorLine, autoReviewTarget, ForemanReview, overlayAutoReview, REVIEW_LINK, reviewTarget, userPromptOf } from "./review.ts";
+import { autoReviewDoctorLine, autoReviewTarget, ForemanReview, overlayAutoReview, REVIEW_LINK, reviewTarget, reviewValue, userPromptOf } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
@@ -74,7 +78,7 @@ import { defaultSpawner } from "./spawn.ts";
 import type { Spawner } from "./spawn.ts";
 import { ADDON_BG_TOOL, FOREMAN_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
-import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
+import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
 import { appendReview, capSet, checksLine, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prGateRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, hideStaleNotice, staleNoticeRunIds } from "./notices.ts";
@@ -120,7 +124,7 @@ import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, waitNote } from ".
 import { symbolSet } from "./symbols.ts";
 import { blockedConfirm, installBlockedShim, PERMISSIONS_DECISION, PERMISSIONS_UI_PROMPT, withBlocked } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
-import { builderLaunchRefusal, changedPlans, checkpointMode, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, PLAN_VERDICT_FILE, planSnapshot, planSummary, planVersionHash, readPlan, readPlanVerdict, sha256 } from "./checkpoint.ts";
+import { builderLaunchRefusal, changedPlans, checkpointMode, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, PLAN_VERDICT_FILE, planSnapshot, planSummary, planVersionHash, readPlan, readPlanVerdict, restoreFromStore, saveStored, sha256, stampPlanVersion } from "./checkpoint.ts";
 import { effectivePlannerMode, PLANNER_SELF_MESSAGE, plannerNotBelow, selfPlanRequired } from "./plannerself.ts";
 import type { PlanRecord } from "./checkpoint.ts";
 import type { EventBus } from "./herdr.ts";
@@ -503,7 +507,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const f = p.forwarding && typeof p.forwarding === "object" ? (p.forwarding as { requesterAgentName?: unknown }) : null;
     const who = f && typeof f.requesterAgentName === "string" ? { agent: f.requesterAgentName } : {};
-    [...sessions.values()][0]?.trace?.emit({ event: "dialog", surface: f ? "child" : "permission", ...who });
+    let command = "";
+    try {
+      command = reviewValue(p as never);
+    } catch {
+      command = "";
+    }
+    [...sessions.values()][0]?.trace?.emit({ event: "dialog", surface: f ? "child" : "permission", ...who, ...(command ? { command } : {}) });
   };
   pi.events?.on(PERMISSIONS_UI_PROMPT, (d: unknown) => {
     traceDialogPrompt(d);
@@ -836,7 +846,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const claudeRisks = provider === BRIDGE_PROVIDER ? projectClaudeRisks(cwd) : [];
     if (claudeRisks.length) ctx.ui.notify(`pi-foreman: project Claude Code config runs in claude-bridge turns: ${claudeRisks.join(", ")}. Fix: ${PROJECT_CLAUDE_FIX}`, "error");
-    const bridgeCfgRisks = projectBridgeConfigRisks(cwd);
+    const bridgeCfgRisks = bridgeTrusted(agentDir, cwd) ? [] : projectBridgeConfigRisks(cwd); // silent while the owner's trust record matches the file (bridgetrust.ts)
     if (bridgeCfgRisks.length) ctx.ui.notify(`pi-foreman: the project's claude-bridge config makes the bridge run what the project chose: ${bridgeCfgRisks.join(", ")}. Fix: ${PROJECT_BRIDGE_FIX}`, "error");
     s.trace?.emit({ event: "session_start", role: s.isChild ? "child" : "foreman", model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null, tier: s.ceremony.tier });
     tracePoint(s, ctx.model);
@@ -938,6 +948,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     s.trace?.emit({ event: "round_state_restored", approval: a ? "ruling" : "none" });
     persistRounds(s);
+  }
+
+  /**
+   * session_start after a reload or resume (R41 item 17): the checkpoint approval and the plan-review verdicts come back from the harness-only approval
+   * store, keyed by the plan version hash of the plan files now in the scratch dir. A parent ruling is restoreRounds' business.
+   */
+  function restoreStoredPlans(s: Session, ctx: ExtensionContext): void {
+    if (s.isChild || roundStateDir(process.env)) return; // a round session's approval comes from the parent's ruling (restoreRounds), never from a stored human answer
+    const r = restoreFromStore(s.agentDir, planOpts(s, ctx));
+    for (const v of r.reviews) if (!s.planReviews.lineage(v.plan.path)) s.planReviews.restore(v.plan.path, { hash: v.plan.hash, verdict: v.review.verdict, model: v.review.model, findings: Promise.resolve([]) }, v.review.rounds);
+    const a = r.approved;
+    if (a && !s.plan) s.plan = { topic: a.plan.topic, path: a.plan.path, hash: a.plan.hash, status: "approved", approvedAt: a.at, by: a.by, note: "restored after reload from the approval store" };
+    if (a || r.reviews.length) {
+      s.trace?.emit({ event: "round_state_restored", approval: a ? "store" : "none" });
+      persistRounds(s);
+    }
   }
 
   function sessionFor(ctx: ExtensionContext): Session | undefined {
@@ -1095,6 +1121,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("session_start", async (event, ctx) => {
     const s = await startSession(ctx);
     restoreRounds(s, ctx);
+    if (event.reason === "reload" || event.reason === "resume") restoreStoredPlans(s, ctx);
     emitReady(pi.events as EventBus | undefined, core.claim);
     if (!s.isChild) {
       idleBind = { s, ctx };
@@ -1359,7 +1386,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (instructionsCache === null) notifyOnce(s, ctx, "instructions", "pi-foreman: instructions/foreman.md is missing; the foreman runs without its rules.");
     if (s.orientation === undefined) {
       // Once per session, so every later turn (and a compaction re-put) carries identical bytes.
-      s.orientation = get(s.config.config, "ceremony.orientation.enabled") === false ? "" : await collectOrientation(ctx.cwd, { reads: readLimits(get(s.config.config, "ceremony.foremanReads")).before, maxLines: Math.max(1, Number(get(s.config.config, "ceremony.orientation.maxLines")) || 120) });
+      s.orientation = get(s.config.config, "ceremony.orientation.enabled") === false ? "" : await collectOrientation(ctx.cwd, { reads: readLimits(get(s.config.config, "ceremony.foremanReads")).before, maxLines: Math.max(1, Number(get(s.config.config, "ceremony.orientation.maxLines")) || 120), roots: await piRootsOf(s) });
       s.trace?.emit({ event: "orientation", lines: s.orientation ? s.orientation.split("\n").length : 0 });
     }
     const text = [applyVariants(instructionsCache ?? "", promptVariants(s)), tierLine(s.ceremony), s.triageHint, finishLine({ [s.ceremony.tier]: requiredOf(s, s.ceremony.tier) }, s.ceremony.tier)].concat(s.orientation).filter(Boolean).join("\n\n");
@@ -1367,6 +1394,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.foremanSection = withDigest(text, s.retro.digest);
     event.systemPromptOptions.sections["pi-foreman"] = s.foremanSection;
   });
+  let piInstallRoot: Promise<string | null> | undefined;
+  /** The roots of the running pi: its coding-agent package dir (resolved from the package itself, never a literal path), the global npm root, this package's root. */
+  async function piRootsOf(s: Session): Promise<PiRoots> {
+    piInstallRoot ??= (async () => {
+      try {
+        const d = ((await import("@earendil-works/pi-coding-agent")) as { getPackageDir?: () => unknown }).getPackageDir?.();
+        return typeof d === "string" && d ? d : null;
+      } catch {
+        return null;
+      }
+    })();
+    return { installRoot: await piInstallRoot, npmRoot: s.owned.npmRoot ?? null, pkgRoot: PKG_ROOT };
+  }
   /** Values for the tagged variant lines of the prompt files (ledgercall.ts applyVariants). */
   function promptVariants(s: Session): Record<string, string> {
     return {
@@ -1726,7 +1766,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const findings = (s.reviewRuns.findings.get(runId) ?? Promise.resolve([])).then((b) => b.find((x) => x.result.index === r.index)?.findings ?? [], () => []);
       for (const p of plans) {
         const rp = readPlan(p, opts);
-        if ("plan" in rp) s.planReviews.record(rp.plan.path, { hash: planVersionHash(rp.plan.bytes), verdict: r.verdict, model: r.model, findings });
+        if ("plan" in rp) {
+          s.planReviews.record(rp.plan.path, { hash: planVersionHash(rp.plan.bytes), verdict: r.verdict, model: r.model, findings });
+          const rounds = s.planReviews.lineage(rp.plan.path)?.rounds ?? 1;
+          saveStored(s.agentDir, rp.plan.hash, rp.plan.topic, { review: { verdict: r.verdict, model: r.model, rounds } }); // survives /reload (checkpoint.ts)
+        }
       }
     }
     persistRounds(s);
@@ -2218,6 +2262,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (clamp) s.trace?.emit({ event: "launch_timeout", ...clamp, reason: "cap" });
       }
       const pc = payloadCtx(s, ctx);
+      // safety.preBash.hooks (prebash.ts): user-configured hooks before a bash call; a hook error is traced and ignored unless safety.preBash.strict
+      if (event.toolName === "bash" && typeof input.command === "string") {
+        const pre = preBashConfigOf(get(s.config.config, "safety.preBash"));
+        if (pre.hooks.length) {
+          const hr = await runPreBashHooks(pre, { command: input.command, cwd: ctx.cwd, tool: event.toolName, session: s.id, role: s.isChild ? s.usage.line.role ?? "child" : "foreman" }, { spawner, agentDir: s.agentDir });
+          for (const e of hr.errors) s.trace?.emit({ event: "prebash_hook_error", kind: pre.strict ? "strict" : "ignored", reason: `${e.hook}: ${e.error}` });
+          if (hr.blocked) return { block: true, reason: hr.blocked };
+        }
+      }
       for (const guard of mapping.pre) {
         let agents: string[] = [];
         if (guard === "destructive_guard") {
@@ -2237,7 +2290,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (guard === "git_guard") await s.reviewSync;
         const prGate = { enabled: get(s.config.config, "ceremony.reviewBeforePr") !== false, reviewed_heads: passHeads(s.reviews) };
         const payload = guard === "git_guard" ? gitGuardPayload(event.toolName, input, pc, get(s.config.config, "safety.git"), prGate) : preToolPayload(event.toolName, input, pc);
-        if (guard === "ledger_guard_spawn") (payload.tool_input as Record<string, unknown>).prompt = callerTask;
+        if (guard === "ledger_guard_spawn") {
+          (payload.tool_input as Record<string, unknown>).prompt = callerTask;
+          payload.permission_mode = spawnPermissionMode(planModeOn(ctx.sessionManager.getBranch?.() ?? []), agents);
+        }
         const outcome = await run(s, ctx, guard, payload, mapping.coreName);
         if (guard === "destructive_guard" && outcome.kind === "decision" && dropDeadPathRewrite(outcome.d, input.command, os.homedir())) {
           s.trace?.emit({ event: "guard_rewrite_dropped", guard, toolFamily: mapping.coreName });
@@ -2324,6 +2380,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview)) s.trace?.emit(r);
       }
       if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input)) s.trace?.emit(r);
+      // R41 Ruling: the roots of Pi and npm (and a builder's absolute plan and ledger paths) in every fresh child brief
+      if (event.toolName === "subagent" && !s.isChild) for (const r of applyRootsBlock(input, await piRootsOf(s), { plan: s.plan && s.plan.status === "approved" ? s.plan.path : null, ledger: boundLedger(s.markerDir, s.id) })) s.trace?.emit(r);
       if (event.toolName === "subagent" && climbs.length > 0) {
         const ledgerFile = boundLedger(s.markerDir, s.id);
         const ledger = (() => { try { return ledgerFile ? fs.readFileSync(ledgerFile, "utf8") : null; } catch { return null; } })();
@@ -2727,6 +2785,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   };
   /** The handoff dirs where this session is the child: the only ones the ask state and the parent-ruling gate read. */
   const childDirsOf = (s: Session): string[] => childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id));
+  /** A `ruling.md` / `ruling-plan.md` written by this session in a handoff dir where it is the PARENT gets the `plan-version:` line of that dir's plan.md (checkpoint.ts stampPlanVersion). */
+  function stampParentRuling(s: Session, file: string): void {
+    if (path.basename(file) !== "ruling.md" && path.basename(file) !== PLAN_VERDICT_FILE) return;
+    const realOf = (d: string): string => {
+      try {
+        return fs.realpathSync.native(d);
+      } catch {
+        return path.resolve(d);
+      }
+    };
+    const dir = realOf(path.dirname(file));
+    const own = new Set(childDirsOf(s).map(realOf));
+    if (own.has(dir)) return;
+    const parentOf = ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)).map(realOf);
+    if (!parentOf.includes(dir)) return;
+    const hash = stampPlanVersion(file, path.join(dir, "plan.md"));
+    if (hash) s.trace?.emit({ event: "plan_ruling_stamped", to: hash.slice(0, 16) });
+  }
   const bashRulingSnaps = new Map<string, Map<string, number>>();
   const MUTATING_TOOLS = new Set(["write", "edit", "bash", "powershell"]);
 
@@ -2891,6 +2967,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           } catch {
             // keep the resolved path
           }
+          // R41 item 17: the parent pane's harness stamps the plan version into a plan ruling it wrote for a CHILD's handoff dir (never the caller's own dir)
+          if (event.toolName === "write" || event.toolName === "edit") stampParentRuling(owner, real);
           selfRulingsFor(owner).mark(real);
         }
       }
@@ -3640,6 +3718,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           rec.status = "approved";
           rec.approvedAt = new Date().toISOString();
           rec.by = !verdict && ctx.mode === "tui" ? "user" : "rig";
+          // a human's dialog answer (not a parent verdict) is kept in the harness-only approval store, keyed by the plan version hash
+          if (!verdict) saveStored(s.agentDir, rec.hash, rec.topic, { approval: { at: rec.approvedAt, by: rec.by } });
           return done("approve", rec.by, `The owner approved ${name} (${hash8}). Builders may launch at tier heavy while the file stays unchanged; any edit needs a new ${CHECKPOINT_TOOL}.`);
         }
         if (answer === "revise") {
@@ -3818,7 +3898,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman prs [list]",
+    description: "pi-foreman commands: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman prs [list] | /foreman trust bridge",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
       if (sub === "close") return close.command(args.trim().slice(sub.length), ctx);
@@ -3837,6 +3917,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       if (sub === "session") return sessionCmd.command(args.trim().slice(sub.length), ctx);
+      if (sub === "trust") {
+        const s = await ensureSession(ctx);
+        if (s.isChild || rest.length !== 1 || rest[0] !== "bridge") {
+          ctx.ui.notify("Usage: /foreman trust bridge (foreman session only)", "warning");
+          return;
+        }
+        // the owner's confirm dialog only: no auto review, no model answer
+        ctx.ui.notify(await trustBridgeCommand(s.agentDir, s.cwd, projectBridgeConfigRisks(s.cwd), { hasUI: ctx.hasUI, mode: ctx.mode, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) }), "info");
+        return;
+      }
       if (sub === "budget") {
         const s = await ensureSession(ctx);
         if (rest[0] !== "lift" || s.isChild) {
@@ -4025,8 +4115,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (risks.length) fail(`project Claude Code config runs in claude-bridge turns: ${risks.join(", ")}`, PROJECT_CLAUDE_FIX);
       else ok("no project Claude Code hooks, command helpers or .mcp.json");
     }
-    const bridgeCfg = projectBridgeConfigRisks(s.cwd);
-    if (bridgeCfg.length) fail(`project claude-bridge config: ${bridgeCfg.join(", ")}`, PROJECT_BRIDGE_FIX);
+    const bridgeTrust = bridgeTrusted(s.agentDir, s.cwd);
+    const bridgeCfg = bridgeTrust ? [] : projectBridgeConfigRisks(s.cwd);
+    if (bridgeTrust) ok("project .pi/claude-bridge.json is trusted by the owner (bridge-trust.json, hash matches)");
+    else if (bridgeCfg.length) fail(`project claude-bridge config: ${bridgeCfg.join(", ")}`, PROJECT_BRIDGE_FIX);
     else ok("no executable path, AskClaude or strictMcpConfig false in .pi/claude-bridge.json");
     const userBridge = userBridgeConfigRisks(s.agentDir);
     const userBridgeFile = path.join(s.agentDir, "claude-bridge.json");
