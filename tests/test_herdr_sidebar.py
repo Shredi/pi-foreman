@@ -32,23 +32,23 @@ SYMS = {
                 "cold": "❄", "downshift": "↓",
                 "waiting-owner": "\u270b", "waiting-external": "\u21bb", "idle": "\u23f8",
                 "spinner": BRAILLE, "review": "◎", "agent": "◆", "task": "⚙", "wait": "◷", "ask": "?", "recent": "✓",
-                "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌"},
+                "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌", "rule": "─"},
     "emoji": {"working": "⏳", "waiting": "⏸️", "asking": "❓", "blocked": "✋", "done": "✅", "lost": "❌",
               "keepalive": "♨️", "cold": "❄️", "downshift": "⬇️",
               "waiting-owner": "✋", "waiting-external": "🔄", "idle": "⏸️",
               "spinner": BRAILLE, "review": "🔍", "agent": "🤖", "task": "⚙️", "wait": "⏱️", "ask": "❓", "recent": "✅",
-              "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌"},
+              "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌", "rule": "─"},
     "nerd": {"working": "\uf252", "waiting": "\uf04c", "asking": "\uf128", "blocked": "\uf256",
              "done": "\uf00c", "lost": "\uf00d", "keepalive": "\uf06d",
              "cold": "\uf2dc", "downshift": "\uf063",
              "waiting-owner": "\uf256", "waiting-external": "\uf017", "idle": "\uf04c",
              "spinner": BRAILLE, "review": "\uf002", "agent": "\uf544", "task": "\uf013", "wait": "\uf017", "ask": "\uf128",
              "recent": "\uf00c",
-             "pr-fail": "\uf111", "pr-run": "\uf192", "pr-ok": "\uf10c", "pr-none": "\uf1db"},
+             "pr-fail": "\uf111", "pr-run": "\uf192", "pr-ok": "\uf10c", "pr-none": "\uf1db", "rule": "\u2500"},
     "ascii": {"working": "*", "waiting": ".", "asking": "?", "blocked": "#", "done": "+", "lost": "x",
               "keepalive": "^", "cold": "_", "downshift": "v", "waiting-owner": "#", "waiting-external": "@", "idle": ".",
               "spinner": ["|", "/", "-", "\\"], "review": "&", "agent": ">", "task": "=", "wait": "~", "ask": "?", "recent": "+",
-              "pr-fail": "x", "pr-run": "*", "pr-ok": "o", "pr-none": "."},
+              "pr-fail": "x", "pr-run": "*", "pr-ok": "o", "pr-none": ".", "rule": "-"},
 }
 # The glyphs a sidebar state shows (the keys that are not the footer's, a spinner or an activity mark).
 STATE_KEYS = ("working", "waiting", "asking", "blocked", "done", "lost", "waiting-owner", "waiting-external", "idle")
@@ -1284,16 +1284,16 @@ class CellWidthTest(unittest.TestCase):
     WIDTHS = {
         "unicode": {"working": 2, "waiting": 1, "asking": 1, "blocked": 2, "done": 1, "lost": 1, "keepalive": 1,
                     "cold": 1, "downshift": 1, "waiting-owner": 2, "waiting-external": 1, "idle": 1, "review": 1, "agent": 1, "task": 1, "wait": 1,
-                    "ask": 1, "recent": 1, "pr-fail": 1, "pr-run": 1, "pr-ok": 1, "pr-none": 1},
+                    "ask": 1, "recent": 1, "pr-fail": 1, "pr-run": 1, "pr-ok": 1, "pr-none": 1, "rule": 1},
         "emoji": {"working": 2, "waiting": 2, "asking": 2, "blocked": 2, "done": 2, "lost": 2, "keepalive": 2,
                   "cold": 2, "downshift": 2, "waiting-owner": 2, "waiting-external": 2, "idle": 2, "review": 2, "agent": 2, "task": 2, "wait": 2,
-                  "ask": 2, "recent": 2, "pr-fail": 1, "pr-run": 1, "pr-ok": 1, "pr-none": 1},
+                  "ask": 2, "recent": 2, "pr-fail": 1, "pr-run": 1, "pr-ok": 1, "pr-none": 1, "rule": 1},
         "nerd": dict.fromkeys(("working", "waiting", "asking", "blocked", "done", "lost", "keepalive", "cold", "downshift",
                                "waiting-owner", "waiting-external", "idle", "review", "agent", "task", "wait", "ask", "recent",
-                               "pr-fail", "pr-run", "pr-ok", "pr-none"), 1),
+                               "pr-fail", "pr-run", "pr-ok", "pr-none", "rule"), 1),
         "ascii": dict.fromkeys(("working", "waiting", "asking", "blocked", "done", "lost", "keepalive", "cold", "downshift",
                                 "waiting-owner", "waiting-external", "idle", "review", "agent", "task", "wait", "ask", "recent",
-                                "pr-fail", "pr-run", "pr-ok", "pr-none"), 1),
+                                "pr-fail", "pr-run", "pr-ok", "pr-none", "rule"), 1),
     }
 
     def test_every_glyph_of_symbols_json_has_its_pinned_width(self):

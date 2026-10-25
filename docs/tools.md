@@ -328,14 +328,15 @@ The widget at 80 columns, one failing PR, one running PR with a queued required 
 another repo and the shared watch (every label is a hyperlink):
 
 ```text
-● #58 r58: PR widget, reliable tracking, bot watch · review? · ✗1 ◉2 ✓9
+── PRs (4) ───────────────────────────────────────────
+● #58 r58: PR widget, reliable tracking, bot watch · review? · ✗ 1 ◉ 2 ✓ 9
   ✗ failed: test (ubuntu)
   ◉ running: bench-smoke, test (windows)
-◉ #57 r57: cache keep-alive per provider · approved · ◉1 ◌1 ✓11
+◉ #57 r57: cache keep-alive per provider · approved · ◉ 1 ◌ 1 ✓ 11
   ◉ running: test (macos)
   ◌ missing: bench-smoke
-○ #55 r55: ladder docs · approved · ✓12
-○ acme/tools#204 fix: retry on 502 · review? · ✓6
+○ #55 r55: ladder docs · approved · ✓ 12
+○ acme/tools#204 fix: retry on 502 · review? · ✓ 6
 watch: 2 need review · 1 failing
   ● acme/web#118 chore: lockfile maintenance
 ```
@@ -344,12 +345,12 @@ At 40 columns (below the 60-column breakpoint) the review word goes first, a tit
 still be too long, detail lines show counts instead of names, and the watch items drop so that only the summary stays:
 
 ```text
-● #58 r58: PR widget, reliab… · ✗1 ◉2 ✓9
+● #58 r58: PR widget, rel… · ✗ 1 ◉ 2 ✓ 9
   ✗ failed 1 · ◉ running 2
-◉ #57 r57: cache keep-alive… · ◉1 ◌1 ✓11
+◉ #57 r57: cache keep-al… · ◉ 1 ◌ 1 ✓ 11
   ◉ running 1 · ◌ missing 1
-○ #55 r55: ladder docs · ✓12
-○ acme/tools#204 fix: retry on 502 · ✓6
+○ #55 r55: ladder docs · ✓ 12
+○ acme/tools#204 fix: retry on 502 · ✓ 6
 watch: 2 need review · 1 failing
 ```
 
