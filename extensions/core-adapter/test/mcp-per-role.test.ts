@@ -13,7 +13,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { disableIntercom, mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { createDefaultChildSessionFactory } from "../../../node_modules/pi-subagents/src/runs/shared/child-session.js";
 import { resolvePiLaunchToolPlan } from "../../../node_modules/pi-subagents/src/runs/shared/child-tool-plan.js";
 import { discoverAgents } from "../../../node_modules/pi-subagents/src/agents/agents.js";
@@ -71,6 +71,21 @@ function launch(root: string, agentDir: string, extra: Record<string, unknown>, 
   } as never;
 }
 
+/**
+ * pi-intercom reads its config from the runner's PI_CODING_AGENT_DIR when it loads, and spawns its broker with the
+ * session's env. So the disabled agent dir must be the runner's one while a session is created.
+ */
+async function createIn<T>(agentDir: string, create: () => Promise<T>): Promise<T> {
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  try {
+    return await create();
+  } finally {
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
+  }
+}
+
 async function waitForFile(file: string): Promise<boolean> {
   for (let waited = 0; waited < 5000; waited += 50) {
     if (fs.existsSync(file)) return true;
@@ -87,12 +102,13 @@ async function waitForFile(file: string): Promise<boolean> {
 async function withParentHost<T>(root: string, use: (host: Api) => Promise<T>): Promise<T> {
   const parentDir = path.join(root, "parent-agent");
   const server = writeMcpJson(parentDir, "parent", undefined);
+  disableIntercom(parentDir);
   const factory = createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 10_000 });
   const hook: { api?: Api } = {};
-  const parent = await factory.create(launch(root, parentDir, {
+  const parent = await createIn(parentDir, () => factory.create(launch(root, parentDir, {
     tools: ["mcp__fx__echo"],
     builtinMcpTools: [{ name: "mcp__fx__echo", selector: "fx" }],
-  }, hook));
+  }, hook)));
   try {
     assert.equal(await waitForFile(server.startMarker), true, "parent host did not start the server");
     return await use(hook.api!);
@@ -138,6 +154,7 @@ for (const [label, mcp, selector] of [["server only", ["fx"], "fx"], ["server/to
     const root = mkTestTmp("mcp-per-role-");
     const agentDir = path.join(root, "agent");
     const server = writeMcpJson(agentDir, "child", undefined);
+    disableIntercom(agentDir);
     const factory = createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 10_000 });
     try {
       // Role A: the generated tools carry mcp:<selector>, pi-subagents splits and grants it.
@@ -154,10 +171,10 @@ for (const [label, mcp, selector] of [["server only", ["fx"], "fx"], ["server/to
       assert.deepEqual(plan.effectiveMcpTools, ["mcp__fx__echo"]);
 
       const roleA: { api?: Api } = {};
-      const childA = await factory.create(launch(root, agentDir, {
+      const childA = await createIn(agentDir, () => factory.create(launch(root, agentDir, {
         tools: plan.effectiveToolAllowlist,
         builtinMcpTools: plan.builtinMcpTools,
-      }, roleA));
+      }, roleA)));
       try {
         assert.equal(await waitForFile(server.startMarker), true, "server did not start for role A");
         const direct = roleA.api!.getAllTools().filter((tool) => tool.exposure === "direct").map(({ name }) => name);
@@ -176,7 +193,7 @@ for (const [label, mcp, selector] of [["server only", ["fx"], "fx"], ["server/to
       assert.equal(planB.builtinMcpTools, undefined);
       assert.deepEqual(planB.effectiveMcpTools, []);
       const roleB: { api?: Api } = {};
-      const childB = await factory.create(launch(root, agentDir, { tools: planB.effectiveToolAllowlist }, roleB));
+      const childB = await createIn(agentDir, () => factory.create(launch(root, agentDir, { tools: planB.effectiveToolAllowlist }, roleB)));
       try {
         await new Promise((resolve) => setTimeout(resolve, 1000));
         assert.equal(fs.existsSync(server.startMarker), false, "server started for role B");
@@ -197,6 +214,7 @@ test("enabled: false keeps the server off in the child, so a server cannot be ke
   const root = mkTestTmp("mcp-per-role-");
   const agentDir = path.join(root, "agent");
   const server = writeMcpJson(agentDir, "child", false);
+  disableIntercom(agentDir);
   const factory = createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 1500 });
   try {
     const tools = generatedTools(root, "builder", ["fx/echo"]);
@@ -204,7 +222,7 @@ test("enabled: false keeps the server off in the child, so a server cannot be ke
     const { plan } = await withParentHost(root, async (host) => planFor(root, agentDir, tools, host));
     assert.deepEqual(plan.builtinMcpTools, [{ name: "mcp__fx__echo", selector: "fx/echo" }]);
     await assert.rejects(
-      factory.create(launch(root, agentDir, { tools: plan.effectiveToolAllowlist, builtinMcpTools: plan.builtinMcpTools }, {})),
+      createIn(agentDir, () => factory.create(launch(root, agentDir, { tools: plan.effectiveToolAllowlist, builtinMcpTools: plan.builtinMcpTools }, {}))),
       /did not register in the child session: mcp__fx__echo/,
     );
     assert.equal(fs.existsSync(server.startMarker), false, "disabled server was started");
