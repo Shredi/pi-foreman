@@ -66,6 +66,7 @@ import { applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool,
 import type { PrOp } from "./gitpack.ts";
 import { PrWatches, pollSnapshot } from "./prwatch.ts";
 import { PrDots, branchOf, prDotsEnabled } from "./prdots.ts";
+import { PrWidget } from "./prwidget.ts";
 import { ExtStatus } from "./extstatus.ts";
 import { registerSafeOps, runSafeOp } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
@@ -355,6 +356,8 @@ interface Session {
   lastAssistantAt: number | null;
   /** Children widget and its run view (childwidget.ts). */
   widget: ChildWidget;
+  /** PR widget above the editor (prwidget.ts); never mounted in a child. */
+  prWidget: PrWidget;
   /** Presence file (livestate.ts); null for a subagent child or a print/json run. */
   live: LiveState | null;
   /** Foreman only: the pressure sampler timer (pressure.ts), and the launches queued behind the one that runs under high pressure (per assistant message). */
@@ -517,10 +520,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const p of s.prWatches.list()) rows.push({ label: `pr #${p.n}`, detail: p.until, startedAt: p.startedAt });
     return rows;
   };
+  const prWidgetTouch = (s: Session, ctx: ExtensionContext): void => {
+    s.prWidget.request(ctx, { enabled: !s.isChild && s.prPack && get(s.config.config, "widget.prs") !== false, links: get(s.config.config, "widget.prLinks") !== false && ctx.mode === "tui", symbols: get(s.config.config, "ui.symbols") });
+  };
   const radarTouch = (s: Session | undefined, ctx: ExtensionContext): void => {
     if (!s) return;
     s.live?.touch();
     s.widget.request(ctx, { enabled: get(s.config.config, "widget.children") === true, agentDir: s.agentDir, intercomId: s.live?.intercomId ?? null, symbols: get(s.config.config, "ui.symbols"), background: () => backgroundOf(s), spinner: get(s.config.config, "ui.spinner") !== false });
+    prWidgetTouch(s, ctx);
   };
   pi.on("agent_start", async (_e, ctx) => {
     const s = sessionFor(ctx);
@@ -660,6 +667,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         changed: () => {
           s.live?.touch();
           s.widget.refresh();
+          s.prWidget.refresh();
         },
       }),
       extStatus: new ExtStatus({
@@ -762,6 +770,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       idleCtx: null,
       lastAssistantAt: null,
       widget: new ChildWidget(usageFile(agentDir, foremanSession), loadPrices(PKG_ROOT)),
+      prWidget: new PrWidget({ views: () => s.prDots.views(), shared: () => null /* B3: the shared snapshot reader */, current: () => s.prDots.currentRepo() }),
       live: null,
       pressureSampler: null,
       pressureQ: null,
@@ -1085,6 +1094,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     herdrMeta.start(ctx, get(s.config.config, "herdr.groupTag") !== false);
     sidebarLive.start(ctx, { python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, sessionId: s.id, symbols: get(s.config.config, "ui.symbols"), spinner: get(s.config.config, "ui.spinner") !== false, live: s.live });
     if (!s.isChild && s.live) {
+      prWidgetTouch(s, ctx);
       s.prDots.start();
       s.extStatus.start();
     }
@@ -1116,6 +1126,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.panels.clear();
     s.prWatches.clear();
     s.prDots.clear();
+    s.prWidget.dispose();
     s.extStatus.clear();
     if (!s.isChild) {
       syncKeepalives(s, ctx);
@@ -3782,10 +3793,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list",
+    description: "pi-foreman commands: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman prs [list]",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
       if (sub === "close") return close.command(args.trim().slice(sub.length), ctx);
+      if (sub === "prs") {
+        const s = await ensureSession(ctx);
+        if (s.isChild || rest.length > 1 || (rest[0] !== undefined && rest[0] !== "list")) {
+          ctx.ui.notify("Usage: /foreman prs [list] (foreman session only)", "warning");
+          return;
+        }
+        if (rest[0] === "list") {
+          ctx.ui.notify(s.prWidget.listText(), "info");
+          return;
+        }
+        const mode = s.prWidget.cycle();
+        ctx.ui.notify(`pi-foreman: PR widget ${mode}${get(s.config.config, "widget.prs") === false ? " (widget.prs is off, nothing shows)" : ""}`, "info");
+        return;
+      }
       if (sub === "session") return sessionCmd.command(args.trim().slice(sub.length), ctx);
       if (sub === "budget") {
         const s = await ensureSession(ctx);

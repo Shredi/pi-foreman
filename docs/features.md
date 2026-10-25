@@ -514,6 +514,8 @@ Switch: `tools.pr` is true.
 
 | Key | Default | Layer |
 |---|---|---|
+| `widget.prs` | `true` | any layer |
+| `widget.prLinks` | `true` | any layer |
 | `tools.pr` | `true` | tighten-only (only false is accepted) |
 | `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
 | `tools.prDots` | `true` | any layer |
@@ -792,6 +794,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [ceremony-tiers](#ceremony-tiers) | `/ceremony` |
 | [read-budgets](#read-budgets) | `/foreman budget` |
 | [waits](#waits) | `/foreman waits` |
+| [pr-ops](#pr-ops) | `/foreman prs` |
 | [sessions](#sessions) | `/foreman session`, `foreman session` |
 | [remote-sessions](#remote-sessions) | `foreman session remote` |
 | [sync](#sync) | `/sync`, `foreman sync` |

@@ -96,6 +96,10 @@ sets, and a templates object brings any other CLI. Nothing here merges a PR, fix
 | `tools.prShared.authors` | `[]` | not in project/session (at most 8 authors whose open PRs with a failed check show as failing) |
 | `tools.prShared.seconds` | `180` | not in project/session (60..3600, floor for every endpoint) |
 | `tools.prShared.events` | `true` | not in project/session (also read the user's events feed) |
+| `widget.prs` | `true` | any layer (the PR widget above the editor, TUI only) |
+| `widget.prLinks` | `true` | any layer (labels in the PR widget are terminal hyperlinks) |
+
+`/foreman prs` cycles the PR widget between auto, collapsed and hidden for the session; `/foreman prs list` prints the tracked PRs and the shared snapshot as a notice.
 
 `tools.prHost` is `"auto"` (`gh`, then `glab`, found on `PATH` outside the workspace), `"gh"`, `"glab"` or a templates
 object. Re-run `foreman setup` after changing `tools.pr`: child tool lists come from the generated `subagents` block,

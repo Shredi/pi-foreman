@@ -431,7 +431,7 @@
     "widget": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "children": { "type": "boolean", "description": "Show the children widget (subagent runs and opened sessions) below the editor in the tui." } }
+      "properties": { "children": { "type": "boolean", "description": "Show the children widget (subagent runs and opened sessions) below the editor in the tui." }, "prs": { "type": "boolean", "description": "Show the PR widget (tracked PRs and the shared watch summary) above the editor in the tui. /foreman prs cycles auto, collapsed and hidden for the session." }, "prLinks": { "type": "boolean", "description": "Make the PR labels of the widget terminal hyperlinks (OSC 8) to the PR page; false renders plain labels." } }
     },
     "herdr": {
       "type": "object",

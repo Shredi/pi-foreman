@@ -248,6 +248,12 @@ export class PrDots {
     return this.repoNow.get(this.mainCwd());
   }
 
+  /** The host-resolved current repository once `pr_repo` answered (null while unknown, or without a lookup); the widget's watch items read `#n` for it. */
+  currentRepo(): Repo | null {
+    const cur = this.currentNow();
+    return cur && cur !== NO_REPO ? cur : null;
+  }
+
   private isForeign(key: PrKey): boolean {
     const cur = this.currentNow();
     return !!cur && cur !== NO_REPO && !sameRepo(cur, key);
