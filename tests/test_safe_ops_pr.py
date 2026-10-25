@@ -369,6 +369,10 @@ def pair(argv, flag):
     return argv[argv.index(flag) + 1]
 
 
+def fields_of(argv):
+    return [argv[i + 1] for i, a in enumerate(argv) if a == "-f"]
+
+
 class CleanTitleTest(unittest.TestCase):
     def test_clean_title_strips_c1_cf_and_cuts(self):
         import pr_ops
@@ -709,7 +713,8 @@ class PollTest(RepoLessCase):
         self.assertEqual(res["items"], [{"repo": "acme/lib", "n": 7, "title": "R", "url": "https://ghe.example.com/acme/lib/pull/7"}])
         argv = argv_of(self.calls()[0])
         self.assertEqual(argv[:6], ["gh", "api", "-i", "--method", "GET", "--hostname"])
-        self.assertEqual(argv[-1], "notifications?all=false&participating=false&per_page=100&page=2")
+        self.assertEqual(argv[-1], "notifications")
+        self.assertEqual(fields_of(argv), ["all=false", "participating=false", "per_page=100", "page=2"])
         self.assertEqual(pair(argv, "-H"), "If-Modified-Since: Fri, 30 Jan 2026 12:00:00 GMT")
         self.assertNotIn("If-None-Match", " ".join(argv))
 
@@ -717,12 +722,25 @@ class PollTest(RepoLessCase):
         self.scn({"gh api -i": {"stdout": http(200, {"ETag": '"e1"'}, j(EVENTS))}})
         res = self.ok(self.at("pr_poll", endpoint="events", login="octo-user", etag='W/"e0"'))
         argv = argv_of(self.calls()[0])
-        self.assertEqual(argv[-1], "users/octo-user/events?per_page=100")
+        self.assertEqual(argv[-1], "users/octo-user/events")
+        self.assertEqual(fields_of(argv), ["per_page=100"])
         self.assertEqual(pair(argv, "-H"), 'If-None-Match: W/"e0"')
         self.assertEqual(res["etag"], '"e1"')
         self.assertEqual(res["items"], [
             {"repo": "acme/lib", "n": 3, "url": "https://ghe.example.com/acme/lib/pull/3", "at": "2026-01-02T00:00:00Z"},
             {"repo": "acme/lib", "n": 4, "url": "https://github.com/acme/lib/pull/4", "at": "2026-01-02T01:00:00Z"}])
+
+    def test_poll_argv_has_no_cmd_metacharacters(self):
+        for kw in (dict(endpoint="notifications", page=3, since="Fri, 30 Jan 2026 12:00:00 GMT"),
+                   dict(endpoint="events", login="octo-user")):
+            self.scn({"gh api -i": {"stdout": http(200, {}, "[]")}})
+            self.ok(self.at("pr_poll", **kw))
+            argv = argv_of(self.calls()[0])
+            self.assertIn("-f", argv)
+            for a in argv:
+                if a.startswith("If-Modified-Since"):
+                    continue   # a header value, no cmd.exe metacharacter in an HTTP date
+                self.assertFalse(set(a) & set("&|<>^%"), (kw, a))
 
     def test_304_403_404_with_gh_exit_1_are_answers(self):
         for code in (304, 403, 404):

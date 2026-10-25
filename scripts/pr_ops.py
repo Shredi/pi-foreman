@@ -1283,13 +1283,18 @@ def op_pr_poll(req):
         raise _bad("notifications take no login")
     root = _repoless_root(req)
     host = _gh_only(pr_host, root, "poll")
-    path = "notifications?all=false&participating=false&per_page=100&page=%d" % (page or 1) \
-        if endpoint == "notifications" else "users/%s/events?per_page=100" % lg
+    # Query parameters travel as -f fields (gh puts them in the query string under GET), so no argv element holds
+    # an `&` that cmd.exe would cut at when the host is a .cmd shim.
+    fields = [("all", "false"), ("participating", "false"), ("per_page", "100"), ("page", str(page or 1))] \
+        if endpoint == "notifications" else [("per_page", "100")]
+    path = "notifications" if endpoint == "notifications" else "users/%s/events" % lg
     argv = [host.program, "api", "-i", "--method", "GET"] + (["--hostname", hostname] if hostname else [])
     if since:
         argv += ["-H", "If-Modified-Since: " + since]
     if etag:
         argv += ["-H", "If-None-Match: " + etag]
+    for k, v in fields:
+        argv += ["-f", "%s=%s" % (k, v)]
     code, out, err = run_host(argv + [path], root)
     parsed = parse_http(out)  # gh exits 1 on 304, 403 and 404 but still prints the status line and headers
     if parsed is None:

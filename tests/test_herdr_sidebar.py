@@ -2184,6 +2184,12 @@ class StateCellTest(unittest.TestCase):
                 self.assertEqual(res.returncode, 0, res.stderr)
                 self.assertIn(mark, res.stdout.decode("utf-8"))
 
+    def test_output_newlines_are_lf_only(self):
+        res = subprocess.run([sys.executable, str(PLUGIN / "sidebar.py"), "configure", "--symbols", "unicode"],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertNotIn(b"\r", res.stdout)
+
 
 class LiveKidsOnAgentLineTest(unittest.TestCase):
     """Round 61 bug 1: child sessions without a pane row show on the agents line only while live."""
