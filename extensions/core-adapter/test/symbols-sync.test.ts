@@ -14,7 +14,7 @@ test("builtinSymbols() equals config/symbols.json key for key", () => {
 });
 
 test("the four PR circles of every set are in the built-in tables", () => {
-  const want = { unicode: "●◉○◌", emoji: "🔴🟡🟢⚪", nerd: "\uf111\uf192\uf10c\uf1db", ascii: "x*o." };
+  const want = { unicode: "●◉○◌", emoji: "●◉○◌", nerd: "\uf111\uf192\uf10c\uf1db", ascii: "x*o." };
   for (const [name, set] of Object.entries(builtinSymbols())) {
     const got = [set["pr-fail"], set["pr-run"], set["pr-ok"], set["pr-none"]].join("");
     assert.equal(got, want[name as keyof typeof want], name);

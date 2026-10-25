@@ -432,7 +432,7 @@
     "widget": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "children": { "type": "boolean", "description": "Show the children widget (subagent runs and opened sessions) below the editor in the tui." } }
+      "properties": { "children": { "type": "boolean", "description": "Show the children widget (subagent runs and opened sessions) below the editor in the tui." }, "prs": { "type": "boolean", "description": "Show the PR widget (tracked PRs and the shared watch summary) above the editor in the tui. /foreman prs cycles auto, collapsed and hidden for the session." }, "prLinks": { "type": "boolean", "description": "Make the PR labels of the widget terminal hyperlinks (OSC 8) to the PR page; false renders plain labels." } }
     },
     "herdr": {
       "type": "object",
@@ -615,9 +615,34 @@
       "description": "Optional built-in tool packs (docs/tools.md).",
       "properties": {
         "git": { "type": "boolean", "description": "true = the git tool pack: git_status, git_log, git_diff_stat, git_branch_state for the foreman and for children whose role has bash. User or overlay config; the project and session layers may only set false. Re-run foreman setup after a change." },
-        "pr": { "type": "boolean", "description": "true (default) = the PR tools pr_create, pr_status, pr_checks, pr_comments and pr_watch for the foreman; children whose role has bash get the read tools. The host comes from tools.prHost. The project and session layers may only set false. Re-run foreman setup after a change." },
-        "prHost": { "type": ["string", "object"], "additionalProperties": { "type": "string" }, "description": "Host CLI for the PR tools: \"auto\" (gh, then glab, found on PATH outside the workspace), \"gh\", \"glab\", or an object of command templates with the keys create, status, checks and comments (docs/tools.md#host-templates). User or overlay config only." },
-        "prWatchSeconds": { "type": "integer", "minimum": 5, "maximum": 3600, "description": "Seconds between two pr_watch polls (default 60)." }
+        "pr": { "type": "boolean", "description": "true (default) = the PR tools pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_track and pr_untrack for the foreman; children whose role has bash get the read tools. The host comes from tools.prHost. The project and session layers may only set false. Re-run foreman setup after a change." },
+        "prDots": { "type": "boolean", "description": "false = the PR status dots poller (sidebar dots and the external status hook) never starts, while the PR tools stay on. Default true." },
+        "prHost": { "type": ["string", "object"], "additionalProperties": { "type": "string" }, "description": "Host CLI for the PR tools: \"auto\" (gh, then glab, found on PATH outside the workspace), \"gh\", \"glab\", or an object of command templates with the keys create, status, checks, comments, find and search (docs/tools.md#host-templates). User or overlay config only." },
+        "prWatchSeconds": { "type": "integer", "minimum": 5, "maximum": 3600, "description": "Seconds between two pr_watch polls (default 60)." },
+        "prInteractions": {
+          "type": "array",
+          "maxItems": 16,
+          "description": "Extra command patterns that register a pull request once the command exits 0 (docs/tools.md#registration-paths). User or overlay config only; none ship.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pattern"],
+            "properties": {
+              "pattern": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Regular expression (flag u) matched against each command segment, with the named group n (the PR number) and optional groups repo (owner/name) and host." }
+            }
+          }
+        },
+        "prShared": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Shared PR watch: one leader session per machine polls the PR host and publishes a snapshot every session shows (docs/tools.md#shared-pr-watch). User or overlay config only.",
+          "properties": {
+            "enabled": { "type": "boolean", "description": "true = run the shared watch (default false)." },
+            "authors": { "type": "array", "maxItems": 8, "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\\[bot\\])?$" }, "description": "Authors (users or bots) whose open pull requests with a failed check show as failing (default none)." },
+            "seconds": { "type": "integer", "minimum": 60, "maximum": 3600, "description": "Seconds between two polls of each source, a floor for every endpoint (default 180)." },
+            "events": { "type": "boolean", "description": "true (default) = also read the user's events feed to register pull requests touched elsewhere." }
+          }
+        }
       }
     }
   }

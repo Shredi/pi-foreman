@@ -7,6 +7,10 @@
    "tier": "standard"
   },
   {
+   "event": "compaction_point",
+   "model": "foreman-fake/foreman"
+  },
+  {
    "event": "chain_clear"
   },
   {

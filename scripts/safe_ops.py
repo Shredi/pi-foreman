@@ -5,7 +5,9 @@ CLI: one JSON request on stdin, one JSON answer on stdout, exit 0.
 
     request  {"op": "worktree_remove" | "move" | "copy" | "status" | "log" | "diff_stat" |
               "branch_state" (the last four are read-only, capped to 200 entries / 16 KB),
-              "pr_create" | "pr_status" | "pr_checks" | "pr_comments" (scripts/pr_ops.py, run a host CLI), "args": {...}, "cwd": "<dir>",
+              "pr_create" | "pr_status" | "pr_checks" | "pr_comments" | "pr_repo" | "pr_find" | "pr_search" |
+              "pr_batch" | "pr_poll" | "pr_login" (scripts/pr_ops.py, run a host CLI; pr_search, pr_batch, pr_poll and
+              pr_login are REPOLESS_PR_OPS: no work tree needed, `cwd` only the process cwd), "args": {...}, "cwd": "<dir>",
               "config": {"copyMaxBytes": ..., "worktreeDisposable": [...], "baseBranch": ...}}
     answer   {"ok": true, "action": "<what was done>", ...}
           or {"ok": false, "precondition": "<name>", "message": "precondition failed: <name> (<detail>)"}
@@ -763,7 +765,10 @@ OPS = {"move": op_move, "copy": op_copy, "worktree_remove": op_worktree_remove, 
        "log": op_log, "diff_stat": op_diff_stat, "branch_state": op_branch_state}
 
 
-PR_OPS = ("pr_create", "pr_status", "pr_checks", "pr_comments")
+PR_OPS = ("pr_create", "pr_status", "pr_checks", "pr_comments", "pr_repo", "pr_find", "pr_search", "pr_batch", "pr_poll",
+          "pr_login")
+# These never call workspace_root: they use realpath(cwd) as process cwd and as the find_program exclusion root.
+REPOLESS_PR_OPS = ("pr_search", "pr_batch", "pr_poll", "pr_login")
 
 
 def handle(req):

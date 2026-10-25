@@ -464,10 +464,10 @@
       "area": "tools",
       "toggle": {"on": {"tools.pr": true}, "off": {"tools.pr": false}},
       "title": "PR tools",
-      "purpose": "Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands.",
+      "purpose": "Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_track, pr_untrack): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands. Pushed, searched, acted-on and touched PRs are tracked by host, owner, repo and number, shown in a PR widget above the editor and, with the shared watch, with review requests and failing bot PRs.",
       "doc": "docs/tools.md#pr-tools",
-      "keys": ["tools.pr", "tools.prHost", "tools.prWatchSeconds"],
-      "commands": [],
+      "keys": ["tools.pr", "tools.prHost", "tools.prDots", "tools.prWatchSeconds", "tools.prInteractions", "tools.prShared", "widget.prs", "widget.prLinks"],
+      "commands": ["/foreman prs"],
       "switch": {"key": "tools.pr", "on": "true"},
       "state": "on",
       "enable": "{\"tools\": {\"pr\": true}}"
