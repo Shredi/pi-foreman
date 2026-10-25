@@ -149,7 +149,7 @@ function certain(raw: string, env: Record<string, string>, cwd: string | undefin
 }
 
 /** The text up to the end of the line holding the first heredoc opener (the whole text without one). */
-function headerOf(text: string): string {
+export function headerOf(text: string): string {
   const at = text.indexOf("<<");
   if (at < 0) return text;
   const nl = text.indexOf("\n", at);
@@ -157,7 +157,7 @@ function headerOf(text: string): string {
 }
 
 /** The directory after `cd <literal>` (words already substituted); undefined when it is not certain. */
-function cdTarget(words: string[], cwd: string | undefined, win = false): string | undefined {
+export function cdTarget(words: string[], cwd: string | undefined, win = false): string | undefined {
   if (words.length !== 2 || words[1].startsWith("-") || words[1].includes("$")) return undefined;
   // win32: a drive path is tracked with path.win32; a drive-relative `X:x` (an unquoted `X:\x` to bash) is not certain
   if (win && /^[A-Za-z]:/.test(words[1])) return winAbs(words[1]) ? path.win32.normalize(words[1]) : undefined;
