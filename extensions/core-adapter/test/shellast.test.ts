@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { parseShell } from "../shellast.ts";
 import type { ShellParseOptions, ShellSegment } from "../shellast.ts";
 import { splitChain } from "../shellchain.ts";
+import { classify, effectCtx, RUNNERS } from "../effects.ts";
 
 const POSIX = { platform: "posix", cwd: "/w/proj", env: { FOREMAN_SCRATCH: "/t/s1" } } satisfies ShellParseOptions;
 const WIN = { platform: "win32", cwd: "C:\\w\\proj", env: { FOREMAN_SCRATCH: "C:\\t\\s1" } } satisfies ShellParseOptions;
@@ -188,14 +189,14 @@ test("variables resolve only through the closed grammar (old: null)", () => {
   assert.deepEqual(views("D='C:\\t\\x'; mkdir -p $D", WIN), ["", "mkdir -p C:\\t\\x"]);
   assert.deepEqual(views("D=C:/t/x; mkdir -p $D", WIN), ["", "mkdir -p C:/t/x"]);
   assert.deepEqual(views("mkdir -p $UNSET/y"), ["mkdir -p $UNSET/y !unresolved_var"]);
-  assert.deepEqual(views("D=/t/x && mkdir -p $D | cat"), ["D=/t/x"].length ? views("D=/t/x && mkdir -p $D | cat") : []);
+  assert.deepEqual(views("D=/t/x && mkdir -p $D | cat"), [" !assignment", "mkdir -p $D !unresolved_var", "cat"]);
   assert.ok(views("D=/t/x && mkdir -p $D | cat").some((v) => v.includes("!unresolved_var")));
 });
 
 test("a variable outside the grammar stays unresolved: command position, loop variable, reserved name", () => {
   assert.deepEqual(views("$X rm"), ["$X rm !unresolved_var"]);
-  assert.deepEqual(views("for f in a b; do rm $f; done"), ["rm $f !unresolved_var"]);
-  assert.deepEqual(views("PATH=/x; ls"), ["!assignment", "ls"].length ? views("PATH=/x; ls") : []);
+  assert.deepEqual(views("for f in a b; do rm $f; done"), ["for !assignment", "rm $f !unresolved_var"]);
+  assert.deepEqual(views("PATH=/x; ls"), [" !assignment", "ls"]);
   assert.equal(parseShell("PATH=/x; ls", POSIX)[0].opaque, "assignment");
   assert.equal(parseShell("echo ~/x", POSIX)[0].opaque, "unresolved_var");
 });
@@ -271,7 +272,7 @@ test("parse errors are one opaque segment (old: null)", () => {
     if (c !== "if true; then") assert.equal(old(c), "null");
     assert.deepEqual(views(c), [" !parse_error"], c);
   }
-  assert.deepEqual(parseShell("bash -c 'ls \"x'", POSIX).map(view), ["bash>ls \"x !parse_error"].length ? parseShell("bash -c 'ls \"x'", POSIX).map(view) : []);
+  assert.deepEqual(parseShell("bash -c 'ls \"x'", POSIX).map(view), ['bash>bash ls "x !parse_error']);
   assert.equal(parseShell("bash -c 'ls \"x'", POSIX)[0].opaque, "parse_error");
 });
 
@@ -347,4 +348,98 @@ test("redirects of a wrapper reach the unwrapped segments", () => {
   const s = parseShell("bash -c 'rm x' > /o/f", POSIX)[0];
   assert.deepEqual(s.redirects, [{ op: ">", fd: null, target: "/o/f" }]);
   assert.deepEqual(parseShell("( rm x ) > /o/f", POSIX)[0].redirects, [{ op: ">", fd: null, target: "/o/f" }]);
+});
+
+// ---- review fixes: assignments, wrapper words, runners (old side: splitChain and effects.ts classify)
+const fx = (cmd: string): string => classify(cmd, effectCtx("/w/proj", [], "darwin"));
+const reasonOf = (cmd: string): string | null => parseShell(cmd, POSIX).find((s) => s.opaque)?.opaque ?? null;
+
+test("loop variables and assigning builtins are assignments (old: effects unknown, splitChain splits)", () => {
+  const forms: Array<[string, string]> = [
+    ["for PATH in /tmp/e; do ls; done", "for"],
+    ["read X", "read"],
+    ["read -r PATH", "read"],
+    ["printf -v PATH x", "printf"],
+    ["printf -vPATH x", "printf"],
+    ["mapfile A", "mapfile"],
+    ["readarray A", "readarray"],
+    ["getopts ab o", "getopts"],
+    ["let PATH=1", "let"],
+    ["declare PATH", "declare"],
+    ["declare -n r=PATH", "declare"],
+    ["typeset PATH=/x", "typeset"],
+    ["typeset -g PATH", "typeset"],
+    ["export -n A", "export"],
+    ["export PATH", "export"],
+    ["local PATH", "local"],
+    ["PATH+=x", ""],
+    ["LANG+=x", ""],
+  ];
+  for (const [c] of forms) {
+    assert.equal(reasonOf(c), "assignment", c);
+    assert.equal(fx(c), "unknown", c);
+    assert.equal(old(c), "chain", c);
+  }
+  for (const c of ["select a in b; do ls; done", "((PATH=1))"]) {
+    assert.equal(reasonOf(c), "unsupported", c);
+    assert.equal(fx(c), "unknown", c);
+  }
+  assert.equal(old("for LANG in $X; do ls; done"), "null");
+  assert.equal(reasonOf("for LANG in $X; do ls; done"), "assignment");
+  assert.equal(old("((PATH=1))"), "null");
+  assert.equal(old("select a in b; do ls; done"), "chain");
+});
+
+test("a loop variable on the harmless allowlist with literal items is fine; the body still resolves nothing", () => {
+  assert.deepEqual(views("for LANG in a b; do ls; done"), ["ls"]);
+  assert.equal(reasonOf("for f in a b; do ls; done"), "assignment");
+  assert.equal(parseShell("export NODE_ENV=test", POSIX)[0].opaque, null);
+  assert.equal(parseShell("declare -x NODE_ENV=test", POSIX)[0].opaque, null);
+});
+
+test("an unresolved word in a wrapper's options or operands makes the segment opaque, none is dropped", () => {
+  assert.deepEqual(views("timeout $X ls"), ["timeout $X ls !unresolved_var"]);
+  assert.deepEqual(views("timeout 5 $X ls"), ["timeout>$X ls !unresolved_var"]);
+  assert.deepEqual(views("nice -n $N ls"), ["nice -n $N ls !wrapper_option"]);
+  assert.deepEqual(views("env $V ls"), ["env>$V ls !unresolved_var"]);
+  assert.deepEqual(views("xargs -n $N ls"), ["xargs -n $N ls !wrapper_option"]);
+  for (const c of ["timeout $X ls", "nice -n $N ls", "env $V ls", "xargs -n $N ls"]) {
+    assert.equal(old(c), "null", c);
+    assert.equal(fx(c), "unknown", c);
+  }
+  assert.deepEqual(views("timeout 5 ls"), ["timeout>ls"]);
+});
+
+test("every program effects.ts refuses as a runner is opaque or unwrapped, never a plain segment", () => {
+  const expected: Record<string, string> = {
+    "exec ls": "shell_builtin",
+    "source x": "shell_builtin",
+    ". x": "shell_builtin",
+    "fish -c ls": "foreign_shell",
+    "csh -c ls": "foreign_shell",
+    "tcsh -c ls": "foreign_shell",
+    "zsh -c ls": "foreign_shell",
+    "sudo ls": "unsupported",
+    "doas ls": "unsupported",
+    "su -c ls": "unsupported",
+    "ionice ls": "unsupported",
+    "chroot / ls": "unsupported",
+    "parallel ls": "unsupported",
+    "busybox ls": "unsupported",
+    "unbuffer ls": "unsupported",
+    "/usr/bin/sudo ls": "unsupported",
+    "env sudo ls": "unsupported",
+    "timeout 5 exec ls": "shell_builtin",
+  };
+  for (const [c, r] of Object.entries(expected)) {
+    assert.equal(reasonOf(c), r, c);
+    assert.equal(fx(c), "unknown", c);
+    assert.equal(old(c), "chain", c);
+  }
+  // the shared set: each runner is either an opaque segment or a wrapper that unwraps to the inner program
+  for (const r of RUNNERS) {
+    if (["sh", "bash", "dash", "ksh"].includes(r)) continue; // `sh ls` runs the script file ls: a plain segment
+    const segs = parseShell(`${r} ls`, POSIX);
+    assert.ok(segs.some((s) => s.opaque !== null) || segs.some((s) => s.program === "ls"), r);
+  }
 });

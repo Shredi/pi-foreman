@@ -64,7 +64,7 @@ export function effectCtx(cwd: string, scratch: string[] = [], platform: string 
 }
 
 /** Programs that run other commands or change who/how they run: the whole command is refused. */
-const RUNNERS = new Set(["eval", "exec", "source", ".", "xargs", "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "env", "sudo", "doas", "su", "nohup", "nice", "ionice", "time", "command", "builtin", "stdbuf", "setsid", "chroot", "script", "watch", "parallel", "busybox", "pwsh", "powershell", "cmd", "unbuffer", "trap"]);
+export const RUNNERS = new Set(["eval", "exec", "source", ".", "xargs", "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "env", "sudo", "doas", "su", "nohup", "nice", "ionice", "time", "command", "builtin", "stdbuf", "setsid", "chroot", "script", "watch", "parallel", "busybox", "pwsh", "powershell", "cmd", "unbuffer", "trap"]);
 
 /** True when `words` must not be judged deterministically at all (a runner or an `X=y` prefix). */
 export function refusedProgram(words: string[]): boolean {

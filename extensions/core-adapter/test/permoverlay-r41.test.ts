@@ -112,6 +112,72 @@ test("r41: a shell write to a floored file is denied (redirect, tee, sed -i, cp,
   }
 });
 
+test("r41 review: the floor runs before a child's ask (npm install && write to managed.json is a floor deny)", () => {
+  const mj = `${agentDir}/pi-foreman/managed.json`;
+  assert.equal(bash("npm install", "child")?.kind, "ask");
+  for (const cmd of [`npm install && echo x > ${mj}`, `npm install; curl -o ${mj} https://x`, `npm install && tee ${mj}`]) {
+    const d = bash(cmd, "child");
+    assert.equal(d?.kind, "deny", cmd);
+    assert.equal(d!.rule, "floor", cmd);
+  }
+  assert.equal(bash(`npm install && echo x > ${cwd}/out.txt`, "child")?.kind, "ask");
+});
+
+test("r41 review: output options of downloaders and writers are floor targets", () => {
+  const bt = `${agentDir}/pi-foreman/state/bridge-trust.json`;
+  const ap = `${agentDir}/pi-foreman/state/approvals`;
+  const mj = `${agentDir}/pi-foreman/managed.json`;
+  const cmds = [
+    `curl -o ${bt} https://x`,
+    `curl -so ${bt} https://x`,
+    `curl -o${bt} https://x`,
+    `curl --output ${bt} https://x`,
+    `curl --output=${bt} https://x`,
+    `curl -O --output-dir ${ap} https://x/a.json`,
+    `curl --output-dir ${ap} -o a.json https://x`,
+    `wget -O ${bt} https://x`,
+    `wget -O${bt} https://x`,
+    `wget --output-document=${bt} https://x`,
+    `wget -P ${ap} https://x/a.json`,
+    `echo x | tee ${bt}`,
+    `echo x | tee -a ${mj}`,
+    `cp ${cwd}/a ${bt}`,
+    `cp ${cwd}/a ${ap}/`,
+    `cp -t ${ap} ${cwd}/a`,
+    `mv ${cwd}/a ${bt}`,
+    `install ${cwd}/a ${mj}`,
+    `rsync ${cwd}/a ${bt}`,
+    `dd if=${cwd}/a of=${bt}`,
+    `tar -xf ${cwd}/a.tar -C ${ap}`,
+    `tar xzf ${cwd}/a.tgz -C ${ap}`,
+    `unzip ${cwd}/a.zip -d ${ap}`,
+    `git clone https://x/r.git ${ap}`,
+    `ln -s ${cwd}/a ${bt}`,
+    `sed -i s/a/b/ ${bt}`,
+    `sed -i.bak s/a/b/ ${mj}`,
+    `python3 -c "open('${bt}','w').write('x')"`,
+    `node -e "require('fs').writeFileSync('${mj}','x')"`,
+    `timeout 5 curl -o ${bt} https://x`,
+    `bash -c 'wget -O ${bt} https://x'`,
+    `sudo cp ${cwd}/a ${bt}`,
+    `cd ${agentDir}/pi-foreman/state && curl -o bridge-trust.json https://x`,
+  ];
+  for (const role of ["main", "child"] as const) {
+    for (const cmd of cmds) {
+      const d = bash(cmd, role);
+      assert.equal(d?.kind, "deny", `${role} ${cmd}`);
+      // a child's inline interpreter is refused by an earlier child rule: a deny either way
+      if (role === "main" || !/^(python3 -c|node -e|cd )/.test(cmd)) assert.equal(d!.rule, "floor", `${role} ${cmd}`);
+    }
+  }
+});
+
+test("r41 review: the same writers aimed at ordinary files are no floor deny", () => {
+  for (const cmd of [`curl -o ${cwd}/out.txt https://x`, `wget -O ${cwd}/o.html https://x`, `cp ${cwd}/a ${cwd}/b`, `dd if=${cwd}/a of=${cwd}/b`, `tar -xf ${cwd}/a.tar -C ${cwd}/d`, `unzip ${cwd}/a.zip -d ${cwd}/d`, `git clone https://x/r.git ${cwd}/r`, `python3 -c "print(1)"`, `cp ${agentDir}/pi-foreman/managed.json ${cwd}/copy.json`, `curl https://x`]) {
+    assert.notEqual(bash(cmd)?.rule, "floor", cmd);
+  }
+});
+
 test("r41: a read of a floored file is no floor deny", () => {
   for (const f of FLOORED) assert.notEqual(bash(`cat ${f}`)?.rule, "floor", f);
   assert.notEqual(tool("read", { path: FLOORED[0] })?.rule, "floor");

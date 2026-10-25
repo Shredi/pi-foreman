@@ -18,6 +18,7 @@
 
 import { forEachChild, parse } from "unbash";
 import type { Assignment, Command, CommandNode, CompoundList, ParsedScript as Script, Redirection, Statement, SyntaxNode, Word } from "unbash";
+import { RUNNERS } from "./effects.ts";
 import { cdTarget, grammarStatements, headerOf, resolveVars } from "./shellvars.ts";
 
 export type OpaqueReason =
@@ -72,6 +73,19 @@ const INTERPRETERS = new Set([...SHELLS, "node", "nodejs", "bun", "deno", "pytho
 const FOREIGN = new Set(["powershell", "pwsh", "cmd", "wsl"]);
 const BUILTINS = new Set(["alias", "unalias", "shopt", "trap", "enable", "builtin"]);
 const DECLARE = new Set(["export", "declare", "typeset", "local", "readonly"]);
+/** Builtins whose job is to set a variable from input; the name or value is never a closed literal. */
+const ASSIGNING = new Set(["read", "mapfile", "readarray", "getopts", "let"]);
+/** Programs effects.ts refuses (RUNNERS) that this walker does not unwrap; the reason says why. */
+const runnerReason = (name: string): OpaqueReason => (name === "exec" || name === "source" || name === "." ? "shell_builtin" : name === "fish" || name === "csh" || name === "tcsh" || name === "zsh" ? "foreign_shell" : "unsupported");
+/** `declare`-family words that assign: a nameref/unexport option, or any operand that is not a harmless `NAME=literal`. */
+const declares = (rest: W[]): boolean =>
+  rest.some((a) => {
+    const v = a.value ?? a.text;
+    if (/^-[A-Za-z]*$/.test(v)) return v.includes("n");
+    if (v === "--") return false;
+    const x = a.assign ?? asAssign(a);
+    return !(x && harmless(x));
+  });
 const INLINE = /^-[A-Za-z]*[cemEp]$|^--(eval|print)(=|$)/;
 const FOREIGN_FILE = /\.(ps1|cmd|bat)$/i;
 const RANK: Record<string, number> = { process_substitution: 0, glob_target: 1, unresolved_var: 2 };
@@ -316,9 +330,13 @@ function walkNode(n: any, sc: Scope): string | null {
       return walkLists([n.clause, n.then, ...n.elif.flatMap((e: any) => [e.clause, e.then]), n.else], sc);
     case "While":
       return walkLists([n.clause, n.body], sc);
-    case "For":
+    case "For": {
       walkWords(n.wordlist, sc);
+      const nm = String(n.name.text);
+      const listed = n.wordlist !== undefined && (n.wordlist as Word[]).every((w) => wordOf(w).value !== null);
+      if (!(listed && (HARMLESS.has(nm) || nm.startsWith("LC_")))) seg(sc, "for", [], "assignment");
       return walkLists([n.body], sc);
+    }
     case "Case": {
       walkWords([n.word, ...n.items.flatMap((i: any) => i.pattern)], sc);
       return walkLists(n.items.map((i: any) => i.body), sc);
@@ -428,7 +446,8 @@ function plain(prog: string, name: string, rest: W[], c: Cmd, cwd: string | null
   else if (BUILTINS.has(name) || (name === "hash" && vals.some((v) => /^-[A-Za-z]*p/.test(v)))) reason = "shell_builtin";
   else if (name === "tee" || name === "script") reason = "writing_wrapper";
   else if (name === "unset" && !vals.every((v) => HARMLESS.has(v) || v.startsWith("LC_"))) reason = "assignment";
-  else if (DECLARE.has(name) && rest.some((a) => { const x = a.assign ?? asAssign(a); return x && !harmless(x); })) reason = "assignment";
+  else if (DECLARE.has(name) && declares(rest)) reason = "assignment";
+  else if (ASSIGNING.has(name) || (name === "printf" && vals.some((v) => /^-[A-Za-z]*v/.test(v)))) reason = "assignment";
   else if (INTERPRETERS.has(name)) {
     const inline = !SHELLS.has(name) && vals.some((v) => INLINE.test(v));
     if (!inline && (stdinFlag || vals.includes("-") || c.feeds)) reason = "stdin_fed";
@@ -505,9 +524,10 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
     case "popd":
       plain(prog, name, rest, c, cwd);
       return null;
+    case "zsh":
+      return bad("foreign_shell");
     case "bash":
     case "sh":
-    case "zsh":
     case "dash":
     case "ksh":
     case "ash": {
@@ -559,7 +579,9 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
     }
     case "timeout": {
       const o = opts({ flags: "v", arg: "ks", long: ["--foreground", "--preserve-status", "--verbose"], longArg: ["--kill-after", "--signal"] });
-      return typeof o === "string" ? bad(o) : wrap(o.rest.slice(1), "timeout");
+      if (typeof o === "string") return bad(o);
+      if (o.rest[0] && o.rest[0].value === null) return bad(o.rest[0].reason ?? "unresolved_var");
+      return wrap(o.rest.slice(1), "timeout");
     }
     case "nice": {
       const o = opts({ arg: "n", numeric: true, longArg: ["--adjustment"] });
@@ -631,6 +653,7 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
       return o.rest.length > 1 ? wrap(o.rest.slice(1), "flock") : plain(prog, name, rest, c, cwd);
     }
     default:
+      if (RUNNERS.has(name) && !BUILTINS.has(name) && name !== "script") return bad(runnerReason(name));
       return plain(prog, name, rest, c, cwd);
   }
 }

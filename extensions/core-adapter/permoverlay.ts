@@ -80,6 +80,7 @@ import { workspaceOf } from "./python.ts";
 import { resolveVars } from "./shellvars.ts";
 import { probeFileHit } from "./splitliteral.ts";
 import { gitProtectedRead } from "./effects.ts";
+import { parseShell as parseAst } from "./shellast.ts";
 import { netReadCommand } from "./netread.ts";
 
 export interface PathRule {
@@ -2936,6 +2937,168 @@ function floorDecision(rules: OverlayRules, words: string[], text: string, ctx: 
   return null;
 }
 
+/** The values of the options `short` (letters, also inside a cluster like `-sSo f` or attached like `-of`) and `long` (`--x v`, `--x=v`) in `args`. */
+function optValues(args: string[], short: string[], long: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--") break;
+    if (a.startsWith("--")) {
+      for (const l of long) {
+        if (a === l && args[i + 1] !== undefined) out.push(args[i + 1]);
+        else if (a.startsWith(`${l}=`)) out.push(a.slice(l.length + 1));
+      }
+    } else if (/^-[A-Za-z]/.test(a)) {
+      const body = a.slice(1);
+      const j = [...body].findIndex((ch) => short.includes(ch));
+      if (j >= 0) {
+        const rest = body.slice(j + 1);
+        if (rest) out.push(rest);
+        else if (args[i + 1] !== undefined) out.push(args[i + 1]);
+      }
+    }
+  }
+  return out;
+}
+
+/** The non-option words of `args` (everything after `--`). */
+function plainOperands(args: string[]): string[] {
+  const i = args.indexOf("--");
+  return [...args.slice(0, i < 0 ? args.length : i).filter((a) => !a.startsWith("-") || a === "-"), ...(i < 0 ? [] : args.slice(i + 1))];
+}
+
+const urlName = (u: string): string => u.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split(/[?#]/)[0].split("/").slice(1).filter(Boolean).pop() ?? "index.html";
+const isUrl = (w: string): boolean => /^[a-z][a-z0-9+.-]*:\/\//i.test(w);
+const baseOf = (w: string): string => w.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? w;
+const INLINE_FLAG = /^-[A-Za-z]*[cerp]$|^--(?:eval|print|command)(?:=|$)/;
+const SCRIPT_RUNNERS = /^(?:python[\d.]*|node(?:js)?|perl|ruby|php|deno|bun|lua|rscript)$/;
+
+/** The write targets one program names through its output options or destination operand (`words`), and the program text of an inline script (`texts`). */
+function writerTargets(prog: string, args: string[], words: string[], texts: string[]): void {
+  const ops = plainOperands(args);
+  const into = (dir: string, srcs: string[]): void => {
+    words.push(dir);
+    for (const s of srcs) words.push(`${dir.replace(/[\\/]+$/, "")}/${baseOf(isUrl(s) ? urlName(s) : s)}`);
+  };
+  switch (prog) {
+    case "curl": {
+      const dirs = optValues(args, [], ["--output-dir"]);
+      const outs = optValues(args, ["o", "D", "c"], ["--output", "--dump-header", "--cookie-jar", "--trace", "--trace-ascii", "--stderr", "--libcurl"]);
+      const remote = args.some((a) => /^-[A-Za-z]*O/.test(a) || a === "--remote-name" || a === "--remote-name-all");
+      const names = remote ? ops.filter(isUrl).map(urlName) : [];
+      for (const w of [...outs, ...names]) {
+        words.push(w);
+        for (const d of dirs) words.push(`${d.replace(/[\\/]+$/, "")}/${w}`);
+      }
+      words.push(...dirs);
+      return;
+    }
+    case "wget": {
+      const dirs = optValues(args, ["P"], ["--directory-prefix"]);
+      words.push(...optValues(args, ["O", "o", "a"], ["--output-document", "--output-file", "--append-output"]), ...dirs);
+      for (const u of ops.filter(isUrl)) {
+        words.push(urlName(u));
+        for (const d of dirs) words.push(`${d.replace(/[\\/]+$/, "")}/${urlName(u)}`);
+      }
+      return;
+    }
+    case "tee":
+    case "touch":
+    case "truncate":
+    case "shred":
+    case "mkdir":
+    case "chmod":
+    case "chown":
+      words.push(...ops);
+      return;
+    case "cp":
+    case "install":
+    case "rsync":
+    case "mv":
+    case "ln":
+    case "ditto": {
+      const t = optValues(args, ["t"], ["--target-directory"]);
+      if (t.length) into(t[0], ops);
+      else if (ops.length >= 2) {
+        into(ops[ops.length - 1], ops.slice(0, -1));
+        if (prog === "mv") words.push(...ops.slice(0, -1));
+      } else if (prog === "ln" && ops.length === 1) words.push(baseOf(ops[0]));
+      return;
+    }
+    case "dd":
+      for (const a of args) if (a.startsWith("of=")) words.push(a.slice(3));
+      return;
+    case "tar": {
+      const first = args[0] && !args[0].startsWith("-") ? [`-${args[0]}`, ...args.slice(1)] : args;
+      words.push(...optValues(first, ["C"], ["--directory"]));
+      if (first.some((a) => /^-[A-Za-z]*[cru]/.test(a) && !a.startsWith("--")) || first.includes("--create")) words.push(...optValues(first, ["f"], ["--file"]));
+      return;
+    }
+    case "unzip":
+      words.push(...optValues(args, ["d"], []));
+      return;
+    case "zip":
+      if (ops[0]) words.push(ops[0]);
+      return;
+    case "git": {
+      const i = args.indexOf("clone");
+      if (i < 0) return;
+      const valued = new Set(["--depth", "-b", "--branch", "-o", "--origin", "--template", "--reference", "-c", "--config", "--separate-git-dir", "-j", "--jobs", "--filter", "--upload-pack", "-u"]);
+      const opd: string[] = [];
+      for (let k = i + 1; k < args.length; k++) {
+        if (valued.has(args[k])) k++;
+        else if (!args[k].startsWith("-")) opd.push(args[k]);
+      }
+      words.push(...optValues(args.slice(i + 1), [], ["--separate-git-dir"]));
+      if (opd.length >= 2) words.push(opd[1]);
+      else if (opd.length === 1) words.push(baseOf(opd[0]).replace(/\.git$/, ""));
+      return;
+    }
+    case "sed":
+    case "perl":
+      if (args.some((a) => /^-[A-Za-z]*i/.test(a) || a.startsWith("--in-place"))) words.push(...ops);
+      if (SCRIPT_RUNNERS.test(prog) && args.some((a) => INLINE_FLAG.test(a))) texts.push(args.join(" "));
+      return;
+    default:
+      if (SCRIPT_RUNNERS.test(prog) && args.some((a) => INLINE_FLAG.test(a))) texts.push(args.join(" "));
+  }
+}
+
+/** R41: every path a downloader or writer in the line names as an output (curl -o, wget -O, tee, cp/mv/install/rsync/ln destination, dd of=, tar -C, unzip -d, git clone dir, sed -i), and the text of inline scripts. */
+function outputTargets(command: string, ctx: MatchCtx): { words: string[]; texts: string[] } {
+  const words: string[] = [];
+  const texts: string[] = [];
+  const x = ctx.platform === "win32" ? path.win32 : path.posix;
+  const scratch = scratchOf(ctx);
+  let segs: ReturnType<typeof parseAst> = [];
+  try {
+    segs = parseAst(command, { cwd: ctx.cwd || null, platform: ctx.platform, ...(scratch ? { env: { FOREMAN_SCRATCH: scratch } } : {}) });
+  } catch {
+    return { words, texts };
+  }
+  for (const s of segs) {
+    const found: string[] = [];
+    // a runner the walker leaves opaque (sudo, exec, ionice ...) or a program in the segment: every argv position may start the real program
+    writerTargets(baseOf(s.program).toLowerCase().replace(/\.exe$/, ""), s.argv, found, texts);
+    if (s.opaque) for (let i = 0; i < s.argv.length; i++) writerTargets(baseOf(s.argv[i]).toLowerCase().replace(/\.exe$/, ""), s.argv.slice(i + 1), found, texts);
+    for (const r of s.redirects) if (r.op !== "<" && r.op !== "dup") found.push(r.target);
+    for (const w of found) words.push(s.cwd && !x.isAbsolute(w) && !w.startsWith("~") && !w.startsWith("$") ? x.join(s.cwd, w) : w);
+  }
+  return { words, texts };
+}
+
+/** R41: the floor for a shell line: redirect, remove and output-option targets, and the literal floored paths named in an inline script. */
+function shellFloor(rules: OverlayRules, targets: string[], command: string, ctx: MatchCtx): Decision | null {
+  const extra = outputTargets(command, ctx);
+  const floor = floorDecision(rules, [...new Set([...targets, ...extra.words].flatMap((t) => [t, ...expandBraces(t)]))], command, ctx, "this shell command");
+  if (floor) return floor;
+  if (!extra.texts.length) return null;
+  const literal = floorPatterns(rules, ctx).map((p) => p.replace(/\/\*$/, "")).filter((p) => !p.includes("*"));
+  const hit = literal.find((p) => extra.texts.some((t) => t.replace(/\\+/g, "/").includes(p)));
+  if (hit === undefined) return null;
+  return { kind: "deny", rule: "floor", path: clip(hit), reason: `pi-foreman: denied by the permission policy (floor: an inline script names '${clip(hit)}', a policy file or a harness state file). No tool or shell write to a policy file (any layer), managed.json, state/round-parents.json, state/bridge-trust.json, state/approvals or state/gate is allowed, and no review or approval lifts this. Ask the user to change it.` };
+}
+
 const SCAN_VALUE_FLAGS: Record<string, Set<string>> = {
   grep: new Set(["-e", "-f", "-m", "-A", "-B", "-C", "-d", "-D", "--regexp", "--file", "--max-count"]),
   rg: new Set(["-e", "-f", "-g", "-t", "-T", "-m", "-A", "-B", "-C", "-j", "-M", "-E", "-r", "-d", "--regexp", "--file", "--glob", "--iglob", "--type", "--type-not", "--max-count", "--max-depth", "--threads"]),
@@ -3104,6 +3267,12 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   if (ctx.role === "child" && c.worktreeOp !== undefined) {
     return { kind: "deny", reason: `pi-foreman: denied by the permission policy (git worktree ${clip(c.worktreeOp)} is the foreman's; children may only list worktrees). Ask the foreman.` };
   }
+  // R41 floors and scans: deterministic denies before any other rule, review or ask (the child asks below included)
+  const pctx: MatchCtx = shell === "posix" ? { ...ctx, bashWords: true, dotGlob: /dotglob|globignore|glob_?dots/i.test(command) } : ctx;
+  const floor = shellFloor(rules, [...c.writeTargets!, ...(c.tmpTargets ?? []), ...(c.roTargets ?? []), ...c.removeWords!], command, pctx);
+  if (floor) return floor;
+  const scan = scanDecision(rules, command, shell, ctx);
+  if (scan) return scan;
   if (ctx.role === "child" && c.childAsk !== undefined && !npmInstallOwned(c, ctx) && !npmCiWorktreeLabel(command, ctx)) {
     const ci = c.childAsk === "npm ci" ? " Run a bare `npm ci` in your worktree (no pipe, chain or background) or ask the foreman." : "";
     return { kind: "ask", reason: `pi-foreman: ${c.childAsk} needs approval for a child (it writes the project or the network; the foreman may run it).${ci}` };
@@ -3140,14 +3309,8 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   // R14 ruling 5: lifted are `{cwd}/.pi/*` and the writeAsk package-root pair (`{pkgRoot}`, `{pkgRoot}/*`: a read of a package file is no write);
   // every ask/deny/childDeny rule (another session's state, intercom, settings.json, .git) and the handoff parent/child writeAsk rules still see it
   const msgProtect = rules.protect.filter((r) => r.pattern !== "{cwd}/.pi/*" && !(r.fromWriteAsk && !r.pattern.includes("/handoffs/")));
-  const pctx: MatchCtx = shell === "posix" ? { ...ctx, bashWords: true, dotGlob: /dotglob|globignore|glob_?dots/i.test(command) } : ctx;
   const removed = new Set(c.removeWords!.flatMap((w) => [w, ...expandBraces(w)]));
   const texts = [...c.unitTexts, ...c.pipeTexts];
-  // R41 floors and scans: deterministic denies before any other rule, review or ask
-  const floor = floorDecision(rules, [...new Set([...c.writeTargets!, ...(c.tmpTargets ?? []), ...(c.roTargets ?? []), ...c.removeWords!].flatMap((t) => [t, ...expandBraces(t)]))], command, pctx, "this shell command");
-  if (floor) return floor;
-  const scan = scanDecision(rules, command, shell, ctx);
-  if (scan) return scan;
   for (const pat of rules.bashDeny) {
     if (texts.some((t) => bashMatches(pat, t, ctx))) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (command rule '${pat}'). This cannot be approved; use another way.` };
   }

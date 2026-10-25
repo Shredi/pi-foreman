@@ -50,24 +50,73 @@ function classOf(token: string, roots: ShapeRoots): string {
 
 const FILE = /^(?:[A-Za-z0-9_@+-][\w@+.-]*\.[A-Za-z][A-Za-z0-9]{1,9}|\.[A-Za-z_][\w@+.-]*)$/;
 
+/** Long options whose operand is a credential or an auth header (`--user x`, `--password=x`, `--token x`, `--header x`). */
+const CRED_LONG = /^--[a-z0-9-]*(?:user|pass|secret|token|key|auth|header|cookie|credential|bearer)[a-z0-9-]*$/i;
+/** Short options that take a credential, by program (`curl -u user:pass`, `sshpass -p pw`, `mysql -u root`). */
+const CRED_SHORT: Record<string, string> = { curl: "uHU", sshpass: "p", mysql: "u", mysqldump: "u", mysqladmin: "u", http: "a", https: "a", xh: "a" };
+/** A variable name from the secrets grammar of trace.ts (token, key, password, secret ...), widened by pass, auth, credential, cookie. */
+const SECRET_NAME = /pass|token|key|secret|pwd|auth|cred|cookie|bearer|session/i;
+
+/** Heredoc and here-string bodies are program text or data of unknown content: `<<EOF\n<heredoc>`, `<<< <heredoc>`. */
+function maskHeredocs(text: string): string {
+  return text
+    .replace(/<<<[ \t]*(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s;|&()]+)/g, "<<< <heredoc>")
+    .replace(/(?<!<)(<<-?)[ \t]*(['"]?)([A-Za-z_][\w-]*)\2([^\n]*)\n[\s\S]*?(?:\n[ \t]*\3[ \t]*(?=\n|$)|$)/g, "$1$3$4\n<heredoc>");
+}
+
 /**
  * The shape of a command: program and option words kept; quoted strings and secret-grammar values `<v>`;
  * URLs `scheme://host`; every literal path (any token with a separator, `~`, or a file name with an extension) a class token.
  */
 export function normalizeShape(text: string, roots: ShapeRoots = {}): string {
-  const quoted = text.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, "<v>");
+  const quoted = maskHeredocs(text).replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, "<v>");
   const masked = redactCommand(quoted).split("[redacted]").join("<v>");
-  const out = masked.replace(/[^\s;|&()]+/g, (tok: string) => {
-    const url = /^([a-z][a-z0-9+.-]*:\/\/)(?:<v>@)?([^\s\/?#:@]+)/i.exec(tok);
-    if (url) return url[1] + url[2];
-    if (tok.includes("<v>")) return tok;
-    const eq = tok.startsWith("-") ? tok.indexOf("=") : -1;
-    const head = eq > 0 ? tok.slice(0, eq + 1) : "";
-    const t = tok.slice(head.length);
-    if (/[\/\\]/.test(t) || t.startsWith("~") || FILE.test(t.replace(/(:\d+)+$/, ""))) return head + classOf(t, roots);
-    return tok;
-  });
-  return out.slice(0, MAX_SHAPE);
+  let prog = "";
+  let pending = false;
+  let prev = 0;
+  let out = "";
+  const re = /[^\s;|&()]+/g;
+  for (let m = re.exec(masked); m; m = re.exec(masked)) {
+    const gap = masked.slice(prev, m.index);
+    prev = m.index + m[0].length;
+    if (/[;|&()\n]/.test(gap)) {
+      prog = "";
+      pending = false;
+    }
+    out += gap + shapeToken(m[0], roots, { prog, pending });
+    const tok = m[0];
+    if (!prog && !/^[A-Za-z_]\w*=/.test(tok)) prog = (tok.split(/[\\/]/).pop() ?? tok).toLowerCase();
+    pending = credOperandNext(tok, prog);
+  }
+  return (out + masked.slice(prev)).slice(0, MAX_SHAPE);
+}
+
+/** Whether the token after `tok` is the operand of a credential option. */
+function credOperandNext(tok: string, prog: string): boolean {
+  if (tok.startsWith("--")) return !tok.includes("=") && CRED_LONG.test(tok);
+  return /^-[A-Za-z]$/.test(tok) && (CRED_SHORT[prog] ?? "").includes(tok[1]);
+}
+
+function shapeToken(tok: string, roots: ShapeRoots, st: { prog: string; pending: boolean }): string {
+  if (st.pending) return "<v>";
+  const asg = /^([A-Za-z_]\w*)=(.+)$/.exec(tok);
+  if (asg && SECRET_NAME.test(asg[1])) return `${asg[1]}=<v>`;
+  if (tok.startsWith("--")) {
+    const eq = tok.indexOf("=");
+    if (eq > 0 && CRED_LONG.test(tok.slice(0, eq))) return `${tok.slice(0, eq)}=<v>`;
+  } else if (/^-[A-Za-z]./.test(tok)) {
+    // attached short operand: `-uuser:pass` for the known programs, `-pSECRET` (more than a flag cluster) for any
+    if ((CRED_SHORT[st.prog] ?? "").includes(tok[1]) || (tok[1] === "p" && !/^[A-Za-z]{0,3}$/.test(tok.slice(2)))) return `-${tok[1]}<v>`;
+  }
+  const url = /^([a-z][a-z0-9+.-]*:\/\/)(?:<v>@)?([^\s\/?#:@]+)/i.exec(tok);
+  if (url) return url[1] + url[2];
+  if (tok.includes("<v>")) return tok;
+  const eq = tok.startsWith("-") ? tok.indexOf("=") : -1;
+  const head = eq > 0 ? tok.slice(0, eq + 1) : "";
+  const t = tok.slice(head.length);
+  if (/[\/\\]/.test(t) || t.startsWith("~") || FILE.test(t.replace(/(:\d+)+$/, ""))) return head + classOf(t, roots);
+  if (t.length > 20 && /\d/.test(t) && /[a-z]/.test(t) && /[A-Z]/.test(t)) return head + "<v>";
+  return tok;
 }
 
 export interface GateRecord {

@@ -86,3 +86,56 @@ test("a write failure never throws into the caller", () => {
   assert.doesNotThrow(() => log.record({ tool: "bash", layer: "floor", verdict: "deny", reason: { bad: 1 } as never, input: 5 as never }));
   fs.rmSync(agent, { recursive: true, force: true });
 });
+
+// ---- review fixes: the shape never keeps a raw credential
+const cases: Array<[string, string, string]> = [
+  ["curl -u admin:Hunter2pw https://h.io/x", "Hunter2pw", "curl -u <v> https://h.io"],
+  ["curl -uadmin:Hunter2pw https://h.io", "Hunter2pw", "curl -u<v> https://h.io"],
+  ["curl --user admin:Hunter2pw https://h.io", "Hunter2pw", "curl --user <v> https://h.io"],
+  ["curl --user=admin:Hunter2pw https://h.io", "Hunter2pw", "curl --user=<v> https://h.io"],
+  ["mysql -pHunter2pw -u root", "Hunter2pw", "mysql -p<v> -u <v>"],
+  ["tool --password Hunter2pw run", "Hunter2pw", "tool --password <v> run"],
+  ["tool --password=Hunter2pw run", "Hunter2pw", "tool --password=<v> run"],
+  ["sshpass -p Hunter2pw ssh host", "Hunter2pw", "sshpass -p <v> ssh host"],
+  ["aws --secret-access-key Hunter2pw s3 ls", "Hunter2pw", "aws --secret-access-key <v> s3 ls"],
+  ["tool --token Hunter2pw", "Hunter2pw", "tool --token <v>"],
+  ["tool --api-key Hunter2pw", "Hunter2pw", "tool --api-key <v>"],
+  ["curl -H Authorization:Hunter2pw https://h.io", "Hunter2pw", "curl -H <v> https://h.io"],
+  [`curl -H "Authorization: Basic Hunter2pw" https://h.io`, "Hunter2pw", "curl -H <v> https://h.io"],
+  ["curl --header X-Thing:Hunter2pw https://h.io", "Hunter2pw", "curl --header <v> https://h.io"],
+  ["PASSWORD=Hunter2pw run.sh", "Hunter2pw", "PASSWORD=<v> <rel>"],
+  ["export DB_PASS=Hunter2pw", "Hunter2pw", "export DB_PASS=<v>"],
+  ["MY_COOKIE=Hunter2pw run", "Hunter2pw", "MY_COOKIE=<v> run"],
+  ["curl https://admin:Hunter2pw@h.io/x", "Hunter2pw", "curl https://h.io"],
+  ["echo Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8", "Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8", "echo <v>"],
+  ["cat <<EOF\nHunter2pw\nEOF", "Hunter2pw", "cat <<EOF\n<heredoc>"],
+  ["cat <<'EOF' > out.txt\nHunter2pw\nline2\nEOF\nls", "Hunter2pw", "cat <<EOF > <rel>\n<heredoc>\nls"],
+  ["cat <<-EOF\n\tHunter2pw\n\tEOF", "Hunter2pw", "cat <<-EOF\n<heredoc>"],
+  ["cat <<< Hunter2pw", "Hunter2pw", "cat <<< <heredoc>"],
+  [`cat <<< "Hunter2 pw"`, "Hunter2 pw", "cat <<< <heredoc>"],
+];
+
+test("shape: each credential position becomes <v> or <heredoc>", () => {
+  for (const [input, secret, want] of cases) {
+    const s = normalizeShape(input, posix);
+    assert.ok(!s.includes(secret), `${input} -> ${s}`);
+    assert.equal(s, want, input);
+  }
+});
+
+test("shape: ordinary flags and operands survive the credential rules", () => {
+  assert.equal(normalizeShape("mkdir -p dir && ls -ltr", posix), "mkdir -p dir && ls -ltr");
+  assert.equal(normalizeShape("cp -pr a.txt b.txt", posix), "cp -pr <rel> <rel>");
+  assert.equal(normalizeShape("sort -u list.txt | uniq", posix), "sort -u <rel> | uniq");
+  assert.equal(normalizeShape("git log --oneline -n 5", posix), "git log --oneline -n 5");
+});
+
+test("record: the serialised log line never contains a planted secret, in any position", () => {
+  const agent = tmpAgent();
+  const log = openGateLog({ agentDir: agent, session: "s", kind: "owner", roots: posix });
+  for (const [input] of cases) log.record({ tool: "bash", layer: "default", verdict: "allow", input });
+  const raw = fs.readFileSync(log.file, "utf8");
+  for (const [, secret] of cases) assert.ok(!raw.includes(secret), secret);
+  assert.equal(raw.trim().split("\n").length, cases.length);
+  fs.rmSync(agent, { recursive: true, force: true });
+});
