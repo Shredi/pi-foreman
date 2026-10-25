@@ -1,0 +1,88 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { normalizeShape, openGateLog, gateLogFile, GATE_LOG_MAX_BYTES } from "../gatelog.ts";
+
+const posix = { worktree: "/w/repo", scratch: "/s/scr", tmp: "/t", home: "/h/me", parent: "/w/main" };
+const win = { worktree: "C:\\w\\repo", scratch: "C:\\s\\scr", tmp: "C:\\t", home: "C:\\Users\\me", parent: "C:\\w\\main" };
+
+const tmpAgent = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "gatelog-"));
+const lines = (f: string): Record<string, unknown>[] => fs.readFileSync(f, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+
+test("normalizeShape: path classes on POSIX separators", () => {
+  assert.equal(normalizeShape("cat /w/repo/src/a.ts /s/scr/x /t/y /h/me/.ssh/id /w/main/.workflow/L.md /etc/passwd src/b", posix), "cat <worktree>/... <scratch>/... <tmp>/... <home>/... <parent>/.workflow/... <abs> <rel>");
+  assert.equal(normalizeShape("ls ~/x ~", posix), "ls <home>/... <home>/...");
+});
+
+test("normalizeShape: path classes on Windows separators", () => {
+  assert.equal(normalizeShape("type C:\\w\\repo\\src\\a.ts c:\\S\\scr\\x C:\\t\\y C:\\Users\\me\\.ssh\\id C:\\w\\main\\.workflow\\L.md D:\\other src\\b", win), "type <worktree>/... <scratch>/... <tmp>/... <home>/... <parent>/.workflow/... <abs> <rel>");
+  assert.equal(normalizeShape("cat C:/w/repo/a", win), "cat <worktree>/...");
+});
+
+test("normalizeShape: a sibling with a shared prefix is not below the root", () => {
+  assert.equal(normalizeShape("cat /w/repo2/a", posix), "cat <abs>");
+});
+
+test("normalizeShape: URLs keep scheme and host only", () => {
+  assert.equal(normalizeShape("curl -s https://example.com/a/b?q=1", posix), "curl -s https://example.com");
+  assert.ok(!/pw|8080/.test(normalizeShape("curl http://u:pw@host.io:8080/x")));
+  assert.ok(!normalizeShape("curl https://example.com/private/path?token=abc").includes("private"));
+});
+
+test("normalizeShape: quoted strings and secret values become <v>, options stay", () => {
+  assert.equal(normalizeShape(`git commit -m "fix the thing" --author='A B'`), "git commit -m <v> --author=<v>");
+  const s = normalizeShape("curl -H 'Authorization: Bearer abc123' --out=/h/x PASSWORD=hunter2 ghp_abcdefghijkl", posix);
+  assert.ok(!/abc123|hunter2|ghp_/.test(s), s);
+  assert.ok(s.includes("--out=<abs>"), s);
+});
+
+test("record: fields, redaction and no raw value in the file", () => {
+  const agent = tmpAgent();
+  const log = openGateLog({ agentDir: agent, session: "s1", kind: "child", role: "builder", cwd: "/w/repo/secret-dir", roots: posix, now: () => new Date("2026-01-02T03:04:05Z") });
+  log.record({ tool: "bash", layer: "default", verdict: "allow", rule: "r.1", reason: "matched rule '/w/repo/x' for token=SECRETVALUE12345", input: `cat /w/repo/private-name.txt "quoted secret" API_TOKEN=sk-abcdefghijk1234 https://evil.example/leak/path` });
+  const file = gateLogFile(agent);
+  assert.equal(log.file, file);
+  assert.equal(file, path.join(agent, "pi-foreman", "state", "gate", "log.jsonl"));
+  const [r] = lines(file);
+  assert.deepEqual(Object.keys(r), ["ts", "session", "kind", "role", "tool", "layer", "verdict", "rule", "reason", "shape", "cwdHash"]);
+  assert.equal(r.ts, "2026-01-02T03:04:05.000Z");
+  assert.equal(r.kind, "child");
+  assert.equal(r.layer, "default");
+  assert.match(String(r.cwdHash), /^[0-9a-f]{12}$/);
+  const raw = fs.readFileSync(file, "utf8");
+  for (const leak of ["private-name", "quoted secret", "SECRETVALUE12345", "sk-abcdefghijk1234", "/leak/path", "secret-dir"]) assert.ok(!raw.includes(leak), leak);
+  assert.ok(String(r.shape).startsWith("cat <worktree>/... <v>"));
+  fs.rmSync(agent, { recursive: true, force: true });
+});
+
+test("cap: rotation to log.1.jsonl keeps one generation", () => {
+  const agent = tmpAgent();
+  const log = openGateLog({ agentDir: agent, session: "s", kind: "owner", maxBytes: 600 });
+  for (let i = 0; i < 40; i++) log.record({ tool: "bash", layer: "floor", verdict: "deny", input: `echo ${i}` });
+  const dir = path.dirname(log.file);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ["log.1.jsonl", "log.jsonl"]);
+  assert.ok(fs.statSync(log.file).size <= 600);
+  assert.ok(fs.statSync(path.join(dir, "log.1.jsonl")).size <= 600);
+  assert.equal(lines(log.file).at(-1)?.verdict, "deny");
+  fs.rmSync(agent, { recursive: true, force: true });
+});
+
+test("default cap is 20 MB and a bad maxBytes falls back to it", () => {
+  assert.equal(GATE_LOG_MAX_BYTES, 20 * 1024 * 1024);
+  const agent = tmpAgent();
+  const log = openGateLog({ agentDir: agent, session: "s", kind: "owner", maxBytes: "x" });
+  for (let i = 0; i < 5; i++) log.record({ tool: "read", layer: "cache", verdict: "allow" });
+  assert.equal(lines(log.file).length, 5);
+  fs.rmSync(agent, { recursive: true, force: true });
+});
+
+test("a write failure never throws into the caller", () => {
+  const agent = tmpAgent();
+  fs.writeFileSync(path.join(agent, "pi-foreman"), "a file, not a directory");
+  const log = openGateLog({ agentDir: agent, session: "s", kind: "owner" });
+  assert.doesNotThrow(() => log.record({ tool: "bash", layer: "floor", verdict: "deny", input: "x" }));
+  assert.doesNotThrow(() => log.record({ tool: "bash", layer: "floor", verdict: "deny", reason: { bad: 1 } as never, input: 5 as never }));
+  fs.rmSync(agent, { recursive: true, force: true });
+});

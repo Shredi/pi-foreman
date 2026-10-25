@@ -1,0 +1,157 @@
+// Gate decision log (plan 2.6): one JSON line per decision in <agentDir>/pi-foreman/state/gate/log.jsonl.
+// A line never carries a raw value: the command shape is normalised (paths to a class token, URLs to scheme and host,
+// quoted strings and secret-grammar values to `<v>`), every other string is redacted and capped. Best effort, like the trace.
+import * as crypto from "node:crypto";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { redactCommand, scrubReason } from "./trace.ts";
+
+export const GATE_LOG_MAX_BYTES = 20 * 1024 * 1024;
+export const GATE_KINDS = ["owner", "round", "child", "headless"] as const;
+export const GATE_LAYERS = ["floor", "default", "review", "dialog", "cache"] as const;
+export type GateKind = (typeof GATE_KINDS)[number];
+export type GateLayer = (typeof GATE_LAYERS)[number];
+
+/** Roots a literal path is classified against; each is optional. */
+export interface ShapeRoots {
+  worktree?: string;
+  scratch?: string;
+  tmp?: string;
+  home?: string;
+  /** The parent checkout: only its `.workflow/` tree has a class (`<parent>/.workflow/...`). */
+  parent?: string;
+}
+
+const MAX_SHAPE = 400;
+const MAX_FIELD = 120;
+const MAX_REASON = 320;
+
+const slashes = (p: string): string => p.replace(/\\/g, "/").replace(/\/+$/, "");
+/** Whether `p` is `root` or below it (segment boundary; a drive letter is case-insensitive). */
+function below(p: string, root: string | undefined): boolean {
+  if (!root) return false;
+  const r = slashes(root);
+  if (r.length < 2) return false;
+  const win = /^[A-Za-z]:/.test(r);
+  const a = win ? p.toLowerCase() : p;
+  const b = win ? r.toLowerCase() : r;
+  return a === b || a.startsWith(b + "/");
+}
+
+function classOf(token: string, roots: ShapeRoots): string {
+  const p = slashes(token);
+  if (below(p, roots.worktree)) return "<worktree>/...";
+  if (below(p, roots.scratch)) return "<scratch>/...";
+  if (below(p, roots.tmp)) return "<tmp>/...";
+  if (roots.parent && below(p, slashes(roots.parent) + "/.workflow")) return "<parent>/.workflow/...";
+  if (p === "~" || p.startsWith("~/") || below(p, roots.home)) return "<home>/...";
+  return /^(?:[A-Za-z]:)?\//.test(p) ? "<abs>" : "<rel>";
+}
+
+const FILE = /^(?:[A-Za-z0-9_@+-][\w@+.-]*\.[A-Za-z][A-Za-z0-9]{1,9}|\.[A-Za-z_][\w@+.-]*)$/;
+
+/**
+ * The shape of a command: program and option words kept; quoted strings and secret-grammar values `<v>`;
+ * URLs `scheme://host`; every literal path (any token with a separator, `~`, or a file name with an extension) a class token.
+ */
+export function normalizeShape(text: string, roots: ShapeRoots = {}): string {
+  const quoted = text.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, "<v>");
+  const masked = redactCommand(quoted).split("[redacted]").join("<v>");
+  const out = masked.replace(/[^\s;|&()]+/g, (tok: string) => {
+    const url = /^([a-z][a-z0-9+.-]*:\/\/)(?:<v>@)?([^\s\/?#:@]+)/i.exec(tok);
+    if (url) return url[1] + url[2];
+    if (tok.includes("<v>")) return tok;
+    const eq = tok.startsWith("-") ? tok.indexOf("=") : -1;
+    const head = eq > 0 ? tok.slice(0, eq + 1) : "";
+    const t = tok.slice(head.length);
+    if (/[\/\\]/.test(t) || t.startsWith("~") || FILE.test(t.replace(/(:\d+)+$/, ""))) return head + classOf(t, roots);
+    return tok;
+  });
+  return out.slice(0, MAX_SHAPE);
+}
+
+export interface GateRecord {
+  tool: string;
+  layer: GateLayer;
+  verdict: string;
+  /** Rule id or policy entry id. */
+  rule?: string;
+  reason?: string;
+  /** The raw command or target text; written only as its normalised shape. */
+  input?: string;
+  role?: string;
+  kind?: GateKind;
+}
+
+export interface GateLogOptions {
+  agentDir: string;
+  session: string;
+  kind: GateKind;
+  role?: string;
+  cwd?: string;
+  roots?: ShapeRoots;
+  /** `gate.logMaxBytes`; default 20 MB. */
+  maxBytes?: unknown;
+  now?: () => Date;
+}
+
+export interface GateLog {
+  readonly file: string;
+  record(rec: GateRecord): void;
+}
+
+export const gateLogFile = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "gate", "log.jsonl");
+
+const field = (v: unknown): string => redactCommand(typeof v === "string" ? v : "").slice(0, MAX_FIELD);
+
+/** The log writer. `record` never throws: a failed write drops the line. */
+export function openGateLog(opts: GateLogOptions): GateLog {
+  const file = gateLogFile(opts.agentDir);
+  const max = typeof opts.maxBytes === "number" && Number.isFinite(opts.maxBytes) && opts.maxBytes > 0 ? Math.floor(opts.maxBytes) : GATE_LOG_MAX_BYTES;
+  const now = opts.now ?? (() => new Date());
+  const cwdHash = opts.cwd ? crypto.createHash("sha256").update(opts.cwd).digest("hex").slice(0, 12) : "";
+  let ready = false;
+  return {
+    file,
+    record(rec) {
+      try {
+        if (!ready) {
+          fs.mkdirSync(path.dirname(file), { recursive: true });
+          ready = true;
+        }
+        const line =
+          JSON.stringify({
+            ts: now().toISOString(),
+            session: field(opts.session),
+            kind: rec.kind ?? opts.kind,
+            role: field(rec.role ?? opts.role),
+            tool: field(rec.tool),
+            layer: rec.layer,
+            verdict: field(rec.verdict),
+            rule: field(rec.rule),
+            reason: scrubReason(redactCommand(typeof rec.reason === "string" ? rec.reason : "")).slice(0, MAX_REASON),
+            shape: normalizeShape(rec.input ?? "", opts.roots),
+            cwdHash,
+          }) + "\n";
+        let size = 0;
+        try {
+          size = fs.statSync(file).size;
+        } catch {
+          // no file yet
+        }
+        if (size > 0 && size + Buffer.byteLength(line) > max) {
+          const old = path.join(path.dirname(file), "log.1.jsonl");
+          try {
+            fs.rmSync(old, { force: true });
+          } catch {
+            // rename below replaces it where it can
+          }
+          fs.renameSync(file, old);
+        }
+        fs.appendFileSync(file, line, "utf8");
+      } catch {
+        // the log is best effort
+      }
+    },
+  };
+}
