@@ -616,6 +616,7 @@
         "git": { "type": "boolean", "description": "true = the git tool pack: git_status, git_log, git_diff_stat, git_branch_state for the foreman and for children whose role has bash. User or overlay config; the project and session layers may only set false. Re-run foreman setup after a change." },
         "pr": { "type": "boolean", "description": "true (default) = the PR tools pr_create, pr_status, pr_checks, pr_comments and pr_watch for the foreman; children whose role has bash get the read tools. The host comes from tools.prHost. The project and session layers may only set false. Re-run foreman setup after a change." },
         "prHost": { "type": ["string", "object"], "additionalProperties": { "type": "string" }, "description": "Host CLI for the PR tools: \"auto\" (gh, then glab, found on PATH outside the workspace), \"gh\", \"glab\", or an object of command templates with the keys create, status, checks and comments (docs/tools.md#host-templates). User or overlay config only." },
+        "prDots": { "type": "boolean", "description": "false = the PR status dots poller (sidebar dots and the external status hook) never starts, while the PR tools stay on. Default true." },
         "prWatchSeconds": { "type": "integer", "minimum": 5, "maximum": 3600, "description": "Seconds between two pr_watch polls (default 60)." }
       }
     }

@@ -7,6 +7,10 @@
    "tier": "standard"
   },
   {
+   "event": "compaction_point",
+   "model": "foreman-fake/foreman"
+  },
+  {
    "event": "chain_clear"
   },
   {
@@ -186,6 +190,10 @@
    "role": "foreman",
    "model": "foreman-fake/foreman",
    "tier": "standard"
+  },
+  {
+   "event": "compaction_point",
+   "model": "foreman-fake/foreman"
   },
   {
    "event": "chain_clear"

@@ -9,7 +9,9 @@
    {"text": "Waiting."}
   ],
   "rt2": [
-   {"text": "Reviewed.", "usage": {"totalTokens": 175000}}
+   {"text": "Reviewed.", "usage": {"totalTokens": 90000}},
+   {"text": "Reviewed.", "usage": {"totalTokens": 90000}},
+   {"text": "Reviewed.", "usage": {"totalTokens": 90000}}
   ],
   "rt3": [
    {"text": "ok"},

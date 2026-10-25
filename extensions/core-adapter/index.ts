@@ -64,7 +64,7 @@ import type { PythonResolution } from "./python.ts";
 import { runGuard } from "./runguard.ts";
 import { applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrPack } from "./gitpack.ts";
 import { PrWatches, pollSnapshot } from "./prwatch.ts";
-import { PrDots, branchOf } from "./prdots.ts";
+import { PrDots, branchOf, prDotsEnabled } from "./prdots.ts";
 import { ExtStatus } from "./extstatus.ts";
 import { registerSafeOps, runSafeOp } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
@@ -624,7 +624,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         },
       }),
       prDots: new PrDots({
-        enabled: () => s.prPack && !s.isChild,
+        enabled: () => prDotsEnabled(s.prPack, s.isChild, get(s.config.config, "tools.prDots")),
         preflight: () => safeOpDriftPreflight(s.gitDrift, s.isChild, s.cwd, os.homedir(), "foreman_pr_dots", { mode: "print", hasUI: false }, (r) => s.trace?.emit(r), "pr-dots"),
         branch: () => branchOf(s.prCtx?.cwd ?? s.cwd),
         run: (op, args) => prRun(s, s.prCtx?.cwd ?? s.cwd, op, args, 30_000),

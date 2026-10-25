@@ -516,6 +516,7 @@ Switch: `tools.pr` is true.
 |---|---|---|
 | `tools.pr` | `true` | tighten-only (only false is accepted) |
 | `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
+| `tools.prDots` | `true` | any layer |
 | `tools.prWatchSeconds` | `60` | any layer |
 
 ### sidebar-status

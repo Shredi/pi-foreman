@@ -28,6 +28,11 @@ export function dotState(mergeable: unknown, checks: Partial<ChecksAnswer> | und
   return "none";
 }
 
+/** Whether the dots poller runs: the PR pack is on, this is the foreman, and tools.prDots is not false (absent = true). */
+export function prDotsEnabled(prPack: boolean, isChild: boolean, prDots: unknown): boolean {
+  return prPack && !isChild && prDots !== false;
+}
+
 /** The checked-out branch name, "" when detached or on any failure. */
 export function branchOf(cwd: string): Promise<string> {
   return new Promise((resolve) => {
