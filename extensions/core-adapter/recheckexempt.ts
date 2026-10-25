@@ -20,6 +20,15 @@ export interface ExemptCtx {
 const PATH_FIELDS = ["path", "file", "dir", "directory", "cwd"] as const;
 const NEUTRAL_VERBS = new Set(["sleep", "echo", "true", ":", "printf", "date"]);
 const WORKTREE = /^(?:git\s+(?:-C\s+\S+\s+)?worktree\s+(?:add|list|prune)(?:\s|$))/;
+// R41 item 16: PR coordination and a default-branch sync are no re-check either. Plain words only (no quotes, `$`, redirects).
+const PR_TOOLS: ReadonlySet<string> = new Set(["pr_status", "pr_checks", "pr_comments", "pr_watch"]);
+const ARGS = String.raw`(?:\s+[A-Za-z0-9_./:=@%+,#-]+)*`;
+const PR_VIEW = new RegExp(String.raw`^(?:gh|glab)\s+(?:pr|mr|run|ci)\s+(?:view|list|checks|status)${ARGS}$`);
+const WORD = String.raw`[A-Za-z0-9_.:-]+`;
+const PEER_READ = new RegExp(String.raw`^(?:herdr\s+(?:pane\s+read\s+${WORD}(?:\s+--lines(?:=|\s+)\d+)?|(?:agent|pane)\s+list)|(?:\S*/)?foreman\s+(?:session\s+list|worktree\s+sweep\s+--dry-run))$`);
+const DEFAULT_BRANCH = String.raw`(?:main|master)`;
+const GIT = String.raw`git(?:\s+-C\s+[A-Za-z0-9_./:=@%+,~-]+)?`;
+const BRANCH_SYNC = new RegExp(String.raw`^${GIT}\s+(?:fetch(?:\s+origin(?:\s+${DEFAULT_BRANCH})?)?|pull\s+--ff-only(?:\s+origin(?:\s+${DEFAULT_BRANCH})?)?)$`);
 
 function expand(w: string, c: ExemptCtx): string | null {
   let x = w;
@@ -66,7 +75,7 @@ function words(seg: string): string[] | null {
 function segmentVerdict(seg: string, c: ExemptCtx): 1 | 0 | -1 {
   const text = seg.trim();
   if (!text) return 0;
-  if (WORKTREE.test(text)) return 1;
+  if (WORKTREE.test(text) || PR_VIEW.test(text) || BRANCH_SYNC.test(text) || PEER_READ.test(text)) return 1;
   const w = words(text);
   if (!w || w.length === 0) return -1;
   const operands = w.slice(1).filter((x) => !x.startsWith("-") && !/^[<>]|^\d?>/.test(x)).filter(pathLike);
@@ -103,6 +112,7 @@ function scriptExempt(code: string, c: ExemptCtx): boolean {
 export function recheckExempt(toolName: string, input: unknown, c: ExemptCtx): boolean {
   if (!input || typeof input !== "object") return false;
   const inp = input as Record<string, unknown>;
+  if (PR_TOOLS.has(toolName)) return true;
   if (toolName === "bash") return typeof inp.command === "string" && bashExempt(inp.command, c);
   if (toolName === "codemode") {
     const code = typeof inp.code === "string" ? inp.code : typeof inp.script === "string" ? inp.script : "";

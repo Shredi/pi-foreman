@@ -168,7 +168,7 @@ export function finalizationCommand(toolName: string, input: unknown): boolean {
   return FINAL_RE.test(command);
 }
 
-const PR_COORDINATION: ReadonlySet<string> = new Set(["pr_status", "pr_checks", "pr_comments"]);
+const PR_COORDINATION: ReadonlySet<string> = new Set(["pr_status", "pr_checks", "pr_comments", "pr_watch"]);
 const FOREMAN_SESSION_SEG = /^(?:\S*\/)?foreman session(?:\s|$)/;
 const CD_SEG = /^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*$/;
 
