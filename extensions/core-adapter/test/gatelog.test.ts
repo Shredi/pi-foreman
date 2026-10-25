@@ -179,3 +179,20 @@ test("record: the serialised log line never contains a planted secret, in any po
   assert.equal(raw.trim().split("\n").length, cases.length);
   fs.rmSync(agent, { recursive: true, force: true });
 });
+
+test("shape: npm config set masks the value of a secret-named key whatever its length", () => {
+  const s = normalizeShape("npm config set //r/:_authToken tk9", posix);
+  assert.ok(!/tk9/.test(s), s);
+  assert.match(s, /npm config set \S+ <v>$/);
+});
+
+test("record: a reason quoting a credential never reaches the log", () => {
+  const agent = tmpAgent();
+  const log = openGateLog({ agentDir: agent, session: "s", kind: "owner", roots: posix });
+  const reasons = ["denied `curl --password hunter2 https://x`", "ask: sshpass -p hunter2 ssh h", "ran mysql -ppw1234 -e 'select 1'", "npm config set //r/:_authToken hunter2"];
+  for (const reason of reasons) log.record({ tool: "bash", layer: "floor", verdict: "deny", reason, input: "ls" });
+  const raw = fs.readFileSync(log.file, "utf8");
+  assert.ok(!/hunter2|pw1234/.test(raw), raw);
+  assert.equal(raw.trim().split("\n").length, reasons.length);
+  fs.rmSync(agent, { recursive: true, force: true });
+});

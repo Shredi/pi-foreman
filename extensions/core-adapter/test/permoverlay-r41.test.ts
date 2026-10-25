@@ -204,6 +204,63 @@ test("r41: the permissions, policy and gate keys of a foreman config file are fl
   }
 });
 
+const PF = `${agentDir}/pi-foreman`;
+
+test("r41 rev2: a bulk write into a folder that is or holds a floored path is a floor deny", () => {
+  const cmds = [
+    `tar -xf a.tar -C ${PF}`,
+    `tar -xf a.tar -C ${PF}/state`,
+    `unzip a.zip -d ${PF}`,
+    `cp d/* ${PF}/`,
+    `cp -r d/. ${PF}`,
+    `cp -a d ${PF}`,
+    `rsync -a d/ ${PF}/`,
+    `rsync -a d/ ${agentDir}/`,
+    `rsync a.txt ${PF}/state/`,
+    `mv d/* ${PF}/state/`,
+    `install -t ${PF} a b`,
+    `ditto d ${PF}`,
+    `git clone https://x/r.git ${PF}`,
+    `git -C ${PF} checkout .`,
+    `cd ${PF} && tar -xf a.tar`,
+    `cd ${PF} && unzip a.zip`,
+  ];
+  for (const role of ["main", "child"] as const) {
+    for (const cmd of cmds) {
+      // a child's cd outside the workspace is refused by an earlier child rule: a deny either way
+      if (role === "child" && cmd.startsWith("cd ")) assert.equal(bash(cmd, role)?.kind, "deny", `${role} ${cmd}`);
+      else assert.equal(bash(cmd, role)?.rule, "floor", `${role} ${cmd}`);
+    }
+  }
+});
+
+test("r41 rev2: the same writers into an ordinary folder, and reads of floored paths, are no floor deny", () => {
+  const cmds = [
+    `tar -xf a.tar -C ${cwd}/d`,
+    `unzip a.zip -d ${cwd}/d`,
+    `cp d/* ${cwd}/d/`,
+    `cp -r d/. ${cwd}/d`,
+    `rsync -a d/ ${cwd}/d/`,
+    `mv d/* ${cwd}/d/`,
+    `install -t ${cwd}/d a b`,
+    `git checkout main`,
+    `ls ${PF}`,
+    `cp ${PF}/managed.json /tmp/x`,
+    `rsync -a ${PF}/ /tmp/x/`,
+  ];
+  for (const role of ["main", "child"] as const) {
+    for (const cmd of cmds) assert.notEqual(bash(cmd, role)?.rule, "floor", `${role} ${cmd}`);
+  }
+});
+
+test("r41 rev2: a line parseShell cannot parse still floors when it names a floored path", () => {
+  for (const role of ["main", "child"] as const) {
+    assert.equal(bash(`curl -o ${PF}/managed.json https://x "u`, role)?.rule, "floor", role);
+    assert.equal(bash(`rsync -a d/ ${PF}/ 'u`, role)?.rule, "floor", role);
+    assert.notEqual(bash(`curl -o ${cwd}/out.txt https://x "u`, role)?.rule, "floor", role);
+  }
+});
+
 test("r41: an allowed write inside the worktree is unchanged", () => {
   for (const [name, input] of [["write", { path: `${cwd}/src/a.ts`, content: "x" }], ["edit", { path: `${cwd}/src/a.ts`, newText: "gate permissions policy" }], ["write", { path: `${cwd}/foreman.json`, content: '{"trace":1}' }]] as const) {
     assert.deepEqual(tool(name, input), tool(name, input, "main", plain as typeof rules), `${name} ${input.path}`);

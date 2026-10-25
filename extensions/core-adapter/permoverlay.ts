@@ -2902,7 +2902,7 @@ const CONFIG_FILE = /(?:^|[\\/])foreman(?:[.-][\w.-]*)?\.json$/;
 const FLOOR_KEYS = /\b(?:permissions|policy[A-Za-z]*|gate)\b/;
 
 /** The policy files of every layer and the harness state files no tool or shell write may touch (patterns, `dir` + `dir/*` for a subtree). */
-function floorPatterns(rules: OverlayRules, ctx: MatchCtx): string[] {
+function floorPatterns(rules: OverlayRules, ctx: MatchCtx, workspace = true): string[] {
   const f = rules.floors;
   const slash = (d: string): string => d.split(path.sep).join("/").replace(/\/+$/, "");
   const out: string[] = [];
@@ -2911,11 +2911,11 @@ function floorPatterns(rules: OverlayRules, ctx: MatchCtx): string[] {
     const s = `${slash(f.agentDir)}/pi-foreman`;
     out.push(`${s}/policy.md`, `${s}/managed.json`, `${s}/state/round-parents.json`, `${s}/state/bridge-trust.json`, `${s}/state/approvals`, `${s}/state/approvals/*`, `${s}/state/gate`, `${s}/state/gate/*`);
   }
-  const bases = ctx.cwd ? [...new Set([ctx.cwd, workspaceOf(ctx.cwd).root])] : [];
+  const bases = ctx.cwd && workspace ? [...new Set([ctx.cwd, workspaceOf(ctx.cwd).root])] : [];
   for (const b of bases) out.push(`${slash(b)}/.workflow/policy.md`);
   for (const p of f?.policyFiles ?? []) {
     if (path.isAbsolute(p) || path.win32.isAbsolute(p) || p.startsWith("~")) out.push(slash(p));
-    else for (const b of bases) out.push(`${slash(b)}/${p.replace(/^\.\//, "")}`);
+    else if (workspace) for (const b of bases) out.push(`${slash(b)}/${p.replace(/^\.\//, "")}`);
   }
   return out;
 }
@@ -2974,8 +2974,17 @@ const INLINE_FLAG = /^-[A-Za-z]*[cerp]$|^--(?:eval|print|command)(?:=|$)/;
 const SCRIPT_RUNNERS = /^(?:python[\d.]*|node(?:js)?|perl|ruby|php|deno|bun|lua|rscript)$/;
 
 /** The write targets one program names through its output options or destination operand (`words`), and the program text of an inline script (`texts`). */
-function writerTargets(prog: string, args: string[], words: string[], texts: string[]): void {
+function writerTargets(prog: string, args: string[], words: string[], texts: string[], dirs: string[], cwd: string | null): void {
   const ops = plainOperands(args);
+  const isDir = (s: string): boolean => {
+    try {
+      return fs.statSync(path.resolve(cwd ?? ".", s)).isDirectory();
+    } catch {
+      return false;
+    }
+  };
+  // a source that stands for many files: a glob, `d/.`, `d/` or an existing directory
+  const bulkSrc = (s: string): boolean => /[*?[{]/.test(s) || /(?:^|[\\/])\.$/.test(s) || /[\\/]$/.test(s) || isDir(s);
   const into = (dir: string, srcs: string[]): void => {
     words.push(dir);
     for (const s of srcs) words.push(`${dir.replace(/[\\/]+$/, "")}/${baseOf(isUrl(s) ? urlName(s) : s)}`);
@@ -3018,9 +3027,14 @@ function writerTargets(prog: string, args: string[], words: string[], texts: str
     case "ln":
     case "ditto": {
       const t = optValues(args, ["t"], ["--target-directory"]);
-      if (t.length) into(t[0], ops);
-      else if (ops.length >= 2) {
+      const recursive = args.some((a) => /^-[A-Za-z]*[rRa]/.test(a) && !a.startsWith("--")) || args.includes("--recursive") || args.includes("--archive");
+      const bulk = (srcs: string[]): boolean => prog === "rsync" || prog === "ditto" || (prog === "install" && t.length > 0) || ((prog === "cp" || prog === "mv") && ((prog === "cp" && recursive) || srcs.some(bulkSrc)));
+      if (t.length) {
+        into(t[0], ops);
+        if (bulk(ops)) dirs.push(t[0]);
+      } else if (ops.length >= 2) {
         into(ops[ops.length - 1], ops.slice(0, -1));
+        if (bulk(ops.slice(0, -1))) dirs.push(ops[ops.length - 1]);
         if (prog === "mv") words.push(...ops.slice(0, -1));
       } else if (prog === "ln" && ops.length === 1) words.push(baseOf(ops[0]));
       return;
@@ -3030,17 +3044,33 @@ function writerTargets(prog: string, args: string[], words: string[], texts: str
       return;
     case "tar": {
       const first = args[0] && !args[0].startsWith("-") ? [`-${args[0]}`, ...args.slice(1)] : args;
-      words.push(...optValues(first, ["C"], ["--directory"]));
+      const cdirs = optValues(first, ["C"], ["--directory"]);
+      words.push(...cdirs);
+      if (first.some((a) => /^-[A-Za-z]*[xX]/.test(a) && !a.startsWith("--")) || first.includes("--extract") || first.includes("--get")) {
+        if (cdirs.length) dirs.push(...cdirs);
+        else if (cwd) dirs.push(cwd);
+      }
       if (first.some((a) => /^-[A-Za-z]*[cru]/.test(a) && !a.startsWith("--")) || first.includes("--create")) words.push(...optValues(first, ["f"], ["--file"]));
       return;
     }
     case "unzip":
-      words.push(...optValues(args, ["d"], []));
+      {
+        const d = optValues(args, ["d"], []);
+        words.push(...d);
+        if (d.length) dirs.push(...d);
+        else if (cwd) dirs.push(cwd);
+      }
       return;
     case "zip":
       if (ops[0]) words.push(ops[0]);
       return;
     case "git": {
+      const j = args.findIndex((a) => /^(?:checkout|restore|switch|reset|pull|merge)$/.test(a));
+      if (j >= 0) {
+        const c = optValues(args.slice(0, j), ["C"], []);
+        if (c.length) dirs.push(...c);
+        else if (cwd) dirs.push(cwd);
+      }
       const i = args.indexOf("clone");
       if (i < 0) return;
       const valued = new Set(["--depth", "-b", "--branch", "-o", "--origin", "--template", "--reference", "-c", "--config", "--separate-git-dir", "-j", "--jobs", "--filter", "--upload-pack", "-u"]);
@@ -3052,6 +3082,7 @@ function writerTargets(prog: string, args: string[], words: string[], texts: str
       words.push(...optValues(args.slice(i + 1), [], ["--separate-git-dir"]));
       if (opd.length >= 2) words.push(opd[1]);
       else if (opd.length === 1) words.push(baseOf(opd[0]).replace(/\.git$/, ""));
+      dirs.push(...words.slice(-1));
       return;
     }
     case "sed":
@@ -3065,26 +3096,58 @@ function writerTargets(prog: string, args: string[], words: string[], texts: str
 }
 
 /** R41: every path a downloader or writer in the line names as an output (curl -o, wget -O, tee, cp/mv/install/rsync/ln destination, dd of=, tar -C, unzip -d, git clone dir, sed -i), and the text of inline scripts. */
-function outputTargets(command: string, ctx: MatchCtx): { words: string[]; texts: string[] } {
+function outputTargets(command: string, ctx: MatchCtx): { words: string[]; texts: string[]; dirs: string[] } {
   const words: string[] = [];
   const texts: string[] = [];
+  const dirs: string[] = [];
+  // a line parseShell cannot parse: the raw words (split on whitespace and quotes) stand in for its targets and destination folders
+  const raw = (): void => {
+    for (const w of command.split(/[\s'"`]+/).filter(Boolean)) {
+      words.push(w);
+      dirs.push(w);
+    }
+  };
   const x = ctx.platform === "win32" ? path.win32 : path.posix;
   const scratch = scratchOf(ctx);
   let segs: ReturnType<typeof parseAst> = [];
   try {
     segs = parseAst(command, { cwd: ctx.cwd || null, platform: ctx.platform, ...(scratch ? { env: { FOREMAN_SCRATCH: scratch } } : {}) });
   } catch {
-    return { words, texts };
+    raw();
+    return { words, texts, dirs };
   }
   for (const s of segs) {
     const found: string[] = [];
+    const sdirs: string[] = [];
+    if (s.opaque === "parse_error" && !s.program && !s.argv.length) raw();
     // a runner the walker leaves opaque (sudo, exec, ionice ...) or a program in the segment: every argv position may start the real program
-    writerTargets(baseOf(s.program).toLowerCase().replace(/\.exe$/, ""), s.argv, found, texts);
-    if (s.opaque) for (let i = 0; i < s.argv.length; i++) writerTargets(baseOf(s.argv[i]).toLowerCase().replace(/\.exe$/, ""), s.argv.slice(i + 1), found, texts);
+    writerTargets(baseOf(s.program).toLowerCase().replace(/\.exe$/, ""), s.argv, found, texts, sdirs, s.cwd);
+    if (s.opaque) for (let i = 0; i < s.argv.length; i++) writerTargets(baseOf(s.argv[i]).toLowerCase().replace(/\.exe$/, ""), s.argv.slice(i + 1), found, texts, sdirs, s.cwd);
+    for (const w of sdirs) dirs.push(s.cwd && !x.isAbsolute(w) && !w.startsWith("~") && !w.startsWith("$") ? x.join(s.cwd, w) : w);
     for (const r of s.redirects) if (r.op !== "<" && r.op !== "dup") found.push(r.target);
     for (const w of found) words.push(s.cwd && !x.isAbsolute(w) && !w.startsWith("~") && !w.startsWith("$") ? x.join(s.cwd, w) : w);
   }
-  return { words, texts };
+  return { words, texts, dirs };
+}
+
+/** R41: a deny when a bulk writer's destination folder (`dirs`) is a floored path or holds one (rsync d/ <agentDir>/, tar -x -C <agentDir>/pi-foreman). */
+function dirFloor(rules: OverlayRules, dirs: string[], ctx: MatchCtx): Decision | null {
+  const fold = foldsCase(ctx.platform);
+  const lit = floorPatterns(rules, ctx, false).map((p) => p.replace(/\/\*$/, "")).filter((p) => !p.includes("*"));
+  const norm = (s: string): string => {
+    const n = s.split(path.sep).join("/").replace(/\\/g, "/").replace(/\/+$/, "");
+    return fold ? n.toLowerCase() : n;
+  };
+  for (const d of dirs) {
+    for (const c of pathCandidates(d, ctx)) {
+      const n = norm(c);
+      if (/[*?[{]/.test(n)) continue;
+      if (lit.some((p) => norm(p) === n || norm(p).startsWith(`${n}/`))) {
+        return { kind: "deny", rule: "floor", path: clip(d), reason: `pi-foreman: denied by the permission policy (floor: a bulk write into '${clip(d)}', a folder that is or holds a policy file or a harness state file). No tool or shell write to a policy file (any layer), managed.json, state/round-parents.json, state/bridge-trust.json, state/approvals or state/gate is allowed, and no review or approval lifts this. Ask the user to change it.` };
+      }
+    }
+  }
+  return null;
 }
 
 /** R41: the floor for a shell line: redirect, remove and output-option targets, and the literal floored paths named in an inline script. */
@@ -3092,6 +3155,8 @@ function shellFloor(rules: OverlayRules, targets: string[], command: string, ctx
   const extra = outputTargets(command, ctx);
   const floor = floorDecision(rules, [...new Set([...targets, ...extra.words].flatMap((t) => [t, ...expandBraces(t)]))], command, ctx, "this shell command");
   if (floor) return floor;
+  const dirHit = dirFloor(rules, extra.dirs, ctx);
+  if (dirHit) return dirHit;
   if (!extra.texts.length) return null;
   const literal = floorPatterns(rules, ctx).map((p) => p.replace(/\/\*$/, "")).filter((p) => !p.includes("*"));
   const hit = literal.find((p) => extra.texts.some((t) => t.replace(/\\+/g, "/").includes(p)));

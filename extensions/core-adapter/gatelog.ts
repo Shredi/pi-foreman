@@ -77,8 +77,8 @@ function maskHeredocs(text: string): string {
  * The shape of a command: program and option words kept; quoted strings and secret-grammar values `<v>`;
  * URLs `scheme://host`; every literal path (any token with a separator, `~`, or a file name with an extension) a class token.
  */
-export function normalizeShape(text: string, roots: ShapeRoots = {}): string {
-  const quoted = maskHeredocs(text).replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, "<v>");
+export function normalizeShape(text: string, roots: ShapeRoots = {}, credsOnly = false): string {
+  const quoted = credsOnly ? text.replace(/[`'"]/g, " ") : maskHeredocs(text).replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, "<v>");
   const masked = redactCommand(quoted).split("[redacted]").join("<v>");
   let prog = "";
   let pending = false;
@@ -96,14 +96,17 @@ export function normalizeShape(text: string, roots: ShapeRoots = {}): string {
       user = false;
       words = [];
     }
-    out += gap + shapeToken(m[0], roots, { prog, pending, user });
+    const shaped = shapeToken(m[0], roots, { prog, pending, user });
+    out += gap + (credsOnly && !shaped.includes("<v>") ? m[0] : shaped);
     const tok = m[0];
     if (/^(?:-u|--user(?:name)?(?:=|$))/.test(tok)) user = true;
     if (!prog && !/^[A-Za-z_]\w*=/.test(tok)) prog = (tok.split(/[\\/]/).pop() ?? tok).toLowerCase();
     words.push(tok);
     // `aws configure set aws_secret_access_key VALUE`: the operand of a secret-named key
     const awsSet = prog === "aws" && words.length === 4 && words[1] === "configure" && words[2] === "set" && SECRET_NAME.test(tok);
-    pending = awsSet || credOperandNext(tok, prog);
+    // `npm config set //r/:_authToken VALUE`: the operand of a secret-named key, whatever its length
+    const npmSet = prog === "npm" && words.length === 4 && words[1] === "config" && words[2] === "set" && SECRET_NAME.test(tok);
+    pending = awsSet || npmSet || credOperandNext(tok, prog);
   }
   return (out + masked.slice(prev)).slice(0, MAX_SHAPE);
 }
@@ -196,7 +199,7 @@ export function openGateLog(opts: GateLogOptions): GateLog {
             layer: rec.layer,
             verdict: field(rec.verdict),
             rule: field(rec.rule),
-            reason: scrubReason(redactCommand(typeof rec.reason === "string" ? rec.reason : "")).slice(0, MAX_REASON),
+            reason: scrubReason(redactCommand(normalizeShape(typeof rec.reason === "string" ? rec.reason : "", opts.roots, true))).slice(0, MAX_REASON),
             shape: normalizeShape(rec.input ?? "", opts.roots),
             cwdHash,
           }) + "\n";
