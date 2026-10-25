@@ -67,6 +67,7 @@ import type { PrOp } from "./gitpack.ts";
 import { PrWatches, pollSnapshot } from "./prwatch.ts";
 import { PrDots, branchOf, prDotsEnabled } from "./prdots.ts";
 import { PrWidget } from "./prwidget.ts";
+import { PrBot, prBotDir, sharedDoctorLines } from "./prbot.ts";
 import { ExtStatus } from "./extstatus.ts";
 import { registerSafeOps, runSafeOp } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
@@ -235,6 +236,8 @@ interface Session {
   prCtx: ExtensionContext | null;
   /** Foreman only: PR state dots for the sidebar (prdots.ts) and the external status hook (extstatus.ts); both feed the live file's `dots`. */
   prDots: PrDots;
+  /** Foreman only: the shared PR watch (prbot.ts): leader lease, host polling, snapshot reader. */
+  prBot: PrBot;
   extStatus: ExtStatus;
   /** Project Claude Code config snapshot, checked before claude-bridge prompts (claudedrift.ts). */
   claudeCfg: ClaudeConfigWatch;
@@ -592,6 +595,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const owned = computeOwned(null);
     const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o) : null);
     const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), busy: () => idleBusy(s, s.idleCtx), piIdleMode: () => piCacheWarmingIdle(), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, aboveFloor: () => idleAboveFloor(s) });
+    let lastShared: ReturnType<PrBot["read"]> = null;
     const s: Session = {
       id,
       cwd,
@@ -642,6 +646,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         batch: true,
         traceTrack: (r) => s.trace?.emit(r),
         interactions: () => get(s.config.config, "tools.prInteractions"),
+        beforeTick: () => {
+          const before = s.prBot.read();
+          if (before) s.prDots.onTouched(before.touched);
+          if (before !== lastShared) {
+            lastShared = before;
+            s.prWidget.refresh();
+          }
+        },
         baseBranch: () => {
           const b = get(s.config.config, "safety.ops.baseBranch");
           return typeof b === "string" && b ? b : null;
@@ -770,7 +782,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       idleCtx: null,
       lastAssistantAt: null,
       widget: new ChildWidget(usageFile(agentDir, foremanSession), loadPrices(PKG_ROOT)),
-      prWidget: new PrWidget({ views: () => s.prDots.views(), shared: () => null /* B3: the shared snapshot reader */, current: () => s.prDots.currentRepo() }),
+      prBot: new PrBot({
+        active: () => s.prPack && !s.isChild,
+        config: () => get(s.config.config, "tools.prShared"),
+        prHost: () => get(s.config.config, "tools.prHost"),
+        dir: prBotDir(agentDir),
+        sessionId: id,
+        run: (op, args, runCwd) => prRun(s, runCwd, op, args, 30_000),
+        cwd: () => s.prCtx?.cwd ?? s.cwd,
+        preflight: () => safeOpDriftPreflight(s.gitDrift, s.isChild, s.cwd, os.homedir(), "foreman_pr_shared", { mode: "print", hasUI: false }, (r) => s.trace?.emit(r), "pr-shared"),
+        trace: (r) => s.trace?.emit(r),
+      }),
+      prWidget: new PrWidget({ views: () => s.prDots.views(), shared: () => s.prBot.read(), current: () => s.prDots.currentRepo() }),
       live: null,
       pressureSampler: null,
       pressureQ: null,
@@ -1096,6 +1119,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s.isChild && s.live) {
       prWidgetTouch(s, ctx);
       s.prDots.start();
+      s.prBot.start();
       s.extStatus.start();
     }
     // Host pressure (pressure.ts): the foreman samples on a timer; the launch path only reads the file.
@@ -1126,6 +1150,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.panels.clear();
     s.prWatches.clear();
     s.prDots.clear();
+    s.prBot.dispose();
     s.prWidget.dispose();
     s.extStatus.clear();
     if (!s.isChild) {
@@ -4044,6 +4069,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     else fail("session marker missing", `make ${s.markerDir} writable and restart the session.`);
     out.push(`INFO ceremony: ${tierLine(s.ceremony)}`);
     out.push(`INFO sidebar status: ${s.extStatus.describe()}`);
+    out.push(...sharedDoctorLines(s.isChild ? "pr shared watch: off" : s.prBot.describe(), s.config.warnings));
     out.push(`INFO PR tools: ${s.prPack ? prHostLabel(get(s.config.config, "tools.prHost") ?? "auto", workspaceOf(s.cwd).root, process.env, platform) : "off (tools.pr)"}`);
     const cache = resolveCachePolicy(s.config.config, ctx.model?.provider, ctx.model?.id);
     if (cache.active && !s.isChild) {

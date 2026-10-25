@@ -114,6 +114,8 @@ export interface PrDotsDeps {
   timers?: Timers;
   /** The dots changed (live file and widget refresh). */
   changed?(): void;
+  /** Runs at the start of every tick: the shared watch snapshot is read here (no second timer). */
+  beforeTick?(): void;
   /** Registration trace (`pr_track`); default: none. */
   traceTrack?(rec: Record<string, unknown>): void;
   /** The session cwd. */
@@ -567,6 +569,11 @@ export class PrDots {
   // ---------------------------------------------------------------- one tick
 
   private async round(): Promise<"skipped" | "ok" | "failed" | "halted"> {
+    try {
+      this.deps.beforeTick?.();
+    } catch {
+      // the snapshot is optional display data
+    }
     const pre = await this.deps.preflight();
     if (pre) return "skipped";
     this.tickNo += 1;
