@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // pi-foreman installer (design section 11). Plain Node >= 22 ESM, no dependencies.
 //   node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--develop] [--remove] [--agent-dir <dir>]
+//                  [--profile <name>] [--enable <id>[,<id>]] [--disable <id>[,<id>]] [--addon <id>] [--pick]
 // pi-foreman itself is installed with `pi install git:github.com/Shredi/pi-foreman` (it bundles pi-subagents,
 // the permission system and pi-intercom as dependencies); this script writes the config around it.
 import * as fs from "node:fs";
@@ -9,6 +10,10 @@ import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createInterface } from "node:readline/promises";
+import {
+  assignment, equivalentCommand, installedAddons, loadAddons, loadFeatures, loadProfiles, planChanges, resolveSetupPython, toggleable,
+} from "./extensions/core-adapter/profiles.mjs";
 
 // The shared point rule. Loaded softly: a copy of this script without the extension folder still installs, minus the compaction step.
 const pointModule = await import("./extensions/core-adapter/compaction-point.mjs").catch(() => null);
@@ -19,26 +24,28 @@ const PI_DEFAULT_KEEP_RECENT = pointModule?.PI_DEFAULT_KEEP_RECENT ?? 20000;
 const ROOT = fs.realpathSync(path.dirname(fileURLToPath(import.meta.url)));
 const WIN = process.platform === "win32";
 const MANAGED_KEYS = ["agentOverridesByProvider", "agentOverrides", "forceTopLevelAsync"]; // same keys as /foreman doctor
-const MIN_PY = [3, 13];
-const PROBE_CODE = "import sys;print('%d.%d' % sys.version_info[:2]);print(sys.executable)";
 const OVERLAY_RE = /^npm:(@[a-z0-9~][a-z0-9._~-]*\/)?[a-z0-9~][a-z0-9._~-]*@\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
 const FOREMAN_INSTALL = "pi install git:github.com/Shredi/pi-foreman";
 const FOREMAN_SOURCE = "git:github.com/Shredi/pi-foreman";
 const USAGE = [
   "Usage: node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--develop] [--remove] [--agent-dir <dir>]",
+  "                       [--profile <name>] [--enable <id>[,<id>]] [--disable <id>[,<id>]] [--addon <id>] [--pick]",
   `  Install pi-foreman first: ${FOREMAN_INSTALL}  (this script is also reachable as \`foreman setup\`).`,
   "  --no-intercom  filter pi-intercom out of the pi-foreman package entry and do not write its config",
   "                 (adds the filter only; delete the \"!node_modules/pi-intercom/**\" lines from settings.json to undo)",
   "  --develop      run from a checkout: write <checkout>/.pi/settings.json so the checkout replaces the installed",
   "                 package in that directory (project packages load only after Pi's trust prompt, or `pi -a`)",
   "  --remove       drop the managed settings keys and config; then run `pi remove <pi-foreman source>` yourself",
+  "  --profile      apply a feature profile (orchestration, standard, full) to the user foreman.json and record it",
+  "  --enable/--disable  switch toggleable features on or off after the profile (comma lists, repeatable; `foreman features list` shows the ids)",
+  "  --addon        install an optional Pi add-on from config/addons.json (repeatable; installed only on this consent)",
+  "  --pick         open the terminal picker again (needs a terminal; PI_FOREMAN_PICKER=off disables it, =force is a test aid)",
   "  --dry-run      show what would change, write nothing",
 ].join("\n");
 const NO_INTERCOM_GLOB = "!node_modules/pi-intercom/**";
 const BUNDLED_RE = /^npm:(pi-subagents|@gotgenes\/pi-permission-system|pi-intercom)(@.*)?$/;
 const REMOTE_FOREMAN_RE = /^(npm:pi-foreman(@[^/]+)?|(github\.com\/[^/\s]+\/pi-foreman(\.git)?(@[^/]+)?\/?)|git:[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|git:https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?)$/;
-// Optional add-on; nothing in pi-foreman requires it (docs/herdr.md, "Optional add-on: background tasks").
-const ADDON_HINT = "optional add-on: PI_BG_FEATURES=process pi install npm:pi-background-tasks (background shell tasks with status, logs and kill; `process` leaves out the attribution provider override, which takes over the global anthropic provider slot).";
+const NO_PROFILE_HINT = "features: no profile chosen yet; run foreman setup --pick in a terminal, or pass --profile <name> [--enable/--disable <id>]";
 const BRIDGE_HINT = "pi-claude-bridge: log in once. Run `CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude` and enter /login, or run `claude setup-token` and export CLAUDE_CODE_OAUTH_TOKEN (docs/install.md, \"Claude bridge: log in once\").";
 const INTERCOM = "pi-intercom";
 // pi-subagents runs this after creating a managed worktree (config: <agent dir>/extensions/subagent/config.json). POSIX only:
@@ -62,8 +69,10 @@ const say = (s = "") => console.log(s);
 
 // ---------------------------------------------------------------- helpers
 
+const csv = (v) => v.split(",").map((s) => s.trim()).filter(Boolean);
+
 function parseArgs(argv) {
-  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false, develop: false };
+  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false, develop: false, profile: null, enable: [], disable: [], addon: [], pick: false };
   for (let i = 0; i < argv.length; i++) {
     const eq = argv[i].startsWith("--") ? argv[i].indexOf("=") : -1;
     const flag = eq >= 0 ? argv[i].slice(0, eq) : argv[i];
@@ -80,6 +89,11 @@ function parseArgs(argv) {
     else if (flag === "--develop") o.develop = true;
     else if (flag === "--overlay") o.overlay = value();
     else if (flag === "--agent-dir") o.agentDir = value();
+    else if (flag === "--profile") o.profile = value();
+    else if (flag === "--enable") o.enable.push(...csv(value()));
+    else if (flag === "--disable") o.disable.push(...csv(value()));
+    else if (flag === "--addon") o.addon.push(...csv(value()));
+    else if (flag === "--pick") o.pick = true;
     else if (flag === "--help" || flag === "-h") throw new Fatal(USAGE, 0);
     else throw new Fatal(`Unknown argument: ${argv[i]}\n${USAGE}`, 2);
   }
@@ -88,6 +102,14 @@ function parseArgs(argv) {
   }
   if (o.overlay && o.remove) throw new Fatal("--overlay and --remove cannot be combined.", 2);
   if (o.develop && (o.remove || o.project)) throw new Fatal("--develop cannot be combined with --remove or --project.", 2);
+  const named = [o.profile && "--profile", o.enable.length && "--enable", o.disable.length && "--disable", o.addon.length && "--addon"].filter(Boolean);
+  if (o.remove && (named.length || o.pick)) throw new Fatal(`${[...named, o.pick && "--pick"].filter(Boolean).join(", ")} cannot be combined with --remove.`, 2);
+  if (o.pick && named.length) throw new Fatal(`--pick cannot be combined with ${named.join(", ")}: the picker opens only without feature or add-on flags.`, 2);
+  const plan = planChanges({}, { profile: o.profile ?? undefined, enable: o.enable, disable: o.disable });
+  if (plan.errors.length) throw new Fatal(plan.errors.join("\n"), 2);
+  const addonIds = loadAddons().addons.map((a) => a.id);
+  const badAddon = o.addon.filter((id) => !addonIds.includes(id));
+  if (badAddon.length) throw new Fatal(`unknown add-on ${badAddon.join(", ")}; valid: ${addonIds.join(", ")}`, 2);
   return o;
 }
 
@@ -141,22 +163,41 @@ function timestamp() {
   return new Date().toISOString().replace(/[-:]/g, "").replace(".", "").replace("T", "-").replace("Z", "");
 }
 
-function unifiedDiff(label, before, after) {
+/** Line-level unified diff (LCS), 2 lines of context, one hunk per change cluster. */
+export function unifiedDiff(label, before, after) {
   const a = before === null ? [] : before.replace(/\n$/, "").split("\n");
   const b = after.replace(/\n$/, "").split("\n");
-  let s = 0;
-  while (s < a.length && s < b.length && a[s] === b[s]) s++;
-  let e = 0;
-  while (e < a.length - s && e < b.length - s && a[a.length - 1 - e] === b[b.length - 1 - e]) e++;
+  const n = a.length;
+  const m = b.length;
+  const lcs = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+  // ops: [tag, text, aLine, bLine] with 0-based line numbers of the next line on each side.
+  const ops = [];
+  let i = 0;
+  let j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && a[i] === b[j]) ops.push([" ", a[i++], i, ++j]);
+    else if (i < n && (j >= m || lcs[i + 1][j] >= lcs[i][j + 1])) ops.push(["-", a[i++], i, j]);
+    else ops.push(["+", b[j++], i, j]);
+  }
   const ctx = 2;
-  const from = Math.max(0, s - ctx);
-  const aEnd = Math.min(a.length, a.length - e + ctx);
-  const bEnd = Math.min(b.length, b.length - e + ctx);
-  const lines = [`--- ${before === null ? "/dev/null" : `a/${label}`}`, `+++ b/${label}`, `@@ -${a.length ? from + 1 : 0},${aEnd - from} +${b.length ? from + 1 : 0},${bEnd - from} @@`];
-  for (let i = from; i < s; i++) lines.push(` ${a[i]}`);
-  for (let i = s; i < a.length - e; i++) lines.push(`-${a[i]}`);
-  for (let i = s; i < b.length - e; i++) lines.push(`+${b[i]}`);
-  for (let i = a.length - e; i < aEnd; i++) lines.push(` ${a[i]}`);
+  const lines = [`--- ${before === null ? "/dev/null" : `a/${label}`}`, `+++ b/${label}`];
+  const changed = ops.map((o, k) => (o[0] === " " ? -1 : k)).filter((k) => k >= 0);
+  let g = 0;
+  while (g < changed.length) {
+    let h = g;
+    while (h + 1 < changed.length && changed[h + 1] - changed[h] <= 2 * ctx + 1) h++;
+    const start = Math.max(0, changed[g] - ctx);
+    const end = Math.min(ops.length - 1, changed[h] + ctx);
+    const slice = ops.slice(start, end + 1);
+    const aCount = slice.filter((o) => o[0] !== "+").length;
+    const bCount = slice.filter((o) => o[0] !== "-").length;
+    const aStart = aCount ? slice.find((o) => o[0] !== "+")[2] : slice[0][2];
+    const bStart = bCount ? slice.find((o) => o[0] !== "-")[3] : slice[0][3];
+    lines.push(`@@ -${aStart},${aCount} +${bStart},${bCount} @@`);
+    for (const o of slice) lines.push(`${o[0]}${o[1]}`);
+    g = h + 1;
+  }
   return lines.join("\n");
 }
 
@@ -307,70 +348,13 @@ function checkPi(pi, lock, agentDir, cwd) {
 
 // ---------------------------------------------------------------- Python
 
-/** Same order as extensions/core-adapter/python.ts. */
-function pythonCandidates(configPath, envPath) {
-  const out = [];
-  if (configPath && configPath.trim()) out.push({ command: configPath.trim(), args: [], source: "python.path" });
-  if (envPath && envPath.trim()) out.push({ command: envPath.trim(), args: [], source: "PI_FOREMAN_PYTHON" });
-  if (WIN) out.push({ command: "py", args: ["-3"], source: "py -3" }, { command: "python", args: [], source: "python" });
-  else out.push({ command: "python3", args: [], source: "python3" }, { command: "python", args: [], source: "python" });
-  return out;
-}
-
-function isStoreStub(file) {
-  return WIN && !!file && path.win32.basename(path.win32.dirname(file)).toLowerCase() === "windowsapps";
-}
-
-function readPythonPathHint(agentDir) {
-  let value = null;
-  for (const file of [path.join(ROOT, "config", "foreman.defaults.json"), path.join(agentDir, "foreman.json")]) {
-    try {
-      const v = JSON.parse(fs.readFileSync(file, "utf8"));
-      if (isObj(v) && isObj(v.python) && v.python.path !== undefined) value = v.python.path;
-    } catch {
-      /* missing or unreadable: ignore here, validate reports it later */
-    }
-  }
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
+/** The shared resolver (profiles.mjs, also used by the features CLI), failing the way setup fails. */
 function resolvePython(agentDir) {
-  const rejected = [];
-  for (const c of pythonCandidates(readPythonPathHint(agentDir), process.env.PI_FOREMAN_PYTHON)) {
-    const label = `${c.source} (${[c.command, ...c.args].join(" ")})`;
-    if (isStoreStub(c.command)) {
-      rejected.push(`${label}: Windows Store alias stub`);
-      continue;
-    }
-    const r = spawnSync(c.command, [...c.args, "-E", "-c", PROBE_CODE], { encoding: "utf8", timeout: 10_000, windowsHide: true });
-    if (r.error || r.status !== 0) {
-      rejected.push(`${label}: ${r.error ? r.error.message : `exit ${r.status}`}`);
-      continue;
-    }
-    const lines = (r.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    const m = /^(\d+)\.(\d+)$/.exec(lines[0] || "");
-    if (!m) {
-      rejected.push(`${label}: unreadable version output`);
-      continue;
-    }
-    const ver = [Number(m[1]), Number(m[2])];
-    if (ver[0] < MIN_PY[0] || (ver[0] === MIN_PY[0] && ver[1] < MIN_PY[1])) {
-      rejected.push(`${label}: Python ${ver.join(".")} is older than 3.13`);
-      continue;
-    }
-    const executable = lines[1] || c.command;
-    if (isStoreStub(executable)) {
-      rejected.push(`${label}: Windows Store alias stub`);
-      continue;
-    }
-    return { executable, version: ver, source: c.source };
+  try {
+    return resolveSetupPython(agentDir);
+  } catch (err) {
+    throw new Fatal(err.message);
   }
-  const how = WIN
-    ? "Windows: `winget install Python.Python.3.13` (or https://www.python.org/downloads/) with the py launcher. The Microsoft Store stub does not count."
-    : process.platform === "darwin"
-      ? "macOS: the Command Line Tools python3 is 3.9. Install 3.13 with `brew install python@3.13` (or https://www.python.org/downloads/)."
-      : "Linux: a python3.13 package from your distro (Debian/Ubuntu: the deadsnakes PPA), or `uv python install 3.13`.";
-  throw new Fatal(`No Python >= 3.13 found (tried: ${rejected.join("; ") || "nothing"}).\n${how}\nOr set python.path in foreman.json / PI_FOREMAN_PYTHON, then re-run.`);
 }
 
 function runConfigCli(py, args, cwd, script = "foreman_config.py") {
@@ -481,8 +465,119 @@ function foremanBeforeBridge(list, baseDir) {
 
 // ---------------------------------------------------------------- main
 
-function main(argv) {
+class Aborted extends Error {}
+
+/**
+ * The terminal picker (plain readline, numbered ASCII menus): profile, optional per-area toggles, add-on consent, summary, confirm.
+ * Resolves to { profile, enable, disable, addons } (enable/disable relative to the profile), or null on "no", EOF or Ctrl-C.
+ */
+async function runPicker({ currentText, currentConfig, recorded, installed, project }) {
+  const features = loadFeatures();
+  const profiles = loadProfiles().profiles;
+  const names = Object.keys(profiles);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  rl.on("SIGINT", () => rl.close());
+  const lines = rl[Symbol.asyncIterator]();
+  const ask = async (question) => {
+    rl.setPrompt(question);
+    rl.prompt();
+    const { value, done } = await lines.next();
+    if (done) throw new Aborted();
+    return String(value).trim();
+  };
+  const yes = async (question) => /^y/i.test(await ask(question));
+  try {
+    say("Profiles:");
+    names.forEach((n, i) => {
+      const off = Object.entries(profiles[n].features ?? {}).filter(([, v]) => !v).map(([k]) => k);
+      say(`  ${i + 1}) ${n} - ${profiles[n].title}. ${profiles[n].summary}${off.length ? ` Off: ${off.join(", ")}.` : ""}`);
+    });
+    const preset = names.includes(recorded) ? recorded : "standard";
+    let profile = null;
+    while (!profile) {
+      const a = await ask(`Profile [${names.indexOf(preset) + 1}]: `);
+      profile = a === "" ? preset : /^\d+$/.test(a) ? names[Number(a) - 1] : names.find((n) => n === a);
+      if (!profile) say(`  choose 1-${names.length} or a profile name`);
+    }
+    const base = assignment(profile);
+    const states = { ...base };
+    if (await yes("Adjust features? [y/N]: ")) {
+      const toggles = toggleable(features);
+      const areas = [...new Set(toggles.filter((f) => !f.toggle.relaxes).map((f) => f.area))];
+      const groups = areas.map((area) => ({ title: area, list: toggles.filter((f) => f.area === area && !f.toggle.relaxes) }));
+      groups.push({ title: "safety relaxations", list: toggles.filter((f) => f.toggle.relaxes), warn: "WARNING: each of these loosens a safety guard; leave them off unless you know you need them." });
+      for (const g of groups) {
+        say(`${g.title}:`);
+        if (g.warn) say(`  ${g.warn}`);
+        for (;;) {
+          g.list.forEach((f, i) => {
+            const auto = states[f.id] === "on" && Object.values(f.toggle.on).some((v) => v === null);
+            say(`  ${i + 1}) [${states[f.id] === "on" ? "x" : " "}] ${f.id}${auto ? " (auto)" : ""} - ${f.title}`);
+          });
+          const picks = (await ask("Flip (numbers, Enter to continue): ")).split(/[\s,]+/).filter(Boolean);
+          if (!picks.length) break;
+          for (const p of picks) {
+            const f = g.list[Number(p) - 1];
+            if (f) states[f.id] = states[f.id] === "on" ? "off" : "on";
+            else say(`  no entry ${p}`);
+          }
+        }
+      }
+    }
+    const enable = Object.keys(states).filter((id) => states[id] === "on" && base[id] === "off");
+    const disable = Object.keys(states).filter((id) => states[id] === "off" && base[id] === "on");
+    const addons = [];
+    for (const a of loadAddons().addons) {
+      const have = installed.find((i) => i.id === a.id);
+      if (have) {
+        say(`Add-on ${a.id}: already installed (${have.source}, ${have.scope})`);
+        continue;
+      }
+      say(`Add-on ${a.id}: ${a.purpose}`);
+      say(`  installs npm:${a.package}@${a.version}`);
+      for (const c of a.clashes) say(`  note: ${c}`);
+      if (await yes(`Install ${a.id}? [y/N]: `)) addons.push(a.id);
+    }
+    const plan = planChanges(currentConfig, { profile, enable, disable });
+    say("Summary:");
+    say(`  profile: ${profile}`);
+    say(canonical(plan.config) === canonical(currentConfig) && currentText !== null ? "  foreman.json: no change" : unifiedDiff("foreman.json", currentText, toJson(plan.config)));
+    for (const id of addons) {
+      const a = loadAddons().addons.find((x) => x.id === id);
+      say(`  would run: pi install npm:${a.package}@${a.version}${project ? " -l" : ""}`);
+    }
+    if (plan.relaxations.length) say(`WARN safety relaxations on: ${plan.relaxations.join(", ")}`);
+    say(`  equivalent: ${equivalentCommand({ profile, enable, disable, addons, project })}`);
+    if (!(await yes("Apply? [y/N]: "))) return null;
+    return { profile, enable, disable, addons };
+  } catch (err) {
+    if (err instanceof Aborted) {
+      say("");
+      return null;
+    }
+    throw err;
+  } finally {
+    rl.close();
+  }
+}
+
+/** What the environment allows for the picker: PI_FOREMAN_PICKER=force (test and automation aid) overrides the TTY and CI tests, =off disables it. */
+function pickerState() {
+  const mode = process.env.PI_FOREMAN_PICKER;
+  const force = mode === "force";
+  const tty = !!(process.stdin.isTTY && process.stdout.isTTY);
+  return { off: mode === "off", force, tty, ci: !!process.env.CI, allowed: mode !== "off" && (force || (tty && !process.env.CI)) };
+}
+
+async function main(argv) {
   const opts = parseArgs(argv);
+  if (opts.pick) {
+    // --pick needs every picker precondition except "no profile recorded"
+    const st = pickerState();
+    if (st.off) throw new Fatal("--pick cannot run: PI_FOREMAN_PICKER=off disables the picker.", 2);
+    if (!st.force && !st.tty) throw new Fatal("--pick needs a terminal: stdin and stdout must both be TTYs (PI_FOREMAN_PICKER=force overrides, for tests).", 2);
+    if (!st.force && st.ci) throw new Fatal("--pick cannot run while CI is set (PI_FOREMAN_PICKER=force overrides, for tests).", 2);
+  }
   if (Number(process.versions.node.split(".")[0]) < 22) throw new Fatal(`Node ${process.versions.node} is too old; pi-foreman needs Node >= 22.`);
   const lock = JSON.parse(fs.readFileSync(path.join(ROOT, "packages.lock.json"), "utf8"));
   const agentDir = resolveAgentDir(opts.agentDir);
@@ -540,12 +635,53 @@ function main(argv) {
     }
   };
 
+  // Add-ons are found in both settings files: a second copy of a package stops Pi at start.
+  const packagesOf = (file) => {
+    try {
+      const s = parseJsonObject(readText(file), file);
+      return Array.isArray(s?.packages) ? s.packages : [];
+    } catch {
+      return [];
+    }
+  };
+  const addonsInstalled = () => installedAddons(packagesOf(path.join(agentDir, "settings.json")), packagesOf(path.join(projectDir, ".pi", "settings.json")));
+
+  /**
+   * Validates the candidate user config the way the current one validates today: it blocks only on error strings the baseline
+   * (`baseText`: null validates the current file in place, else the template text when the file is new) lacks, so a file with an old error can still be changed. Fatal 1, nothing written.
+   */
+  function guardUserConfig(py, baseText, candidateText) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pf-setup-"));
+    try {
+      const errorsOf = (text) => {
+        let userFile = [];
+        if (text !== null) {
+          const file = path.join(tmp, "foreman.json");
+          fs.writeFileSync(file, text);
+          userFile = ["--user-file", file];
+        }
+        const r = runConfigCli(py, ["validate", "--json", "--agent-dir", agentDir, "--project-dir", projectDir, ...(opts.project ? ["--trusted-project"] : []), ...userFile], projectDir);
+        if (!r.data) throw new Fatal(`validate failed (exit ${r.code}): ${r.stderr || "no JSON output"}`);
+        return Array.isArray(r.data.errors) ? r.data.errors : [];
+      };
+      const before = errorsOf(baseText);
+      const added = errorsOf(candidateText).filter((e) => !before.includes(e));
+      if (added.length) {
+        for (const e of added) say(`  foreman.json error: ${e}`);
+        throw new Fatal("The change would make foreman.json invalid; nothing was written.");
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
   return opts.remove ? removeAll() : install();
 
   // ------------------------------------------------------------ remove
   function removeAll() {
     const installed = (Array.isArray(settings.packages) ? settings.packages : []).find((e) => isForemanEntry(e, baseDir));
     const removeLine = `pi remove ${(installed && entrySource(installed)) || FOREMAN_SOURCE}${opts.project ? " -l" : ""}`;
+    for (const a of addonsInstalled()) say(`add-ons installed: ${a.id} (${a.source}); kept, remove with: pi remove ${a.source}${a.scope === "project" ? " -l" : ""}`);
     const cur = isObj(settings.subagents) ? pick(settings.subagents) : {};
     const dropManaged = (obj) => {
       if (!isObj(obj.subagents)) return;
@@ -628,7 +764,7 @@ function main(argv) {
   }
 
   // ------------------------------------------------------------ install
-  function install() {
+  async function install() {
     if (!(Array.isArray(settings.packages) ? settings.packages : []).some((e) => isForemanEntry(e, baseDir)) && !opts.develop) {
       throw new Fatal(`pi-foreman is not installed as a Pi package. Run:\n${FOREMAN_INSTALL}${opts.project ? " -l" : ""}`);
     }
@@ -636,14 +772,81 @@ function main(argv) {
     say(`  python ${py.version.join(".")} via ${py.source}: ${py.executable}`);
     let anyChange = false;
 
-    // config template first, so the generator and validator see it
+    // The recorded profile is the merged user-plus-overlay value (no project layer).
+    const knownProfiles = Object.keys(loadProfiles().profiles);
+    const mergedProfile = runConfigCli(py, ["merged", "--json", "--agent-dir", agentDir], projectDir).data?.config?.profile;
+    const recorded = typeof mergedProfile === "string" && mergedProfile ? mergedProfile : null;
+    if (recorded && !knownProfiles.includes(recorded)) {
+      say(`WARN profile ${recorded} unknown (valid: ${knownProfiles.join(", ")}); fix with: foreman setup --profile <name>`);
+    }
+    const curText = readText(foremanFile);
     const template = toJson({ version: 1, providers: {} });
-    if (readText(foremanFile) === null) {
-      anyChange = true;
-      say(`foreman.json: absent, ${dry ? "would create" : "creating"} a template`);
-      if (dry) say(unifiedDiff("foreman.json", null, template));
-      else writeFile(foremanFile, template);
-    } else say("foreman.json: present, left alone");
+    let curCfg = { version: 1, providers: {} };
+    let parseErr = null;
+    if (curText !== null) {
+      try {
+        curCfg = parseJsonObject(curText, foremanFile);
+      } catch (err) {
+        parseErr = err;
+      }
+    }
+
+    // choices: flags, or the picker (terminal only, first run or --pick)
+    const st = pickerState();
+    const hasFlags = !!(opts.profile || opts.enable.length || opts.disable.length || opts.addon.length);
+    let request = { profile: opts.profile, enable: opts.enable, disable: opts.disable };
+    let addonIds = [...opts.addon];
+    let diffShown = false;
+    if (st.allowed && !hasFlags && (recorded === null || opts.pick)) {
+      if (parseErr) throw parseErr;
+      const picked = await runPicker({ currentText: curText, currentConfig: curCfg, recorded, installed: addonsInstalled(), project: opts.project });
+      if (!picked) {
+        say("nothing written");
+        return;
+      }
+      request = { profile: picked.profile, enable: picked.enable, disable: picked.disable };
+      addonIds = picked.addons;
+      diffShown = true;
+    } else if (!request.profile && recorded === null) say(NO_PROFILE_HINT);
+
+    // foreman.json first, so the generator and the permission render below see it (on --dry-run nothing is written, so they
+    // reflect the file on disk, one run behind the diff shown here)
+    if (!request.profile && !request.enable.length && !request.disable.length) {
+      if (curText === null) {
+        anyChange = true;
+        say(`foreman.json: absent, ${dry ? "would create" : "creating"} a template`);
+        if (dry) say(unifiedDiff("foreman.json", null, template));
+        else writeFile(foremanFile, template);
+      } else say("foreman.json: present, left alone");
+    } else {
+      if (parseErr) throw parseErr;
+      const plan = planChanges(curCfg, request);
+      if (plan.errors.length) throw new Fatal(plan.errors.join("\n"), 2);
+      for (const c of plan.changes) {
+        const leaves = c.leaves.map((l) => `${l.path}=${JSON.stringify(l.value)}`).join(", ");
+        say(`  feature ${c.feature} -> ${c.state}${leaves ? ` (${leaves})` : ""}${c.notes.length ? `: ${c.notes.join("; ")}` : ""}`);
+      }
+      if (plan.relaxations.length) say(`WARN safety relaxations on: ${plan.relaxations.join(", ")}`);
+      const nextText = toJson(plan.config);
+      if (curText !== null && canonical(plan.config) === canonical(curCfg)) say(`foreman.json: up to date${request.profile ? ` (profile ${request.profile})` : ""}`);
+      else {
+        say(`foreman.json: ${dry ? "would write" : "writing"} ${curText === null ? "a new file" : "changes"}`);
+        if (!diffShown) say(unifiedDiff("foreman.json", curText, nextText));
+        guardUserConfig(py, curText === null ? template : null, nextText);
+        anyChange = true;
+        if (!dry) {
+          if (curText !== null) {
+            const file = `${foremanFile}.bak-${timestamp()}`;
+            fs.copyFileSync(foremanFile, file);
+            say(`  backup: ${file}`);
+          }
+          fs.mkdirSync(path.dirname(foremanFile), { recursive: true });
+          const beside = `${foremanFile}.tmp-${process.pid}`;
+          fs.writeFileSync(beside, nextText);
+          fs.renameSync(beside, foremanFile);
+        }
+      }
+    }
 
     // packages: pi-foreman installs itself (and bundles its dependencies); here we migrate and filter
     const list0 = Array.isArray(settings.packages) ? settings.packages : [];
@@ -670,6 +873,22 @@ function main(argv) {
     const todo = want.filter((w) => !isRecorded(settings, w.spec));
     for (const w of want) say(`  package ${w.label}: ${todo.includes(w) ? "to install" : "already recorded"}`);
     const installArgs = todo.map((w) => ["install", w.spec, ...(opts.project ? ["-l"] : [])]);
+    // add-ons: only on consent, queued before the fresh settings re-read so setup never overwrites the packages entry the install adds
+    const addonRegistry = loadAddons().addons;
+    const already = addonsInstalled();
+    const addonNew = [];
+    for (const id of addonIds) {
+      const a = addonRegistry.find((x) => x.id === id);
+      const have = already.find((i) => i.id === id);
+      if (have) say(`  add-on ${id}: already installed (${have.source}), no command`);
+      else {
+        const spec = `npm:${a.package}@${a.version}`;
+        say(`  add-on ${id}: to install (${spec})`);
+        installArgs.push(["install", spec, ...(opts.project ? ["-l"] : [])]);
+        addonNew.push({ id, spec });
+      }
+      for (const [k, v] of Object.entries(a.env ?? {})) say(`  add-on ${id}: set ${k}=${v} permanently in your shell profile; Pi reads it when it starts, not at install.`);
+    }
     if (installArgs.length) anyChange = true;
     const planned = [...list0.filter((e) => !stale.includes(e)), ...todo.map((w) => w.spec)];
     // --no-intercom: filter on the pi-foreman entry
@@ -1053,6 +1272,10 @@ function main(argv) {
     } else if (anyChange) {
       if (removeArgs.length || installArgs.length || !same || filtered || reordered || comp.changed) backup();
       for (const a of [...removeArgs, ...installArgs]) runOrDie(a);
+      for (const a of addonNew) {
+        if (!isObj(managed.addons)) managed.addons = {};
+        managed.addons[a.id] = { spec: a.spec, installedAt: new Date().toISOString() };
+      }
       let finalBlock = pick(next.subagents);
       if (!same || filtered || reordered || comp.changed) {
         // pi edits `packages` in the same file, so merge into what is on disk now
@@ -1094,7 +1317,11 @@ function main(argv) {
     if (errors.length) say(`  some roles are unresolved; only the resolvable part was written. Edit ${foremanFile}.`);
 
     if (finalPackages.some(isBridgeEntry)) say(BRIDGE_HINT.replace("<agent dir>", agentDir));
-    if (!opts.remove) say(ADDON_HINT);
+    const present = addonsInstalled();
+    for (const a of addonRegistry) {
+      if (present.some((i) => i.id === a.id) || addonNew.some((n) => n.id === a.id)) continue;
+      say(`optional add-on ${a.id}: ${a.purpose} Spec npm:${a.package}@${a.version}. ${a.clashes.join(" ")} Install with: foreman setup --addon ${a.id}`);
+    }
     if (opts.develop && developSettings()) anyChange = true;
     if (!anyChange) say("pi-foreman: up to date, nothing to change.");
     else if (dry) say("pi-foreman: dry run complete, nothing written.");
@@ -1105,7 +1332,7 @@ function main(argv) {
 // Run only as the entry point, so the tests can import npmCiReason.
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === path.join(ROOT, "setup.mjs")) {
   try {
-    main(process.argv.slice(2));
+    await main(process.argv.slice(2));
   } catch (err) {
     if (err instanceof Fatal) {
       (err.code === 0 ? console.log : console.error)(err.message);

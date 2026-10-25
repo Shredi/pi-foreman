@@ -408,14 +408,14 @@ The items join the pull request dots in the same row and order (see Dots). Overl
 
 ## Optional add-on: background tasks
 
-Nothing in pi-foreman requires it. `pi-background-tasks` runs shell commands in the background with status, logs and kill (`bg_run`). Install it with
+Nothing in pi-foreman requires it. `pi-background-tasks` runs shell commands in the background with status, logs and kill (`bg_run`). It is an optional add-on in `config/addons.json` (exact pin, consent only). Install it with `foreman setup --addon background-tasks` (or the picker), or by hand with `pi install npm:pi-background-tasks@2.6.10`, and set the variable in your shell profile:
 
-    PI_BG_FEATURES=process pi install npm:pi-background-tasks
+    export PI_BG_FEATURES=process
 
-`PI_BG_FEATURES=process` installs the process features only. Its other feature, an attribution hook, overrides the provider
+The add-on reads `PI_BG_FEATURES` when Pi starts, not at install, so a prefix on `pi install` does nothing. `PI_BG_FEATURES=process` selects the process features only. Its other feature, an attribution hook, overrides the provider
 named `anthropic` and decides by provider name (`model.provider === 'anthropic'`). A `claude-bridge` provider serving `claude-*` ids is not
 treated as an Anthropic route by that check, but the override takes over the global `anthropic` provider slot, so keep attribution off.
-`foreman setup` prints this install line.
+`foreman setup` prints the consent line and this variable hint; see [Profiles, features and add-ons](install.md#profiles-features-and-add-ons).
 
 The add-on reads `PI_BG_FEATURES` when Pi starts, so `foreman session open` passes every `PI_BG_*` variable of the opener
 (`PI_BG_FEATURES` first; names and values checked, one that fails is skipped with a note) into the child's launch line, and

@@ -37,8 +37,104 @@ setup from the clone once: `node <agentDir>/git/github.com/Shredi/pi-foreman/set
 
 Flags: `--dry-run`, `--project` (project-local settings), `--overlay npm:<pkg>@<exact-version>` (organisation overlay;
 ranges are refused, see [overlays](overlays.md)), `--no-intercom` (see below), `--develop` (see
-[Developing](#developing)), `--remove`, `--agent-dir <dir>` (overrides `PI_CODING_AGENT_DIR` / `~/.pi/agent`).
+[Developing](#developing)), `--remove`, `--agent-dir <dir>` (overrides `PI_CODING_AGENT_DIR` / `~/.pi/agent`),
+`--profile <name>`, `--enable <id>[,<id>]`, `--disable <id>[,<id>]`, `--addon <id>` and `--pick` (see
+[Profiles, features and add-ons](#profiles-features-and-add-ons)).
 If pi-foreman is not installed as a Pi package, setup stops and prints the `pi install` line above.
+
+## Profiles, features and add-ons
+
+Setup has a feature axis next to the model-map presets ([presets](presets.md)): three shipped **profiles**, per-feature
+**toggles** declared in `config/features.json` (see [features](features.md)) and consent-only **add-ons** from
+`config/addons.json`. The choice is written into the user `foreman.json` (`profile` plus the toggle leaves) and shown by
+`/foreman doctor`.
+
+### Flags
+
+- `--profile <name>`: apply `orchestration`, `standard` or `full`. Applying a profile assigns every toggleable feature: the
+  ones it names as given, every other one to its shipped state. So `full` followed by `standard` turns the relaxations back off.
+- `--enable <id>[,<id>]` and `--disable <id>[,<id>]`: switch toggleable features after the profile; both are repeatable.
+  On Windows repeat the flag instead of using a comma list, because `cmd` splits arguments on commas.
+- `--addon <id>`: install an add-on (repeatable). This flag is the consent; nothing is installed without it or a picker "yes".
+- `--pick`: open the picker again.
+
+Setup exits 2 and prints the valid ids or the rule for: an unknown profile, feature or add-on id; a feature that is not
+toggleable (the message names the doc link and the enable snippet); the same id in `--enable` and `--disable`; `--remove`
+combined with any of `--profile/--enable/--disable/--addon/--pick`; and `--pick` when a picker precondition fails. `--pick`
+needs every picker precondition below except "no profile recorded"; the message names the one that failed.
+
+### The picker
+
+The picker is a numbered terminal menu (`node:readline`). It opens only when stdin and stdout are terminals, `CI` is unset,
+none of `--profile/--enable/--disable/--addon` is given, and either no profile is recorded yet or `--pick` is given.
+`PI_FOREMAN_PICKER=force` overrides the terminal and `CI` tests and `PI_FOREMAN_PICKER=off` disables the picker; both are a
+test and automation aid. `/foreman setup` inside Pi runs setup with piped output and sets `PI_FOREMAN_PICKER=off` for it, so
+it stays flag-driven. A run that never prompts and has no recorded profile prints one hint naming `--pick` and `--profile`.
+
+Steps: (1) pick a profile, with its summary and off-list; the recorded or `standard` one is preselected and Enter keeps it;
+(2) "Adjust features?" (default no): per area, flip toggles by number, safety relaxations in a last group with a warning;
+(3) add-ons not yet installed: purpose, exact spec, clash notes, `y/N` (default no); (4) summary with the `foreman.json` diff,
+the planned `pi install` lines and the equivalent flag line, then `y/N`. Ctrl-C, end of input or "no" prints "nothing
+written" and exits 0.
+
+### Write order
+
+The `foreman.json` step runs before `generate-subagents` and the permission render, so a real run produces generated files
+that reflect the new config. On `--dry-run` nothing is written, so those diffs reflect the file on disk, one run behind the
+shown `foreman.json` diff. Steps: create the template if the file is absent, plan the changes, show the diff, validate the
+candidate. Validation blocks only on an error the current file does not already have (error strings compare exactly);
+safety-path findings are warnings and never block. A new error prints, nothing is written, setup exits 1. Otherwise setup
+backs up `foreman.json.bak-<timestamp>` (the `YYYYMMDD-HHMMSSmmm` form of setup; `apply-preset` uses a date form), writes a
+file beside it and renames. Profile and toggle leaves win over hand-set values; no user key is removed; a re-run with
+nothing to change says "up to date".
+
+Risks: `foreman.json` is written before the add-on installs and the settings write. If a later step fails, the new profile
+stays and the backup exists. The recorded profile is the merged user-plus-overlay value; a project or session `profile` is dropped
+with a warning. A recorded name that no longer exists warns, skips the picker and names `--profile` as the fix.
+
+### The profiles
+
+| Profile | Off | On |
+|---|---|---|
+| `orchestration` | `pr-ops`, `herdr`, `footer-ui`, `idle-cache`, `idle-downshift`, `retro`, `trace` | the rest in their shipped state |
+| `standard` | none | every toggleable feature in its shipped state (the package defaults) |
+| `full` | none | every toggleable feature, safety relaxations included |
+
+`full` prints `WARN safety relaxations on: <ids>`. The relaxations are `git-tools`, `children-may-push`, `workflow-scripts`
+and `remote-intercom`: the project layer may not switch them on. Safety rules (permissions, git, ops, ceremony gates, bridge) are never
+toggleable. `idle-cache` has no fixed default (cache policy decides per provider): its shipped state is declared `on`, and
+explicit `true` matches the policy except for a provider with a TTL but no billing set, where it turns pings on. `features list`
+and the doctor show `on` for request-billed providers that skip keepalive anyway.
+
+### Add-ons
+
+`config/addons.json` lists exact-pinned optional Pi packages. Setup installs one only on consent: `pi install
+npm:<package>@<version>` (`-l` with `--project`), and records it under `managed.addons`. If the package is already installed in
+either settings file at any version, setup says "already installed" and runs nothing, because a second copy stops Pi at start.
+Without consent, setup prints one line per add-on that is not installed: purpose, spec, clash notes and how to consent.
+
+- `polish` (`pi-polish`): compact tool output; registers renderers only. It ships a second extension (`chrome`) you may filter.
+- `background-tasks` (`pi-background-tasks`): `bg_run`. It needs `PI_BG_FEATURES=process`, which the add-on reads **when Pi
+  starts**: set it permanently in your shell profile, not as a prefix on `pi install`. Without `process`, its attribution hook
+  takes over the global `anthropic` provider slot. Its declared Pi peer range (0.81 to 0.84) excludes the pinned Pi 1.4.x;
+  the doctor reports that. See [herdr](herdr.md#optional-add-on-background-tasks).
+
+`--remove` lists installed add-ons as `add-ons installed: <id> (<source>); kept, remove with: pi remove <source>` and runs
+nothing for them.
+
+### foreman features
+
+- `foreman features list [--json]`: id, area, state (`on`, `off`, `auto`, `configured`, `n/a`), the recorded profile's
+  expectation and a `*` on a deviation. It reads the user-plus-overlay merge, without the project layer.
+- `foreman features addons [--json]`: the registry with the installed state from both settings files.
+- `foreman features profile <name>`, `enable <id..>`, `disable <id..>` (plus `--dry-run`): these run the whole setup with the
+  matching flags (Pi must be on `PATH`; in a checkout it may run `npm ci`), so there is one write path.
+
+### Doctor lines
+
+`/foreman doctor` prints `INFO profile: <name>` (or `none (run foreman setup --pick or --profile <name>)`, or `WARN profile
+<name> unknown (valid: ...)`), `INFO profile deviations: <id> is <state>, profile says <state>; ...` (or `none`), and `WARN
+safety relaxations on: <ids>` whenever a relaxation is on, with or without a profile.
 
 ## What setup writes
 
