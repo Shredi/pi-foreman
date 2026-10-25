@@ -414,3 +414,85 @@ test("r41 narrowing 2: the agent dir is a floored destination word, not a floore
   assert.equal(bashIn(PF, "cp x settings.json")?.rule, "floor");
   assert.equal(bash(`cd ${PF}/state && cp x y`)?.rule, "floor");
 });
+
+// rev4
+const ROLES = ["main", "child"] as const;
+
+test("r41 rev4 gap 1: a floored word fed through stdin, a variable, a loop or a substitution is a floor deny (main and child)", () => {
+  const cmds = [
+    `echo ${PF} | xargs rm -rf`,
+    `printf %s ${PF}/managed.json | xargs rm`,
+    `X=${PF}; rm -rf $X`,
+    `for f in ${PF}; do rm -rf $f; done`,
+    `while read f; do rm -rf $f; done <<< ${PF}`,
+    `rm -rf $(echo ${PF})`,
+    `cat <<EOF | xargs rm\n${PF}/managed.json\nEOF`,
+    `echo ${PF}/state/approvals/a1.json | xargs -n1 rm`,
+  ];
+  // a child's earlier denies (variable binding, stdin writes) may fire before the floor: a deny either way
+  for (const cmd of cmds) {
+    assert.equal(bash(cmd)?.rule, "floor", cmd);
+    assert.equal(bash(cmd, "child")?.kind, "deny", `child ${cmd}`);
+  }
+});
+
+test("r41 rev4 gap 1: lines of plain reads naming a floored word stay allowed", () => {
+  const cmds = [`echo ${PF}`, `echo ${PF} | cat`, `cat ${PF}/managed.json | grep x`, `X=${PF}; ls $X`, `printf %s ${PF}/managed.json`];
+  for (const role of ROLES) for (const cmd of cmds) assert.notEqual(bash(cmd, role)?.rule, "floor", `${role} ${cmd}`);
+});
+
+// the agent dir under the home directory, as installed
+const agentH = `${home}/.pi/agent`;
+const rulesH = buildOverlayRules(readBaseline(PKG)!, {}, {}, agentH, pkg, undefined, false, undefined, [custom]);
+const bashH = (command: string, role: "main" | "child" = "main"): Decision | null => bash(command, role, rulesH);
+
+test("r41 rev4 gap 2: an ancestor of the agent dir is a floored removal, rename or bulk-write destination", () => {
+  const cmds = [
+    `rm -rf ${agentH}/..`,
+    `mv ${agentH}/.. /tmp/x`,
+    `find ${agentH}/.. -delete`,
+    `find ~ -exec rm {} +`,
+    `rm -rf ${home}`,
+    `rm -rf ~`,
+    `rm -rf $HOME`,
+    `rm -rf /`,
+    `rmdir ${home}/.pi`,
+    `rsync -a src/ ~`,
+    `tar -xf a.tar -C ~`,
+    `cp -r src ~`,
+    `chmod -R 700 ~`,
+    `chown -R me ${home}`,
+    `trash ${home}`,
+    `rm -rf ../..`,
+  ];
+  for (const role of ROLES) for (const cmd of cmds) assert.equal(bashH(cmd, role)?.rule, "floor", `${role} ${cmd}`);
+});
+
+test("r41 rev4 gap 2: an ancestor as a read operand, a cwd or a plain destination is no floor deny", () => {
+  const cmds = [`cd ~`, `ls ~`, `cp x ~/foo`, `du -sh ~`, `cp -r ~ /tmp/x`, `rsync -a ~/ /tmp/x/`, `ls ${home}`, `rm -rf ${cwd}/x`, `rm -rf ~/foo`, `find ~ -name x`];
+  for (const role of ROLES) for (const cmd of cmds) assert.notEqual(bashH(cmd, role)?.rule, "floor", `${role} ${cmd}`);
+});
+
+test("r41 rev4 gap 3: inline interpreter text and ANSI-C quoting naming a floored path are a floor deny", () => {
+  const cmds = [
+    `node -e "require('fs').rmSync('${PF}',{recursive:true})"`,
+    `node -e "require('fs').writeFileSync('${PF}/managed.json','{}')"`,
+    `python3 -c "import shutil; shutil.rmtree('${PF}')"`,
+    `perl -e 'unlink "${PF}/policy.md"'`,
+    `ruby -e "File.delete('${PF}/managed.json')"`,
+    `php -r "unlink('${PF}/managed.json');"`,
+    `osascript -e 'do shell script "rm ${PF}/managed.json"'`,
+    `bash -c 'rm -rf ${PF}/state'`,
+    `sh -c "x=${PF}/state/approvals; rm -rf $x"`,
+    `rm -rf $'${PF}'`,
+    `rm -rf $'${PF}/managed.json'`,
+  ];
+  for (const cmd of cmds) {
+    assert.equal(bash(cmd)?.rule, "floor", cmd);
+    assert.equal(bash(cmd, "child")?.kind, "deny", `child ${cmd}`);
+  }
+  for (const role of ROLES) {
+    assert.notEqual(bash(`node -e "console.log(1)"`, role)?.rule, "floor", role);
+    assert.notEqual(bash(`python3 -c "print('${agentDir}/settings.json')"`, role)?.rule, "floor", role);
+  }
+});

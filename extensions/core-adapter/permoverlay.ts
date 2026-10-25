@@ -2943,7 +2943,7 @@ function floorDecision(rules: OverlayRules, words: string[], text: string, ctx: 
  * floored as a file only) and every parent of the pi-foreman ones up to and including the agent dir (a destination word, never a cwd). `word` is true when a shell word (an option value `--o=p`, `-Cp`, a brace or
  * glob word, `~`, `..`, a relative name against `cwd`) names a member or a file below state/approvals or state/gate; `folder` when `cwd` is a holding folder.
  */
-function floorMatcher(rules: OverlayRules, ctx: MatchCtx): { word: (w: string, cwd: string | null, unknownCwd: boolean, cdTarget?: boolean) => boolean; folder: (cwd: string | null) => boolean; config: (w: string, cwd: string | null) => boolean } {
+function floorMatcher(rules: OverlayRules, ctx: MatchCtx): { word: (w: string, cwd: string | null, unknownCwd: boolean, cdTarget?: boolean) => boolean; ancestor: (w: string, cwd: string | null, unknownCwd: boolean) => boolean; text: (t: string) => boolean; folder: (cwd: string | null) => boolean; config: (w: string, cwd: string | null) => boolean } {
   const fold = foldsCase(ctx.platform);
   const norm = (s: string): string => {
     const n = s.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/+$/, "");
@@ -2951,8 +2951,16 @@ function floorMatcher(rules: OverlayRules, ctx: MatchCtx): { word: (w: string, c
   };
   const pats = floorPatterns(rules, ctx);
   const agent = rules.floors?.agentDir ? norm(rules.floors.agentDir) : undefined;
-  const bases = ctx.cwd ? new Set([norm(ctx.cwd), norm(workspaceOf(ctx.cwd).root)]) : new Set<string>();
   const exact = new Set<string>();
+  // every ancestor of the agent dir up to the filesystem root ("" once normalised): a removal, rename or bulk-write destination, never a read operand or a cwd
+  const ancestors = new Set<string>();
+  if (agent) {
+    for (let d = path.posix.dirname(agent); ; d = path.posix.dirname(d)) {
+      const top = d === "/" || d === ".";
+      ancestors.add(top ? "" : d);
+      if (top) break;
+    }
+  }
   const holding = new Set<string>();
   for (const p of pats.filter((x) => !x.includes("*"))) {
     const n = norm(p);
@@ -2975,7 +2983,8 @@ function floorMatcher(rules: OverlayRules, ctx: MatchCtx): { word: (w: string, c
   const variants = (w: string): string[] => {
     const out = new Set<string>([w]);
     // an unresolved-variable word keeps its quotes
-    if (/^(["'])[^"']*\1$/.test(w)) out.add(w.slice(1, -1));
+    // (`$'...'` ANSI-C quoting included)
+    if (/^\$?(["'])[^"']*\1$/.test(w)) out.add(w.slice(w.startsWith("$") ? 2 : 1, -1));
     // `--out=p`, `of=p`: an option or key before the `=`, not a sed or awk expression like `s/=.*//`
     const eq = /^-{0,2}[\w-]+=/.exec(w);
     if (eq) out.add(w.slice(eq[0].length));
@@ -2999,6 +3008,13 @@ function floorMatcher(rules: OverlayRules, ctx: MatchCtx): { word: (w: string, c
           return [...pathCandidates(v, { ...ctx, cwd: cw }), ...lexical].some((c) => (exact.has(norm(c)) && !(cdTarget && norm(c) === agent)) || pats.some((p) => pathMatches(p, c, ctx)) || (GLOB.test(c) && (anchored || lexical.includes(c)) && members.some((m) => pathMatches(c, m, ctx))));
         }),
       ),
+    ancestor: (w, cwd, unknown) => variants(w).some((v) => cwdsOf(cwd, unknown).some((cw) => pathCandidates(v, { ...ctx, cwd: cw }).some((c) => ancestors.has(norm(c))))),
+    // inline script text is raw text: a floored path or folder as a substring; a name below a folder is floored only below approvals and gate
+    // (the agent dir and the other folders count as whole paths, so a script reading state/usage/x.jsonl is not a hit)
+    text: (t) => {
+      const x = norm(t);
+      return [...exact].some((e) => (pats.includes(`${e}/*`) ? x.includes(e) : new RegExp(`${e.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w./-])`).test(x)));
+    },
     folder: (cwd) => !!cwd && holding.has(norm(cwd)),
     config: (w, cwd) => cands(w, cwd, false).some((c) => CONFIG_FILE.test(c)),
   };
@@ -3046,11 +3062,38 @@ function copySources(prog: string, args: string[]): Set<number> {
   return out;
 }
 
+/** The words of a removal, rename or bulk-write call that are its destinations (an ancestor of the agent dir is floored there only); a copy source is a read. */
+function destWords(prog: string, args: string[], src: Set<number>): string[] {
+  const ops = args.filter((_, i) => !src.has(i));
+  const has = (re: RegExp): boolean => args.some((a) => re.test(a));
+  if (/^(?:rm|rmdir|unlink|shred|srm|trash|trash-put|mv|rename|rsync)$/.test(prog)) return ops;
+  if (prog === "find") return has(/^-(?:delete|exec|execdir|ok|okdir)$/) ? ops : [];
+  if (prog === "cp" || prog === "ditto") return has(/^-[A-Za-z]*[rRa]|^--(?:recursive|archive)$/) ? ops : [];
+  if (/^(?:chmod|chown|chgrp)$/.test(prog)) return has(/^-[A-Za-z]*R|^--recursive$/) ? ops : [];
+  if (prog === "tar") {
+    const out: string[] = [];
+    args.forEach((a, i) => {
+      if (a === "-C" || a === "--directory") out.push(args[i + 1] ?? "");
+      else if (a.startsWith("--directory=") || /^-C./.test(a)) out.push(a);
+    });
+    return out;
+  }
+  return [];
+}
+
+/** Programs that run their `-e`/`-c`/`-r` argument as a script: its text is raw text for the floor. */
+const INLINE_PROGS = /^(?:node|nodejs|python[\d.]*|perl|ruby|php|osascript|bash|sh|zsh|dash|ksh)$/;
+/** Control words and builtins that move words around and run nothing themselves. */
+const PLUMBING = /^(?:cd|pushd|popd|echo|printf|for|select|read|export|declare|typeset|local|readonly|unset|true|false|:|)$/;
+
 /**
  * R41 rev3: the one path-based floor rule for a shell line, whatever the program. Every word of every segment (option values and attached forms
  * included) that names a floored file, a folder holding one or a parent of those up to the agent dir is a floor deny, unless the segment is a
  * plain read (read-class program, the word an operand) or the word is a source of a plain cp/rsync. A segment whose cwd (cd, pushd) is a floored
  * folder is a floor deny unless it is a plain read.
+ * R41 rev4: a floored word anywhere on the line (echo, an assignment, a for-list, a here-string, a `$(...)` body) is a floor deny when a segment
+ * runs something besides plain reads or is stdin-fed (it reaches the writer through a pipe or a variable); the ancestors of the agent dir are floored
+ * destinations of a removal, rename or bulk write; the script text of an inline interpreter call is raw text.
  */
 function pathFloor(rules: OverlayRules, command: string, ctx: MatchCtx): Decision | null {
   const m = floorMatcher(rules, ctx);
@@ -3064,6 +3107,8 @@ function pathFloor(rules: OverlayRules, command: string, ctx: MatchCtx): Decisio
   }
   let moved = false;
   let inFloor = false;
+  let risky = false;
+  const exempt = new Set<string>();
   for (const s of segs) {
     if (s.opaque === "parse_error") {
       // not parseable: the raw words stand in; only a lone read-class line with no operator or redirect passes
@@ -3078,28 +3123,44 @@ function pathFloor(rules: OverlayRules, command: string, ctx: MatchCtx): Decisio
     const cwd = s.cwd;
     for (const r of s.redirects) {
       if (r.op !== "<" && r.op !== "dup" && m.word(r.target, cwd, moved && !cwd)) return { kind: "deny", rule: "floor", path: clip(r.target), reason: floorReason(r.target) };
+      if (r.op === "<") exempt.add(r.target);
     }
+    const read = plainRead(prog, s.argv);
+    if (!PLUMBING.test(prog) && !read) risky = true;
+    if (read || /^(?:cd|pushd|popd)$/.test(prog)) s.argv.forEach((a) => exempt.add(a));
     if (/^(?:cd|pushd|popd)$/.test(prog)) {
       moved = true;
       if (prog === "popd") inFloor = false;
       else inFloor = s.argv.some((a) => m.word(a, cwd, !cwd, true));
       continue;
     }
-    if (prog === "echo" || prog === "printf" || plainRead(prog, s.argv)) continue;
+    if (prog === "echo" || prog === "printf" || read) continue;
     const unknown = moved && !cwd;
     if (inFloor || m.folder(cwd ?? ctx.cwd)) {
       const at = inFloor ? "a floored folder" : cwd ?? ctx.cwd;
       return { kind: "deny", rule: "floor", path: clip(at), reason: floorReason(at) };
     }
     const src = copySources(prog, s.argv);
+    src.forEach((i) => exempt.add(s.argv[i]));
     for (let i = 0; i < s.argv.length; i++) {
       const w = s.argv[i];
       if (!src.has(i) && m.word(w, cwd, unknown)) return { kind: "deny", rule: "floor", path: clip(w), reason: floorReason(w) };
+    }
+    const anc = destWords(prog, s.argv, src).find((w) => m.ancestor(w, cwd, unknown));
+    if (anc !== undefined) return { kind: "deny", rule: "floor", path: clip(anc), reason: floorReason(anc) };
+    if (INLINE_PROGS.test(prog) && s.argv.some((a) => /^-[A-Za-z]*[ecrEp]$|^--eval$/.test(a)) && m.text(s.argv.join("\n"))) {
+      return { kind: "deny", rule: "floor", path: clip(prog), reason: floorReason(prog) };
     }
     if (keys && !(prog === "git" && /^(?:add|commit|mv|rm)$/.test(s.argv.find((a) => !a.startsWith("-")) ?? ""))) {
       const w = s.argv.find((a) => m.config(a, cwd));
       if (w !== undefined) return { kind: "deny", rule: "floor", path: clip(w), reason: `pi-foreman: denied by the permission policy (floor: this shell command writes the safety.permissions*, safety.policy* or gate.* keys of the foreman config file '${clip(w)}'). The agent never changes these keys, and no review or approval lifts this. Ask the user to change them.` };
     }
+  }
+  if (risky) {
+    // every raw word of the line (quotes, `;&|<>(){},` and `$'` cut away): a floored word that only reaches the writer through stdin, a variable or a loop
+    const raw = command.replace(/\$(?=['"])/g, "").replace(/['"`]/g, "").split(/[\s;&|<>(){},]+/).filter(Boolean);
+    const w = raw.find((x) => !exempt.has(x) && m.word(x, null, false));
+    if (w !== undefined) return { kind: "deny", rule: "floor", path: clip(w), reason: floorReason(w) };
   }
   return null;
 }
