@@ -37,7 +37,7 @@ SYMS = {
               "keepalive": "♨️", "cold": "❄️", "downshift": "⬇️",
               "waiting-owner": "✋", "waiting-external": "🔄", "idle": "⏸️",
               "spinner": BRAILLE, "review": "🔍", "agent": "🤖", "task": "⚙️", "wait": "⏱️", "ask": "❓", "recent": "✅",
-              "pr-fail": "🔴", "pr-run": "🟡", "pr-ok": "🟢", "pr-none": "⚪"},
+              "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌"},
     "nerd": {"working": "\uf252", "waiting": "\uf04c", "asking": "\uf128", "blocked": "\uf256",
              "done": "\uf00c", "lost": "\uf00d", "keepalive": "\uf06d",
              "cold": "\uf2dc", "downshift": "\uf063",
@@ -1287,7 +1287,7 @@ class CellWidthTest(unittest.TestCase):
                     "ask": 1, "recent": 1, "pr-fail": 1, "pr-run": 1, "pr-ok": 1, "pr-none": 1},
         "emoji": {"working": 2, "waiting": 2, "asking": 2, "blocked": 2, "done": 2, "lost": 2, "keepalive": 2,
                   "cold": 2, "downshift": 2, "waiting-owner": 2, "waiting-external": 2, "idle": 2, "review": 2, "agent": 2, "task": 2, "wait": 2,
-                  "ask": 2, "recent": 2, "pr-fail": 2, "pr-run": 2, "pr-ok": 2, "pr-none": 2},
+                  "ask": 2, "recent": 2, "pr-fail": 1, "pr-run": 1, "pr-ok": 1, "pr-none": 1},
         "nerd": dict.fromkeys(("working", "waiting", "asking", "blocked", "done", "lost", "keepalive", "cold", "downshift",
                                "waiting-owner", "waiting-external", "idle", "review", "agent", "task", "wait", "ask", "recent",
                                "pr-fail", "pr-run", "pr-ok", "pr-none"), 1),
@@ -1824,7 +1824,9 @@ class SampleCommandTest(PushWorld):
             for name in SYMS:
                 self.assertIn("== %s, variant %s, width 40 ==" % (name, variant), text)
             self.assertIn("● #17 · ◉ #21 · ○ #19 · ◌ #12" if variant == "pr" else "○ deploy · +3", text)
-            self.assertIn("🔴 #17", text)
+            emoji = text.split("\n== emoji, variant %s, width 40 ==\n" % variant)[1].split("\n== ")[0]
+            self.assertIn("● #17", emoji)
+            self.assertNotIn("🔴", text)
             self.assertIn("x #17 · * #21 · o #19 · . #12" if variant == "pr" else "o deploy · +3", text)
         one = self.run_cli("sample", "--dry-run", "--symbols", "ascii", "--width", "26")
         self.assertEqual(one.stdout.decode("utf-8").count("=="), 2)

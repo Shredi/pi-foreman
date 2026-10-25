@@ -135,7 +135,7 @@ touches `.ask` and shows the session as blocked in Herdr (`herdr:blocked`, label
   session shutdown recompute it.
 - **A stale ruling is ignored.** A `ruling-<n>.md` whose mtime is older than `ask.md` does not wake the wait (it keeps waiting).
 - **A newer brief supersedes the wait.** A file wait on `ruling.md` or `ruling-<n>.md` resolves with the outcome
-  `superseded by brief <path>` when a `brief-<n>.md` newer than the wait appears in the same handoff dir. That is not a
+  `superseded by brief <path>` when a `brief-<x>.md` newer than the wait appears in the same handoff dir. That is not a
   ruling: `.ask` and the blocked state stay open until a ruling or `.seen` arrives.
 - **A parent ruling never satisfies the finish gate.** A `ruling.md` or `ruling-<n>.md` (first line `APPROVED` or `SHIP`)
   from the parent does not close the reviewer step: only a reviewer verdict does. After a FAIL the finish refusal names

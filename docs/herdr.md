@@ -51,8 +51,8 @@ timer, file or child-session wait and `⣻?` for a child run that asks; a sessio
    `config.toml`. Herdr takes at most 16 rules per token, so the snippet is written for one set: every glyph in its
    rules is that set's glyph. The header cell has a base colour (`fg`, green, the colour of a session on its own turn);
    if your Herdr refuses a cell-level `fg` on reload, delete that one attribute: the own-turn line then keeps your
-   theme colour and the rules still apply. The `emoji` set also gets rules on the pr cells (the circles carry their own
-   colour, the rule colours the label too); the `ascii` set has no rules and no `fg`. The plugin never writes
+   theme colour and the rules still apply. The `emoji` set uses the same text circles on the pr cells, so the same rules colour them;
+   the `ascii` set has no rules and no `fg`. The plugin never writes
    `config.toml`.
 3. `herdr server reload-config`.
 
@@ -163,7 +163,8 @@ and Herdr's status stays working, and the wait shows on its activity line.
 #### Dots
 
 The dots row shows one circle and a short label per tracked item, in the glyph set's `pr-fail`, `pr-run`, `pr-ok` and
-`pr-none` keys (see Symbols). A pull request dot is labelled `#<number>`; an external item (see
+`pr-none` keys (see Symbols). The `emoji` set uses the same text circles as `unicode`, one cell each, so the row keeps its
+line height and the pr rules colour them. A pull request dot is labelled `#<number>`; an external item (see
 [External status](#external-status)) shows its own label.
 
 | State | Circle (`unicode`) | Meaning of a pull request |
@@ -445,10 +446,10 @@ Activity glyphs and the spinner:
 | `wait` | ◷ | ⏱️ | U+F017 | `~` |
 | `ask` | ? | ❓ | U+F128 | `?` |
 | `recent` | ✓ | ✅ | U+F00C | `+` |
-| `pr-fail` | ● | 🔴 | U+F111 | `x` |
-| `pr-run` | ◉ | 🟡 | U+F192 | `*` |
-| `pr-ok` | ○ | 🟢 | U+F10C | `o` |
-| `pr-none` | ◌ | ⚪ | U+F1DB | `.` |
+| `pr-fail` | ● | ● | U+F111 | `x` |
+| `pr-run` | ◉ | ◉ | U+F192 | `*` |
+| `pr-ok` | ○ | ○ | U+F10C | `o` |
+| `pr-none` | ◌ | ◌ | U+F1DB | `.` |
 
 ## External status
 

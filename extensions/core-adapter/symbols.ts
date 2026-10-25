@@ -19,7 +19,7 @@ const BRAILLE = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"];
 /** The activity keys and spinner frames when config/symbols.json lacks them. */
 const EXTRA: Record<SetName, Record<ActivityKey, string> & { spinner: string[] }> = {
   unicode: { spinner: BRAILLE, review: "◎", agent: "◆", task: "⚙", wait: "◷", ask: "?", recent: "✓", "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌" },
-  emoji: { spinner: BRAILLE, review: "🔍", agent: "🤖", task: "⚙️", wait: "\u23f1\ufe0f", ask: "❓", recent: "✅", "pr-fail": "🔴", "pr-run": "🟡", "pr-ok": "🟢", "pr-none": "⚪" },
+  emoji: { spinner: BRAILLE, review: "🔍", agent: "🤖", task: "⚙️", wait: "\u23f1\ufe0f", ask: "❓", recent: "✅", "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌" },
   nerd: { spinner: BRAILLE, review: "\uf002", agent: "\uf544", task: "\uf013", wait: "\uf017", ask: "\uf128", recent: "\uf00c", "pr-fail": "\uf111", "pr-run": "\uf192", "pr-ok": "\uf10c", "pr-none": "\uf1db" },
   ascii: { spinner: ["|", "/", "-", "\\"], review: "&", agent: ">", task: "=", wait: "~", ask: "?", recent: "+", "pr-fail": "x", "pr-run": "*", "pr-ok": "o", "pr-none": "." },
 };

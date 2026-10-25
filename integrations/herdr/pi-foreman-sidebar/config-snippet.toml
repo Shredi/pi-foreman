@@ -33,9 +33,8 @@
 # session blocked for more than 15 minutes, so that rule comes first. First
 # match wins. If your Herdr rejects the cell-level `fg`, delete it: the own-turn
 # line then keeps your theme colour and the rules still apply.
-# The pr cells are coloured by their circle; the emoji set gets pr rules on
-# purpose (the circles carry their colour, the rule colours the label too) and
-# the ascii set has none. The unknown circle has no rule: it keeps your theme
+# The pr cells are coloured by their circle; the emoji set uses the same text
+# circles, so the same rules colour it, and the ascii set has none. The unknown circle has no rule: it keeps your theme
 # colour.
 # The hex values are placeholders: pick the ones that suit your theme.
 # The plugin draws the tree itself (the connectors and the blank cells U+2800

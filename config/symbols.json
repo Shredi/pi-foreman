@@ -4,7 +4,7 @@
               "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌"},
   "emoji":   {"working": "⏳", "waiting": "⏸️", "asking": "❓", "blocked": "✋", "done": "✅", "lost": "❌", "keepalive": "♨️", "cold": "❄️", "downshift": "⬇️", "waiting-owner": "✋", "waiting-external": "🔄", "idle": "⏸️",
               "spinner": ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"], "review": "🔍", "agent": "🤖", "task": "⚙️", "wait": "\u23f1\ufe0f", "ask": "❓", "recent": "✅",
-              "pr-fail": "🔴", "pr-run": "🟡", "pr-ok": "🟢", "pr-none": "⚪"},
+              "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌"},
   "nerd":    {"waiting-owner": "\uf256", "waiting-external": "\uf017", "idle": "\uf04c", "working": "\uf252", "waiting": "\uf04c", "asking": "\uf128", "blocked": "\uf256", "done": "\uf00c", "lost": "\uf00d", "keepalive": "\uf06d", "cold": "\uf2dc", "downshift": "\uf063",
               "spinner": ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"], "review": "\uf002", "agent": "\uf544", "task": "\uf013", "wait": "\uf017", "ask": "\uf128", "recent": "\uf00c",
               "pr-fail": "\uf111", "pr-run": "\uf192", "pr-ok": "\uf10c", "pr-none": "\uf1db"},
