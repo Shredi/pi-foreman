@@ -517,8 +517,8 @@ Switch: `tools.pr` is true.
 | `widget.prs` | `true` | any layer |
 | `widget.prLinks` | `true` | any layer |
 | `tools.pr` | `true` | tighten-only (only false is accepted) |
-| `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
 | `tools.prDots` | `true` | any layer |
+| `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
 | `tools.prWatchSeconds` | `60` | any layer |
 | `tools.prInteractions` | `[]` | not in project/session (the PR interaction patterns come from the user or overlay config) |
 | `tools.prShared.enabled` | `false` | not in project/session (the shared PR watch comes from the user or overlay config) |
