@@ -134,6 +134,9 @@ touches `.ask` and shows the session as blocked in Herdr (`herdr:blocked`, label
   ruling of that ask (`ruling-<n>.md`, or `ruling.md`). Any `.seen` write (write/edit tool, or a `bash` result) and the
   session shutdown recompute it.
 - **A stale ruling is ignored.** A `ruling-<n>.md` whose mtime is older than `ask.md` does not wake the wait (it keeps waiting).
+- **A newer brief supersedes the wait.** A file wait on `ruling.md` or `ruling-<n>.md` resolves with the outcome
+  `superseded by brief <path>` when a `brief-<x>.md` newer than the wait appears in the same handoff dir. That is not a
+  ruling: `.ask` and the blocked state stay open until a ruling or `.seen` arrives.
 - **A parent ruling never satisfies the finish gate.** A `ruling.md` or `ruling-<n>.md` (first line `APPROVED` or `SHIP`)
   from the parent does not close the reviewer step: only a reviewer verdict does. After a FAIL the finish refusal names
   the newer ruling and says the chair runs `/ceremony <tier>` to override; `/foreman close` lists what is still open and
@@ -447,7 +450,7 @@ it as plain text `foreman:close`, accepted only from the recorded parent session
 Herdr's Pi integration (`herdr integration install pi`, installed by you, never by the installer) shows a session
 as working, idle or blocked. pi-foreman emits `herdr:blocked` on `pi.events` while any dialog waits for you, so
 the pane reads blocked ("?") instead of working. The foreman tree in Herdr's Agents panel is a separate plugin:
-[Herdr sidebar](herdr.md). In a Herdr pane the session also pushes its own sidebar tokens (`sidebar.py push`, on every state change and every 5 s; the header carries Pi's spinner frame while it works, `ui.spinner: false` turns that off); see [who publishes what](herdr.md#who-publishes-what). Design record: `design/architecture.md`
+[Herdr sidebar](herdr.md). In a Herdr pane the session also pushes its own sidebar tokens (`sidebar.py push`, on every state change and every 5 s; the header carries a dense braille frame, followed by the reason icon, while it works or waits on something; `ui.spinner: false` turns that off); see [who publishes what](herdr.md#who-publishes-what). Design record: `design/architecture.md`
 [session features](../design/architecture.md#session-features-phase-4).
 
 ### Blocked shim
@@ -535,5 +538,5 @@ add-on's `bg_run` tool; `/foreman waits` then also lists its running tasks, and 
 | `herdr.blockedShim` | Show any open dialog or permission ask as blocked in Herdr (default `true`); any layer may set it. |
 | `herdr.groupTag` | Herdr group tag on opened child and parent panes (default `true`); any layer may set it. |
 | `ui.symbols` | Glyph set for radar, the children widget and the Herdr sidebar plugin: `unicode` (default, broadest support), `emoji`, `nerd` (Nerd Font) or `ascii`; an unknown value reads as `unicode`; any layer may set it. |
-| `ui.spinner` | Animate the working glyph (Pi's braille frames, 250 ms steps) in the children widget and the Herdr sidebar (default `true`); `false` shows static glyphs everywhere; any layer may set it. |
+| `ui.spinner` | Animate the working glyph (dense braille frames, 250 ms steps; the sidebar also ticks while a session waits on something) in the children widget and the Herdr sidebar (default `true`); `false` shows static glyphs everywhere; any layer may set it. |
 | `widget.children` | Children widget below the editor in the TUI (default `true`); any layer may set it. |
