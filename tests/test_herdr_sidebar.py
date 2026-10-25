@@ -2148,5 +2148,41 @@ class StateCellTest(unittest.TestCase):
         self.assertIn("⣻⚙ r53-sidebar", res.stdout.decode("utf-8"))
 
 
+class LiveKidsOnAgentLineTest(unittest.TestCase):
+    """Round 61 bug 1: child sessions without a pane row show on the agents line only while live."""
+
+    def a1(self, *kids):
+        kid_nodes = []
+        for i, (sym, state) in enumerate(kids):
+            kid = tnode("k%d" % i, "kid%d" % i, "x", sym, state)
+            kid["paneId"] = None
+            kid_nodes.append(kid)
+        parent = tnode("s", "parent", "x", children=kid_nodes)
+        out = sidebar.compose({"symbols": "unicode", "roots": [parent]}, 60)["P-s"]["fm_a1"]
+        return out and out.replace(B, " ").strip()
+
+    def test_closed_idle_and_stale_kids_leave_the_line(self):
+        self.assertIsNone(self.a1(("idle", "idle"), ("working", "closed"), ("waiting", "idle"), ("done", "done"),
+                                  ("lost", "lost"), ("working", "closing")))
+
+    def test_live_kids_stay(self):
+        for sym, state in (("working", "working"), ("working", "starting"), ("waiting-external", "working"),
+                           ("waiting-owner", "blocked")):
+            with self.subTest(sym=sym, state=state):
+                self.assertIn("kid0", self.a1((sym, state)))
+
+    def test_mix_shows_and_counts_only_live_kids(self):
+        kids = [("working", "working"), ("idle", "idle"), ("working", "closed"), ("waiting-external", "working"),
+                ("waiting-owner", "blocked"), ("working", "starting"), ("done", "done")]
+        line = self.a1(*kids)
+        for name in ("kid0", "kid3", "kid4"):
+            self.assertIn(name, line)
+        for name in ("kid1", "kid2", "kid6"):
+            self.assertNotIn(name, line)
+        live = [("working", "working"), ("waiting-external", "working")] * 4   # six live names would need +n
+        many = self.a1(*(live + [("idle", "idle")] * 3))
+        self.assertIn("+%d" % (len(live) - sidebar.MAX_ITEMS), many)
+
+
 if __name__ == "__main__":
     unittest.main()

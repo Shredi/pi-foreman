@@ -94,3 +94,12 @@ pi = [
       { contains = "⚠", fg = "#e0a030" },
   ] }],
 ]
+
+# Attention highlight. Herdr marks an agent that needs you from its agent status; pi-foreman raises
+# that status (herdr:blocked) whenever a session shows ✋ or ?, so there is no switch to turn on.
+# These Herdr keys (see `herdr --default-config`) only change how the attention shows. They stay
+# comments: the plugin never writes your config.toml. Uncomment what you want, then reload.
+# [ui]
+# agent_panel_sort = "priority"        # "spaces" (default) groups by space; "priority" is the attention queue
+# [ui.sound]
+# request_path = "sounds/request.mp3"  # sound for needs-attention (a blocked session); path / done_path cover the rest

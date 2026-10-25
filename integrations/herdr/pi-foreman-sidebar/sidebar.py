@@ -566,7 +566,7 @@ def _agent_line(node, joins, recent, width, aux):
         return "done · %d run%s" % (runs, "" if runs == 1 else "s") if runs else None
     groups, counts = [], {}
     for k in kids:
-        if _is_row(k, joins):
+        if _is_row(k, joins) or (k.get("kind") == "session" and not _live_kid(k)):
             continue
         finished = k.get("state") == "done"
         if finished and not _recent_run(k, recent):
