@@ -102,6 +102,8 @@ interface FileSnap {
   hash: string;
   /** Parsed config files: key -> hash of its values. Null for files that are not config. */
   keys: Map<string, string> | null;
+  /** Raw values of branch.<b>.remote/.merge keys, in memory only (never serialized; absent on loaded snapshots). */
+  raw?: Map<string, string[]>;
 }
 
 export interface GitSnapshot {
@@ -176,7 +178,8 @@ export function takeGitSnapshot(cwd: string, home: string): GitSnapshot | null {
     const entries = parseGitConfig(text);
     const grouped = new Map<string, string[]>();
     for (const [k, v] of entries) grouped.set(k, [...(grouped.get(k) ?? []), v]);
-    files.set(lbl, { hash: sha(text), keys: new Map([...grouped].map(([k, vs]) => [k, sha(vs.join("\0"))])) });
+    const raw = new Map([...grouped].filter(([k]) => BRANCH_TRACKING.test(k)));
+    files.set(lbl, { hash: sha(text), keys: new Map([...grouped].map(([k, vs]) => [k, sha(vs.join("\0"))])), raw });
     for (const [k, v] of entries) {
       if (k === "core.hookspath" && own) hooksPath = v.replace(/^"(.*)"$/, "$1");
       if (!/^include(if\..*)?\.path$/.test(k)) continue;
@@ -409,6 +412,23 @@ function worktreeLabel(lbl: string): { n: string; what: string; quiet: string[] 
 
 const BRANCH_TRACKING = /^branch\..+\.(remote|merge)$/;
 
+/**
+ * An added or changed branch.<b>.merge / branch.<b>.remote key that `worktree add -b`, `push -u` or
+ * `checkout -b` write: merge only as refs/heads/<b> (<b> = the section name); remote only as a name
+ * whose remote.<name>.url is present in both snapshots with an unchanged hash (a URL or path value
+ * has no such key). Raw values come from the `after` snapshot, in memory only.
+ */
+function routineTracking(key: string, a: FileSnap, b: FileSnap): boolean {
+  const m = /^branch\.(.+)\.(remote|merge)$/.exec(key);
+  const vals = b.raw?.get(key);
+  if (!m || !vals || vals.length !== 1) return false;
+  const v = vals[0];
+  if (m[2] === "merge") return v === `refs/heads/${m[1]}`;
+  const url = `remote.${v}.url`;
+  const [ua, ub] = [a.keys?.get(url), b.keys?.get(url)];
+  return ua !== undefined && ua === ub;
+}
+
 /** What changed between two snapshots, as short lines naming files, keys and hooks (never values). Empty = no drift. */
 export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot | null): string[] {
   if (!before) return [];
@@ -429,11 +449,12 @@ export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot 
       const ka = a!.keys ?? new Map<string, string>();
       const kb = b!.keys ?? new Map<string, string>();
       // branch.<name>.remote/.merge appear and vanish with `worktree add -b`, `push -u`, `checkout -b`: routine, not drift.
-      const added = [...kb.keys()].filter((k) => !ka.has(k) && !BRANCH_TRACKING.test(k));
+      const routine = (k: string): boolean => BRANCH_TRACKING.test(k) && routineTracking(k, a!, b!);
+      const added = [...kb.keys()].filter((k) => !ka.has(k) && !routine(k));
       const removed = [...ka.keys()].filter((k) => !kb.has(k) && !BRANCH_TRACKING.test(k));
-      const changed = [...kb.keys()].filter((k) => ka.has(k) && ka.get(k) !== kb.get(k));
+      const changed = [...kb.keys()].filter((k) => ka.has(k) && ka.get(k) !== kb.get(k) && !routine(k));
       const parts = [listed("added", added), listed("changed", changed), listed("removed", removed)].filter(Boolean);
-      const onlyTracking = !parts.length && [...ka.keys(), ...kb.keys()].some((k) => BRANCH_TRACKING.test(k) && ka.has(k) !== kb.has(k));
+      const onlyTracking = !parts.length && [...ka.keys(), ...kb.keys()].some((k) => BRANCH_TRACKING.test(k) && ka.get(k) !== kb.get(k));
       if (onlyTracking) continue;
       state = parts.length ? parts.join("; ") : "content changed";
     }
