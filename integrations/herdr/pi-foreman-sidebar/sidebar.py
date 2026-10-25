@@ -2016,6 +2016,9 @@ def main(argv=None):
                     help="with push: print {tokens, fm_hd_tpl, stamp, pane}; report nothing, write no stamp")
     ap.add_argument("--clear", action="store_true", help="with push: clear the session's keys; with sample: end the override")
     ap.add_argument("--final", action="store_true", help="with push: publish the final row, then drop only the stamp")
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace", newline="\n")
     argv = sys.argv[1:] if argv is None else argv
     args = ap.parse_args(argv)
     if args.command == "start":
