@@ -123,6 +123,46 @@ test("shape: each credential position becomes <v> or <heredoc>", () => {
   }
 });
 
+const passwordCases: Array<[string, string, string]> = [
+  ["mysql -ppw", "pw", "mysql -p<v>"],
+  ["mysql -u root -ppw", "pw", "mysql -u <v> -p<v>"],
+  ["mysql -h db -P 3306 -u root -pS3cret dbname", "S3cret", "mysql -h db -P 3306 -u <v> -p<v> dbname"],
+  ["docker login -p pw2", "pw2", "docker login -p <v>"],
+  ["docker login -u me -p pw2 registry.example", "pw2", "docker login -u me -p <v> <rel>"], // a dotted host reads as a file name; the operand is kept as its class, not masked as a password
+  ["podman login -ppw2 reg.io", "pw2", "podman login -p<v> <rel>"],
+  ["mariadb -ppw db", "pw", "mariadb -p<v> db"],
+  ["mysqldump -ppw db", "pw", "mysqldump -p<v> db"],
+  ["mysqladmin -ppw status", "pw", "mysqladmin -p<v> status"],
+  ["sshpass -ppw ssh host", "pw", "sshpass -p<v> ssh host"],
+  ["othertool --user me -ppw", "pw", "othertool --user <v> -p<v>"],
+  ["tool -p pw run", "pw", "tool -p <v> run"],
+  ["tool --password pw run", "pw", "tool --password <v> run"],
+  ["tool --password=pw run", "pw", "tool --password=<v> run"],
+  ["helm registry login -p pw reg.io", "pw", "helm registry login -p <v> <rel>"],
+  ["npm login --token pw", "pw", "npm login --token <v>"],
+  ["gh auth login --token pw", "pw", "gh auth login --token <v>"],
+  ["az login --password pw", "pw", "az login --password <v>"],
+  ["aws configure set aws_secret_access_key pw", "pw", "aws configure set aws_secret_access_key <v>"],
+  ["docker login --secret pw reg.io", "pw", "docker login --secret <v> <rel>"],
+];
+
+test("shape: password operands are masked whatever their length", () => {
+  for (const [input, secret, want] of passwordCases) {
+    const s = normalizeShape(input, posix);
+    assert.equal(s, want, input);
+    assert.ok(!s.split(/[\s=]/).some((w) => w.replace(/^-p/, "") === secret), input);
+  }
+});
+
+test("shape: no-operand credential flags keep the next word", () => {
+  assert.equal(normalizeShape("docker login --password-stdin reg.io", posix), "docker login --password-stdin <rel>");
+  assert.equal(normalizeShape("gh auth login --with-token < tok.txt", posix), "gh auth login --with-token < <rel>");
+});
+
+test("shape: psql -p masks the port (chosen behaviour: harmless)", () => {
+  assert.equal(normalizeShape("psql -p 5432", posix), "psql -p <v>");
+});
+
 test("shape: ordinary flags and operands survive the credential rules", () => {
   assert.equal(normalizeShape("mkdir -p dir && ls -ltr", posix), "mkdir -p dir && ls -ltr");
   assert.equal(normalizeShape("cp -pr a.txt b.txt", posix), "cp -pr <rel> <rel>");

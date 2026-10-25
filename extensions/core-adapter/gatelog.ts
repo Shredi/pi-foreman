@@ -52,8 +52,17 @@ const FILE = /^(?:[A-Za-z0-9_@+-][\w@+.-]*\.[A-Za-z][A-Za-z0-9]{1,9}|\.[A-Za-z_]
 
 /** Long options whose operand is a credential or an auth header (`--user x`, `--password=x`, `--token x`, `--header x`). */
 const CRED_LONG = /^--[a-z0-9-]*(?:user|pass|secret|token|key|auth|header|cookie|credential|bearer)[a-z0-9-]*$/i;
-/** Short options that take a credential, by program (`curl -u user:pass`, `sshpass -p pw`, `mysql -u root`). */
-const CRED_SHORT: Record<string, string> = { curl: "uHU", sshpass: "p", mysql: "u", mysqldump: "u", mysqladmin: "u", http: "a", https: "a", xh: "a" };
+/** Short options that take a credential, by program (`curl -u user:pass`, `mysql -u root`). */
+const CRED_SHORT: Record<string, string> = { curl: "uHU", mysql: "u", mysqldump: "u", mysqladmin: "u", mariadb: "u", http: "a", https: "a", xh: "a" };
+/** Short options that take a password for every program, whatever its length: `-p pw`.
+ *  `-p` also means a port (`psql -p 5432`): masking a port in a log shape is harmless, leaking a password is not. */
+const CRED_ANY_SHORT = "p";
+/** Programs whose `-p` is a flag without operand (`mkdir -p dir`), kept readable. */
+const P_IS_FLAG = new Set(["mkdir"]);
+/** Credential-looking long options that take no operand (`docker login --password-stdin`, `gh auth login --with-token`). */
+const NO_OPERAND = /^--(?:password-stdin|with-token)$/;
+/** Programs where an attached `-pVALUE` is a password whatever its length (`mysql -ppw`, `docker login -ppw`). */
+const ATTACHED_P = new Set(["mysql", "mysqldump", "mysqladmin", "mariadb", "sshpass", "docker", "podman", "helm", "npm", "gh", "az", "aws"]);
 /** A variable name from the secrets grammar of trace.ts (token, key, password, secret ...), widened by pass, auth, credential, cookie. */
 const SECRET_NAME = /pass|token|key|secret|pwd|auth|cred|cookie|bearer|session/i;
 
@@ -73,6 +82,8 @@ export function normalizeShape(text: string, roots: ShapeRoots = {}): string {
   const masked = redactCommand(quoted).split("[redacted]").join("<v>");
   let prog = "";
   let pending = false;
+  let user = false;
+  let words: string[] = [];
   let prev = 0;
   let out = "";
   const re = /[^\s;|&()]+/g;
@@ -82,22 +93,28 @@ export function normalizeShape(text: string, roots: ShapeRoots = {}): string {
     if (/[;|&()\n]/.test(gap)) {
       prog = "";
       pending = false;
+      user = false;
+      words = [];
     }
-    out += gap + shapeToken(m[0], roots, { prog, pending });
+    out += gap + shapeToken(m[0], roots, { prog, pending, user });
     const tok = m[0];
+    if (/^(?:-u|--user(?:name)?(?:=|$))/.test(tok)) user = true;
     if (!prog && !/^[A-Za-z_]\w*=/.test(tok)) prog = (tok.split(/[\\/]/).pop() ?? tok).toLowerCase();
-    pending = credOperandNext(tok, prog);
+    words.push(tok);
+    // `aws configure set aws_secret_access_key VALUE`: the operand of a secret-named key
+    const awsSet = prog === "aws" && words.length === 4 && words[1] === "configure" && words[2] === "set" && SECRET_NAME.test(tok);
+    pending = awsSet || credOperandNext(tok, prog);
   }
   return (out + masked.slice(prev)).slice(0, MAX_SHAPE);
 }
 
 /** Whether the token after `tok` is the operand of a credential option. */
 function credOperandNext(tok: string, prog: string): boolean {
-  if (tok.startsWith("--")) return !tok.includes("=") && CRED_LONG.test(tok);
-  return /^-[A-Za-z]$/.test(tok) && (CRED_SHORT[prog] ?? "").includes(tok[1]);
+  if (tok.startsWith("--")) return !tok.includes("=") && !NO_OPERAND.test(tok) && CRED_LONG.test(tok);
+  return /^-[A-Za-z]$/.test(tok) && ((CRED_SHORT[prog] ?? "") + (P_IS_FLAG.has(prog) ? "" : CRED_ANY_SHORT)).includes(tok[1]);
 }
 
-function shapeToken(tok: string, roots: ShapeRoots, st: { prog: string; pending: boolean }): string {
+function shapeToken(tok: string, roots: ShapeRoots, st: { prog: string; pending: boolean; user: boolean }): string {
   if (st.pending) return "<v>";
   const asg = /^([A-Za-z_]\w*)=(.+)$/.exec(tok);
   if (asg && SECRET_NAME.test(asg[1])) return `${asg[1]}=<v>`;
@@ -106,7 +123,8 @@ function shapeToken(tok: string, roots: ShapeRoots, st: { prog: string; pending:
     if (eq > 0 && CRED_LONG.test(tok.slice(0, eq))) return `${tok.slice(0, eq)}=<v>`;
   } else if (/^-[A-Za-z]./.test(tok)) {
     // attached short operand: `-uuser:pass` for the known programs, `-pSECRET` (more than a flag cluster) for any
-    if ((CRED_SHORT[st.prog] ?? "").includes(tok[1]) || (tok[1] === "p" && !/^[A-Za-z]{0,3}$/.test(tok.slice(2)))) return `-${tok[1]}<v>`;
+    const attachedP = tok[1] === "p" && (ATTACHED_P.has(st.prog) || st.user || !/^[A-Za-z]{0,3}$/.test(tok.slice(2)));
+    if ((CRED_SHORT[st.prog] ?? "").includes(tok[1]) || attachedP) return `-${tok[1]}<v>`;
   }
   const url = /^([a-z][a-z0-9+.-]*:\/\/)(?:<v>@)?([^\s\/?#:@]+)/i.exec(tok);
   if (url) return url[1] + url[2];
