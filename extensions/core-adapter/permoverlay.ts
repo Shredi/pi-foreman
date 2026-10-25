@@ -136,6 +136,8 @@ export interface OverlayRules {
    * overlay narrows that to pure ls/stat/which shell lines and the ls tool; anything else naming them asks (R10 item 3).
    */
   probeDirs?: string[];
+  /** R41: the floors (policy files, harness state) and the roots named in a whole-filesystem scan deny; set by buildOverlayRules. */
+  floors?: { agentDir: string; pkgRoot?: string; policyFiles: string[] };
 }
 
 export interface Baseline {
@@ -808,7 +810,7 @@ export function isSelfHost(cwd: string, pkgRoot: string, platform: string = proc
  * the project and session layers (the config CLI's `basePermissions`); asks present there are
  * PS's job, only the added ones are enforced here. Without `base` no ask is enforced.
  */
-export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unknown, agentDir: string, pkgRoot?: string, xdgConfigHome: string | undefined = process.env.XDG_CONFIG_HOME, selfHost = false, owned?: OwnedRoots): OverlayRules {
+export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unknown, agentDir: string, pkgRoot?: string, xdgConfigHome: string | undefined = process.env.XDG_CONFIG_HOME, selfHost = false, owned?: OwnedRoots, policyFiles: string[] = []): OverlayRules {
   const m = obj(merged);
   const b = obj(base);
   const slash = (d: string): string => d.split(path.sep).join("/").replace(/\/+$/, "");
@@ -848,6 +850,7 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
     childBlockInWorkspace: CHILD_BLOCK_WORKTREES,
     ...(owned ? { owned } : {}),
     probeDirs: probeDirPatterns(baseline.externalDirectory?.probe ?? []),
+    floors: { agentDir, ...(pkgRoot ? { pkgRoot } : {}), policyFiles },
   };
 }
 
@@ -2888,6 +2891,156 @@ function shadowedInterpreters(command: string): Set<string> {
   return out;
 }
 
+// ------------------------------------------------------------ R41 floors and scans
+
+/** A foreman config file by name (`foreman.json`, `foreman.defaults.json`, `foreman.local.json`). */
+const CONFIG_FILE = /(?:^|[\\/])foreman(?:[.-][\w.-]*)?\.json$/;
+/** The config keys no agent write may touch: safety.permissions*, safety.policy*, gate.* (read from the written text, fail closed). */
+const FLOOR_KEYS = /\b(?:permissions|policy[A-Za-z]*|gate)\b/;
+
+/** The policy files of every layer and the harness state files no tool or shell write may touch (patterns, `dir` + `dir/*` for a subtree). */
+function floorPatterns(rules: OverlayRules, ctx: MatchCtx): string[] {
+  const f = rules.floors;
+  const slash = (d: string): string => d.split(path.sep).join("/").replace(/\/+$/, "");
+  const out: string[] = [];
+  if (f?.pkgRoot) out.push(`${slash(f.pkgRoot)}/config/permissions.policy.md`);
+  if (f?.agentDir) {
+    const s = `${slash(f.agentDir)}/pi-foreman`;
+    out.push(`${s}/policy.md`, `${s}/managed.json`, `${s}/state/round-parents.json`, `${s}/state/bridge-trust.json`, `${s}/state/approvals`, `${s}/state/approvals/*`, `${s}/state/gate`, `${s}/state/gate/*`);
+  }
+  const bases = ctx.cwd ? [...new Set([ctx.cwd, workspaceOf(ctx.cwd).root])] : [];
+  for (const b of bases) out.push(`${slash(b)}/.workflow/policy.md`);
+  for (const p of f?.policyFiles ?? []) {
+    if (path.isAbsolute(p) || path.win32.isAbsolute(p) || p.startsWith("~")) out.push(slash(p));
+    else for (const b of bases) out.push(`${slash(b)}/${p.replace(/^\.\//, "")}`);
+  }
+  return out;
+}
+
+/** R41: a deny, no model and no dialog, for a write (`words`) to a floored file or, with `text` naming a floored config key, to a foreman config file. */
+function floorDecision(rules: OverlayRules, words: string[], text: string, ctx: MatchCtx, what: string): Decision | null {
+  const pats = floorPatterns(rules, ctx);
+  const keys = FLOOR_KEYS.test(text);
+  for (const w of words) {
+    for (const x of pathCandidates(w, ctx)) {
+      if (pats.some((p) => pathMatches(p, x, ctx))) {
+        return { kind: "deny", rule: "floor", path: clip(w), reason: `pi-foreman: denied by the permission policy (floor: ${what} writes '${clip(w)}', a policy file or a harness state file). No tool or shell write to a policy file (any layer), managed.json, state/round-parents.json, state/bridge-trust.json, state/approvals or state/gate is allowed, and no review or approval lifts this. Ask the user to change it.` };
+      }
+      if (keys && CONFIG_FILE.test(x)) {
+        return { kind: "deny", rule: "floor", path: clip(w), reason: `pi-foreman: denied by the permission policy (floor: ${what} writes the safety.permissions*, safety.policy* or gate.* keys of the foreman config file '${clip(w)}'). The agent never changes these keys, and no review or approval lifts this. Ask the user to change them.` };
+      }
+    }
+  }
+  return null;
+}
+
+const SCAN_VALUE_FLAGS: Record<string, Set<string>> = {
+  grep: new Set(["-e", "-f", "-m", "-A", "-B", "-C", "-d", "-D", "--regexp", "--file", "--max-count"]),
+  rg: new Set(["-e", "-f", "-g", "-t", "-T", "-m", "-A", "-B", "-C", "-j", "-M", "-E", "-r", "-d", "--regexp", "--file", "--glob", "--iglob", "--type", "--type-not", "--max-count", "--max-depth", "--threads"]),
+  fd: new Set(["-e", "-E", "-t", "-d", "-S", "-o", "-j", "-c", "--extension", "--exclude", "--type", "--max-depth", "--size", "--owner", "--threads", "--color"]),
+  du: new Set(["-d", "-B", "-t", "-X", "--max-depth", "--block-size", "--threshold", "--exclude"]),
+  ls: new Set(["-w", "-I", "-T", "--width", "--ignore", "--tabsize"]),
+  tree: new Set(["-L", "-P", "-I", "-o", "--charset", "--filelimit", "--timefmt"]),
+};
+
+/** The non-option words of `args` (after `--` all of them), skipping the values of the flags in `valued`; the flags seen are added to `seen`. */
+function scanOperands(args: string[], valued: Set<string>, seen: Set<string>): string[] {
+  const out: string[] = [];
+  let ended = false;
+  for (let i = 0; i < args.length; i++) {
+    const w = args[i];
+    if (ended || !w.startsWith("-") || w === "-") out.push(w);
+    else if (w === "--") ended = true;
+    else {
+      seen.add(w);
+      if (valued.has(w)) i++;
+    }
+  }
+  return out;
+}
+
+/** The search roots of a scan unit (`find`, a recursive grep, `rg`, `fd`, `du`, `ls -R`, `tree`): [] = the cwd; null = not a scan. */
+function scanRoots(core: string[]): string[] | null {
+  if (!core.length) return null;
+  const verb = baseName(core[0]);
+  const args = core.slice(1);
+  const seen = new Set<string>();
+  if (verb === "find") {
+    const roots: string[] = [];
+    for (const w of args) {
+      if (/^-[HLP]$/.test(w)) continue;
+      if (w.startsWith("-") || w === "(" || w === "!") break;
+      roots.push(w);
+    }
+    return roots;
+  }
+  if (verb === "grep" || verb === "egrep" || verb === "fgrep") {
+    const ops = scanOperands(args, SCAN_VALUE_FLAGS.grep, seen);
+    const rec = args.some((w, i) => /^-[A-Za-z]*[rR]/.test(w) || w === "--recursive" || w === "--dereference-recursive" || w === "--directories=recurse" || (w === "-d" && args[i + 1] === "recurse"));
+    if (!rec) return null;
+    return seen.has("-e") || seen.has("-f") || seen.has("--regexp") || seen.has("--file") || args.some((w) => /^--(?:regexp|file)=/.test(w)) ? ops : ops.slice(1);
+  }
+  if (verb === "rg") {
+    const ops = scanOperands(args, SCAN_VALUE_FLAGS.rg, seen);
+    return seen.has("-e") || seen.has("-f") || seen.has("--regexp") || seen.has("--file") || seen.has("--files") || args.some((w) => /^--(?:regexp|file)=/.test(w)) ? ops : ops.slice(1);
+  }
+  if (verb === "fd" || verb === "fdfind") {
+    const cut = args.findIndex((w) => /^(?:-x|-X|--exec|--exec-batch)$/.test(w));
+    const sp = args.flatMap((w, i) => (w === "--search-path" && args[i + 1] !== undefined ? [args[i + 1]] : /^--search-path=/.test(w) ? [w.slice(14)] : []));
+    return [...scanOperands(cut >= 0 ? args.slice(0, cut) : args, SCAN_VALUE_FLAGS.fd, seen).slice(1), ...sp];
+  }
+  if (verb === "du") return scanOperands(args, SCAN_VALUE_FLAGS.du, seen);
+  if (verb === "tree") return scanOperands(args, SCAN_VALUE_FLAGS.tree, seen);
+  if (verb === "ls") {
+    const ops = scanOperands(args, SCAN_VALUE_FLAGS.ls, seen);
+    return args.some((w) => /^-[A-Za-z]*R/.test(w) || w === "--recursive") ? ops : null;
+  }
+  return null;
+}
+
+/** True when the search root `word` is the file system root, the home directory or a parent of it, or a parent of the workspace outside the owned roots. */
+function scanRootBad(rules: OverlayRules, word: string, ctx: MatchCtx): boolean {
+  const p = ctx.platform === "win32" ? path.win32 : path.posix;
+  const ws = ctx.cwd ? workspaceOf(ctx.cwd).root : "";
+  const owned = ctx.owned ?? rules.owned;
+  const allowed = [...tmpRoots(ctx), scratchOf(ctx), rules.floors?.pkgRoot, ...(owned ? [...owned.readWrite, ...owned.readOnly] : [])].filter((x): x is string => !!x);
+  for (const c of pathCandidates(word, ctx)) {
+    if (!p.isAbsolute(c)) continue;
+    const x = p.resolve(c);
+    if (p.parse(x).root === x || (ctx.home && insideDir(x, ctx.home, ctx))) return true;
+    if (ws && insideDir(x, ws, ctx) && !insideDir(ws, x, ctx) && !allowed.some((a) => insideDir(a, x, ctx))) return true;
+  }
+  return false;
+}
+
+/** R41: the deny for a whole-filesystem scan, naming the roots the agent may scan so it does not retry. */
+function scanDecision(rules: OverlayRules, command: string, shell: "posix" | "powershell", ctx: MatchCtx, depth = 0): Decision | null {
+  if (depth > 3) return null;
+  for (const pipe of parseShell(command, shell).pipelines) {
+    for (const unit of pipe) {
+      const core = variants(unit).core;
+      const roots = scanRoots(core);
+      if (roots) {
+        const bad = (roots.length ? roots : ["."]).find((r) => scanRootBad(rules, r, ctx));
+        if (bad !== undefined) return scanDeny(rules, bad === "." ? ctx.cwd : bad, ctx);
+      }
+      const inner = innerScript(core);
+      if (inner) {
+        const d = scanDecision(rules, inner.script, inner.shell, ctx, depth + 1);
+        if (d) return d;
+      }
+    }
+  }
+  return null;
+}
+
+function scanDeny(rules: OverlayRules, root: string, ctx: MatchCtx): Decision {
+  const ws = ctx.cwd ? workspaceOf(ctx.cwd).root : undefined;
+  const owned = ctx.owned ?? rules.owned;
+  const named = [ws && `the worktree ${ws}`, scratchOf(ctx) && `your scratch dir ${scratchOf(ctx)}`, "/tmp", "the Pi install root", owned?.npmRoot ? `the global npm root ${owned.npmRoot}` : "the global npm root", rules.floors?.pkgRoot ? `the bundled package roots (${rules.floors.pkgRoot})` : "the bundled package roots"].filter(Boolean);
+  return { kind: "deny", rule: "fs-scan", path: clip(root), reason: `pi-foreman: denied by the permission policy (a whole-filesystem scan: the search root '${clip(root)}' is /, the home directory or a parent of the workspace). Scan only inside ${named.join(", ")}; name that directory as the search root. Do not retry this scan.` };
+}
+
 export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchCtx): Decision | null {
   const shell = ctx0.shell ?? "posix";
   const command = shell === "powershell" ? psDashes(rawCommand) : rawCommand;
@@ -2988,6 +3141,11 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   const pctx: MatchCtx = shell === "posix" ? { ...ctx, bashWords: true, dotGlob: /dotglob|globignore|glob_?dots/i.test(command) } : ctx;
   const removed = new Set(c.removeWords!.flatMap((w) => [w, ...expandBraces(w)]));
   const texts = [...c.unitTexts, ...c.pipeTexts];
+  // R41 floors and scans: deterministic denies before any other rule, review or ask
+  const floor = floorDecision(rules, [...new Set([...c.writeTargets!, ...(c.tmpTargets ?? []), ...(c.roTargets ?? []), ...c.removeWords!].flatMap((t) => [t, ...expandBraces(t)]))], command, pctx, "this shell command");
+  if (floor) return floor;
+  const scan = scanDecision(rules, command, shell, ctx);
+  if (scan) return scan;
   for (const pat of rules.bashDeny) {
     if (texts.some((t) => bashMatches(pat, t, ctx))) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (command rule '${pat}'). This cannot be approved; use another way.` };
   }
@@ -3297,7 +3455,7 @@ export function ownStateRead(command: string, ctx0: MatchCtx): boolean {
       if (verb === "git" && words[1] === "log" && words.slice(2).every((w, k, a) => /^(?:--oneline|--decorate|--graph|--stat|-\d{1,3}|--max-count=\d{1,3})$/.test(w) || (/^\d{1,3}$/.test(w) && a[k - 1] === "-n") || w === "-n")) continue;
       if (!CHAIN_READERS.has(verb)) return false;
       // R31c: a grep chain unit is no recursive read and names no directory (as the own-read grep unit), so no link or ancestor dir is followed
-      if (verb === "grep" && words.slice(1).some((w) => /^-[A-Za-z]*[rRd]|^--(?:dereference-)?recursive$|^--directories/.test(w) || pathCandidates(w, ctx).some((x) => { try { return fs.statSync(x).isDirectory(); } catch { return false; } }))) return false;
+      if (/^(?:grep|egrep|fgrep)$/.test(verb) && words.slice(1).some((w) => /^-[A-Za-z]*[rRd]|^--(?:dereference-)?recursive$|^--directories/.test(w) || pathCandidates(w, ctx).some((x) => { try { return fs.statSync(x).isDirectory(); } catch { return false; } }))) return false;
       if (PROTECTED_READERS.has(verb) ? !protectedReader(words, new Set()) : !unitReadOnly(words, new Set())) return false;
     }
   }
@@ -3755,6 +3913,16 @@ export function checkPathTool(rules: OverlayRules, toolName: string, input: Reco
   if (!PATH_TOOLS.has(toolName)) return null;
   const ctx: MatchCtx = ctx0.owned || !rules.owned ? ctx0 : { ...ctx0, owned: rules.owned };
   const paths = toolPaths(toolName, input);
+  const written = paths.filter((x) => x.write).map((x) => x.value);
+  if (written.length) {
+    const { path: _p, file_path: _f, filePath: _fp, oldText: _o, old_string: _os, ...rest } = input;
+    const floor = floorDecision(rules, written, JSON.stringify(rest), ctx, `this ${toolName} call`);
+    if (floor) return floor;
+  }
+  if (toolName === "find" || toolName === "grep") {
+    const root = typeof input.path === "string" && input.path ? input.path : ".";
+    if (scanRootBad(rules, root, ctx)) return scanDeny(rules, root === "." ? ctx.cwd : root, ctx);
+  }
   for (const { value, write } of paths) {
     const hit = pathDeny(rules.pathRules, value, ctx, !write, false);
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(value)}' for ${toolName}).` };

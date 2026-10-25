@@ -168,7 +168,7 @@ test("matcher differences from the permission system: documented behaviours", ()
   assert.equal(bash(r, "touch ./absent.pem")?.kind, "deny", "path-shaped, absent: stricter than PS");
   // 2. a directory is denied by its own name only when a pattern matches '<dir>/'; ancestors are not walked
   assert.equal(bash(r, "grep -r x ~/.aws")?.kind, "deny");
-  assert.equal(bash(r, "grep -r x ~"), null, "ancestor of a secret directory: known gap, as in PS");
+  assert.equal(bash(r, "grep -r x ~")?.rule, "fs-scan", "whole-filesystem scan from the home directory is denied (r41)");
   // 3. powershell: patterns are case-insensitive, `\` is a path separator, backtick escapes
   assert.equal(decide(r, "powershell", { command: "Get-Content .env" })?.kind, "deny");
   assert.equal(decide(r, "powershell", { command: "gc ~/.ssh/id_ed25519" })?.kind, "deny");
