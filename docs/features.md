@@ -518,6 +518,11 @@ Switch: `tools.pr` is true.
 | `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
 | `tools.prDots` | `true` | any layer |
 | `tools.prWatchSeconds` | `60` | any layer |
+| `tools.prInteractions` | `[]` | not in project/session (the PR interaction patterns come from the user or overlay config) |
+| `tools.prShared.enabled` | `false` | not in project/session (the shared PR watch comes from the user or overlay config) |
+| `tools.prShared.authors` | `[]` | not in project/session (the shared PR watch comes from the user or overlay config) |
+| `tools.prShared.seconds` | `180` | not in project/session (the shared PR watch comes from the user or overlay config) |
+| `tools.prShared.events` | `true` | not in project/session (the shared PR watch comes from the user or overlay config) |
 
 ### sidebar-status
 
@@ -842,6 +847,8 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `roles.*.skills` | the skills a role gets come from the user or overlay config |
 | `providers.*.roles.*.strong` | the strong model is picked in the user or overlay config |
 | `tools.prHost` | the PR host program comes from the user or overlay config |
+| `tools.prShared` | the shared PR watch comes from the user or overlay config |
+| `tools.prInteractions` | the PR interaction patterns come from the user or overlay config |
 | `sidebar.statusCommand` | the sidebar status command runs a program: user or overlay config only |
 | `sidebar.statusSeconds` | the sidebar status interval comes from the user or overlay config |
 | `sync.repos` | the repository list comes from the user or overlay config |

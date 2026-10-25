@@ -91,6 +91,11 @@ sets, and a templates object brings any other CLI. Nothing here merges a PR, fix
 | `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
 | `tools.prDots` | `true` | any layer (`false` keeps the PR status dots poller from starting; the PR tools stay on, see [herdr](herdr.md#dots)) |
 | `tools.prWatchSeconds` | `60` | any layer (integer 5..3600, seconds between two `pr_watch` polls) |
+| `tools.prInteractions` | `[]` | not in project/session (up to 16 `{pattern}` objects: a regular expression of at most 200 characters, flag `u`, with the named group `n` and optional `repo` and `host`; a command segment that matches and exits 0 tracks that PR) |
+| `tools.prShared.enabled` | `false` | not in project/session (the shared PR watch; user or overlay config only) |
+| `tools.prShared.authors` | `[]` | not in project/session (at most 8 authors whose open PRs with a failed check show as failing) |
+| `tools.prShared.seconds` | `180` | not in project/session (60..3600, floor for every endpoint) |
+| `tools.prShared.events` | `true` | not in project/session (also read the user's events feed) |
 
 `tools.prHost` is `"auto"` (`gh`, then `glab`, found on `PATH` outside the workspace), `"gh"`, `"glab"` or a templates
 object. Re-run `foreman setup` after changing `tools.pr`: child tool lists come from the generated `subagents` block,

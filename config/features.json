@@ -410,7 +410,7 @@
       "title": "PR tools",
       "purpose": "Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands.",
       "doc": "docs/tools.md#pr-tools",
-      "keys": ["tools.pr", "tools.prHost", "tools.prDots", "tools.prWatchSeconds"],
+      "keys": ["tools.pr", "tools.prHost", "tools.prDots", "tools.prWatchSeconds", "tools.prInteractions", "tools.prShared"],
       "commands": [],
       "switch": {"key": "tools.pr", "on": "true"},
       "state": "on",

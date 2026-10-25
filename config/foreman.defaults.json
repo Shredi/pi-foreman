@@ -118,6 +118,6 @@
   "bridge": { "isolateClaudeConfig": "auto" },
   "python": { "path": null },
   "trace": { "enabled": null, "dir": null },
-  "tools": { "git": false, "pr": true, "prHost": "auto", "prDots": true, "prWatchSeconds": 60 },
+  "tools": { "git": false, "pr": true, "prHost": "auto", "prDots": true, "prWatchSeconds": 60, "prInteractions": [], "prShared": { "enabled": false, "authors": [], "seconds": 180, "events": true } },
   "sidebar": { "statusSeconds": 60 }
 }

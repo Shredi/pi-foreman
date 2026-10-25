@@ -473,6 +473,85 @@ class ConfigTest(unittest.TestCase):
         self.assertIn("google", err)
 
 
+class PrConfigTest(unittest.TestCase):
+    """tools.prShared, tools.prInteractions and the find/search template keys (round 58)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.agent = Path(self.tmp.name) / "agent"
+        self.agent.mkdir()
+        self.project = Path(self.tmp.name) / "proj"
+        (self.project / ".pi").mkdir(parents=True)
+        saved = os.environ.get("PI_CODING_AGENT_DIR")
+        os.environ["PI_CODING_AGENT_DIR"] = str(self.agent)
+        self.addCleanup(lambda: os.environ.pop("PI_CODING_AGENT_DIR", None) if saved is None else os.environ.__setitem__("PI_CODING_AGENT_DIR", saved))
+
+    def load(self, user=None, project=None):
+        (self.agent / "foreman.json").write_text(json.dumps(user or {}))
+        if project is not None:
+            (self.project / ".pi" / "foreman.json").write_text(json.dumps(project))
+        return fc.load_config(project_dir=str(self.project), trusted_project=True)
+
+    def test_defaults_ship_no_patterns_and_the_watch_off(self):
+        tools = self.load()["config"]["tools"]
+        self.assertEqual(tools["prInteractions"], [])
+        self.assertEqual(tools["prShared"], {"enabled": False, "authors": [], "seconds": 180, "events": True})
+
+    def test_user_layer_values_are_accepted_and_merged(self):
+        res = self.load(user={"tools": {"prShared": {"enabled": True, "authors": ["ci-bot", "dependabot[bot]"], "seconds": 300},
+                                        "prInteractions": [{"pattern": "deploy (?<n>\\d+)"}]}})
+        self.assertEqual(res["errors"], [])
+        tools = res["config"]["tools"]
+        self.assertEqual(tools["prShared"], {"enabled": True, "authors": ["ci-bot", "dependabot[bot]"], "seconds": 300, "events": True})
+        self.assertEqual(tools["prInteractions"], [{"pattern": "deploy (?<n>\\d+)"}])
+
+    def test_invalid_values_are_errors(self):
+        too_many = [{"pattern": "(?<n>1)"}] * 17
+        for tools in ({"prShared": {"seconds": 59}}, {"prShared": {"seconds": 3601}}, {"prShared": {"authors": ["a"] * 9}},
+                      {"prShared": {"authors": ["-evil"]}}, {"prShared": {"authors": ["a b"]}}, {"prShared": {"enabled": "yes"}},
+                      {"prInteractions": too_many}, {"prInteractions": ["(?<n>1)"]},
+                      {"prInteractions": [{"pattern": "x" * 201}]}, {"prInteractions": [{"pattern": ""}]},
+                      {"prInteractions": [{"pattern": "no group"}]}):
+            self.assertTrue(self.load(user={"tools": tools})["errors"], tools)
+        for tools in ({"prShared": {"seconds": 60, "authors": ["a"] * 8}}, {"prInteractions": [{"pattern": "x" * 190 + "(?<n>1)"}]}):
+            self.assertEqual(self.load(user={"tools": tools})["errors"], [], tools)
+
+    def test_project_and_session_layers_are_ignored_with_a_warning(self):
+        res = self.load(user={"tools": {"prShared": {"enabled": False}}},
+                        project={"tools": {"prShared": {"enabled": True, "authors": ["x"]}, "prInteractions": [{"pattern": "(?<n>\\d+)"}]}})
+        tools = res["config"]["tools"]
+        self.assertEqual(tools["prShared"]["enabled"], False)
+        self.assertEqual(tools["prShared"]["authors"], [])
+        self.assertEqual(tools["prInteractions"], [])
+        warn = "\n".join(res["warnings"])
+        self.assertIn("project tools.prShared ignored", warn)
+        self.assertIn("project tools.prInteractions ignored", warn)
+
+    def test_template_keys_find_and_search_and_the_new_placeholders(self):
+        def errors(host):
+            return [m for _lvl, _path, m in fc.semantic_issues({"tools": {"prHost": host}})]
+        self.assertEqual(errors({"find": "my-tool find {mode} {head} {author} --state {state} -R {repo} --host {host}",
+                                 "search": "my-tool search {author} --host {host}"}), [])
+        self.assertTrue(errors({"search": "my-tool {reviewer}"}))
+        self.assertTrue(errors({"find": "my-tool --kind={mode}"}))
+        self.assertTrue(errors({"batch": "my-tool"}))
+        self.assertTrue(errors({"search": "{host} x"}))
+        for ph in ("{host}", "{mode}", "{author}", "{state}"):
+            self.assertIn(ph, fc.PR_PLACEHOLDERS)
+        self.assertEqual(fc.PR_HOST_KEYS[-2:], ("find", "search"))
+
+    def test_pr_track_and_untrack_are_never_child_tools(self):
+        self.assertIn("pr_track", fc.CHILD_DENIED_TOOLS)
+        self.assertIn("pr_untrack", fc.CHILD_DENIED_TOOLS)
+        cfg = self.load(user={"providers": PROV})["config"]
+        cfg["roles"]["builder"]["tools"] += ["pr_track", "pr_untrack", "pr_create"]
+        for t in ("pr_track", "pr_untrack"):
+            self.assertNotIn(t, fc.generate_subagents(cfg)["subagents"]["agentOverrides"]["builder"]["tools"])
+            self.assertNotIn(t, fc.resolve_role(cfg, "builder", "p1")["tools"])
+        self.assertNotIn("pr_track", fc.PR_READ_TOOLS)
+
+
 def render_prompt(text, values):
     """Mirror of ledgercall.ts applyVariants (keys compared case-insensitively)."""
     vals = {k.lower(): v for k, v in values.items()}
