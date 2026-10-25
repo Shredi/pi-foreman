@@ -7,6 +7,11 @@
    "tier": "standard"
   },
   {
+   "event": "compaction_point",
+   "role": "explorer",
+   "model": "foreman-fake/explorer"
+  },
+  {
    "event": "llm",
    "role": "explorer",
    "model": "foreman-fake/explorer"

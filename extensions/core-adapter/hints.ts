@@ -149,7 +149,7 @@ export function hintFailTrace(emit: (rec: Record<string, unknown>) => void): Hin
  * fs.renameSync with a bounded, synchronous retry on the sharing errors (EPERM, EACCES, EBUSY). Any
  * other error, or the last retryable one, is returned with the attempts made.
  */
-function renameRetry(from: string, to: string, rename: (a: string, b: string) => void = fs.renameSync): { attempts: number; error?: NodeJS.ErrnoException } {
+export function renameRetry(from: string, to: string, rename: (a: string, b: string) => void = fs.renameSync): { attempts: number; error?: NodeJS.ErrnoException } {
   for (let attempts = 1; ; attempts++) {
     try {
       rename(from, to);

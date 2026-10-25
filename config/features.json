@@ -408,10 +408,10 @@
     {
       "id": "pr-ops",
       "title": "PR tools",
-      "purpose": "Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands.",
+      "purpose": "Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_track, pr_untrack): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands. Pushed, searched, acted-on and touched PRs are tracked by host, owner, repo and number, shown in a PR widget above the editor and, with the shared watch, with review requests and failing bot PRs.",
       "doc": "docs/tools.md#pr-tools",
-      "keys": ["tools.pr", "tools.prHost", "tools.prWatchSeconds"],
-      "commands": [],
+      "keys": ["tools.pr", "tools.prHost", "tools.prDots", "tools.prWatchSeconds", "tools.prInteractions", "tools.prShared", "widget.prs", "widget.prLinks"],
+      "commands": ["/foreman prs"],
       "switch": {"key": "tools.pr", "on": "true"},
       "state": "on",
       "enable": "{\"tools\": {\"pr\": true}}"
@@ -663,7 +663,7 @@
       "title": "Compaction cap",
       "purpose": "Caps the context size at which Pi's own auto-compaction fires: `foreman setup` writes a per-model point (a price-tier boundary minus headroom, or this cap) as Pi's compaction.modelOverrides. The idle warm compaction and the footer context bar use the same point.",
       "doc": "docs/cache.md",
-      "keys": ["compaction.maxTokens", "providers.<x>.models"],
+      "keys": ["compaction.maxTokens", "providers.<x>.models", "providers.<x>.modelDataFrom"],
       "commands": [],
       "switch": null,
       "state": "on",

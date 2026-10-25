@@ -67,9 +67,12 @@ Keys outside safety that the project and session layers cannot loosen either
     tools.git                        only false is accepted (true adds tools)
     tools.pr                         only false is accepted (true adds tools)
     tools.prHost                     ignored (it picks the program the PR tools run)
+    tools.prShared                   ignored (it starts a machine-wide poller of the PR host: user or overlay only)
+    tools.prInteractions             ignored (patterns that register PRs from commands: user or overlay only)
     sidebar.statusCommand / statusSeconds   ignored (the command runs a program: L1/L3/L2 only)
     childMaxThinking                 lower only (off < ... < max)
     ladder.* (but strongOnRevision), providers.*.ranks   ignored (the ladder and the child rank policy: L1/L3/L2 only)
+    providers.*.modelDataFrom        ignored (it decides the reserve setup writes: L1/L3/L2 only)
     providers.*.strongAbove / childMaxTurns, roles.*.strongAbove / childMaxTurns   ignored (ladder)
     ceremony.revisionRounds.<tier>   lower only (a higher limit loosens the review loop)
     ceremony.requireTriage           only true is accepted (false lets the foreman edit untriaged)
@@ -179,7 +182,7 @@ CHILD_ROLES = ["planner", "explorer", "builder", "reviewer", "senior-reviewer", 
 SESSION_FOREMAN = "session-foreman"
 # Tools a child never gets, whatever roles.<id>.tools says: children reach the foreman through
 # contact_supervisor, never through pi-intercom (the adapter also refuses the tool in children).
-CHILD_DENIED_TOOLS = ("intercom", "pr_create", "pr_watch")
+CHILD_DENIED_TOOLS = ("intercom", "pr_create", "pr_watch", "pr_track", "pr_untrack")
 THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 # project-layer tightening of safety.* (see module docstring)
@@ -223,6 +226,8 @@ IGNORED_KEYS = [
     (("roles", "*", "skills"), "the skills a role gets come from the user or overlay config"),
     (("providers", "*", "roles", "*", "strong"), "the strong model is picked in the user or overlay config"),
     (("tools", "prHost"), "the PR host program comes from the user or overlay config"),
+    (("tools", "prShared"), "the shared PR watch comes from the user or overlay config"),
+    (("tools", "prInteractions"), "the PR interaction patterns come from the user or overlay config"),
     (("sidebar", "statusCommand"), "the sidebar status command runs a program: user or overlay config only"),
     (("sidebar", "statusSeconds"), "the sidebar status interval comes from the user or overlay config"),
     (("sync", "repos"), "the repository list comes from the user or overlay config"),
@@ -248,6 +253,7 @@ IGNORED_KEYS = [
     (("ladder", "reviewPanel"), "the review panel's models come from the user or overlay config"),
     (("ladder", "sizing"), "the launch sizing rules come from the user or overlay config"),
     (("providers", "*", "ranks"), "model ranks decide which children may launch: user or overlay config only"),
+    (("providers", "*", "modelDataFrom"), "it decides the reserve setup writes: user or overlay config only"),
     (("providers", "*", "strongAbove"), "the ladder comes from the user or overlay config"),
     (("providers", "*", "childMaxTurns"), "the ladder comes from the user or overlay config"),
     (("roles", "*", "strongAbove"), "the ladder comes from the user or overlay config"),
@@ -752,6 +758,8 @@ def semantic_issues(cfg):
                         path = "safety.git.commit." + key
                         issues.append(("error", path, "%s: invalid regular expression %r (%s)" % (path, pat, exc)))
     issues.extend(pr_host_issues((cfg.get("tools") or {}).get("prHost")))
+    issues.extend(pr_interaction_issues((cfg.get("tools") or {}).get("prInteractions")))
+    issues.extend(pr_shared_issues((cfg.get("tools") or {}).get("prShared")))
     issues.extend(mcp_deny_issues(cfg))
     sessions = cfg.get("sessions")
     issues.extend(machine_issues(sessions.get("machines") if isinstance(sessions, dict) else None))
@@ -790,8 +798,36 @@ def mcp_deny_issues(cfg):
     return issues
 
 
-PR_HOST_KEYS = ("create", "status", "checks", "comments")
-PR_PLACEHOLDERS = ("{repo}", "{number}", "{since}", "{base}", "{head}", "{title}", "{bodyFile}", "{draft}")
+PR_HOST_KEYS = ("create", "status", "checks", "comments", "find", "search")
+PR_PLACEHOLDERS = ("{repo}", "{number}", "{since}", "{base}", "{head}", "{title}", "{bodyFile}", "{draft}",
+                   "{host}", "{mode}", "{author}", "{state}")
+
+
+def pr_interaction_issues(items):
+    """tools.prInteractions: at most 16 patterns of 1 to 200 characters, each with the named group n (JavaScript syntax `(?<n>...)`)."""
+    if not isinstance(items, list):
+        return []
+    issues = []
+    if len(items) > 16:
+        issues.append(("error", "tools.prInteractions", "tools.prInteractions: at most 16 patterns"))
+    for i, item in enumerate(items):
+        pat = item.get("pattern") if isinstance(item, dict) else None
+        path = "tools.prInteractions.%d" % i
+        if not isinstance(pat, str):
+            continue
+        if not 1 <= len(pat) <= 200:
+            issues.append(("error", path, "%s: pattern must be 1 to 200 characters" % path))
+        elif "(?<n>" not in pat:
+            issues.append(("error", path, "%s: pattern needs the named group (?<n>...) for the PR number" % path))
+    return issues
+
+
+def pr_shared_issues(shared):
+    """tools.prShared.authors: at most 8 (the schema checks each name)."""
+    authors = shared.get("authors") if isinstance(shared, dict) else None
+    if isinstance(authors, list) and len(authors) > 8:
+        return [("error", "tools.prShared.authors", "tools.prShared.authors: at most 8 authors")]
+    return []
 
 
 def pr_host_issues(host):

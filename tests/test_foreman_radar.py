@@ -578,18 +578,18 @@ class Round33Tests(Fixture):
             fr.main(["--agent-dir", str(self.adir), "--json", "--symbols", "klingon"])
 
     def test_load_symbols_has_the_activity_keys_and_spinner_of_every_set(self):
-        for name, agent, spinner0 in (("unicode", "\u25c6", "\u280b"), ("emoji", "\U0001f916", "\u280b"),
-                                      ("nerd", "\uf544", "\u280b"), ("ascii", ">", "|")):
+        for name, agent, spinner0 in (("unicode", "\u25c6", "\u28fe"), ("emoji", "\U0001f916", "\u28fe"),
+                                      ("nerd", "\uf544", "\u28fe"), ("ascii", ">", "|")):
             table = fr.load_symbols(name)
             self.assertEqual((table["agent"], table["spinner"][0]), (agent, spinner0), name)
             self.assertTrue(all(isinstance(table[k], str) and table[k] for k in
                                 ("working", "waiting", "asking", "blocked", "done", "lost", "task", "wait", "ask", "recent")))
         self.assertEqual(fr.load_symbols("ascii")["spinner"], ["|", "/", "-", "\\"])
-        self.assertEqual(len(fr.load_symbols("unicode")["spinner"]), 10)
+        self.assertEqual(len(fr.load_symbols("unicode")["spinner"]), 8)
         self.assertEqual(fr.load_symbols("klingon"), fr.load_symbols("unicode"))
         with mock.patch.object(fr, "SYMBOLS_PATH", Path(self.tmp) / "missing.json"):
             table = fr.load_symbols("emoji")
-        self.assertEqual((table["agent"], table["working"], len(table["spinner"])), ("\u25c6", "\u23f3", 10))
+        self.assertEqual((table["agent"], table["working"], len(table["spinner"])), ("\u25c6", "\u23f3", 8))
 
     def test_config_accepts_the_four_sets_and_rejects_others(self):
         import foreman_config

@@ -6,6 +6,7 @@
     foreman close record --kind worktree|scratch|handoff --path P [--branch B] [--base B]
                   [--owner O] [--class private|round|durable] [--session S] [--state D]
     foreman close --take PATH | --drop PATH [--session S] [--state D]
+    foreman close merged --ws D --ref REF [--base B]    (prints {"merged": true|false}; needs no session)
 
 Session S defaults to CLAUDE_CODE_SESSION_ID; the state dir to PI_FOREMAN_STATE_DIR, else
 `<agentDir>/pi-foreman/state` (foreman_config.resolve_agent_dir). This module is the single writer
@@ -265,13 +266,18 @@ def uncommitted(roots):
     return out
 
 
-def merged_into(ws, ref, base_cfg):
-    """True when `ref` is in the base branch or in its pushed upstream."""
+def merged_into_base(ws, ref, base_cfg):
+    """True when `ref` is in the base branch (no upstream clause)."""
     try:
         base_ref, _ = safe_ops.resolve_base(ws, base_cfg)
     except safe_ops.Precondition:
-        base_ref = None
-    if base_ref and fsync.git(["merge-base", "--is-ancestor", ref, base_ref], ws)[0] == 0:
+        return False
+    return bool(base_ref) and fsync.git(["merge-base", "--is-ancestor", ref, base_ref], ws)[0] == 0
+
+
+def merged_into(ws, ref, base_cfg):
+    """True when `ref` is in the base branch or in its pushed upstream."""
+    if merged_into_base(ws, ref, base_cfg):
         return True
     code, up, _ = fsync.git(["rev-parse", "--verify", "--quiet", "--symbolic-full-name", ref + "@{upstream}"], ws)
     return code == 0 and bool(up.strip()) and fsync.git(["merge-base", "--is-ancestor", ref, up.strip()], ws)[0] == 0
@@ -536,6 +542,14 @@ def common(p):
 
 
 def parse(argv):
+    if argv and argv[0] == "merged":
+        p = argparse.ArgumentParser(prog="foreman close merged")
+        p.add_argument("--ws", required=True)
+        p.add_argument("--ref", required=True)
+        p.add_argument("--base")
+        a = p.parse_args(argv[1:])
+        a.cmd = "merged"
+        return a
     if argv and argv[0] == "record":
         p = argparse.ArgumentParser(prog="foreman close record")
         p.add_argument("--kind", required=True, choices=KINDS)
@@ -569,6 +583,12 @@ def main(argv=None):
         a = parse(argv)
     except SystemExit as exc:
         return 2 if exc.code else 0
+    if a.cmd == "merged":  # before the session check, unlike record
+        if not os.path.isdir(a.ws) or not a.ref.startswith("refs/"):
+            print("foreman close merged: --ws must be a directory and --ref a full ref", file=sys.stderr)
+            return 2
+        print(json.dumps({"merged": merged_into_base(os.path.abspath(a.ws), a.ref, a.base or None)}))
+        return 0
     sid = (a.session or os.environ.get(SESSION_ENV, "")).strip()
     if not safe_sid(sid):
         print("foreman close: no session (pass --session or set %s)" % SESSION_ENV, file=sys.stderr)

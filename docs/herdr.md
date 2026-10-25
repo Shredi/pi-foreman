@@ -5,34 +5,36 @@
 > glyph sets, and the known limits of Herdr's plugin API.
 
 The plugin `integrations/herdr/pi-foreman-sidebar/` shows the pi-foreman session tree in Herdr's Agents panel: per Pi
-pane a header (tree connector, state glyph, label, age or blocked timer), one line each for what runs (agents),
+pane a header (tree connector, a state cell of spinner and reason icon, label, age or blocked timer), one line each for what runs (agents),
 what it watches (tasks, PRs, CI) and what it waits on, a row of status dots for its pull requests, and a line with tokens and cost. It needs Herdr
 0.9.0 or later on Linux or macOS and Python 3.13+. Pane-level session features (blocked shim, group tag) are in
 [sessions](sessions.md#herdr).
 
 ```text
-  ⠹  pi-foreman                   12s
+  ⣻◎ pi-foreman                   12s
   │  ◆ builder sonnet-5.5 ×2 · revie…
   │  ⚙ pr #12 · npm test 3m
-  │  ⧗ timer 5m
+  │  ◷ timer 5m
   │  ● #17 · ◉ #21 · ○ #19 · ○ deploy
   │  ↑287k ↓7.4k · $3.32 · ✓3
-  ├─ ⠼  r31-sidebar                6m
+  ├─ ⣽◎ r31-sidebar                6m
   │  │  ◆ reviewer opus-5.5
   │  │  $0.47 · ✓1
   │  └─ ✋ r31-perms               1m
   │        ? ask 1: rule scope
   │        $0.12
   ├─ ⏸  r32-cache                  2m
-  │     ⧗ child r32b 4m
+  │     ◷ child r32b 4m
   │     $1.02 · ✓2
   └─ ✓  r31-git                   40m
         $0.88 · ✓4
 ```
 
-The mock-up is the `unicode` set at width 40 (blank cells shown as spaces); `⠹` and `⠼` are spinner frames of two
-working sessions. The first session shows all six rows: header, agents, tasks and watches, waits, the dots row and the
-meta line.
+The mock-up is the `unicode` set at width 40 (blank cells shown as spaces); `⣻` and `⣽` are spinner frames of two
+working sessions, each followed by its reason icon (`◎`: a reviewer runs). The first session shows all six rows:
+header, agents, tasks and watches, waits, the dots row and the meta line (the waits line is drawn only while a
+wait is pending). The same sessions read `⣻◆` for a builder, `⣻⚙` for a task or PR watch, `⣻◷` for a
+timer, file or child-session wait and `⣻?` for a child run that asks; a session on its own turn shows the frame alone.
 
 ## Install
 
@@ -44,8 +46,14 @@ meta line.
    herdr plugin install <owner>/pi-foreman/integrations/herdr/pi-foreman-sidebar
    ```
 
-2. Print the rows snippet (the `configure` action, or `python3 sidebar.py configure` in the plugin folder) and merge it
-   into Herdr's `config.toml`. The plugin never writes that file.
+2. Print the rows snippet for your glyph set (the `configure` action, or `python3 sidebar.py configure [--symbols <set>]`
+   in the plugin folder; the default is your configured `ui.symbols`, `unicode` when unknown) and merge it into Herdr's
+   `config.toml`. Herdr takes at most 16 rules per token, so the snippet is written for one set: every glyph in its
+   rules is that set's glyph. The header cell has a base colour (`fg`, green, the colour of a session on its own turn);
+   if your Herdr refuses a cell-level `fg` on reload, delete that one attribute: the own-turn line then keeps your
+   theme colour and the rules still apply. The `emoji` set uses the same text circles on the pr cells, so the same rules colour them;
+   the `ascii` set has no rules and no `fg`. The plugin never writes
+   `config.toml`.
 3. `herdr server reload-config`.
 
 The daemon starts with Herdr (`[[startup]]`); the `pane.agent_detected` hook restarts it if it died. Actions: `start`,
@@ -77,9 +85,13 @@ herdr agent list                   # within 60 s the pi pane carries the fm_* to
 touches the Agents view and exits 1 when a report failed. When nothing joined, the `joined 0 of …` line on stderr says
 why.
 
-`python3 sidebar.py sample [--pane <id>] [--variant pr|mixed] [--symbols <set>] [--width <n>] [--minutes <m>] [--dry-run] [--clear]`
+`python3 sidebar.py sample [--pane <id>] [--variant pr|mixed] [--reason <r>] [--symbols <set>] [--width <n>] [--minutes <m>] [--dry-run] [--clear]`
 shows a synthetic session (live agents, a PR watch, an open ask, the pressure suffix and the PR dots: `pr` one dot per
-state, `mixed` PRs, an external item and `+3`) on one pane so you can judge the colour rules in the snippet live. The pane
+state, `mixed` PRs, an external item and `+3`) on one pane so you can judge the colour rules in the snippet live.
+`--reason none|ask|review|agent|task|wait|blocked|idle|done` composes the session so that its header shows that reason
+or static state (default: the mixed sample); the glyph set is `--symbols`, else your `ui.symbols`. `--reason all
+--dry-run` prints one line per reason and state for every glyph set (or the one `--symbols` names): the ticking header
+at one frame, then the non-ticking one. The pane
 is `--pane`, else `HERDR_PANE_ID` (1 to 100 of `A-Za-z0-9._:-`, not `.` or `..`). It composes the session through the
 same code as real data, writes `sample/<pane>.json` (the session tokens and the expiry, default 10 minutes) into the
 plugin state folder and publishes once; while that file is fresh, `push` and the daemon use it for that pane instead of
@@ -105,16 +117,19 @@ of an entry 2 cells further right than the first and has no setting for it, so `
 (`DETAIL_INDENT` in `sidebar.py`) and the detail rows are 2 cells shorter: every `│` sits under the connector or glyph
 it continues.
 
-**Upgrading from an earlier snippet:** re-run `configure` (the action, or `python3 sidebar.py configure`), merge the new
-snippet over your old `pi = [...]` rows and run `herdr server reload-config`. The old three-row snippet is gone; the old
+**Upgrading from an earlier snippet:** re-run `configure` (the action, or `python3 sidebar.py configure [--symbols <set>]`),
+merge the new snippet over your old `pi = [...]` rows and run `herdr server reload-config`. An old merged snippet keeps
+working (no token was removed), but only the new one colours the header by reason icon, and each glyph set needs its own
+run. Run it again after you change `ui.symbols`. The old three-row snippet is gone; the old
 tokens still publish (see Tokens) but the new snippet does not use them. Nothing else changes in your `config.toml`.
 
 ### The tree
 
 - Each nesting level is 3 cells: a connector (`├─ ` or `└─ `), a continuation (`│` plus two blank cells, or three
   blank cells after a last child) and, under a session that has row children, a child marker (`│`).
-- The glyph slot is always 2 cells wide (a 1-cell glyph gets a blank cell, U+2800, which Herdr does not trim), so the
-  label column never moves when a session switches between the spinner and a static glyph.
+- The state slot has one fixed width per glyph set (see Header glyphs and colours): 2 cells, 3 for `emoji`. A narrower
+  cell is padded with blank cells (U+2800, which Herdr does not trim), so the label column never moves when a session
+  switches between the spinner and a static glyph.
 - The label and the activity lines start at the same column; every `│` leads to a later `├─` or `└─` in the same
   column. Siblings are ordered by start time, then session id, whatever order they arrive in.
 - A deep tree keeps its prefix whole: with little room the age drops first, then the label is cut to one character and `…`.
@@ -131,21 +146,29 @@ tokens still publish (see Tokens) but the new snippet does not use them. Nothing
 
 | Line | Content |
 |---|---|
-| `fm_a1` agents | `◆ builder sonnet-5.5 ×2 · reviewer opus-5.5`: running child runs by role and model; a finished run shows `✓ role` for `radar.recentRunSeconds` |
+| `fm_a1` agents | `◆ builder sonnet-5.5 ×2 · reviewer opus-5.5`: running child runs by role and model, and child sessions without a pane row of their own while they are live; a finished run shows `✓ role` for `radar.recentRunSeconds` |
 | `fm_a2` tasks and watches | `⚙ pr #12 · npm test 3m`: PR watches, CI waits (`foreman_wait` kind `ci`), `foreman_bg` commands and the `bg_run` add-on's tasks of this session |
-| `fm_a3` waits | `? ask 1: topic` for an open ask, then `⧗ child r32b 4m`: timer, file, child and pid waits |
+| `fm_a3` waits | `? ask 1: topic` for an open ask, then `◷ child r32b 4m`: timer, file, child and pid waits |
 | `fm_pr1`..`fm_pr4` | `● #17 · ◉ #21`: status dots of pull requests and external items (see Dots) |
 | `fm_meta` | `↑287k ↓7.4k · $3.32 · ✓3`, plus the host pressure suffix |
 
-A done session shows `done · n runs` on `fm_a1`, a lost one `lost`. A live, self-publishing working session shows a
-spinner frame in the glyph slot (see Spinner); waiting is working: while a `foreman_wait` or `foreman_bg` is pending the state stays `working`
+A done session shows `done · n runs` on `fm_a1`, a lost one `lost`. A child session without its own pane row (a closed
+or idle one, a stale registry entry) is listed on `fm_a1` only while it is live: a session whose state is `idle`,
+`waiting`, `done`, `lost`, `closed` or `closing` leaves the line and the hidden `+n` count, one that works (starting and
+pending included), waits on something external or waits for you stays. The same test decides the agent reason icon of
+the parent's header. A live, self-publishing working session shows a spinner frame in the state cell (see Spinner);
+waiting is working: while a `foreman_wait` or `foreman_bg` is pending the state stays `working`
 and Herdr's status stays working, and the wait shows on its activity line.
 
 #### Dots
 
 The dots row shows one circle and a short label per tracked item, in the glyph set's `pr-fail`, `pr-run`, `pr-ok` and
-`pr-none` keys (see Symbols). A pull request dot is labelled `#<number>`; an external item (see
-[External status](#external-status)) shows its own label.
+`pr-none` keys (see Symbols). The `emoji` set uses the same text circles as `unicode`, one cell each, so the row keeps its
+line height and the pr rules colour them. A pull request dot is labelled `#<number>`; a PR of another repository than the current one
+is labelled `owner/name#<number>`, cut to 20 characters; an external item (see
+[External status](#external-status)) shows its own label. The PR widget above the editor is the detailed view of the same
+data (checks by name, review state, the shared watch); see [tools](tools.md#pr-widget). Sidebar tokens stay plain text:
+no hyperlinks and no colour codes.
 
 | State | Circle (`unicode`) | Meaning of a pull request |
 |---|---|---|
@@ -158,12 +181,17 @@ The order is red, yellow, green, unknown, then by PR number (external items with
 label. At most four cells fit the row; when items are hidden by the cell count or by the width, the last placed cell
 becomes `+n` (n = items not shown). At most 14 dots reach the sidebar.
 
-Which PRs are tracked: a PR created with `pr_create`, a PR under `pr_watch`, and the PR of the current branch. At most six
-are tracked. A closed or merged PR disappears from the row.
+Which PRs are tracked: a PR registered by any of the paths in [tools](tools.md#registration-paths): a branch this session
+pushed, an author search, a command that acted on a PR, the user's events feed, `pr_create`, a PR URL in a result,
+`pr_track`, a PR under `pr_watch` and the PR of the current branch. A PR is identified by host, owner, repo and number. At
+most six are tracked. A closed or merged PR disappears from the row.
 
-Cost: each tracked PR is polled with at most two host calls (checks and mergeability) every `tools.prWatchSeconds` (floor
-30 s), for at most six PRs, on top of the polls `pr_watch` makes itself. A PR that a watch covers reuses the watch's
-checks snapshot and costs only the status call. See [tools](tools.md#watch).
+Cost: on gh one GraphQL batch per tick and host covers every tracked PR (state, mergeability, review and checks), every
+`tools.prWatchSeconds` (floor 30 s), plus a few `pr_find` lookups for pushed branches and one author search every second
+tick, on top of the polls `pr_watch` makes itself. On glab and template hosts each tracked PR costs two calls (checks and
+mergeability), at most 12 for six PRs. A PR that a watch covers reuses the watch's checks snapshot. See
+[tools](tools.md#call-budget) and [tools](tools.md#watch). `tools.prDots: false` keeps the poller from starting at all (the
+PR tools stay on).
 
 ### Data
 
@@ -185,21 +213,57 @@ waits); `dots` go to the pr row (`fm_pr1`..`fm_pr4`), pull request and external 
 
 ### Header glyphs and colours
 
-| State | Glyph in `fm_hd` (`unicode`) |
-|---|---|
-| working | spinner frame (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) in a live session, ⏳ in a session the daemon publishes |
-| waiting, idle | ⏸ |
-| ask open (a run waits for you) | ? |
-| blocked | ✋ |
-| blocked longer than 15 minutes | `!` right after the age (`16m!`), red |
-| done | ✓ |
-| lost | ✗ |
+The state slot of `fm_hd` is a two-part cell: an animated part (a spinner frame) followed by a reason icon that says
+what the session waits on. The sidebar decides from the session's state (`sym`) and its reason.
 
-The snippet colours the whole header line by a glyph it contains (Herdr rules match substrings of the value): `!` red and
-bold, blocked and ask yellow, lost red, done dim; the rules cover the `unicode`, `emoji` and `nerd` sets at once. The `ascii`
-set has no colour rules, because its glyphs would collide with label text. A `!` or `?` in a label also triggers its
-rule (labels are slugs, so this is rare). `fm_a1`, `fm_a2`, `fm_a3` and `fm_meta` are dim with no colour, so they follow
-your theme. The hex values are placeholders; pick the ones that suit your theme.
+Reason of a session, first match wins:
+
+| Reason | Icon (`unicode`) | When |
+|---|---|---|
+| `ask` | ? | a child run is in state `ask` (rare: a forwarded child prompt normally opens a dialog, and the session is then blocked) |
+| `review` | ◎ | a live run with role `reviewer` or `senior-reviewer` |
+| `agent` | ◆ | any other live run, or a live child session without a pane row (see Activity lines) |
+| `task` | ⚙ | a PR or CI wait, a wait flagged `bg`, or a background task |
+| `wait` | ◷ | any other wait: timer, file, child, pid |
+| none | blank | the session's own turn |
+
+State and cell:
+
+| `sym` | Cell (`unicode`) | Animated |
+|---|---|---|
+| `working` (a turn or run; registry `starting` and `pending` too) | spinner frame + reason icon | yes |
+| `waiting-external` (only waits pending) | spinner frame + reason icon | yes |
+| `idle` with a reason (a run runs while the session has no turn) | spinner frame + reason icon | yes |
+| `waiting-owner`, `blocked` (a dialog, checkpoint or ask waits for you) | ✋ | no |
+| `waiting`, `idle` without a reason | ⏸ | no |
+| `done` | ✓ | no |
+| `lost` | ✗ | no |
+| blocked longer than 15 minutes | `!` right after the age (`16m!`), red | no |
+
+A session that waits for you never animates, so ✋ stays whatever else runs. The age at the right is the time since the
+session's last event (the blocked time while blocked); how long a wait itself has run is on the waits line.
+
+**Non-ticking header.** The animation is a template (`fm_hd_tpl`) that the session's own publisher fills with the
+current frame. A pane the daemon publishes, `ui.spinner: false` and a publisher whose gate is off send no frames; the
+header then shows the set's static glyph of the state followed by the reason icon when both fit the slot. When they do
+not fit, `working` and `waiting-external` show the static glyph alone, and `idle` with a reason shows the icon alone,
+so it never looks like a truly idle ⏸ line. In `unicode`: ⏳ alone for working, `↻◷` for a waiting-external timer,
+`⏸◆` for idle with an agent; in `emoji` the glyph alone (⏳, 🔄) or the icon alone (🤖, ⚙️, ❓ for idle); in `nerd` and `ascii`
+glyph plus icon.
+
+**Slot width.** The slot is as wide as the widest of `1 + the widest reason icon` and the widest static state glyph of the
+set: 2 cells for `unicode`, `nerd` and `ascii`, 3 for `emoji` (`🤖`, `🔍`, `⏱️` and `⚙️` are 2 cells wide). Every cell is padded
+with blank cells (U+2800) to that width, so the label column never moves inside a set. Because emoji widths differ
+across terminals, check the slot in yours (`sample --reason all --dry-run`).
+
+The snippet colours the whole header line by a glyph it contains (Herdr rules match substrings of the value), with a
+base colour for the own-turn line. Rules, first match wins: `!` red and bold, blocked `✋` and ask `?` yellow, review `◎`
+and agent `◆` blue, task `⚙` and wait `◷` cyan, lost `✗` red, done `✓` and idle `⏸` dim grey. That is ten rules
+per set, within Herdr's 16. No rule matches a spinner frame, so the frame takes the colour of the reason icon, or the
+base green with none. The `ascii` set has no colour rules and no base colour, because its glyphs would collide with
+label text. A `!` or a reason or state glyph in a label also triggers its rule (labels are slugs, so this is rare).
+`fm_a1`, `fm_a2`, `fm_a3` and `fm_meta` are dim with no colour, so they follow your theme. The hex values are
+placeholders; pick the ones that suit your theme.
 
 ### Presence states and their `state_icon` glyphs
 
@@ -226,7 +290,7 @@ every 5 s by the session or, for a pane it does not push, the daemon; values are
 
 | Token | Value |
 |---|---|
-| `fm_hd` | tree prefix, 2-cell glyph slot, label; the age or blocked timer right-aligned, `!` right after it when blocked longer than 15 minutes |
+| `fm_hd` | tree prefix, state slot (2 cells, 3 for `emoji`), label; the age or blocked timer right-aligned, `!` right after it when blocked longer than 15 minutes |
 | `fm_a1` | agents (see Activity lines) |
 | `fm_a2` | tasks and watches |
 | `fm_a3` | waits and an open ask |
@@ -283,12 +347,16 @@ goes stale. A usage byte-offset cache (`push/<session id>.usage.json`) keeps the
 
 ### Spinner
 
-A live session that is working shows Pi's own braille frames (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`, the default Pi loader; `| / - \` in the `ascii`
-set) in the glyph slot of `fm_hd`, in the sidebar and in the children widget of the Pi TUI alike. The frame is
+A live session that works, waits on something external or runs a child shows dense braille frames (`⣾⣽⣻⢿⡿⣟⣯⣷`; `| / - \`
+in the `ascii` set) followed by its reason icon in the state slot of `fm_hd`, in the sidebar and in the children widget of
+the Pi TUI alike. The frame is
 `floor(epoch ms / 250) mod frames`, so every pane and the TUI show the same frame at the same time; the rate is bounded
 at 4 frames a second. Python composes the header with a `{spin}` slot (`fm_hd_tpl`); the TypeScript publisher swaps the
-current frame in and, every 250 ms while the session is working, sends only `fm_hd`. The timer stops when the session
-is not working and at shutdown. Panes the daemon publishes keep the static glyph. `ui.spinner: false` (in `foreman.json`)
+current frame in and, every 250 ms while the session is neither blocked nor done and Python gave it a template, sends only
+`fm_hd`. A session with no template (idle with no reason) does not tick. A long wait (a PR watch can run for hours) ticks
+like a working turn, so it sends `fm_hd` four times a second: that is the cost of showing a live wait. The timer stops
+when the session is blocked or done, and at shutdown. Panes the daemon publishes keep the static header (see Header glyphs
+and colours). `ui.spinner: false` (in `foreman.json`)
 turns the animation off everywhere: static glyphs in the sidebar and the widget. See
 [sessions](sessions.md#further-session-keys).
 
@@ -303,7 +371,7 @@ config `stableId`; a child that closes marks its own entry `closed`.
 Ask signal: when a session opened by `foreman session open` writes `ask.md` (first line `# Ask <n>: <topic>`) in its own
 handoff dir, pi-foreman touches `<handoff>/.ask` and opens a blocked source, so Herdr shows `blocked` with the label
 `ask <n>: <topic>` (`herdr:blocked`, the same channel as a dialog; never `herdr agent prompt`). Writing `.seen` in that
-dir, or shutdown, releases it. A parent that is not a Pi session polls `*.md` and `.ask`; the file contract is in
+dir, or shutdown, releases it; a ruling wait that ends as `superseded by brief <path>` (see [sessions](sessions.md)) does not release it. A parent that is not a Pi session polls `*.md` and `.ask`; the file contract is in
 [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session).
 
 ## Remote clients and Pi pane status
@@ -329,6 +397,25 @@ panel falls back to Herdr's own sort. `agent.view.set` needs the plugin linked o
 without that publishes tokens only and retries the view at most once a minute. The choice is saved in the plugin state
 folder and reapplied at startup, because Herdr forgets the view on a server restart.
 
+### Attention highlight
+
+Herdr marks an agent that needs you from its agent status, and it has no separate switch for the highlight in its
+config reference (`herdr --default-config`): the highlight follows the status. pi-foreman raises that status through the
+`herdr:blocked` event whenever the sidebar draws ✋ or `?` for a session: a dialog or permission prompt, a checkpoint,
+the ask-by-file `.ask` of a child session, and a forwarded child prompt that a child run is waiting on. See
+[blocked shim](sessions.md#blocked-shim), including when the shim steps aside (Herdr's own integration, version 10 or
+later, takes over) and the `herdr.blockedShim` switch.
+
+Two Herdr keys change how the attention shows. Both are commented in the snippet, because the plugin never writes your
+`config.toml`; check the names against your Herdr's reference (`herdr --default-config`) before you uncomment them:
+
+| Key | Values | Effect |
+|---|---|---|
+| `ui.agent_panel_sort` | `"spaces"` (default, grouped by space), `"priority"` (the attention queue) | order of the Agents panel; with `priority`, agents that need you come first |
+| `ui.sound.request_path` | path to an mp3 | the sound for needs-attention notifications (a blocked session); `path` and `done_path` set the others |
+
+With pi-foreman's own view (see above) the foreman panes come first whatever `agent_panel_sort` says.
+
 ## Symbols
 
 `ui.symbols` in `foreman.json` picks the glyph set for radar, the children widget and this plugin (via
@@ -346,7 +433,7 @@ python3 -c 'import json,sys; s=json.load(open(sys.argv[1]))[sys.argv[2]]; print(
 
 | State | `unicode` | `emoji` | `nerd` | `ascii` |
 |---|---|---|---|---|
-| working (no spinner) | ⏳ | ⏳ | U+F252 | `*` |
+| working (no spinner; the glyph of a non-ticking header) | ⏳ | ⏳ | U+F252 | `*` |
 | waiting, idle | ⏸ | ⏸️ | U+F04C | `.` |
 | asking (a run waits for you) | ? | ❓ | U+F128 | `?` |
 | blocked, waiting-owner | ✋ | ✋ | U+F256 | `#` |
@@ -359,16 +446,17 @@ Activity glyphs and the spinner:
 
 | Key | `unicode` | `emoji` | `nerd` | `ascii` |
 |---|---|---|---|---|
-| `spinner` (frames) | `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` | same | same | `\| / - \` |
+| `spinner` (frames) | `⣾⣽⣻⢿⡿⣟⣯⣷` | same | same | `\| / - \` |
+| `review` | ◎ | 🔍 | U+F002 | `&` |
 | `agent` | ◆ | 🤖 | U+F544 | `>` |
 | `task` | ⚙ | ⚙️ | U+F013 | `=` |
-| `wait` | ⧗ | ⏳ | U+F252 | `~` |
+| `wait` | ◷ | ⏱️ | U+F017 | `~` |
 | `ask` | ? | ❓ | U+F128 | `?` |
 | `recent` | ✓ | ✅ | U+F00C | `+` |
-| `pr-fail` | ● | 🔴 | U+F111 | `x` |
-| `pr-run` | ◉ | 🟡 | U+F192 | `*` |
-| `pr-ok` | ○ | 🟢 | U+F10C | `o` |
-| `pr-none` | ◌ | ⚪ | U+F1DB | `.` |
+| `pr-fail` | ● | ● | U+F111 | `x` |
+| `pr-run` | ◉ | ◉ | U+F192 | `*` |
+| `pr-ok` | ○ | ○ | U+F10C | `o` |
+| `pr-none` | ◌ | ◌ | U+F1DB | `.` |
 
 ## External status
 
