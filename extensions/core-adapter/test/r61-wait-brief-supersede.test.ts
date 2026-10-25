@@ -1,10 +1,10 @@
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { LiveState, liveDir } from "../livestate.ts";
-import { WaitRuntime } from "../wait.ts";
+import { WaitRuntime, registerWait } from "../wait.ts";
 import type { Outcome, Timers, WaitLimits } from "../wait.ts";
 
 const LIMITS: WaitLimits = { batchWindowSeconds: 0, maxSeconds: 86400, maxActive: 4, ci: true };
@@ -107,40 +107,40 @@ test("without briefs, or without mtime, nothing supersedes", () => {
   noMtime.rt.dispose();
 });
 
-test("regression: a resolved or cancelled wait fires changed once and the next presence file no longer lists it", () => {
+test("regression: a resolved or cancelled wait fires changed once and the next presence file no longer lists it", async () => {
+  delete process.env.PI_SUBAGENT_CHILD;
+  mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"] });
   const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "r61w-"));
-  const clock = fakeClock();
-  let rt!: WaitRuntime;
-  let live!: LiveState;
+  let tool!: { execute: (...a: unknown[]) => Promise<{ details: Record<string, unknown> }> };
+  const pi = { on: () => undefined, registerTool: (t: never) => (tool = t), sendMessage: () => undefined };
+  const session = { id: "s1", isChild: false, cwd: agentDir, agentDir, overlay: null, config: () => ({}), trace: () => undefined };
+  const waits = registerWait(pi as never, { session: async () => session as never, home: agentDir, platform: process.platform });
+  const ctx = { mode: "rpc", cwd: agentDir, isIdle: () => true, sessionManager: { getSessionId: () => "s1" } };
+  const live = LiveState.start({ agentDir, sessionId: "s1", cwd: agentDir, mode: "rpc", env: {} }, () => [], undefined, () => waits.active("s1"))!;
   const listed = () => JSON.parse(fs.readFileSync(path.join(liveDir(agentDir), "s1.json"), "utf8")).waits.map((w: { id: string }) => w.id);
-  const changed = { n: 0 };
-  rt = new WaitRuntime({
-    timers: clock.timers,
-    now: clock.now,
-    limits: () => LIMITS,
-    stat: () => null,
-    alive: () => true,
-    gh: () => Promise.reject(new Error("unused")),
-    wake: () => {},
-    trace: () => {},
-    // what index.ts registers through waits.onChange
-    changed: () => {
-      changed.n++;
-      live.touch();
-      live.flush();
-    },
+  let fired = 0;
+  // the wiring of index.ts: a wait change touches the live file
+  const off = waits.onChange("s1", () => {
+    fired++;
+    live.touch();
+    live.flush();
   });
-  live = LiveState.start({ agentDir, sessionId: "s1", cwd: "/w", mode: "rpc", env: {} }, () => [], undefined, () => rt.list())!;
-  const a = rt.start({ kind: "timer", seconds: 5, note: "a" }) as { id: string };
-  const b = rt.start({ kind: "timer", seconds: 500, note: "b" }) as { id: string };
-  assert.equal(changed.n, 2);
-  assert.deepEqual(listed(), [a.id, b.id]);
-  clock.advance(5000);
-  assert.equal(changed.n, 3, "resolve fires changed once");
-  assert.deepEqual(listed(), [b.id], "the resolved wait is gone from the presence file");
-  rt.cancel(b.id);
-  assert.equal(changed.n, 4, "cancel fires changed once");
-  assert.deepEqual(listed(), []);
-  live.stop();
-  rt.dispose();
+  try {
+    const a = String((await tool.execute("c1", { action: "start", kind: "timer", seconds: 5, note: "a" }, undefined, undefined, ctx)).details.id);
+    const b = String((await tool.execute("c2", { action: "start", kind: "timer", seconds: 500, note: "b" }, undefined, undefined, ctx)).details.id);
+    assert.equal(fired, 2);
+    assert.deepEqual(listed(), [a, b]);
+    mock.timers.tick(6000);
+    assert.equal(fired, 3, "resolve fires onChange once");
+    assert.deepEqual(listed(), [b], "the resolved wait is gone from the presence file");
+    await tool.execute("c3", { action: "cancel", id: b }, undefined, undefined, ctx);
+    assert.equal(fired, 4, "cancel fires onChange once");
+    assert.deepEqual(listed(), []);
+    // the composed fm_a3 without the wait is pinned in tests/test_herdr_sidebar.py (PushJsonTest)
+  } finally {
+    off();
+    live.stop();
+    waits.cancelAll("s1");
+    mock.timers.reset();
+  }
 });

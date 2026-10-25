@@ -518,15 +518,23 @@ class SnippetTest(unittest.TestCase):
         self.assertEqual(emoji_hd.count("\u23f8\ufe0f"), 1)
         self.assertNotIn("\u23f8", [c for c in emoji_hd if c != "\u23f8\ufe0f"])
 
-    @unittest.skipIf(tomllib is None, "tomllib needs Python 3.11+")
     def test_configure_prints_the_set_and_defaults_to_the_configured_one(self):
-        res = subprocess.run([sys.executable, str(PLUGIN / "sidebar.py"), "configure", "--symbols", "nerd"],
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
-        self.assertEqual(res.returncode, 0, res.stderr)
-        out = res.stdout.decode("utf-8")
+        def configure(*extra):
+            res = subprocess.run([sys.executable, str(PLUGIN / "sidebar.py"), "configure"] + list(extra),
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            return res.stdout.decode("utf-8")
+        out = configure("--symbols", "nerd")
         self.assertEqual(out, sidebar.snippet_for("nerd"))
         self.assertIn("# Glyph set of this snippet: nerd.", out)
         self.assertIn('contains = "\\uf002"', out)
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        with open(os.path.join(tmp, "foreman.json"), "w", encoding="utf-8") as fh:
+            json.dump({"ui": {"symbols": "emoji"}}, fh)
+        out = configure("--agent-dir", tmp)
+        self.assertEqual(out, sidebar.snippet_for("emoji"))
+        self.assertNotEqual(out, sidebar.snippet_for("unicode"))
 
     @unittest.skipIf(tomllib is None, "tomllib needs Python 3.11+")
     def test_snippet_header_files_and_manifest(self):
@@ -1232,7 +1240,7 @@ class TreePropertyTest(unittest.TestCase):
         for i, (key, k, text) in enumerate(lines):
             pos = tree[key]
             if k == "fm_hd":
-                want = len(pos["P"]) + (6 if pos["conn"] else 3) + (3 if symbols == "emoji" else 2) - 2
+                want = len(pos["P"]) + (6 if pos["conn"] else 3) + sidebar.slot_width(sidebar.aux_symbols(symbols)) - 2
                 if budget - want >= 2:
                     rest = text[len(pos["P"]) + len(pos["conn"]):]   # slot, space, label
                     slot = sidebar.slot_width(sidebar.aux_symbols(symbols))
@@ -1501,6 +1509,23 @@ class PushJsonTest(unittest.TestCase):
         doc = json.loads(self.push("--json").stdout.decode("utf-8"))
         self.assertIsNone(doc["fm_hd_tpl"])
         self.assertTrue(doc["tokens"]["fm_hd"].startswith(IND + "✓"))
+
+    def test_fm_a3_drops_a_wait_once_the_presence_file_no_longer_lists_it(self):
+        # the TS side (r61-wait-brief-supersede.test.ts) pins resolve/cancel -> presence file; this is the compose half
+        live = os.path.join(self.adir, "pi-foreman", "state", "live", "sid-1.json")
+        with open(live, encoding="utf-8") as fh:
+            d = json.load(fh)
+        d["waits"] = [{"id": "w1", "kind": "timer", "note": "ruling", "ageSeconds": 5, "leftSeconds": 60}]
+        with open(live, "w", encoding="utf-8") as fh:
+            json.dump(d, fh)
+        before = json.loads(self.push("--json").stdout.decode("utf-8"))["tokens"]["fm_a3"]
+        self.assertIn("ruling", before or "")
+        d["waits"] = []
+        with open(live, "w", encoding="utf-8") as fh:
+            json.dump(d, fh)
+        after = json.loads(self.push("--json").stdout.decode("utf-8"))["tokens"]["fm_a3"]
+        self.assertNotIn("ruling", after or "")
+        self.assertFalse(after and after.replace(B, " ").strip())
 
     def test_unknown_session_and_a_losing_session_print_an_empty_object(self):
         self.assertEqual(self.push("--json", session="nope").stdout, b"{}\n")

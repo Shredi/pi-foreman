@@ -564,6 +564,7 @@ function dirBriefs(dir: string): { name: string; mtimeMs: number }[] {
   try {
     const out: { name: string; mtimeMs: number }[] = [];
     for (const name of fs.readdirSync(dir)) {
+      if (!isBriefName(name)) continue;
       try {
         out.push({ name, mtimeMs: fs.statSync(path.join(dir, name)).mtimeMs });
       } catch {
