@@ -1149,14 +1149,17 @@ def op_pr_batch(req):
     entries = _batch_args(args)
     root = _repoless_root(req)
     host = _gh_only(pr_host, root, "batch")
-    argv = [host.program, "api", "graphql"] + (["--hostname", hostname] if hostname else []) + \
-        ["-f", "query=" + _pr_query(len(entries))]
-    subst = []
+    variables = {}
     for i, (repo, n) in enumerate(entries):
         owner, name = two_part(repo)
-        argv += ["-f", "owner%d=%s" % (i, owner), "-f", "name%d=%s" % (i, name), "-F", "n%d=%d" % (i, n)]
-        subst += [owner, name]
-    code, out, err = run_host(argv, root, subst)
+        variables.update({"owner%d" % i: owner, "name%d" % i: name, "n%d" % i: n})
+    path = _body_file(json.dumps({"query": _pr_query(len(entries)), "variables": variables}))
+    try:   # the body goes through a file: 50 queries overflow the Windows command line
+        argv = [host.program, "api", "graphql"] + (["--hostname", hostname] if hostname else []) + \
+            ["--input", _argpath(path)]
+        code, out, err = run_host(argv, root, [_argpath(path)])
+    finally:
+        _unlink(path)
     try:
         d = json.loads(out)
     except ValueError:

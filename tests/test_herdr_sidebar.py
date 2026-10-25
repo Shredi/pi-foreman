@@ -2174,6 +2174,16 @@ class StateCellTest(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("⣻⚙ r53-sidebar", res.stdout.decode("utf-8"))
 
+    def test_output_is_utf8_under_a_cp1252_console(self):
+        env = dict(os.environ, PYTHONIOENCODING="cp1252")
+        for argv, mark in (((["configure", "--symbols", "unicode"]), "⚠"),
+                           (["sample", "--reason", "all", "--dry-run"], "⣻")):   # neither is in cp1252
+            with self.subTest(argv=argv):
+                res = subprocess.run([sys.executable, str(PLUGIN / "sidebar.py")] + argv, env=env,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+                self.assertEqual(res.returncode, 0, res.stderr)
+                self.assertIn(mark, res.stdout.decode("utf-8"))
+
 
 class LiveKidsOnAgentLineTest(unittest.TestCase):
     """Round 61 bug 1: child sessions without a pane row show on the agents line only while live."""

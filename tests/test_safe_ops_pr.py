@@ -588,16 +588,12 @@ class BatchTest(RepoLessCase):
         res = self.ok(self.at("pr_batch", prs=[{"repo": "acme/lib", "n": 5}, {"repo": "Other/Tool.x", "n": 6}]))
         self.assertEqual([p["number"] for p in res["prs"]], [5, 6])
         argv = argv_of(self.calls()[0])
-        self.assertEqual(argv[:4], ["gh", "api", "graphql", "-f"])
-        pairs = [(argv[i], argv[i + 1]) for i in range(len(argv) - 1) if argv[i] in ("-f", "-F")]
-        self.assertIn(("-f", "owner0=acme"), pairs)
-        self.assertIn(("-f", "name0=lib"), pairs)
-        self.assertIn(("-F", "n0=5"), pairs)
-        self.assertIn(("-f", "owner1=Other"), pairs)
-        self.assertIn(("-f", "name1=Tool.x"), pairs)
-        self.assertIn(("-F", "n1=6"), pairs)
-        self.assertEqual([k for k, v in pairs if v.startswith(("owner", "name"))], ["-f"] * 4)
-        query = [v for k, v in pairs if v.startswith("query=")][0]
+        self.assertEqual(argv[:3], ["gh", "api", "graphql"])
+        body = json.loads(self.calls()[0]["body"])
+        v = body["variables"]
+        self.assertEqual(v, {"owner0": "acme", "name0": "lib", "n0": 5, "owner1": "Other", "name1": "Tool.x", "n1": 6})
+        self.assertIsInstance(v["n0"], int)
+        query = body["query"]
         for frag in ("$owner0: String!", "$name1: String!", "$n1: Int!", "r1: repository(owner: $owner1, name: $name1)", "pullRequest(number: $n0)",
                      "isRequired(pullRequestNumber: $n0)", "contexts(first: 100)", "totalCount"):
             self.assertIn(frag, query)
@@ -605,6 +601,16 @@ class BatchTest(RepoLessCase):
             self.assertNotIn(lit, query)
         self.ok(self.at("pr_batch", prs=[{"repo": "acme/lib", "n": 5}]))
         self.assertNotIn("--hostname", argv_of(self.calls()[1]))
+
+    def test_long_batch_keeps_argv_short_and_removes_the_body_file(self):
+        self.scn({"gh api graphql": {"stdout": j({"data": {}})}})
+        prs = [{"repo": "%s/%s" % ("o" * 39, "n" * 100), "n": i + 1} for i in range(50)]
+        self.at("pr_batch", prs=prs)
+        call = self.calls()[0]
+        argv = argv_of(call)
+        self.assertLess(sum(len(a) + 1 for a in argv), 8000)
+        self.assertEqual(len(json.loads(call["body"])["variables"]), 150)
+        self.assertFalse(os.path.exists(argv[argv.index("--input") + 1]))
 
     def test_hostname_and_validation_and_cap(self):
         self.scn({"gh api graphql": {"stdout": j({"data": {"r0": gql_pr(5, rollup())}})}})
