@@ -28,6 +28,7 @@ import foreman_config as fc  # noqa: E402
 
 ROOT = HERE.parent
 FEATURES_PATH = ROOT / "config" / "features.json"
+PROFILES_PATH = ROOT / "config" / "profiles.json"
 OUT_PATH = ROOT / "docs" / "features.md"
 PLACEHOLDER = "<x>"
 BEGIN = "<!-- BEGIN GENERATED: foreman_docs.py features -->"
@@ -98,6 +99,10 @@ def enumerated_commands(root=ROOT):
 # ---------------------------------------------------------------- map helpers
 
 def load_features(path=FEATURES_PATH):
+    return json.loads(read(path))
+
+
+def load_profiles(path=PROFILES_PATH):
     return json.loads(read(path))
 
 
@@ -313,8 +318,30 @@ def leaf_name(leaf):
     return ".".join(leaf)
 
 
-def render(features=None, defaults=None, leaves=None):
+def shipped_side(toggle, defaults):
+    """`on` or `off`: the side equal to the L1 defaults, else the declared `shipped`."""
+    if toggle.get("shipped"):
+        return toggle["shipped"]
+    for side in ("on", "off"):
+        if all(lookup(defaults, split(k)) == [v] for k, v in toggle[side].items()):
+            return side
+    return ""
+
+
+def toggle_marker(feature):
+    t = feature.get("toggle")
+    if not t:
+        return ""
+    return "toggle, relaxes safety" if t.get("relaxes") else "toggle"
+
+
+def toggle_text(patch):
+    return ", ".join("%s = %s" % (code(k), code(fmt_value(v))) for k, v in patch.items())
+
+
+def render(features=None, defaults=None, leaves=None, profiles=None):
     features = features if features is not None else load_features()
+    profiles = profiles if profiles is not None else load_profiles()
     defaults = defaults if defaults is not None else load_defaults()
     leaves = leaves if leaves is not None else load_leaves()
     fmap = {f["id"]: f for f in features["features"]}
@@ -341,12 +368,34 @@ def render(features=None, defaults=None, leaves=None):
     out += ["## Feature inventory", "",
             "State is the fresh-install state with the package defaults: `on`, `off` (a switch you turn on) or "
             "`opt-in` (needs a value or a command from you).", "",
-            "| Feature | State | Purpose | Enable | Doc |", "|---|---|---|---|---|"]
+            "| Feature | Area | Toggle | State | Purpose | Enable | Doc |", "|---|---|---|---|---|---|---|"]
     for f in features["features"]:
-        out.append("| [%s](#%s) | %s | %s | %s | [%s](%s) |" % (
-            f["id"], f["id"], f["state"], cell(f["purpose"]),
+        out.append("| [%s](#%s) | %s | %s | %s | %s | %s | [%s](%s) |" % (
+            f["id"], f["id"], f["area"], toggle_marker(f), f["state"], cell(f["purpose"]),
             code(f["enable"]) if f["enable"] else "on by default",
             Path(f["doc"].split("#")[0]).stem, cell(f["doc"].replace("docs/", "", 1))))
+    out.append("")
+
+    toggles = [f for f in features["features"] if f.get("toggle")]
+    out += ["## Profiles", "",
+            "`foreman setup --profile <name>` assigns every toggleable feature: the ones a profile names as given, "
+            "all others their shipped state. `--enable`/`--disable` adjust single features afterwards. "
+            "`full` switches safety relaxations on.", "",
+            "| Profile | Summary | On | Off |", "|---|---|---|---|"]
+    for name, p in profiles["profiles"].items():
+        named = p["features"]
+        out.append("| %s | %s | %s | %s |" % (
+            code(name), cell(p["summary"]),
+            ", ".join(code(i) for i, v in named.items() if v) or "shipped states",
+            ", ".join(code(i) for i, v in named.items() if not v) or "none"))
+    out += ["", "Toggleable features (`on` and `off` write these leaves into the user config; "
+            "`*` = every provider present):", "",
+            "| Feature | Area | On writes | Off writes | Shipped | Relaxes safety |", "|---|---|---|---|---|---|"]
+    for f in toggles:
+        t = f["toggle"]
+        out.append("| [%s](#%s) | %s | %s | %s | %s | %s |" % (
+            f["id"], f["id"], f["area"], toggle_text(t["on"]), toggle_text(t["off"]),
+            shipped_side(t, defaults), "yes" if t.get("relaxes") else "no"))
     out.append("")
 
     out += ["## Feature keys", ""]

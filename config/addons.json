@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "addons": [
+    {
+      "id": "polish",
+      "package": "pi-polish",
+      "version": "0.1.2",
+      "purpose": "Compact Claude Code-style tool output in the terminal (renderers only; it registers no tools).",
+      "clashes": [
+        "It ships a second extension (`chrome`) that you may filter out in the package entry of `settings.json`."
+      ]
+    },
+    {
+      "id": "background-tasks",
+      "package": "pi-background-tasks",
+      "version": "2.6.10",
+      "purpose": "Background shell tasks for long-running commands (`bg_run`).",
+      "env": { "PI_BG_FEATURES": "process" },
+      "clashes": [
+        "PI_BG_FEATURES=process is read when Pi starts, not at install: set it permanently in your shell profile.",
+        "Without `process`, its attribution extension takes over the global anthropic provider slot.",
+        "2.6.10 declares a Pi peer range of 0.81 to 0.84 while pi-foreman pins Pi 1.4.x; `/foreman doctor` reports the mismatch."
+      ]
+    }
+  ]
+}

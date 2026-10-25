@@ -7,6 +7,7 @@
   "additionalProperties": false,
   "properties": {
     "version": { "type": "integer", "minimum": 1, "maximum": 1, "description": "Config format version." },
+    "profile": { "type": ["string", "null"], "description": "The setup profile recorded by `foreman setup` (orchestration, standard or full); null = none chosen yet. User or overlay config only." },
     "rankTiers": { "type": "object", "description": "Preset template only (config/presets/inexpensive.json): roles named by rank tier, resolved to models by `foreman config apply-preset` and removed from the written file. The runtime never reads it." },
     "displayNames": {
       "type": ["string", "object"],
