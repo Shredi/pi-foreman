@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -785,6 +786,22 @@ class FoldPresetTests(unittest.TestCase):
         cells = [l for l in out.getvalue().splitlines() if l.startswith("bench: [")]
         self.assertEqual(len(cells), 8, out.getvalue())
         self.assertIn("8 cell(s) in order", out.getvalue())
+
+
+class TaskImagePythonTests(unittest.TestCase):
+    FOLD_TASKS = ("m1-recheck", "t1-trivial")
+
+    def dockerfile(self, name):
+        return (ROOT / "bench" / "tasks" / name / "environment" / "Dockerfile").read_text("utf-8")
+
+    def test_fold_task_images_install_foreman_python_with_same_uv_pin(self):
+        pins = {}
+        for name in self.FOLD_TASKS:
+            text = self.dockerfile(name)
+            self.assertIn("ENV PI_FOREMAN_PYTHON=", text, name)
+            pins[name] = re.findall(r"ghcr\.io/astral-sh/uv:(\S+)", text)
+        self.assertTrue(pins["m1-recheck"], "m1-recheck has no uv image pin")
+        self.assertEqual(pins["t1-trivial"], pins["m1-recheck"])
 
 
 class FakeUploadEnv:
