@@ -160,6 +160,8 @@ export interface CloseDeps {
   closeChildren?: () => Promise<string[]>;
   /** What the parent would have to rule when the ceremony is incomplete ("" = complete). */
   ceremonyNote?: () => string;
+  /** Start the pushed-branch notice (fire-and-forget; it never delays the close). */
+  pushNotice?: () => void;
   /** Timer for the start deadline (default: an unref'd setTimeout). */
   setTimer?: (fn: () => void, ms: number) => () => void;
 }
@@ -275,6 +277,7 @@ export class CloseFlow {
     this.d.notify(`pi-foreman: closing this session (result file ${req.file}).`, "info");
     const open = this.d.ceremonyNote?.() ?? "";
     if (open) this.d.notify(`pi-foreman: ceremony incomplete. ${open}`, "warning");
+    this.d.pushNotice?.();
     if (ctx.isIdle()) this.closeTurn();
     else this.phase = "idle-wait";
   }
@@ -433,6 +436,8 @@ export interface CloseSession {
   closeChildren?: (send: (to: string, text: string) => Promise<string>) => Promise<string[]>;
   /** What the parent would have to rule when the ceremony is incomplete ("" = complete). */
   ceremonyNote?: () => string;
+  /** Evaluate the pushed branches without a tracked PR and notify (fire-and-forget). */
+  pushNotice?: (ctx: ExtensionContext) => void;
 }
 
 type Bus = { emit(channel: string, data: unknown): void; on?(channel: string, handler: (data: unknown) => void): (() => void) | void } | undefined;
@@ -491,6 +496,7 @@ export function registerClose(
       report: s.report ? (file) => s.report!(holder.ctx, file) : undefined,
       markClosed: s.markClosed ? () => s.markClosed!() : undefined,
       ceremonyNote: s.ceremonyNote,
+      pushNotice: s.pushNotice ? () => s.pushNotice!(holder.ctx) : undefined,
       closeChildren: s.closeChildren ? () => s.closeChildren!((to, text) => outboxSend(pi.events, to, text, "close", SEND_WAIT_MS)) : undefined,
       retro: () => (get(s.config(), "sync.runRetro") === false ? s.retro(holder.ctx) : Promise.resolve("")),
       reply: (to, text) => outboxSend(pi.events, to, text, "close"),

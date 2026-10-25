@@ -236,5 +236,64 @@ class HandoverTest(Base):
         self.assertFalse((self.state / "sessions").exists())
 
 
+class MergedTest(Base):
+    """`foreman close merged`: is a ref in the base branch (no upstream clause, no session needed)."""
+
+    def merged(self, ref, *extra):
+        out = io.StringIO()
+        err = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = fcl.main(["merged", "--ws", str(self.repo), "--ref", ref, *extra])  # no --session, no state dir
+        return code, out.getvalue(), err.getvalue()
+
+    def branch(self, name, commit=True):
+        g(self.repo, "checkout", "-q", "-b", name)
+        if commit:
+            (self.repo / (name + ".txt")).write_text(name)
+            g(self.repo, "add", name + ".txt")
+            g(self.repo, "commit", "-q", "-m", name)
+        g(self.repo, "checkout", "-q", "main")
+
+    def test_merged_and_not_merged_without_a_session(self):
+        self.branch("feat")
+        self.assertEqual(self.merged("refs/heads/feat", "--base", "main")[:2], (0, '{"merged": false}\n'))
+        g(self.repo, "merge", "-q", "--no-ff", "-m", "m", "feat")
+        self.assertEqual(self.merged("refs/heads/feat", "--base", "main")[:2], (0, '{"merged": true}\n'))
+        self.assertFalse((self.state / "sessions").exists())
+
+    def test_a_pushed_but_unmerged_branch_is_not_merged_even_with_an_upstream(self):
+        remote = self.tmp / "remote.git"
+        g(self.tmp, "init", "-q", "--bare", str(remote))
+        g(self.repo, "remote", "add", "origin", str(remote))
+        self.branch("feat")
+        g(self.repo, "push", "-q", "-u", "origin", "feat")
+        self.assertTrue(fcl.merged_into(str(self.repo), "feat", "main"), "the close report's upstream clause says merged")
+        self.assertFalse(fcl.merged_into_base(str(self.repo), "refs/heads/feat", "main"))
+        for ref in ("refs/heads/feat", "refs/remotes/origin/feat"):
+            self.assertEqual(self.merged(ref, "--base", "main")[:2], (0, '{"merged": false}\n'), ref)
+
+    def test_a_missing_ref_or_a_non_full_ref_or_workspace_is_refused(self):
+        self.assertEqual(self.merged("refs/heads/nope", "--base", "main")[:2], (0, '{"merged": false}\n'))
+        code, out, err = self.merged("feat", "--base", "main")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("full ref", err)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(fcl.main(["merged", "--ws", str(self.tmp / "missing"), "--ref", "refs/heads/main"]), 2)
+            self.assertEqual(fcl.main(["merged", "--ws", str(self.repo)]), 2)
+
+    def test_an_unresolvable_base_is_not_merged(self):
+        self.assertEqual(self.merged("refs/heads/main", "--base", "no-such-base")[:2], (0, '{"merged": false}\n'))
+
+    def test_record_still_needs_a_session(self):
+        out = io.StringIO()
+        err = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = fcl.main(["record", "--kind", "scratch", "--path", str(self.tmp), "--state", str(self.state)])
+        self.assertEqual(code, 2)
+        self.assertIn("no session", err.getvalue())
+        self.assertEqual(fcl.parse(["merged", "--ws", "w", "--ref", "refs/heads/x"]).cmd, "merged")
+        self.assertEqual(fcl.parse(["record", "--kind", "scratch", "--path", "p"]).cmd, "record")
+
+
 if __name__ == "__main__":
     unittest.main()

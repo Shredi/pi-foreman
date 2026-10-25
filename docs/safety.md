@@ -28,6 +28,8 @@ cmd); otherwise it is refused and the
 refusal names the allowed form. Each allowed path leaves a `test_restore` trace line (path in `cmd`) in the child's
 trace. Children are not stopped from committing; after a child commit "vs HEAD" means its changes since that commit.
 
+The read PR tools take `repo` and `host`. `host` is an allow-rule: it must equal the current repository's host, the host of a remote of the checkout or the host of an already tracked PR; any other host is refused with `[pr_refused:pr_host_refused]` before the op runs, in the foreman and in children alike. `repo` is accepted for any `owner/name` on an accepted host. `pr_track` and `pr_untrack` change what the session watches, so like `pr_create` and `pr_watch` they are foreman-only: `CHILD_DENIED_TOOLS` names all four, and a child that calls one is refused with `[pr_refused:child]`. The poller's host ops (`pr_find`, `pr_batch`, `pr_poll` and the others) are not model tools. See [tools](tools.md#pr-tools).
+
 Git config drift (a changed `.git/config`, hooks, includes) asks before the foreman's next git run; added or removed `branch.<name>.remote` and `branch.<name>.merge` keys (from `worktree add -b`, `push -u`, `checkout -b`) are routine and ignored, a changed value is still reported.
 
 ## Permission baseline and auto-review

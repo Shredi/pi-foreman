@@ -76,7 +76,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [review-critic](#review-critic) | on | Every reviewer and senior-reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines. | on by default | [roles](roles.md#review-critic) |
 | [git-guard](#git-guard) | on | Lints the foreman's commits and pushes (protected branches, message pattern, trailers, an optional check command) and refuses a PR without a reviewer PASS on the current head. | on by default | [safety](safety.md#git-guard-and-pr-gate) |
 | [git-tools](#git-tools) | off | Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace. | `{"tools": {"git": true}}` | [tools](tools.md#git-tool-pack) |
-| [pr-ops](#pr-ops) | on | Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands. | `{"tools": {"pr": true}}` | [tools](tools.md#pr-tools) |
+| [pr-ops](#pr-ops) | on | Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_track, pr_untrack): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands. Pushed, searched, acted-on and touched PRs are tracked by host, owner, repo and number, shown in a PR widget above the editor and, with the shared watch, with review requests and failing bot PRs. | `{"tools": {"pr": true}}` | [tools](tools.md#pr-tools) |
 | [sidebar-status](#sidebar-status) | opt-in | Runs a command you configure on an interval and shows its JSON items (label and state) as extra dots on the Herdr sidebar; the items are display data only, the program must lie outside the workspace, and the setting is read from user or overlay config only. | `{"sidebar": {"statusCommand": "/path/to/your-status-program", "statusSeconds": 60}}` | [herdr](herdr.md#external-status) |
 | [children-may-push](#children-may-push) | off | Lets subagent children push; by default they may commit but never push, and they never open PRs. | `{"safety": {"children": {"mayPush": true}}}` | [safety](safety.md#git-guard-and-pr-gate) |
 | [review-required](#review-required) | off | Requires a review before close-out in every session. | `{"safety": {"review": {"required": true}}}` | [safety](safety.md#further-safety-and-runtime-keys) |
@@ -508,16 +508,23 @@ Switch: `tools.git` is true.
 
 ### pr-ops
 
-**PR tools.** Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands.
+**PR tools.** Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_track, pr_untrack): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands. Pushed, searched, acted-on and touched PRs are tracked by host, owner, repo and number, shown in a PR widget above the editor and, with the shared watch, with review requests and failing bot PRs.
 
 Switch: `tools.pr` is true.
 
 | Key | Default | Layer |
 |---|---|---|
+| `widget.prs` | `true` | any layer |
+| `widget.prLinks` | `true` | any layer |
 | `tools.pr` | `true` | tighten-only (only false is accepted) |
-| `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
 | `tools.prDots` | `true` | any layer |
+| `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
 | `tools.prWatchSeconds` | `60` | any layer |
+| `tools.prInteractions` | `[]` | not in project/session (the PR interaction patterns come from the user or overlay config) |
+| `tools.prShared.enabled` | `false` | not in project/session (the shared PR watch comes from the user or overlay config) |
+| `tools.prShared.authors` | `[]` | not in project/session (the shared PR watch comes from the user or overlay config) |
+| `tools.prShared.seconds` | `180` | not in project/session (the shared PR watch comes from the user or overlay config) |
+| `tools.prShared.events` | `true` | not in project/session (the shared PR watch comes from the user or overlay config) |
 
 ### sidebar-status
 
@@ -787,6 +794,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [ceremony-tiers](#ceremony-tiers) | `/ceremony` |
 | [read-budgets](#read-budgets) | `/foreman budget` |
 | [waits](#waits) | `/foreman waits` |
+| [pr-ops](#pr-ops) | `/foreman prs` |
 | [sessions](#sessions) | `/foreman session`, `foreman session` |
 | [remote-sessions](#remote-sessions) | `foreman session remote` |
 | [sync](#sync) | `/sync`, `foreman sync` |
@@ -842,6 +850,8 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `roles.*.skills` | the skills a role gets come from the user or overlay config |
 | `providers.*.roles.*.strong` | the strong model is picked in the user or overlay config |
 | `tools.prHost` | the PR host program comes from the user or overlay config |
+| `tools.prShared` | the shared PR watch comes from the user or overlay config |
+| `tools.prInteractions` | the PR interaction patterns come from the user or overlay config |
 | `sidebar.statusCommand` | the sidebar status command runs a program: user or overlay config only |
 | `sidebar.statusSeconds` | the sidebar status interval comes from the user or overlay config |
 | `sync.repos` | the repository list comes from the user or overlay config |

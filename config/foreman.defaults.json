@@ -86,7 +86,7 @@
   "intercom": { "allowRemote": false, "allowOpenPane": false },
   "close": { "from": ["herdr", "intercom-parent"], "autoClean": true, "worktreeDir": "../<repo>.worktrees", "childWaitMs": 60000 },
   "footer": { "usage": true, "style": "foreman" },
-  "widget": { "children": true },
+  "widget": { "children": true, "prs": true, "prLinks": true },
   "ui": { "symbols": "unicode", "spinner": true },
   "herdr": { "blockedShim": true, "groupTag": true },
   "sessions": { "machines": {}, "remoteInlineMaxBytes": 32768 },
@@ -118,6 +118,6 @@
   "bridge": { "isolateClaudeConfig": "auto" },
   "python": { "path": null },
   "trace": { "enabled": null, "dir": null },
-  "tools": { "git": false, "pr": true, "prHost": "auto", "prDots": true, "prWatchSeconds": 60 },
+  "tools": { "git": false, "pr": true, "prHost": "auto", "prDots": true, "prWatchSeconds": 60, "prInteractions": [], "prShared": { "enabled": false, "authors": [], "seconds": 180, "events": true } },
   "sidebar": { "statusSeconds": 60 }
 }

@@ -132,6 +132,20 @@ class RetroTest(unittest.TestCase):
         self.assertIsNone(fr.pr_pack_line(fr.build(None, [], None, None, 5, str(self.tmp))))
         self.assertIsNone(fr.pr_pack_line(fr.build(None, None, None, None, 5, str(self.tmp))))
 
+    def test_pr_tracked_line_counts_first_registrations_per_path(self):
+        trace = [{"event": "pr_track", "path": "push", "count": 1}, {"event": "pr_track", "path": "push", "count": 2, "foreign": True},
+                 {"event": "pr_track", "path": "interact", "count": 3}, {"event": "pr_track", "path": "url", "count": 3, "dup": True},
+                 {"event": "pr_track", "path": "url", "count": 3, "skipped": True}, {"event": "pr_track", "path": "untrack", "count": 2},
+                 {"event": "pr_track", "path": "bogus", "count": 2}, {"event": "pr_track", "path": "branch", "count": 4}]
+        rep = fr.build(None, trace, None, None, 5, str(self.tmp))
+        self.assertEqual(rep["trace"]["pr_track"], {"push": 2, "foreign": 1, "interact": 1, "branch": 1})
+        line = "pr: tracked 4 (push 2, interact 1, branch 1; foreign 1)"
+        self.assertEqual(fr.pr_track_line(rep), line)
+        self.assertIn(line, fr.render_text(rep).splitlines())
+        self.assertIsNone(fr.pr_track_line(fr.build(None, [], None, None, 5, str(self.tmp))))
+        self.assertIsNone(fr.pr_track_line(fr.build(None, None, None, None, 5, str(self.tmp))))
+        self.assertEqual(fr.build(None, [], None, None, 5, str(self.tmp))["trace"]["pr_track"], {})
+
     def test_explorer_counts_unmarked_launch_entries(self):
         trace = [{"event": "launch_entry", "role": "explorer", "kind": "entry", "model": "p/m-haiku"},
                  {"event": "launch_entry", "role": "builder", "kind": "entry", "model": "p/m-haiku"},
