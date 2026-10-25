@@ -329,7 +329,7 @@
       "id": "background-tasks-addon",
       "area": "tools",
       "title": "Background-tasks add-on detection",
-      "purpose": "Detects the optional pi-background-tasks add-on (install: `PI_BG_FEATURES=process pi install npm:pi-background-tasks`): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it.",
+      "purpose": "Detects the optional pi-background-tasks add-on (install with `pi install npm:pi-background-tasks@2.6.10` on consent via `foreman setup --addon background-tasks`; set `PI_BG_FEATURES=process` in the shell profile so it is present when Pi starts): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it.",
       "doc": "docs/herdr.md#optional-add-on-background-tasks",
       "keys": [],
       "commands": [],

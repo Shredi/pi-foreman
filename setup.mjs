@@ -15,7 +15,8 @@ import {
   assignment, equivalentCommand, installedAddons, loadAddons, loadFeatures, loadProfiles, planChanges, resolveSetupPython, toggleable,
 } from "./extensions/core-adapter/profiles.mjs";
 
-// The shared point rule. Loaded softly: a copy of this script without the extension folder still installs, minus the compaction step.
+// The script needs `config/` and `extensions/core-adapter/profiles.mjs` beside it (imported statically above); `@inquirer/prompts` is loaded only when the picker opens.
+// The shared point rule and model data are loaded softly: without them the install still runs, minus the compaction step.
 const pointModule = await import("./extensions/core-adapter/compaction-point.mjs").catch(() => null);
 const dataModule = await import("./extensions/core-adapter/pi-model-data.mjs").catch(() => null);
 const PI_DEFAULT_RESERVE = pointModule?.PI_DEFAULT_RESERVE ?? 16384;
