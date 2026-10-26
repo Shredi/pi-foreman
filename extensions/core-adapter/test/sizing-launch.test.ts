@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pressurePath } from "../pressure.ts";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
 const ROLE_IDS = ["explorer", "planner", "reviewer", "senior-reviewer", "finalizer"];
 const BIG = "x\n".repeat(1700);
@@ -14,7 +14,7 @@ const RANKS = [{ match: "foreman*", tier: 0 }, { match: "huge", tier: 1 }, { mat
 function providers(o: { strong?: boolean; ranks?: unknown[] } = {}): Record<string, unknown> {
   const roles: Record<string, unknown> = Object.fromEntries(ROLE_IDS.map((r) => [r, { model: `fake/${r}` }]));
   roles.builder = { model: "fake/builder", ...(o.strong === false ? {} : { strong: { model: "fake/strong" } }) };
-  return { fake: { roles, ...(o.ranks ? { ranks: o.ranks } : {}) } };
+  return { fake: { review: { model: "m" }, roles, ...(o.ranks ? { ranks: o.ranks } : {}) } };
 }
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
@@ -23,7 +23,7 @@ const sizing = (a: Rig): Record<string, unknown>[] => a.events("launch_sizing");
 const builder = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({ agent: "builder", task: "build it", ...extra });
 
 async function rig(t: Parameters<typeof r11Rig>[0], o: { strong?: boolean; ranks?: unknown[]; ceremony?: Record<string, unknown> } = {}): Promise<Rig> {
-  return r11Rig(t, { default: "standard", ...o.ceremony }, { config: { providers: providers(o) } });
+  return r11Rig(t, { default: "standard", ...o.ceremony }, { ctx: reviewAllowOpts().ctx, config: { providers: providers(o) } });
 }
 
 test("size and risk are stripped on every launch path", async (t) => {
@@ -45,7 +45,7 @@ test("size and risk are stripped on every launch path", async (t) => {
   const shadow = { agent: "reviewer", task: "[panel-shadow:fake/x] review", size: "bad", risk: ["nope"] };
   await a.launch(shadow);
   assert.ok(!("size" in shadow) && !("risk" in shadow));
-  const child = await r11Rig(t, { default: "standard" }, { child: true, config: { providers: providers() } });
+  const child = await r11Rig(t, { default: "standard" }, { ctx: reviewAllowOpts().ctx, child: true, config: { providers: providers() } });
   const kid = builder({ size: "bad", risk: ["guard"] });
   await child.launch(kid);
   assert.ok(!("size" in kid) && !("risk" in kid));

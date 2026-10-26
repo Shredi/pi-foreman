@@ -16,6 +16,10 @@ Precedence: floors, then `ask`, then `deny`, then `allow`. No matching entry is 
   Routine git in the worktree: add, commit on the session's own branch, switch to the session's own branches, fetch, pull of the current branch, diff, stash of own work.
 - id: forge-reads
   Read-only gh and glab calls: pr/issue view and list, checks, run view, api GET requests against the repository's own forge.
+- id: agent-coordination
+  Tools with surface json that only hand work to or talk with other pi-foreman agents: `subagent` launches (agent, task, cwd inside the worktree or owned roots), `intercom` messages and `contact_supervisor` / `subagent_supervisor` calls. The prose fields (task, message) are the agent's own words, not commands; do not deny them for what they mention.
+- id: pr-create-own-branch
+  `pr_create` for the session's own branch (the PR gate decides separately whether the PR may be opened). Deny when the payload names another repository or head.
 - id: gh-pr-edit-own
   `gh pr edit` only for the session's own pull request, the one whose head is the session's current branch (the ask payload carries `branch` and `head`). Allow only when the PR number, URL or branch named in the command is that PR (or the command names none and gh resolves the current branch). Deny `gh pr edit` of any other PR, and deny when you cannot tell which PR it targets.
 - id: merge-attributes-file

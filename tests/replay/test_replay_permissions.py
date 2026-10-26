@@ -59,7 +59,8 @@ class TestPermissionLayers(ReplayCase):
         # ("Children cannot answer asks"), there is no forwarding server, and the parent sees no dialog.
         rig = self.baseline_rig("perm-ask", config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-ask" % PROVIDER_A}}}})
         pi = rig.start()
-        pi.prompt("[[replay:c2]] go", timeout=60)
+        # the subagent launch itself is a payload tool and goes to review (review-ask here): the owner approves that one dialog
+        pi.prompt("[[replay:c2]] go", answers=[{"value": "allow once"}], timeout=60)
         notice, recs = pi.wait_child_notify(timeout=90)
         pi.close()
         dialogs = [r for r in recs if r.get("type") == "extension_ui_request" and r.get("method") in ("select", "confirm")]

@@ -1,6 +1,7 @@
 // (l) The launch trace events and the launch result carry the resolved child model.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { reviewAllowOpts } from "./_r11rig.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { mkTestTmp, rmTestTmp, waitQuiet } from "./_tmpbase.ts";
@@ -36,7 +37,7 @@ test("a launch traces role_launch and role_launched with the mapped model and th
   process.env.PI_CODING_AGENT_DIR = agentDir;
   delete process.env.PI_SUBAGENT_CHILD;
   const roles = Object.fromEntries(["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"].map((r) => [r, { model: `fake/${r}` }]));
-  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { roles } }, trace: { enabled: true }, ceremony: { launchWait: "detach" } }));
+  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "m" }, roles } }, trace: { enabled: true }, ceremony: { launchWait: "detach" } }));
   const handlers = new Map<string, Handler>();
   const pi = {
     events: { on: () => undefined, emit: () => undefined },
@@ -63,7 +64,7 @@ test("a launch traces role_launch and role_launched with the mapped model and th
     hasUI: true,
     isProjectTrusted: () => false,
     isIdle: () => true,
-    modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }) },
+    modelRegistry: reviewAllowOpts().ctx.modelRegistry,
     ui: { notify: () => undefined, confirm: async () => false, select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined },
   };
   await handlers.get("session_start")!({ reason: "startup" }, ctx);

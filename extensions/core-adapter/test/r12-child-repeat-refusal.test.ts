@@ -13,7 +13,7 @@ import * as path from "node:path";
 import coreAdapter from "../index.ts";
 import { LadderState } from "../ladder.ts";
 import { launchWaitText, REPEAT_REFUSAL_ERROR, REPEAT_REFUSAL_LINE, REPEAT_STOP_REASONS, runEndOf } from "../launchwait.ts";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
@@ -201,7 +201,7 @@ test("parent_run_end_repeat_refusal_no_retry", async (t) => {
   assert.equal(runEndOf({ runId: "a", agent: "reviewer", success: true, summary: `VERDICT: PASS\n${STOPPED}` })?.repeatRefusal, undefined);
   assert.equal(runEndOf({ runId: "b", agent: "builder", success: false, summary: "STATUS: stuck" })?.repeatRefusal, undefined);
   // through the adapter: the parent's stop record, one launch, nothing relaunched or made climb-eligible
-  const a = await r11Rig(t);
+  const a = await r11Rig(t, {}, reviewAllowOpts());
   const input = { agent: "builder", task: "fix item 4" };
   const { id } = await a.launch(input);
   await a.started(id, input, "run-r");

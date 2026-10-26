@@ -2,6 +2,7 @@
 // stopped, never climb-eligible, never relaunched by the harness; trace `child_policy_block` is the stop record; the report says so.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { reviewAllowOpts } from "./_r11rig.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -42,7 +43,7 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
   delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;
   const roles = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
   const l2 = {
-    providers: { fake: { roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}`, ...(r === "builder" ? { strong: { model: "fake/senior-reviewer" } } : {}) }])) } },
+    providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}`, ...(r === "builder" ? { strong: { model: "fake/senior-reviewer" } } : {}) }])) } },
     trace: { enabled: true },
     ceremony: { launchWait: "detach" },
   };
@@ -74,7 +75,7 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
     hasUI: true,
     isProjectTrusted: () => false,
     isIdle: () => true,
-    modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }) },
+    modelRegistry: reviewAllowOpts().ctx.modelRegistry,
     ui: { notify: () => undefined, confirm: async () => false, select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined },
   };
   await handlers.get("session_start")!({ reason: "startup" }, ctx);

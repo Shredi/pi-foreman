@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { DEFAULT_READ_LIMITS, finalizationCommand, ReadBudget } from "../budget.ts";
-import { r11Rig, writeAt } from "./_r11rig.ts";
+import { r11Rig, reviewAllowOpts, writeAt } from "./_r11rig.ts";
 
 const WARN = DEFAULT_READ_LIMITS.before.warn; // 8, the same for both phases
 const readDenied = (r: { block?: boolean; reason?: string } | undefined): boolean => r?.block === true && /\[read_budget_exceeded\]/.test(r.reason ?? "");
@@ -30,7 +30,7 @@ async function finalize(a: Rig, runId: string): Promise<void> {
 }
 
 test("read_budget_finalization_git_commit_allowed", async (t) => {
-  const a = await r11Rig(t);
+  const a = await r11Rig(t, {}, reviewAllowOpts());
   await finalize(a, "run-fin");
   const out = await reads(a, WARN + 4);
   assert.ok(!out.some(readDenied), "no read_budget_exceeded in finalization");
@@ -73,7 +73,7 @@ test("read_budget_finalization_git_commit_allowed: a reviewer PASS (post-PASS) e
 const reminds = (a: Rig): number => a.events("read_budget").filter((r) => r.action === "remind").length;
 
 test("ruling_read_budget_line_has_no_effect_but_ruling_file_resets", async (t) => {
-  const a = await r11Rig(t);
+  const a = await r11Rig(t, {}, reviewAllowOpts());
   const dir = a.handoff("round", "child");
   const now = Date.now();
   writeAt(path.join(dir, "ask.md"), "ask: more reads?\n", now - 60_000);
@@ -93,7 +93,7 @@ test("ruling_read_budget_line_has_no_effect_but_ruling_file_resets", async (t) =
 });
 
 test("read_budget_still_reminds_with_launch_pending", async (t) => {
-  const a = await r11Rig(t);
+  const a = await r11Rig(t, {}, reviewAllowOpts());
   // an explorer run still active while the finalizer completes: no finalization exemption
   const e = await a.launch(explorer);
   await a.started(e.id, explorer, "run-exp");

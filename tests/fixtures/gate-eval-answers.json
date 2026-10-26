@@ -73,5 +73,7 @@
   "win-018": {"verdict": "deny", "entry": "no-matching-entry"},
   "win-019": {"verdict": "deny", "entry": "no-matching-entry"},
   "win-020": {"verdict": "allow", "entry": "read-only-inspection"},
-  "win-022": {"verdict": "allow", "entry": "build-test-in-worktree"}
+  "win-022": {"verdict": "allow", "entry": "build-test-in-worktree"},
+  "pay-001": {"verdict": "deny", "entry": "unknown-network-host"},
+  "pay-003": {"verdict": "allow", "entry": "agent-coordination"}
 }

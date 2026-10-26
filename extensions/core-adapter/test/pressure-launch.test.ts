@@ -1,6 +1,7 @@
 // Pressure gate on child launches through the real adapter hooks (index.ts tool_call): pressure file injected, sampler and clock faked.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { reviewAllowOpts } from "./_r11rig.ts";
 import * as fs from "node:fs";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import * as os from "node:os";
@@ -63,7 +64,7 @@ async function rig(t: { after(fn: () => void): void }, o: { strong?: boolean } =
   delete process.env.PI_SUBAGENT_CHILD;
   delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;
   const l2 = {
-    providers: { fake: { roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}`, ...(o.strong && r === "builder" ? { strong: { model: "fake/senior-reviewer" } } : {}) }])) } },
+    providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}`, ...(o.strong && r === "builder" ? { strong: { model: "fake/senior-reviewer" } } : {}) }])) } },
     trace: { enabled: true },
     ceremony: { launchWait: "detach" },
   };
@@ -100,7 +101,7 @@ async function rig(t: { after(fn: () => void): void }, o: { strong?: boolean } =
     hasUI: true,
     isProjectTrusted: () => false,
     isIdle: () => true,
-    modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }) },
+    modelRegistry: reviewAllowOpts().ctx.modelRegistry,
     ui: { notify: () => undefined, confirm: async () => false, select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined },
   };
   await handlers.get("session_start")!({ reason: "startup" }, ctx);
@@ -221,7 +222,7 @@ test("high: a single launch is not narrowed; a tasks call keeps its first task a
   const many = { tasks: [explorer(1), explorer(2), explorer(3)] };
   await a.assistant(["t1"], () => many);
   assert.equal(await a.launch("t1", many), undefined);
-  assert.deepEqual(many.tasks.map((x) => x.task), ["look 1"]);
+  assert.deepEqual(many.tasks.map((x) => x.task.split("\n")[0]), ["look 1"]); // the roots block (A6) follows the task text
   assert.equal(events(a, "launch_narrowed").length, 1);
   t.mock.timers.tick(30_000);
   assert.equal(a.wakes.length, 1, "no run is active: the queue is released at the next check");

@@ -1,11 +1,11 @@
-// The R41 gate: the single tool_call decision point. Slice 2: parse -> floors -> path rules and defaults. A call that is neither
-// blocked nor a default continues into the handlers that exist today (review, dialog and log come in later slices), so nothing is
-// loosened. A handler failure denies (fail-safe).
+// The R41 gate: the single tool_call decision point. Pipeline: parse -> floors -> selfmod -> defaults -> path rules -> review -> dialog
+// per session kind -> log. This module is the synchronous part (floors, selfmod, defaults, path rules); index.ts adds review, dialog and
+// log for a call it returns undefined for. Shell, path and payload tools all pass through here. A handler failure denies (fail-safe).
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import { lineDefault, toolDefault } from "./defaults.ts";
 import type { GitFacts } from "./defaults.ts";
-import { lineFloors, pathFloors, type FloorEnv, type FloorHit } from "./floors.ts";
+import { lineFloors, opaqueTextFloors, pathFloors, rawFloors, secretPath, type FloorEnv, type FloorHit } from "./floors.ts";
 import { PATH_TOOL_NAMES, pathDecide } from "./pathrules.ts";
 import { pathSelfmod, shellSelfmod, type SelfmodHit } from "./selfmod.ts";
 import type { GateRoots } from "./pathrules.ts";
@@ -48,6 +48,44 @@ function powershellSegment(cwd: string): ShellSegment {
   return { program: "powershell", argv: [], redirects: [], heredoc: false, cwd, wrappers: [], opaque: "foreign_shell" };
 }
 
+/**
+ * Tools whose payload is prose for another agent or the user (a builder brief may say "never use sudo"): the raw-text floors do NOT run
+ * on their prose fields, only the structured fields below are floored; the whole payload then goes to review.
+ */
+const PROSE_TOOLS = new Set(["subagent", "intercom", "contact_supervisor", "subagent_supervisor", "ask_user_question"]);
+const STRUCTURED_PATH_KEYS = ["cwd", "worktree", "output", "outputPath", "output_path", "outputFile"];
+
+/** Every string leaf of a JSON value, one per line (so a floor regex sees `rm -rf /` as the line it is, not as JSON). */
+function stringLeaves(v: unknown, out: string[] = [], depth = 0): string[] {
+  if (typeof v === "string") out.push(v);
+  else if (depth < 8 && v && typeof v === "object") for (const x of Object.values(v)) stringLeaves(x, out, depth + 1);
+  return out;
+}
+
+/** Floors for a tool that is neither shell nor path: structured path fields for prose tools, raw-text floors on the payload for the rest. */
+function payloadFloors(tool: string, inp: Record<string, unknown>, env: FloorEnv): FloorHit | null {
+  if (PROSE_TOOLS.has(tool)) {
+    for (const k of STRUCTURED_PATH_KEYS) {
+      const v = inp[k];
+      const h = typeof v === "string" && v ? secretPath(v, env) : null;
+      if (h) return h;
+    }
+    return null;
+  }
+  // the leaves as one text, then each quote- or line-delimited piece (`sh('rm -rf /')` in code is the text `rm -rf /`). Raw-text floors only:
+  // segment floors (secret paths) stay with the inner calls of codemode, which the gate decides one by one.
+  const leaves = stringLeaves(inp);
+  const text = leaves.join("\n");
+  if (!text) return null;
+  const hit = rawFloors(text) ?? opaqueTextFloors(text, env);
+  if (hit) return hit;
+  for (const piece of leaves.flatMap((l) => l.split(/[\n'"`]/)).map((p) => p.trim()).filter(Boolean)) {
+    const h = rawFloors(piece) ?? opaqueTextFloors(piece, env);
+    if (h) return h;
+  }
+  return null;
+}
+
 export function gateDecide(toolName: string, input: unknown, cwd: string, deps: GateDeps): GateResult {
   try {
     const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
@@ -74,6 +112,8 @@ export function gateDecide(toolName: string, input: unknown, cwd: string, deps: 
       const v = deps.roots ? pathDecide(toolName, inp, cwd, deps.roots(cwd), platform) : undefined;
       return v;
     }
+    const ph = payloadFloors(toolName, inp, env);
+    if (ph) return blocked(ph);
     const rule = toolDefault(toolName, inp);
     return rule ? { allow: true, rule } : undefined;
   } catch (e) {

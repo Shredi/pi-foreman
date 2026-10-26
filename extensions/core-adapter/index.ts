@@ -1942,9 +1942,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return rt;
   };
 
-  // R41 gate (slice 4a: floors, path rules, defaults, review, decision log): the first tool_call handler this extension registers. A floor
-  // or review deny blocks; a default or review allow is traced and logged; the handlers below still run for everything the gate does not
-  // block (an ask or an unreachable review falls through to them), so nothing is loosened until the dialog slice lands.
+  // R41 gate: the first tool_call handler this extension registers, deciding every tool call of every session kind. Pipeline: parse,
+  // floors, selfmod, defaults, path rules, review, dialog per session kind (owner dialog, round ask.md, child / headless deny), decision
+  // log. A floor or review deny blocks; a default or review allow is traced and logged; an ask goes to the dialog; a handler failure
+  // blocks. The handlers below still run for what the gate lets through.
   pi.on("tool_call", async (event, ctx) => {
     const gs = sessionFor(ctx);
     const stoppedMsg = gs?.isChild ? repeatStopped.get(gs.id) : undefined;
@@ -1992,8 +1993,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (changesState(event.toolName, r.rule)) rt?.cache.invalidateAllows();
       return undefined;
     }
-    const surface = gs && rt ? gateSurface(event.toolName) : null;
-    if (!gs || !rt || !surface) return undefined;
+    if (!gs || !rt) return undefined;
+    const surface = gateSurface(event.toolName);
     const sessionKey = `${event.toolName}\u0000${payload}`;
     if (gateStopped.has(gs.id)) {
       note("floor", "deny", "user-stop", STOP_TEXT);
@@ -2107,8 +2108,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
   };
   const SHELL_GATE_TOOLS = new Set(["bash", "foreman_bg", "bg_run", "powershell"]);
-  /** The review surface of a tool (review.ts REVIEW_SURFACES plus the path tools), or null when the gate does not review it. */
-  const gateSurface = (tool: string): string | null => (SHELL_GATE_TOOLS.has(tool) ? "bash" : PATH_TOOL_NAMES.has(tool) ? "file" : tool === "skill" ? "skill" : tool.startsWith("mcp") ? "mcp" : null);
+  /** The review surface of a tool: every tool has one; a tool that is not shell, path, skill or mcp is reviewed on its JSON payload ("json"). */
+  const gateSurface = (tool: string): string => (SHELL_GATE_TOOLS.has(tool) ? "bash" : PATH_TOOL_NAMES.has(tool) ? "file" : tool === "skill" ? "skill" : tool.startsWith("mcp") ? "mcp" : "json");
   /** The text the log shapes and the review reads: the command, the path operands, or the JSON input. */
   const gatePayload = (tool: string, input: unknown): string => {
     const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
