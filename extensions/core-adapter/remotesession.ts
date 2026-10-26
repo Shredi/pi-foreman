@@ -29,9 +29,10 @@ export function remoteOrigin(details: unknown): RemoteOrigin | null {
 
 export type RemoteNotice =
   | { kind: "plan" | "result" | "update" | "ask"; label: string; path: string; sha256: string; bytes: number; truncated: boolean; content: string }
-  | { kind: "closed"; path?: string; close?: string };
+  | { kind: "closed"; path?: string; close?: string }
+  | { kind: "refused"; reason: string };
 
-/** The notice contract of `remote notice` (scripts/foreman_session.py): `<Kind> from <label>: <path> sha256:<hex> bytes:<n>[ truncated]`, `---`, content; or `foreman:closed [path] [CLOSE: ready|open]`. */
+/** The notice contract of `remote notice` (scripts/foreman_session.py): `<Kind> from <label>: <path> sha256:<hex> bytes:<n>[ truncated]`, `---`, content; `foreman:closed [path] [CLOSE: ready|open]`, or `foreman:refused <reason>`. */
 export function parseRemoteNotice(text: unknown): RemoteNotice | null {
   if (typeof text !== "string") return null;
   const t = text.startsWith(UNVERIFIED_PREFIX) ? text.slice(UNVERIFIED_PREFIX.length) : text;
@@ -44,7 +45,9 @@ export function parseRemoteNotice(text: unknown): RemoteNotice | null {
     const content = rest.replace(/^---\r?\n?/, "");
     return { kind: h[1].toLowerCase() as "plan" | "result" | "update" | "ask", label: h[2], path: h[3], sha256: h[4], bytes: Number(h[5]), truncated: !!h[6], content };
   }
-  if (nl >= 0 && t.slice(nl).trim() !== "") return null; // the closed notice has no body
+  if (nl >= 0 && t.slice(nl).trim() !== "") return null; // the closed and refused notices have no body
+  const f = /^foreman:refused(?: (\S.*))?$/.exec(head.trim());
+  if (f) return { kind: "refused", reason: f[1] ?? "" };
   const c = /^foreman:closed(?: (?!CLOSE: )(\S.*?))?(?: CLOSE: (ready|open))?$/.exec(head.trim());
   if (!c) return null;
   return { kind: "closed", ...(c[1] ? { path: c[1] } : {}), ...(c[2] ? { close: c[2] } : {}) };
@@ -108,6 +111,13 @@ export function applyRemoteNotice(reg: Registry, origin: RemoteOrigin, notice: R
     entry.last = { kind: "closed", ...(result ? { path: result } : {}), at };
     if (result) entry.result = result;
     return { entry, kind: "closed", path: result ?? "", changed: true };
+  }
+  if (notice.kind === "refused") {
+    // the reason is remote text: one line, control characters stripped, cut to 200 characters
+    const reason = notice.reason.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim().slice(0, 200);
+    entry.last = { kind: "refused", path: reason, at };
+    if (entry.status === "closing") entry.status = "open";
+    return { entry, kind: "refused", path: reason, changed: true };
   }
   const win = (entry.remote as { platform?: unknown } | undefined)?.platform === "win32";
   const sep = Math.max(notice.path.lastIndexOf("/"), notice.path.lastIndexOf("\\"));

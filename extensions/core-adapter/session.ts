@@ -154,9 +154,6 @@ export function resolveTarget(reg: Registry, target: string): string {
   return target;
 }
 
-/** The close line for a remote entry: P1 cannot close a remote session. */
-export const remoteNotClosed = (s: SessionEntry): string => `${s.label}@${String(s.machine)}: not closed (remote close comes in P2; close it on ${String(s.machine)})`;
-
 /** The handoff dir of the newest registry entry for a label or child id; undefined when none is recorded. */
 export function resolveHandoff(reg: Registry, target: string): string | undefined {
   for (let i = reg.sessions.length - 1; i >= 0; i--) {
@@ -315,7 +312,7 @@ export function cliModelOf(argv: readonly string[]): string | undefined {
 
 export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>): Promise<SessionResult> {
   if (!d.python) return { text: "foreman_session.py: no usable Python (run /foreman doctor).", ok: false };
-  if (c.planMode && !d.commands?.includes("plan")) return { text: PLAN_MODE_UNAVAILABLE, ok: false };
+  if (c.planMode && !c.machine && !d.commands?.includes("plan")) return { text: PLAN_MODE_UNAVAILABLE, ok: false };
   const explicit = c.model ?? sessionForemanModel(d.config, d.model);
   const model = explicit ?? d.model;
   if (d.config && (model || d.model === undefined)) {
@@ -390,7 +387,14 @@ export async function sessionClose(d: SessionDeps, target: string, resultPath?: 
   const reg = readRegistry(d.agentDir);
   const to = resolveTarget(reg, target);
   const remote = [...reg.sessions].reverse().find((s) => s.child === to && typeof s.machine === "string");
-  if (remote) return { text: remoteNotClosed(remote), ok: false };
+  if (remote) {
+    const who = `${remote.label}@${String(remote.machine)}`;
+    if (!d.runRemote) return { text: `${who}: not closed (no remote runner)`, ok: false };
+    const r = await d.runRemote(["close-remote", remote.child, ...(resultPath ? ["--path", resultPath] : [])]);
+    const ok = !r.error && !r.timedOut && r.code === 0;
+    const text = ok ? `pi-foreman session: close request sent to ${who}.` : [r.stderr.trim(), r.stdout.trim()].filter(Boolean).join("\n") || (r.error ? r.error.message : r.timedOut ? "foreman_session.py timed out" : `${who}: close not sent`);
+    return { text, ok };
+  }
   const r = await sendTo(d, to, closeText(resultPath), "close request");
   const entry = reg.sessions.find((s) => s.child === to);
   if (r.ok && entry && entry.status !== "closed") {
@@ -454,6 +458,9 @@ export async function runSessionOpenTool(d: SessionDeps, params: Record<string, 
   const model = str("model");
   if (cwd) c.cwd = cwd;
   if (model) c.model = model;
+  const machine = str("machine");
+  if (machine) c.machine = machine;
+  if (params.trust === true) c.trust = true;
   if (params.planMode === true) c.planMode = true;
   if (Array.isArray(first) && first.length) c.firstCommands = first as string[];
   return sessionOpen(d, c);
@@ -573,10 +580,12 @@ const OPEN_PARAMS = {
     cwd: { type: "string", description: "Directory the new session runs in (default: this session's)." },
     model: { type: "string", description: "Model of the new session, <provider>/<id>; the rank rule applies." },
     planFirst: { type: "boolean", description: "The brief asks the session to write a plan first." },
-    planMode: { type: "boolean", description: "Open the session in plan mode (first command /plan); refused when this session has no /plan command." },
+    planMode: { type: "boolean", description: "Open the session in plan mode (first command /plan); for a local open, refused when this session has no /plan command (a remote open is checked on the remote machine)." },
     firstCommand: { type: "array", items: { type: "string" }, maxItems: 4, description: "Extension commands (each starting with /) the new session runs before the brief prompt." },
     focus: { type: "boolean", description: "Focus the new Herdr tab." },
     dryRun: { type: "boolean", description: "Print the handoff dir, child id and command; open nothing." },
+    machine: { type: "string", description: "Open the session on this remote machine (a sessions.machines name); needs cwd, the directory on that machine." },
+    trust: { type: "boolean", description: "With machine: record the trust grant for the remote folder on that machine (a stored refusal is not overridden)." },
   },
   required: ["label", "brief"],
   additionalProperties: false,
