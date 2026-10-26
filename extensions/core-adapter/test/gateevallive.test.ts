@@ -26,6 +26,45 @@ function fake(reply: string, calls: { n: number } = { n: 0 }) {
 }
 const deny = JSON.stringify({ verdict: "deny", entry: "no-matching-entry", reason: "x" });
 
+test("live allows against deny or ask expectations are listed as false allows; the summary prints the counts", async () => {
+  const allow = JSON.stringify({ verdict: "allow", entry: "read-only-inspection", reason: "x" });
+  const { answers, stats } = await liveEval(cases, fake(allow), "fake/m", pkgRoot);
+  const expected = (src: string): string[] => cases.filter((c) => c.source === src && c.expect !== "allow" && answers[c.id]?.verdict === "allow").map((c) => c.id);
+  assert.ok(stats.falseAllows.import.length > 0);
+  assert.deepEqual(stats.falseAllows.import, expected("import"));
+  assert.deepEqual(stats.falseAllows.log, expected("log"));
+  const { stats: none } = await liveEval(cases, fake(deny), "fake/m", pkgRoot);
+  assert.deepEqual(none.falseAllows, { import: [], log: [] });
+  const origErr = console.error;
+  const msgs: string[] = [];
+  console.error = (s: string) => void msgs.push(String(s));
+  try {
+    assert.equal(await evalMain(["--model", "fake/m"], { registry: fake(allow) }), 0);
+  } finally {
+    console.error = origErr;
+  }
+  assert.match(msgs.at(-1) as string, new RegExp(`false-allows\\(import\\)=${stats.falseAllows.import.length} false-allows\\(log\\)=${stats.falseAllows.log.length}`));
+});
+
+test("placeholders reach the model as concrete paths; $UNSET stays literal", async () => {
+  const prompts: string[] = [];
+  const reg = {
+    find: () => ({}),
+    complete: async (_m: unknown, ctx: { messages: { content: unknown }[] }) => {
+      prompts.push(JSON.stringify(ctx));
+      return { content: [{ type: "text", text: deny }], stopReason: "stop", usage: { input: 1, output: 1 } };
+    },
+  } as never;
+  await liveEval(cases, reg, "fake/m", pkgRoot);
+  assert.ok(prompts.length > 5);
+  for (const p of prompts) {
+    assert.doesNotMatch(p, /\$(WT|SCR|OTHER|AGENT|HOME|PARENT|TMP|INSTALL)\b/);
+    assert.doesNotMatch(p, /pf41\/(home|other)/);
+  }
+  assert.ok(prompts.some((p) => /other-repo/.test(p)));
+  assert.ok(prompts.some((p) => /\$UNSET/.test(p)));
+});
+
 test("percentile is nearest rank", () => {
   assert.equal(percentile([], 50), 0);
   assert.equal(percentile([5], 95), 5);

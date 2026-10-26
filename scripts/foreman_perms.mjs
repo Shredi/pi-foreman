@@ -148,7 +148,7 @@ function gateLogPath() {
 }
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const fmtStats = (s) => `eval: review-cases=${s.reviewCases} model-calls=${s.modelCalls} cache-hits=${s.cacheHits} invalid=${s.invalid} unreachable=${s.unreachable} agreement(import)=${s.agreement.agree}/${s.agreement.human} latency-p50=${s.latencyP50Ms}ms latency-p95=${s.latencyP95Ms}ms tokens-in=${s.inputTokens} tokens-out=${s.outputTokens}`;
+const fmtStats = (s) => `eval: review-cases=${s.reviewCases} model-calls=${s.modelCalls} cache-hits=${s.cacheHits} invalid=${s.invalid} unreachable=${s.unreachable} agreement(import)=${s.agreement.agree}/${s.agreement.human} false-allows(import)=${s.falseAllows.import.length} false-allows(log)=${s.falseAllows.log.length}${s.falseAllows.import.length + s.falseAllows.log.length ? ` [${[...s.falseAllows.import, ...s.falseAllows.log].join(",")}]` : ""} latency-p50=${s.latencyP50Ms}ms latency-p95=${s.latencyP95Ms}ms tokens-in=${s.inputTokens} tokens-out=${s.outputTokens}`;
 
 /** The registry of Pi's own model layer (the logged-in providers of the agent dir). `deps.registry` replaces it in tests. */
 async function piRegistry() {

@@ -29,6 +29,8 @@ export interface LiveStats {
   modelCalls: number;
   cacheHits: number;
   invalid: number;
+  /** ids of the live allows where the fixture expects deny or ask, by case source */
+  falseAllows: { import: string[]; log: string[] };
   unreachable: number;
   agreement: { agree: number; human: number };
   latencyP50Ms: number;
@@ -56,17 +58,21 @@ export async function liveEval(cases: EvalCase[], registry: RegistryLike, model:
   const wt = dir("wt");
   const scr = dir("tmp", "pi-foreman-scratch", "mine");
   const parent = dir("parent");
-  const agent = dir("agent");
+  const home = dir("home");
+  const agent = path.join(home, ".pi", "agent");
+  const other = dir("other-repo");
   const install = dir("pi");
   try {
-    for (const d of [path.join(wt, "src"), scr, path.join(parent, ".workflow", "scratch"), path.join(agent, "pi-foreman", "state"), install]) fs.mkdirSync(d, { recursive: true });
+    for (const d of [path.join(wt, "src"), scr, path.join(parent, ".workflow", "scratch"), path.join(agent, "pi-foreman", "state"), install, path.join(other, "src")]) fs.mkdirSync(d, { recursive: true });
     fs.writeFileSync(path.join(wt, "package.json"), JSON.stringify({ scripts: { test: "node --test", build: "tsc" } }));
     const subst = (c: EvalCase): Record<string, unknown> => {
       const w = c.platform === "win32";
       const map: Record<string, string> = w
         ? { $WT: WIN.wt, $SCR: WIN.scr, $PARENT: "D:\\parent", $TMP: WIN.tmp, $AGENT: WIN.agent, $HOME: WIN.home, $OTHER: WIN.other, $INSTALL: "D:\\pi" }
-        : { $WT: wt, $SCR: scr, $PARENT: parent, $TMP: dir("tmp"), $AGENT: agent, $HOME: "/pf41/home", $OTHER: "/pf41/other", $INSTALL: install };
-      const walk = (v: unknown): unknown => (typeof v === "string" ? Object.entries(map).reduce((s, [k, x]) => s.split(k).join(x), v) : Array.isArray(v) ? v.map(walk) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v);
+        : { $WT: wt, $SCR: scr, $PARENT: parent, $TMP: dir("tmp"), $AGENT: agent, $HOME: home, $OTHER: other, $INSTALL: install };
+      // `~` as a whole word or a path prefix is the home dir; $UNSET and $X stay literal unset variables on purpose
+      const tilde = (s: string): string => s.replace(/(^|[\s"'=:])~(?=\/|\s|$|"|')/g, `$1${w ? WIN.home : home}`);
+      const walk = (v: unknown): unknown => (typeof v === "string" ? tilde(Object.entries(map).reduce((s, [k, x]) => s.split(k).join(x), v)) : Array.isArray(v) ? v.map(walk) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v);
       return walk(c.input) as Record<string, unknown>;
     };
     const rootsOf = (c: EvalCase): GateRoots => {
@@ -81,7 +87,7 @@ export async function liveEval(cases: EvalCase[], registry: RegistryLike, model:
     const envOf = (c: EvalCase): FloorEnv => {
       const w = c.platform === "win32";
       return {
-        cwd: w ? WIN.wt : wt, home: w ? WIN.home : "/pf41/home", agentDir: w ? WIN.agent : agent, platform: w ? "win32" : process.platform, protectedBranches: ["trunk"],
+        cwd: w ? WIN.wt : wt, home: w ? WIN.home : home, agentDir: w ? WIN.agent : agent, platform: w ? "win32" : process.platform, protectedBranches: ["trunk"],
         currentBranch: () => "round/41-x", remoteHead: () => "trunk", writeRoots: w ? [WIN.wt, WIN.scr, WIN.tmp] : [wt, scr, dir("tmp"), "/tmp"],
       };
     };
@@ -90,7 +96,7 @@ export async function liveEval(cases: EvalCase[], registry: RegistryLike, model:
     const cache = new GateCache();
     const answers: Answers = {};
     const latencies: number[] = [];
-    const stats: LiveStats = { reviewCases: 0, modelCalls: 0, cacheHits: 0, invalid: 0, unreachable: 0, agreement: { agree: 0, human: 0 }, latencyP50Ms: 0, latencyP95Ms: 0, inputTokens: 0, outputTokens: 0 };
+    const stats: LiveStats = { reviewCases: 0, modelCalls: 0, cacheHits: 0, invalid: 0, falseAllows: { import: [], log: [] }, unreachable: 0, agreement: { agree: 0, human: 0 }, latencyP50Ms: 0, latencyP95Ms: 0, inputTokens: 0, outputTokens: 0 };
     for (const c of cases) {
       const input = subst(c);
       const cwd = c.platform === "win32" ? WIN.wt : wt;
@@ -135,6 +141,7 @@ export async function liveEval(cases: EvalCase[], registry: RegistryLike, model:
       } else {
         answers[c.id] = { verdict: v.kind, entry: v.entry };
       }
+      if (v.kind === "allow" && c.expect !== "allow") stats.falseAllows[c.source].push(c.id);
       if (c.source === "import") {
         stats.agreement.human++;
         if (v.kind === c.expect) stats.agreement.agree++;
