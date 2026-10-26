@@ -78,6 +78,7 @@ below such a heading neither needs a new review nor resets the checkpoint; a bod
 starts a new lineage. The first FAIL of a lineage refuses once with `plan_revision_required`, so the planner revises
 before the owner sees it; once the revised plan (new bytes) has a verdict, the checkpoint opens whatever it says. The
 owner's dialog shows `Plan review: PASS|FAIL (reviewer <model>)` and up to 8 located findings (`file:line class note`).
+`ceremony.planReviewMax` (default 4) caps the `[plan-review]` runs per plan topic per session. At the cap a further launch is refused (`launch_refused:plan_review_cap`) and the checkpoint opens with the latest verdict and `Plan review cap reached (N reviews); the owner decides` (see [ceremony](ceremony.md#plan-state-tier-source-and-plan-phase)).
 Trace `plan_review {model, decision}`. The foreman's instructions carry the plan-review step only while it is on
 (`<!--planReview=on-->` variant). Plan review uses the model rule like any other occasion.
 

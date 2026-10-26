@@ -55,11 +55,12 @@ class GeneratorTest(unittest.TestCase):
                     "/tmpx/pi-foreman-scratch/*", a + "/foreman.json", a + "/settings.json"):
             self.assertEqual(ext[pat], "allow", pat)
         keys = list(ext)
-        for tail in ("/parent", "/child"):
+        for tail in ("/parent", "/child", "/live.json"):
             pat = a + "/pi-foreman/handoffs/*" + tail
             self.assertEqual(ext[pat], "ask")
             self.assertLess(keys.index(a + "/pi-foreman/handoffs/*"), keys.index(pat))
-        self.assertEqual(keys[-2:], [a + "/pi-foreman/handoffs/*/parent", a + "/pi-foreman/handoffs/*/child"])
+        self.assertEqual(keys[-3:], [a + "/pi-foreman/handoffs/*/parent", a + "/pi-foreman/handoffs/*/child", a + "/pi-foreman/handoffs/*/live.json"])
+        self.assertEqual(ext[a + "/pi-foreman/handoffs/*/live.json"], "ask")
         read = p["external_directory_read"]
         for pat in (a + "/pi-foreman/*", "/opt/npm/lib/node_modules", "/opt/npm/lib/node_modules/*"):
             self.assertEqual(read[pat], "allow", pat)

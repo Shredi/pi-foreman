@@ -13,7 +13,7 @@ again. All four subcommands are yours to type; a subagent child refuses every on
   (with `--machine`, `--print-all` is refused: `remote_option`; `--plan-mode` and `--first-command` are checked on the remote; `--focus` focuses the new tab on the remote machine)
   writes a handoff dir (below), starts `pi` in a new Herdr tab (or prints the command to run in a terminal)
   and records the session. The label is 1 to 40 characters of `A-Z a-z 0-9 . _ -`. `--plan-first` makes the
-  brief ask for a `plan.md` and a stop before any work; `--focus` focuses the new tab; `--dry-run` writes nothing
+  brief ask for a `plan.md` and a stop before any work, and sets the plan phase (`PI_FOREMAN_PLAN_PHASE=1`, see [ceremony](ceremony.md#plan-state-tier-source-and-plan-phase)); `--focus` focuses the new tab; `--dry-run` writes nothing
   (no handoff dir, brief, parent, child or registry entry) and prints the handoff path, the child id, the session
   model (`session model: <id>`, when `--model` is given) and the command it would run; no Herdr call.
   Example: `/foreman session open docs ./brief-docs.md --cwd ../site --model anthropic/claude-sonnet-4-5 --plan-first`
@@ -68,6 +68,13 @@ A foreman session can open a session without bash: `foreman_session_open({label,
 - `parent`: the opener's intercom id, one line. The child's close check reads it every time. The parent-id path works for a Pi parent only; other parents (for example a Claude session) are reached through the handoff files ([ask by file](#ask-by-file-parent-that-is-not-a-pi-session)).
 - `child`: the child's intercom id, `fm-<slug>-<6 hex>`. The child also gets it as `PI_INTERCOM_STABLE_ID`.
 - later, written by the child: `plan.md` (with `--plan-first`) and `result.md`.
+- `live.json`: `{intercomId, piSessionId, at}`, written by the child's adapter at each session start. It binds the handoff dir to the Pi session. It is write-ask, like `parent` and `child`.
+
+#### Identity after a restart
+
+After a Herdr restart `pi` resumes the child's session file without the handoff env. The adapter writes a session entry `pi-foreman-identity` (Pi session id, child id, parent label, handoff dir, model, remote flag, session name) when a value changes, and restores it at the next start unless the start is a fork. It counts only if the entry's Pi session id is this session's id, the handoff dir's `child` file equals the entry's child id, and the handoff `live.json` names this Pi session id. A fork or a copied session file gets a new id and restores nothing. The parent id is re-read from the `parent` file. The restore sets the handoff, parent and intercom env, the parent label, the remote flag, the session name when empty, and the session model on startup and on resume. A `pi-intercom` loaded before core-adapter is unsupported: the id may already be published, so the adapter warns and asks for `/reload`.
+
+`brief` and `close` also resolve the target by a Pi session id found in a registry entry's `live.json`. On `Session not found` they retry once with the `intercomId` in that `live.json` when it differs from the registry's child id. The retry target always comes from the handoff dir the registry entry names.
 
 The child starts with `PI_FOREMAN_HANDOFF_DIR` (the dir), `PI_FOREMAN_PARENT_INTERCOM` (the parent id) and its
 prompt "Read the handoff brief at <dir>/brief.md and proceed." The registry is

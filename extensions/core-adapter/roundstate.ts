@@ -3,7 +3,7 @@
 //
 // The file keeps the handoff dir, the checkpointed plan's topic and version hash, the plan-review lineage of that plan,
 // the review counters and the revision rounds per chain. It never keeps an approval: on session_start the checkpoint
-// approval comes back only from the parent's `ruling.md` (parentApproval restore mode: first line APPROVED, ctime newer
+// approval comes back only from the parent's `ruling-plan.md` or `ruling.md` (parentApproval restore mode: first line APPROVED, ctime newer
 // than the ctime of both `<scratch>/plan-<topic>.md` and `<handoff>/plan.md`, and both plan files of one version hash). Any other field (`approved: true`) is
 // ignored. A different handoff dir or plan hash discards the whole file (re-ceremony). Counters restore only as
 // non-negative integers; a chain with a bad one starts fresh. The rulings a chain used and its last refusal are not kept; the caps-reset
