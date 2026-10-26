@@ -16,6 +16,10 @@ Precedence: floors, then `ask`, then `deny`, then `allow`. No matching entry is 
   Routine git in the worktree: add, commit on the session's own branch, switch to the session's own branches, fetch, pull of the current branch, diff, stash of own work.
 - id: forge-reads
   Read-only gh and glab calls: pr/issue view and list, checks, run view, api GET requests against the repository's own forge.
+- id: gh-pr-edit-own
+  `gh pr edit` only for the session's own pull request, the one whose head is the session's current branch (the ask payload carries `branch` and `head`). Allow only when the PR number, URL or branch named in the command is that PR (or the command names none and gh resolves the current branch). Deny `gh pr edit` of any other PR, and deny when you cannot tell which PR it targets.
+- id: merge-attributes-file
+  `git -c core.attributesFile=<path> merge ...`, only for the `merge` subcommand and only when `<path>` lies under the repository's `.workflow/` directory (worktree or main checkout). This one use of `-c core.attributesFile` is allowed despite tool-config-edit. Deny the same `-c` on any other subcommand, with a path outside `.workflow/`, or with a path you cannot resolve; any other `-c` key stays under tool-config-edit.
 
 ## deny
 
@@ -33,11 +37,13 @@ Precedence: floors, then `ask`, then `deny`, then `allow`. No matching entry is 
 ## ask
 
 - id: package-install
-  Installing or removing packages or global tools: npm/pnpm/yarn install, pip install, brew, apt, cargo install, go install.
+  Installing or removing packages or global tools: npm/pnpm/yarn install or ci, pip install, brew, apt, cargo install, go install. Also when the output is redirected to /tmp or the scratch dir (`npm ci > /tmp/x.log`): the redirect does not make an install routine.
+- id: inline-interpreter-script
+  Inline interpreter scripts given on the command line: `python3 -c`, `python3 -I -c`, `node -e`, `perl -e`, `ruby -e` and similar, also inside a pipe. The script is not visible to this review, so the owner decides.
 - id: new-remote
   Adding, changing or removing a git remote or its URLs, or any push configuration.
 - id: tool-config-edit
-  Editing configuration of tools and the harness: settings.json, shell profiles, editor or CI config outside the task, git config, MCP server definitions.
+  Editing configuration of tools and the harness: settings.json, shell profiles, editor or CI config outside the task, git config (including `git -c <key>=...`, except the merge case of allow entry merge-attributes-file), MCP server definitions.
 
 ## context
 

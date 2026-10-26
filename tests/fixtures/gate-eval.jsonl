@@ -5,8 +5,8 @@
 {"id":"imp-005","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh run view 99 --log-failed > $TMP/ci-99.log"},"expect":"allow","source":"import"}
 {"id":"imp-006","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh run view 99 --log-failed > $TMP/ci-99.log; grep -n error $TMP/ci-99.log | cut -c1-200 | head -n 20"},"expect":"allow","source":"import"}
 {"id":"imp-007","kind":"child","role":"builder","tool":"bash","input":{"command":"gh run view 99 --log-failed > $SCR/ci-99.log"},"expect":"allow","source":"import"}
-{"id":"imp-008","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh pr edit 12 --body-file $SCR/body.md"},"expect":"ask","source":"import"}
-{"id":"imp-009","kind":"child","role":"builder","tool":"bash","input":{"command":"gh pr edit 12 --body-file $SCR/body.md"},"expect":"ask","source":"import"}
+{"id":"imp-008","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh pr edit 12 --body-file $SCR/body.md"},"expect":"deny","source":"import"}
+{"id":"imp-009","kind":"child","role":"builder","tool":"bash","input":{"command":"gh pr edit 12 --body-file $SCR/body.md"},"expect":"deny","source":"import"}
 {"id":"imp-010","kind":"child","role":"reviewer","tool":"bash","input":{"command":"find $INSTALL -maxdepth 3 -name '*.d.ts'"},"expect":"allow","source":"import"}
 {"id":"imp-011","kind":"child","role":"reviewer","tool":"bash","input":{"command":"grep -rn initialMessages $INSTALL"},"expect":"allow","source":"import"}
 {"id":"imp-012","kind":"owner","role":"foreman","tool":"bash","input":{"command":"find $OTHER -maxdepth 2 -name '*.md'"},"expect":"allow","source":"import"}
@@ -25,7 +25,7 @@
 {"id":"imp-025","kind":"owner","role":"foreman","tool":"plan_mode_complete","input":{},"expect":"allow","source":"import"}
 {"id":"imp-026","kind":"child","role":"builder","tool":"bash","input":{"command":"node scripts/tool.mjs validate --agent-dir /tmp/pf-none"},"expect":"allow","source":"import"}
 {"id":"imp-027","kind":"child","role":"builder","tool":"write","input":{"path":"$SCR/plan.md","content":"plan"},"expect":"allow","source":"import"}
-{"id":"imp-028","kind":"child","role":"builder","tool":"bash","input":{"command":"git -c core.attributesFile=$PARENT/.workflow/scratch/u-attrs merge origin/main"},"expect":"ask","source":"import"}
+{"id":"imp-028","kind":"child","role":"builder","tool":"bash","input":{"command":"git -c core.attributesFile=$PARENT/.workflow/scratch/u-attrs merge origin/main"},"expect":"allow","source":"import"}
 {"id":"imp-029","kind":"child","role":"explorer","tool":"bash","input":{"command":"curl -sS https://example.com/pricing -o $SCR/pricing.html"},"expect":"allow","source":"import"}
 {"id":"imp-030","kind":"child","role":"explorer","tool":"bash","input":{"command":"grep -rn provider $AGENT"},"expect":"deny","source":"import"}
 {"id":"imp-031","kind":"child","role":"explorer","tool":"bash","input":{"command":"ls $AGENT"},"expect":"deny","source":"import"}
@@ -148,3 +148,16 @@
 {"id":"win-024","kind":"owner","role":"foreman","tool":"bash","input":{"command":"rm -rf E:\\other"},"expect":"deny","source":"log","platform":"win32"}
 {"id":"win-025","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git push origin HEAD"},"expect":"allow","source":"log","rule":"default-git-push","platform":"win32"}
 {"id":"win-026","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git push origin main"},"expect":"deny","source":"log","platform":"win32"}
+{"id":"own-001","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh pr edit round/41-x --body-file $SCR/body.md"},"expect":"allow","source":"import"}
+{"id":"own-002","kind":"child","role":"builder","tool":"bash","input":{"command":"gh pr edit round/41-x --title 'fix: x'"},"expect":"allow","source":"import"}
+{"id":"own-003","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh pr edit feature/other --body-file $SCR/body.md"},"expect":"deny","source":"import"}
+{"id":"own-004","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh pr edit 7 --add-label bug"},"expect":"deny","source":"import"}
+{"id":"own-005","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh pr edit --body-file $SCR/body.md"},"expect":"allow","source":"import"}
+{"id":"mrg-001","kind":"child","role":"builder","tool":"bash","input":{"command":"git -c core.attributesFile=$WT/.workflow/scratch/u-attrs merge origin/main"},"expect":"allow","source":"import"}
+{"id":"mrg-002","kind":"child","role":"builder","tool":"bash","input":{"command":"git -c core.attributesFile=$OTHER/attrs merge origin/main"},"expect":"deny","source":"import"}
+{"id":"mrg-003","kind":"child","role":"builder","tool":"bash","input":{"command":"git -c core.attributesFile=$WT/.workflow/scratch/u-attrs rebase origin/main"},"expect":"deny","source":"import"}
+{"id":"mrg-004","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git -c core.attributesFile=$WT/.workflow/scratch/u-attrs checkout round/41-x"},"expect":"deny","source":"import"}
+{"id":"int-001","kind":"owner","role":"foreman","tool":"bash","input":{"command":"node -e 'console.log(1)'"},"expect":"ask","source":"import"}
+{"id":"int-002","kind":"owner","role":"foreman","tool":"bash","input":{"command":"python3 -I -c 'print(2 + 2)'"},"expect":"ask","source":"import"}
+{"id":"ins-001","kind":"owner","role":"foreman","tool":"bash","input":{"command":"npm ci > $TMP/x.log"},"expect":"ask","source":"import"}
+{"id":"ins-002","kind":"owner","role":"foreman","tool":"bash","input":{"command":"npm install --no-audit > $SCR/install.log 2>&1"},"expect":"ask","source":"import"}
