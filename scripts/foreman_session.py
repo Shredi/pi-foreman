@@ -7,10 +7,11 @@
                                       [--parent-id ID] [--own-model ID] [--agent-dir D]
     python scripts/foreman_session.py open <label> <brief-file> --machine NAME --cwd DIR [--trust] [...]
     python scripts/foreman_session.py list [--json] [--agent-dir D]
-    python scripts/foreman_session.py remote probe|open|deliver|outbox --json   (the remote side; JSON on stdin)
+    python scripts/foreman_session.py remote probe|open|deliver|outbox|close --json   (the remote side; JSON on stdin)
     python scripts/foreman_session.py remote notice <plan|result|update|ask|closed> [file] [--close ready|open]
     python scripts/foreman_session.py remote notice refused --reason=TEXT
     python scripts/foreman_session.py pull <label|child id|all> [--json] [--agent-dir D]
+    python scripts/foreman_session.py close-remote <label|child id> [--path P.md] [--json] [--agent-dir D]
     python scripts/foreman_session.py brief <handoff dir|label|child id> <text|file> [--parent-id ID] [--agent-dir D]
 
 `open` writes the handoff dir `<agent dir>/pi-foreman/handoffs/<YYYYmmdd-HHMMSS>-<slug>/`:
@@ -110,6 +111,8 @@ OUTBOX_TIMEOUT = CLOSE_TIMEOUT = 30
 OUTBOX_FILE, OUTBOX_LOCK, RETURN_PATH_FILE = "outbox.jsonl", "outbox.lock", "return-path"
 OUTBOX_LOCK_SECONDS = 10  # msvcrt.locking gives up after about this long; the POSIX retry loop matches it
 OUTBOX_TEXT_MAX = 65536
+CLOSE_FILE = "close.json"
+RESULT_PATH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,200}\Z")  # as close.ts RESULT_PATH_RE
 OUTBOX_DEFAULT_BYTES, OUTBOX_MAX_BYTES = 262144, 1048576
 REFUSED_REASON_MAX = 200
 SSH_ERR_MAX = 2048
@@ -579,9 +582,8 @@ def open_in_herdr(binary, label, cwd, workspace_label, command, focus):
 
 def cmd_open(a):
     if getattr(a, "machine", None):
-        for flag, given in (("--plan-mode", a.plan_mode), ("--first-command", a.first_command), ("--focus", a.focus), ("--print-all", a.print_all)):
-            if given:
-                raise Refused("%s is not supported with --machine in this version" % flag, "remote_option")
+        if a.print_all:
+            raise Refused("--print-all is not supported with --machine in this version", "remote_option")
         return cmd_open_remote(a)
     if getattr(a, "trust", False):
         raise Refused("--trust needs --machine")
@@ -908,9 +910,16 @@ def check_trust(adir, cwd, trust, dry_run):
 def remote_open(adir, params):
     spec = {"label": str, "brief": str, "cwd": str, "model": (str, type(None)), "ownModel": (str, type(None)),
             "planFirst": bool, "parentAddress": str, "parentName": str, "trust": bool, "dryRun": bool,
-            "returnPath": str, "pollSeconds": int}
+            "returnPath": str, "pollSeconds": int, "firstCommands": list, "focus": bool}
     check_fields(params, spec, ("label", "brief", "cwd", "parentAddress", "parentName"))
     mode = request_mode(params)
+    first = params.get("firstCommands", [])
+    try:
+        if not all(isinstance(c, str) for c in first):
+            raise Refused("firstCommands must be a list of strings")
+        check_first_commands(first)
+    except Refused as e:
+        raise Refused(str(e), "bad_request")
     poll = params.get("pollSeconds")
     if "pollSeconds" in params and (mode != "pull" or isinstance(poll, bool) or not 1 <= poll <= 3600):
         raise Refused("pollSeconds is an integer of 1..3600 and belongs to a pull open", "bad_request")
@@ -939,8 +948,8 @@ def remote_open(adir, params):
     remote = {"parentName": params["parentName"], "cap": inline_cap(adir), "say": lines.append, "trusted": trusted,
               "mode": mode, "poll": poll}
     p = {"adir": adir, "label": label, "text": params["brief"], "cwd": cwd, "model": model, "own_model": own,
-         "plan_first": params.get("planFirst") is True, "parent": params["parentAddress"], "focus": False,
-         "dry_run": dry, "print_all": False}
+         "plan_first": params.get("planFirst") is True, "parent": params["parentAddress"], "focus": params.get("focus") is True,
+         "dry_run": dry, "print_all": False, "first": first}
     _, info = open_session(p, remote)
     reply = {k: v for k, v in info.items() if v is not None}
     reply["handoffName"] = Path(info["handoff"]).name
@@ -1102,6 +1111,40 @@ def remote_outbox(adir, params):
             "live": live_summary(adir, read_small(d / "child"))}
 
 
+def remote_close(adir, params):
+    """Record the parent's close order in <handoff>/close.json (the child's authority to close) and wake the child."""
+    spec = {"handoffName": str, "parentAddress": str, "path": str}
+    check_fields(params, spec, ("handoffName", "parentAddress"))
+    if not ADDRESS_RE.match(params["parentAddress"]):
+        raise Refused("parentAddress must be <id>@<machine>", "bad_request")
+    path = params.get("path")
+    if path is not None and not (RESULT_PATH_RE.match(path) and path.endswith(".md")):
+        raise Refused("the result path may use only A-Z a-z 0-9 . _ / - (at most 200 characters) and must end in .md", "bad_request")
+    d = deliver_dir(adir, params["handoffName"])
+    if read_small(d / "parent") != params["parentAddress"]:
+        raise Refused("the session behind this handoff dir does not belong to %s" % params["parentAddress"], "wrong_session")
+    child = read_small(d / "child")
+    if not child or not VALUE_RE.match(child):
+        raise Refused("the handoff dir has no usable child id", "no_handoff")
+    order = {"v": 1, "parent": params["parentAddress"]}
+    if path is not None:
+        order["path"] = path
+    order["at"] = iso_now()
+    fd, tmp = tempfile.mkstemp(prefix=".close-", dir=str(d))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(order) + "\n")
+        os.replace(tmp, str(d / CLOSE_FILE))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    woke, _ = send_intercom(child, "foreman:close")
+    return {"woke": woke}
+
+
 def read_params():
     stream = getattr(sys.stdin, "buffer", None)
     raw = stream.read(MAX_STDIN_BYTES + 1) if stream else sys.stdin.read(MAX_STDIN_BYTES + 1).encode("utf-8")
@@ -1124,7 +1167,8 @@ def cmd_remote(a):
     """`remote probe|open|deliver`: the only stdout is the final JSON line."""
     adir = agent_dir(a.agent_dir)
     try:
-        verbs = {"probe": remote_probe, "open": remote_open, "deliver": remote_deliver, "outbox": remote_outbox}
+        verbs = {"probe": remote_probe, "open": remote_open, "deliver": remote_deliver, "outbox": remote_outbox,
+                 "close": remote_close}
         reply = dict(verbs[a.verb](adir, read_params()), ok=True)
     except Refused as e:
         reply = {"ok": False, "code": e.code or "refused", "error": str(e)}
@@ -1423,6 +1467,23 @@ def ssh_verb(name, target, command, verb, payload, timeout):
     return reply
 
 
+def relay_warning(name, relay):
+    """A warning when the remote's pi-intercom relay command cannot be found on this machine's PATH (best effort: this
+    process sees the interactive PATH, the SSH one may differ), else None. The remote's text is never repeated."""
+    try:
+        words = shlex.split(relay)
+    except ValueError:
+        words = []
+    if words and (os.path.isabs(words[0]) or shutil.which(words[0])):
+        return None
+    cli, node = intercom_cli(), shutil.which("node")
+    if words and cli and node:
+        return ("the relay command of %s is not on PATH here, so push notices may not arrive. Set crossMachine.remoteCommand in "
+                "%s's pi-intercom config to: %s %s" % (name, name, shlex.quote(node), shlex.quote(str(cli))))
+    return ("the relay command of %s was not found on PATH here (best effort check); push notices may not arrive. "
+            "See docs/sessions.md, pi-intercom on PATH" % name)
+
+
 def cmd_open_remote(a):
     adir = agent_dir(a.agent_dir)
     name = a.machine
@@ -1434,6 +1495,8 @@ def cmd_open_remote(a):
         raise Refused("brief file not found: %s" % a.brief)
     if not a.cwd or PATH_BAD.search(a.cwd):
         raise Refused("--machine needs --cwd: a directory on %s without characters that cannot be passed safely" % name, "cwd_required")
+    first = first_commands(a.first_command or [], a.plan_mode)
+    check_first_commands(first)
     if a.model and not VALUE_RE.match(a.model):
         raise Refused("--model may use only A-Z a-z 0-9 . _ : / @ -")
     own_model = a.own_model or os.environ.get(ENV_MODEL, "").strip() or None
@@ -1480,9 +1543,19 @@ def cmd_open_remote(a):
     if probe.get("returnPathOk") is not True:
         raise Refused("%s cannot send notices back to %s: %s" % (name, address, probe.get("returnPathError") or "no return path"),
                       "no_return_path")
+    if mode == "push":
+        if not isinstance(probe.get("relayCommand"), str):
+            raise Unreachable("remote %s unreachable: its probe reply is malformed" % name)
+        warning = relay_warning(name, probe["relayCommand"])
+        if warning:
+            sys.stderr.write("pi-foreman session: %s\n" % warning)
     payload = {"label": a.label, "brief": text, "cwd": a.cwd, "model": a.model, "ownModel": own_model,
                "planFirst": a.plan_first, "parentAddress": address, "parentName": parent_name, "trust": a.trust,
                "dryRun": a.dry_run}
+    if first:
+        payload["firstCommands"] = first
+    if a.focus:
+        payload["focus"] = True
     if mode == "pull":
         pull_cfg = session_config(adir).get("pull")
         every = pull_cfg.get("intervalSeconds") if isinstance(pull_cfg, dict) else None
@@ -1579,6 +1652,43 @@ def remote_brief(a, adir, entry):
     return 0
 
 
+def cmd_close_remote(a):
+    """`close-remote <label|child> [--path p]`: order the remote child to close; the entry becomes `closing`."""
+    adir = agent_dir(a.agent_dir)
+    entry = find_entry(adir, a.target)
+    if not entry:
+        raise Refused("no session with label or child id %r (see: foreman session list)" % a.target)
+    if not isinstance(entry.get("machine"), str) or not entry["machine"]:
+        raise Refused("%s is not a session on a remote machine" % a.target, "not_remote")
+    if entry.get("status") not in ("open", "pending"):
+        raise Refused("%s is %s, not open" % (a.target, entry.get("status")), "not_open")
+    if a.path is not None and not (RESULT_PATH_RE.match(a.path) and a.path.endswith(".md")):
+        raise Refused("--path may use only A-Z a-z 0-9 . _ / - (at most 200 characters) and must end in .md")
+    name = entry["machine"]
+    payload = {"handoffName": entry.get("handoffName"), "parentAddress": entry.get("parentAddress")}
+    if a.path is not None:
+        payload["path"] = a.path
+    try:
+        _, command = machine_entry(adir, name)
+        reply = ssh_verb(name, machine_target(name), command, "close", payload, CLOSE_TIMEOUT)
+    except Refused as e:
+        why = str(e) if isinstance(e, Unreachable) or not e.code else "[%s] %s" % (e.code, e)
+        mark_entry(adir, entry, lastError=why)
+        sys.stderr.write("pi-foreman session: close for %s@%s not sent (%s).\n" % (entry.get("label"), name, why))
+        return 1
+    mark_entry(adir, entry, status="closing", closeSentAt=time.strftime("%Y-%m-%dT%H:%M:%S"), lastError=None)
+    print_json(dict(reply, ok=True))
+    return 0
+
+
+def mark_entry(adir, entry, **fields):
+    reg = read_registry(adir)
+    for s in reg["sessions"]:
+        if isinstance(s, dict) and s.get("child") == entry.get("child"):
+            s.update(fields)
+    write_registry(adir, reg)
+
+
 def pull_one(adir, entry, targets):
     """Run the outbox verb for one registry entry; the `pulled` item. `targets` caches the SSH target per machine."""
     name = entry["machine"]
@@ -1642,16 +1752,16 @@ def cmd_list(a):
 def resolve_child(adir, target):
     """A handoff dir (its `child` file) or a registry label / child id (newest entry wins) -> (the child's intercom id,
     its handoff dir or None). The handoff dir is the target itself when it is one, else the entry's `handoff`."""
+    for s in reversed(read_registry(adir)["sessions"]):
+        if isinstance(s, dict) and target in (s.get("label"), s.get("child")) and VALUE_RE.match(str(s.get("child"))):
+            handoff = s.get("handoff")
+            return s["child"], (Path(handoff) if isinstance(handoff, str) and handoff else None)
     p = Path(target)
     if p.is_dir() and (p / "child").is_file():
         child = (p / "child").read_text("utf-8").strip()
         if VALUE_RE.match(child):
             return child, p
         raise Refused("%s has no usable child id" % (p / "child"))
-    for s in reversed(read_registry(adir)["sessions"]):
-        if isinstance(s, dict) and target in (s.get("label"), s.get("child")) and VALUE_RE.match(str(s.get("child"))):
-            handoff = s.get("handoff")
-            return s["child"], (Path(handoff) if isinstance(handoff, str) and handoff else None)
     raise Refused("no session with handoff dir, label or child id %r (see: foreman session list)" % target)
 
 
@@ -1697,7 +1807,7 @@ def new_brief(handoff, data):
 
 def cmd_brief(a):
     adir = agent_dir(a.agent_dir)
-    entry = None if Path(a.target).is_dir() else find_entry(adir, a.target)
+    entry = find_entry(adir, a.target)
     if entry and entry.get("machine"):
         return remote_brief(a, adir, entry)
     to, handoff = resolve_child(adir, a.target)
@@ -1752,7 +1862,7 @@ def main(argv=None):
     b.add_argument("--agent-dir", dest="agent_dir_sub")
     rm = sub.add_parser("remote")
     verbs = rm.add_subparsers(dest="verb")
-    for verb in ("probe", "open", "deliver", "outbox"):
+    for verb in ("probe", "open", "deliver", "outbox", "close"):
         v = verbs.add_parser(verb)
         v.add_argument("--json", action="store_true")
         v.add_argument("--agent-dir", dest="agent_dir_sub")
@@ -1766,6 +1876,11 @@ def main(argv=None):
     pl.add_argument("target")
     pl.add_argument("--json", action="store_true")
     pl.add_argument("--agent-dir", dest="agent_dir_sub")
+    cr = sub.add_parser("close-remote")
+    cr.add_argument("target")
+    cr.add_argument("--path")
+    cr.add_argument("--json", action="store_true")
+    cr.add_argument("--agent-dir", dest="agent_dir_sub")
     ls = sub.add_parser("list")
     ls.add_argument("--json", action="store_true")
     ls.add_argument("--agent-dir", dest="agent_dir_sub")
@@ -1779,6 +1894,8 @@ def main(argv=None):
     try:
         if a.cmd == "pull":
             return cmd_pull(a)
+        if a.cmd == "close-remote":
+            return cmd_close_remote(a)
         if a.cmd == "open":
             return cmd_open(a)
         if a.cmd == "list":
