@@ -40,6 +40,8 @@ jobs:
         run: npm install --no-package-lock --no-audit --no-fund
       - name: adapter tests
         run: node --test "extensions/core-adapter/test/*.test.ts"
+      - name: gate eval (offline)
+        run: node --test extensions/core-adapter/test/gate-eval.test.ts
       - name: installer tests (dry-run, idempotent second run, remove)
         run: node --test "tests/installer/*.test.mjs"
       - name: install Pi (pinned)
