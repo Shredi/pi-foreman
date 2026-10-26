@@ -20,12 +20,15 @@ YES = [{"value": "allow once"}, {"value": "Yes"}]  # the gate dialog; then the p
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % (REASON,))
 class TestModelReview(ReplayCase):
-    def review_rig(self, kind, timeout_ms=None):
+    def review_rig(self, kind, timeout_ms=None, b_without_review=False):
         review = {"model": "%s/review-%s" % (PROVIDER_A, kind)}
         if timeout_ms:
             review["timeoutMs"] = timeout_ms
+        providers = {PROVIDER_A: {"review": review}}
+        if b_without_review:
+            providers[PROVIDER_B] = {"review": {"model": None}}  # provider_map gives every provider a review model; this one has none
         return self.rig("review-" + kind, load_fixture("review"), providers=(PROVIDER_A, PROVIDER_B),
-                        permissions="baseline", config={"providers": {PROVIDER_A: {"review": review}}})
+                        permissions="baseline", config={"providers": providers})
 
     def ask(self, pi):
         """(dialog shown, [(isError, text)] of the bash call, review trace outcomes so far)."""
@@ -71,26 +74,27 @@ class TestModelReview(ReplayCase):
     def test_provider_error_goes_to_the_human(self):
         self.assert_prompted("error", "unreachable")
 
-    def test_invalid_verdict_is_a_deny(self):
-        dialog, bash, outcomes = self.run_path("invalid")
-        self.assertFalse(dialog)
-        self.assertEqual([e for e, _ in bash], [True])
-        self.assertEqual(outcomes, ["deny"])
+    def test_invalid_verdict_goes_to_the_human(self):
+        # plan Addendum 3 F1 (owner ruling A): an invalid verdict is an unreachable review, not a deny
+        self.assert_prompted("invalid", "unreachable")
 
     def test_timeout_goes_to_the_human(self):
         self.assert_prompted("hang", "unreachable", timeout_ms=1500)
 
     def test_reviewer_follows_the_active_provider_without_restart(self):
-        rig = self.review_rig("allow")
+        rig = self.review_rig("allow", b_without_review=True)
         pi = rig.start()
         self.assertFalse(self.ask(pi)[0])
         pi.request({"type": "set_model", "provider": PROVIDER_B, "modelId": "foreman"})
         dialog, bash = self.ask(pi)
         pi.close()
-        # provider B sets no review model: its auto-picked role-map model answers with the scripted text, an invalid verdict, which is a deny
-        self.assertFalse(dialog)
-        self.assertEqual([e for e, _ in bash], [True])
-        self.assertEqual(self.outcomes(rig)[-1], "deny")
+        # provider B sets no review model: its auto-picked role-map model answers with the scripted text, an invalid verdict, which is
+        # an unreachable review (Addendum 3 F1), so the human is asked; the switch is shown by the changed outcome
+        self.assertTrue(dialog)
+        self.assertEqual([e for e, _ in bash], [False])
+        outcomes = self.outcomes(rig)  # the permission package's own review records interleave until phase D
+        self.assertEqual(outcomes[0], "allow")
+        self.assertIn("unreachable", outcomes)
 
 
 if __name__ == "__main__":

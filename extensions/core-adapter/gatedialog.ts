@@ -50,7 +50,8 @@ export function silentDeny(kind: "child" | "headless", a: GateAsk): string {
       ? `pi-foreman: policy ask ${a.entry}: ${a.reason}. Children cannot answer asks; report this line to the foreman and continue with what you can.`
       : `pi-foreman: policy ask ${a.entry}: ${a.reason}. This session cannot answer asks; the call is denied. Report this to the owner.`;
   }
-  return `pi-foreman: the permission review is unreachable (${unreachableName(a.why)}: ${a.detail}); the call is denied. Report this to the owner.`;
+  const code = a.why === "invalid_verdict" ? "policy_invalid_verdict: " : "";
+  return `pi-foreman: ${code}the permission review is unreachable (${unreachableName(a.why)}: ${a.detail}); the call is denied. Report this to the owner.`;
 }
 
 export const userDeny = (typed: string): string => (typed.trim() ? `pi-foreman: denied by the user: ${typed.trim()}` : "pi-foreman: denied by the user.");

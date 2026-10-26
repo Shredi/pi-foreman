@@ -37,12 +37,12 @@ test("a valid verdict passes through with its entry and reason", async () => {
   assert.equal((await gateReview(req(), deps(stub([V("deny", "no-secret")])))).kind, "deny");
 });
 
-test("validation matrix: every malformed verdict is a policy_invalid_verdict deny", async () => {
+test("validation matrix: every malformed verdict is an unreachable review with cause invalid_verdict (Addendum 3 F1)", async () => {
   const bad = ["", "not json", "[]", V("allow", "ok-read", { extra: 1 }), V("allow", "nope"), V("allow", "no-secret"), V("deny", "ok-read"), V("none"), V("allow"), V("maybe", "ok-read"), V("allow", "ctx"), '{"verdict":"allow","entry":"ok-read","reason":5}'];
   for (const b of bad) {
     const v = await gateReview(req(), deps(stub([b])));
-    assert.equal(v.kind, "deny", b);
-    assert.equal((v as { entry: string }).entry, "policy_invalid_verdict", b);
+    assert.equal(v.kind, "unreachable", b);
+    assert.equal((v as { cause: string }).cause, "invalid_verdict", b);
   }
 });
 
@@ -70,8 +70,9 @@ test("project layer: second call after a trusted allow, tighten-only", async () 
   const none = await gateReview(req(), deps(stub([V("allow", "ok-read"), '{"verdict":"none"}']), { policy: policy(true) }));
   assert.equal(none.kind, "allow");
   // the project layer cannot answer allow, nor name a trusted id
-  assert.equal((await gateReview(req(), deps(stub([V("allow", "ok-read"), V("allow", "ok-read")]), { policy: policy(true) }))).kind, "deny");
-  assert.equal((await gateReview(req(), deps(stub([V("allow", "ok-read"), V("deny", "no-secret")]), { policy: policy(true) }))).kind, "deny");
+  // (an invalid project verdict is an unreachable review, never an allow: Addendum 3 F1)
+  assert.equal((await gateReview(req(), deps(stub([V("allow", "ok-read"), V("allow", "ok-read")]), { policy: policy(true) }))).kind, "unreachable");
+  assert.equal((await gateReview(req(), deps(stub([V("allow", "ok-read"), V("deny", "no-secret")]), { policy: policy(true) }))).kind, "unreachable");
 });
 
 test("project layer is not asked after a trusted deny or ask", async () => {
@@ -175,4 +176,18 @@ test("trace and cache flag", async () => {
   await gateReview(req(), d);
   assert.deepEqual(seen.map((r) => (r as { cached: boolean }).cached), [false, true]);
   assert.equal((seen[0] as { entry: string }).entry, "no-secret");
+});
+
+test("cache: a different review target (provider switch) misses, for allows and denies", async () => {
+  const cfg = { providers: { p: { review: { model: "m" } }, q: { review: { model: "n" } } } };
+  for (const [first, second] of [[V("allow", "ok-read"), V("deny", "no-secret")], [V("deny", "no-secret"), V("allow", "ok-read")]]) {
+    const cache = new GateCache();
+    const s = stub([first, second]);
+    const a = await gateReview(req(), deps(s, { cache, config: cfg, provider: "p" }));
+    const b = await gateReview(req(), deps(s, { cache, config: cfg, provider: "q" }));
+    assert.equal((b as { cached: boolean }).cached, false);
+    assert.notEqual(a.kind, b.kind);
+    assert.equal(s.calls.length, 2);
+    assert.equal((await gateReview(req(), deps(s, { cache, config: cfg, provider: "q" })) as { cached: boolean }).cached, true);
+  }
 });

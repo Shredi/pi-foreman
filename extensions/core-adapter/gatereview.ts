@@ -235,8 +235,9 @@ async function callReview(deps: GateReviewDeps, target: ReviewTarget | null, sys
 
 // ------------------------------------------------------------------ cache keys
 
-function cacheKeys(r: GateReviewRequest, policyHashHex: string, projectHashHex: string): { deny: string; allow: string } {
-  const base = [policyHashHex, projectHashHex, r.kind, r.role, r.cwd, r.branch ?? "", r.head ?? "", r.mergeHead ?? ""];
+function cacheKeys(r: GateReviewRequest, policyHashHex: string, projectHashHex: string, targetKey: string): { deny: string; allow: string } {
+  // the review target is part of the key: a provider or model switch must not replay a verdict another reviewer gave
+  const base = [policyHashHex, projectHashHex, targetKey, r.kind, r.role, r.cwd, r.branch ?? "", r.head ?? "", r.mergeHead ?? ""];
   const shape = r.pathKeys ? `${r.tool} ${[...r.pathKeys].sort().join("\0")}` : normalizeShape(r.payload, { worktree: r.worktree });
   // A denial of a shape also holds for every command of that shape; an allow only for the exact input (the shape masks quoted values).
   return { deny: JSON.stringify([...base, "shape", shape]), allow: JSON.stringify([...base, "exact", r.tool, r.payload]) };
@@ -267,18 +268,18 @@ export async function gateReview(req: GateReviewRequest, deps: GateReviewDeps): 
 
   const trusted = deps.policy.trusted;
   if (!trusted.entries.length) return done(deny(POLICY_UNAVAILABLE, "the trusted permission policy is unavailable, so the call is denied. Report this to the user."));
-  const keys = cacheKeys(req, deps.policy.hash, deps.policy.project ? policyHash(deps.policy.project.entries) : "");
+  const target = gateReviewTarget(deps.config, deps.provider, deps.registry);
+  const keys = cacheKeys(req, deps.policy.hash, deps.policy.project ? policyHash(deps.policy.project.entries) : "", target ? `${target.provider}/${target.modelId}` : "");
   const hit = deps.cache?.get(keys.deny, keys.allow);
   if (hit && hit.kind !== "unreachable") return done({ ...hit, cached: true });
 
-  const target = gateReviewTarget(deps.config, deps.provider, deps.registry);
   const text = requestText(req);
   if (target) model = `${target.provider}/${target.modelId}`;
 
   const first = await callReview(deps, target, trustedSystemPrompt(trusted), text);
   if ("cause" in first) return done({ kind: "unreachable", cause: first.cause, detail: first.detail });
   const p = parseGateVerdict(first.text, trusted, ["allow", "deny", "ask"]);
-  if (typeof p === "string") return done(deny(INVALID_VERDICT, `the review verdict was invalid (${p}), so the call is denied.`), keys);
+  if (typeof p === "string") return done({ kind: "unreachable", cause: "invalid_verdict", detail: `the review verdict was invalid (${p})` });
   const verdict = { kind: p.verdict as "allow" | "deny" | "ask", entry: p.entry, reason: p.reason || `policy entry ${p.entry}`, layer: "trusted" as const, cached: false };
   if (verdict.kind !== "allow") return done(verdict, keys);
 
@@ -287,7 +288,7 @@ export async function gateReview(req: GateReviewRequest, deps: GateReviewDeps): 
   const second = await callReview(deps, target, projectSystemPrompt(project), text);
   if ("cause" in second) return done({ kind: "unreachable", cause: second.cause, detail: `project policy review: ${second.detail}` });
   const q = parseGateVerdict(second.text, project, ["deny", "ask", "none"]);
-  if (typeof q === "string") return done(deny(INVALID_VERDICT, `the project policy review verdict was invalid (${q}), so the call is denied.`, "project"), keys);
+  if (typeof q === "string") return done({ kind: "unreachable", cause: "invalid_verdict", detail: `project policy review: the verdict was invalid (${q})` });
   if (q.verdict === "none") return done(verdict, keys);
   return done({ kind: q.verdict, entry: q.entry, reason: q.reason || `project policy entry ${q.entry}`, layer: "project", cached: false }, keys);
 }

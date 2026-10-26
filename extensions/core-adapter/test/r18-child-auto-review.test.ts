@@ -152,11 +152,12 @@ test("r18 child: a review deny is final and blocks with the policy entry and the
   assert.deepEqual(gate(c), ["blocked:review:secret-access"]);
 });
 
-test("r18 child: the old verdict shape (defer, riskLevel) is an invalid verdict, a deny", async (t) => {
+test("r18 child: the old verdict shape (defer, riskLevel) is an invalid verdict: unreachable, a child deny with code policy_invalid_verdict (Addendum 3 F1)", async (t) => {
   const c = await childRig(t, '{"verdict":"defer"}');
   const r = await c.bash(PROBE);
   assert.equal(r?.block, true);
-  assert.deepEqual(gate(c), ["blocked:review:policy_invalid_verdict"]);
+  assert.match(r?.reason ?? "", /policy_invalid_verdict/);
+  assert.deepEqual(gate(c), []);
 });
 
 test("r18 child: its self-ruling ask never reaches the reviewer", async (t) => {

@@ -96,3 +96,12 @@ test("a payload tool with no review model and no UI denies within 1 s", async (t
   assert.ok(res && res.block);
   assert.ok(Date.now() - t0 < 1000);
 });
+
+// Addendum 3 F1: an invalid verdict is an unreachable review; a headless session denies with policy_invalid_verdict.
+test("an invalid review verdict in a headless session denies with policy_invalid_verdict", async (t) => {
+  const reg = fakeRegistry(["not json"]);
+  const r = await r11Rig(t, {}, { ctx: { hasUI: false, mode: "print", modelRegistry: reg.registry }, config });
+  const res = await r.call("subagent", { agent: "builder", task: "fix the thing" });
+  assert.ok(res && res.block);
+  assert.match(res.reason ?? "", /policy_invalid_verdict/);
+});
