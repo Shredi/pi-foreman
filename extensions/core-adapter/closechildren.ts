@@ -1,6 +1,7 @@
 // `/foreman close` also closes the session's own child sessions (R3b point 4): each registry entry (sessions.json)
 // whose `parent` is this session's opener id and whose status is open or pending gets `foreman:close`; the registry
 // is polled until every sent child reports `closed` (or the bounded wait ends). One report line per child. Never throws.
+import type { PullNow, RunRemote } from "./remotepull.ts";
 import { closeText, readRegistry, remoteNotClosed, writeRegistry } from "./session.ts";
 
 export const CHILD_POLL_MS = 1_000;
@@ -15,6 +16,10 @@ export interface CloseChildrenDeps {
   waitMs: number;
   /** Injectable timer: resolves after `ms`. */
   sleep: (ms: number) => Promise<void>;
+  /** Poll a remote child's outbox now (remotepull.ts); not used before remote close lands. */
+  pullNow?: PullNow;
+  /** Run a `foreman_session.py` verb through the pull queue (remotepull.ts). */
+  runRemote?: RunRemote;
 }
 
 type Outcome = "closed" | "refused" | "timeout" | "not sent";

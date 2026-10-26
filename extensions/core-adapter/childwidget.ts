@@ -6,6 +6,8 @@ import path from "node:path";
 import { abbrev } from "./footer.ts";
 import { parseLines } from "./usage.ts";
 import { priceRecord } from "./cost.ts";
+import { pullSummary } from "./remotesession.ts";
+import type { SessionEntry } from "./session.ts";
 import type { PriceTable } from "./cost.ts";
 import { cellWidth, runSymbol, SPINNER_MS, spinnerFrame, symbolSet } from "./symbols.ts";
 
@@ -35,6 +37,8 @@ export interface SessionRow {
   status: string;
   /** ms epoch of last.at, else opened (NaN when unparsable). */
   at: number;
+  /** `pull <age>` and the last pull error of a pull-mode remote entry (remotesession.ts pullSummary). */
+  pull?: string;
 }
 
 /** A background row of the foreman (index.ts): a foreman_wait wait (`wait`), a foreman_bg command (`bg`) or a PR watch (`pr #n`). */
@@ -244,7 +248,7 @@ export function ageText(ms: number): string {
 }
 
 export function sessionLine(r: SessionRow, now: number): string {
-  return [r.label, r.status, Number.isFinite(r.at) ? ageText(now - r.at) : "?"].join(" · ");
+  return [r.label, r.status, Number.isFinite(r.at) ? ageText(now - r.at) : "?", ...(r.pull ? [r.pull] : [])].join(" · ");
 }
 
 /** Opened sessions of `parent` from sessions.json (closed and failed ones are not shown). */
@@ -259,7 +263,8 @@ export function readOpened(agentDir: string, parent: string | null): SessionRow[
       const s = e as { parent?: unknown; label?: unknown; status?: unknown; opened?: unknown; last?: unknown };
       if (s.parent !== parent || text(s.status) === "closed" || text(s.status) === "failed") continue;
       const last = s.last && typeof s.last === "object" ? text((s.last as { at?: unknown }).at) : "";
-      out.push({ label: text(s.label) || "session", status: text(s.status) || "?", at: Date.parse(last || text(s.opened)) });
+      const pull = pullSummary(e as SessionEntry, Date.now(), ageText);
+      out.push({ label: text(s.label) || "session", status: text(s.status) || "?", at: Date.parse(last || text(s.opened)), ...(pull ? { pull } : {}) });
     }
     return out;
   } catch {

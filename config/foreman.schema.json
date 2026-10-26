@@ -453,12 +453,30 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
+              "returnPath": { "type": "string", "enum": ["pull", "push"], "description": "How this machine's child sessions report back (default `pull`): `pull` has the parent fetch an outbox in the handoff dir over its own SSH connection and needs nothing on the remote side; `push` uses pi-intercom's cross-machine relay from the remote (it needs this machine saved in the remote's Herdr and the relay command on the SSH PATH)." },
               "foremanCommand": { "type": "string", "pattern": "^[A-Za-z0-9._:/\\\\][A-Za-z0-9._:/\\\\-]{0,199}$", "description": "The foreman command on the remote machine, run over SSH (default `foreman`); no spaces, no leading dash. Use an absolute path when the SSH PATH does not hold it." },
               "parentName": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", "description": "This machine's name as the remote machine's Herdr and pi-intercom know it (default: pi-intercom's `crossMachine.machineName`, else the lowercased short hostname)." }
             }
           }
         },
-        "remoteInlineMaxBytes": { "type": "integer", "minimum": 1024, "maximum": 49152, "description": "Bytes of a result or plan a remote child's notice carries inline (default 32768); a project or session can only lower it." }
+        "remoteInlineMaxBytes": { "type": "integer", "minimum": 1024, "maximum": 49152, "description": "Bytes of a result or plan a remote child's notice carries inline (default 32768); a project or session can only lower it." },
+        "pull": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Polling of remote pull sessions' outboxes. User or overlay config only.",
+          "properties": {
+            "intervalSeconds": { "type": "integer", "minimum": 5, "maximum": 300, "description": "Seconds between two polls of an open pull session (default 20)." },
+            "fastSeconds": { "type": "integer", "minimum": 2, "maximum": 60, "description": "Seconds between two polls while an ask is open, the session is closing, or shortly after an open or a brief (default 5)." }
+          }
+        },
+        "ssh": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "SSH settings of the parent's remote calls. User or overlay config only.",
+          "properties": {
+            "controlMaster": { "type": "boolean", "description": "On POSIX parents, add ControlMaster/ControlPath/ControlPersist options to every SSH call so polls reuse one connection (default true). Windows parents ignore it; false adds nothing." }
+          }
+        }
       }
     },
     "compaction": {

@@ -176,6 +176,18 @@ On Windows pi-subagents cannot spawn a script hook without a shell, so the `fore
 
 On Windows a `foreman_bg` command runs under `cmd.exe` (`cmd /d /s /c "<command>"`), and the add-on's `bg_run` also runs its commands under `cmd.exe`, while the overlay rules, the shell-write guard, the destructive guard and the git guard classify the command as bash. cmd syntax the bash scanner does not model (`&` as a separator, `^` escapes, `%VAR%` expansion, cmd built-ins such as `del`, `rd` or `copy`) can therefore pass with a verdict that is wrong for what actually runs. Keep background commands on Windows to plain program calls (`node …`, `npm test`). Running them through `bash.exe -c` (Git Bash), so the guards and the shell agree, is a later item.
 
+## Known limit: remote outbox trust boundary
+
+A pull-mode remote child (`sessions.machines.<name>.returnPath` `pull`, the default; see [sessions](sessions.md#remote-child-sessions)) writes its notices to `outbox.jsonl` in its handoff dir on the remote machine, and your parent reads that file over its own SSH connection. Nothing from the remote connects back, so the only credential in play is the parent's SSH login. The handoff dir is the trust boundary: any process running as that user on the remote machine can append to the outbox, and the parent accepts the entries of an open registry entry whose child id and `parent` file match. The text is parsed and mirrored as data and acts on nothing, but a local process on the remote machine can forge a notice, and the parent cannot tell it from the child's. Treat remote notices like any peer message, and list only machines whose users you trust.
+
+## Known limit: registry without a lock
+
+`sessions.json` is read, changed and written back without a lock (`foreman session brief`, the open and close verbs and the pull poll all do this, the write itself is atomic). Two of them running at once can lose one update, for example a `pull` that stores a new outbox cursor while a `brief` writes the entry back from before it. The cursor then moves back and the next poll re-fetches entries, which are applied again. The loss is accepted for now; the outbox itself is locked (see the next limit).
+
+## Known limit: corrupt last outbox line
+
+A remote child appends one notice line to `outbox.jsonl` under a lock on `outbox.lock`. A crash in the middle of that append can leave a last line that is not a complete notice. Later notices then refuse with `outbox_corrupt` ("the last line of … is not a notice entry; remove it by hand") until the line is removed by hand on the remote machine. The child's notice command exits 1 with that code, so no later notice reaches the outbox, and the parent's poll keeps running without a pull error: it skips the bad line when it lies past the cursor. The line is counted as `skipped` only by a poll that also returns an entry before it; a corrupt last line written after the parent has caught up (a crash during the append of an entry the parent had already fetched, cursor at that entry) is not counted, so the poll shows nothing wrong and only the child's next `remote notice` refuses with `outbox_corrupt`. The parent never truncates or rewrites the outbox.
+
 ## Further safety and runtime keys
 
 Key-by-key layer rules for `safety.*`: `design/architecture.md`
