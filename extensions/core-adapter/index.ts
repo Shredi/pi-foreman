@@ -16,6 +16,7 @@ import type { Decision, MatchCtx, OverlayRules } from "./permoverlay.ts";
 import { childHandoffDirs, ownedRoots, ownHandoffDirs, resolveNpmRoot, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
+import { baseFloorEnv, gateDecide } from "./gate.ts";
 import { permFileState, PS_CHILD_ID, PS_PACKAGE, psGlobalConfigPath, psProjectConfigPath, renderPermissions, resolvePermissionSystem } from "./permsys.ts";
 import { npmRootDrift, npmRootDriftNotice, readPolicy } from "./npmrootdrift.ts";
 import type { Registration } from "./childext.ts";
@@ -1886,6 +1887,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // Session manifest (manifest.ts): pre-state here, silent `foreman_close.py record` at tool_result.
   const manifest = new ManifestRecorder((p) => fs.existsSync(p));
   const manifestCtx = (s: Session, cwd: string) => ({ cwd, stateDir: path.join(s.agentDir, "pi-foreman", "state"), platform });
+
+  // R41 gate (slice 1: floors only): the first tool_call handler this extension registers; the handlers below still run for what it lets through.
+  pi.on("tool_call", async (event, ctx) => {
+    const gs = sessionFor(ctx);
+    const r = gateDecide(event.toolName, event.input, ctx.cwd, { env: (cwd) => baseFloorEnv(cwd, gs?.agentDir ? { agentDir: gs.agentDir } : {}) });
+    return r ? { block: true as const, reason: r.reason } : undefined;
+  });
 
   pi.on("tool_call", async (event, ctx) => {
     const ms = sessionFor(ctx);
