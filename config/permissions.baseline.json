@@ -71,7 +71,8 @@
     ],
     "ask": [
       "{agentDir}/pi-foreman/handoffs/*/parent",
-      "{agentDir}/pi-foreman/handoffs/*/child"
+      "{agentDir}/pi-foreman/handoffs/*/child",
+      "{agentDir}/pi-foreman/handoffs/*/live.json"
     ]
   },
   "shellTools": {
@@ -261,7 +262,8 @@
       "{pkgRoot}",
       "{pkgRoot}/*",
       "{agentDir}/pi-foreman/handoffs/*/parent",
-      "{agentDir}/pi-foreman/handoffs/*/child"
+      "{agentDir}/pi-foreman/handoffs/*/child",
+      "{agentDir}/pi-foreman/handoffs/*/live.json"
     ],
     "writeAskSelfHost": [
       "{pkgRoot}/config/permissions*.json",
