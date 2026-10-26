@@ -16,7 +16,8 @@ import type { Decision, MatchCtx, OverlayRules } from "./permoverlay.ts";
 import { childHandoffDirs, ownedRoots, ownHandoffDirs, resolveNpmRoot, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
-import { baseFloorEnv, gateDecide } from "./gate.ts";
+import { baseFloorEnv, gateDecide, gitFacts } from "./gate.ts";
+import type { GateRoots } from "./pathrules.ts";
 import { permFileState, PS_CHILD_ID, PS_PACKAGE, psGlobalConfigPath, psProjectConfigPath, renderPermissions, resolvePermissionSystem } from "./permsys.ts";
 import { npmRootDrift, npmRootDriftNotice, readPolicy } from "./npmrootdrift.ts";
 import type { Registration } from "./childext.ts";
@@ -33,7 +34,7 @@ import { dormantDoctorLine } from "./features.ts";
 import { bridgeTrusted, trustBridgeCommand } from "./bridgetrust.ts";
 import { preBashConfigOf, runPreBashHooks } from "./prebash.ts";
 import { profileDoctorLines } from "./profiledoctor.ts";
-import { collectOrientation } from "./orient.ts";
+import { BUNDLED_PACKAGE_ROOTS, collectOrientation } from "./orient.ts";
 import type { PiRoots } from "./orient.ts";
 import { applyRootsBlock } from "./childbrief.ts";
 import { ExplorerBrief } from "./builderbrief.ts";
@@ -1888,11 +1889,46 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const manifest = new ManifestRecorder((p) => fs.existsSync(p));
   const manifestCtx = (s: Session, cwd: string) => ({ cwd, stateDir: path.join(s.agentDir, "pi-foreman", "state"), platform });
 
-  // R41 gate (slice 1: floors only): the first tool_call handler this extension registers; the handlers below still run for what it lets through.
+  /** The session's roots for the gate's path rules and defaults (pathrules.ts GateRoots). */
+  async function gateRootsOf(s: Session, cwd: string): Promise<GateRoots> {
+    const state = path.join(s.agentDir, "pi-foreman", "state");
+    const rounds = roundWorktrees(state, s.usage.line.foremanSession, platform);
+    const pi = await piRootsOf(s);
+    const real = (p: string): string => { try { return fs.realpathSync(p); } catch { return p; } };
+    const owned = sessionOwnedRoots(s);
+    return {
+      worktree: workspaceOf(cwd).root,
+      scratch: s.isChild ? (launchBinding?.scratch ? [launchBinding.scratch] : []) : s.scratch.live(null),
+      tmp: [real(os.tmpdir()), ...(platform === "win32" ? [] : ["/tmp"])],
+      scratchBase: s.owned.childScratchRoot,
+      owned: [...owned.write, ...owned.read],
+      install: [pi.installRoot, pi.npmRoot, ...BUNDLED_PACKAGE_ROOTS.map((r) => path.join(PKG_ROOT, r))].filter((x): x is string => !!x),
+      roundFlow: mainWorkflowReadable(rounds, platform).filter((d) => !d.endsWith("/*")),
+      handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
+      child: s.isChild,
+      role: s.isChild ? s.usage.line.role : "foreman",
+      tmpAccess: get(s.config.config, "gate.tmpAccess") !== false,
+    };
+  }
+
+  // R41 gate (slice 2: floors, path rules, defaults): the first tool_call handler this extension registers. A default allow is traced;
+  // the handlers below still run for everything the gate does not block, so nothing is loosened until the review slices land.
   pi.on("tool_call", async (event, ctx) => {
     const gs = sessionFor(ctx);
-    const r = gateDecide(event.toolName, event.input, ctx.cwd, { env: (cwd) => baseFloorEnv(cwd, gs?.agentDir ? { agentDir: gs.agentDir } : {}) });
-    return r ? { block: true as const, reason: r.reason } : undefined;
+    const roots = gs ? await gateRootsOf(gs, ctx.cwd) : undefined;
+    const configured = ((v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []))(gs ? get(gs.config.config, "safety.git.protectedBranches") : undefined);
+    const r = gateDecide(event.toolName, event.input, ctx.cwd, {
+      env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), protectedBranches: configured }),
+      ...(roots ? { roots: () => roots, facts: { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
+    });
+    if (!r) return undefined;
+    const role = gs?.isChild ? gs.usage.line.role : "foreman";
+    if ("block" in r) {
+      gs?.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "blocked", rule: r.rule, ...denyFields(r.reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]) });
+      return { block: true as const, reason: r.reason };
+    }
+    gs?.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: r.rule, role });
+    return undefined;
   });
 
   pi.on("tool_call", async (event, ctx) => {

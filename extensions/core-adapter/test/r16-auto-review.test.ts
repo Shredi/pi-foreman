@@ -94,7 +94,7 @@ async function run(tool: string, input: Record<string, unknown>, o: { reply?: st
     : recs.some((x) => x.event === "auto_review_allow")
       ? "allow"
       : !ov
-        ? "pass"
+        ? recs.some((x) => x.event === "guard" && x.guard === "gate" && x.decision === "blocked") ? "deny" : "pass" // R41: a floor denies in the gate, before any overlay record
         : ov.decision === "deny"
           ? ov.by === "auto" ? "model-deny" : "deny"
           : String(ov.decision);
