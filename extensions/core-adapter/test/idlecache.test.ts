@@ -440,11 +440,12 @@ test("trace records use only TRACE_FIELDS", () => {
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
 test("cache_warming_decision: R0 drift stop first, children and policy-less sessions stay silent, watching warms", async (t) => {
-  const keys = ["PATH", "Path", "PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "CLAUDE_CONFIG_DIR"];
+  const keys = ["PATH", "Path", "PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "CLAUDE_CONFIG_DIR", "FORCE_PROMPT_CACHING_5M", "CLAUDE_CODE_PROMPT_CACHE_TTL"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   t.after(() => {
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
   });
+  process.env.FORCE_PROMPT_CACHING_5M = "1"; // the bridge TTL is derived 3600 by default (self-warm); this test watches Pi's 300 s warms
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-idle-")));
   let shutdown: (() => Promise<unknown>) | undefined;
   t.after(async () => {

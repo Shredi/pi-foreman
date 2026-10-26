@@ -127,9 +127,10 @@ class CachePolicyMirrorTest(unittest.TestCase):
     def test_preset_matches_builtin(self):
         preset = json.loads((ROOT / "config" / "presets" / "claude-bridge.json").read_text())
         c = preset["providers"][P]["cache"]
-        self.assertEqual({"ttlSeconds": c["ttlSeconds"], "billing": c["billing"]}, fc.BUILTIN_CACHE[P])
+        self.assertEqual(c["billing"], fc.BUILTIN_CACHE[P]["billing"])
+        self.assertNotIn("ttlSeconds", c)  # it would shadow the derived bridge TTL
         self.assertIs(c["keepalive"]["enabled"], True)  # round 32: self-warm keeps the 1 h cache warm
-        self.assertEqual(fc.cache_policy(preset, P, "claude-sonnet-5-5")["ttlSeconds"], 3600)
+        self.assertEqual(fc.cache_policy(preset, P, "claude-sonnet-5-5", 3600)["ttlSeconds"], 3600)
 
     def test_builtin_matches_ts(self):
         ts = (ROOT / "extensions" / "core-adapter" / "cachepolicy.ts").read_text()
