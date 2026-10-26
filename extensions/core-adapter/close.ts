@@ -495,32 +495,44 @@ export interface CloseSession {
 type Bus = { emit(channel: string, data: unknown): void; on?(channel: string, handler: (data: unknown) => void): (() => void) | void } | undefined;
 let outboxSeq = 0;
 
+/** An outbox result: pi-intercom's `status` (sent|failed|blocked|rejected) with its `code` and `detail` when it sent them. */
+export interface OutboxOutcome {
+  status: string;
+  code?: string;
+  detail?: string;
+}
+
 /**
- * Emit one pi-intercom outbox request; resolves with the outbox result's status, or "timeout"
+ * Emit one pi-intercom outbox request; resolves with the outbox result (status, code, detail), or status "timeout"
  * after `waitMs` (also when no result event arrives). Never rejects.
  */
-export function outboxSend(events: Bus, to: string, message: string, kind: string, waitMs = OUTBOX_WAIT_MS): Promise<string> {
-  if (!events) return Promise.resolve("no-events");
+export function outboxSendDetailed(events: Bus, to: string, message: string, kind: string, waitMs = OUTBOX_WAIT_MS): Promise<OutboxOutcome> {
+  if (!events) return Promise.resolve({ status: "no-events" });
   const requestId = `pi-foreman-${kind}-${Date.now()}-${++outboxSeq}`;
   return new Promise((resolve) => {
     let off: (() => void) | void;
-    const done = (status: string): void => {
+    const done = (out: OutboxOutcome): void => {
       clearTimeout(timer);
       if (typeof off === "function") off();
-      resolve(status);
+      resolve(out);
     };
-    const timer = setTimeout(() => done("timeout"), waitMs);
+    const timer = setTimeout(() => done({ status: "timeout" }), waitMs);
     timer.unref?.();
     try {
       off = events.on?.(INTERCOM_OUTBOX_RESULT_EVENT, (data) => {
-        const d = data as { requestId?: unknown; status?: unknown } | null;
-        if (d && d.requestId === requestId) done(typeof d.status === "string" ? d.status : "unknown");
+        const d = data as { requestId?: unknown; status?: unknown; code?: unknown; detail?: unknown } | null;
+        if (d && d.requestId === requestId) done({ status: typeof d.status === "string" ? d.status : "unknown", ...(typeof d.code === "string" ? { code: d.code } : {}), ...(typeof d.detail === "string" ? { detail: d.detail } : {}) });
       });
       events.emit(INTERCOM_OUTBOX_EVENT, { version: 1, requestId, extensionId: "pi-foreman", extensionName: "pi-foreman", to, message });
     } catch {
-      done("failed");
+      done({ status: "failed" });
     }
   });
+}
+
+/** `outboxSendDetailed`, reduced to the status. */
+export async function outboxSend(events: Bus, to: string, message: string, kind: string, waitMs = OUTBOX_WAIT_MS): Promise<string> {
+  return (await outboxSendDetailed(events, to, message, kind, waitMs)).status;
 }
 
 /** Wire the intercom trigger and the sequence events; returns the `/foreman close` handler. */

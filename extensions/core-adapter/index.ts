@@ -124,6 +124,8 @@ import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, waitNote, type Cac
 import { symbolSet } from "./symbols.ts";
 import { blockedConfirm, installBlockedShim, PERMISSIONS_DECISION, PERMISSIONS_UI_PROMPT, withBlocked } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
+import { captureIdentity, IDENTITY_ENTRY, latestIdentity, restoreIdentity, writeLive } from "./identity.ts";
+import type { IdentityRestore } from "./identity.ts";
 import { builderLaunchRefusal, changedPlans, checkpointMode, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, PLAN_NAME, PLAN_VERDICT_FILE, planSnapshot, readPlanVerdictFile, planSummary, planVersionHash, readPlan, readPlanVerdict, sha256 } from "./checkpoint.ts";
 import { effectivePlannerMode, PLANNER_SELF_MESSAGE, plannerNotBelow, selfPlanRequired } from "./plannerself.ts";
 import type { PlanRecord } from "./checkpoint.ts";
@@ -1073,14 +1075,36 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
   }
 
-  async function applyForemanModel(s: Session, ctx: ExtensionContext): Promise<void> {
+  /**
+   * session_start, after startSession: an opened session (handoff dir and child id in env, restored or given) appends its identity
+   * entry when it differs from the branch's latest and refreshes `<handoff>/live.json`; never in a child or on a fork.
+   */
+  function recordIdentity(s: Session, ctx: ExtensionContext, reason: string, restored: IdentityRestore): void {
+    if (restored.status === "restored") s.trace?.emit({ event: "identity_restored", reason });
+    else if (restored.status === "skipped") s.trace?.emit({ event: "identity_restore_skipped", reason: restored.reason });
+    if (s.isChild || process.env.PI_SUBAGENT_CHILD === "1" || reason === "fork") return;
+    const id = captureIdentity(process.env, s.id, pi.getSessionName?.());
+    if (!id) return;
+    const last = latestIdentity((ctx.sessionManager.getBranch?.() ?? []) as unknown[]);
+    if (JSON.stringify(last) !== JSON.stringify(id)) {
+      try {
+        pi.appendEntry(IDENTITY_ENTRY, id);
+      } catch {
+        // the session file is not writable now: the next start tries again
+      }
+    }
+    writeLive(id.handoff, id.child, s.id);
+  }
+
+  /** `restoredModel` (an identity restored this start): the model the session was opened on wins over the foreman role model. */
+  async function applyForemanModel(s: Session, ctx: ExtensionContext, restoredModel?: string | null): Promise<void> {
     const role = s.config.roles.foreman;
     const codemode = role && typeof role.codemode === "boolean" ? role.codemode : get(s.config.config, "roles.foreman.codemode") === true;
     if (codemode) {
       const active = pi.getActiveTools();
       if (!active.includes("codemode")) pi.setActiveTools([...active, "codemode"]);
     }
-    if (!role || typeof role.model !== "string") {
+    if (!restoredModel && (!role || typeof role.model !== "string")) {
       // Only worth a warning when the map names this provider; an empty map is a fresh install.
       const provider = ctx.model?.provider;
       if (role && typeof role.error === "string" && provider && get(s.config.config, `providers.${provider}`)) ctx.ui.notify(`pi-foreman: foreman model not applied: ${role.error}`, "warning");
@@ -1088,7 +1112,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (userPickedModel) return;
     // `foreman session open --model X` wins over the overlay/preset role model (model and thinking) for this session
-    const spec = foremanModelSpec(role.model, sessionModelOf(process.env), cliModelOf(process.argv));
+    const spec = restoredModel ? (cliModelOf(process.argv) ? null : restoredModel) : foremanModelSpec(role!.model as string, sessionModelOf(process.env), cliModelOf(process.argv));
     if (spec === null) return;
     const slash = spec.indexOf("/");
     const provider = slash > 0 ? spec.slice(0, slash) : ctx.model?.provider ?? "";
@@ -1105,7 +1129,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         applyingModel = false;
       }
     }
-    if (typeof role.thinking === "string" && role.thinking) pi.setThinkingLevel(role.thinking as Parameters<ExtensionAPI["setThinkingLevel"]>[0]);
+    if (role && typeof role.thinking === "string" && role.thinking) pi.setThinkingLevel(role.thinking as Parameters<ExtensionAPI["setThinkingLevel"]>[0]);
   }
 
   async function registerChildExtensions(s: Session, ctx: ExtensionContext): Promise<void> {
@@ -1207,7 +1231,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // ------------------------------------------------------------------ events
 
   pi.on("session_start", async (event, ctx) => {
+    // First: startSession, intercom and the sidebar read the identity env, and pi-intercom (loaded after this extension) reads PI_INTERCOM_STABLE_ID.
+    const restored = restoreIdentity({ env: process.env, reason: event.reason, piSessionId: ctx.sessionManager.getSessionId?.() ?? "", branch: (ctx.sessionManager.getBranch?.() ?? []) as unknown[], currentName: pi.getSessionName?.(), setSessionName: (name) => pi.setSessionName?.(name) });
     const s = await startSession(ctx);
+    recordIdentity(s, ctx, event.reason, restored);
     await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r));
     restoreCeremonyState(s, ctx, event.reason);
     restoreRounds(s, ctx, event.reason);
@@ -1221,7 +1248,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       await idleModel.onSessionStart(ctx.sessionManager.getBranch?.() ?? []); // before applyForemanModel: a downshift left open is closed first
     }
     review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [], recordUsage: (m) => { const x = sessions.get(s.id); if (x) appendUsage(x.usage.file, usageLine({ ...x.usage.line, role: "autoreview", launchId: null, kind: "foreman" }, m)); }, scratchDirs: (role) => sessions.get(s.id)?.scratch.live(role) ?? [], ownDirs: () => { const x = sessions.get(s.id); return x ? [...ownHandoffDirs(handoffsRoot(x), intercomIdOf(process.env, x.agentDir, x.id)), ...roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform)] : []; }, roundDirs: () => { const x = sessions.get(s.id); return x ? roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform) : []; }, ledgerFile: () => { const x = sessions.get(s.id); return x ? boundLedger(x.markerDir, x.usage.line.foremanSession) : null; }, ownedRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x).write : []; }, readOnlyRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x).read : []; }, ownReads: () => { const x = sessions.get(s.id); return x && !x.isChild ? [...ownUsageReadable(x.agentDir, platform, x.id, { dir: get(x.config.config, "trace.dir"), stateDir: x.markerDir }, x.usage.line.foremanSession), ...ownTaskReadable([x.cwd, workspaceOf(x.cwd).root, x.usage.line.workspace], x.usage.line.foremanSession, platform), ...asyncResultReads(x.childFiles, platform)] : []; }, ...reviewExtras(baseline, () => sessions.get(s.id)?.config.config, ctx) });
-    if (!s.isChild && (event.reason === "startup" || event.reason === "new")) await applyForemanModel(s, ctx);
+    if (!s.isChild && (event.reason === "startup" || event.reason === "new" || (event.reason === "resume" && restored.status === "restored"))) await applyForemanModel(s, ctx, restored.status === "restored" ? restored.entry.model : undefined);
     await registerChildExtensions(s, ctx);
     const orderNotice = s.isChild ? null : loadOrderNotice(s.cwd, s.agentDir, PKG_ROOT);
     if (orderNotice) notifyOnce(s, ctx, "load-order", orderNotice, "warning");
