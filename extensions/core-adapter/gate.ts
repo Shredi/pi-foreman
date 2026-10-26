@@ -62,6 +62,31 @@ function stringLeaves(v: unknown, out: string[] = [], depth = 0): string[] {
   return out;
 }
 
+/** Free-text fields of pi-foreman's own tools (notes, plans, messages, PR text, dialog questions): quoting a floored command there is prose, not a command. */
+const PROSE_FIELDS = new Set(["text", "note", "notes", "plan", "message", "reason", "question", "questions", "title", "body", "summary", "answer", "description", "details", "detail", "content", "findings", "comment", "prompt", "context", "label", "options", "report"]);
+/** Fields that name a file or directory: a secret path there is a floor deny. */
+const PATH_FIELD = /^(?:path|paths|cwd|worktree|file|files|dir|dirs|directory|target|dest|destination|src|source|from|to|root|repo|output|outputPath|output_path|outputFile)$/i;
+
+/**
+ * Floors on the fields of a structured payload: secretPath on path-like fields; with `raw`, raw-text floors on every other string field except the
+ * prose fields (own tools). Floors are permanent, so only free text is exempt, never a whole tool.
+ */
+function fieldFloors(v: unknown, key: string, env: FloorEnv, raw: boolean, depth = 0): FloorHit | null {
+  if (raw && PROSE_FIELDS.has(key)) return null;
+  if (typeof v === "string") {
+    if (!v) return null;
+    if (PATH_FIELD.test(key)) return secretPath(v, env);
+    return raw ? (rawFloors(v) ?? opaqueTextFloors(v, env)) : null;
+  }
+  if (depth < 8 && v && typeof v === "object") {
+    for (const [k, x] of Object.entries(v)) {
+      const h = fieldFloors(x, Array.isArray(v) ? key : k, env, raw, depth + 1);
+      if (h) return h;
+    }
+  }
+  return null;
+}
+
 /** Floors for a tool that is neither shell nor path: structured path fields for prose tools, raw-text floors on the payload for the rest. */
 function payloadFloors(tool: string, inp: Record<string, unknown>, env: FloorEnv): FloorHit | null {
   if (PROSE_TOOLS.has(tool)) {
@@ -74,6 +99,8 @@ function payloadFloors(tool: string, inp: Record<string, unknown>, env: FloorEnv
   }
   // the leaves as one text, then each quote- or line-delimited piece (`sh('rm -rf /')` in code is the text `rm -rf /`). Raw-text floors only:
   // segment floors (secret paths) stay with the inner calls of codemode, which the gate decides one by one.
+  const pathHit = fieldFloors(inp, "", env, false);
+  if (pathHit) return pathHit;
   const leaves = stringLeaves(inp);
   const text = leaves.join("\n");
   if (!text) return null;
@@ -112,8 +139,8 @@ export function gateDecide(toolName: string, input: unknown, cwd: string, deps: 
       const v = deps.roots ? pathDecide(toolName, inp, cwd, deps.roots(cwd), platform) : undefined;
       return v;
     }
-    // own tools carry free text (ledger notes, plans) that may quote a floor pattern; they go straight to their default
-    const ph = OWN_TOOLS.has(toolName) ? null : payloadFloors(toolName, inp, env);
+    // own tools carry free text (ledger notes, plans) that may quote a floor pattern: only their prose fields skip the floors
+    const ph = OWN_TOOLS.has(toolName) ? fieldFloors(inp, "", env, true) : payloadFloors(toolName, inp, env);
     if (ph) return blocked(ph);
     const rule = toolDefault(toolName, inp);
     return rule ? { allow: true, rule } : undefined;
