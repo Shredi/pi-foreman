@@ -13,7 +13,7 @@ let system = "";
 const modelRegistry = {
   find: () => ({ cost: { input: 1 } }),
   getProviderAuthStatus: () => ({ configured: true }),
-  complete: async (_m: unknown, c: { systemPrompt?: string }) => (calls++, system = c.systemPrompt ?? "", { content: [{ type: "text", text: '{"verdict":"allow"}' }], stopReason: "stop" }),
+  complete: async (_m: unknown, c: { systemPrompt?: string }) => (calls++, system = c.systemPrompt ?? "", { content: [{ type: "text", text: '{"verdict":"allow","entry":"read-only-inspection","reason":"stub"}' }], stopReason: "stop" }),
 };
 let dialogs = 0;
 const ui = { notify: () => undefined, confirm: async () => (dialogs++, false), select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined };
@@ -31,9 +31,9 @@ test("r17b live shape: cp from outside the workspace into the own relative scrat
   const n0 = rig.trace().length;
   await rig.call("bash", { command: `cp ${inBash(path.join(srcDir, "live-ruling-2.md"))} .pi/scratch/live-ruling-2.md` });
   const recs = rig.trace().slice(n0);
-  assert.ok(recs.some((x) => x.event === "auto_review_allow"));
-  assert.deepEqual([dialogs, calls], [0, 1]);
-  // the live reviewer deferred (human dialog) as long as its rules listed `.pi/scratch` as read-only: it must be a read-and-write dir
-  assert.match(system, /To read and write: its scratch \([^)]*\.pi\/scratch[^)]*\)/);
-  assert.doesNotMatch(system, /to read: [^.]*; \.pi\/scratch;/);
+  // R41: the gate decides (no auto_review_allow, no overlay ask); the review stub allows the line, no dialog
+  assert.equal(recs.some((x) => x.event === "auto_review_allow"), false);
+  assert.ok(recs.some((x) => x.event === "guard" && x.guard === "gate" && x.decision === "allowed"), JSON.stringify(recs));
+  assert.equal(dialogs, 0);
+  void [calls, system];
 });

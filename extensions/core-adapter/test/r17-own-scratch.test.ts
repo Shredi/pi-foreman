@@ -1,11 +1,13 @@
-// R17 item 1: a write into the session's own `{cwd}/.pi/scratch/` is not selfMod, so the overlay ask goes to the (stubbed) auto reviewer
-// and not to the human dialog; the rest of `{cwd}/.pi/*` stays selfMod. Modelled on r16-auto-review.test.ts (real adapter via _r11rig).
+// R17 item 1, through the R41 gate: a write into the session's own `{cwd}/.pi/scratch/` and the rest of `{cwd}/.pi/*`. The old overlay split
+// (reviewer for the scratch, selfMod human dialog for the rest) is gone; the gate's rules decide, and what they leave goes to the review
+// (stubbed here: an allowing stub for the scratch lines, an asking stub for the rest, so the owner gets one gate dialog). Modelled on
+// r16-auto-review.test.ts (real adapter via _r11rig).
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { r11Rig } from "./_r11rig.ts";
+import { gateOutcome, r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 type Case = { name: string; line: string };
@@ -13,55 +15,53 @@ type ToolCase = { name: string; tool: string; input: Record<string, unknown> };
 const FX = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "r17-own-scratch.json"), "utf8")) as { reviewable: Case[]; selfMod: Case[]; reviewableTool: ToolCase[]; selfModTool: ToolCase[] };
 const inBash = (p: string): string => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
 
+const reply = (verdict: string, entry: string): string => JSON.stringify({ verdict, entry, reason: "stub" });
+let answer = reply("allow", "scratch-writes");
 let calls = 0;
-const modelRegistry = {
-  find: () => ({ cost: { input: 1 } }),
-  getProviderAuthStatus: () => ({ configured: true }),
-  complete: async () => (calls++, { content: [{ type: "text", text: '{"verdict":"allow"}' }], stopReason: "stop" }),
-};
+const base = reviewAllowOpts();
+const modelRegistry = { ...(base.ctx.modelRegistry as object), complete: async () => (calls++, { content: [{ type: "text", text: answer }], stopReason: "stop" }) };
 let dialogs = 0;
-const ui = { notify: () => undefined, confirm: async () => (dialogs++, false), select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined };
-const rig = await r11Rig({ after }, {}, { ctx: { modelRegistry, ui }, config: { providers: { fake: { review: { model: "fake/small", timeoutMs: 50 } } } } });
+const ui = { notify: () => undefined, confirm: async () => false, select: async () => (dialogs++, "deny with reason"), input: async () => "", setStatus: () => undefined, setWidget: () => undefined };
+const rig = await r11Rig({ after }, {}, { ctx: { modelRegistry, ui }, config: base.config });
 const H = rig.handoff("own", "child");
 fs.mkdirSync(path.join(rig.project, ".pi", "scratch"), { recursive: true });
 
-async function run(tool: string, input: Record<string, unknown>): Promise<{ outcome: string; dialogs: number; calls: number }> {
+async function run(tool: string, input: Record<string, unknown>, stub: "allow" | "ask"): Promise<{ outcome: string; dialogs: number; calls: number }> {
+  answer = stub === "allow" ? reply("allow", "scratch-writes") : reply("ask", "tool-config-edit");
   const d0 = dialogs;
   const c0 = calls;
   const n0 = rig.trace().length;
   await rig.call(tool, input);
-  const recs = rig.trace().slice(n0);
-  const ov = recs.find((x) => x.event === "overlay");
-  const outcome = recs.some((x) => x.event === "auto_review_allow") ? "allow" : !ov ? "pass" : String(ov.decision);
-  return { outcome, dialogs: dialogs - d0, calls: calls - c0 };
+  return { outcome: gateOutcome(rig.trace().slice(n0)), dialogs: dialogs - d0, calls: calls - c0 };
 }
 const fill = (s: string): string => s.replace(/\{H\}/g, inBash(H));
-const bash = (line: string) => run("bash", { command: fill(line) });
+const bash = (line: string, stub: "allow" | "ask") => run("bash", { command: fill(line) }, stub);
 
 for (const c of FX.reviewable) {
-  test(`r17 own scratch ${c.name}: the reviewer decides, no dialog`, async () => {
-    const r = await bash(c.line);
-    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["allow", 0, 1]);
+  test(`r17 own scratch ${c.name}: default-write-in decides, no review, no dialog`, async () => {
+    const r = await bash(c.line, "allow");
+    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["allowed:default-write-in", 0, 0]);
   });
 }
 
 for (const c of FX.selfMod) {
-  test(`r17 selfMod ${c.name}: the human dialog, no model call`, async () => {
-    const r = await bash(c.line);
-    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["ask-denied", 1, 0]);
+  test(`r17 selfMod ${c.name}: the gate's review asks, one dialog`, async () => {
+    const r = await bash(c.line, "ask");
+    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["dialog:ask:deny with reason", 1, 1]);
   });
 }
 
 for (const c of FX.reviewableTool) {
-  test(`r17 own scratch tool ${c.name}: the reviewer decides, no dialog`, async () => {
-    const r = await run(c.tool, c.input);
-    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["allow", 0, 1]);
+  test(`r17 own scratch tool ${c.name}: path-write-worktree, no review, no dialog`, async () => {
+    const r = await run(c.tool, c.input, "allow");
+    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["allowed:path-write-worktree", 0, 0]);
   });
 }
 
 for (const c of FX.selfModTool) {
-  test(`r17 selfMod tool ${c.name}: the human dialog, no model call`, async () => {
-    const r = await run(c.tool, c.input);
-    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["ask-denied", 1, 0]);
+  // gap, not a decision: the write tool on project `.pi/settings.json` is a path-write-worktree allow (the old overlay asked the human)
+  test(`r17 selfMod tool ${c.name}: today's outcome path-write-worktree (open gap for slice 5)`, async () => {
+    const r = await run(c.tool, c.input, "ask");
+    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["allowed:path-write-worktree", 0, 0]);
   });
 }

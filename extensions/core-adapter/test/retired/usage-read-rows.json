@@ -1,9 +1,0 @@
-{
-  "comment": "R16 item 4c: rows of r12-state-read.test.ts that called usageNodeRead directly, retired when permoverlay.ts ownRead dropped the USAGE_VERBS chain and the usagePythonRead/usageNodeRead wrappers (ownStateRead is the one own-read decision). Each row keeps its test name and runs through the real adapter (test/_r11rig.ts) as the foreman with a stubbed allowing reviewer. Placeholders: {usage} this session's own usage record under <agentDir>/pi-foreman/state/usage, {usageDir} that usage dir, {state} the state dir. Every path goes through inBash. expect: pass = ownStateRead still allows it deterministically (no overlay record, no model call); review = the overlay ask goes to the auto reviewer, the allowing stub allows it with one model call; human = a self-modification ask (a protect hit on state/) that skips the reviewer and goes to the human dialog, which the rig's ui denies, no model call. The three `human` rows were never allowed (usageNodeRead was false for them); their outcome did not change with item 4c.",
-  "rows": [
-    { "test": "state_usage_node_e_read", "line": "node -e \"console.log(require('fs').readFileSync('{usage}','utf8'))\"", "expect": "pass", "note": "the node read form of an own record: an ownStateRead unit (usageNodeWords)" },
-    { "test": "state_usage_node_e_read", "line": "node -e \"require('fs').writeFileSync('{usage}','x')\"", "expect": "human", "note": "a write call is no read form" },
-    { "test": "state_usage_node_e_read", "line": "node -e \"require('child_process').execSync('ls {usageDir}')\"", "expect": "human", "note": "another module is no read form" },
-    { "test": "state_usage_node_e_read", "line": "node -e \"console.log(require('fs').readFileSync('{state}/rounds.json','utf8'))\"", "expect": "human", "note": "rounds.json is no own record" }
-  ]
-}

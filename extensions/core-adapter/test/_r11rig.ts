@@ -161,3 +161,26 @@ export function writeAt(file: string, text: string, at: number): void {
   fs.writeFileSync(file, text);
   fs.utimesSync(file, at / 1000, at / 1000);
 }
+
+/** R41: the gate's outcome of the trace records of one tool call: `allowed:<rule>`, `blocked:<rule>`, `dialog:<cause>:<answer>`, or `pass` (no gate record). */
+export function gateOutcome(recs: Record<string, unknown>[]): string {
+  const g = recs.filter((x) => x.event === "guard" && x.guard === "gate");
+  const last = g[g.length - 1];
+  const dlg = recs.find((x) => x.event === "dialog" && x.guard === "gate");
+  if (dlg && !(last && last.decision === "allowed")) return `dialog:${dlg.cause}:${dlg.decision}`;
+  return last ? `${last.decision}:${last.rule}` : "pass";
+}
+
+/** R41: r11Rig options whose gate review always allows (policy entry read-only-inspection), for rigs whose bash calls have no default allow. */
+export function reviewAllowOpts(): { ctx: Record<string, unknown>; config: Record<string, unknown> } {
+  return {
+    ctx: {
+      modelRegistry: {
+        find: () => ({ id: "m" }),
+        getProviderAuthStatus: () => ({ configured: false }),
+        complete: async () => ({ content: [{ type: "text", text: JSON.stringify({ verdict: "allow", entry: "read-only-inspection", reason: "stub" }) }], stopReason: "stop", usage: { input: 1, output: 1 } }),
+      },
+    },
+    config: { providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"].map((r) => [r, { model: `fake/${r}` }])) } } },
+  };
+}

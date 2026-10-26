@@ -314,7 +314,7 @@ test("critical and high do not gate foreman_bg or bash", async (t) => {
   for (const level of ["high", "critical"] as const) {
     a.setLevel(level);
     for (const toolName of ["foreman_bg", "bash"]) {
-      const d = await a.handlers.get("tool_call")!({ toolName, toolCallId: `x-${level}-${toolName}`, input: { command: "echo hi" } }, a.ctx);
+      const d = await a.handlers.get("tool_call")!({ toolName, toolCallId: `x-${level}-${toolName}`, input: { command: "ls" } }, a.ctx);
       assert.equal(d, undefined, `${toolName} under ${level}`);
     }
   }
