@@ -161,8 +161,6 @@ test("a reviewer (denies mcp__*) with mcp in config starts nothing", async () =>
 });
 
 test("a direct server in mcp.json is deferred in the child: not active, loaded by tool_search", async () => {
-  const startMarker = "unused";
-  void startMarker;
   await withChild({ roles: { builder: { mcp: ["fx"] } }, server: { command: process.execPath, args: [fixture, path.join(fs.realpathSync(process.env.TMPDIR ?? "/tmp"), `fx-direct-${process.pid}-s`), path.join(fs.realpathSync(process.env.TMPDIR ?? "/tmp"), `fx-direct-${process.pid}-e`)], exposure: "direct" } }, async ({ api }) => {
     assert.equal(await waitFor(() => mcpTools(api).includes("mcp__fx__echo")), true);
     assert.equal(api.getAllTools().find(({ name }) => name === "mcp__fx__echo")?.exposure, "deferred");

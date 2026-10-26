@@ -34,9 +34,8 @@ import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits } from "./childreads.ts";
 import { bgWaitLocations, coordinationCall, finalizationCommand, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { roleToolDenied } from "./roledeny.ts";
-import { McpChild, registerChildToolSearch } from "./mcpchild.ts";
+import { McpChild, configuredServers, registerChildToolSearch } from "./mcpchild.ts";
 import type { McpChildOpts } from "./mcpchild.ts";
-import { configuredServers } from "./mcpchild.ts";
 import { PER_ENTRY_BINDINGS, planMcpLaunch, unknownServerLine, unknownServers, workflowBindingBlock } from "./mcplaunch.ts";
 import { childSkillDirs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
@@ -2031,7 +2030,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (act.block) return { block: true, reason: act.block };
         // r68 (A22): a workflow script that names a binding could forge one for any child.
         const branch = (ctx.sessionManager.getBranch?.() ?? []) as { type?: string; message?: unknown }[];
-        const forged = workflowBindingBlock(input, { cwd: s.cwd, replyText: lastAssistantText(branch.filter((e) => e.type === "message").map((e) => e.message)) });
+        const forged = workflowBindingBlock(input, { cwd: s.cwd, roles: get(s.config.config, "roles"), replyText: lastAssistantText(branch.filter((e) => e.type === "message").map((e) => e.message)) });
         if (forged) {
           s.trace?.emit({ event: "launch_refused", reason: "workflow_binding", tier: s.ceremony.tier, ...launchDeny(input) });
           return { block: true, reason: forged };

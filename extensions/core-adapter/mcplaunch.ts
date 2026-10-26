@@ -98,7 +98,7 @@ export function planMcpLaunch(input: Json, configRoles: unknown, opts: { perEntr
         if (typeof entry.agent === "string" && entry.agent) entries.push({ entry, role: entry.agent });
         continue;
       }
-      if (typeof entry.agent !== "string" || !entry.agent) continue; // a step without a role: nothing to validate against, left as given
+      if (typeof entry.agent !== "string" || !entry.agent) return refuse("mcp_launch", "pi-foreman: a tasks/chain entry with mcp needs an agent; the list is checked against that role's ceiling");
       const checked = checkList(entry.mcp, entry.agent, configRoles);
       if (checked.text) return refuse("mcp_launch", checked.text);
       entries.push({ entry, role: entry.agent, mcp: checked.list });
@@ -135,13 +135,19 @@ const MAX_SCRIPT_BYTES = 1_000_000;
  * `pi-foreman/1` binding (any role, any `mcp`). A script whose text (the reply's text for `workflow: true`, the file for a
  * path, `workflowScript`, and the JSON `args`) names either word is refused, so only adapter-written bindings exist.
  */
-export function workflowBindingBlock(input: Json, ctx: { cwd: string; replyText: string }): string | undefined {
+export function workflowBindingBlock(input: Json, ctx: { cwd: string; replyText: string; roles?: unknown }): string | undefined {
   if (!isObj(input) || (input.workflow === undefined && input.workflowScript === undefined)) return undefined;
   const texts: string[] = [];
-  if (input.workflow === true) texts.push(ctx.replyText);
-  if (typeof input.workflow === "string" && input.workflow.includes("/")) {
+  // pi-subagents reads the string "true" as true and takes a slash or a backslash as a script path
+  const workflow = input.workflow === "true" ? true : input.workflow;
+  if (workflow === true) texts.push(ctx.replyText);
+  if (typeof workflow === "string" && workflow.trim() && !workflow.includes("/") && !workflow.includes("\\")) {
+    const ceiling = isObj(ctx.roles) && Object.keys(ctx.roles).some((r) => roleMcpEntries(ctx.roles, r).length > 0);
+    if (ceiling) return namedResourceText();
+  }
+  if (typeof workflow === "string" && (workflow.includes("/") || workflow.includes("\\"))) {
     try {
-      const file = path.resolve(ctx.cwd, input.workflow);
+      const file = path.resolve(ctx.cwd, workflow);
       if (fs.statSync(file).size <= MAX_SCRIPT_BYTES) texts.push(fs.readFileSync(file, "utf8"));
       else return refusalText();
     } catch {
@@ -158,6 +164,9 @@ export function workflowBindingBlock(input: Json, ctx: { cwd: string; replyText:
   }
   return texts.some((t) => BINDING_WORDS.test(t)) ? refusalText() : undefined;
 }
+
+const namedResourceText = (): string =>
+  "pi-foreman: subagent launch refused [launch_refused:workflow_binding]: named workflow resources cannot be checked for a forged launch binding while a role has an MCP ceiling (roles.<role>.mcp); use workflow: true or a script path instead.";
 
 const refusalText = (): string =>
   "pi-foreman: subagent launch refused [launch_refused:workflow_binding]: a workflow script that names `extensionBindings` or `pi-foreman/1` could forge a launch binding; only the adapter writes bindings. Remove it from the script.";

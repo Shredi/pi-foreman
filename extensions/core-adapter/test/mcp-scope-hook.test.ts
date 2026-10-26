@@ -78,7 +78,7 @@ test("a launch mcp list narrows the guard: fx/echo allows echo only, and the rea
   assert.equal(shout?.reason, "pi-foreman: `mcp__fx__shout` is outside the MCP scope of role builder (roles.builder.mcp, launch mcp).");
 });
 
-test("a codemode inner call is judged like a direct call", async (t) => {
+test("a tool_call arriving after a codemode call (how a nested call surfaces) is judged like a direct call", async (t) => {
   const { rig } = await childRig(t);
   assert.equal(await rig.call("codemode", { code: "return 1" }), undefined);
   // the nested call arrives as its own tool_call with the nested tool's name

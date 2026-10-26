@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { r11Rig } from "./_r11rig.ts";
@@ -157,6 +158,30 @@ test("workflow scripts naming a binding are refused; plain ones are not", () => 
   assert.equal(workflowBindingBlock({ workflow: true }, { cwd: "/x", replyText: "await agent({task: 'a'})" }), undefined);
   assert.match(workflowBindingBlock({ workflow: "x", args: { s: "pi-foreman/1" } }, ctx) ?? "", /workflow_binding/);
   assert.equal(workflowBindingBlock({ agent: "builder", task: "a" }, ctx), undefined);
+});
+
+test("workflow binding check: the string true, backslash paths and named resources", () => {
+  const forged = { cwd: os.tmpdir(), replyText: "agent({ extensionBindings: {} })" };
+  assert.match(workflowBindingBlock({ workflow: "true" }, forged) ?? "", /workflow_binding/);
+  assert.equal(workflowBindingBlock({ workflow: "true" }, { cwd: "/x", replyText: "agent({})" }), undefined);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wfb-"));
+  try {
+    fs.writeFileSync(path.join(dir, "a.js"), "agent({ extensionBindings: {} })");
+    fs.writeFileSync(path.join(dir, ".\\a.js"), "agent({ extensionBindings: {} })"); // on POSIX a backslash is a plain file name character
+    assert.match(workflowBindingBlock({ workflow: ".\\a.js" }, { cwd: dir, replyText: "" }) ?? "", /workflow_binding/);
+    assert.match(workflowBindingBlock({ workflow: "./a.js" }, { cwd: dir, replyText: "" }) ?? "", /workflow_binding/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  const withCeiling = { cwd: "/x", replyText: "", roles: { builder: { mcp: ["fx"] }, reviewer: {} } };
+  assert.match(workflowBindingBlock({ workflow: "my-flow" }, withCeiling) ?? "", /named workflow resources cannot be checked/);
+  assert.equal(workflowBindingBlock({ workflow: "my-flow" }, { cwd: "/x", replyText: "", roles: { builder: {} } }), undefined);
+});
+
+test("a tasks entry with mcp but no agent is refused", () => {
+  const res = planMcpLaunch({ tasks: [{ task: "a", mcp: ["fx"] }] }, { builder: { mcp: ["fx"] } }, { perEntryBindings: true });
+  assert.equal(res.refusal?.reason, "mcp_launch");
+  assert.match(res.refusal?.text ?? "", /needs an agent/);
 });
 
 test("a workflow script file naming a binding is refused", async (t) => {
