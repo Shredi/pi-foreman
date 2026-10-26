@@ -36,6 +36,10 @@
    "role": "builder"
   },
   {
+   "event": "roots_block",
+   "role": "builder"
+  },
+  {
    "event": "guard",
    "toolFamily": "Agent",
    "guard": "ledger_guard_spawn",
@@ -48,6 +52,10 @@
   },
   {
    "event": "launch_sizing",
+   "role": "builder"
+  },
+  {
+   "event": "roots_block",
    "role": "builder"
   },
   {
@@ -83,6 +91,13 @@
   {
    "event": "llm",
    "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "subagent_supervisor",
+   "guard": "gate",
+   "decision": "allowed"
   },
   {
    "event": "supervisor_request",
@@ -176,6 +191,13 @@
     "event": "llm",
     "role": "builder",
     "model": "foreman-fake/builder"
+   },
+   {
+    "event": "guard",
+    "role": "builder",
+    "toolFamily": "contact_supervisor",
+    "guard": "gate",
+    "decision": "allowed"
    },
    {
     "event": "llm",

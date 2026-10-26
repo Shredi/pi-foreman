@@ -17,6 +17,18 @@
    "model": "foreman-fake/explorer"
   },
   {
+   "event": "review",
+   "role": "explorer",
+   "decision": "allow"
+  },
+  {
+   "event": "guard",
+   "role": "explorer",
+   "toolFamily": "bash",
+   "guard": "gate",
+   "decision": "allowed"
+  },
+  {
    "event": "guard",
    "role": "explorer",
    "toolFamily": "Bash",

@@ -21,6 +21,13 @@
    "model": "foreman-fake/foreman"
   },
   {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "foreman_triage",
+   "guard": "gate",
+   "decision": "allowed"
+  },
+  {
    "event": "tier",
    "tier": "trivial"
   },
@@ -35,19 +42,10 @@
   },
   {
    "event": "guard",
-   "toolFamily": "Write",
-   "guard": "ledger_guard_write",
-   "decision": "none"
-  },
-  {
-   "event": "guard",
-   "toolFamily": "Write",
-   "guard": "ledger_bind",
-   "decision": "none"
-  },
-  {
-   "event": "llm",
-   "model": "foreman-fake/foreman"
+   "role": "foreman",
+   "toolFamily": "write",
+   "guard": "gate",
+   "decision": "allowed"
   },
   {
    "event": "guard",
@@ -64,6 +62,36 @@
   {
    "event": "llm",
    "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "write",
+   "guard": "gate",
+   "decision": "allowed"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Write",
+   "guard": "ledger_guard_write",
+   "decision": "none"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Write",
+   "guard": "ledger_bind",
+   "decision": "none"
+  },
+  {
+   "event": "llm",
+   "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "foreman_move",
+   "guard": "gate",
+   "decision": "allowed"
   },
   {
    "event": "safe_op",
@@ -73,6 +101,13 @@
   {
    "event": "llm",
    "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "foreman_move",
+   "guard": "gate",
+   "decision": "allowed"
   },
   {
    "event": "safe_op",

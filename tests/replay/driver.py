@@ -135,7 +135,9 @@ def deep_merge(base, over):
 
 
 def provider_map(providers, unmapped=()):
-    return {p: {"roles": {r: {"model": "%s/%s" % (p, r)} for r in ROLES if r not in unmapped}} for p in providers}
+    # every fake provider also gets a review model: the gate sends lines that are neither floor nor default to review
+    return {p: {"roles": {r: {"model": "%s/%s" % (p, r)} for r in ROLES if r not in unmapped},
+                "review": {"model": "%s/review-allow" % p}} for p in providers}
 
 
 def _under_tmp(p):

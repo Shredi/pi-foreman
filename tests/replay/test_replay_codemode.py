@@ -35,13 +35,13 @@ class TestCodemodeInnerCalls(ReplayCase):
         pi.close()
         dialogs = [str(r.get("title", "")) for r in recs if r.get("type") == "extension_ui_request" and r.get("method") == "select"]
         self.assertFalse([d for d in dialogs if "codemode" in d], dialogs)
-        self.assertTrue([d for d in dialogs if "uname -s" in d], dialogs)
+        self.assertFalse(dialogs, dialogs)  # item 23: the unlisted `uname -s` goes to review (review-allow in the rig), not to a dialog
         res = ends(recs)
         outer = [x for x in res if x[0] == "codemode"]
         inner = [x for x in res if x[1]]
         self.assertEqual(len(outer), 1)
         self.assertFalse(outer[0][2], outer[0][3])
-        self.assertEqual([(n, e) for n, _, e, _ in inner], [("read", False), ("bash", True), ("bash", True), ("bash", True)])
+        self.assertEqual([(n, e) for n, _, e, _ in inner], [("read", False), ("bash", True), ("bash", False), ("bash", True)], inner)
         self.assertTrue(all(p == inner[0][1] for _, p, _, _ in inner))
         self.assertIn("denied by the write protection", inner[1][3])
         self.assertIn("pi-permission-system", inner[2][3])

@@ -48,6 +48,13 @@
   },
   {
    "event": "guard",
+   "role": "foreman",
+   "toolFamily": "write",
+   "guard": "gate",
+   "decision": "allowed"
+  },
+  {
+   "event": "guard",
    "toolFamily": "Write",
    "guard": "ledger_guard_write",
    "decision": "none"
@@ -61,6 +68,17 @@
   {
    "event": "llm",
    "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "review",
+   "decision": "allow"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "bash",
+   "guard": "gate",
+   "decision": "allowed"
   },
   {
    "event": "guard",
@@ -85,6 +103,10 @@
    "event": "role_launch",
    "role": "explorer",
    "model": "foreman-fake/explorer"
+  },
+  {
+   "event": "roots_block",
+   "role": "explorer"
   },
   {
    "event": "role_launched",
@@ -214,6 +236,17 @@
   {
    "event": "llm",
    "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "review",
+   "decision": "allow"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "bash",
+   "guard": "gate",
+   "decision": "allowed"
   },
   {
    "event": "guard",

@@ -9,10 +9,10 @@
  "builder": {
   "bld": [
    {"tools": [
-    {"name": "bash", "arguments": {"command": "HOME=x; touch ~/rebound.txt"}}
+    {"name": "bash", "arguments": {"command": "cat ~/.ssh/id_rsa"}}
    ]},
    {"tools": [
-    {"name": "bash", "arguments": {"command": "HOME=x; touch ~/rebound.txt"}}
+    {"name": "bash", "arguments": {"command": "cat ~/.ssh/id_rsa"}}
    ]},
    {"tools": [
     {"name": "bash", "arguments": {"command": "touch third.txt"}}

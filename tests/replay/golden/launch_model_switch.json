@@ -32,6 +32,10 @@
    "model": "foreman-fake/builder"
   },
   {
+   "event": "roots_block",
+   "role": "explorer"
+  },
+  {
    "event": "role_launched",
    "role": "explorer",
    "model": "foreman-fake/builder",
@@ -98,6 +102,10 @@
    "event": "role_launch",
    "role": "explorer",
    "model": "foreman-fake-b/reviewer"
+  },
+  {
+   "event": "roots_block",
+   "role": "explorer"
   },
   {
    "event": "role_launched",
