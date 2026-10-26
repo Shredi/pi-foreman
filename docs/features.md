@@ -629,8 +629,8 @@ Switch: `safety.subagents.allowWorkflow` is true.
 | Key | Default | Layer |
 |---|---|---|
 | `bridge.isolateClaudeConfig` | `"auto"` | not in project/session (it loosens the host config isolation) |
-| `bridge.promptCacheTtl.main` | unset | not in project/session (the bridge cache TTL comes from the user or overlay config) |
-| `bridge.promptCacheTtl.subagent` | unset | not in project/session (the bridge cache TTL comes from the user or overlay config) |
+| `bridge.promptCacheTtl.main` | `"1h"` | not in project/session (the bridge cache TTL comes from the user or overlay config) |
+| `bridge.promptCacheTtl.subagent` | `"5m"` | not in project/session (the bridge cache TTL comes from the user or overlay config) |
 
 ### sessions
 

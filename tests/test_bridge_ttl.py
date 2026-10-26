@@ -73,7 +73,7 @@ class ConfigLayerTest(unittest.TestCase):
         self.assertEqual(res["errors"], [])
         self.assertTrue([w for w in res["warnings"] if "bridge.promptCacheTtl.main" in w], res["warnings"])
         ttl = res["config"]["bridge"].get("promptCacheTtl", {})
-        self.assertNotIn("main", ttl)
+        self.assertEqual(ttl.get("main"), "1h")  # the shipped default fills it
         self.assertEqual(ttl.get("subagent"), "inherit")
         self.assertEqual(fc.derived_bridge_ttl(res["config"], False, {}), 3600)  # the default fills it
         self.assertIsNone(fc.derived_bridge_ttl(res["config"], True, {}))  # inherit
@@ -89,7 +89,7 @@ class ConfigLayerTest(unittest.TestCase):
                 res = self.load(user={"version": 1, "bridge": {"promptCacheTtl": bad}})
                 self.assertEqual(res["errors"], [])
                 self.assertTrue([w for w in res["warnings"] if "bridge.promptCacheTtl" in w], res["warnings"])
-                self.assertNotIn("promptCacheTtl", res["config"]["bridge"])
+                self.assertEqual(res["config"]["bridge"]["promptCacheTtl"], {"main": "1h", "subagent": "5m"})
                 self.assertEqual(fc.derived_bridge_ttl(res["config"], False, {}), 3600)
 
     def test_ignored_key_row_exists(self):
