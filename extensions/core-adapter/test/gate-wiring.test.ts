@@ -84,16 +84,18 @@ test("a review allow falls to the old handlers, is logged, and goes into the his
   assert.match(second, /terraform plan/);
 });
 
-test("ask and unreachable reviews fall through and are logged", async (t) => {
+// slice 4b: an ask or an unreachable review opens the dialog (the rig's select answers "approve", no option, so the call is denied); the review record stays
+test("ask and unreachable reviews are logged as review records, then answered by the dialog", async (t) => {
+  const rec = (r: Awaited<ReturnType<typeof rig>>) => r.log().filter((x) => x.layer === "review").at(-1)!;
   const ask = await rig(t, [V("ask", "package-install")]);
-  assert.equal(await ask.call("bash", { command: "pip install x" }), undefined);
-  assert.deepEqual([ask.log().at(-1)!.layer, ask.log().at(-1)!.verdict], ["review", "ask"]);
+  assert.ok((await ask.call("bash", { command: "pip install x" }))?.block);
+  assert.deepEqual([rec(ask).layer, rec(ask).verdict], ["review", "ask"]);
   const gone = await rig(t, [new Error("boom")]);
-  assert.equal(await gone.call("bash", { command: "terraform plan" }), undefined);
-  assert.deepEqual([gone.log().at(-1)!.layer, gone.log().at(-1)!.verdict, gone.log().at(-1)!.rule], ["review", "unreachable", "provider_error"]);
+  assert.ok((await gone.call("bash", { command: "terraform plan" }))?.block);
+  assert.deepEqual([rec(gone).layer, rec(gone).verdict, rec(gone).rule], ["review", "unreachable", "provider_error"]);
   const none = await rig(t, [V("allow", "build-test-in-worktree")], false);
   await none.call("bash", { command: "terraform plan" });
-  assert.equal(none.log().at(-1)!.rule, "no_model");
+  assert.equal(rec(none).rule, "no_model");
 });
 
 test("the log carries the shape, never the raw command, and the child session logs too", async (t) => {

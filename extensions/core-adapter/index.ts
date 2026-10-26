@@ -21,6 +21,8 @@ import { GateCache, GateHistory, gateReview, MAX_OWNER_MESSAGES } from "./gatere
 import type { GateReviewRequest } from "./gatereview.ts";
 import { gateLogFile, openGateLog } from "./gatelog.ts";
 import type { GateKind, GateLog } from "./gatelog.ts";
+import { awaitRuling, DEFAULT_ASK_TIMEOUT_MS, dialogBody, DIALOG_OPTIONS, silentDeny, STOP_TEXT, unreachableName, userDeny, writeRoundAsk } from "./gatedialog.ts";
+import type { GateAsk } from "./gatedialog.ts";
 import { loadPolicy } from "./policy.ts";
 import type { LoadedPolicy } from "./policy.ts";
 import { PATH_TOOL_NAMES } from "./pathrules.ts";
@@ -560,7 +562,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("ui_prompt_start", async (_e, ctx) => sessionFor(ctx)?.live?.setBlocked(true));
   pi.on("ui_prompt_end", async (_e, ctx) => sessionFor(ctx)?.live?.setBlocked(false));
   // orphaned dialog (see herdr.ts): Pi may swallow ui_prompt_end, so any input or the end of the turn also clears the "ui" source
-  pi.on("input", async (_e, ctx) => sessionFor(ctx)?.live?.setBlocked(false));
+  pi.on("input", async (e, ctx) => {
+    const s = sessionFor(ctx);
+    s?.live?.setBlocked(false);
+    if (s && (e as { source?: string }).source !== "extension") gateStopped.delete(s.id); // a new user prompt ends a "deny and stop"
+  });
   pi.on("agent_end", async (_e, ctx) => sessionFor(ctx)?.live?.setBlocked(false));
   pi.events?.on(CHILD_TRACE_EVENT, (data: unknown) => {
     const e = (data ?? {}) as Record<string, unknown>;
@@ -1817,7 +1823,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** Overlay check (see permoverlay.ts); undefined = let the call go on. */
-  async function overlayBlock(s: Session, ctx: ExtensionContext, toolName: string, input: Record<string, unknown>, rulingAsk?: Decision) {
+  async function overlayBlock(s: Session, ctx: ExtensionContext, toolName: string, input: Record<string, unknown>, rulingAsk?: Decision, callId = "") {
+    // R41: a call the gate decided has no overlay check, auto review or confirm; a self-ruling ask is not a gate matter and still resolves here
+    if (gateDecided.delete(callId) && !rulingAsk) return undefined;
     if (!s.overlay) return { block: true as const, reason: OVERLAY_UNAVAILABLE };
     // the session's own bg_run task dirs (`.pi/tasks/<session id>-*`) are readable for the session and its children, no other session's
     // and the session cwd's `.pi/scratch` (log copies; a child's cwd is its worktree)
@@ -1929,6 +1937,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     cache: GateCache;
   }
   const gateRuntimes = new Map<string, GateRuntime>();
+  /** Tool calls the gate decided (allow); the old overlay skips them. */
+  const gateDecided = new Set<string>();
+  /** Sessions whose owner answered "deny and stop" (until the next user prompt), and per-session allows keyed `tool\0payload`. */
+  const gateStopped = new Set<string>();
+  const gateSessionAllow = new Map<string, Set<string>>();
   /** The owner's prompts of a session, newest first. */
   const gateOwnerMessages = new Map<string, string[]>();
   const gateRuntimeOf = (s: Session): GateRuntime => {
@@ -1954,7 +1967,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ...(roots ? { roots: () => roots, facts: { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
     });
     const role = gs?.isChild ? gs.usage.line.role : "foreman";
-    const kind: GateKind = gs?.isChild ? "child" : ctx.hasUI ? "owner" : "headless";
+    const kind: GateKind = gs?.isChild ? "child" : gs && roundStateDir(process.env) ? "round" : ctx.hasUI ? "owner" : "headless";
     const rt = gs ? gateRuntimeOf(gs) : undefined;
     const payload = gatePayload(event.toolName, event.input);
     const note = (layer: "floor" | "default", verdict: string, rule: string, reason?: string): void => rt?.log.record({ tool: event.toolName, layer, verdict, rule, ...(reason ? { reason } : {}), input: payload, role, kind });
@@ -1966,12 +1979,25 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (r) {
       gs?.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: r.rule, role });
       note("default", "allow", r.rule);
+      gateDecided.add(event.toolCallId);
       rt?.history.push(event.toolName, payload);
       if (changesState(event.toolName, r.rule)) rt?.cache.invalidateAllows();
       return undefined;
     }
     const surface = gs && rt ? gateSurface(event.toolName) : null;
     if (!gs || !rt || !surface) return undefined;
+    const sessionKey = `${event.toolName}\u0000${payload}`;
+    if (gateStopped.has(gs.id)) {
+      note("floor", "deny", "user-stop", STOP_TEXT);
+      return { block: true as const, reason: STOP_TEXT };
+    }
+    if (gateSessionAllow.get(gs.id)?.has(sessionKey)) {
+      gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: "session-allow", role });
+      rt.log.record({ tool: event.toolName, layer: "cache", verdict: "allow", rule: "session-allow", input: payload, role, kind, cached: true });
+      gateDecided.add(event.toolCallId);
+      rt.history.push(event.toolName, payload);
+      return undefined;
+    }
     try {
       const facts = reviewGitFacts(ctx.cwd);
       const req: GateReviewRequest = {
@@ -1992,11 +2018,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       if (v.kind === "allow") {
         gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: `review:${v.entry}`, role });
+        gateDecided.add(event.toolCallId);
         rt.history.push(event.toolName, payload);
         if (changesState(event.toolName)) rt.cache.invalidateAllows();
         return undefined;
       }
-      gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "fell-through", rule: v.kind === "unreachable" ? `review-unreachable:${v.cause}` : `review-ask:${v.entry}`, role });
+      const ask: GateAsk = v.kind === "unreachable" ? { cause: "unreachable", why: v.cause, detail: v.detail } : { cause: "ask", entry: v.entry, reason: v.reason };
+      const blocked = await gateAsk(gs, ctx, rt, kind, role, event.toolName, event.input, payload, ask, sessionKey);
+      if (blocked) return blocked;
+      gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: ask.cause === "ask" ? `dialog:${ask.entry}` : `dialog:${ask.why}`, role });
+      gateDecided.add(event.toolCallId);
+      rt.history.push(event.toolName, payload);
+      if (changesState(event.toolName)) rt.cache.invalidateAllows();
       return undefined;
     } catch (e) {
       const reason = `pi-foreman: the permission gate failed (${e instanceof Error ? e.message : String(e)}), so the call is denied. Report this to the user.`;
@@ -2004,6 +2037,62 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return { block: true as const, reason };
     }
   });
+
+  /**
+   * The gate's ask routing (plan 2.5). Returns the block, or undefined when the call may go on. Owner pane: one pi-foreman dialog; round
+   * session: ask.md to the parent and a wait for ruling-<n>.md; child and headless: a deny that says what to report. No model decides here.
+   */
+  async function gateAsk(gs: Session, ctx: ExtensionContext, rt: GateRuntime, kind: GateKind, role: string, tool: string, input: unknown, payload: string, a: GateAsk, sessionKey: string): Promise<{ block: true; reason: string } | undefined> {
+    const detail = a.cause === "ask" ? `${a.entry}: ${a.reason}` : `${unreachableName(a.why)}: ${a.detail}`;
+    const rule = a.cause === "ask" ? a.entry : a.why;
+    const done = (answer: string, allow: boolean, reason?: string): { block: true; reason: string } | undefined => {
+      // the trace's field list is pinned (trace.ts): the answer goes in `decision`, the cause detail in `reason`
+      const df = denyFields(detail, tool, input, role, [PKG_ROOT, ctx.cwd]);
+      gs.trace?.emit({ event: "dialog", guard: "gate", cause: a.cause, decision: answer, rule, toolFamily: tool, ...df, ...dialogFields(df.command) });
+      rt.log.record({ tool, layer: "dialog", verdict: allow ? "allow" : "deny", rule, reason: answer, input: payload, role, kind });
+      askFlag.overlay({ command: df.command, rule, approved: allow, session: gs.id });
+      return allow ? undefined : { block: true as const, reason: reason ?? "pi-foreman: denied." };
+    };
+    if (kind === "round") {
+      const dir = roundStateDir(process.env) as string;
+      const t = get(gs.config.config, "gate.askTimeoutMs");
+      const timeoutMs = typeof t === "number" && Number.isFinite(t) && t >= 0 ? t : DEFAULT_ASK_TIMEOUT_MS;
+      let n: number;
+      try {
+        n = writeRoundAsk(dir, a, { tool, payload, cwd: ctx.cwd, session: gs.id });
+      } catch (e) {
+        return done("timeout", false, `pi-foreman: the ask for the parent could not be written (${e instanceof Error ? e.message : String(e)}); the call is denied. Report this to the owner.`);
+      }
+      const w = await withBlocked(herdrEvents, `ask ${n}: gate ${tool}`, () => awaitRuling(dir, n, timeoutMs));
+      if (w.answer === "allow") return done("ruling-allow", true);
+      if (w.answer === "deny") return done("ruling-deny", false, `pi-foreman: denied by the parent in ruling-${n}.md.`);
+      if (w.answer === "other") return done("ruling-deny", false, `pi-foreman: denied: the first line of ruling-${n}.md is "${(w.first ?? "").slice(0, 40)}", not ALLOW or DENY.`);
+      return done("timeout", false, `pi-foreman: denied: no ruling-${n}.md within ${Math.round(timeoutMs / 1000)}s (gate.askTimeoutMs); the call is denied. Report this to the owner.`);
+    }
+    if (kind !== "owner") {
+      const reason = silentDeny(kind, a);
+      rt.log.record({ tool, layer: "dialog", verdict: "deny", rule, reason: "no-dialog", input: payload, role, kind });
+      return { block: true as const, reason };
+    }
+    const body = dialogBody(a, tool, payload);
+    const choice = await withBlocked(herdrEvents, body.split("\n", 1)[0], () => ctx.ui.select(body, [...DIALOG_OPTIONS]));
+    if (choice === "allow once") return done(choice, true);
+    if (choice === "allow for session") {
+      let set = gateSessionAllow.get(gs.id);
+      if (!set) gateSessionAllow.set(gs.id, (set = new Set()));
+      set.add(sessionKey);
+      return done(choice, true);
+    }
+    if (choice === "deny with reason") {
+      const typed = (await withBlocked(herdrEvents, "deny reason", () => ctx.ui.input("pi-foreman: reason for the deny (shown to the agent)", ""))) ?? "";
+      return done(choice, false, userDeny(typed));
+    }
+    if (choice === "deny and stop") {
+      gateStopped.add(gs.id);
+      return done(choice, false, STOP_TEXT);
+    }
+    return done("dismissed", false, userDeny("the dialog was dismissed"));
+  }
 
   const gatePolicyFiles = (gs: Session | undefined): string[] => {
     const v = gs ? get(gs.config.config, "safety.policy.files") : undefined;
@@ -2089,7 +2178,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // First of all, before the permission system and the core guards: the overlay's deny/ask rules.
     if (isOverlayTool(event.toolName)) {
       try {
-        const blocked = await overlayBlock(await ensureSession(ctx), ctx, event.toolName, event.input as Record<string, unknown>, rulingAsk);
+        const blocked = await overlayBlock(await ensureSession(ctx), ctx, event.toolName, event.input as Record<string, unknown>, rulingAsk, event.toolCallId);
         if (blocked) return blocked;
       } catch (err) {
         return { block: true, reason: `pi-foreman: adapter error in the permission overlay (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
@@ -3085,6 +3174,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.on("tool_result", async (event, ctx) => {
+    gateDecided.delete(event.toolCallId);
     sessionFor(ctx)?.gitDrift.after(ctx.cwd, os.homedir(), event.toolCallId);
     const owner = sessionFor(ctx);
     if (event.isError) owner?.trace?.emit(toolErrorRecord(event.toolName, event.content)); // R6 lane 7f

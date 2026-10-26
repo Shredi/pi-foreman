@@ -62,6 +62,13 @@ export function dialogReport(traceFile: string): DialogReport {
       out.self_ruling_refusal.lines.push(typeof rec.command === "string" ? rec.command : String(rec.toolFamily ?? ""));
       continue;
     }
+    // R41 gate dialog (index.ts gateAsk): one record per owner dialog or round ruling wait, counted in the family of its command
+    if (rec.event === "dialog" && rec.guard === "gate") {
+      const fam = (DIALOG_FAMILIES as readonly string[]).includes(String(rec.class)) ? String(rec.class) : "other";
+      out[fam].count++;
+      out[fam].lines.push(typeof rec.command === "string" ? rec.command : String(rec.toolFamily ?? ""));
+      continue;
+    }
     if (rec.event === "dialog") {
       const f = SURFACE_FAMILY[String(rec.surface)];
       if (!f) continue;
