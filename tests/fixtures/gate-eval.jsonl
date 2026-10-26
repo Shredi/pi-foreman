@@ -161,6 +161,6 @@
 {"id":"int-002","kind":"owner","role":"foreman","tool":"bash","input":{"command":"python3 -I -c 'print(2 + 2)'"},"expect":"ask","source":"import"}
 {"id":"ins-001","kind":"owner","role":"foreman","tool":"bash","input":{"command":"npm ci > $TMP/x.log"},"expect":"ask","source":"import"}
 {"id":"ins-002","kind":"owner","role":"foreman","tool":"bash","input":{"command":"npm install --no-audit > $SCR/install.log 2>&1"},"expect":"ask","source":"import"}
-{"id":"pay-001","kind":"owner","role":"foreman","tool":"fetch","input":{"url":"https://example.org/api","method":"POST","body":"x"},"expect":"deny","source":"import"}
-{"id":"pay-002","kind":"owner","role":"foreman","tool":"codemode","input":{"code":"await sh('rm -rf /')"},"expect":"deny","source":"import"}
-{"id":"pay-003","kind":"owner","role":"foreman","tool":"subagent","input":{"agent":"builder","task":"never use sudo; fix the typo in README"},"expect":"allow","source":"import"}
+{"id":"pay-001","kind":"owner","role":"foreman","tool":"fetch","input":{"url":"https://example.org/api","method":"POST","body":"x"},"expect":"deny","source":"log","rule":"no-matching-entry"}
+{"id":"pay-002","kind":"owner","role":"foreman","tool":"codemode","input":{"code":"await sh('rm -rf /')"},"expect":"deny","source":"log","rule":"floor-rm-system"}
+{"id":"pay-003","kind":"owner","role":"foreman","tool":"subagent","input":{"agent":"builder","task":"never use sudo; fix the typo in README"},"expect":"allow","source":"log","rule":"agent-coordination"}
