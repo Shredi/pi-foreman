@@ -302,7 +302,7 @@ interface Session {
   planReviewCount: number;
   /** Foreman only: `[plan-review]` runs launched per plan topic in this session (ceremony.planReviewMax; persisted in the ceremony-state entry, planstate.ts). */
   topicReviews: Record<string, number>;
-  /** Reserved for the plan phase (persisted in the ceremony-state entry; not enforced yet). */
+  /** Plan phase (persisted in the ceremony-state entry): .workflow-only writes, explorers without a ledger, no builder or finalizer. Entered by PI_FOREMAN_PLAN_PHASE=1 or /foreman plan; left by a checkpoint approval or /foreman plan off. */
   planPhase: boolean;
   /** The ceremony-state entry last appended or restored, as JSON (an identical state is not appended again). */
   ceremonyEntry: string;
@@ -789,7 +789,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewCount: 0,
       planReviewCount: 0,
       topicReviews: {},
-      planPhase: false,
+      planPhase: !isChild && process.env.PI_FOREMAN_PLAN_PHASE === "1",
       ceremonyEntry: JSON.stringify(emptyCeremonyState()),
       failItems: [],
       critique: new CritiqueCounter(),
@@ -987,7 +987,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function restoreCeremonyState(s: Session, ctx: ExtensionContext, reason: string): void {
     if (s.isChild) return;
     const e = latestCeremonyState((ctx.sessionManager.getBranch?.() ?? []) as unknown[]);
-    if (!e) return;
+    if (!e) return persistCeremonyState(s); // a plan phase entered through the env is recorded at once
     for (const l of e.lineages) s.planReviews.restore(l.path, { hash: l.hash, verdict: l.verdict, model: l.model, findings: Promise.resolve([]) }, l.rounds, l.reviews);
     s.topicReviews = { ...e.planReviews };
     s.planPhase = e.planPhase;
@@ -1699,6 +1699,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.budget.verdict = s.reviewGate.last; // R12 item 8: the recheck refusal names the real verdict
     const d = s.budget.check(READ_CLASS.has(toolName) ? toolName : "read", callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt, coordinationCall(toolName, input));
     if (d.kind === "remind") {
+      if (s.planPhase) return undefined; // the plan phase reads freely: no reminder
       s.readNotices.set(callId, d.text);
       s.trace?.emit({ event: "read_budget", phase: d.phase, count: d.count, action: "remind" });
     } else if (d.kind === "deny") {
@@ -2442,6 +2443,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         if (guard === "ledger_guard_spawn") {
           agents = subagentAgents(input);
+          // Plan phase: explorers research before any ledger exists; the core gate would ask for one, so it is not called for them.
+          if (s.planPhase && !s.isChild && agents.length > 0 && agents.every((a) => a === "explorer") && !boundLedger(s.markerDir, s.id)) {
+            s.trace?.emit({ event: "plan_phase_explorer", role: "explorer" });
+            continue;
+          }
           setCeremony(s, beforeSpawn(s.ceremony, agents, trivialBuilderPath(get(s.config.config, "ceremony.required"))));
         }
         // Children get the git guard in child mode from extensions/git-guard; main mode is the foreman lint.
@@ -2790,7 +2796,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   function editModeOfSession(s: Session): { mode: EditMode; scratchDir: string } {
-    return { mode: editModeOf(get(s.config.config, "ceremony.foremanEdits")), scratchDir: scratchDirOf(get(s.config.config, "ceremony.scratchDir")) };
+    // The plan phase is readonly in every edit mode: only .workflow/ is writable.
+    return { mode: s.planPhase && !s.isChild ? "readonly" : editModeOf(get(s.config.config, "ceremony.foremanEdits")), scratchDir: scratchDirOf(get(s.config.config, "ceremony.scratchDir")) };
   }
 
   function planOpts(s: Session, ctx: ExtensionContext) {
@@ -2805,6 +2812,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Heavy tier: a builder launch needs the owner's approval of the current plan (checkpoint.ts). A refusal records nothing. */
   function builderPlanBlock(s: Session, ctx: ExtensionContext, input: Record<string, unknown>): string | undefined {
     const tier = s.ceremony.tier;
+    if (s.planPhase) {
+      const roles = launchRoles(s, input);
+      if (roles.includes("builder") || roles.includes("finalizer")) {
+        s.trace?.emit({ event: "launch_refused", reason: "plan_phase", tier, ...launchDeny(input) });
+        return launchRefusalText("plan_phase", s.plan, planOpts(s, ctx).scratchDir);
+      }
+    }
     if (tier !== "heavy" || !launchRoles(s, input).includes("builder")) return undefined;
     const o = planOpts(s, ctx);
     const reason = builderLaunchRefusal(s.plan, tier, s.plan ? currentPlanHash(s.plan, o) : null);
@@ -2846,6 +2860,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function onEditRefused(s: Session, mode: EditMode, kind: string): string {
     s.trace?.emit({ event: "foreman_edit_refused", mode, kind });
     if (mode === "bounded") return "";
+    if (s.planPhase) return " The plan phase is on: write the plan under .workflow/ and use explorers; code changes wait for a checkpoint approval or /foreman plan off.";
     s.ceremony = { ...s.ceremony, needsChange: true };
     if (s.ceremony.tier !== "trivial") return isTriaged(s.ceremony) ? "" : ` Record the tier with ${TRIAGE_TOOL}: this task needs a builder, so trivial counts as standard.`;
     setCeremony(s, escalate(s.ceremony, "standard", "auto", "edit mode refused a change"));
@@ -3893,6 +3908,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           rec.source = !verdict ? "dialog" : handoff && readPlanVerdictFile(handoff, plan.path, selfRulingsFor(s)) ? "ruling-plan" : "ruling";
           rec.approvedAt = new Date().toISOString();
           rec.by = !verdict && ctx.mode === "tui" ? "user" : "rig";
+          if (s.planPhase) {
+            s.planPhase = false; // an approval ends the plan phase
+            s.trace?.emit({ event: "plan_phase", decision: "off", cause: "checkpoint" });
+          }
           return done("approve", rec.by, `The owner approved ${name} (${hash8}). Builders may launch at tier heavy while the file stays unchanged; any edit needs a new ${CHECKPOINT_TOOL}.`);
         }
         if (answer === "revise") {
@@ -4071,10 +4090,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman prs [list]",
+    description: "pi-foreman commands: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off] | /foreman prs [list]",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
       if (sub === "close") return close.command(args.trim().slice(sub.length), ctx);
+      if (sub === "plan") {
+        const s = await ensureSession(ctx);
+        if (s.isChild || rest.length > 1 || (rest[0] !== undefined && rest[0] !== "off")) {
+          ctx.ui.notify("Usage: /foreman plan | /foreman plan off (foreman session only)", "warning");
+          return;
+        }
+        s.planPhase = rest[0] !== "off";
+        s.trace?.emit({ event: "plan_phase", decision: s.planPhase ? "on" : "off", cause: "user" });
+        persistCeremonyState(s);
+        ctx.ui.notify(s.planPhase ? "pi-foreman: plan phase on. Changes only under .workflow/, explorers need no ledger, builders and finalizers wait for a checkpoint approval or /foreman plan off." : "pi-foreman: plan phase off.", "info");
+        return;
+      }
       if (sub === "prs") {
         const s = await ensureSession(ctx);
         if (s.isChild || rest.length > 1 || (rest[0] !== undefined && rest[0] !== "list")) {
@@ -4159,7 +4190,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       if (sub !== "doctor") {
-        ctx.ui.notify("Usage: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman flag-ask [note] | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list", "warning");
+        ctx.ui.notify("Usage: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman flag-ask [note] | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off]", "warning");
         return;
       }
       const s = await ensureSession(ctx);

@@ -14,7 +14,7 @@ export type Block = { block?: boolean; reason?: string } | undefined;
 type Entry = { type: "custom"; customType: string; data: unknown };
 
 export const PLAN = "# Widget\n\n## Goal\nShip it.\n";
-const KEYS = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE", "PI_INTERCOM_SESSION_ID", "PI_INTERCOM_STABLE_ID", "PI_FOREMAN_HANDOFF_DIR", "PI_FOREMAN_PARENT_INTERCOM", "HERDR_PANE_ID", "HERDR_ENV"];
+const KEYS = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE", "PI_INTERCOM_SESSION_ID", "PI_INTERCOM_STABLE_ID", "PI_FOREMAN_HANDOFF_DIR", "PI_FOREMAN_PARENT_INTERCOM", "HERDR_PANE_ID", "HERDR_ENV", "PI_FOREMAN_PLAN_PHASE"];
 export const tick = (ms = 25) => new Promise((r) => setTimeout(r, ms));
 let n = 0;
 
@@ -145,6 +145,14 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
         await handlers.get("message_end")!({ message: { role: "assistant", content: [{ type: "toolCall", id, name: "subagent", arguments: input }] } }, ctx);
         return (await handlers.get("tool_call")!({ toolName: "subagent", toolCallId: id, input }, ctx)) as Block;
       },
+      /** A tool call then its result: the block reason, or the text the result gained (a read reminder). */
+      async call(toolName: string, input: Record<string, unknown>): Promise<{ block: Block; note: string }> {
+        const id = `k${++calls}`;
+        const block = (await handlers.get("tool_call")!({ toolName, toolCallId: id, input }, ctx)) as Block;
+        if (block) return { block, note: "" };
+        const r = (await handlers.get("tool_result")!({ toolName, toolCallId: id, input, details: {}, content: [{ type: "text", text: "ok" }], isError: false }, ctx)) as { content?: { text: string }[] } | undefined;
+        return { block: undefined, note: (r?.content ?? []).map((c) => c.text).join("\n") };
+      },
       ownerPrompt: () => handlers.get("input")!({ source: "interactive", text: "next" }, ctx),
       command: (name: string, args: string) => commands.get(name)!.handler(args, ctx),
       /** A foreman write of the ledger (tool_call, file, tool_result) so the tier header is read. */
@@ -170,8 +178,15 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       fs.writeFileSync(f, text);
     }
   };
+  /** The adapter's trace events so far (state dir `trace-*.jsonl`). */
+  const traceEvents = async (): Promise<Record<string, unknown>[]> => {
+    await tick(50);
+    const dir = path.join(agentDir, "pi-foreman", "state");
+    const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => n.startsWith("trace-") && n.endsWith(".jsonl")) : [];
+    return files.flatMap((f) => fs.readFileSync(path.join(dir, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>));
+  };
   const ceremonyEntries = () => entries.filter((e) => e.customType === "pi-foreman-ceremony-state");
-  return { adapter, rule, entries, ceremonyEntries, notes, state, handoff, planFile, project, sessionFile, hash: () => planVersionHash(fs.readFileSync(planFile)) };
+  return { adapter, rule, traceEvents, entries, ceremonyEntries, notes, state, handoff, planFile, project, sessionFile, hash: () => planVersionHash(fs.readFileSync(planFile)) };
 }
 
 export const planRequired = (r: Block): boolean => r?.block === true && /\[launch_refused:plan_required\]/.test(r.reason ?? "");

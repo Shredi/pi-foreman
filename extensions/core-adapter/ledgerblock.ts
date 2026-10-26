@@ -41,8 +41,17 @@ export function criticBlock(questions: readonly string[]): string {
   return ["[pi-foreman critic] Answer each question once per ledger item as a line `CRITIC: <item> Q<k>: <answer>`.", ...questions.map((q, i) => `Q${i + 1}. ${q.replace(/^\(\d+\)\s*/, "")}`), "[end of critic]", ""].join("\n");
 }
 
-/** The line every builder brief carries after the ledger block (R26 item 4): protected files are the foreman's to apply and commit. */
-const PROTECTED_LINE = "Protected files (config/foreman.defaults.json, config/permissions.baseline.json, package.json and the other write-ask paths): report the needed change; the foreman applies and commits it.\n";
+const PROTECTED_PATHS = ["config/foreman.defaults.json", "config/permissions.baseline.json", "package.json"];
+
+/**
+ * The line every builder brief carries after the ledger block (R26 item 4, R46 item 6): protected (write-ask) files are staged and
+ * committed by the foreman, never by the child. The protected files the task cites are named as editable.
+ */
+function protectedLine(task: string): string {
+  const cited = PROTECTED_PATHS.filter((p) => task.includes(p));
+  if (cited.length === 0) return "Protected files (package.json, config/*.json and the other write-ask paths): do not stage or commit them; the foreman stages and commits them.\n";
+  return `Protected files (${cited.join(", ")}): you may edit these, the task names them; do not git add or commit them, the foreman stages and commits them. If an edit is refused, say so in your report.\n`;
+}
 
 /**
  * The re-review line (R26 item 3): a reviewer launched after an open FAIL reviews the revision diff, not the whole change. `sha` is the
@@ -68,7 +77,7 @@ export function applyLedgerItems(input: Record<string, unknown>, ledger: string 
       // the critic questions go into every reviewer and senior-reviewer task (a rung-up handoff entry included), after the ledger block
       const cb = role === "builder" ? "" : criticBlock(critic);
       const re = role === "reviewer" && reReview && occasionOf(e.task) === "item" ? reReviewLine(reReview.sha) : "";
-      const prot = role === "builder" && !skip.has(e) ? PROTECTED_LINE : "";
+      const prot = role === "builder" && !skip.has(e) ? protectedLine(e.task) : "";
       if (block || cb || re || prot) e.task = re + block + prot + cb + e.task;
       if (block) out.push({ event: "ledger_block", role, chars: block.length });
     }

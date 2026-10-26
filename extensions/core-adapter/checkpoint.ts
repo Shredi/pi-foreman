@@ -25,7 +25,7 @@ export const PLAN_NAME = /^plan-([A-Za-z0-9._-]{1,64})\.md$/;
 export const CHECKPOINT_CHOICES = ["revise", "reject", "approve"] as const;
 
 export type PlanStatus = "pending" | "approved" | "revise" | "rejected";
-export type LaunchRefusal = "plan_required" | "checkpoint_pending" | "plan_changed";
+export type LaunchRefusal = "plan_required" | "checkpoint_pending" | "plan_changed" | "plan_phase";
 
 /** The session's latest checkpoint. */
 export interface PlanRecord {
@@ -254,6 +254,7 @@ export function readPlanVerdictFile(dir: string, planFile: string, self?: SelfRu
 export function launchRefusalText(reason: LaunchRefusal, rec: PlanRecord | null | undefined, scratchDir: string): string {
   const head = `pi-foreman: builder launch refused [launch_refused:${reason}]:`;
   const name = rec ? `plan-${rec.topic}.md` : "";
+  if (reason === "plan_phase") return `${head} the session is in the plan phase: only explorers and [plan-review] reviewers launch. Write the plan under ${scratchDir}/ (ask the owner with ask_user_question until it is decision-complete), then call ${CHECKPOINT_TOOL}; an approval ends the phase. The owner can also end it with /foreman plan off.`;
   if (reason === "plan_required" && rec?.status === "rejected") return `${head} the owner rejected ${name}, so the heavy path is stopped. Launch no builder; report to the owner and ask how to go on. A new plan needs a new ${CHECKPOINT_TOOL} approval.`;
   if (reason === "plan_required") return `${head} at tier heavy a builder starts only after the owner approved a plan. Write ${scratchDir}/plan-<topic>.md (or launch the planner), then call ${CHECKPOINT_TOOL} with its path and wait for the owner's answer.`;
   if (reason === "checkpoint_pending") return `${head} the checkpoint of ${name} is ${rec?.status === "revise" ? "waiting for a revised plan" : "pending (no answer from the owner yet)"}. ${rec?.status === "revise" ? `Change the plan as the owner asked, then call ${CHECKPOINT_TOOL} again.` : `Ask the owner in your reply, or call ${CHECKPOINT_TOOL} again with the same path.`}`;
@@ -279,6 +280,14 @@ export function planSummary(text: string, rel: string, hash: string): string {
       if (goal.length === 4) break;
     }
   }
-  const out = [`Plan: ${clean(title)}`, ...goal.map((g, i) => (i === 0 ? `Goal: ${g}` : `  ${g}`)), `Sections: ${sections.join(" · ").slice(0, 200) || "(none)"}`, ...(cut < 0 ? [] : [`Appendix: from "${clean(all[cut])}" (outside review and approval)`]), `File: ${rel}`, `sha256: ${hash.slice(0, 12)}`];
+  const openAt = lines.findIndex((l) => { const h = heading.exec(l); return !!h && /^open questions\b/i.test(h[2].trim()); });
+  let open = 0;
+  if (openAt >= 0) {
+    for (const l of lines.slice(openAt + 1)) {
+      if (heading.test(l)) break;
+      if (l.trim()) open++;
+    }
+  }
+  const out = [`Plan: ${clean(title)}`, ...goal.map((g, i) => (i === 0 ? `Goal: ${g}` : `  ${g}`)), `Sections: ${sections.join(" · ").slice(0, 200) || "(none)"}`, ...(open > 0 ? [`Open questions: ${open}`] : []), ...(cut < 0 ? [] : [`Appendix: from "${clean(all[cut])}" (outside review and approval)`]), `File: ${rel}`, `sha256: ${hash.slice(0, 12)}`];
   return out.slice(0, 12).join("\n");
 }

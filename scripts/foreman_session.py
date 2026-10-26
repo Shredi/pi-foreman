@@ -96,6 +96,7 @@ ENV_PARENT = "PI_FOREMAN_PARENT_INTERCOM"
 ENV_STABLE = "PI_INTERCOM_STABLE_ID"
 ENV_PARENT_LABEL = "PI_FOREMAN_PARENT_LABEL"
 ENV_MODEL = "PI_FOREMAN_SESSION_MODEL"
+ENV_PLAN_PHASE = "PI_FOREMAN_PLAN_PHASE"  # --plan-first: the child's adapter starts in the plan phase (.workflow-only writes, no builders)
 ENV_PUBLISHED = "PI_INTERCOM_SESSION_ID"
 ENV_BG_PREFIX = "PI_BG_"
 ENV_BG_FEATURES = "PI_BG_FEATURES"
@@ -228,6 +229,13 @@ def opener_id(given, adir, env=None):
     return given or env.get(ENV_PUBLISHED, "").strip() or env.get(ENV_STABLE, "").strip() or parent_from_config(adir)
 
 
+PLAN_FIRST_NOTES = [
+    "   While you plan, change files only under `.workflow/` and use explorers; builders wait for the approval.",
+    "   Ask the parent questions with `ask_user_question` until the plan is decision-complete (no guesses left).",
+    "   `plan.md` has the sections `## Decisions and assumptions` and `## Open questions` (empty when none).",
+]
+
+
 def footer(label, plan_first):
     """The report-back contract appended to every opened brief (no paths: they are relative to the brief)."""
     lines = [
@@ -248,7 +256,7 @@ def footer(label, plan_first):
             "   then stop and wait for the parent's ruling. The parent writes `ruling.md` in the handoff dir (first",
             "   line `APPROVED` = go ahead; anything else = revise `plan.md` and send `Plan from %s: <path>` again)" % label,
             "   and wakes you with a brief naming `brief-<n>.md`, a copy of the ruling (`foreman session brief %s <ruling path>`)." % label,
-        ]
+        ] + PLAN_FIRST_NOTES
         n += 1
     lines += [
         "%d. Done: write `result.md` in the handoff dir (self-contained, at most 40 lines) and send" % n,
@@ -303,7 +311,7 @@ def remote_footer(label, plan_first, cap, mode="push", poll_seconds=None):
             "       %s plan" % base,
             "   and stop to wait for the parent's ruling: `foreman_wait` kind `file` on `ruling.md` in the handoff dir",
             "   (first line `APPROVED` = go ahead; anything else = revise `plan.md` and run the command again).",
-        ]
+        ] + PLAN_FIRST_NOTES
         n += 1
     lines += [
         "%d. Done: write `result.md` in the handoff dir (self-contained, at most 40 lines) and run" % n,
@@ -414,8 +422,10 @@ def addon_env(environ=None):
     return sorted(out, key=lambda kv: (kv[0] != ENV_BG_FEATURES, kv[0]))
 
 
-def child_env(handoff, parent, child, parent_slug, model=None, environ=None, remote=False):
+def child_env(handoff, parent, child, parent_slug, model=None, environ=None, remote=False, plan_phase=False):
     env = [(ENV_HANDOFF, str(handoff)), (ENV_PARENT, parent), (ENV_STABLE, child), (ENV_PARENT_LABEL, parent_slug)]
+    if plan_phase:
+        env.append((ENV_PLAN_PHASE, "1"))
     if remote:  # the parent is on another machine: the child reports with `remote notice`
         env.append((ENV_REMOTE_PARENT, "1"))
     # the child's Pi keeps this model instead of applying the overlay/preset foreman role model
@@ -646,7 +656,7 @@ def open_session(p, remote=None):
     else:
         here = Path.cwd()  # the opener runs this command from its own cwd; the child may live elsewhere (--cwd)
         parent_slug = opener_slug(here, git_top(here))
-    env = child_env(handoff, parent, child, parent_slug, model, remote=bool(remote))
+    env = child_env(handoff, parent, child, parent_slug, model, remote=bool(remote), plan_phase=bool(p["plan_first"]))
     prompt = prompt_text(handoff)
     first = p.get("first") or []
     command = posix_command(env, model, prompt, first)

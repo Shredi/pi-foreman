@@ -6,7 +6,7 @@
 //
 // An approval comes back only when the plan file's version hash still equals the recorded one (an Addendum below the body keeps
 // it) and, for a verdict from the parent, the verdict file still reads APPROVED. The session file is write-protected for the
-// foreman and its children (permoverlay.ts), so only the adapter writes this entry. `planPhase` is reserved (not enforced yet).
+// foreman and its children (permoverlay.ts), so only the adapter writes this entry. `planPhase` is the plan phase (index.ts).
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { isTier } from "./ceremony.ts";
@@ -44,7 +44,7 @@ export interface CeremonyStateEntry {
   lineages: PersistedLineage[];
   planReviews: Record<string, number>;
   userTier: Tier | null;
-  /** Reserved for the plan phase; not enforced yet. */
+  /** The plan phase is on (index.ts): .workflow-only writes, no builder or finalizer launch. */
   planPhase: boolean;
 }
 

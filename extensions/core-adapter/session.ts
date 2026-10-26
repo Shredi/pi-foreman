@@ -610,7 +610,7 @@ const OPEN_PARAMS = {
     brief: { type: "string", description: "Path of the brief file the new session reads." },
     cwd: { type: "string", description: "Directory the new session runs in (default: this session's)." },
     model: { type: "string", description: "Model of the new session, <provider>/<id>; the rank rule applies." },
-    planFirst: { type: "boolean", description: "The brief asks the session to write a plan first." },
+    planFirst: { type: "boolean", description: "Open the session in the plan phase: it writes a plan first, changes files only under .workflow/, launches no builder, and asks questions via ask_user_question until the plan is decision-complete." },
     planMode: { type: "boolean", description: "Open the session in plan mode (first command /plan); for a local open, refused when this session has no /plan command (a remote open is checked on the remote machine)." },
     firstCommand: { type: "array", items: { type: "string" }, maxItems: 4, description: "Extension commands (each starting with /) the new session runs before the brief prompt." },
     focus: { type: "boolean", description: "Focus the new Herdr tab." },
@@ -631,7 +631,7 @@ export function registerSessionOpenTool(
     name: SESSION_OPEN_TOOL,
     label: "Open a session",
     description:
-      "Open a new foreman session in a Herdr tab (or print the command for a new terminal) with a brief file: same as `/foreman session open`. Design or new-topic sessions: planMode true; a session with an approved plan: no planMode. Refused in subagent children.",
+      "Open a new foreman session in a Herdr tab (or print the command for a new terminal) with a brief file: same as `/foreman session open`. Design or new-topic sessions: planFirst true (the new session starts in the plan phase: .workflow-only writes, explorers, no builders until its plan is approved); a session with an approved plan: no planFirst. Refused in subagent children.",
     parameters: OPEN_PARAMS as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await deps.session(ctx);
