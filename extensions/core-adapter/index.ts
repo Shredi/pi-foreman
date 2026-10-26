@@ -1139,7 +1139,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   pi.on("session_start", async (event, ctx) => {
     const s = await startSession(ctx);
-    await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r));
+    await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r), ctx.model?.provider, get(s.config.config, "mcp.directProviders"));
     restoreRounds(s, ctx);
     emitReady(pi.events as EventBus | undefined, core.claim);
     if (!s.isChild && process.env.PI_SUBAGENT_CHILD !== "1" && (ctx.mode === "tui" || ctx.mode === "rpc")) {

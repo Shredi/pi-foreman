@@ -606,6 +606,11 @@
       "additionalProperties": false,
       "properties": { "isolateClaudeConfig": { "type": ["boolean", "string"], "enum": [true, false, "auto"], "description": "Point CLAUDE_CONFIG_DIR at an empty pi-foreman folder so the claude bridge ignores the host's Claude Code settings, hooks, plugins and CLAUDE.md. auto = on when the active provider is claude-bridge. A project cannot set it." } }
     },
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "directProviders": { "type": "array", "items": { "type": "string" }, "description": "Provider ids that fix a turn's tool list at its first request (pi-claude-bridge): a deferred MCP tool that tool_search loads mid-turn is never callable there. For a child on such a provider its allowed deferred MCP tools are loaded before the first prompt, so they are callable at once (the prompt grows by their schemas; trace event mcp_child_direct). Unset = [\"claude-bridge\"]; [] turns it off. User or overlay config only." } }
+    },
     "python": {
       "type": "object",
       "additionalProperties": false,
