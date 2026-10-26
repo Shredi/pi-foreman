@@ -3,7 +3,7 @@
 // log for a call it returns undefined for. Shell, path and payload tools all pass through here. A handler failure denies (fail-safe).
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
-import { lineDefault, toolDefault } from "./defaults.ts";
+import { OWN_TOOLS, lineDefault, toolDefault } from "./defaults.ts";
 import type { GitFacts } from "./defaults.ts";
 import { lineFloors, opaqueTextFloors, pathFloors, rawFloors, secretPath, type FloorEnv, type FloorHit } from "./floors.ts";
 import { PATH_TOOL_NAMES, pathDecide } from "./pathrules.ts";
@@ -52,7 +52,7 @@ function powershellSegment(cwd: string): ShellSegment {
  * Tools whose payload is prose for another agent or the user (a builder brief may say "never use sudo"): the raw-text floors do NOT run
  * on their prose fields, only the structured fields below are floored; the whole payload then goes to review.
  */
-const PROSE_TOOLS = new Set(["subagent", "intercom", "contact_supervisor", "subagent_supervisor", "ask_user_question"]);
+const PROSE_TOOLS = new Set(["subagent", "intercom", "contact_supervisor", "subagent_supervisor", "ask_user_question", "pr_create"]);
 const STRUCTURED_PATH_KEYS = ["cwd", "worktree", "output", "outputPath", "output_path", "outputFile"];
 
 /** Every string leaf of a JSON value, one per line (so a floor regex sees `rm -rf /` as the line it is, not as JSON). */
@@ -112,7 +112,8 @@ export function gateDecide(toolName: string, input: unknown, cwd: string, deps: 
       const v = deps.roots ? pathDecide(toolName, inp, cwd, deps.roots(cwd), platform) : undefined;
       return v;
     }
-    const ph = payloadFloors(toolName, inp, env);
+    // own tools carry free text (ledger notes, plans) that may quote a floor pattern; they go straight to their default
+    const ph = OWN_TOOLS.has(toolName) ? null : payloadFloors(toolName, inp, env);
     if (ph) return blocked(ph);
     const rule = toolDefault(toolName, inp);
     return rule ? { allow: true, rule } : undefined;
