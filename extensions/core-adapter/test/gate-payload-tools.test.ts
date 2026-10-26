@@ -102,6 +102,11 @@ test("own tools and pr_create text quoting floor patterns are not floor-denied",
   }
 });
 
+test("foreman_worktree_remove carries a path and reaches review, not a default", () => {
+  const res = gateDecide("foreman_worktree_remove", { path: "wt" }, process.cwd(), { env: (cwd: string) => baseFloorEnv(cwd) });
+  assert.equal(res, undefined);
+});
+
 // An unreachable review never hangs: no UI and no review model denies at once with the headless text.
 test("a payload tool with no review model and no UI denies within 1 s", async (t) => {
   const r = await r11Rig(t, {}, { ctx: { hasUI: false, mode: "print" } });

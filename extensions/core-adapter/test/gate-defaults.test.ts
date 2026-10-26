@@ -137,7 +137,7 @@ test("powershell is one opaque segment: raw-text floors, then no default", () =>
 });
 
 test("own tools: exactly the enumeration is a default; every other tool falls through", () => {
-  const listed = ["plan_mode_question", "plan_mode_complete", "ask_user_question", "foreman_ledger", "foreman_triage", "foreman_checkpoint", "foreman_dialogs", "foreman_wait", "contact_supervisor", "subagent_supervisor", "bg_wait", "bg_status", "bg_logs", "bg_kill", "pr_status", "pr_checks", "pr_comments", "pr_watch", "pr_track", "pr_untrack", "git_status", "git_log", "git_diff_stat", "git_branch_state", "foreman_worktree_remove", "subagents_enable"];
+  const listed = ["plan_mode_question", "plan_mode_complete", "ask_user_question", "foreman_ledger", "foreman_triage", "foreman_checkpoint", "foreman_dialogs", "foreman_wait", "contact_supervisor", "subagent_supervisor", "bg_wait", "bg_status", "bg_logs", "bg_kill", "pr_status", "pr_checks", "pr_comments", "pr_watch", "pr_track", "pr_untrack", "git_status", "git_log", "git_diff_stat", "git_branch_state", "subagents_enable"];
   assert.deepEqual([...OWN_TOOLS].sort(), [...listed].sort());
   for (const t of listed) assert.deepEqual(g(t, {}), { allow: true, rule: "default-own-tool" }, t);
   for (const t of ["foreman_bg", "bg_run", "foreman_move", "foreman_copy", "foreman_session_open", "pr_create", "subagent", "intercom", "codemode", "mcp", "skill", "read", "write", "edit", "unknown_tool"]) assert.equal(kind(g(t, {})), "pass", t);

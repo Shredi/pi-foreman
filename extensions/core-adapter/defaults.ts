@@ -29,7 +29,7 @@ export const OWN_TOOLS: ReadonlySet<string> = new Set([
   "plan_mode_question", "plan_mode_complete", "ask_user_question", "foreman_ledger", "foreman_triage", "foreman_checkpoint", "foreman_dialogs", "foreman_wait",
   "contact_supervisor", "subagent_supervisor", "bg_wait", "bg_status", "bg_logs", "bg_kill",
   "pr_status", "pr_checks", "pr_comments", "pr_watch", "pr_track", "pr_untrack",
-  "git_status", "git_log", "git_diff_stat", "git_branch_state", "foreman_worktree_remove", "subagents_enable",
+  "git_status", "git_log", "git_diff_stat", "git_branch_state", "subagents_enable",
 ]);
 
 /** Every rule name this module can return (tests walk it). */

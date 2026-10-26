@@ -192,7 +192,7 @@ test("export-eval: dedupes by shape, drops private strings and counts them", () 
   assert.deepEqual(out.map((c: { input: unknown }) => c.input), [{ command: "ls <wt>" }, { command: "pwd" }]);
   assert.deepEqual([stats.duplicates, stats.unusable, stats.dropped], [1, 1, { "home-path": 1, host: 2, email: 1, token: 1, ip: 1 }]);
   assert.equal(permsMain(["bogus"]), 2);
-  assert.equal(permsMain(["candidates"]), 2);
+  assert.equal(permsMain(["adopt", "abcd1234"]), 2);
   const f = path.join(base, "prepared.jsonl");
   const o = path.join(base, "out.jsonl");
   fs.writeFileSync(f, JSON.stringify(from[1]) + "\n");
