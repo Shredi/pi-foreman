@@ -39,9 +39,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export const PROVIDERS = ["foreman-fake", "foreman-fake-b"];
 export const ROLE_MODELS = ["foreman", "planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"];
-export const REVIEW_MODELS = ["allow", "deny-high", "deny-low", "defer", "garbage", "empty", "error", "hang"].map((k) => `review-${k}`);
+// R41 gate models: allow, deny, ask, invalid (closed JSON verdicts of the shipped policy), unreachable (throws like review-error).
+// deny-high, deny-low, defer, garbage and empty are the old reviewer's; slice 6 removes them with the assertions that use them.
+export const REVIEW_MODELS = ["allow", "deny", "ask", "invalid", "unreachable", "deny-high", "deny-low", "defer", "garbage", "empty", "error", "hang"].map((k) => `review-${k}`);
 const REVIEW_REPLIES: Record<string, string> = {
-  "review-allow": '{"verdict":"allow"}',
+  "review-allow": '{"verdict":"allow","entry":"read-only-inspection","reason":"scripted allow"}',
+  "review-deny": '{"verdict":"deny","entry":"secret-access","reason":"scripted deny"}',
+  "review-ask": '{"verdict":"ask","entry":"package-install","reason":"scripted ask"}',
+  "review-invalid": '{"verdict":"allow","entry":"not-an-entry"}',
   "review-deny-high": '{"verdict":"deny","reason":"scripted hard deny","riskLevel":"high"}',
   "review-deny-low": '{"verdict":"deny","reason":"scripted soft deny","riskLevel":"low"}',
   "review-defer": '{"verdict":"defer","reason":"scripted unsure","lean":"allow"}',
@@ -168,7 +173,7 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
       // the log is a test aid only
     }
   }
-  if (model.id === "review-error") throw new Error("fake: scripted provider failure");
+  if (model.id === "review-error" || model.id === "review-unreachable") throw new Error("fake: scripted provider failure");
   const stream = createAssistantMessageEventStream();
   const summary = [context.systemPrompt, ...(context.messages as { role: string; content: unknown }[]).filter((m) => m.role === "system").map((m) => textOf(m.content))]
     .some((t) => typeof t === "string" && t.startsWith("You are a context summarization assistant"));
