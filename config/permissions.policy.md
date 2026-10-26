@@ -7,13 +7,13 @@ Precedence: floors, then `ask`, then `deny`, then `allow`. No matching entry is 
 ## allow
 
 - id: read-only-inspection
-  Read-only inspection inside the worktree, the session's scratch dir and the owned roots: cat, head, tail, ls, stat, wc, grep, rg, find, sed -n, read-only git (status, diff, log, show, blame), also chained with cd, ;, &&, | and echo.
+  Read-only inspection inside the worktree, the session's scratch dir and the owned roots: cat, head, tail, ls, stat, wc, grep, rg, find, sed -n, read-only git (status, diff, log, show, blame), also chained with cd, ;, &&, | and echo. Not covered: a child reading the agent dir or any other repository outside its owned roots; and any line where an unset or unknown variable, a process substitution or an xargs argument expands into a path (`ls $UNSET`, `cat <(ls)`, `echo a | xargs ls`), because the path read cannot be judged, so such a line is not read-only inspection.
 - id: build-test-in-worktree
-  Project builds, type checks, linters and test runs started from the worktree, and bounded edits of files inside the worktree.
+  Project builds, type checks, linters and test runs started from the worktree, and bounded edits of files inside the worktree. Only package-manager scripts and make targets (`npm run`, `npm test`, `pnpm run`, `make <target>`) count as build or test runs. Running an arbitrary script file whose content this review cannot see (`bash x.sh`, `sh x.sh`, `./x.sh`) is not covered; see ask entry unseen-script-run.
 - id: scratch-writes
   Writes, copies and deletes inside this session's own scratch dir and the OS temp area it owns, including mutation tests on a copy there.
 - id: git-routine
-  Routine git in the worktree: add, commit on the session's own branch, switch to the session's own branches, fetch, pull of the current branch, diff, stash of own work.
+  Routine git in the worktree: add, commit on the session's own branch, switch to the session's own branches, fetch, pull of the current branch, diff, stash of own work. Hook-skipping forms are never routine: see deny entry hook-skip.
 - id: forge-reads
   Read-only gh and glab calls: pr/issue view and list, checks, run view, api GET requests against the repository's own forge.
 - id: agent-coordination
@@ -31,6 +31,8 @@ Precedence: floors, then `ask`, then `deny`, then `allow`. No matching entry is 
   Reading, copying, printing or sending credentials and secrets: auth.json, .env files, private keys, tokens, ~/.ssh, ~/.aws, .netrc, .npmrc, keychains, environment dumps.
 - id: push-off-branch
   A push that is not of the session's own non-protected branch to its own remote, any force push, a push to a protected branch, a tag or release publication.
+- id: hook-skip
+  Skipping git hooks or checks: `git commit --no-verify` or `-n`, `git push --no-verify`, `core.hooksPath` overrides, and hook-disabling environment such as `HUSKY=0` or `SKIP=...`. Commits and pushes with the hooks active are not affected by this entry.
 - id: delete-outside-roots
   Deleting, overwriting or moving files outside the worktree, this session's scratch dir and the OS temp area it owns.
 - id: unknown-network-host
@@ -44,6 +46,8 @@ Precedence: floors, then `ask`, then `deny`, then `allow`. No matching entry is 
   Installing or removing packages or global tools: npm/pnpm/yarn install or ci, pip install, brew, apt, cargo install, go install. Also when the output is redirected to /tmp or the scratch dir (`npm ci > /tmp/x.log`): the redirect does not make an install routine.
 - id: inline-interpreter-script
   Inline interpreter scripts given on the command line: `python3 -c`, `python3 -I -c`, `node -e`, `perl -e`, `ruby -e` and similar, also inside a pipe. The script is not visible to this review, so the owner decides.
+- id: unseen-script-run
+  Running a script file whose content this review cannot see (`bash x.sh`, `sh x.sh`, `./x.sh`, `zsh x.sh`), even inside the worktree. Package-manager scripts and make targets are build-test-in-worktree, not this entry.
 - id: new-remote
   Adding, changing or removing a git remote or its URLs, or any push configuration.
 - id: tool-config-edit
