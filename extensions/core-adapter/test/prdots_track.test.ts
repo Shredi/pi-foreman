@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 import { CLOSED_VIEW_MS, dotState } from "../prdots.ts";
 import { CloseFlow } from "../close.ts";
 import type { CloseDeps } from "../close.ts";
@@ -382,7 +383,7 @@ test("notice: git -C other push and cd other && git push record the other cwd fo
   await n.h.d.onBash("git -C /other push origin a", " * [new branch]      a -> a", true, "/w");
   await n.h.d.onBash("cd /second && git push origin b", " * [new branch]      b -> b", true, "/w");
   await n.run();
-  assert.deepEqual(n.h.callsOf("pr_find").map((c) => c.cwd).sort(), ["/other", "/second"]);
+  assert.deepEqual(n.h.callsOf("pr_find").map((c) => c.cwd).sort(), [path.resolve("/other"), path.resolve("/second")]);
   assert.deepEqual(n.notes.sort(), ["a", "b"]);
 });
 

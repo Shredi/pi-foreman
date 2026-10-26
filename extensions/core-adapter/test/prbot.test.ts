@@ -117,7 +117,7 @@ function bot(w: World, id: string, o: { cfg?: unknown; random?: number; host?: s
     active: () => o.active ?? true,
     config: () => cfg,
     prHost: () => o.prHost ?? "auto",
-    dir: o.dir ?? "/agent/pi-foreman/state/prbot",
+    dir: o.dir ?? DIR,
     sessionId: id,
     run: async (op, args, cwd) => {
       calls.push({ op, args, cwd, at: w.clock() });
@@ -145,8 +145,10 @@ function bot(w: World, id: string, o: { cfg?: unknown; random?: number; host?: s
   };
 }
 
-const LEASE = "/agent/pi-foreman/state/prbot/lease.json";
-const SNAP = "/agent/pi-foreman/state/prbot/snapshot.json";
+// Keys built the way prbot.ts builds them (path.join), so they match on Windows too, where the join gives backslashes.
+const DIR = "/agent/pi-foreman/state/prbot";
+const LEASE = path.join(DIR, "lease.json");
+const SNAP = path.join(DIR, "snapshot.json");
 const lease = (w: World): Record<string, unknown> => JSON.parse(w.memfs.files.get(LEASE)?.text ?? "{}");
 const snap = (w: World): Record<string, any> => JSON.parse(w.memfs.files.get(SNAP)?.text ?? "{}");
 const leaseOf = (sessionId: string, w: World, o: Record<string, unknown> = {}) => JSON.stringify({ sessionId, pid: 99, hostname: "host-a", acquiredAt: w.clock(), renewedAt: w.clock(), expiresAt: w.clock() + 300_000, ...o });
@@ -721,7 +723,8 @@ test("prbot_real_fs_exclusive_create_atomic_write_and_mtime_read", async () => {
     const got = b.b.read();
     assert.equal(got?.review[0].n, 8);
     assert.equal(b.b.read(), got, "unchanged mtime: the parsed object is reused");
-    assert.equal(fs.statSync(path.join(target, "snapshot.json")).mode & 0o077, 0);
+    // POSIX mode bits only: Windows has no group/other bits and reports 0o666 whatever the 0o600 create mode asked for.
+    if (process.platform !== "win32") assert.equal(fs.statSync(path.join(target, "snapshot.json")).mode & 0o077, 0);
     a.b.dispose();
     b.b.dispose();
     assert.equal(fs.existsSync(path.join(target, "lease.json")), false);
