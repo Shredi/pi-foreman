@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "profiles": {
+    "orchestration": {
+      "title": "Orchestration only",
+      "summary": "The ceremony, ladder and review machinery without the extra UI, PR tools, herdr integration, idle cache keepalive, idle downshift, retro and trace.",
+      "features": {
+        "pr-ops": false,
+        "herdr": false,
+        "footer-ui": false,
+        "idle-cache": false,
+        "idle-downshift": false,
+        "retro": false,
+        "trace": false
+      }
+    },
+    "standard": {
+      "title": "Standard",
+      "summary": "Every toggleable feature in its shipped state; the package defaults.",
+      "features": {}
+    },
+    "full": {
+      "title": "Full",
+      "summary": "Every toggleable feature on, safety relaxations included (git tools, children may push, workflow scripts, remote intercom).",
+      "features": {
+        "codemode": true,
+        "reviewer-climb": true,
+        "plan-review": true,
+        "orientation": true,
+        "git-tools": true,
+        "pr-ops": true,
+        "review-required": true,
+        "children-may-push": true,
+        "workflow-scripts": true,
+        "remote-intercom": true,
+        "idle-cache": true,
+        "idle-downshift": true,
+        "herdr": true,
+        "footer-ui": true,
+        "retro": true,
+        "trace": true
+      }
+    }
+  }
+}

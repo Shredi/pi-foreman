@@ -6,8 +6,11 @@ import path from "node:path";
 import { abbrev } from "./footer.ts";
 import { parseLines } from "./usage.ts";
 import { priceRecord } from "./cost.ts";
+import { pullSummary } from "./remotesession.ts";
+import type { SessionEntry } from "./session.ts";
 import type { PriceTable } from "./cost.ts";
 import { cellWidth, runSymbol, SPINNER_MS, spinnerFrame, symbolSet } from "./symbols.ts";
+import type { SymbolKey } from "./symbols.ts";
 
 export const WIDGET_KEY = "foreman-children";
 export const MAX_ROWS = 8;
@@ -35,6 +38,11 @@ export interface SessionRow {
   status: string;
   /** ms epoch of last.at, else opened (NaN when unparsable). */
   at: number;
+  /** `pull <age>` and the last pull error of a pull-mode remote entry (remotesession.ts pullSummary). */
+  pull?: string;
+  /** Remote entries: the machine (row `label@machine`) and the state word of remoteState. */
+  machine?: string;
+  state?: string;
 }
 
 /** A background row of the foreman (index.ts): a foreman_wait wait (`wait`), a foreman_bg command (`bg`) or a PR watch (`pr #n`). */
@@ -244,7 +252,43 @@ export function ageText(ms: number): string {
 }
 
 export function sessionLine(r: SessionRow, now: number): string {
-  return [r.label, r.status, Number.isFinite(r.at) ? ageText(now - r.at) : "?"].join(" · ");
+  return [r.label, r.status, Number.isFinite(r.at) ? ageText(now - r.at) : "?", ...(r.pull ? [r.pull] : [])].join(" · ");
+}
+
+/** The radar's live-state window for a remote child: heartbeat age plus pull age must stay under this (foreman_radar.py REMOTE_LIVE_MAX). */
+const REMOTE_LIVE_MAX_S = 90;
+
+/**
+ * State word of a remote entry, as the radar derives it: an open ask and `closing` come first; the child's
+ * `remoteLive` state counts while the last pull is younger than 3 x the interval + 30 s and heartbeat age plus pull
+ * age is under 90 s; a pull entry without a pull success for that window is `lost`.
+ */
+export function remoteState(e: SessionEntry, nowMs: number, intervalSeconds = 20): string {
+  const status = text(e.status);
+  if ((status === "open" || status === "pending") && e.ask && typeof e.ask === "object") return "ask";
+  if (status === "closing") return "closing";
+  const at = typeof e.pulledAt === "string" ? Date.parse(e.pulledAt) : NaN;
+  const pullAge = Number.isFinite(at) ? Math.max(0, (nowMs - at) / 1000) : null;
+  const fresh = pullAge !== null && pullAge < 3 * intervalSeconds + 30;
+  const live = e.remoteLive && typeof e.remoteLive === "object" ? (e.remoteLive as { state?: unknown; heartbeatAgeSeconds?: unknown }) : {};
+  const beat = live.heartbeatAgeSeconds;
+  if (pullAge !== null && fresh && typeof beat === "number" && beat + pullAge < REMOTE_LIVE_MAX_S) {
+    if (live.state === "blocked" || live.state === "working" || live.state === "done") return live.state;
+    return "idle";
+  }
+  if (status === "pending") return "starting";
+  if (status !== "open" || e.returnPath !== "pull") return status || "?";
+  if (pullAge === null) return "starting";
+  return fresh ? "idle" : "lost";
+}
+
+const REMOTE_GLYPH: Record<string, SymbolKey> = { ask: "asking", blocked: "blocked", working: "working", done: "done", lost: "lost", idle: "idle", closing: "waiting", starting: "waiting" };
+
+/** `<glyph> label@machine · state · age[ · pull …]` of a remote entry. */
+export function remoteLine(r: SessionRow, now: number, symbols?: unknown): string {
+  const set = symbolSet(symbols);
+  const state = r.state ?? r.status;
+  return set[REMOTE_GLYPH[state] ?? "idle"] + " " + [`${r.label}@${r.machine}`, state, Number.isFinite(r.at) ? ageText(now - r.at) : "?", ...(r.pull ? [r.pull] : [])].join(" · ");
 }
 
 /** Opened sessions of `parent` from sessions.json (closed and failed ones are not shown). */
@@ -259,7 +303,14 @@ export function readOpened(agentDir: string, parent: string | null): SessionRow[
       const s = e as { parent?: unknown; label?: unknown; status?: unknown; opened?: unknown; last?: unknown };
       if (s.parent !== parent || text(s.status) === "closed" || text(s.status) === "failed") continue;
       const last = s.last && typeof s.last === "object" ? text((s.last as { at?: unknown }).at) : "";
-      out.push({ label: text(s.label) || "session", status: text(s.status) || "?", at: Date.parse(last || text(s.opened)) });
+      const pull = pullSummary(e as SessionEntry, Date.now(), ageText);
+      const machine = (e as { machine?: unknown }).machine;
+      const remote = typeof machine === "string" && machine !== "";
+      const pulledAt = (e as { pulledAt?: unknown }).pulledAt;
+      const pulled = remote && typeof pulledAt === "string" ? Date.parse(pulledAt) : NaN;
+      const seen = Date.parse(last || text(s.opened));
+      const at = remote && Number.isFinite(pulled) ? Math.max(Number.isFinite(seen) ? seen : 0, pulled) : seen;
+      out.push({ label: text(s.label) || "session", status: text(s.status) || "?", at, ...(pull ? { pull } : {}), ...(remote ? { machine, state: remoteState(e as SessionEntry, Date.now()) } : {}) });
     }
     return out;
   } catch {
@@ -286,7 +337,7 @@ export function foldRows(lines: string[]): string[] {
 export function widgetLines(runs: RunView[], sessions: SessionRow[], now: number, since: number | null = null, symbols?: unknown, background: BackgroundRow[] = [], spin = false): string[] {
   const active = runs.filter((r) => r.state !== "done");
   const bg = background.map((b) => [b.label, b.detail, ageText(now - b.startedAt)].join(" · "));
-  const opened = [...sessions].sort((a, b) => (b.at || 0) - (a.at || 0)).map((s) => sessionLine(s, now));
+  const opened = [...sessions].sort((a, b) => (b.at || 0) - (a.at || 0)).map((s) => (s.machine ? remoteLine(s, now, symbols) : sessionLine(s, now)));
   if (!active.length) return foldRows([...bg, ...opened]);
   const from = since ?? Math.min(...active.map((r) => r.startedAt));
   const done = runs.filter((r) => r.state === "done" && r.endedAt !== null && r.endedAt >= from);

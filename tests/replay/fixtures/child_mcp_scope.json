@@ -1,0 +1,18 @@
+{
+ "foreman": {
+  "b1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:bld]] use the echo tool", "mcp": ["fx/echo"]}}]},
+   {"text": "Launched."},
+   {"text": "Builder reported."}
+  ]
+ },
+ "builder": {
+  "bld": [
+   {"tools": [{"name": "bash", "arguments": {"command": "sleep 3"}}]},
+   {"tools": [{"name": "tool_search", "arguments": {"query": "echo"}}]},
+   {"tools": [{"name": "mcp__fx__echo", "arguments": {"text": "hello"}}]},
+   {"tools": [{"name": "mcp__fx__shout", "arguments": {"text": "hello"}}]},
+   {"text": "scope child finished"}
+  ]
+ }
+}

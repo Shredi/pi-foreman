@@ -1,0 +1,16 @@
+{
+ "foreman": {
+  "c1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:exp]] call the shout tool", "mcp": ["fx/echo"]}}]},
+   {"text": "Launched."},
+   {"text": "Explorer reported."}
+  ]
+ },
+ "explorer": {
+  "exp": [
+   {"tools": [{"name": "bash", "arguments": {"command": "sleep 3"}}]},
+   {"tools": [{"name": "codemode", "arguments": {"code": "let out;\ntry { out = String(await tools.mcp__fx__shout({ text: \"hello\" })); } catch (e) { out = \"err \" + String(e.message).slice(0, 200); }\ntext(out);"}}]},
+   {"text": "codemode scope child finished"}
+  ]
+ }
+}

@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 import { PrRegistry, chainSegments, compilePatterns, detectInteraction, keyString, matchPatterns, parsePrUrl, parsePush, parsePushOutput, registerTouched, scanUrls } from "../prtrack.ts";
 import type { PrKey } from "../prtrack.ts";
 import { pre, ran, rig, url } from "./_prrig.ts";
@@ -213,7 +214,7 @@ test("number-only registrations are parked until pr_repo answers and keyed by it
 
 test("onBash: git push records the branch with cwd, remote, repo and host; -C and cd record the other cwd", async () => {
   const h = rig();
-  h.state.repos["/other"] = { host: "git.example.org", repo: "acme/lib" };
+  h.state.repos[path.resolve("/other")] = { host: "git.example.org", repo: "acme/lib" };
   await h.d.onBash("git push -u origin feat", " * [new branch]      feat -> feat", true, "/w");
   await h.d.onBash("git -C /other push up topic", "   1a2b3c4..5d6e7f8  topic -> topic", true, "/w");
   await h.d.onBash("cd sub && git push", " * [new branch]      sub -> sub", true, "/w");
@@ -222,8 +223,8 @@ test("onBash: git push records the branch with cwd, remote, repo and host; -C an
   await flush();
   const p = h.d.pushedBranches().map((x) => ({ name: x.name, cwd: x.cwd, remote: x.remote, repo: x.repo, host: x.host }));
   assert.deepEqual(p, [
-    { name: "sub", cwd: "/w/sub", remote: "origin", repo: "acme/app", host: "github.com" },
-    { name: "topic", cwd: "/other", remote: "up", repo: "acme/lib", host: "git.example.org" },
+    { name: "sub", cwd: path.resolve("/w/sub"), remote: "origin", repo: "acme/app", host: "github.com" },
+    { name: "topic", cwd: path.resolve("/other"), remote: "up", repo: "acme/lib", host: "git.example.org" },
     { name: "feat", cwd: "/w", remote: "origin", repo: "acme/app", host: "github.com" },
   ]);
 });
@@ -256,14 +257,14 @@ test("onBash: interactions register under the current repo; a non-zero exit and 
 
 test("onBash: after cd the number is resolved through pr_repo in that directory; GH_REPO is honoured; unresolved is skipped", async () => {
   const h = rig();
-  h.state.repos["/w/other"] = { host: "github.com", repo: "acme/other" };
-  h.state.repos["/w/none"] = null;
+  h.state.repos[path.resolve("/w/other")] = { host: "github.com", repo: "acme/other" };
+  h.state.repos[path.resolve("/w/none")] = null;
   await h.d.onBash("cd other && gh pr comment 5 -b hi", "", true, "/w");
   await h.d.onBash("GH_REPO=acme/env gh pr comment 6 -b hi", "", true, "/w");
   await h.d.onBash("cd none && gh pr comment 7 -b hi", "", true, "/w");
   await h.d.onBash("cd $X && gh pr comment 9 -b hi", "", true, "/w");
   assert.deepEqual(h.tracks.map((t) => [t.path, t.skipped ?? false]), [["interact", false], ["interact", false], ["interact", true], ["interact", true]]);
-  assert.equal(h.callsOf("pr_repo").filter((c) => c.cwd === "/w/other").length, 1);
+  assert.equal(h.callsOf("pr_repo").filter((c) => c.cwd === path.resolve("/w/other")).length, 1);
   h.d.start();
   await h.fire();
   const prs = h.callsOf("pr_batch")[0].args.prs as { repo: string; n: number }[];

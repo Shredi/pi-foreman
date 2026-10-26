@@ -160,6 +160,14 @@ The `net-read` allow (docs/permissions.md, Network reads) takes any host, by own
 - `~/.curlrc` (and the `wget` startup files and HSTS cache) still apply; the allow does not read them.
 - Output goes only into the session or the role scratch dir; each child role has its own scratch dir, so a child can read a file another child of the same role left there.
 
+## Known limit: MCP scope in children
+
+The permission gate judges every `mcp__` call on its payload; the MCP scope (`roles.<id>.mcp`, see [roles](roles.md#rolesidmcp)) decides which tools exist in a child. Both apply. Residuals:
+
+- Children read the trusted project's `.pi/mcp.json` the way Pi does. A shell write to `{cwd}/.pi/*` is guarded by the permission baseline, but a project you trust can still name servers there; they load only when a role's ceiling lists them.
+- Group launches (`tasks`, `chain`) that need MCP are refused until the pinned pi-subagents forwards per-entry bindings; launch those roles singly.
+- With `safety.subagents.allowWorkflow` on, a workflow script could pass `extensionBindings` per child and forge a binding. A script (inline or file) whose text names `extensionBindings` or `pi-foreman/1` is therefore refused (`launch_refused`, reason `workflow_binding`); only bindings the adapter writes exist. The text scan is best-effort: a computed key (`"extension" + "Bindings"`) defeats it. A script path is read from the launch `cwd` (as pi-subagents resolves it); a script that cannot be read, and a named workflow resource, which the adapter cannot read at all, are refused whenever a role has an MCP ceiling (`roles.<role>.mcp`). `allowWorkflow` is off by default, which is the real protection.
+
 ## Known limit: stale "needs attention" notices
 
 pi-subagents delivers `subagent_control_notice` custom messages with `pi.sendMessage` (`triggerTurn` for async runs), and a queued message cannot be withdrawn. The idle wake that carries them is handled at `input` (R26 item 2): when every unseen notice is for a run whose end event already arrived, the input returns `handled` and no turn starts (trace `notify_deduped {reason: "run_ended", runId}`). A wake that also carries a notice for a live run, or any owner prompt, still starts a turn, and the stale notice in it is hidden from the model and the display (`context`, `message_end`). `notices.ts` (`staleNoticeRunIds`, `dropEndedRunNotices`) holds the rules. Pi's hooks cannot cancel a queued custom message itself, so a mixed wake still runs; fixing that needs a Pi hook to withdraw a queued custom message (for example a `message_start` handler that can cancel it), or a run-end check in pi-subagents' `control-notices.js` before it calls `sendMessage`.
@@ -175,6 +183,18 @@ On Windows pi-subagents cannot spawn a script hook without a shell, so the `fore
 ## Known limit: background runs on Windows
 
 On Windows a `foreman_bg` command runs under `cmd.exe` (`cmd /d /s /c "<command>"`), and the add-on's `bg_run` also runs its commands under `cmd.exe`, while the overlay rules, the shell-write guard, the destructive guard and the git guard classify the command as bash. cmd syntax the bash scanner does not model (`&` as a separator, `^` escapes, `%VAR%` expansion, cmd built-ins such as `del`, `rd` or `copy`) can therefore pass with a verdict that is wrong for what actually runs. Keep background commands on Windows to plain program calls (`node …`, `npm test`). Running them through `bash.exe -c` (Git Bash), so the guards and the shell agree, is a later item.
+
+## Known limit: remote outbox trust boundary
+
+A pull-mode remote child (`sessions.machines.<name>.returnPath` `pull`, the default; see [sessions](sessions.md#remote-child-sessions)) writes its notices to `outbox.jsonl` in its handoff dir on the remote machine, and your parent reads that file over its own SSH connection. Nothing from the remote connects back, so the only credential in play is the parent's SSH login. The handoff dir is the trust boundary: any process running as that user on the remote machine can append to the outbox, and the parent accepts the entries of an open registry entry whose child id and `parent` file match. The text is parsed and mirrored as data and acts on nothing, but a local process on the remote machine can forge a notice, and the parent cannot tell it from the child's. Treat remote notices like any peer message, and list only machines whose users you trust.
+
+## Known limit: registry without a lock
+
+`sessions.json` is read, changed and written back without a lock (`foreman session brief`, the open and close verbs and the pull poll all do this, the write itself is atomic). Two of them running at once can lose one update, for example a `pull` that stores a new outbox cursor while a `brief` writes the entry back from before it. The cursor then moves back and the next poll re-fetches entries, which are applied again. The loss is accepted for now; the outbox itself is locked (see the next limit).
+
+## Known limit: corrupt last outbox line
+
+A remote child appends one notice line to `outbox.jsonl` under a lock on `outbox.lock`. A crash in the middle of that append can leave a last line that is not a complete notice. Later notices then refuse with `outbox_corrupt` ("the last line of … is not a notice entry; remove it by hand") until the line is removed by hand on the remote machine. The child's notice command exits 1 with that code, so no later notice reaches the outbox, and the parent's poll keeps running without a pull error: it skips the bad line when it lies past the cursor. The line is counted as `skipped` only by a poll that also returns an entry before it; a corrupt last line written after the parent has caught up (a crash during the append of an entry the parent had already fetched, cursor at that entry) is not counted, so the poll shows nothing wrong and only the child's next `remote notice` refuses with `outbox_corrupt`. The parent never truncates or rewrites the outbox.
 
 ## Further safety and runtime keys
 

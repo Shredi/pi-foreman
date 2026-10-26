@@ -31,8 +31,9 @@ def main():
         sys.stderr.write("fake host: no scenario for %s\n" % " ".join(argv))
         return 99
     entry = scenario[best]
-    sys.stdout.write(entry.get("stdout", ""))
-    sys.stderr.write(entry.get("stderr", ""))
+    for stream, key in ((sys.stdout, "stdout"), (sys.stderr, "stderr")):
+        stream.buffer.write(entry.get(key, "").encode("utf-8"))   # bytes, like gh: no \n -> \r\n translation
+        stream.buffer.flush()
     return entry.get("exit", 0)
 
 

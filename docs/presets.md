@@ -2,7 +2,7 @@
 
 > Opt-in config files under `config/presets/`, merged into your `<agent dir>/foreman.json` on request, never by default.
 > Covers `apply-preset`, `--dry-run`, the rank-tier `inexpensive` preset and an overlay on top of it.
-> Role and rank background is in [roles](roles.md); overlay layering in [overlays](overlays.md).
+> Role and rank background is in [roles](roles.md); overlay layering in [overlays](overlays.md). Feature profiles (what is switched on, not which models) are in [install](install.md#profiles-features-and-add-ons).
 
 ## apply-preset
 
