@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "profile": null,
   "displayNames": "classic",
   "presence": { "enabled": true, "awayAfterMinutes": 11 },
   "displayPresets": {

@@ -40,6 +40,7 @@
   },
   "type": "module",
   "dependencies": {
+    "@inquirer/prompts": "8.7.4",
     "@gotgenes/pi-permission-system": "39.0.2",
     "pi-intercom": "0.17.0",
     "pi-subagents": "0.78.0",

@@ -31,6 +31,7 @@ import { firstRunNotice, presetNames, presetProviders, providerGapNotice } from 
 import { dormantDoctorLine } from "./features.ts";
 import { bridgeTrusted, trustBridgeCommand } from "./bridgetrust.ts";
 import { preBashConfigOf, runPreBashHooks } from "./prebash.ts";
+import { profileDoctorLines } from "./profiledoctor.ts";
 import { collectOrientation } from "./orient.ts";
 import type { PiRoots } from "./orient.ts";
 import { applyRootsBlock } from "./childbrief.ts";
@@ -4188,6 +4189,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const peerLine = addonPeerRangeLine({ agentDir: s.agentDir, cwd: s.cwd }, await (deps.piVersion ?? runningPiVersion)());
     if (peerLine) out.push(peerLine);
     out.push(dormantDoctorLine(PKG_ROOT, s.config.config));
+    // The profile and its deviations are read without the project layer (the agent dir has no .pi/foreman.json), so project tightening is not noise.
+    const userOnly = s.python.ok ? await loadMergedConfig({ python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, projectDir: s.agentDir, trusted: false, spawner }) : null;
+    out.push(...profileDoctorLines(userOnly && userOnly.source === "cli" ? userOnly.config : s.config.config, s.config.config, PKG_ROOT));
     return out;
   }
 }

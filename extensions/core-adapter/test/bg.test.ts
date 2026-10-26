@@ -355,6 +355,14 @@ test("/foreman waits without the add-on ignores .pi/tasks; doctor prints INFO ba
   assert.match(present.notes.pop()!, /\nINFO background-tasks: present\n/);
 });
 
+test("doctor prints the recorded profile and the deviations line", async (t) => {
+  const a = adapter(t);
+  fs.writeFileSync(path.join(a.agentDir, "foreman.json"), `${JSON.stringify({ version: 1, profile: "standard", providers: {} })}\n`);
+  await a.handlers.get("session_start")!({ reason: "startup" }, a.ctx);
+  await a.commands.get("foreman")!.handler("doctor", a.ctx);
+  assert.match(a.notes.pop()!, /\nINFO profile: standard\nINFO profile deviations: none\n?/);
+});
+
 // -- item 6 guard gap: the add-on's bg_run runs shell commands, so it is guarded like bash --------------------
 
 test("guard parity: the add-on's bg_run gets exactly the verdict a bash call gets; a non-string command is denied", async (t) => {

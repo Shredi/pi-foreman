@@ -18,6 +18,23 @@ tokens (two consecutive infrastructure-error cells stop it with exit 5), `--setu
 
 Fold preset (`bench/presets/fold.json`): a fold-vs-keep measurement of two ceremony choices on the m1-recheck and t1-trivial tasks. Fold asks whether the foreman reads the code itself (its own read budget) or hands the reading to an explorer first; trivial asks whether a trivial task goes to a trivial builder or to the foreman's bounded self-edit. Four rows: `fold-a-default` (default knobs), `fold-b-reads24` (`foreman_reads` warn 24 in both phases, so the read reminder comes later), `fold-c-trivial-bounded` (`foreman_edits: bounded` and `user_config` `ceremony.required.trivial: []`, which drops the trivial builder step), and `fold-d-both` (b and c). Compare them on the existing columns only: `read_blocks` (reads that drew a reminder), `tokens`, `wall s`, `tier`, `ceremony_incomplete` and the pass column `success` (the task's hidden tests; the reviewer's verdict is not a column). No new columns are added. One repeat is one sample: run the preset more than once (`repeats` or a second `run` with a new jobs dir) before reading a difference as real. The preset uses the `foreman-fake` provider like the smoke preset, so its numbers only show the harness wiring; a real measurement sets `model` (`provider/model`) on each row, and nothing in the preset names an account or a provider.
 
+### Fold baseline (Opus, one repeat)
+
+Every role on claude-opus-5-5 through the claude-bridge provider, fold preset rows unchanged otherwise, repeats 1, pi-foreman commit 13ba11c, pi 1.4.0, pi-subagents 0.78.0, pi-claude-bridge 0.9.2, thinking medium. One sample per cell, so differences are not yet significant, as in the paragraph above.
+
+| row | task | success | tokens | wall s | tool calls | read reminders (`read_blocks`) | launches | tier | ceremony_incomplete |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| fold-a-default | m1-recheck | 1/1 | 348,895 | 106 | 19 | 0 | 4 | standard | 0 |
+| fold-b-reads24 | m1-recheck | 1/1 | 414,975 | 142 | 20 | 0 | 5 | standard | 0 |
+| fold-c-trivial-bounded | m1-recheck | 1/1 | 315,396 | 97 | 17 | 0 | 4 | standard | 0 |
+| fold-d-both | m1-recheck | 1/1 | 337,778 | 95 | 18 | 0 | 4 | standard | 0 |
+| fold-a-default | t1-trivial | 1/1 | 324,564 | 97 | 15 | 0 | 3 | trivial | 0 |
+| fold-b-reads24 | t1-trivial | 1/1 | 308,374 | 92 | 15 | 0 | 2 | trivial | 0 |
+| fold-c-trivial-bounded | t1-trivial | 1/1 | 290,327 | 72 | 12 | 0 | 1 | trivial | 1 |
+| fold-d-both | t1-trivial | 1/1 | 284,426 | 82 | 16 | 0 | 3 | trivial | 0 |
+
+The bench has no separate count of the foreman's own reads; `read_blocks` (reads that drew a reminder) is the read-budget column, and it was 0 in every cell.
+
 ## Columns
 
 Trace-derived columns include `ceremony_incomplete`, `read_blocks` (trace `read_budget` events with action `remind`, and `deny` from older traces; the read budget only reminds), `recheck_blocks`, `finish_refused`,

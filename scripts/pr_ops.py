@@ -1149,14 +1149,17 @@ def op_pr_batch(req):
     entries = _batch_args(args)
     root = _repoless_root(req)
     host = _gh_only(pr_host, root, "batch")
-    argv = [host.program, "api", "graphql"] + (["--hostname", hostname] if hostname else []) + \
-        ["-f", "query=" + _pr_query(len(entries))]
-    subst = []
+    variables = {}
     for i, (repo, n) in enumerate(entries):
         owner, name = two_part(repo)
-        argv += ["-f", "owner%d=%s" % (i, owner), "-f", "name%d=%s" % (i, name), "-F", "n%d=%d" % (i, n)]
-        subst += [owner, name]
-    code, out, err = run_host(argv, root, subst)
+        variables.update({"owner%d" % i: owner, "name%d" % i: name, "n%d" % i: n})
+    path = _body_file(json.dumps({"query": _pr_query(len(entries)), "variables": variables}))
+    try:   # the body goes through a file: 50 queries overflow the Windows command line
+        argv = [host.program, "api", "graphql"] + (["--hostname", hostname] if hostname else []) + \
+            ["--input", _argpath(path)]
+        code, out, err = run_host(argv, root, [_argpath(path)])
+    finally:
+        _unlink(path)
     try:
         d = json.loads(out)
     except ValueError:
@@ -1280,13 +1283,18 @@ def op_pr_poll(req):
         raise _bad("notifications take no login")
     root = _repoless_root(req)
     host = _gh_only(pr_host, root, "poll")
-    path = "notifications?all=false&participating=false&per_page=100&page=%d" % (page or 1) \
-        if endpoint == "notifications" else "users/%s/events?per_page=100" % lg
+    # Query parameters travel as -f fields (gh puts them in the query string under GET), so no argv element holds
+    # an `&` that cmd.exe would cut at when the host is a .cmd shim.
+    fields = [("all", "false"), ("participating", "false"), ("per_page", "100"), ("page", str(page or 1))] \
+        if endpoint == "notifications" else [("per_page", "100")]
+    path = "notifications" if endpoint == "notifications" else "users/%s/events" % lg
     argv = [host.program, "api", "-i", "--method", "GET"] + (["--hostname", hostname] if hostname else [])
     if since:
         argv += ["-H", "If-Modified-Since: " + since]
     if etag:
         argv += ["-H", "If-None-Match: " + etag]
+    for k, v in fields:
+        argv += ["-f", "%s=%s" % (k, v)]
     code, out, err = run_host(argv + [path], root)
     parsed = parse_http(out)  # gh exits 1 on 304, 403 and 404 but still prints the status line and headers
     if parsed is None:
