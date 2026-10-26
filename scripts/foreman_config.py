@@ -213,6 +213,7 @@ IGNORED_KEYS = [
     (("profile",), "the setup profile is recorded in the user or overlay config"),
     (("paths", "hubWorkflow"), "it loosens: it makes dirs outside the worktree readable; user or overlay config only"),
     (("bridge", "isolateClaudeConfig"), "it loosens the host config isolation"),
+    (("bridge", "promptCacheTtl"), "the bridge cache TTL comes from the user or overlay config"),
     (("providers", "*", "review"), "it loosens: a review model approves asks"),
     (("providers", "*", "cache", "ttlSeconds"), "the cache policy comes from the user or overlay config"),
     (("providers", "*", "cache", "billing"), "the cache policy comes from the user or overlay config"),
@@ -341,6 +342,14 @@ BUILTIN_CACHE = {
 }
 # Smallest TTL whose 0.9 x tick lies beyond Pi's 30-minute idle cap (mirrors SELF_WARM_MIN_TTL_SECONDS in cachepolicy.ts).
 SELF_WARM_MIN_TTL_SECONDS = 2001
+# Built-in per-model TTLs (mirrors BUILTIN_BY_MODEL in cachepolicy.ts); the first matching row wins.
+BUILTIN_BY_MODEL = {
+    "github-copilot": [("claude-*", 300), ("gpt-*", 1800), ("o1*", 1800), ("o3*", 1800), ("o4*", 1800)],
+}
+# bridge.promptCacheTtl (mirrors bridgettl.ts): the Claude Code prompt-cache TTL per Pi process kind.
+BRIDGE_TTL_VALUES = ("1h", "5m", "inherit")
+BRIDGE_TTL_DEFAULTS = {"main": "1h", "subagent": "5m"}
+BRIDGE_TTL_SECONDS = {"1h": 3600, "5m": 300}
 TIERS = ["trivial", "standard", "heavy"]
 # Steps ceremony.required.<tier> may name (the adapter counts each per session).
 REQUIRED_STEPS = ["planner", "builder", "reviewer", "finalizer"]
@@ -375,6 +384,43 @@ def warn_removed_compaction(name, data, warnings):
     if found:
         warnings.append("%s config: %s removed in r52; `foreman setup` writes Pi's compaction.modelOverrides; see docs/cache.md"
                         % (name, ", ".join("compaction." + k for k in found)))
+
+
+def fix_bridge_ttl(name, data, warnings):
+    """Remove a malformed bridge.promptCacheTtl (or one of its kinds) from one layer, with a warning; the default fills it."""
+    bridge = data.get("bridge") if isinstance(data, dict) else None
+    if not isinstance(bridge, dict) or "promptCacheTtl" not in bridge:
+        return
+    val = bridge["promptCacheTtl"]
+    if not isinstance(val, dict):
+        del bridge["promptCacheTtl"]
+        warnings.append("%s bridge.promptCacheTtl ignored: not an object with main and subagent; using the defaults" % name)
+        return
+    for kind in ("main", "subagent"):
+        if kind in val and not (isinstance(val[kind], str) and val[kind] in BRIDGE_TTL_VALUES):
+            del val[kind]
+            warnings.append("%s bridge.promptCacheTtl.%s ignored: use 1h, 5m or inherit; using %s"
+                            % (name, kind, BRIDGE_TTL_DEFAULTS[kind]))
+
+
+def _truthy_env(value):
+    return value is not None and value.strip().lower() not in ("", "0", "false", "no", "off")
+
+
+def derived_bridge_ttl(config, is_child, env):
+    """TTL in seconds Claude Code gets on the bridge for this process kind (mirrors derivedBridgeTtlS in bridgettl.ts).
+
+    None when FORCE_PROMPT_CACHING_5M is truthy or the kind's setting is "inherit".
+    """
+    if _truthy_env((env or {}).get("FORCE_PROMPT_CACHING_5M")):
+        return None
+    bridge = config.get("bridge") if isinstance(config, dict) else None
+    setting = bridge.get("promptCacheTtl") if isinstance(bridge, dict) else None
+    kind = "subagent" if is_child else "main"
+    value = setting.get(kind) if isinstance(setting, dict) else None
+    if value not in BRIDGE_TTL_VALUES:
+        value = BRIDGE_TTL_DEFAULTS[kind]
+    return BRIDGE_TTL_SECONDS.get(value)
 
 
 def _drop_pattern(node, keys, done, who, why, warnings):
@@ -1030,6 +1076,7 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
             errors.append("%s config is not a JSON object (%s)" % (name, path))
             return None
         warn_removed_compaction(name, data, warnings)
+        fix_bridge_ttl(name, data, warnings)
         drop_invalid_safety(name, data, schema, warnings)
         fix_malformed_ceremony(name, data, l1, errors)
         return data
@@ -1064,6 +1111,7 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
             if isinstance(comp, dict) and "maxTokens" in comp:
                 del comp["maxTokens"]
                 warnings.append("session compaction.maxTokens ignored: session layer ignored: setup applies maxTokens")
+            fix_bridge_ttl("session", data, warnings)
             drop_invalid_safety("session", data, schema, warnings)
             fix_malformed_ceremony("session", data, l1, errors)
             drop_loosening(data, "session", warnings)
@@ -1547,8 +1595,10 @@ def _model_matches(pattern, model):
     return re.fullmatch(re.escape(pattern).replace(r"\*", ".*").replace(r"\?", "."), model) is not None
 
 
-def cache_policy(config, provider, model=None):
+def cache_policy(config, provider, model=None, bridge_ttl=None):
     """Resolved cache policy of one provider (mirrors resolveCachePolicy in cachepolicy.ts).
+
+    bridge_ttl: derived_bridge_ttl seconds; on claude-bridge it sits after a byModel row and an explicit ttlSeconds.
 
     -> {"ttlSeconds", "billing", "enabled"} or None when neither the config nor BUILTIN_CACHE has an entry.
     """
@@ -1560,33 +1610,41 @@ def cache_policy(config, provider, model=None):
     if not cfg and not built:
         return None
     hit = {}
-    if model and isinstance(cfg.get("byModel"), list):
-        mid = model[len(provider) + 1:] if model.startswith(str(provider) + "/") else model
+    mid = (model[len(provider) + 1:] if model.startswith(str(provider) + "/") else model) if model else ""
+    if mid and isinstance(cfg.get("byModel"), list):
         for row in cfg["byModel"]:
             if isinstance(row, dict) and isinstance(row.get("match"), str) and row["match"] \
                     and _model_matches(row["match"], mid):
                 hit = row
                 break
-    ttl = hit["ttlSeconds"] if isinstance(hit.get("ttlSeconds"), int) else (
-        cfg["ttlSeconds"] if "ttlSeconds" in cfg else built.get("ttlSeconds"))
+    derived = False
+    if isinstance(hit.get("ttlSeconds"), int):
+        ttl = hit["ttlSeconds"]
+    elif "ttlSeconds" in cfg:
+        ttl = cfg["ttlSeconds"]
+    elif provider == "claude-bridge" and bridge_ttl is not None:
+        ttl, derived = bridge_ttl, True
+    else:
+        ttl = next((t for pat, t in BUILTIN_BY_MODEL.get(provider, []) if mid and _model_matches(pat, mid)),
+                   built.get("ttlSeconds"))
     ttl = ttl if isinstance(ttl, int) and not isinstance(ttl, bool) and ttl >= 1 else None
     braw = hit.get("billing") if hit.get("billing") in ("token", "request") else cfg.get("billing")
     billing = braw if braw in ("token", "request") else built.get("billing")
     ka = cfg.get("keepalive") if isinstance(cfg.get("keepalive"), dict) else {}
     enabled = ka.get("enabled")
     if not isinstance(enabled, bool):
-        enabled = billing == "token" and ttl is not None and ttl < 3600
+        enabled = billing == "token" and ttl is not None and (ttl < 3600 or derived)
     if billing == "request":
         enabled = False
     return {"ttlSeconds": ttl, "billing": billing, "enabled": enabled}
 
 
-def warm_policy(config, provider, model=None):
+def warm_policy(config, provider, model=None, bridge_ttl=None):
     """cache_policy plus the warm-policy fields (mirrors resolveWarmPolicy in cachepolicy.ts).
 
     -> cache_policy's keys and budgetShare, awayTicks, whileWaiting, selfWarm, selfWarmWindowMinutes, compactMinTokens, or None.
     """
-    base = cache_policy(config, provider, model)
+    base = cache_policy(config, provider, model, bridge_ttl)
     if base is None:
         return None
     provs = config.get("providers") if isinstance(config, dict) else None

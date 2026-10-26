@@ -17,6 +17,8 @@ export interface WarmWireOpts {
   pi: Pick<ExtensionAPI, "getAllTools" | "getActiveTools" | "getThinkingLevel" | "getSettings">;
   pkgRoot: string;
   isChild: boolean;
+  /** Derived claude-bridge TTL in seconds (bridgettl.ts); absent or null = none. */
+  bridgeTtl?(): number | null;
   /** The latest event context of the foreman session. */
   ctx(): ExtensionContext | null;
   /** The merged config object. */
@@ -37,7 +39,7 @@ export interface WarmWireOpts {
 export function createWarm(o: WarmWireOpts): { presence: Presence; selfWarm: SelfWarm } {
   const policy = () => {
     const m = o.ctx()?.model;
-    return m ? resolveWarmPolicy(o.config(), m.provider, m.id) : null;
+    return m ? resolveWarmPolicy(o.config(), m.provider, m.id, o.bridgeTtl?.() ?? null) : null;
   };
   const presence = new Presence({
     now: () => Date.now(),
