@@ -44,10 +44,12 @@ for (const c of FX.reviewable) {
   });
 }
 
+// a target the parser cannot resolve (variable, glob, command substitution) is no selfmod rule hit: the review judges it (it asks here)
+const UNRESOLVED = /^scratch_(var|braced_var|glob|subst)_dotdot$/;
 for (const c of FX.selfMod) {
-  test(`r17 selfMod ${c.name}: the gate's review asks, one dialog`, async () => {
+  test(`r17 selfMod ${c.name}: ${UNRESOLVED.test(c.name) ? "the review asks, one dialog" : "the selfmod rule asks, one dialog, no model call"}`, async () => {
     const r = await bash(c.line, "ask");
-    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["dialog:ask:deny with reason", 1, 1]);
+    assert.deepEqual([r.outcome, r.dialogs, r.calls], UNRESOLVED.test(c.name) ? ["dialog:ask:deny with reason", 1, 1] : ["dialog:selfmod:deny with reason", 1, 0]);
   });
 }
 
@@ -59,9 +61,8 @@ for (const c of FX.reviewableTool) {
 }
 
 for (const c of FX.selfModTool) {
-  // gap, not a decision: the write tool on project `.pi/settings.json` is a path-write-worktree allow (the old overlay asked the human)
-  test(`r17 selfMod tool ${c.name}: today's outcome path-write-worktree (open gap for slice 5)`, async () => {
+  test(`r17 selfMod tool ${c.name}: the selfmod rule asks, one dialog, no model call`, async () => {
     const r = await run(c.tool, c.input, "ask");
-    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["allowed:path-write-worktree", 0, 0]);
+    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["dialog:selfmod:deny with reason", 1, 0]);
   });
 }

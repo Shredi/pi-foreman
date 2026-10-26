@@ -223,3 +223,39 @@ test("round session: no ruling within gate.askTimeoutMs denies", async (t) => {
   assert.match(String(res.reason), /no ruling-1\.md within/);
   assert.equal(r.events("dialog").at(-1)!.decision, "timeout");
 });
+
+// selfmod rules (selfmod.ts): one rig case per session kind; no model call whatever the reviewer would say
+const SETTINGS = { path: ".pi/settings.json", content: "{}" };
+
+test("selfmod rule, owner: the dialog is titled self-modification asks (rule), no model call; allow once continues", async (t) => {
+  const r = await rig(t, [], { answers: ["allow once"] });
+  // the gate lets it through; the foreman's scratchpad guard (a later handler) still refuses the write
+  assert.doesNotMatch(String((await r.call("write", SETTINGS))?.reason), /self-modification/);
+  assert.equal(r.titles.length, 1);
+  assert.match(r.titles[0], /^pi-foreman: self-modification asks \(selfmod-project-settings\)\n/);
+  const d = r.events("dialog").at(-1)!;
+  assert.deepEqual([d.rule, d.decision], ["selfmod-project-settings", "allow once"]);
+  assert.ok(r.events("guard").some((e) => e.guard === "gate" && e.decision === "ask" && e.rule === "selfmod-project-settings"));
+  assert.equal(r.log().at(-1)!.layer, "dialog");
+});
+
+test("selfmod rule, round session: ask.md names the rule and a ruling DENY blocks", async (t) => {
+  const r = await roundRig(t, []);
+  const p = r.call("write", SETTINGS);
+  const text = await r.waitAsk();
+  assert.match(text, /cause: self-modification/);
+  assert.match(text, /rule: selfmod-project-settings/);
+  fs.writeFileSync(path.join(r.dir, "ruling-1.md"), "deny\n");
+  assert.match(String((await p)?.reason), /denied by the parent/);
+  assert.equal(r.titles.length, 0);
+});
+
+test("selfmod rule, child and headless: a deny with the rule name that says what to report; no dialog", async (t) => {
+  const child = await rig(t, [], { child: true, answers: ["allow once"] });
+  const c = await child.call("write", SETTINGS);
+  assert.match(String(c?.reason), /self-modification rule selfmod-project-settings: .*Children cannot make this change; report this line to the foreman/);
+  const head = await rig(t, [], { headless: true, answers: ["allow once"] });
+  const h = await head.call("write", SETTINGS);
+  assert.match(String(h?.reason), /self-modification rule selfmod-project-settings: .*Report this to the owner\.$/);
+  assert.equal(child.titles.length + head.titles.length, 0);
+});

@@ -124,14 +124,14 @@ test("r18 child: a toolchain-probe line goes to the gate's review; allow -> a ga
   assert.ok(c.sent[0].includes("session kind: child"), c.sent[0]);
 });
 
-// R41: the overlay's childDeny for another session's state dir is gone; the read goes to the gate's review, whose deny is final
-// (open gap for slice 5: no deterministic rule, an allowing review lets it through).
-test("r18 child: a read of another session's state dir reaches the gate's review; its deny blocks", async (t) => {
+// R41: the selfmod-state-read rule (selfmod.ts) denies a child's read of another session's state dir; no model call.
+test("r18 child: a read of another session's state dir is denied by the selfmod-state-read rule, no review", async (t) => {
   const c = await childRig(t, V("deny", "secret-access", "another session's state"));
   const r = await c.bash(OTHER_STATE.replace(/~\/\.pi\/agent(?=\/)/g, c.agentDir).replace(/\{agentDir\}/g, c.agentDir).replace(/\{other\}/g, "01a16999-other"));
   assert.equal(r?.block, true);
-  assert.equal(c.sent.length, 1);
-  assert.deepEqual(gate(c), ["blocked:review:secret-access"]);
+  assert.match(r?.reason ?? "", /selfmod-state-read.*report this line to the foreman/);
+  assert.equal(c.sent.length, 0);
+  assert.deepEqual(gate(c), ["blocked:selfmod-state-read"]);
 });
 
 test("r18 child: an asking reviewer is a child deny that names the entry and tells the child to report it (no dialog)", async (t) => {

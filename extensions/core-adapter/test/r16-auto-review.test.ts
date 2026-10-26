@@ -102,7 +102,6 @@ const ALLOWING: Record<string, Expect> = {
   toolchain_probe_pipe: [OK, 0, 1],
   project_settings_read_mention: [OK, 0, 1],
   other_session_state_read: [OK, 0, 1],
-  cd_agentdir_then_cp_settings: [OK, 0, 1],
 };
 for (const c of [...FX.friction, ...FX.reviewable, ...FX.cdRelativeGaps.filter((x) => x.name in ALLOWING)]) {
   test(`r16 ${c.name}: ${ALLOWING[c.name]?.[0]} with an allowing stub`, async () => {
@@ -129,19 +128,20 @@ test("r16 hard_deny cp_into_child_handoff_ruling: the gate's review allows (stub
   assert.deepEqual([r.outcome, r.block?.block, r.recs.some((x) => x.event === "guard" && x.guard === "self_ruling")], [OK, true, true], JSON.stringify(r.block));
 });
 
-// R41: the self-modification asks of the old overlay (a human dialog, no model call) are no longer deterministic: the gate's review judges
-// them. Under an asking stub the owner gets one gate dialog; a default or path rule that decides without the review is named. The lines a
-// later legacy guard still blocks are marked.
+// R41: the self-modification writes are a dialog by rule (selfmod.ts, plan 2.5): the owner gets one gate dialog and no model is called,
+// whatever the stub answers. tee into the agent extensions is no selfmod rule: the review judges it.
+const SM: Expect = ["dialog:selfmod:deny with reason", 1, 0, true];
 const ASKING: Record<string, Expect> = {
-  agentdir_settings_write: ["dialog:ask:deny with reason", 1, 1, true],
-  other_session_state_write: ["dialog:ask:deny with reason", 1, 1, true],
-  probe_ask_after_protect_hit: ["dialog:ask:deny with reason", 1, 1, true],
-  redirect_into_pi_settings: ["dialog:ask:deny with reason", 1, 1, true],
-  cp_into_agent_settings: ["dialog:ask:deny with reason", 1, 1, true],
+  agentdir_settings_write: SM,
+  other_session_state_write: SM,
+  probe_ask_after_protect_hit: SM,
+  redirect_into_pi_settings: SM,
+  cp_into_agent_settings: SM,
   tee_into_agent_extensions: ["dialog:ask:deny with reason", 1, 1, true],
-  rm_pi_settings: ["allowed:default-write-in", 0, 0, true],
-  read_then_write_pi_settings: ["dialog:ask:deny with reason", 1, 1, true],
-  cd_then_redirect_into_pi: ["dialog:ask:deny with reason", 1, 1, true],
+  rm_pi_settings: SM,
+  read_then_write_pi_settings: SM,
+  cd_then_redirect_into_pi: SM,
+  cd_agentdir_then_cp_settings: SM,
 };
 for (const c of [...FX.selfMod, ...FX.cdRelativeGaps.filter((x) => !(x.name in ALLOWING))]) {
   test(`r16 selfMod ${c.name}: ${ASKING[c.name]?.[0]} with an asking stub`, async () => {
@@ -153,8 +153,8 @@ for (const c of [...FX.selfMod, ...FX.cdRelativeGaps.filter((x) => !(x.name in A
 }
 
 const TOOLS: Record<string, Expect> = {
-  write_tool_agent_settings: ["allowed:path-write-tmp", 0, 0],
-  edit_tool_pi_settings: ["allowed:path-write-worktree", 0, 0, true],
+  write_tool_agent_settings: SM,
+  edit_tool_pi_settings: SM,
   copy_tool_into_agent_foreman_json: ["allowed:path-read-worktree", 0, 0],
 };
 for (const c of FX.selfModTool) {

@@ -7,6 +7,7 @@ import { lineDefault, toolDefault } from "./defaults.ts";
 import type { GitFacts } from "./defaults.ts";
 import { lineFloors, pathFloors, type FloorEnv, type FloorHit } from "./floors.ts";
 import { PATH_TOOL_NAMES, pathDecide } from "./pathrules.ts";
+import { pathSelfmod, shellSelfmod, type SelfmodHit } from "./selfmod.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { parseShell } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
@@ -20,12 +21,20 @@ export interface GateDeps {
   facts?: GitFacts;
 }
 
-export type GateResult = { block: true; reason: string; rule: string } | { allow: true; rule: string } | undefined;
+/** `ask`: a self-modification rule (selfmod.ts) wants the dialog / ask path; never a model call. */
+export type GateResult = { block: true; reason: string; rule: string } | { allow: true; rule: string } | { ask: true; rule: string; reason: string } | undefined;
 
 const SHELL_TOOLS = new Set(["bash", "foreman_bg", "bg_run"]);
 const PATH_TOOLS = PATH_TOOL_NAMES;
 
 const blocked = (h: FloorHit): GateResult => ({ block: true, reason: h.reason, rule: h.rule });
+
+/** A self-modification hit: a child is denied outright (with what to report), every other session kind is asked. */
+function selfmodResult(h: SelfmodHit | undefined, child: boolean): GateResult {
+  if (!h) return undefined;
+  if (child) return { block: true, rule: h.rule, reason: `pi-foreman: self-modification rule ${h.rule}: ${h.reason}. Children cannot make this change; report this line to the foreman and continue with what you can.` };
+  return { ask: true, rule: h.rule, reason: h.reason };
+}
 
 /** The command text of a shell-like tool call, or null. */
 function commandOf(toolName: string, input: Record<string, unknown>): string | null {
@@ -50,12 +59,18 @@ export function gateDecide(toolName: string, input: unknown, cwd: string, deps: 
       const h = lineFloors(cmd, segs, env);
       if (h) return blocked(h);
       if (!deps.roots || toolName === "powershell") return undefined;
+      const sm = selfmodResult(shellSelfmod(segs, cwd, deps.roots(cwd), platform), deps.roots(cwd).child);
+      if (sm) return sm;
       const rule = lineDefault(cmd, segs, { roots: deps.roots(cwd), facts: deps.facts ?? gitFacts, platform, cwd });
       return rule ? { allow: true, rule } : undefined;
     }
     if (PATH_TOOLS.has(toolName)) {
       const h = pathFloors(inp, env, toolName);
       if (h) return blocked(h);
+      if (deps.roots) {
+        const sm = selfmodResult(pathSelfmod(toolName, inp, cwd, deps.roots(cwd), platform), deps.roots(cwd).child);
+        if (sm) return sm;
+      }
       const v = deps.roots ? pathDecide(toolName, inp, cwd, deps.roots(cwd), platform) : undefined;
       return v;
     }

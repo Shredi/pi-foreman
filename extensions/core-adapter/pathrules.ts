@@ -26,6 +26,8 @@ export interface GateRoots {
   role: string;
   /** `gate.tmpAccess` (default true): writes (and for the owner reads) under the OS temp dirs. */
   tmpAccess: boolean;
+  /** The Pi agent dir (settings.json, pi-foreman/state); the self-modification rules read it. */
+  agentDir?: string;
   /** Injectable for tests: realpath of an existing path, null when it does not exist. */
   realpath?: (p: string) => string | null;
 }
@@ -43,7 +45,7 @@ export function under(platform: string, root: string, p: string): boolean {
   return rs.every((s, i) => s === "*" || s === ps[i]);
 }
 
-function realDefault(p: string): string | null {
+export function realDefault(p: string): string | null {
   try {
     return fs.realpathSync.native(p);
   } catch {
@@ -52,7 +54,7 @@ function realDefault(p: string): string | null {
 }
 
 /** The real spelling of `abs`: its deepest existing ancestor through realpath, the rest appended. */
-function realSpelling(platform: string, abs: string, real: (p: string) => string | null): string {
+export function realSpelling(platform: string, abs: string, real: (p: string) => string | null): string {
   const x = px(platform);
   const tail: string[] = [];
   let e = abs;
@@ -67,7 +69,7 @@ function realSpelling(platform: string, abs: string, real: (p: string) => string
 }
 
 /** The absolute form of a path word, or null (empty, `~`, NUL, a drive-relative `C:x`). */
-function resolveWord(platform: string, cwd: string, w: unknown): string | null {
+export function resolveWord(platform: string, cwd: string, w: unknown): string | null {
   if (typeof w !== "string" || !w || w.includes("\0") || w.startsWith("~")) return null;
   if (platform === "win32" && /^[A-Za-z]:(?![\\/])/.test(w)) return null;
   return px(platform).resolve(cwd, w);
@@ -104,7 +106,7 @@ function classOf(r: GateRoots, platform: string, abs: string, dir: Dir): string 
 const GLOBBED = (w: unknown): boolean => typeof w === "string" && (px("posix").isAbsolute(w) || /^[A-Za-z]:|^[\\/]|^~/.test(w) || w.split(/[\\/]/).includes(".."));
 
 /** The path operations of a path tool call: [path word, direction]; null when the input names none this module understands. */
-function opsOf(tool: string, inp: Record<string, unknown>): Array<[unknown, Dir]> | null {
+export function opsOf(tool: string, inp: Record<string, unknown>): Array<[unknown, Dir]> | null {
   const p = inp.path ?? inp.file_path ?? inp.filePath;
   switch (tool) {
     case "read":

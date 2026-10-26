@@ -1910,6 +1910,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       roundFlow: mainWorkflowReadable(rounds, platform).filter((d) => !d.endsWith("/*")),
       handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
       child: s.isChild,
+      agentDir: s.agentDir,
       role: s.isChild ? s.usage.line.role : "foreman",
       tmpAccess: get(s.config.config, "gate.tmpAccess") !== false,
     };
@@ -1963,6 +1964,25 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       gs?.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "blocked", rule: r.rule, ...denyFields(r.reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]) });
       note("floor", "deny", r.rule, r.reason);
       return (gs && (repeatedDeny(gs, ctx, r.reason) ?? undefined)) || { block: true as const, reason: r.reason };
+    }
+    if (r && "ask" in r) {
+      // a self-modification rule (selfmod.ts): the dialog / ask path, never a model call and never a default
+      const smReason = `pi-foreman: self-modification rule ${r.rule}: ${r.reason}. This session cannot answer asks; the call is denied. Report this to the owner.`;
+      if (!gs || !rt) return { block: true as const, reason: smReason };
+      const smKey = `${event.toolName}\u0000${payload}`;
+      if (gateStopped.has(gs.id)) {
+        note("floor", "deny", "user-stop", STOP_TEXT);
+        return { block: true as const, reason: STOP_TEXT };
+      }
+      gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "ask", rule: r.rule, role });
+      if (!gateSessionAllow.get(gs.id)?.has(smKey)) {
+        const blockedAsk = await gateAsk(gs, ctx, rt, kind, role, event.toolName, event.input, payload, { cause: "selfmod", rule: r.rule, reason: r.reason }, smKey);
+        if (blockedAsk) return blockedAsk;
+      }
+      gateDecided.add(event.toolCallId);
+      rt.history.push(event.toolName, payload);
+      rt.cache.invalidateAllows();
+      return undefined;
     }
     if (r) {
       gs?.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: r.rule, role });
@@ -2031,8 +2051,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * session: ask.md to the parent and a wait for ruling-<n>.md; child and headless: a deny that says what to report. No model decides here.
    */
   async function gateAsk(gs: Session, ctx: ExtensionContext, rt: GateRuntime, kind: GateKind, role: string, tool: string, input: unknown, payload: string, a: GateAsk, sessionKey: string): Promise<{ block: true; reason: string } | undefined> {
-    const detail = a.cause === "ask" ? `${a.entry}: ${a.reason}` : `${unreachableName(a.why)}: ${a.detail}`;
-    const rule = a.cause === "ask" ? a.entry : a.why;
+    const detail = a.cause === "selfmod" ? `${a.rule}: ${a.reason}` : a.cause === "ask" ? `${a.entry}: ${a.reason}` : `${unreachableName(a.why)}: ${a.detail}`;
+    const rule = a.cause === "selfmod" ? a.rule : a.cause === "ask" ? a.entry : a.why;
     const done = (answer: string, allow: boolean, reason?: string): { block: true; reason: string } | undefined => {
       // the trace's field list is pinned (trace.ts): the answer goes in `decision`, the cause detail in `reason`
       const df = denyFields(detail, tool, input, role, [PKG_ROOT, ctx.cwd]);

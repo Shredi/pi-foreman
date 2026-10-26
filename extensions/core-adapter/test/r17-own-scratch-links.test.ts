@@ -48,9 +48,9 @@ test("r17 own scratch: the write tool on a plain new file is path-write-worktree
 });
 
 const selfMod = (name: string, tool: string, input: Record<string, unknown>): void => {
-  test(`r17 own scratch link ${name}: ${tool === "bash" ? "the review asks, one dialog" : "path-write-worktree (the link stays in the worktree; open gap for slice 5)"}`, { skip: !linked }, async () => {
+  test(`r17 own scratch link ${name}: the link is the settings file, the selfmod rule asks, no model call`, { skip: !linked }, async () => {
     const r = await run(tool, input);
-    assert.deepEqual([r.outcome, r.dialogs, r.calls], tool === "bash" ? ["dialog:ask:deny with reason", 1, 1] : ["allowed:path-write-worktree", 0, 0]);
+    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["dialog:selfmod:deny with reason", 1, 0]);
   });
 };
 selfMod("symlink redirect", "bash", { command: "echo x > .pi/scratch/l" });
@@ -60,14 +60,17 @@ selfMod("hard link write tool", "write", { path: ".pi/scratch/h", content: "x" }
 
 // the scratch root itself must not be a link: `.pi/scratch -> .pi`, or `.pi -> <other dir holding scratch>` fails closed
 // (one rig; each case swaps the real `.pi` aside, builds its layout, then restores it)
-const failsClosed = (name: string, layout: () => void, tool: string, input: Record<string, unknown>): void => {
-  test(`r17 own scratch root link ${name}: ${tool === "bash" ? "the review asks, one dialog" : "path-write-worktree (open gap for slice 5)"}`, { skip: win }, async () => {
+// `settings`: the target is the settings file through the link (the selfmod rule asks); otherwise a plain new file below a linked .pi:
+// the write tool is path-write-worktree and a redirect is no default, so the review asks
+const failsClosed = (name: string, layout: () => void, tool: string, input: Record<string, unknown>, settings = true): void => {
+  const want = settings ? ["dialog:selfmod:deny with reason", 1, 0] : tool === "bash" ? ["dialog:ask:deny with reason", 1, 1] : ["allowed:path-write-worktree", 0, 0];
+  test(`r17 own scratch root link ${name}: ${settings ? "the selfmod rule asks, no model call" : tool === "bash" ? "the review asks, one dialog" : "path-write-worktree"}`, { skip: win }, async () => {
     const aside = path.join(rig.project, "pi-real");
     fs.renameSync(pi, aside);
     try {
       layout();
       const r = await run(tool, input);
-      assert.deepEqual([r.outcome, r.dialogs, r.calls], tool === "bash" ? ["dialog:ask:deny with reason", 1, 1] : ["allowed:path-write-worktree", 0, 0]);
+      assert.deepEqual([r.outcome, r.dialogs, r.calls], want);
     } finally {
       fs.rmSync(pi, { recursive: true, force: true });
       fs.renameSync(aside, pi);
@@ -86,5 +89,5 @@ const piIsLink = (): void => {
 };
 failsClosed("scratch -> .pi redirect", scratchIsPi, "bash", { command: "echo x > .pi/scratch/settings.json" });
 failsClosed("scratch -> .pi write tool", scratchIsPi, "write", { path: ".pi/scratch/settings.json", content: "x" });
-failsClosed(".pi link write tool", piIsLink, "write", { path: ".pi/scratch/new.md", content: "x" });
-failsClosed(".pi link redirect", piIsLink, "bash", { command: "echo x > .pi/scratch/new.md" });
+failsClosed(".pi link write tool", piIsLink, "write", { path: ".pi/scratch/new.md", content: "x" }, false);
+failsClosed(".pi link redirect", piIsLink, "bash", { command: "echo x > .pi/scratch/new.md" }, false);

@@ -11,7 +11,7 @@ export const DEFAULT_ASK_TIMEOUT_MS = 15 * 60 * 1000;
 const PAYLOAD_CAP = 600;
 
 /** Why the dialog opens: the policy asks (entry + reason), or the review could not decide (cause + detail). */
-export type GateAsk = { cause: "ask"; entry: string; reason: string } | { cause: "unreachable"; why: string; detail: string };
+export type GateAsk = { cause: "ask"; entry: string; reason: string } | { cause: "unreachable"; why: string; detail: string } | { cause: "selfmod"; rule: string; reason: string };
 
 const UNREACHABLE_NAMES: Record<string, string> = { timeout: "timeout", provider_error: "provider error", no_model: "no model configured", invalid_verdict: "invalid verdict" };
 export const unreachableName = (cause: string): string => UNREACHABLE_NAMES[cause] ?? cause;
@@ -19,17 +19,23 @@ export const unreachableName = (cause: string): string => UNREACHABLE_NAMES[caus
 export const cut = (text: string, max = PAYLOAD_CAP): string => (text.length > max ? `${text.slice(0, max)} ... [${text.length - max} more chars]` : text);
 
 export function dialogTitle(a: GateAsk): string {
+  if (a.cause === "selfmod") return `pi-foreman: self-modification asks (${a.rule})`;
   return a.cause === "ask" ? `pi-foreman: policy asks (${a.entry})` : `pi-foreman: review unreachable (${unreachableName(a.why)})`;
 }
 
 /** The dialog body: tool, payload, cause detail. The select title carries all of it (Pi's select has one text field). */
 export function dialogBody(a: GateAsk, tool: string, payload: string): string {
-  const why = a.cause === "ask" ? `entry ${a.entry}: ${a.reason}` : `${unreachableName(a.why)}: ${a.detail}`;
+  const why = a.cause === "selfmod" ? `rule ${a.rule}: ${a.reason}` : a.cause === "ask" ? `entry ${a.entry}: ${a.reason}` : `${unreachableName(a.why)}: ${a.detail}`;
   return `${dialogTitle(a)}\n${tool}: ${cut(payload)}\n${why}`;
 }
 
 /** The deny text for a session that cannot be asked (child, headless, owner without a UI). */
 export function silentDeny(kind: "child" | "headless", a: GateAsk): string {
+  if (a.cause === "selfmod") {
+    return kind === "child"
+      ? `pi-foreman: self-modification rule ${a.rule}: ${a.reason}. Children cannot make this change; report this line to the foreman and continue with what you can.`
+      : `pi-foreman: self-modification rule ${a.rule}: ${a.reason}. This session cannot answer asks; the call is denied. Report this to the owner.`;
+  }
   if (a.cause === "ask") {
     return kind === "child"
       ? `pi-foreman: policy ask ${a.entry}: ${a.reason}. Children cannot answer asks; report this line to the foreman and continue with what you can.`
@@ -70,8 +76,8 @@ export interface RoundAsk {
 /** Write `<dir>/ask.md` (header `# Ask <n>: <topic>`, then `key: value` lines and the payload) and return n. */
 export function writeRoundAsk(dir: string, a: GateAsk, f: RoundAsk): number {
   const n = nextAskN(dir);
-  const detail = a.cause === "ask" ? [`cause: policy ask`, `entry: ${a.entry}`, `reason: ${a.reason}`] : [`cause: review unreachable`, `unreachable: ${unreachableName(a.why)}`, `detail: ${a.detail}`];
-  const text = [`# Ask ${n}: gate ${a.cause === "ask" ? "ask" : "review unreachable"} for ${f.tool}`, "", ...detail, `tool: ${f.tool}`, `cwd: ${f.cwd}`, `session: ${f.session}`, "", "Answer with ruling-" + n + ".md whose first line is ALLOW or DENY (anything else denies).", "", "```", cut(f.payload, 4000), "```", ""].join("\n");
+  const detail = a.cause === "selfmod" ? [`cause: self-modification`, `rule: ${a.rule}`, `reason: ${a.reason}`] : a.cause === "ask" ? [`cause: policy ask`, `entry: ${a.entry}`, `reason: ${a.reason}`] : [`cause: review unreachable`, `unreachable: ${unreachableName(a.why)}`, `detail: ${a.detail}`];
+  const text = [`# Ask ${n}: gate ${a.cause === "selfmod" ? "self-modification" : a.cause === "ask" ? "ask" : "review unreachable"} for ${f.tool}`, "", ...detail, `tool: ${f.tool}`, `cwd: ${f.cwd}`, `session: ${f.session}`, "", "Answer with ruling-" + n + ".md whose first line is ALLOW or DENY (anything else denies).", "", "```", cut(f.payload, 4000), "```", ""].join("\n");
   fs.mkdirSync(dir, { recursive: true });
   const tmp = path.join(dir, `.ask.md.${process.pid}.tmp`);
   fs.writeFileSync(tmp, text, "utf8");
