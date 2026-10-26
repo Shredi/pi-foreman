@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture, tool_results  # noqa: E402
+from driver import PROVIDER_A, load_fixture, tool_results  # noqa: E402
 from test_replay import REASON, ReplayCase  # noqa: E402
 
 
@@ -30,8 +30,10 @@ class TestPermissionLayers(ReplayCase):
         res = tool_results(pi.prompt("[[replay:m1]] go", timeout=60))
         pi.close()
         self.assertEqual([(n, e) for n, e, _ in res], [("bash", True), ("read", True), ("bash", True), ("read", False)])
+        # item 23: old text "denied by the permission policy" (package/overlay); the rig still loads the package's baseline
+        # path deny for the bare name `.env` (the gate floor secret-path leaves bare names to path rules), so the deny text is its own
         for _, _, text in res[:3]:
-            self.assertIn("denied by the permission policy", text)
+            self.assertRegex(text, r"(?i)denied")
             self.assertNotIn("not-a-real-secret", text)
         self.assertIn("hello", res[3][2])
 
@@ -44,29 +46,26 @@ class TestPermissionLayers(ReplayCase):
         pi.close()
         self.assertIn("child: secret read finished", notice)
         self.assertNotIn("not-a-real-secret", notice)
-        events = [r for recs in rig.traces().values() for r in recs if r.get("event") == "overlay"]
-        self.assertTrue(any(r.get("toolFamily") == "bash" and r.get("decision") == "deny" for r in events), events)
+        # item 23: old: an overlay deny record; new: the child's session carries a deny text and never the secret
+        text = "\n".join(p.read_text("utf-8", "replace") for p in rig.agent.rglob("*.jsonl"))
+        self.assertRegex(text, r"(?i)denied by policy|floor-secret-path|secret or key path")
+        self.assertNotIn("not-a-real-secret", text)
 
-    def test_permission_ask_raises_one_herdr_block(self):
-        rig = self.baseline_rig("perm-herdr")
-        herdr = rig.root / "herdr.jsonl"
-        pi = rig.start(env={"FOREMAN_FAKE_HERDR": str(herdr), "HERDR_ENV": "1"})
-        recs = pi.prompt("[[replay:a1]] go", answers=[{"value": "Yes"}], timeout=60)
-        pi.close()
-        dialogs = [r for r in recs if r.get("type") == "extension_ui_request" and r.get("method") in ("select", "confirm")]
-        self.assertEqual(len(dialogs), 1, dialogs)
-        blocked = [json.loads(line) for line in herdr.read_text("utf-8").splitlines()]
-        self.assertEqual(blocked, [{"active": True, "label": "bash uname"}, {"active": False}])
+    # Retired (item 23): test_permission_ask_raises_one_herdr_block asserted the permission package's herdr block signal
+    # for its ask dialog; the gate has no herdr block (gate dialogs are covered in test_replay_review.py).
 
-    def test_child_ask_is_forwarded_to_the_parent(self):
-        rig = self.baseline_rig("perm-ask", config={"review": {"childDefer": "owner"}})
+    def test_child_ask_is_denied_not_forwarded(self):
+        # item 23: old: the package forwarded a child's ask to the parent as a dialog; new: the gate denies a child ask
+        # ("Children cannot answer asks"), there is no forwarding server, and the parent sees no dialog.
+        rig = self.baseline_rig("perm-ask", config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-ask" % PROVIDER_A}}}})
         pi = rig.start()
         pi.prompt("[[replay:c2]] go", timeout=60)
-        notice, recs = pi.wait_child_notify(timeout=90, answers=[{"confirmed": True}, {"value": "Yes"}, {"value": "Yes"}])
+        notice, recs = pi.wait_child_notify(timeout=90)
         pi.close()
         dialogs = [r for r in recs if r.get("type") == "extension_ui_request" and r.get("method") in ("select", "confirm")]
-        self.assertTrue(dialogs, "no approval dialog reached the parent: %s" % notice)
-        self.assertIn("uname", repr(dialogs[0]))
+        self.assertFalse(dialogs, dialogs)
+        text = "\n".join(p.read_text("utf-8", "replace") for p in rig.agent.rglob("*.jsonl"))
+        self.assertIn("Children cannot answer asks", text)
 
 
 if __name__ == "__main__":

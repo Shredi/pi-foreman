@@ -32,15 +32,14 @@ class TestChildBaseline(ReplayCase):
         pi = rig.start()
         sid = pi.session_id()
         pi.prompt("[[replay:b1]] go", timeout=60)
-        # the only ask that may reach the parent is the child's `curl`; decline it
+        # item 23: the overlay's cd denies (5) and the single curl ask are retired; the gate sends every one of the
+        # seven lines to review (review-allow in the rig). The package's external-directory dialogs the rig still loads are not asserted.
         notice, recs = pi.wait_child_notify(timeout=120, answers=[{"confirmed": False}, {"value": "No"}, {"value": "No"}])
         pi.close()
         self.assertIn("builder child finished", notice)
-        dialogs = [repr(r) for r in recs if r.get("type") == "extension_ui_request" and r.get("method") in ("select", "confirm")]
-        self.assertEqual(len(dialogs), 1, dialogs)
-        self.assertIn("curl", dialogs[0])
-        events = [r for recs_ in rig.traces().values() for r in recs_ if r.get("event") == "overlay"]
-        self.assertEqual(sum(1 for r in events if r.get("toolFamily") == "bash" and r.get("decision") == "deny"), 5, events)
+        events = [r for recs_ in rig.traces().values() for r in recs_]
+        gate = [r for r in events if r.get("event") == "guard" and r.get("guard") == "gate" and r.get("toolFamily") == "bash"]
+        self.assertEqual([r.get("decision") for r in gate], ["allowed"] * 7, gate)
         sup = [r["decision"] for r in rig.traces()["trace-" + sid] if r.get("event") == "supervisor_request"]
         self.assertEqual(sup, ["open", "replied"])
 
