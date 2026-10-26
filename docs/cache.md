@@ -4,19 +4,20 @@
 > session resuming cold, its spend budget and presence gate, the self-sent warms beyond Pi's 30-minute cap, and warm
 > compaction.
 
-On token-billed providers with a short cache TTL (`claude-bridge`: 300 s, keep-alive on by default) an idle
+On token-billed providers with a short cache TTL (`claude-bridge`: 3600 s for the foreman, 300 s for subagents, derived; keep-alive on by default) an idle
 session otherwise pays for a cold prompt on resume. Layer rules are below; the idle model downshift is in [ladder](ladder.md#idle-rung-foreman-downshift).
 
 ## Config
 
-Built-in values exist for `claude-bridge` (`ttlSeconds` 300, `billing` `token`) and `github-copilot` (`ttlSeconds` null, `billing` `request`). A key set in the config wins over the built-in value. `config/foreman.defaults.json` stays `providers: {}`; the built-in table lives in code. Keep-alive is on by default for `claude-bridge` through these built-in provider defaults; the claude-bridge presets set ttl 300 with a `byModel` row of 3600 s for `claude-*` (a subscription within plan usage; 300 on extra-usage credits or an API key), `keepalive.enabled: true`, `keepalive.awayTicks: 2` and a foreman idle model ([presets](presets.md#claude-bridge-cache-values)). It is off for request-billed providers (`github-copilot`) and silent for providers without any cache entry.
+Built-in values exist for `claude-bridge` (`ttlSeconds` 300, `billing` `token`; the TTL is derived from `bridge.promptCacheTtl` first, see below) and `github-copilot` (`ttlSeconds` null, `billing` `request`, plus built-in per-model rows). A key set in the config wins over the built-in value. `config/foreman.defaults.json` stays `providers: {}`; the built-in table lives in code. Keep-alive is on by default for `claude-bridge` through these built-in provider defaults; the claude-bridge presets set `billing: token`, `keepalive.enabled: true`, `keepalive.awayTicks: 2` and a foreman idle model ([presets](presets.md#claude-bridge-cache-values)). It is off for request-billed providers (`github-copilot`) and silent for providers without any cache entry.
 
 | key | default | meaning |
 |---|---|---|
-| `providers.<p>.cache.ttlSeconds` | 300 for `claude-bridge`, else null | Prompt-cache time to live in seconds (integer >= 1); null = unknown, the policy stays off. |
+| `bridge.promptCacheTtl.main`, `.subagent` | `1h`, `5m` | Claude Code's prompt-cache TTL on the `claude-bridge` provider for the foreman and session foremen (`main`) and for subagents (`subagent`): `1h`, `5m` or `inherit` (leave `CLAUDE_CODE_PROMPT_CACHE_TTL` alone; the policy assumes 300 s). Invalid values fall back to the default with a warning. User and overlay config only; a project or session value is ignored with a warning. |
+| `providers.<p>.cache.ttlSeconds` | derived for `claude-bridge` (3600 foreman, 300 subagent), else null | Prompt-cache time to live in seconds (integer >= 1); null = unknown, the policy stays off. An explicit value wins over the derived bridge TTL. |
 | `providers.<p>.cache.billing` | `token` for `claude-bridge`, `request` for `github-copilot` | `token` or `request`. A request-billed provider never gets a keep-alive. |
-| `providers.<p>.cache.byModel` | none | Rows `{match, ttlSeconds?, billing?, note?}` layered over `ttlSeconds` and `billing`: the first row whose `match` (glob with `*`/`?`, else a substring of the model id) fits the active model wins. `billing: "request"` in a row never gets a keep-alive. User and overlay config only. |
-| `providers.<p>.cache.keepalive.enabled` | true iff `billing` is `token` and `ttlSeconds` < 3600 | Switches the keep-alive on or off. |
+| `providers.<p>.cache.byModel` | none | Rows `{match, ttlSeconds?, billing?, note?}` layered over `ttlSeconds` and `billing`: the first row whose `match` (glob with `*`/`?`, else a substring of the model id) fits the active model wins, ahead of `ttlSeconds` and the derived bridge TTL. `billing: "request"` in a row never gets a keep-alive. User and overlay config only. |
+| `providers.<p>.cache.keepalive.enabled` | true iff `billing` is `token` and `ttlSeconds` < 3600 or derived from `bridge.promptCacheTtl` | Switches the keep-alive on or off. |
 | `providers.<p>.cache.keepalive.intervalSeconds` | 90% of `ttlSeconds`, at least 30 | Seconds between pings (30..3600). |
 | `providers.<p>.cache.keepalive.windowMinutes` | 45 | Minutes of idleness after which Pi's warms stop (1..60); capped by Pi's own idle limit of 30 minutes. |
 | `providers.<p>.cache.keepalive.budgetShare` | 0.5 | Warm budget per idle: the warms may cost at most this share (0..1) of one cold re-cache of the prompt. |
@@ -37,14 +38,36 @@ The keep-alive interval and the on/off default follow the TTL of the matched row
 | family | TTL | billing | keep-alive |
 |---|---|---|---|
 | Anthropic direct | none built in (`no_entry`; 300 s is the provider's own TTL) | none until set | off until you set `cache.ttlSeconds` and `cache.billing` |
-| Claude subscription through the `claude-bridge` preset, within plan usage | 3600 s (`byModel` row) | token | pi-foreman's self-warm (Pi stops at 30 minutes); children get the same TTL, see below |
-| Claude through the bridge on extra-usage credits or an API key | 300 s (set `cache.ttlSeconds`/the row to 300) | token | Pi's warmer |
-| request-billed provider, Claude-type model | 300 s | request | never |
-| request-billed provider, OpenAI-type model | 600 s | request | never |
+| Claude through `claude-bridge`, foreman and session foremen | derived from `bridge.promptCacheTtl.main`: 3600 s (`1h`, default), 300 s (`5m`, `inherit`, or `FORCE_PROMPT_CACHING_5M`) | token | pi-foreman's self-warm at 3600 s (Pi stops at 30 minutes), Pi's warmer at 300 s |
+| Claude through `claude-bridge`, subagents | derived from `bridge.promptCacheTtl.subagent`: 300 s (`5m`, default) | token | Pi's warmer |
+| `github-copilot`, Claude-type model (`claude-*`) | 300 s (built-in row) | request | never |
+| `github-copilot`, OpenAI-type model (`gpt-*`, `o1*`, `o3*`, `o4*`) | 1800 s (built-in row) | request | never |
+| `github-copilot`, any other model | unknown (null), the policy stays hidden | request | never |
+| request-billed provider with a `byModel` row such as `gpt-*` 600 | the row | request | never |
 
-**Children through the bridge.** The bridge calls the Claude Agent SDK and sets no TTL itself. Claude Code puts Agent SDK turns into its main-conversation bucket, so on a subscription within plan usage every Pi session, foreman and children alike, gets the 1-hour TTL, and on extra-usage credits or an API key all of them get 5 minutes. pi-foreman cannot change that; a change in the bridge (honouring `cacheRetention`, passing the TTL variable to Claude Code) could. A child therefore needs no TTL row of its own.
+The built-in `github-copilot` rows are an order of precedence of their own: a matching `byModel` row, then an explicit `cache.ttlSeconds`, then the built-in row, then the provider's null. The footer hides every request-billed policy, so the rows show in `foreman doctor` and the policy values only.
 
-The request-billed rows document the TTL a `byModel` row such as `{"match": "gpt-*", "ttlSeconds": 600, "billing": "request"}` sets for the live policy. They do not apply to the retro cost report: retro passes no model, so only the provider-level cache values (built-in entry and `cache.ttlSeconds` / `cache.billing`) count there, never a `byModel` row.
+### Children through the bridge
+
+The bridge calls the Claude Agent SDK and sets no TTL itself; Claude Code reads `CLAUDE_CODE_PROMPT_CACHE_TTL` from the environment of the Pi process (the bridge spawns it with a copy of that environment at query time). pi-foreman sets it on the `claude-bridge` provider, at session start and on a model switch, before the first bridge query:
+
+- `main` (the foreman and session foremen): `1h` by default. The bar, keep-alive, self-warm, warm compaction and the retro cache line use the same 3600 s.
+- `subagent` (children, `PI_SUBAGENT_CHILD=1`): `5m` by default, so a child overrides a `1h` it inherited from the parent. Short-lived children gain nothing from the 1-hour cache and its higher write price.
+- `inherit`: the variable is left alone, and the policy assumes 300 s. A subagent that inherits the parent's `1h` then runs on 1 h while the policy and bar assume 300 s.
+
+Switching away from `claude-bridge` restores the earlier value (or removes the variable); other providers are never touched. The variable is process-wide, so a `claude` started from a shell tool inherits it too.
+
+Claude Code honours the variable from roughly v2.1.242 (the exact minimum is unconfirmed); older versions ignore it harmlessly and keep their own TTL, so the policy then assumes a TTL the cache does not have.
+
+**Cost.** The 1-hour cache costs more per cache write than the 5-minute one. On a subscription within plan usage that is covered; on extra-usage credits or an API key set `bridge.promptCacheTtl.main` to `5m` (or `inherit`). Without the preset a bridge foreman now gets a derived 3600 s and, since the keep-alive defaults to on for a derived bridge TTL, self-warms; set `providers.claude-bridge.cache.keepalive.enabled: false` to stop that.
+
+`FORCE_PROMPT_CACHING_5M` in the environment makes Claude Code cache 5 minutes whatever the setting; the policy then assumes 300 s. `DISABLE_PROMPT_CACHING*` turns caching off. `foreman doctor` prints the effective TTL per kind and warns on both.
+
+#### Migration from the old preset
+
+Earlier versions of the `claude-bridge` presets wrote `providers.claude-bridge.cache.ttlSeconds: 300` and a `claude-*` `byModel` row of 3600 s. Applying a preset again does not remove them from your user config, and an explicit value wins over the derived TTL. Delete both from your user `foreman.json`; `foreman doctor` warns while they are there. A row or `ttlSeconds` you set on purpose is respected silently.
+
+The request-billed rows document the TTL a `byModel` row such as `{"match": "gpt-*", "ttlSeconds": 600, "billing": "request"}` sets for the live policy. They do not apply to the retro cost report: retro passes no model, so only the provider-level cache values (built-in entry and `cache.ttlSeconds` / `cache.billing`) count there, never a `byModel` row. For `claude-bridge` retro derives the TTL of the foreman kind from `bridge.promptCacheTtl` and the retro process's own environment (`FORCE_PROMPT_CACHING_5M`), not the foreman's.
 
 ## Layers
 
@@ -152,8 +175,8 @@ Keep-alive spends tokens: every tick reads the whole prefix from the cache.
 
 | provider | TTL | billing | keep-alive |
 |---|---|---|---|
-| `claude-bridge` | 300 s | token | on by default (built-in defaults; the preset carries the same values) |
-| `github-copilot` | unknown | request | off (request-billed): policy off |
+| `claude-bridge` | derived: 3600 s foreman, 300 s subagent | token | on by default (built-in defaults; the preset carries the same values) |
+| `github-copilot` | per model: `claude-*` 300 s, `gpt-*`/`o1*`/`o3*`/`o4*` 1800 s, else unknown | request | off (request-billed): policy off |
 | others | no entry | n/a | none; silent (no trace) |
 
 A provider with no entry and no `cache` config is not traced at all. Add `providers.<p>.cache` with `ttlSeconds` and `billing: "token"` to give another provider the same treatment.

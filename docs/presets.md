@@ -21,13 +21,13 @@ result is validated against the schema and nothing is written when it fails. `--
 
 | key | value | why |
 |---|---|---|
-| `providers.claude-bridge.cache.byModel` row `claude-*` | `ttlSeconds: 3600`, note "subscription within plan usage; 300 on extra-usage credits or API key" | Claude Code gives a subscription turn within plan usage the 1-hour cache; on extra-usage credits or an API key it is 5 minutes (set 300 then). |
+| `providers.claude-bridge.cache.ttlSeconds` and `byModel` | none | The TTL is derived from `bridge.promptCacheTtl` (1 h for the foreman, 5 m for subagents; [cache](cache.md#children-through-the-bridge)). An explicit value here would shadow it. |
 | `providers.claude-bridge.cache.keepalive.enabled` | `true` | pi-foreman sends the warms beyond Pi's 30-minute cap itself ([cache](cache.md#self-warm-beyond-pis-cap)). |
 | `providers.claude-bridge.cache.keepalive.awayTicks` | `2` | While the owner is away at most two warms per idle ([presence gate](cache.md#presence-gate)). |
 | `providers.claude-bridge.roles.foreman.idle` | Sonnet 5.5, thinking `medium` | The foreman's idle rung ([ladder](ladder.md#idle-rung-foreman-downshift)). |
 
-The `claude-bridge` preset used to carry a 600 s row and switch the keep-alive off; apply it again to pick up the new
-values. Pi needs the matching `promptCache` tier for the model (`long: 3600`, with `PI_CACHE_RETENTION=long`) and
+Earlier versions of the `claude-bridge` presets wrote `ttlSeconds: 300` and a `claude-*` 3600 s `byModel` row. Applying a preset again does not remove them from your user config; delete both ([migration](cache.md#migration-from-the-old-preset)).
+Pi needs the matching `promptCache` tier for the model (`long: 3600`, with `PI_CACHE_RETENTION=long`) and
 `cacheWarming: "idle"`; `foreman doctor` warns when they differ.
 
 ## The inexpensive preset
