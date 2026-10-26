@@ -273,6 +273,12 @@ def _run_label(k, width):
     return label
 
 
+def _remote_label(k):
+    """`label@machine · state · age` of a session on another machine (no pane here)."""
+    age = fmt_age(k.get("age_s"))
+    return " · ".join(p for p in (k.get("name") or "?", k.get("state") or "", age) if p)
+
+
 _aux_cache = {}
 
 
@@ -570,7 +576,7 @@ def _agent_line(node, joins, recent, width, aux):
         finished = k.get("state") == "done"
         if finished and not _recent_run(k, recent):
             continue
-        item = (finished, _run_label(k, width))
+        item = (finished, _remote_label(k) if k.get("machine") else _run_label(k, width))
         if item not in counts:
             groups.append(item)
             counts[item] = 0

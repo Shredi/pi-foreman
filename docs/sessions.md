@@ -10,7 +10,7 @@
 again. All four subcommands are yours to type; a subagent child refuses every one of them.
 
 - `/foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--machine NAME [--trust]]`
-  (`--plan-mode`, `--first-command` and `--focus` are refused with `--machine`: `remote_option`)
+  (with `--machine`, `--print-all` is refused: `remote_option`; `--plan-mode` and `--first-command` are checked on the remote; `--focus` focuses the new tab on the remote machine)
   writes a handoff dir (below), starts `pi` in a new Herdr tab (or prints the command to run in a terminal)
   and records the session. The label is 1 to 40 characters of `A-Z a-z 0-9 . _ -`. `--plan-first` makes the
   brief ask for a `plan.md` and a stop before any work; `--focus` focuses the new tab; `--dry-run` writes nothing
@@ -35,7 +35,7 @@ pi-intercom as the address. Spaces in a brief path or `--cwd` do not survive the
 `bin/foreman session open|list` (`.cmd` and `.ps1` on Windows) runs `scripts/foreman_session.py`:
 
 - `foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--machine NAME [--trust]] [--print-all] [--parent-id ID] [--own-model ID] [--agent-dir DIR]`.
-  `--print-all` prints both the POSIX and the PowerShell command. With `--machine`, `--plan-mode`, `--first-command`, `--focus` and `--print-all` are refused (`remote_option`). The parent id is `--parent-id`, else
+  `--print-all` prints both the POSIX and the PowerShell command. With `--machine`, `--print-all` is refused (`remote_option`); `--plan-mode` and `--first-command` go to the remote, which checks them; `--focus` focuses the new tab on the remote machine. The parent id is `--parent-id`, else
   `PI_INTERCOM_SESSION_ID`, else `PI_INTERCOM_STABLE_ID`, else `stableId` in `<agent dir>/intercom/config.json`; without any, `open` is refused.
 - `foreman session list [--json] [--agent-dir DIR]` prints label, model (`-` when none was given), state, handoff dir and child id.
 - `foreman session brief <handoff dir|label|child id> <text|file> [--parent-id ID] [--agent-dir DIR]` delivers a brief to the
@@ -58,7 +58,7 @@ Requirement and residual risk: `--plan-mode` needs a `plan` command in the new s
 
 ### The foreman_session_open tool
 
-A foreman session can open a session without bash: `foreman_session_open({label, brief, cwd?, model?, planFirst?, planMode?, firstCommand?: string[], focus?, dryRun?})` runs the same open as the command (same validation, rank rule and opener id). It is refused in subagent children, which never get the tool. Design or new-topic sessions open with `planMode: true`; a session with an approved plan opens without.
+A foreman session can open a session without bash: `foreman_session_open({label, brief, cwd?, model?, planFirst?, planMode?, firstCommand?: string[], focus?, dryRun?, machine?, trust?})` runs the same open as the command (same validation, rank rule and opener id); `machine` (a `sessions.machines` name, with `cwd`, the directory on that machine) opens a remote child, and `trust` records the remote folder's trust grant with it. It is refused in subagent children, which never get the tool. Design or new-topic sessions open with `planMode: true`; a session with an approved plan opens without.
 
 ### Handoff dir and registry
 
@@ -267,7 +267,7 @@ dependencies so a tool could call them; none is registered.
 
 ## Remote child sessions
 
-`foreman session open <label> <brief> --machine <name> --cwd <dir on that machine> [--trust]` opens the child on a machine saved in Herdr, over SSH, and the child reports back to this session over the return path of its machine (`pull` by default, see Return paths below). It works from the CLI and from `/foreman session open` (which forwards `--machine` and `--trust`). `--cwd` is required and is passed unchanged: it is a path on the other machine, never resolved here; the brief file is a local path. `--plan-mode`, `--first-command`, `--focus` and `--print-all` are not supported with `--machine` in this version: they are refused (`remote_option`) before any SSH call, and nothing is written.
+`foreman session open <label> <brief> --machine <name> --cwd <dir on that machine> [--trust]` opens the child on a machine saved in Herdr, over SSH, and the child reports back to this session over the return path of its machine (`pull` by default, see Return paths below). It works from the CLI and from `/foreman session open` (which forwards `--machine` and `--trust`). `--cwd` is required and is passed unchanged: it is a path on the other machine, never resolved here; the brief file is a local path. `--print-all` is not supported with `--machine` in this version: it is refused (`remote_option`) before any SSH call, and nothing is written. `--plan-mode` and `--first-command` are sent to the remote, which checks them (a refusal there names its own code); `--focus` focuses the new tab on the remote machine.
 
 **Config (user or overlay config only).** A project or session layer cannot set `sessions.machines`, `sessions.pull` or `sessions.ssh`; they are ignored there.
 
@@ -295,7 +295,7 @@ dependencies so a tool could call them; none is registered.
 
 - the opener is a Pi session in a Herdr pane, and its pi-intercom id is its session UUID (a stable id or a CLI parent cannot receive the notices: `no_return_path`);
 - the remote machine has this machine saved and enabled in Herdr, and exactly one Pi agent pane there carries this session's UUID;
-- the remote has `pi` and `pi-intercom` installed, and pi-intercom is resolvable in the remote's non-interactive SSH PATH, or `crossMachine.remoteCommand` is set in the **remote** machine's intercom config.
+- the remote has `pi` and `pi-intercom` installed, and the relay command (`crossMachine.remoteCommand` of the remote's intercom config) resolves in the non-interactive SSH PATH of this machine, since the relay runs it over SSH from here. Package bins usually are not on that PATH; set `crossMachine.remoteCommand` in the **remote** machine's intercom config to the absolute node and cli.mjs paths.
 
 In push mode the probe runs in the SSH environment, but the notice runs in the child pane's environment, so a true `returnPathOk` in the probe does not guarantee delivery (`returnPath` there is the mode string). A failed notice exits 1 and the child sees it.
 
@@ -309,9 +309,15 @@ In push mode the probe runs in the SSH environment, but the notice runs in the c
 
 **Environment difference.** The child on the remote machine does not see this machine's Herdr, config, project files or environment; it works from the brief and its own machine. The parent is `<session uuid>@<parentName>` in push mode and `<opener id>@<parentName>` in pull mode; the child's `PI_FOREMAN_PARENT_LABEL` comes from `parentName`, not from the SSH cwd.
 
-**Failures.** `remote <name> unreachable: <ssh error>` (ssh exit 255, a timeout or no JSON reply) writes nothing locally. Refusal codes: `machine_not_allowed` (not in `sessions.machines`), `machine_unknown`, `machine_disabled`, `machine_target` (unusable SSH target), `herdr_missing` (no `herdr` binary here), `ssh_missing`, `cwd_required`, `no_return_path`, `remote_protocol` (the two sides speak different protocols; update both), `remote_missing` (`pi` or pi-intercom not found in the remote SSH environment), `remote_untrusted`, `remote_option` (`--plan-mode`, `--first-command`, `--focus` or `--print-all` given with `--machine`), `session_rank` (the model rank rule, checked here and on the remote), `too_large` (over 64 KB), `not_pullable` (`foreman session pull` on a session that is not an open pull session on a remote machine), and on the remote `outbox_corrupt`, `outbox_locked`, `bad_request`, `bad_name`, `bad_cwd`, `wrong_session` (the handoff's parent is not this session), `no_handoff`, `no_entry`, `bad_parent`, `not_remote`, `intercom_missing`, `node_shim` (Windows: node is not an `.exe`), `send_failed`, `refused` (a remote refusal that has no specific code) and `internal` (an unexpected error on the remote); a reply from the remote without any code is shown here as `remote_refused`. A failed brief sets `lastError` on the entry and exits 1; a failed pull sets `pullError` on the entry and keeps the cursor.
+**Failures.** `remote <name> unreachable: <ssh error>` (ssh exit 255, a timeout or no JSON reply) writes nothing locally. Refusal codes: `machine_not_allowed` (not in `sessions.machines`), `machine_unknown`, `machine_disabled`, `machine_target` (unusable SSH target), `herdr_missing` (no `herdr` binary here), `ssh_missing`, `cwd_required`, `no_return_path`, `remote_protocol` (the two sides speak different protocols; update both), `remote_missing` (`pi` or pi-intercom not found in the remote SSH environment), `remote_untrusted`, `remote_option` (`--print-all` given with `--machine`), `session_rank` (the model rank rule, checked here and on the remote), `too_large` (over 64 KB), `not_pullable` (`foreman session pull` on a session that is not an open pull session on a remote machine), `not_remote` and `not_open` (`close-remote` on a session that is not a remote one, or whose entry is not `open`), and on the remote `outbox_corrupt`, `outbox_locked`, `bad_request`, `bad_name`, `bad_cwd`, `wrong_session` (the handoff's parent is not this session), `no_handoff`, `no_entry`, `bad_parent`, `not_remote`, `intercom_missing`, `node_shim` (Windows: node is not an `.exe`), `send_failed`, `refused` (a remote refusal that has no specific code) and `internal` (an unexpected error on the remote); a reply from the remote without any code is shown here as `remote_refused`. A failed brief sets `lastError` on the entry and exits 1; a failed pull sets `pullError` on the entry and keeps the cursor.
 
-**Limits of this version.** There is no remote close (`/foreman session close` and `/foreman close` say `<label>@<machine>: not closed (remote close comes in P2; close it on <machine>)` and change nothing; the owner closes the pane on the remote machine), no sidebar entry and no `machine` parameter on the session tool. The radar and sidebar show an open remote entry as `lost` after the starting window, and it stays `lost` even after a result arrived until the entry is closed: they look for a local live file and for `result.md` only under the local handoffs dir, not the mirror.
+**Limits of this version.** `--print-all` is refused with `--machine`. A remote entry is shown by the radar and sidebar from its pull state and the child's heartbeat (see [Radar](#radar)), not from a local live file, and its result is read from the mirror. A remote close is only as fast as the child's reply: the entry stays `closing` until the child sends `foreman:closed` or `foreman:refused`.
+
+**Remote close.** `foreman session close-remote <label|child id> [--path P.md] [--json]` closes a child opened with `--machine`. `/foreman session close` and `/foreman close` run it for each such entry, and the CLI prints the same result. The parent runs the remote `close` verb over its own SSH call. That writes `close.json` in the child's handoff dir (the parent's opener id, the result path if given, and the time) and sends the child `foreman:close` by pi-intercom. The child accepts the order only if the file parses, names the parent recorded at spawn, is at most 15 minutes old and has not been used: it is then renamed `close.json.seen`. A cross-machine message never closes. The child runs its ordinary close sequence and replies `foreman:closed <path>` or `foreman:refused <reason>`; the parent records that reply on the entry. A refusal on this side (a bad `--path`, `not_remote`, `not_open`) changes nothing.
+
+**Trust of the remote close.** The remote only receives the parent's SSH calls. It gets no credential and never connects back. `close.json` is trusted only as far as the remote handoff dir is, the same boundary as the outbox (see Trust in pull mode).
+
+**PATH.** pi-intercom is a package bin. In push mode the relay command must resolve in the parent's non-interactive SSH PATH, because the relay runs `crossMachine.remoteCommand` over SSH on the parent machine; package bins usually are not on that PATH on either machine. The fix is setting `crossMachine.remoteCommand` in the remote's pi-intercom config to the absolute node and cli.mjs paths, which the open's warning prints (see Push). When the probe's relay command is not found on this machine's PATH, the open prints a warning (`the relay command of <machine> was not found on PATH here`). That check is best effort: this process sees its interactive PATH, and the SSH one may differ. Pull mode needs no relay and gives no such warning.
 
 **Permission ask.** The footer's notice command is classed `unknown` by the effect classes ([permissions](permissions.md)), so in the remote pane it can raise a permission ask; with nobody at that pane the notice waits until answered. Allow that exact command in the remote machine's user config.
 
@@ -395,6 +401,8 @@ Glyphs come from the `ui.symbols` set (`unicode` shown; `emoji`, `nerd` (Nerd Fo
 | `✋` | blocked: the session waits on a prompt |
 | `✓` | done (also a closed session, a finished run) |
 | `✗` | lost: presence file not `done` and no heartbeat for 90 seconds; or registry `open` with no presence file after 2 minutes; or `failed` |
+
+Remote entries (opened with `--machine`) are shown as `label@machine`, with a state from their pull and not from a local live file. An open ask shows as `ask`, `closing` and `starting` (no pull yet) as waiting, and a child's own live state (`working`, `blocked`, `done` or idle) counts while the last pull is younger than 3 × `sessions.pull.intervalSeconds` + 30 s and its heartbeat age plus the pull age is under 90 s. A pull entry with no pull success in that window is `lost` once its starting window is over.
 
 Options: `--once` prints one plain snapshot (no ANSI) and exits 0; without it the screen is redrawn with ANSI codes
 every `--interval` seconds (default 3) until `q` or Ctrl-C (no curses, so Windows works; a stdout that is not a

@@ -367,7 +367,7 @@ the `✓n` count. Tokens: `fm_meta` counts uncached input (see its row above); r
 Opened sessions: a registry entry (`sessions.json`) whose handoff dir matches a live session is merged into that node, so
 a working child shows once under its parent, never as a second `✗ lost` row. An `open` entry with a `result.md` and no
 live file shows as idle. The opener id is `--parent-id`, `PI_INTERCOM_SESSION_ID`, `PI_INTERCOM_STABLE_ID`, then the
-config `stableId`; a child that closes marks its own entry `closed`.
+config `stableId`; a child that closes marks its own entry `closed`. A remote child (`--machine`, see [remote child sessions](sessions.md#remote-child-sessions)) is shown as `label@machine · state · age` with its pull age; its state comes from the pull, not from a local live file, so it is `lost` when no pull has succeeded in the window.
 
 Ask signal: when a session opened by `foreman session open` writes `ask.md` (first line `# Ask <n>: <topic>`) in its own
 handoff dir, pi-foreman touches `<handoff>/.ask` and opens a blocked source, so Herdr shows `blocked` with the label

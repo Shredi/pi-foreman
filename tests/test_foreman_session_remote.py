@@ -1066,8 +1066,7 @@ class NoticeWin32Test(NoticeBase):
 
     def test_footer_forms(self):
         for plan_first in (False, True):
-            with mock.patch.object(fsn, "host_platform", return_value="win32"):
-                text = fsn.remote_footer("demo", plan_first, 32768)
+            text = fsn.remote_footer("demo", plan_first, 32768)
             cmds = [l.strip() for l in text.splitlines() if " remote notice " in l]
             self.assertTrue(cmds)
             for c in cmds:
@@ -1083,7 +1082,7 @@ class NoticeWin32Test(NoticeBase):
 
 class RemoteOptionTest(RemoteBase):
     def test_unsupported_flags_are_refused_with_machine(self):
-        for flag in ("--plan-mode", "--first-command", "--focus", "--print-all"):
+        for flag in ("--print-all",):
             extra = (flag, "/x") if flag == "--first-command" else (flag,)
             rc, out, err = self.run_main(*self.open_args(*extra))
             self.assertEqual(rc, 1, flag)

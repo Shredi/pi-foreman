@@ -692,6 +692,13 @@ def deep_merge(base, over):
 
 # ---------------------------------------------------------------- validation
 
+def _end_anchored(pattern):
+    """`pattern` with a trailing `$` read as end of string (ECMAScript, and the runtime's `\\Z`): Python's `$` also
+    matches before a final newline."""
+    slashes = len(pattern) - len(pattern[:-1].rstrip("\\")) - 1
+    return pattern[:-1] + r"\Z" if pattern.endswith("$") and slashes % 2 == 0 else pattern
+
+
 _TYPES = {
     "string": lambda v: isinstance(v, str),
     "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
@@ -715,7 +722,7 @@ def validate_schema(value, schema, path, issues):
     if "enum" in schema and value not in schema["enum"]:
         issues.append(("error", path, "%s: must be one of %s" % (label, ", ".join(map(str, schema["enum"])))))
         return
-    if isinstance(value, str) and "pattern" in schema and not re.search(schema["pattern"], value):
+    if isinstance(value, str) and "pattern" in schema and not re.search(_end_anchored(schema["pattern"]), value):
         issues.append(("error", path, "%s: %r does not match pattern %s" % (label, value, schema["pattern"])))
         return
     if _TYPES["number"](value):

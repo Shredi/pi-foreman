@@ -66,7 +66,7 @@ export { INTERCOM_MESSAGE_TYPE as INTERCOM_INBOUND_TYPE } from "./intercomguard.
 export { INTERCOM_WAKE_TEXT } from "./usage.ts";
 /** pi-intercom 0.17.0 extension-api.ts: outbox request event (reply to the sender). */
 export const INTERCOM_OUTBOX_EVENT = "intercom:outbox-request";
-export const CLOSE_SOURCES = ["herdr", "intercom-parent"] as const;
+export const CLOSE_SOURCES = ["herdr", "intercom-parent", "remote-parent"] as const;
 export type CloseSource = (typeof CLOSE_SOURCES)[number];
 
 /** Result path text (security review S4): a fixed charset and a `.md` suffix, both sources. */
@@ -112,6 +112,47 @@ export function intercomClose(details: unknown, parentId: string | undefined, fr
   return { kind: "close", path: req.path, sender };
 }
 
+/** Set to 1 in a session opened by a remote parent (`foreman session open --machine`). */
+export const REMOTE_PARENT_ENV = "PI_FOREMAN_REMOTE_PARENT";
+export const CLOSE_ORDER_FILE = "close.json";
+/** A close order older than this is stale and refused. */
+export const CLOSE_ORDER_MAX_AGE_MS = 15 * 60_000;
+
+/**
+ * A close request in a remote child's inbound message. The authority is `<handoff>/close.json`, written by the remote
+ * `close` verb (the parent's order over SSH), never the sender: it must parse, name PI_FOREMAN_PARENT_INTERCOM as its
+ * `parent` and be at most 15 minutes old. It is consumed once (renamed `close.json.seen`); the result path comes from
+ * the file only. A cross-machine message never closes. null = ordinary message.
+ */
+export function remoteParentClose(details: unknown, env: Record<string, string | undefined>, handoffDir: string, now: Date = new Date()): IntercomClose | null {
+  const d = (details && typeof details === "object" ? details : {}) as { from?: { id?: unknown }; message?: { content?: { text?: unknown }; crossMachine?: unknown } };
+  if (!parseCloseText(d.message?.content?.text)) return null;
+  const sender = typeof d.from?.id === "string" ? d.from.id : undefined;
+  const refused = (reason: string): IntercomClose => ({ kind: "refused", reason, sender });
+  if (d.message?.crossMachine) return refused("cross-machine messages cannot close a session");
+  const file = path.join(handoffDir, CLOSE_ORDER_FILE);
+  let order: { parent?: unknown; path?: unknown; at?: unknown } | null = null;
+  try {
+    const o = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
+    order = o && typeof o === "object" && !Array.isArray(o) ? (o as typeof order) : null;
+  } catch {
+    order = null;
+  }
+  if (!order) return refused(`no close order from the remote parent (${CLOSE_ORDER_FILE} is missing or unreadable)`);
+  const parent = env[PARENT_INTERCOM_ENV];
+  if (!parent || order.parent !== parent) return refused("the close order does not name the parent recorded at spawn");
+  const at = typeof order.at === "string" ? Date.parse(order.at) : NaN;
+  if (!Number.isFinite(at) || Math.abs(now.getTime() - at) > CLOSE_ORDER_MAX_AGE_MS) return refused("the close order is stale (older than 15 minutes)");
+  const given = order.path;
+  if (given !== undefined && (typeof given !== "string" || !validResultPathText(given))) return refused("the close order carries an invalid result path");
+  try {
+    fs.renameSync(file, `${file}.seen`);
+  } catch {
+    return refused("the close order was already used");
+  }
+  return { kind: "close", path: given as string | undefined, sender: sender ?? "" };
+}
+
 function stamp(now: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}`;
@@ -146,6 +187,8 @@ export interface CloseDeps {
   retro: () => Promise<string>;
   /** Send `text` to `to` over intercom; a returned promise settles when the send is done (or given up). */
   reply: (to: string, text: string) => void | Promise<unknown>;
+  /** A remote child's answer to its remote parent: `remote notice closed [--close ready|open]` or `refused --reason=<arg>`. */
+  remoteReply?: (kind: "closed" | "refused", arg?: string) => void | Promise<unknown>;
   notify: (text: string, level: "info" | "warning" | "error") => void;
   trace: (rec: Record<string, unknown>) => void;
   /** Mark the current run's turn cause as `close`. */
@@ -245,7 +288,8 @@ export class CloseFlow {
     this.d.trace({ event: "close", cause: source, decision: "refused" });
     const text = `pi-foreman: close refused: ${reason}`;
     this.d.notify(text, "warning");
-    if (replyTo) this.d.reply(replyTo, text);
+    if (source === "remote-parent") void Promise.resolve(this.d.remoteReply?.("refused", reason)).catch(() => undefined);
+    else if (replyTo) this.d.reply(replyTo, text);
   }
 
   private waitsBlock(source: CloseSource, replyTo?: string): boolean {
@@ -393,6 +437,12 @@ export class CloseFlow {
       } catch {
         // the ack is best effort; the close itself is done
       }
+    } else if (req.source === "remote-parent") {
+      try {
+        await this.d.remoteReply?.("closed", report ? (report.ready ? "ready" : "open") : undefined);
+      } catch {
+        // as above
+      }
     }
     this.d.trace({ event: "close", cause: req.source, decision: "shutdown" });
     this.reset();
@@ -438,6 +488,8 @@ export interface CloseSession {
   ceremonyNote?: () => string;
   /** Evaluate the pushed branches without a tracked PR and notify (fire-and-forget). */
   pushNotice?: (ctx: ExtensionContext) => void;
+  /** Notice command of a remote child (`remote notice closed|refused`, scripts/foreman_session.py). */
+  remoteReply?: (kind: "closed" | "refused", arg?: string) => void | Promise<unknown>;
 }
 
 type Bus = { emit(channel: string, data: unknown): void; on?(channel: string, handler: (data: unknown) => void): (() => void) | void } | undefined;
@@ -500,6 +552,7 @@ export function registerClose(
       closeChildren: s.closeChildren ? () => s.closeChildren!((to, text) => outboxSend(pi.events, to, text, "close", SEND_WAIT_MS)) : undefined,
       retro: () => (get(s.config(), "sync.runRetro") === false ? s.retro(holder.ctx) : Promise.resolve("")),
       reply: (to, text) => outboxSend(pi.events, to, text, "close"),
+      remoteReply: s.remoteReply,
       notify: (text, level) => {
         try {
           holder.ctx.ui.notify(text, level);
@@ -523,13 +576,22 @@ export function registerClose(
   });
   /** An inbound intercom message's details: start a close (true), refuse, or ignore (false). */
   const fromIntercom = (s: CloseSession, ctx: ExtensionContext, details: unknown, viaWake: boolean): boolean => {
-    const r = intercomClose(details, parentIntercomId(process.env), closeFrom(s.config()));
+    const from = closeFrom(s.config());
+    const handoff = process.env[HANDOFF_DIR_ENV];
+    const remote = process.env[REMOTE_PARENT_ENV] === "1" && !!handoff;
+    const source = remote ? "remote-parent" : "intercom-parent";
+    const r = remote
+      ? from.has(source) || !parseCloseText((details as { message?: { content?: { text?: unknown } } } | null)?.message?.content?.text)
+        ? remoteParentClose(details, process.env, handoff!)
+        : ({ kind: "refused", reason: "close.from does not include remote-parent" } as IntercomClose)
+      : intercomClose(details, parentIntercomId(process.env), from);
     if (!r) return false;
     const flow = flowFor(s, ctx);
-    if (r.kind === "refused") return void flow.refuse(r.reason, "intercom-parent", r.sender), false;
+    const replyTo = remote ? undefined : r.sender;
+    if (r.kind === "refused") return void flow.refuse(r.reason, source, replyTo), false;
     const file = resultPath(r.path, { cwd: s.cwd, sessionId: s.id, now: new Date(), platform: deps.platform });
-    if ("error" in file) return void flow.refuse(file.error, "intercom-parent", r.sender), false;
-    flow.request({ source: "intercom-parent", file: file.path, shown: file.shown, replyTo: r.sender }, ctx, viaWake);
+    if ("error" in file) return void flow.refuse(file.error, source, replyTo), false;
+    flow.request({ source, file: file.path, shown: file.shown, replyTo }, ctx, viaWake);
     return true;
   };
   // Busy session: pi-intercom steers the message in and the extension message_end fires.

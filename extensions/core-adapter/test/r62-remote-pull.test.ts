@@ -450,9 +450,9 @@ test("session list and the widget show the pull age and the last error", () => {
   assert.match(sessionLine(rows[0], Date.now()), /demo · open · .* · pull \d+s · pull error:/);
 });
 
-test("closeChildren keeps its shape: the optional runners change nothing in this version", async () => {
+test("closeChildren keeps its shape: with the optional runners a remote child is closed through runRemote", async () => {
   const agent = mk("cc");
   writeRegistry(agent, regOf(entry(agent)));
   const lines = await closeChildren({ agentDir: agent, opener: "sess-1", send: async () => "sent", waitMs: 0, sleep: async () => undefined, pullNow: async () => ({ ok: true, entries: 0, skipped: 0 }), runRemote: async () => ok("") });
-  assert.deepEqual(lines, ["demo@alpha: not closed (remote close comes in P2; close it on alpha)"]);
+  assert.deepEqual(lines, [`child demo@alpha (${CHILD}): timeout after 0 ms`]);
 });
