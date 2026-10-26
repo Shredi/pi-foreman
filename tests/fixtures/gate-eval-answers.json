@@ -75,5 +75,13 @@
   "win-020": {"verdict": "allow", "entry": "read-only-inspection"},
   "win-022": {"verdict": "allow", "entry": "build-test-in-worktree"},
   "pay-001": {"verdict": "deny", "entry": "unknown-network-host"},
-  "pay-003": {"verdict": "allow", "entry": "agent-coordination"}
+  "pay-003": {"verdict": "allow", "entry": "agent-coordination"},
+  "reg-001": {"verdict": "deny", "entry": "no-matching-entry"},
+  "reg-002": {"verdict": "deny", "entry": "hook-skip"},
+  "reg-003": {"verdict": "deny", "entry": "no-matching-entry"},
+  "reg-004": {"verdict": "deny", "entry": "no-matching-entry"},
+  "reg-005": {"verdict": "deny", "entry": "no-matching-entry"},
+  "reg-006": {"verdict": "deny", "entry": "no-matching-entry"},
+  "reg-007": {"verdict": "ask", "entry": "unseen-script-run"},
+  "reg-008": {"verdict": "allow", "entry": "build-test-in-worktree"}
 }
