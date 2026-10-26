@@ -11,7 +11,7 @@ import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
-import { buildOverlayRules, checkToolCall, isOverlayTool, isSelfHost, npmCiWorktreeLabel,OVERLAY_UNAVAILABLE, readBaseline, resolveDecision, rulesFilePath } from "./permoverlay.ts";
+import { buildOverlayRules, checkToolCall, isOverlayTool, isSelfHost, npmCiWorktreeLabel,OVERLAY_UNAVAILABLE, readBaseline, resolveDecision } from "./permoverlay.ts";
 import type { Decision, MatchCtx, OverlayRules } from "./permoverlay.ts";
 import { childHandoffDirs, ownedRoots, ownHandoffDirs, resolveNpmRoot, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
@@ -58,7 +58,7 @@ import { branchMove, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdi
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
-import { autoReviewDoctorLine, autoReviewTarget, ForemanReview, overlayAutoReview, REVIEW_LINK, reviewTarget, reviewValue, userPromptOf } from "./review.ts";
+import { ForemanReview, REVIEW_LINK, reviewTarget, reviewValue, userPromptOf } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
@@ -1838,20 +1838,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.isChild && toolName === "bash" && typeof input.command === "string" && npmCiWorktreeLabel(input.command, mctx)) s.trace?.emit({ event: "overlay_allow", rule: "npm-ci-worktree", role: s.usage.line.role });
     // R16 item 4a: the self-ruling ask (ruling.ts selfRulingAsk) takes the place of an overlay ask that is no self-modification
     const d = d0 && (d0.kind === "deny" || d0.selfMod) ? d0 : (rulingAsk ?? d0);
-    // R16 item 1: a foreman ask that is no self-modification goes to the auto reviewer first; allow lets the call go on to the later layers
-    const rulesFile = rulesFilePath(s.config.basePermissions, s.agentDir, PKG_ROOT);
-    // R18: a child's ask goes to the reviewer too, except its self-ruling ask (a ruling write is never a reviewer allow)
-    const childRole = s.usage.line.role;
-    const auto = await overlayAutoReview(review, s.id, s.isChild && d?.rule === "self-ruling" ? null : d, toolName, input, { enabled: get(s.config.config, "safety.permissions.autoReview.enabled") !== false, isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, session: s.usage.line.foremanSession || s.id, requester: s.isChild ? `subagent ${childRole}` : undefined, rules: () => (rulesFile ? fs.readFileSync(rulesFile, "utf8") : "") });
-    if (d && auto) {
-      const df = denyFields(auto === "allow" ? d.reason : auto.reason, toolName, input, s.isChild ? childRole : "foreman", [PKG_ROOT, ctx.cwd]);
-      if (auto === "allow") {
-        s.trace?.emit({ event: "auto_review_allow", toolFamily: toolName, family: dialogFamily(df.command), rule: d.rule ?? null, command: df.command, ...(s.isChild ? { role: childRole } : {}) });
-        return undefined;
-      }
-      s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: "deny", by: "auto", ...df });
-      return auto;
-    }
     const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) });
     if (d) {
       const df = denyFields((d as { reason?: unknown }).reason, toolName, input, s.isChild ? s.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]);
@@ -1960,6 +1946,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // block (an ask or an unreachable review falls through to them), so nothing is loosened until the dialog slice lands.
   pi.on("tool_call", async (event, ctx) => {
     const gs = sessionFor(ctx);
+    const stoppedMsg = gs?.isChild ? repeatStopped.get(gs.id) : undefined;
+    if (stoppedMsg) return { block: true as const, reason: stoppedMsg };
     const roots = gs ? await gateRootsOf(gs, ctx.cwd) : undefined;
     const configured = ((v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []))(gs ? get(gs.config.config, "safety.git.protectedBranches") : undefined);
     const r = gateDecide(event.toolName, event.input, ctx.cwd, {
@@ -1974,7 +1962,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (r && "block" in r) {
       gs?.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "blocked", rule: r.rule, ...denyFields(r.reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]) });
       note("floor", "deny", r.rule, r.reason);
-      return { block: true as const, reason: r.reason };
+      return (gs && (repeatedDeny(gs, ctx, r.reason) ?? undefined)) || { block: true as const, reason: r.reason };
     }
     if (r) {
       gs?.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: r.rule, role });
@@ -4368,7 +4356,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!rt) out.push(`WARN no review model for provider ${ctx.model?.provider ?? "(none)"}: model review (${REVIEW_LINK}) is off, every ask goes to you — set providers.<p>.review.model in foreman.json`);
     else if (!ctx.modelRegistry.find(rt.provider, rt.modelId)) fail(`review model ${rt.provider}/${rt.modelId} not in the model registry; asks go to you`, "correct providers.<p>.review.model.");
     else ok(`model review: ${rt.provider}/${rt.modelId} (timeout ${rt.timeoutMs} ms)`);
-    out.push(`INFO ${autoReviewDoctorLine(get(s.config.config, "safety.permissions.autoReview.enabled") !== false, rulesFilePath(s.config.basePermissions, s.agentDir, PKG_ROOT), PKG_ROOT, rt ?? autoReviewTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as unknown as Parameters<typeof autoReviewTarget>[2]))}`);
     const gp = gateRuntimeOf(s);
     out.push(`INFO gate policy: ${gp.policy.trusted.entries.length} trusted entries (hash ${gp.policy.hash.slice(0, 12)}), project layer ${gp.policy.project ? `${gp.policy.project.entries.length} entries` : "none"}; decision log ${gateLogFile(s.agentDir)}`);
     for (const w of gp.policy.warnings) out.push(`WARN policy: ${w}`);

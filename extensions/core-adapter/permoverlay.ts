@@ -749,20 +749,6 @@ function refsBound(word: string, names: ReadonlySet<string>): boolean {
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : []);
 const obj = (v: unknown): Json => (v && typeof v === "object" && !Array.isArray(v) ? (v as Json) : {});
 
-/**
- * R16 item 2: the reviewer rules file of the overlay's asks. `safety.permissions.autoReview.rulesFile` of `base` (the layers before the
- * project and session layers: a project cannot set it) replaces the shipped `config/permissions.rules.md`; absolute, `~/...` or relative
- * to the agent dir. Null without either.
- */
-export function rulesFilePath(base: unknown, agentDir: string, pkgRoot: string | undefined, home: string = os.homedir()): string | null {
-  const f = obj(obj(base).autoReview).rulesFile;
-  if (typeof f === "string" && f.trim()) {
-    const t = f.trim();
-    return t === "~" || t.startsWith("~/") || t.startsWith("~\\") ? path.join(home, t.slice(1)) : path.resolve(agentDir, t);
-  }
-  return pkgRoot ? path.join(pkgRoot, "config", "permissions.rules.md") : null;
-}
-
 export function readBaseline(pkgRoot: string): Baseline | null {
   try {
     const raw = JSON.parse(fs.readFileSync(path.join(pkgRoot, "config", "permissions.baseline.json"), "utf8")) as Json;
@@ -836,8 +822,6 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
   const mp = obj(m.paths);
   const bp = obj(b.paths);
   const hasBase = Object.keys(b).length > 0;
-  // R16: a user rules file of the auto reviewer is protected like protect.ask (the shipped one is under writeAskSelfHost / writeAsk)
-  const userRules = typeof obj(b.autoReview).rulesFile === "string" ? rulesFilePath(b, agentDir, undefined) : null;
   return {
     bashDeny: [...baseline.bash.deny, ...strs(m.deny)],
     bashAsk: hasBase ? without(strs(m.ask), strs(b.ask)) : [],
@@ -847,7 +831,7 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
       ...strs(mp.deny).map((pattern): PathRule => ({ pattern: sub(pattern), action: "deny" })),
     ],
     pathAsk: hasBase ? without(strs(mp.ask), strs(bp.ask)) : [],
-    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true, { readOk: "main" }), ...prot(pb?.childDeny, null, true, { fromChildDeny: true }), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false, { readOk: "child", fromWriteAsk: true }), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true })), ...(userRules ? prot([slash(userRules)], "ask", true, { readOk: "main" }) : [])],
+    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true, { readOk: "main" }), ...prot(pb?.childDeny, null, true, { fromChildDeny: true }), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false, { readOk: "child", fromWriteAsk: true }), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true }))],
     childBlock: [...CHILD_BLOCK.map(sub), ...CHILD_BLOCK_WORKTREES, ...(owned?.childScratchRoot ? [slash(owned.childScratchRoot), `${slash(owned.childScratchRoot)}/*`] : [])],
     childBlockExcept: CHILD_BLOCK_EXCEPT.map(sub),
     childBlockInWorkspace: CHILD_BLOCK_WORKTREES,
