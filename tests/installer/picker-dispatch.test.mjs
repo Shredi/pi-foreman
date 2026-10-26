@@ -2,11 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..", "..");
-const { pickerKind, runPicker, INQUIRER_MISSING_NOTE } = await import(path.join(ROOT, "setup.mjs"));
+const { pickerKind, runPicker, INQUIRER_MISSING_NOTE } = await import(pathToFileURL(path.join(ROOT, "setup.mjs")).href);
 
 const ctx = { currentText: null, currentConfig: {}, recorded: null, installed: [], project: false };
 
