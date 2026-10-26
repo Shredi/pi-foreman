@@ -151,6 +151,11 @@ export interface GateRecord {
   input?: string;
   role?: string;
   kind?: GateKind;
+  latencyMs?: number;
+  /** The review model, `provider/id`, when a model decided. */
+  model?: string;
+  /** The verdict came from the decision cache. */
+  cached?: boolean;
 }
 
 export interface GateLogOptions {
@@ -200,6 +205,9 @@ export function openGateLog(opts: GateLogOptions): GateLog {
             verdict: field(rec.verdict),
             rule: field(rec.rule),
             reason: scrubReason(redactCommand(normalizeShape(typeof rec.reason === "string" ? rec.reason : "", opts.roots, true))).slice(0, MAX_REASON),
+            ...(typeof rec.latencyMs === "number" ? { latencyMs: Math.round(rec.latencyMs) } : {}),
+            ...(rec.model ? { model: field(rec.model) } : {}),
+            ...(rec.cached ? { cached: true } : {}),
             shape: normalizeShape(rec.input ?? "", opts.roots),
             cwdHash,
           }) + "\n";

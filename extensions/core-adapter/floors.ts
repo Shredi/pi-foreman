@@ -29,8 +29,12 @@ export interface FloorEnv {
   protectedBranches?: string[];
   /** Roots a delete or a recursive overwrite may reach: the worktree, scratch dirs, the OS temp dir, owned write roots. */
   writeRoots?: string[];
-  /** The Pi agent dir (its auth.json is a secret path). */
+  /** The Pi agent dir (its auth.json is a secret path; its pi-foreman policy and state files are floored writes). */
   agentDir?: string;
+  /** The bundled package root (its config/permissions.policy.md is a floored write). */
+  pkgRoot?: string;
+  /** safety.policy.files: extra policy files of the owner's overlay (absolute, `~` or cwd-relative). */
+  policyFiles?: string[];
   currentBranch?: (cwd: string) => string | null;
   remoteHead?: (cwd: string) => string | null;
 }
@@ -328,6 +332,8 @@ function segmentFloors(seg: ShellSegment, env: FloorEnv, line: ShellSegment[]): 
   const prog = base(seg.program);
   const git = gitFloors(seg, env);
   if (git) return git;
+  const pw = protectedWrite(seg, prog, env, line);
+  if (pw) return pw;
   if (PRIVILEGE.has(prog)) return hit("privilege", `\`${prog}\` escalates privileges. Run the command as the current user; ask the user when root is needed.`);
   if (POWER.has(prog) || (prog === "init" && /^[06]$/.test(seg.argv[0] ?? "")) || (prog === "systemctl" && seg.argv.some((w) => /^(poweroff|reboot|halt|kexec)$/.test(w)))) return hit("shutdown", "Shutting down or rebooting the machine is not allowed. Ask the user.");
   if (prog.startsWith("mkfs") || DISK.has(prog) || (prog === "diskutil" && seg.argv.some((w) => /^(erase|partition|reformat|zero|secure|apfs)/i.test(w))) || (prog === "format" && seg.argv.some((w) => /^[a-z]:$/i.test(w)))) {
@@ -377,15 +383,22 @@ const SECRET_DIRS = /(^|\/)(\.ssh|\.gnupg|\.aws|\.azure|\.config\/gcloud|\.confi
 const SECRET_FILE = /(^|\/)(id_(rsa|dsa|ecdsa|ed25519)(_[\w-]+)?|[^/]+\.(pem|key|p12|pfx|jks|keystore))$/i;
 
 /** A secret or key path (read or write), by the path alone. Bare names (no separator, no `~`) are not judged here; the overlay's path rules cover those. */
+const SECRET_EXTRA = /(^|\/)(\.config\/hub|\.config\/glab-cli|\.pi\/extensions\/pi-permission-system|credentials(\.[^/]*)?)(\/|$)/i;
+const ENV_FILE = /(^|\/)([^/]*\.env|\.env\.[^/]+)$/i;
+const ENV_EXEMPT = /\.env\.(example|sample|template)$/i;
+
 export function secretPath(word: string, env: FloorEnv): FloorHit | null {
   const w = slash(word.replace(/^(["'])(.*)\1$/, "$2"));
   const m = /^-{1,2}[\w-]+=(.+)$/.exec(w);
   const x = m ? m[1] : w;
   const pathLike = x.includes("/") || x.startsWith("~");
-  let bad = pathLike && !/\.pub$/.test(x) && (SECRET_DIRS.test(x) || SECRET_FILE.test(x));
-  if (!bad && env.agentDir && pathLike) {
-    const auth = slash(path.join(env.agentDir, "auth.json"));
-    bad = x === auth || x.toLowerCase() === auth.toLowerCase();
+  let bad = pathLike && !/\.pub$/.test(x) && (SECRET_DIRS.test(x) || SECRET_FILE.test(x) || SECRET_EXTRA.test(x) || (ENV_FILE.test(x) && !ENV_EXEMPT.test(x)));
+  if (!bad && pathLike) {
+    const abs = resolveWord(x, env.cwd, env);
+    if (abs !== null) {
+      const mine = formsOf(abs, env);
+      bad = authFiles(env).some((a) => formsOf(a, env).some((f) => mine.includes(f)));
+    }
   }
   if (!bad) return null;
   return hit("secret-path", `'${x}' is a secret or key path (SSH, GnuPG, cloud or registry credentials, private keys, Pi's auth file). Never read or write it; ask the user for the value you need.`);
@@ -439,7 +452,7 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   const raw = rawFloors(text);
   if (raw) return raw;
   if (segments.some((s) => s.opaque !== null)) {
-    const o = opaqueTextFloors(text, env);
+    const o = opaqueTextFloors(text, env) ?? opaqueProtected(text, env);
     if (o) return o;
   }
   for (const s of segments) {
@@ -450,13 +463,192 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
 }
 
 /** The floors of a path tool call (read, write, edit, grep, find, ls, foreman_move, foreman_copy): a secret or key path. */
-export function pathFloors(input: Record<string, unknown>, env: FloorEnv): FloorHit | null {
+export function pathFloors(input: Record<string, unknown>, env: FloorEnv, tool?: string): FloorHit | null {
   for (const k of ["path", "file_path", "filePath", "src", "dst", "glob", "pattern"]) {
     const v = input[k];
     if (typeof v === "string" && v) {
       const h = secretPath(v, env);
       if (h) return h;
     }
+  }
+  return tool !== undefined && WRITE_TOOLS.has(tool) ? protectedToolWrite(tool, input, env) : null;
+}
+
+// ------------------------------------------------------------------ policy files, harness state, config keys (writes)
+
+const WRITE_TOOLS = new Set(["write", "edit", "foreman_move", "foreman_copy"]);
+/** A foreman config file by name (`foreman.json`, `foreman.defaults.json`, `foreman.local.json`). */
+const CONFIG_FILE = /(?:^|[\\/])foreman(?:[.-][\w.-]*)?\.json$/;
+/** The config keys no agent write may touch: safety.permissions*, safety.policy*, gate.* (read from the written text, fail closed). */
+const FLOOR_KEYS = /\b(?:permissions|policy[A-Za-z]*|gate)\b/;
+
+const foldFor = (env: FloorEnv): boolean => (env.platform ?? process.platform) === "win32" || (env.platform ?? process.platform) === "darwin";
+
+/** realpath of the deepest existing ancestor with the missing tail re-appended. */
+function realDeep(abs: string): string | null {
+  const tail: string[] = [];
+  let cur = abs;
+  for (let n = 0; n < 64; n++) {
+    try {
+      const real = fs.realpathSync(cur);
+      return tail.length ? path.join(real, ...tail.reverse()) : real;
+    } catch {
+      const parent = path.dirname(cur);
+      if (parent === cur) return null;
+      tail.push(path.basename(cur));
+      cur = parent;
+    }
+  }
+  return null;
+}
+
+/** The comparable spellings of an absolute path: lexical and symlink-resolved, slashes unified, case-folded where the file system is. */
+function formsOf(abs: string, env: FloorEnv): string[] {
+  const fold = foldFor(env);
+  const real = realDeep(abs);
+  return [...new Set([abs, ...(real ? [real] : [])].map((p) => {
+    const s = slash(p).replace(/(.)\/$/, "$1");
+    return fold ? s.toLowerCase() : s;
+  }))];
+}
+
+/** The agent dirs: the session's and the default `<home>/.pi/agent`. */
+const agentDirs = (env: FloorEnv): string[] => [env.agentDir, env.home ? path.join(env.home, ".pi", "agent") : undefined].filter((x): x is string => !!x);
+const authFiles = (env: FloorEnv): string[] => agentDirs(env).map((a) => path.join(a, "auth.json"));
+
+interface Protected {
+  p: string;
+  /** Covers everything below `p` too. */
+  tree: boolean;
+}
+
+/** Policy files of every layer and the harness state files. */
+function protectedEntries(env: FloorEnv): Protected[] {
+  const out: Protected[] = [];
+  if (env.pkgRoot) out.push({ p: path.join(env.pkgRoot, "config", "permissions.policy.md"), tree: false });
+  for (const a of agentDirs(env)) {
+    const s = path.join(a, "pi-foreman");
+    for (const f of ["policy.md", "managed.json", "state/round-parents.json", "state/bridge-trust.json"]) out.push({ p: path.join(s, f), tree: false });
+    for (const d of ["state/approvals", "state/gate"]) out.push({ p: path.join(s, d), tree: true });
+  }
+  out.push({ p: path.join(env.cwd, ".workflow", "policy.md"), tree: false });
+  for (const f of env.policyFiles ?? []) {
+    const r = f.startsWith("~") ? resolveWord(f, env.cwd, env) : path.resolve(env.cwd, f);
+    if (r) out.push({ p: r, tree: false });
+  }
+  return out;
+}
+
+const globRe = (g: string, fold: boolean): RegExp => new RegExp(`^${g.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]")}$`, fold ? "i" : "");
+
+/** The protected entry a word names (a glob word is matched against the entries), or null. */
+function protectedWord(word: string, cwd: string, env: FloorEnv, entries: Protected[]): string | null {
+  const w = slash(word.replace(/^(['"])(.*)\1$/, "$2"));
+  const m = /^-{1,2}[\w-]+=(.+)$/.exec(w) ?? /^[A-Za-z_]\w*=(.+)$/.exec(w);
+  for (const x of m ? [w, m[1]] : [w]) {
+    if (!x || /\s/.test(x)) continue;
+    let v = x;
+    if (/^(~|\$HOME|\$\{HOME\})(\/|$)/.test(v)) {
+      if (!env.home) continue;
+      v = path.posix.join(slash(env.home), v.replace(/^(~|\$HOME|\$\{HOME\})/, ""));
+    }
+    const cut = v.search(/[$`]/);
+    if (cut >= 0) v = v.slice(0, cut);
+    if (!v) continue;
+    const abs = path.posix.isAbsolute(v) || path.win32.isAbsolute(v) ? v : slash(path.resolve(cwd, v));
+    if (/[*?]/.test(abs)) {
+      const re = globRe(abs, foldFor(env));
+      const lit = abs.slice(0, abs.search(/[*?]/));
+      const dir = formsOf(lit.endsWith("/") ? lit.slice(0, -1) : path.posix.dirname(lit), env);
+      const found = entries.find((e) => formsOf(e.p, env).some((g) => re.test(g) || (e.tree && dir.some((f) => f === g || f.startsWith(`${g}/`)))));
+      if (found) return found.p;
+      continue;
+    }
+    const mine = formsOf(abs, env);
+    const found = entries.find((e) => formsOf(e.p, env).some((g) => mine.some((f) => f === g || (e.tree && f.startsWith(`${g}/`)))));
+    if (found) return found.p;
+  }
+  return null;
+}
+
+const protHit = (what: string, word: string): FloorHit => hit("policy-file", `${what} '${word.slice(0, 120)}', a policy file or a harness state file (policy.md of any layer, managed.json, state/round-parents.json, state/bridge-trust.json, state/approvals, state/gate). Ask the user to change it.`);
+const configHit = (what: string, word: string): FloorHit => hit("config-keys", `${what} the safety.permissions*, safety.policy* or gate.* keys of the foreman config file '${word.slice(0, 120)}'. The agent never changes these keys. Ask the user to change them.`);
+
+const READ_PROGS = new Set(["cat", "head", "tail", "less", "more", "ls", "stat", "file", "wc", "grep", "egrep", "fgrep", "rg", "diff", "cmp", "echo", "printf", "cd", "pushd", "popd", "pwd", "test", "[", "realpath", "readlink", "basename", "dirname", "md5sum", "shasum", "sha256sum", "nl", "od", "hexdump", "strings", "tree", "du", "df", "which", "type", "true", "false", "jq", "sort", "uniq", "cut", "tr"]);
+const GIT_NONWRITE = new Set(["diff", "log", "show", "status", "blame", "ls-files", "grep", "cat-file", "rev-parse", "check-ignore", "add", "commit", "rev-list", "describe", "shortlog"]);
+
+/** Whether the segment only reads (or stages) its path operands. */
+function readOnlySegment(seg: ShellSegment, prog: string): boolean {
+  const a = seg.argv;
+  if (READ_PROGS.has(prog)) return true;
+  if (prog === "sed") return !a.some((w) => /^-[A-Za-z]*i|^--in-place/.test(w));
+  if (prog === "find") return !a.some((w) => /^-(delete|exec|execdir|ok|okdir|fprint\w*|fls)$/.test(w));
+  if (prog === "git") {
+    const sub = a.find((w, i) => !w.startsWith("-") && (i === 0 || !/^(-C|-c|--git-dir|--work-tree)$/.test(a[i - 1])));
+    return sub !== undefined && GIT_NONWRITE.has(sub);
+  }
+  return false;
+}
+
+/** The source operands of a copy (every positional but the destination): read only. */
+function copySourceWords(seg: ShellSegment, prog: string): Set<string> {
+  const out = new Set<string>();
+  if (prog !== "cp" && prog !== "rsync") return out;
+  const a = seg.argv;
+  const target = a.some((w) => w === "-t" || w.startsWith("--target-directory"));
+  const pos = a.filter((w) => !w.startsWith("-"));
+  (target ? pos : pos.slice(0, -1)).forEach((w) => out.add(w));
+  return out;
+}
+
+const lineWords = (line: ShellSegment[]): string[] => line.flatMap((s) => [s.program, ...s.argv, ...s.redirects.map((r) => r.target)]);
+
+/** Floor: a shell write to a policy file or harness state file, or to a foreman config file in a line that carries a floored key. */
+function protectedWrite(seg: ShellSegment, prog: string, env: FloorEnv, line: ShellSegment[]): FloorHit | null {
+  const cwd = seg.cwd ?? env.cwd;
+  const entries = protectedEntries(env);
+  const keys = lineWords(line).some((w) => FLOOR_KEYS.test(w));
+  const configWord = (w: string): boolean => keys && CONFIG_FILE.test(slash(resolveWord(w.replace(/^[^=/]*=/, ""), cwd, env) ?? w));
+  for (const r of seg.redirects) {
+    if (r.op === "<" || r.op === "dup") continue;
+    if (protectedWord(r.target, cwd, env, entries)) return protHit("This shell redirect writes", r.target);
+    if (configWord(r.target)) return configHit("This shell redirect writes", r.target);
+  }
+  if (readOnlySegment(seg, prog)) return null;
+  const src = copySourceWords(seg, prog);
+  for (const w of seg.argv) {
+    if (src.has(w)) continue;
+    if (protectedWord(w, cwd, env, entries)) return protHit(`\`${prog}\` writes`, w);
+    if (configWord(w)) return configHit(`\`${prog}\` writes`, w);
+  }
+  return null;
+}
+
+/** Raw-text scan of an opaque line: a protected path, or a config file beside a floored key, in any word denies. */
+function opaqueProtected(text: string, env: FloorEnv): FloorHit | null {
+  const entries = protectedEntries(env);
+  const words = text.replace(/\$(?=['"])/g, "").replace(/['"`]/g, "").split(/[\s;&|<>(){},]+/).filter(Boolean);
+  const w = words.find((x) => protectedWord(x, env.cwd, env, entries));
+  if (w !== undefined) return protHit("The unparsed line names", w);
+  if (FLOOR_KEYS.test(text)) {
+    const c = words.find((x) => CONFIG_FILE.test(x));
+    if (c !== undefined) return configHit("The unparsed line names a file next to", c);
+  }
+  return null;
+}
+
+/** Floor: a write, edit, move or copy tool call whose written path is a policy or state file, or a foreman config file written with a floored key. */
+function protectedToolWrite(tool: string, input: Record<string, unknown>, env: FloorEnv): FloorHit | null {
+  const entries = protectedEntries(env);
+  const moves = tool === "foreman_move" || tool === "foreman_copy";
+  const keys = moves ? ["dst", ...(tool === "foreman_move" ? ["src"] : [])] : ["path", "file_path", "filePath"];
+  const body = Object.entries(input).filter(([k, v]) => typeof v === "string" && !keys.includes(k)).map(([, v]) => v as string).concat(JSON.stringify(input.edits ?? ""));
+  for (const k of keys) {
+    const v = input[k];
+    if (typeof v !== "string" || !v) continue;
+    if (protectedWord(v, env.cwd, env, entries)) return protHit(`\`${tool}\` writes`, v);
+    const abs = resolveWord(v, env.cwd, env);
+    if (!moves && abs !== null && CONFIG_FILE.test(slash(abs)) && body.some((b) => FLOOR_KEYS.test(b))) return configHit(`\`${tool}\` writes`, v);
   }
   return null;
 }

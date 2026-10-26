@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import { GIT_FLOOR_KEYS_FILE, floorKey, lineFloors, pathFloors, type FloorEnv } from "../floors.ts";
 import { parseShell } from "../shellast.ts";
 
@@ -106,4 +107,66 @@ test("path tools: secret and key paths", () => {
   assert.equal(pathFloors({ path: "/h/me/.ssh/id_rsa" }, env)?.rule, "floor-secret-path");
   assert.equal(pathFloors({ path: "/h/me/.pi/agent/auth.json" }, env)?.rule, "floor-secret-path");
   assert.equal(pathFloors({ path: "/w/repo/src/a.ts" }, env), null);
+});
+
+const penv: FloorEnv = { ...env, pkgRoot: "/pkg", policyFiles: ["/h/me/extra-policy.md", "rel/p.md"] };
+const A = "/h/me/.pi/agent/pi-foreman";
+
+test("policy and harness state files: shell writes are floored, reads are not", () => {
+  for (const l of [
+    `echo x > ${A}/policy.md`,
+    `tee ${A}/managed.json`,
+    `rm ${A}/state/bridge-trust.json`,
+    `mv x ${A}/state/round-parents.json`,
+    `cp /tmp/a ${A}/state/approvals/a.json`,
+    `rm -r ${A}/state/gate`,
+    `printf x >> ${A}/state/gate/log.jsonl`,
+    "echo x > /pkg/config/permissions.policy.md",
+    "echo x > /w/repo/.workflow/policy.md",
+    "echo x > ~/.pi/agent/pi-foreman/policy.md",
+    "echo x > /h/me/extra-policy.md",
+    "echo x > rel/p.md",
+    "git restore .workflow/policy.md",
+    `rm ${A}/state/gate/*`,
+    `X=${A}/policy.md; echo x > $X`,
+  ]) assert.equal(floor(l, penv), "floor-policy-file", l);
+  for (const l of [`cat ${A}/policy.md`, `grep a ${A}/state/gate/log.jsonl`, "cat /w/repo/.workflow/policy.md", "git add .workflow/policy.md", `cp ${A}/policy.md /tmp/x`, `echo x > ${A}/other.md`, "echo x > /w/repo/.workflow/other.md"]) {
+    assert.equal(floor(l, penv), null, l);
+  }
+});
+
+test("foreman config files: writes with gate/permissions/policy keys are floored", () => {
+  assert.equal(floor(`echo '{"gate":{}}' > /h/me/.pi/agent/foreman.json`, penv), "floor-config-keys");
+  assert.equal(floor(`tee foreman.json <<< '{"safety":{"permissions":1}}'`, penv), "floor-config-keys");
+  assert.equal(floor(`echo '{"trace":{}}' > /h/me/.pi/agent/foreman.json`, penv), null);
+  assert.equal(floor(`grep gate /h/me/.pi/agent/foreman.json`, penv), null);
+});
+
+test("path tools: writes to policy files and config keys, secret paths in the extended list", () => {
+  assert.equal(pathFloors({ path: `${A}/policy.md`, content: "x" }, penv, "write")?.rule, "floor-policy-file");
+  assert.equal(pathFloors({ file_path: "/w/repo/.workflow/policy.md" }, penv, "edit")?.rule, "floor-policy-file");
+  assert.equal(pathFloors({ src: "/tmp/a", dst: `${A}/state/bridge-trust.json` }, penv, "foreman_move")?.rule, "floor-policy-file");
+  assert.equal(pathFloors({ src: `${A}/policy.md`, dst: "/tmp/a" }, penv, "foreman_move")?.rule, "floor-policy-file");
+  assert.equal(pathFloors({ src: `${A}/policy.md`, dst: "/tmp/a" }, penv, "foreman_copy"), null);
+  assert.equal(pathFloors({ path: `${A}/policy.md` }, penv, "read"), null);
+  assert.equal(pathFloors({ path: "/h/me/.pi/agent/foreman.json", content: '{"gate":{"mode":"off"}}' }, penv, "write")?.rule, "floor-config-keys");
+  assert.equal(pathFloors({ path: "/h/me/.pi/agent/foreman.json", content: '{"trace":{}}' }, penv, "write"), null);
+  assert.equal(pathFloors({ path: "/w/repo/src/a.ts", content: "x" }, penv, "write"), null);
+  for (const p of ["/h/me/.config/glab-cli/config.yml", "/h/me/.config/gh/hosts.yml", "/w/repo/prod.env", "/w/repo/.env.local", "/w/repo/credentials.json"]) assert.equal(pathFloors({ path: p }, penv, "read")?.rule, "floor-secret-path", p);
+  assert.equal(pathFloors({ path: "/w/repo/.env.example" }, penv, "read"), null);
+});
+
+test("the agent auth file matches through ~, another spelling of the agent dir and a symlink", () => {
+  const other: FloorEnv = { ...env, agentDir: "/elsewhere/agent" };
+  assert.equal(pathFloors({ path: "~/.pi/agent/auth.json" }, other)?.rule, "floor-secret-path");
+  assert.equal(pathFloors({ path: "/elsewhere//agent/./auth.json" }, other)?.rule, "floor-secret-path");
+  const dir = fs.mkdtempSync(`${os.tmpdir()}/pf-floor-`);
+  try {
+    fs.mkdirSync(`${dir}/real`);
+    fs.symlinkSync(`${dir}/real`, `${dir}/link`);
+    assert.equal(pathFloors({ path: `${dir}/link/auth.json` }, { ...env, agentDir: `${dir}/real` })?.rule, "floor-secret-path");
+    assert.equal(pathFloors({ path: `${dir}/link/other.json` }, { ...env, agentDir: `${dir}/real` }), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

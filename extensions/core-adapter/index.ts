@@ -16,7 +16,14 @@ import type { Decision, MatchCtx, OverlayRules } from "./permoverlay.ts";
 import { childHandoffDirs, ownedRoots, ownHandoffDirs, resolveNpmRoot, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
-import { baseFloorEnv, gateDecide, gitFacts } from "./gate.ts";
+import { baseFloorEnv, changesState, gateDecide, gitFacts, reviewGitFacts } from "./gate.ts";
+import { GateCache, GateHistory, gateReview, MAX_OWNER_MESSAGES } from "./gatereview.ts";
+import type { GateReviewRequest } from "./gatereview.ts";
+import { gateLogFile, openGateLog } from "./gatelog.ts";
+import type { GateKind, GateLog } from "./gatelog.ts";
+import { loadPolicy } from "./policy.ts";
+import type { LoadedPolicy } from "./policy.ts";
+import { PATH_TOOL_NAMES } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { permFileState, PS_CHILD_ID, PS_PACKAGE, psGlobalConfigPath, psProjectConfigPath, renderPermissions, resolvePermissionSystem } from "./permsys.ts";
 import { npmRootDrift, npmRootDriftNotice, readPolicy } from "./npmrootdrift.ts";
@@ -1171,6 +1178,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s) return;
     asks.get(s.id)?.releaseAll();
     asks.delete(s.id);
+    gateRuntimes.delete(s.id);
+    gateOwnerMessages.delete(s.id);
     try {
       s.registration?.dispose();
     } catch {
@@ -1354,6 +1363,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const prompt = userPromptOf(event);
     if (prompt !== null) {
       review.setIntent(s.id, prompt);
+      if (!s.isChild) gateOwnerMessages.set(s.id, [prompt, ...(gateOwnerMessages.get(s.id) ?? [])].slice(0, MAX_OWNER_MESSAGES));
       // D7: a child never triages; only the foreman's request can escalate on a signal.
       const signals = s.isChild ? [] : promptSignals(prompt, get(s.config.config, "ceremony.heavySignals"));
       s.triageHint = "";
@@ -1911,25 +1921,108 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     };
   }
 
-  // R41 gate (slice 2: floors, path rules, defaults): the first tool_call handler this extension registers. A default allow is traced;
-  // the handlers below still run for everything the gate does not block, so nothing is loosened until the review slices land.
+  /** Per-session gate state: the merged policy (loaded once), the decision log, the review's history and decision cache. */
+  interface GateRuntime {
+    policy: LoadedPolicy;
+    log: GateLog;
+    history: GateHistory;
+    cache: GateCache;
+  }
+  const gateRuntimes = new Map<string, GateRuntime>();
+  /** The owner's prompts of a session, newest first. */
+  const gateOwnerMessages = new Map<string, string[]>();
+  const gateRuntimeOf = (s: Session): GateRuntime => {
+    let rt = gateRuntimes.get(s.id);
+    if (!rt) {
+      const policy = loadPolicy({ pkgRoot: PKG_ROOT, agentDir: s.agentDir, cwd: s.cwd, files: get(s.config.config, "safety.policy.files") });
+      const log = openGateLog({ agentDir: s.agentDir, session: s.id, kind: s.isChild ? "child" : "owner", role: s.isChild ? s.usage.line.role : "foreman", cwd: s.cwd, maxBytes: get(s.config.config, "gate.logMaxBytes"), roots: { worktree: workspaceOf(s.cwd).root, scratch: s.scratch.live(null)[0], tmp: os.tmpdir(), home: os.homedir() } });
+      rt = { policy, log, history: new GateHistory(), cache: new GateCache() };
+      gateRuntimes.set(s.id, rt);
+    }
+    return rt;
+  };
+
+  // R41 gate (slice 4a: floors, path rules, defaults, review, decision log): the first tool_call handler this extension registers. A floor
+  // or review deny blocks; a default or review allow is traced and logged; the handlers below still run for everything the gate does not
+  // block (an ask or an unreachable review falls through to them), so nothing is loosened until the dialog slice lands.
   pi.on("tool_call", async (event, ctx) => {
     const gs = sessionFor(ctx);
     const roots = gs ? await gateRootsOf(gs, ctx.cwd) : undefined;
     const configured = ((v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []))(gs ? get(gs.config.config, "safety.git.protectedBranches") : undefined);
     const r = gateDecide(event.toolName, event.input, ctx.cwd, {
-      env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), protectedBranches: configured }),
+      env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), pkgRoot: PKG_ROOT, policyFiles: gatePolicyFiles(gs), protectedBranches: configured }),
       ...(roots ? { roots: () => roots, facts: { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
     });
-    if (!r) return undefined;
     const role = gs?.isChild ? gs.usage.line.role : "foreman";
-    if ("block" in r) {
+    const kind: GateKind = gs?.isChild ? "child" : ctx.hasUI ? "owner" : "headless";
+    const rt = gs ? gateRuntimeOf(gs) : undefined;
+    const payload = gatePayload(event.toolName, event.input);
+    const note = (layer: "floor" | "default", verdict: string, rule: string, reason?: string): void => rt?.log.record({ tool: event.toolName, layer, verdict, rule, ...(reason ? { reason } : {}), input: payload, role, kind });
+    if (r && "block" in r) {
       gs?.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "blocked", rule: r.rule, ...denyFields(r.reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]) });
+      note("floor", "deny", r.rule, r.reason);
       return { block: true as const, reason: r.reason };
     }
-    gs?.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: r.rule, role });
-    return undefined;
+    if (r) {
+      gs?.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: r.rule, role });
+      note("default", "allow", r.rule);
+      rt?.history.push(event.toolName, payload);
+      if (changesState(event.toolName, r.rule)) rt?.cache.invalidateAllows();
+      return undefined;
+    }
+    const surface = gs && rt ? gateSurface(event.toolName) : null;
+    if (!gs || !rt || !surface) return undefined;
+    try {
+      const facts = reviewGitFacts(ctx.cwd);
+      const req: GateReviewRequest = {
+        surface, tool: event.toolName, role, kind, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, owned: roots?.owned ?? [], ...facts,
+        ownerMessages: gateOwnerMessages.get(gs.id) ?? [], history: rt.history.list(), payload,
+        ...(surface === "file" ? { pathKeys: Object.keys((event.input ?? {}) as object).filter((k) => typeof (event.input as Record<string, unknown>)[k] === "string") } : {}),
+      };
+      const v = await gateReview(req, {
+        policy: rt.policy, registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, cache: rt.cache,
+        recordUsage: (m) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: "autoreview", launchId: null, kind: "foreman" }, m as never)),
+        trace: (t) => gs.trace?.emit({ event: "review", kind: "gate", ...t }),
+        log: rt.log,
+      });
+      if (v.kind === "deny") {
+        const reason = `pi-foreman: policy ${v.entry}: ${v.reason}`;
+        gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "blocked", rule: `review:${v.entry}`, ...denyFields(reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]) });
+        return { block: true as const, reason };
+      }
+      if (v.kind === "allow") {
+        gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: `review:${v.entry}`, role });
+        rt.history.push(event.toolName, payload);
+        if (changesState(event.toolName)) rt.cache.invalidateAllows();
+        return undefined;
+      }
+      gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "fell-through", rule: v.kind === "unreachable" ? `review-unreachable:${v.cause}` : `review-ask:${v.entry}`, role });
+      return undefined;
+    } catch (e) {
+      const reason = `pi-foreman: the permission gate failed (${e instanceof Error ? e.message : String(e)}), so the call is denied. Report this to the user.`;
+      note("floor", "deny", "gate-error", reason);
+      return { block: true as const, reason };
+    }
   });
+
+  const gatePolicyFiles = (gs: Session | undefined): string[] => {
+    const v = gs ? get(gs.config.config, "safety.policy.files") : undefined;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  };
+  const SHELL_GATE_TOOLS = new Set(["bash", "foreman_bg", "bg_run", "powershell"]);
+  /** The review surface of a tool (review.ts REVIEW_SURFACES plus the path tools), or null when the gate does not review it. */
+  const gateSurface = (tool: string): string | null => (SHELL_GATE_TOOLS.has(tool) ? "bash" : PATH_TOOL_NAMES.has(tool) ? "file" : tool === "skill" ? "skill" : tool.startsWith("mcp") ? "mcp" : null);
+  /** The text the log shapes and the review reads: the command, the path operands, or the JSON input. */
+  const gatePayload = (tool: string, input: unknown): string => {
+    const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+    if (SHELL_GATE_TOOLS.has(tool)) return String(i.command ?? i.cmd ?? "");
+    if (PATH_TOOL_NAMES.has(tool)) return Object.entries(i).filter(([, v]) => typeof v === "string").map(([k, v]) => `${k}=${v}`).join(" ");
+    try {
+      return JSON.stringify(i);
+    } catch {
+      return "";
+    }
+  };
 
   pi.on("tool_call", async (event, ctx) => {
     const ms = sessionFor(ctx);
@@ -4186,6 +4279,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     else if (!ctx.modelRegistry.find(rt.provider, rt.modelId)) fail(`review model ${rt.provider}/${rt.modelId} not in the model registry; asks go to you`, "correct providers.<p>.review.model.");
     else ok(`model review: ${rt.provider}/${rt.modelId} (timeout ${rt.timeoutMs} ms)`);
     out.push(`INFO ${autoReviewDoctorLine(get(s.config.config, "safety.permissions.autoReview.enabled") !== false, rulesFilePath(s.config.basePermissions, s.agentDir, PKG_ROOT), PKG_ROOT, rt ?? autoReviewTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as unknown as Parameters<typeof autoReviewTarget>[2]))}`);
+    const gp = gateRuntimeOf(s);
+    out.push(`INFO gate policy: ${gp.policy.trusted.entries.length} trusted entries (hash ${gp.policy.hash.slice(0, 12)}), project layer ${gp.policy.project ? `${gp.policy.project.entries.length} entries` : "none"}; decision log ${gateLogFile(s.agentDir)}`);
+    for (const w of gp.policy.warnings) out.push(`WARN policy: ${w}`);
     if (s.permissionSystemError) fail(s.permissionSystemError, "run the installer (node setup.mjs); the package is pinned in packages.lock.json.");
     else ok(`permission system resolvable (${PS_PACKAGE})`);
     if (s.overlay) ok(`permission overlay active (${s.overlay.bashDeny.length} command deny, ${s.overlay.pathRules.length} path rules, ${s.overlay.bashAsk.length + s.overlay.pathAsk.length} project/session ask)`);

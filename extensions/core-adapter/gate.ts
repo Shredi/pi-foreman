@@ -54,7 +54,7 @@ export function gateDecide(toolName: string, input: unknown, cwd: string, deps: 
       return rule ? { allow: true, rule } : undefined;
     }
     if (PATH_TOOLS.has(toolName)) {
-      const h = pathFloors(inp, env);
+      const h = pathFloors(inp, env, toolName);
       if (h) return blocked(h);
       const v = deps.roots ? pathDecide(toolName, inp, cwd, deps.roots(cwd), platform) : undefined;
       return v;
@@ -92,6 +92,25 @@ export const gitFacts: GitFacts = {
     }
   },
 };
+
+/** Git facts for a review request: branch, HEAD, MERGE_HEAD and remote names (null / empty when git cannot say). */
+export function reviewGitFacts(cwd: string): { branch: string | null; head: string | null; mergeHead: string | null; remotes: string[] } {
+  return {
+    branch: currentBranch(cwd),
+    head: gitOut(cwd, ["rev-parse", "-q", "--verify", "HEAD"]) || null,
+    mergeHead: gitOut(cwd, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]) || null,
+    remotes: (gitOut(cwd, ["remote"]) ?? "").split("\n").filter(Boolean),
+  };
+}
+
+const PURE_READ_TOOLS = new Set(["read", "grep", "find", "ls"]);
+const PURE_READ_RULES = new Set(["default-read", "default-git-read", "default-gh-read", "default-fetch"]);
+
+/** Whether an allowed call can change state (so cached review allows no longer hold): everything but a pure read. */
+export function changesState(tool: string, rule?: string): boolean {
+  if (PURE_READ_TOOLS.has(tool) || (rule !== undefined && PURE_READ_RULES.has(rule))) return false;
+  return !(rule !== undefined && /^path-read-/.test(rule));
+}
 
 /** The default floor environment: process facts and git lookups. index.ts passes richer roots when it wires the session in. */
 export function baseFloorEnv(cwd: string, extra: Partial<FloorEnv> = {}): FloorEnv {

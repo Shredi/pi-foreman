@@ -247,6 +247,7 @@ function cacheKeys(r: GateReviewRequest, policyHashHex: string, projectHashHex: 
 export async function gateReview(req: GateReviewRequest, deps: GateReviewDeps): Promise<GateVerdict> {
   const now = deps.now ?? Date.now;
   const t0 = now();
+  let model = "";
   const done = (v: Omit<Extract<GateVerdict, { entry: string }>, "latencyMs"> | { kind: "unreachable"; cause: UnreachableCause; detail: string }, cacheKey?: { deny: string; allow: string }): GateVerdict => {
     const out = { ...v, latencyMs: now() - t0 } as GateVerdict;
     if (cacheKey && deps.cache && out.kind !== "unreachable" && !out.cached) {
@@ -256,7 +257,7 @@ export async function gateReview(req: GateReviewRequest, deps: GateReviewDeps): 
     try {
       const entry = out.kind === "unreachable" ? out.cause : out.entry;
       deps.trace?.({ decision: out.kind, entry, cached: out.kind !== "unreachable" && out.cached, latencyMs: out.latencyMs });
-      deps.log?.record({ tool: req.tool, layer: out.kind !== "unreachable" && out.cached ? "cache" : "review", verdict: out.kind, rule: entry, reason: out.kind === "unreachable" ? out.detail : out.reason, input: req.payload, role: req.role, kind: req.kind });
+      deps.log?.record({ tool: req.tool, layer: out.kind !== "unreachable" && out.cached ? "cache" : "review", verdict: out.kind, rule: entry, reason: out.kind === "unreachable" ? out.detail : out.reason, input: req.payload, role: req.role, kind: req.kind, latencyMs: out.latencyMs, cached: out.kind !== "unreachable" && out.cached, ...(model ? { model } : {}) });
     } catch {
       // trace and log are best effort
     }
@@ -272,6 +273,7 @@ export async function gateReview(req: GateReviewRequest, deps: GateReviewDeps): 
 
   const target = gateReviewTarget(deps.config, deps.provider, deps.registry);
   const text = requestText(req);
+  if (target) model = `${target.provider}/${target.modelId}`;
 
   const first = await callReview(deps, target, trustedSystemPrompt(trusted), text);
   if ("cause" in first) return done({ kind: "unreachable", cause: first.cause, detail: first.detail });
