@@ -144,7 +144,7 @@ test("registerClose: with PI_FOREMAN_REMOTE_PARENT=1 and remote-parent excluded,
     await handlers.get("message_end")!({ message: { role: "custom", customType: INTERCOM_INBOUND_TYPE, details: close() } }, ctx);
     assert.deepEqual(replies, ["refused:close.from does not include remote-parent"]);
     assert.ok(fs.existsSync(path.join(dir, "close.json")));
-    // a local parent id never closes a remote child: no order, a refusal through the notice
+    // same close.from refusal again: remote-parent is still excluded, so no order is written and the notice is refused
     fs.unlinkSync(path.join(dir, "close.json"));
     replies.length = 0;
     await handlers.get("message_end")!({ message: { role: "custom", customType: INTERCOM_INBOUND_TYPE, details: close() } }, ctx);
