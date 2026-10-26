@@ -14,7 +14,7 @@ import shutil
 import sys
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from unittest import mock
 
 TESTS = Path(__file__).resolve().parent
@@ -290,6 +290,14 @@ class RelayWarningTest(unittest.TestCase):
         self.assertIsNone(self.warn(os.path.abspath(os.sep + os.path.join("opt", "pi", "pi-intercom"))))
         with mock.patch.object(fsn.shutil, "which", return_value="/usr/bin/pi-intercom"):
             self.assertIsNone(fsn.relay_warning("alpha", "pi-intercom --flag"))
+
+    def test_remote_paths_are_posix_whatever_the_host(self):
+        self.assertIsNone(self.warn("/opt/x/pi-intercom --flag"))
+        with mock.patch.object(fsn, "intercom_cli", return_value=PureWindowsPath("\\opt\\my pi\\cli.mjs")), \
+                mock.patch.object(fsn.shutil, "which", side_effect=lambda n, *a, **k: "/usr/bin/node" if n == "node" else None):
+            text = fsn.relay_warning("alpha", RELAY)
+        self.assertNotIn("\\", text)
+        self.assertIn(shlex.quote("/opt/my pi/cli.mjs"), text)
 
     def test_the_first_shell_word_is_tested(self):
         self.assertIn("remoteCommand", self.warn("%s --flag 'a b'" % RELAY))

@@ -68,7 +68,9 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import ntpath
 import os
+import posixpath
 import re
 import hashlib
 import secrets
@@ -1474,12 +1476,15 @@ def relay_warning(name, relay):
         words = shlex.split(relay)
     except ValueError:
         words = []
-    if words and (os.path.isabs(words[0]) or shutil.which(words[0])):
+    # The relay command and the fix text belong to the remote (POSIX) side, so they are judged as POSIX on every host;
+    # a drive-letter absolute word (a raw Windows path, which shlex has already stripped of its backslashes) also counts.
+    raw = relay.split(None, 1)[0] if words else ""
+    if words and (posixpath.isabs(words[0]) or ntpath.isabs(raw) or shutil.which(words[0])):
         return None
     cli, node = intercom_cli(), shutil.which("node")
     if words and cli and node:
         return ("the relay command of %s is not on PATH here, so push notices may not arrive. Set crossMachine.remoteCommand in "
-                "%s's pi-intercom config to: %s %s" % (name, name, shlex.quote(node), shlex.quote(str(cli))))
+                "%s's pi-intercom config to: %s %s" % (name, name, shlex.quote(node), shlex.quote(Path(cli).as_posix())))
     return ("the relay command of %s was not found on PATH here (best effort check); push notices may not arrive. "
             "See docs/sessions.md, pi-intercom on PATH" % name)
 
