@@ -8,7 +8,8 @@
 # Six rows per session. Five hold one token each, so no Herdr separator (" · ")
 # is drawn and the plugin owns every column of the line; the pr row holds four
 # cells, one per dot, so each dot gets its own colour:
-#   $fm_hd    tree connector, state glyph, label, age (the glyph animates in a live session)
+#   $fm_hd    tree connector, state glyph, label, age (the glyph animates in a live session;
+#             the reason icon is not here, it leads the detail rows below)
 #   $fm_a1    agents: running child runs, runs that just finished
 #   $fm_a2    tasks and watches: PR watches, CI, background commands
 #   $fm_a3    waits and an open ask
@@ -25,11 +26,12 @@
 #
 # Colours: the detail rows are dim and follow your theme. The header cell has a
 # base colour (green: a session working on its own turn); its rules colour the
-# whole header line by the reason icon or state glyph it contains (rules match
-# substrings of the value): blocked and ask yellow, review and agent blue, task
-# and wait cyan, lost red, done and idle grey. The ascii set has no rules and no
-# base colour, its glyphs would collide with label text. A "!" or a reason or
-# state glyph in a session label colours its line too. "!" after the age marks a
+# whole header line by the state glyph it contains (rules match substrings of
+# the value): blocked and asking yellow, lost red, done and idle grey. The
+# header holds no reason icon (review, agent, task, wait), so it has no rules
+# for them; the reason colour lives on the detail rows. The ascii set has no
+# rules and no base colour, its glyphs would collide with label text. A "!" or
+# a state glyph in a session label colours its line too. "!" after the age marks a
 # session blocked for more than 15 minutes, so that rule comes first. First
 # match wins. If your Herdr rejects the cell-level `fg`, delete it: the own-turn
 # line then keeps your theme colour and the rules still apply.
@@ -51,10 +53,6 @@ pi = [
       { contains = "!", fg = "#d9534f", bold = true },
       { contains = "✋", fg = "#e0a030" },
       { contains = "?", fg = "#e0a030" },
-      { contains = "◎", fg = "#6fa8dc" },
-      { contains = "◆", fg = "#6fa8dc" },
-      { contains = "⚙", fg = "#5bc0de" },
-      { contains = "◷", fg = "#5bc0de" },
       { contains = "✗", fg = "#d9534f" },
       { contains = "✓", fg = "#8a8a8a" },
       { contains = "⏸", fg = "#8a8a8a" },

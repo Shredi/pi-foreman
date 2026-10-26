@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "profile": null,
   "displayNames": "classic",
   "presence": { "enabled": true, "awayAfterMinutes": 11 },
   "displayPresets": {
@@ -89,7 +90,7 @@
   "widget": { "children": true, "prs": true, "prLinks": true },
   "ui": { "symbols": "unicode", "spinner": true },
   "herdr": { "blockedShim": true, "groupTag": true },
-  "sessions": { "machines": {}, "remoteInlineMaxBytes": 32768 },
+  "sessions": { "machines": {}, "remoteInlineMaxBytes": 32768, "pull": { "intervalSeconds": 20, "fastSeconds": 5 }, "ssh": { "controlMaster": true } },
   "compaction": { "maxTokens": 200000 },
   "wait": { "batchWindowSeconds": 300, "maxSeconds": 86400, "maxActive": 8, "ci": true },
   "resources": { "maxLoadPerCore": 1.5, "minFreeMemMB": 1024, "minFreeDiskGB": 5, "sampleSeconds": 30 },

@@ -61,6 +61,15 @@ export interface RemoteApplied {
   changed: boolean;
 }
 
+/** `pull <age>` (or `pull never`) and `pull error: <text>` of a pull-mode remote entry, for `session list` and the widget; "" for any other entry. */
+export function pullSummary(s: SessionEntry, nowMs: number, age: (ms: number) => string): string {
+  if (typeof s.machine !== "string" || s.returnPath !== "pull") return "";
+  const at = typeof s.pulledAt === "string" ? Date.parse(s.pulledAt) : NaN;
+  const parts = [`pull ${Number.isFinite(at) ? age(nowMs - at) : "never"}`];
+  if (typeof s.pullError === "string" && s.pullError) parts.push(`pull error: ${s.pullError.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim().slice(0, 200)}`);
+  return parts.join(" · ");
+}
+
 const norm = (p: string, ci: boolean): string => {
   const s = p.replace(/\\/g, "/").replace(/\/+$/, "");
   return ci ? s.toLowerCase() : s;

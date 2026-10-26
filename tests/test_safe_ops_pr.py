@@ -369,6 +369,10 @@ def pair(argv, flag):
     return argv[argv.index(flag) + 1]
 
 
+def fields_of(argv):
+    return [argv[i + 1] for i, a in enumerate(argv) if a == "-f"]
+
+
 class CleanTitleTest(unittest.TestCase):
     def test_clean_title_strips_c1_cf_and_cuts(self):
         import pr_ops
@@ -588,16 +592,12 @@ class BatchTest(RepoLessCase):
         res = self.ok(self.at("pr_batch", prs=[{"repo": "acme/lib", "n": 5}, {"repo": "Other/Tool.x", "n": 6}]))
         self.assertEqual([p["number"] for p in res["prs"]], [5, 6])
         argv = argv_of(self.calls()[0])
-        self.assertEqual(argv[:4], ["gh", "api", "graphql", "-f"])
-        pairs = [(argv[i], argv[i + 1]) for i in range(len(argv) - 1) if argv[i] in ("-f", "-F")]
-        self.assertIn(("-f", "owner0=acme"), pairs)
-        self.assertIn(("-f", "name0=lib"), pairs)
-        self.assertIn(("-F", "n0=5"), pairs)
-        self.assertIn(("-f", "owner1=Other"), pairs)
-        self.assertIn(("-f", "name1=Tool.x"), pairs)
-        self.assertIn(("-F", "n1=6"), pairs)
-        self.assertEqual([k for k, v in pairs if v.startswith(("owner", "name"))], ["-f"] * 4)
-        query = [v for k, v in pairs if v.startswith("query=")][0]
+        self.assertEqual(argv[:3], ["gh", "api", "graphql"])
+        body = json.loads(self.calls()[0]["body"])
+        v = body["variables"]
+        self.assertEqual(v, {"owner0": "acme", "name0": "lib", "n0": 5, "owner1": "Other", "name1": "Tool.x", "n1": 6})
+        self.assertIsInstance(v["n0"], int)
+        query = body["query"]
         for frag in ("$owner0: String!", "$name1: String!", "$n1: Int!", "r1: repository(owner: $owner1, name: $name1)", "pullRequest(number: $n0)",
                      "isRequired(pullRequestNumber: $n0)", "contexts(first: 100)", "totalCount"):
             self.assertIn(frag, query)
@@ -605,6 +605,16 @@ class BatchTest(RepoLessCase):
             self.assertNotIn(lit, query)
         self.ok(self.at("pr_batch", prs=[{"repo": "acme/lib", "n": 5}]))
         self.assertNotIn("--hostname", argv_of(self.calls()[1]))
+
+    def test_long_batch_keeps_argv_short_and_removes_the_body_file(self):
+        self.scn({"gh api graphql": {"stdout": j({"data": {}})}})
+        prs = [{"repo": "%s/%s" % ("o" * 39, "n" * 100), "n": i + 1} for i in range(50)]
+        self.at("pr_batch", prs=prs)
+        call = self.calls()[0]
+        argv = argv_of(call)
+        self.assertLess(sum(len(a) + 1 for a in argv), 8000)
+        self.assertEqual(len(json.loads(call["body"])["variables"]), 150)
+        self.assertFalse(os.path.exists(argv[argv.index("--input") + 1]))
 
     def test_hostname_and_validation_and_cap(self):
         self.scn({"gh api graphql": {"stdout": j({"data": {"r0": gql_pr(5, rollup())}})}})
@@ -703,7 +713,8 @@ class PollTest(RepoLessCase):
         self.assertEqual(res["items"], [{"repo": "acme/lib", "n": 7, "title": "R", "url": "https://ghe.example.com/acme/lib/pull/7"}])
         argv = argv_of(self.calls()[0])
         self.assertEqual(argv[:6], ["gh", "api", "-i", "--method", "GET", "--hostname"])
-        self.assertEqual(argv[-1], "notifications?all=false&participating=false&per_page=100&page=2")
+        self.assertEqual(argv[-1], "notifications")
+        self.assertEqual(fields_of(argv), ["all=false", "participating=false", "per_page=100", "page=2"])
         self.assertEqual(pair(argv, "-H"), "If-Modified-Since: Fri, 30 Jan 2026 12:00:00 GMT")
         self.assertNotIn("If-None-Match", " ".join(argv))
 
@@ -711,12 +722,25 @@ class PollTest(RepoLessCase):
         self.scn({"gh api -i": {"stdout": http(200, {"ETag": '"e1"'}, j(EVENTS))}})
         res = self.ok(self.at("pr_poll", endpoint="events", login="octo-user", etag='W/"e0"'))
         argv = argv_of(self.calls()[0])
-        self.assertEqual(argv[-1], "users/octo-user/events?per_page=100")
+        self.assertEqual(argv[-1], "users/octo-user/events")
+        self.assertEqual(fields_of(argv), ["per_page=100"])
         self.assertEqual(pair(argv, "-H"), 'If-None-Match: W/"e0"')
         self.assertEqual(res["etag"], '"e1"')
         self.assertEqual(res["items"], [
             {"repo": "acme/lib", "n": 3, "url": "https://ghe.example.com/acme/lib/pull/3", "at": "2026-01-02T00:00:00Z"},
             {"repo": "acme/lib", "n": 4, "url": "https://github.com/acme/lib/pull/4", "at": "2026-01-02T01:00:00Z"}])
+
+    def test_poll_argv_has_no_cmd_metacharacters(self):
+        for kw in (dict(endpoint="notifications", page=3, since="Fri, 30 Jan 2026 12:00:00 GMT"),
+                   dict(endpoint="events", login="octo-user")):
+            self.scn({"gh api -i": {"stdout": http(200, {}, "[]")}})
+            self.ok(self.at("pr_poll", **kw))
+            argv = argv_of(self.calls()[0])
+            self.assertIn("-f", argv)
+            for a in argv:
+                if a.startswith("If-Modified-Since"):
+                    continue   # a header value, no cmd.exe metacharacter in an HTTP date
+                self.assertFalse(set(a) & set("&|<>^%"), (kw, a))
 
     def test_304_403_404_with_gh_exit_1_are_answers(self):
         for code in (304, 403, 404):
