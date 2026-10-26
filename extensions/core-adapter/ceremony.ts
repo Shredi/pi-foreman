@@ -28,6 +28,10 @@ export interface CeremonyState {
   needsChange?: boolean;
   /** A builder ran at trivial on the builder path: the finish scans its diff (trivial.ts). */
   trivialBuilder?: boolean;
+  /** The tier the user set with `/ceremony`: sticky; the ledger header and foreman_triage never raise the tier above it, automatic escalations still do. Only the next `/ceremony` replaces it. */
+  userTier?: Tier;
+  /** The tier the latest ledger header named while `userTier` held the tier down (shown by tierLine). */
+  ledgerSaid?: Tier;
 }
 
 export function isTier(v: unknown): v is Tier {
@@ -40,6 +44,8 @@ export function initialCeremony(defaultTier: unknown): CeremonyState {
 
 /** Automatic change: only upward. The config default is not a triage, so any tier replaces it. */
 export function escalate(s: CeremonyState, tier: Tier, source: "ledger" | "auto", reason: string): CeremonyState {
+  // A tier the user set outranks the ledger header: it is recorded for the tier line, never applied.
+  if (s.userTier && source === "ledger") return { ...s, triaged: true, ledgerSaid: tier };
   if (s.source === "default" && source === "ledger") {
     return { ...s, tier, source, reasons: [...s.reasons, reason], triaged: true };
   }
@@ -49,7 +55,7 @@ export function escalate(s: CeremonyState, tier: Tier, source: "ledger" | "auto"
 
 /** `/ceremony <tier>`: the user may move the tier either way. */
 export function userOverride(s: CeremonyState, tier: Tier): CeremonyState {
-  return { ...s, tier, source: "user", reasons: [...s.reasons, `user set ${tier}`], triaged: true };
+  return { ...s, tier, source: "user", reasons: [...s.reasons, `user set ${tier}`], triaged: true, userTier: tier, ...(s.source === "ledger" && s.tier !== tier ? { ledgerSaid: s.tier } : {}) };
 }
 
 /** `Tier: <tier>` in the ledger header (first 40 lines; markdown emphasis allowed). */
@@ -130,6 +136,6 @@ export function gateThreshold(s: CeremonyState): number | null {
 }
 
 export function tierLine(s: CeremonyState): string {
-  const how = s.source === "default" ? "config default, not triaged yet" : s.source === "user" ? "set by the user" : s.source === "ledger" ? "from the ledger header" : s.source === "foreman" ? "triaged by the foreman" : s.triaged ? "escalated automatically" : "escalated automatically, not triaged yet";
+  const how = s.source === "default" ? "config default, not triaged yet" : s.source === "user" ? (s.ledgerSaid && s.ledgerSaid !== s.tier ? `set by the user (ledger says ${s.ledgerSaid})` : "set by the user") : s.source === "ledger" ? "from the ledger header" : s.source === "foreman" ? "triaged by the foreman" : s.triaged ? "escalated automatically" : "escalated automatically, not triaged yet";
   return `Current ceremony tier: ${s.tier} (${how}).`;
 }

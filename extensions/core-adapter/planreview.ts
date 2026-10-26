@@ -20,6 +20,15 @@ import type { PanelFinding } from "./panel.ts";
 import type { ReviewResult } from "./occasion.ts";
 import type { Verdict } from "./rounds.ts";
 
+/** `ceremony.planReviewMax`: `[plan-review]` runs per plan topic per session before the owner decides; a positive integer, else 4. */
+export const DEFAULT_PLAN_REVIEW_MAX = 4;
+export function planReviewMax(v: unknown): number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 1 ? v : DEFAULT_PLAN_REVIEW_MAX;
+}
+
+/** The line the checkpoint shows (dialog or result text) once a topic reached `ceremony.planReviewMax`. */
+export const planReviewCapLine = (n: number): string => `Plan review cap reached (${n} reviews); the owner decides`;
+
 /** `ceremony.planReviewRounds`: a positive integer, else 2. */
 export const DEFAULT_PLAN_REVIEW_ROUNDS = 2;
 export function planReviewRounds(v: unknown): number {
@@ -61,22 +70,27 @@ export function planPathsOf(files: readonly string[], scratchDir: string): strin
 
 /** Plan-review verdicts per plan lineage (real plan path). */
 export class PlanReviews {
-  private readonly byPath = new Map<string, { latest: PlanVerdict; rounds: number }>();
+  private readonly byPath = new Map<string, { latest: PlanVerdict; rounds: number; reviews: number }>();
 
   /** Each recorded verdict of a new plan VERSION is one round of the plan's lineage (a revision keeps the count; a repeat review of the same version does not add one). */
   record(planPath: string, v: PlanVerdict): void {
     const l = this.byPath.get(planPath);
-    this.byPath.set(planPath, { latest: v, rounds: (l?.rounds ?? 0) + (l && l.latest.hash === v.hash ? 0 : 1) });
+    this.byPath.set(planPath, { latest: v, rounds: (l?.rounds ?? 0) + (l && l.latest.hash === v.hash ? 0 : 1), reviews: (l?.reviews ?? 0) + 1 });
+  }
+
+  /** Every lineage (the session entry, planstate.ts). */
+  all(): { path: string; latest: PlanVerdict; rounds: number; reviews: number }[] {
+    return [...this.byPath].map(([path, l]) => ({ path, ...l }));
   }
 
   /** The latest verdict and round count of a plan's lineage, or null (the reload file, roundstate.ts). */
-  lineage(planPath: string): { latest: PlanVerdict; rounds: number } | null {
+  lineage(planPath: string): { latest: PlanVerdict; rounds: number; reviews: number } | null {
     return this.byPath.get(planPath) ?? null;
   }
 
   /** After a reload: put back a lineage the reload file kept. */
-  restore(planPath: string, latest: PlanVerdict, rounds: number): void {
-    this.byPath.set(planPath, { latest, rounds });
+  restore(planPath: string, latest: PlanVerdict, rounds: number, reviews: number = rounds): void {
+    this.byPath.set(planPath, { latest, rounds, reviews });
   }
 
   /**
@@ -98,7 +112,7 @@ export class PlanReviews {
 export function planReviewRefusalText(reason: PlanReviewRefusal, rel: string, tier: string, stale: boolean): string {
   const head = `pi-foreman: ${CHECKPOINT_TOOL} refused [${reason}]:`;
   if (reason === "plan_revision_required") {
-    return `${head} the plan review of ${rel} failed. Send the plan back to the planner once with the review's findings, launch the reviewer with "[plan-review]" on the revised plan and the ledger, then call ${CHECKPOINT_TOOL} again; after that re-review the checkpoint opens whatever the verdict.`;
+    return `${head} the plan review of ${rel} failed. Send the plan back to the planner once with the review's findings. Revise the body above the appendix: an Addendum is not a revision and keeps the same plan version. Then launch the reviewer with "[plan-review]" on the revised plan and the ledger, then call ${CHECKPOINT_TOOL} again; after that re-review the checkpoint opens whatever the verdict.`;
   }
   const why = stale ? "the plan changed since its last review, so that verdict no longer counts" : "the plan has no review yet";
   return `${head} at tier ${tier} the checkpoint needs a reviewer verdict on the current version of the plan (ceremony.planReview), and ${why}. Launch the reviewer with "[plan-review]" in its task, naming ${rel} and the ledger, wait for its verdict, then call ${CHECKPOINT_TOOL} again.`;

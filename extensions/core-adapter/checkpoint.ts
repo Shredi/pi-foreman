@@ -2,7 +2,7 @@
 // `foreman_checkpoint(path)` records the latest checkpoint of the session (in memory, like the
 // review verdicts); a builder launch at tier heavy is refused unless that record is approved and
 // the file still hashes the same. The hash is the plan VERSION (planVersionHash: sha256 of the body
-// above any ruling/decision-log/addendum appendix) over the bytes the harness reads itself; the
+// above any ruling/decision-log/addendum appendix, isAppendixLine) over the bytes the harness reads itself; the
 // model never supplies one. Same bytes after a delete and re-create = same hash = still approved.
 //
 // Path rules (the edit mode's own helpers): inside the foreman's workspace, directly in the real
@@ -36,6 +36,8 @@ export interface PlanRecord {
   status: PlanStatus;
   approvedAt: string | null;
   by: "user" | "rig" | null;
+  /** Where the approval came from (planstate.ts persists it): the dialog, the parent's ruling-plan.md or ruling.md. */
+  source?: "dialog" | "ruling-plan" | "ruling";
   note?: string;
 }
 
@@ -63,16 +65,21 @@ export function sha256(bytes: Buffer): string {
   return crypto.createHash("sha256").update(bytes).digest("hex");
 }
 
-/** Headings (exact line, trailing whitespace ignored) from which a plan file is appendix: rulings, not the reviewed plan. */
-const APPENDIX_LINES = new Set(["## Ruling", "## Rulings", "## Parent ruling", "## Decision log", "<!-- plan-appendix -->"]);
-const APPENDIX_PREFIX = "## Addendum";
+/**
+ * Whether a line starts the appendix of a plan file (rulings, not the reviewed plan): a level 2 or 3 heading, case-insensitive,
+ * whose text starts with Addendum, Addenda, Ruling, Rulings, Parent ruling or Decision log as a whole word (followed by the end of the
+ * line, `:`, ` -`, ` (` or ` <digit>`), or the line `<!-- plan-appendix -->`. Trailing whitespace is ignored.
+ */
+export function isAppendixLine(line: string): boolean {
+  const l = line.replace(/\s+$/, "");
+  return l === "<!-- plan-appendix -->" || /^#{2,3}[ \t]+(?:addendum|addenda|rulings?|parent ruling|decision log)(?=$|:|[ \t]-|[ \t]\(|[ \t]\d)/i.test(l);
+}
 
 /** Start offset of the first appendix line in `text`, or -1 (no appendix). `text` must keep one char per byte (latin1) when used for offsets. */
 function appendixOffset(text: string): number {
   let at = 0;
   for (const line of text.split(/(?<=\n)/)) {
-    const l = line.replace(/\s+$/, "");
-    if (APPENDIX_LINES.has(l) || l.startsWith(APPENDIX_PREFIX)) return at;
+    if (isAppendixLine(line)) return at;
     at += line.length;
   }
   return -1;
@@ -227,7 +234,7 @@ export function readPlanVerdict(dir: string, planFile: string, self?: SelfRuling
   }
 }
 
-function readPlanVerdictFile(dir: string, planFile: string, self?: SelfRulings): PlanVerdict | null {
+export function readPlanVerdictFile(dir: string, planFile: string, self?: SelfRulings): PlanVerdict | null {
   try {
     const file = path.join(dir, PLAN_VERDICT_FILE);
     const st = fs.lstatSync(file);
@@ -258,7 +265,7 @@ const clean = (s: string): string => s.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, ""
 /** What the owner sees before the dialog: title, Goal's first lines, section headings, path, hash prefix (at most 12 lines). */
 export function planSummary(text: string, rel: string, hash: string): string {
   const all = text.split(/\r?\n/);
-  const cut = all.findIndex((l) => APPENDIX_LINES.has(l.replace(/\s+$/, "")) || l.startsWith(APPENDIX_PREFIX));
+  const cut = all.findIndex(isAppendixLine);
   const lines = cut < 0 ? all : all.slice(0, cut);
   const heading = /^(#{1,6})\s+(.*)$/;
   const title = lines.map((l) => heading.exec(l)).find((h) => h && h[1] === "#")?.[2] ?? lines.find((l) => l.trim()) ?? "(untitled)";

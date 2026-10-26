@@ -106,6 +106,8 @@ export interface ProtectRule {
   fromWriteAsk?: boolean;
   /** Comes from protect.childDeny (MatchCtx.skillDirs lifts the `.agents` ones for a read of a named skill). */
   fromChildDeny?: boolean;
+  /** The `*` stands for one file name: a path below a subdirectory of the pattern's directory does not match (the Pi session files, not `subagent-artifacts/`). */
+  flat?: boolean;
 }
 
 /** Roots owned by the foreman session (owned.ts provides them); optional, today's behaviour without it. */
@@ -808,7 +810,7 @@ export function isSelfHost(cwd: string, pkgRoot: string, platform: string = proc
  * the project and session layers (the config CLI's `basePermissions`); asks present there are
  * PS's job, only the added ones are enforced here. Without `base` no ask is enforced.
  */
-export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unknown, agentDir: string, pkgRoot?: string, xdgConfigHome: string | undefined = process.env.XDG_CONFIG_HOME, selfHost = false, owned?: OwnedRoots): OverlayRules {
+export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unknown, agentDir: string, pkgRoot?: string, xdgConfigHome: string | undefined = process.env.XDG_CONFIG_HOME, selfHost = false, owned?: OwnedRoots, sessionDir?: string): OverlayRules {
   const m = obj(merged);
   const b = obj(base);
   const slash = (d: string): string => d.split(path.sep).join("/").replace(/\/+$/, "");
@@ -842,7 +844,7 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
       ...strs(mp.deny).map((pattern): PathRule => ({ pattern: sub(pattern), action: "deny" })),
     ],
     pathAsk: hasBase ? without(strs(mp.ask), strs(bp.ask)) : [],
-    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true, { readOk: "main" }), ...prot(pb?.childDeny, null, true, { fromChildDeny: true }), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false, { readOk: "child", fromWriteAsk: true }), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true })), ...(userRules ? prot([slash(userRules)], "ask", true, { readOk: "main" }) : [])],
+    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true, { readOk: "main" }), ...prot(pb?.childDeny, null, true, { fromChildDeny: true }), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false, { readOk: "child", fromWriteAsk: true }), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true })), ...(userRules ? prot([slash(userRules)], "ask", true, { readOk: "main" }) : []), ...(sessionDir ? [{ pattern: `${slash(sessionDir)}/*.jsonl`, main: "deny" as const, child: "deny" as const, shell: true, childShell: true, readOk: "main" as const, flat: true }] : [])],
     childBlock: [...CHILD_BLOCK.map(sub), ...CHILD_BLOCK_WORKTREES, ...(owned?.childScratchRoot ? [slash(owned.childScratchRoot), `${slash(owned.childScratchRoot)}/*`] : [])],
     childBlockExcept: CHILD_BLOCK_EXCEPT.map(sub),
     childBlockInWorkspace: CHILD_BLOCK_WORKTREES,
@@ -3371,8 +3373,9 @@ function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: bo
     if (shell && !r.shell && !(child && r.childShell)) continue;
     const kind = child ? r.child : r.main;
     if (!kind || (kind === "ask" && ask && !ask.shortName)) continue;
-    const exact = cands.some((x) => pathMatches(r.pattern, x, ctx));
-    if (!exact && !guessed.some((x) => pathMatches(r.pattern, x, ctx))) continue;
+    const flatName = (x: string): boolean => !r.flat || !/[\\/]/.test(x.slice(r.pattern.lastIndexOf("/") + 1));
+    const exact = cands.some((x) => pathMatches(r.pattern, x, ctx) && flatName(x));
+    if (!exact && (r.flat || !guessed.some((x) => pathMatches(r.pattern, x, ctx)))) continue;
     if (kind === "deny") return { kind, rule: r, shortName: !exact };
     if (!ask || (ask.shortName && exact)) ask = { kind, rule: r, shortName: !exact };
   }
