@@ -458,6 +458,7 @@ Activity glyphs and the spinner:
 | `pr-run` | ◉ | ◉ | U+F192 | `*` |
 | `pr-ok` | ○ | ○ | U+F10C | `o` |
 | `pr-none` | ◌ | ◌ | U+F1DB | `.` |
+| `rule` | ─ | ─ | ─ | `-` |
 
 ## External status
 
