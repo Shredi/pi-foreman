@@ -201,7 +201,7 @@ export function readBinding(env: Env): LaunchBinding | null {
     const l = isObj(b.ladder) ? b.ladder : null;
     const limit = l ? { ladder: { strongAbove: pos(l.strongAbove), maxTurns: pos(l.maxTurns), bottom: l.bottom === true } } : {};
     const scratch = str(b.scratch);
-    const mcp = Array.isArray(b.mcp) && b.mcp.every((x) => typeof x === "string") ? { mcp: b.mcp as string[] } : {};
+    const mcp = b.mcp === undefined ? {} : { mcp: Array.isArray(b.mcp) && b.mcp.every((x) => typeof x === "string") ? (b.mcp as string[]) : [] }; // malformed fails closed
     return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp };
   } catch {
     return null;

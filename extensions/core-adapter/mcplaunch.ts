@@ -141,17 +141,19 @@ export function workflowBindingBlock(input: Json, ctx: { cwd: string; replyText:
   // pi-subagents reads the string "true" as true and takes a slash or a backslash as a script path
   const workflow = input.workflow === "true" ? true : input.workflow;
   if (workflow === true) texts.push(ctx.replyText);
+  const ceiling = isObj(ctx.roles) && Object.keys(ctx.roles).some((r) => roleMcpEntries(ctx.roles, r).length > 0);
   if (typeof workflow === "string" && workflow.trim() && !workflow.includes("/") && !workflow.includes("\\")) {
-    const ceiling = isObj(ctx.roles) && Object.keys(ctx.roles).some((r) => roleMcpEntries(ctx.roles, r).length > 0);
     if (ceiling) return namedResourceText();
   }
   if (typeof workflow === "string" && (workflow.includes("/") || workflow.includes("\\"))) {
     try {
-      const file = path.resolve(ctx.cwd, workflow);
+      // pi-subagents resolves the script against the launch's own cwd
+      const file = path.resolve(ctx.cwd, typeof input.cwd === "string" && input.cwd ? input.cwd : ".", workflow);
       if (fs.statSync(file).size <= MAX_SCRIPT_BYTES) texts.push(fs.readFileSync(file, "utf8"));
       else return refusalText();
     } catch {
-      // an unreadable script cannot be inspected; pi-subagents fails the launch itself
+      // an unreadable script cannot be inspected: refused while a role has an MCP ceiling, else pi-subagents fails the launch itself
+      if (ceiling) return unreadableScriptText();
     }
   }
   if (typeof input.workflowScript === "string") texts.push(input.workflowScript);
@@ -167,6 +169,9 @@ export function workflowBindingBlock(input: Json, ctx: { cwd: string; replyText:
 
 const namedResourceText = (): string =>
   "pi-foreman: subagent launch refused [launch_refused:workflow_binding]: named workflow resources cannot be checked for a forged launch binding while a role has an MCP ceiling (roles.<role>.mcp); use workflow: true or a script path instead.";
+
+const unreadableScriptText = (): string =>
+  "pi-foreman: subagent launch refused [launch_refused:workflow_binding]: the workflow script cannot be read from the launch cwd, so it cannot be checked for a forged launch binding while a role has an MCP ceiling (roles.<role>.mcp).";
 
 const refusalText = (): string =>
   "pi-foreman: subagent launch refused [launch_refused:workflow_binding]: a workflow script that names `extensionBindings` or `pi-foreman/1` could forge a launch binding; only the adapter writes bindings. Remove it from the script.";

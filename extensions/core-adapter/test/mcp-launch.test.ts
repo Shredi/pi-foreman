@@ -178,6 +178,30 @@ test("workflow binding check: the string true, backslash paths and named resourc
   assert.equal(workflowBindingBlock({ workflow: "my-flow" }, { cwd: "/x", replyText: "", roles: { builder: {} } }), undefined);
 });
 
+test("workflow script path resolves against the launch cwd; unreadable scripts are refused under a ceiling", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wfc-"));
+  try {
+    fs.mkdirSync(path.join(dir, "sub"));
+    fs.writeFileSync(path.join(dir, "sub", "wf.js"), "agent({ extensionBindings: {} })");
+    const ctx = { cwd: dir, replyText: "" };
+    assert.match(workflowBindingBlock({ workflow: "./wf.js", cwd: "sub" }, ctx) ?? "", /workflow_binding/);
+    assert.match(workflowBindingBlock({ workflow: "./wf.js", cwd: path.join(dir, "sub") }, { cwd: "/x", replyText: "" }) ?? "", /workflow_binding/);
+    const withCeiling = { ...ctx, roles: { builder: { mcp: ["fx"] } } };
+    assert.match(workflowBindingBlock({ workflow: "./missing.js" }, withCeiling) ?? "", /cannot be read/);
+    assert.equal(workflowBindingBlock({ workflow: "./missing.js" }, ctx), undefined);
+    assert.equal(workflowBindingBlock({ workflow: "./missing.js" }, { ...ctx, roles: { builder: {} } }), undefined);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a binding mcp with non-string entries fails closed", () => {
+  const env = (mcp: unknown) => ({ PI_SUBAGENT_EXTENSION_BINDINGS: JSON.stringify({ "pi-foreman/1": { foremanSession: "f", workspace: "/w", role: "builder", launchId: "l", mcp } }) });
+  assert.deepEqual(readBinding(env(["fx", 1]))?.mcp, []);
+  assert.deepEqual(readBinding(env("fx"))?.mcp, []);
+  assert.deepEqual(readBinding(env(["fx"]))?.mcp, ["fx"]);
+});
+
 test("a tasks entry with mcp but no agent is refused", () => {
   const res = planMcpLaunch({ tasks: [{ task: "a", mcp: ["fx"] }] }, { builder: { mcp: ["fx"] } }, { perEntryBindings: true });
   assert.equal(res.refusal?.reason, "mcp_launch");
