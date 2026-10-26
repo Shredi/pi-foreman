@@ -2,12 +2,13 @@
 // foreman perms: read-only helpers around the R41 permission gate decision log.
 //   export-eval [--log <file>] [--from <file>] [--out <file>]   eval cases (JSONL) from the decision log and/or a prepared JSONL file
 //   candidates [--log <file>] [--min N]                       shapes the review allowed >= N times (default 5) with no deny and no owner override, and shapes the owner approved in dialogs >= 2 times
-// Both are read-only. Adoption has no CLI form: it is `/foreman perms adopt <shape-id>` in the owner pane. Standard library only.
+//   eval --model <provider/id> [--out <file>] [--fixture <file>]   live gate eval: the fixture cases that reach the review run against a real model (extensions/core-adapter/gateevallive.ts; Node >= 22.18 runs the .ts directly)
+// export-eval and candidates are read-only. Adoption has no CLI form: it is `/foreman perms adopt <shape-id>` in the owner pane. Standard library only.
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SHELL_TOOLS = new Set(["bash", "foreman_bg", "bg_run", "powershell"]);
 const PUBLIC_HOSTS = new Set(["github.com", "api.github.com", "gitlab.com", "npmjs.org", "registry.npmjs.org", "npmjs.com", "pypi.org", "example.com", "example.org", "example.net", "localhost"]);
@@ -31,7 +32,7 @@ export function findPrivate(text) {
   return [...out];
 }
 
-const usage = () => console.error("usage: foreman_perms.mjs export-eval [--log <file>] [--from <file>] [--out <file>]\n       foreman_perms.mjs candidates [--log <file>] [--min N]");
+const usage = () => console.error("usage: foreman_perms.mjs export-eval [--log <file>] [--from <file>] [--out <file>]\n       foreman_perms.mjs candidates [--log <file>] [--min N]\n       foreman_perms.mjs eval --model <provider/id> [--out <answers file>] [--fixture <file>]   (live run; needs Node >= 22.18 and a logged-in provider)");
 
 function parseArgs(argv, allowed = ["--log", "--from", "--out"]) {
   const o = {};
@@ -146,8 +147,49 @@ function gateLogPath() {
   return path.join(agentDir, "pi-foreman", "state", "gate", "log.jsonl");
 }
 
+const here = path.dirname(fileURLToPath(import.meta.url));
+const fmtStats = (s) => `eval: review-cases=${s.reviewCases} model-calls=${s.modelCalls} cache-hits=${s.cacheHits} invalid=${s.invalid} unreachable=${s.unreachable} agreement(import)=${s.agreement.agree}/${s.agreement.human} latency-p50=${s.latencyP50Ms}ms latency-p95=${s.latencyP95Ms}ms tokens-in=${s.inputTokens} tokens-out=${s.outputTokens}`;
+
+/** The registry of Pi's own model layer (the logged-in providers of the agent dir). `deps.registry` replaces it in tests. */
+async function piRegistry() {
+  const pi = await import("@earendil-works/pi-coding-agent");
+  const registry = new pi.ModelRegistry(await pi.ModelRuntime.create());
+  await registry.refresh?.();
+  return registry;
+}
+
+/** Live gate eval: the fixture cases that reach the review run against `--model`; writes the answers file and prints latency and token statistics. */
+export async function evalMain(rest, deps = {}) {
+  const o = parseArgs(rest, ["--model", "--out", "--fixture"]);
+  if (!o || !/^[^/\s]+\/\S+$/.test(o.model ?? "")) {
+    usage();
+    return 2;
+  }
+  const pkgRoot = path.resolve(here, "..");
+  const cases = readJsonl(o.fixture ?? path.join(pkgRoot, "tests", "fixtures", "gate-eval.jsonl"));
+  let registry;
+  try {
+    registry = deps.registry ?? (await piRegistry());
+    const slash = o.model.indexOf("/");
+    const m = registry.find(o.model.slice(0, slash), o.model.slice(slash + 1));
+    if (!m) throw new Error(`model ${o.model} not found in the registry`);
+    if (registry.hasConfiguredAuth && !registry.hasConfiguredAuth(m)) throw new Error(`no credentials for ${o.model}`);
+  } catch (e) {
+    console.error(`eval: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+  const { liveEval } = await import(pathToFileURL(path.join(here, "..", "extensions", "core-adapter", "gateevallive.ts")).href);
+  const { answers, stats } = await liveEval(cases, registry, o.model, pkgRoot);
+  const text = JSON.stringify(answers, null, 2) + "\n";
+  if (o.out) fs.writeFileSync(o.out, text);
+  else process.stdout.write(text);
+  console.error(fmtStats(stats));
+  return 0;
+}
+
 export function main(argv) {
   const [sub, ...rest] = argv;
+  if (sub === "eval") return evalMain(rest);
   if (sub === "candidates") {
     const o = parseArgs(rest, ["--log", "--min"]);
     const min = o && o.min !== undefined ? Number(o.min) : 5;
@@ -182,4 +224,4 @@ export function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) process.exitCode = main(process.argv.slice(2));
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) Promise.resolve(main(process.argv.slice(2))).then((code) => { process.exitCode = code; });
