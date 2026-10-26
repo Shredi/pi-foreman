@@ -1,7 +1,9 @@
 // R26 regression: the spawn-length ledger guard measures the caller's task, not the task after the harness prepends (re-review line).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig as baseRig, reviewAllowOpts } from "./_r11rig.ts";
+
+const r11Rig = (t: Parameters<typeof baseRig>[0], ceremony: Record<string, unknown> = {}) => baseRig(t, ceremony, reviewAllowOpts());
 
 const FAIL = "Overall verdict: FAIL\n1. the parser drops the last line\n";
 const LINE = "[pi-foreman re-review]";

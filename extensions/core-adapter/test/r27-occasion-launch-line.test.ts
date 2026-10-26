@@ -1,7 +1,9 @@
 // R27 item 4: the launch result of a reviewer names its occasion when it is not `item`; a plain review gets no such line.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig as baseRig, reviewAllowOpts } from "./_r11rig.ts";
+
+const r11Rig = (t: Parameters<typeof baseRig>[0], ceremony: Record<string, unknown> = {}) => baseRig(t, ceremony, reviewAllowOpts());
 
 const texts = (res: unknown): string[] => ((res as { content?: { text: string }[] } | undefined)?.content ?? []).map((c) => c.text);
 
