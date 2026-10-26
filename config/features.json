@@ -73,7 +73,7 @@
       "id": "roles",
       "area": "models",
       "title": "Role definitions",
-      "purpose": "Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time default of the neutral roles; a launch timeoutMs wins, capped by ceremony.launchTimeoutCapMinutes.",
+      "purpose": "Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time default of the neutral roles; a launch timeoutMs wins, capped by ceremony.launchTimeoutCapMinutes. roles.<x>.mcp is the ceiling of MCP servers a child may load on demand through tool_search (a launch mcp field narrows it).",
       "doc": "docs/roles.md#further-role-and-provider-keys",
       "keys": ["roles.<x>.file", "roles.<x>.promptAppend", "roles.<x>.tools", "roles.<x>.denyTools", "roles.<x>.mcp", "roles.<x>.skills", "roles.<x>.launch", "roles.<x>.timeoutMinutes", "ceremony.childTimeoutSeconds", "ceremony.launchTimeoutCapMinutes"],
       "commands": [],

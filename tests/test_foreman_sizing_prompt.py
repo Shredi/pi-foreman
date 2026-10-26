@@ -38,7 +38,10 @@ class SizingPromptTest(unittest.TestCase):
         text = (ROOT / "instructions" / "foreman.md").read_text()
         for brief in ("off",):  # the merged launch-brief lines only render with launchBriefs on
             k = self.knobs(sizing="off", launchbriefs=brief)
-            self.assertEqual(render_prompt(text, k), render_prompt(old.stdout.decode("utf-8"), k))
+            # round 68: the launch `mcp` field is named in the launch rule
+            old_launch = "`output` and `outputMode` are refused (`output_path`). Workflow scripts"
+            new_launch = "`output` and `outputMode` are refused (`output_path`). `mcp: [\"server\", \"server/tool\"]` narrows a child's MCP tools to part of its role's ceiling (single launches only; `[]` = none). Workflow scripts"
+            self.assertEqual(render_prompt(text, k), render_prompt(old.stdout.decode("utf-8"), k).replace(old_launch, new_launch))
         self.assertNotIn("size: {files", render_prompt(text, self.knobs(sizing="off")))
 
 

@@ -104,7 +104,7 @@ Design record for the ladder: `design/architecture.md`
 | `displayPresets.<name>` | Named display-name presets, each a map `{role id: display name}`; chosen by `displayNames`. |
 | `roles.<role>.promptAppend` | Text appended to the role prompt. |
 | `roles.<role>.tools` | Strict tool allowlist, written into the generated settings (informational for the foreman); project/session can only narrow it. |
-| `roles.<role>.mcp` | MCP servers a child role may use, by configured name: `server` for all its tools, `server/tool` for one. Each becomes an `mcp:<name>` entry in the role's generated tools, served by Pi's built-in MCP. Default none. User or overlay config only; a project or session value is ignored with a warning. An error where the role's `denyTools` deny the server's `mcp__` tools, and for `foreman` and `session-foreman`, which already load every enabled server in `mcp.json`. |
+| `roles.<role>.mcp` | The MCP ceiling of a child role, by configured name: `server` for all its tools, `server/tool` for one. A launch can narrow it (`mcp` on `subagent`) but never widen it. The tools load on demand through `tool_search` in the child; no `mcp:` entries are written to the generated tools. Default none. User or overlay config only; a project or session value is ignored with a warning. An error where the role's `denyTools` deny the server's `mcp__` tools, and for `foreman` and `session-foreman`, which already load every enabled server in `mcp.json`. |
 | `roles.<role>.skills` | Skills a child role gets as catalog entries, by name (one plain path segment; no `/`, `\`, `.`, `..`, glob characters or `:`). A role gets only the skills it names: `inheritSkills` stays off and the system prompt is replaced, so an unnamed skill is not listed. Written to the generated `agentOverrides` only when non-empty. Default none. User or overlay config only; a project or session value is ignored with a warning. |
 | `roles.<role>.denyTools` | Tool-name globs (`*` wildcard) a child of the role never gets: the call is denied, never asked, before the permission overlay. Defaults: `mcp__*` for `planner`, `explorer`, `reviewer` and `senior-reviewer`, so MCP tools are denied for the read-only roles. Layers only add entries; none removes one. A child whose launch binding cannot be read gets `mcp__*` denied. The check runs in the `tool_call` hook, and every inner call of a codemode script runs through the hooks on its own, so the deny applies to those calls too. |
 | `roles.<role>.launch` | How the role is launched; only `detached` exists (detached children forward permission asks to the parent). Not settable by project/session. |
@@ -141,13 +141,33 @@ The table above has the key rows; this section gives the behaviour.
 
 ### `roles.<id>.mcp`
 
-- A list of strings. An entry is `server` (all of its tools) or `server/tool`; each becomes `mcp:<entry>` in the role's generated subagent tools, served by Pi's built-in MCP.
+- A list of strings: the **ceiling** of what a child of the role may load. An entry is `server` (all of its tools) or `server/tool`. Default none.
+- MCP tools load **on demand**. Nothing is declared in the child's prompt up front: every child role's generated tools carry `tool_search` (no `mcp:` entries are written any more), and the child loads a tool when its task needs one. A child with an empty ceiling has `tool_search` registered but inactive, so it sees no declaration.
+- core-adapter, which runs in every child, loads Pi's MCP extension with a filtered server list. A server outside the ceiling never starts in the child and is not listed; each call to an `mcp__` tool is checked against the ceiling again and refused with `` pi-foreman: `<tool>` is outside the MCP scope of role <role> (roles.<role>.mcp[, launch mcp]) `` (trace `guard: "mcp_scope"`). `denyTools` wins: a role whose patterns match a server's tools loads nothing from it.
 - User or overlay config only; a project or session value is ignored with a warning, because a server runs a command.
-- Servers come from Pi's `<agentDir>/mcp.json`; the project `.pi/mcp.json` counts only when the project is trusted. Tool names are `mcp__<server>__<tool>`; a character outside `[A-Za-z0-9_]` becomes `_`.
-- `enabled: false` in `mcp.json` keeps the server off in children too. A server cannot be kept child-only through `mcp.json`: any enabled server also connects in the main session (unless `--no-mcp`).
-- `pi-mcp-adapter`, if installed, takes priority over the built-in MCP.
-- A role without `mcp` loads no MCP extension and starts no server.
+- Servers come from Pi's `<agentDir>/mcp.json`; the project `.pi/mcp.json` counts only when the project is trusted. Tool names are `mcp__<server>__<tool>`; a character outside `[A-Za-z0-9_]` becomes `_`. Server names compare in both `-` and `_` forms.
+- Adding a server is two lines: the server in `mcp.json` and its name in `roles.<id>.mcp`. No `foreman setup` re-run is needed for MCP changes.
+- A server that is down is absent from `tool_search` results; the child reports the missing tool under Friction and you check `/mcp`.
 - The read-only roles (`planner`, `explorer`, `reviewer`, `senior-reviewer`) deny `mcp__*` through `denyTools` by default.
+
+Exposure in the child, per allowed server:
+
+| `mcp.json` exposure | In the child |
+|---|---|
+| `deferred` | stays `deferred` |
+| `codemode` | stays `codemode` |
+| `direct` | becomes `deferred` (an exact tool name is unknown at setup, so nothing can be declared up front) |
+| `hidden` | the server is dropped |
+
+`toolExposure` values map the same way. A `server/tool` entry sets the server `hidden` and lists only the allowed tool names in `toolExposure`; every other override, wildcards included, is dropped. Several `server/tool` entries for one server merge; a bare `server` entry wins. `enabled: false` in `mcp.json` keeps the server off in children too.
+
+If the running Pi has no MCP loader on disk (for example a compiled Pi binary), MCP is refused in that child with the trace event `mcp_child_unsupported` and a line in the child prompt that the child's report carries under Friction; there is no silent fallback.
+
+Per-launch narrowing: `subagent({ agent, task, mcp: ["server", "server/tool"] })` narrows the ceiling for that one child. Each entry must lie inside the role's ceiling (`server` only if the role lists that server; `server/tool` if the role lists the server or that same entry), else the launch is refused with `pi-foreman: launch mcp entry <x> is outside roles.<role>.mcp`. `mcp: []` means no MCP for that child; an absent field means the full ceiling. `options.mcp` is refused. A server name that `mcp.json` does not know adds a warning line to the launch receipt and the trace event `mcp_launch_unknown_server`; the launch still runs.
+
+Groups take the same field per entry: `tasks[i].mcp`, `chain[i].mcp`, `chain[i].parallel[j].mcp`, and a dynamic fan-out step (`chain[i].parallel` given as an object with `agent`) carries one `mcp` for its children. Each entry is validated against that entry's role. pi-subagents does not yet forward per-entry bindings to the children of a group, so a group that needs MCP (any entry whose role has a non-empty ceiling, or any entry carrying `mcp`) is refused with `pi-foreman: group launches with MCP need pi-subagents with per-entry bindings (pinned <ver>); launch these roles as single subagent({agent, task}) calls`. Groups of roles without a ceiling run as before. A child without a binding fails closed: no MCP, `tool_search` inactive.
+
+Upgrading from the `mcp:` grant: generated agent files that still carry `mcp:` entries make `/foreman doctor` report the settings block as out of sync; re-run `foreman setup` once.
 
 Two config errors:
 

@@ -30,6 +30,8 @@ npm run typecheck                                 # tsc --noEmit
 node setup.mjs --dry-run                          # installer preview, writes nothing (exits 1 until pi-foreman is installed as a package; see install.md#developing)
 ```
 
+A fresh worktree needs `npm ci --legacy-peer-deps` before `npm run test:node`.
+
 ## Replay rig
 
 `node scripts/replay_run.mjs` runs each `tests/replay/test_*.py` as its own `unittest` process, in parallel: `FOREMAN_REPLAY_JOBS` workers (default `min(4, availableParallelism)`), then the modules in its `SERIAL` list one by one. It prints a PASS or FAIL line per module, the 15 slowest, the wall time, and the last 80 lines of each failing module; exit 1 on a failure, 2 when no module is found. Each module starts `pi --mode rpc` with

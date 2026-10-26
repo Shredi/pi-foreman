@@ -42,7 +42,7 @@ class McpConfigTest(unittest.TestCase):
         return fc.load_config(agent_dir=str(self.agent), project_dir=str(self.project), trusted_project=True,
                               session_json=json.dumps(session) if session is not None else None)
 
-    def test_user_layer_mcp_maps_to_mcp_entries_in_both_outputs(self):
+    def test_user_layer_mcp_emits_no_mcp_entries_and_tool_search_before_codemode(self):
         prov = copy.deepcopy(PROV)
         prov["p1"]["roles"]["builder"]["codemode"] = True  # differs from the role default: per-provider tools written
         res = self.load(l2={"providers": prov, "roles": {"builder": {"mcp": ["fx", "gh/search", "fx"]}}})
@@ -51,19 +51,45 @@ class McpConfigTest(unittest.TestCase):
         out = fc.generate_subagents(res["config"])
         self.assertEqual(out["errors"], [])
         tools = out["subagents"]["agentOverrides"]["builder"]["tools"]
-        self.assertEqual(tools[-2:], ["mcp:fx", "mcp:gh/search"])
+        self.assertEqual(tools[-1], "tool_search")
+        self.assertFalse([t for t in tools if t.startswith("mcp:")])
         per_provider = out["subagents"]["agentOverridesByProvider"]["p1"]["builder"]["tools"]
-        self.assertEqual([t for t in per_provider if t.startswith("mcp:")], ["mcp:fx", "mcp:gh/search"])
-        self.assertIn("codemode", per_provider)
+        self.assertFalse([t for t in per_provider if t.startswith("mcp:")])
+        self.assertEqual(per_provider[-2:], ["tool_search", "codemode"])
         resolved = fc.resolve_role(res["config"], "builder", "p1")["tools"]
-        self.assertEqual([t for t in resolved if t.startswith("mcp:")], ["mcp:fx", "mcp:gh/search"])
-        self.assertNotIn("mcp:fx", out["subagents"]["agentOverrides"]["explorer"]["tools"])
+        self.assertFalse([t for t in resolved if t.startswith("mcp:")])
+        self.assertEqual(resolved[-2:], ["tool_search", "codemode"])
 
     def test_role_without_mcp_gets_no_mcp_entries(self):
         res = self.load(l2={"providers": PROV})
         out = fc.generate_subagents(res["config"])
         for role, entry in out["subagents"]["agentOverrides"].items():
             self.assertFalse([t for t in entry["tools"] if t.startswith("mcp:")], role)
+
+    def test_every_child_role_gets_tool_search_once_and_foreman_does_not(self):
+        res = self.load(l2={"providers": PROV})
+        out = fc.generate_subagents(res["config"])
+        for role, entry in out["subagents"]["agentOverrides"].items():
+            self.assertEqual(entry["tools"].count("tool_search"), 1, role)
+            self.assertFalse(fc.resolve_role(res["config"], role, "p1")["tools"].count("tool_search") != 1, role)
+        self.assertNotIn("tool_search", fc.resolve_role(res["config"], "foreman", "p1")["tools"])
+        self.assertFalse(hasattr(fc, "with_mcp"))
+
+    def test_stale_block_with_mcp_entries_differs_on_the_keys_the_doctor_compares(self):
+        # Mirrors the doctor sync check (extensions/core-adapter/index.ts): it compares the keys
+        # agentOverridesByProvider, agentOverrides, forceTopLevelAsync of settings.json against generate-subagents.
+        res = self.load(l2={"providers": PROV, "roles": {"builder": {"mcp": ["fx"]}}})
+        fresh = fc.generate_subagents(res["config"])["subagents"]
+        keys = ["agentOverridesByProvider", "agentOverrides", "forceTopLevelAsync"]
+        canon = lambda v: json.dumps(v, sort_keys=True)  # noqa: E731
+        self.assertTrue(all(canon(fresh[k]) == canon(copy.deepcopy(fresh)[k]) for k in keys))
+        stale = copy.deepcopy(fresh)
+        stale["agentOverrides"]["builder"]["tools"].append("mcp:fx")
+        self.assertFalse(all(canon(stale[k]) == canon(fresh[k]) for k in keys))
+        stale = copy.deepcopy(fresh)
+        stale["agentOverrides"]["builder"]["tools"].remove("tool_search")
+        stale["agentOverrides"]["builder"]["tools"].append("mcp:fx")
+        self.assertFalse(all(canon(stale[k]) == canon(fresh[k]) for k in keys))
 
     def test_project_and_session_layers_cannot_set_mcp(self):
         res = self.load(proj={"roles": {"builder": {"mcp": ["evil"]}}},

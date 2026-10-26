@@ -1152,12 +1152,15 @@ def with_pr_pack(cfg, role, tools):
     return tools
 
 
-def with_mcp(cfg, role, tools):
-    """Append the role's `mcp` servers as `mcp:<name>` entries; pi-subagents routes them to the built-in MCP."""
+def with_tool_search(tools):
+    """Add `tool_search` to a child role's tools, at the index of `codemode` (else appended).
+
+    MCP tools load on demand through it; core-adapter scopes them per role (`roles.<id>.mcp`),
+    so no `mcp:` entry is emitted.
+    """
     out = list(tools)
-    for name in ((cfg.get("roles") or {}).get(role) or {}).get("mcp") or []:
-        if isinstance(name, str) and name and "mcp:" + name not in out:
-            out.append("mcp:" + name)
+    if "tool_search" not in out:
+        out.insert(out.index("codemode") if "codemode" in out else len(out), "tool_search")
     return out
 
 
@@ -1183,7 +1186,7 @@ def resolve_role(cfg, role, provider):
     codemode = effective_codemode(cfg, provider, role)
     tools = list((cfg.get("roles") or {}).get(role, {}).get("tools", []))
     if role != "foreman":
-        tools = with_mcp(cfg, role, with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in tools if t not in CHILD_DENIED_TOOLS]))))
+        tools = with_tool_search(with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in tools if t not in CHILD_DENIED_TOOLS]))))
     if codemode and "codemode" not in tools:
         tools.append("codemode")
     out = {"model": model, "thinking": cap_thinking(thinking, cfg.get("maxThinking")),
@@ -1236,7 +1239,7 @@ def generate_subagents(cfg):
         tools = with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in (cfg.get("roles") or {}).get(role, {}).get("tools", []) if t not in CHILD_DENIED_TOOLS])))
         if cfg.get("roles", {}).get(role, {}).get("codemode") and "codemode" not in tools:
             tools.append("codemode")
-        overrides[role] = {"tools": with_mcp(cfg, role, tools)}
+        overrides[role] = {"tools": with_tool_search(tools)}
         skills = cfg.get("roles", {}).get(role, {}).get("skills")
         if skills:
             overrides[role]["skills"] = list(skills)

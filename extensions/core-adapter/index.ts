@@ -35,6 +35,9 @@ import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits } from "./childreads.ts";
 import { bgWaitLocations, coordinationCall, finalizationCommand, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { roleToolDenied } from "./roledeny.ts";
+import { McpChild, configuredServers, registerChildToolSearch } from "./mcpchild.ts";
+import type { McpChildOpts } from "./mcpchild.ts";
+import { PER_ENTRY_BINDINGS, planMcpLaunch, unknownServerLine, unknownServers, workflowBindingBlock } from "./mcplaunch.ts";
 import { childSkillDirs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
@@ -380,6 +383,8 @@ export interface AdapterDeps {
   pressureRun?: (args: string[]) => Promise<{ ok: boolean; text: string }>;
   /** Tests: the running Pi version the doctor compares the add-on's peer range against (default: Pi's VERSION export). */
   piVersion?: () => Promise<string | null>;
+  /** Tests: the child's MCP loader root and import, and the SDK's createMcpExtension (mcpchild.ts). */
+  mcpChild?: Partial<Pick<McpChildOpts, "resolveRoot" | "importFile" | "createMcp" | "env">>;
   /** Tests: the timer of the remote pull loop (remotepull.ts); the default is an unref'd setInterval. */
   pullSetInterval?: (fn: () => void, ms: number) => { unref?: () => void };
 }
@@ -387,6 +392,8 @@ export interface AdapterDeps {
 export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): void {
   const spawner = deps.spawner ?? defaultSpawner;
   const platform = deps.platform ?? process.platform;
+  // r68: Pi's tool_search exists in every child before the installInert return below, so a child allowlisting it never fails at agent_start.
+  if (process.env.PI_SUBAGENT_CHILD === "1") registerChildToolSearch(pi);
   const core = claimCore(PKG_ROOT); // once-guard (registry.ts): a second copy from another root registers only a notice
   if ("notice" in core) return installInert(pi, core.notice);
   pi.on("session_shutdown", async () => {
@@ -559,6 +566,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // A child's launch binding is in the env while its extensions load (usage.ts); read it now.
   const launchBinding = readBinding(process.env);
   if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.scratch) process.env[SCRATCH_ENV] = launchBinding.scratch;
+  // r68: the child's MCP scope. The binding is captured here; the allowed set is computed from it in session_start (never from env later).
+  const mcpChild = process.env.PI_SUBAGENT_CHILD === "1" ? new McpChild(pi, { binding: launchBinding ? { role: launchBinding.role, ...(launchBinding.mcp ? { mcp: launchBinding.mcp } : {}) } : null, ...(deps.mcpChild ?? {}) }) : null;
 
   const pyPath = (s: Session): string | null => (s.python.ok ? s.python.info.executable : null);
 
@@ -1102,6 +1111,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   pi.on("session_start", async (event, ctx) => {
     const s = await startSession(ctx);
+    await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r));
     restoreRounds(s, ctx);
     emitReady(pi.events as EventBus | undefined, core.claim);
     if (!s.isChild && process.env.PI_SUBAGENT_CHILD !== "1" && (ctx.mode === "tui" || ctx.mode === "rpc")) {
@@ -1147,6 +1157,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.pressureSampler.start();
     }
   });
+  // After core-adapter's own session_start handler: Pi runs handlers in registration order, so the allowed set is known when Pi's MCP extension loads its config.
+  mcpChild?.install();
 
   pi.on("session_shutdown", async (_event, ctx) => {
     const s = sessionFor(ctx);
@@ -1348,6 +1360,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
     }
     if (s.isChild) {
+      const mcpNote = mcpChild?.note();
+      if (mcpNote) event.systemPromptOptions.sections["pi-foreman-mcp"] = mcpNote;
       // ceremony.ledgerHelper "tool": reviewer roles learn to close V with foreman_ledger (instructions/reviewer.md).
       if (!REVIEW_ROLES.includes(s.usage.line.role)) return;
       if (reviewerInstructionsCache === undefined) {
@@ -1910,6 +1924,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         rs?.trace?.emit({ event: "guard", guard: "role_tool_denied", toolFamily: event.toolName, decision: "blocked", reason: "role_tool_denied" });
         return { block: true, reason: `pi-foreman: ${msg}.` };
       }
+      // MCP scope (mcpscope.ts, r68): an mcp__ call outside roles.<role>.mcp (and the launch's mcp) is blocked, codemode inner calls included.
+      const scope = mcpChild?.callBlock(event.toolName);
+      if (scope) {
+        rs?.trace?.emit({ event: "guard", guard: "mcp_scope", toolFamily: event.toolName, decision: "blocked", reason: "mcp_scope" });
+        return { block: true, reason: `pi-foreman: ${scope}.` };
+      }
     }
     // A child never deletes an editor backup with rm (effects.ts) on any shell tool; it reports it instead.
     if (process.env.PI_SUBAGENT_CHILD === "1" && isShellTool(event.toolName) && editorBackupCommand((event.input as { command?: unknown }).command)) {
@@ -1983,6 +2003,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const blocked = childLaunchBlock(s, event.toolName);
       if (blocked) return { block: true, reason: blocked };
       let notices: string[] = [];
+      let launchMcp: string[] | undefined;
+      const mcpNotes: string[] = [];
       let budgetNotes: string[] = [];
       // Counted and warned only once the launch passed every check (set at the end of the guard path).
       let pendingReviews = 0;
@@ -2018,6 +2040,28 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
         const act = subagentActionCheck(input, { allowWorkflow, runs: s.runs, allowed: childRoleIds(get(s.config.config, "roles")), resolution, maxThinking: get(s.config.config, "maxThinking") });
         if (act.block) return { block: true, reason: act.block };
+        // r68 (A22): a workflow script that names a binding could forge one for any child.
+        const branch = (ctx.sessionManager.getBranch?.() ?? []) as { type?: string; message?: unknown }[];
+        const forged = workflowBindingBlock(input, { cwd: s.cwd, roles: get(s.config.config, "roles"), replyText: lastAssistantText(branch.filter((e) => e.type === "message").map((e) => e.message)) });
+        if (forged) {
+          s.trace?.emit({ event: "launch_refused", reason: "workflow_binding", tier: s.ceremony.tier, ...launchDeny(input) });
+          return { block: true, reason: forged };
+        }
+        // r68: the launch `mcp` field is validated against the role's ceiling and leaves the call here (rawLaunch above keeps it for a relaunch).
+        const mcpPlan = planMcpLaunch(input, get(s.config.config, "roles"), { perEntryBindings: PER_ENTRY_BINDINGS });
+        if (mcpPlan.refusal) {
+          s.trace?.emit({ event: "launch_refused", reason: mcpPlan.refusal.reason, tier: s.ceremony.tier, ...launchDeny(input) });
+          return { block: true, reason: mcpPlan.refusal.text };
+        }
+        launchMcp = mcpPlan.mcp;
+        if (!mcpPlan.group && mcpPlan.entries[0]) {
+          const known = await configuredServers(s.cwd, safeTrusted(ctx), process.env, deps.mcpChild?.resolveRoot);
+          const unknown = known ? unknownServers(get(s.config.config, "roles"), mcpPlan.entries[0].role, launchMcp, known) : [];
+          if (unknown.length > 0) {
+            s.trace?.emit({ event: "mcp_launch_unknown_server", role: mcpPlan.entries[0].role, reason: unknown.join(",") });
+            mcpNotes.push(unknownServerLine(mcpPlan.entries[0].role, unknown));
+          }
+        }
         const outPath = outputPathBlock(input);
         if (outPath) {
           s.trace?.emit({ event: "launch_refused", reason: "output_path", tier: s.ceremony.tier, ...launchDeny(input) });
@@ -2316,7 +2360,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.budgetWarned = true;
         s.trace?.emit(pendingWarn);
       }
-      if (notices.length + budgetNotes.length > 0) s.launchNotices.set(event.toolCallId, [...notices, ...budgetNotes]);
+      if (notices.length + budgetNotes.length + mcpNotes.length > 0) s.launchNotices.set(event.toolCallId, [...notices, ...budgetNotes, ...mcpNotes]);
       if (event.toolName === "subagent" && !s.isChild && subagentAgents(input).includes("builder")) {
         const applied = s.critique.onBuilder();
         if (applied) s.trace?.emit(applied);
@@ -2364,7 +2408,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         limits = { bottom, maxTurns: childMaxTurns(s.config.config, p, single), ...(bottom ? { strongAbove: strongAbove(s.config.config, p, single) } : {}) };
       }
       if (event.toolName === "subagent") {
-        const b = recordLaunchUsage(s, ctx, input, kind, limits);
+        const b = recordLaunchUsage(s, ctx, input, kind, limits, launchMcp);
         if (!s.isChild) s.widget.runs.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: b?.model ?? null });
       }
       if (event.toolName === "subagent" && !s.isChild && !isManagementCall(input)) s.pendingLaunches.add(event.toolCallId);
@@ -2852,13 +2896,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** D8: give a single-child launch its usage binding (role, launch id, kind) through extensionBindings. */
-  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, kind?: LaunchKind, ladder?: LadderLimits): LaunchBinding | null {
+  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, kind?: LaunchKind, ladder?: LadderLimits, mcp?: string[]): LaunchBinding | null {
     const role = singleLaunchRole(input);
     if (!role) return null;
     const model = typeof input.model === "string" && input.model ? input.model : null;
     const b = recordUsageLaunch(s.launches, { foremanSession: s.usage.line.foremanSession, workspace: s.usage.line.workspace, role, model, kind, activeProvider: ctx.model?.provider, ladder });
     launchScratch(s, input, b);
     if (retroEnabled(get(s.config.config, "retro.enabled"), ctx.mode)) b.retro = true; // the child traces for the retro
+    if (mcp) b.mcp = mcp;
     bindLaunch(input, b);
     return b;
   }

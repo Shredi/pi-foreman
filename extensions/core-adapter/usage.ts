@@ -45,6 +45,8 @@ export interface LaunchBinding {
   scratch?: string;
   /** The foreman's effective retro was on: the child traces when its `trace.enabled` is null (retro.ts sessionTrace). */
   retro?: boolean;
+  /** Launch `mcp` list (r68): narrows roles.<role>.mcp for this child; `[]` = no MCP, absent = the full ceiling. */
+  mcp?: string[];
 }
 
 export interface LadderLimits {
@@ -142,12 +144,38 @@ export function singleLaunchRole(input: Json): string | null {
   return str(input.agent);
 }
 
-/** Drop a foreman-supplied pi-foreman binding from any `subagent` call; only the adapter writes it. */
+/**
+ * The objects of a group launch that can carry launch fields: every `tasks[i]`, `chain[i]`, `chain[i].parallel[j]`, and the
+ * object of a dynamic fan-out step (`chain[i].parallel` given as an object).
+ */
+export function groupEntryObjects(input: Json): Json[] {
+  const out: Json[] = [];
+  if (!isObj(input)) return out;
+  if (Array.isArray(input.tasks)) for (const t of input.tasks) if (isObj(t)) out.push(t);
+  if (Array.isArray(input.chain)) {
+    for (const step of input.chain) {
+      if (!isObj(step)) continue;
+      out.push(step);
+      if (Array.isArray(step.parallel)) {
+        for (const p of step.parallel) if (isObj(p)) out.push(p);
+      } else if (isObj(step.parallel)) out.push(step.parallel);
+    }
+  }
+  return out;
+}
+
+function dropBinding(o: Json): void {
+  if (!isObj(o.extensionBindings) || !(BINDING_NS in o.extensionBindings)) return;
+  const { [BINDING_NS]: _dropped, ...rest } = o.extensionBindings;
+  if (Object.keys(rest).length > 0) o.extensionBindings = rest;
+  else delete o.extensionBindings;
+}
+
+/** Drop a foreman-supplied pi-foreman binding from any `subagent` call, per-entry ones included; only the adapter writes it. */
 export function stripBinding(input: Json): void {
-  if (!isObj(input) || !isObj(input.extensionBindings) || !(BINDING_NS in input.extensionBindings)) return;
-  const { [BINDING_NS]: _dropped, ...rest } = input.extensionBindings;
-  if (Object.keys(rest).length > 0) input.extensionBindings = rest;
-  else delete input.extensionBindings;
+  if (!isObj(input)) return;
+  dropBinding(input);
+  for (const entry of groupEntryObjects(input)) dropBinding(entry);
 }
 
 /** Write the binding into the launch input's `extensionBindings` (other namespaces are kept). */
@@ -173,7 +201,8 @@ export function readBinding(env: Env): LaunchBinding | null {
     const l = isObj(b.ladder) ? b.ladder : null;
     const limit = l ? { ladder: { strongAbove: pos(l.strongAbove), maxTurns: pos(l.maxTurns), bottom: l.bottom === true } } : {};
     const scratch = str(b.scratch);
-    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(b.retro === true ? { retro: true } : {}) };
+    const mcp = b.mcp === undefined ? {} : { mcp: Array.isArray(b.mcp) && b.mcp.every((x) => typeof x === "string") ? (b.mcp as string[]) : [] }; // malformed fails closed
+    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp };
   } catch {
     return null;
   }
