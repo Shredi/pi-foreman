@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // foreman perms: read-only helpers around the R41 permission gate decision log.
 //   export-eval [--log <file>] [--from <file>] [--out <file>]   eval cases (JSONL) from the decision log and/or a prepared JSONL file
-// `candidates` and `adopt` are phase C: they print "not in this release" and exit 2. Standard library only.
+//   candidates [--log <file>] [--min N]                       shapes the review allowed >= N times (default 5) with no deny and no owner override, and shapes the owner approved in dialogs >= 2 times
+// Both are read-only. Adoption has no CLI form: it is `/foreman perms adopt <shape-id>` in the owner pane. Standard library only.
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -29,13 +31,13 @@ export function findPrivate(text) {
   return [...out];
 }
 
-const usage = () => console.error("usage: foreman_perms.mjs export-eval [--log <file>] [--from <file>] [--out <file>]\n       (candidates and adopt are not in this release)");
+const usage = () => console.error("usage: foreman_perms.mjs export-eval [--log <file>] [--from <file>] [--out <file>]\n       foreman_perms.mjs candidates [--log <file>] [--min N]");
 
-function parseArgs(argv) {
+function parseArgs(argv, allowed = ["--log", "--from", "--out"]) {
   const o = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (!["--log", "--from", "--out"].includes(a) || i + 1 >= argv.length) return null;
+    if (!allowed.includes(a) || i + 1 >= argv.length) return null;
     o[a.slice(2)] = argv[++i];
   }
   return o;
@@ -72,11 +74,92 @@ export function buildEval(logRecs, fromRecs) {
   return { cases, stats };
 }
 
+const BRANCH_SUBS = new Set(["switch", "checkout", "branch", "merge", "rebase", "push", "pull", "fetch", "cherry-pick", "reset"]);
+/** Subcommands whose first operand is a remote, not a branch. */
+const REMOTE_FIRST = new Set(["push", "pull", "fetch"]);
+
+/**
+ * The grouping shape of a logged command shape: the logged shape (paths already a class token) with numbers `<n>`, hex ids of 7+ characters
+ * with a digit `<h>`, and the branch operands of git switch/checkout/branch/merge/rebase/push/pull/fetch `<branch>` (not the remote, not options).
+ */
+export function candidateShape(shape) {
+  return shape
+    .split(/([;|&\n]+)/)
+    .map((seg) => {
+      const toks = seg.split(/(\s+)/);
+      const words = toks.filter((t, i) => i % 2 === 0 && t);
+      if (words[0] === "git") {
+        const si = words.findIndex((w, i) => i > 0 && !w.startsWith("-"));
+        if (si > 0 && BRANCH_SUBS.has(words[si])) {
+          let seen = 0;
+          for (let i = si + 1; i < words.length; i++) {
+            if (words[i].startsWith("-") || words[i].startsWith("<")) continue;
+            if (REMOTE_FIRST.has(words[si]) && seen++ === 0) continue;
+            words[i] = "<branch>";
+          }
+          let k = 0;
+          for (let i = 0; i < toks.length; i += 2) if (toks[i]) toks[i] = words[k++];
+        }
+      }
+      return toks.join("");
+    })
+    .join("")
+    .replace(/(?<![A-Za-z<])\b[0-9a-f]{7,40}\b(?!>)/g, (m) => (/\d/.test(m) ? "<h>" : m))
+    .replace(/(?<![A-Za-z<-])\d+(?![A-Za-z>])/g, "<n>");
+}
+
+/** The stable short id of a shape: first 8 hex of sha256 over tool and grouping shape. */
+export const shapeId = (tool, gshape) => crypto.createHash("sha256").update(`${tool}\0${gshape}`).digest("hex").slice(0, 8);
+
+/**
+ * Candidates for the user policy's allow section from decision-log records. A shape is listed when the review allowed it `min` times (layers
+ * review and cache) or the owner approved it in dialogs at least twice, and it never hit a floor, was never denied by any layer and was never refused
+ * by the owner in a dialog (an override). Rows are sorted by count, then last seen.
+ */
+export function findCandidates(recs, min = 5) {
+  const groups = new Map();
+  for (const r of recs) {
+    if (typeof r?.tool !== "string" || typeof r.shape !== "string" || !r.shape) continue;
+    const g = candidateShape(r.shape);
+    const id = shapeId(r.tool, g);
+    const e = groups.get(id) ?? { id, tool: r.tool, shape: g, example: r.shape, reviewAllows: 0, dialogAllows: 0, blocked: false, last: "" };
+    groups.set(id, e);
+    if (r.layer === "floor" || r.verdict === "deny" || (r.layer === "dialog" && r.verdict !== "allow")) e.blocked = true;
+    else if (r.verdict === "allow" && (r.layer === "review" || r.layer === "cache")) e.reviewAllows++;
+    else if (r.verdict === "allow" && r.layer === "dialog" && /^allow (once|for session)$/.test(String(r.reason ?? ""))) e.dialogAllows++;
+    if (typeof r.ts === "string" && r.ts > e.last) { e.last = r.ts; e.example = r.shape; }
+  }
+  return [...groups.values()]
+    .filter((e) => !e.blocked && (e.reviewAllows >= min || e.dialogAllows >= 2))
+    .map((e) => ({ id: e.id, tool: e.tool, shape: e.shape, count: e.reviewAllows + e.dialogAllows, source: e.reviewAllows >= min ? "review" : "dialog", last: e.last, example: e.example, section: "allow" }))
+    .sort((a, b) => b.count - a.count || (a.last < b.last ? 1 : -1));
+}
+
+/** Log records of the default log file (and its rotated sibling) or of the given file. */
+export function readLog(file) {
+  const files = file ? [file] : [gateLogPath().replace(/log\.jsonl$/, "log.1.jsonl"), gateLogPath()];
+  return files.flatMap((f) => (fs.existsSync(f) ? readJsonl(f) : []));
+}
+
+function gateLogPath() {
+  const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent");
+  return path.join(agentDir, "pi-foreman", "state", "gate", "log.jsonl");
+}
+
 export function main(argv) {
   const [sub, ...rest] = argv;
-  if (sub === "candidates" || sub === "adopt") {
-    console.error("not in this release");
-    return 2;
+  if (sub === "candidates") {
+    const o = parseArgs(rest, ["--log", "--min"]);
+    const min = o && o.min !== undefined ? Number(o.min) : 5;
+    if (!o || !Number.isInteger(min) || min < 1) {
+      usage();
+      return 2;
+    }
+    const rows = findCandidates(readLog(o.log), min);
+    console.log(["id", "count", "last seen", "section", "tool", "example"].join("\t"));
+    for (const r of rows) console.log([r.id, r.count, r.last, r.section, r.tool, r.example].join("\t"));
+    console.error(`candidates: ${rows.length} (min ${min}). Adopt one in the owner pane with /foreman perms adopt <id>.`);
+    return 0;
   }
   if (sub !== "export-eval") {
     usage();
@@ -87,8 +170,7 @@ export function main(argv) {
     usage();
     return 2;
   }
-  const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent");
-  const logFile = o.log ?? (o.from ? null : path.join(agentDir, "pi-foreman", "state", "gate", "log.jsonl"));
+  const logFile = o.log ?? (o.from ? null : gateLogPath());
   const logRecs = logFile && fs.existsSync(logFile) ? readJsonl(logFile) : [];
   const fromRecs = o.from ? readJsonl(o.from) : [];
   const { cases, stats } = buildEval(logRecs, fromRecs);
