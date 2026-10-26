@@ -127,6 +127,15 @@ test("own-tool floors are per field: prose is free, paths and commands are floor
   assert.equal(call("pr_create", { title: "t", body: "quotes `npm publish`" }), undefined);
 });
 
+// A secret copy source is a secret read.
+test("foreman_copy floors its source too", () => {
+  const deps = { env: (cwd: string) => baseFloorEnv(cwd, { home: "/Users/someone" }) };
+  const call = (input: unknown) => gateDecide("foreman_copy", input, process.cwd(), deps) as { block?: true; allow?: true; reason?: string } | undefined;
+  for (const src of ["/Users/someone/.ssh/id_rsa", ".env", "/Users/someone/.aws/credentials"]) assert.ok(call({ src, dst: "x" })?.block, src);
+  assert.ok(call({ src: "/Users/someone/.ssh/id_rsa", dst: "x" })?.reason, "the deny carries a reason");
+  assert.ok(call({ src: "src/a.ts", dst: "src/b.ts" })?.block !== true);
+});
+
 // An unreachable review never hangs: no UI and no review model denies at once with the headless text.
 test("a payload tool with no review model and no UI denies within 1 s", async (t) => {
   const r = await r11Rig(t, {}, { ctx: { hasUI: false, mode: "print" } });
