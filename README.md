@@ -24,7 +24,8 @@ pi install git:github.com/Shredi/pi-foreman
 ```
 
 Then start `pi` and run `/foreman setup` once (`/foreman setup --dry-run` shows what it would change and writes
-nothing). Map your models in `foreman.json`: see [install](docs/install.md). To work on pi-foreman itself, see
+nothing). Choose a feature profile with `--profile orchestration|standard|full`, `--enable`/`--disable <id>`, `--addon <id>` or
+`--pick` ([profiles, features and add-ons](docs/install.md#profiles-features-and-add-ons)). Map your models in `foreman.json`: see [install](docs/install.md). To work on pi-foreman itself, see
 [Developing](docs/install.md#developing).
 
 ## First session

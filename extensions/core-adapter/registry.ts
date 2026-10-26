@@ -74,6 +74,7 @@ export function setupInvocation(pkgRoot: string, args: string, agentDir: string,
   const childEnv: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) if (typeof v === "string") childEnv[k] = v;
   childEnv.PI_CODING_AGENT_DIR = agentDir;
+  childEnv.PI_FOREMAN_PICKER = "off"; // piped output: an inherited `force` must never hang the run
   return { command: execPath, args: [path.join(pkgRoot, "setup.mjs"), ...args.trim().split(/\s+/).filter(Boolean)], env: childEnv };
 }
 

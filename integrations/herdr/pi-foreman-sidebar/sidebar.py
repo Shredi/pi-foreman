@@ -89,8 +89,7 @@ AUX_FALLBACK = {"review": "◎", "agent": "◆", "task": "⚙", "wait": "◷", "
                 "waiting": "⏸", "blocked": "✋", "done": "✓", "lost": "✗", "waiting-owner": "✋",
                 "waiting-external": "↻", "idle": "⏸",
                 "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌"}
-# The reasons a two-part state cell can show (first match wins), and the static state glyphs that set its width.
-REASONS = ("ask", "review", "agent", "task", "wait")
+# The static state glyphs that, with the spinner frames, set the width of the header's state slot.
 STATE_KEYS = ("working", "waiting", "blocked", "done", "lost", "waiting-owner", "waiting-external", "idle")
 REVIEW_ROLES = ("reviewer", "senior-reviewer")
 SPINNER_FALLBACK = ("⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷")
@@ -358,9 +357,11 @@ def tree_rows(roots, joins, tree=None):
 
 
 def slot_width(aux):
-    """Cells of the state slot of one glyph set: the spinner plus the widest reason icon, or the widest
-    static state glyph, whichever is wider (2 for unicode, nerd and ascii; 3 for emoji)."""
-    return max([1 + max(cell_width(aux[k]) for k in REASONS)] + [cell_width(aux[k]) for k in STATE_KEYS])
+    """Cells of the state slot of one glyph set: the widest spinner frame or static state glyph (2 for
+    unicode and emoji, whose ⏳ ✋ ✅ ⏸️ are wide, 1 for nerd and ascii). The reason icon is not in the
+    header, so every row of a set has one label column. A VS16 glyph such as ⏸️ counts 2, as
+    `cell_width` counts it; a terminal that draws it in 1 cell shifts the label by one."""
+    return max([cell_width(f) for f in aux["spinner"]] + [cell_width(aux[k]) for k in STATE_KEYS])
 
 
 def _slot(glyph, width=2):
@@ -396,20 +397,13 @@ def _reason(node, joins):
 
 def _state_cell(node, joins, aux):
     """(static cell, ticking cell or None) of a header's state slot, before padding. Sym `working`,
-    `waiting-external` and `idle` with a reason animate: `SPIN_MARK` + the reason icon. The static cell
-    of an animated session (daemon-published pane, spinner off) is the state glyph plus the icon when both
-    fit the slot, else the glyph alone (the icon alone for an idle session, so it never looks idle)."""
+    `waiting-external` and `idle` with a reason animate: the ticking cell is `SPIN_MARK` alone. The static
+    cell (daemon-published pane, spinner off) is the state glyph. The reason icon lives on the detail
+    rows only, so the slot holds one glyph and the label column is the same in every row."""
     sym = node.get("sym")
-    reason = _reason(node, joins)
-    icon = aux[reason] if reason else ""
-    if not (sym in ("working", "waiting-external") or (sym == "idle" and reason)):
+    if not (sym in ("working", "waiting-external") or (sym == "idle" and _reason(node, joins))):
         return node.get("glyph") or "", None
-    glyph = node.get("glyph") or aux.get(sym) or ""
-    if cell_width(glyph + icon) <= slot_width(aux):
-        static = glyph + icon
-    else:
-        static = icon if sym == "idle" else glyph
-    return static, SPIN_MARK + icon
+    return node.get("glyph") or aux.get(sym) or "", SPIN_MARK
 
 
 def _prefix_only(prefix, budget, indent=""):
@@ -653,7 +647,7 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
     ({key: {P, conn, own}}) place a root row at a tree position computed elsewhere
     (legacy prefixes and the new rows); `layout_out` and `tree_out` collect every
     row's. `tpl_out` collects, per pane of an animated session (working, waiting on something external,
-    idle with a reason), the fm_hd header with its state slot as `{spin}` + the reason icon.
+    idle with a reason), the fm_hd header with its state slot as `{spin}`.
     """
     if joins is None:
         joins = {}
@@ -1843,8 +1837,8 @@ SAMPLE_REASONS = ("none", "ask", "review", "agent", "task", "wait", "blocked", "
 
 
 def _sample_reason(root, reason, aux):
-    """`root` (the mixed sample session) changed so that its header shows `reason`: a reason icon next to the
-    spinner, or a static state."""
+    """`root` (the mixed sample session) changed so that it shows `reason`: the detail lines that carry the
+    reason icon (the header shows the spinner only), or a static state."""
     run = lambda role, state="working": {"key": "sample-" + role, "kind": "run", "role": role,  # noqa: E731
                                          "name": role, "state": state, "sym": state, "children": []}
     root.update(children=[], waits=[], tasks=[], asks=[])
@@ -2097,6 +2091,9 @@ def main(argv=None):
                     help="with push: print {tokens, fm_hd_tpl, stamp, pane}; report nothing, write no stamp")
     ap.add_argument("--clear", action="store_true", help="with push: clear the session's keys; with sample: end the override")
     ap.add_argument("--final", action="store_true", help="with push: publish the final row, then drop only the stamp")
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace", newline="\n")
     argv = sys.argv[1:] if argv is None else argv
     args = ap.parse_args(argv)
     if args.command == "start":

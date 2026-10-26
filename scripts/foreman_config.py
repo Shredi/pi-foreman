@@ -8,7 +8,8 @@ scalars and lists are replaced):
     L3       every installed package whose package.json has `pi.foreman.config`
              (under <agent dir>/npm/node_modules, scoped too), plus --l3 PATH
     L2       <agent dir>/foreman.json   (agent dir: --agent-dir, else
-             $PI_CODING_AGENT_DIR, else ~/.pi/agent)
+             $PI_CODING_AGENT_DIR, else ~/.pi/agent; `merged` and `validate` take
+             --user-file PATH to read another file in this place)
     project  <project dir>/.pi/foreman.json, only with --trusted-project
     session  --session-json '<json>'
 
@@ -208,6 +209,7 @@ LOOSEN_ONLY = [("subagents", "allowWorkflow")]
 # Keys outside safety that the project and session layers may not set (module docstring).
 # One row per rule so a rule can be reverted on its own.
 IGNORED_KEYS = [
+    (("profile",), "the setup profile is recorded in the user or overlay config"),
     (("paths", "hubWorkflow"), "it loosens: it makes dirs outside the worktree readable; user or overlay config only"),
     (("bridge", "isolateClaudeConfig"), "it loosens the host config isolation"),
     (("providers", "*", "review"), "it loosens: a review model approves asks"),
@@ -997,7 +999,7 @@ def discover_l3(agent_dir):
 
 
 def load_config(agent_dir=None, project_dir=None, trusted_project=False,
-                session_json=None, l3_paths=()):
+                session_json=None, l3_paths=(), user_file=None):
     """Return the merged-result dict: config, warnings, errors, safetyFallback, layers."""
     warnings, errors, layers = [], [], ["L1"]
     try:
@@ -1028,7 +1030,7 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
         if data is not None:
             cfg = deep_merge(cfg, data)
             layers.append("L3:" + pkg)
-    l2 = agent / "foreman.json"
+    l2 = Path(user_file) if user_file else agent / "foreman.json"
     if l2.is_file():
         data = load_layer("L2", l2)
         if data is not None:
@@ -1270,6 +1272,7 @@ def build_parser():
     sub = p.add_subparsers(dest="cmd", required=True)
     for name in ("merged", "validate"):
         s = sub.add_parser(name, parents=[common])
+        s.add_argument("--user-file", help="read this file as the user layer (L2) instead of <agent dir>/foreman.json")
         s.add_argument("--provider")
     s = sub.add_parser("resolve", parents=[common])
     s.add_argument("--role", required=True)
@@ -1486,7 +1489,7 @@ def main(argv=None):
         return apply_preset(args)
     try:
         res = load_config(args.agent_dir, args.project_dir, args.trusted_project,
-                          args.session_json, args.l3)
+                          args.session_json, args.l3, getattr(args, "user_file", None))
     except ConfigError as exc:
         print(str(exc), file=sys.stderr)
         return 2
