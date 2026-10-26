@@ -226,6 +226,7 @@ IGNORED_KEYS = [
     (("roles", "*", "launch"), "the launch mode comes from the user or overlay config"),
     (("roles", "*", "file"), "a role file replaces the prompt: user or overlay config only"),
     (("roles", "*", "mcp"), "an MCP server runs a command: user or overlay config only"),
+    (("mcp", "directProviders"), "the providers that get MCP tools declared up front come from the user or overlay config"),
     (("roles", "*", "skills"), "the skills a role gets come from the user or overlay config"),
     (("providers", "*", "roles", "*", "strong"), "the strong model is picked in the user or overlay config"),
     (("tools", "prHost"), "the PR host program comes from the user or overlay config"),

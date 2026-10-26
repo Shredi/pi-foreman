@@ -200,7 +200,7 @@ Switch: `providers` is non-empty.
 | `roles.<x>.timeoutMinutes` | `planner`: `20`, `explorer`: `20`, `builder`: `60`, `reviewer`: `30`, `senior-reviewer`: `45`, `finalizer`: `30` | tighten-only (lower only, minimum 1) |
 | `ceremony.childTimeoutSeconds` | `1800` | tighten-only (lower only, minimum 1) |
 | `ceremony.launchTimeoutCapMinutes` | `120` | tighten-only (lower only, minimum 1, at most 120 without an earlier value) |
-| `mcp.directProviders` | unset | any layer |
+| `mcp.directProviders` | unset | not in project/session (the providers that get MCP tools declared up front come from the user or overlay config) |
 
 ### display-names
 
@@ -895,6 +895,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `roles.*.launch` | the launch mode comes from the user or overlay config |
 | `roles.*.file` | a role file replaces the prompt: user or overlay config only |
 | `roles.*.mcp` | an MCP server runs a command: user or overlay config only |
+| `mcp.directProviders` | the providers that get MCP tools declared up front come from the user or overlay config |
 | `roles.*.skills` | the skills a role gets come from the user or overlay config |
 | `providers.*.roles.*.strong` | the strong model is picked in the user or overlay config |
 | `tools.prHost` | the PR host program comes from the user or overlay config |

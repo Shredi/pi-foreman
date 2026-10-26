@@ -10,11 +10,14 @@ type Tool = { name: string; exposure: string };
 const ROLES = { builder: { mcp: ["fx"] } };
 
 /** A child whose MCP extension registers `tools` (name, label, exposure) on install, plus the calls made on the api. */
-async function child(roles: unknown, tools: { name: string; label: string; exposure?: string }[], provider: string | undefined, configured: unknown, launch?: string[]) {
+async function child(roles: unknown, tools: { name: string; label: string; exposure?: string }[], provider: string | undefined, configured: unknown, launch?: string[], earlier: (string | undefined)[] = []) {
   const active = ["read", "tool_search"];
   const calls: string[][] = [];
+  const hooks: ((e: unknown, ctx: unknown) => Promise<void>)[] = [];
   const api = {
-    on: () => {},
+    on: (event: string, handler: (e: unknown, ctx: unknown) => Promise<void>) => {
+      if (event === "before_agent_start") hooks.push(handler);
+    },
     registerTool: () => {},
     getActiveTools: () => [...active],
     setActiveTools: (names: string[]) => {
@@ -29,8 +32,11 @@ async function child(roles: unknown, tools: { name: string; label: string; expos
   const mcp = new McpChild(api as never, { binding: { role: "builder", ...(launch ? { mcp: launch } : {}) }, createMcp, preloadWaitMs: 100 });
   const trace: Record<string, unknown>[] = [];
   mcp.install();
-  await mcp.start(roles, (r) => trace.push(r), provider, configured);
-  await mcp.preload();
+  await mcp.start(roles, (r) => trace.push(r), configured);
+  // `earlier` are prompts that start before the provider is known or on another one; then the prompt under test
+  for (const hook of hooks) {
+    for (const p of [...earlier, provider]) await hook({}, { model: p === undefined ? undefined : { provider: p } });
+  }
   return { calls, active, trace };
 }
 
@@ -91,4 +97,10 @@ test("a child without a ceiling declares nothing", async () => {
   const c = await child({}, TOOLS, "p1", ["p1"]);
   assert.deepEqual(c.active, ["read"]); // start drops tool_search; no mcp__ tool is added
   assert.deepEqual(c.trace, []);
+});
+
+test("a provider known only at a later before_agent_start still preloads, once", async () => {
+  const c = await child(ROLES, TOOLS, "p1", ["p1"], undefined, [undefined, "p2"]);
+  assert.deepEqual(c.active, ["read", "tool_search", "mcp__fx__echo", "mcp__fx__shout"]);
+  assert.deepEqual(c.trace, [{ event: "mcp_child_direct", provider: "p1", servers: "fx", count: 2 }]);
 });

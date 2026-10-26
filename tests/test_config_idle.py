@@ -83,6 +83,12 @@ class LayerRuleTest(unittest.TestCase):
         self.assertNotIn("idle", role)
         self.assertTrue(any("idle" in w for w in warnings), warnings)
 
+    def test_project_cannot_set_mcp_direct_providers(self):
+        self.assertIn(("mcp", "directProviders"), [k for k, _ in fc.IGNORED_KEYS])
+        merged, warnings = self.project({"mcp": {"directProviders": ["some-provider"]}})
+        self.assertNotIn("directProviders", merged.get("mcp", {}) or {})
+        self.assertTrue(any("directProviders" in w for w in warnings), warnings)
+
 
 class FeaturesTest(unittest.TestCase):
     def test_feature_lists_the_keys(self):

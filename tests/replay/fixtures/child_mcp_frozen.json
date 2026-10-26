@@ -8,7 +8,6 @@
  },
  "builder": {
   "bld": [
-   {"tools": [{"name": "bash", "arguments": {"command": "sleep 3"}}]},
    {"tools": [{"name": "tool_search", "arguments": {"query": "echo"}}]},
    {"tools": [{"name": "mcp__fx__echo", "arguments": {"text": "hello"}}]},
    {"tools": [{"name": "mcp__gx__echo", "arguments": {"text": "outside"}}]},

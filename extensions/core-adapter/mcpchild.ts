@@ -122,11 +122,9 @@ export const unsupportedNote = (reason: string): string => `pi-foreman: MCP is n
 export class McpChild {
   /** Set by `start` from the captured binding. */
   allowed: McpAllowed = { servers: [], tools: {} };
-  /** The child's provider fixes its tool list per turn (mcp.directProviders): allowed servers are declared up front. */
-  direct = false;
+  /** `mcp.directProviders` as configured, set by `start`; `preload` matches the turn's provider against it. */
+  private configuredDirect: unknown;
   private preloaded = false;
-  /** Provider id of the child, set by `start`. */
-  provider: string | undefined;
   private trace: (record: Record<string, unknown>) => void = () => {};
   /** Why MCP is refused in this child (loader missing, extension not creatable), else null. */
   unsupported: string | null = null;
@@ -177,7 +175,7 @@ export class McpChild {
     }
     try {
       (create as (o: unknown) => (api: unknown) => void)({ loadConfig: (ctx: ExtensionContext) => this.loadConfig(ctx) })(this.proxy());
-      this.pi.on("before_agent_start", async () => this.preload());
+      this.pi.on("before_agent_start", async (_event, ctx) => this.preload(ctx.model?.provider));
     } catch (error) {
       this.setupError = `Pi's MCP extension failed to start: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -195,9 +193,10 @@ export class McpChild {
    * mid-turn, and Pi will not declare a `direct` MCP tool under a child's `--tools` allowlist. So before the first
    * prompt, once the allowed servers' tools are registered (bounded wait), load the allowed deferred ones the way
    * `tool_search` would: they are declared in the first request. Only tools inside the child's MCP scope are loaded.
+   * `provider` is the model provider at that prompt (it may be unset at session start); without one nothing is loaded yet.
    */
-  async preload(): Promise<void> {
-    if (!this.direct || this.preloaded || mcpEmpty(this.allowed) || this.unsupported) return;
+  async preload(provider: string | undefined): Promise<void> {
+    if (provider === undefined || !directProviders(this.configuredDirect).includes(provider) || this.preloaded || mcpEmpty(this.allowed) || this.unsupported) return;
     this.preloaded = true;
     const wanted = (): string[] => [...this.labels].filter(([, label]) => mcpCallAllowed(this.allowed, label)).map(([name]) => name);
     const seen = (): Set<string> => new Set(wanted().map((name) => serverKey(this.labels.get(name)?.split("/", 1)[0] ?? "")));
@@ -213,21 +212,20 @@ export class McpChild {
     if (load.length === 0) return;
     this.pi.setActiveTools([...active, ...load]);
     const servers = [...new Set(load.map((name) => this.labels.get(name)?.split("/", 1)[0] ?? ""))].sort();
-    this.trace({ event: "mcp_child_direct", provider: this.provider ?? null, servers: servers.join(","), count: load.length });
+    this.trace({ event: "mcp_child_direct", provider, servers: servers.join(","), count: load.length });
   }
 
   /**
    * The child's session_start: compute the allowed set from the captured binding and the role config, wait for the
    * loader import, and take `tool_search` out of the active set when no MCP is available so no declaration is sent.
-   * `provider` is the child's model provider id; when `mcp.directProviders` (`configuredDirect`) lists it, `preload`
-   * declares the allowed deferred tools up front (a provider that fixes its tool list per turn cannot call a tool
-   * that `tool_search` loads mid-turn).
+   * When the child's model provider is listed in `mcp.directProviders` (`configuredDirect`), `preload` declares the
+   * allowed deferred tools up front (a provider that fixes its tool list per turn cannot call a tool that
+   * `tool_search` loads mid-turn).
    */
-  async start(configRoles: unknown, trace: (record: Record<string, unknown>) => void, provider?: string, configuredDirect?: unknown): Promise<void> {
+  async start(configRoles: unknown, trace: (record: Record<string, unknown>) => void, configuredDirect?: unknown): Promise<void> {
     const binding = this.opts.binding;
     this.trace = trace;
-    this.provider = provider;
-    this.direct = provider !== undefined && directProviders(configuredDirect).includes(provider);
+    this.configuredDirect = configuredDirect;
     this.allowed = allowedMcp(configRoles, binding?.role, binding?.mcp);
     const { load, reason } = await this.loading;
     this.loader = load;
