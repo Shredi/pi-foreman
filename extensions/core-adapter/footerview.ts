@@ -6,6 +6,21 @@ export interface FooterTheme {
   fg(color: FooterColor, text: string): string;
 }
 
+/** What the cache bar shows (cachebar.ts numbers, formatted by the adapter); glyphs come from the active symbol set. */
+export interface CacheBarView {
+  /** Share of the TTL left, 0..1; null = unknown (dim, empty cells). */
+  share: number | null;
+  /** Time to cold (mm:ss); null = unknown. */
+  left: string | null;
+  /** The cache is cold: empty red cells and the cold word. */
+  cold: boolean;
+  /** Warms still to come (at least 1) and the limiter when it is not the window; null = none scheduled. */
+  warms: { count: number; limiter: "budget" | "away" | null } | null;
+  /** The idle model id of the step after the warms; null = no step. */
+  step: string | null;
+  glyphs: { keepalive: string; cold: string; downshift: string };
+}
+
 export interface FooterView {
   /** Short model id, null when no model is selected. */
   model: string | null;
@@ -19,10 +34,8 @@ export interface FooterView {
   contextPoint?: number | null;
   /** Cache-read share of the session's prompt tokens, null before the first prompt. */
   cacheHit: number | null;
-  /** The adapter's keep-alive marker is up: the prompt cache is warm. */
-  warm: boolean;
-  /** The cold or downshift glyph in the status slot (warm is then false); absent otherwise. */
-  mark?: { state: "cold" | "downshift"; glyph: string };
+  /** The cache-timer bar right of `CH`; absent = hidden. */
+  cache?: CacheBarView;
   /** The usage text (footerText); null when the usage footer is off. */
   usage: string | null;
   /** Other extensions' status texts, in display order. */
@@ -103,18 +116,36 @@ function contextBar(windowPercent: number | null, contextWindow: number, point: 
   return `${theme.fg(color, "■".repeat(filled) + "□".repeat(cells - filled))} ${theme.fg(color, label)}`;
 }
 
-/** `CH 98%` green from 80, yellow from 40, red below, then the warm or cold marker. */
-function cacheSegment(hit: number, warm: boolean, mark: FooterView["mark"], theme: FooterTheme): string {
+/** `CH 98%` green from 80, yellow from 40, red below. */
+function cacheSegment(hit: number, theme: FooterTheme): string {
   const color: FooterColor = hit >= 80 ? "success" : hit >= 40 ? "warning" : "error";
-  return `${theme.fg(color, `CH ${Math.round(hit)}%`)} ${mark ? `${mark.glyph} ${mark.state}` : warm ? "warm" : "cold"}`;
+  return theme.fg(color, `CH ${Math.round(hit)}%`);
 }
 
-function headline(v: FooterView, theme: FooterTheme, opts: { branch: boolean; cells: number }): string {
+/** Cache-timer bar: cells drain with the share of the TTL left (green above 50 %, yellow above 20 %, red at or below, dim unknown); `reduced` keeps cells and time only. */
+function cacheBarSegment(c: CacheBarView, cells: number, reduced: boolean, theme: FooterTheme): string {
+  if (c.cold) return theme.fg("error", `${"□".repeat(cells)} ${c.glyphs.cold} cold`);
+  const color: FooterColor = c.share === null ? "dim" : c.share > 0.5 ? "success" : c.share > 0.2 ? "warning" : "error";
+  const filled = c.share === null ? 0 : Math.min(cells, Math.max(0, Math.round(c.share * cells)));
+  let out = theme.fg(color, "■".repeat(filled) + "□".repeat(cells - filled));
+  if (c.left !== null) out += ` ${theme.fg(color, c.left)}`;
+  if (!reduced && c.warms) {
+    out += ` ${c.glyphs.keepalive} ${c.warms.count === 1 ? "last" : c.warms.count}`;
+    if (c.warms.limiter) out += ` ${theme.fg("dim", c.warms.limiter)}`;
+  }
+  return out;
+}
+
+function headline(v: FooterView, theme: FooterTheme, opts: { branch: boolean; cells: number; reduced?: boolean }): string {
   const model = v.model ?? "no-model";
   const segments = [v.thinking ? `${model} • ${v.thinking}` : model];
   if (opts.branch && v.branch) segments.push(v.branch);
   segments.push(contextBar(v.contextPercent, v.contextWindow, v.contextPoint, opts.cells, theme));
-  if (v.cacheHit !== null) segments.push(cacheSegment(v.cacheHit, v.warm, v.mark, theme));
+  if (v.cacheHit !== null) segments.push(cacheSegment(v.cacheHit, theme));
+  if (v.cache) {
+    segments.push(cacheBarSegment(v.cache, opts.cells, opts.reduced === true, theme));
+    if (v.cache.step && !opts.reduced) segments.push(`${v.cache.glyphs.downshift} ${v.cache.step}`);
+  }
   return segments.join(" · ");
 }
 
@@ -124,7 +155,7 @@ export function sanitizeStatus(text: string): string {
 }
 
 /**
- * Line 1 drops the branch first, then shrinks the bar to 5 cells; a line still too wide is cut with `…`.
+ * Line 1 drops the branch first, then shrinks the bars to 5 cells, then the cache bar to cells and time; a line still too wide is cut with `…`.
  * Line 2 is the usage text, then ` · ` and the other extensions' statuses, dimmed.
  */
 export function renderFooter(v: FooterView, width: number, theme: FooterTheme): string[] {
@@ -132,6 +163,7 @@ export function renderFooter(v: FooterView, width: number, theme: FooterTheme): 
     { branch: true, cells: 10 },
     { branch: false, cells: 10 },
     { branch: false, cells: 5 },
+    { branch: false, cells: 5, reduced: true },
   ].map((opts) => headline(v, theme, opts));
   const line1 = candidates.find((line) => visibleWidth(line) <= width) ?? candidates[candidates.length - 1];
   const foreign = v.statuses.map(sanitizeStatus).filter((s) => s !== "").join(" ");

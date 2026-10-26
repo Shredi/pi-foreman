@@ -86,7 +86,7 @@
   "retro": { "proposalMinReviews": 5, "enabled": null, "workspaceKey": null, "backlogDir": null, "repoBacklog": [], "expireDays": 14, "askThreshold": 2, "panelThreshold": 3 },
   "intercom": { "allowRemote": false, "allowOpenPane": false },
   "close": { "from": ["herdr", "intercom-parent", "remote-parent"], "autoClean": true, "worktreeDir": "../<repo>.worktrees", "childWaitMs": 60000 },
-  "footer": { "usage": true, "style": "foreman" },
+  "footer": { "usage": true, "style": "foreman", "cacheBar": true },
   "widget": { "children": true, "prs": true, "prLinks": true },
   "ui": { "symbols": "unicode", "spinner": true },
   "herdr": { "blockedShim": true, "groupTag": true },

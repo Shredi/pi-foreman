@@ -9,7 +9,7 @@ const theme = { fg: (c: keyof typeof CODE, t: string) => `\x1b[${CODE[c]}m${t}\x
 const plain = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 const bar = (s: string): string => plain(s).match(/[■□]+/)?.[0] ?? "";
 
-const base: FooterView = { model: "m", thinking: null, branch: null, contextPercent: 7, contextWindow: 1_000_000, cacheHit: null, warm: false, usage: null, statuses: [] };
+const base: FooterView = { model: "m", thinking: null, branch: null, contextPercent: 7, contextWindow: 1_000_000, cacheHit: null, usage: null, statuses: [] };
 
 test("percent and cells divide by the point: 140k of a 1M window at a 200k point is 70%", () => {
   const line = renderFooter({ ...base, contextPercent: 14, contextPoint: 200_000 }, 200, theme)[0];
