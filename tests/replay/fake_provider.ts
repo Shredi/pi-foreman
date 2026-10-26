@@ -11,7 +11,7 @@
 // after that user message, so the script is stateless across processes and turns.
 //
 // Reviewer models (`<provider>/review-<kind>`) ignore the script and answer every request with
-// a fixed verdict, for the model-review link: allow, deny-high, deny-low, defer, garbage, empty,
+// a fixed verdict, for the model-review link: allow, deny, ask, invalid, unreachable,
 // error (the provider throws) and hang (never answers until aborted).
 //
 // Usage is fixed per answer: input 10, output 5, cacheRead 4, cacheWrite 2 (cost 0), so replay can
@@ -40,18 +40,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 export const PROVIDERS = ["foreman-fake", "foreman-fake-b"];
 export const ROLE_MODELS = ["foreman", "planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"];
 // R41 gate models: allow, deny, ask, invalid (closed JSON verdicts of the shipped policy), unreachable (throws like review-error).
-// deny-high, deny-low, defer, garbage and empty are the old reviewer's; slice 6 removes them with the assertions that use them.
-export const REVIEW_MODELS = ["allow", "deny", "ask", "invalid", "unreachable", "deny-high", "deny-low", "defer", "garbage", "empty", "error", "hang"].map((k) => `review-${k}`);
+export const REVIEW_MODELS = ["allow", "deny", "ask", "invalid", "unreachable", "error", "hang"].map((k) => `review-${k}`);
 const REVIEW_REPLIES: Record<string, string> = {
   "review-allow": '{"verdict":"allow","entry":"read-only-inspection","reason":"scripted allow"}',
   "review-deny": '{"verdict":"deny","entry":"secret-access","reason":"scripted deny"}',
   "review-ask": '{"verdict":"ask","entry":"package-install","reason":"scripted ask"}',
   "review-invalid": '{"verdict":"allow","entry":"not-an-entry"}',
-  "review-deny-high": '{"verdict":"deny","reason":"scripted hard deny","riskLevel":"high"}',
-  "review-deny-low": '{"verdict":"deny","reason":"scripted soft deny","riskLevel":"low"}',
-  "review-defer": '{"verdict":"defer","reason":"scripted unsure","lean":"allow"}',
-  "review-garbage": "Sure, that looks fine to me.",
-  "review-empty": "",
 };
 const TAG = /\[\[replay:([A-Za-z0-9_.-]+)\]\]/;
 

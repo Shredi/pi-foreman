@@ -110,7 +110,7 @@ def note_refusal(status, text):
 
 
 ROLE_IDS = ("senior-reviewer", "finalizer", "explorer", "planner", "builder", "reviewer", "foreman")
-FAKE_REVIEW_MODEL = "review-defer"  # never auto-allows: the ask reaches the dialog
+FAKE_REVIEW_MODEL = "review-unreachable"  # never allows: the call reaches the dialog
 
 
 KEEP_ASK_LINES = re.compile(r"^\s*(tool|subagent|rule)\s*:", re.I)

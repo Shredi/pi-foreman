@@ -101,7 +101,7 @@ class BuildWorldTest(unittest.TestCase):
         self.assertNotIn("ceremony", cfg)
         self.assertEqual(ws.foreman_config(row(review_model="p/other"))["providers"]["p"]["review"]["model"], "p/other")
         fake = ws.foreman_config(row(_fake=True))["providers"]["p"]["review"]["model"]
-        self.assertEqual(fake, "p/review-defer")
+        self.assertEqual(fake, "p/review-unreachable")
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "foreman.json").write_text(json.dumps(cfg))
             r = subprocess.run([sys.executable, str(ROOT / "scripts" / "foreman_config.py"), "validate", "--json",
