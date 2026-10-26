@@ -87,7 +87,7 @@ const lock = path.join(foreman, "bench", "pi-lock");
 // a path written INTO a bash line: on win32 a child writes forward slashes (unquoted backslashes are bash escapes,
 // see the win32 fixtures in r11-npm-lock-win32.test.ts); the ctx paths stay native
 const inBash = (p: string): string => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
-const npm = (command: string, at = wt, extra: Partial<MatchCtx> = {}): string => child(command, { roundRoots: [wt], foremanRoot: foreman, ...extra }, at).kind;
+const npm = (command: string, at = wt, extra: Partial<MatchCtx> = {}): string => child(command, { roundRoots: [wt], foremanRoot: foreman, install: true, ...extra }, at).kind; // R46: the pre-allow needs the launch's install flag
 
 test("npm_ci_bench_pi_lock_foreman_checkout_allowed", () => {
   assert.equal(npm(`npm ci --prefix ${inBash(lock)}`), "pass");

@@ -30,7 +30,7 @@ test("npm ci in a pi-subagents leaf: the label is granted for a real node_module
     fs.symlinkSync(main, path.join(linked, "node_modules"));
 
     const rules = buildOverlayRules(baseline, {}, {}, path.join(home, ".pi", "agent"), ws, undefined, false);
-    const ctxOf = (cwd: string): MatchCtx => ({ cwd, home, platform: process.platform, role: "child", roundRoots: [] });
+    const ctxOf = (cwd: string): MatchCtx => ({ cwd, home, platform: process.platform, role: "child", roundRoots: [], install: true });
 
     assert.equal(npmCiWorktreeLabel("npm ci", ctxOf(leaf)), "npm-ci-worktree");
     assert.equal(checkToolCall(rules, "bash", { command: "npm ci" }, ctxOf(leaf)), null);
@@ -56,7 +56,7 @@ test("npm ci in an owned round root: a symlinked node_modules asks, a real one d
     fs.symlinkSync(main, path.join(linked, "node_modules"));
 
     const rules = buildOverlayRules(baseline, {}, {}, path.join(home, ".pi", "agent"), ws, undefined, false);
-    const ctxOf = (cwd: string): MatchCtx => ({ cwd, home, platform: process.platform, role: "child", roundRoots: [real, linked] });
+    const ctxOf = (cwd: string): MatchCtx => ({ cwd, home, platform: process.platform, role: "child", roundRoots: [real, linked], install: true });
 
     assert.equal(checkToolCall(rules, "bash", { command: "npm ci" }, ctxOf(real)), null);
     assert.equal(checkToolCall(rules, "bash", { command: "npm ci" }, ctxOf(linked))?.kind, "ask");

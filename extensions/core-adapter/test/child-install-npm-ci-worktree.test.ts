@@ -24,7 +24,7 @@ fs.writeFileSync(path.join(leaf, "package.json"), "{}");
 
 const rules: OverlayRules = buildOverlayRules(baseline, {}, {}, ag, ws, undefined, false);
 const ctxOf = (cwd: string): MatchCtx => ({ cwd, home, platform: process.platform, role: "child", roundRoots: [round] });
-const run = (cwd: string, command: string): string => checkToolCall(rules, "bash", { command }, ctxOf(cwd))?.kind ?? "pass";
+const run = (cwd: string, command: string): string => checkToolCall(rules, "bash", { command }, { ...ctxOf(cwd), install: true })?.kind ?? "pass";
 const win = process.platform === "win32";
 const expected = win ? null : "npm-ci-worktree";
 const decision = win ? "ask" : "pass";

@@ -167,6 +167,8 @@ export interface MatchCtx {
   roundRoots?: string[];
   /** Child only: the foreman's own checkout (workspace root); `npm install|ci` into its `bench/pi-lock` is pre-allowed (R11 item 10). */
   foremanRoot?: string;
+  /** Child only: the launch set `install: true` (R46 item 8); without it the owned-root, `npm-ci-worktree` and `bench/pi-lock` npm pre-allows do not apply. */
+  install?: boolean;
   /** Child only: round worktrees the child may read but not write (roundsurface.ts childSurface); a write below one outside `roundRoots` and the scratch dir is denied. */
   roundReadRoots?: string[];
   exists?: (p: string) => boolean;
@@ -2951,9 +2953,11 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   if (ctx.role === "child" && c.worktreeOp !== undefined) {
     return { kind: "deny", reason: `pi-foreman: denied by the permission policy (git worktree ${clip(c.worktreeOp)} is the foreman's; children may only list worktrees). Ask the foreman.` };
   }
-  if (ctx.role === "child" && c.childAsk !== undefined && !npmInstallOwned(c, ctx) && !npmCiWorktreeLabel(command, ctx)) {
+  if (ctx.role === "child" && c.childAsk !== undefined && !(ctx.install === true && (npmInstallOwned(c, ctx) || npmCiWorktreeLabel(command, ctx)))) {
+    const npm = c.childAsk.startsWith("npm ");
     const ci = c.childAsk === "npm ci" ? " Run a bare `npm ci` in your worktree (no pipe, chain or background) or ask the foreman." : "";
-    return { kind: "ask", reason: `pi-foreman: ${c.childAsk} needs approval for a child (it writes the project or the network; the foreman may run it).${ci}` };
+    const flag = npm && !ctx.install ? " The foreman can relaunch you with the launch flag `install: true`, which lets you run it in your worktree." : "";
+    return { kind: "ask", reason: `pi-foreman: ${c.childAsk} needs approval for a child (it writes the project or the network; the foreman may run it).${ci}${flag}` };
   }
   // R31c: in a network read (netread.ts) a URL operand is no path (`https://h/x` would read as `<cwd>/https:/h/x`)
   const netRead = shell === "posix" && netReadCommand(command, ctx.role === "child" ? "child" : "orchestrator", scratch0 ? [scratch0] : [], ctx.cwd);
