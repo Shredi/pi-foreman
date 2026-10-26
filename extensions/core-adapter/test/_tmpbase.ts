@@ -73,7 +73,7 @@ function stopBrokersUnder(root: string): void {
     try { pid = Number(fs.readFileSync(file, "utf8").trim()); } catch { continue; }
     if (!Number.isInteger(pid) || pid <= 0) continue;
     try { process.kill(pid, "SIGTERM"); } catch { continue; } // ESRCH: already gone; EPERM: not ours
-    for (let waited = 0; waited < 2000 && alive(pid); waited += 50) {
+    for (let waited = 0; waited < 500 && alive(pid); waited += 50) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
     }
   }

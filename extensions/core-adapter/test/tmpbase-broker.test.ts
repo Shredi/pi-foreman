@@ -23,7 +23,7 @@ test("disableIntercom writes intercom/config.json with enabled: false", () => {
   }
 });
 
-test("rmTestTmp SIGTERMs a broker-pid'd child under the removed dir before removing it", async () => {
+test("rmTestTmp SIGTERMs a broker-pid'd child under the removed dir before removing it", async (t) => {
   const root = mkTestTmp("tmpbase-broker-");
   const agentDir = path.join(root, "agent");
   const dir = path.join(agentDir, "intercom");
@@ -31,10 +31,17 @@ test("rmTestTmp SIGTERMs a broker-pid'd child under the removed dir before remov
   const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
   const pid = child.pid;
   assert.ok(pid !== undefined);
+  // Kill the dummy on every path, so a regression that skips the stop leaves no process behind.
+  t.after(() => child.kill("SIGKILL"));
   fs.writeFileSync(path.join(dir, "broker.pid"), String(pid));
   const exited = new Promise<number | null>((resolve) => child.once("exit", (code) => resolve(code)));
   rmTestTmp(root);
-  await exited;
+  // Bound the wait: without the stop, the dummy never exits and an unbounded await would hang the run.
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<"timed out">((resolve) => { timer = setTimeout(() => resolve("timed out"), 10_000); });
+  const outcome = await Promise.race([exited, timedOut]);
+  clearTimeout(timer);
+  assert.notEqual(outcome, "timed out", "the broker dummy was not stopped within 10 s");
   assert.equal(alive(pid), false);
   assert.equal(fs.existsSync(root), false);
 });
