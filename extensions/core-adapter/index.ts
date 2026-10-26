@@ -41,6 +41,7 @@ import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { firstRunNotice, presetNames, presetProviders, providerGapNotice } from "./firstrun.ts";
 import { dormantDoctorLine } from "./features.ts";
 import { bridgeTrusted, trustBridgeCommand } from "./bridgetrust.ts";
+import { adoptPerms } from "./permsadopt.ts";
 import { preBashConfigOf, runPreBashHooks } from "./prebash.ts";
 import { profileDoctorLines } from "./profiledoctor.ts";
 import { BUNDLED_PACKAGE_ROOTS, collectOrientation } from "./orient.ts";
@@ -4135,7 +4136,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman prs [list] | /foreman trust bridge",
+    description: "pi-foreman commands: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman prs [list] | /foreman trust bridge | /foreman perms adopt <shape-id>",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
       if (sub === "close") return close.command(args.trim().slice(sub.length), ctx);
@@ -4162,6 +4163,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         // the owner's confirm dialog only: no auto review, no model answer
         ctx.ui.notify(await trustBridgeCommand(s.agentDir, s.cwd, projectBridgeConfigRisks(s.cwd), { hasUI: ctx.hasUI, mode: ctx.mode, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) }), "info");
+        return;
+      }
+      if (sub === "perms") {
+        const s = await ensureSession(ctx);
+        if (rest[0] !== "adopt" || rest.length !== 2) {
+          ctx.ui.notify("Usage: /foreman perms adopt <shape-id> (owner pane only; list shapes with `foreman perms candidates`)", "warning");
+          return;
+        }
+        const kind: GateKind = s.isChild ? "child" : roundStateDir(process.env) ? "round" : ctx.hasUI ? "owner" : "headless";
+        // the owner's confirm dialog only: no auto review, no model answer
+        ctx.ui.notify(await adoptPerms(s.agentDir, rest[1], kind, { hasUI: ctx.hasUI, mode: ctx.mode, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) }), "info");
         return;
       }
       if (sub === "budget") {
