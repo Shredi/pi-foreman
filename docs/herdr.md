@@ -117,6 +117,8 @@ of an entry 2 cells further right than the first and has no setting for it, so `
 (`DETAIL_INDENT` in `sidebar.py`) and the detail rows are 2 cells shorter: every `│` sits under the connector or glyph
 it continues.
 
+**Checking the PR colours:** `python3 sidebar.py configure --check [--symbols <set>] [--config <path>]` (`check` is an alias) reads the Herdr `config.toml` (default: Herdr's config dir) and compares the `$fm_pr1..4` colour rules with the glyphs of the set. It prints one line: `ok` when they match, `stale: ...` naming the expected and configured glyphs otherwise. It exits 0 when ok, 1 when stale or a token is missing, 2 when the file is unreadable or has no `pi` rows; it writes nothing. The daemon runs the same check once at start and logs one line when the rules are stale. After changing `ui.symbols`, re-run `configure` and merge the snippet.
+
 **Upgrading from an earlier snippet:** re-run `configure` (the action, or `python3 sidebar.py configure [--symbols <set>]`),
 merge the new snippet over your old `pi = [...]` rows and run `herdr server reload-config`. An old merged snippet keeps
 working (no token was removed), but only the new one matches the header (state glyph rules, no reason icon rules), and each glyph set needs its own
@@ -456,6 +458,7 @@ Activity glyphs and the spinner:
 | `pr-run` | ◉ | ◉ | U+F192 | `*` |
 | `pr-ok` | ○ | ○ | U+F10C | `o` |
 | `pr-none` | ◌ | ◌ | U+F1DB | `.` |
+| `rule` | ─ | ─ | ─ | `-` |
 
 ## External status
 
