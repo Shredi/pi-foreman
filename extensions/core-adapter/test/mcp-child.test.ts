@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
@@ -161,10 +162,11 @@ test("a reviewer (denies mcp__*) with mcp in config starts nothing", async () =>
 });
 
 test("a direct server in mcp.json is deferred in the child: not active, loaded by tool_search", async () => {
-  await withChild({ roles: { builder: { mcp: ["fx"] } }, server: { command: process.execPath, args: [fixture, path.join(fs.realpathSync(process.env.TMPDIR ?? "/tmp"), `fx-direct-${process.pid}-s`), path.join(fs.realpathSync(process.env.TMPDIR ?? "/tmp"), `fx-direct-${process.pid}-e`)], exposure: "direct" } }, async ({ api }) => {
+  const tmp = fs.realpathSync(os.tmpdir());
+  await withChild({ roles: { builder: { mcp: ["fx"] } }, server: { command: process.execPath, args: [fixture, path.join(tmp, `fx-direct-${process.pid}-s`), path.join(tmp, `fx-direct-${process.pid}-e`)], exposure: "direct" } }, async ({ api }) => {
     assert.equal(await waitFor(() => mcpTools(api).includes("mcp__fx__echo")), true);
     assert.equal(api.getAllTools().find(({ name }) => name === "mcp__fx__echo")?.exposure, "deferred");
     assert.equal(api.getActiveTools().includes("mcp__fx__echo"), false);
   });
-  for (const suffix of ["s", "e"]) fs.rmSync(path.join(fs.realpathSync(process.env.TMPDIR ?? "/tmp"), `fx-direct-${process.pid}-${suffix}`), { force: true });
+  for (const suffix of ["s", "e"]) fs.rmSync(path.join(tmp, `fx-direct-${process.pid}-${suffix}`), { force: true });
 });
