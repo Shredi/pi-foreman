@@ -171,6 +171,9 @@ class RemoteBase(unittest.TestCase):
         adir.mkdir(parents=True, exist_ok=True)
         cfg = {"sessions": {"machines": machines}}
         cfg.update(extra or {})
+        for row in cfg["sessions"].get("machines", {}).values():  # the push fixture, unless a test sets its own
+            row.setdefault("returnPath", "push")
+        cfg["sessions"].setdefault("ssh", {}).setdefault("controlMaster", False)
         (adir / "foreman.json").write_text(json.dumps(cfg), "utf-8")
 
     def apply_env(self, env, stack):
@@ -262,7 +265,8 @@ class ConfigTest(unittest.TestCase):
 
     def test_defaults(self):
         sessions = self.load()["config"]["sessions"]
-        self.assertEqual(sessions, {"machines": {}, "remoteInlineMaxBytes": 32768})
+        self.assertEqual(sessions, {"machines": {}, "remoteInlineMaxBytes": 32768, "pull": {"intervalSeconds": 20, "fastSeconds": 5},
+                                    "ssh": {"controlMaster": True}})
 
     def test_machines_from_the_project_layer_are_ignored(self):
         r = self.load(project={"sessions": {"machines": {"alpha": {}}}}, l2={"sessions": {"machines": {"beta": {}}}})
@@ -303,10 +307,11 @@ class ProbeTest(RemoteBase):
     def test_probe_fields(self):
         code, r = self.probe()
         self.assertEqual(code, 0)
-        self.assertEqual(r["protocol"], 1)
+        self.assertEqual(r["protocol"], 2)
+        self.assertEqual(r["returnPath"], "push")
         self.assertEqual((r["piVersion"], r["intercomVersion"], r["platform"]), ("pi 9.9.9", "1.2.3", sys.platform))
         self.assertEqual(r["herdr"], {"available": True, "serverUp": True})
-        self.assertEqual((r["agentDir"], r["returnPath"]), (str(self.radir), True))
+        self.assertEqual((r["agentDir"], r["returnPathOk"]), (str(self.radir), True))
         self.assertIn("foremanVersion", r)
         self.assertEqual(r["intercomMachine"], fsn.short_hostname())
 
@@ -321,34 +326,38 @@ class ProbeTest(RemoteBase):
     def test_return_path_needs_the_parent_saved_and_enabled(self):
         off = [dict(REMOTE_MACHINES[0], enabled=False)]
         r = self.probe(FAKE_HERDR_MACHINES=json.dumps(off))[1]
-        self.assertFalse(r["returnPath"])
+        self.assertFalse(r["returnPathOk"])
+        self.assertEqual(r["returnPath"], "push")
         self.assertIn("beta", r["returnPathError"])
-        self.assertFalse(self.probe(FAKE_HERDR_MACHINES="[]")[1]["returnPath"])
+        self.assertFalse(self.probe(FAKE_HERDR_MACHINES="[]")[1]["returnPathOk"])
 
     def test_return_path_needs_exactly_one_agent_with_the_parent_uuid(self):
-        self.assertFalse(self.probe(FAKE_HERDR_AGENTS=json.dumps([pi_row(OTHER)]))[1]["returnPath"])
+        self.assertFalse(self.probe(FAKE_HERDR_AGENTS=json.dumps([pi_row(OTHER)]))[1]["returnPathOk"])
         two = self.probe(FAKE_HERDR_AGENTS=json.dumps([pi_row(PARENT), pi_row(PARENT)]))[1]
-        self.assertFalse(two["returnPath"])
+        self.assertFalse(two["returnPathOk"])
+        self.assertEqual(two["returnPath"], "push")
         self.assertIn("2 pi agents", two["returnPathError"])
 
     def test_return_path_reads_pi_rows_with_a_session_file_only(self):
         rows = [{"agent": "shell", "agent_session": {"kind": "path", "value": "/s/x_%s.jsonl" % PARENT}},
                 {"agent": "pi", "agent_session": {"kind": "name", "value": "x_%s.jsonl" % PARENT}},
                 {"agent": "pi", "agent_session": {"kind": "path", "value": "/s/%s.jsonl" % PARENT}}]
-        self.assertFalse(self.probe(FAKE_HERDR_AGENTS=json.dumps(rows))[1]["returnPath"])
+        self.assertFalse(self.probe(FAKE_HERDR_AGENTS=json.dumps(rows))[1]["returnPathOk"])
         letters = "abcdefab-cdef-abcd-efab-cdefabcdefab"
         asked = {"parentName": "beta", "parentAddress": letters + "@beta"}
         for row, expected in ((pi_row(letters), True), (pi_row(letters.upper()), False)):  # ids compare exactly
             reply = self.remote("probe", asked, FAKE_HERDR_AGENTS=json.dumps([row]))[1]
-            self.assertEqual(reply["returnPath"], expected)
+            self.assertEqual(reply["returnPathOk"], expected)
+            self.assertEqual(reply["returnPath"], "push")
 
     def test_herdr_bin_path_rule(self):
         r = self.probe(HERDR_BIN_PATH=str(self.tmp / "missing herdr"))[1]
-        self.assertFalse(r["returnPath"])
+        self.assertFalse(r["returnPathOk"])
+        self.assertEqual(r["returnPath"], "push")
         self.assertIn("not found", r["returnPathError"])
         other = self.tmp / "herdr2"
         self.script(other, FAKE_HERDR)
-        self.assertTrue(self.probe(HERDR_BIN_PATH=str(other))[1]["returnPath"])
+        self.assertTrue(self.probe(HERDR_BIN_PATH=str(other))[1]["returnPathOk"])
 
     def test_probe_refuses_bad_requests(self):
         code, r = self.remote("probe", {"parentName": "beta", "parentAddress": ADDRESS, "extra": 1})
@@ -611,7 +620,7 @@ class ParentTest(RemoteBase):
                           "cwd": str(self.rproj)})
         self.assertEqual(entry["remoteHandoff"], str(self.radir / "pi-foreman" / "handoffs" / handoff_name))
         self.assertEqual((entry["remote"]["protocol"], entry["remote"]["piVersion"], entry["remote"]["platform"]),
-                         (1, "pi 9.9.9", sys.platform))
+                         (2, "pi 9.9.9", sys.platform))
         self.assertTrue(mirror.is_dir() and not list(mirror.iterdir()))
         remote_entry = self.remote_registry()[0]
         self.assertEqual((remote_entry["child"], remote_entry["parent"]), (entry["child"], ADDRESS))
@@ -711,14 +720,14 @@ class ParentTest(RemoteBase):
         err = self.refused(*self.open_args(), code="no_return_path", FAKE_REMOTE_HERDR_MACHINES="[]")
         self.assertIn("beta", err)
         self.assertEqual(len(self.ssh_calls()), 1)  # probe only
-        self.refused(*self.open_args(), code="remote_protocol", FAKE_SSH_PROTOCOL="2")
+        self.refused(*self.open_args(), code="remote_protocol", FAKE_SSH_PROTOCOL="3")
         self.refused(*self.open_args(), code="remote_missing", FAKE_REMOTE_PATH=str(self.bin))
         self.refused(*self.open_args(), code="remote_missing", FAKE_NO_INTERCOM="1")
         self.assertEqual(self.remote_registry(), [])
 
     def test_protocol_mismatch_names_both_values(self):
-        err = self.refused(*self.open_args(), code="remote_protocol", FAKE_SSH_PROTOCOL="2")
-        self.assertIn("remote alpha speaks protocol 2, this side speaks 1;", err)
+        err = self.refused(*self.open_args(), code="remote_protocol", FAKE_SSH_PROTOCOL="3")
+        self.assertIn("remote alpha speaks protocol 3, this side speaks 2;", err)
 
     def test_remote_refusals_are_passed_through(self):
         (self.rproj / ".pi").mkdir()
@@ -1057,8 +1066,7 @@ class NoticeWin32Test(NoticeBase):
 
     def test_footer_forms(self):
         for plan_first in (False, True):
-            with mock.patch.object(fsn, "host_platform", return_value="win32"):
-                text = fsn.remote_footer("demo", plan_first, 32768)
+            text = fsn.remote_footer("demo", plan_first, 32768)
             cmds = [l.strip() for l in text.splitlines() if " remote notice " in l]
             self.assertTrue(cmds)
             for c in cmds:
@@ -1074,7 +1082,7 @@ class NoticeWin32Test(NoticeBase):
 
 class RemoteOptionTest(RemoteBase):
     def test_unsupported_flags_are_refused_with_machine(self):
-        for flag in ("--plan-mode", "--first-command", "--focus", "--print-all"):
+        for flag in ("--print-all",):
             extra = (flag, "/x") if flag == "--first-command" else (flag,)
             rc, out, err = self.run_main(*self.open_args(*extra))
             self.assertEqual(rc, 1, flag)
@@ -1090,7 +1098,8 @@ class RemoteOptionTest(RemoteBase):
         rc, out, err = self.run_main("open", "demo", str(self.brief), "--cwd", str(self.rproj), "--parent-id", PARENT,
                                      "--plan-mode", "--dry-run")
         self.assertEqual(rc, 0, err)
-        self.assertIn("pi /plan ", out)
+        # the dry-run line is PowerShell on win32, where every message is single-quoted
+        self.assertIn("pi '/plan' " if sys.platform == "win32" else "pi /plan ", out)
         self.assertEqual(lines_of(self.logs["ssh"]), [])
 
 

@@ -104,10 +104,10 @@ interface Ctx {
 function counts(v: PrView, c: Ctx, theme: FooterTheme): string {
   const n = v.checks.counts;
   const parts: string[] = [];
-  if (n.failed > 0) parts.push(theme.fg("error", `${c.sym.lost}${n.failed}`));
-  if (n.running > 0) parts.push(theme.fg("warning", `${c.sym["pr-run"]}${n.running}`));
-  if (n.missing > 0) parts.push(theme.fg("dim", `${c.sym["pr-none"]}${n.missing}`));
-  if (n.passed > 0) parts.push(theme.fg("success", `${c.sym.recent}${n.passed}`));
+  if (n.failed > 0) parts.push(theme.fg("error", `${c.sym.lost} ${n.failed}`));
+  if (n.running > 0) parts.push(theme.fg("warning", `${c.sym["pr-run"]} ${n.running}`));
+  if (n.missing > 0) parts.push(theme.fg("dim", `${c.sym["pr-none"]} ${n.missing}`));
+  if (n.passed > 0) parts.push(theme.fg("success", `${c.sym.recent} ${n.passed}`));
   const text = parts.join(" ");
   return text && v.checks.truncated ? `${text}+` : text;
 }
@@ -187,6 +187,15 @@ function watchLines(shared: PrShared, room: number, c: Ctx, opts: RenderOpts): s
     out.push(dim(`${head}${title && avail >= 2 ? ` ${cut(title, avail)}` : ""}`));
   }
   return out;
+}
+
+/** The divider above the widget: `── PRs (n) ` (no count when no view is open) filled with the rule glyph to `width`; below 12 columns a plain rule. */
+export function dividerLine(open: number, width: number, theme: FooterTheme, sym: SymbolSet): string {
+  const rule = sym.rule;
+  if (width < 12) return theme.fg("dim", rule.repeat(width));
+  const title = `${rule}${rule} PRs${open ? ` (${open})` : ""} `;
+  if (vw(title) > width) return theme.fg("dim", rule.repeat(width));
+  return theme.fg("dim", title + rule.repeat(width - vw(title)));
 }
 
 /** The widget lines for `views` (any order) and the shared snapshot (null: none), none wider than `width`. */
@@ -423,8 +432,12 @@ export class PrWidget {
   /** The lines Pi draws at `width` (called from the component's render). */
   linesFor(width: number): string[] {
     if (!this.opts) return [];
-    if (this.mode === "collapsed") return [fitWidth((this.theme ?? PLAIN).fg("dim", collapsedLine(this.data.views, this.data.shared)), width)];
-    return renderPrWidget(this.data.views, this.data.shared, width, { links: this.opts.links, theme: this.theme, symbols: symbolSet(this.opts.symbols), now: this.now(), current: this.deps.current() });
+    const theme = this.theme ?? PLAIN;
+    const sym = symbolSet(this.opts.symbols);
+    const open = this.data.views.filter((v) => v.state === "open").length;
+    if (this.mode === "collapsed") return [dividerLine(open, width, theme, sym), fitWidth(theme.fg("dim", collapsedLine(this.data.views, this.data.shared)), width)];
+    const body = renderPrWidget(this.data.views, this.data.shared, width, { links: this.opts.links, theme: this.theme, symbols: sym, now: this.now(), current: this.deps.current() });
+    return body.length ? [dividerLine(open, width, theme, sym), ...body] : [];
   }
 
   /** Pi dropped the component. */

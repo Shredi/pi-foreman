@@ -36,6 +36,8 @@ STALE_AFTER = 900.0
 DONE_TTL_MINUTES = 30.0
 RECENT_RUN_SECONDS = 8
 STARTING_WINDOW = 120.0
+PULL_INTERVAL = 20  # sessions.pull.intervalSeconds default
+REMOTE_LIVE_MAX = 90.0  # a remote child's heartbeat age plus the pull age must stay under this to show its live state
 SYMBOLS_PATH = Path(__file__).resolve().parent.parent / "config" / "symbols.json"
 SYM_ORDER = ("working", "waiting", "asking", "blocked", "done", "lost")
 SYM_COLORS = {"working": "32", "waiting": "90", "asking": "33", "blocked": "33", "done": "90", "lost": "31"}
@@ -159,6 +161,18 @@ def config_done_ttl(adir):
     except Exception:  # noqa: BLE001 - display tool: a broken config must not stop the radar
         pass
     return DONE_TTL_MINUTES
+
+
+def config_pull_interval(adir):
+    """sessions.pull.intervalSeconds of the merged config; the default on any failure."""
+    try:
+        import foreman_config
+        v = (foreman_config.load_config(agent_dir=str(adir))["config"].get("sessions") or {}).get("pull", {}).get("intervalSeconds")
+        if isinstance(v, int) and not isinstance(v, bool) and 5 <= v <= 300:
+            return v
+    except Exception:  # noqa: BLE001 - display tool: a broken config must not stop the radar
+        pass
+    return PULL_INTERVAL
 
 
 def config_recent_runs(adir):
@@ -329,7 +343,8 @@ def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
         handoffs[dn] = {"parent": read_line(p / "parent"), "child": read_line(p / "child"), "mtime": mtime(p),
                         "path": str(p),
                         "has": [f for f in ("result.md", "plan.md", "brief.md") if (p / f).exists()]}
-    data = {"live": live, "registry": reg, "handoffs": handoffs, "usage": usage, "trace": trace}
+    data = {"live": live, "registry": reg, "handoffs": handoffs, "usage": usage, "trace": trace,
+            "pullInterval": config_pull_interval(adir)}
     keep = None if only is None else subtree_sids(data, only)
     for d in live:
         sid = d["sessionId"]
@@ -402,6 +417,33 @@ def reg_glyph(status, opened, now, has_result=False):
     if status == "failed":
         return "lost", "failed"
     return "idle", status if status in ("closing", "closed") else "idle"
+
+
+def remote_glyph(e, opened, now, interval):
+    """(glyph, state, pulled time) of a registry entry on a remote machine. The live state of the child counts while the
+    last pull is younger than 3 x the pull interval + 30 s and the child's heartbeat age plus the pull age is under
+    REMOTE_LIVE_MAX; an open ask, `closing` and `closed` come first; a pull entry with no pull success for that window
+    is lost once its starting window is over."""
+    pulled = parse_ts(e.get("pulledAt"))
+    status = e.get("status")
+    if status in ("open", "pending") and isinstance(e.get("ask"), dict):
+        return "blocked", "ask", pulled
+    if status not in ("open", "pending"):
+        return (*reg_glyph(status, opened, now), pulled)
+    pull_age = None if pulled is None else max(0.0, now - pulled)
+    fresh = pull_age is not None and pull_age < 3 * interval + 30
+    live = e.get("remoteLive") if isinstance(e.get("remoteLive"), dict) else {}
+    beat = live.get("heartbeatAgeSeconds")
+    if fresh and isinstance(beat, (int, float)) and not isinstance(beat, bool) and beat + pull_age < REMOTE_LIVE_MAX:
+        state = live.get("state")
+        if state == "blocked":
+            return "blocked", "blocked", pulled
+        if state == "working":
+            return "working", "working", pulled
+        return "idle", "done" if state == "done" else "idle", pulled
+    if status == "pending" or e.get("returnPath") != "pull" or not fresh and pulled is None:
+        return (*reg_glyph(status, opened, now), pulled)
+    return ("idle", "idle", pulled) if fresh else ("lost", "lost", pulled)
 
 
 def build(data, now):
@@ -525,9 +567,15 @@ def build(data, now):
         ho = handoff_by_leaf.get(leaf(e.get("handoff")))
         if n is None:
             n = new_node("session", key, e.get("label") if isinstance(e.get("label"), str) and e.get("label") else key)
-            n["glyph"], n["state"] = reg_glyph(e.get("status"), opened, now, bool(ho and "result.md" in ho["has"]))
             last = e.get("last")
             n["last"] = parse_ts(last.get("at")) if isinstance(last, dict) else None
+            if isinstance(e.get("machine"), str) and e["machine"]:
+                n["machine"] = e["machine"]
+                n["name"] += "@" + e["machine"]
+                n["glyph"], n["state"], n["pulled"] = remote_glyph(e, opened, now, data.get("pullInterval") or PULL_INTERVAL)
+                n["last"] = max([t for t in (n["last"], n["pulled"]) if t is not None], default=None)
+            else:
+                n["glyph"], n["state"] = reg_glyph(e.get("status"), opened, now, bool(ho and "result.md" in ho["has"]))
             n["last"] = n["last"] or opened
             n["started"] = opened
             n["path"] = e["handoff"] if isinstance(e.get("handoff"), str) else ""
@@ -803,6 +851,9 @@ def to_json_node(n, now, symbols):
             "cwd": n["cwd"], "age_s": age, "blocked_s": blocked, "own": cost(n["own"]), "tot": cost(n["tot"]),
             "done_children": sum(1 for c in n["children"] if c["state"] == "done"), "children": kids}
     if n["kind"] == "session":
+        if n.get("machine"):
+            out["machine"] = n["machine"]
+            out["pulled_s"] = None if n.get("pulled") is None else max(0, int(now - n["pulled"]))
         out["sid"] = n["sid"]
         out["waits"] = n["waits"]
         out["started"] = n["started"]

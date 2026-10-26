@@ -94,6 +94,14 @@ export class IdleModel {
     return this.base !== null;
   }
 
+  /** The configured idle rung when downshift is enabled and the model is found, else null; no switching, no trace. */
+  idleRung(): ModelRef | null {
+    const d = this.d;
+    const rung = d.enabled() ? d.rung() : null;
+    const target = rung ? d.find(rung.model) : undefined;
+    return target ? { provider: target.provider, id: target.id } : null;
+  }
+
   /** `<provider>/<id>` of the model the foreman's gates judge: the base while downshifted, else the current model. */
   baseModel(current: ModelRef | null | undefined): string | null {
     if (this.base) return spec(this.base);

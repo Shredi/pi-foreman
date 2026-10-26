@@ -515,7 +515,7 @@ The `foreman` CLI (`bin/foreman`, `.cmd`, `.ps1`; `foreman update-check|retro|sy
 | `radar.doneTtlMinutes` | `30` | neutral (display) | L1, L3, L2 (radar reads no project file) |
 | `retro.proposalMinReviews` | `5` | lower proposes sooner | L1, L3, L2; project ignored |
 | `intercom.allowRemote`, `intercom.allowOpenPane` | `false` | `true` loosens | any layer may set false; a project or session can only set false |
-| `close.from` | `["herdr","intercom-parent"]` | fewer is tighter | any; project and session intersect |
+| `close.from` | `["herdr","intercom-parent","remote-parent"]` | fewer is tighter | any; project and session intersect |
 | `close.autoClean` | `true` | `true` loosens (removes worktrees and scratch) | any; project and session only false |
 | `close.worktreeDir` | `../<repo>.worktrees` | neutral (names the sweep convention) | L1, L3, L2; project ignored |
 | `close.childWaitMs` | `60000` | neutral (how long a close waits for its child sessions) | L1, L3, L2; project ignored |
@@ -614,7 +614,7 @@ pi-foreman installs as a Pi package; details in `docs/install.md`.
 | Copilot, Codex subscription | Pi built-in providers | Pi 1.0.4, pin 1.1.0 | Source read: Copilot device-flow `/login github-copilot` or `COPILOT_GITHUB_TOKEN`. Not run. |
 | MCP | **adopt Pi built-in (pending hands-on in Phase 2)**; `pi-mcp-adapter` 5.0.0 opt-in overlay only | Pi 1.0.4 (docs, types) | The adapter replaces the built-in, rewrites user settings, and hides per-tool gating behind one proxy tool. Not run. |
 | Codemode | adopt Pi built-in | Pi 1.0.4, pin 1.1.0 | Hands-on in child |
-| Background tasks | **none**; `pi-background-tasks` avoided | 2.6.9 (source read) | 2.6.9 impersonates the Claude Code client on the `anthropic` provider, and its Pi peer range is `^0.81–0.84` |
+| Background tasks | **optional add-on, consent only** (`config/addons.json`); never a dependency | 2.6.9 (source read) | 2.6.9 impersonates the Claude Code client on the `anthropic` provider, and its Pi peer range is `^0.81–0.84` |
 | Claude Code child runner | **not used**, not even in an overlay | pi-subagents 0.75.0 (docs) | Async only, no Pi guards inside. The Claude bridge is the only Claude path. |
 | Intercom | **adopt `pi-intercom` 0.17.0** behind the guard in §5 layer 7 | 0.17.0 (source read) | Inbound messages are data; open-pane and cross-machine sends are off by default |
 | Plan mode, todo, web search | candidates, not adopted yet | not tested | Decided with evidence in Phases 2 and 4 |
@@ -629,7 +629,7 @@ pi-foreman installs as a Pi package; details in `docs/install.md`.
 | 3 | A per-launch thinking change restates the full `provider/model:level`, not a bare `:level` | A bare level fails for native children in pi-subagents 0.75.0 |
 | 4 | pi-foreman's `providers.*` is the source, and the pi-subagents block is generated from it | The foreman entry, codemode switch, fallback and fan-out need one file. pi-subagents' mechanism is still used. |
 | 5 | Model review is an own chain link, `foreman-review`; ai-guard is not installed (supersedes the first plan: pinned ai-guard with the own link as fallback) | ai-guard cannot switch the reviewing model with the provider without a restart |
-| 6 | `pi-background-tasks` dropped | Client impersonation by default, and the peer range excludes Pi 1.0 |
+| 6 | `pi-background-tasks` optional add-on, consent only (was: dropped) | Client impersonation by default, and the peer range excludes Pi 1.0 |
 | 7 | MCP decided: Pi built-in, adapter as opt-in only | Per-tool gating, no settings mutation, native to Pi 1.0 |
 | 8 | The foreman is a main-session role with its own provider-map entry, applied via `setModel`/`setThinkingLevel` | It is not a subagent, but it must follow the provider switch |
 | 9 | Python core everywhere, including Windows | Measured Windows warm p95 is 65–71 ms, under the 150 ms threshold |
@@ -671,7 +671,7 @@ Open item 13: per-cycle context collapse (replacing a finished delegation span b
 |---|---|
 | 1 | Subagents: `pi-subagents` 0.75.0, every role detached, policy extensions required in every child. The fallback package is used only if this one blocks. |
 | 2 | Permission map `@gotgenes/pi-permission-system` 39.0.2, pinned with Pi. Model review `pi-permission-ai-guard` 0.13.0, pinned; Phase 3 wires and tests it (superseded 2026-10-04: own link `foreman-review`, §14 #5). |
-| 3 | MCP: Pi built-in. No background-tasks package. |
+| 3 | MCP: Pi built-in. Background-tasks package: optional add-on, consent only. |
 | 4 | Codemode works for all six roles; the shipped default is on only for `foreman` and `explorer` until benchmark numbers exist. The switch per role and per role × provider stays. |
 | 5 | Display preset "classic": Picard, Dora, Bob, Watson, Sherlock, Gandalf. |
 | 6 | Skills under `.agents/skills/` are for Pi sessions only. |

@@ -29,11 +29,15 @@ import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { firstRunNotice, presetNames, presetProviders, providerGapNotice } from "./firstrun.ts";
 import { dormantDoctorLine } from "./features.ts";
+import { profileDoctorLines } from "./profiledoctor.ts";
 import { collectOrientation } from "./orient.ts";
 import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits } from "./childreads.ts";
 import { bgWaitLocations, coordinationCall, finalizationCommand, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { roleToolDenied } from "./roledeny.ts";
+import { McpChild, configuredServers, registerChildToolSearch } from "./mcpchild.ts";
+import type { McpChildOpts } from "./mcpchild.ts";
+import { PER_ENTRY_BINDINGS, planMcpLaunch, unknownServerLine, unknownServers, workflowBindingBlock } from "./mcplaunch.ts";
 import { childSkillDirs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
@@ -116,7 +120,7 @@ import { citedItems, hintFailTrace, ledgerHint, writeHint, type HintWriteOpts } 
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, sessionTrace, withDigest } from "./retro.ts";
 import { frictionOfRunEnd } from "./friction.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
-import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, waitNote } from "./footer.ts";
+import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, waitNote, type CacheSource } from "./footer.ts";
 import { symbolSet } from "./symbols.ts";
 import { blockedConfirm, installBlockedShim, PERMISSIONS_DECISION, PERMISSIONS_UI_PROMPT, withBlocked } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
@@ -138,6 +142,8 @@ import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCo
 import type { CloseReport } from "./close.ts";
 import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, registerSessionOpenTool, sessionModelOf } from "./session.ts";
 import { closeChildren } from "./closechildren.ts";
+import { createRemotePull } from "./remotepull.ts";
+import type { PullHost } from "./remotepull.ts";
 import { AskContract } from "./askcontract.ts";
 import { SteerReader } from "./steer.ts";
 import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NOTE } from "./plannerscope.ts";
@@ -357,6 +363,8 @@ interface Session {
   presence: Presence;
   idleCtx: ExtensionContext | null;
   lastAssistantAt: number | null;
+  /** A turn is running (agent_start .. agent_settled); the footer's cache bar shows no warms. */
+  running: boolean;
   /** Children widget and its run view (childwidget.ts). */
   widget: ChildWidget;
   /** PR widget above the editor (prwidget.ts); never mounted in a child. */
@@ -377,14 +385,23 @@ export interface AdapterDeps {
   pressureRun?: (args: string[]) => Promise<{ ok: boolean; text: string }>;
   /** Tests: the running Pi version the doctor compares the add-on's peer range against (default: Pi's VERSION export). */
   piVersion?: () => Promise<string | null>;
+  /** Tests: the child's MCP loader root and import, and the SDK's createMcpExtension (mcpchild.ts). */
+  mcpChild?: Partial<Pick<McpChildOpts, "resolveRoot" | "importFile" | "createMcp" | "env">>;
+  /** Tests: the timer of the remote pull loop (remotepull.ts); the default is an unref'd setInterval. */
+  pullSetInterval?: (fn: () => void, ms: number) => { unref?: () => void };
 }
 
 export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): void {
   const spawner = deps.spawner ?? defaultSpawner;
   const platform = deps.platform ?? process.platform;
+  // r68: Pi's tool_search exists in every child before the installInert return below, so a child allowlisting it never fails at agent_start.
+  if (process.env.PI_SUBAGENT_CHILD === "1") registerChildToolSearch(pi);
   const core = claimCore(PKG_ROOT); // once-guard (registry.ts): a second copy from another root registers only a notice
   if ("notice" in core) return installInert(pi, core.notice);
-  pi.on("session_shutdown", async () => core.release());
+  pi.on("session_shutdown", async () => {
+    remotePull.stop();
+    core.release();
+  });
   // Before any session_start (pi-intercom reads PI_INTERCOM_STABLE_ID when it connects): review S6.
   if (process.env.PI_SUBAGENT_CHILD === "1") {
     stripChildIntercomEnv(process.env);
@@ -442,6 +459,31 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
   /** The model the foreman's gates (review rule, rank checks, panel) judge: the base while downshifted, else the current model. */
   const foremanBaseModel = (ctx: ExtensionContext): string | null => idleModel.baseModel(ctx.model);
+  /** Raw state for the footer's cache bar (footer.ts CacheSource): read-only, nothing is sent. */
+  const cacheSourceOf = (s: Session, model: { id: string; provider?: string } | undefined): CacheSource | null => {
+    if (!model) return null;
+    const policy = resolveWarmPolicy(s.config.config, model.provider, model.id);
+    const snap = s.selfWarm.snapshot();
+    const owner = !!policy.selfWarm && s.selfWarm.owns();
+    const pi = s.idleCache.snapshot();
+    const ttl = policy.ttlSeconds ?? 0;
+    const rung = idleModel.idleRung();
+    return {
+      policy,
+      now: Date.now(),
+      lastTouch: s.selfWarm.lastCacheTouch(),
+      windowEndAt: owner ? snap.windowEndAt : pi.windowEndAt,
+      nextWarmAt: owner ? (snap.state === "watching" ? snap.nextWarmAt : null) : pi.nextWarmAt,
+      tickMs: (owner ? 0.9 * ttl : Math.min(0.9 * ttl, ttl - 10)) * 1000,
+      budget: snap.budget && policy.budgetShare !== undefined ? { spent: snap.budget.spent, cold: snap.budget.cold, next: snap.budget.next, share: policy.budgetShare } : null,
+      away: policy.awayTicks !== undefined && s.presence.away() ? { isAway: true, used: snap.awayUsed, ticks: policy.awayTicks } : null,
+      running: s.running,
+      downshifted: idleModel.downshifted(),
+      idleRung: rung ? rung.id : null,
+      enabled: get(s.config.config, "footer.cacheBar") !== false,
+      symbols: String(get(s.config.config, "ui.symbols") ?? "unicode"),
+    };
+  };
   let instructionsCache: string | null | undefined;
   let reviewerInstructionsCache: string | null | undefined;
   const bridgeIso = new BridgeIsolation();
@@ -551,6 +593,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // A child's launch binding is in the env while its extensions load (usage.ts); read it now.
   const launchBinding = readBinding(process.env);
   if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.scratch) process.env[SCRATCH_ENV] = launchBinding.scratch;
+  // r68: the child's MCP scope. The binding is captured here; the allowed set is computed from it in session_start (never from env later).
+  const mcpChild = process.env.PI_SUBAGENT_CHILD === "1" ? new McpChild(pi, { binding: launchBinding ? { role: launchBinding.role, ...(launchBinding.mcp ? { mcp: launchBinding.mcp } : {}) } : null, ...(deps.mcpChild ?? {}) }) : null;
 
   const pyPath = (s: Session): string | null => (s.python.ok ? s.python.info.executable : null);
 
@@ -781,6 +825,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       presence: warm.presence,
       idleCtx: null,
       lastAssistantAt: null,
+      running: false,
       widget: new ChildWidget(usageFile(agentDir, foremanSession), loadPrices(PKG_ROOT)),
       prBot: new PrBot({
         active: () => s.prPack && !s.isChild,
@@ -816,7 +861,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!isChild) {
       if (ctx.mode === "tui" && footerStyleOf(get(s.config.config, "footer.style")) === "foreman") {
         try {
-          ctx.ui.setFooter((tui, theme, data) => usageFooter.mount(id, ctx, tui, theme, data, () => pi.getThinkingLevel()));
+          ctx.ui.setFooter((tui, theme, data) => usageFooter.mount(id, ctx, tui, theme, data, () => pi.getThinkingLevel(), (model) => cacheSourceOf(s, model)));
         } catch {
           // the footer is cosmetic: Pi's own footer stays
         }
@@ -1094,8 +1139,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   pi.on("session_start", async (event, ctx) => {
     const s = await startSession(ctx);
+    await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r));
     restoreRounds(s, ctx);
     emitReady(pi.events as EventBus | undefined, core.claim);
+    if (!s.isChild && process.env.PI_SUBAGENT_CHILD !== "1" && (ctx.mode === "tui" || ctx.mode === "rpc")) {
+      pullBind = { s, ctx };
+      remotePull.start();
+    }
     if (!s.isChild) {
       idleBind = { s, ctx };
       await idleModel.onSessionStart(ctx.sessionManager.getBranch?.() ?? []); // before applyForemanModel: a downshift left open is closed first
@@ -1135,6 +1185,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.pressureSampler.start();
     }
   });
+  // After core-adapter's own session_start handler: Pi runs handlers in registration order, so the allowed set is known when Pi's MCP extension loads its config.
+  mcpChild?.install();
 
   pi.on("session_shutdown", async (_event, ctx) => {
     const s = sessionFor(ctx);
@@ -1307,6 +1359,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.idleCache.onAgentStart();
     s.selfWarm.onActivity();
     idleBind = { s, ctx };
+    s.running = true;
     idleModel.setRunning(true);
   });
 
@@ -1336,6 +1389,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
     }
     if (s.isChild) {
+      const mcpNote = mcpChild?.note();
+      if (mcpNote) event.systemPromptOptions.sections["pi-foreman-mcp"] = mcpNote;
       // ceremony.ledgerHelper "tool": reviewer roles learn to close V with foreman_ledger (instructions/reviewer.md).
       if (!REVIEW_ROLES.includes(s.usage.line.role)) return;
       if (reviewerInstructionsCache === undefined) {
@@ -1428,6 +1483,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.idleCache.start();
       s.selfWarm.start();
       idleBind = { s, ctx };
+      s.running = false;
       idleModel.setRunning(false);
     }
   });
@@ -1898,6 +1954,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         rs?.trace?.emit({ event: "guard", guard: "role_tool_denied", toolFamily: event.toolName, decision: "blocked", reason: "role_tool_denied" });
         return { block: true, reason: `pi-foreman: ${msg}.` };
       }
+      // MCP scope (mcpscope.ts, r68): an mcp__ call outside roles.<role>.mcp (and the launch's mcp) is blocked, codemode inner calls included.
+      const scope = mcpChild?.callBlock(event.toolName);
+      if (scope) {
+        rs?.trace?.emit({ event: "guard", guard: "mcp_scope", toolFamily: event.toolName, decision: "blocked", reason: "mcp_scope" });
+        return { block: true, reason: `pi-foreman: ${scope}.` };
+      }
     }
     // A child never deletes an editor backup with rm (effects.ts) on any shell tool; it reports it instead.
     if (process.env.PI_SUBAGENT_CHILD === "1" && isShellTool(event.toolName) && editorBackupCommand((event.input as { command?: unknown }).command)) {
@@ -1971,6 +2033,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const blocked = childLaunchBlock(s, event.toolName);
       if (blocked) return { block: true, reason: blocked };
       let notices: string[] = [];
+      let launchMcp: string[] | undefined;
+      const mcpNotes: string[] = [];
       let budgetNotes: string[] = [];
       // Counted and warned only once the launch passed every check (set at the end of the guard path).
       let pendingReviews = 0;
@@ -2006,6 +2070,28 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
         const act = subagentActionCheck(input, { allowWorkflow, runs: s.runs, allowed: childRoleIds(get(s.config.config, "roles")), resolution, maxThinking: get(s.config.config, "maxThinking") });
         if (act.block) return { block: true, reason: act.block };
+        // r68 (A22): a workflow script that names a binding could forge one for any child.
+        const branch = (ctx.sessionManager.getBranch?.() ?? []) as { type?: string; message?: unknown }[];
+        const forged = workflowBindingBlock(input, { cwd: s.cwd, roles: get(s.config.config, "roles"), replyText: lastAssistantText(branch.filter((e) => e.type === "message").map((e) => e.message)) });
+        if (forged) {
+          s.trace?.emit({ event: "launch_refused", reason: "workflow_binding", tier: s.ceremony.tier, ...launchDeny(input) });
+          return { block: true, reason: forged };
+        }
+        // r68: the launch `mcp` field is validated against the role's ceiling and leaves the call here (rawLaunch above keeps it for a relaunch).
+        const mcpPlan = planMcpLaunch(input, get(s.config.config, "roles"), { perEntryBindings: PER_ENTRY_BINDINGS });
+        if (mcpPlan.refusal) {
+          s.trace?.emit({ event: "launch_refused", reason: mcpPlan.refusal.reason, tier: s.ceremony.tier, ...launchDeny(input) });
+          return { block: true, reason: mcpPlan.refusal.text };
+        }
+        launchMcp = mcpPlan.mcp;
+        if (!mcpPlan.group && mcpPlan.entries[0]) {
+          const known = await configuredServers(s.cwd, safeTrusted(ctx), process.env, deps.mcpChild?.resolveRoot);
+          const unknown = known ? unknownServers(get(s.config.config, "roles"), mcpPlan.entries[0].role, launchMcp, known) : [];
+          if (unknown.length > 0) {
+            s.trace?.emit({ event: "mcp_launch_unknown_server", role: mcpPlan.entries[0].role, reason: unknown.join(",") });
+            mcpNotes.push(unknownServerLine(mcpPlan.entries[0].role, unknown));
+          }
+        }
         const outPath = outputPathBlock(input);
         if (outPath) {
           s.trace?.emit({ event: "launch_refused", reason: "output_path", tier: s.ceremony.tier, ...launchDeny(input) });
@@ -2304,7 +2390,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.budgetWarned = true;
         s.trace?.emit(pendingWarn);
       }
-      if (notices.length + budgetNotes.length > 0) s.launchNotices.set(event.toolCallId, [...notices, ...budgetNotes]);
+      if (notices.length + budgetNotes.length + mcpNotes.length > 0) s.launchNotices.set(event.toolCallId, [...notices, ...budgetNotes, ...mcpNotes]);
       if (event.toolName === "subagent" && !s.isChild && subagentAgents(input).includes("builder")) {
         const applied = s.critique.onBuilder();
         if (applied) s.trace?.emit(applied);
@@ -2352,7 +2438,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         limits = { bottom, maxTurns: childMaxTurns(s.config.config, p, single), ...(bottom ? { strongAbove: strongAbove(s.config.config, p, single) } : {}) };
       }
       if (event.toolName === "subagent") {
-        const b = recordLaunchUsage(s, ctx, input, kind, limits);
+        const b = recordLaunchUsage(s, ctx, input, kind, limits, launchMcp);
         if (!s.isChild) s.widget.runs.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: b?.model ?? null });
       }
       if (event.toolName === "subagent" && !s.isChild && !isManagementCall(input)) s.pendingLaunches.add(event.toolCallId);
@@ -2840,13 +2926,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** D8: give a single-child launch its usage binding (role, launch id, kind) through extensionBindings. */
-  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, kind?: LaunchKind, ladder?: LadderLimits): LaunchBinding | null {
+  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, kind?: LaunchKind, ladder?: LadderLimits, mcp?: string[]): LaunchBinding | null {
     const role = singleLaunchRole(input);
     if (!role) return null;
     const model = typeof input.model === "string" && input.model ? input.model : null;
     const b = recordUsageLaunch(s.launches, { foremanSession: s.usage.line.foremanSession, workspace: s.usage.line.workspace, role, model, kind, activeProvider: ctx.model?.provider, ladder });
     launchScratch(s, input, b);
     if (retroEnabled(get(s.config.config, "retro.enabled"), ctx.mode)) b.retro = true; // the child traces for the retro
+    if (mcp) b.mcp = mcp;
     bindLaunch(input, b);
     return b;
   }
@@ -3344,7 +3431,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     activeRuns: (id) => sessions.get(id)?.activeRuns.size ?? 0,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), ceremonyNote: () => closeCeremonyNote(s), pushNotice: (c) => startPushNotice(s, c), runSync: (c) => runSync(s, c), report: (c, file) => closeReport(s, c, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text, markClosed: () => void markOwnClosed(s.agentDir, process.env), closeChildren: (send) => closeChildren({ agentDir: s.agentDir, opener: openerIntercomId(process.env, s.agentDir, s.id), send, waitMs: Math.max(0, Number(get(s.config.config, "close.childWaitMs") ?? 60_000) || 0), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) }) };
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), ceremonyNote: () => closeCeremonyNote(s), pushNotice: (c) => startPushNotice(s, c), runSync: (c) => runSync(s, c), report: (c, file) => closeReport(s, c, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text, markClosed: () => void markOwnClosed(s.agentDir, process.env), remoteReply: async (kind, arg) => { const py = pyPath(s); if (py) await spawner(py, ["-E", "-s", path.join(PKG_ROOT, "scripts", "foreman_session.py"), "--agent-dir", s.agentDir, "remote", "notice", kind, ...(kind === "refused" ? [`--reason=${arg ?? ""}`] : arg ? ["--close", arg] : [])], { timeoutMs: 60_000, cwd: s.cwd }); }, closeChildren: (send) => closeChildren({ agentDir: s.agentDir, opener: openerIntercomId(process.env, s.agentDir, s.id), send, waitMs: Math.max(0, Number(get(s.config.config, "close.childWaitMs") ?? 60_000) || 0), sleep: (ms) => new Promise((r) => setTimeout(r, ms)), pullNow: (c) => remotePull.pullNow(c), runRemote: (a) => remotePull.runRemote(a) }) };
     },
   });
 
@@ -3358,6 +3445,29 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     pkgRoot: PKG_ROOT,
     onChildNotice: (sessionId, label, kind, notePath) => void waits.childNotice(sessionId, label, kind, notePath),
     session: sessionHost,
+    pullNow: (c) => remotePull.pullNow(c),
+    runRemote: (a) => remotePull.runRemote(a),
+  });
+
+  // Pull return path of remote children (remotepull.ts): the loop starts from session_start of a top session only.
+  let pullBind: { s: Session; ctx: ExtensionContext } | null = null;
+  const pullHost = (): PullHost | null =>
+    pullBind && {
+      id: pullBind.s.id,
+      isChild: pullBind.s.isChild,
+      agentDir: pullBind.s.agentDir,
+      opener: openerIntercomId(process.env, pullBind.s.agentDir, pullBind.s.id),
+      python: pyPath(pullBind.s),
+      config: pullBind.s.config.config,
+      notify: (text, level) => pullBind?.ctx.ui.notify(text, level),
+      trace: (r) => pullBind?.s.trace?.emit(r),
+    };
+  const remotePull = createRemotePull({
+    host: pullHost,
+    spawner,
+    pkgRoot: PKG_ROOT,
+    onNotice: (sessionId, label, kind, notePath) => void waits.childNotice(sessionId, label, kind, notePath),
+    ...(deps.pullSetInterval ? { setInterval: deps.pullSetInterval } : {}),
   });
 
   if (process.env.PI_SUBAGENT_CHILD !== "1") registerSessionOpenTool(pi, { spawner, pkgRoot: PKG_ROOT, session: sessionHost });
@@ -4096,6 +4206,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const peerLine = addonPeerRangeLine({ agentDir: s.agentDir, cwd: s.cwd }, await (deps.piVersion ?? runningPiVersion)());
     if (peerLine) out.push(peerLine);
     out.push(dormantDoctorLine(PKG_ROOT, s.config.config));
+    // The profile and its deviations are read without the project layer (the agent dir has no .pi/foreman.json), so project tightening is not noise.
+    const userOnly = s.python.ok ? await loadMergedConfig({ python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, projectDir: s.agentDir, trusted: false, spawner }) : null;
+    out.push(...profileDoctorLines(userOnly && userOnly.source === "cli" ? userOnly.config : s.config.config, s.config.config, PKG_ROOT));
     return out;
   }
 }

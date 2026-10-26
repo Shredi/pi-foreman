@@ -8,7 +8,8 @@ scalars and lists are replaced):
     L3       every installed package whose package.json has `pi.foreman.config`
              (under <agent dir>/npm/node_modules, scoped too), plus --l3 PATH
     L2       <agent dir>/foreman.json   (agent dir: --agent-dir, else
-             $PI_CODING_AGENT_DIR, else ~/.pi/agent)
+             $PI_CODING_AGENT_DIR, else ~/.pi/agent; `merged` and `validate` take
+             --user-file PATH to read another file in this place)
     project  <project dir>/.pi/foreman.json, only with --trusted-project
     session  --session-json '<json>'
 
@@ -118,6 +119,7 @@ Keys outside safety that the project and session layers cannot loosen either
     close.worktreeDir                ignored (the worktree convention: L1/L3/L2 only)
     close.childWaitMs                ignored (how long a close waits for child sessions: L1/L3/L2 only)
     sessions.machines                ignored (the machines a session may open on over SSH: user or overlay config only)
+    sessions.pull, sessions.ssh      ignored (the pull poll periods and SSH multiplexing: user or overlay config only)
     sessions.remoteInlineMaxBytes    lower only, minimum 1024 (a higher cap sends more of a remote result inline)
     compaction.maxTokens             lower only, minimum 50000 (a higher cap compacts later); a null is dropped;
                                      the session layer is ignored with a warning (setup applies it)
@@ -208,6 +210,7 @@ LOOSEN_ONLY = [("subagents", "allowWorkflow")]
 # Keys outside safety that the project and session layers may not set (module docstring).
 # One row per rule so a rule can be reverted on its own.
 IGNORED_KEYS = [
+    (("profile",), "the setup profile is recorded in the user or overlay config"),
     (("paths", "hubWorkflow"), "it loosens: it makes dirs outside the worktree readable; user or overlay config only"),
     (("bridge", "isolateClaudeConfig"), "it loosens the host config isolation"),
     (("providers", "*", "review"), "it loosens: a review model approves asks"),
@@ -239,6 +242,8 @@ IGNORED_KEYS = [
     (("close", "worktreeDir"), "the worktree convention comes from the user or overlay config"),
     (("close", "childWaitMs"), "the child close wait comes from the user or overlay config"),
     (("sessions", "machines"), "the machines a session may open on over SSH come from the user or overlay config"),
+    (("sessions", "pull"), "the remote pull poll periods come from the user or overlay config"),
+    (("sessions", "ssh"), "the SSH multiplexing switch comes from the user or overlay config"),
     (("ceremony", "checkpoint"), "who approves the plan checkpoint comes from the user or overlay config"),
     (("ceremony", "reviewModel"), "the fallback reviewer model comes from the user or overlay config"),
     (("ceremony", "reviewByOccasion"), "the per-occasion reviewer overrides come from the user or overlay config"),
@@ -687,6 +692,13 @@ def deep_merge(base, over):
 
 # ---------------------------------------------------------------- validation
 
+def _end_anchored(pattern):
+    """`pattern` with a trailing `$` read as end of string (ECMAScript, and the runtime's `\\Z`): Python's `$` also
+    matches before a final newline."""
+    slashes = len(pattern) - len(pattern[:-1].rstrip("\\")) - 1
+    return pattern[:-1] + r"\Z" if pattern.endswith("$") and slashes % 2 == 0 else pattern
+
+
 _TYPES = {
     "string": lambda v: isinstance(v, str),
     "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
@@ -710,7 +722,7 @@ def validate_schema(value, schema, path, issues):
     if "enum" in schema and value not in schema["enum"]:
         issues.append(("error", path, "%s: must be one of %s" % (label, ", ".join(map(str, schema["enum"])))))
         return
-    if isinstance(value, str) and "pattern" in schema and not re.search(schema["pattern"], value):
+    if isinstance(value, str) and "pattern" in schema and not re.search(_end_anchored(schema["pattern"]), value):
         issues.append(("error", path, "%s: %r does not match pattern %s" % (label, value, schema["pattern"])))
         return
     if _TYPES["number"](value):
@@ -997,7 +1009,7 @@ def discover_l3(agent_dir):
 
 
 def load_config(agent_dir=None, project_dir=None, trusted_project=False,
-                session_json=None, l3_paths=()):
+                session_json=None, l3_paths=(), user_file=None):
     """Return the merged-result dict: config, warnings, errors, safetyFallback, layers."""
     warnings, errors, layers = [], [], ["L1"]
     try:
@@ -1028,7 +1040,7 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
         if data is not None:
             cfg = deep_merge(cfg, data)
             layers.append("L3:" + pkg)
-    l2 = agent / "foreman.json"
+    l2 = Path(user_file) if user_file else agent / "foreman.json"
     if l2.is_file():
         data = load_layer("L2", l2)
         if data is not None:
@@ -1140,12 +1152,15 @@ def with_pr_pack(cfg, role, tools):
     return tools
 
 
-def with_mcp(cfg, role, tools):
-    """Append the role's `mcp` servers as `mcp:<name>` entries; pi-subagents routes them to the built-in MCP."""
+def with_tool_search(tools):
+    """Add `tool_search` to a child role's tools, at the index of `codemode` (else appended).
+
+    MCP tools load on demand through it; core-adapter scopes them per role (`roles.<id>.mcp`),
+    so no `mcp:` entry is emitted.
+    """
     out = list(tools)
-    for name in ((cfg.get("roles") or {}).get(role) or {}).get("mcp") or []:
-        if isinstance(name, str) and name and "mcp:" + name not in out:
-            out.append("mcp:" + name)
+    if "tool_search" not in out:
+        out.insert(out.index("codemode") if "codemode" in out else len(out), "tool_search")
     return out
 
 
@@ -1171,7 +1186,7 @@ def resolve_role(cfg, role, provider):
     codemode = effective_codemode(cfg, provider, role)
     tools = list((cfg.get("roles") or {}).get(role, {}).get("tools", []))
     if role != "foreman":
-        tools = with_mcp(cfg, role, with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in tools if t not in CHILD_DENIED_TOOLS]))))
+        tools = with_tool_search(with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in tools if t not in CHILD_DENIED_TOOLS]))))
     if codemode and "codemode" not in tools:
         tools.append("codemode")
     out = {"model": model, "thinking": cap_thinking(thinking, cfg.get("maxThinking")),
@@ -1224,7 +1239,7 @@ def generate_subagents(cfg):
         tools = with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in (cfg.get("roles") or {}).get(role, {}).get("tools", []) if t not in CHILD_DENIED_TOOLS])))
         if cfg.get("roles", {}).get(role, {}).get("codemode") and "codemode" not in tools:
             tools.append("codemode")
-        overrides[role] = {"tools": with_mcp(cfg, role, tools)}
+        overrides[role] = {"tools": with_tool_search(tools)}
         skills = cfg.get("roles", {}).get(role, {}).get("skills")
         if skills:
             overrides[role]["skills"] = list(skills)
@@ -1270,6 +1285,7 @@ def build_parser():
     sub = p.add_subparsers(dest="cmd", required=True)
     for name in ("merged", "validate"):
         s = sub.add_parser(name, parents=[common])
+        s.add_argument("--user-file", help="read this file as the user layer (L2) instead of <agent dir>/foreman.json")
         s.add_argument("--provider")
     s = sub.add_parser("resolve", parents=[common])
     s.add_argument("--role", required=True)
@@ -1486,7 +1502,7 @@ def main(argv=None):
         return apply_preset(args)
     try:
         res = load_config(args.agent_dir, args.project_dir, args.trusted_project,
-                          args.session_json, args.l3)
+                          args.session_json, args.l3, getattr(args, "user_file", None))
     except ConfigError as exc:
         print(str(exc), file=sys.stderr)
         return 2

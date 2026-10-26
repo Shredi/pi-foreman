@@ -66,6 +66,9 @@ switches the pack off in children too. Children never write the variable. Roles 
 explorer, builder, reviewer, senior-reviewer and finalizer, and overlay roles likewise) get the four names in their
 list; the planner has no bash and gets none.
 
+Every child role also gets `tool_search`, through which MCP tools load on demand within the role's `roles.<id>.mcp`
+ceiling (see [roles](roles.md#rolesidmcp)). It is inactive in a child whose role allows no MCP server.
+
 ### Trace and retro
 
 | Event | Fields | Meaning |
@@ -328,14 +331,15 @@ The widget at 80 columns, one failing PR, one running PR with a queued required 
 another repo and the shared watch (every label is a hyperlink):
 
 ```text
-● #58 r58: PR widget, reliable tracking, bot watch · review? · ✗1 ◉2 ✓9
+── PRs (4) ─────────────────────────────────────────────────────────────────────
+● #58 r58: PR widget, reliable tracking, bot watch · review? · ✗ 1 ◉ 2 ✓ 9
   ✗ failed: test (ubuntu)
   ◉ running: bench-smoke, test (windows)
-◉ #57 r57: cache keep-alive per provider · approved · ◉1 ◌1 ✓11
+◉ #57 r57: cache keep-alive per provider · approved · ◉ 1 ◌ 1 ✓ 11
   ◉ running: test (macos)
   ◌ missing: bench-smoke
-○ #55 r55: ladder docs · approved · ✓12
-○ acme/tools#204 fix: retry on 502 · review? · ✓6
+○ #55 r55: ladder docs · approved · ✓ 12
+○ acme/tools#204 fix: retry on 502 · review? · ✓ 6
 watch: 2 need review · 1 failing
   ● acme/web#118 chore: lockfile maintenance
 ```
@@ -344,24 +348,25 @@ At 40 columns (below the 60-column breakpoint) the review word goes first, a tit
 still be too long, detail lines show counts instead of names, and the watch items drop so that only the summary stays:
 
 ```text
-● #58 r58: PR widget, reliab… · ✗1 ◉2 ✓9
+── PRs (4) ─────────────────────────────
+● #58 r58: PR widget, rel… · ✗ 1 ◉ 2 ✓ 9
   ✗ failed 1 · ◉ running 2
-◉ #57 r57: cache keep-alive… · ◉1 ◌1 ✓11
+◉ #57 r57: cache keep-al… · ◉ 1 ◌ 1 ✓ 11
   ◉ running 1 · ◌ missing 1
-○ #55 r55: ladder docs · ✓12
-○ acme/tools#204 fix: retry on 502 · ✓6
+○ #55 r55: ladder docs · ✓ 12
+○ acme/tools#204 fix: retry on 502 · ✓ 6
 watch: 2 need review · 1 failing
 ```
 
-`/foreman prs` once collapses it to one line that counts only open PRs, `PRs: 1 fail · 1 run · 2 ok · watch 3` (`PRs: none`
+`/foreman prs` once collapses it to the divider rule plus one line that counts only open PRs, `PRs: 1 fail · 1 run · 2 ok · watch 3` (`PRs: none`
 without any). A PR merged in the last 60 seconds shows as `✓ merged #55 r55: ladder docs`, then disappears.
 
 Rules:
 
 - Order: failing, running, ok, no checks, then PRs of the current repo before foreign ones, then by number; merged and closed last.
-- A PR with a failed check, a conflict, a running check or a missing required check expands to a block of at most four lines (a header and up to three detail lines at 60 columns or more, at most two count lines below). Other PRs take one line. Passed checks are never listed. Counts end with `+` when the host cut the check list (`✓12+`).
-- Own PRs take at most eight lines; the last line becomes `+n more PRs` when the next block does not fit. The whole widget, watch section included, takes at most ten lines and nothing wraps.
-- Colours follow the theme: failing red, running yellow, ok green; missing, stale, no-check and compact green lines are dim, so a failing PR stands out. Glyphs come from the symbol set (`pr-fail`, `pr-run`, `pr-ok`, `pr-none`, `lost`, `recent`, `ask`; see [herdr](herdr.md#symbols)).
+- A PR with a failed check, a conflict, a running check or a missing required check expands to a block of at most four lines (a header and up to three detail lines at 60 columns or more, at most two count lines below). Other PRs take one line. Passed checks are never listed. Counts end with `+` when the host cut the check list (`✓ 12+`).
+- Own PRs take at most eight lines; the last line becomes `+n more PRs` when the next block does not fit. The body, watch section included, takes at most ten lines below the divider (the divider is one more line) and nothing wraps.
+- Colours follow the theme: failing red, running yellow, ok green; missing, stale, no-check and compact green lines are dim, so a failing PR stands out. Glyphs come from the symbol set (`pr-fail`, `pr-run`, `pr-ok`, `pr-none`, `lost`, `recent`, `ask`, `rule`; see [herdr](herdr.md#symbols)).
 - Review words: `review?`, `changes!`, `approved`, `draft`; nothing when unknown.
 - Watch section: a summary line `watch: 2 need review · 1 failing` (a zero part is left out). At 60 columns or more up to two item lines follow, failing before review items (`  ● ...` and `  ? ...`). Touched items never show. A snapshot older than three watch intervals, or marked degraded, makes the summary dim with ` · stale`.
 - A label is a hyperlink only when the URL is a plain `https://` address that names the same host, repo and number as the key. With `widget.prLinks` off, outside the tui, or on any other URL, the label is plain text. Widths are measured without the OSC bytes.

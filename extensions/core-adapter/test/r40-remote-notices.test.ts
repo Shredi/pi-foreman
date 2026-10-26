@@ -311,33 +311,35 @@ test("session brief resolves the newest entry of a label of any kind: a newer lo
   assert.equal(d2.spawned.length, 1);
 });
 
-test("session close and closeChildren skip remote entries with the not-closed line", async () => {
+test("session close and closeChildren without a remote runner report the no-runner line and touch nothing", async () => {
   const agent = mk("close");
   const e = entry(agent);
   writeRegistry(agent, regOf(e));
   const d = deps(agent);
   const r = await runSessionCommand(d, "close demo");
   assert.equal(r.ok, false);
-  assert.equal(r.text, "demo@alpha: not closed (remote close comes in P2; close it on alpha)");
+  assert.equal(r.text, "demo@alpha: not closed (no remote runner)");
   assert.equal(d.sent.length, 0);
   assert.equal(readRegistry(agent).sessions[0].status, "open");
   const sent: string[] = [];
   const lines = await closeChildren({ agentDir: agent, opener: "sess-1", send: async (to) => (sent.push(to), "sent"), waitMs: 0, sleep: async () => undefined });
-  assert.deepEqual(lines, ["demo@alpha: not closed (remote close comes in P2; close it on alpha)"]);
+  assert.deepEqual(lines, ["demo@alpha: not closed (no remote runner)"]);
   assert.equal(sent.length, 0);
   assert.equal(readRegistry(agent).sessions[0].status, "open");
 });
 
-// --plan-mode/--first-command/--focus with --machine: the TS side forwards them unchanged and the script refuses (remote_option) before any SSH; its text is passed through
-test("session open --machine forwards the flags the script refuses with remote_option; a local open with --plan-mode is unchanged", async () => {
-  const refusal = "pi-foreman session: refused [remote_option]: --plan-mode is not supported with --machine in this version";
-  const d = deps(mk("remote-option"), { commands: ["plan"], spawner: async (_c, args) => (d.spawned.push(args), { code: 1, stdout: "", stderr: refusal, timedOut: false }) });
+// --plan-mode/--first-command/--focus with --machine reach the script (it validates them on the remote); the opener's /plan check applies to local opens only
+test("session open --machine forwards --plan-mode, --first-command and --focus without a /plan check; --print-all is a parser error; a local open with --plan-mode is unchanged", async () => {
+  const d = deps(mk("remote-option"), { commands: [], spawner: async (_c, args) => (d.spawned.push(args), { code: 0, stdout: "opened", stderr: "", timedOut: false }) });
   const r = await runSessionCommand(d, "open demo b.md --machine alpha --cwd /home/u/p --plan-mode --first-command /x --focus");
-  assert.equal(r.ok, false);
-  assert.match(r.text, /\[remote_option\]: --plan-mode is not supported with --machine/);
+  assert.equal(r.ok, true);
   const argv = d.spawned[0];
-  assert.ok(argv.includes("--plan-mode") && argv.includes("--focus"));
+  assert.ok(argv.includes("--plan-mode") && argv.includes("--focus") && argv.includes("--machine"));
   assert.equal(argv[argv.indexOf("--first-command") + 1], "/x");
+  const all = await runSessionCommand(d, "open demo b.md --machine alpha --cwd /home/u/p --print-all");
+  assert.equal(all.ok, false);
+  assert.match(all.text, /^unknown option --print-all\./);
+  assert.equal(d.spawned.length, 1);
   const local = deps(mk("remote-option-local"), { commands: ["plan"] });
   const ok = await runSessionCommand(local, "open demo b.md --plan-mode");
   assert.ok(ok.ok);

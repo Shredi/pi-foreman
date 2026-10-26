@@ -38,70 +38,102 @@ The per-key layer rule in the tables below is read from `scripts/foreman_config.
 
 State is the fresh-install state with the package defaults: `on`, `off` (a switch you turn on) or `opt-in` (needs a value or a command from you).
 
-| Feature | State | Purpose | Enable | Doc |
-|---|---|---|---|---|
-| [setup](#setup) | on | `foreman setup` writes the permission config, the generated `subagents` block and a starter `foreman.json`; `/foreman doctor` checks the result and `update-check` lists newer pinned packages. | on by default | [install](install.md#install) |
-| [doctor-providers](#doctor-providers) | on | `/foreman doctor` prints `providers: <list>`, the providers the model registry holds in this session; a missing `claude-bridge` there means the bridge is not loaded or has not registered yet (see the opened-session note). | on by default | [sessions](sessions.md#providers-in-opened-sessions) |
-| [model-map](#model-map) | opt-in | Maps each role to a model and thinking level per provider; until a model is mapped, children run on Pi's default model and an interactive session shows one notice. | `{"providers": {"<provider>": {"roles": {"foreman": {"model": "<provider>/<big-model>"}, "builder": {"model": "<provider>/<mid-model>"}}}}}` | [install](install.md#what-setup-writes) |
-| [presets](#presets) | opt-in | Opt-in model maps under `config/presets/` (role models, ranks, strong rungs, reviewer climb) merged into your `foreman.json` on request, never by default. The `inexpensive` preset names roles by rank tier and resolves them from your `providers.<x>.ranks` at apply time (docs/presets.md). | `foreman config apply-preset claude-bridge --dry-run` | [presets](presets.md) |
-| [roles](#roles) | on | Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time default of the neutral roles; a launch timeoutMs wins, capped by ceremony.launchTimeoutCapMinutes. | on by default | [roles](roles.md#further-role-and-provider-keys) |
-| [display-names](#display-names) | on | Shows roles under a display-name preset (`classic` personal names, `plain` ids) or your own map; no code compares a display name. | on by default | [roles](roles.md#roles) |
-| [codemode](#codemode) | on | Gives a role the `codemode` tool, whose script calls each pass the guards and permissions on their own (on for the foreman and explorer by default). | `{"roles": {"builder": {"codemode": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
-| [ladder](#ladder) | opt-in | A child climbs to its role's strong model through the foreman after a context, turns, stuck or review-FAIL handoff; with no strong rung mapped nothing climbs. | `{"providers": {"<provider>": {"roles": {"builder": {"strong": {"model": "<provider>/<stronger-model>"}}}}}}` | [ladder](ladder.md#rungs-and-the-live-rung) |
-| [idle-downshift](#idle-downshift) | opt-in | A notice turn (child, wake, intercom, other) that starts on a cold cache runs on the foreman's idle rung; the owner's next input restores the base model. With no idle rung mapped nothing changes. | `{"providers": {"<provider>": {"roles": {"foreman": {"idle": {"model": "<provider>/<cheaper-model>"}}}}}}` | [ladder](ladder.md) |
-| [rank-policy](#rank-policy) | opt-in | Ranks models into tiers so children may only launch below (or at) the foreman's tier; with no ranks anywhere the policy does nothing. | `{"providers": {"<provider>": {"ranks": [{"match": "*big*", "tier": 0}, {"match": "*mid*", "tier": 1}]}}, "ladder": {"childPolicy": "below"}}` | [roles](roles.md#role-ladder-rank-policy-and-presets) |
-| [reviewer-climb](#reviewer-climb) | off | Sends the next reviewer launch to its strong rung after a second FAIL of one ledger item, and to a security rung on a security-shaped diff. | `{"ladder": {"reviewerClimb": {"enabled": true, "securityRung": "<provider>/<model>"}}}` | [ladder](ladder.md#reviewer-climb) |
-| [review-panel](#review-panel) | opt-in | Adds shadow reviewer models beside the primary on the named occasions; their findings are reported but never block, mark items or satisfy the PR gate. | `{"ladder": {"reviewPanel": {"shadows": ["<other-provider>/<other-model>"], "gates": ["pre-pr"]}}}` | [review](review.md#review-panel) |
-| [different-model-rule](#different-model-rule) | on | Moves a reviewer launch off the foreman's own model to the next differing rung, else to `ceremony.reviewModel`. | on by default | [review](review.md#different-model-rule) |
-| [review-overrides](#review-overrides) | opt-in | Sets the thinking level and/or model of a reviewer launch per occasion (`item`, `plan-review`, `pre-pr`, `second-opinion`). | `{"ceremony": {"reviewByOccasion": {"pre-pr": {"thinking": "high"}}}}` | [review](review.md#per-occasion-overrides) |
-| [self-planning](#self-planning) | on | `ceremony.planner: self` (default): the foreman writes the heavy plan itself and its approved checkpoint satisfies the planner step; `role` keeps the planner launch and falls back to `self` when the planner's rank is not below the foreman's. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
-| [checkpoint-verdict](#checkpoint-verdict) | on | A session opened with a parent takes the plan checkpoint verdict from the parent-written `ruling-plan.md` (APPROVED, REVISE <text> or REJECT) instead of a dialog; `human` keeps the dialog for an attended session. | on by default | [ceremony](ceremony.md) |
-| [plan-review](#plan-review) | off | Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan version (the body above any ruling, decision-log or addendum appendix, so an appended ruling needs no new review); on for heavy by default, opt-in for trivial and standard. | `{"ceremony": {"planReview": {"standard": true}}}` | [review](review.md#plan-review) |
-| [findings](#findings) | on | Records every reviewer run's located findings locally, with `foreman findings` to list, dismiss or export them and `foreman retro models` to compare reviewer models. | on by default | [review](review.md#findings-store) |
-| [bench](#bench) | opt-in | Measures harness changes over Harbor tasks in local Docker, and reviewer models over planted-defect diffs with `foreman bench review`. | `foreman bench review --tasks bench/review-samples --dry-run` | [bench](bench.md#running) |
-| [bench-climb](#bench-climb) | opt-in | Explores cheap-to-strong reviewer climb policies offline over review-bench cells; the runtime has no climb on a finding. | `foreman bench review --tasks bench/review-samples --mode climb --rungs <cheap-model>,<strong-model> --dry-run` | [bench](bench.md#review-bench) |
-| [ceremony-tiers](#ceremony-tiers) | on | The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a clean work tree). | on by default | [ceremony](ceremony.md#triage-and-delegation) |
-| [read-budgets](#read-budgets) | on | Reminds the foreman to delegate once its own reads pass a budget (never refuses a read; coordination calls do not count), caps rechecks after a PASS (a plan-review PASS does not start the recheck window), and gives child roles their own read budgets. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
-| [launch-wait](#launch-wait) | on | Returns a foreman launch at once with its receipt (the completion notice starts the next turn; "block" holds it until the child ends, for replay rigs and bench), drops duplicate completion notices and caps concurrent children. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
-| [waits](#waits) | on | The foreman-only `foreman_wait` tool waits on timers, files, processes and CI runs within a duration and concurrency limit, batching its notices. | on by default | [sessions](sessions.md#further-session-keys) |
-| [foreman-bg](#foreman-bg) | on | The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool. | on by default | [sessions](sessions.md#background-runs) |
-| [background-tasks-addon](#background-tasks-addon) | on | Detects the optional pi-background-tasks add-on (install: `PI_BG_FEATURES=process pi install npm:pi-background-tasks`): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it. | on by default | [herdr](herdr.md#optional-add-on-background-tasks) |
-| [orientation](#orientation) | on | Adds a short repository overview (file tree, AGENTS.md or README head, build and test commands) to the foreman's system prompt once per session. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
-| [child-scratch](#child-scratch) | on | Gives every single-child launch its own temp dir (`$FOREMAN_SCRATCH`) that the guards allow writes in and the harness removes when the run ends. | on by default | [safety](safety.md#child-scratch) |
-| [permissions](#permissions) | on | Your bash and path deny, ask and allow patterns on top of the shipped baseline, generated by setup into the permission-system config. | on by default | [safety](safety.md#permission-baseline-and-auto-review) |
-| [owned-install-reads](#owned-install-reads) | on | Shell reads (`ls`, `cat`) of Pi's own install releases and the pi-subagents run root need no dialog; setup renders them as read grants, as it does each `safety.permissions.readRoots` entry. | on by default | [permissions](permissions.md#owned-paths) |
-| [own-cli-allow](#own-cli-allow) | on | The foreman session's own `bin/foreman` (explicit path, realpath inside its root) with `session open\|brief\|list`, `dialogs` or `findings list` is allowed before the review model (trace `overlay_allow{rule: own_cli}`); children and forwarded asks, shell control, `VAR=`, `..` or a symlink out, and user ask/deny rules keep the normal path. | on by default | [permissions](permissions.md) |
-| [auto-review](#auto-review) | on | A review model decides permission asks (children's included) before they reach you; unset, it picks the cheapest mapped model, and with none the asks go to you. | on by default | [roles](roles.md#auto-review-model) |
-| [headless-review](#headless-review) | off | Treats the session as headless for forwarded child asks: one the review model would defer to you is denied with a text naming the allowed forms. | `{"review": {"headless": true}}` | [safety](safety.md#permission-baseline-and-auto-review) |
-| [review-critic](#review-critic) | on | Every reviewer and senior-reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines. | on by default | [roles](roles.md#review-critic) |
-| [git-guard](#git-guard) | on | Lints the foreman's commits and pushes (protected branches, message pattern, trailers, an optional check command) and refuses a PR without a reviewer PASS on the current head. | on by default | [safety](safety.md#git-guard-and-pr-gate) |
-| [git-tools](#git-tools) | off | Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace. | `{"tools": {"git": true}}` | [tools](tools.md#git-tool-pack) |
-| [pr-ops](#pr-ops) | on | Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_track, pr_untrack): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands. Pushed, searched, acted-on and touched PRs are tracked by host, owner, repo and number, shown in a PR widget above the editor and, with the shared watch, with review requests and failing bot PRs. | `{"tools": {"pr": true}}` | [tools](tools.md#pr-tools) |
-| [sidebar-status](#sidebar-status) | opt-in | Runs a command you configure on an interval and shows its JSON items (label and state) as extra dots on the Herdr sidebar; the items are display data only, the program must lie outside the workspace, and the setting is read from user or overlay config only. | `{"sidebar": {"statusCommand": "/path/to/your-status-program", "statusSeconds": 60}}` | [herdr](herdr.md#external-status) |
-| [children-may-push](#children-may-push) | off | Lets subagent children push; by default they may commit but never push, and they never open PRs. | `{"safety": {"children": {"mayPush": true}}}` | [safety](safety.md#git-guard-and-pr-gate) |
-| [review-required](#review-required) | off | Requires a review before close-out in every session. | `{"safety": {"review": {"required": true}}}` | [safety](safety.md#further-safety-and-runtime-keys) |
-| [workflow-scripts](#workflow-scripts) | off | Lets the foreman run pi-subagents workflow scripts and `schedule.*` calls, which can launch any agent outside the role map; they stay refused at tier heavy. | `{"safety": {"subagents": {"allowWorkflow": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
-| [guards](#guards) | on | Loads the guard extensions into every child, sets the limits of the precondition-checked copy and worktree-remove tools, and picks the Python that runs every guard. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
-| [bridge-isolation](#bridge-isolation) | on | With the Claude bridge, points `CLAUDE_CONFIG_DIR` at an empty folder so the host's Claude Code settings, hooks and plugins do not load into bridge turns. | on by default | [safety](safety.md#bridge-isolation) |
-| [sessions](#sessions) | on | `/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom. The session runs on the `session-foreman` role's model (default: the opening session's own model) and never on a higher rank. | on by default | [sessions](sessions.md#session-commands) |
-| [remote-sessions](#remote-sessions) | opt-in | `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. The child reports back by cross-machine pi-intercom notices; the parent mirrors them into files. User or overlay config only. | `{"sessions": {"machines": {"alpha": {}}}}` | [sessions](sessions.md#remote-child-sessions) |
-| [round-state](#round-state) | on | In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns only from the parent's `ruling.md` newer than both the plan and the handoff plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
-| [remote-intercom](#remote-intercom) | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
-| [sync](#sync) | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
-| [retro](#retro) | on | `/retro` prints the session's friction metrics, writes permission-allow proposals and files findings to a local backlog read with `foreman backlog`. | on by default | [retro](retro.md#switches) |
-| [repo-backlog](#repo-backlog) | opt-in | Moves the central retro backlog elsewhere or sends a workspace's findings into its own `.workflow/retro-backlog.md`, optionally committed by `/sync`. | `{"retro": {"repoBacklog": [{"path": "<absolute path or glob>", "commit": false}]}}` | [retro](retro.md#the-store) |
-| [close](#close) | on | Records what a session creates, prints a CLOSE report and removes its own worktrees and scratch only when every precondition passes. | on by default | [close](close.md#config) |
-| [trace](#trace) | on | Writes allowlisted trace records per session and child (no command lines or file contents); by default it follows the effective retro switch. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
-| [footer-ui](#footer-ui) | on | Shows tokens, list-price cost and child launches in the footer, the children widget below the editor and the glyph set, with `/foreman cost` for a summary. | on by default | [sessions](sessions.md#commands) |
-| [dialogs-cli](#dialogs-cli) | on | The foreman-only `foreman_dialogs({trace?})` tool and `foreman dialogs <trace>` (`bin/foreman`, `.cmd`, `.ps1`) return the JSON of `/foreman dialogs --json` for this session's trace or a named trace file; read only. A session's own async run results join the read-only verbs. | on by default | [sessions](sessions.md#commands) |
-| [ask-user-question](#ask-user-question) | on | The foreman-only `ask_user_question({questions})` tool (1 to 4 questions, 2 to 4 options each plus free text) raises the questions in the pane and blocks the turn until a human answers; without a UI it tells the agent to use the ask.md file path, which stays unchanged. With an open ask.md in a handoff dir where the session is the child the answer is also written to `ruling-<n>.md`. | on by default | [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session) |
-| [auto-review-overlay](#auto-review-overlay) | on | Every foreman overlay ask that is no self-modification (a child's included) goes to the review model before the human dialog: an allow lets the call go on, a deny with riskLevel high or critical is a block, defers, errors, timeouts and a missing model fall back to the dialog. The deterministic basic blockers run first and are not judged. | on by default | [permissions](permissions.md#two-layers) |
-| [reviewer-rules-file](#reviewer-rules-file) | on | The auto reviewer judges overlay asks by the prose rules in `config/permissions.rules.md`; `safety.permissions.autoReview.rulesFile` in the user layer or an overlay replaces the file. | on by default | [overlays](overlays.md#reviewer-rules-file) |
-| [herdr](#herdr) | on | In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes. | on by default | [sessions](sessions.md#herdr) |
-| [radar](#radar) | on | `foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files. | on by default | [sessions](sessions.md#radar) |
-| [compaction](#compaction) | on | Caps the context size at which Pi's own auto-compaction fires: `foreman setup` writes a per-model point (a price-tier boundary minus headroom, or this cap) as Pi's compaction.modelOverrides. The idle warm compaction and the footer context bar use the same point. | on by default | [cache](cache.md) |
-| [resources](#resources) | on | Samples load, free memory and free disk; at high pressure child launches run one at a time and the strong climb pauses, at critical pressure launches are deferred until the host recovers (10 minutes at most). `/foreman doctor` prints the current level and `/foreman status` the last sample. | on by default | [resources](resources.md) |
-| [idle-cache](#idle-cache) | off | Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge preset sets a 3600 s byModel row, noting that a subscription turn within plan usage gets the 1-hour cache and 300 applies on extra-usage credits or an API key, keeps the keep-alive on with awayTicks 2 and gives the foreman role an idle rung); off for request-billed providers; silent without an entry. A warm budget (half a cold re-cache per idle), a presence gate (warms while the owner is away are limited) and, for TTLs beyond Pi's 30-minute idle cap, warms sent by pi-foreman itself apply to the keep-alive. | `set providers.claude-bridge.cache.keepalive.enabled to false (off) or true (on) in user or overlay config, or foreman config apply-preset claude-bridge --dry-run   # or: {"providers": {"<provider>": {"cache": {"ttlSeconds": 300, "billing": "token", "keepalive": {"enabled": true}}}}}` | [cache](cache.md#config) |
+| Feature | Area | Toggle | State | Purpose | Enable | Doc |
+|---|---|---|---|---|---|---|
+| [setup](#setup) | install |  | on | `foreman setup` writes the permission config, the generated `subagents` block and a starter `foreman.json`; `/foreman doctor` checks the result and `update-check` lists newer pinned packages. | on by default | [install](install.md#install) |
+| [profiles](#profiles) | install |  | on | `foreman setup` applies a named profile (`orchestration`, `standard` or `full`) and per-feature toggles to the user `foreman.json` and records the choice; `foreman features` lists the state of every toggleable feature and the profile's deviations. | on by default | [install](install.md#profiles-features-and-add-ons) |
+| [doctor-providers](#doctor-providers) | install |  | on | `/foreman doctor` prints `providers: <list>`, the providers the model registry holds in this session; a missing `claude-bridge` there means the bridge is not loaded or has not registered yet (see the opened-session note). | on by default | [sessions](sessions.md#providers-in-opened-sessions) |
+| [model-map](#model-map) | models |  | opt-in | Maps each role to a model and thinking level per provider; until a model is mapped, children run on Pi's default model and an interactive session shows one notice. | `{"providers": {"<provider>": {"roles": {"foreman": {"model": "<provider>/<big-model>"}, "builder": {"model": "<provider>/<mid-model>"}}}}}` | [install](install.md#what-setup-writes) |
+| [presets](#presets) | models |  | opt-in | Opt-in model maps under `config/presets/` (role models, ranks, strong rungs, reviewer climb) merged into your `foreman.json` on request, never by default. The `inexpensive` preset names roles by rank tier and resolves them from your `providers.<x>.ranks` at apply time (docs/presets.md). | `foreman config apply-preset claude-bridge --dry-run` | [presets](presets.md) |
+| [roles](#roles) | models |  | on | Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time default of the neutral roles; a launch timeoutMs wins, capped by ceremony.launchTimeoutCapMinutes. roles.<x>.mcp is the ceiling of MCP servers a child may load on demand through tool_search (a launch mcp field narrows it). | on by default | [roles](roles.md#further-role-and-provider-keys) |
+| [display-names](#display-names) | ui |  | on | Shows roles under a display-name preset (`classic` personal names, `plain` ids) or your own map; no code compares a display name. | on by default | [roles](roles.md#roles) |
+| [codemode](#codemode) | tools | toggle | on | Gives a role the `codemode` tool, whose script calls each pass the guards and permissions on their own (on for the foreman and explorer by default). | `{"roles": {"builder": {"codemode": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
+| [ladder](#ladder) | models |  | opt-in | A child climbs to its role's strong model through the foreman after a context, turns, stuck or review-FAIL handoff; with no strong rung mapped nothing climbs. | `{"providers": {"<provider>": {"roles": {"builder": {"strong": {"model": "<provider>/<stronger-model>"}}}}}}` | [ladder](ladder.md#rungs-and-the-live-rung) |
+| [idle-downshift](#idle-downshift) | models | toggle | opt-in | A notice turn (child, wake, intercom, other) that starts on a cold cache runs on the foreman's idle rung; the owner's next input restores the base model. With no idle rung mapped nothing changes. | `{"providers": {"<provider>": {"roles": {"foreman": {"idle": {"model": "<provider>/<cheaper-model>"}}}}}}` | [ladder](ladder.md) |
+| [rank-policy](#rank-policy) | models |  | opt-in | Ranks models into tiers so children may only launch below (or at) the foreman's tier; with no ranks anywhere the policy does nothing. | `{"providers": {"<provider>": {"ranks": [{"match": "*big*", "tier": 0}, {"match": "*mid*", "tier": 1}]}}, "ladder": {"childPolicy": "below"}}` | [roles](roles.md#role-ladder-rank-policy-and-presets) |
+| [reviewer-climb](#reviewer-climb) | review | toggle | off | Sends the next reviewer launch to its strong rung after a second FAIL of one ledger item, and to a security rung on a security-shaped diff. | `{"ladder": {"reviewerClimb": {"enabled": true, "securityRung": "<provider>/<model>"}}}` | [ladder](ladder.md#reviewer-climb) |
+| [review-panel](#review-panel) | review |  | opt-in | Adds shadow reviewer models beside the primary on the named occasions; their findings are reported but never block, mark items or satisfy the PR gate. | `{"ladder": {"reviewPanel": {"shadows": ["<other-provider>/<other-model>"], "gates": ["pre-pr"]}}}` | [review](review.md#review-panel) |
+| [different-model-rule](#different-model-rule) | review |  | on | Moves a reviewer launch off the foreman's own model to the next differing rung, else to `ceremony.reviewModel`. | on by default | [review](review.md#different-model-rule) |
+| [review-overrides](#review-overrides) | review |  | opt-in | Sets the thinking level and/or model of a reviewer launch per occasion (`item`, `plan-review`, `pre-pr`, `second-opinion`). | `{"ceremony": {"reviewByOccasion": {"pre-pr": {"thinking": "high"}}}}` | [review](review.md#per-occasion-overrides) |
+| [self-planning](#self-planning) | ceremony |  | on | `ceremony.planner: self` (default): the foreman writes the heavy plan itself and its approved checkpoint satisfies the planner step; `role` keeps the planner launch and falls back to `self` when the planner's rank is not below the foreman's. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
+| [checkpoint-verdict](#checkpoint-verdict) | ceremony |  | on | A session opened with a parent takes the plan checkpoint verdict from the parent-written `ruling-plan.md` (APPROVED, REVISE <text> or REJECT) instead of a dialog; `human` keeps the dialog for an attended session. | on by default | [ceremony](ceremony.md) |
+| [plan-review](#plan-review) | review | toggle | off | Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan version (the body above any ruling, decision-log or addendum appendix, so an appended ruling needs no new review); on for heavy by default, opt-in for trivial and standard. | `{"ceremony": {"planReview": {"standard": true}}}` | [review](review.md#plan-review) |
+| [findings](#findings) | review |  | on | Records every reviewer run's located findings locally, with `foreman findings` to list, dismiss or export them and `foreman retro models` to compare reviewer models. | on by default | [review](review.md#findings-store) |
+| [bench](#bench) | ops |  | opt-in | Measures harness changes over Harbor tasks in local Docker, and reviewer models over planted-defect diffs with `foreman bench review`. | `foreman bench review --tasks bench/review-samples --dry-run` | [bench](bench.md#running) |
+| [bench-climb](#bench-climb) | ops |  | opt-in | Explores cheap-to-strong reviewer climb policies offline over review-bench cells; the runtime has no climb on a finding. | `foreman bench review --tasks bench/review-samples --mode climb --rungs <cheap-model>,<strong-model> --dry-run` | [bench](bench.md#review-bench) |
+| [ceremony-tiers](#ceremony-tiers) | ceremony |  | on | The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a clean work tree). | on by default | [ceremony](ceremony.md#triage-and-delegation) |
+| [read-budgets](#read-budgets) | ceremony |  | on | Reminds the foreman to delegate once its own reads pass a budget (never refuses a read; coordination calls do not count), caps rechecks after a PASS (a plan-review PASS does not start the recheck window), and gives child roles their own read budgets. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
+| [launch-wait](#launch-wait) | ceremony |  | on | Returns a foreman launch at once with its receipt (the completion notice starts the next turn; "block" holds it until the child ends, for replay rigs and bench), drops duplicate completion notices and caps concurrent children. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
+| [waits](#waits) | sessions |  | on | The foreman-only `foreman_wait` tool waits on timers, files, processes and CI runs within a duration and concurrency limit, batching its notices. | on by default | [sessions](sessions.md#further-session-keys) |
+| [foreman-bg](#foreman-bg) | tools |  | on | The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool. | on by default | [sessions](sessions.md#background-runs) |
+| [background-tasks-addon](#background-tasks-addon) | tools |  | on | Detects the optional pi-background-tasks add-on (install with `pi install npm:pi-background-tasks@2.6.10` on consent via `foreman setup --addon background-tasks`; set `PI_BG_FEATURES=process` in the shell profile so it is present when Pi starts): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it. | on by default | [herdr](herdr.md#optional-add-on-background-tasks) |
+| [orientation](#orientation) | ceremony | toggle | on | Adds a short repository overview (file tree, AGENTS.md or README head, build and test commands) to the foreman's system prompt once per session. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
+| [child-scratch](#child-scratch) | ceremony |  | on | Gives every single-child launch its own temp dir (`$FOREMAN_SCRATCH`) that the guards allow writes in and the harness removes when the run ends. | on by default | [safety](safety.md#child-scratch) |
+| [permissions](#permissions) | safety |  | on | Your bash and path deny, ask and allow patterns on top of the shipped baseline, generated by setup into the permission-system config. | on by default | [safety](safety.md#permission-baseline-and-auto-review) |
+| [owned-install-reads](#owned-install-reads) | safety |  | on | Shell reads (`ls`, `cat`) of Pi's own install releases and the pi-subagents run root need no dialog; setup renders them as read grants, as it does each `safety.permissions.readRoots` entry. | on by default | [permissions](permissions.md#owned-paths) |
+| [own-cli-allow](#own-cli-allow) | safety |  | on | The foreman session's own `bin/foreman` (explicit path, realpath inside its root) with `session open\|brief\|list`, `dialogs` or `findings list` is allowed before the review model (trace `overlay_allow{rule: own_cli}`); children and forwarded asks, shell control, `VAR=`, `..` or a symlink out, and user ask/deny rules keep the normal path. | on by default | [permissions](permissions.md) |
+| [auto-review](#auto-review) | safety |  | on | A review model decides permission asks (children's included) before they reach you; unset, it picks the cheapest mapped model, and with none the asks go to you. | on by default | [roles](roles.md#auto-review-model) |
+| [headless-review](#headless-review) | review |  | off | Treats the session as headless for forwarded child asks: one the review model would defer to you is denied with a text naming the allowed forms. | `{"review": {"headless": true}}` | [safety](safety.md#permission-baseline-and-auto-review) |
+| [review-critic](#review-critic) | review |  | on | Every reviewer and senior-reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines. | on by default | [roles](roles.md#review-critic) |
+| [git-guard](#git-guard) | safety |  | on | Lints the foreman's commits and pushes (protected branches, message pattern, trailers, an optional check command) and refuses a PR without a reviewer PASS on the current head. | on by default | [safety](safety.md#git-guard-and-pr-gate) |
+| [git-tools](#git-tools) | tools | toggle, relaxes safety | off | Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace. | `{"tools": {"git": true}}` | [tools](tools.md#git-tool-pack) |
+| [pr-ops](#pr-ops) | tools | toggle | on | Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_track, pr_untrack): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands. Pushed, searched, acted-on and touched PRs are tracked by host, owner, repo and number, shown in a PR widget above the editor and, with the shared watch, with review requests and failing bot PRs. | `{"tools": {"pr": true}}` | [tools](tools.md#pr-tools) |
+| [sidebar-status](#sidebar-status) | ui |  | opt-in | Runs a command you configure on an interval and shows its JSON items (label and state) as extra dots on the Herdr sidebar; the items are display data only, the program must lie outside the workspace, and the setting is read from user or overlay config only. | `{"sidebar": {"statusCommand": "/path/to/your-status-program", "statusSeconds": 60}}` | [herdr](herdr.md#external-status) |
+| [children-may-push](#children-may-push) | safety | toggle, relaxes safety | off | Lets subagent children push; by default they may commit but never push, and they never open PRs. | `{"safety": {"children": {"mayPush": true}}}` | [safety](safety.md#git-guard-and-pr-gate) |
+| [review-required](#review-required) | review | toggle | off | Requires a review before close-out in every session. | `{"safety": {"review": {"required": true}}}` | [safety](safety.md#further-safety-and-runtime-keys) |
+| [workflow-scripts](#workflow-scripts) | safety | toggle, relaxes safety | off | Lets the foreman run pi-subagents workflow scripts and `schedule.*` calls, which can launch any agent outside the role map; they stay refused at tier heavy. | `{"safety": {"subagents": {"allowWorkflow": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
+| [guards](#guards) | safety |  | on | Loads the guard extensions into every child, sets the limits of the precondition-checked copy and worktree-remove tools, and picks the Python that runs every guard. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
+| [bridge-isolation](#bridge-isolation) | safety |  | on | With the Claude bridge, points `CLAUDE_CONFIG_DIR` at an empty folder so the host's Claude Code settings, hooks and plugins do not load into bridge turns. | on by default | [safety](safety.md#bridge-isolation) |
+| [sessions](#sessions) | sessions |  | on | `/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom. The session runs on the `session-foreman` role's model (default: the opening session's own model) and never on a higher rank. | on by default | [sessions](sessions.md#session-commands) |
+| [remote-sessions](#remote-sessions) | sessions |  | opt-in | `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. By default (`returnPath` `pull`) the child appends its notices to an outbox file on that machine and the parent fetches them over its own SSH call, so the remote never connects back; `push` sends them by cross-machine pi-intercom notices instead. The parent mirrors the notices into files. `foreman session close-remote` (and `/foreman close`) closes such a child over the same SSH call. User or overlay config only. | `{"sessions": {"machines": {"alpha": {}}}}` | [sessions](sessions.md#remote-child-sessions) |
+| [round-state](#round-state) | sessions |  | on | In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns only from the parent's `ruling.md` newer than both the plan and the handoff plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
+| [remote-intercom](#remote-intercom) | sessions | toggle, relaxes safety | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
+| [sync](#sync) | ops |  | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
+| [retro](#retro) | retro | toggle | on | `/retro` prints the session's friction metrics, writes permission-allow proposals and files findings to a local backlog read with `foreman backlog`. | on by default | [retro](retro.md#switches) |
+| [repo-backlog](#repo-backlog) | retro |  | opt-in | Moves the central retro backlog elsewhere or sends a workspace's findings into its own `.workflow/retro-backlog.md`, optionally committed by `/sync`. | `{"retro": {"repoBacklog": [{"path": "<absolute path or glob>", "commit": false}]}}` | [retro](retro.md#the-store) |
+| [close](#close) | sessions |  | on | Records what a session creates, prints a CLOSE report and removes its own worktrees and scratch only when every precondition passes. | on by default | [close](close.md#config) |
+| [trace](#trace) | ops | toggle | on | Writes allowlisted trace records per session and child (no command lines or file contents); by default it follows the effective retro switch. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
+| [footer-ui](#footer-ui) | ui | toggle | on | Shows tokens, list-price cost and child launches in the footer, the children widget below the editor and the glyph set, with `/foreman cost` for a summary. | on by default | [sessions](sessions.md#commands) |
+| [dialogs-cli](#dialogs-cli) | ui |  | on | The foreman-only `foreman_dialogs({trace?})` tool and `foreman dialogs <trace>` (`bin/foreman`, `.cmd`, `.ps1`) return the JSON of `/foreman dialogs --json` for this session's trace or a named trace file; read only. A session's own async run results join the read-only verbs. | on by default | [sessions](sessions.md#commands) |
+| [ask-user-question](#ask-user-question) | ui |  | on | The foreman-only `ask_user_question({questions})` tool (1 to 4 questions, 2 to 4 options each plus free text) raises the questions in the pane and blocks the turn until a human answers; without a UI it tells the agent to use the ask.md file path, which stays unchanged. With an open ask.md in a handoff dir where the session is the child the answer is also written to `ruling-<n>.md`. | on by default | [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session) |
+| [auto-review-overlay](#auto-review-overlay) | safety |  | on | Every foreman overlay ask that is no self-modification (a child's included) goes to the review model before the human dialog: an allow lets the call go on, a deny with riskLevel high or critical is a block, defers, errors, timeouts and a missing model fall back to the dialog. The deterministic basic blockers run first and are not judged. | on by default | [permissions](permissions.md#two-layers) |
+| [reviewer-rules-file](#reviewer-rules-file) | review |  | on | The auto reviewer judges overlay asks by the prose rules in `config/permissions.rules.md`; `safety.permissions.autoReview.rulesFile` in the user layer or an overlay replaces the file. | on by default | [overlays](overlays.md#reviewer-rules-file) |
+| [herdr](#herdr) | ui | toggle | on | In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes. | on by default | [sessions](sessions.md#herdr) |
+| [radar](#radar) | ops |  | on | `foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files. | on by default | [sessions](sessions.md#radar) |
+| [compaction](#compaction) | models |  | on | Caps the context size at which Pi's own auto-compaction fires: `foreman setup` writes a per-model point (a price-tier boundary minus headroom, or this cap) as Pi's compaction.modelOverrides. The idle warm compaction and the footer context bar use the same point. | on by default | [cache](cache.md) |
+| [resources](#resources) | ops |  | on | Samples load, free memory and free disk; at high pressure child launches run one at a time and the strong climb pauses, at critical pressure launches are deferred until the host recovers (10 minutes at most). `/foreman doctor` prints the current level and `/foreman status` the last sample. | on by default | [resources](resources.md) |
+| [idle-cache](#idle-cache) | models | toggle | off | Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge preset sets a 3600 s byModel row, noting that a subscription turn within plan usage gets the 1-hour cache and 300 applies on extra-usage credits or an API key, keeps the keep-alive on with awayTicks 2 and gives the foreman role an idle rung); off for request-billed providers; silent without an entry. A warm budget (half a cold re-cache per idle), a presence gate (warms while the owner is away are limited) and, for TTLs beyond Pi's 30-minute idle cap, warms sent by pi-foreman itself apply to the keep-alive. | `set providers.claude-bridge.cache.keepalive.enabled to false (off) or true (on) in user or overlay config, or foreman config apply-preset claude-bridge --dry-run   # or: {"providers": {"<provider>": {"cache": {"ttlSeconds": 300, "billing": "token", "keepalive": {"enabled": true}}}}}` | [cache](cache.md#config) |
+
+## Profiles
+
+`foreman setup --profile <name>` assigns every toggleable feature: the ones a profile names as given, all others their shipped state. `--enable`/`--disable` adjust single features afterwards. `full` switches safety relaxations on.
+
+| Profile | Summary | On | Off |
+|---|---|---|---|
+| `orchestration` | The ceremony, ladder and review machinery without the extra UI, PR tools, herdr integration, idle cache keepalive, idle downshift, retro and trace. | shipped states | `pr-ops`, `herdr`, `footer-ui`, `idle-cache`, `idle-downshift`, `retro`, `trace` |
+| `standard` | Every toggleable feature in its shipped state; the package defaults. | shipped states | none |
+| `full` | Every toggleable feature on, safety relaxations included (git tools, children may push, workflow scripts, remote intercom). | `codemode`, `reviewer-climb`, `plan-review`, `orientation`, `git-tools`, `pr-ops`, `review-required`, `children-may-push`, `workflow-scripts`, `remote-intercom`, `idle-cache`, `idle-downshift`, `herdr`, `footer-ui`, `retro`, `trace` | none |
+
+Toggleable features (`on` and `off` write these leaves into the user config; `*` = every provider present):
+
+| Feature | Area | On writes | Off writes | Shipped | Relaxes safety |
+|---|---|---|---|---|---|
+| [codemode](#codemode) | tools | `roles.foreman.codemode` = `true` | `roles.foreman.codemode` = `false` | on | no |
+| [idle-downshift](#idle-downshift) | models | `ladder.idleDownshift.enabled` = `true` | `ladder.idleDownshift.enabled` = `false` | on | no |
+| [reviewer-climb](#reviewer-climb) | review | `ladder.reviewerClimb.enabled` = `true` | `ladder.reviewerClimb.enabled` = `false` | off | no |
+| [plan-review](#plan-review) | review | `ceremony.planReview.standard` = `true` | `ceremony.planReview.standard` = `false` | off | no |
+| [orientation](#orientation) | ceremony | `ceremony.orientation.enabled` = `true` | `ceremony.orientation.enabled` = `false` | on | no |
+| [git-tools](#git-tools) | tools | `tools.git` = `true` | `tools.git` = `false` | off | yes |
+| [pr-ops](#pr-ops) | tools | `tools.pr` = `true` | `tools.pr` = `false` | on | no |
+| [children-may-push](#children-may-push) | safety | `safety.children.mayPush` = `true` | `safety.children.mayPush` = `false` | off | yes |
+| [review-required](#review-required) | review | `safety.review.required` = `true` | `safety.review.required` = `false` | off | no |
+| [workflow-scripts](#workflow-scripts) | safety | `safety.subagents.allowWorkflow` = `true` | `safety.subagents.allowWorkflow` = `false` | off | yes |
+| [remote-intercom](#remote-intercom) | sessions | `intercom.allowRemote` = `true` | `intercom.allowRemote` = `false` | off | yes |
+| [retro](#retro) | retro | `retro.enabled` = `null` | `retro.enabled` = `false` | on | no |
+| [trace](#trace) | ops | `trace.enabled` = `null` | `trace.enabled` = `false` | on | no |
+| [footer-ui](#footer-ui) | ui | `footer.usage` = `true`, `widget.children` = `true` | `footer.usage` = `false`, `widget.children` = `false` | on | no |
+| [herdr](#herdr) | ui | `herdr.blockedShim` = `true`, `herdr.groupTag` = `true` | `herdr.blockedShim` = `false`, `herdr.groupTag` = `false` | on | no |
+| [idle-cache](#idle-cache) | models | `providers.*.cache.keepalive.enabled` = `true` | `providers.*.cache.keepalive.enabled` = `false` | on | no |
 
 ## Feature keys
 
@@ -112,6 +144,14 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | Key | Default | Layer |
 |---|---|---|
 | `version` | `1` | any layer |
+
+### profiles
+
+**Setup profiles and feature toggles.** `foreman setup` applies a named profile (`orchestration`, `standard` or `full`) and per-feature toggles to the user `foreman.json` and records the choice; `foreman features` lists the state of every toggleable feature and the profile's deviations.
+
+| Key | Default | Layer |
+|---|---|---|
+| `profile` | `null` | not in project/session (the setup profile is recorded in the user or overlay config) |
 
 ### doctor-providers
 
@@ -146,7 +186,7 @@ Switch: `providers` is non-empty.
 
 ### roles
 
-**Role definitions.** Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time default of the neutral roles; a launch timeoutMs wins, capped by ceremony.launchTimeoutCapMinutes.
+**Role definitions.** Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time default of the neutral roles; a launch timeoutMs wins, capped by ceremony.launchTimeoutCapMinutes. roles.<x>.mcp is the ceiling of MCP servers a child may load on demand through tool_search (a launch mcp field narrows it).
 
 | Key | Default | Layer |
 |---|---|---|
@@ -403,7 +443,7 @@ No config key.
 
 ### background-tasks-addon
 
-**Background-tasks add-on detection.** Detects the optional pi-background-tasks add-on (install: `PI_BG_FEATURES=process pi install npm:pi-background-tasks`): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it.
+**Background-tasks add-on detection.** Detects the optional pi-background-tasks add-on (install with `pi install npm:pi-background-tasks@2.6.10` on consent via `foreman setup --addon background-tasks`; set `PI_BG_FEATURES=process` in the shell profile so it is present when Pi starts): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it.
 
 No config key.
 
@@ -598,15 +638,19 @@ No config key.
 
 ### remote-sessions
 
-**Remote child sessions over SSH.** `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. The child reports back by cross-machine pi-intercom notices; the parent mirrors them into files. User or overlay config only.
+**Remote child sessions over SSH.** `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. By default (`returnPath` `pull`) the child appends its notices to an outbox file on that machine and the parent fetches them over its own SSH call, so the remote never connects back; `push` sends them by cross-machine pi-intercom notices instead. The parent mirrors the notices into files. `foreman session close-remote` (and `/foreman close`) closes such a child over the same SSH call. User or overlay config only.
 
 Switch: `sessions.machines` is non-empty.
 
 | Key | Default | Layer |
 |---|---|---|
+| `sessions.machines.<x>.returnPath` | unset | not in project/session (the machines a session may open on over SSH come from the user or overlay config) |
 | `sessions.machines.<x>.foremanCommand` | unset | not in project/session (the machines a session may open on over SSH come from the user or overlay config) |
 | `sessions.machines.<x>.parentName` | unset | not in project/session (the machines a session may open on over SSH come from the user or overlay config) |
 | `sessions.remoteInlineMaxBytes` | `32768` | tighten-only (lower only, minimum 1024) |
+| `sessions.pull.intervalSeconds` | `20` | not in project/session (the remote pull poll periods come from the user or overlay config) |
+| `sessions.pull.fastSeconds` | `5` | not in project/session (the remote pull poll periods come from the user or overlay config) |
+| `sessions.ssh.controlMaster` | `true` | not in project/session (the SSH multiplexing switch comes from the user or overlay config) |
 
 ### round-state
 
@@ -665,7 +709,7 @@ Switch: `retro.repoBacklog` is non-empty.
 
 | Key | Default | Layer |
 |---|---|---|
-| `close.from` | `["herdr", "intercom-parent"]` | tighten-only (can only narrow the list) |
+| `close.from` | `["herdr", "intercom-parent", "remote-parent"]` | tighten-only (can only narrow the list) |
 | `close.autoClean` | `true` | tighten-only (only false is accepted) |
 | `close.worktreeDir` | `"../<repo>.worktrees"` | not in project/session (the worktree convention comes from the user or overlay config) |
 | `close.childWaitMs` | `60000` | not in project/session (the child close wait comes from the user or overlay config) |
@@ -686,6 +730,7 @@ Switch: `retro.repoBacklog` is non-empty.
 | Key | Default | Layer |
 |---|---|---|
 | `footer.usage` | `true` | any layer |
+| `footer.cacheBar` | `true` | any layer |
 | `footer.style` | `"foreman"` | any layer |
 | `ui.symbols` | `"unicode"` | any layer |
 | `ui.spinner` | `true` | any layer |
@@ -787,6 +832,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | Feature | Commands |
 |---|---|
 | [setup](#setup) | `/foreman`, `/foreman setup`, `foreman setup`, `/foreman doctor`, `/foreman update-check`, `foreman update-check`, `foreman config`, `foreman config validate` |
+| [profiles](#profiles) | `foreman setup --profile`, `foreman setup --pick`, `foreman features` |
 | [presets](#presets) | `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` |
 | [findings](#findings) | `foreman findings`, `foreman retro models` |
 | [bench](#bench) | `foreman bench`, `foreman bench review`, `foreman bench review-table` |
@@ -796,7 +842,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [waits](#waits) | `/foreman waits` |
 | [pr-ops](#pr-ops) | `/foreman prs` |
 | [sessions](#sessions) | `/foreman session`, `foreman session` |
-| [remote-sessions](#remote-sessions) | `foreman session remote` |
+| [remote-sessions](#remote-sessions) | `foreman session remote`, `foreman session pull`, `foreman session close-remote` |
 | [sync](#sync) | `/sync`, `foreman sync` |
 | [retro](#retro) | `/retro`, `/foreman flag-ask`, `foreman retro`, `foreman backlog` |
 | [close](#close) | `/foreman close`, `foreman close`, `foreman worktree` |
@@ -832,6 +878,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 
 | Key | Reason |
 |---|---|
+| `profile` | the setup profile is recorded in the user or overlay config |
 | `paths.hubWorkflow` | it loosens: it makes dirs outside the worktree readable; user or overlay config only |
 | `bridge.isolateClaudeConfig` | it loosens the host config isolation |
 | `providers.*.review` | it loosens: a review model approves asks |
@@ -863,6 +910,8 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `close.worktreeDir` | the worktree convention comes from the user or overlay config |
 | `close.childWaitMs` | the child close wait comes from the user or overlay config |
 | `sessions.machines` | the machines a session may open on over SSH come from the user or overlay config |
+| `sessions.pull` | the remote pull poll periods come from the user or overlay config |
+| `sessions.ssh` | the SSH multiplexing switch comes from the user or overlay config |
 | `ceremony.checkpoint` | who approves the plan checkpoint comes from the user or overlay config |
 | `ceremony.reviewModel` | the fallback reviewer model comes from the user or overlay config |
 | `ceremony.reviewByOccasion` | the per-occasion reviewer overrides come from the user or overlay config |

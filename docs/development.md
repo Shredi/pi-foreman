@@ -15,6 +15,7 @@
 - `bench/` benchmark presets, prices and Harbor agents; `bin/` the `foreman` and `ledger` wrappers
 - `design/` architecture record; `tests/` Python tests, `tests/installer`, `tests/replay`
 - `setup.mjs` setup script (`foreman setup`); `packages.lock.json` pinned Pi and packages
+- Runtime dependencies (`package.json`, exact pins mirrored in `packages.lock.json`): pi-subagents, `@gotgenes/pi-permission-system`, pi-intercom, and `@inquirer/prompts` (the arrow-key setup picker, imported lazily by `setup.mjs`)
 
 Running from a checkout instead of the installed package: [install](install.md#developing).
 
@@ -28,6 +29,8 @@ npm run test:ci                                   # pre-PR: what CI runs and npm
 npm run typecheck                                 # tsc --noEmit
 node setup.mjs --dry-run                          # installer preview, writes nothing (exits 1 until pi-foreman is installed as a package; see install.md#developing)
 ```
+
+A fresh worktree needs `npm ci --legacy-peer-deps` before `npm run test:node`.
 
 ## Replay rig
 
