@@ -160,6 +160,14 @@ The `net-read` allow (docs/permissions.md, Network reads) takes any host, by own
 - `~/.curlrc` (and the `wget` startup files and HSTS cache) still apply; the allow does not read them.
 - Output goes only into the session or the role scratch dir; each child role has its own scratch dir, so a child can read a file another child of the same role left there.
 
+## Known limit: MCP scope in children
+
+The permission gate judges every `mcp__` call on its payload; the MCP scope (`roles.<id>.mcp`, see [roles](roles.md#rolesidmcp)) decides which tools exist in a child. Both apply. Residuals:
+
+- Children read the trusted project's `.pi/mcp.json` the way Pi does. A shell write to `{cwd}/.pi/*` is guarded by the permission baseline, but a project you trust can still name servers there; they load only when a role's ceiling lists them.
+- Group launches (`tasks`, `chain`) that need MCP are refused until the pinned pi-subagents forwards per-entry bindings; launch those roles singly.
+- With `safety.subagents.allowWorkflow` on, a workflow script could pass `extensionBindings` per child and forge a binding. A script (inline or file) whose text names `extensionBindings` or `pi-foreman/1` is therefore refused (`launch_refused`, reason `workflow_binding`); only bindings the adapter writes exist.
+
 ## Known limit: stale "needs attention" notices
 
 pi-subagents delivers `subagent_control_notice` custom messages with `pi.sendMessage` (`triggerTurn` for async runs), and a queued message cannot be withdrawn. The idle wake that carries them is handled at `input` (R26 item 2): when every unseen notice is for a run whose end event already arrived, the input returns `handled` and no turn starts (trace `notify_deduped {reason: "run_ended", runId}`). A wake that also carries a notice for a live run, or any owner prompt, still starts a turn, and the stale notice in it is hidden from the model and the display (`context`, `message_end`). `notices.ts` (`staleNoticeRunIds`, `dropEndedRunNotices`) holds the rules. Pi's hooks cannot cancel a queued custom message itself, so a mixed wake still runs; fixing that needs a Pi hook to withdraw a queued custom message (for example a `message_start` handler that can cancel it), or a run-end check in pi-subagents' `control-notices.js` before it calls `sendMessage`.

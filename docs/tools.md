@@ -66,6 +66,9 @@ switches the pack off in children too. Children never write the variable. Roles 
 explorer, builder, reviewer, senior-reviewer and finalizer, and overlay roles likewise) get the four names in their
 list; the planner has no bash and gets none.
 
+Every child role also gets `tool_search`, through which MCP tools load on demand within the role's `roles.<id>.mcp`
+ceiling (see [roles](roles.md#rolesidmcp)). It is inactive in a child whose role allows no MCP server.
+
 ### Trace and retro
 
 | Event | Fields | Meaning |

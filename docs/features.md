@@ -44,7 +44,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [doctor-providers](#doctor-providers) | on | `/foreman doctor` prints `providers: <list>`, the providers the model registry holds in this session; a missing `claude-bridge` there means the bridge is not loaded or has not registered yet (see the opened-session note). | on by default | [sessions](sessions.md#providers-in-opened-sessions) |
 | [model-map](#model-map) | opt-in | Maps each role to a model and thinking level per provider; until a model is mapped, children run on Pi's default model and an interactive session shows one notice. | `{"providers": {"<provider>": {"roles": {"foreman": {"model": "<provider>/<big-model>"}, "builder": {"model": "<provider>/<mid-model>"}}}}}` | [install](install.md#what-setup-writes) |
 | [presets](#presets) | opt-in | Opt-in model maps under `config/presets/` (role models, ranks, strong rungs, reviewer climb) merged into your `foreman.json` on request, never by default. The `inexpensive` preset names roles by rank tier and resolves them from your `providers.<x>.ranks` at apply time (docs/presets.md). | `foreman config apply-preset claude-bridge --dry-run` | [presets](presets.md) |
-| [roles](#roles) | on | Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time default of the neutral roles; a launch timeoutMs wins, capped by ceremony.launchTimeoutCapMinutes. | on by default | [roles](roles.md#further-role-and-provider-keys) |
+| [roles](#roles) | on | Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time default of the neutral roles; a launch timeoutMs wins, capped by ceremony.launchTimeoutCapMinutes. roles.<x>.mcp is the ceiling of MCP servers a child may load on demand through tool_search (a launch mcp field narrows it). | on by default | [roles](roles.md#further-role-and-provider-keys) |
 | [display-names](#display-names) | on | Shows roles under a display-name preset (`classic` personal names, `plain` ids) or your own map; no code compares a display name. | on by default | [roles](roles.md#roles) |
 | [codemode](#codemode) | on | Gives a role the `codemode` tool, whose script calls each pass the guards and permissions on their own (on for the foreman and explorer by default). | `{"roles": {"builder": {"codemode": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
 | [ladder](#ladder) | opt-in | A child climbs to its role's strong model through the foreman after a context, turns, stuck or review-FAIL handoff; with no strong rung mapped nothing climbs. | `{"providers": {"<provider>": {"roles": {"builder": {"strong": {"model": "<provider>/<stronger-model>"}}}}}}` | [ladder](ladder.md#rungs-and-the-live-rung) |
@@ -146,7 +146,7 @@ Switch: `providers` is non-empty.
 
 ### roles
 
-**Role definitions.** Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time default of the neutral roles; a launch timeoutMs wins, capped by ceremony.launchTimeoutCapMinutes.
+**Role definitions.** Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time default of the neutral roles; a launch timeoutMs wins, capped by ceremony.launchTimeoutCapMinutes. roles.<x>.mcp is the ceiling of MCP servers a child may load on demand through tool_search (a launch mcp field narrows it).
 
 | Key | Default | Layer |
 |---|---|---|
