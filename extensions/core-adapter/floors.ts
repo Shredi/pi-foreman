@@ -385,6 +385,9 @@ const SECRET_FILE = /(^|\/)(id_(rsa|dsa|ecdsa|ed25519)(_[\w-]+)?|[^/]+\.(pem|key
 /** A secret or key path (read or write), by the path alone. Bare names (no separator, no `~`) are not judged here; the overlay's path rules cover those. */
 const SECRET_EXTRA = /(^|\/)(\.config\/hub|\.config\/glab-cli|\.pi\/extensions\/pi-permission-system|credentials(\.[^/]*)?)(\/|$)/i;
 const ENV_FILE = /(^|\/)([^/]*\.env|\.env\.[^/]+)$/i;
+/** A bare (separator-free) word is a secret only when it is a dotenv name itself, so `process.env` or `app.env` as an argument is not judged. `.envrc` is not a secret. */
+const ENV_BARE = /^\.env(\.[^/]+)?$/i;
+const GIT_CONFIG_FILE = /(^|\/)\.git\/config$/i;
 const ENV_EXEMPT = /\.env\.(example|sample|template)$/i;
 
 export function secretPath(word: string, env: FloorEnv): FloorHit | null {
@@ -392,7 +395,8 @@ export function secretPath(word: string, env: FloorEnv): FloorHit | null {
   const m = /^-{1,2}[\w-]+=(.+)$/.exec(w);
   const x = m ? m[1] : w;
   const pathLike = x.includes("/") || x.startsWith("~");
-  let bad = pathLike && !/\.pub$/.test(x) && (SECRET_DIRS.test(x) || SECRET_FILE.test(x) || SECRET_EXTRA.test(x) || (ENV_FILE.test(x) && !ENV_EXEMPT.test(x)));
+  const bareEnv = !pathLike && ENV_BARE.test(x) && !ENV_EXEMPT.test(x);
+  let bad = bareEnv || (pathLike && !/\.pub$/.test(x) && (GIT_CONFIG_FILE.test(x) || SECRET_DIRS.test(x) || SECRET_FILE.test(x) || SECRET_EXTRA.test(x) || (ENV_FILE.test(x) && !ENV_EXEMPT.test(x))));
   if (!bad && pathLike) {
     const abs = resolveWord(x, env.cwd, env);
     if (abs !== null) {

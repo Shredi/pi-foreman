@@ -170,3 +170,33 @@ test("the agent auth file matches through ~, another spelling of the agent dir a
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("bare and relative dotenv names are secret paths in shell lines and path tools; the three template names are not", () => {
+  for (const n of [".env", "./.env", ".env.local", ".env.production", "sub/dir/.env", "../up/.env.staging"]) {
+    assert.equal(floor(`head -n1 ${n}`), "floor-secret-path", n);
+    assert.equal(floor(`cat ${n}`), "floor-secret-path", n);
+    assert.equal(floor(`cp x ${n}`), "floor-secret-path", n);
+    for (const tool of ["read", "write", "edit", "grep"]) assert.equal(pathFloors({ path: n }, env, tool)?.rule, "floor-secret-path", `${tool} ${n}`);
+  }
+  assert.equal(floor("echo x > .env"), "floor-secret-path");
+  for (const n of [".env.example", ".env.sample", ".env.template", "./.env.example", "sub/.env.template"]) {
+    assert.equal(floor(`cat ${n}`), null, n);
+    assert.equal(pathFloors({ path: n }, env, "read"), null, n);
+  }
+  // `.envrc` is a direnv script, not a dotenv file, and a dotted bare word like process.env is not a path
+  assert.equal(floor("cat .envrc"), null);
+  assert.equal(pathFloors({ path: ".envrc" }, env, "read"), null);
+  assert.equal(floor("echo process.env"), null);
+});
+
+test("the dotgit config file is a secret path (remote URLs may embed tokens); the git command that reads one key is not", () => {
+  for (const p of [".git/config", "./.git/config", "/w/repo/.git/config", "../other/.git/config"]) {
+    assert.equal(floor(`cat ${p}`), "floor-secret-path", p);
+    assert.equal(pathFloors({ path: p }, env, "read")?.rule, "floor-secret-path", p);
+    assert.equal(pathFloors({ path: p }, env, "write")?.rule, "floor-secret-path", p);
+  }
+  assert.equal(floor("git config --get remote.origin.url"), null);
+  assert.equal(floor("git remote -v"), null);
+  assert.equal(pathFloors({ path: ".gitignore" }, env, "read"), null);
+  assert.equal(pathFloors({ path: "docs/git/config" }, env, "read"), null);
+});

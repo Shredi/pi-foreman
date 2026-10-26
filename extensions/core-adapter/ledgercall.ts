@@ -9,6 +9,8 @@
 // backslash outside the cd path, unquoted characters outside a safe set. Words are either fully
 // single-quoted, fully double-quoted (no $ ` \ inside) or unquoted.
 
+import { GATE_DENY_PREFIXES } from "./gatedialog.ts";
+
 export const LEDGER_TOOL = "foreman_ledger";
 export type LedgerHelper = "tool" | "bash" | "off";
 export const LEDGER_ACTIONS = ["status", "mark", "add", "note", "defer", "upsert"] as const;
@@ -127,7 +129,7 @@ export function mentionsLedger(cmd: unknown): boolean {
  */
 export function isPermissionDeny(isError: boolean, text: string): boolean {
   if (!isError) return false;
-  return text.includes("[pi-permission-system]") || /^pi-foreman: (?:denied by the permission policy|this command needs approval|this path needs approval|denied by the write protection|this changes protected configuration)/.test(text);
+  return text.includes("[pi-permission-system]") || GATE_DENY_PREFIXES.some((p) => text.startsWith(p)) || /^pi-foreman: (?:denied by the permission policy|this command needs approval|this path needs approval|denied by the write protection|this changes protected configuration)/.test(text);
 }
 
 export interface GateView {

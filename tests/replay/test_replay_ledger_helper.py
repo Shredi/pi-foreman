@@ -98,10 +98,7 @@ class TestLedgerHelper(ReplayCase):
         pi.close()
         self.assertEqual([e for _, e, _ in res], [True, True], res)
         self.assertIn("pi-foreman:", res[0][2])
-        # The old assertion [("bash", False), ("bash", True)] on the ledger_call records is dropped: ledgercall.ts
-        # isPermissionDeny still matches only the package and overlay texts, so a gate deny ("pi-foreman: policy ...") is
-        # traced allowed:true. Open issue for the foreman (D removal list ledgercall.ts:124-130); see the report.
-        self.assertEqual([r["kind"] for r in events(rig, sid, "ledger_call")], ["bash", "bash"])
+        self.assertEqual([(r["kind"], r["allowed"]) for r in events(rig, sid, "ledger_call")], [("bash", False), ("bash", False)])
 
     def test_reviewer_child_closes_v_and_nothing_else(self):
         rig, sid, recs = self.run_flow("g")

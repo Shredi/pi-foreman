@@ -16,6 +16,15 @@ export type GateAsk = { cause: "ask"; entry: string; reason: string } | { cause:
 const UNREACHABLE_NAMES: Record<string, string> = { timeout: "timeout", provider_error: "provider error", no_model: "no model configured", invalid_verdict: "invalid verdict" };
 export const unreachableName = (cause: string): string => UNREACHABLE_NAMES[cause] ?? cause;
 
+/** Leading texts of every gate deny (floors, policy, review unreachable, dialog answers, self-modification, handler failure); the ledger trace reads them. */
+export const GATE_DENY_PREFIXES = [
+  "pi-foreman: denied",
+  "pi-foreman: policy ",
+  "pi-foreman: the permission review is unreachable",
+  "pi-foreman: the permission gate failed",
+  "pi-foreman: self-modification rule",
+] as const;
+
 export const cut = (text: string, max = PAYLOAD_CAP): string => (text.length > max ? `${text.slice(0, max)} ... [${text.length - max} more chars]` : text);
 
 export function dialogTitle(a: GateAsk): string {

@@ -41,21 +41,22 @@ class TestCodemodeInnerCalls(ReplayCase):
         inner = [x for x in res if x[1]]
         self.assertEqual(len(outer), 1)
         self.assertFalse(outer[0][2], outer[0][3])
-        self.assertEqual([(n, e) for n, _, e, _ in inner], [("read", False), ("bash", False), ("bash", False), ("bash", True)], inner)
+        self.assertEqual([(n, e) for n, _, e, _ in inner], [("read", False), ("bash", True), ("bash", False), ("bash", True)], inner)
         self.assertTrue(all(p == inner[0][1] for _, p, _, _ in inner))
-        # item 23: `cat .git/config` is a worktree read (rule path-read-worktree), no longer an overlay deny; `uname -s` goes to review
-        # the .env read is still refused (the rig still loads the package's baseline path deny, rule '*.env')
-        self.assertIn("Denied by policy", inner[3][3])
+        # `cat .git/config` and the .env read are refused by the gate's secret-path floor; `uname -s` goes to review
+        self.assertIn("floor (secret-path)", inner[1][3])
+        self.assertIn(".git/config", inner[1][3])
+        self.assertIn("floor (secret-path)", inner[3][3])
         self.assertIn(".env", inner[3][3])
         self.assertNotIn("not-a-real-secret", outer[0][3])
         gate = [r.get("decision") for recs_ in rig.traces().values() for r in recs_ if r.get("event") == "guard" and r.get("guard") == "gate" and r.get("toolFamily") == "bash"]
-        self.assertEqual(gate[:2], ["allowed", "allowed"], gate)
+        self.assertEqual(gate[:3], ["blocked", "allowed", "blocked"], gate)
 
         # headless (json mode): the script runs, the secret read is still refused
         _, out, _ = rig.run_print("[[replay:cm1]] json", mode="json", timeout=90)
         res = ends(out)
         self.assertFalse([x for x in res if x[0] == "codemode"][0][2])
-        self.assertEqual([(n, e) for n, p, e, _ in res if p], [("read", False), ("bash", False), ("bash", False), ("bash", True)])
+        self.assertEqual([(n, e) for n, p, e, _ in res if p], [("read", False), ("bash", True), ("bash", False), ("bash", True)])
 
 
 if __name__ == "__main__":
