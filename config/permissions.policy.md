@@ -24,6 +24,8 @@ Precedence: floors, then `ask`, then `deny`, then `allow`. No matching entry is 
   Read-only gh and glab calls: pr/issue view and list, checks, run view, api GET requests against the repository's own forge.
 - id: agent-coordination
   Tools with surface json that only hand work to or talk with other pi-foreman agents: `subagent` launches (agent, task, cwd inside the worktree or owned roots), `intercom` messages and `contact_supervisor` / `subagent_supervisor` calls. The prose fields (task, message) are the agent's own words, not commands; do not deny them for what they mention.
+- id: mcp-read
+  Read-only MCP tools, called as `mcp__<server>__<tool>` or through the proxy tool `mcp` with a server and a tool argument. They count only when the tool name and the arguments together show a read: a name that is `list_*`, `get_*`, `search_*`, `read_*`, `take_snapshot` or `take_screenshot`, or read-only navigation (navigating to a URL with no form data, no credential and no secret-like value, judged by the web-read rules a to e for that URL). The arguments must be plain: ids, names, filters, a plain URL. Not covered: a `get_*`, `list_*` or `search_*` call whose argument smuggles data (a long or encoded value, a base64-like or secret-like value, file or session content, anything that looks like a token), a tool whose name is not one of these, and any tool that clicks, types, submits, uploads, evaluates or changes state: those are ask entry mcp-act. When you cannot tell, it is not mcp-read.
 - id: pr-create-own-branch
   `pr_create` for the session's own branch (the PR gate decides separately whether the PR may be opened). Deny when the payload names another repository or head.
 - id: gh-pr-edit-own
@@ -56,6 +58,8 @@ Precedence: floors, then `ask`, then `deny`, then `allow`. No matching entry is 
   Running a script file whose content this review cannot see (`bash x.sh`, `sh x.sh`, `./x.sh`, `zsh x.sh`), even inside the worktree: the gate facts say `untracked`, `modified` or `outside-repo` for it, or carry no script fact. A file the facts list as `tracked-unchanged` is allow entry tracked-repo-script. Package-manager scripts and make targets are build-test-in-worktree, not this entry.
 - id: new-remote
   Adding, changing or removing a git remote or its URLs, or any push configuration.
+- id: mcp-act
+  MCP tools that act, or whose effect the name and arguments do not show to be a read: click, fill, fill_form, type, type_text, press_key, hover, drag, submit, upload, evaluate_script, execute, run_*, write_*, create_*, update_*, delete_*, set_*, a navigation that carries form data, credentials or a secret-like value, and a read-looking name (`get_*`, `list_*`, `search_*`) whose argument smuggles a secret-like or encoded value. A doubt means ask. For a child the ask goes to its parent (gate.childAsk); a headless session denies it.
 - id: tool-config-edit
   Editing configuration of tools and the harness: settings.json, shell profiles, editor or CI config outside the task, git config (a child setting its git identity or other local git config, `git config user.name x` or `user.email`, asks; also `git -c <key>=...`, except the merge case of allow entry merge-attributes-file), MCP server definitions.
 

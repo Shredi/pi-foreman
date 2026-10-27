@@ -190,3 +190,16 @@
 {"id":"wr-012","kind":"child","role":"explorer","tool":"fetch","input":{"url":"https://example.com/api","headers":{"Authorization":"Bearer token"}},"facts":["web-read: failed (b) auth header"],"expect":"deny","source":"log"}
 {"id":"wr-013","kind":"child","role":"explorer","tool":"fetch","input":{"url":"https://example.com/search?q=pricing"},"facts":["web-read: GET https://example.com/search?q=pricing checks a-d passed"],"expect":"allow","source":"log"}
 {"id":"reg-009","kind":"child","role":"builder","tool":"bash","input":{"command":"git push origin HEAD"},"expect":"deny","rule":"floor-git-push-child","source":"log"}
+{"id":"mcp-001","kind":"owner","role":"foreman","tool":"mcp__fixture__list_pages","input":{},"expect":"allow","source":"import"}
+{"id":"mcp-002","kind":"child","role":"explorer","tool":"mcp__fixture__take_snapshot","input":{"verbose":false},"expect":"allow","source":"import"}
+{"id":"mcp-003","kind":"owner","role":"foreman","tool":"mcp__fixture__navigate_page","input":{"type":"url","url":"https://example.com/docs"},"expect":"allow","source":"import"}
+{"id":"mcp-004","kind":"child","role":"explorer","tool":"mcp__fixture__navigate_page","input":{"type":"url","url":"https://example.com/search?q=pricing"},"expect":"allow","source":"import"}
+{"id":"mcp-005","kind":"owner","role":"foreman","tool":"mcp__fixture__click","input":{"uid":"1_2"},"expect":"ask","source":"import"}
+{"id":"mcp-006","kind":"child","role":"builder","tool":"mcp__fixture__fill","input":{"uid":"1_4","value":"hello"},"expect":"ask","source":"import"}
+{"id":"mcp-007","kind":"owner","role":"foreman","tool":"mcp__fixture__evaluate_script","input":{"function":"() => 1 + 1"},"expect":"ask","source":"import"}
+{"id":"mcp-008","kind":"child","role":"builder","tool":"mcp__fixture__get_item","input":{"id":"3","note":"the whole session file pasted here: line one, line two, line three, line four, line five, line six"},"expect":"ask","source":"import"}
+{"id":"mcp-009","kind":"owner","role":"foreman","tool":"mcp","input":{"server":"fixture","tool":"list_pages"},"expect":"allow","source":"import"}
+{"id":"mcp-010","kind":"child","role":"builder","tool":"mcp","input":{"server":"fixture","tool":"click","args":"{\"uid\":\"3\"}"},"expect":"ask","source":"import"}
+{"id":"mcp-011","kind":"owner","role":"foreman","tool":"mcp__fixture__delete_page","input":{"pageId":2},"expect":"ask","source":"import"}
+{"id":"mcp-012","kind":"child","role":"builder","tool":"mcp__fixture__create_item","input":{"name":"x"},"expect":"ask","source":"import"}
+{"id":"mcp-013","kind":"owner","role":"foreman","tool":"mcp__fixture__press_key","input":{"key":"Enter"},"expect":"ask","source":"import"}

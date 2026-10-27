@@ -97,5 +97,18 @@
   "rsc-001": {"verdict": "ask", "entry": "unseen-script-run"},
   "rsc-002": {"verdict": "ask", "entry": "unseen-script-run"},
   "rsr-001": {"verdict": "deny", "entry": "delete-outside-roots"},
-  "rsr-002": {"verdict": "allow", "entry": "read-sibling-repo"}
+  "rsr-002": {"verdict": "allow", "entry": "read-sibling-repo"},
+  "mcp-001": {"verdict": "allow", "entry": "mcp-read"},
+  "mcp-002": {"verdict": "allow", "entry": "mcp-read"},
+  "mcp-003": {"verdict": "allow", "entry": "mcp-read"},
+  "mcp-004": {"verdict": "allow", "entry": "mcp-read"},
+  "mcp-005": {"verdict": "ask", "entry": "mcp-act"},
+  "mcp-006": {"verdict": "ask", "entry": "mcp-act"},
+  "mcp-007": {"verdict": "ask", "entry": "mcp-act"},
+  "mcp-008": {"verdict": "ask", "entry": "mcp-act"},
+  "mcp-009": {"verdict": "allow", "entry": "mcp-read"},
+  "mcp-010": {"verdict": "ask", "entry": "mcp-act"},
+  "mcp-011": {"verdict": "ask", "entry": "mcp-act"},
+  "mcp-012": {"verdict": "ask", "entry": "mcp-act"},
+  "mcp-013": {"verdict": "ask", "entry": "mcp-act"}
 }
