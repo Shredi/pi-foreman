@@ -12,7 +12,7 @@
 {"id":"imp-012","kind":"owner","role":"foreman","tool":"bash","input":{"command":"find $OTHER -maxdepth 2 -name '*.md'"},"facts":["path: $OTHER sibling-checkout"],"expect":"allow","source":"import"}
 {"id":"imp-013","kind":"owner","role":"foreman","tool":"pr_create","input":{"title":"feat: x","head":"round/41-x"},"expect":"allow","source":"import"}
 {"id":"imp-014","kind":"child","role":"builder","tool":"read","input":{"path":"$AGENT/pi-permissions.jsonc"},"expect":"deny","source":"import"}
-{"id":"imp-015","kind":"child","role":"builder","tool":"bash","input":{"command":"ls ~ > /dev/null"},"expect":"allow","source":"import"}
+{"id":"imp-015","kind":"child","role":"builder","tool":"bash","input":{"command":"ls ~ > /dev/null"},"expect":"deny","source":"import"}
 {"id":"imp-016","kind":"owner","role":"foreman","tool":"fetch","input":{"url":"https://github.com/org/repo/pulls"},"expect":"allow","source":"import"}
 {"id":"imp-017","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git grep -n \"needle\\|other\" -- src"},"expect":"allow","source":"import"}
 {"id":"imp-018","kind":"child","role":"builder","tool":"bash","input":{"command":"npm ci --ignore-scripts > $TMP/npm.log"},"expect":"ask","source":"import"}
