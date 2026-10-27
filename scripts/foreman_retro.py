@@ -10,7 +10,7 @@ Every input is optional; a missing or unreadable file makes its section say "no 
 command families (first two words, three for sudo/ssh, digits -> N, hex -> HASH), tool names and
 guard names are printed: never prompts, command text, file bodies or tool output.
 
-Proposals look at the whole review log: a bash command family approved (by the user or the review
+Proposals look at the whole gate log (--review-log): a bash command family approved (by the user or the review
 model) at least --min-reviews times in at least two sessions and never denied becomes the candidate
 `"<family> *"`, unless the baseline or merged config deny/ask rules already match it, the family runs
 code (interpreters, wrappers, runners, git config/remote/submodule) or an argv word names a baseline
@@ -108,39 +108,29 @@ def bash_family(cmd):
     return fam[:60]
 
 
-# ------------------------------------------------------------------ review log
+# ------------------------------------------------------------------ gate log
 
 def collect_asks(records):
-    """One dict per requestId: session, family, outcome, decider, verdict, ts (terminal event)."""
-    asks = {}
+    """One dict per gate record that decided something (gatelog.ts): session, family (from the logged shape),
+    outcome (approved/denied), human (a dialog the user answered), review (the reviewer's verdict; an ask or
+    an unreachable reviewer counts as defer), ts. Cached verdicts, default allows and no-dialog denials decide nothing new."""
+    asks = []
     for rec in records:
-        rid = rec.get("requestId")
-        if not isinstance(rid, str) or not rid:
+        layer, verdict = rec.get("layer"), rec.get("verdict")
+        if rec.get("cached") is True or layer not in ("floor", "review", "dialog"):
             continue
-        a = asks.setdefault(rid, {"session": None, "fallback": None, "family": None, "outcome": None,
-                                  "human": False, "review": None, "ts": "", "ask": False})
-        ev = str(rec.get("event", ""))
-        if ev.startswith("permission_request.") or ev.startswith("forwarded_permission."):
-            a["ask"] = True
-        if ev.startswith("forwarded_permission.") and isinstance(rec.get("targetSessionId"), str):
-            a["fallback"] = rec["targetSessionId"]
-        if str(rec.get("toolName", "")).lower() in ("bash", "powershell") and isinstance(rec.get("command"), str) and a["family"] is None:
-            a["family"] = bash_family(rec["command"])
-        if ev == "foreman_review.decision":
-            if isinstance(rec.get("sessionId"), str):
-                a["session"] = rec["sessionId"]
-            if rec.get("model") and rec.get("verdict") in ("allow", "deny", "defer"):
-                a["review"] = rec["verdict"]
-        elif ev == "ai_guard.decision" and rec.get("verdict") in ("allow", "deny", "defer"):
-            a["review"] = rec["verdict"]
-        if ev in ("permission_request.approved", "permission_request.denied"):
-            ts = str(rec.get("timestamp", ""))
-            if ts >= a["ts"]:
-                a["ts"] = ts
-            a["outcome"] = "approved" if ev.endswith("approved") else "denied"
-            if rls.human_kind(rec.get("decidedBy")) == "user":
-                a["human"] = True
-    return [a for a in asks.values() if a["ask"]]
+        a = {"session": rec.get("session") if isinstance(rec.get("session"), str) and rec.get("session") else None,
+             "fallback": None, "family": None, "outcome": None, "human": False, "review": None,
+             "ts": str(rec.get("ts", "")), "ask": True}
+        if str(rec.get("tool", "")).lower() in ("bash", "powershell") and isinstance(rec.get("shape"), str):
+            a["family"] = bash_family(rec["shape"])
+        if layer == "review":
+            a["review"] = verdict if verdict in ("allow", "deny") else "defer"
+        if verdict in ("allow", "deny") and rec.get("reason") != "no-dialog":
+            a["outcome"] = "approved" if verdict == "allow" else "denied"
+            a["human"] = layer == "dialog"
+        asks.append(a)
+    return asks
 
 
 def ask_session(a):
@@ -1021,12 +1011,9 @@ def selftest():
         lines = []
         for i in range(2):
             for s in ("s1", "s2"):
-                rid = "%s-%d" % (s, i)
-                lines.append({"event": "permission_request.approved", "requestId": rid, "toolName": "bash",
-                              "command": "git fetch origin", "timestamp": "2026-01-01T00:00:0%d" % i,
-                              "decidedBy": {"kind": "user"}})
-                lines.append({"event": "foreman_review.decision", "requestId": rid, "sessionId": s})
-        lines.append({"event": "permission_request.approved", "requestId": "x", "toolName": "bash", "command": "sudo ls"})
+                lines.append({"id": "%s-%d" % (s, i), "session": s, "tool": "bash", "layer": "dialog", "verdict": "allow",
+                              "shape": "git fetch origin", "ts": "2026-01-01T00:00:0%d" % i})
+        lines.append({"id": "x", "tool": "bash", "layer": "dialog", "verdict": "allow", "shape": "sudo ls"})
         with open(rl, "w", encoding="utf-8") as fh:
             for r in lines:
                 fh.write(json.dumps(r) + "\n")
