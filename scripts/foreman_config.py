@@ -215,6 +215,8 @@ IGNORED_KEYS = [
     (("bridge", "isolateClaudeConfig"), "it loosens the host config isolation"),
     (("bridge", "promptCacheTtl"), "the bridge cache TTL comes from the user or overlay config"),
     (("providers", "*", "review"), "it loosens: a review model approves asks"),
+    (("providers", "*", "roles", "review"), "it loosens: the gate's review model approves asks; user or overlay config only"),
+    (("roles", "review"), "it loosens: the gate's review model approves asks; user or overlay config only"),
     (("providers", "*", "cache", "ttlSeconds"), "the cache policy comes from the user or overlay config"),
     (("providers", "*", "cache", "billing"), "the cache policy comes from the user or overlay config"),
     (("providers", "*", "cache", "keepalive", "intervalSeconds"), "the cache policy comes from the user or overlay config"),
@@ -325,8 +327,14 @@ LAYER_TIGHTEN = [
     (("childMaxThinking",), ("ordered", tuple(THINKING))),
     (("tools", "git"), "false_only"),
     (("tools", "pr"), "false_only"),
+    (("gate", "tmpAccess"), "false_only"),
+    (("gate", "askTimeoutMs"), "lower_only"),
+    (("gate", "reviewTimeoutMs"), "lower_only"),
+    (("gate", "childAsk"), ("ordered", ("deny", "parent"))),
 ]
-LAYER_MINIMUM = {"timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
+# gate keys the project and session layers may set (the LAYER_TIGHTEN rows above); every other gate key is user or overlay only
+GATE_LAYER_KEYS = ("tmpAccess", "askTimeoutMs", "reviewTimeoutMs", "childAsk")
+LAYER_MINIMUM = {"reviewTimeoutMs": 100, "timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
                  "maxTokens": 50000, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0,
                  "windowMinutes": 1, "childTimeoutSeconds": 1, "launchTimeoutCapMinutes": 1, "reviewRuns": 1, "budgetUsd": 0.01,
                  "maxLoadPerCore": 0.01, "selfWarmWindowMinutes": 1, "awayAfterMinutes": 1,
@@ -645,6 +653,16 @@ def _restrict_ceremony(base, proj, who, warnings):
 def restrict_layer(base, proj, who, warnings, project_dir):
     """Drop or narrow, in place, the non-safety keys the project or session layer may not loosen."""
     _restrict_ceremony(base, proj, who, warnings)
+    gate = proj.get("gate")
+    if gate is not None and not isinstance(gate, dict):
+        del proj["gate"]
+        warnings.append("%s gate ignored: not an object" % who)
+    elif isinstance(gate, dict):
+        for name in list(gate):
+            if name not in GATE_LAYER_KEYS:
+                del gate[name]
+                warnings.append("%s gate.%s ignored: the %s may only tighten gate.%s (user or overlay config sets the rest)"
+                                % (who, name, who, ", gate.".join(GATE_LAYER_KEYS)))
     for keys, why in IGNORED_KEYS:
         _drop_pattern(proj, keys, (), who, why, warnings)
     for keys, rule in LAYER_TIGHTEN:
