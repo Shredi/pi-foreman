@@ -44,11 +44,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 export const PROVIDERS = ["foreman-fake", "foreman-fake-b"];
 export const ROLE_MODELS = ["foreman", "planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"];
 // R41 gate models: allow, deny, ask, invalid (closed JSON verdicts of the shipped policy), unreachable (throws like review-error).
-export const REVIEW_MODELS = ["allow", "deny", "ask", "invalid", "unreachable", "error", "hang"].map((k) => `review-${k}`);
+export const REVIEW_MODELS = ["allow", "deny", "ask", "invalid", "unreachable", "child-unreachable", "error", "hang"].map((k) => `review-${k}`);
 const REVIEW_REPLIES: Record<string, string> = {
   "review-allow": '{"verdict":"allow","entry":"read-only-inspection","reason":"scripted allow"}',
   "review-deny": '{"verdict":"deny","entry":"secret-access","reason":"scripted deny"}',
   "review-ask": '{"verdict":"ask","entry":"package-install","reason":"scripted ask"}',
+  "review-child-unreachable": '{"verdict":"allow","entry":"read-only-inspection","reason":"scripted allow (owner)"}',
   "review-invalid": '{"verdict":"allow","entry":"not-an-entry"}',
 };
 const TAG = /\[\[replay:([A-Za-z0-9_.-]+)\]\]/;
@@ -205,6 +206,8 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
     }
   }
   if (model.id === "review-error" || model.id === "review-unreachable") throw new Error("fake: scripted provider failure");
+  // review-child-unreachable: the owner's calls are allowed, every child call hits an unreachable reviewer
+  if (model.id === "review-child-unreachable" && (context.messages as { role: string; content: unknown }[]).some((m) => textOf(m.content).includes("session kind: child"))) throw new Error("fake: scripted provider failure");
   const stream = createAssistantMessageEventStream();
   const summary = [context.systemPrompt, ...(context.messages as { role: string; content: unknown }[]).filter((m) => m.role === "system").map((m) => textOf(m.content))]
     .some((t) => typeof t === "string" && t.startsWith("You are a context summarization assistant"));

@@ -21,7 +21,7 @@ from test_replay import REASON, ReplayCase  # noqa: E402
 class TestChildSed(ReplayCase):
     def test_sed_chain_allowed_and_headless_defer_denied_with_forms(self):
         rig = self.rig("child-sed", load_fixture("child_sed"), permissions="baseline",
-                       config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-unreachable" % PROVIDER_A}}},
+                       config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-child-unreachable" % PROVIDER_A}}},
                                "review": {"headless": True}})
         sub = rig.project / "sub"
         sub.mkdir()
@@ -36,8 +36,7 @@ class TestChildSed(ReplayCase):
         self.assertEqual(dialogs, [], dialogs)
         events = [r for recs_ in rig.traces().values() for r in recs_]
         reviews = [r for r in events if r.get("event") == "review"]
-        # the sed chain is allowed by the link with no model call; both writes reach the model and defer
-        self.assertEqual([r.get("decision") for r in reviews], ["sed-read", "unreachable", "unreachable"], reviews)  # R41: the gate review is unreachable, a child is denied
+        self.assertEqual([r.get("decision") for r in reviews], ["allow", "unreachable", "unreachable"], reviews)  # R41: the owner's subagent launch is allowed by the gate review, the sed chain is a gate default (no record), both writes reach the unreachable review and a child is denied
         self.assertIsNone(reviews[0].get("model"), reviews[0])
         self.assertEqual([r for r in events if r.get("event") == "review_defer_headless"], [])  # the old headless defer record is gone
         self.assertEqual([r.get("role") for r in reviews[1:]], ["builder", "builder"], reviews)
