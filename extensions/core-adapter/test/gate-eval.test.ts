@@ -69,7 +69,7 @@ function envOf(c: EvalCase): FloorEnv {
   const w = c.platform === "win32";
   return {
     cwd: w ? WIN.wt : wt, home: w ? WIN.home : "/pf41/home", agentDir: w ? WIN.agent : agent, platform: w ? "win32" : process.platform, protectedBranches: ["trunk"],
-    currentBranch: () => "round/41-x", remoteHead: () => "trunk", writeRoots: w ? [WIN.wt, WIN.scr, WIN.tmp] : [wt, scr, dir("tmp"), "/tmp"],
+    currentBranch: () => "round/41-x", remoteHead: () => "trunk", writeRoots: w ? [WIN.wt, WIN.scr, WIN.tmp] : [wt, scr, dir("tmp"), "/tmp"], child: c.kind === "child",
   };
 }
 

@@ -176,3 +176,4 @@
 {"id":"rsc-002","kind":"owner","role":"foreman","tool":"bash","input":{"command":"bash scripts/edited.sh"},"facts":["script: scripts/edited.sh modified"],"expect":"ask","source":"log"}
 {"id":"rsr-001","kind":"child","role":"builder","tool":"bash","input":{"command":"grep -rn TODO $OTHER/main > $OTHER/main/todo.txt"},"facts":["path: $OTHER/main sibling-checkout"],"expect":"deny","source":"log"}
 {"id":"rsr-002","kind":"child","role":"explorer","tool":"bash","input":{"command":"ls $OTHER/main/src"},"facts":["path: $OTHER/main/src sibling-checkout"],"expect":"allow","source":"log"}
+{"id":"reg-009","kind":"child","role":"builder","tool":"bash","input":{"command":"git push origin HEAD"},"expect":"deny","rule":"floor-git-push-child","source":"log"}

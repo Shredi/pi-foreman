@@ -1956,7 +1956,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const roots = gs ? await gateRootsOf(gs, ctx.cwd) : undefined;
     const configured = ((v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []))(gs ? get(gs.config.config, "safety.git.protectedBranches") : undefined);
     const r = gateDecide(event.toolName, event.input, ctx.cwd, {
-      env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), pkgRoot: PKG_ROOT, policyFiles: gatePolicyFiles(gs), protectedBranches: configured }),
+      env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), pkgRoot: PKG_ROOT, policyFiles: gatePolicyFiles(gs), protectedBranches: configured, ...(gs?.isChild ? { child: true } : {}) }),
       ...(roots ? { roots: () => roots, facts: { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
     });
     const role = gs?.isChild ? gs.usage.line.role : "foreman";

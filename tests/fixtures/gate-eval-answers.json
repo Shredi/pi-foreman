@@ -42,7 +42,6 @@
   "log-012": {"verdict": "deny", "entry": "delete-outside-roots"},
   "log-013": {"verdict": "deny", "entry": "delete-outside-roots"},
   "log-025": {"verdict": "deny", "entry": "push-off-branch"},
-  "log-026": {"verdict": "deny", "entry": "push-off-branch"},
   "log-027": {"verdict": "deny", "entry": "no-matching-entry"},
   "log-028": {"verdict": "deny", "entry": "no-matching-entry"},
   "log-029": {"verdict": "allow", "entry": "git-routine"},

@@ -37,6 +37,8 @@ export interface FloorEnv {
   policyFiles?: string[];
   currentBranch?: (cwd: string) => string | null;
   remoteHead?: (cwd: string) => string | null;
+  /** A subagent child session: it never pushes (the foreman pushes). */
+  child?: boolean;
 }
 
 export interface FloorHit {
@@ -244,6 +246,7 @@ function gitFloors(seg: ShellSegment, env: FloorEnv): FloorHit | null {
   }
   if (call.sub === "config") return configFloor(call);
   if (call.sub === "remote") return remoteFloor(call);
+  if (call.sub === "push" && env.child) return hit("git-push-child", "Children never push; the foreman pushes. Commit your work and report the branch.");
   if (call.sub === "push") return pushFloor(call, env);
   return null;
 }
@@ -475,6 +478,7 @@ const rawWords = (text: string): string[] => text.toLowerCase().split(/[\s'"`=;&
 export function opaqueTextFloors(text: string, env: FloorEnv): FloorHit | null {
   const lower = text.toLowerCase();
   if (/\bgit\b/.test(lower)) {
+    if (env.child && /\bpush\b/.test(lower)) return hit("git-push-child", "The unparsed line looks like a git push. Children never push; the foreman pushes.");
     const key = rawWords(text).find((w) => floorKey(w) && w.includes("."));
     if (key !== undefined) return hit("git-config", `The unparsed line names the git config key '${key}', which changes where code is fetched or pushed, which program git runs or which credentials it uses. Run a plain, literal command.`);
     if (/\bremote\s+(?:add|set-url|rename|remove|rm|set-head|set-branches)\b/.test(lower)) return hit("git-config", "The unparsed line changes a git remote. Run a plain, literal command; ask the user to change remotes.");
