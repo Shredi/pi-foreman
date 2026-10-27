@@ -167,9 +167,10 @@ class ConfigTest(unittest.TestCase):
         s = res["config"]["safety"]
         self.assertIs(s["children"]["mayPush"], True)  # L2 value stays; project cannot change it up
         self.assertIs(s["review"]["required"], True)  # project false ignored
-        self.assertEqual(s["permissions"]["deny"], ["a", "b"])
-        self.assertEqual(s["permissions"]["ask"], ["c"])
-        self.assertEqual(s["permissions"]["allow"], ["y"])
+        # safety.permissions is gone from the tighten table: the project value changes nothing
+        self.assertEqual(s["permissions"]["deny"], ["a"])
+        self.assertNotIn("ask", s["permissions"])
+        self.assertEqual(s["permissions"]["allow"], ["x", "y"])
         self.assertEqual(s["git"]["protectedBranches"], ["main", "master", "release"])
         self.assertEqual(s["requiredChildExtensions"], ["ext"])
         self.assertNotIn("preconditionOps", s)

@@ -20,16 +20,11 @@ layer: it goes through the same rules. Neither can set a key that is not in the 
     -------------------------------  -----------------------------------------
     safety.children.mayPush          true = permissive; only false is accepted
     safety.review.required           true = strict; only true is accepted
-    safety.permissions.deny/ask      union (entries are added, never removed)
-    safety.permissions.paths.deny/ask  union
-    safety.permissions.projectCommands  ignored with a warning (it loosens: allows commands)
-    safety.permissions.readRoots     ignored with a warning (it loosens: allows reads outside the worktree)
     safety.requiredChildExtensions   union
     safety.git.protectedBranches     union
     safety.git.commit.requiredTrailers / forbiddenTrailers   union
     safety.git.commit.messagePattern ignored (a pattern can loosen the lint)
     safety.git.commit.checkCommand   ignored (it executes a program; L3/L2 only)
-    safety.permissions.allow         cannot be extended (result = intersection)
     safety.ops.copyMaxBytes          lower = tighter; only a lower value is accepted
     safety.ops.worktreeDisposable    loosens: ignored with a warning
     safety.ops.baseBranch            loosens: ignored with a warning
@@ -191,15 +186,10 @@ THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 TIGHTEN = {
     ("children", "mayPush"): "false_only",
     ("review", "required"): "true_only",
-    ("permissions", "deny"): "union",
-    ("permissions", "ask"): "union",
-    ("permissions", "paths", "deny"): "union",
-    ("permissions", "paths", "ask"): "union",
     ("requiredChildExtensions",): "union",
     ("git", "protectedBranches"): "union",
     ("git", "commit", "requiredTrailers"): "union",
     ("git", "commit", "forbiddenTrailers"): "union",
-    ("permissions", "allow"): "intersect",
     ("ops", "copyMaxBytes"): "lower_only",
 }
 
