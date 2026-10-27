@@ -124,15 +124,9 @@ class BuildWorldTest(unittest.TestCase):
             os.environ.pop("PI_FOREMAN_PYTHON", None)
             self.assertNotIn("python", ws.foreman_config(row()))
 
-    def test_project_commands_reach_the_permission_config(self):
+    def test_project_commands_reach_the_config(self):
         cfg = ws.foreman_config(row(project_commands=["cargo test *"]))
         self.assertEqual(cfg["safety"]["permissions"]["projectCommands"], ["cargo test *"])
-        with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "foreman.json").write_text(json.dumps(cfg))
-            r = subprocess.run([sys.executable, str(ROOT / "scripts" / "permissions_gen.py"), "--agent-dir", tmp, "render"],
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            self.assertEqual(r.returncode, 0, r.stderr.decode())
-            self.assertIn('"cargo test *"', r.stdout.decode())
 
 
 class BenchRetroTest(unittest.TestCase):

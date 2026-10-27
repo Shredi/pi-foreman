@@ -61,7 +61,7 @@ test("ledgercall: knob default and permission deny detection", () => {
   assert.equal(ledgerHelperMode(undefined), "tool");
   assert.equal(ledgerHelperMode("bash"), "bash");
   assert.equal(ledgerHelperMode("off"), "off");
-  assert.equal(isPermissionDeny(true, "[pi-permission-system] This 'bash' call (rule '*') requires approval, but no interactive UI is available."), true);
+  assert.equal(isPermissionDeny(true, "[pi-permission-system] This 'bash' call (rule '*') requires approval, but no interactive UI is available."), false);
   assert.equal(isPermissionDeny(true, "pi-foreman: denied by the permission policy (command rule 'sudo *')."), true);
   assert.equal(isPermissionDeny(true, "pi-foreman: [recheck_budget_exceeded] the reviewer passed"), false);
   assert.equal(isPermissionDeny(false, "[pi-permission-system]"), false);

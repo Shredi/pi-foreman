@@ -33,11 +33,6 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
   const agentDir = path.join(root, "agent");
   fs.mkdirSync(path.join(project, ".workflow"), { recursive: true });
   fs.mkdirSync(agentDir, { recursive: true });
-  // a resolvable permission-system package (permsys.ts resolvePermissionSystem), so a checkout without node_modules can launch
-  const ps = path.join(agentDir, "npm", "node_modules", "@gotgenes", "pi-permission-system");
-  fs.mkdirSync(path.join(ps, "src"), { recursive: true });
-  fs.writeFileSync(path.join(ps, "package.json"), JSON.stringify({ name: "@gotgenes/pi-permission-system" }));
-  fs.writeFileSync(path.join(ps, "src", "index.ts"), "export default () => undefined;\n");
   process.env.PI_CODING_AGENT_DIR = agentDir;
   delete process.env.PI_SUBAGENT_CHILD;
   delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;

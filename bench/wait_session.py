@@ -389,7 +389,7 @@ def read_secret(path):
 
 def _subprocess_failure(label, proc):
     """Failure message for a helper subprocess: return code plus the last 800 chars of each stream
-    (foreman_config.py and permissions_gen.py print their errors as JSON on stdout)."""
+    (foreman_config.py prints its errors as JSON on stdout)."""
     def tail(stream):
         return (stream or b"").decode("utf-8", "replace")[-800:]
     return "%s failed (rc=%s): stdout: %s stderr: %s" % (label, proc.returncode, tail(proc.stdout), tail(proc.stderr))
@@ -411,19 +411,6 @@ def build_world(args, row):
         if gen.returncode != 0:
             raise RuntimeError(_subprocess_failure("generate-subagents", gen))
         settings["subagents"] = json.loads(gen.stdout.decode("utf-8"))["subagents"]
-        if row.get("_permission_system"):  # same render the installer runs (setup.mjs)
-            pg = subprocess.run([sys.executable, str(REPO / "scripts" / "permissions_gen.py"), "render", "--agent-dir", str(agent)],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
-            if pg.returncode != 0:
-                raise RuntimeError(_subprocess_failure("permissions_gen", pg))
-            cfg = agent / "extensions" / "pi-permission-system" / "config.json"
-            cfg.parent.mkdir(parents=True, exist_ok=True)
-            rendered = json.loads(pg.stdout.decode("utf-8"))["config"]
-            # Opt-in rig-side extras (row key `permission_tools_allow`), e.g. bash for the scripted
-            # fake rows. foreman_triage is in the baseline since 17a3412.
-            for tool in row.get("permission_tools_allow") or []:
-                rendered.setdefault("permission", {})[tool] = "allow"
-            write_json(cfg, rendered)
     write_json(agent / "settings.json", settings)
     return agent
 
@@ -649,7 +636,6 @@ def setup_check(args, row, env):
     import stat as stat_mod
     res = {"claude_config_dir_before": empty_dir_check(env["CLAUDE_CONFIG_DIR"])}
     res["python"] = {"version": "%d.%d.%d" % sys.version_info[:3], "ok": sys.version_info >= (3, 13)}
-    res["permission_system_config"] = (Path(env["PI_CODING_AGENT_DIR"]) / "extensions" / "pi-permission-system" / "config.json").is_file()
 
     def run(cmd):
         try:

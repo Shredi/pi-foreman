@@ -49,7 +49,7 @@ export function rootsLines(r: PiRoots | undefined): string[] {
 }
 
 /** Bundled packages under the pi-foreman package root (package.json dependencies). */
-export const BUNDLED_PACKAGE_ROOTS = ["node_modules/@gotgenes/pi-permission-system", "node_modules/@inquirer/prompts", "node_modules/pi-subagents", "node_modules/pi-intercom", "node_modules/unbash"];
+export const BUNDLED_PACKAGE_ROOTS = ["node_modules/@inquirer/prompts", "node_modules/pi-subagents", "node_modules/pi-intercom", "node_modules/unbash"];
 
 const byteOrder = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 

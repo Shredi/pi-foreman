@@ -79,7 +79,7 @@ export function setupInvocation(pkgRoot: string, args: string, agentDir: string,
 }
 
 /** Packages bundled as dependencies under `<pkgRoot>/node_modules` and loaded through the package manifest. */
-export const BUNDLED_PACKAGES = ["pi-subagents", "@gotgenes/pi-permission-system", "pi-intercom"];
+export const BUNDLED_PACKAGES = ["pi-subagents", "pi-intercom"];
 
 /** `./node_modules/...` entries of the package manifest (package.json `pi.*` arrays). */
 export function manifestBundledEntries(pkgRoot: string): string[] {

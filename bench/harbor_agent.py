@@ -58,7 +58,6 @@ BRIDGE = "pi-claude-bridge@0.9.2"
 # the platform package (claude-agent-sdk-linux-<arch>) from the SDK's optional dependencies.
 AGENT_SDK = "@anthropic-ai/claude-agent-sdk@0.3.293"
 FAKE_PROVIDERS = ("foreman-fake", "foreman-fake-b")
-PERMISSION_SYSTEM = "@gotgenes/pi-permission-system"
 ROLES = ["foreman", "planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
 
 R_REPO = "/opt/pi-foreman"
@@ -541,7 +540,7 @@ class _BenchPi(BaseInstalledAgent):
     def packages(self):
         pkgs = []
         if self.KIND == "foreman":
-            pkgs += [R_NPM + "/node_modules/pi-subagents", R_REPO, R_NPM + "/node_modules/" + PERMISSION_SYSTEM]
+            pkgs += [R_NPM + "/node_modules/pi-subagents", R_REPO]
         if not self.fake:
             pkgs.append(R_NPM + "/node_modules/pi-claude-bridge")
         return pkgs
@@ -556,7 +555,7 @@ class _BenchPi(BaseInstalledAgent):
         await self.exec_as_root(environment, command=pi_install_command(prebaked))
         # Python 3.13+ (PI_FOREMAN_PYTHON when the image sets it) runs the core, the guards and the waiter; fail the install, not the cell.
         await self.exec_as_root(environment, command="\"${PI_FOREMAN_PYTHON:-python3}\" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 13) else 1)'")
-        npm = ([SUBAGENTS, "%s@%s" % (PERMISSION_SYSTEM, locked_version(PERMISSION_SYSTEM))] if self.KIND == "foreman" else []) + ([] if self.fake else [BRIDGE, AGENT_SDK])
+        npm = ([SUBAGENTS] if self.KIND == "foreman" else []) + ([] if self.fake else [BRIDGE, AGENT_SDK])
         if npm:
             await self.exec_as_root(environment, command="set -e; " + NVM + "mkdir -p %s; " % R_NPM + retry_sh(
                 "npm install --no-audit --no-fund --prefix %s %s" % (R_NPM, " ".join(npm))))

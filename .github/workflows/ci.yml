@@ -36,7 +36,7 @@ jobs:
         run: |
           python -m pip install -q pytest
           python scripts/pull_core.py --conformance
-      - name: install bundled packages (pi-subagents, permission system, intercom)
+      - name: install bundled packages (pi-subagents, intercom)
         run: npm install --no-package-lock --no-audit --no-fund
       - name: adapter tests
         run: node --test "extensions/core-adapter/test/*.test.ts"
@@ -124,7 +124,7 @@ jobs:
           b = r["agent_result"]["metadata"]["bench"]
           assert b["status"] == "done" and not b["infra_error"], b
           run = json.load(open(os.path.join(logs, "bench-run.json")))
-          assert "@gotgenes/pi-permission-system" in run["versions"], run["versions"]
+          assert "pi-subagents" in run["versions"], run["versions"]
           cfg = json.load(open(os.path.join(logs, "agent-foreman.json")))
           assert cfg["providers"]["foreman-fake"]["review"]["model"], cfg
           assert glob.glob(os.path.join(logs, "state", "usage", "*.jsonl")), os.listdir(os.path.join(logs, "state"))

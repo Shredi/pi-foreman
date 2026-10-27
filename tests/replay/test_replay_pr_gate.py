@@ -42,15 +42,6 @@ def fake_gh(rig):
     return bindir, marker
 
 
-def allow_tool(rig, name):
-    """The owner allows the package tool, so only the foreman's gate stands in its way."""
-    cfg = rig.agent / "extensions" / "pi-permission-system" / "config.json"
-    data = json.loads(cfg.read_text("utf-8"))
-    data.setdefault("tools", {})[name] = "allow"
-    data.setdefault("permission", {})[name] = "allow"
-    cfg.write_text(json.dumps(data, indent=1), "utf-8")
-
-
 def last(res):
     return res[-1]
 
@@ -69,7 +60,6 @@ class TestPrGate(ReplayCase):
 
     def test_gate_walk(self):
         rig, env, marker = self.pr_rig("prgate")
-        allow_tool(rig, PR_TOOL)
         pi = rig.start(env=env)
 
         none = last(self.attempt(pi, "pr-gh"))
@@ -107,7 +97,6 @@ class TestPrGate(ReplayCase):
 
     def test_pr_tool_without_review(self):
         rig, env, _ = self.pr_rig("prtool")
-        allow_tool(rig, PR_TOOL)
         pi = rig.start(env=env)
         tool = last(self.attempt(pi, "pr-tool"))
         pi.close()

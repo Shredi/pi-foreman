@@ -30,8 +30,6 @@ import { loadPolicy } from "./policy.ts";
 import type { LoadedPolicy } from "./policy.ts";
 import { PATH_TOOL_NAMES } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
-import { permFileState, PS_CHILD_ID, PS_PACKAGE, psGlobalConfigPath, psProjectConfigPath, renderPermissions, resolvePermissionSystem } from "./permsys.ts";
-import { npmRootDrift, npmRootDriftNotice, readPolicy } from "./npmrootdrift.ts";
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
@@ -62,7 +60,8 @@ import { branchMove, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdi
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
-import { ForemanReview, REVIEW_LINK, reviewTarget, reviewValue, userPromptOf } from "./review.ts";
+import { hubWorkflowDriftLines } from "./hubdrift.ts";
+import { ForemanReview, reviewTarget, reviewValue, userPromptOf } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
@@ -108,7 +107,6 @@ import { costReport } from "./costreport.ts";
 import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
-import { hubWorkflowDriftLines } from "./hubdrift.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
 import { AskFlag } from "./askflag.ts";
 import { ASK_USER_TOOL, askUserQuestion } from "./askuser.ts";
@@ -214,7 +212,6 @@ interface Session {
   registrationError?: string;
   childExtensionErrors?: string[];
   /** Set when the permission system cannot be resolved: child launches are refused. */
-  permissionSystemError?: string;
   /** Deny/ask rules enforced before the permission system; null = baseline unreadable (fail closed). */
   overlay: OverlayRules | null;
   /** Child only: realpaths of the skills its role names (skilldirs.ts), resolved once. */
@@ -502,7 +499,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
   const herdrMeta = installHerdrMeta(pi); // group tag (herdrmeta.ts), started at the end of session_start
   const sidebarLive = installSidebarLive(pi); // session-owned Herdr sidebar row (sidebarlive.ts), same place
-  pi.events?.on("permissions:ready", (payload: unknown) => review.onReady(payload));
   // Radar: forwarded permission prompts put a child run in "ask" (childwidget.ts); blocked/working feed the presence file.
   const radarEvent = (fn: (s: Session) => void): void => {
     for (const s of sessions.values()) {
@@ -835,12 +831,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (!npmRoot) return;
         s.owned = computeOwned(npmRoot);
         s.overlay = buildOverlay(s.owned);
-        // R3b point 8c: the policy is not rewritten here; a policy that grants a different root is traced and warned once.
-        const drift = npmRootDrift(npmRoot, readPolicy(psGlobalConfigPath(agentDir)));
-        const note = npmRootDriftNotice(drift, s.notified);
-        if (!drift || !note) return;
-        s.trace?.emit({ event: "npm_root_drift", resolved: drift.resolved, rendered: drift.rendered });
-        if (!s.isChild) ctx.ui.notify(note, "warning");
       })
       .catch(() => undefined);
     if (!isChild) {
@@ -1044,11 +1034,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const extra = normaliseChildExtensions(get(s.config.config, "safety.requiredChildExtensions"), s.agentDir);
     s.childExtensionErrors = extra.errors;
     for (const e of extra.errors) ctx.ui.notify(`pi-foreman: ${e}`, "error");
-    // The permission system is required in every child (design section 5): unresolvable = launches refused.
-    const ps = resolvePermissionSystem({ agentDir: s.agentDir, cwd: s.cwd, pkgRoot: PKG_ROOT });
-    s.permissionSystemError = ps ? undefined : `${PS_PACKAGE} is not installed or not resolvable`;
-    if (s.permissionSystemError) ctx.ui.notify(`pi-foreman: ${s.permissionSystemError}. Children would run without permission checks, so launches are blocked. Run the installer (node setup.mjs), restart and run /foreman doctor.`, "error");
-    s.childExtensions = [{ id: ADAPTER_ID, path: ENTRY }, { id: GIT_GUARD_ID, path: GIT_GUARD_ENTRY }, ...(ps ? [{ id: PS_CHILD_ID, path: ps }] : []), ...extra.list.filter((e) => e.id !== ADAPTER_ID && e.id !== GIT_GUARD_ID && e.id !== PS_CHILD_ID)];
+    s.childExtensions = [{ id: ADAPTER_ID, path: ENTRY }, { id: GIT_GUARD_ID, path: GIT_GUARD_ENTRY }, ...extra.list.filter((e) => e.id !== ADAPTER_ID && e.id !== GIT_GUARD_ID)];
     try {
       const { fn, via } = await loadRegister();
       s.registration = fn({ sessionId: s.id, extensions: s.childExtensions, requireForAllRunners: true });
@@ -1064,9 +1050,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (toolName !== "subagent") return undefined;
     if (!s.registration) {
       return `pi-foreman: required child extensions are not registered${s.registrationError ? ` (${s.registrationError})` : ""}, so children would run without the guards; the launch is blocked. Fix safety.requiredChildExtensions, restart the session and run /foreman doctor.`;
-    }
-    if (s.permissionSystemError) {
-      return `pi-foreman: ${s.permissionSystemError}, so children would run without permission checks; the launch is blocked. Run the installer (node setup.mjs), restart the session and run /foreman doctor.`;
     }
     if (s.childExtensionErrors && s.childExtensionErrors.length > 0) {
       return `pi-foreman: required child extension config has errors (${s.childExtensionErrors.join("; ")}); the launch is blocked. Fix safety.requiredChildExtensions and restart the session.`;
@@ -1157,9 +1140,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const registry = ctx.modelRegistry as unknown as RegistryLike;
       for (const gap of modelGaps(s.config.config, provider, registry)) notifyOnce(s, ctx, `model-gap:${gap}`, `pi-foreman: ${gap}; launches that need it fail. Fix the provider map or the login, then run /foreman doctor.`);
       for (const w of familyWarnings(s.config.roles, provider, registry)) notifyOnce(s, ctx, `family:${w}`, w);
-    }
-    if (fs.existsSync(psProjectConfigPath(s.cwd))) {
-      notifyOnce(s, ctx, "ps-project-file", `pi-foreman: ${psProjectConfigPath(s.cwd)} exists. A project permission file can loosen the permission system's rules (it applies once the project is trusted). pi-foreman still enforces its deny rules itself, but put your rules in foreman.json and remove this file. /foreman doctor fails while it exists.`);
     }
     herdrMeta.start(ctx, get(s.config.config, "herdr.groupTag") !== false);
     sidebarLive.start(ctx, { python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, sessionId: s.id, symbols: get(s.config.config, "ui.symbols"), spinner: get(s.config.config, "ui.spinner") !== false, live: s.live });
@@ -4074,7 +4054,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** Retro inputs of this session (agent dir, review log, usage, session file, trace). */
   function retroInputs(s: Session, ctx: ExtensionContext, sessionFlag: string, reportOnly = false): string[] {
-    const args = ["--agent-dir", s.agentDir, "--review-log", path.join(s.agentDir, "extensions", "pi-permission-system", "logs", "pi-permission-system-permission-review.jsonl"), "--usage", s.usage.file];
+    const args = ["--agent-dir", s.agentDir, "--usage", s.usage.file];
     const sessionFile = ctx.sessionManager.getSessionFile();
     if (sessionFile) args.push(sessionFlag, sessionFile);
     if (s.trace) args.push("--trace", s.trace.file);
@@ -4249,7 +4229,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const inv = setupInvocation(PKG_ROOT, args.trim().slice(sub.length), s.agentDir);
         const r = await spawner(inv.command, inv.args, { timeoutMs: 300_000, cwd: s.cwd, env: inv.env });
         const ok = !r.error && !r.timedOut && r.code === 0;
-        ctx.ui.notify([r.stdout.trim(), r.stderr.trim(), ...hubDrift(s)].filter(Boolean).join("\n") || (r.error ? `setup.mjs: ${r.error.message}` : r.timedOut ? "setup.mjs timed out." : "setup.mjs produced no output."), ok ? "info" : "error");
+        ctx.ui.notify([r.stdout.trim(), r.stderr.trim(), ...hubWorkflowDriftLines({ hubWorkflow: get(s.config.config, "paths.hubWorkflow") })].filter(Boolean).join("\n") || (r.error ? `setup.mjs: ${r.error.message}` : r.timedOut ? "setup.mjs timed out." : "setup.mjs produced no output."), ok ? "info" : "error");
         return;
       }
       if (sub !== "doctor") {
@@ -4262,12 +4242,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ctx.ui.notify(["pi-foreman doctor", ...lines].join("\n"), failed ? "error" : "info");
     },
   });
-
-  /** hubdrift.ts lines for the doctor and `/foreman setup`: the cwd's checkout and the session's round worktrees. */
-  function hubDrift(s: Session): string[] {
-    const checkouts = [workspaceOf(s.cwd).root, ...roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform)];
-    return hubWorkflowDriftLines({ agentDir: s.agentDir, hubWorkflow: get(s.config.config, "paths.hubWorkflow"), checkouts, platform });
-  }
 
   async function doctor(s: Session, ctx: ExtensionContext): Promise<string[]> {
     const out: string[] = [];
@@ -4394,27 +4368,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     else if (order === "unknown") out.push("INFO load order of pi-foreman and pi-claude-bridge not found in settings.json packages");
     out.push(...intercomDoctor(s.agentDir, [settings?.packages, projectSettings?.packages], process.env, PKG_ROOT));
     const rt = reviewTarget(s.config.config, ctx.model?.provider);
-    if (!rt) out.push(`WARN no review model for provider ${ctx.model?.provider ?? "(none)"}: model review (${REVIEW_LINK}) is off, every ask goes to you — set providers.<p>.review.model in foreman.json`);
+    if (!rt) out.push(`WARN no review model for provider ${ctx.model?.provider ?? "(none)"}: model review is off, every ask goes to you — set providers.<p>.review.model in foreman.json`);
     else if (!ctx.modelRegistry.find(rt.provider, rt.modelId)) fail(`review model ${rt.provider}/${rt.modelId} not in the model registry; asks go to you`, "correct providers.<p>.review.model.");
     else ok(`model review: ${rt.provider}/${rt.modelId} (timeout ${rt.timeoutMs} ms)`);
     const gp = gateRuntimeOf(s);
     out.push(`INFO gate policy: ${gp.policy.trusted.entries.length} trusted entries (hash ${gp.policy.hash.slice(0, 12)}), project layer ${gp.policy.project ? `${gp.policy.project.entries.length} entries` : "none"}; decision log ${gateLogFile(s.agentDir)}`);
     for (const w of gp.policy.warnings) out.push(`WARN policy: ${w}`);
-    if (s.permissionSystemError) fail(s.permissionSystemError, "run the installer (node setup.mjs); the package is pinned in packages.lock.json.");
-    else ok(`permission system resolvable (${PS_PACKAGE})`);
+    out.push(...hubWorkflowDriftLines({ hubWorkflow: get(s.config.config, "paths.hubWorkflow") }));
     if (s.overlay) ok(`permission overlay active (${s.overlay.bashDeny.length} command deny, ${s.overlay.pathRules.length} path rules, ${s.overlay.bashAsk.length + s.overlay.pathAsk.length} project/session ask)`);
     else fail("permission overlay baseline unreadable (shell and file tools are blocked)", "reinstall pi-foreman: config/permissions.baseline.json is part of the package.");
-    if (fs.existsSync(psProjectConfigPath(s.cwd))) fail(`project permission file ${psProjectConfigPath(s.cwd)} exists; it can loosen the permission system's rules`, "delete it and put your rules in foreman.json (the overlay still enforces denies, but asks and allows would be affected).");
-    else ok("no project permission file");
     for (const sh of shadowedRoles(s.cwd, childRoleIds(get(s.config.config, "roles")))) out.push(`WARN project agent shadows a role (${sh}) — fix: ${SHADOW_FIX}`);
-    const wanted = await renderPermissions({ python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, cwd: s.cwd, spawner });
-    const pf = permFileState(s.agentDir, wanted);
-    if (pf.state === "ok") ok("generated permission-system config is in sync");
-    else if (pf.state === "missing") fail("generated permission-system config is missing", "run the installer (node setup.mjs).");
-    else if (pf.state === "unreadable") fail("generated permission-system config is not valid JSON", "run the installer (node setup.mjs); it backs the file up first.");
-    else if (pf.state === "stale") fail(`generated permission-system config is out of date: ${pf.detail}`, "run the installer (node setup.mjs).");
-    else fail(`generated permission-system config was edited: ${pf.detail}. The installer owns this file`, "put your rules in foreman.json (safety.permissions) and run the installer; it backs the edited file up.");
-    out.push(...hubDrift(s));
 
     if (fs.existsSync(markerPath(s.markerDir, s.id))) ok(`session marker in ${s.markerDir}`);
     else fail("session marker missing", `make ${s.markerDir} writable and restart the session.`);

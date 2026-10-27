@@ -164,22 +164,6 @@ class TestCheckpoint(ReplayCase):
         self.assertEqual([(n, e) for n, e, _ in res], [("foreman_triage", False), ("subagent", True)], res)
         self.assertIn("[launch_refused:plan_required]", res[1][2])
 
-    def test_without_the_baseline_allow_the_permission_system_asks(self):
-        rig = self.rig("ck-perm", script(), permissions="baseline")
-        cfg_file = rig.agent / "extensions" / "pi-permission-system" / "config.json"
-        cfg = json.loads(cfg_file.read_text("utf-8"))
-        self.assertEqual(cfg["permission"].get("foreman_checkpoint"), "allow")
-        del cfg["permission"]["foreman_checkpoint"]
-        cfg_file.write_text(json.dumps(cfg), "utf-8")
-        pi = rig.start()
-        recs = pi.prompt("[[replay:perm]] go", answers=[{"cancelled": True}], timeout=90)
-        pi.close()
-        res = tool_results(recs, "foreman_checkpoint")
-        ds = dialogs(recs)
-        self.assertTrue(ds and not ds[0].get("title", "").startswith(TITLE), ds)
-        self.assertEqual([e for _, e, _ in res], [True], res)
-        self.assertEqual(events(rig, "checkpoint"), [], "the permission system stopped it before the tool ran")
-
 
 if __name__ == "__main__":
     unittest.main()

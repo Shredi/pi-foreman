@@ -123,13 +123,13 @@ export function mentionsLedger(cmd: unknown): boolean {
 }
 
 /**
- * A tool result that is a permission refusal: pi-permission-system's tagged block reason, or the
+ * A tool result that is a permission refusal: the gate's and the
  * adapter overlay's deny/ask-denied texts (permoverlay.ts). Blocked calls never reach tool_result,
  * so index.ts reads this from tool_execution_end.
  */
 export function isPermissionDeny(isError: boolean, text: string): boolean {
   if (!isError) return false;
-  return text.includes("[pi-permission-system]") || GATE_DENY_PREFIXES.some((p) => text.startsWith(p)) || /^pi-foreman: (?:denied by the permission policy|this command needs approval|this path needs approval|denied by the write protection|this changes protected configuration)/.test(text);
+  return GATE_DENY_PREFIXES.some((p) => text.startsWith(p)) || /^pi-foreman: (?:denied by the permission policy|this command needs approval|this path needs approval|denied by the write protection|this changes protected configuration)/.test(text);
 }
 
 export interface GateView {

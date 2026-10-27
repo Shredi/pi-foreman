@@ -38,18 +38,6 @@ class BuildWorldErrorTest(unittest.TestCase):
         self.assertIn("rc=2", msg)
         self.assertIn(ERROR_JSON.decode("utf-8"), msg)
 
-    def test_permissions_gen_failure_carries_rc_and_stdout(self):
-        gen_ok = done(0, stdout=b'{"subagents": {}}')
-        pg_fail = done(2, stdout=ERROR_JSON, stderr=b"")
-        with mock.patch.object(ws, "subprocess") as sp:
-            sp.run.side_effect = [gen_ok, pg_fail]
-            with self.assertRaises(RuntimeError) as cm:
-                ws.build_world(self.args, foreman_row(_permission_system=True))
-        msg = str(cm.exception)
-        self.assertTrue(msg.startswith("permissions_gen failed (rc=2)"), msg)
-        self.assertIn("rc=2", msg)
-        self.assertIn(ERROR_JSON.decode("utf-8"), msg)
-
 
 if __name__ == "__main__":
     unittest.main()

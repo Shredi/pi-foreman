@@ -37,10 +37,7 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
   const project = path.join(root, "project");
   const agentDir = path.join(root, "agent");
   for (const d of [".git", ".workflow/scratch"]) fs.mkdirSync(path.join(project, d), { recursive: true });
-  const ps = path.join(agentDir, "npm", "node_modules", "@gotgenes", "pi-permission-system");
-  fs.mkdirSync(path.join(ps, "src"), { recursive: true });
-  fs.writeFileSync(path.join(ps, "package.json"), JSON.stringify({ name: "@gotgenes/pi-permission-system" }));
-  fs.writeFileSync(path.join(ps, "src", "index.ts"), "export default () => undefined;\n");
+  fs.mkdirSync(agentDir, { recursive: true });
   const roles = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
   fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, ceremony: { launchWait: "detach", default: "heavy", revisionRounds: { heavy: 2 } } }));
   const sessionId = `r14-rs-${++n}`;

@@ -32,7 +32,31 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import review_log_stats as rls  # noqa: E402
-import permissions_gen as pg  # noqa: E402
+import foreman_config as fc  # noqa: E402
+
+BASELINE_PATH = fc.ROOT / "config" / "permissions.baseline.json"
+
+
+def load_baseline():
+    return fc.read_json(BASELINE_PATH)
+
+
+def strings(value):
+    return [x for x in value if isinstance(x, str) and x] if isinstance(value, list) else []
+
+
+def bash_rules(baseline, perms):
+    """Ordered [(pattern, state)] for the bash surface (catch-all excluded)."""
+    perms = perms or {}
+    base = baseline.get("bash") or {}
+    out = [(p, "allow") for p in strings(base.get("allow"))]
+    out += [(p, "allow") for p in strings(perms.get("projectCommands"))]
+    out += [(p, "allow") for p in strings(perms.get("allow"))]
+    out += [(p, "ask") for p in strings(base.get("ask"))]
+    out += [(p, "ask") for p in strings(perms.get("ask"))]
+    out += [(p, "deny") for p in strings(base.get("deny"))]
+    out += [(p, "deny") for p in strings(perms.get("deny"))]
+    return out
 
 DEFAULT_MIN_REVIEWS = 5
 APPLY_HINT = (
@@ -149,21 +173,21 @@ def load_deny_ask_rules(agent_dir):
     """Baseline bash deny/ask patterns, plus the merged config's when it loads."""
     rules = []
     try:
-        base = pg.load_baseline()
+        base = load_baseline()
         perms = {}
         try:
-            res = pg.fc.load_config(agent_dir)
+            res = fc.load_config(agent_dir)
             perms = (res["config"].get("safety") or {}).get("permissions") or {}
         except Exception:
             perms = {}
-        rules = [p for p, s in pg.bash_rules(base, perms) if s in ("deny", "ask")]
+        rules = [p for p, s in bash_rules(base, perms) if s in ("deny", "ask")]
     except Exception:
         pass
     return rules
 
 
 def wildcard_match(pattern, text):
-    """pi-permission-system wildcards: * any chars, ? one char, trailing ' *' also matches the bare command."""
+    """Permission wildcards: * any chars, ? one char, trailing ' *' also matches the bare command."""
     def conv(pat):
         return "".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in pat)
     rx = conv(pattern[:-2]) + "(?: .*)?" if pattern.endswith(" *") else conv(pattern)
@@ -207,16 +231,16 @@ def load_protect_patterns(agent_dir):
     """The baseline write-protection patterns (all lists), placeholders filled for matching argv words:
     {cwd} -> any prefix, agent dir, its parent, package root, $XDG_CONFIG_HOME (dropped when unset), ~."""
     try:
-        prot = pg.load_baseline().get("protect") or {}
+        prot = load_baseline().get("protect") or {}
     except Exception:
         return []
     ad = Path(agent_dir).expanduser().as_posix()
     xdg = os.environ.get("XDG_CONFIG_HOME", "")
     subs = {"{cwd}": "*", "{agentDirParent}": ad.rsplit("/", 1)[0] or "/", "{agentDir}": ad,
-            "{pkgRoot}": Path(pg.fc.ROOT).as_posix(), "{xdgConfigHome}": Path(xdg).as_posix() if os.path.isabs(xdg) else None}
+            "{pkgRoot}": Path(fc.ROOT).as_posix(), "{xdgConfigHome}": Path(xdg).as_posix() if os.path.isabs(xdg) else None}
     out = []
     for key in ("deny", "ask", "childDeny", "removeAsk", "writeAsk"):
-        for pat in pg.strings(prot.get(key)):
+        for pat in strings(prot.get(key)):
             if any(val is None and ph in pat for ph, val in subs.items()):
                 continue
             for ph, val in subs.items():
@@ -416,7 +440,7 @@ def cache_metrics(trace, usage, sid, config=None):
 
     def policy(r):
         try:
-            return pg.fc.cache_policy(config or {}, _line_provider(r) or session_prov)
+            return fc.cache_policy(config or {}, _line_provider(r) or session_prov)
         except Exception:  # noqa: BLE001 - the line is optional
             return None
     cold, ttl = 0, None
@@ -429,7 +453,7 @@ def cache_metrics(trace, usage, sid, config=None):
         prompt = num(a.get("input")) + num(a.get("cacheRead")) + num(a.get("cacheWrite"))
         if t1 - t0 > pol["ttlSeconds"] and num(b.get("cacheRead")) < 0.5 * prompt:
             cold += 1
-    pol = policy(fore[0][1]) if fore else (pg.fc.cache_policy(config or {}, session_prov) if session_prov else None)
+    pol = policy(fore[0][1]) if fore else (fc.cache_policy(config or {}, session_prov) if session_prov else None)
     if ttl is None and pol:
         ttl = pol.get("ttlSeconds")
     if not (pol or ka or warm or cold or down):
@@ -623,7 +647,7 @@ def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
     ranks = config = None
     if trace is not None or usage is not None:
         try:
-            config = pg.fc.load_config(agent_dir)["config"]
+            config = fc.load_config(agent_dir)["config"]
             ranks = ranks_of(config)
         except Exception:  # noqa: BLE001 - the share is optional
             ranks = None
@@ -930,7 +954,7 @@ def emit_backlog(args, report, trace=None, usage=None):
     try:
         import foreman_backlog as bl
         cwd = args.backlog_workspace or os.getcwd()
-        cfg = pg.fc.load_config(args.agent_dir, cwd)["config"]
+        cfg = fc.load_config(args.agent_dir, cwd)["config"]
         rc = cfg.get("retro") if isinstance(cfg.get("retro"), dict) else {}
         if rc.get("enabled") is False:
             return []
@@ -954,7 +978,7 @@ def run(args):
     if min_reviews is None:
         min_reviews = DEFAULT_MIN_REVIEWS
         try:
-            v = (pg.fc.load_config(args.agent_dir)["config"].get("retro") or {}).get("proposalMinReviews")
+            v = (fc.load_config(args.agent_dir)["config"].get("retro") or {}).get("proposalMinReviews")
             if isinstance(v, int) and not isinstance(v, bool) and v > 0:
                 min_reviews = v
         except Exception:
@@ -1034,7 +1058,7 @@ def models_main(argv):
     except ValueError as exc:
         print("retro models: %s" % exc, file=sys.stderr)
         return 2
-    agent = str(pg.fc.resolve_agent_dir(args.agent_dir))
+    agent = str(fc.resolve_agent_dir(args.agent_dir))
     cwd = args.cwd or os.getcwd()
     rates = None
     try:
@@ -1059,7 +1083,7 @@ def models_main(argv):
     if not args.no_backlog:
         try:
             import foreman_backlog as bl
-            cfg = pg.fc.load_config(agent, cwd)["config"]
+            cfg = fc.load_config(agent, cwd)["config"]
             thr = (cfg.get("retro") or {}).get("panelThreshold")
             thr = thr if isinstance(thr, int) and not isinstance(thr, bool) and thr > 0 else 3
             cands = ff.shadow_candidates(table, thr)

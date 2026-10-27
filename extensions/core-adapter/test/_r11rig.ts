@@ -28,10 +28,6 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
   const agentDir = path.join(root, "agent");
   fs.mkdirSync(path.join(project, ".workflow"), { recursive: true });
   fs.mkdirSync(agentDir, { recursive: true });
-  const ps = path.join(agentDir, "npm", "node_modules", "@gotgenes", "pi-permission-system");
-  fs.mkdirSync(path.join(ps, "src"), { recursive: true });
-  fs.writeFileSync(path.join(ps, "package.json"), JSON.stringify({ name: "@gotgenes/pi-permission-system" }));
-  fs.writeFileSync(path.join(ps, "src", "index.ts"), "export default () => undefined;\n");
   const sessionId = `r11-p2-${++rigs}`;
   process.env.PI_CODING_AGENT_DIR = agentDir;
   process.env.PI_INTERCOM_SESSION_ID = sessionId;

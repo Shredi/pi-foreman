@@ -10,11 +10,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_foreman_session as base  # noqa: E402
 
 fsn = base.fsn
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "scripts"))
-import permissions_gen as pg  # noqa: E402
-
-OWNED = {"scratchRoot": "/tmpx/pi-foreman-scratch", "npmRoot": "/opt/npm/lib/node_modules"}
 
 
 class FirstCommandsTest(unittest.TestCase):
@@ -78,11 +73,6 @@ class FirstCommandsTest(unittest.TestCase):
         self.assertEqual(fsn.ps_quote("a'b\u2018c\u2019d\u201ae\u201bf"),
                          "'a''b\u2018\u2018c\u2019\u2019d\u201a\u201ae\u201b\u201bf'")
         self.assertIn("--model 'm\u2019\u2019x'", fsn.powershell_command([], "m\u2019x", "p"))
-
-    def test_baseline_allows_the_session_open_tool(self):
-        with tempfile.TemporaryDirectory() as d:
-            p = pg.render({}, Path(d), owned=OWNED)["permission"]
-        self.assertEqual(p["foreman_session_open"], "allow")
 
     def test_dry_run_writes_nothing(self):
         code, out, err = self.run_main(*self.open_args("--dry-run", "--plan-mode"))

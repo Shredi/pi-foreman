@@ -9,7 +9,6 @@
   },
   "packages": [
     { "name": "pi-subagents", "version": "0.78.0", "mode": "bundled", "notes": "https://github.com/nicobailon/pi-subagents/releases/tag/v{version}" },
-    { "name": "@gotgenes/pi-permission-system", "version": "39.0.2", "mode": "bundled", "notes": "https://github.com/gotgenes/pi-packages/releases/tag/pi-permission-system-v{version}" },
     { "name": "pi-intercom", "version": "0.17.0", "mode": "bundled", "notes": "https://github.com/nicobailon/pi-intercom/releases/tag/v{version}" },
     { "name": "@inquirer/prompts", "version": "8.7.4", "mode": "bundled", "notes": "https://github.com/SBoudrias/Inquirer.js/releases/tag/%40inquirer%2Fprompts%40{version}" }
   ]

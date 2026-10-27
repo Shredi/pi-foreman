@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Count permission decisions per session from the permission system's review log (stdlib, 3.13+).
+"""Count permission decisions per session from the review log (stdlib, 3.13+).
 
     python scripts/review_log_stats.py [LOG] [--agent-dir DIR] [--json]
 
-LOG defaults to <agent dir>/extensions/pi-permission-system/logs/
-pi-permission-system-permission-review.jsonl (agent dir: --agent-dir, else
+LOG defaults to <agent dir>/pi-foreman/state/gate/log.jsonl (agent dir: --agent-dir, else
 $PI_CODING_AGENT_DIR, else ~/.pi/agent).
 
 Per session it counts each ask (requestId) once:
@@ -27,7 +26,7 @@ import os
 import sys
 from pathlib import Path
 
-LOG_REL = Path("extensions") / "pi-permission-system" / "logs" / "pi-permission-system-permission-review.jsonl"
+LOG_REL = Path("pi-foreman") / "state" / "gate" / "log.jsonl"
 FIELDS = ["asks", "human_approved", "human_denied", "review_allow", "review_deny", "review_defer", "forwarded"]
 
 

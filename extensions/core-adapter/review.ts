@@ -1,5 +1,5 @@
 // Model review of permission asks (design §5 layer 3, decision D3): pi-foreman's own link
-// `foreman-review` in the authorizer chain of @gotgenes/pi-permission-system ("PS").
+// reviewer of the gate.
 //
 // Why an own link and not pi-permission-ai-guard: ai-guard reads its config once at
 // session_start and builds its reviewer from it; its session overrides cover only mode and
@@ -32,10 +32,8 @@ import { hubWorkflowDirs, isolationDir, mainWorkflowReadable, roundWorktreeAdd }
 import type { EffectClass, EffectCtx } from "./effects.ts";
 import { isSubagentWakeText } from "./idlecustom.ts";
 
-export const REVIEW_LINK = "foreman-review";
 export const DEFAULT_REVIEW_TIMEOUT_MS = 15_000;
 export const REVIEW_SURFACES = ["bash", "mcp", "skill"];
-const SERVICES_KEY = Symbol.for("@gotgenes/pi-permission-system:session-services");
 const MAX_INTENT = 2000;
 export const MAX_VALUE = 4000;
 
@@ -222,15 +220,6 @@ export const HEADLESS_DENY =
 export const CHILD_DEFER_DENY =
   "pi-foreman: not approved - a child's command the model review could not clear is not put to the owner, so the run does not wait for it. Run tests as `node --test <file>` or `python3 -m unittest discover -s tests -p <file>`, with no `cd` prefix; use the read, grep, find and ls tools for inspection.";
 
-interface PermissionsServiceLike {
-  registerAuthorizer(name: string, authorize: (details: AskDetails, query: unknown, log: ReviewLog) => Promise<Verdict>): () => void;
-}
-
-function services(): Map<string, PermissionsServiceLike> | undefined {
-  const m = (globalThis as Record<symbol, unknown>)[SERVICES_KEY];
-  return m instanceof Map ? (m as Map<string, PermissionsServiceLike>) : undefined;
-}
-
 function replyText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -364,7 +353,6 @@ export function userPromptOf(event: unknown): string | null {
 
 export class ForemanReview {
   private readonly sessions = new Map<string, ReviewSession>();
-  private readonly disposers = new Map<string, () => void>();
 
   /** Session state from session_start; the link reads it at ask time. */
   upsert(id: string, s: ReviewSession): void {
@@ -389,25 +377,6 @@ export class ForemanReview {
 
   drop(id: string): void {
     this.sessions.delete(id);
-    try {
-      this.disposers.get(id)?.();
-    } catch {
-      // already gone
-    }
-    this.disposers.delete(id);
-  }
-
-  /** `permissions:ready` handler: register the link on that session's PS service (once). */
-  onReady(payload: unknown): void {
-    const id = payload && typeof payload === "object" ? (payload as { sessionId?: unknown }).sessionId : undefined;
-    if (typeof id !== "string" || !id || this.disposers.has(id)) return;
-    const svc = services()?.get(id);
-    if (!svc) return;
-    try {
-      this.disposers.set(id, svc.registerAuthorizer(REVIEW_LINK, (d, _q, log) => this.authorize(id, d, log)));
-    } catch {
-      // duplicate after /reload: the earlier registration still answers
-    }
   }
 
   /** The link. Never throws, never hangs past the review timeout. */
