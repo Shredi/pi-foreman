@@ -147,10 +147,10 @@ test("unchanged tokens are not re-sent before 10 s (the stamp is still written),
 
 const spinOut = () => out({ fm_hd_tpl: "{spin} job" });
 
-test("working: only fm_hd is sent every tick with {spin} replaced by the clock's frame; it stops when not working and on stop()", async () => {
+test("working: only fm_hd is sent every tick with {spin} replaced by the clock's frame; it stops when the push carries no template and on stop()", async () => {
   const frames = symbolSet("unicode").spinner;
   const w = { on: true };
-  const { s, reports, st } = rig({ working: () => w.on, tickMs: 10, frames, symbols: "unicode" }, spinOut);
+  const { s, reports, st } = rig({ tickMs: 10, frames, symbols: "unicode" }, () => (w.on ? spinOut() : out()));
   st.now = 250 * 3;
   s.request();
   await sleep(60);
@@ -163,10 +163,12 @@ test("working: only fm_hd is sent every tick with {spin} replaced by the clock's
   await sleep(30);
   assert.equal(reports[reports.length - 1].fm_hd, `${frames[4]} job`);
   w.on = false;
+  s.request();
   await sleep(30);
+  assert.equal(reports[reports.length - 1].fm_hd, "⏳⠀ job", "the static header replaces the last frame");
   const n = reports.length;
   await sleep(60);
-  assert.equal(reports.length, n, "no tick while not working");
+  assert.equal(reports.length, n, "no tick without a template");
   w.on = true;
   s.request();
   await sleep(60);
@@ -178,7 +180,7 @@ test("working: only fm_hd is sent every tick with {spin} replaced by the clock's
 });
 
 test("ui.spinner:false sends static glyphs: no tick, no {spin} substitution", async () => {
-  const { s, reports } = rig({ working: () => true, spinner: false, tickMs: 10 }, spinOut);
+  const { s, reports } = rig({ spinner: false, tickMs: 10 }, spinOut);
   s.request();
   await sleep(60);
   assert.equal(reports.length, 1);
@@ -186,8 +188,8 @@ test("ui.spinner:false sends static glyphs: no tick, no {spin} substitution", as
   s.stop();
 });
 
-test("a session that is not working never ticks, even with a spinner template", async () => {
-  const { s, reports } = rig({ working: () => false, tickMs: 10 }, spinOut);
+test("a push without a spinner template never ticks", async () => {
+  const { s, reports } = rig({ tickMs: 10 });
   s.request();
   await sleep(60);
   assert.equal(reports.length, 1);

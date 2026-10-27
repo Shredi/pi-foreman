@@ -217,13 +217,15 @@ waits); `dots` go to the pr row (`fm_pr1`..`fm_pr4`), pull request and external 
 
 The state slot of `fm_hd` holds one glyph: a spinner frame while the session animates, else the state glyph. The
 reason icon (what the session waits on) is not in the header; it leads the detail lines below. The sidebar decides from
-the session's state (`sym`) and its reason whether the glyph animates.
+the session's state (`sym`) and its reason whether the glyph animates. State (`fm_state`) and spinner come from one
+source, the session's push (`sidebar.py push --json`): the publisher ticks only while the last push carried a `{spin}`
+template, and sends the static header again when the ticking stops, so no frozen frame stays.
 
 Reason of a session, first match wins:
 
 | Reason | Icon (`unicode`) | When |
 |---|---|---|
-| `ask` | ? | a child run is in state `ask` (rare: a forwarded child prompt normally opens a dialog, and the session is then blocked) |
+| `ask` | ? | a child run is in state `ask` (a forwarded child prompt waits for you; the header shows `needs-you`) |
 | `review` | ◎ (the agents line shows the run with `◆`) | a live run with role `reviewer` or `senior-reviewer` |
 | `agent` | ◆ | any other live run, or a live child session without a pane row (see Activity lines) |
 | `task` | ⚙ | a PR or CI wait, a wait flagged `bg`, or a background task |
@@ -234,23 +236,27 @@ State and cell:
 
 | `sym` | Cell (`unicode`) | Animated |
 |---|---|---|
+| `needs-you` (an own dialog or ask, an open `ask.md` with no `ruling-<n>.md`, or a child's ask forwarded to this session) | ❓ (`?` in `ascii`) | no: beats the spinner |
 | `working` (a turn or run; registry `starting` and `pending` too) | spinner frame | yes |
-| `waiting-external` (only waits pending) | spinner frame | yes |
-| `idle` with a reason (a run runs while the session has no turn) | spinner frame | yes |
-| `waiting-owner`, `blocked` (a dialog, checkpoint or ask waits for you) | ✋ | no |
-| `waiting`, `idle` without a reason | ⏸ | no |
+| `waiting-external` or `idle` while the session has work of its own: a child run or live child session, a `bg_run` or `foreman_bg` task, a running `pr_watch` or `foreman_wait` | spinner frame | yes |
+| `waiting-external` with no local work | ↻ | no |
+| `waiting-owner`, `blocked` (legacy: the turn ended and it is your move) | ✋ | no |
+| `waiting`, `idle` with nothing active | ⏸ | no |
 | `done` | ✓ | no |
 | `lost` | ✗ | no |
 | blocked longer than 15 minutes | `!` right after the age (`16m!`), red | no |
 
-A session that waits for you never animates, so ✋ stays whatever else runs. The age at the right is the time since the
+The spinner means something in this session is still active: its own turn, or any of its own background work. It stops
+only when nothing is active, and a still symbol takes its place. A session that waits for you never animates, so ❓
+stays whatever else runs; it clears when the dialog is answered or times out, the ruling file appears, or the forwarded
+ask is answered or its run ends. The age at the right is the time since the
 session's last event (the blocked time while blocked); how long a wait itself has run is on the waits line.
 
 **Non-ticking header.** The animation is a template (`fm_hd_tpl`) that the session's own publisher fills with the
 current frame. A pane the daemon publishes, `ui.spinner: false` and a publisher whose gate is off send no frames; the
 header then shows the set's static glyph of the state alone: ⏳ for working, `↻` for waiting-external and ⏸ for idle
 in `unicode`. Without a frame, an idle session with a reason looks like a truly idle ⏸ line; its detail line tells
-them apart.
+them apart. Needs-you is never a frame: it shows ❓ in every pane.
 
 **Slot width.** The slot is as wide as the widest spinner frame or static state glyph of the set: 2 cells for
 `unicode` (⏳ and ✋ are wide) and `emoji` (⏳, ✋, ✅, ❌ and `⏸️` count 2), 1 for `nerd` and `ascii`. Every cell is padded
@@ -269,15 +275,18 @@ placeholders; pick the ones that suit your theme.
 
 ### Presence states and their `state_icon` glyphs
 
-The presence file (`state/live/<session>.json`) carries `presence`, one of five names; each has its own icon key in
-`config/symbols.json`. Precedence: `done` > `waiting-owner` > `working` > `waiting-external` > `idle` (a finished
+The presence file (`state/live/<session>.json`) carries `presence`, one of six names; each has its own icon key in
+`config/symbols.json`. Precedence: `done` > `needs-you` > `working` > `waiting-external` > `idle` (a finished
 session is `done` whatever else is still open). The legacy `state` field is unchanged for older readers (`blocked` is
-`waiting-owner`; `waiting-external` still reads `working`), and `presence` is absent from files written by older versions.
+an own dialog; `waiting-external` still reads `working`), and `presence` is absent from files written by older versions.
+The radar derives `needs-you` from the file too (an open `asks` entry, or a child run in state `ask`), so a parent whose
+turn ended still shows ❓ while a forwarded child ask waits.
 
 | `presence` | `state_icon` glyph (unicode / nerd) | Meaning |
 |---|---|---|
 | `working` | ⏳ / `\uf252` | the foreman turn runs, or a child run is live, with nothing for you to do |
-| `waiting-owner` | ✋ / `\uf256` | an open ask, checkpoint dialog or UI prompt waits for you |
+| `needs-you` | ❓ / `\uf128` (`?` in `ascii`) | an own permission dialog, `ask_user_question`, guard or drift ask or checkpoint, an open `ask.md` with no `ruling-<n>.md`, or a child's ask forwarded to this session waits for you |
+| `waiting-owner` | ✋ / `\uf256` | older files only: an open ask or dialog (now `needs-you`) |
 | `waiting-external` | ↻ / `\uf017` | only external waits are pending: `foreman_wait`, `foreman_bg` pid waits, `pr_watch` |
 | `idle` | ⏸ / `\uf04c` | none of the above |
 | `done` | ✓ / `\uf00c` | the session ended |
@@ -298,7 +307,7 @@ every 5 s by the session or, for a pane it does not push, the daemon; values are
 | `fm_a3` | waits and an open ask |
 | `fm_pr1`..`fm_pr4` | PR status dots, one cell each: a circle (`pr-fail`, `pr-run`, `pr-ok`, `pr-none` of the glyph set) and the label (`#21`), ordered red, yellow, green, unknown; cells that do not fit collapse into a last `+n` cell |
 | `fm_meta` | `↑in ↓out · $cost · ✓n` and the pressure suffix; `in` counts uncached input only (fresh input plus cache writes, from the usage file), `↑~n` marks the raw total incl. cache reads when no usage file has the split; radar and its JSON keep the raw total. When it does not fit, the `↑↓` counts drop as a whole first, then the text is cut; hidden below 20 columns |
-| `fm_state` | `working`, `waiting`, `asking`, `blocked`, `done` or `lost`, for your own rules |
+| `fm_state` | `working`, `waiting`, `asking`, `blocked`, `done`, `lost`, `waiting-owner`, `waiting-external`, `idle` or `needs-you`, for your own rules |
 | `fm_block_s` | seconds blocked, set only while blocked, for your own `gt`/`lt` rules |
 | `fm_sort` | parent-first sort key (`r001`, `r001.c001`) |
 
@@ -312,7 +321,11 @@ glyphs like `wcwidth` and Herdr's renderer (a variation selector makes a glyph 2
 are 1). Nothing wraps.
 
 A session is joined to its pane by the presence file's `paneId` (pi-foreman writes `HERDR_PANE_ID` there), else by the
-pane's foreground pid, else by a working directory only one Pi pane has. When several presence files name the same pane
+pane's foreground pid, else by the Pi session id that Herdr's `agent_session` (the Pi session file path) names, else by a
+working directory only one Pi pane has. The session id survives a Herdr restart, which changes pane ids. Parent links come
+from the persisted records, not from memory: the registry `parent`, the handoff `parent` file and the handoff `live.json`
+(`piSessionId`); a parent may be named by its intercom id or its Pi session id. A live child with no pane is shown on its
+parent's agents line, never as a root, and the `N children` count of the group tag counts the same children. When several presence files name the same pane
 (sessions restarted in it), the live one wins. A finished, stale or lost session never joins by working directory, and the
 daemon clears the `fm_*` keys of a Pi pane no session is joined to (once), so a new pane in the folder of an earlier
 session does not show that session's row. When a session leaves radar its tokens are cleared at once; if the
@@ -442,6 +455,7 @@ python3 -c 'import json,sys; s=json.load(open(sys.argv[1]))[sys.argv[2]]; print(
 | lost | ✗ | ❌ | U+F00D | `x` |
 | keep-alive | ♨ | ♨️ | U+F06D | `^` |
 | waiting-external | ↻ | 🔄 | U+F017 | `@` |
+| needs-you (a dialog or ask waits for you) | ❓ | ❓ | U+F128 | `?` |
 
 Activity glyphs and the spinner:
 

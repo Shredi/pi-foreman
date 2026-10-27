@@ -92,17 +92,20 @@ export interface LiveFile {
   cost: number;
   /** ISO time the session became blocked (blockers empty -> non-empty); null when not blocked. */
   blockedSince: string | null;
-  /** Sidebar presence (R11 P4); `state` stays for older readers: blocked = waiting-owner, waiting-external reads as working. */
+  /** Sidebar presence (R11 P4); `state` stays for older readers: blocked = needs-you (an own dialog), waiting-external reads as working. */
   presence: PresenceName;
   /** Host pressure (pressure.ts); present only when the level is high or critical. */
   pressure?: { level: "high" | "critical"; reasons: string[] };
 }
 
-export type PresenceName = "working" | "waiting-owner" | "waiting-external" | "idle" | "done";
+export type PresenceName = "working" | "waiting-owner" | "waiting-external" | "idle" | "done" | "needs-you";
 
-/** done > waiting-owner > working > waiting-external > idle. */
-export function presenceState(i: { done: boolean; owner: boolean; turn: boolean; children: boolean; externalWaits: boolean }): PresenceName {
-  return i.done ? "done" : i.owner ? "waiting-owner" : i.turn || i.children ? "working" : i.externalWaits ? "waiting-external" : "idle";
+/**
+ * done > needs-you > working > waiting-external > idle. `owner` is an own dialog or hold, `asks` an open ask.md or a
+ * forwarded child ask; either waits for the owner and beats the spinner states.
+ */
+export function presenceState(i: { done: boolean; owner: boolean; asks?: boolean; turn: boolean; children: boolean; externalWaits: boolean }): PresenceName {
+  return i.done ? "done" : i.owner || i.asks ? "needs-you" : i.turn || i.children ? "working" : i.externalWaits ? "waiting-external" : "idle";
 }
 
 export const liveDir = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "live");
@@ -232,15 +235,19 @@ export class LiveState {
     return this.done ? "done" : this.blockers.size > 0 ? "blocked" : this.working || this.waitList().length > 0 ? "working" : "idle"; // a pending wait is work: never shown idle or done (R6 lane 7a)
   }
 
-  /** Presence state: an open ask/checkpoint/prompt, a running turn or child, a pending external wait, else idle. */
+  /** Presence state: an open dialog, ask or forwarded child ask (needs-you), a running turn or child, a pending external wait, else idle. */
   get presenceName(): PresenceName {
     let children = false;
+    let asks = false;
     try {
-      children = this.runs().some((r) => r.endedAt === null && r.state === "working");
+      const live = this.runs().filter((r) => r.endedAt === null);
+      children = live.some((r) => r.state === "working");
+      asks = live.some((r) => r.state === "ask");
     } catch {
       // runs are best effort
     }
-    return presenceState({ done: this.done, owner: this.blockers.size > 0, turn: this.working, children, externalWaits: this.waitList().length > 0 });
+    if (!asks && !this.done) asks = this.askList().length > 0;
+    return presenceState({ done: this.done, owner: this.blockers.size > 0, asks, turn: this.working, children, externalWaits: this.waitList().length > 0 });
   }
 
   private waitList(): LiveWait[] {

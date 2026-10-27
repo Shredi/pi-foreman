@@ -48,8 +48,9 @@ export function ownSlug(env: Env, cwd: string): string {
   return h ? handoffSlug(h, env.PI_INTERCOM_STABLE_ID ?? "") : repoSlug(cwd);
 }
 
-export function countChildren(reg: Registry, ownId: string): number {
-  return reg.sessions.filter((e) => e && e.parent === ownId && typeof e.status === "string" && LIVE.has(e.status)).length;
+/** Live registry children of this session: recorded under its intercom id, or under its Pi session id (the id a restarted opener may still be known by) — the sidebar tree nests them by the same rule. */
+export function countChildren(reg: Registry, ownId: string, piSessionId?: string): number {
+  return reg.sessions.filter((e) => e && (e.parent === ownId || (!!piSessionId && e.parent === piSessionId)) && typeof e.status === "string" && LIVE.has(e.status)).length;
 }
 
 /** The text and token to report, or null to clear. `parentSlug` is set for an opened child. */
@@ -73,6 +74,8 @@ export interface MetaDeps {
   run: (argv: string[]) => void;
   registry: () => Registry;
   ownId: () => string;
+  /** The Pi session id, when the registry may name it as the parent. */
+  sessionId?: string;
   cwd: string;
 }
 
@@ -98,7 +101,7 @@ export class HerdrMeta {
   tick(): void {
     let n = 0;
     try {
-      n = countChildren(this.d.registry(), this.d.ownId());
+      n = countChildren(this.d.registry(), this.d.ownId(), this.d.sessionId);
     } catch {
       n = 0;
     }
@@ -152,7 +155,7 @@ export function installHerdrMeta(pi: Pick<ExtensionAPI, "on">, opts: { env?: Env
     if (!metaGate(env, ctx.mode, groupTag)) return;
     const agentDir = piAgentDir(env, os.homedir());
     const sid = ctx.sessionManager.getSessionId();
-    meta = new HerdrMeta({ env, cwd: ctx.cwd, run: opts.run ?? runHerdr(env.HERDR_BIN?.trim() || "herdr"), registry: () => readRegistry(agentDir), ownId: () => openerIntercomId(env, agentDir, sid) });
+    meta = new HerdrMeta({ env, cwd: ctx.cwd, run: opts.run ?? runHerdr(env.HERDR_BIN?.trim() || "herdr"), registry: () => readRegistry(agentDir), ownId: () => openerIntercomId(env, agentDir, sid), sessionId: sid });
     meta.tick();
     timer = setInterval(() => meta?.tick(), META_REFRESH_MS);
     timer.unref?.();
