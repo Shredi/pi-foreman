@@ -137,6 +137,11 @@ export interface McpLoadedLike {
 /** In a child nothing is declared up front: `direct` becomes `deferred`, the rest stays. */
 const childExposure = (e: Exposure): Exposure => (e === "direct" ? "deferred" : e);
 
+/** Provider ids whose child gets its allowed deferred MCP tools declared up front (mcp.directProviders); unset = claude-bridge, [] = none. */
+export function directProviders(configured: unknown): string[] {
+  return Array.isArray(configured) ? configured.filter((x): x is string => typeof x === "string") : ["claude-bridge"];
+}
+
 const patternRe = (pattern: string): RegExp => new RegExp("^" + pattern.split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$");
 
 /** Pi's `getMcpToolExposure`: the exact `toolExposure` entry, else the first matching pattern, else the server's exposure (default codemode). */

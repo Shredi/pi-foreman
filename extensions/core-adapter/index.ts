@@ -1245,7 +1245,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const restored = restoreIdentity({ env: process.env, reason: event.reason, piSessionId: ctx.sessionManager.getSessionId?.() ?? "", branch: (ctx.sessionManager.getBranch?.() ?? []) as unknown[], currentName: pi.getSessionName?.(), setSessionName: (name) => pi.setSessionName?.(name) });
     const s = await startSession(ctx);
     recordIdentity(s, ctx, event.reason, restored);
-    await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r));
+    await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r), get(s.config.config, "mcp.directProviders"));
     restoreCeremonyState(s, ctx, event.reason);
     restoreRounds(s, ctx, event.reason);
     emitReady(pi.events as EventBus | undefined, core.claim);

@@ -40,8 +40,53 @@ export async function waitQuiet(dir: string): Promise<void> {
 }
 
 /**
+ * Turn pi-intercom off for a temp agent dir a test hands to a session: with `enabled: false` its broker never
+ * spawns, so no detached broker outlives the dir. Call it before the session is created.
+ */
+export function disableIntercom(agentDir: string): void {
+  const dir = path.join(agentDir, "intercom");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ enabled: false }));
+}
+
+/** Every `<...>/intercom/broker.pid` under `dir` (a pi-intercom broker's pid file); symlinks are not followed. */
+function brokerPidFiles(dir: string): string[] {
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+  const out: string[] = [];
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) out.push(...brokerPidFiles(p));
+    else if (e.isFile() && e.name === "broker.pid" && path.basename(dir) === "intercom") out.push(p);
+  }
+  return out;
+}
+
+/**
+ * SIGTERM each broker a session left under `root` (the broker shuts down cleanly on SIGTERM), then wait briefly
+ * for it to exit so it does not write into the dir while it is removed. The pid comes from a file inside `root`,
+ * which is the only check; a stale pid file whose pid was reused would signal that process.
+ */
+function stopBrokersUnder(root: string): void {
+  for (const file of brokerPidFiles(root)) {
+    let pid: number;
+    try { pid = Number(fs.readFileSync(file, "utf8").trim()); } catch { continue; }
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    try { process.kill(pid, "SIGTERM"); } catch { continue; } // ESRCH: already gone; EPERM: not ours
+    for (let waited = 0; waited < 500 && alive(pid); waited += 50) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+  }
+}
+
+function alive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
+}
+
+/**
  * Remove a fixture dir. Windows refuses to delete a directory that is the process cwd or is still held by a
- * just-exited child (EBUSY), so step out of it first and retry a few times.
+ * just-exited child (EBUSY), so step out of it first and retry a few times. A pi-intercom broker a session left
+ * under the dir is stopped first.
  */
 export function rmTestTmp(dir: string): void {
   try {
@@ -49,6 +94,7 @@ export function rmTestTmp(dir: string): void {
     const target = path.resolve(dir);
     if (cwd === target || cwd.startsWith(target + path.sep)) process.chdir(os.tmpdir());
   } catch { /* cwd may already be gone */ }
+  stopBrokersUnder(dir);
   try {
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   } catch (e) {

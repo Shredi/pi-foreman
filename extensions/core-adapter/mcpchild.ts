@@ -10,7 +10,7 @@ import * as sdk from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { piAgentDir } from "./env.ts";
 import type { Env } from "./env.ts";
-import { allowedMcp, filterMcpConfig, mcpCallAllowed, mcpEmpty } from "./mcpscope.ts";
+import { allowedMcp, directProviders, filterMcpConfig, mcpCallAllowed, mcpEmpty, serverKey } from "./mcpscope.ts";
 import type { McpAllowed, McpLoadedLike } from "./mcpscope.ts";
 
 export const TOOL_SEARCH = "tool_search";
@@ -111,13 +111,21 @@ export interface McpChildOpts {
   importFile?: (href: string) => Promise<unknown>;
   /** Injectable for tests: the SDK's `createMcpExtension`. */
   createMcp?: unknown;
+  /** Injectable for tests: how long `preload` waits for the allowed servers' tools (default 10 s, Pi's own startup wait). */
+  preloadWaitMs?: number;
 }
+
+const PRELOAD_WAIT_MS = 10_000;
 
 export const unsupportedNote = (reason: string): string => `pi-foreman: MCP is not available in this child (${reason}). Do not look for MCP tools; name the missing MCP tool under Friction in your report.`;
 
 export class McpChild {
   /** Set by `start` from the captured binding. */
   allowed: McpAllowed = { servers: [], tools: {} };
+  /** `mcp.directProviders` as configured, set by `start`; `preload` matches the turn's provider against it. */
+  private configuredDirect: unknown;
+  private preloaded = false;
+  private trace: (record: Record<string, unknown>) => void = () => {};
   /** Why MCP is refused in this child (loader missing, extension not creatable), else null. */
   unsupported: string | null = null;
   /** Tool name to `server/tool` label, recorded when Pi's MCP extension registers a tool. */
@@ -167,6 +175,7 @@ export class McpChild {
     }
     try {
       (create as (o: unknown) => (api: unknown) => void)({ loadConfig: (ctx: ExtensionContext) => this.loadConfig(ctx) })(this.proxy());
+      this.pi.on("before_agent_start", async (_event, ctx) => this.preload(ctx.model?.provider));
     } catch (error) {
       this.setupError = `Pi's MCP extension failed to start: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -180,11 +189,43 @@ export class McpChild {
   }
 
   /**
+   * A provider that fixes its tool list per turn (mcp.directProviders) never sees a tool that `tool_search` loads
+   * mid-turn, and Pi will not declare a `direct` MCP tool under a child's `--tools` allowlist. So before the first
+   * prompt, once the allowed servers' tools are registered (bounded wait), load the allowed deferred ones the way
+   * `tool_search` would: they are declared in the first request. Only tools inside the child's MCP scope are loaded.
+   * `provider` is the model provider at that prompt (it may be unset at session start); without one nothing is loaded yet.
+   */
+  async preload(provider: string | undefined): Promise<void> {
+    if (provider === undefined || !directProviders(this.configuredDirect).includes(provider) || this.preloaded || mcpEmpty(this.allowed) || this.unsupported) return;
+    this.preloaded = true;
+    const wanted = (): string[] => [...this.labels].filter(([, label]) => mcpCallAllowed(this.allowed, label)).map(([name]) => name);
+    const seen = (): Set<string> => new Set(wanted().map((name) => serverKey(this.labels.get(name)?.split("/", 1)[0] ?? "")));
+    const ready = (): boolean => {
+      const have = seen();
+      return [...this.allowed.servers, ...Object.keys(this.allowed.tools)].every((server) => have.has(serverKey(server)));
+    };
+    const deadline = Date.now() + (this.opts.preloadWaitMs ?? PRELOAD_WAIT_MS);
+    while (!ready() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+    const exposure = new Map(this.pi.getAllTools().map((tool) => [tool.name, (tool as { exposure?: string }).exposure]));
+    const active = this.pi.getActiveTools();
+    const load = wanted().filter((name) => exposure.get(name) === "deferred" && !active.includes(name));
+    if (load.length === 0) return;
+    this.pi.setActiveTools([...active, ...load]);
+    const servers = [...new Set(load.map((name) => this.labels.get(name)?.split("/", 1)[0] ?? ""))].sort();
+    this.trace({ event: "mcp_child_direct", provider, servers: servers.join(","), count: load.length });
+  }
+
+  /**
    * The child's session_start: compute the allowed set from the captured binding and the role config, wait for the
    * loader import, and take `tool_search` out of the active set when no MCP is available so no declaration is sent.
+   * When the child's model provider is listed in `mcp.directProviders` (`configuredDirect`), `preload` declares the
+   * allowed deferred tools up front (a provider that fixes its tool list per turn cannot call a tool that
+   * `tool_search` loads mid-turn).
    */
-  async start(configRoles: unknown, trace: (record: Record<string, unknown>) => void): Promise<void> {
+  async start(configRoles: unknown, trace: (record: Record<string, unknown>) => void, configuredDirect?: unknown): Promise<void> {
     const binding = this.opts.binding;
+    this.trace = trace;
+    this.configuredDirect = configuredDirect;
     this.allowed = allowedMcp(configRoles, binding?.role, binding?.mcp);
     const { load, reason } = await this.loading;
     this.loader = load;
