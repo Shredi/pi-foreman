@@ -53,19 +53,22 @@ class TestPermissionLayers(ReplayCase):
     # Retired (item 23): test_permission_ask_raises_one_herdr_block asserted the permission package's herdr block signal
     # for its ask dialog; the gate has no herdr block (gate dialogs are covered in test_replay_review.py).
 
-    def test_child_ask_is_denied_not_forwarded(self):
-        # item 23: old: the package forwarded a child's ask to the parent as a dialog; new: the gate denies a child ask
-        # ("Children cannot answer asks"), there is no forwarding server, and the parent sees no dialog.
+    def test_child_ask_goes_to_the_parent_dialog(self):
+        # item 23: old: the package forwarded a child's ask to the parent as a dialog. Owner ruling (gate.childAsk parent): the
+        # parent's pane shows the child's ask as a dialog and the parent's deny reaches the child (old assertion: no dialog and
+        # "Children cannot answer asks"; that text stays for a headless parent).
         rig = self.baseline_rig("perm-ask", config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-ask" % PROVIDER_A}}}})
         pi = rig.start()
         # the subagent launch itself is a payload tool and goes to review (review-ask here): the owner approves that one dialog
         pi.prompt("[[replay:c2]] go", answers=[{"value": "allow once"}], timeout=60)
-        notice, recs = pi.wait_child_notify(timeout=90)
+        notice, recs = pi.wait_child_notify(timeout=90, answers=[{"value": "deny with reason"}, {"value": "scripted no"}])
         pi.close()
-        dialogs = [r for r in recs if r.get("type") == "extension_ui_request" and r.get("method") in ("select", "confirm")]
-        self.assertFalse(dialogs, dialogs)
+        dialogs = [r for r in recs if r.get("type") == "extension_ui_request" and r.get("method") == "select" and "asks" in str(r.get("title"))]
+        self.assertEqual(len(dialogs), 1, dialogs)
+        self.assertIn("package-install", dialogs[0]["title"])
         text = "\n".join(p.read_text("utf-8", "replace") for p in rig.agent.rglob("*.jsonl"))
-        self.assertIn("Children cannot answer asks", text)
+        self.assertIn("denied by the parent", text)
+        self.assertNotIn("Children cannot answer asks", text)
 
 
 if __name__ == "__main__":
