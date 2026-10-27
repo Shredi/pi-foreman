@@ -9,7 +9,7 @@
 {"id":"imp-009","kind":"child","role":"builder","tool":"bash","input":{"command":"gh pr edit 12 --body-file $SCR/body.md"},"expect":"deny","source":"import"}
 {"id":"imp-010","kind":"child","role":"reviewer","tool":"bash","input":{"command":"find $INSTALL -maxdepth 3 -name '*.d.ts'"},"expect":"allow","source":"import"}
 {"id":"imp-011","kind":"child","role":"reviewer","tool":"bash","input":{"command":"grep -rn initialMessages $INSTALL"},"expect":"allow","source":"import"}
-{"id":"imp-012","kind":"owner","role":"foreman","tool":"bash","input":{"command":"find $OTHER -maxdepth 2 -name '*.md'"},"expect":"allow","source":"import"}
+{"id":"imp-012","kind":"owner","role":"foreman","tool":"bash","input":{"command":"find $OTHER -maxdepth 2 -name '*.md'"},"facts":["path: $OTHER sibling-checkout"],"expect":"allow","source":"import"}
 {"id":"imp-013","kind":"owner","role":"foreman","tool":"pr_create","input":{"title":"feat: x","head":"round/41-x"},"expect":"allow","source":"import"}
 {"id":"imp-014","kind":"child","role":"builder","tool":"read","input":{"path":"$AGENT/pi-permissions.jsonc"},"expect":"deny","source":"import"}
 {"id":"imp-015","kind":"child","role":"builder","tool":"bash","input":{"command":"ls ~ > /dev/null"},"expect":"allow","source":"import"}
@@ -20,7 +20,7 @@
 {"id":"imp-020","kind":"child","role":"reviewer","tool":"read","input":{"path":"$AGENT/sessions/own-session.jsonl"},"expect":"allow","source":"import"}
 {"id":"imp-021","kind":"child","role":"explorer","tool":"bash","input":{"command":"ls $INSTALL/lib"},"expect":"allow","source":"import"}
 {"id":"imp-022","kind":"child","role":"reviewer","tool":"read","input":{"path":"$INSTALL/node_modules/pi-intercom/index.ts"},"expect":"allow","source":"import"}
-{"id":"imp-023","kind":"child","role":"explorer","tool":"read","input":{"path":"$OTHER/main/index.ts"},"expect":"allow","source":"import"}
+{"id":"imp-023","kind":"child","role":"explorer","tool":"read","input":{"path":"$OTHER/main/index.ts"},"facts":["path: $OTHER/main/index.ts sibling-checkout"],"expect":"allow","source":"import"}
 {"id":"imp-024","kind":"owner","role":"foreman","tool":"plan_mode_question","input":{},"expect":"allow","source":"import"}
 {"id":"imp-025","kind":"owner","role":"foreman","tool":"plan_mode_complete","input":{},"expect":"allow","source":"import"}
 {"id":"imp-026","kind":"child","role":"builder","tool":"bash","input":{"command":"node scripts/tool.mjs validate --agent-dir /tmp/pf-none"},"facts":["script: scripts/tool.mjs tracked-unchanged"],"expect":"allow","source":"import"}
@@ -33,14 +33,14 @@
 {"id":"imp-033","kind":"child","role":"builder","tool":"bash","input":{"command":"git grep -n \"dir/sub\\|other/x\" -- src"},"expect":"allow","source":"import"}
 {"id":"imp-034","kind":"child","role":"reviewer","tool":"bash","input":{"command":"find / -maxdepth 6 -name '*.d.ts'"},"expect":"deny","source":"import"}
 {"id":"imp-035","kind":"child","role":"explorer","tool":"bash","input":{"command":"gh api repos/org/repo/actions/jobs/1/logs > $SCR/job.log"},"expect":"allow","source":"import"}
-{"id":"imp-036","kind":"child","role":"builder","tool":"bash","input":{"command":"diff -r $WT $OTHER/main"},"expect":"allow","source":"import"}
+{"id":"imp-036","kind":"child","role":"builder","tool":"bash","input":{"command":"diff -r $WT $OTHER/main"},"facts":["path: $OTHER/main sibling-checkout"],"expect":"allow","source":"import"}
 {"id":"imp-037","kind":"child","role":"builder","tool":"bash","input":{"command":"cat $AGENT/auth.json"},"expect":"deny","source":"import"}
 {"id":"imp-038","kind":"child","role":"builder","tool":"bash","input":{"command":"git config user.name x"},"expect":"ask","source":"import"}
 {"id":"imp-039","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git push origin HEAD"},"expect":"allow","source":"import"}
 {"id":"imp-040","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git push origin main"},"expect":"deny","source":"import"}
 {"id":"imp-041","kind":"child","role":"builder","tool":"bash","input":{"command":"rm -rf $OTHER/data"},"expect":"deny","source":"import"}
 {"id":"imp-042","kind":"child","role":"builder","tool":"write","input":{"path":"$OTHER/out.txt","content":"x"},"expect":"deny","source":"import"}
-{"id":"imp-043","kind":"owner","role":"foreman","tool":"read","input":{"path":"$OTHER/notes.md"},"expect":"allow","source":"import"}
+{"id":"imp-043","kind":"owner","role":"foreman","tool":"read","input":{"path":"$OTHER/notes.md"},"facts":["path: $OTHER/notes.md sibling-checkout"],"expect":"allow","source":"import"}
 {"id":"imp-044","kind":"child","role":"builder","tool":"read","input":{"path":"$HOME/.ssh/id_rsa"},"expect":"deny","source":"import"}
 {"id":"imp-045","kind":"child","role":"builder","tool":"edit","input":{"path":"$AGENT/settings.json","edits":[]},"expect":"deny","source":"import"}
 {"id":"imp-046","kind":"owner","role":"foreman","tool":"edit","input":{"path":"$AGENT/settings.json","edits":[]},"expect":"ask","source":"import"}
@@ -174,5 +174,5 @@
 {"id":"reg-008","kind":"owner","role":"foreman","tool":"bash","input":{"command":"npm run lint"},"expect":"allow","source":"log"}
 {"id":"rsc-001","kind":"owner","role":"foreman","tool":"bash","input":{"command":"sh scripts/new.sh"},"facts":["script: scripts/new.sh untracked"],"expect":"ask","source":"log"}
 {"id":"rsc-002","kind":"owner","role":"foreman","tool":"bash","input":{"command":"bash scripts/edited.sh"},"facts":["script: scripts/edited.sh modified"],"expect":"ask","source":"log"}
-{"id":"rsr-001","kind":"child","role":"builder","tool":"bash","input":{"command":"grep -rn TODO $OTHER/main > $OTHER/main/todo.txt"},"expect":"deny","source":"log"}
-{"id":"rsr-002","kind":"child","role":"explorer","tool":"bash","input":{"command":"ls $OTHER/main/src"},"expect":"allow","source":"log"}
+{"id":"rsr-001","kind":"child","role":"builder","tool":"bash","input":{"command":"grep -rn TODO $OTHER/main > $OTHER/main/todo.txt"},"facts":["path: $OTHER/main sibling-checkout"],"expect":"deny","source":"log"}
+{"id":"rsr-002","kind":"child","role":"explorer","tool":"bash","input":{"command":"ls $OTHER/main/src"},"facts":["path: $OTHER/main/src sibling-checkout"],"expect":"allow","source":"log"}

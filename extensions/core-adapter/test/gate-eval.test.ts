@@ -46,13 +46,13 @@ const facts: GitFacts = { currentBranch: () => "round/41-x", protectedBranches: 
 const WIN = { wt: "D:\\work\\repo", scr: "D:\\tmp\\pi-foreman-scratch\\mine", home: "C:\\Users\\x", agent: "C:\\Users\\x\\.pi\\agent", tmp: "D:\\tmp", other: "E:\\other" };
 
 /** The placeholders a fixture may use, per platform. */
-function subst(c: EvalCase): Record<string, unknown> {
+function subst(c: EvalCase, v0: unknown = c.input): Record<string, unknown> {
   const w = c.platform === "win32";
   const map: Record<string, string> = w
     ? { $WT: WIN.wt, $SCR: WIN.scr, $PARENT: "D:\\parent", $TMP: WIN.tmp, $AGENT: WIN.agent, $HOME: WIN.home, $OTHER: WIN.other, $INSTALL: "D:\\pi" }
     : { $WT: wt, $SCR: scr, $PARENT: parent, $TMP: dir("tmp"), $AGENT: agent, $HOME: "/pf41/home", $OTHER: "/pf41/other", $INSTALL: install };
   const walk = (v: unknown): unknown => (typeof v === "string" ? Object.entries(map).reduce((s, [k, x]) => s.split(k).join(x), v) : Array.isArray(v) ? v.map(walk) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v);
-  return walk(c.input) as Record<string, unknown>;
+  return walk(v0) as Record<string, unknown>;
 }
 
 function rootsOf(c: EvalCase): GateRoots {
@@ -103,7 +103,7 @@ async function run(c: EvalCase): Promise<Outcome> {
   if (g && "ask" in g) return { verdict: "ask", layer: "selfmod", rule: g.rule };
   const r = rootsOf(c);
   const v = await gateReview(
-    { surface: c.tool, tool: c.tool, role: c.role, kind: c.kind as never, cwd, worktree: r.worktree, owned: r.owned, branch: "round/41-x", head: "h1", mergeHead: null, remotes: ["origin"], ownerMessages: [], payload: payloadOf(c.tool, input), ...(c.facts ? { facts: c.facts } : {}) },
+    { surface: c.tool, tool: c.tool, role: c.role, kind: c.kind as never, cwd, worktree: r.worktree, owned: r.owned, branch: "round/41-x", head: "h1", mergeHead: null, remotes: ["origin"], ownerMessages: [], payload: payloadOf(c.tool, input), ...(c.facts ? { facts: subst(c, c.facts) as unknown as string[] } : {}) },
     { policy, registry: fakeRegistry(c.id), config, provider: "p", cache },
   );
   if (v.kind === "unreachable") return { verdict: "ask", layer: "review", rule: v.cause };

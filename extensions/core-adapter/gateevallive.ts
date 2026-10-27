@@ -2,6 +2,7 @@
 // It replays the fixture cases through the same gateDecide and gateReview (prompt and verdict parser) as the offline runner
 // tests/gate-eval.test.ts; the cases that reach the review model go to the registry given, and its answers are recorded in the
 // gate-eval-answers.json format together with latency and token statistics. The registry is injected, so tests use a fake one.
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -66,11 +67,12 @@ export async function liveEval(cases: EvalCase[], registry: RegistryLike, model:
   const install = dir("pi");
   try {
     for (const d of [path.join(wt, "src"), scr, path.join(parent, ".workflow", "scratch"), path.join(agent, "pi-foreman", "state"), install, path.join(other, "src")]) fs.mkdirSync(d, { recursive: true });
+    execFileSync("git", ["init", "-q"], { cwd: other, stdio: "ignore" }); // the sibling checkout the path facts name
     fs.writeFileSync(path.join(wt, "package.json"), JSON.stringify({ scripts: { test: "node --test", build: "tsc" } }));
     // a linked worktree of the parent checkout (the attributes-file floor accepts the main checkout's .workflow/)
     fs.mkdirSync(path.join(parent, ".git", "worktrees", "wt"), { recursive: true });
     fs.writeFileSync(path.join(wt, ".git"), `gitdir: ${path.join(parent, ".git", "worktrees", "wt")}\n`);
-    const subst = (c: EvalCase): Record<string, unknown> => {
+    const subst = (c: EvalCase, v0: unknown = c.input): Record<string, unknown> => {
       const w = c.platform === "win32";
       const map: Record<string, string> = w
         ? { $WT: WIN.wt, $SCR: WIN.scr, $PARENT: "D:\\parent", $TMP: WIN.tmp, $AGENT: WIN.agent, $HOME: WIN.home, $OTHER: WIN.other, $INSTALL: "D:\\pi" }
@@ -78,7 +80,7 @@ export async function liveEval(cases: EvalCase[], registry: RegistryLike, model:
       // `~` as a whole word or a path prefix is the home dir; $UNSET and $X stay literal unset variables on purpose
       const tilde = (s: string): string => s.replace(/(^|[\s"'=:])~(?=\/|\s|$|"|')/g, `$1${w ? WIN.home : home}`);
       const walk = (v: unknown): unknown => (typeof v === "string" ? tilde(Object.entries(map).reduce((s, [k, x]) => s.split(k).join(x), v)) : Array.isArray(v) ? v.map(walk) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v);
-      return walk(c.input) as Record<string, unknown>;
+      return walk(v0) as Record<string, unknown>;
     };
     const rootsOf = (c: EvalCase): GateRoots => {
       const w = c.platform === "win32";
@@ -126,7 +128,7 @@ export async function liveEval(cases: EvalCase[], registry: RegistryLike, model:
       };
       const payload = typeof input.command === "string" ? input.command : `${c.tool} ${JSON.stringify(input)}`;
       const v = await gateReview(
-        { surface: c.tool, tool: c.tool, role: c.role, kind: c.kind as never, cwd, worktree: r.worktree, owned: r.owned, branch: "round/41-x", head: "h1", mergeHead: null, remotes: ["origin"], ownerMessages: [], payload, ...(c.facts ? { facts: c.facts } : {}) },
+        { surface: c.tool, tool: c.tool, role: c.role, kind: c.kind as never, cwd, worktree: r.worktree, owned: r.owned, branch: "round/41-x", head: "h1", mergeHead: null, remotes: ["origin"], ownerMessages: [], payload, ...(c.facts ? { facts: subst(c, c.facts) as unknown as string[] } : {}) },
         { policy, registry: wrapped, config, provider: "live", cache },
       );
       stats.reviewCases++;
