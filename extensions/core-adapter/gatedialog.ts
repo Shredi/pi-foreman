@@ -81,13 +81,17 @@ export interface RoundAsk {
   payload: string;
   cwd: string;
   session: string;
+  /** A child's ask (childask.ts): its role, run and the epoch ms after which it stops waiting. */
+  role?: string;
+  run?: string;
+  deadline?: number;
 }
 
 /** Write `<dir>/ask.md` (header `# Ask <n>: <topic>`, then `key: value` lines and the payload) and return n. */
 export function writeRoundAsk(dir: string, a: GateAsk, f: RoundAsk): number {
   const n = nextAskN(dir);
   const detail = a.cause === "selfmod" ? [`cause: self-modification`, `rule: ${a.rule}`, `reason: ${a.reason}`] : a.cause === "ask" ? [`cause: policy ask`, `entry: ${a.entry}`, `reason: ${a.reason}`] : [`cause: review unreachable`, `unreachable: ${unreachableName(a.why)}`, `detail: ${a.detail}`];
-  const text = [`# Ask ${n}: gate ${a.cause === "selfmod" ? "self-modification" : a.cause === "ask" ? "ask" : "review unreachable"} for ${f.tool}`, "", ...detail, `tool: ${f.tool}`, `cwd: ${f.cwd}`, `session: ${f.session}`, "", "Answer with ruling-" + n + ".md whose first line is ALLOW or DENY (anything else denies).", "", "```", cut(f.payload, 4000), "```", ""].join("\n");
+  const text = [`# Ask ${n}: gate ${a.cause === "selfmod" ? "self-modification" : a.cause === "ask" ? "ask" : "review unreachable"} for ${f.tool}`, "", ...detail, `tool: ${f.tool}`, `cwd: ${f.cwd}`, `session: ${f.session}`, ...(f.role ? [`role: ${f.role}`] : []), ...(f.run ? [`run: ${f.run}`] : []), ...(f.deadline ? [`deadline: ${f.deadline}`] : []), "", "Answer with ruling-" + n + ".md whose first line is ALLOW or DENY (anything else denies).", "", "```", cut(f.payload, 4000), "```", ""].join("\n");
   fs.mkdirSync(dir, { recursive: true });
   const tmp = path.join(dir, `.ask.md.${process.pid}.tmp`);
   fs.writeFileSync(tmp, text, "utf8");
@@ -95,18 +99,20 @@ export function writeRoundAsk(dir: string, a: GateAsk, f: RoundAsk): number {
   return n;
 }
 
-export type RulingAnswer = { answer: "allow" | "deny" | "other" | "timeout"; first?: string };
+export type RulingAnswer = { answer: "allow" | "deny" | "other" | "timeout"; first?: string; reason?: string };
 
-/** Poll `<dir>/ruling-<n>.md` until it exists or `timeoutMs` passes; its first line ALLOW / DENY (case-insensitive) decides. */
-export async function awaitRuling(dir: string, n: number, timeoutMs: number, pollMs = 250): Promise<RulingAnswer> {
+/** Poll `<dir>/ruling-<n>.md` until it exists or `timeoutMs` passes; its first line ALLOW / DENY (case-insensitive) decides, the rest is the reason. A ruling whose mtime is before `notBefore` (ms) is stale and ignored. */
+export async function awaitRuling(dir: string, n: number, timeoutMs: number, pollMs = 250, notBefore?: number): Promise<RulingAnswer> {
   const file = path.join(dir, `ruling-${n}.md`);
   const end = Date.now() + timeoutMs;
   for (;;) {
     try {
-      const first = fs.readFileSync(file, "utf8").split(/\r?\n/, 1)[0].trim();
+      const text = notBefore !== undefined && fs.statSync(file).mtimeMs < notBefore ? "" : fs.readFileSync(file, "utf8");
+      const first = text.split(/\r?\n/, 1)[0].trim();
       if (first) {
         const w = first.toLowerCase();
-        return { answer: w === "allow" ? "allow" : w === "deny" ? "deny" : "other", first };
+        const reason = text.split(/\r?\n/).slice(1).join(" ").trim().slice(0, 300);
+        return { answer: w === "allow" ? "allow" : w === "deny" ? "deny" : "other", first, ...(reason ? { reason } : {}) };
       }
     } catch {
       // not there yet

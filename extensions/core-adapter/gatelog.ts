@@ -9,7 +9,7 @@ import { redactCommand, scrubReason } from "./trace.ts";
 
 export const GATE_LOG_MAX_BYTES = 20 * 1024 * 1024;
 export const GATE_KINDS = ["owner", "round", "child", "headless"] as const;
-export const GATE_LAYERS = ["floor", "default", "review", "dialog", "cache"] as const;
+export const GATE_LAYERS = ["floor", "default", "review", "dialog", "cache", "child-ask"] as const;
 export type GateKind = (typeof GATE_KINDS)[number];
 export type GateLayer = (typeof GATE_LAYERS)[number];
 

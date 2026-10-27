@@ -24,7 +24,9 @@ import { pathFacts } from "./pathfact.ts";
 import { webReadFacts } from "./webread.ts";
 import { gateLogFile, openGateLog } from "./gatelog.ts";
 import type { GateKind, GateLog } from "./gatelog.ts";
-import { awaitRuling, DEFAULT_ASK_TIMEOUT_MS, dialogBody, DIALOG_OPTIONS, silentDeny, STOP_TEXT, unreachableName, userDeny, writeRoundAsk } from "./gatedialog.ts";
+import { ChildAskWatch, childAskDir, childAskParentDir } from "./childask.ts";
+import type { ChildAnswer, ChildAsk, ChildAskEvent } from "./childask.ts";
+import { awaitRuling, cut, DEFAULT_ASK_TIMEOUT_MS, dialogBody, DIALOG_OPTIONS, silentDeny, STOP_TEXT, unreachableName, userDeny, writeRoundAsk } from "./gatedialog.ts";
 import type { GateAsk } from "./gatedialog.ts";
 import { loadPolicy } from "./policy.ts";
 import type { LoadedPolicy } from "./policy.ts";
@@ -1319,6 +1321,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       idleModel.stop();
     }
     sweepScratch(s);
+    closeChildAsks(s);
     s.live?.stop();
     s.pressureSampler?.stop();
     s.widget.dispose();
@@ -1762,6 +1765,48 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   };
   /** A newer ruling in the handoff dir, taken before a gated action (child launch, checkpoint press); "" when none. */
   const rulingPickup = (s: Session, gate: string): string => (s.isChild ? "" : pickupRuling(steerWatchFor(s), gate));
+  // A child's policy ask (childask.ts, plan Addendum 5): per parent session one watch over the ask dirs of its running children.
+  const childAskWatches = new Map<string, ChildAskWatch>();
+  const childAskWatchFor = (s: Session, ctx: ExtensionContext): ChildAskWatch => {
+    let w = childAskWatches.get(s.id);
+    if (!w) childAskWatches.set(s.id, (w = new ChildAskWatch((a) => answerChildAsk(s, ctx, a), (e) => reportChildAsk(s, e))));
+    return w;
+  };
+  const closeChildAsk = (s: Session, launchId: string | null): void => {
+    if (!launchId) return;
+    const dir = childAskDir(s.agentDir, s.id, launchId);
+    childAskWatches.get(s.id)?.remove(dir);
+    fs.rmSync(dir, { recursive: true, force: true });
+  };
+  const closeChildAsks = (s: Session): void => {
+    childAskWatches.get(s.id)?.stop();
+    childAskWatches.delete(s.id);
+    fs.rmSync(childAskParentDir(s.agentDir, s.id), { recursive: true, force: true });
+  };
+  const reportChildAsk = (s: Session, e: ChildAskEvent): void => {
+    const verdict = e.kind === "answered" ? (e.allow ? "allow" : "deny") : "deny";
+    gateRuntimeOf(s).log.record({ tool: e.ask.tool, layer: "child-ask", verdict, rule: e.ask.entry || "ask", reason: `child run ${e.ask.run} (${e.ask.role}): ${e.kind}${e.detail ? ` ${e.detail}` : ""}`, input: e.ask.payload, role: e.ask.role, kind: roundStateDir(process.env) ? "round" : "owner" });
+  };
+  /** The parent's answer to one child ask: the owner's dialog, or the round path (ask.md in the handoff dir, ruling copied down); never a model. */
+  async function answerChildAsk(s: Session, ctx: ExtensionContext, a: ChildAsk): Promise<ChildAnswer> {
+    const dir = roundStateDir(process.env);
+    if (dir) {
+      const left = a.deadline ? Math.max(0, a.deadline - Date.now()) : DEFAULT_ASK_TIMEOUT_MS;
+      const n = writeRoundAsk(dir, { cause: "ask", entry: a.entry, reason: a.reason }, { tool: a.tool, payload: a.payload, cwd: a.cwd, session: s.id, role: a.role, run: a.run });
+      const notBefore = fs.statSync(path.join(dir, "ask.md")).mtimeMs;
+      const w = await withBlocked(herdrEvents, `ask ${n}: child ${a.role} ${a.tool}`, () => awaitRuling(dir, n, left, 250, notBefore));
+      steerWatchFor(s).skip(`ruling-${n}.md`); // the copy-down below is its delivery: the steer pickup must not hand it to the session again
+      return w.answer === "allow" ? { allow: true } : { allow: false, reason: w.answer === "timeout" ? "the parent's parent did not answer in time" : (w.reason ?? `ruling-${n}.md first line was "${(w.first ?? "").slice(0, 40)}"`) };
+    }
+    if (!ctx.hasUI) return { allow: false, reason: "the parent session cannot answer asks" };
+    const body = `pi-foreman: ${a.role} (run ${a.run}) asks\n${a.tool}: ${cut(a.payload)}\nentry ${a.entry}: ${a.reason}`;
+    const choice = await withBlocked(herdrEvents, body.split("\n", 1)[0], () => ctx.ui.select(body, ["allow once", "deny with reason"]));
+    if (choice === "allow once") return { allow: true };
+    if (choice !== "deny with reason") return { allow: false, reason: "the dialog was dismissed" };
+    const typed = (await withBlocked(herdrEvents, "deny reason", () => ctx.ui.input("pi-foreman: reason for the deny (shown to the child)", ""))) ?? "";
+    return { allow: false, reason: typed.trim() || "denied by the parent" };
+  }
+  let childAskChain: Promise<void> = Promise.resolve();
   pi.events?.on(SUPERVISOR_SURFACED_EVENT, (data: unknown) => launchWaits.onSupervisorRequest(data));
   pi.on("session_shutdown", async () => launchWaits.abortAll());
 
@@ -1773,7 +1818,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         endActive(s.activeRuns, data);
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
         if (typeof runId === "string") s.attention.onRunEnd(runId);
-        if (typeof runId === "string") finishScratch(s, s.scratch.onRunEnd(runId));
+        if (typeof runId === "string") {
+          const ended = s.scratch.onRunEnd(runId);
+          finishScratch(s, ended);
+          closeChildAsk(s, ended);
+        }
         if (typeof runId === "string" && !s.isChild) {
           s.widget.runs.onRunEnd(runId);
           s.live?.touch();
@@ -2215,6 +2264,27 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (w.answer === "deny") return done("ruling-deny", false, `pi-foreman: denied by the parent in ruling-${n}.md.`);
       if (w.answer === "other") return done("ruling-deny", false, `pi-foreman: denied: the first line of ruling-${n}.md is "${(w.first ?? "").slice(0, 40)}", not ALLOW or DENY.`);
       return done("timeout", false, `pi-foreman: denied: no ruling-${n}.md within ${Math.round(timeoutMs / 1000)}s (gate.askTimeoutMs); the call is denied. Report this to the owner.`);
+    }
+    const askDir = launchBinding?.askDir;
+    if (kind === "child" && a.cause === "ask" && askDir && get(gs.config.config, "gate.childAsk") === "parent") {
+      const t = get(gs.config.config, "gate.askTimeoutMs");
+      const timeoutMs = typeof t === "number" && Number.isFinite(t) && t >= 0 ? t : DEFAULT_ASK_TIMEOUT_MS;
+      const turn = childAskChain; // one ask.md at a time: parallel tool calls of the child queue here
+      let free: () => void = () => {};
+      childAskChain = new Promise<void>((r) => (free = r));
+      await turn;
+      try {
+        const n = writeRoundAsk(askDir, a, { tool, payload, cwd: ctx.cwd, session: gs.id, role, run: launchBinding?.launchId, deadline: Date.now() + timeoutMs });
+        const notBefore = fs.statSync(path.join(askDir, "ask.md")).mtimeMs;
+        const w = await withBlocked(herdrEvents, `ask ${n}: gate ${tool}`, () => awaitRuling(askDir, n, timeoutMs, 250, notBefore));
+        if (w.answer === "allow") return done("parent-allow", true);
+        if (w.answer === "timeout") return done("parent-timeout", false, `pi-foreman: denied: the parent did not answer within ${Math.round(timeoutMs / 1000)}s (gate.askTimeoutMs); the call is denied. Report this line to the foreman and continue with what you can.`);
+        return done("parent-deny", false, w.answer === "deny" ? `pi-foreman: denied by the parent${w.reason ? `: ${w.reason}` : "."} Report this line to the foreman and continue with what you can.` : `pi-foreman: denied: the parent's ruling-${n}.md starts with "${(w.first ?? "").slice(0, 40)}", not ALLOW or DENY.`);
+      } catch (e) {
+        return done("parent-deny", false, `pi-foreman: the ask for the parent could not be written (${e instanceof Error ? e.message : String(e)}); the call is denied. Report this line to the foreman.`);
+      } finally {
+        free();
+      }
     }
     if (kind !== "owner") {
       const reason = silentDeny(kind, a);
@@ -3358,6 +3428,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const model = typeof input.model === "string" && input.model ? input.model : null;
     const b = recordUsageLaunch(s.launches, { foremanSession: s.usage.line.foremanSession, workspace: s.usage.line.workspace, role, model, kind, activeProvider: ctx.model?.provider, ladder });
     launchScratch(s, input, b);
+    if (!s.isChild && get(s.config.config, "gate.childAsk") === "parent" && (roundStateDir(process.env) || ctx.hasUI)) {
+      // a parent that can answer (owner pane, round path) gives the child an ask dir; a headless parent gives none, so its children deny
+      const askDir = childAskDir(s.agentDir, s.id, b.launchId);
+      try {
+        fs.mkdirSync(askDir, { recursive: true, mode: 0o700 });
+        b.askDir = askDir;
+        childAskWatchFor(s, ctx).add(askDir);
+      } catch {
+        delete b.askDir;
+      }
+    }
     if (retroEnabled(get(s.config.config, "retro.enabled"), ctx.mode)) b.retro = true; // the child traces for the retro
     if (mcp) b.mcp = mcp;
     if (flags?.reads !== undefined) b.reads = flags.reads;
@@ -3476,7 +3557,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const heads = s.launchHeadsByCall.get(event.toolCallId);
         s.launchHeadsByCall.delete(event.toolCallId);
         const runId = launchId(event.input, event.details, event.isError);
-        finishScratch(s, s.scratch.onLaunched(boundLaunchId(event.input), runId));
+        const launched = s.scratch.onLaunched(boundLaunchId(event.input), runId);
+        finishScratch(s, launched);
+        closeChildAsk(s, launched);
         s.ladder.onLaunched(event.toolCallId, runId);
         if (runId && !s.isChild) {
           s.widget.runs.onLaunched(event.toolCallId, runId, s.launchedRoles.get(runId) ?? []);

@@ -584,7 +584,7 @@ function protectedEntries(env: FloorEnv): Protected[] {
   for (const a of agentDirs(env)) {
     const s = path.join(a, "pi-foreman");
     for (const f of ["policy.md", "managed.json", "state/round-parents.json", "state/bridge-trust.json"]) out.push({ p: path.join(s, f), tree: false });
-    for (const d of ["state/approvals", "state/gate"]) out.push({ p: path.join(s, d), tree: true });
+    for (const d of ["state/approvals", "state/gate", "state/child-asks"]) out.push({ p: path.join(s, d), tree: true });
     out.push({ p: path.join(a, "sessions"), tree: true, ext: ".jsonl" });
   }
   if (env.sessionDir) out.push({ p: env.sessionDir, tree: false, ext: ".jsonl", flat: true });
@@ -628,7 +628,7 @@ function protectedWord(word: string, cwd: string, env: FloorEnv, entries: Protec
   return null;
 }
 
-const protHit = (what: string, word: string): FloorHit => hit("policy-file", `${what} '${word.slice(0, 120)}', a policy file or a harness state file (policy.md of any layer, managed.json, state/round-parents.json, state/bridge-trust.json, state/approvals, state/gate) or a Pi session file (*.jsonl under the sessions dir). Ask the user to change it.`);
+const protHit = (what: string, word: string): FloorHit => hit("policy-file", `${what} '${word.slice(0, 120)}', a policy file or a harness state file (policy.md of any layer, managed.json, state/round-parents.json, state/bridge-trust.json, state/approvals, state/gate, state/child-asks) or a Pi session file (*.jsonl under the sessions dir). Ask the user to change it.`);
 const configHit = (what: string, word: string): FloorHit => hit("config-keys", `${what} the safety.permissions*, safety.policy* or gate.* keys of the foreman config file '${word.slice(0, 120)}'. The agent never changes these keys. Ask the user to change them.`);
 
 const READ_PROGS = new Set(["cat", "head", "tail", "less", "more", "ls", "stat", "file", "wc", "grep", "egrep", "fgrep", "rg", "diff", "cmp", "echo", "printf", "cd", "pushd", "popd", "pwd", "test", "[", "realpath", "readlink", "basename", "dirname", "md5sum", "shasum", "sha256sum", "nl", "od", "hexdump", "strings", "tree", "du", "df", "which", "type", "true", "false", "jq", "sort", "uniq", "cut", "tr"]);
