@@ -1,19 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SidebarLive, sidebarMayTick, type SidebarDeps, type Tokens } from "../sidebarlive.ts";
-import type { LiveStateName } from "../livestate.ts";
+import { SidebarLive, type SidebarDeps, type Tokens } from "../sidebarlive.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const json = JSON.stringify({ tokens: { fm_hd: "x job", fm_meta: "$1" }, fm_hd_tpl: "{spin} job", stamp: "/s/push/sid.stamp", pane: "w1:p1" });
+const withTpl = JSON.stringify({ tokens: { fm_hd: "x job", fm_meta: "$1" }, fm_hd_tpl: "{spin} job", stamp: "/s/push/sid.stamp", pane: "w1:p1" });
+const noTpl = JSON.stringify({ tokens: { fm_hd: "x job", fm_meta: "$1" }, fm_hd_tpl: null, stamp: "/s/push/sid.stamp", pane: "w1:p1" });
 
-function rig(state: { name: LiveStateName }) {
+function rig(out: { json: string }) {
   const reports: Tokens[] = [];
   const d: SidebarDeps = {
     pane: "w1:p1",
     sessionId: "sid",
     agentDir: "/a",
     symbols: "unicode",
-    push: (_args, done) => setTimeout(() => done(json), 1),
+    push: (_args, done) => setTimeout(() => done(out.json), 1),
     report: async (tokens) => {
       reports.push(tokens);
     },
@@ -24,26 +24,21 @@ function rig(state: { name: LiveStateName }) {
     refreshMs: 100_000,
     tickMs: 10,
     frames: ["a", "b"],
-    working: () => sidebarMayTick(state.name),
   };
   return { s: new SidebarLive(d), reports };
 }
 
-test("the adapter's tick gate: every live state ticks a template except blocked and done", () => {
-  const names: LiveStateName[] = ["idle", "working", "waiting", "blocked", "done"];
-  assert.deepEqual(names.filter(sidebarMayTick), ["idle", "working", "waiting"]);
-});
-
-test("a {spin} template ticks at live state idle and does not at blocked", async () => {
-  const state = { name: "idle" as LiveStateName };
-  const { s, reports } = rig(state);
+test("a {spin} template ticks, and the ticking stops once the push carries none (the push is the one source)", async () => {
+  const out = { json: withTpl };
+  const { s, reports } = rig(out);
   s.request();
   await sleep(80);
-  assert.ok(reports.filter((r) => Object.keys(r).join() === "fm_hd").length >= 2, "idle with a template: ticking");
-  state.name = "blocked";
+  assert.ok(reports.filter((r) => Object.keys(r).join() === "fm_hd").length >= 2, "template: ticking");
+  out.json = noTpl; // e.g. the session now waits for the owner
+  s.request();
   await sleep(30);
   const n = reports.length;
   await sleep(80);
-  assert.equal(reports.length, n, "blocked: no tick");
+  assert.equal(reports.length, n, "no template: no tick");
   s.stop();
 });

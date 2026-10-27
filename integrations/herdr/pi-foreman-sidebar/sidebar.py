@@ -87,10 +87,10 @@ SPIN_MARK = "\ue000"
 SYMBOLS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "config", "symbols.json")
 AUX_FALLBACK = {"review": "◎", "agent": "◆", "task": "⚙", "wait": "◷", "ask": "?", "recent": "✓", "working": "⏳",
                 "waiting": "⏸", "blocked": "✋", "done": "✓", "lost": "✗", "waiting-owner": "✋",
-                "waiting-external": "↻", "idle": "⏸",
+                "waiting-external": "↻", "idle": "⏸", "needs-you": "❓",
                 "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌"}
 # The static state glyphs that, with the spinner frames, set the width of the header's state slot.
-STATE_KEYS = ("working", "waiting", "blocked", "done", "lost", "waiting-owner", "waiting-external", "idle")
+STATE_KEYS = ("working", "waiting", "blocked", "done", "lost", "waiting-owner", "waiting-external", "idle", "needs-you")
 REVIEW_ROLES = ("reviewer", "senior-reviewer")
 SPINNER_FALLBACK = ("⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷")
 SYMBOL_SETS = ("unicode", "emoji", "nerd", "ascii")
@@ -401,13 +401,22 @@ def _reason(node, joins):
     return "wait" if waits else None
 
 
+def _busy(node, joins):
+    """The session itself has work going besides its turn: a reason (child run, task, wait) or a live child
+    session, with or without its own pane row."""
+    return bool(_reason(node, joins)) or any(
+        k.get("kind") == "session" and _live_kid(k) for k in node.get("children") or [])
+
+
 def _state_cell(node, joins, aux):
-    """(static cell, ticking cell or None) of a header's state slot, before padding. Sym `working`,
-    `waiting-external` and `idle` with a reason animate: the ticking cell is `SPIN_MARK` alone. The static
+    """(static cell, ticking cell or None) of a header's state slot, before padding. The spinner means
+    something in this session is still active: sym `working`, or `waiting-external` / `idle` while it has
+    work of its own (`_busy`). The ticking cell is `SPIN_MARK` alone. `needs-you`, `blocked`, `done` and
+    `lost` never tick, and with nothing active the cell is the still state glyph (`⏸`, `↻`). The static
     cell (daemon-published pane, spinner off) is the state glyph. The reason icon lives on the detail
     rows only, so the slot holds one glyph and the label column is the same in every row."""
     sym = node.get("sym")
-    if not (sym in ("working", "waiting-external") or (sym == "idle" and _reason(node, joins))):
+    if not (sym == "working" or (sym in ("waiting-external", "idle") and _busy(node, joins))):
         return node.get("glyph") or "", None
     return node.get("glyph") or aux.get(sym) or "", SPIN_MARK
 
@@ -652,8 +661,8 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
     session publishes the rest). `layout` ({key: {pre, cont}}) and `tree`
     ({key: {P, conn, own}}) place a root row at a tree position computed elsewhere
     (legacy prefixes and the new rows); `layout_out` and `tree_out` collect every
-    row's. `tpl_out` collects, per pane of an animated session (working, waiting on something external,
-    idle with a reason), the fm_hd header with its state slot as `{spin}`.
+    row's. `tpl_out` collects, per pane of an animated session (working, or waiting or idle while it has
+    work of its own: see `_state_cell`), the fm_hd header with its state slot as `{spin}`.
     """
     if joins is None:
         joins = {}
@@ -764,6 +773,8 @@ def _norm(path):
 def session_names(agent_session, sid):
     """Whether Herdr's agent_session (a session file path) names exactly session `sid`: the file's basename without
     `.jsonl`, or the id after its last `_` (`<timestamp>_<id>.jsonl`). `s-1` does not match `s-10.jsonl`."""
+    if isinstance(agent_session, dict):  # `herdr pane list` reports {kind, source, value}
+        agent_session = agent_session.get("value")
     if not isinstance(agent_session, str) or not sid:
         return False
     base = re.split(r"[\\/]", agent_session)[-1]
@@ -821,6 +832,13 @@ def join(nodes, agents, procinfo=None):
         joins[winner["key"]] = pane
         claimed.add(pane)
     pi_panes = [a for a in agents or [] if a.get("agent") == "pi" and a.get("pane_id")]
+    # Pane ids and pids change when Herdr restarts; the Pi session file Herdr reports for a pane still names the session.
+    for n in sorted((m for m in sessions if m["key"] not in joins and m.get("sid")), key=_rank):
+        hits = [a["pane_id"] for a in pi_panes if a["pane_id"] not in claimed
+                and session_names(a.get("agent_session"), n["sid"])]
+        if len(hits) == 1:
+            joins[n["key"]] = hits[0]
+            claimed.add(hits[0])
     rest = [n for n in sessions if n["key"] not in joins and _norm(n.get("cwd"))
             and n.get("state") not in NOT_SELF_STATES]
     for n in rest:

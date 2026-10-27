@@ -3,9 +3,10 @@
 // trailing push when requests arrived meanwhile); a 5 s timer keeps the 15 s token TTL alive. With a socket
 // reporter the push runs as `push --json` and this file sends `pane.report_metadata` itself (only when the tokens
 // changed, or after 10 s), then writes the stamp; a failed report falls back to a plain `push` for that cycle.
-// While the session may tick (live state neither blocked nor done, `ui.spinner` not false, and Python's template
-// carries `{spin}`: working, waiting-external, idle with a reason) a 250 ms timer sends only `fm_hd` with the current
-// spinner frame in place of `{spin}`. session_shutdown stops the timers and runs `push --final` (the daemon takes the keys
+// The push is the one source of state and spinner: while `ui.spinner` is not false and the last push carried a
+// `{spin}` template (Python decides: the session works or has background work of its own, and no dialog or ask
+// waits for the owner) a 250 ms timer sends only `fm_hd` with the current spinner frame in place of `{spin}`. When
+// the ticking stops the static `fm_hd` is sent again, so no frozen frame stays in the sidebar. session_shutdown stops the timers and runs `push --final` (the daemon takes the keys
 // over). Only with HERDR_ENV=1, HERDR_PANE_ID, mode tui, a Python interpreter, the sidebar.py file and a
 // LiveState for the session.
 import { execFile } from "node:child_process";
@@ -103,8 +104,6 @@ export interface SidebarDeps {
   writeStamp?: (file: string, pane: string) => void;
   /** `ui.spinner` (false = static glyphs; default on). */
   spinner?: boolean;
-  /** The session may tick now (see `sidebarMayTick`); the `{spin}` template still decides whether it does. */
-  working?: () => boolean;
   /** Spinner frames (default: the unicode set's). */
   frames?: readonly string[];
   /** Clock for tests (epoch ms). */
@@ -130,6 +129,8 @@ export class SidebarLive {
   private tpl: string | null = null;
   private lastSent: string | null = null;
   private lastSentAt = 0;
+  /** A spinner frame is what the sidebar shows in `fm_hd` now (the static header must be sent to replace it). */
+  private framed = false;
 
   constructor(d: SidebarDeps) {
     this.d = d;
@@ -206,7 +207,7 @@ export class SidebarLive {
   }
 
   private animating(): boolean {
-    return this.d.spinner !== false && this.tpl !== null && (this.d.working?.() ?? false);
+    return this.d.spinner !== false && this.tpl !== null;
   }
 
   /** `push --json` output -> socket report -> stamp. Anything unusable or a failed report falls back to a plain push. */
@@ -223,8 +224,9 @@ export class SidebarLive {
     this.tpl = typeof j.fm_hd_tpl === "string" ? j.fm_hd_tpl : null;
     const raw = JSON.stringify(tokens);
     const t = this.now();
-    if (raw !== this.lastSent || t - this.lastSentAt >= REPUSH_MS) {
-      const sent = this.animating() && this.tpl ? { ...tokens, fm_hd: this.tpl.replace("{spin}", this.frame()) } : tokens;
+    if (raw !== this.lastSent || t - this.lastSentAt >= REPUSH_MS || (this.framed && !this.animating())) {
+      const ticks = this.animating() && !!this.tpl;
+      const sent = ticks ? { ...tokens, fm_hd: this.tpl!.replace("{spin}", this.frame()) } : tokens;
       try {
         await this.d.report!(sent);
       } catch {
@@ -232,6 +234,7 @@ export class SidebarLive {
         return this.fallback();
       }
       if (this.stopped) return; // the final push owns the row now
+      this.framed = ticks;
       this.lastSent = raw;
       this.lastSentAt = t;
     }
@@ -265,6 +268,7 @@ export class SidebarLive {
     if (this.spin) return;
     this.spin = setInterval(() => {
       if (this.stopped || !this.animating() || !this.tpl) return this.stopSpin();
+      this.framed = true;
       this.d.report!({ fm_hd: this.tpl.replace("{spin}", this.frame()) }).catch(() => {});
     }, this.d.tickMs ?? SPINNER_MS);
     this.spin.unref?.();
@@ -325,9 +329,6 @@ export interface SidebarStart {
   live: { onChange: (cb: () => void) => () => void; flush: () => void; stop: () => void; stateName: LiveStateName } | null;
 }
 
-/** Live states that never tick whatever the template says; Python's `fm_hd_tpl` picks the rest. */
-export const sidebarMayTick = (state: LiveStateName): boolean => state !== "blocked" && state !== "done";
-
 /** Wire the session-owned sidebar row; `start(ctx, cfg)` runs at the end of session_start, shutdown stops it. */
 export function installSidebarLive(pi: Pick<ExtensionAPI, "on">, opts: { env?: Env } = {}): { start: (ctx: ExtensionContext, cfg: SidebarStart) => void } {
   const env = opts.env ?? process.env;
@@ -354,7 +355,6 @@ export function installSidebarLive(pi: Pick<ExtensionAPI, "on">, opts: { env?: E
       push: (args, done) => execQuiet(python, ["-E", "-s", script, ...args], 10_000, done),
       report: (tokens) => reportMetadata(socketPath(env), { pane_id: env.HERDR_PANE_ID!.trim(), source: SIDEBAR_SOURCE, tokens, ttl_ms: TTL_MS }),
       spinner: cfg.spinner !== false,
-      working: () => sidebarMayTick(live.stateName),
       frames: symbolSet(cfg.symbols).spinner,
       flush: () => live.flush(),
       finish: () => live.stop(),
