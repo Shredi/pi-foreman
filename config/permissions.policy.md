@@ -27,7 +27,7 @@ Precedence: floors, then `ask`, then `deny`, then `allow`. No matching entry is 
 - id: gh-pr-edit-own
   `gh pr edit` only for the session's own pull request, the one whose head is the session's current branch (the ask payload carries `branch` and `head`). Allow only when the PR number, URL or branch named in the command is that PR (or the command names none and gh resolves the current branch). Deny `gh pr edit` of any other PR, and deny when you cannot tell which PR it targets.
 - id: merge-attributes-file
-  `git -c core.attributesFile=<path> merge ...`, only for the `merge` subcommand and only when `<path>` lies under the repository's `.workflow/` directory (worktree or main checkout). This one use of `-c core.attributesFile` is allowed despite tool-config-edit. Deny the same `-c` on any other subcommand, with a path outside `.workflow/`, or with a path you cannot resolve; any other `-c` key stays under tool-config-edit.
+  `git -c core.attributesFile=<path> merge ...`, only for the `merge` subcommand and only when `<path>` lies under the repository's `.workflow/` directory (worktree or main checkout). This one use of `-c core.attributesFile` is allowed despite tool-config-edit. The same `-c` on any other subcommand or with a path outside `.workflow/` (or one that cannot be resolved) is already a floor deny (a merge driver runs arbitrary commands) and never reaches this review; any other `-c` key stays under tool-config-edit.
 
 ## deny
 

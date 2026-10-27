@@ -67,6 +67,9 @@ export async function liveEval(cases: EvalCase[], registry: RegistryLike, model:
   try {
     for (const d of [path.join(wt, "src"), scr, path.join(parent, ".workflow", "scratch"), path.join(agent, "pi-foreman", "state"), install, path.join(other, "src")]) fs.mkdirSync(d, { recursive: true });
     fs.writeFileSync(path.join(wt, "package.json"), JSON.stringify({ scripts: { test: "node --test", build: "tsc" } }));
+    // a linked worktree of the parent checkout (the attributes-file floor accepts the main checkout's .workflow/)
+    fs.mkdirSync(path.join(parent, ".git", "worktrees", "wt"), { recursive: true });
+    fs.writeFileSync(path.join(wt, ".git"), `gitdir: ${path.join(parent, ".git", "worktrees", "wt")}\n`);
     const subst = (c: EvalCase): Record<string, unknown> => {
       const w = c.platform === "win32";
       const map: Record<string, string> = w

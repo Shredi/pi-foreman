@@ -198,6 +198,38 @@ function pushFloor(call: GitCall, env: FloorEnv): FloorHit | null {
   return null;
 }
 
+/** The repo's work tree root above `cwd` and, for a linked worktree, the main checkout (lexical fallback: `cwd` itself). */
+function repoRoots(cwd: string): string[] {
+  let cur = cwd;
+  for (let n = 0; n < 64; n++) {
+    const dotGit = path.join(cur, ".git");
+    try {
+      const st = fs.statSync(dotGit);
+      if (st.isDirectory()) return [cur];
+      const m = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dotGit, "utf8"));
+      const main = m ? /^(.*)[\\/]\.git[\\/]worktrees[\\/]/.exec(m[1].trim())?.[1] : undefined;
+      return main ? [cur, main] : [cur];
+    } catch {
+      const parent = path.dirname(cur);
+      if (parent === cur) break;
+      cur = parent;
+    }
+  }
+  return [cwd];
+}
+
+/** `git -c core.attributesFile=<path> <verb>`: only `merge` with the file under the repo's .workflow/ goes on to the review (a merge driver runs arbitrary commands). */
+function attributesFloor(call: GitCall, value: string, env: FloorEnv): FloorHit | null {
+  const alt = "Keep the attributes file under the repo's .workflow/ and use `git -c core.attributesFile=<repo>/.workflow/<file> merge ...`.";
+  if (call.sub !== "merge") return hit("git-attributes-file", `\`-c core.attributesFile\` with \`git ${call.sub || "?"}\` can name a merge or filter driver that runs arbitrary commands; only merge is allowed. ${alt}`);
+  const cwd = call.cwd ?? env.cwd;
+  const abs = isWord(value) ? resolveWord(value, cwd, env) : null;
+  const real = abs ? (realDeep(abs) ?? abs) : null;
+  const under = real !== null && repoRoots(cwd).some((r) => insideRoot(real, path.join(realDeep(r) ?? r, ".workflow"), env.platform));
+  if (!under) return hit("git-attributes-file", `The attributes file '${value}' is not under the repo's .workflow/ (or cannot be resolved); a merge driver it names runs arbitrary commands. ${alt}`);
+  return null;
+}
+
 /** All git floors of one segment: config writes in every form, remote changes, the push floors. */
 function gitFloors(seg: ShellSegment, env: FloorEnv): FloorHit | null {
   const call = gitCall(seg, env);
@@ -205,6 +237,10 @@ function gitFloors(seg: ShellSegment, env: FloorEnv): FloorHit | null {
   for (const o of call.overrides) {
     const key = keyOfOverride(o);
     if (!isWord(key) || floorKey(key)) return hit("git-config", `Setting '${key || "?"}' with -c or --config-env changes where code is fetched or pushed, which program git runs or which credentials it uses. Run git without it.`);
+    if (key.trim().toLowerCase() === "core.attributesfile") {
+      const h = attributesFloor(call, o.slice(o.indexOf("=") + 1), env);
+      if (h) return h;
+    }
   }
   if (call.sub === "config") return configFloor(call);
   if (call.sub === "remote") return remoteFloor(call);
