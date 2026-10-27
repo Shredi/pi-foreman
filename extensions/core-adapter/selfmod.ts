@@ -18,6 +18,8 @@ const HITS = {
   "selfmod-project-pi": "this writes the project's .pi/ directory outside .pi/scratch and .pi/tasks, which holds Pi's project configuration",
   "selfmod-agent-settings": "this writes the Pi agent settings.json, which changes how Pi and its extensions run",
   "selfmod-state": "this writes pi-foreman session state, which other sessions and the foreman read as live data",
+  "selfmod-session-dir": "this moves or removes the Pi session dir or one of its ancestors up to the agent sessions dir, which breaks the running session's file",
+  "selfmod-identity": "this writes a handoff's live.json, the session identity file the adapter keeps",
   "selfmod-state-read": "this reads pi-foreman session state of other sessions, which a child does not read",
 } as const;
 type SelfmodRule = keyof typeof HITS;
@@ -41,6 +43,19 @@ function sameFile(a: string, b: string): boolean {
   }
 }
 
+/** The session dir and each ancestor up to a sessions dir (inclusive); only the dir itself when it lies elsewhere. */
+function sessionDirChain(platform: string, dirs: string[], stops: string[]): string[] {
+  const x = platform === "win32" ? path.win32 : path.posix;
+  const out = new Set(dirs);
+  for (const d of dirs) {
+    for (const stop of stops) {
+      if (!under(platform, stop, d)) continue;
+      for (let p = d; p !== stop && p !== x.dirname(p);) out.add((p = x.dirname(p)));
+    }
+  }
+  return [...out];
+}
+
 function classify(abs: string, dir: Dir, cwd: string, r: GateRoots, platform: string): SelfmodHit | undefined {
   const real = r.realpath ?? (platform === process.platform ? realDefault : () => null);
   const x = platform === "win32" ? path.win32 : path.posix;
@@ -50,10 +65,17 @@ function classify(abs: string, dir: Dir, cwd: string, r: GateRoots, platform: st
   const agentSettings = agent.map((a) => x.join(a, "settings.json"));
   const states = agent.map((a) => x.join(a, "pi-foreman", "state"));
   const own = [...r.handoffs, ...r.scratch].flatMap((d) => spellings(platform, d, real));
+  const handoffRoots = agent.map((a) => x.join(a, "pi-foreman", "handoffs"));
+  const sessionDirs = r.sessionDir ? sessionDirChain(platform, spellings(platform, r.sessionDir, real), agent.map((a) => x.join(a, "sessions"))) : [];
   for (const c of spellings(platform, abs, real)) {
     if (dir === "read") {
       if (r.child && states.some((s) => under(platform, s, c)) && !own.some((d) => under(platform, d, c))) return hit("selfmod-state-read");
       continue;
+    }
+    if (sessionDirs.includes(c)) return hit("selfmod-session-dir");
+    for (const h of handoffRoots) {
+      const rel = under(platform, h, c) ? x.relative(h, c).split(/[\\/]/) : [];
+      if (rel.length === 2 && rel[1] === "live.json") return hit("selfmod-identity");
     }
     if (settings.includes(c)) return hit("selfmod-project-settings");
     if (agentSettings.includes(c)) return hit("selfmod-agent-settings");

@@ -28,6 +28,8 @@ export interface GateRoots {
   tmpAccess: boolean;
   /** The Pi agent dir (settings.json, pi-foreman/state); the self-modification rules read it. */
   agentDir?: string;
+  /** The dir of the session's own Pi session file (moving it, or an ancestor up to `<agentDir>/sessions`, is a self-modification ask). */
+  sessionDir?: string;
   /** Injectable for tests: realpath of an existing path, null when it does not exist. */
   realpath?: (p: string) => string | null;
 }

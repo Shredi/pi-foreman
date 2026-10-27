@@ -194,6 +194,16 @@ const CORE_DIR = path.join(PKG_ROOT, "core");
 const BIN_DIR = path.join(PKG_ROOT, "bin");
 
 /** Launch refusal trace fields: the roles launched and the call as `subagent <roles>`. */
+/** The dir of the session's own Pi session file, or undefined (in-memory session, no file). */
+function sessionDirOf(ctx: ExtensionContext): string | undefined {
+  try {
+    const f = ctx.sessionManager.getSessionFile();
+    return typeof f === "string" && f && path.isAbsolute(f) ? path.dirname(f) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function launchDeny(input: Record<string, unknown>): { role: string; command: string } {
   const roles = subagentAgents(input).join("+");
   return { role: roles, command: `subagent ${roles}`.trim() };
@@ -641,14 +651,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const computeOwned = (npmRoot: string | null): OwnedRoots => ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot });
     const owned = computeOwned(null);
     // The Pi session files are written by the adapter only (pi.appendEntry): the current session's dir gets a write deny (permoverlay.ts sessionDir).
-    const sessionDir = (() => {
-      try {
-        const f = ctx.sessionManager.getSessionFile();
-        return typeof f === "string" && f && path.isAbsolute(f) ? path.dirname(f) : undefined;
-      } catch {
-        return undefined;
-      }
-    })();
+    const sessionDir = sessionDirOf(ctx);
     const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o, ((v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []))(get(config.config, "safety.policy.files")), sessionDir) : null);
     const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), busy: () => idleBusy(s, s.idleCtx), piIdleMode: () => piCacheWarmingIdle(), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, aboveFloor: () => idleAboveFloor(s) });
     let lastShared: ReturnType<PrBot["read"]> = null;
@@ -2008,7 +2011,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const manifestCtx = (s: Session, cwd: string) => ({ cwd, stateDir: path.join(s.agentDir, "pi-foreman", "state"), platform });
 
   /** The session's roots for the gate's path rules and defaults (pathrules.ts GateRoots). */
-  async function gateRootsOf(s: Session, cwd: string): Promise<GateRoots> {
+  async function gateRootsOf(s: Session, cwd: string, sessionDir: string | undefined): Promise<GateRoots> {
     const state = path.join(s.agentDir, "pi-foreman", "state");
     const rounds = roundWorktrees(state, s.usage.line.foremanSession, platform);
     const pi = await piRootsOf(s);
@@ -2025,6 +2028,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
       child: s.isChild,
       agentDir: s.agentDir,
+      ...(sessionDir ? { sessionDir } : {}),
       role: s.isChild ? s.usage.line.role : "foreman",
       tmpAccess: get(s.config.config, "gate.tmpAccess") !== false,
     };
@@ -2078,10 +2082,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return { block: true as const, reason: `pi-foreman: ${scope}.` };
       }
     }
-    const roots = gs ? await gateRootsOf(gs, ctx.cwd) : undefined;
+    const roots = gs ? await gateRootsOf(gs, ctx.cwd, sessionDirOf(ctx)) : undefined;
     const configured = ((v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []))(gs ? get(gs.config.config, "safety.git.protectedBranches") : undefined);
     const r = gateDecide(event.toolName, event.input, ctx.cwd, {
-      env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), pkgRoot: PKG_ROOT, policyFiles: gatePolicyFiles(gs), protectedBranches: configured, ...(gs?.isChild ? { child: true } : {}) }),
+      env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), ...(roots?.sessionDir ? { sessionDir: roots.sessionDir } : {}), pkgRoot: PKG_ROOT, policyFiles: gatePolicyFiles(gs), protectedBranches: configured, ...(gs?.isChild ? { child: true } : {}) }),
       ...(roots ? { roots: () => roots, facts: { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
     });
     const role = gs?.isChild ? gs.usage.line.role : "foreman";
