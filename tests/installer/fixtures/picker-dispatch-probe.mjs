@@ -1,9 +1,9 @@
 // Runs setup.mjs's picker dispatch with a terminal and an import that fails; stdin is a pipe, so the readline menu answers.
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const { runPicker } = await import(path.join(root, "setup.mjs"));
+const { runPicker } = await import(pathToFileURL(path.join(root, "setup.mjs")).href);
 const ctx = { currentText: null, currentConfig: {}, recorded: null, installed: [], project: false };
 const r = await runPicker(ctx, {
   tty: true,

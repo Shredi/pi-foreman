@@ -32,23 +32,23 @@ SYMS = {
                 "cold": "❄", "downshift": "↓",
                 "waiting-owner": "\u270b", "waiting-external": "\u21bb", "idle": "\u23f8",
                 "spinner": BRAILLE, "review": "◎", "agent": "◆", "task": "⚙", "wait": "◷", "ask": "?", "recent": "✓",
-                "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌"},
+                "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌", "rule": "─"},
     "emoji": {"working": "⏳", "waiting": "⏸️", "asking": "❓", "blocked": "✋", "done": "✅", "lost": "❌",
               "keepalive": "♨️", "cold": "❄️", "downshift": "⬇️",
               "waiting-owner": "✋", "waiting-external": "🔄", "idle": "⏸️",
               "spinner": BRAILLE, "review": "🔍", "agent": "🤖", "task": "⚙️", "wait": "⏱️", "ask": "❓", "recent": "✅",
-              "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌"},
+              "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌", "rule": "─"},
     "nerd": {"working": "\uf252", "waiting": "\uf04c", "asking": "\uf128", "blocked": "\uf256",
              "done": "\uf00c", "lost": "\uf00d", "keepalive": "\uf06d",
              "cold": "\uf2dc", "downshift": "\uf063",
              "waiting-owner": "\uf256", "waiting-external": "\uf017", "idle": "\uf04c",
              "spinner": BRAILLE, "review": "\uf002", "agent": "\uf544", "task": "\uf013", "wait": "\uf017", "ask": "\uf128",
              "recent": "\uf00c",
-             "pr-fail": "\uf111", "pr-run": "\uf192", "pr-ok": "\uf10c", "pr-none": "\uf1db"},
+             "pr-fail": "\uf111", "pr-run": "\uf192", "pr-ok": "\uf10c", "pr-none": "\uf1db", "rule": "\u2500"},
     "ascii": {"working": "*", "waiting": ".", "asking": "?", "blocked": "#", "done": "+", "lost": "x",
               "keepalive": "^", "cold": "_", "downshift": "v", "waiting-owner": "#", "waiting-external": "@", "idle": ".",
               "spinner": ["|", "/", "-", "\\"], "review": "&", "agent": ">", "task": "=", "wait": "~", "ask": "?", "recent": "+",
-              "pr-fail": "x", "pr-run": "*", "pr-ok": "o", "pr-none": "."},
+              "pr-fail": "x", "pr-run": "*", "pr-ok": "o", "pr-none": ".", "rule": "-"},
 }
 # The glyphs a sidebar state shows (the keys that are not the footer's, a spinner or an activity mark).
 STATE_KEYS = ("working", "waiting", "asking", "blocked", "done", "lost", "waiting-owner", "waiting-external", "idle")
@@ -503,10 +503,12 @@ class SnippetTest(unittest.TestCase):
                     self.assertTrue(all(c.get("dim") for row in rows[1:4] + rows[5:] for c in row))
                     continue
                 self.assertEqual(hd["fg"], "#5cb85c")
-                self.assertEqual(len(contains), 10)
+                self.assertEqual(len(contains), 6)
                 self.assertEqual(hd["rules"][0], {"contains": "!", "fg": "#d9534f", "bold": True})
-                # a rule for every state and reason glyph that needs a colour
-                wanted = {g[k] for k in ("blocked", "asking", "review", "agent", "task", "wait", "lost", "done", "idle")}
+                # a rule for every state glyph that needs a colour, none for a reason icon (not in the header)
+                wanted = {g[k] for k in ("blocked", "asking", "lost", "done", "idle")}
+                for k in ("review", "agent", "task", "wait"):
+                    self.assertTrue(g[k] in wanted or g[k] not in contains, (name, k))
                 self.assertEqual(set(contains[1:]), wanted)
                 for frame in g["spinner"]:
                     self.assertFalse(any(c in frame for c in contains), frame)
@@ -527,7 +529,8 @@ class SnippetTest(unittest.TestCase):
         out = configure("--symbols", "nerd")
         self.assertEqual(out, sidebar.snippet_for("nerd"))
         self.assertIn("# Glyph set of this snippet: nerd.", out)
-        self.assertIn('contains = "\\uf002"', out)
+        self.assertIn('contains = "\\uf544"', out)   # the agents row rule
+        self.assertNotIn('contains = "\\uf002"', out)   # the review icon is no header rule any more
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, True)
         with open(os.path.join(tmp, "foreman.json"), "w", encoding="utf-8") as fh:
@@ -995,11 +998,11 @@ def mock_snapshot(reverse=False):
 
 
 MOCK_40 = """\
-  ⠹◎ pi-foreman                   12s
+  ⠹  pi-foreman                   12s
   │  ◆ builder sonnet-5.5 ×2 · revie…
   │  ⚙ pr #12 · npm test 3m
   │  ↑287k ↓7.4k · $3.32 · ✓3
-  ├─ ⠼◎ r31-sidebar                6m
+  ├─ ⠼  r31-sidebar                6m
   │  │  ◆ reviewer opus-5.5
   │  │  $0.47 · ✓1
   │  └─ ✋ r31-perms               1m
@@ -1013,11 +1016,11 @@ MOCK_40 = """\
 """.splitlines()
 
 MOCK_26 = """\
-  ⠹◎ pi-foreman     12s
+  ⠹  pi-foreman     12s
   │  ◆ builder sonnet-…
   │  ⚙ pr #12 · npm te…
   │  $3.32 · ✓3
-  ├─ ⠼◎ r31-sidebar  6m
+  ├─ ⠼  r31-sidebar  6m
   │  │  ◆ reviewer opu…
   │  │  $0.47 · ✓1
   │  └─ ✋ r31-perms 1m
@@ -1078,7 +1081,7 @@ class TreeSnapshotTest(unittest.TestCase):
         n = tnode("s", "a-very-long-session-label", "⠼", age=125)
         n["tasks"] = [{"label": "task%d" % i, "ageSeconds": 60, "id": str(i)} for i in range(5)]
         out = sidebar.compose({"roots": [n]}, 30)["P-s"]
-        self.assertEqual(out["fm_hd"].replace(B, " "), "  ⠼⚙ a-very-long-sessio… 2m")   # budget 27; a task shows its icon in the slot
+        self.assertEqual(out["fm_hd"].replace(B, " "), "  ⠼  a-very-long-sessio… 2m")   # budget 27; a task shows its icon on the detail row only
         self.assertTrue(out["fm_a2"].endswith("… +2"), out["fm_a2"])
         self.assertEqual(sidebar.cell_width(out["fm_a2"]), 25)   # budget 27 less Herdr's row indent
         # nested two deep at width 18: under four cells of label next to the age, so the age goes
@@ -1122,7 +1125,7 @@ class TreeSnapshotTest(unittest.TestCase):
         self.assertEqual(tree["P-root"] if "P-root" in tree else tree["root"], {"P": "", "conn": "", "own": ""})
         self.assertEqual(tree["perms"], {"P": sidebar.CONT_MID, "conn": sidebar.CONN_LAST, "own": sidebar.CONT_LAST})
         self.assertEqual(sorted(tpl), ["P-root", "P-sidebar"])   # the two working sessions
-        self.assertEqual(tpl["P-root"].replace(B, " "), "  {spin}◎ pi-foreman                   12s")
+        self.assertEqual(tpl["P-root"].replace(B, " "), "  {spin}  pi-foreman                   12s")
 
     def test_continuations_share_the_column_of_the_connector_or_glyph_they_continue(self):
         # Herdr draws the rows below a header DETAIL_INDENT cells right of it; `rendered` does the same
@@ -1284,16 +1287,16 @@ class CellWidthTest(unittest.TestCase):
     WIDTHS = {
         "unicode": {"working": 2, "waiting": 1, "asking": 1, "blocked": 2, "done": 1, "lost": 1, "keepalive": 1,
                     "cold": 1, "downshift": 1, "waiting-owner": 2, "waiting-external": 1, "idle": 1, "review": 1, "agent": 1, "task": 1, "wait": 1,
-                    "ask": 1, "recent": 1, "pr-fail": 1, "pr-run": 1, "pr-ok": 1, "pr-none": 1},
+                    "ask": 1, "recent": 1, "pr-fail": 1, "pr-run": 1, "pr-ok": 1, "pr-none": 1, "rule": 1},
         "emoji": {"working": 2, "waiting": 2, "asking": 2, "blocked": 2, "done": 2, "lost": 2, "keepalive": 2,
                   "cold": 2, "downshift": 2, "waiting-owner": 2, "waiting-external": 2, "idle": 2, "review": 2, "agent": 2, "task": 2, "wait": 2,
-                  "ask": 2, "recent": 2, "pr-fail": 1, "pr-run": 1, "pr-ok": 1, "pr-none": 1},
+                  "ask": 2, "recent": 2, "pr-fail": 1, "pr-run": 1, "pr-ok": 1, "pr-none": 1, "rule": 1},
         "nerd": dict.fromkeys(("working", "waiting", "asking", "blocked", "done", "lost", "keepalive", "cold", "downshift",
                                "waiting-owner", "waiting-external", "idle", "review", "agent", "task", "wait", "ask", "recent",
-                               "pr-fail", "pr-run", "pr-ok", "pr-none"), 1),
+                               "pr-fail", "pr-run", "pr-ok", "pr-none", "rule"), 1),
         "ascii": dict.fromkeys(("working", "waiting", "asking", "blocked", "done", "lost", "keepalive", "cold", "downshift",
                                 "waiting-owner", "waiting-external", "idle", "review", "agent", "task", "wait", "ask", "recent",
-                                "pr-fail", "pr-run", "pr-ok", "pr-none"), 1),
+                                "pr-fail", "pr-run", "pr-ok", "pr-none", "rule"), 1),
     }
 
     def test_every_glyph_of_symbols_json_has_its_pinned_width(self):
@@ -2024,7 +2027,8 @@ class MixedSourcesTest(PushWorld):
 
 
 class StateCellTest(unittest.TestCase):
-    """Round 61: the two-part state cell (spinner + reason icon) of fm_hd."""
+    """Round 61, changed in round 66: the state cell of fm_hd holds the state glyph or spinner only; the
+    reason icon lives on the detail rows."""
     REASONS = {
         "none": {},
         "ask": {"children": lambda: [trun("r", "builder", state="ask", sym="asking")]},
@@ -2102,8 +2106,8 @@ class StateCellTest(unittest.TestCase):
                         animated = sym in ("working", "waiting-external") or (sym == "idle" and reason != "none")
                         self.assertEqual(tpl is not None, animated)
                         if animated:
-                            icon = icons[reason] if reason != "none" else ""
-                            self.assertTrue(tpl.startswith("  {spin}" + icon), tpl)
+                            self.assertTrue(tpl.startswith("  {spin}"), tpl)
+                            self.assertNotIn(icons[reason] if reason != "none" else "\0", tpl.split(" label")[0])
 
     def test_static_states_keep_their_glyph_whatever_the_reason(self):
         for sym in ("waiting-owner", "blocked", "waiting", "done", "lost"):
@@ -2115,15 +2119,10 @@ class StateCellTest(unittest.TestCase):
         self.assertEqual((hd.startswith("  ⏸"), tpl), (True, None))
 
     def test_non_ticking_header_per_set(self):
-        want = {
-            "unicode": {"working": "⏳", "waiting-external": "↻◷", "idle": "⏸◷"},   # glyph + icon when both fit 2 cells
-            "emoji": {"working": "⏳", "waiting-external": "🔄", "idle": "⏱️"},       # 3 cells: glyph alone; icon alone for idle
-            "nerd": {"working": "\uf252\uf017", "waiting-external": "\uf017\uf017", "idle": "\uf04c\uf017"},
-            "ascii": {"working": "*~", "waiting-external": "@~", "idle": ".~"},
-        }
-        for symbols, cases in want.items():
-            for sym, cell in cases.items():
+        for symbols in SYMS:
+            for sym in ("working", "waiting-external", "idle"):
                 with self.subTest(symbols=symbols, sym=sym):
+                    cell = SYMS[symbols][sym]   # the state glyph alone, whatever the reason
                     hd, _ = self.header(sym, "wait", symbols)
                     pad = sidebar.slot_width(sidebar.aux_symbols(symbols)) - sidebar.cell_width(cell)
                     self.assertTrue(hd.startswith("  " + cell + " " * pad + " label"), hd)
@@ -2134,7 +2133,7 @@ class StateCellTest(unittest.TestCase):
 
     def test_slot_width_per_set(self):
         self.assertEqual({n: sidebar.slot_width(sidebar.aux_symbols(n)) for n in SYMS},
-                         {"unicode": 2, "emoji": 3, "nerd": 2, "ascii": 2})
+                         {"unicode": 2, "emoji": 2, "nerd": 1, "ascii": 1})
 
     def test_label_column_never_moves_within_a_set(self):
         for symbols in SYMS:
@@ -2149,6 +2148,49 @@ class StateCellTest(unittest.TestCase):
                         with self.subTest(symbols=symbols, sym=sym, reason=reason, text=text):
                             self.assertEqual(sidebar.cell_width(text[:text.index(" label") + 1]),
                                              sidebar.DETAIL_INDENT + slot + 1, text)   # indent, slot, space
+
+    def test_header_never_holds_a_reason_icon_but_the_detail_rows_do(self):
+        for symbols in SYMS:
+            aux = sidebar.aux_symbols(symbols)
+            states = {aux[k] for k in sidebar.STATE_KEYS} | set(aux["spinner"]) | {SYMS[symbols]["asking"]}
+            for sym in self.SYMS_:
+                for reason in self.REASONS:
+                    if reason == "none":
+                        continue
+                    icon = aux[reason]
+                    snap = {"symbols": symbols, "roots": [self.session(sym, reason, symbols)]}
+                    tpl = {}
+                    out = sidebar.compose(snap, 40, tpl_out=tpl)["P-s"]
+                    with self.subTest(symbols=symbols, sym=sym, reason=reason):
+                        for hd in (out["fm_hd"], tpl.get("P-s", "")):
+                            head = hd.split("label")[0]
+                            if icon not in states:   # a reason icon equal to a state glyph is that glyph
+                                self.assertNotIn(icon, head)
+                        shown = aux["agent"] if reason == "review" else icon   # a reviewer run is a run on a1
+                        if sym not in ("lost", "done"):   # those show no activity lines
+                            self.assertTrue(any(shown in (out[k] or "") for k in ("fm_a1", "fm_a2", "fm_a3")), out)
+
+    def test_label_starts_at_one_column_in_every_row_of_a_tree(self):
+        for symbols in SYMS:
+            g = SYMS[symbols]
+            slot = sidebar.slot_width(sidebar.aux_symbols(symbols))
+            kids = [tnode("k%d" % i, "lbl%d" % i, g[sym], sym, sym, symbols=symbols, **{k: v() if callable(v) else v
+                    for k, v in self.REASONS[reason].items()})
+                    for i, (sym, reason) in enumerate((s, r) for s in self.SYMS_ for r in self.REASONS)]
+            root = tnode("root", "lbl-root", g["working"], "working", "working", symbols=symbols, children=kids,
+                         tasks=[{"id": "t", "label": "npm test", "pid": 1, "ageSeconds": 5}])
+            snap = {"symbols": symbols, "roots": [root]}
+            tree, tpl = {}, {}
+            out = sidebar.compose(snap, 60, tree_out=tree, tpl_out=tpl)
+            self.assertGreater(len(tpl), 3)   # spinner rows with and without a reason are in the mix
+            for key, pos in tree.items():
+                pane = "P-" + key
+                for text in (out[pane]["fm_hd"], tpl.get(pane, "").replace("{spin}", g["spinner"][1])):
+                    if not text:
+                        continue
+                    with self.subTest(symbols=symbols, key=key, text=text):
+                        col = sidebar.cell_width(text[:text.index("lbl")])
+                        self.assertEqual(col, sidebar.DETAIL_INDENT + sidebar.cell_width(pos["P"] + pos["conn"]) + slot + 1)
 
     def test_pinned_widths_of_the_new_glyphs(self):
         cw = sidebar.cell_width
@@ -2167,12 +2209,13 @@ class StateCellTest(unittest.TestCase):
             self.assertEqual([l.split()[0] for l in block], list(sidebar.SAMPLE_REASONS), name)
             self.assertTrue(all("r53-sidebar" in l for l in block))
         review = next(l for l in lines if l.startswith("review"))
-        self.assertIn("⣻◎ r53-sidebar", review)   # unicode set first: one frame, then the icon
+        self.assertIn("⣻  r53-sidebar", review.replace(B, " "))   # unicode set first: one frame, no reason icon
+        self.assertNotIn("◎", review.split("r53-sidebar")[0])
         # one reason alone, a single set
         res = subprocess.run([sys.executable, str(PLUGIN / "sidebar.py"), "sample", "--reason", "task", "--dry-run",
                               "--symbols", "unicode"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn("⣻⚙ r53-sidebar", res.stdout.decode("utf-8"))
+        self.assertIn("⣻  r53-sidebar", res.stdout.decode("utf-8").replace(B, " "))
 
     def test_output_is_utf8_under_a_cp1252_console(self):
         env = dict(os.environ, PYTHONIOENCODING="cp1252")

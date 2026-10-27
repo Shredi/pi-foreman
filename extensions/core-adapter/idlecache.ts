@@ -107,6 +107,13 @@ export class IdleCache {
     return this.st;
   }
 
+  /** Read-only state for the footer's cache bar: the next Pi-sent warm is one Pi tick after the last decision (else the window start). */
+  snapshot(): { state: IdleState; windowEndAt: number; nextWarmAt: number | null } {
+    const ttl = this.deps.policy()?.ttlSeconds ?? null;
+    const next = this.st === "watching" && ttl !== null ? (this.lastDecisionAt ?? this.startedAt) + Math.min(0.9 * ttl, ttl - 10) * 1000 : null;
+    return { state: this.st, windowEndAt: this.windowEndAt, nextWarmAt: next };
+  }
+
   /** Record a turn start (Pi's idle cap counts from the last real request). */
   noteTurnStart(at: number): void {
     this.lastTurnStartAt = at;

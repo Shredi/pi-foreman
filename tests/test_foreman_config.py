@@ -315,7 +315,7 @@ class ConfigTest(unittest.TestCase):
             self.assertIsInstance(entry["tools"], list)
             self.assertEqual("codemode" in entry["tools"], role == "explorer", role)
         self.assertEqual(sub["agentOverrides"]["finalizer"]["tools"],
-                         ["read", "ls", "grep", "find", "bash", "edit"] + list(fc.PR_READ_TOOLS))
+                         ["read", "ls", "grep", "find", "bash", "edit"] + list(fc.PR_READ_TOOLS) + ["tool_search"])
         json.dumps(out)
 
     def test_children_never_get_the_intercom_tool(self):
@@ -337,7 +337,7 @@ class ConfigTest(unittest.TestCase):
         self.assertIn("foreman_ledger", fc.resolve_role(cfg, "reviewer", "p1")["tools"])
         cfg["ceremony"]["ledgerHelper"] = "off"
         self.assertEqual(fc.generate_subagents(cfg)["subagents"]["agentOverrides"]["reviewer"]["tools"],
-                         ["read", "ls", "grep", "find", "bash"] + list(fc.PR_ROLE_TOOLS["reviewer"]))
+                         ["read", "ls", "grep", "find", "bash"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search"])
 
     def test_git_pack_tools_for_bash_roles_only_when_on(self):
         self.l2({"providers": PROV, "tools": {"git": True}})
@@ -624,7 +624,11 @@ class PackageFilesTest(unittest.TestCase):
         old_pr = "Children never open PRs."
         new_pr = "Children never open PRs. The PR body carries a `## Changelog` section (one to three user-facing bullets): the finalizer drafts it at heavy tier, you draft it otherwise. PRs never edit CHANGELOG.md."
         self.assertIn(old_pr, expected)
-        self.assertEqual(render_prompt(text, knobs), expected.replace(old_wait, new_wait).replace(old_reads, new_reads).replace(old_pr, new_pr))
+        # round 68: the launch `mcp` field is named in the launch rule
+        old_launch = "`output` and `outputMode` are refused (`output_path`). Workflow scripts"
+        new_launch = "`output` and `outputMode` are refused (`output_path`). `mcp: [\"server\", \"server/tool\"]` narrows a child's MCP tools to part of its role's ceiling (single launches only; `[]` = none). Workflow scripts"
+        self.assertIn(old_launch, expected)
+        self.assertEqual(render_prompt(text, knobs), expected.replace(old_wait, new_wait).replace(old_reads, new_reads).replace(old_pr, new_pr).replace(old_launch, new_launch))
 
     def test_defaults_validate(self):
         res = fc.load_config(agent_dir=tempfile.gettempdir() + os.sep + "pf-no-such-agent-dir")

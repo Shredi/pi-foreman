@@ -14,7 +14,9 @@ export type TraceRecord = Partial<Record<TraceField, string | number | boolean |
 // The warm-policy fields (budget, presence, self-warm source, compaction trigger) are allowed the same way: the pinned list stays as it is.
 // R39 `launch_sizing` keys likewise (base rung, declared and measured sizes, risk tags, files outside the workspace).
 // R52 `point` (the runtime compaction point in `compaction_point` and `compaction` records).
-const ALLOWED = new Set<string>([...TRACE_FIELDS, "surface", "code", "attempts", "source", "spent", "cold", "share", "idleSeconds", "trigger", "tokens", "min", "base", "declaredLines", "modules", "declaredModules", "risk", "outside", "point"]);
+// R62 `remote_pull` keys `machine`, `label`, `entries` and `error` (`skipped` and `ms` are pinned fields already).
+// R72 `mcp_child_direct` keys `provider` and `servers` (`count` is a pinned field already).
+const ALLOWED = new Set<string>([...TRACE_FIELDS, "machine", "label", "entries", "error", "surface", "code", "attempts", "source", "spent", "cold", "share", "idleSeconds", "trigger", "tokens", "min", "base", "declaredLines", "modules", "declaredModules", "risk", "outside", "point", "provider", "servers"]);
 const MAX_STRING = 120;
 const MAX_COMMAND = 200; // a denied command (lane 3h)
 /** `command` is kept only on a deny trace: a refused launch, a read/recheck budget deny, an overlay deny. */
@@ -121,6 +123,10 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
     if (!ALLOWED.has(k)) continue;
     if (k === "command" && !isDeny(rec) && !fullCommand(rec)) continue; // never a command outside a deny (and the owner's flagged ask, R31c)
     if (k === "message" && (rec.event !== "tool_error" || typeof v !== "string")) continue; // free text: only a tool_error's redacted message
+    if (k === "error") {
+      if (typeof v === "string") out[k] = scrubPaths(redactCommand(v)).slice(0, MAX_STRING);
+      continue;
+    }
     if (k === "message") {
       out[k] = scrubPaths(redactCommand(String(v))).slice(0, MAX_MESSAGE);
       continue;

@@ -7,7 +7,7 @@ rows that render those tokens live in config-snippet.toml (`configure` prints
 it). Standard library only, Python 3.13+. Imports on every OS; the daemon's
 POSIX parts (flock, AF_UNIX) are reached only inside functions.
 
-Subcommands: start | stop | run | status | configure | push | sample.
+Subcommands: start | stop | run | status | configure | check | push | sample.
 
 `push` is the session's own fast path: it composes the tokens of one session
 (radar imported in-process) and reports them for its pane, then touches a push
@@ -35,6 +35,11 @@ import tempfile
 import threading
 import time
 import unicodedata
+
+try:
+    import tomllib
+except ImportError:  # Python < 3.11: the check reports that it cannot run
+    tomllib = None
 
 PLUGIN_ID = "pi-foreman.sidebar"
 SOURCE = "plugin:" + PLUGIN_ID
@@ -84,8 +89,7 @@ AUX_FALLBACK = {"review": "◎", "agent": "◆", "task": "⚙", "wait": "◷", "
                 "waiting": "⏸", "blocked": "✋", "done": "✓", "lost": "✗", "waiting-owner": "✋",
                 "waiting-external": "↻", "idle": "⏸",
                 "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌"}
-# The reasons a two-part state cell can show (first match wins), and the static state glyphs that set its width.
-REASONS = ("ask", "review", "agent", "task", "wait")
+# The static state glyphs that, with the spinner frames, set the width of the header's state slot.
 STATE_KEYS = ("working", "waiting", "blocked", "done", "lost", "waiting-owner", "waiting-external", "idle")
 REVIEW_ROLES = ("reviewer", "senior-reviewer")
 SPINNER_FALLBACK = ("⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷")
@@ -269,6 +273,12 @@ def _run_label(k, width):
     return label
 
 
+def _remote_label(k):
+    """`label@machine · state · age` of a session on another machine (no pane here)."""
+    age = fmt_age(k.get("age_s"))
+    return " · ".join(p for p in (k.get("name") or "?", k.get("state") or "", age) if p)
+
+
 _aux_cache = {}
 
 
@@ -353,9 +363,11 @@ def tree_rows(roots, joins, tree=None):
 
 
 def slot_width(aux):
-    """Cells of the state slot of one glyph set: the spinner plus the widest reason icon, or the widest
-    static state glyph, whichever is wider (2 for unicode, nerd and ascii; 3 for emoji)."""
-    return max([1 + max(cell_width(aux[k]) for k in REASONS)] + [cell_width(aux[k]) for k in STATE_KEYS])
+    """Cells of the state slot of one glyph set: the widest spinner frame or static state glyph (2 for
+    unicode and emoji, whose ⏳ ✋ ✅ ⏸️ are wide, 1 for nerd and ascii). The reason icon is not in the
+    header, so every row of a set has one label column. A VS16 glyph such as ⏸️ counts 2, as
+    `cell_width` counts it; a terminal that draws it in 1 cell shifts the label by one."""
+    return max([cell_width(f) for f in aux["spinner"]] + [cell_width(aux[k]) for k in STATE_KEYS])
 
 
 def _slot(glyph, width=2):
@@ -391,20 +403,13 @@ def _reason(node, joins):
 
 def _state_cell(node, joins, aux):
     """(static cell, ticking cell or None) of a header's state slot, before padding. Sym `working`,
-    `waiting-external` and `idle` with a reason animate: `SPIN_MARK` + the reason icon. The static cell
-    of an animated session (daemon-published pane, spinner off) is the state glyph plus the icon when both
-    fit the slot, else the glyph alone (the icon alone for an idle session, so it never looks idle)."""
+    `waiting-external` and `idle` with a reason animate: the ticking cell is `SPIN_MARK` alone. The static
+    cell (daemon-published pane, spinner off) is the state glyph. The reason icon lives on the detail
+    rows only, so the slot holds one glyph and the label column is the same in every row."""
     sym = node.get("sym")
-    reason = _reason(node, joins)
-    icon = aux[reason] if reason else ""
-    if not (sym in ("working", "waiting-external") or (sym == "idle" and reason)):
+    if not (sym in ("working", "waiting-external") or (sym == "idle" and _reason(node, joins))):
         return node.get("glyph") or "", None
-    glyph = node.get("glyph") or aux.get(sym) or ""
-    if cell_width(glyph + icon) <= slot_width(aux):
-        static = glyph + icon
-    else:
-        static = icon if sym == "idle" else glyph
-    return static, SPIN_MARK + icon
+    return node.get("glyph") or aux.get(sym) or "", SPIN_MARK
 
 
 def _prefix_only(prefix, budget, indent=""):
@@ -571,7 +576,7 @@ def _agent_line(node, joins, recent, width, aux):
         finished = k.get("state") == "done"
         if finished and not _recent_run(k, recent):
             continue
-        item = (finished, _run_label(k, width))
+        item = (finished, _remote_label(k) if k.get("machine") else _run_label(k, width))
         if item not in counts:
             groups.append(item)
             counts[item] = 0
@@ -648,7 +653,7 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
     ({key: {P, conn, own}}) place a root row at a tree position computed elsewhere
     (legacy prefixes and the new rows); `layout_out` and `tree_out` collect every
     row's. `tpl_out` collects, per pane of an animated session (working, waiting on something external,
-    idle with a reason), the fm_hd header with its state slot as `{spin}` + the reason icon.
+    idle with a reason), the fm_hd header with its state slot as `{spin}`.
     """
     if joins is None:
         joins = {}
@@ -1508,6 +1513,13 @@ def run_daemon(args, foreman):
     backoff = 1.0
     last_s = 0.0  # duration of the last radar snapshot, kept across restarts
     log("started, foreman %s, state dir %s" % (foreman, sdir))
+    try:  # the one-time PR rule check: its line when stale, never fatal, never repeated
+        code, line = check_config_text(os.path.join(herdr_config_dir(), "config.toml"),
+                                       getattr(args, "symbols", None) or default_symbols(getattr(args, "agent_dir", None)))
+        if code == 1:
+            log(line)
+    except Exception:
+        pass
     try:
         pub.reapply_view()
         while True:
@@ -1831,8 +1843,8 @@ SAMPLE_REASONS = ("none", "ask", "review", "agent", "task", "wait", "blocked", "
 
 
 def _sample_reason(root, reason, aux):
-    """`root` (the mixed sample session) changed so that its header shows `reason`: a reason icon next to the
-    spinner, or a static state."""
+    """`root` (the mixed sample session) changed so that it shows `reason`: the detail lines that carry the
+    reason icon (the header shows the spinner only), or a static state."""
     run = lambda role, state="working": {"key": "sample-" + role, "kind": "run", "role": role,  # noqa: E731
                                          "name": role, "state": state, "sym": state, "children": []}
     root.update(children=[], waits=[], tasks=[], asks=[])
@@ -2001,9 +2013,71 @@ def cmd_configure(args):
     return 0
 
 
+def default_symbols(agent_dir=None):
+    radar = _import_radar()
+    name = radar.config_symbols(radar.agent_dir(agent_dir)) if radar else "unicode"
+    return name if name in SYMBOL_SETS else "unicode"
+
+
+def pr_rule_check(text, name):
+    """(exit code, one line) for the PR dot rules of the pi rows in a Herdr config.toml text: 0 when every
+    $fm_pr cell colours its circles as the set's pr-fail, pr-run, pr-ok glyphs do (ascii: no rules), 1 when
+    a rule is stale or a $fm_pr token is missing, 2 when the text is not TOML or has no pi rows."""
+    if tomllib is None:
+        return 2, "check needs Python 3.11+ (tomllib)"
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return 2, "unreadable: not valid TOML"
+    rows = data
+    for key in ("ui", "sidebar", "agents", "rows_by_agent", "pi"):
+        rows = rows.get(key) if isinstance(rows, dict) else None
+    if not isinstance(rows, list) or not rows:
+        return 2, "no pi rows in ui.sidebar.agents.rows_by_agent"
+    tokens = ["$" + key for key in PR_KEYS]
+    found = {}
+    for row in rows:
+        for cell in row if isinstance(row, list) else []:
+            if isinstance(cell, dict) and cell.get("token") in tokens:
+                found[cell["token"]] = [r.get("contains") for r in cell.get("rules", []) if isinstance(r, dict)]
+    want = aux_symbols(name)
+    expect = [] if name == "ascii" else [want["pr-fail"], want["pr-run"], want["pr-ok"]]
+    missing = [t for t in tokens if t not in found]
+    stale = [t for t in tokens if t in found and found[t] != expect]
+    if not missing and not stale:
+        return 0, "ok: set %s, PR rules match symbols.json" % name
+    problems = []
+    if missing:
+        problems.append("missing " + " ".join(missing))
+    if stale:
+        has = []
+        for t in tokens:
+            has.extend(v for v in found.get(t, []) if v not in has)
+        problems.append("set %s expects %s, config has %s" % (name, " ".join(expect) or "no rules", " ".join(has) or "no rules"))
+    return 1, "stale: %s (rerun configure and merge)" % "; ".join(problems)
+
+
+def check_config_text(path, name):
+    """(exit code, line) of pr_rule_check on the file at `path`; 2 when the file cannot be read."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        return 2, "unreadable: %s (%s)" % (path, exc.__class__.__name__)
+    return pr_rule_check(text, name)
+
+
+def cmd_check(args):
+    name = args.symbols or default_symbols(args.agent_dir)
+    code, line = check_config_text(args.config or os.path.join(herdr_config_dir(), "config.toml"), name)
+    print(line)
+    return code
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sidebar.py", description=__doc__.splitlines()[0])
-    ap.add_argument("command", choices=("start", "stop", "run", "status", "configure", "push", "sample"))
+    ap.add_argument("command", choices=("start", "stop", "run", "status", "configure", "check", "push", "sample"))
+    ap.add_argument("--check", action="store_true", help="with configure: only check the PR rules in --config (alias: the check command)")
     ap.add_argument("--width", type=int)
     ap.add_argument("--no-view", action="store_true")
     ap.add_argument("--lead-cells", type=int)
@@ -2011,6 +2085,7 @@ def main(argv=None):
     ap.add_argument("--dry-run", action="store_true", help="with run: compose once, report nothing")
     ap.add_argument("--foreman")
     ap.add_argument("--agent-dir")
+    ap.add_argument("--config", help="with check: the Herdr config.toml to read (default: Herdr's config dir)")
     ap.add_argument("--session", help="with push: the session id")
     ap.add_argument("--pane", help="with push: the session's Herdr pane id; with sample: the pane (default HERDR_PANE_ID)")
     ap.add_argument("--symbols", choices=SYMBOL_SETS, help="with push, sample or configure: glyph set; default ui.symbols")
@@ -2033,8 +2108,10 @@ def main(argv=None):
         return cmd_stop()
     if args.command == "status":
         return cmd_status()
-    if args.command == "configure":
+    if args.command == "configure" and not args.check:
         return cmd_configure(args)
+    if args.command in ("configure", "check"):
+        return cmd_check(args)
     if args.command == "push":
         return cmd_push(args)
     if args.command == "sample":

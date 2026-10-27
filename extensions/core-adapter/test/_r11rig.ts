@@ -12,7 +12,7 @@ export type Block = { block?: boolean; reason?: string } | undefined;
 let rigs = 0;
 
 /** `opts.ctx`: fields that replace the fake ctx's (ui, modelRegistry, ...); `opts.config`: top-level keys merged into the user foreman.json. */
-export async function r11Rig(t: { after(fn: () => void | Promise<void>): void }, ceremony: Record<string, unknown> = {}, opts: { ctx?: Record<string, unknown>; config?: Record<string, unknown>; child?: boolean } = {}) {
+export async function r11Rig(t: { after(fn: () => void | Promise<void>): void }, ceremony: Record<string, unknown> = {}, opts: { ctx?: Record<string, unknown>; config?: Record<string, unknown>; child?: boolean; deps?: Record<string, unknown>; piExtra?: Record<string, unknown> } = {}) {
   const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE", "PI_INTERCOM_SESSION_ID", "PI_INTERCOM_STABLE_ID", "HERDR_PANE_ID", "HERDR_ENV"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r11-p2-")));
@@ -64,8 +64,9 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     setModel: async () => true,
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
+    ...opts.piExtra,
   };
-  coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }) });
+  coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), ...opts.deps });
   const ctx = {
     sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined, getEntries: () => [], getBranch: () => [] },
     cwd: project,
@@ -130,6 +131,8 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     },
     /** The tool_result of a foreman write that went through (marks a self-written ruling). */
     wrote: (file: string) => handlers.get("tool_result")!({ toolName: "write", toolCallId: `w${++calls}`, input: { path: file }, content: [{ type: "text", text: "ok" }], isError: false }, ctx),
+    /** Any hook event through the adapter's handlers as registered. */
+    fire: (name: string, event: unknown) => handlers.get(name)!(event, ctx),
     /** A custom `subagent-notify` message (a child completion notice) as the foreman receives it. */
     notice: (text: string) => handlers.get("message_end")!({ message: { role: "custom", customType: "subagent-notify", content: text } }, ctx),
     /** An event-bus message (`pi.events.on` channel) such as `permissions:ui_prompt`. */

@@ -32,6 +32,10 @@
 // FOREMAN_FAKE_PROMPT_CACHE=1 declares `promptCache: {short: 20}` on every fake model (idle-cache replay); a step's
 // usage may carry `totalTokens` (the context size the foreman's compaction check reads).
 // FOREMAN_FAKE_COST=<in>,<out>,<cacheRead>,<cacheWrite> prices the fake models (warm-budget replay).
+// FOREMAN_FAKE_FROZEN=1 mimics a provider that fixes its tool list per turn (pi-claude-bridge): the tool names declared by the
+// turn's first request are recorded, and a later scripted call to any other name is never forwarded to Pi; the turn ends with
+// the text `No such tool available: <name>` (the bridge's own answer). FOREMAN_FAKE_FROZEN_LOG=<file> appends one JSON line
+// per turn start: {tag, tools}.
 import * as fs from "node:fs";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Model, SimpleStreamOptions, TranscriptContext } from "@earendil-works/pi-ai";
@@ -96,6 +100,39 @@ export function pickStep(script: Script, modelId: string, messages: { role: stri
 
 let counter = 0;
 const seen = new Map<string, number>();
+/** Frozen mode: the tool names the first request of each turn (by tag) declared. */
+const frozen = new Map<string, Set<string>>();
+
+/** Frozen mode: record the turn's tool list at its first request; a later call outside it is answered like the bridge does and not forwarded. */
+function freezeTools(step: Step, context: TranscriptContext): void {
+  const where = locate(context.messages as { role: string; content: unknown }[]);
+  if (!where) return;
+  const [tag, index] = where;
+  if (index === 0 || !frozen.has(tag)) {
+    // Pi declares the loadout in system messages (toolsAdded / toolsRemoved); folded in order they give the declared set.
+    const declared = new Set<string>();
+    for (const m of context.messages as { role: string; toolsAdded?: { name: string }[]; toolsRemoved?: { name: string }[] }[]) {
+      if (m.role !== "system") continue;
+      for (const t of m.toolsAdded ?? []) declared.add(t.name);
+      for (const t of m.toolsRemoved ?? []) declared.delete(t.name);
+    }
+    const names = [...declared];
+    frozen.set(tag, new Set(names));
+    const log = process.env.FOREMAN_FAKE_FROZEN_LOG;
+    if (log) {
+      try {
+        fs.appendFileSync(log, `${JSON.stringify({ tag, tools: names })}\n`);
+      } catch {
+        // the log is a test aid only
+      }
+    }
+  }
+  const known = frozen.get(tag)!;
+  const missing = (step.tools ?? []).find((t) => !known.has(t.name));
+  if (!missing) return;
+  step.tools = [];
+  step.text = `No such tool available: ${missing.name}`;
+}
 
 /** Characters of the system prompt (base text, system messages and their sections), tool schemas and the other messages. */
 function requestSizes(context: TranscriptContext): { system: number; tools: number; messages: number; total: number; toolNames: string } {
@@ -172,6 +209,7 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
   const summary = [context.systemPrompt, ...(context.messages as { role: string; content: unknown }[]).filter((m) => m.role === "system").map((m) => textOf(m.content))]
     .some((t) => typeof t === "string" && t.startsWith("You are a context summarization assistant"));
   const step: Step = model.id.startsWith("review-") ? { text: REVIEW_REPLIES[model.id] } : summary ? { text: "fake: summary" } : pickStep(loadScript(), model.id, context.messages as { role: string; content: unknown }[]);
+  if (process.env.FOREMAN_FAKE_FROZEN === "1" && !model.id.startsWith("review-") && !summary) freezeTools(step, context);
   const output: AssistantMessage = {
     role: "assistant",
     content: [],

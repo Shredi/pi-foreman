@@ -24,6 +24,7 @@ import os
 import queue
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -161,6 +162,18 @@ def scenario_tmp_base():
     return base
 
 
+def stop_intercom_broker(agent):
+    """SIGTERM the pi-intercom broker a session left in `agent` (its <agent>/intercom/broker.pid); it exits on SIGTERM."""
+    try:
+        pid = int((Path(agent) / "intercom" / "broker.pid").read_text("utf-8").strip())
+    except (OSError, ValueError):
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        pass  # already gone (ESRCH), or not ours
+
+
 class Rig:
     """One throwaway Pi world: agent dir + project + tmp, plus the processes started in it."""
 
@@ -289,6 +302,7 @@ class Rig:
     def close(self):
         for p in self.procs:
             p.close()
+        stop_intercom_broker(self.agent)
         if os.environ.get("FOREMAN_REPLAY_KEEP") == "1":
             sys.stderr.write("replay: kept %s\n" % self.root)
             return

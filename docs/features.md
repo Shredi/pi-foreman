@@ -45,7 +45,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [doctor-providers](#doctor-providers) | install |  | on | `/foreman doctor` prints `providers: <list>`, the providers the model registry holds in this session; a missing `claude-bridge` there means the bridge is not loaded or has not registered yet (see the opened-session note). | on by default | [sessions](sessions.md#providers-in-opened-sessions) |
 | [model-map](#model-map) | models |  | opt-in | Maps each role to a model and thinking level per provider; until a model is mapped, children run on Pi's default model and an interactive session shows one notice. | `{"providers": {"<provider>": {"roles": {"foreman": {"model": "<provider>/<big-model>"}, "builder": {"model": "<provider>/<mid-model>"}}}}}` | [install](install.md#what-setup-writes) |
 | [presets](#presets) | models |  | opt-in | Opt-in model maps under `config/presets/` (role models, ranks, strong rungs, reviewer climb) merged into your `foreman.json` on request, never by default. The `inexpensive` preset names roles by rank tier and resolves them from your `providers.<x>.ranks` at apply time (docs/presets.md). | `foreman config apply-preset claude-bridge --dry-run` | [presets](presets.md) |
-| [roles](#roles) | models |  | on | Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time default of the neutral roles; a launch timeoutMs wins, capped by ceremony.launchTimeoutCapMinutes. | on by default | [roles](roles.md#further-role-and-provider-keys) |
+| [roles](#roles) | models |  | on | Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time default of the neutral roles; a launch timeoutMs wins, capped by ceremony.launchTimeoutCapMinutes. roles.<x>.mcp is the ceiling of MCP servers a child may load on demand through tool_search (a launch mcp field narrows it). mcp.directProviders lists the providers that fix a turn's tool list (default claude-bridge): a child on one gets its allowed deferred MCP tools declared before the first prompt. | on by default | [roles](roles.md#further-role-and-provider-keys) |
 | [display-names](#display-names) | ui |  | on | Shows roles under a display-name preset (`classic` personal names, `plain` ids) or your own map; no code compares a display name. | on by default | [roles](roles.md#roles) |
 | [codemode](#codemode) | tools | toggle | on | Gives a role the `codemode` tool, whose script calls each pass the guards and permissions on their own (on for the foreman and explorer by default). | `{"roles": {"builder": {"codemode": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
 | [ladder](#ladder) | models |  | opt-in | A child climbs to its role's strong model through the foreman after a context, turns, stuck or review-FAIL handoff; with no strong rung mapped nothing climbs. | `{"providers": {"<provider>": {"roles": {"builder": {"strong": {"model": "<provider>/<stronger-model>"}}}}}}` | [ladder](ladder.md#rungs-and-the-live-rung) |
@@ -85,7 +85,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [guards](#guards) | safety |  | on | Loads the guard extensions into every child, sets the limits of the precondition-checked copy and worktree-remove tools, and picks the Python that runs every guard. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
 | [bridge-isolation](#bridge-isolation) | safety |  | on | With the Claude bridge, points `CLAUDE_CONFIG_DIR` at an empty folder so the host's Claude Code settings, hooks and plugins do not load into bridge turns. | on by default | [safety](safety.md#bridge-isolation) |
 | [sessions](#sessions) | sessions |  | on | `/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom. The session runs on the `session-foreman` role's model (default: the opening session's own model) and never on a higher rank. | on by default | [sessions](sessions.md#session-commands) |
-| [remote-sessions](#remote-sessions) | sessions |  | opt-in | `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. The child reports back by cross-machine pi-intercom notices; the parent mirrors them into files. User or overlay config only. | `{"sessions": {"machines": {"alpha": {}}}}` | [sessions](sessions.md#remote-child-sessions) |
+| [remote-sessions](#remote-sessions) | sessions |  | opt-in | `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. By default (`returnPath` `pull`) the child appends its notices to an outbox file on that machine and the parent fetches them over its own SSH call, so the remote never connects back; `push` sends them by cross-machine pi-intercom notices instead. The parent mirrors the notices into files. `foreman session close-remote` (and `/foreman close`) closes such a child over the same SSH call. User or overlay config only. | `{"sessions": {"machines": {"alpha": {}}}}` | [sessions](sessions.md#remote-child-sessions) |
 | [round-state](#round-state) | sessions |  | on | In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns only from the parent's `ruling.md` newer than both the plan and the handoff plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
 | [remote-intercom](#remote-intercom) | sessions | toggle, relaxes safety | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [sync](#sync) | ops |  | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
@@ -186,7 +186,7 @@ Switch: `providers` is non-empty.
 
 ### roles
 
-**Role definitions.** Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time default of the neutral roles; a launch timeoutMs wins, capped by ceremony.launchTimeoutCapMinutes.
+**Role definitions.** Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time default of the neutral roles; a launch timeoutMs wins, capped by ceremony.launchTimeoutCapMinutes. roles.<x>.mcp is the ceiling of MCP servers a child may load on demand through tool_search (a launch mcp field narrows it). mcp.directProviders lists the providers that fix a turn's tool list (default claude-bridge): a child on one gets its allowed deferred MCP tools declared before the first prompt.
 
 | Key | Default | Layer |
 |---|---|---|
@@ -200,6 +200,7 @@ Switch: `providers` is non-empty.
 | `roles.<x>.timeoutMinutes` | `planner`: `20`, `explorer`: `20`, `builder`: `60`, `reviewer`: `30`, `senior-reviewer`: `45`, `finalizer`: `30` | tighten-only (lower only, minimum 1) |
 | `ceremony.childTimeoutSeconds` | `1800` | tighten-only (lower only, minimum 1) |
 | `ceremony.launchTimeoutCapMinutes` | `120` | tighten-only (lower only, minimum 1, at most 120 without an earlier value) |
+| `mcp.directProviders` | unset | not in project/session (the providers that get MCP tools declared up front come from the user or overlay config) |
 
 ### display-names
 
@@ -640,15 +641,19 @@ No config key.
 
 ### remote-sessions
 
-**Remote child sessions over SSH.** `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. The child reports back by cross-machine pi-intercom notices; the parent mirrors them into files. User or overlay config only.
+**Remote child sessions over SSH.** `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. By default (`returnPath` `pull`) the child appends its notices to an outbox file on that machine and the parent fetches them over its own SSH call, so the remote never connects back; `push` sends them by cross-machine pi-intercom notices instead. The parent mirrors the notices into files. `foreman session close-remote` (and `/foreman close`) closes such a child over the same SSH call. User or overlay config only.
 
 Switch: `sessions.machines` is non-empty.
 
 | Key | Default | Layer |
 |---|---|---|
+| `sessions.machines.<x>.returnPath` | unset | not in project/session (the machines a session may open on over SSH come from the user or overlay config) |
 | `sessions.machines.<x>.foremanCommand` | unset | not in project/session (the machines a session may open on over SSH come from the user or overlay config) |
 | `sessions.machines.<x>.parentName` | unset | not in project/session (the machines a session may open on over SSH come from the user or overlay config) |
 | `sessions.remoteInlineMaxBytes` | `32768` | tighten-only (lower only, minimum 1024) |
+| `sessions.pull.intervalSeconds` | `20` | not in project/session (the remote pull poll periods come from the user or overlay config) |
+| `sessions.pull.fastSeconds` | `5` | not in project/session (the remote pull poll periods come from the user or overlay config) |
+| `sessions.ssh.controlMaster` | `true` | not in project/session (the SSH multiplexing switch comes from the user or overlay config) |
 
 ### round-state
 
@@ -707,7 +712,7 @@ Switch: `retro.repoBacklog` is non-empty.
 
 | Key | Default | Layer |
 |---|---|---|
-| `close.from` | `["herdr", "intercom-parent"]` | tighten-only (can only narrow the list) |
+| `close.from` | `["herdr", "intercom-parent", "remote-parent"]` | tighten-only (can only narrow the list) |
 | `close.autoClean` | `true` | tighten-only (only false is accepted) |
 | `close.worktreeDir` | `"../<repo>.worktrees"` | not in project/session (the worktree convention comes from the user or overlay config) |
 | `close.childWaitMs` | `60000` | not in project/session (the child close wait comes from the user or overlay config) |
@@ -728,6 +733,7 @@ Switch: `retro.repoBacklog` is non-empty.
 | Key | Default | Layer |
 |---|---|---|
 | `footer.usage` | `true` | any layer |
+| `footer.cacheBar` | `true` | any layer |
 | `footer.style` | `"foreman"` | any layer |
 | `ui.symbols` | `"unicode"` | any layer |
 | `ui.spinner` | `true` | any layer |
@@ -840,7 +846,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [pr-ops](#pr-ops) | `/foreman prs` |
 | [bridge-isolation](#bridge-isolation) | `/foreman trust bridge` |
 | [sessions](#sessions) | `/foreman session`, `foreman session` |
-| [remote-sessions](#remote-sessions) | `foreman session remote` |
+| [remote-sessions](#remote-sessions) | `foreman session remote`, `foreman session pull`, `foreman session close-remote` |
 | [sync](#sync) | `/sync`, `foreman sync` |
 | [retro](#retro) | `/retro`, `/foreman flag-ask`, `foreman retro`, `foreman backlog` |
 | [close](#close) | `/foreman close`, `foreman close`, `foreman worktree` |
@@ -892,6 +898,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `roles.*.launch` | the launch mode comes from the user or overlay config |
 | `roles.*.file` | a role file replaces the prompt: user or overlay config only |
 | `roles.*.mcp` | an MCP server runs a command: user or overlay config only |
+| `mcp.directProviders` | the providers that get MCP tools declared up front come from the user or overlay config |
 | `roles.*.skills` | the skills a role gets come from the user or overlay config |
 | `providers.*.roles.*.strong` | the strong model is picked in the user or overlay config |
 | `tools.prHost` | the PR host program comes from the user or overlay config |
@@ -908,6 +915,8 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `close.worktreeDir` | the worktree convention comes from the user or overlay config |
 | `close.childWaitMs` | the child close wait comes from the user or overlay config |
 | `sessions.machines` | the machines a session may open on over SSH come from the user or overlay config |
+| `sessions.pull` | the remote pull poll periods come from the user or overlay config |
+| `sessions.ssh` | the SSH multiplexing switch comes from the user or overlay config |
 | `ceremony.checkpoint` | who approves the plan checkpoint comes from the user or overlay config |
 | `ceremony.reviewModel` | the fallback reviewer model comes from the user or overlay config |
 | `ceremony.reviewByOccasion` | the per-occasion reviewer overrides come from the user or overlay config |

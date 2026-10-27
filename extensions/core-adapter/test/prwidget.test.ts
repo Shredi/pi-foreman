@@ -55,14 +55,14 @@ const render = (views: PrView[], sh: PrShared | null, width: number, extra: Part
 
 test("mock-up at width 80 and 120: eight own lines, the watch summary and one watch item, as golden lines", () => {
   const expected = [
-    "● #58 r58: PR widget, reliable tracking, bot watch · review? · ✗1 ◉2 ✓9",
+    "● #58 r58: PR widget, reliable tracking, bot watch · review? · ✗ 1 ◉ 2 ✓ 9",
     "  ✗ failed: test (ubuntu)",
     "  ◉ running: bench-smoke, test (windows)",
-    "◉ #57 r57: cache keep-alive per provider · approved · ◉1 ◌1 ✓11",
+    "◉ #57 r57: cache keep-alive per provider · approved · ◉ 1 ◌ 1 ✓ 11",
     "  ◉ running: test (macos)",
     "  ◌ missing: bench-smoke",
-    "○ #55 r55: ladder docs · approved · ✓12",
-    "○ acme/tools#204 fix: retry on 502 · review? · ✓6",
+    "○ #55 r55: ladder docs · approved · ✓ 12",
+    "○ acme/tools#204 fix: retry on 502 · review? · ✓ 6",
     "watch: 2 need review · 1 failing",
     "  ● acme/web#118 chore: lockfile maintenance",
   ];
@@ -73,12 +73,12 @@ test("mock-up at width 80 and 120: eight own lines, the watch summary and one wa
 test("mock-up at width 40: no review word, titles cut, counts instead of names, no watch items (addendum golden lines)", () => {
   const lines = render(mockViews(), shared(), 40);
   assert.deepEqual(lines, [
-    "● #58 r58: PR widget, reliab… · ✗1 ◉2 ✓9",
+    "● #58 r58: PR widget, rel… · ✗ 1 ◉ 2 ✓ 9",
     "  ✗ failed 1 · ◉ running 2",
-    "◉ #57 r57: cache keep-alive… · ◉1 ◌1 ✓11",
+    "◉ #57 r57: cache keep-al… · ◉ 1 ◌ 1 ✓ 11",
     "  ◉ running 1 · ◌ missing 1",
-    "○ #55 r55: ladder docs · ✓12",
-    "○ acme/tools#204 fix: retry on 502 · ✓6",
+    "○ #55 r55: ladder docs · ✓ 12",
+    "○ acme/tools#204 fix: retry on 502 · ✓ 6",
     "watch: 2 need review · 1 failing",
   ]);
   for (const l of lines) assert.ok(visibleWidth(l) <= 40, l);
@@ -86,15 +86,15 @@ test("mock-up at width 40: no review word, titles cut, counts instead of names, 
 
 test("all green, no watch items: compact lines only", () => {
   const v = [view(55, { title: "r55: ladder docs", reviewDecision: "APPROVED", counts: { passed: 12 } }), view(54, { title: "r54: footer context point", reviewDecision: "REVIEW_REQUIRED", counts: { passed: 12 } })];
-  assert.deepEqual(render(v, null, 80), ["○ #54 r54: footer context point · review? · ✓12", "○ #55 r55: ladder docs · approved · ✓12"]);
+  assert.deepEqual(render(v, null, 80), ["○ #54 r54: footer context point · review? · ✓ 12", "○ #55 r55: ladder docs · approved · ✓ 12"]);
   assert.deepEqual(render([], null, 80), []);
   assert.deepEqual(render([], shared({ review: [], failing: [] }), 80), []);
 });
 
 test("breakpoint 60: at 60 the review word and names stay, at 59 the review word goes and detail lines show counts", () => {
   const v = [view(5, { title: "short", dot: "fail", reviewDecision: "APPROVED", names: { failed: ["lint"] }, counts: { passed: 2 } })];
-  assert.deepEqual(render(v, null, 60), ["● #5 short · approved · ✗1 ✓2", "  ✗ failed: lint"]);
-  assert.deepEqual(render(v, null, 59), ["● #5 short · ✗1 ✓2", "  ✗ failed 1"]);
+  assert.deepEqual(render(v, null, 60), ["● #5 short · approved · ✗ 1 ✓ 2", "  ✗ failed: lint"]);
+  assert.deepEqual(render(v, null, 59), ["● #5 short · ✗ 1 ✓ 2", "  ✗ failed 1"]);
   const items = render([], shared(), 60);
   assert.equal(items.length, 3);
   assert.equal(render([], shared(), 59).length, 1);
@@ -104,10 +104,10 @@ test("at or above 60 the title is cut to fit and the review word stays; below it
   const v = [view(5, { title: "x".repeat(100), reviewDecision: "APPROVED", counts: { passed: 2 } })];
   const wide = render(v, null, 60)[0];
   assert.equal(visibleWidth(wide), 60);
-  assert.ok(wide.includes("… · approved · ✓2"));
+  assert.ok(wide.includes("… · approved · ✓ 2"));
   const narrow = render(v, null, 30)[0];
   assert.equal(visibleWidth(narrow), 30);
-  assert.ok(narrow.endsWith("… · ✓2"));
+  assert.ok(narrow.endsWith("… · ✓ 2"));
 });
 
 test("expanded block is at most four lines; draft and changes review words; closed counts omitted when zero", () => {
@@ -115,7 +115,7 @@ test("expanded block is at most four lines; draft and changes review words; clos
   const lines = render([v], null, 80);
   assert.equal(lines.length, 4);
   assert.ok(lines[0].includes(" · draft · "));
-  assert.deepEqual(render([view(6, { reviewDecision: "CHANGES_REQUESTED", counts: { passed: 1 } })], null, 80), ["○ #6 title 6 · changes! · ✓1"]);
+  assert.deepEqual(render([view(6, { reviewDecision: "CHANGES_REQUESTED", counts: { passed: 1 } })], null, 80), ["○ #6 title 6 · changes! · ✓ 1"]);
   const three = render([v], null, 40);
   assert.deepEqual(three.slice(1), ["  ✗ failed 1 · ◉ running 1", "  ◌ missing 1"]);
 });
@@ -130,7 +130,7 @@ test("order: fail, run, ok, none, current repo before foreign, by number, merged
     view(4, { state: "merged", dot: "none", closedAt: 0 }),
   ];
   const heads = render(v, null, 80).filter((l) => !l.startsWith("  "));
-  assert.deepEqual(heads, ["● #1 title 1 · ✗1", "◉ #2 title 2 · ◉1", "○ #7 title 7", "○ acme/tools#9 title 9", "◌ #3 title 3", "✓ merged #4 title 4"]);
+  assert.deepEqual(heads, ["● #1 title 1 · ✗ 1", "◉ #2 title 2 · ◉ 1", "○ #7 title 7", "○ acme/tools#9 title 9", "◌ #3 title 3", "✓ merged #4 title 4"]);
 });
 
 test("six PRs: eight own lines at most, the last line is +n more PRs", () => {
@@ -150,7 +150,7 @@ test("six PRs: eight own lines at most, the last line is +n more PRs", () => {
 test("a foreign PR reads owner/name#n; the counts end with + when the host cut the list", () => {
   const v = [view(204, { repo: "acme/tools", counts: { passed: 12 } })];
   v[0].checks.truncated = true;
-  assert.deepEqual(render(v, null, 80), ["○ acme/tools#204 title 204 · ✓12+"]);
+  assert.deepEqual(render(v, null, 80), ["○ acme/tools#204 title 204 · ✓ 12+"]);
 });
 
 test("merged and closed PRs show a dim glyph line and fade through the view list", () => {
@@ -165,9 +165,9 @@ test("colours: fail red, run yellow, missing dim, ok line dim", () => {
   const themed = { fg: (c: string, t: string) => `<${c}>${t}</${c}>` } as never;
   const v = [view(1, { dot: "fail", names: { failed: ["f"] }, counts: { passed: 1 } }), view(2, { counts: { passed: 1 } })];
   const lines = render(v, null, 80, { theme: themed });
-  assert.ok(lines[0].startsWith("<error>●</error> #1 title 1 · <error>✗1</error> <success>✓1</success>"));
+  assert.ok(lines[0].startsWith("<error>●</error> #1 title 1 · <error>✗ 1</error> <success>✓ 1</success>"));
   assert.equal(lines[1], "<error>  ✗ failed: f</error>");
-  assert.equal(lines[2], "<dim>○ #2 title 2 · ✓1</dim>");
+  assert.equal(lines[2], "<dim>○ #2 title 2 · ✓ 1</dim>");
 });
 
 test("watch section: failing first, review with the ask glyph, at most two items, ten lines in total, touched never rendered", () => {
@@ -210,9 +210,9 @@ test("links: the label is a hyperlink only when the URL matches the key; width i
   const v = [view(55, { counts: { passed: 1 } })];
   const plain = render(v, null, 80, { links: false });
   const linkedLines = render(v, null, 80, { links: true });
-  assert.equal(linkedLines[0], `○ ${OSC("https://github.com/acme/pi/pull/55", "#55")} title 55 · ✓1`);
+  assert.equal(linkedLines[0], `○ ${OSC("https://github.com/acme/pi/pull/55", "#55")} title 55 · ✓ 1`);
   assert.equal(visibleWidth(linkedLines[0]), visibleWidth(plain[0]));
-  assert.deepEqual(plain, ["○ #55 title 55 · ✓1"]);
+  assert.deepEqual(plain, ["○ #55 title 55 · ✓ 1"]);
   for (const url of ["https://github.com/acme/pi/pull/56", "https://github.com/acme/other/pull/55", "https://example.org/acme/pi/pull/55", "http://github.com/acme/pi/pull/55", "https://github.com/acme/pi/pull/55\x1b\\x", "https://github.com/acme/pi/pull/55 x", "https://github.com/acme/pi/pull/55\u0085", null]) {
     assert.deepEqual(render([{ ...v[0], url }], null, 80, { links: true }), plain, String(url));
   }
@@ -321,8 +321,8 @@ test("PrWidget mounts once above the editor under key pi-foreman-prs and renders
   assert.deepEqual(r.calls, [{ key: WIDGET_KEY, removed: false, placement: "aboveEditor" }]);
   assert.equal(WIDGET_KEY, "pi-foreman-prs");
   const c = r.mount()!;
-  assert.deepEqual(c.render(40), render(mockViews(), null, 40));
-  assert.deepEqual(c.render(80), render(mockViews(), null, 80));
+  assert.deepEqual(c.render(40).slice(1), render(mockViews(), null, 40));
+  assert.deepEqual(c.render(80).slice(1), render(mockViews(), null, 80));
 });
 
 test("PrWidget: an unchanged signature neither mounts again nor requests a render; a change requests one, debounced to one per second", () => {
@@ -344,7 +344,7 @@ test("PrWidget: an unchanged signature neither mounts again nor requests a rende
   r.advance(1000);
   assert.equal(r.renders(), 2);
   assert.equal(r.calls.length, 1);
-  assert.deepEqual(r.mount()!.render(80), render(mockViews().slice(2), null, 80));
+  assert.deepEqual(r.mount()!.render(80).slice(1), render(mockViews().slice(2), null, 80));
 });
 
 test("PrWidget: removed once when empty and mounted again when data returns", () => {
@@ -367,7 +367,7 @@ test("PrWidget: a watch-only snapshot mounts, widget.prs off removes, a non-tui 
   const r = rig([], shared({ at: 5_000_000 }));
   r.widget.request(r.ctx(), opts);
   assert.equal(r.calls.length, 1);
-  assert.deepEqual(r.mount()!.render(80), ["watch: 2 need review · 1 failing", "  ● acme/web#118 chore: lockfile maintenance", "  ? acme/web#7 item 7"]);
+  assert.deepEqual(r.mount()!.render(80).slice(1), ["watch: 2 need review · 1 failing", "  ● acme/web#118 chore: lockfile maintenance", "  ? acme/web#7 item 7"]);
   r.widget.request(r.ctx(), { ...opts, enabled: false });
   assert.deepEqual(r.calls.map((c) => c.removed), [false, true]);
   r.widget.request(r.ctx(), { ...opts, enabled: false });
@@ -388,7 +388,7 @@ test("/foreman prs cycles auto, collapsed, hidden and back", () => {
   assert.equal(r.widget.currentMode(), "auto");
   assert.equal(r.widget.cycle(), "collapsed");
   assert.equal(r.renders(), 1);
-  assert.deepEqual(c.render(80), ["PRs: 1 fail · 1 run · 2 ok · watch 3"]);
+  assert.deepEqual(c.render(80).slice(1), ["PRs: 1 fail · 1 run · 2 ok · watch 3"]);
   assert.equal(r.widget.cycle(), "hidden");
   assert.deepEqual(r.calls.map((x) => x.removed), [false, true]);
   assert.equal(r.widget.cycle(), "auto");

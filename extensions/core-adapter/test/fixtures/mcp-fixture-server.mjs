@@ -1,6 +1,6 @@
-// Stdio MCP server for the per-role MCP probe (mcp-per-role.test.ts). Newline-delimited JSON-RPC 2.0, the framing
+// Stdio MCP server for the on-demand MCP child test (mcp-child.test.ts). Newline-delimited JSON-RPC 2.0, the framing
 // Pi's stdio transport reads. argv[2] is a start marker written when the server starts; argv[3] is an exit marker
-// written when stdin closes, so the test can tell the server was shut down. One tool: `echo`.
+// written when stdin closes, so the test can tell the server was shut down. Two tools: `echo` and `shout`.
 import * as fs from "node:fs";
 import * as readline from "node:readline";
 
@@ -23,10 +23,15 @@ const handlers = {
         description: "Echo the text argument back.",
         inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
       },
+      {
+        name: "shout",
+        description: "Return the text argument in upper case.",
+        inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+      },
     ],
   }),
   "tools/call": (params) => ({
-    content: [{ type: "text", text: String(params?.arguments?.text ?? "") }],
+    content: [{ type: "text", text: params?.name === "shout" ? String(params?.arguments?.text ?? "").toUpperCase() : String(params?.arguments?.text ?? "") }],
     isError: false,
   }),
 };
