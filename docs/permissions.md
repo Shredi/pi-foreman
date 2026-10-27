@@ -172,6 +172,7 @@ Every other `gate.*` key is user or overlay only; a project value is dropped wit
 - The `bash` tool is parsed as bash. When the resolved shell is not a bash binary (a custom `shellPath`, or the Unix `sh` fallback) the gate treats the tool as opaque.
 - The decision is made on the command string, not at run time: another local user can swap a `/tmp` path for a symlink in between.
 - Git config in the repository (`diff.external`, a pager) still applies to `git diff` and `git log`.
+- The live eval (`node scripts/foreman_perms.mjs eval --model <provider/id>`) calls the review model's provider directly (the Anthropic API for the default Haiku review model), needs a logged-in provider and Node >= 22.18, and never runs in CI; CI runs only the offline eval with fixture answers.
 
 ## Windows
 
