@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { planRequired, world } from "./_r46world.ts";
 import type { Block } from "./_r46world.ts";
 import { planSummary } from "../checkpoint.ts";
+import { bashPath } from "./_bashpath.ts";
 
 const planPhase = (r: Block): boolean => r?.block === true && /\[launch_refused:plan_phase\]/.test(r.reason ?? "");
 const READS = { foremanReads: { before: { warn: 1, every: 1 }, after: { warn: 1, every: 1 } } };
@@ -61,7 +62,7 @@ test("write, edit, foreman_copy, foreman_move and shell writes outside .workflow
       ["edit", { path: src, edits: [{ oldText: "a", newText: "b" }] }],
       ["foreman_copy", { src: wf, dst: src }],
       ["foreman_move", { src: wf, dst: src }],
-      ["bash", { command: `echo x > ${src}` }],
+      ["bash", { command: `echo x > ${bashPath(src)}` }],
     ];
     await a.command("foreman", "plan");
     for (const [tool, input] of outside) {
@@ -69,7 +70,7 @@ test("write, edit, foreman_copy, foreman_move and shell writes outside .workflow
       assert.equal(r?.block, true, `${mode}: ${tool} outside .workflow/`);
       assert.match(r?.reason ?? "", /readonly|plan phase/i, `${mode}: ${tool}: the plan phase decides, not the triage gate`);
     }
-    for (const [tool, input] of [["write", { path: wf, content: "x" }], ["edit", { path: wf, edits: [] }], ["foreman_copy", { src, dst: wf }], ["bash", { command: `echo x > ${wf}` }]] as [string, Record<string, unknown>][]) {
+    for (const [tool, input] of [["write", { path: wf, content: "x" }], ["edit", { path: wf, edits: [] }], ["foreman_copy", { src, dst: wf }], ["bash", { command: `echo x > ${bashPath(wf)}` }]] as [string, Record<string, unknown>][]) {
       assert.equal((await a.checkCall(tool, input))?.block, undefined, `${mode}: ${tool} into .workflow/`);
     }
   }
