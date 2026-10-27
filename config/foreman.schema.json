@@ -30,7 +30,7 @@
           "promptAppend": { "type": "string", "description": "Text appended to the role prompt." },
           "tools": { "type": "array", "items": { "type": "string" }, "description": "Strict tool allowlist. Written as a JSON array into the generated settings. For the foreman it is informational. A project or session can only narrow it (intersection), and cannot add role ids." },
           "denyTools": { "type": "array", "items": { "type": "string" }, "description": "Tool-name globs (`*` wildcard) a child of this role never gets: the call is denied, never asked. Defaults deny mcp__* for the read-only roles. Layers add to the list; none removes an entry." },
-          "mcp": { "type": "array", "items": { "type": "string" }, "description": "Ceiling of MCP servers a child of this role may load on demand through tool_search, by configured name: `server` for all its tools, `server/tool` for one. Nothing is declared up front; a launch `mcp` field can narrow it. User or overlay config only. Refused where the role's denyTools deny mcp__*." },
+          "mcp": { "type": "array", "items": { "type": "string" }, "description": "Ceiling of MCP servers a child of this role may load on demand through tool_search, by configured name: `server` for all its tools, `server/tool` for one. Declared up front only on a `mcp.directProviders` provider (its allowed deferred tools are preloaded); a launch `mcp` field can narrow it. User or overlay config only. Refused where the role's denyTools deny mcp__*." },
           "skills": { "type": "array", "items": { "type": "string", "pattern": "^(?!\\.\\.?$)[^/\\\\:*?\\[\\]{}]+$" }, "description": "Skills this role gets as catalog entries, by name: one plain path segment (no / or \\, not . or .., no glob characters, no colon). A role gets only the skills it names; inheritSkills stays off. Default none. User or overlay config only." },
           "codemode": { "type": "boolean", "description": "Add the codemode tool to this role. Overridden per provider by providers.<p>.roles.<id>.codemode." },
           "launch": { "type": "string", "enum": ["detached"], "description": "How the role is launched. Only detached is supported: detached children forward permission asks to the parent. A project or session cannot set it." },
@@ -605,6 +605,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": { "isolateClaudeConfig": { "type": ["boolean", "string"], "enum": [true, false, "auto"], "description": "Point CLAUDE_CONFIG_DIR at an empty pi-foreman folder so the claude bridge ignores the host's Claude Code settings, hooks, plugins and CLAUDE.md. auto = on when the active provider is claude-bridge. A project cannot set it." } }
+    },
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "directProviders": { "type": "array", "items": { "type": "string" }, "description": "Provider ids that fix a turn's tool list at its first request (pi-claude-bridge): a deferred MCP tool that tool_search loads mid-turn is never callable there. For a child on such a provider its allowed deferred MCP tools are loaded before the first prompt, so they are callable at once (the prompt grows by their schemas; trace event mcp_child_direct). Unset = [\"claude-bridge\"]; [] turns it off. User or overlay config only." } }
     },
     "python": {
       "type": "object",
