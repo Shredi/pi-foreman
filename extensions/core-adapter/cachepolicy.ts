@@ -12,6 +12,17 @@ export const BUILTIN_CACHE: Record<string, { ttlSeconds: number | null; billing:
   "github-copilot": { ttlSeconds: null, billing: "request" },
 };
 
+/** Built-in per-model TTLs of a provider (seconds); the first matching row wins, after a config row and ttlSeconds. */
+export const BUILTIN_BY_MODEL: Record<string, { match: string; ttlSeconds: number }[]> = {
+  "github-copilot": [
+    { match: "claude-*", ttlSeconds: 300 },
+    { match: "gpt-*", ttlSeconds: 1800 },
+    { match: "o1*", ttlSeconds: 1800 },
+    { match: "o3*", ttlSeconds: 1800 },
+    { match: "o4*", ttlSeconds: 1800 },
+  ],
+};
+
 export type CacheSkip = "no_entry" | "billing_request" | "ttl_unknown" | "ttl_long" | "disabled";
 
 export interface CachePolicy {
@@ -47,8 +58,15 @@ export function matchModel(pattern: string, model: string): boolean {
   return new RegExp(`^${re}$`).test(model);
 }
 
-/** `model` is the bare model id or `<provider>/<id>`; the first byModel row that matches wins over the provider ttl. */
-export function resolveCachePolicy(config: unknown, provider: string | undefined | null, model?: string | null): CachePolicy {
+/**
+ * `model` is the bare model id or `<provider>/<id>`. TTL order: a matching byModel row, an explicit ttlSeconds,
+ * on claude-bridge `bridgeTtlS` (derivedBridgeTtlS), the built-in per-model row, the provider built-in.
+ */
+export function resolveCachePolicy(config: unknown, provider: string | undefined | null, model?: string | null, bridgeTtlS?: number | null): CachePolicy {
+  return resolve(config, provider, model, bridgeTtlS).policy;
+}
+
+function resolve(config: unknown, provider: string | undefined | null, model?: string | null, bridgeTtlS?: number | null): { policy: CachePolicy; enabled: boolean } {
   const provs = isObj(config) ? config.providers : undefined;
   const entry = isObj(provs) && provider ? provs[provider] : undefined;
   const raw = isObj(entry) ? entry.cache : undefined;
@@ -61,7 +79,15 @@ export function resolveCachePolicy(config: unknown, provider: string | undefined
     ? cfg.byModel.find((r) => isObj(r) && typeof r.match === "string" && r.match !== "" && matchModel(r.match, id))
     : undefined;
   const hit = isObj(row) ? row : {};
-  const ttlRaw = isInt(hit.ttlSeconds) ? hit.ttlSeconds : "ttlSeconds" in cfg ? cfg.ttlSeconds : built?.ttlSeconds;
+  const rows = provider && Object.prototype.hasOwnProperty.call(BUILTIN_BY_MODEL, provider) ? BUILTIN_BY_MODEL[provider] : [];
+  const derived = !isInt(hit.ttlSeconds) && !("ttlSeconds" in cfg) && provider === "claude-bridge" && isInt(bridgeTtlS);
+  const ttlRaw = isInt(hit.ttlSeconds)
+    ? hit.ttlSeconds
+    : "ttlSeconds" in cfg
+      ? cfg.ttlSeconds
+      : derived
+        ? bridgeTtlS
+        : (id ? rows.find((r) => matchModel(r.match, id))?.ttlSeconds : undefined) ?? built?.ttlSeconds;
   const ttlSeconds = isInt(ttlRaw) && ttlRaw >= 1 ? ttlRaw : null;
   const billingRaw = hit.billing === "token" || hit.billing === "request" ? hit.billing : cfg.billing;
   const billing: CacheBilling | null =
@@ -78,16 +104,17 @@ export function resolveCachePolicy(config: unknown, provider: string | undefined
     effectiveWindowMinutes: Math.min(windowMinutes, PI_IDLE_CAP_MINUTES),
     warmCompact: typeof cfg.warmCompact === "boolean" ? cfg.warmCompact : true,
   };
-  if (!built && Object.keys(cfg).length === 0) return { ...base, active: false, skip: "no_entry" };
+  if (!built && Object.keys(cfg).length === 0) return { policy: { ...base, active: false, skip: "no_entry" }, enabled: false };
 
+  // A derived bridge TTL keeps keep-alive on by default, also at 3600 s (the warms are then self-warms).
   const enabled =
-    typeof ka.enabled === "boolean" ? ka.enabled : billing === "token" && ttlSeconds !== null && ttlSeconds < 3600;
+    typeof ka.enabled === "boolean" ? ka.enabled : billing === "token" && ttlSeconds !== null && (ttlSeconds < 3600 || derived);
   let skip: CacheSkip | undefined;
   if (billing === "request") skip = "billing_request";
   else if (ttlSeconds === null) skip = "ttl_unknown";
   else if (ttlSeconds >= 3600) skip = "ttl_long";
   else if (!enabled) skip = "disabled";
-  return skip ? { ...base, active: false, skip } : { ...base, active: true };
+  return { policy: skip ? { ...base, active: false, skip } : { ...base, active: true }, enabled };
 }
 
 /** Smallest TTL whose 0.9 x tick lies beyond Pi's idle cap: Pi never warms it, pi-foreman may. */
@@ -97,8 +124,8 @@ export const SELF_WARM_MIN_TTL_SECONDS = Math.floor((PI_IDLE_CAP_MINUTES * 60) /
  * resolveCachePolicy plus the warm-policy fields (budget, away ticks, waiting, self-warm) with their defaults.
  * A separate function: resolveCachePolicy itself keeps its pinned shape.
  */
-export function resolveWarmPolicy(config: unknown, provider: string | undefined | null, model?: string | null): CachePolicy {
-  const base = resolveCachePolicy(config, provider, model);
+export function resolveWarmPolicy(config: unknown, provider: string | undefined | null, model?: string | null, bridgeTtlS?: number | null): CachePolicy {
+  const { policy: base, enabled } = resolve(config, provider, model, bridgeTtlS);
   if (base.skip === "no_entry") return base;
   const provs = isObj(config) ? config.providers : undefined;
   const entry = isObj(provs) && provider ? provs[provider] : undefined;
@@ -106,7 +133,6 @@ export function resolveWarmPolicy(config: unknown, provider: string | undefined 
   const ka = isObj(cfg.keepalive) ? cfg.keepalive : {};
   const clamp = (v: unknown, lo: number, hi: number, d: number): number => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
   const ttl = base.ttlSeconds;
-  const enabled = typeof ka.enabled === "boolean" ? ka.enabled : base.billing === "token" && ttl !== null && ttl < 3600;
   const selfWarm = enabled && base.billing === "token" && ttl !== null && ka.beyondPiCap !== false && ttl >= SELF_WARM_MIN_TTL_SECONDS;
   const fallbackWindow = Math.min(1440, Math.max(45, 3 * Math.ceil((ttl ?? 0) / 60)));
   return {

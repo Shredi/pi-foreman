@@ -31,10 +31,8 @@ class ByModelTest(unittest.TestCase):
 
     def test_preset_row_and_project_layer_drops_by_model(self):
         preset = json.loads((ROOT / "config" / "presets" / "claude-bridge.json").read_text())
-        row = preset["providers"][P]["cache"]["byModel"][0]
-        self.assertEqual(row["ttlSeconds"], 3600)
-        self.assertIn("subscription within plan usage", row["note"])
-        self.assertEqual(fc.cache_policy({"providers": preset["providers"]}, P, "claude-opus-5-5")["ttlSeconds"], 3600)
+        self.assertNotIn("byModel", preset["providers"][P]["cache"])  # the TTL is derived, not a row
+        self.assertEqual(fc.cache_policy({"providers": preset["providers"]}, P, "claude-opus-5-5", 3600)["ttlSeconds"], 3600)
         self.assertIn((("providers", "*", "cache", "byModel")), [k for k, _w in fc.IGNORED_KEYS])
 
 

@@ -6,7 +6,7 @@
     "claude-bridge": {
       "modelDataFrom": "anthropic",
       "strongAbove": 100000,
-      "cache": { "ttlSeconds": 300, "billing": "token", "byModel": [{ "match": "claude-*", "ttlSeconds": 3600, "note": "subscription within plan usage; 300 on extra-usage credits or API key" }], "keepalive": { "enabled": true, "awayTicks": 2 } },
+      "cache": { "billing": "token", "keepalive": { "enabled": true, "awayTicks": 2 } },
       "ranks": [
         { "match": "claude-fable-*", "tier": 0 },
         { "match": "claude-opus-*", "tier": 1 },

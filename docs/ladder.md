@@ -106,7 +106,7 @@ overlay config only (a project or session value is ignored) and unset by default
   and the shadow checks compare against the base model, never against the idle rung. Child role models are unaffected.
 - **Unavailable rung.** An idle rung that is not in the model registry, or a failed switch, leaves the base model in
   place and traces `foreman_model {outcome: "unavailable"}` once per session.
-- **Cost.** While downshifted the idle model has its own keep-alive, TTL (its `cache.byModel` row) and warm budget.
+- **Cost.** While downshifted the idle model has its own keep-alive, TTL (its `cache.byModel` row, else the provider's TTL, [cache](cache.md#ttl-by-family)) and warm budget.
   `/foreman cost` and `foreman retro` book the turns to the idle model; the retro cache line counts them as
   `downshifted turns K`. The footer shows a downshift glyph ([sessions](sessions.md)).
 
