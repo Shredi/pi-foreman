@@ -109,7 +109,6 @@ test("read/write/edit/grep/find/ls paths are checked, relative, absolute and ~",
     assert.equal(bash(r, "cat innocent.txt")?.kind, "deny", "symlink to a secret");
   }
   assert.equal(decide(r, "read", { path: path.join(agentDir, "auth.json") })?.kind, "deny");
-  assert.equal(decide(r, "write", { path: path.join(agentDir, "extensions", "pi-permission-system", "config.json") })?.kind, "deny");
   assert.equal(decide(r, "read", { path: "notes.txt" }), null);
   assert.equal(decide(r, "read", { path: ".env.example" }), null);
   assert.equal(decide(r, "grep", { pattern: "x" }), null, "no path: nothing to check");

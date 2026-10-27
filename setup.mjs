@@ -2,8 +2,8 @@
 // pi-foreman installer (design section 11). Plain Node >= 22 ESM, no dependencies.
 //   node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--develop] [--remove] [--agent-dir <dir>]
 //                  [--profile <name>] [--enable <id>[,<id>]] [--disable <id>[,<id>]] [--addon <id>] [--pick]
-// pi-foreman itself is installed with `pi install git:github.com/Shredi/pi-foreman` (it bundles pi-subagents,
-// the permission system and pi-intercom as dependencies); this script writes the config around it.
+// pi-foreman itself is installed with `pi install git:github.com/Shredi/pi-foreman` (it bundles pi-subagents
+// and pi-intercom as dependencies); this script writes the config around it.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -14,6 +14,7 @@ import { createInterface } from "node:readline/promises";
 import {
   assignment, equivalentCommand, installedAddons, loadAddons, loadFeatures, loadProfiles, planChanges, resolveSetupPython, toggleable,
 } from "./extensions/core-adapter/profiles.mjs";
+import { migrateGateConfig } from "./scripts/foreman_migrate_gate.mjs";
 
 // The script needs `config/` and `extensions/core-adapter/profiles.mjs` beside it (imported statically above); `@inquirer/prompts` is loaded only when the picker opens.
 // The shared point rule and model data are loaded softly: without them the install still runs, minus the compaction step.
@@ -44,7 +45,7 @@ const USAGE = [
   "  --dry-run      show what would change, write nothing",
 ].join("\n");
 const NO_INTERCOM_GLOB = "!node_modules/pi-intercom/**";
-const BUNDLED_RE = /^npm:(pi-subagents|@gotgenes\/pi-permission-system|pi-intercom)(@.*)?$/;
+const BUNDLED_RE = /^npm:(pi-subagents|pi-intercom)(@.*)?$/;
 const REMOTE_FOREMAN_RE = /^(npm:pi-foreman(@[^/]+)?|(github\.com\/[^/\s]+\/pi-foreman(\.git)?(@[^/]+)?\/?)|git:[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|git:https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?)$/;
 const NO_PROFILE_HINT = "features: no profile chosen yet; run foreman setup --pick in a terminal, or pass --profile <name> [--enable/--disable <id>]";
 const BRIDGE_HINT = "pi-claude-bridge: log in once. Run `CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude` and enter /login, or run `claude setup-token` and export CLAUDE_CODE_OAUTH_TOKEN (docs/install.md, \"Claude bridge: log in once\").";
@@ -680,7 +681,6 @@ async function main(argv) {
   const baseDir = path.dirname(settingsFile);
   const managedFile = path.join(agentDir, "pi-foreman", "managed.json");
   const foremanFile = path.join(agentDir, "foreman.json");
-  const permFile = path.join(agentDir, "extensions", "pi-permission-system", "config.json");
   const dry = opts.dryRun;
 
   say(`pi-foreman installer${dry ? " (dry run: nothing will be written)" : ""}${opts.remove ? " [remove]" : ""}`);
@@ -798,15 +798,7 @@ async function main(argv) {
       for (const k of ownedKeys) dropOverride(next, k);
     }
     if (next) say(unifiedDiff(path.basename(settingsFile), settingsText, toJson(next)));
-    const permText = readText(permFile);
-    const permRecorded = isObj(managed.files) ? managed.files[permFile] : undefined;
-    let dropPerm = false;
-    if (permText === null) say("permission-system config: none present");
-    else if (permRecorded && permRecorded === (() => { try { return sha(parseJsonObject(permText, permFile)); } catch { return null; } })()) {
-      dropPerm = true;
-      say(`permission-system config: unchanged since written, removing ${permFile}`);
-    } else say("permission-system config: not ours or edited by hand, kept");
-    if (!next && !dropPerm && !Object.keys(derived).length) {
+    if (!next && !Object.keys(derived).length) {
       say("pi-foreman: up to date, nothing to remove.");
       say(`The package itself stays installed; to remove it run: ${removeLine}`);
       return;
@@ -821,13 +813,6 @@ async function main(argv) {
       writeFile(settingsFile, toJson(fresh));
     }
     delete managed.entries[settingsFile];
-    if (dropPerm) {
-      const file = `${permFile}.bak-${timestamp()}`;
-      fs.copyFileSync(permFile, file);
-      say(`  backup: ${file}`);
-      fs.unlinkSync(permFile);
-      delete managed.files[permFile];
-    }
     if (managedText !== null) writeFile(managedFile, toJson(managed));
     say("pi-foreman: removed managed entries.");
     say(`The package itself stays installed; to remove it run: ${removeLine}`);
@@ -864,7 +849,9 @@ async function main(argv) {
     }
     const py = resolvePython(agentDir);
     say(`  python ${py.version.join(".")} via ${py.source}: ${py.executable}`);
-    let anyChange = false;
+    // The permission package's keys, rendered config and backups move to the gate (backup under state/migration first).
+    const gateMigration = migrateGateConfig({ agentDir, configPath: foremanFile, log: say, dryRun: dry });
+    let anyChange = gateMigration.changed;
 
     // The recorded profile is the merged user-plus-overlay value (no project layer).
     const knownProfiles = Object.keys(loadProfiles().profiles);
@@ -903,7 +890,7 @@ async function main(argv) {
       diffShown = true;
     } else if (!request.profile && recorded === null) say(NO_PROFILE_HINT);
 
-    // foreman.json first, so the generator and the permission render below see it (on --dry-run nothing is written, so they
+    // foreman.json first, so the generator below sees it (on --dry-run nothing is written, so they
     // reflect the file on disk, one run behind the diff shown here)
     if (!request.profile && !request.enable.length && !request.disable.length) {
       if (curText === null) {
@@ -1309,35 +1296,6 @@ async function main(argv) {
 
     for (const e of errors) say(`  generate-subagents: ${e}`);
     for (const w of warnings) say(`  warning: ${w}`);
-    // permission-system config, generated from the baseline plus safety.permissions (L1 -> L3 -> L2)
-    const pg = runConfigCli(py, ["render", "--agent-dir", agentDir], projectDir, "permissions_gen.py");
-    if (!pg.data || !isObj(pg.data.config)) throw new Fatal(`permissions_gen.py failed (exit ${pg.code}): ${pg.stderr || "no JSON output"}`);
-    const permWanted = pg.data.config;
-    const permText = readText(permFile);
-    let permCur = null;
-    let permBroken = false;
-    try {
-      permCur = parseJsonObject(permText, permFile);
-    } catch {
-      permBroken = true;
-    }
-    const permRecorded = isObj(managed.files) ? managed.files[permFile] : undefined;
-    const permSame = !permBroken && permCur !== null && canonical(permCur) === canonical(permWanted);
-    const permHash = sha(permWanted);
-    if (permSame) say("permission-system config: in sync");
-    else {
-      anyChange = true;
-      if (permText === null) say(`permission-system config: absent, ${dry ? "would write" : "writing"} ${permFile}`);
-      else {
-        const edited = permBroken || !permRecorded || permRecorded !== sha(permCur);
-        say(`permission-system config: ${edited ? "edited by hand or not recorded as ours" : "out of date"}; backing it up and overwriting. The installer owns this file: put your own rules in foreman.json (safety.permissions).`);
-      }
-      say(unifiedDiff("extensions/pi-permission-system/config.json", permText, toJson(permWanted)));
-    }
-    const permNeedRecord = !isObj(managed.files) || managed.files[permFile] !== permHash;
-    if (permNeedRecord) anyChange = true;
-    for (const w of pg.data.warnings || []) say(`  warning: ${w}`);
-
     // pi-subagents worktree setup hook: a plain node_modules copy instead of the symlink (scripts/foreman_worktree_setup.py)
     const hookFile = path.join(agentDir, "extensions", "subagent", "config.json");
     const hookLauncher = path.join(ROOT, "bin", "foreman-worktree-setup");
@@ -1384,17 +1342,7 @@ async function main(argv) {
       managed.entries[settingsFile] = { ...(isObj(managed.entries[settingsFile]) ? managed.entries[settingsFile] : {}), subagentsHash: sha(finalBlock) };
       if (Object.keys(comp.record).length) managed.entries[settingsFile].compactionDerived = comp.record;
       else delete managed.entries[settingsFile].compactionDerived;
-      if (!permSame) {
-        if (permText !== null) {
-          const file = `${permFile}.bak-${timestamp()}`;
-          fs.copyFileSync(permFile, file);
-          say(`  backup: ${file}`);
-        }
-        writeFile(permFile, toJson(permWanted));
-      }
       if (hookNext) writeFile(hookFile, toJson(hookNext));
-      if (!isObj(managed.files)) managed.files = {};
-      managed.files[permFile] = permHash;
       writeFile(managedFile, toJson(managed));
     }
 

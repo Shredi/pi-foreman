@@ -227,7 +227,7 @@ class Rig:
         block = json.loads(gen.stdout.decode())["subagents"]
         bundled_check()
         # one package entry: the repo brings pi-subagents and intercom; non-intercom rigs filter intercom out
-        entry = {"source": str(REPO), "extensions": ["!node_modules/@gotgenes/**"] + ([] if intercom else ["!node_modules/pi-intercom/**"])}  # TEMP-D1: until package.json drops the old entry
+        entry = {"source": str(REPO), "extensions": [] if intercom else ["!node_modules/pi-intercom/**"]}
         st = {"packages": [entry], "subagents": block}
         if settings:
             st = deep_merge(st, settings)

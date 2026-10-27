@@ -73,8 +73,6 @@
     "heavyThreshold": "strict"
   },
   "review": {
-    "headless": false,
-    "childDefer": "deny",
     "critic": [
       "(1) Is this lean — how would Claude Code solve it, and is a deterministic rule, a classifier rule or a human the right layer?",
       "(2) Real repeated friction or a reviewer-invented edge case?",
@@ -96,8 +94,10 @@
   "wait": { "batchWindowSeconds": 300, "maxSeconds": 86400, "maxActive": 8, "ci": true },
   "resources": { "maxLoadPerCore": 1.5, "minFreeMemMB": 1024, "minFreeDiskGB": 5, "sampleSeconds": 30 },
   "paths": { "hubWorkflow": [] },
+  "gate": { "reviewTimeoutMs": 15000, "askTimeoutMs": 900000, "childAsk": "parent", "tmpAccess": true, "logMaxBytes": 20971520 },
   "safety": {
-    "permissions": { "allow": [], "ask": [], "deny": [], "paths": { "deny": [], "ask": [] }, "projectCommands": [], "readRoots": [], "autoReview": { "enabled": true, "rulesFile": null } },
+    "policy": { "files": [] },
+    "preBash": { "hooks": [], "strict": false },
     "requiredChildExtensions": [],
     "children": { "mayPush": false },
     "review": { "required": false },
