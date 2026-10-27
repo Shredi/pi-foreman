@@ -11,10 +11,12 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture, tool_results  # noqa: E402
+from driver import PROVIDER_A, load_fixture, tool_results  # noqa: E402
 from test_replay import REASON, ReplayCase  # noqa: E402
 
 CFG = {"ceremony": {"launchWait": "block", "childReads": {"builder": {"warn": 2, "deny": 3}}}}
+# R41: a child's npm ci is the review's ask (package-install); the fake child-only reviewer asks, the gate adds the R46 text to the ask
+CFG_ASK = {**CFG, "providers": {PROVIDER_A: {"review": {"model": "%s/review-child-ask" % PROVIDER_A}}}}
 HINT = "relaunch you with the launch flag `install: true`"
 
 
@@ -28,8 +30,8 @@ def session_text(rig):
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestR46Launch(ReplayCase):
-    def run_flow(self, name, tag):
-        rig = self.rig(name, load_fixture("r46_launch"), config=CFG)
+    def run_flow(self, name, tag, config=CFG):
+        rig = self.rig(name, load_fixture("r46_launch"), config=config)
         (rig.project / "a.txt").write_text("alpha\n", "utf-8")
         pi = rig.start()
         res = tool_results(pi.prompt("[[replay:%s]] go" % tag, timeout=240))
@@ -44,11 +46,11 @@ class TestR46Launch(ReplayCase):
         self.assertNotIn("[child_read_budget_exceeded]", session_text(rig))
 
     def test_npm_ci_refusal_names_the_install_flag(self):
-        rig = self.run_flow("r46-noinstall", "noinst")
+        rig = self.run_flow("r46-noinstall", "noinst", CFG_ASK)
         self.assertIn(HINT, session_text(rig))
 
     def test_install_launch_does_not_get_the_hint(self):
-        rig = self.run_flow("r46-install", "inst")
+        rig = self.run_flow("r46-install", "inst", CFG_ASK)
         text = session_text(rig)
         self.assertIn("npm ci needs approval for a child", text)
         self.assertNotIn(HINT, text)

@@ -25,6 +25,7 @@ import { webReadFacts } from "./webread.ts";
 import { gateLogFile, openGateLog } from "./gatelog.ts";
 import type { GateKind, GateLog } from "./gatelog.ts";
 import { ChildAskWatch, childAskDir, childAskParentDir } from "./childask.ts";
+import { childNpmNote } from "./childnpm.ts";
 import type { ChildAnswer, ChildAsk, ChildAskEvent } from "./childask.ts";
 import { awaitRuling, cut, DEFAULT_ASK_TIMEOUT_MS, dialogBody, DIALOG_OPTIONS, silentDeny, STOP_TEXT, unreachableName, userDeny, writeRoundAsk } from "./gatedialog.ts";
 import type { GateAsk } from "./gatedialog.ts";
@@ -2219,7 +2220,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (changesState(event.toolName, undefined, event.input as Record<string, unknown>)) rt.cache.invalidateAllows();
         return undefined;
       }
-      const ask: GateAsk = v.kind === "unreachable" ? { cause: "unreachable", why: v.cause, detail: v.detail } : { cause: "ask", entry: v.entry, reason: v.reason };
+      const ask: GateAsk = v.kind === "unreachable" ? { cause: "unreachable", why: v.cause, detail: v.detail } : { cause: "ask", entry: v.entry, reason: kind === "child" && event.toolName === "bash" ? [v.reason, childNpmNote(String((event.input as Record<string, unknown>)?.command ?? ""), launchBinding?.install === true)].filter(Boolean).join(" ") : v.reason };
       const blocked = await gateAsk(gs, ctx, rt, kind, role, event.toolName, event.input, payload, ask, sessionKey);
       if (blocked) return blocked;
       gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: ask.cause === "ask" ? `dialog:${ask.entry}` : `dialog:${ask.why}`, role });
@@ -2279,7 +2280,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const w = await withBlocked(herdrEvents, `ask ${n}: gate ${tool}`, () => awaitRuling(askDir, n, timeoutMs, 250, notBefore));
         if (w.answer === "allow") return done("parent-allow", true);
         if (w.answer === "timeout") return done("parent-timeout", false, `pi-foreman: denied: the parent did not answer within ${Math.round(timeoutMs / 1000)}s (gate.askTimeoutMs); the call is denied. Report this line to the foreman and continue with what you can.`);
-        return done("parent-deny", false, w.answer === "deny" ? `pi-foreman: denied by the parent${w.reason ? `: ${w.reason}` : "."} Report this line to the foreman and continue with what you can.` : `pi-foreman: denied: the parent's ruling-${n}.md starts with "${(w.first ?? "").slice(0, 40)}", not ALLOW or DENY.`);
+        return done("parent-deny", false, w.answer === "deny" ? `pi-foreman: denied by the parent${w.reason ? `: ${w.reason}` : "."} Report this line to the foreman and continue with what you can. The ask was ${a.entry}: ${a.reason}` : `pi-foreman: denied: the parent's ruling-${n}.md starts with "${(w.first ?? "").slice(0, 40)}", not ALLOW or DENY.`);
       } catch (e) {
         return done("parent-deny", false, `pi-foreman: the ask for the parent could not be written (${e instanceof Error ? e.message : String(e)}); the call is denied. Report this line to the foreman.`);
       } finally {
