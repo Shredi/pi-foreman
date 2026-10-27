@@ -41,9 +41,9 @@ REMOTE_LIVE_MAX = 90.0  # a remote child's heartbeat age plus the pull age must 
 SYMBOLS_PATH = Path(__file__).resolve().parent.parent / "config" / "symbols.json"
 SYM_ORDER = ("working", "waiting", "asking", "blocked", "done", "lost")
 SYM_COLORS = {"working": "32", "waiting": "90", "asking": "33", "blocked": "33", "done": "90", "lost": "31"}
-PRESENCE_KEYS = ("waiting-owner", "waiting-external", "idle")  # R11 P4 state icons; header counts stay on SYM_ORDER
+PRESENCE_KEYS = ("waiting-owner", "waiting-external", "idle", "needs-you")  # R11 P4 state icons; header counts stay on SYM_ORDER
 FALLBACK_SYMBOLS = {"working": "⏳", "waiting": "⏸", "asking": "?", "blocked": "✋", "done": "✓", "lost": "✗",
-                    "waiting-owner": "✋", "waiting-external": "↻", "idle": "⏸"}
+                    "waiting-owner": "✋", "waiting-external": "↻", "idle": "⏸", "needs-you": "❓"}
 SYMBOL_SETS = ("unicode", "emoji", "nerd", "ascii")
 # Activity glyphs of the sidebar rows (agent run, task, wait, ask, finished run); the spinner is a list of frames.
 FALLBACK_ACTIVITY = {"review": "◎", "agent": "◆", "task": "⚙", "wait": "◷", "ask": "?", "recent": "✓"}
@@ -231,10 +231,20 @@ def sym_key(n):
     return "blocked" if st == "blocked" else "waiting"
 
 
+def asks_you(n):
+    """An open ask waits for the owner on this session: an open ask.md of its own handoff, or a child run or
+    session that asks (a forwarded permission prompt) and has not ended."""
+    return bool(n.get("asks")) or any(c["state"] == "ask" and c.get("ended") is None for c in n["children"])
+
+
 def icon_key(n):
-    """Symbol key for a row: the presence state of a live session when its file has one, else sym_key."""
+    """Symbol key for a row: `needs-you` while an own dialog or ask, an open ask file or a forwarded child ask waits
+    for the owner (it beats every other state but done and lost), else the presence state of a live session when
+    its file has one, else sym_key."""
     key = sym_key(n)
     p = n.get("presence")
+    if n["kind"] == "session" and n["glyph"] != "lost" and key not in ("done", "lost") and (p == "needs-you" or asks_you(n)):
+        return "needs-you"
     if n["glyph"] != "lost" and key in ("waiting", "blocked", "working") and p in PRESENCE_KEYS + ("working",):
         return p
     return key
@@ -340,8 +350,11 @@ def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
         p = base / "handoffs" / dn
         if not p.is_dir():
             continue
+        live_id = read_json(p / "live.json")  # R46: the child's own {intercomId, piSessionId}
+        live_id = live_id if isinstance(live_id, dict) else {}
         handoffs[dn] = {"parent": read_line(p / "parent"), "child": read_line(p / "child"), "mtime": mtime(p),
                         "path": str(p),
+                        "piSessionId": live_id.get("piSessionId") if isinstance(live_id.get("piSessionId"), str) else None,
                         "has": [f for f in ("result.md", "plan.md", "brief.md") if (p / f).exists()]}
     data = {"live": live, "registry": reg, "handoffs": handoffs, "usage": usage, "trace": trace,
             "pullInterval": config_pull_interval(adir)}
@@ -579,6 +592,8 @@ def build(data, now):
             n["last"] = n["last"] or opened
             n["started"] = opened
             n["path"] = e["handoff"] if isinstance(e.get("handoff"), str) else ""
+            if ho and ho.get("piSessionId") and not n["sid"]:
+                n["sid"] = ho["piSessionId"]
             nodes[key] = n
         if isinstance(e.get("parent"), str) and e["parent"] and not n["parent"]:
             n["parent"] = e["parent"]
@@ -603,10 +618,27 @@ def build(data, now):
         n["glyph"], n["state"] = reg_glyph("open", opened, now, "result.md" in ho["has"])
         n["last"], n["started"], n["parent"] = opened, opened, ho["parent"] or None
         n["path"] = ho.get("path") or ""
+        n["sid"] = ho.get("piSessionId") or None
         nodes[key] = n
+
+    def parent_of(n):
+        """The node a recorded parent id names: a session key (intercom id), else a live session's Pi session id (a
+        restarted parent keeps its session id but may publish a new intercom id), else the Pi session id in the
+        parent's own handoff live.json."""
+        ref = n["parent"]
+        if not ref:
+            return None
+        p = nodes.get(ref) or by_sid.get(ref)
+        if p is None:
+            for ho in handoff_by_leaf.values():
+                if ho.get("piSessionId") and ho["piSessionId"] in by_sid and ref == ho.get("child"):
+                    p = by_sid[ho["piSessionId"]]
+                    break
+        return p
+
     roots, seen = [], set()
     for n in nodes.values():
-        p = nodes.get(n["parent"]) if n["parent"] else None
+        p = parent_of(n)
         if p is not None and p is not n:
             p["children"].append(n)
         else:
@@ -622,7 +654,7 @@ def build(data, now):
         mark(r)
     for n in nodes.values():  # sessions only in a parent cycle: break it here
         if id(n) not in seen:
-            p = nodes.get(n["parent"])
+            p = parent_of(n)
             if p is not None:
                 p["children"] = [c for c in p["children"] if c is not n]
             roots.append(n)

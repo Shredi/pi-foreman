@@ -1,6 +1,6 @@
 """Replay: sidebar presence states (R11 P4) in the presence file's `presence` field, one case per state.
 
-working (a foreman turn runs), waiting-owner (an open permission ask), waiting-external (only a
+working (a foreman turn runs), needs-you (an open permission ask), waiting-external (only a
 foreman_wait timer is pending) and idle (a settled session with nothing open). The legacy `state`
 field is checked alongside. Same prerequisites and skips as test_replay.py.
 """
@@ -76,13 +76,13 @@ class TestPresenceStates(ReplayCase):
         # A live child alone is work: presence says working while the legacy state is already idle.
         self.assertIn(("working", "idle"), seen)
 
-    def test_replay_presence_waiting_owner(self):
+    def test_replay_presence_needs_you(self):  # an own permission ask is needs-you since round 73 (was waiting-owner)
         pi = self.rig_.start()
         path = self._file(pi)
         seen = []
 
         def look(_rec):
-            seen.append(self._until(path, "waiting-owner"))
+            seen.append(self._until(path, "needs-you"))
             return {"confirmed": True}
 
         recs = pi.prompt("[[replay:p_ask]] ask", answers=[look], timeout=60)

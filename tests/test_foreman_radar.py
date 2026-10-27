@@ -232,7 +232,7 @@ class RenderTests(Fixture):
         self.three_levels()
         text = "\n".join(self.lines())
         self.assertNotIn("\x1b", text)
-        self.assertIn("\u23f3 top", text)
+        self.assertIn("\u2753 top", text)  # its child run asks: needs-you (round 73)
         self.assertRegex(text, r"\u270b api +blocked +\d+s +\u2191600 \u219320 \$0\.25")
 
     def test_header_plain(self):

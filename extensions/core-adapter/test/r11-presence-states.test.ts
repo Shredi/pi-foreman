@@ -11,12 +11,12 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "r11p-"));
 const wait = { id: "w1", kind: "timer", note: "n", ageSeconds: 1, leftSeconds: 60 };
 const live = { launchId: "L", role: "builder", rung: "model" as const, model: null, state: "working" as const, tokensIn: 0, tokensOut: 0, cost: 0, startedAt: 0, endedAt: null };
 
-test("presenceState: precedence done > waiting-owner > working > waiting-external > idle", () => {
+test("presenceState: precedence done > needs-you > working > waiting-external > idle", () => {
   assert.equal(presenceState(base), "idle");
   assert.equal(presenceState({ ...base, externalWaits: true }), "waiting-external");
   assert.equal(presenceState({ ...base, externalWaits: true, turn: true }), "working");
   assert.equal(presenceState({ ...base, externalWaits: true, children: true }), "working");
-  assert.equal(presenceState({ ...base, externalWaits: true, children: true, turn: true, owner: true }), "waiting-owner");
+  assert.equal(presenceState({ ...base, externalWaits: true, children: true, turn: true, owner: true }), "needs-you");
   assert.equal(presenceState({ owner: true, turn: true, children: true, externalWaits: true, done: true }), "done");
 });
 
@@ -34,14 +34,14 @@ test("LiveState presence: each state, with the legacy state field unchanged", ()
   runs = [live];
   assert.equal(snap().presence, "working");
   runs = [{ ...live, state: "ask" as never }];
-  assert.equal(snap().presence, "idle"); // a child's ask reaches the owner through hold(), not through the run
+  assert.equal(snap().presence, "needs-you"); // a child's forwarded ask waits for the owner (round 73)
   runs = [];
   l.onAgentStart();
   assert.equal(snap().presence, "working");
   waits = [wait];
   assert.equal(snap().presence, "working"); // working beats waiting-external
   const release = l.hold();
-  assert.equal(snap().presence, "waiting-owner");
+  assert.equal(snap().presence, "needs-you");
   assert.equal(snap().state, "blocked"); // legacy name kept
   release();
   l.onSettled(true);

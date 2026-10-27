@@ -10,7 +10,7 @@ export type SetName = "unicode" | "nerd" | "emoji" | "ascii";
 /** Activity icons of the sidebar tree and the children widget; `rule` is the PR widget's divider line. */
 export type ActivityKey = "review" | "agent" | "task" | "wait" | "ask" | "recent" | "pr-fail" | "pr-run" | "pr-ok" | "pr-none" | "rule";
 /** Presence-state icons (livestate.ts PresenceName; `working` and `done` reuse their own keys). */
-export type PresenceKey = "waiting-owner" | "waiting-external" | "idle";
+export type PresenceKey = "waiting-owner" | "waiting-external" | "idle" | "needs-you";
 
 const KEEPALIVE: Record<SetName, string> = { emoji: "♨️", ascii: "^", unicode: "♨", nerd: "" };
 
@@ -33,10 +33,10 @@ const CACHE_GLYPHS: Record<SetName, { cold: string; downshift: string }> = {
 };
 
 const FALLBACK: Record<SetName, Omit<Record<SymbolKey, string>, "keepalive" | "cold" | "downshift" | ActivityKey>> = {
-  emoji: { working: "⏳", waiting: "⏸️", asking: "❓", blocked: "✋", done: "✅", lost: "❌", "waiting-owner": "✋", "waiting-external": "🔄", idle: "⏸️" },
-  ascii: { working: "*", waiting: ".", asking: "?", blocked: "#", done: "+", lost: "x", "waiting-owner": "#", "waiting-external": "@", idle: "." },
-  unicode: { working: "⏳", waiting: "⏸", asking: "?", blocked: "✋", done: "✓", lost: "✗", "waiting-owner": "✋", "waiting-external": "↻", idle: "⏸" },
-  nerd: { "waiting-owner": "\uf256", "waiting-external": "\uf017", idle: "\uf04c", working: "", waiting: "", asking: "", blocked: "", done: "", lost: "" },
+  emoji: { working: "⏳", waiting: "⏸️", asking: "❓", blocked: "✋", done: "✅", lost: "❌", "waiting-owner": "✋", "waiting-external": "🔄", idle: "⏸️", "needs-you": "❓" },
+  ascii: { working: "*", waiting: ".", asking: "?", blocked: "#", done: "+", lost: "x", "waiting-owner": "#", "waiting-external": "@", idle: ".", "needs-you": "?" },
+  unicode: { working: "⏳", waiting: "⏸", asking: "?", blocked: "✋", done: "✓", lost: "✗", "waiting-owner": "✋", "waiting-external": "↻", idle: "⏸", "needs-you": "❓" },
+  nerd: { "needs-you": "\uf128", "waiting-owner": "\uf256", "waiting-external": "\uf017", idle: "\uf04c", working: "", waiting: "", asking: "", blocked: "", done: "", lost: "" },
 };
 
 const FILE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "config", "symbols.json");
