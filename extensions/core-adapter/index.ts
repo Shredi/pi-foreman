@@ -1988,7 +1988,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (changesState(event.toolName, r.rule, event.input as Record<string, unknown>)) rt?.cache.invalidateAllows();
       return undefined;
     }
-    if (!gs || !rt) return undefined;
+    // no session: no review, dialog or log to decide with, and the overlay below is no replacement for the gate; floors and defaults ran above
+    if (!gs || !rt) return { block: true as const, reason: "pi-foreman: this tool call has no session to review it in, so it is denied. Report this to the owner." };
     const surface = gateSurface(event.toolName);
     const sessionKey = `${event.toolName}\u0000${payload}`;
     if (gateStopped.has(gs.id)) {
