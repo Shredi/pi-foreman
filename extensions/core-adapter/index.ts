@@ -20,6 +20,7 @@ import { baseFloorEnv, changesState, gateDecide, gitFacts, reviewGitFacts } from
 import { GateCache, GateHistory, gateReview, MAX_OWNER_MESSAGES } from "./gatereview.ts";
 import type { GateReviewRequest } from "./gatereview.ts";
 import { scriptFacts } from "./scriptfact.ts";
+import { pathFacts } from "./pathfact.ts";
 import { gateLogFile, openGateLog } from "./gatelog.ts";
 import type { GateKind, GateLog } from "./gatelog.ts";
 import { awaitRuling, DEFAULT_ASK_TIMEOUT_MS, dialogBody, DIALOG_OPTIONS, silentDeny, STOP_TEXT, unreachableName, userDeny, writeRoundAsk } from "./gatedialog.ts";
@@ -2014,7 +2015,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const req: GateReviewRequest = {
         surface, tool: event.toolName, role, kind, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, owned: roots?.owned ?? [], ...facts,
         ownerMessages: gateOwnerMessages.get(gs.id) ?? [], history: rt.history.list(), payload,
-        ...(surface === "bash" ? { facts: scriptFacts(payload, ctx.cwd, workspaceOf(ctx.cwd).root) } : {}),
+        facts: [
+          ...(surface === "bash" ? scriptFacts(payload, ctx.cwd, workspaceOf(ctx.cwd).root) : []),
+          ...pathFacts(event.toolName, event.input, payload, ctx.cwd, workspaceOf(ctx.cwd).root, [...(roots?.owned ?? []), ...(roots?.scratch ?? [])], gs.agentDir),
+        ],
         ...(surface === "file" ? { pathKeys: Object.keys((event.input ?? {}) as object).filter((k) => typeof (event.input as Record<string, unknown>)[k] === "string") } : {}),
       };
       const v = await gateReview(req, {
