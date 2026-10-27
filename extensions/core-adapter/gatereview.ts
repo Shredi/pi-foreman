@@ -45,6 +45,8 @@ export interface GateReviewRequest {
   history?: string[];
   /** The full command, or the path payload of a path tool; sent whole between nonce fences. */
   payload: string;
+  /** Facts the gate computed itself (never the model), one line each, e.g. `script: scripts/x.sh tracked-unchanged`. */
+  facts?: string[];
   /** Path tools: the path keys of the call (cache key: tool + sorted keys). */
   pathKeys?: string[];
 }
@@ -156,6 +158,7 @@ export function requestText(r: GateReviewRequest, nonce = randomBytes(8).toStrin
     "## What the agent ran earlier in this session (commands and paths, no output)",
     ...fence("HISTORY", (r.history ?? []).join("\n") || "(none)"),
     "",
+    ...(r.facts?.length ? ["## Facts the gate computed (trusted, not from the agent)", ...r.facts, ""] : []),
     "## The call",
     ...fence("CALL", r.payload),
     "",
@@ -237,7 +240,7 @@ async function callReview(deps: GateReviewDeps, target: ReviewTarget | null, sys
 
 function cacheKeys(r: GateReviewRequest, policyHashHex: string, projectHashHex: string, targetKey: string): { deny: string; allow: string } {
   // the review target is part of the key: a provider or model switch must not replay a verdict another reviewer gave
-  const base = [policyHashHex, projectHashHex, targetKey, r.kind, r.role, r.cwd, r.branch ?? "", r.head ?? "", r.mergeHead ?? ""];
+  const base = [policyHashHex, projectHashHex, targetKey, r.kind, r.role, r.cwd, r.branch ?? "", r.head ?? "", r.mergeHead ?? "", ...(r.facts ?? [])];
   const shape = r.pathKeys ? `${r.tool} ${[...r.pathKeys].sort().join("\0")}` : normalizeShape(r.payload, { worktree: r.worktree });
   // A denial of a shape also holds for every command of that shape; an allow only for the exact input (the shape masks quoted values).
   return { deny: JSON.stringify([...base, "shape", shape]), allow: JSON.stringify([...base, "exact", r.tool, r.payload]) };

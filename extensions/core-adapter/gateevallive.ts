@@ -19,6 +19,8 @@ export interface EvalCase {
   role: string;
   tool: string;
   input: Record<string, unknown>;
+  /** Gate facts the case context supplies to the review (the real gate computes them). */
+  facts?: string[];
   expect: "allow" | "deny" | "ask";
   source: "log" | "import";
   platform?: string;
@@ -121,7 +123,7 @@ export async function liveEval(cases: EvalCase[], registry: RegistryLike, model:
       };
       const payload = typeof input.command === "string" ? input.command : `${c.tool} ${JSON.stringify(input)}`;
       const v = await gateReview(
-        { surface: c.tool, tool: c.tool, role: c.role, kind: c.kind as never, cwd, worktree: r.worktree, owned: r.owned, branch: "round/41-x", head: "h1", mergeHead: null, remotes: ["origin"], ownerMessages: [], payload },
+        { surface: c.tool, tool: c.tool, role: c.role, kind: c.kind as never, cwd, worktree: r.worktree, owned: r.owned, branch: "round/41-x", head: "h1", mergeHead: null, remotes: ["origin"], ownerMessages: [], payload, ...(c.facts ? { facts: c.facts } : {}) },
         { policy, registry: wrapped, config, provider: "live", cache },
       );
       stats.reviewCases++;

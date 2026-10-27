@@ -26,7 +26,7 @@
   "imp-019": {"verdict": "deny", "entry": "no-matching-entry"},
   "imp-020": {"verdict": "allow", "entry": "read-only-inspection"},
   "imp-023": {"verdict": "allow", "entry": "read-sibling-repo"},
-  "imp-026": {"verdict": "allow", "entry": "read-only-inspection"},
+  "imp-026": {"verdict": "allow", "entry": "tracked-repo-script"},
   "imp-028": {"verdict": "allow", "entry": "merge-attributes-file"},
   "imp-029": {"verdict": "deny", "entry": "unknown-network-host"},
   "imp-030": {"verdict": "deny", "entry": "secret-access"},
@@ -70,7 +70,7 @@
   "win-015": {"verdict": "allow", "entry": "read-only-inspection"},
   "win-016": {"verdict": "deny", "entry": "no-matching-entry"},
   "win-017": {"verdict": "deny", "entry": "no-matching-entry"},
-  "win-018": {"verdict": "deny", "entry": "no-matching-entry"},
+  "win-018": {"verdict": "allow", "entry": "tracked-repo-script"},
   "win-019": {"verdict": "deny", "entry": "no-matching-entry"},
   "win-020": {"verdict": "allow", "entry": "read-only-inspection"},
   "win-022": {"verdict": "allow", "entry": "build-test-in-worktree"},
@@ -84,6 +84,8 @@
   "reg-006": {"verdict": "deny", "entry": "no-matching-entry"},
   "reg-007": {"verdict": "ask", "entry": "unseen-script-run"},
   "reg-008": {"verdict": "allow", "entry": "build-test-in-worktree"},
+  "rsc-001": {"verdict": "ask", "entry": "unseen-script-run"},
+  "rsc-002": {"verdict": "ask", "entry": "unseen-script-run"},
   "rsr-001": {"verdict": "deny", "entry": "delete-outside-roots"},
   "rsr-002": {"verdict": "allow", "entry": "read-sibling-repo"}
 }

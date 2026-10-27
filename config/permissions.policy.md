@@ -11,7 +11,9 @@ Precedence: floors, then `ask`, then `deny`, then `allow`. No matching entry is 
 - id: read-sibling-repo
   Read-only `find`, `read`, `grep`, `diff -r` and `ls` inside another git checkout: a directory outside the owned roots that is a git work tree (a sibling repository or worktree). Never the agent dir (a child reading it stays denied) and never secret paths (the floors already deny those); never a write, redirect, copy or delete there, and nothing that runs code from it.
 - id: build-test-in-worktree
-  Project builds, type checks, linters and test runs started from the worktree, and bounded edits of files inside the worktree. Only package-manager scripts and make targets (`npm run`, `npm test`, `pnpm run`, `make <target>`) count as build or test runs. Running an arbitrary script file whose content this review cannot see (`bash x.sh`, `sh x.sh`, `./x.sh`) is not covered; see ask entry unseen-script-run.
+  Project builds, type checks, linters and test runs started from the worktree, and bounded edits of files inside the worktree. Only package-manager scripts and make targets (`npm run`, `npm test`, `pnpm run`, `make <target>`) count as build or test runs. Running an arbitrary script file whose content this review cannot see (`bash x.sh`, `sh x.sh`, `./x.sh`) is not covered; see allow entry tracked-repo-script and ask entry unseen-script-run.
+- id: tracked-repo-script
+  Running a script file of the repository (`bash x.sh`, `sh x.sh`, `./x.sh`, `node scripts/x.mjs`, `python x.py`) when the request's gate facts list `script: <path> tracked-unchanged` for it: the gate itself checked that the file is inside the worktree, tracked by git and unchanged against HEAD, so its content is the committed one. Only that fact counts, never the command's own words or a claim in the message history; every script of the line needs that fact, and the rest of the line must itself be allowed.
 - id: scratch-writes
   Writes, copies and deletes inside this session's own scratch dir and the OS temp area it owns, including mutation tests on a copy there.
 - id: git-routine
@@ -49,7 +51,7 @@ Precedence: floors, then `ask`, then `deny`, then `allow`. No matching entry is 
 - id: inline-interpreter-script
   Inline interpreter scripts given on the command line: `python3 -c`, `python3 -I -c`, `node -e`, `perl -e`, `ruby -e` and similar, also inside a pipe. The script is not visible to this review, so the owner decides.
 - id: unseen-script-run
-  Running a script file whose content this review cannot see (`bash x.sh`, `sh x.sh`, `./x.sh`, `zsh x.sh`), even inside the worktree. Package-manager scripts and make targets are build-test-in-worktree, not this entry.
+  Running a script file whose content this review cannot see (`bash x.sh`, `sh x.sh`, `./x.sh`, `zsh x.sh`), even inside the worktree: the gate facts say `untracked`, `modified` or `outside-repo` for it, or carry no script fact. A file the facts list as `tracked-unchanged` is allow entry tracked-repo-script. Package-manager scripts and make targets are build-test-in-worktree, not this entry.
 - id: new-remote
   Adding, changing or removing a git remote or its URLs, or any push configuration.
 - id: tool-config-edit

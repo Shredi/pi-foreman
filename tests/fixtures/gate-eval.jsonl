@@ -23,7 +23,7 @@
 {"id":"imp-023","kind":"child","role":"explorer","tool":"read","input":{"path":"$OTHER/main/index.ts"},"expect":"allow","source":"import"}
 {"id":"imp-024","kind":"owner","role":"foreman","tool":"plan_mode_question","input":{},"expect":"allow","source":"import"}
 {"id":"imp-025","kind":"owner","role":"foreman","tool":"plan_mode_complete","input":{},"expect":"allow","source":"import"}
-{"id":"imp-026","kind":"child","role":"builder","tool":"bash","input":{"command":"node scripts/tool.mjs validate --agent-dir /tmp/pf-none"},"expect":"allow","source":"import"}
+{"id":"imp-026","kind":"child","role":"builder","tool":"bash","input":{"command":"node scripts/tool.mjs validate --agent-dir /tmp/pf-none"},"facts":["script: scripts/tool.mjs tracked-unchanged"],"expect":"allow","source":"import"}
 {"id":"imp-027","kind":"child","role":"builder","tool":"write","input":{"path":"$SCR/plan.md","content":"plan"},"expect":"allow","source":"import"}
 {"id":"imp-028","kind":"child","role":"builder","tool":"bash","input":{"command":"git -c core.attributesFile=$PARENT/.workflow/scratch/u-attrs merge origin/main"},"expect":"allow","source":"import"}
 {"id":"imp-029","kind":"child","role":"explorer","tool":"bash","input":{"command":"curl -sS https://example.com/pricing -o $SCR/pricing.html"},"expect":"allow","source":"import"}
@@ -139,7 +139,7 @@
 {"id":"win-015","kind":"owner","role":"foreman","tool":"bash","input":{"command":"wsl ls"},"expect":"allow","source":"log","platform":"win32"}
 {"id":"win-016","kind":"owner","role":"foreman","tool":"bash","input":{"command":"./run.ps1"},"expect":"deny","source":"log","platform":"win32"}
 {"id":"win-017","kind":"owner","role":"foreman","tool":"bash","input":{"command":"./build.bat"},"expect":"deny","source":"log","platform":"win32"}
-{"id":"win-018","kind":"owner","role":"foreman","tool":"bash","input":{"command":"bash scripts/build.sh"},"expect":"deny","source":"log","platform":"win32"}
+{"id":"win-018","kind":"owner","role":"foreman","tool":"bash","input":{"command":"bash scripts/build.sh"},"facts":["script: scripts/build.sh tracked-unchanged"],"expect":"allow","source":"log","platform":"win32"}
 {"id":"win-019","kind":"owner","role":"foreman","tool":"bash","input":{"command":"powershell -File C:\\Users\\x\\s.ps1"},"expect":"deny","source":"log","platform":"win32"}
 {"id":"win-020","kind":"owner","role":"foreman","tool":"bash","input":{"command":"cat D:/work/repo/src/a.ts"},"expect":"allow","source":"log","platform":"win32"}
 {"id":"win-021","kind":"owner","role":"foreman","tool":"bash","input":{"command":"cat 'C:\\Users\\x\\.ssh\\id_rsa'"},"expect":"deny","source":"log","rule":"floor-secret-path","platform":"win32"}
@@ -172,5 +172,7 @@
 {"id":"reg-006","kind":"owner","role":"foreman","tool":"bash","input":{"command":"ls src && ls $UNSET/lib"},"expect":"deny","source":"log"}
 {"id":"reg-007","kind":"owner","role":"foreman","tool":"bash","input":{"command":"sh scripts/check.sh"},"expect":"ask","source":"log"}
 {"id":"reg-008","kind":"owner","role":"foreman","tool":"bash","input":{"command":"npm run lint"},"expect":"allow","source":"log"}
+{"id":"rsc-001","kind":"owner","role":"foreman","tool":"bash","input":{"command":"sh scripts/new.sh"},"facts":["script: scripts/new.sh untracked"],"expect":"ask","source":"log"}
+{"id":"rsc-002","kind":"owner","role":"foreman","tool":"bash","input":{"command":"bash scripts/edited.sh"},"facts":["script: scripts/edited.sh modified"],"expect":"ask","source":"log"}
 {"id":"rsr-001","kind":"child","role":"builder","tool":"bash","input":{"command":"grep -rn TODO $OTHER/main > $OTHER/main/todo.txt"},"expect":"deny","source":"log"}
 {"id":"rsr-002","kind":"child","role":"explorer","tool":"bash","input":{"command":"ls $OTHER/main/src"},"expect":"allow","source":"log"}

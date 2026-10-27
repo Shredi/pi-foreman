@@ -22,7 +22,7 @@ const pkgRoot = path.resolve(here, "..", "..", "..");
 const fixtureFile = path.join(pkgRoot, "tests", "fixtures", "gate-eval.jsonl");
 const answersFile = path.join(pkgRoot, "tests", "fixtures", "gate-eval-answers.json");
 
-interface EvalCase { id: string; kind: string; role: string; tool: string; input: Record<string, unknown>; expect: "allow" | "deny" | "ask"; source: "log" | "import"; rule?: string; platform?: string }
+interface EvalCase { id: string; kind: string; role: string; tool: string; input: Record<string, unknown>; facts?: string[]; expect: "allow" | "deny" | "ask"; source: "log" | "import"; rule?: string; platform?: string }
 type Outcome = { verdict: "allow" | "deny" | "ask"; layer: "floor" | "selfmod" | "default" | "review" | "cache"; rule: string };
 
 const cases: EvalCase[] = fs.readFileSync(fixtureFile, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
@@ -100,7 +100,7 @@ async function run(c: EvalCase): Promise<Outcome> {
   if (g && "ask" in g) return { verdict: "ask", layer: "selfmod", rule: g.rule };
   const r = rootsOf(c);
   const v = await gateReview(
-    { surface: c.tool, tool: c.tool, role: c.role, kind: c.kind as never, cwd, worktree: r.worktree, owned: r.owned, branch: "round/41-x", head: "h1", mergeHead: null, remotes: ["origin"], ownerMessages: [], payload: payloadOf(c.tool, input) },
+    { surface: c.tool, tool: c.tool, role: c.role, kind: c.kind as never, cwd, worktree: r.worktree, owned: r.owned, branch: "round/41-x", head: "h1", mergeHead: null, remotes: ["origin"], ownerMessages: [], payload: payloadOf(c.tool, input), ...(c.facts ? { facts: c.facts } : {}) },
     { policy, registry: fakeRegistry(c.id), config, provider: "p", cache },
   );
   if (v.kind === "unreachable") return { verdict: "ask", layer: "review", rule: v.cause };
