@@ -50,13 +50,13 @@ class TestModelReview(ReplayCase):
         dialog, bash, outcomes = self.run_path(kind, timeout_ms)
         self.assertTrue(dialog, "%s: no human prompt" % kind)
         self.assertEqual([e for e, _ in bash], [False], "%s: approved by the human, the command runs: %s" % (kind, bash))
-        self.assertEqual(outcomes[:1], [outcome])  # later records come from the permission package's own ask until phase B removes it
+        self.assertEqual(outcomes, [outcome])
 
     def test_allow_runs_without_a_prompt(self):
         dialog, bash, outcomes = self.run_path("allow")
         self.assertFalse(dialog)
         self.assertEqual([e for e, _ in bash], [False])
-        self.assertTrue(outcomes and set(outcomes) == {"allow"}, outcomes)
+        self.assertEqual(outcomes, ["allow"])
 
     def test_deny_is_final(self):
         dialog, bash, outcomes = self.run_path("deny")
