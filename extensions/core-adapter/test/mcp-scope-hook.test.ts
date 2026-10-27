@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
 /** An installed Pi package root that has the MCP loader on disk. */
 const PI_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "node_modules", "@earendil-works", "pi-coding-agent");
@@ -35,7 +35,9 @@ async function childRig(t: T, o: Opts = {}) {
   const tools = o.tools ?? [["mcp__fx__echo", "fx/echo"], ["mcp__fx__shout", "fx/shout"], ["mcp__other__probe", "other/probe"]];
   const rig = await r11Rig(t, {}, {
     child: true,
-    config: { roles: o.roles ?? { builder: { mcp: ["fx"] } } },
+    // the gate's review allows an in-scope call; scope and denyTools refusals come before the gate
+    ctx: reviewAllowOpts().ctx,
+    config: { ...reviewAllowOpts().config, roles: o.roles ?? { builder: { mcp: ["fx"] } } },
     piExtra: { getActiveTools: () => [...active], setActiveTools: (names: string[]) => { active.splice(0, active.length, ...names); } },
     deps: {
       mcpChild: {

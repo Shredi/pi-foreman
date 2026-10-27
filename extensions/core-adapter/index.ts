@@ -1945,6 +1945,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const gs = sessionFor(ctx);
     const stoppedMsg = gs?.isChild ? repeatStopped.get(gs.id) : undefined;
     if (stoppedMsg) return { block: true as const, reason: stoppedMsg };
+    // Role tool denial (roledeny.ts) and MCP scope (mcpscope.ts, r68) only block and run before the gate, so a refusal never becomes an ask or a review answer:
+    // a child's tool matching roles.<role>.denyTools, or an mcp__ call outside roles.<role>.mcp (and the launch's mcp, codemode inner calls included).
+    if (process.env.PI_SUBAGENT_CHILD === "1") {
+      const msg = roleToolDenied(gs ? get(gs.config.config, "roles") : undefined, launchBinding?.role, event.toolName);
+      if (msg) {
+        gs?.trace?.emit({ event: "guard", guard: "role_tool_denied", toolFamily: event.toolName, decision: "blocked", reason: "role_tool_denied" });
+        return { block: true as const, reason: `pi-foreman: ${msg}.` };
+      }
+      const scope = mcpChild?.callBlock(event.toolName);
+      if (scope) {
+        gs?.trace?.emit({ event: "guard", guard: "mcp_scope", toolFamily: event.toolName, decision: "blocked", reason: "mcp_scope" });
+        return { block: true as const, reason: `pi-foreman: ${scope}.` };
+      }
+    }
     const roots = gs ? await gateRootsOf(gs, ctx.cwd) : undefined;
     const configured = ((v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []))(gs ? get(gs.config.config, "safety.git.protectedBranches") : undefined);
     const r = gateDecide(event.toolName, event.input, ctx.cwd, {
@@ -2170,21 +2184,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const agents = ps ? subagentAgents(event.input as Record<string, unknown>) : [];
       const text = ps && agents.length > 0 ? rulingPickup(ps, `launch ${agents.join("+")}`) : "";
       if (text) return { block: true, reason: `pi-foreman: a newer ruling arrived before this launch; it is not started. Act on it, then launch again.\n${text}` };
-    }
-    // Role tool denial (roledeny.ts): a child's tool matching roles.<role>.denyTools is denied, never asked.
-    if (process.env.PI_SUBAGENT_CHILD === "1") {
-      const rs = sessionFor(ctx);
-      const msg = roleToolDenied(rs ? get(rs.config.config, "roles") : undefined, launchBinding?.role, event.toolName);
-      if (msg) {
-        rs?.trace?.emit({ event: "guard", guard: "role_tool_denied", toolFamily: event.toolName, decision: "blocked", reason: "role_tool_denied" });
-        return { block: true, reason: `pi-foreman: ${msg}.` };
-      }
-      // MCP scope (mcpscope.ts, r68): an mcp__ call outside roles.<role>.mcp (and the launch's mcp) is blocked, codemode inner calls included.
-      const scope = mcpChild?.callBlock(event.toolName);
-      if (scope) {
-        rs?.trace?.emit({ event: "guard", guard: "mcp_scope", toolFamily: event.toolName, decision: "blocked", reason: "mcp_scope" });
-        return { block: true, reason: `pi-foreman: ${scope}.` };
-      }
     }
     // A child never deletes an editor backup with rm (effects.ts) on any shell tool; it reports it instead.
     if (process.env.PI_SUBAGENT_CHILD === "1" && isShellTool(event.toolName) && editorBackupCommand((event.input as { command?: unknown }).command)) {
