@@ -36,7 +36,7 @@ test("each key is mapped or removed with one line", () => {
   assert.deepEqual(cfg, {
     review: { critic: ["q"] },
     providers: { anthropic: { roles: { review: { model: "anthropic/claude-haiku-5-5" } } } },
-    gate: { reviewTimeoutMs: 9000, policy: { userFile: "rules.md" } },
+    gate: { reviewTimeoutMs: 9000, policy: { userFile: "rules.md" }, childAsk: "parent" },
     safety: { keep: 1 },
   });
   const text = r.lines.join("\n");
@@ -44,7 +44,8 @@ test("each key is mapped or removed with one line", () => {
   assert.match(text, /providers\.anthropic\.review\.timeoutMs: moved to gate\.reviewTimeoutMs/);
   assert.match(text, /providers\.anthropic\.review\.extra: removed/);
   assert.match(text, /safety\.permissions\.autoReview\.rulesFile: moved to gate\.policy\.userFile/);
-  for (const k of ["review.headless", "review.childDefer", "review.fallback", "safety.permissions.autoReview.enabled", "safety.permissions.tools.a"]) {
+  assert.match(text, /review\.childDefer: moved to gate\.childAsk "parent"/);
+  for (const k of ["review.headless", "review.fallback", "safety.permissions.autoReview.enabled", "safety.permissions.tools.a"]) {
     assert.match(text, new RegExp(`${k.replace(/\./g, "\\.")}: removed`));
   }
   assert.ok(text.includes(REMOVED_REASON));

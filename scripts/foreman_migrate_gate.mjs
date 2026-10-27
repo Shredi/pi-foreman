@@ -7,7 +7,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 export const REMOVED_REASON = "the permission package is gone; the gate decides";
-const CHILD_REASON = "the gate itself denies a child or headless ask with the allowed forms";
+const HEADLESS_REASON = "a session with no pane above it denies an ask";
+const FALLBACK_REASON = "nothing reads it";
 const PKG = "@gotgenes/pi-permission-system";
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -60,7 +61,18 @@ function planKeys(config) {
   const out = [];
   const drop = (parts, reason) => out.push({ parts, text: removedKeyText(parts.join("."), reason), run: (c) => del(c, parts) });
   const move = (parts, to) => out.push({ parts, text: mappedKeyText(parts.join("."), to.join(".")), run: (c) => { set(c, to, get(c, parts)); del(c, parts); } });
-  for (const k of ["headless", "childDefer", "fallback"]) if (has(config, ["review", k])) drop(["review", k], CHILD_REASON);
+  if (has(config, ["review", "headless"])) drop(["review", "headless"], HEADLESS_REASON);
+  if (has(config, ["review", "fallback"])) drop(["review", "fallback"], FALLBACK_REASON);
+  if (has(config, ["review", "childDefer"])) {
+    // "owner" (a child's ask went to the owner) is gate.childAsk "parent"; any other value is "deny"
+    const parts = ["review", "childDefer"];
+    const to = ["gate", "childAsk"];
+    if (has(config, to)) drop(parts, `${to.join(".")} is already set`);
+    else {
+      const value = get(config, parts) === "owner" ? "parent" : "deny";
+      out.push({ parts, text: mappedKeyText(parts.join("."), `${to.join(".")} "${value}"`), run: (c) => { set(c, to, value); del(c, parts); } });
+    }
+  }
 
   const providers = get(config, ["providers"]);
   for (const p of isObj(providers) ? Object.keys(providers) : []) {
