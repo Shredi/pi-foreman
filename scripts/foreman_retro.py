@@ -418,6 +418,8 @@ def cache_metrics(trace, usage, sid, config=None):
     Returns None when there is no usage or trace, or nothing to report (no policy and all counts 0)."""
     if trace is None and usage is None:
         return None
+    # The retro process's own env; a bare config (no merged `bridge` section) derives nothing.
+    bridge_ttl = fc.derived_bridge_ttl(config, False, os.environ) if isinstance(config, dict) and "bridge" in config else None
     lines = [r for r in usage or [] if isinstance(r, dict) and not (sid and r.get("foremanSession") not in (None, sid))]
     ka = [r for r in lines if r.get("kind") == "keepalive"]
     warm = sum(1 for e in trace or [] if isinstance(e, dict) and e.get("event") == "compaction"
@@ -430,7 +432,7 @@ def cache_metrics(trace, usage, sid, config=None):
 
     def policy(r):
         try:
-            return fc.cache_policy(config or {}, _line_provider(r) or session_prov)
+            return fc.cache_policy(config or {}, _line_provider(r) or session_prov, None, bridge_ttl)
         except Exception:  # noqa: BLE001 - the line is optional
             return None
     cold, ttl = 0, None
@@ -443,7 +445,7 @@ def cache_metrics(trace, usage, sid, config=None):
         prompt = num(a.get("input")) + num(a.get("cacheRead")) + num(a.get("cacheWrite"))
         if t1 - t0 > pol["ttlSeconds"] and num(b.get("cacheRead")) < 0.5 * prompt:
             cold += 1
-    pol = policy(fore[0][1]) if fore else (fc.cache_policy(config or {}, session_prov) if session_prov else None)
+    pol = policy(fore[0][1]) if fore else (fc.cache_policy(config or {}, session_prov, None, bridge_ttl) if session_prov else None)
     if ttl is None and pol:
         ttl = pol.get("ttlSeconds")
     if not (pol or ka or warm or cold or down):

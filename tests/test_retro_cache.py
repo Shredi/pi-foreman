@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import _isolation  # noqa: E402,F401  (agent dir -> temp)
@@ -83,6 +84,7 @@ class CacheLineTest(unittest.TestCase):
         self.assertEqual(plain, withka)
         self.assertEqual(withka["foreman"]["launches"], {"first": 2})
 
+    @mock.patch.dict("os.environ", {"FORCE_PROMPT_CACHING_5M": "1"})  # the merged config now derives 3600 s for the bridge
     def test_json_key_and_text_line(self):
         sess = [{"type": "session", "id": "s1"}]
         rep = fr.build(sess, load("retro_cache_trace.jsonl"), load("retro_cache_usage.jsonl"), None, 5, str(self.tmp))

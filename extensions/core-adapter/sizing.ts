@@ -112,6 +112,74 @@ export function takeSizing(input: Json): { entries: Map<Json, Declared>; carried
   return { entries, carried, ...(error ? { error } : {}) };
 }
 
+export interface LaunchFlags {
+  reads?: number;
+  install?: boolean;
+}
+
+const READS_ROLES: readonly string[] = ["builder", "reviewer"];
+const INSTALL_ROLES: readonly string[] = ["builder", "finalizer"];
+
+/**
+ * Remove the launch fields `reads` (a positive int: the child's read allowance) and `install` (true: the child may run `npm ci`/`npm install`
+ * in its owned dirs) from a `subagent` call and return what each launch entry declared (the entry's own value wins). The binding that carries
+ * them exists for single launches only (`group`): a group keeps the config defaults and `notes` says so. `error` is a refusal text for a
+ * malformed value; the caller refuses only the foreman's own launches.
+ */
+export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>; notes: string[]; group: boolean; error?: string } {
+  const entries = new Map<Json, LaunchFlags>();
+  const notes: string[] = [];
+  let error: string | undefined;
+  const bad = (what: string): void => {
+    error ??= `pi-foreman: launch refused [launch_flag_invalid]: ${what}. Fix: reads: <positive integer> (builder, reviewer), install: true (builder, finalizer).`;
+  };
+  const group = Array.isArray(input.tasks) || Array.isArray(input.chain);
+  const list = launchEntries(input);
+  const own = (e: Json): { reads?: number; install?: boolean } => {
+    const out: { reads?: number; install?: boolean } = {};
+    if (e.reads !== undefined) {
+      if (typeof e.reads === "number" && Number.isInteger(e.reads) && e.reads >= 1) out.reads = e.reads;
+      else bad("reads is not a positive integer");
+    }
+    if (e.install !== undefined) {
+      if (typeof e.install === "boolean") out.install = e.install;
+      else bad("install is not true or false");
+    }
+    return out;
+  };
+  const top = group ? {} : own(input);
+  let dropped = false;
+  for (const e of list) {
+    const mine = e === input ? top : own(e);
+    const eff = { ...(group ? {} : top), ...mine };
+    if (group) dropped ||= eff.reads !== undefined || eff.install !== undefined;
+    if (typeof e.agent !== "string" || group) continue;
+    const role = e.agent;
+    const flags: LaunchFlags = {};
+    if (eff.reads !== undefined) {
+      if (READS_ROLES.includes(role)) flags.reads = eff.reads;
+      else notes.push(`pi-foreman: launch field reads is for builder and reviewer launches; ignored for ${role}.`);
+    }
+    if (eff.install === true) {
+      if (INSTALL_ROLES.includes(role)) flags.install = true;
+      else notes.push(`pi-foreman: launch field install is for builder and finalizer launches; ignored for ${role}.`);
+    }
+    entries.set(e, flags);
+  }
+  if (group) {
+    // top-level fields of a group call apply to no entry
+    dropped ||= input.reads !== undefined || input.install !== undefined;
+    if (dropped) notes.push("pi-foreman: reads and install are carried in the launch binding, which a group launch does not get; this group launch keeps the config read limits and its children's npm install asks. Launch the role as a single subagent({agent, task, ...}) call to set them.");
+  }
+  for (const e of list) {
+    delete e.reads;
+    delete e.install;
+  }
+  delete input.reads;
+  delete input.install;
+  return { entries, notes, group, ...(error ? { error } : {}) };
+}
+
 export interface Measured {
   files: number;
   lines: number;

@@ -2,7 +2,7 @@
 // `foreman_checkpoint(path)` records the latest checkpoint of the session (in memory, like the
 // review verdicts); a builder launch at tier heavy is refused unless that record is approved and
 // the file still hashes the same. The hash is the plan VERSION (planVersionHash: sha256 of the body
-// above any ruling/decision-log/addendum appendix) over the bytes the harness reads itself; the
+// above any ruling/decision-log/addendum appendix, isAppendixLine) over the bytes the harness reads itself; the
 // model never supplies one. Same bytes after a delete and re-create = same hash = still approved.
 //
 // Path rules (the edit mode's own helpers): inside the foreman's workspace, directly in the real
@@ -26,7 +26,7 @@ export const PLAN_NAME = /^plan-([A-Za-z0-9._-]{1,64})\.md$/;
 export const CHECKPOINT_CHOICES = ["revise", "reject", "approve"] as const;
 
 export type PlanStatus = "pending" | "approved" | "revise" | "rejected";
-export type LaunchRefusal = "plan_required" | "checkpoint_pending" | "plan_changed";
+export type LaunchRefusal = "plan_required" | "checkpoint_pending" | "plan_changed" | "plan_phase";
 
 /** The session's latest checkpoint. */
 export interface PlanRecord {
@@ -37,6 +37,8 @@ export interface PlanRecord {
   status: PlanStatus;
   approvedAt: string | null;
   by: "user" | "rig" | null;
+  /** Where the approval came from (planstate.ts persists it): the dialog, the parent's ruling-plan.md or ruling.md. */
+  source?: "dialog" | "ruling-plan" | "ruling";
   note?: string;
 }
 
@@ -64,16 +66,21 @@ export function sha256(bytes: Buffer): string {
   return crypto.createHash("sha256").update(bytes).digest("hex");
 }
 
-/** Headings (exact line, trailing whitespace ignored) from which a plan file is appendix: rulings, not the reviewed plan. */
-const APPENDIX_LINES = new Set(["## Ruling", "## Rulings", "## Parent ruling", "## Decision log", "<!-- plan-appendix -->"]);
-const APPENDIX_PREFIX = "## Addendum";
+/**
+ * Whether a line starts the appendix of a plan file (rulings, not the reviewed plan): a level 2 or 3 heading, case-insensitive,
+ * whose text starts with Addendum, Addenda, Ruling, Rulings, Parent ruling or Decision log as a whole word (followed by the end of the
+ * line, `:`, ` -`, ` (` or ` <digit>`), or the line `<!-- plan-appendix -->`. Trailing whitespace is ignored.
+ */
+export function isAppendixLine(line: string): boolean {
+  const l = line.replace(/\s+$/, "");
+  return l === "<!-- plan-appendix -->" || /^#{2,3}[ \t]+(?:addendum|addenda|rulings?|parent ruling|decision log)(?=$|:|[ \t]-|[ \t]\(|[ \t]\d)/i.test(l);
+}
 
 /** Start offset of the first appendix line in `text`, or -1 (no appendix). `text` must keep one char per byte (latin1) when used for offsets. */
 function appendixOffset(text: string): number {
   let at = 0;
   for (const line of text.split(/(?<=\n)/)) {
-    const l = line.replace(/\s+$/, "");
-    if (APPENDIX_LINES.has(l) || l.startsWith(APPENDIX_PREFIX)) return at;
+    if (isAppendixLine(line)) return at;
     at += line.length;
   }
   return -1;
@@ -364,7 +371,7 @@ export function readPlanVerdict(dir: string, planFile: string, self?: SelfRuling
   }
 }
 
-function readPlanVerdictFile(dir: string, planFile: string, self?: SelfRulings): PlanVerdict | null {
+export function readPlanVerdictFile(dir: string, planFile: string, self?: SelfRulings): PlanVerdict | null {
   try {
     const file = path.join(dir, PLAN_VERDICT_FILE);
     const st = fs.lstatSync(file);
@@ -388,6 +395,7 @@ function readPlanVerdictFile(dir: string, planFile: string, self?: SelfRulings):
 export function launchRefusalText(reason: LaunchRefusal, rec: PlanRecord | null | undefined, scratchDir: string): string {
   const head = `pi-foreman: builder launch refused [launch_refused:${reason}]:`;
   const name = rec ? `plan-${rec.topic}.md` : "";
+  if (reason === "plan_phase") return `${head} the session is in the plan phase: only explorers and [plan-review] reviewers launch. Write the plan under ${scratchDir}/ (ask the owner with ask_user_question until it is decision-complete), then call ${CHECKPOINT_TOOL}; an approval ends the phase. The owner can also end it with /foreman plan off.`;
   if (reason === "plan_required" && rec?.status === "rejected") return `${head} the owner rejected ${name}, so the heavy path is stopped. Launch no builder; report to the owner and ask how to go on. A new plan needs a new ${CHECKPOINT_TOOL} approval.`;
   if (reason === "plan_required") return `${head} at tier heavy a builder starts only after the owner approved a plan. Write ${scratchDir}/plan-<topic>.md (or launch the planner), then call ${CHECKPOINT_TOOL} with its path and wait for the owner's answer.`;
   if (reason === "checkpoint_pending") return `${head} the checkpoint of ${name} is ${rec?.status === "revise" ? "waiting for a revised plan" : "pending (no answer from the owner yet)"}. ${rec?.status === "revise" ? `Change the plan as the owner asked, then call ${CHECKPOINT_TOOL} again.` : `Ask the owner in your reply, or call ${CHECKPOINT_TOOL} again with the same path.`}`;
@@ -399,7 +407,7 @@ const clean = (s: string): string => s.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, ""
 /** What the owner sees before the dialog: title, Goal's first lines, section headings, path, hash prefix (at most 12 lines). */
 export function planSummary(text: string, rel: string, hash: string): string {
   const all = text.split(/\r?\n/);
-  const cut = all.findIndex((l) => APPENDIX_LINES.has(l.replace(/\s+$/, "")) || l.startsWith(APPENDIX_PREFIX));
+  const cut = all.findIndex(isAppendixLine);
   const lines = cut < 0 ? all : all.slice(0, cut);
   const heading = /^(#{1,6})\s+(.*)$/;
   const title = lines.map((l) => heading.exec(l)).find((h) => h && h[1] === "#")?.[2] ?? lines.find((l) => l.trim()) ?? "(untitled)";
@@ -413,6 +421,14 @@ export function planSummary(text: string, rel: string, hash: string): string {
       if (goal.length === 4) break;
     }
   }
-  const out = [`Plan: ${clean(title)}`, ...goal.map((g, i) => (i === 0 ? `Goal: ${g}` : `  ${g}`)), `Sections: ${sections.join(" · ").slice(0, 200) || "(none)"}`, ...(cut < 0 ? [] : [`Appendix: from "${clean(all[cut])}" (outside review and approval)`]), `File: ${rel}`, `sha256: ${hash.slice(0, 12)}`];
+  const openAt = lines.findIndex((l) => { const h = heading.exec(l); return !!h && /^open questions\b/i.test(h[2].trim()); });
+  let open = 0;
+  if (openAt >= 0) {
+    for (const l of lines.slice(openAt + 1)) {
+      if (heading.test(l)) break;
+      if (l.trim()) open++;
+    }
+  }
+  const out = [`Plan: ${clean(title)}`, ...goal.map((g, i) => (i === 0 ? `Goal: ${g}` : `  ${g}`)), `Sections: ${sections.join(" · ").slice(0, 200) || "(none)"}`, ...(open > 0 ? [`Open questions: ${open}`] : []), ...(cut < 0 ? [] : [`Appendix: from "${clean(all[cut])}" (outside review and approval)`]), `File: ${rel}`, `sha256: ${hash.slice(0, 12)}`];
   return out.slice(0, 12).join("\n");
 }

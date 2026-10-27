@@ -22,8 +22,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ageText } from "./childwidget.ts";
-import { CLOSE_TEXT, CLOSED_TEXT, outboxSend, validResultPathText } from "./close.ts";
+import { CLOSE_TEXT, CLOSED_TEXT, outboxSend, outboxSendDetailed, validResultPathText } from "./close.ts";
+import type { OutboxOutcome } from "./close.ts";
 import type { Json } from "./config.ts";
+import { readLive } from "./identity.ts";
 import { INTERCOM_MESSAGE_TYPE, intercomConfigPath, lastIntercomDetails } from "./intercomguard.ts";
 import type { PullNow, RunRemote } from "./remotepull.ts";
 import { applyRemoteNotice, parseRemoteNotice, pullSummary, remoteOrigin } from "./remotesession.ts";
@@ -145,22 +147,38 @@ export function writeRegistry(agentDir: string, reg: Registry): void {
   fs.renameSync(tmp, file);
 }
 
-/** A registry label (newest entry wins) or child id → the child's intercom id; anything else passes through. */
+/** The newest local registry entry whose handoff `live.json` names this Pi session id (the adapter wrote it; a model cannot). */
+function entryByPiSession(reg: Registry, piSessionId: string): SessionEntry | undefined {
+  return [...reg.sessions].reverse().find((s) => s.machine === undefined && !!s.handoff && readLive(s.handoff)?.piSessionId === piSessionId);
+}
+
+/** A registry label (newest entry wins), child id or Pi session id (via the handoff's live.json) → the child's intercom id; anything else passes through. */
 export function resolveTarget(reg: Registry, target: string): string {
   for (let i = reg.sessions.length - 1; i >= 0; i--) {
     const s = reg.sessions[i];
     if (s.label === target || s.child === target) return s.child;
   }
-  return target;
+  return entryByPiSession(reg, target)?.child ?? target;
 }
 
-/** The handoff dir of the newest registry entry for a label or child id; undefined when none is recorded. */
+/** The handoff dir of the newest registry entry for a label, child id or Pi session id; undefined when none is recorded. */
 export function resolveHandoff(reg: Registry, target: string): string | undefined {
   for (let i = reg.sessions.length - 1; i >= 0; i--) {
     const s = reg.sessions[i];
     if (s.label === target || s.child === target) return s.handoff;
   }
-  return undefined;
+  return entryByPiSession(reg, target)?.handoff;
+}
+
+/** The handoff dir a retry may read `live.json` from: always the one a registry entry names for the target (never a free id). */
+function retryHandoff(reg: Registry, target: string, to: string): string | undefined {
+  const e = [...reg.sessions].reverse().find((s) => !!s.handoff && (s.label === target || s.child === target || s.child === to || path.resolve(s.handoff) === target)) ?? entryByPiSession(reg, target);
+  return e?.handoff;
+}
+
+/** pi-intercom's answer for a target that is gone: `target_not_found`, or `delivery_failed` with a not-found/not-connected reason. */
+export function targetMissing(o: OutboxOutcome): boolean {
+  return o.code === "target_not_found" || (o.status === "failed" && o.code === "delivery_failed" && /not (found|connected)/i.test(o.detail ?? ""));
 }
 
 /**
@@ -253,6 +271,8 @@ export interface SessionDeps {
   python: string | null;
   spawner: Spawner;
   send: (to: string, text: string) => Promise<string>;
+  /** Like `send`, with the outbox result's code and detail; when present it decides the retry via live.json. */
+  sendDetailed?: (to: string, text: string) => Promise<OutboxOutcome>;
   /** This session's own model, `<provider>/<id>`; with `config` it enables the session-foreman model and the rank check. */
   model?: string;
   /** Merged config (providers.<p>.roles.session-foreman.model, ranks, ladder.childPolicy). */
@@ -340,8 +360,18 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
   return { text, ok: !r.error && !r.timedOut && r.code === 0 };
 }
 
-async function sendTo(d: SessionDeps, to: string, message: string, what: string): Promise<SessionResult> {
-  const status = await d.send(to, message);
+/** One send; a missing target is retried once with the intercom id in the registry entry's handoff `live.json` when it differs. */
+async function sendTo(d: SessionDeps, to: string, message: string, what: string, handoff?: string): Promise<SessionResult> {
+  const send = async (target: string): Promise<OutboxOutcome> => (d.sendDetailed ? d.sendDetailed(target, message) : { status: await d.send(target, message) });
+  let out = await send(to);
+  if (handoff && targetMissing(out)) {
+    const live = readLive(handoff);
+    if (live && live.intercomId !== to) {
+      to = live.intercomId;
+      out = await send(to);
+    }
+  }
+  const status = out.status;
   if (status === "sent") return { text: `pi-foreman session: ${what} sent to ${to}.`, ok: true };
   if (status === "timeout") return { text: `pi-foreman session: ${what} for ${to} handed to pi-intercom; no send result yet (a confirmation may be open).`, ok: true };
   return { text: `pi-foreman session: ${what} to ${to} not sent (${status}). Is pi-intercom installed and the target connected?`, ok: false };
@@ -379,7 +409,7 @@ export async function sessionBrief(d: SessionDeps, target: string, body: string)
   } catch (err) {
     return { text: `pi-foreman session: brief to ${target} refused: ${(err as Error).message}`, ok: false };
   }
-  return sendTo(d, to, briefText(openerIntercomId(d.env, d.agentDir, d.piSessionId), brief), "brief");
+  return sendTo(d, to, briefText(openerIntercomId(d.env, d.agentDir, d.piSessionId), brief), "brief", retryHandoff(reg, target, to) ?? retryHandoff(reg, path.resolve(d.cwd, target), to));
 }
 
 export async function sessionClose(d: SessionDeps, target: string, resultPath?: string): Promise<SessionResult> {
@@ -395,7 +425,7 @@ export async function sessionClose(d: SessionDeps, target: string, resultPath?: 
     const text = ok ? `pi-foreman session: close request sent to ${who}.` : [r.stderr.trim(), r.stdout.trim()].filter(Boolean).join("\n") || (r.error ? r.error.message : r.timedOut ? "foreman_session.py timed out" : `${who}: close not sent`);
     return { text, ok };
   }
-  const r = await sendTo(d, to, closeText(resultPath), "close request");
+  const r = await sendTo(d, to, closeText(resultPath), "close request", retryHandoff(reg, target, to));
   const entry = reg.sessions.find((s) => s.child === to);
   if (r.ok && entry && entry.status !== "closed") {
     entry.status = "closing";
@@ -559,6 +589,7 @@ export function registerSession(
           python: s.python,
           spawner: deps.spawner,
           send: (to, text) => outboxSend(pi.events, to, text, "session", SEND_WAIT_MS),
+          sendDetailed: (to, text) => outboxSendDetailed(pi.events, to, text, "session", SEND_WAIT_MS),
           model: s.model,
           config: s.config,
           commands: commandNames(pi),
@@ -579,7 +610,7 @@ const OPEN_PARAMS = {
     brief: { type: "string", description: "Path of the brief file the new session reads." },
     cwd: { type: "string", description: "Directory the new session runs in (default: this session's)." },
     model: { type: "string", description: "Model of the new session, <provider>/<id>; the rank rule applies." },
-    planFirst: { type: "boolean", description: "The brief asks the session to write a plan first." },
+    planFirst: { type: "boolean", description: "Open the session in the plan phase: it writes a plan first, changes files only under .workflow/, launches no builder, and asks questions via ask_user_question until the plan is decision-complete." },
     planMode: { type: "boolean", description: "Open the session in plan mode (first command /plan); for a local open, refused when this session has no /plan command (a remote open is checked on the remote machine)." },
     firstCommand: { type: "array", items: { type: "string" }, maxItems: 4, description: "Extension commands (each starting with /) the new session runs before the brief prompt." },
     focus: { type: "boolean", description: "Focus the new Herdr tab." },
@@ -600,7 +631,7 @@ export function registerSessionOpenTool(
     name: SESSION_OPEN_TOOL,
     label: "Open a session",
     description:
-      "Open a new foreman session in a Herdr tab (or print the command for a new terminal) with a brief file: same as `/foreman session open`. Design or new-topic sessions: planMode true; a session with an approved plan: no planMode. Refused in subagent children.",
+      "Open a new foreman session in a Herdr tab (or print the command for a new terminal) with a brief file: same as `/foreman session open`. Design or new-topic sessions: planFirst true (the new session starts in the plan phase: .workflow-only writes, explorers, no builders until its plan is approved); a session with an approved plan: no planFirst. Refused in subagent children.",
     parameters: OPEN_PARAMS as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await deps.session(ctx);

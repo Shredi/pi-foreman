@@ -16,7 +16,7 @@ const wHome = path.win32.join(BASE, "home");
 const fwd = (p: string): string => p.replace(/\\/g, "/");
 const rules = buildOverlayRules(readBaseline(PKG)!, {}, {}, path.win32.join(wHome, ".pi", "agent"), path.win32.join(BASE, "ws"), undefined, false);
 const run = (command: string, at = wt, extra: Partial<MatchCtx> = {}): string => {
-  const c: MatchCtx = { cwd: at, home: wHome, platform: "win32", role: "child", roundRoots: [wt], foremanRoot: foreman, exists: () => true, isDir: () => true, realpath: (p) => path.win32.resolve(p), realpathNative: (p) => path.win32.resolve(p), list: () => [], ...extra };
+  const c: MatchCtx = { cwd: at, home: wHome, platform: "win32", role: "child", install: true, roundRoots: [wt], foremanRoot: foreman, exists: () => true, isDir: () => true, realpath: (p) => path.win32.resolve(p), realpathNative: (p) => path.win32.resolve(p), list: () => [], ...extra };
   return checkToolCall(rules, "bash", { command }, c)?.kind ?? "pass";
 };
 

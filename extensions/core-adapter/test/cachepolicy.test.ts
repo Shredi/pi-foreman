@@ -54,7 +54,8 @@ test("config overrides the built-in ttl; enabled true on a long ttl still skips"
 test("the claude-bridge preset equals the built-in entry", () => {
   const preset = JSON.parse(readFileSync(new URL("../../../config/presets/claude-bridge.json", import.meta.url), "utf8"));
   const c = preset.providers["claude-bridge"].cache;
-  assert.deepEqual({ ttlSeconds: c.ttlSeconds, billing: c.billing }, BUILTIN_CACHE["claude-bridge"]);
+  assert.equal(c.billing, BUILTIN_CACHE["claude-bridge"].billing);
+  assert.equal("ttlSeconds" in c, false); // it would shadow the derived bridge TTL
   assert.equal(c.keepalive.enabled, true); // round 32: self-warm keeps the 1 h cache warm
-  assert.equal(resolveCachePolicy(preset, "claude-bridge", "claude-sonnet-5-5").ttlSeconds, 3600);
+  assert.equal(resolveCachePolicy(preset, "claude-bridge", "claude-sonnet-5-5", 3600).ttlSeconds, 3600);
 });

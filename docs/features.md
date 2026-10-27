@@ -56,7 +56,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [different-model-rule](#different-model-rule) | review |  | on | Moves a reviewer launch off the foreman's own model to the next differing rung, else to `ceremony.reviewModel`. | on by default | [review](review.md#different-model-rule) |
 | [review-overrides](#review-overrides) | review |  | opt-in | Sets the thinking level and/or model of a reviewer launch per occasion (`item`, `plan-review`, `pre-pr`, `second-opinion`). | `{"ceremony": {"reviewByOccasion": {"pre-pr": {"thinking": "high"}}}}` | [review](review.md#per-occasion-overrides) |
 | [self-planning](#self-planning) | ceremony |  | on | `ceremony.planner: self` (default): the foreman writes the heavy plan itself and its approved checkpoint satisfies the planner step; `role` keeps the planner launch and falls back to `self` when the planner's rank is not below the foreman's. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
-| [checkpoint-verdict](#checkpoint-verdict) | ceremony |  | on | A session opened with a parent takes the plan checkpoint verdict from the parent-written `ruling-plan.md` (APPROVED, REVISE <text> or REJECT) instead of a dialog; `human` keeps the dialog for an attended session. | on by default | [ceremony](ceremony.md) |
+| [checkpoint-verdict](#checkpoint-verdict) | ceremony |  | on | A session opened with a parent takes the plan checkpoint verdict from the parent-written `ruling-plan.md` (APPROVED, REVISE <text> or REJECT) instead of a dialog; plan state, the user tier and the plan phase (`/foreman plan`, `--plan-first`) survive `/reload` and resume; `human` keeps the dialog for an attended session. | on by default | [ceremony](ceremony.md) |
 | [plan-review](#plan-review) | review | toggle | off | Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan version (the body above any ruling, decision-log or addendum appendix, so an appended ruling needs no new review); on for heavy by default, opt-in for trivial and standard. | `{"ceremony": {"planReview": {"standard": true}}}` | [review](review.md#plan-review) |
 | [findings](#findings) | review |  | on | Records every reviewer run's located findings locally, with `foreman findings` to list, dismiss or export them and `foreman retro models` to compare reviewer models. | on by default | [review](review.md#findings-store) |
 | [bench](#bench) | ops |  | opt-in | Measures harness changes over Harbor tasks in local Docker, and reviewer models over planted-defect diffs with `foreman bench review`. | `foreman bench review --tasks bench/review-samples --dry-run` | [bench](bench.md#running) |
@@ -83,10 +83,10 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [review-required](#review-required) | review | toggle | off | Requires a review before close-out in every session. | `{"safety": {"review": {"required": true}}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [workflow-scripts](#workflow-scripts) | safety | toggle, relaxes safety | off | Lets the foreman run pi-subagents workflow scripts and `schedule.*` calls, which can launch any agent outside the role map; they stay refused at tier heavy. | `{"safety": {"subagents": {"allowWorkflow": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
 | [guards](#guards) | safety |  | on | Loads the guard extensions into every child, sets the limits of the precondition-checked copy and worktree-remove tools, and picks the Python that runs every guard. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
-| [bridge-isolation](#bridge-isolation) | safety |  | on | With the Claude bridge, points `CLAUDE_CONFIG_DIR` at an empty folder so the host's Claude Code settings, hooks and plugins do not load into bridge turns. | on by default | [safety](safety.md#bridge-isolation) |
+| [bridge-isolation](#bridge-isolation) | safety |  | on | With the Claude bridge, points `CLAUDE_CONFIG_DIR` at an empty folder so the host's Claude Code settings, hooks and plugins do not load into bridge turns. `bridge.promptCacheTtl` sets Claude Code's prompt-cache TTL for bridge turns: 1h for the foreman, 5m for subagents. | on by default | [safety](safety.md#bridge-isolation) |
 | [sessions](#sessions) | sessions |  | on | `/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom. The session runs on the `session-foreman` role's model (default: the opening session's own model) and never on a higher rank. | on by default | [sessions](sessions.md#session-commands) |
 | [remote-sessions](#remote-sessions) | sessions |  | opt-in | `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. By default (`returnPath` `pull`) the child appends its notices to an outbox file on that machine and the parent fetches them over its own SSH call, so the remote never connects back; `push` sends them by cross-machine pi-intercom notices instead. The parent mirrors the notices into files. `foreman session close-remote` (and `/foreman close`) closes such a child over the same SSH call. User or overlay config only. | `{"sessions": {"machines": {"alpha": {}}}}` | [sessions](sessions.md#remote-child-sessions) |
-| [round-state](#round-state) | sessions |  | on | In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns only from the parent's `ruling.md` newer than both the plan and the handoff plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
+| [round-state](#round-state) | sessions |  | on | In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns from the session's own state entry, or from the parent's `ruling-plan.md` or `ruling.md` newer than both the plan and the handoff plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
 | [remote-intercom](#remote-intercom) | sessions | toggle, relaxes safety | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [sync](#sync) | ops |  | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
 | [retro](#retro) | retro | toggle | on | `/retro` prints the session's friction metrics, writes permission-allow proposals and files findings to a local backlog read with `foreman backlog`. | on by default | [retro](retro.md#switches) |
@@ -102,7 +102,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [radar](#radar) | ops |  | on | `foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files. | on by default | [sessions](sessions.md#radar) |
 | [compaction](#compaction) | models |  | on | Caps the context size at which Pi's own auto-compaction fires: `foreman setup` writes a per-model point (a price-tier boundary minus headroom, or this cap) as Pi's compaction.modelOverrides. The idle warm compaction and the footer context bar use the same point. | on by default | [cache](cache.md) |
 | [resources](#resources) | ops |  | on | Samples load, free memory and free disk; at high pressure child launches run one at a time and the strong climb pauses, at critical pressure launches are deferred until the host recovers (10 minutes at most). `/foreman doctor` prints the current level and `/foreman status` the last sample. | on by default | [resources](resources.md) |
-| [idle-cache](#idle-cache) | models | toggle | off | Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge preset sets a 3600 s byModel row, noting that a subscription turn within plan usage gets the 1-hour cache and 300 applies on extra-usage credits or an API key, keeps the keep-alive on with awayTicks 2 and gives the foreman role an idle rung); off for request-billed providers; silent without an entry. A warm budget (half a cold re-cache per idle), a presence gate (warms while the owner is away are limited) and, for TTLs beyond Pi's 30-minute idle cap, warms sent by pi-foreman itself apply to the keep-alive. | `set providers.claude-bridge.cache.keepalive.enabled to false (off) or true (on) in user or overlay config, or foreman config apply-preset claude-bridge --dry-run   # or: {"providers": {"<provider>": {"cache": {"ttlSeconds": 300, "billing": "token", "keepalive": {"enabled": true}}}}}` | [cache](cache.md#config) |
+| [idle-cache](#idle-cache) | models | toggle | off | Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge TTL is derived from `bridge.promptCacheTtl`, 3600 s for the foreman and 300 s for subagents; the claude-bridge preset keeps the keep-alive on with awayTicks 2 and gives the foreman role an idle rung); github-copilot has built-in per-model TTLs for display only; off for request-billed providers; silent without an entry. A warm budget (half a cold re-cache per idle), a presence gate (warms while the owner is away are limited) and, for TTLs beyond Pi's 30-minute idle cap, warms sent by pi-foreman itself apply to the keep-alive. | `set providers.claude-bridge.cache.keepalive.enabled to false (off) or true (on) in user or overlay config, or foreman config apply-preset claude-bridge --dry-run   # or: {"providers": {"<provider>": {"cache": {"ttlSeconds": 300, "billing": "token", "keepalive": {"enabled": true}}}}}` | [cache](cache.md#config) |
 
 ## Profiles
 
@@ -332,7 +332,7 @@ Switch: `ceremony.reviewByOccasion` is non-empty.
 
 ### checkpoint-verdict
 
-**Plan checkpoint verdict by parent file.** A session opened with a parent takes the plan checkpoint verdict from the parent-written `ruling-plan.md` (APPROVED, REVISE <text> or REJECT) instead of a dialog; `human` keeps the dialog for an attended session.
+**Plan checkpoint verdict by parent file.** A session opened with a parent takes the plan checkpoint verdict from the parent-written `ruling-plan.md` (APPROVED, REVISE <text> or REJECT) instead of a dialog; plan state, the user tier and the plan phase (`/foreman plan`, `--plan-first`) survive `/reload` and resume; `human` keeps the dialog for an attended session.
 
 | Key | Default | Layer |
 |---|---|---|
@@ -346,6 +346,7 @@ Switch: `ceremony.planReview.standard` is true.
 
 | Key | Default | Layer |
 |---|---|---|
+| `ceremony.planReviewMax` | `4` | any layer |
 | `ceremony.planReview.trivial` | `false` | tighten-only (only true is accepted) |
 | `ceremony.planReview.standard` | `false` | tighten-only (only true is accepted) |
 | `ceremony.planReview.heavy` | `true` | tighten-only (only true is accepted) |
@@ -413,6 +414,8 @@ No config key.
 | `ceremony.foremanReads.after.deny` | unset | tighten-only (lower only, minimum 1) |
 | `ceremony.childReads.<x>.warn` | `builder`: `20`, `reviewer`: `15` | tighten-only (lower only) |
 | `ceremony.childReads.<x>.deny` | `builder`: `40`, `reviewer`: `30` | tighten-only (lower only) |
+| `ceremony.childReads.<x>.perFile` | `builder`: `5`, `reviewer`: `2` | tighten-only (lower only) |
+| `ceremony.childReads.<x>.max` | `builder`: `120`, `reviewer`: `120` | tighten-only (lower only) |
 | `ceremony.recheckBudget` | `3` | tighten-only (lower only, minimum 0) |
 
 ### launch-wait
@@ -627,11 +630,13 @@ Switch: `safety.subagents.allowWorkflow` is true.
 
 ### bridge-isolation
 
-**Claude bridge isolation.** With the Claude bridge, points `CLAUDE_CONFIG_DIR` at an empty folder so the host's Claude Code settings, hooks and plugins do not load into bridge turns.
+**Claude bridge isolation.** With the Claude bridge, points `CLAUDE_CONFIG_DIR` at an empty folder so the host's Claude Code settings, hooks and plugins do not load into bridge turns. `bridge.promptCacheTtl` sets Claude Code's prompt-cache TTL for bridge turns: 1h for the foreman, 5m for subagents.
 
 | Key | Default | Layer |
 |---|---|---|
 | `bridge.isolateClaudeConfig` | `"auto"` | not in project/session (it loosens the host config isolation) |
+| `bridge.promptCacheTtl.main` | `"1h"` | not in project/session (the bridge cache TTL comes from the user or overlay config) |
+| `bridge.promptCacheTtl.subagent` | `"5m"` | not in project/session (the bridge cache TTL comes from the user or overlay config) |
 
 ### sessions
 
@@ -657,7 +662,7 @@ Switch: `sessions.machines` is non-empty.
 
 ### round-state
 
-**Reload-safe round state.** In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns only from the parent's `ruling.md` newer than both the plan and the handoff plan.
+**Reload-safe round state.** In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns from the session's own state entry, or from the parent's `ruling-plan.md` or `ruling.md` newer than both the plan and the handoff plan.
 
 No config key.
 
@@ -805,7 +810,7 @@ No config key.
 
 ### idle-cache
 
-**Idle prompt-cache policy.** Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge preset sets a 3600 s byModel row, noting that a subscription turn within plan usage gets the 1-hour cache and 300 applies on extra-usage credits or an API key, keeps the keep-alive on with awayTicks 2 and gives the foreman role an idle rung); off for request-billed providers; silent without an entry. A warm budget (half a cold re-cache per idle), a presence gate (warms while the owner is away are limited) and, for TTLs beyond Pi's 30-minute idle cap, warms sent by pi-foreman itself apply to the keep-alive.
+**Idle prompt-cache policy.** Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge TTL is derived from `bridge.promptCacheTtl`, 3600 s for the foreman and 300 s for subagents; the claude-bridge preset keeps the keep-alive on with awayTicks 2 and gives the foreman role an idle rung); github-copilot has built-in per-model TTLs for display only; off for request-billed providers; silent without an entry. A warm budget (half a cold re-cache per idle), a presence gate (warms while the owner is away are limited) and, for TTLs beyond Pi's 30-minute idle cap, warms sent by pi-foreman itself apply to the keep-alive.
 
 Switch: `providers.*.cache.keepalive.enabled` is true.
 
@@ -840,7 +845,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [findings](#findings) | `foreman findings`, `foreman retro models` |
 | [bench](#bench) | `foreman bench`, `foreman bench review`, `foreman bench review-table` |
 | [bench-climb](#bench-climb) | `foreman bench review --mode climb --rungs <a>,<b>` |
-| [ceremony-tiers](#ceremony-tiers) | `/ceremony` |
+| [ceremony-tiers](#ceremony-tiers) | `/ceremony`, `/foreman plan` |
 | [read-budgets](#read-budgets) | `/foreman budget` |
 | [waits](#waits) | `/foreman waits` |
 | [pr-ops](#pr-ops) | `/foreman prs` |
@@ -885,6 +890,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `profile` | the setup profile is recorded in the user or overlay config |
 | `paths.hubWorkflow` | it loosens: it makes dirs outside the worktree readable; user or overlay config only |
 | `bridge.isolateClaudeConfig` | it loosens the host config isolation |
+| `bridge.promptCacheTtl` | the bridge cache TTL comes from the user or overlay config |
 | `providers.*.review` | it loosens: a review model approves asks |
 | `providers.*.cache.ttlSeconds` | the cache policy comes from the user or overlay config |
 | `providers.*.cache.billing` | the cache policy comes from the user or overlay config |

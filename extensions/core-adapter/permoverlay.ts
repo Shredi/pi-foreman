@@ -66,7 +66,7 @@
 //     foreman.json, pi-foreman/claude-config, sibling round worktrees, other children's scratch dirs) nor run `git worktree` beyond list/remove; a child may cd inside its workspace root and scratch dir.
 //     grep's `glob` and find's `pattern` are checked joined to the tool's `path`.
 //     removeAsk (`<agentDir>`, its parent (`~/.pi` by default) and `<agentDir>/pi-foreman`, the
-//     ancestors of the state folder):
+//     ancestors of the state folder; also the current session dir and its ancestors up to `<agentDir>/sessions`):
 //     only a remove or rename of the folder itself is asked/denied — an operand of rm, rmdir,
 //     unlink, trash, mv, rename, del/rd, Remove-Item/Move-Item/Rename-Item and aliases, find
 //     -delete, a literal in inline code (`python -c`), or foreman_move's source. Reads and
@@ -107,6 +107,8 @@ export interface ProtectRule {
   fromWriteAsk?: boolean;
   /** Comes from protect.childDeny (MatchCtx.skillDirs lifts the `.agents` ones for a read of a named skill). */
   fromChildDeny?: boolean;
+  /** The `*` stands for one file name: a path below a subdirectory of the pattern's directory does not match (the Pi session files, not `subagent-artifacts/`). */
+  flat?: boolean;
 }
 
 /** Roots owned by the foreman session (owned.ts provides them); optional, today's behaviour without it. */
@@ -170,6 +172,8 @@ export interface MatchCtx {
   roundRoots?: string[];
   /** Child only: the foreman's own checkout (workspace root); `npm install|ci` into its `bench/pi-lock` is pre-allowed (R11 item 10). */
   foremanRoot?: string;
+  /** Child only: the launch set `install: true` (R46 item 8); without it the owned-root, `npm-ci-worktree` and `bench/pi-lock` npm pre-allows do not apply. */
+  install?: boolean;
   /** Child only: round worktrees the child may read but not write (roundsurface.ts childSurface); a write below one outside `roundRoots` and the scratch dir is denied. */
   roundReadRoots?: string[];
   exists?: (p: string) => boolean;
@@ -799,7 +803,7 @@ export function isSelfHost(cwd: string, pkgRoot: string, platform: string = proc
  * the project and session layers (the config CLI's `basePermissions`); asks present there are
  * PS's job, only the added ones are enforced here. Without `base` no ask is enforced.
  */
-export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unknown, agentDir: string, pkgRoot?: string, xdgConfigHome: string | undefined = process.env.XDG_CONFIG_HOME, selfHost = false, owned?: OwnedRoots, policyFiles: string[] = []): OverlayRules {
+export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unknown, agentDir: string, pkgRoot?: string, xdgConfigHome: string | undefined = process.env.XDG_CONFIG_HOME, selfHost = false, owned?: OwnedRoots, policyFiles: string[] = [], sessionDir?: string): OverlayRules {
   const m = obj(merged);
   const b = obj(base);
   const slash = (d: string): string => d.split(path.sep).join("/").replace(/\/+$/, "");
@@ -831,7 +835,7 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
       ...strs(mp.deny).map((pattern): PathRule => ({ pattern: sub(pattern), action: "deny" })),
     ],
     pathAsk: hasBase ? without(strs(mp.ask), strs(bp.ask)) : [],
-    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true, { readOk: "main" }), ...prot(pb?.childDeny, null, true, { fromChildDeny: true }), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false, { readOk: "child", fromWriteAsk: true }), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true }))],
+    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true, { readOk: "main" }), ...prot(pb?.childDeny, null, true, { fromChildDeny: true }), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false, { readOk: "child", fromWriteAsk: true }), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true })), ...(sessionDir ? [{ pattern: `${slash(sessionDir)}/*.jsonl`, main: "deny" as const, child: "deny" as const, shell: true, childShell: true, readOk: "main" as const, flat: true }, ...prot(sessionDirChain(slash(sessionDir), `${slash(agentDir)}/sessions`), "ask", true).map((r) => ({ ...r, removeOnly: true }))] : [])],
     childBlock: [...CHILD_BLOCK.map(sub), ...CHILD_BLOCK_WORKTREES, ...(owned?.childScratchRoot ? [slash(owned.childScratchRoot), `${slash(owned.childScratchRoot)}/*`] : [])],
     childBlockExcept: CHILD_BLOCK_EXCEPT.map(sub),
     childBlockInWorkspace: CHILD_BLOCK_WORKTREES,
@@ -839,6 +843,15 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
     probeDirs: probeDirPatterns(baseline.externalDirectory?.probe ?? []),
     floors: { agentDir, ...(pkgRoot ? { pkgRoot } : {}), policyFiles },
   };
+}
+
+/** The session dir and each ancestor up to `stop` (the sessions dir, inclusive); only the dir itself when it lies elsewhere. */
+function sessionDirChain(dir: string, stop: string): string[] {
+  const chain = [dir];
+  if (dir !== stop && dir.startsWith(`${stop}/`)) {
+    for (let d = dir.slice(0, dir.lastIndexOf("/")); d.length >= stop.length; d = d.slice(0, d.lastIndexOf("/"))) chain.push(d);
+  }
+  return chain;
 }
 
 /** The probe dir list as overlay patterns: `%APPDATA%` only on win32 with APPDATA set (else the entry is dropped), `~` left to the matcher; dir + `dir/*`. */
@@ -3335,9 +3348,11 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   if (floor) return floor;
   const scan = scanDecision(rules, command, shell, ctx);
   if (scan) return scan;
-  if (ctx.role === "child" && c.childAsk !== undefined && !npmInstallOwned(c, ctx) && !npmCiWorktreeLabel(command, ctx)) {
+  if (ctx.role === "child" && c.childAsk !== undefined && !(ctx.install === true && (npmInstallOwned(c, ctx) || npmCiWorktreeLabel(command, ctx)))) {
+    const npm = c.childAsk.startsWith("npm ");
     const ci = c.childAsk === "npm ci" ? " Run a bare `npm ci` in your worktree (no pipe, chain or background) or ask the foreman." : "";
-    return { kind: "ask", reason: `pi-foreman: ${c.childAsk} needs approval for a child (it writes the project or the network; the foreman may run it).${ci}` };
+    const flag = npm && !ctx.install ? " The foreman can relaunch you with the launch flag `install: true`, which lets you run it in your worktree." : "";
+    return { kind: "ask", reason: `pi-foreman: ${c.childAsk} needs approval for a child (it writes the project or the network; the foreman may run it).${ci}${flag}` };
   }
   // R31c: in a network read (netread.ts) a URL operand is no path (`https://h/x` would read as `<cwd>/https:/h/x`)
   const netRead = shell === "posix" && netReadCommand(command, ctx.role === "child" ? "child" : "orchestrator", scratch0 ? [scratch0] : [], ctx.cwd);
@@ -3756,8 +3771,9 @@ function protectHit(rules: ProtectRule[], word: string, ctx: MatchCtx, shell: bo
     if (shell && !r.shell && !(child && r.childShell)) continue;
     const kind = child ? r.child : r.main;
     if (!kind || (kind === "ask" && ask && !ask.shortName)) continue;
-    const exact = cands.some((x) => pathMatches(r.pattern, x, ctx));
-    if (!exact && !guessed.some((x) => pathMatches(r.pattern, x, ctx))) continue;
+    const flatName = (x: string): boolean => !r.flat || !/[\\/]/.test(x.slice(r.pattern.lastIndexOf("/") + 1));
+    const exact = cands.some((x) => pathMatches(r.pattern, x, ctx) && flatName(x));
+    if (!exact && (r.flat || !guessed.some((x) => pathMatches(r.pattern, x, ctx)))) continue;
     if (kind === "deny") return { kind, rule: r, shortName: !exact };
     if (!ask || (ask.shortName && exact)) ask = { kind, rule: r, shortName: !exact };
   }

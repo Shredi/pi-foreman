@@ -47,6 +47,10 @@ export interface LaunchBinding {
   retro?: boolean;
   /** Launch `mcp` list (r68): narrows roles.<role>.mcp for this child; `[]` = no MCP, absent = the full ceiling. */
   mcp?: string[];
+  /** R46: the child's read deny for this launch (childreads.ts launchReadAllowance); absent = the config limits. */
+  reads?: number;
+  /** R46: launch `install: true`; the child's `npm ci`/`npm install` in its owned dirs runs unasked. */
+  install?: true;
 }
 
 export interface LadderLimits {
@@ -202,7 +206,7 @@ export function readBinding(env: Env): LaunchBinding | null {
     const limit = l ? { ladder: { strongAbove: pos(l.strongAbove), maxTurns: pos(l.maxTurns), bottom: l.bottom === true } } : {};
     const scratch = str(b.scratch);
     const mcp = b.mcp === undefined ? {} : { mcp: Array.isArray(b.mcp) && b.mcp.every((x) => typeof x === "string") ? (b.mcp as string[]) : [] }; // malformed fails closed
-    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp };
+    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp, ...(pos(b.reads) ? { reads: b.reads as number } : {}), ...(b.install === true ? { install: true as const } : {}) };
   } catch {
     return null;
   }
