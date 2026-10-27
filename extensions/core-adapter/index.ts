@@ -107,7 +107,8 @@ import { CompactionGate, overIdleFloor } from "./compaction.ts";
 import { runtimePoint } from "./compaction-point.mjs";
 import { piModelDataDir } from "./pi-model-data.mjs";
 import { resolveCachePolicy, resolveWarmPolicy } from "./cachepolicy.ts";
-import { cacheDoctorLines } from "./doctorcache.ts";
+import { bridgeTtlDoctorLines, cacheDoctorLines } from "./doctorcache.ts";
+import { BridgeCacheTtl, bridgeTtlSetting, derivedBridgeTtlS, type BridgeTtlSetting } from "./bridgettl.ts";
 import type { Presence } from "./presence.ts";
 import type { SelfWarm } from "./selfwarm.ts";
 import { createWarm } from "./warmwire.ts";
@@ -456,7 +457,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     },
     coldAt: () => {
       const m = idleBind?.ctx.model;
-      const ttl = idleBind && m ? resolveWarmPolicy(idleBind.s.config.config, m.provider, m.id).ttlSeconds : null;
+      const ttl = idleBind && m ? resolveWarmPolicy(idleBind.s.config.config, m.provider, m.id, bridgeTtlS).ttlSeconds : null;
       if (!idleBind || typeof ttl !== "number") return Infinity;
       const touch = idleBind.s.selfWarm.lastCacheTouch();
       return touch === null ? 0 : coldAtTouch(touch, ttl); // no touch = a compaction or model change dropped the cache
@@ -473,7 +474,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Raw state for the footer's cache bar (footer.ts CacheSource): read-only, nothing is sent. */
   const cacheSourceOf = (s: Session, model: { id: string; provider?: string } | undefined): CacheSource | null => {
     if (!model) return null;
-    const policy = resolveWarmPolicy(s.config.config, model.provider, model.id);
+    const policy = resolveWarmPolicy(s.config.config, model.provider, model.id, bridgeTtlS);
     const snap = s.selfWarm.snapshot();
     const owner = !!policy.selfWarm && s.selfWarm.owns();
     const pi = s.idleCache.snapshot();
@@ -498,6 +499,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   let instructionsCache: string | null | undefined;
   let reviewerInstructionsCache: string | null | undefined;
   const bridgeIso = new BridgeIsolation();
+  const bridgeTtl = new BridgeCacheTtl();
+  let ttlSetting: BridgeTtlSetting = bridgeTtlSetting(undefined);
+  /** Derived claude-bridge TTL of this process kind (bridgettl.ts); set at session start, null = no derived value. */
+  let bridgeTtlS: number | null = null;
   const review = new ForemanReview();
   const reviewFacts = new ReviewFacts();
   const usageFooter = new UsageFooter(loadPrices(PKG_ROOT), (model) => piRuntimePoint(model));
@@ -658,7 +663,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
     })();
     const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o, sessionDir) : null);
-    const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), busy: () => idleBusy(s, s.idleCtx), piIdleMode: () => piCacheWarmingIdle(), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, aboveFloor: () => idleAboveFloor(s) });
+    const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), busy: () => idleBusy(s, s.idleCtx), piIdleMode: () => piCacheWarmingIdle(), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, aboveFloor: () => idleAboveFloor(s) });
     let lastShared: ReturnType<PrBot["read"]> = null;
     const s: Session = {
       id,
@@ -827,7 +832,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       scratch: new ChildScratch(),
       idleCache: new IdleCache({
         now: () => Date.now(),
-        policy: () => (s.idleCtx ? resolveWarmPolicy(s.config.config, s.idleCtx.model?.provider, s.idleCtx.model?.id) : null),
+        policy: () => (s.idleCtx ? resolveWarmPolicy(s.config.config, s.idleCtx.model?.provider, s.idleCtx.model?.id, bridgeTtlS) : null),
         piIdleMode: () => piCacheWarmingIdle(),
         hasPromptCache: () => !!s.idleCtx?.model?.promptCache,
         busy: () => idleBusy(s, s.idleCtx),
@@ -898,6 +903,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       });
     }
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
+    ttlSetting = bridgeTtlSetting(get(config.config, "bridge.promptCacheTtl"));
+    bridgeTtlS = derivedBridgeTtlS(ttlSetting, isChild, process.env);
+    bridgeTtl.apply(process.env, ttlSetting, provider, isChild);
     try {
       bridgeIso.apply(process.env, agentDir, isoSetting, provider);
     } catch (err) {
@@ -1339,6 +1347,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       warmed.selfWarm.invalidate(); // a model change drops the provider cache and starts a new warm budget
       warmed.selfWarm.onActivity();
     }
+    bridgeTtl.apply(process.env, ttlSetting, event.model?.provider, process.env.PI_SUBAGENT_CHILD === "1");
     try {
       bridgeIso.apply(process.env, sessionFor(ctx)?.agentDir ?? piAgentDir(process.env, os.homedir()), isoSetting, event.model?.provider);
     } catch {
@@ -1444,7 +1453,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return { action: "stop" as const };
     }
     if (!s || s.isChild) return undefined;
-    const policy = resolveWarmPolicy(s.config.config, ctx.model?.provider, ctx.model?.id);
+    const policy = resolveWarmPolicy(s.config.config, ctx.model?.provider, ctx.model?.id, bridgeTtlS);
     if (policy.selfWarm && s.selfWarm.owns()) return { action: "stop" as const }; // pi-foreman sends the warms beyond Pi's idle cap itself
     if (!policy.active) return undefined;
     const action = s.idleCache.decide(idleBusy(s, ctx));
@@ -4314,6 +4323,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
 
     if (isolationOn(isoSetting, ctx.model?.provider)) out.push(...isolationDoctor({ dir: isolationDir(s.agentDir), env: process.env, platform }));
+    if (ctx.model?.provider === BRIDGE_PROVIDER) out.push(...bridgeTtlDoctorLines(s.config.config, ttlSetting, process.env));
     if (ctx.model?.provider === BRIDGE_PROVIDER) {
       const risks = projectClaudeRisks(s.cwd);
       if (risks.length) fail(`project Claude Code config runs in claude-bridge turns: ${risks.join(", ")}`, PROJECT_CLAUDE_FIX);
@@ -4365,7 +4375,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     out.push(`INFO sidebar status: ${s.extStatus.describe()}`);
     out.push(...sharedDoctorLines(s.isChild ? "pr shared watch: off" : s.prBot.describe(), s.config.warnings));
     out.push(`INFO PR tools: ${s.prPack ? prHostLabel(get(s.config.config, "tools.prHost") ?? "auto", workspaceOf(s.cwd).root, process.env, platform) : "off (tools.pr)"}`);
-    const cache = resolveCachePolicy(s.config.config, ctx.model?.provider, ctx.model?.id);
+    const cache = resolveCachePolicy(s.config.config, ctx.model?.provider, ctx.model?.id, bridgeTtlS);
     if (cache.active && !s.isChild) {
       const missing: string[] = [];
       if (settings?.cacheWarming !== "idle" && !piCacheWarmingIdle()) missing.push('Pi settings.json (global): "cacheWarming": "idle"');
@@ -4376,7 +4386,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s.isChild) {
       out.push(...cacheDoctorLines({
         provider: ctx.model?.provider,
-        policy: resolveWarmPolicy(s.config.config, ctx.model?.provider, ctx.model?.id),
+        policy: resolveWarmPolicy(s.config.config, ctx.model?.provider, ctx.model?.id, bridgeTtlS),
         promptCache: ctx.model?.promptCache,
         retention: process.env.PI_CACHE_RETENTION,
         cacheWarmingIdle: settings?.cacheWarming === "idle" || piCacheWarmingIdle(),

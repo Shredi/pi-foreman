@@ -117,7 +117,7 @@
     },
     "subagents": { "allowWorkflow": false }
   },
-  "bridge": { "isolateClaudeConfig": "auto" },
+  "bridge": { "isolateClaudeConfig": "auto", "promptCacheTtl": { "main": "1h", "subagent": "5m" } },
   "python": { "path": null },
   "trace": { "enabled": null, "dir": null },
   "tools": { "git": false, "pr": true, "prHost": "auto", "prDots": true, "prWatchSeconds": 60, "prInteractions": [], "prShared": { "enabled": false, "authors": [], "seconds": 180, "events": true } },

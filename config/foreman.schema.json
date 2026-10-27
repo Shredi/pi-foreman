@@ -605,7 +605,17 @@
     "bridge": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "isolateClaudeConfig": { "type": ["boolean", "string"], "enum": [true, false, "auto"], "description": "Point CLAUDE_CONFIG_DIR at an empty pi-foreman folder so the claude bridge ignores the host's Claude Code settings, hooks, plugins and CLAUDE.md. auto = on when the active provider is claude-bridge. A project cannot set it." } }
+      "properties": { "isolateClaudeConfig": { "type": ["boolean", "string"], "enum": [true, false, "auto"], "description": "Point CLAUDE_CONFIG_DIR at an empty pi-foreman folder so the claude bridge ignores the host's Claude Code settings, hooks, plugins and CLAUDE.md. auto = on when the active provider is claude-bridge. A project cannot set it." },
+        "promptCacheTtl": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Claude Code prompt-cache TTL on the claude bridge, per Pi process kind: main (the foreman and session foremen) and subagent (children). 1h or 5m set CLAUDE_CODE_PROMPT_CACHE_TTL; inherit leaves the variable alone and the cache policy assumes 300 s. Defaults: main 1h, subagent 5m. User and overlay config only; a project cannot set it.",
+          "properties": {
+            "main": { "type": "string", "enum": ["1h", "5m", "inherit"] },
+            "subagent": { "type": "string", "enum": ["1h", "5m", "inherit"] }
+          }
+        }
+      }
     },
     "mcp": {
       "type": "object",
