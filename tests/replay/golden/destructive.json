@@ -48,6 +48,17 @@
   {
    "event": "guard",
    "role": "foreman",
+   "toolFamily": "codemode",
+   "guard": "gate",
+   "decision": "allowed"
+  },
+  {
+   "event": "review",
+   "decision": "allow"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
    "toolFamily": "bash",
    "guard": "gate",
    "decision": "allowed"

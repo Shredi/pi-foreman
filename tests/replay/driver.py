@@ -206,7 +206,7 @@ class Rig:
         self.script = self.root / "script.json"
         self.script.write_text(json.dumps(script, indent=1), "utf-8")
         l2 = {
-            "providers": provider_map(providers, unmapped) if l2_providers else {},
+            "providers": provider_map(providers, unmapped) if l2_providers else {p: {"review": {"model": "%s/review-allow" % p}} for p in providers},  # the review model is user-layer only
             "trace": {"enabled": True},
             # the presence probe never reads the host's keyboard state in a rig; a case that tests the gate sets presence itself
             "presence": {"enabled": False},

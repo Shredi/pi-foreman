@@ -341,7 +341,8 @@ class TestLaunchModel(ReplayCase):
         rig = self.rig(name, load_fixture("project_map"), providers=(PROVIDER_A, PROVIDER_B),
                        l2_providers=False, project_config=_project_map())
         block = json.loads((rig.agent / "settings.json").read_text("utf-8"))["subagents"]
-        self.assertEqual(block.get("agentOverridesByProvider") or {}, {})
+        # the user layer maps no role (R41: it only names the gate's review model, so a provider key may be present and empty)
+        self.assertEqual({k: v for k, v in (block.get("agentOverridesByProvider") or {}).items() if v}, {})
         return rig
 
     def _launch(self, rig, pi, tag, expect_model):

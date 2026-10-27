@@ -21,6 +21,17 @@
    "model": "foreman-fake/foreman"
   },
   {
+   "event": "review",
+   "decision": "allow"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "subagent",
+   "guard": "gate",
+   "decision": "allowed"
+  },
+  {
    "event": "guard",
    "toolFamily": "Agent",
    "guard": "ledger_guard_spawn",
@@ -92,6 +103,17 @@
   {
    "event": "llm",
    "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "review",
+   "decision": "allow"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "subagent",
+   "guard": "gate",
+   "decision": "allowed"
   },
   {
    "event": "guard",
@@ -226,6 +248,17 @@
   {
    "event": "llm",
    "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "review",
+   "decision": "allow"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "subagent",
+   "guard": "gate",
+   "decision": "allowed"
   },
   {
    "event": "guard",
