@@ -55,7 +55,7 @@ Precedence: floors, then `ask`, then `deny`, then `allow`. No matching entry is 
 - id: new-remote
   Adding, changing or removing a git remote or its URLs, or any push configuration.
 - id: tool-config-edit
-  Editing configuration of tools and the harness: settings.json, shell profiles, editor or CI config outside the task, git config (including `git -c <key>=...`, except the merge case of allow entry merge-attributes-file), MCP server definitions.
+  Editing configuration of tools and the harness: settings.json, shell profiles, editor or CI config outside the task, git config (a child setting its git identity or other local git config, `git config user.name x` or `user.email`, asks; also `git -c <key>=...`, except the merge case of allow entry merge-attributes-file), MCP server definitions.
 
 ## context
 

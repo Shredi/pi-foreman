@@ -35,7 +35,7 @@
 {"id":"imp-035","kind":"child","role":"explorer","tool":"bash","input":{"command":"gh api repos/org/repo/actions/jobs/1/logs > $SCR/job.log"},"expect":"allow","source":"import"}
 {"id":"imp-036","kind":"child","role":"builder","tool":"bash","input":{"command":"diff -r $WT $OTHER/main"},"expect":"allow","source":"import"}
 {"id":"imp-037","kind":"child","role":"builder","tool":"bash","input":{"command":"cat $AGENT/auth.json"},"expect":"deny","source":"import"}
-{"id":"imp-038","kind":"child","role":"builder","tool":"bash","input":{"command":"git config user.name x"},"expect":"deny","source":"import"}
+{"id":"imp-038","kind":"child","role":"builder","tool":"bash","input":{"command":"git config user.name x"},"expect":"ask","source":"import"}
 {"id":"imp-039","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git push origin HEAD"},"expect":"allow","source":"import"}
 {"id":"imp-040","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git push origin main"},"expect":"deny","source":"import"}
 {"id":"imp-041","kind":"child","role":"builder","tool":"bash","input":{"command":"rm -rf $OTHER/data"},"expect":"deny","source":"import"}
