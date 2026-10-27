@@ -8,6 +8,8 @@ Precedence: floors, then `ask`, then `deny`, then `allow`. No matching entry is 
 
 - id: read-only-inspection
   Read-only inspection inside the worktree, the session's scratch dir and the owned roots: cat, head, tail, ls, stat, wc, grep, rg, find, sed -n, read-only git (status, diff, log, show, blame), also chained with cd, ;, &&, | and echo. Not covered: a child reading the agent dir or any other repository outside its owned roots; and any line where an unset or unknown variable, a process substitution or an xargs argument expands into a path (`ls $UNSET`, `cat <(ls)`, `echo a | xargs ls`), because the path read cannot be judged, so such a line is not read-only inspection.
+- id: read-sibling-repo
+  Read-only `find`, `read`, `grep`, `diff -r` and `ls` inside another git checkout: a directory outside the owned roots that is a git work tree (a sibling repository or worktree). Never the agent dir (a child reading it stays denied) and never secret paths (the floors already deny those); never a write, redirect, copy or delete there, and nothing that runs code from it.
 - id: build-test-in-worktree
   Project builds, type checks, linters and test runs started from the worktree, and bounded edits of files inside the worktree. Only package-manager scripts and make targets (`npm run`, `npm test`, `pnpm run`, `make <target>`) count as build or test runs. Running an arbitrary script file whose content this review cannot see (`bash x.sh`, `sh x.sh`, `./x.sh`) is not covered; see ask entry unseen-script-run.
 - id: scratch-writes
