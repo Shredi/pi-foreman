@@ -1,5 +1,5 @@
 // Permission overlay (design section 5, layer 1b). Runs in `tool_call` BEFORE everything else,
-// independent of @gotgenes/pi-permission-system (PS).
+// independent of the gate (gate.ts) and of the former permission package (PS), which is no longer loaded.
 //
 // Why it exists: PS merges its project file over the global one and that merge can loosen
 // (a project `bash: "allow"` replaces the whole global deny map), and PS has no session scope.
