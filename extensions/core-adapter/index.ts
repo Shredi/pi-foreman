@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { SteerWatch, foldSteer, pickupRuling, takeLateSteer } from "./steerwatch.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, userOverride } from "./ceremony.ts";
+import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, TIERS, userOverride } from "./ceremony.ts";
 import { checkTrivial, effectiveRequired, escalationNote, trivialBuilderPath } from "./trivial.ts";
 import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint } from "./config.ts";
@@ -306,6 +306,8 @@ interface Session {
   planPhase: boolean;
   /** The ceremony-state entry last appended or restored, as JSON (an identical state is not appended again). */
   ceremonyEntry: string;
+  /** restoreCeremonyState has read the branch: before that, a tier change must not append an entry that shadows the one to restore. */
+  ceremonyRestored: boolean;
   /** Foreman only: item numbers of the last FAIL verdict, until a review passes (item-only re-review). */
   failItems: string[];
   /** Foreman only: critique raised and applied per review round (retro counter, rounds.ts CritiqueCounter). */
@@ -791,6 +793,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       topicReviews: {},
       planPhase: !isChild && process.env.PI_FOREMAN_PLAN_PHASE === "1",
       ceremonyEntry: JSON.stringify(emptyCeremonyState()),
+      ceremonyRestored: false,
       failItems: [],
       critique: new CritiqueCounter(),
       budgetWarned: false,
@@ -965,12 +968,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** Append the `pi-foreman-ceremony-state` session entry (planstate.ts) when the state differs from the last one appended or restored. */
   function persistCeremonyState(s: Session): void {
-    if (s.isChild) return;
+    if (s.isChild || !s.ceremonyRestored) return;
     const data = buildCeremonyState({
       plan: s.plan,
       lineages: s.planReviews.all().map((l) => ({ path: l.path, hash: l.latest.hash, verdict: l.latest.verdict, model: l.latest.model, rounds: l.rounds, reviews: l.reviews })),
       planReviews: s.topicReviews,
       userTier: s.ceremony.userTier,
+      tier: s.ceremony.tier,
+      tierSource: s.ceremony.source,
       planPhase: s.planPhase,
     });
     const json = JSON.stringify(data);
@@ -987,11 +992,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function restoreCeremonyState(s: Session, ctx: ExtensionContext, reason: string): void {
     if (s.isChild) return;
     const e = latestCeremonyState((ctx.sessionManager.getBranch?.() ?? []) as unknown[]);
+    s.ceremonyRestored = true;
     if (!e) return persistCeremonyState(s); // a plan phase entered through the env is recorded at once
     for (const l of e.lineages) s.planReviews.restore(l.path, { hash: l.hash, verdict: l.verdict, model: l.model, findings: Promise.resolve([]) }, l.rounds, l.reviews);
     s.topicReviews = { ...e.planReviews };
     s.planPhase = e.planPhase;
-    if (e.userTier) {
+    if (e.tier && e.tierSource && e.tierSource !== "default") {
+      // a reload never lowers the tier: the persisted effective tier (auto escalations included) or the user's, whichever is higher, unless the last change was /ceremony
+      const tier = e.tierSource === "user" || !e.userTier || TIERS.indexOf(e.tier) >= TIERS.indexOf(e.userTier) ? e.tier : e.userTier;
+      s.ceremony = { ...s.ceremony, tier, source: e.tierSource, triaged: true, ...(e.userTier ? { userTier: e.userTier } : {}) };
+    } else if (e.userTier) {
       s.ceremony = { ...s.ceremony, tier: e.userTier, source: "user", triaged: true, userTier: e.userTier };
     }
     let approved = false;

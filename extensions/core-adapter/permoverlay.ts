@@ -66,7 +66,7 @@
 //     foreman.json, pi-foreman/claude-config, sibling round worktrees, other children's scratch dirs) nor run `git worktree` beyond list/remove; a child may cd inside its workspace root and scratch dir.
 //     grep's `glob` and find's `pattern` are checked joined to the tool's `path`.
 //     removeAsk (`<agentDir>`, its parent (`~/.pi` by default) and `<agentDir>/pi-foreman`, the
-//     ancestors of the state folder):
+//     ancestors of the state folder; also the current session dir and its ancestors up to `<agentDir>/sessions`):
 //     only a remove or rename of the folder itself is asked/denied — an operand of rm, rmdir,
 //     unlink, trash, mv, rename, del/rd, Remove-Item/Move-Item/Rename-Item and aliases, find
 //     -delete, a literal in inline code (`python -c`), or foreman_move's source. Reads and
@@ -846,13 +846,22 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
       ...strs(mp.deny).map((pattern): PathRule => ({ pattern: sub(pattern), action: "deny" })),
     ],
     pathAsk: hasBase ? without(strs(mp.ask), strs(bp.ask)) : [],
-    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true, { readOk: "main" }), ...prot(pb?.childDeny, null, true, { fromChildDeny: true }), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false, { readOk: "child", fromWriteAsk: true }), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true })), ...(userRules ? prot([slash(userRules)], "ask", true, { readOk: "main" }) : []), ...(sessionDir ? [{ pattern: `${slash(sessionDir)}/*.jsonl`, main: "deny" as const, child: "deny" as const, shell: true, childShell: true, readOk: "main" as const, flat: true }] : [])],
+    protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true, { readOk: "main" }), ...prot(pb?.childDeny, null, true, { fromChildDeny: true }), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false, { readOk: "child", fromWriteAsk: true }), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true })), ...(userRules ? prot([slash(userRules)], "ask", true, { readOk: "main" }) : []), ...(sessionDir ? [{ pattern: `${slash(sessionDir)}/*.jsonl`, main: "deny" as const, child: "deny" as const, shell: true, childShell: true, readOk: "main" as const, flat: true }, ...prot(sessionDirChain(slash(sessionDir), `${slash(agentDir)}/sessions`), "ask", true).map((r) => ({ ...r, removeOnly: true }))] : [])],
     childBlock: [...CHILD_BLOCK.map(sub), ...CHILD_BLOCK_WORKTREES, ...(owned?.childScratchRoot ? [slash(owned.childScratchRoot), `${slash(owned.childScratchRoot)}/*`] : [])],
     childBlockExcept: CHILD_BLOCK_EXCEPT.map(sub),
     childBlockInWorkspace: CHILD_BLOCK_WORKTREES,
     ...(owned ? { owned } : {}),
     probeDirs: probeDirPatterns(baseline.externalDirectory?.probe ?? []),
   };
+}
+
+/** The session dir and each ancestor up to `stop` (the sessions dir, inclusive); only the dir itself when it lies elsewhere. */
+function sessionDirChain(dir: string, stop: string): string[] {
+  const chain = [dir];
+  if (dir !== stop && dir.startsWith(`${stop}/`)) {
+    for (let d = dir.slice(0, dir.lastIndexOf("/")); d.length >= stop.length; d = d.slice(0, d.lastIndexOf("/"))) chain.push(d);
+  }
+  return chain;
 }
 
 /** The probe dir list as overlay patterns: `%APPDATA%` only on win32 with APPDATA set (else the entry is dropped), `~` left to the matcher; dir + `dir/*`. */

@@ -2,7 +2,9 @@
 // (appended with pi.appendEntry, read back from the branch like idlemodel.ts latestIdleEntry), keyed on the plan version hash.
 //
 //   { v: 1, plan: {topic, path, hash, status, by, at, source} | null, lineages: [{path, hash, verdict, model, rounds, reviews}],
-//     planReviews: {<topic>: n}, userTier: tier | null, planPhase: boolean }
+//     planReviews: {<topic>: n}, userTier: tier | null, tier: tier | null, tierSource: source | null, planPhase: boolean }
+//
+// `tier` is the effective tier and `tierSource` the source of its last change; a reload never lowers it (index.ts restoreCeremonyState).
 //
 // An approval comes back only when the plan file's version hash still equals the recorded one (an Addendum below the body keeps
 // it) and, for a verdict from the parent, the verdict file still reads APPROVED. The session file is write-protected for the
@@ -10,7 +12,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { isTier } from "./ceremony.ts";
-import type { Tier } from "./ceremony.ts";
+import type { Tier, TierSource } from "./ceremony.ts";
 import type { PlanRecord } from "./checkpoint.ts";
 import { PLAN_MAX_BYTES, PLAN_VERDICT_FILE } from "./checkpoint.ts";
 import type { Verdict } from "./rounds.ts";
@@ -44,15 +46,18 @@ export interface CeremonyStateEntry {
   lineages: PersistedLineage[];
   planReviews: Record<string, number>;
   userTier: Tier | null;
+  /** The effective tier and the source of its last change (null in an entry from before they were recorded). */
+  tier: Tier | null;
+  tierSource: TierSource | null;
   /** The plan phase is on (index.ts): .workflow-only writes, no builder or finalizer launch. */
   planPhase: boolean;
 }
 
 export function emptyCeremonyState(): CeremonyStateEntry {
-  return { v: 1, plan: null, lineages: [], planReviews: {}, userTier: null, planPhase: false };
+  return { v: 1, plan: null, lineages: [], planReviews: {}, userTier: null, tier: null, tierSource: null, planPhase: false };
 }
 
-export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; planReviews: Record<string, number>; userTier?: Tier; planPhase: boolean }): CeremonyStateEntry {
+export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; planReviews: Record<string, number>; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean }): CeremonyStateEntry {
   const p = o.plan;
   return {
     v: 1,
@@ -60,6 +65,8 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     lineages: o.lineages,
     planReviews: { ...o.planReviews },
     userTier: o.userTier ?? null,
+    tier: o.tier ?? null,
+    tierSource: o.tierSource ?? null,
     planPhase: o.planPhase,
   };
 }
@@ -67,6 +74,7 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
 const count = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null);
 const STATUS = new Set(["pending", "approved", "revise", "rejected"]);
 const SOURCES = new Set(["dialog", "ruling-plan", "ruling"]);
+const TIER_SOURCES = new Set(["default", "ledger", "user", "auto", "foreman"]);
 
 /** The newest ceremony-state entry of a branch, validated field by field (a bad field is dropped, not trusted), or null. */
 export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | null {
@@ -96,6 +104,8 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
       }
     }
     out.userTier = isTier(d.userTier) ? d.userTier : null;
+    out.tier = isTier(d.tier) ? d.tier : null;
+    out.tierSource = typeof d.tierSource === "string" && TIER_SOURCES.has(d.tierSource) ? (d.tierSource as TierSource) : null;
     out.planPhase = d.planPhase === true;
     return out;
   }
