@@ -186,11 +186,17 @@ export function reviewGitFacts(cwd: string): { branch: string | null; head: stri
   };
 }
 
-const PURE_READ_TOOLS = new Set(["read", "grep", "find", "ls", "fetch"]);
+const PURE_READ_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const PURE_READ_RULES = new Set(["default-read", "default-git-read", "default-gh-read"]);
 
 /** Whether an allowed call can change state (so cached review allows no longer hold): everything but a pure read. */
-export function changesState(tool: string, rule?: string): boolean {
+export function changesState(tool: string, rule?: string, input?: Record<string, unknown>): boolean {
+  if (tool === "fetch") {
+    const m = input?.method;
+    const body = input?.body;
+    const readMethod = m === undefined || m === null || (typeof m === "string" && /^(get|head)$/i.test(m));
+    return !(readMethod && (body === undefined || body === null || body === ""));
+  }
   if (PURE_READ_TOOLS.has(tool) || (rule !== undefined && PURE_READ_RULES.has(rule))) return false;
   return !(rule !== undefined && /^path-read-/.test(rule));
 }

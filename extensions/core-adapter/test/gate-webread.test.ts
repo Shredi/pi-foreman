@@ -167,6 +167,20 @@ test("fetch review allow is cached per URL and survives a second fetch of it", a
   assert.equal(r.calls.length, 2);
 });
 
+test("a reviewed GET fetch allow keeps another cached allow; a reviewed POST fetch allow drops it", async (t) => {
+  const A = { url: "https://example.com/docs/a" };
+  const get = await fetchRig(t, [ALLOW]);
+  assert.equal(await get.call("fetch", A), undefined);
+  assert.equal(await get.call("fetch", { url: "https://example.com/docs/b", method: "get" }), undefined);
+  assert.equal(await get.call("fetch", A), undefined);
+  assert.equal(get.calls.length, 2, "GET fetch kept the cached allow for A");
+  const post = await fetchRig(t, [ALLOW]);
+  assert.equal(await post.call("fetch", A), undefined);
+  assert.equal(await post.call("fetch", { url: "https://example.com/docs/b", method: "POST", body: "x" }), undefined);
+  assert.equal(await post.call("fetch", A), undefined);
+  assert.equal(post.calls.length, 3, "POST fetch dropped the cached allow for A");
+});
+
 test("fixture facts equal the computed facts for every web-read case", () => {
   const file = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "tests", "fixtures", "gate-eval.jsonl");
   const cases = fs.readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as { id: string; tool: string; input: Record<string, unknown>; facts?: string[] });

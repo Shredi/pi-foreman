@@ -1994,7 +1994,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       note("default", "allow", r.rule);
       gateDecided.add(event.toolCallId);
       rt?.history.push(event.toolName, payload);
-      if (changesState(event.toolName, r.rule)) rt?.cache.invalidateAllows();
+      if (changesState(event.toolName, r.rule, event.input as Record<string, unknown>)) rt?.cache.invalidateAllows();
       return undefined;
     }
     if (!gs || !rt) return undefined;
@@ -2038,7 +2038,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: `review:${v.entry}`, role });
         gateDecided.add(event.toolCallId);
         rt.history.push(event.toolName, payload);
-        if (changesState(event.toolName)) rt.cache.invalidateAllows();
+        if (changesState(event.toolName, undefined, event.input as Record<string, unknown>)) rt.cache.invalidateAllows();
         return undefined;
       }
       const ask: GateAsk = v.kind === "unreachable" ? { cause: "unreachable", why: v.cause, detail: v.detail } : { cause: "ask", entry: v.entry, reason: v.reason };
@@ -2047,7 +2047,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: ask.cause === "ask" ? `dialog:${ask.entry}` : `dialog:${ask.why}`, role });
       gateDecided.add(event.toolCallId);
       rt.history.push(event.toolName, payload);
-      if (changesState(event.toolName)) rt.cache.invalidateAllows();
+      if (changesState(event.toolName, undefined, event.input as Record<string, unknown>)) rt.cache.invalidateAllows();
       return undefined;
     } catch (e) {
       const reason = `pi-foreman: the permission gate failed (${e instanceof Error ? e.message : String(e)}), so the call is denied. Report this to the user.`;
