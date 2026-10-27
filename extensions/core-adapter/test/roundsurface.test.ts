@@ -10,8 +10,6 @@ import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { effectCtx } from "../effects.ts";
 import { applyLedgerItems, reviewLedgerBlock } from "../ledgerblock.ts";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
-import { ForemanReview } from "../review.ts";
-import type { RegistryLike, ReviewSession } from "../review.ts";
 import { isolationDir, roundRoots, roundWorktreeAdd, roundWorktrees } from "../roundsurface.ts";
 import { bashRules, deterministicAllow } from "../timeoutallow.ts";
 
@@ -70,17 +68,6 @@ test("roundWorktreeAdd: the foreman's add of <repo>.worktrees/<round>, nothing e
   ]) assert.equal(add(no), null, no);
 });
 
-test("the link: the foreman's round worktree add needs no ask, a child's does not get it, other adds are not allowed", { skip: !posix }, async () => {
-  const reg: RegistryLike = { find: () => { throw new Error("model called"); }, complete: async () => ({}) };
-  const r = new ForemanReview();
-  const s: ReviewSession = { isChild: false, cwd: main, provider: "a", config: () => ({}), registry: reg, intent: "", bashRules: () => rules, ownDirs: () => [handoff] };
-  r.upsert("s", s);
-  const line = `git -C ${main} worktree add ../repo.worktrees/round -b round main`;
-  assert.deepEqual(await r.authorize("s", { requestId: "r", surface: "bash", agentName: "foreman", value: line }), { kind: "allow" });
-  assert.notEqual((await r.authorize("s", { requestId: "r", surface: "bash", agentName: "foreman", value: `git -C ${main} worktree add /tmp/elsewhere -b round main` })).kind, "allow");
-  assert.notEqual((await r.authorize("s", { requestId: "r", surface: "bash", agentName: "builder", forwarding: true, value: line })).kind, "allow");
-});
-
 test("7e line: mkdir -p <round wt>/.workflow/scratch && cp .workflow/scratch/plan-x.md <round wt>/.workflow/scratch/ by the foreman", { skip: !posix }, () => {
   const line = `mkdir -p ${rt}/.workflow/scratch && cp .workflow/scratch/plan-x.md ${rt}/.workflow/scratch/`;
   const allow = (own: string[]): string | null => deterministicAllow(rules, line, { effects: effectCtx(main), ownDirs: own });
@@ -104,14 +91,6 @@ test("7c lines: a child in the round worktree reads the bound ledger by path and
   assert.equal(allow(`rm ${ledger}`), null);
   // the round worktree is writable for a child's cp/mkdir as an owned dir
   assert.equal(allow(`mkdir -p ${rt}/.workflow/scratch/t && cp ${ledger} ${rt}/.workflow/scratch/t/l.md`), "own-handoff");
-});
-
-test("the link: a forwarded child ask reading the ledger resolves to the deterministic allow", { skip: !posix }, async () => {
-  const reg: RegistryLike = { find: () => { throw new Error("model called"); }, complete: async () => ({}) };
-  const r = new ForemanReview();
-  const s: ReviewSession = { isChild: false, cwd: rt, provider: "a", config: () => ({}), registry: reg, intent: "", bashRules: () => rules, ownDirs: () => [handoff, rt], ledgerFile: () => ledger };
-  r.upsert("s", s);
-  for (const value of [`cat ${ledger}`, `cat ${main}/.workflow/LEDGER-*.md`]) assert.deepEqual(await r.authorize("s", { requestId: "r", surface: "bash", agentName: "builder", forwarding: true, value }), { kind: "allow" }, value);
 });
 
 test("overlay: the round worktrees and isolation worktrees of the session are every child's own root; siblings stay closed", { skip: !posix }, () => {

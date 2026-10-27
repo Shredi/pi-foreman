@@ -1,6 +1,4 @@
 {"ts":"2026-10-20T10:00:00.000Z","event":"overlay","toolFamily":"bash","decision":"ask-approved","command":"node --version","class":"toolchain_probe"}
-{"ts":"2026-10-20T10:00:01.000Z","event":"dialog","surface":"permission"}
-{"ts":"2026-10-20T10:00:02.000Z","event":"dialog","surface":"child","agent":"builder"}
 {"ts":"2026-10-20T10:00:03.000Z","event":"dialog","surface":"checkpoint"}
 {"ts":"2026-10-20T10:00:04.000Z","event":"dialog","surface":"ask_user"}
 {"ts":"2026-10-20T10:00:05.000Z","event":"ask","guard":"git","toolFamily":"bash","decision":"approved"}

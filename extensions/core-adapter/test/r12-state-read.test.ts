@@ -12,8 +12,6 @@ import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import type { MatchCtx, OverlayRules } from "../permoverlay.ts";
 import { ownUsageReadable } from "../roundsurface.ts";
-import { ForemanReview } from "../review.ts";
-import type { RegistryLike } from "../review.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(PKG)!;
@@ -86,16 +84,6 @@ test("state_usage_node_e_read", { skip: !posix }, () => {
   assert.equal(sh(`node -e "console.log(require('fs').readFileSync('${F}','utf8'))"`), "pass");
   assert.equal(sh(`node -e "process.stdout.write(require('fs').readFileSync('${F}', 'utf8'))"`), "pass");
   assert.notEqual(sh(`node -e "require('fs').writeFileSync('${F}','x')"`), "pass");
-});
-
-test("state_usage_node_e_read: the permission link allows the node read form without the model, not a node write", { skip: !posix }, async () => {
-  const F = path.join(usage, `${SID}.jsonl`);
-  const reg: RegistryLike = { find: () => { throw new Error("model called"); }, complete: async () => ({}) };
-  const r = new ForemanReview();
-  r.upsert("s", { isChild: false, cwd: ws, provider: "a", config: () => ({}), registry: reg, intent: "", ownReads: () => ownReads });
-  const link = async (value: string) => (await r.authorize("s", { requestId: "r", surface: "bash", agentName: "foreman", value, toolName: "bash" })).kind;
-  assert.equal(await link(`node -e "console.log(require('fs').readFileSync('${F}','utf8'))"`), "allow");
-  assert.notEqual(await link(`node -e "require('fs').writeFileSync('${F}','x')"`), "allow");
 });
 
 test("state_write_redirect_still_protected", { skip: !posix }, () => {

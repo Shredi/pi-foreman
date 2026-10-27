@@ -3,7 +3,7 @@
 // set the review intent and triage.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ForemanReview, userPromptOf } from "../review.ts";
+import { userPromptOf } from "../review.ts";
 
 test("a Pi 1.2 user run yields its prompt", () => {
   assert.equal(userPromptOf({ type: "before_agent_start", messageType: "user", prompt: "fix the parser" }), "fix the parser");
@@ -27,19 +27,17 @@ test("garbage events count as a user run with an empty prompt", () => {
   assert.equal(userPromptOf({ prompt: 42 }), "");
 });
 
-test("a wake between two user runs leaves the review intent alone", () => {
-  const review = new ForemanReview();
-  review.upsert("s", { isChild: false, cwd: "/w", provider: undefined, config: () => ({}), registry: {} as never, intent: "", trace: () => {} } as never);
+test("a wake between two user runs leaves the latest request alone", () => {
+  let intent = "";
   // the same guard the before_agent_start handler applies
   const onStart = (event: unknown) => {
     const prompt = userPromptOf(event);
-    if (prompt !== null) review.setIntent("s", prompt);
+    if (prompt !== null) intent = prompt;
   };
   onStart({ messageType: "user", prompt: "refactor the cache" });
-  assert.equal(review.intentOf("s"), "refactor the cache");
+  assert.equal(intent, "refactor the cache");
   onStart({ messageType: "custom", message: { customType: "foreman_wake" } });
-  assert.equal(review.intentOf("s"), "refactor the cache");
+  assert.equal(intent, "refactor the cache");
   onStart({ messageType: "user", prompt: "now ship it" });
-  assert.equal(review.intentOf("s"), "now ship it");
-  assert.equal(review.intentOf("unknown"), "");
+  assert.equal(intent, "now ship it");
 });

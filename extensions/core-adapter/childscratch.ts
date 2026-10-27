@@ -10,9 +10,8 @@
 // What the guards allow inside a scratch dir (never outside it):
 //   - permoverlay.ts: a child may cd into its own dir (`$FOREMAN_SCRATCH` is expanded);
 //   - shell_write_guard.py: a planner child (confined) may write into its own dir;
-//   - the review link (review.ts, timeoutallow.ts): a forwarded child ask whose command only
-//     copies into, makes, removes inside or cds into a live scratch dir of the asking role, or
-//     whose write path lies inside one, is allowed without the model (label `child-scratch`).
+//   - timeoutallow.ts: a command that only copies into, makes, removes inside or cds into a live
+//     scratch dir of the asking role, or whose write path lies inside one, composes as `child-scratch`.
 //     POSIX shell forms only, like `tmp-scratch`; a path from the write/edit tools works everywhere.
 import * as fs from "node:fs";
 import * as os from "node:os";

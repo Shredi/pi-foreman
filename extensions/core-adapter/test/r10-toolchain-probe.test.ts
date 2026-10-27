@@ -10,8 +10,6 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import type { MatchCtx, OverlayRules } from "../permoverlay.ts";
-import { ForemanReview } from "../review.ts";
-import type { RegistryLike, ReviewSession } from "../review.ts";
 import { bashRules, hits } from "../timeoutallow.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -103,14 +101,9 @@ test("(decision: ask) read, grep, find, write and edit tools on a probe dir (ove
   }
 });
 
-test("(decision: ask) exec of a found binary: the overlay leaves the command word to the permission system, whose bash rules have no allow row for it", { skip: !posix }, async () => {
+test("(decision: ask) exec of a found binary: the overlay leaves the command word to the permission system, whose bash rules have no allow row for it", { skip: !posix }, () => {
   for (const cmd of ["/usr/local/bin/foo --version", `${path.join(home, ".npm", "_npx", "abc", "bin")} x`]) {
     assert.ok(!hits(prules.allow, cmd, home), `PS allow ${cmd}`);
-    const reg: RegistryLike = { find: () => { throw new Error("model called"); }, complete: async () => ({}) };
-    const s: ReviewSession = { isChild: false, cwd: ws, provider: "a", config: () => ({}), registry: reg, intent: "", bashRules: () => prules };
-    const r = new ForemanReview();
-    r.upsert("s", s);
-    assert.notEqual((await r.authorize("s", { requestId: "r", surface: "bash", agentName: "foreman", value: cmd, toolName: "bash" })).kind, "allow", `link ${cmd}`);
   }
 });
 

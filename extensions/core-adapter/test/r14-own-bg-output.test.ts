@@ -9,8 +9,6 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { rmTestTmp } from "./_tmpbase.ts";
 import { buildOverlayRules, checkToolCall, ownStateRead, readBaseline } from "../permoverlay.ts";
-import { ForemanReview } from "../review.ts";
-import type { RegistryLike } from "../review.ts";
 import type { MatchCtx, OverlayRules } from "../permoverlay.ts";
 import { ownTaskReadable } from "../roundsurface.ts";
 import { checkLogPath, registerWait } from "../wait.ts";
@@ -45,16 +43,9 @@ test("own_bg_output_cat_literal_passes", () => {
   for (const cmd of [`head -20 ${OWN}`, `tail -n 5 ${OWN}`, `wc -l ${OWN}`, `ls -la .pi/tasks/${SID}-66406/`, `stat ${OWN}`]) assert.equal(sh(cmd), "pass", cmd);
 });
 
-test("own_bg_output_other_session_refused", async () => {
+test("own_bg_output_other_session_refused", () => {
   // the overlay: stat is no strict read, so only the own-read set lets it name `.pi/tasks/`; another session's dir keeps the ask
   assert.notEqual(sh(`stat ${FOREIGN}`), "pass");
-  // the permission link: the own output is an own read without the model, another session's is not
-  const noModel: RegistryLike = { find: () => { throw new Error("model called"); }, complete: async () => ({}) };
-  const r = new ForemanReview();
-  r.upsert("s", { isChild: false, cwd: ws, provider: "a", config: () => ({}), registry: noModel, intent: "", ownReads: () => ownTasks });
-  const link = async (value: string): Promise<string> => (await r.authorize("s", { requestId: "r", surface: "bash", agentName: "foreman", value, toolName: "bash" })).kind;
-  assert.equal(await link(`cat ${OWN}`), "allow");
-  for (const cmd of [`cat ${FOREIGN}`, `tail -n 5 ${FOREIGN}`, `cat ${OWN} ${FOREIGN}`, `echo x > ${OWN}`]) assert.notEqual(await link(cmd), "allow", cmd);
   assert.equal(ownStateRead(`cat ${OWN}`, { ...main, role: "child" }), false);
 });
 

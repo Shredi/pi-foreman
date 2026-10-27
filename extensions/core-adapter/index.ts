@@ -64,8 +64,7 @@ import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
 import { hubWorkflowDriftLines } from "./hubdrift.ts";
-import { ForemanReview, reviewTarget, userPromptOf } from "./review.ts";
-import { reviewExtras } from "./timeoutallow.ts";
+import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
@@ -503,7 +502,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   let instructionsCache: string | null | undefined;
   let reviewerInstructionsCache: string | null | undefined;
   const bridgeIso = new BridgeIsolation();
-  const review = new ForemanReview();
   const reviewFacts = new ReviewFacts();
   const usageFooter = new UsageFooter(loadPrices(PKG_ROOT), (model) => piRuntimePoint(model));
   /** Priced run cost per usage file, cached by size and mtime (the widget keeps only 64 rows and loses its total on restart). */
@@ -1142,7 +1140,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       idleBind = { s, ctx };
       await idleModel.onSessionStart(ctx.sessionManager.getBranch?.() ?? []); // before applyForemanModel: a downshift left open is closed first
     }
-    review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [], recordUsage: (m) => { const x = sessions.get(s.id); if (x) appendUsage(x.usage.file, usageLine({ ...x.usage.line, role: "autoreview", launchId: null, kind: "foreman" }, m)); }, scratchDirs: (role) => sessions.get(s.id)?.scratch.live(role) ?? [], ownDirs: () => { const x = sessions.get(s.id); return x ? [...ownHandoffDirs(handoffsRoot(x), intercomIdOf(process.env, x.agentDir, x.id)), ...roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform)] : []; }, roundDirs: () => { const x = sessions.get(s.id); return x ? roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform) : []; }, ledgerFile: () => { const x = sessions.get(s.id); return x ? boundLedger(x.markerDir, x.usage.line.foremanSession) : null; }, ownedRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x).write : []; }, readOnlyRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x).read : []; }, ownReads: () => { const x = sessions.get(s.id); return x && !x.isChild ? [...ownUsageReadable(x.agentDir, platform, x.id, { dir: get(x.config.config, "trace.dir"), stateDir: x.markerDir }, x.usage.line.foremanSession), ...ownTaskReadable([x.cwd, workspaceOf(x.cwd).root, x.usage.line.workspace], x.usage.line.foremanSession, platform), ...asyncResultReads(x.childFiles, platform)] : []; }, ...reviewExtras(baseline, () => sessions.get(s.id)?.config.config, ctx) });
     if (!s.isChild && (event.reason === "startup" || event.reason === "new")) await applyForemanModel(s, ctx);
     await registerChildExtensions(s, ctx);
     const orderNotice = s.isChild ? null : loadOrderNotice(s.cwd, s.agentDir, PKG_ROOT);
@@ -1203,7 +1200,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       idleModel.stop();
     }
     sweepScratch(s);
-    review.drop(s.id);
     s.live?.stop();
     s.pressureSampler?.stop();
     s.widget.dispose();
@@ -1214,8 +1210,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.on("model_select", async (event, ctx) => {
-    const sid = sessionFor(ctx)?.id;
-    if (sid) review.setProvider(sid, event.model?.provider);
     const ps = sessionFor(ctx);
     if (ps) tracePoint(ps, event.model);
     const warmed = sessionFor(ctx);
@@ -1367,7 +1361,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // Only a user run sets the review intent and triages; the section below is built for every run.
     const prompt = userPromptOf(event);
     if (prompt !== null) {
-      review.setIntent(s.id, prompt);
       if (!s.isChild) gateOwnerMessages.set(s.id, [prompt, ...(gateOwnerMessages.get(s.id) ?? [])].slice(0, MAX_OWNER_MESSAGES));
       // D7: a child never triages; only the foreman's request can escalate on a signal.
       const signals = s.isChild ? [] : promptSignals(prompt, get(s.config.config, "ceremony.heavySignals"));
@@ -2834,7 +2827,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("agent_end", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild) return;
-    s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite, wakeKinds: s.turn.cause === "wake" ? s.turn.wakeKinds : undefined, pollBash: s.pollBash || undefined, codemode: s.turn.codemode || undefined, chars: review.intentOf(s.id).length }); // chars: review intent length (a wake run must not reset it)
+    s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite, wakeKinds: s.turn.cause === "wake" ? s.turn.wakeKinds : undefined, pollBash: s.pollBash || undefined, codemode: s.turn.codemode || undefined, chars: (gateOwnerMessages.get(s.id)?.[0] ?? "").length }); // chars: latest owner message length (a wake run must not reset it)
     s.pollBash = 0;
     s.turnSeq += 1;
     s.turn = { cause: "other", cacheRead: 0, cacheWrite: 0 };
