@@ -38,7 +38,7 @@ test("usage tail sums per launch id incrementally and waits for a full line", ()
   assert.equal(t.by.get("b")?.cost, 1);
 });
 
-test("state: working -> ask -> working -> done by forwarded prompt, matched on the requester agent name", () => {
+test("state: working -> done; a run never reads an ask state from permission events", () => {
   const d = tmp();
   const f = path.join(d, "u.jsonl");
   fs.writeFileSync(f, line("L1", 10, 2, 0.1) + "\n");
@@ -48,12 +48,6 @@ test("state: working -> ask -> working -> done by forwarded prompt, matched on t
   assert.equal(c.views()[0].model, "anthropic/claude-sonnet-5-5");
   assert.equal(c.views()[0].state, "working");
   assert.equal(c.views()[0].tokensIn, 10);
-  c.onPrompt({ requestId: "r0", forwarding: null, agentName: "builder" }); // the foreman's own prompt: not an ask
-  assert.equal(c.views()[0].state, "working");
-  c.onPrompt({ requestId: "r1", forwarding: { requesterAgentName: "builder", requesterSessionId: "x" } });
-  assert.equal(c.views()[0].state, "ask");
-  c.onDecision({ requestId: "r1" });
-  assert.equal(c.views()[0].state, "working");
   c.onRunEnd("run1", 2000);
   assert.equal(c.views()[0].state, "done");
 });
@@ -142,18 +136,14 @@ test("height never shrinks while a run is active, updates in place, clears after
   heights.push(height());
   step(() => w.runs.onLaunched("c", "r3", ["explorer"], t));
   heights.push(height());
-  step(() => w.runs.onPrompt({ requestId: "q", forwarding: { requesterAgentName: "reviewer" } }));
-  heights.push(height());
   step(() => w.runs.onRunEnd("r1", t));
   heights.push(height());
   ui.notify();
   step(() => w.runs.onRunEnd("r3", t));
   heights.push(height());
-  step(() => w.runs.onDecision({ requestId: "q" }));
-  heights.push(height());
-  assert.deepEqual(heights, [1, 2, 3, 3, 3, 3, 3]);
+  assert.deepEqual(heights, [1, 2, 3, 3, 3]);
   assert.equal(st.sets, 1); // one component for the whole batch, lines swapped in place
-  assert.ok(st.renders >= 5);
+  assert.ok(st.renders >= 4);
   assert.deepEqual(st.rows?.render(60), [" ⏳ reviewer · working · ↑0 ↓0 · $0.00", " 2 done · ↑0 ↓0 · $0.00", ""]);
   step(() => w.runs.onRunEnd("r2", t));
   assert.equal(height(), 0);

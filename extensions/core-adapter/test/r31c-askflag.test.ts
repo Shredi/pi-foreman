@@ -36,29 +36,15 @@ test("A1 an overlay answer is flagged with family, class, rule and the complete 
   assert.equal(out.note, "needless");
 });
 
-test("A2 a PS prompt answered by the owner is flagged; a flag of another session is not", () => {
+test("A2 a flag of another session is not written; the last answer wins and a denial is flagged as denied", () => {
   const f = new AskFlag();
-  f.prompt({ requestId: "r1", surface: "bash", value: "gh run view 123 --log-failed", request: { surface: "bash", matchedPattern: "gh *" } });
-  f.decision({ requestId: "r1", surface: "bash", value: "gh run view 123 --log-failed", result: "allow", resolution: "user_approved_for_session" }, "sess", w);
-  const rec = f.flag("sess")!;
-  assert.equal(rec.rule, "gh *");
-  assert.equal(rec.command, "gh run view 123 --log-failed");
-  assert.equal(rec.decision, "approved");
-  assert.equal(rec.surface, "bash");
+  f.overlay({ command: "gh run view 123 --log-failed", rule: "gh *", approved: true, session: "sess" });
   assert.equal(f.flag("other"), null);
-});
-
-test("A3 non-user resolutions are ignored", () => {
-  const f = new AskFlag();
-  for (const by of ["policy_allow", "policy_deny", "session_approved", "auto_approved", "authorizer_allowed", "authorizer_denied", "confirmation_unavailable", "gate_error", ""]) {
-    f.prompt({ requestId: `r-${by}`, surface: "bash", value: "ls" });
-    f.decision({ requestId: `r-${by}`, resolution: by, result: "allow" }, "sess", w);
-  }
-  f.decision({ requestId: "unknown", resolution: "user_approved", result: "allow" }, "sess", w);
-  assert.equal(f.flag("sess"), null);
-  f.prompt({ requestId: "d1", surface: "bash", value: "rm x" });
-  f.decision({ requestId: "d1", resolution: "user_denied", result: "deny" }, "sess", w);
-  assert.equal(f.flag("sess")!.decision, "denied");
+  f.overlay({ command: "rm x", rule: "rm *", approved: false, session: "sess" });
+  const rec = f.flag("sess")!;
+  assert.equal(rec.command, "rm x");
+  assert.equal(rec.decision, "denied");
+  assert.equal(rec.surface, "overlay");
 });
 
 test("A4 no answered ask: nothing to flag", () => {

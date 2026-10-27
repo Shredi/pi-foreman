@@ -64,7 +64,7 @@ import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
 import { hubWorkflowDriftLines } from "./hubdrift.ts";
-import { ForemanReview, reviewTarget, reviewValue, userPromptOf } from "./review.ts";
+import { ForemanReview, reviewTarget, userPromptOf } from "./review.ts";
 import { reviewExtras } from "./timeoutallow.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
@@ -139,7 +139,7 @@ import { frictionOfRunEnd } from "./friction.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
 import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, waitNote, type CacheSource } from "./footer.ts";
 import { symbolSet } from "./symbols.ts";
-import { blockedConfirm, installBlockedShim, PERMISSIONS_DECISION, PERMISSIONS_UI_PROMPT, withBlocked } from "./herdr.ts";
+import { blockedConfirm, installBlockedShim, withBlocked } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
 import { builderLaunchRefusal, changedPlans, checkpointMode, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, PLAN_VERDICT_FILE, planSnapshot, planSummary, planVersionHash, readPlan, readPlanVerdict, restoreFromStore, saveStored, sha256, stampPlanVersion } from "./checkpoint.ts";
 import { effectivePlannerMode, PLANNER_SELF_MESSAGE, plannerNotBelow, selfPlanRequired } from "./plannerself.ts";
@@ -540,44 +540,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
   const herdrMeta = installHerdrMeta(pi); // group tag (herdrmeta.ts), started at the end of session_start
   const sidebarLive = installSidebarLive(pi); // session-owned Herdr sidebar row (sidebarlive.ts), same place
-  // Radar: forwarded permission prompts put a child run in "ask" (childwidget.ts); blocked/working feed the presence file.
-  const radarEvent = (fn: (s: Session) => void): void => {
-    for (const s of sessions.values()) {
-      fn(s);
-      s.live?.touch();
-      s.widget.refresh();
-    }
-  };
-  // Dialog count (dialogs.ts): one `dialog` record per prompt this session shows (`permission`), or per forwarded child prompt (`child`, never also `permission`).
   const askFlag = new AskFlag(); // /foreman flag-ask (askflag.ts): the last ask the owner answered
-  const promptsSeen = new Set<string>();
-  const traceDialogPrompt = (d: unknown): void => {
-    const p = (d && typeof d === "object" ? d : {}) as { requestId?: unknown; forwarding?: unknown };
-    if (typeof p.requestId === "string") {
-      if (promptsSeen.has(p.requestId)) return;
-      promptsSeen.add(p.requestId);
-      if (promptsSeen.size > 256) promptsSeen.delete(promptsSeen.values().next().value as string);
-    }
-    const f = p.forwarding && typeof p.forwarding === "object" ? (p.forwarding as { requesterAgentName?: unknown }) : null;
-    const who = f && typeof f.requesterAgentName === "string" ? { agent: f.requesterAgentName } : {};
-    let command = "";
-    try {
-      command = reviewValue(p as never);
-    } catch {
-      command = "";
-    }
-    [...sessions.values()][0]?.trace?.emit({ event: "dialog", surface: f ? "child" : "permission", ...who, ...(command ? { command } : {}) });
-  };
-  pi.events?.on(PERMISSIONS_UI_PROMPT, (d: unknown) => {
-    traceDialogPrompt(d);
-    askFlag.prompt(d);
-    radarEvent((s) => s.widget.runs.onPrompt(d));
-  });
-  pi.events?.on(PERMISSIONS_DECISION, (d: unknown) => {
-    const first = [...sessions.values()][0];
-    askFlag.decision(d, first?.id ?? "", first?.cwd ?? process.cwd());
-    radarEvent((s) => s.widget.runs.onDecision(d));
-  });
   // Background rows of the children widget (childwidget.ts): the foreman's foreman_wait waits (pressure waits are not shown), its foreman_bg commands and its PR watches.
   const backgroundOf = (s: Session): BackgroundRow[] => {
     if (s.isChild) return [];

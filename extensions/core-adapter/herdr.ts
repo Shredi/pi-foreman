@@ -3,8 +3,7 @@
 // owns every open "waiting for the owner" source and emits only on empty->non-empty (active:true) and
 // non-empty->empty (active:false), so Herdr's counter stays balanced however the sources overlap or nest:
 //   ui           Pi's ui_prompt_start .. ui_prompt_end (ANY extension's dialog; Pi collapses nesting and
-//                delivers both via microtask, so ui_prompt_end may arrive before permissions:decision)
-//   perm:<id>    pi-permission-system `permissions:ui_prompt` .. `permissions:decision` with the same requestId
+//                delivers both via microtask)
 //   own:<n>      pi-foreman's own asks (`withBlocked` / `blockedConfirm`)
 // Own asks also reach `onOwn` hooks (the radar presence file), with or without Herdr: Pi suppresses
 // ui_prompt_start while an earlier dialog is still unsettled (uiPromptDepth > 0, e.g. an orphaned one).
@@ -15,8 +14,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { piAgentDir } from "./env.ts";
 
 export const HERDR_BLOCKED_CHANNEL = "herdr:blocked";
-export const PERMISSIONS_UI_PROMPT = "permissions:ui_prompt";
-export const PERMISSIONS_DECISION = "permissions:decision";
 // The upstream patch prepared for Herdr's Pi integration bumps HERDR_INTEGRATION_VERSION to 10 and maps
 // ui_prompt_* and the permission events natively; once that integration is installed this shim steps aside.
 export const HERDR_NATIVE_PROMPT_VERSION = 10;
@@ -35,34 +32,6 @@ export function cleanLabel(s: string): string {
 }
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
-
-/** Quotes and `$(`/`)` of a shell word group are balanced (a value that spans words is complete). */
-function balanced(w: string): boolean {
-  const n = (re: RegExp): number => (w.match(re) ?? []).length;
-  return n(/"/g) % 2 === 0 && n(/'/g) % 2 === 0 && n(/\(/g) <= n(/\)/g);
-}
-
-/** Label of a permission ask: `<agent> · <tool> <head>`; head is the first word of the value after `env` and `NAME=value` assignments (a path's basename), never the full value. */
-export function permissionLabel(data: unknown): string {
-  const d = (data ?? {}) as { agentName?: unknown; surface?: unknown; value?: unknown; request?: { toolName?: unknown } | null; forwarding?: { requesterAgentName?: unknown } | null };
-  const agent = str(d.forwarding?.requesterAgentName) || str(d.agentName);
-  const tool = str(d.request?.toolName) || str(d.surface) || "permission";
-  // Skip `env` and leading `NAME=value` assignments (they can carry secrets); drop anything after an `=` in the head.
-  // A quoted or `$(…)` assignment value can span words: skip until its quotes and parens balance. A head that is
-  // not a plain command word (quotes, `$`, parens left over) is dropped.
-  const words = str(d.value).split(/\s+/).filter(Boolean);
-  let i = words[0] === "env" ? 1 : 0;
-  while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) {
-    let open = words[i];
-    while (!balanced(open) && i + 1 < words.length) open += ` ${words[++i]}`;
-    i++;
-  }
-  let head = (words[i] ?? "").split("=")[0];
-  if (!/^[\w.@+\/\\:-]+$/.test(head)) head = "";
-  if (/[\\/]/.test(head)) head = head.split(/[\\/]+/).filter(Boolean).pop() ?? "";
-  const ask = head ? `${tool} ${head}` : tool;
-  return cleanLabel(agent ? `${agent} · ${ask}` : ask);
-}
 
 /** Version from the `// HERDR_INTEGRATION_VERSION=<n>` header of the installed Herdr Pi integration; 0 when unreadable. */
 export function herdrIntegrationVersion(agentDir: string): number {
@@ -225,16 +194,7 @@ export function installBlockedShim(pi: Pick<ExtensionAPI, "on" | "events">, opts
   pi.on("input", async (e) => {
     if ((e as { source?: unknown }).source === "interactive") tracker.remove("ui");
   });
-  events.on(PERMISSIONS_UI_PROMPT, (data) => {
-    const id = (data as { requestId?: unknown } | undefined)?.requestId;
-    if (typeof id === "string") tracker.add(`perm:${id}`, permissionLabel(data), "perm");
-  });
-  // A decision for an unseen requestId clears nothing (remove of an unknown source is a no-op).
-  events.on(PERMISSIONS_DECISION, (data) => {
-    const id = (data as { requestId?: unknown } | undefined)?.requestId;
-    if (typeof id === "string") tracker.remove(`perm:${id}`);
-  });
-  // agent_end: a permission prompt released without a decision, or an own ask cut short, must not leave Herdr
+  // agent_end: an own ask cut short must not leave Herdr
   // blocked. An open Pi dialog is kept: it can outlive a turn (a command's dialog, or one an extension opens
   // from its own agent_end handler) and Pi always sends its ui_prompt_end, which then releases it.
   pi.on("agent_end", async () => tracker.clear({ keepUi: true }));

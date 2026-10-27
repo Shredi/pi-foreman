@@ -46,7 +46,7 @@ test("record: fields, redaction and no raw value in the file", () => {
   assert.equal(log.file, file);
   assert.equal(file, path.join(agent, "pi-foreman", "state", "gate", "log.jsonl"));
   const [r] = lines(file);
-  assert.deepEqual(Object.keys(r), ["ts", "session", "kind", "role", "tool", "layer", "verdict", "rule", "reason", "shape", "cwdHash"]);
+  assert.deepEqual(Object.keys(r), ["id", "ts", "session", "kind", "role", "tool", "layer", "verdict", "rule", "reason", "shape", "cwdHash"]);
   assert.equal(r.ts, "2026-01-02T03:04:05.000Z");
   assert.equal(r.kind, "child");
   assert.equal(r.layer, "default");

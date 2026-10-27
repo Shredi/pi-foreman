@@ -1,6 +1,7 @@
 // Gate decision log (plan 2.6): one JSON line per decision in <agentDir>/pi-foreman/state/gate/log.jsonl.
 // A line never carries a raw value: the command shape is normalised (paths to a class token, URLs to scheme and host,
-// quoted strings and secret-grammar values to `<v>`), every other string is redacted and capped. Best effort, like the trace.
+// quoted strings and secret-grammar values to `<v>`), every other string is redacted and capped. Every line has its own `id`
+// (12 hex chars). Best effort, like the trace.
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -196,6 +197,7 @@ export function openGateLog(opts: GateLogOptions): GateLog {
         }
         const line =
           JSON.stringify({
+            id: crypto.randomBytes(6).toString("hex"),
             ts: now().toISOString(),
             session: field(opts.session),
             kind: rec.kind ?? opts.kind,

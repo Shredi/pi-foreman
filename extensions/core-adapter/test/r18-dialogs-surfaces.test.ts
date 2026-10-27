@@ -38,11 +38,9 @@ test("dialog_surface_survives_the_trace_writer", (t) => {
   assert.equal(JSON.parse(dialogsJson(tr)).total, 1, "an unknown surface counts nowhere");
 });
 
-test("forwarded_prompt_counts_once_as_child_and_a_plain_prompt_as_permission", async (t) => {
+test("package_permission_events_count_nowhere", async (t) => {
   const a = await r11Rig(t);
   a.channel("permissions:ui_prompt", { requestId: "r1", forwarding: { requesterAgentName: "builder" } });
-  a.channel("permissions:ui_prompt", { requestId: "r1", forwarding: { requesterAgentName: "builder" } });
   a.channel("permissions:ui_prompt", { requestId: "r2" });
-  const recs = a.events("dialog");
-  assert.deepEqual(recs.map((r) => [r.surface, r.agent]), [["child", "builder"], ["permission", undefined]]);
+  assert.deepEqual(a.events("dialog"), []);
 });

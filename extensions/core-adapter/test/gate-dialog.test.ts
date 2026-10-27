@@ -160,6 +160,17 @@ test("dialogReport counts the gate dialog records", async (t) => {
   assert.equal(n, 2);
 });
 
+test("every gate record has its own id, the review record and the dialog record included", async (t) => {
+  const r = await rig(t, [ASK], { answers: ["allow once", "deny and stop"] });
+  await r.call("bash", CMD);
+  await r.call("bash", { command: "pip install flask" });
+  const recs = r.log();
+  assert.ok(recs.length >= 3);
+  assert.ok(recs.some((x) => x.layer === "dialog"));
+  for (const x of recs) assert.match(String(x.id), /^[0-9a-f]{12}$/);
+  assert.equal(new Set(recs.map((x) => x.id)).size, recs.length, "ids are unique");
+});
+
 // ------------------------------------------------------------------ round sessions
 
 async function roundRig(t: Parameters<typeof r11Rig>[0], replies: Reply[], gate?: Record<string, unknown>) {

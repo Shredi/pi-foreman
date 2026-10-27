@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { BlockedTracker, blockedConfirm, installBlockedShim, permissionLabel, withBlocked } from "../herdr.ts";
+import { BlockedTracker, blockedConfirm, installBlockedShim, withBlocked } from "../herdr.ts";
 
 type Sent = { active: boolean; label?: string };
 
@@ -52,15 +52,6 @@ test("another extension's dialog blocks and unblocks with its title (else kind)"
   assert.deepEqual(sent, [{ active: true, label: "Pick one" }, { active: false }, { active: true, label: "input" }, { active: false }]);
 });
 
-test("permission ask overlapping a ui prompt (end before decision) emits exactly one true and one false", async () => {
-  const { fire, events, sent } = install();
-  events.emit("permissions:ui_prompt", { requestId: "r1", surface: "bash", value: "git push origin", agentName: "foreman", request: { toolName: "bash" }, forwarding: { requesterAgentName: "builder" } });
-  await fire("ui_prompt_start", { kind: "custom" });
-  await fire("ui_prompt_end", { kind: "custom" });
-  events.emit("permissions:decision", { requestId: "r1" });
-  assert.deepEqual(sent, [{ active: true, label: "builder · bash git" }, { active: false }]);
-});
-
 test("an own ask nested inside a ui prompt stays one block", async () => {
   const { fire, events, sent } = install();
   await fire("ui_prompt_start", { kind: "confirm", title: "outer" });
@@ -78,48 +69,29 @@ test("typed input releases an orphaned dialog (no ui_prompt_end) but not a permi
   assert.deepEqual(actives(sent), [true]);
   await fire("input", { text: "go on", source: "interactive" });
   assert.deepEqual(actives(sent), [true, false]);
-  events.emit("permissions:ui_prompt", { requestId: "r9", surface: "bash", value: "ls" });
-  await fire("input", { text: "y", source: "interactive" });
-  assert.deepEqual(actives(sent), [true, false, true]);
 });
 
-test("permission label skips env assignments and never shows a value after =", () => {
-  assert.equal(permissionLabel({ agentName: "builder", request: { toolName: "bash" }, value: "GITHUB_TOKEN=ghp_FAKE gh pr create" }), "builder · bash gh");
-  assert.equal(permissionLabel({ request: { toolName: "bash" }, value: "env A=1 B=secret make deploy" }), "bash make");
-  assert.equal(permissionLabel({ request: { toolName: "bash" }, value: "--token=secret" }), "bash --token");
-  assert.equal(permissionLabel({ request: { toolName: "bash" }, value: "SECRET=only" }), "bash");
-  assert.equal(permissionLabel({ request: { toolName: "bash" }, value: 'AUTH="Bearer abc def" curl -s x' }), "bash curl");
-  assert.equal(permissionLabel({ request: { toolName: "bash" }, value: "P='pass word' psql" }), "bash psql");
-  assert.equal(permissionLabel({ request: { toolName: "bash" }, value: "T=$(cat key file) deploy" }), "bash deploy");
-  assert.equal(permissionLabel({ request: { toolName: "bash" }, value: '"quoted secret" x' }), "bash");
-});
-
-test("a decision without a prompt and an end without a start emit nothing", async () => {
+test("an end without a start emits nothing, and permission events are not subscribed", async () => {
   const { fire, events, sent } = install();
-  events.emit("permissions:decision", { requestId: "nope" });
   await fire("ui_prompt_end", {});
   events.emit("permissions:ui_prompt", { requestId: "r1", surface: "read", value: "/a/b/notes.txt" });
-  events.emit("permissions:ui_prompt", { requestId: "r1", surface: "read", value: "x" });
-  events.emit("permissions:decision", { requestId: "r2" });
   events.emit("permissions:decision", { requestId: "r1" });
-  events.emit("permissions:decision", { requestId: "r1" });
-  assert.deepEqual(sent, [{ active: true, label: "read notes.txt" }, { active: false }]);
+  assert.deepEqual(sent, []);
 });
 
 test("clear releases everything once; agent_end keeps an open Pi dialog", async () => {
-  const { fire, events, sent, tracker } = install();
-  events.emit("permissions:ui_prompt", { requestId: "a" });
-  events.emit("permissions:ui_prompt", { requestId: "b" });
+  const { fire, sent, tracker } = install();
+  tracker.add("x:a", "a", "own");
+  tracker.add("x:b", "b", "own");
   tracker.clear();
   tracker.clear();
-  events.emit("permissions:decision", { requestId: "a" });
   assert.deepEqual(actives(sent), [true, false]);
   await fire("ui_prompt_start", { kind: "select" });
-  events.emit("permissions:ui_prompt", { requestId: "c" });
+  tracker.add("x:c", "c", "own");
   await fire("agent_end", {});
   assert.deepEqual(actives(sent), [true, false, true], "the dialog is still open");
   await fire("ui_prompt_end", {});
-  events.emit("permissions:ui_prompt", { requestId: "d" });
+  tracker.add("x:d", "d", "own");
   await fire("session_shutdown", {});
   assert.deepEqual(actives(sent), [true, false, true, false, true, false]);
 });
@@ -147,7 +119,6 @@ test("no emits without HERDR_ENV=1 or with herdr.blockedShim false", async () =>
   for (const opts of [{ env: {}, agentDir: ON.agentDir }, { ...ON, enabled: () => false }]) {
     const { fire, events, sent } = install(opts);
     await fire("ui_prompt_start", { kind: "select" });
-    events.emit("permissions:ui_prompt", { requestId: "r" });
     await withBlocked(events, "own", async () => 1);
     await fire("ui_prompt_end", {});
     assert.deepEqual(sent, []);
@@ -166,13 +137,6 @@ test("own asks reach onOwn hooks with or without Herdr; Herdr emits stay gated",
     assert.deepEqual(log, ["open pi-foreman: git config changed", "release"]);
     assert.equal(sent.length, emits);
   }
-});
-
-test("the permission label never carries the full command", () => {
-  const label = permissionLabel({ requestId: "r", surface: "bash", value: "rm -rf /secret/x", agentName: null, request: { toolName: "bash" }, forwarding: null });
-  assert.equal(label, "bash rm");
-  assert.equal(permissionLabel({ value: "/usr/bin/curl https://x/y?token=1" }), "permission curl");
-  assert.ok(permissionLabel({ agentName: "a".repeat(200), value: "ls" }).length <= 80);
 });
 
 test("onChange fires on the same transitions as herdr:blocked", () => {
