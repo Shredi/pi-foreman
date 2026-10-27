@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const { migrateGateConfig, gateLeftovers, REMOVED_REASON } = await import(pathToFileURL(path.join(HERE, "..", "..", "scripts", "foreman_migrate_gate.mjs")).href);
+const { migrateGateConfig, dropPackageEntry, gateLeftovers, REMOVED_REASON } = await import(pathToFileURL(path.join(HERE, "..", "..", "scripts", "foreman_migrate_gate.mjs")).href);
 
 function fresh(config, { rendered = false } = {}) {
   const agentDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-migrate-gate-")));
@@ -134,4 +134,52 @@ test("gateLeftovers uses the setup texts and ignores providers.*.review", () => 
   for (const l of left.filter((x) => !x.startsWith("rendered"))) assert.ok(r.lines.includes(`gate migration: ${l}`), l);
   assert.ok(r.lines.includes(`gate migration: ${left.find((x) => x.startsWith("rendered"))}`));
   assert.deepEqual(gateLeftovers({ agentDir: e.agentDir, config: read(cp) }).length, 1); // only the package install remains
+});
+
+const PKG_ENTRY = "npm:@gotgenes/pi-permission-system@1.2.3";
+const withSettings = (e, packages) => {
+  const f = path.join(e.agentDir, "settings.json");
+  fs.writeFileSync(f, JSON.stringify({ theme: "x", packages }));
+  return f;
+};
+
+test("the permission package entry (string or object, any version) leaves settings.json after a backup", () => {
+  const e = fresh(null);
+  const f = withSettings(e, ["npm:other@1", PKG_ENTRY, { source: "npm:@gotgenes/pi-permission-system", extra: 1 }, { source: "npm:keep" }]);
+  const before = fs.readFileSync(f, "utf8");
+  const r = dropPackageEntry({ agentDir: e.agentDir });
+  assert.equal(r.changed, true);
+  assert.deepEqual(read(f), { theme: "x", packages: ["npm:other@1", { source: "npm:keep" }] });
+  assert.equal(fs.readFileSync(path.join(e.backup, "settings.json.pre-gate"), "utf8"), before);
+  assert.equal(r.lines.filter((l) => l.includes("permission package entry in")).length, 1);
+  assert.match(r.lines.at(-1), /copy .*settings\.json\.pre-gate over/);
+});
+
+test("settings.json step: dry run writes nothing and a second run is a no-op", () => {
+  const e = fresh(null);
+  const f = withSettings(e, [PKG_ENTRY]);
+  const before = fs.readFileSync(f, "utf8");
+  const d = dropPackageEntry({ agentDir: e.agentDir, dryRun: true });
+  assert.ok(d.lines.some((l) => l.includes("would ") && l.includes("permission package entry")));
+  assert.equal(fs.readFileSync(f, "utf8"), before);
+  assert.equal(fs.existsSync(path.join(e.agentDir, "pi-foreman")), false);
+  dropPackageEntry({ agentDir: e.agentDir });
+  assert.deepEqual(dropPackageEntry({ agentDir: e.agentDir }), { lines: [], changed: false });
+});
+
+test("migrateGateConfig never touches settings.json", () => {
+  const e = fresh(old(), { rendered: true });
+  const f = withSettings(e, [PKG_ENTRY]);
+  const before = fs.readFileSync(f, "utf8");
+  migrateGateConfig({ agentDir: e.agentDir, configPath: e.configPath });
+  assert.equal(fs.readFileSync(f, "utf8"), before);
+  assert.equal(fs.existsSync(path.join(e.backup, "settings.json.pre-gate")), false);
+});
+
+test("settings.json without the package is untouched", () => {
+  const e = fresh(null);
+  const f = withSettings(e, ["npm:other"]);
+  const before = fs.readFileSync(f, "utf8");
+  assert.equal(dropPackageEntry({ agentDir: e.agentDir }).changed, false);
+  assert.equal(fs.readFileSync(f, "utf8"), before);
 });

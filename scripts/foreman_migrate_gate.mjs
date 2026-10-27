@@ -3,6 +3,7 @@
 // backup (foreman.json.pre-gate and the package's rendered config) before any change, then removes the rendered config.
 // The doctor shares the leftover texts below (`gateLeftovers`).
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 export const REMOVED_REASON = "the permission package is gone; the gate decides";
@@ -14,12 +15,16 @@ const toJson = (v) => `${JSON.stringify(v, null, 2)}\n`;
 
 export const migrationDir = (agentDir) => path.join(agentDir, "pi-foreman", "state", "migration");
 export const renderedConfigPath = (agentDir) => path.join(agentDir, "extensions", "pi-permission-system", "config.json");
+export const settingsPath = (agentDir) => path.join(agentDir, "settings.json");
+const PKG_SOURCE_RE = /^npm:@gotgenes\/pi-permission-system(@.*)?$/;
+const isPkgEntry = (e) => (typeof e === "string" ? e : isObj(e) ? e.source : undefined)?.match?.(PKG_SOURCE_RE) != null;
 export const packageInstallPath = (agentDir) => path.join(agentDir, "npm", "node_modules", ...PKG.split("/"));
 
 /** The one text for a key the gate migration removes or moves; setup and the doctor print it. */
 export const removedKeyText = (key, reason = REMOVED_REASON) => `${key}: removed (${reason})`;
 export const mappedKeyText = (from, to) => `${from}: moved to ${to}`;
 export const renderedConfigText = (file) => `rendered permission config ${file}: removed (${REMOVED_REASON})`;
+export const settingsEntryText = (file) => `permission package entry in ${file}: removed (${REMOVED_REASON})`;
 export const packageInstallText = (dir) => `permission package install ${dir}: remove it (${REMOVED_REASON})`;
 
 const get = (o, parts) => parts.reduce((a, k) => (isObj(a) ? a[k] : undefined), o);
@@ -79,6 +84,41 @@ function planKeys(config) {
   return out;
 }
 
+/** The settings.json text and parsed value when its packages hold the permission package entry; else null. */
+function planSettings(agentDir) {
+  try {
+    const text = fs.readFileSync(settingsPath(agentDir), "utf8");
+    const settings = JSON.parse(text);
+    if (isObj(settings) && Array.isArray(settings.packages) && settings.packages.some(isPkgEntry)) return { text, settings };
+  } catch { /* absent or unparseable: nothing to migrate */ }
+  return null;
+}
+
+/**
+ * Remove the permission package entry from <agentDir>/settings.json after a backup. Never called by setup or
+ * migrateGateConfig: the owner runs it (`node scripts/foreman_migrate_gate.mjs settings [--dry-run]`).
+ * @returns {{lines: string[], changed: boolean}}
+ */
+export function dropPackageEntry({ agentDir, dryRun = false, log = () => {} }) {
+  const lines = [];
+  const say = (l) => { lines.push(l); log(l); };
+  const sp = planSettings(agentDir);
+  if (!sp) return { lines, changed: false };
+  const w = dryRun ? "would " : "";
+  const file = settingsPath(agentDir);
+  const pre = path.join(migrationDir(agentDir), "settings.json.pre-gate");
+  say(`gate migration: ${w}write ${pre} before changing ${file}`);
+  say(`gate migration: ${w}${settingsEntryText(file)}`);
+  if (!dryRun) {
+    fs.mkdirSync(migrationDir(agentDir), { recursive: true });
+    if (!fs.existsSync(pre)) fs.writeFileSync(pre, sp.text);
+    sp.settings.packages = sp.settings.packages.filter((e) => !isPkgEntry(e));
+    fs.writeFileSync(file, toJson(sp.settings));
+  }
+  say(`gate migration: to go back, copy ${pre} over ${file}.`);
+  return { lines, changed: true };
+}
+
 /**
  * Migrate the user's foreman.json and the rendered permission config.
  * @returns {{lines: string[], changed: boolean, backupDir: string|null}} backupDir is set when something changed.
@@ -128,6 +168,21 @@ export function gateLeftovers({ agentDir, config }) {
     for (const s of planKeys(config)) if (s.parts[0] === "safety" || s.parts[0] === "review") out.push(s.text);
   }
   if (fs.existsSync(renderedConfigPath(agentDir))) out.push(renderedConfigText(renderedConfigPath(agentDir)));
+  if (planSettings(agentDir)) out.push(settingsEntryText(settingsPath(agentDir)));
   if (fs.existsSync(packageInstallPath(agentDir))) out.push(packageInstallText(packageInstallPath(agentDir)));
   return out;
+}
+
+export const SETTINGS_COMMAND = "node scripts/foreman_migrate_gate.mjs settings";
+
+if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url).pathname) {
+  const args = process.argv.slice(2);
+  if (args[0] !== "settings") {
+    console.error("usage: node scripts/foreman_migrate_gate.mjs settings [--dry-run] [--agent-dir <dir>]");
+    process.exit(2);
+  }
+  const i = args.indexOf("--agent-dir");
+  const agentDir = (i >= 0 && args[i + 1]) || process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent");
+  const r = dropPackageEntry({ agentDir, dryRun: args.includes("--dry-run"), log: console.log });
+  if (!r.changed) console.log(`gate migration: no permission package entry in ${settingsPath(agentDir)}`);
 }
