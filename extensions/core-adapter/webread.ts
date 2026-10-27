@@ -274,11 +274,3 @@ export function webReadFacts(tool: string, input: unknown, ctx: WebReadCtx): str
   }
   return facts.slice(0, MAX_FACTS);
 }
-
-/**
- * Whether a fetch URL needs no review for smuggled data (check (e) done deterministically): no query, no fragment, no percent-encoding, a short path.
- * Any other URL goes to the review.
- */
-export function plainFetchUrl(url: string): boolean {
-  return !/[?#%]/.test(url) && url.length <= 120;
-}

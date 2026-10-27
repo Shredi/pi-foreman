@@ -38,6 +38,8 @@
   "wr-011": {"verdict": "ask", "entry": "web-read"},
   "wr-012": {"verdict": "deny", "entry": "unknown-network-host"},
   "wr-013": {"verdict": "allow", "entry": "web-read"},
+  "log-054": {"verdict": "allow", "entry": "web-read"},
+  "imp-016": {"verdict": "allow", "entry": "web-read"},
   "imp-030": {"verdict": "deny", "entry": "secret-access"},
   "imp-031": {"verdict": "deny", "entry": "no-matching-entry"},
   "imp-032": {"verdict": "allow", "entry": "read-only-inspection"},

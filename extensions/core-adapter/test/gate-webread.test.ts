@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { plainFetchUrl, webReadFacts } from "../webread.ts";
+import { webReadFacts } from "../webread.ts";
 import { toolDefault } from "../defaults.ts";
+import { r11Rig } from "./_r11rig.ts";
 
 const ctx = { cwd: "/w/repo", scratch: ["/s/scr"] };
 const facts = (line: string): string[] => webReadFacts("bash", { command: line }, ctx);
@@ -108,11 +109,62 @@ test("fetch tool", () => {
   assert.match(f({ url: "file:///etc/hosts" })[0], /^web-read: failed \(a\)/);
 });
 
-test("fetch default only for plain URLs; a query, encoding or long path goes to the review", () => {
-  assert.equal(plainFetchUrl("https://example.com/docs/page"), true);
-  for (const u of ["https://example.com/a?q=1", "https://example.com/a#x", "https://example.com/a%2Fb", `https://example.com/${"a".repeat(130)}`]) assert.equal(plainFetchUrl(u), false, u);
-  assert.equal(toolDefault("fetch", { url: "https://example.com/docs/page" }), "default-fetch");
-  assert.equal(toolDefault("fetch", { url: "https://example.com/a?q=1" }), undefined);
+type Reply = string | Error;
+async function fetchRig(t: Parameters<typeof r11Rig>[0], replies: Reply[], o: { child?: boolean; headless?: boolean } = {}) {
+  const calls: string[] = [];
+  const registry = {
+    find: () => ({ id: "m" }),
+    getProviderAuthStatus: () => ({ configured: false }),
+    complete: async (_m: never, c: { messages: { content: string }[] }) => {
+      calls.push(c.messages[0].content);
+      const r = replies[Math.min(calls.length - 1, replies.length - 1)];
+      if (r instanceof Error) throw r;
+      return { content: [{ type: "text", text: r }], stopReason: "stop", usage: { input: 1, output: 1 } };
+    },
+  };
+  const titles: string[] = [];
+  const ui = { notify: () => undefined, confirm: async () => false, select: async (title: string) => (titles.push(title), undefined), input: async () => undefined, setStatus: () => undefined, setWidget: () => undefined };
+  const r = await r11Rig(t, {}, { ctx: { modelRegistry: registry, ui, ...(o.headless ? { hasUI: false, mode: "print" } : {}) }, config: { providers: { fake: { review: { model: "m" }, roles: {} } } }, child: o.child });
+  return { ...r, calls, titles };
+}
+const ASK = JSON.stringify({ verdict: "ask", entry: "web-read", reason: "url looks like a secret" });
+const ALLOW = JSON.stringify({ verdict: "allow", entry: "web-read", reason: "plain page" });
+const SECRET_URL = { url: "https://example.net/AKIAEXAMPLEEXAMPLE00" };
+
+test("fetch has no default for any URL: a plain-path secret-looking URL goes to the review and an ask is not an allow", async (t) => {
+  assert.equal(toolDefault("fetch", { url: "https://example.com/docs/page" }), undefined);
+  assert.equal(toolDefault("fetch", SECRET_URL), undefined);
+  const r = await fetchRig(t, [ASK]);
+  const res = await r.call("fetch", SECRET_URL);
+  assert.equal(r.calls.length, 1, "the review was consulted");
+  assert.match(r.calls[0], /web-read: GET https:\/\/example\.net\/AKIAEXAMPLEEXAMPLE00 checks a-d passed/);
+  assert.equal(r.titles.length, 1, "the owner got a dialog");
+  assert.ok(res && res.block, "an unanswered ask blocks");
+});
+
+test("fetch with an unreachable review is never allowed: owner dialog, child and headless deny", async (t) => {
+  const owner = await fetchRig(t, [new Error("boom")]);
+  const o = await owner.call("fetch", { url: "https://example.com/docs/page" });
+  assert.ok(o && o.block);
+  assert.equal(owner.titles.length, 1);
+  assert.match(owner.titles[0], /review unreachable/);
+  const child = await fetchRig(t, [new Error("boom")], { child: true });
+  const c = await child.call("fetch", { url: "https://example.com/docs/page" });
+  assert.match(String(c?.reason), /the permission review is unreachable/);
+  assert.equal(child.titles.length, 0);
+  const head = await fetchRig(t, [new Error("boom")], { headless: true });
+  const h = await head.call("fetch", { url: "https://example.com/docs/page" });
+  assert.ok(h && h.block);
+  assert.equal(head.titles.length, 0);
+});
+
+test("fetch review allow is cached per URL and survives a second fetch of it", async (t) => {
+  const r = await fetchRig(t, [ALLOW]);
+  assert.equal(await r.call("fetch", { url: "https://example.com/docs/page" }), undefined);
+  assert.equal(await r.call("fetch", { url: "https://example.com/docs/page" }), undefined);
+  assert.equal(r.calls.length, 1);
+  assert.equal(await r.call("fetch", { url: "https://example.com/docs/other" }), undefined);
+  assert.equal(r.calls.length, 2);
 });
 
 test("fixture facts equal the computed facts for every web-read case", () => {

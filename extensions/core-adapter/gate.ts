@@ -186,8 +186,8 @@ export function reviewGitFacts(cwd: string): { branch: string | null; head: stri
   };
 }
 
-const PURE_READ_TOOLS = new Set(["read", "grep", "find", "ls"]);
-const PURE_READ_RULES = new Set(["default-read", "default-git-read", "default-gh-read", "default-fetch"]);
+const PURE_READ_TOOLS = new Set(["read", "grep", "find", "ls", "fetch"]);
+const PURE_READ_RULES = new Set(["default-read", "default-git-read", "default-gh-read"]);
 
 /** Whether an allowed call can change state (so cached review allows no longer hold): everything but a pure read. */
 export function changesState(tool: string, rule?: string): boolean {

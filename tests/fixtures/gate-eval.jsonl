@@ -13,7 +13,7 @@
 {"id":"imp-013","kind":"owner","role":"foreman","tool":"pr_create","input":{"title":"feat: x","head":"round/41-x"},"expect":"allow","source":"import"}
 {"id":"imp-014","kind":"child","role":"builder","tool":"read","input":{"path":"$AGENT/pi-permissions.jsonc"},"expect":"deny","source":"import"}
 {"id":"imp-015","kind":"child","role":"builder","tool":"bash","input":{"command":"ls ~ > /dev/null"},"expect":"deny","source":"import"}
-{"id":"imp-016","kind":"owner","role":"foreman","tool":"fetch","input":{"url":"https://github.com/org/repo/pulls"},"expect":"allow","source":"import"}
+{"id":"imp-016","kind":"owner","role":"foreman","tool":"fetch","input":{"url":"https://github.com/org/repo/pulls"},"facts":["web-read: GET https://github.com/org/repo/pulls checks a-d passed"],"expect":"allow","source":"import"}
 {"id":"imp-017","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git grep -n \"needle\\|other\" -- src"},"expect":"allow","source":"import"}
 {"id":"imp-018","kind":"child","role":"builder","tool":"bash","input":{"command":"npm ci --ignore-scripts > $TMP/npm.log"},"expect":"ask","source":"import"}
 {"id":"imp-019","kind":"child","role":"reviewer","tool":"bash","input":{"command":"find / -name runner.js"},"expect":"deny","source":"import"}
@@ -99,7 +99,7 @@
 {"id":"log-051","kind":"owner","role":"foreman","tool":"bash","input":{"command":"env ls"},"expect":"allow","source":"log"}
 {"id":"log-052","kind":"owner","role":"foreman","tool":"ask_user_question","input":{},"expect":"allow","source":"log","rule":"default-own-tool"}
 {"id":"log-053","kind":"owner","role":"foreman","tool":"pr_status","input":{},"expect":"allow","source":"log","rule":"default-own-tool"}
-{"id":"log-054","kind":"owner","role":"foreman","tool":"fetch","input":{"url":"https://example.com/a"},"expect":"allow","source":"log","rule":"default-fetch"}
+{"id":"log-054","kind":"owner","role":"foreman","tool":"fetch","input":{"url":"https://example.com/a"},"facts":["web-read: GET https://example.com/a checks a-d passed"],"expect":"allow","source":"log"}
 {"id":"log-055","kind":"owner","role":"foreman","tool":"fetch","input":{"url":"https://example.com/a","method":"POST","body":"x"},"expect":"deny","source":"log"}
 {"id":"log-056","kind":"owner","role":"foreman","tool":"read","input":{"path":"$WT/src/a.ts"},"expect":"allow","source":"log"}
 {"id":"log-057","kind":"owner","role":"foreman","tool":"write","input":{"path":"$WT/src/a.ts","content":"x"},"expect":"allow","source":"log"}
