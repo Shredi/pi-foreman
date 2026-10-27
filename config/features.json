@@ -13,7 +13,7 @@
       "id": "setup",
       "area": "install",
       "title": "Package install, setup and checks",
-      "purpose": "`foreman setup` writes the permission config, the generated `subagents` block and a starter `foreman.json`; `/foreman doctor` checks the result and `update-check` lists newer pinned packages.",
+      "purpose": "`foreman setup` migrates the keys of the removed permission package to `gate.*`, writes the generated `subagents` block and a starter `foreman.json`; `/foreman doctor` checks the result and `update-check` lists newer pinned packages.",
       "doc": "docs/install.md#install",
       "keys": ["version"],
       "commands": ["/foreman", "/foreman setup", "foreman setup", "/foreman doctor", "/foreman update-check", "foreman update-check", "foreman config", "foreman config validate"],
@@ -365,10 +365,10 @@
     {
       "id": "permissions",
       "area": "safety",
-      "title": "Permission rules",
-      "purpose": "Your bash and path deny, ask and allow patterns on top of the shipped baseline, enforced by the gate.",
-      "doc": "docs/safety.md#permission-baseline-and-auto-review",
-      "keys": ["safety.permissions", "paths.hubWorkflow"],
+      "title": "Permission policy",
+      "purpose": "Your own policy file (`gate.policy.userFile`, default `<agentDir>/pi-foreman/policy.md`) and an overlay's `safety.policy.files` add allow, deny and ask entries on top of the shipped policy, judged by the gate's review model; a project file can only add deny and ask entries.",
+      "doc": "docs/safety.md#the-tool-gate",
+      "keys": ["gate.policy.userFile", "safety.policy.files", "paths.hubWorkflow"],
       "commands": [],
       "switch": null,
       "state": "on",
@@ -378,7 +378,7 @@
       "id": "owned-install-reads",
       "area": "safety",
       "title": "Reads of Pi's install and run dirs",
-      "purpose": "Shell reads (`ls`, `cat`) of Pi's own install releases and the pi-subagents run root need no dialog; setup renders them as read grants, as it does each `safety.permissions.readRoots` entry.",
+      "purpose": "Shell reads (`ls`, `cat`) of Pi's own install releases and the pi-subagents run root need no dialog; the gate's path rules compute them at runtime from the session's roots.",
       "doc": "docs/permissions.md#owned-paths",
       "keys": [],
       "commands": [],
@@ -413,14 +413,14 @@
     {
       "id": "headless-review",
       "area": "review",
-      "title": "Headless review defer",
-      "purpose": "Treats the session as headless for forwarded child asks: one the review model would defer to you is denied with a text naming the allowed forms.",
-      "doc": "docs/safety.md#permission-baseline-and-auto-review",
-      "keys": ["review.headless", "review.childDefer"],
+      "title": "Child asks to the parent",
+      "purpose": "A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report, and a timeout (`gate.askTimeoutMs`) denies too. A headless session always denies an ask.",
+      "doc": "docs/permissions.md#child-asks",
+      "keys": ["gate.childAsk", "gate.askTimeoutMs"],
       "commands": [],
-      "switch": {"key": "review.headless", "on": "true"},
-      "state": "off",
-      "enable": "{\"review\": {\"headless\": true}}"
+      "switch": null,
+      "state": "on",
+      "enable": ""
     },
     {
       "id": "review-critic",
@@ -542,7 +542,7 @@
       "purpose": "With the Claude bridge, points `CLAUDE_CONFIG_DIR` at an empty folder so the host's Claude Code settings, hooks and plugins do not load into bridge turns. `bridge.promptCacheTtl` sets Claude Code's prompt-cache TTL for bridge turns: 1h for the foreman, 5m for subagents.",
       "doc": "docs/safety.md#bridge-isolation",
       "keys": ["bridge.isolateClaudeConfig", "bridge.promptCacheTtl"],
-      "commands": ["/foreman trust bridge"],
+      "commands": ["/foreman trust", "/foreman trust bridge"],
       "switch": null,
       "state": "on",
       "enable": ""
@@ -700,9 +700,9 @@
       "area": "safety",
       "title": "Gate review and dialog",
       "purpose": "The gate decides every tool call: floors and defaults first, then self-modification rules (a dialog by rule, never model-cleared), then the review model against the policy. An allow continues, a deny is final, an ask or an unreachable review opens the owner dialog (a round session files ask.md; children and headless sessions are denied with what to report).",
-      "doc": "docs/permissions.md#two-layers",
-      "keys": [],
-      "commands": [],
+      "doc": "docs/permissions.md#the-steps",
+      "keys": ["gate.reviewTimeoutMs", "gate.tmpAccess", "gate.logMaxBytes"],
+      "commands": ["/foreman perms", "foreman perms"],
       "switch": null,
       "state": "on",
       "enable": ""
@@ -784,7 +784,7 @@
     "Tighten-only safety: the project and session layers may only make `safety.*` and the keys marked tighten-only stricter, so a cloned repository cannot loosen your guards.",
     "Project trust: the project layer `.pi/foreman.json` is read only after Pi's project trust is resolved; project packages also load only after trust.",
     "Role ids stay neutral (`foreman`, `planner`, `explorer`, `builder`, `reviewer`, `senior-reviewer`, `finalizer`); display names come only from config.",
-    "Setup owns the generated permission config and the `subagents` block in `settings.json`: put your rules into `foreman.json`, a hand edit of the generated files is overwritten.",
+    "Setup owns the `subagents` block in `settings.json`: put your rules into `foreman.json` and your policy file, a hand edit of the generated block is overwritten.",
     "Children never open PRs and reach the foreman through `contact_supervisor`, never through pi-intercom."
   ]
 }

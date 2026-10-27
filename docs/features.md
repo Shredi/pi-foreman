@@ -40,7 +40,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 
 | Feature | Area | Toggle | State | Purpose | Enable | Doc |
 |---|---|---|---|---|---|---|
-| [setup](#setup) | install |  | on | `foreman setup` writes the permission config, the generated `subagents` block and a starter `foreman.json`; `/foreman doctor` checks the result and `update-check` lists newer pinned packages. | on by default | [install](install.md#install) |
+| [setup](#setup) | install |  | on | `foreman setup` migrates the keys of the removed permission package to `gate.*`, writes the generated `subagents` block and a starter `foreman.json`; `/foreman doctor` checks the result and `update-check` lists newer pinned packages. | on by default | [install](install.md#install) |
 | [profiles](#profiles) | install |  | on | `foreman setup` applies a named profile (`orchestration`, `standard` or `full`) and per-feature toggles to the user `foreman.json` and records the choice; `foreman features` lists the state of every toggleable feature and the profile's deviations. | on by default | [install](install.md#profiles-features-and-add-ons) |
 | [doctor-providers](#doctor-providers) | install |  | on | `/foreman doctor` prints `providers: <list>`, the providers the model registry holds in this session; a missing `claude-bridge` there means the bridge is not loaded or has not registered yet (see the opened-session note). | on by default | [sessions](sessions.md#providers-in-opened-sessions) |
 | [model-map](#model-map) | models |  | opt-in | Maps each role to a model and thinking level per provider; until a model is mapped, children run on Pi's default model and an interactive session shows one notice. | `{"providers": {"<provider>": {"roles": {"foreman": {"model": "<provider>/<big-model>"}, "builder": {"model": "<provider>/<mid-model>"}}}}}` | [install](install.md#what-setup-writes) |
@@ -69,11 +69,11 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [background-tasks-addon](#background-tasks-addon) | tools |  | on | Detects the optional pi-background-tasks add-on (install with `pi install npm:pi-background-tasks@2.6.10` on consent via `foreman setup --addon background-tasks`; set `PI_BG_FEATURES=process` in the shell profile so it is present when Pi starts): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it. | on by default | [herdr](herdr.md#optional-add-on-background-tasks) |
 | [orientation](#orientation) | ceremony | toggle | on | Adds a short repository overview (file tree, AGENTS.md or README head, build and test commands) to the foreman's system prompt once per session. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [child-scratch](#child-scratch) | ceremony |  | on | Gives every single-child launch its own temp dir (`$FOREMAN_SCRATCH`) that the guards allow writes in and the harness removes when the run ends. | on by default | [safety](safety.md#child-scratch) |
-| [permissions](#permissions) | safety |  | on | Your bash and path deny, ask and allow patterns on top of the shipped baseline, enforced by the gate. | on by default | [safety](safety.md#permission-baseline-and-auto-review) |
-| [owned-install-reads](#owned-install-reads) | safety |  | on | Shell reads (`ls`, `cat`) of Pi's own install releases and the pi-subagents run root need no dialog; setup renders them as read grants, as it does each `safety.permissions.readRoots` entry. | on by default | [permissions](permissions.md#owned-paths) |
+| [permissions](#permissions) | safety |  | on | Your own policy file (`gate.policy.userFile`, default `<agentDir>/pi-foreman/policy.md`) and an overlay's `safety.policy.files` add allow, deny and ask entries on top of the shipped policy, judged by the gate's review model; a project file can only add deny and ask entries. | on by default | [safety](safety.md#the-tool-gate) |
+| [owned-install-reads](#owned-install-reads) | safety |  | on | Shell reads (`ls`, `cat`) of Pi's own install releases and the pi-subagents run root need no dialog; the gate's path rules compute them at runtime from the session's roots. | on by default | [permissions](permissions.md#owned-paths) |
 | [own-cli-allow](#own-cli-allow) | safety |  | on | The foreman session's own `bin/foreman` (explicit path, realpath inside its root) with `session open\|brief\|list`, `dialogs` or `findings list` is allowed before the review model (trace `overlay_allow{rule: own_cli}`); children and forwarded asks, shell control, `VAR=`, `..` or a symlink out, and user ask/deny rules keep the normal path. | on by default | [permissions](permissions.md) |
-| [auto-review](#auto-review) | safety |  | on | A review model decides permission asks (children's included) before they reach you; unset, it picks the cheapest mapped model, and with none the asks go to you. | on by default | [roles](roles.md#auto-review-model) |
-| [headless-review](#headless-review) | review |  | off | Treats the session as headless for forwarded child asks: one the review model would defer to you is denied with a text naming the allowed forms. | `{"review": {"headless": true}}` | [safety](safety.md#permission-baseline-and-auto-review) |
+| [auto-review](#auto-review) | safety |  | on | The gate's review model judges every call no floor or default decides, against the merged policy; unset, it picks the inexpensive rung of the role map, and with none the call asks you. | on by default | [roles](roles.md#auto-review-model) |
+| [headless-review](#headless-review) | review |  | on | A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report, and a timeout (`gate.askTimeoutMs`) denies too. A headless session always denies an ask. | on by default | [permissions](permissions.md#child-asks) |
 | [review-critic](#review-critic) | review |  | on | Every reviewer and senior-reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines. | on by default | [roles](roles.md#review-critic) |
 | [git-guard](#git-guard) | safety |  | on | Lints the foreman's commits and pushes (protected branches, message pattern, trailers, an optional check command) and refuses a PR without a reviewer PASS on the current head. | on by default | [safety](safety.md#git-guard-and-pr-gate) |
 | [git-tools](#git-tools) | tools | toggle, relaxes safety | off | Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace. | `{"tools": {"git": true}}` | [tools](tools.md#git-tool-pack) |
@@ -96,8 +96,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [footer-ui](#footer-ui) | ui | toggle | on | Shows tokens, list-price cost and child launches in the footer, the children widget below the editor and the glyph set, with `/foreman cost` for a summary. | on by default | [sessions](sessions.md#commands) |
 | [dialogs-cli](#dialogs-cli) | ui |  | on | The foreman-only `foreman_dialogs({trace?})` tool and `foreman dialogs <trace>` (`bin/foreman`, `.cmd`, `.ps1`) return the JSON of `/foreman dialogs --json` for this session's trace or a named trace file; read only. A session's own async run results join the read-only verbs. | on by default | [sessions](sessions.md#commands) |
 | [ask-user-question](#ask-user-question) | ui |  | on | The foreman-only `ask_user_question({questions})` tool (1 to 4 questions, 2 to 4 options each plus free text) raises the questions in the pane and blocks the turn until a human answers; without a UI it tells the agent to use the ask.md file path, which stays unchanged. With an open ask.md in a handoff dir where the session is the child the answer is also written to `ruling-<n>.md`. | on by default | [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session) |
-| [auto-review-overlay](#auto-review-overlay) | safety |  | on | Every foreman overlay ask that is no self-modification (a child's included) goes to the review model before the human dialog: an allow lets the call go on, a deny with riskLevel high or critical is a block, defers, errors, timeouts and a missing model fall back to the dialog. The deterministic basic blockers run first and are not judged. | on by default | [permissions](permissions.md#two-layers) |
-| [reviewer-rules-file](#reviewer-rules-file) | review |  | on | The auto reviewer judges overlay asks by the prose rules in `config/permissions.rules.md`; `safety.permissions.autoReview.rulesFile` in the user layer or an overlay replaces the file. | on by default | [overlays](overlays.md#reviewer-rules-file) |
+| [auto-review-overlay](#auto-review-overlay) | safety |  | on | The gate decides every tool call: floors and defaults first, then self-modification rules (a dialog by rule, never model-cleared), then the review model against the policy. An allow continues, a deny is final, an ask or an unreachable review opens the owner dialog (a round session files ask.md; children and headless sessions are denied with what to report). | on by default | [permissions](permissions.md#the-steps) |
 | [herdr](#herdr) | ui | toggle | on | In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes. | on by default | [sessions](sessions.md#herdr) |
 | [radar](#radar) | ops |  | on | `foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files. | on by default | [sessions](sessions.md#radar) |
 | [compaction](#compaction) | models |  | on | Caps the context size at which Pi's own auto-compaction fires: `foreman setup` writes a per-model point (a price-tier boundary minus headroom, or this cap) as Pi's compaction.modelOverrides. The idle warm compaction and the footer context bar use the same point. | on by default | [cache](cache.md) |
@@ -139,7 +138,7 @@ Toggleable features (`on` and `off` write these leaves into the user config; `*`
 
 ### setup
 
-**Package install, setup and checks.** `foreman setup` writes the permission config, the generated `subagents` block and a starter `foreman.json`; `/foreman doctor` checks the result and `update-check` lists newer pinned packages.
+**Package install, setup and checks.** `foreman setup` migrates the keys of the removed permission package to `gate.*`, writes the generated `subagents` block and a starter `foreman.json`; `/foreman doctor` checks the result and `update-check` lists newer pinned packages.
 
 | Key | Default | Layer |
 |---|---|---|
@@ -472,24 +471,17 @@ Switch: `ceremony.orientation.enabled` is true.
 
 ### permissions
 
-**Permission rules.** Your bash and path deny, ask and allow patterns on top of the shipped baseline, enforced by the gate.
+**Permission policy.** Your own policy file (`gate.policy.userFile`, default `<agentDir>/pi-foreman/policy.md`) and an overlay's `safety.policy.files` add allow, deny and ask entries on top of the shipped policy, judged by the gate's review model; a project file can only add deny and ask entries.
 
 | Key | Default | Layer |
 |---|---|---|
-| `safety.permissions.deny` | `[]` | tighten-only (entries are added, never removed) |
-| `safety.permissions.ask` | `[]` | tighten-only (entries are added, never removed) |
-| `safety.permissions.allow` | `[]` | tighten-only (can only narrow the list) |
-| `safety.permissions.projectCommands` | `[]` | not in project/session (no tighten rule for this safety key) |
-| `safety.permissions.readRoots` | `[]` | not in project/session (no tighten rule for this safety key) |
-| `safety.permissions.autoReview.enabled` | `true` | not in project/session (no tighten rule for this safety key) |
-| `safety.permissions.autoReview.rulesFile` | `null` | not in project/session (no tighten rule for this safety key) |
-| `safety.permissions.paths.deny` | `[]` | tighten-only (entries are added, never removed) |
-| `safety.permissions.paths.ask` | `[]` | tighten-only (entries are added, never removed) |
+| `gate.policy.userFile` | unset | any layer |
+| `safety.policy.files` | `[]` | not in project/session (no tighten rule for this safety key) |
 | `paths.hubWorkflow` | `[]` | not in project/session (it loosens: it makes dirs outside the worktree readable; user or overlay config only) |
 
 ### owned-install-reads
 
-**Reads of Pi's install and run dirs.** Shell reads (`ls`, `cat`) of Pi's own install releases and the pi-subagents run root need no dialog; setup renders them as read grants, as it does each `safety.permissions.readRoots` entry.
+**Reads of Pi's install and run dirs.** Shell reads (`ls`, `cat`) of Pi's own install releases and the pi-subagents run root need no dialog; the gate's path rules compute them at runtime from the session's roots.
 
 No config key.
 
@@ -501,7 +493,7 @@ No config key.
 
 ### auto-review
 
-**Permission auto-review.** A review model decides permission asks (children's included) before they reach you; unset, it picks the cheapest mapped model, and with none the asks go to you.
+**Permission auto-review.** The gate's review model judges every call no floor or default decides, against the merged policy; unset, it picks the inexpensive rung of the role map, and with none the call asks you.
 
 | Key | Default | Layer |
 |---|---|---|
@@ -510,14 +502,12 @@ No config key.
 
 ### headless-review
 
-**Headless review defer.** Treats the session as headless for forwarded child asks: one the review model would defer to you is denied with a text naming the allowed forms.
-
-Switch: `review.headless` is true.
+**Child asks to the parent.** A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report, and a timeout (`gate.askTimeoutMs`) denies too. A headless session always denies an ask.
 
 | Key | Default | Layer |
 |---|---|---|
-| `review.headless` | `false` | any layer |
-| `review.childDefer` | `"deny"` | any layer |
+| `gate.askTimeoutMs` | `900000` | tighten-only (lower only) |
+| `gate.childAsk` | `"parent"` | tighten-only (toward deny; tightest first: deny, parent) |
 
 ### review-critic
 
@@ -623,8 +613,8 @@ Switch: `safety.subagents.allowWorkflow` is true.
 | `safety.ops.copyMaxBytes` | `104857600` | tighten-only (lower only) |
 | `safety.ops.worktreeDisposable` | `["node_modules/", "target/", "dist/", "build/", "__pycache__/", ".venv/"]` | not in project/session (no tighten rule for this safety key) |
 | `safety.ops.baseBranch` | `null` | not in project/session (no tighten rule for this safety key) |
-| `safety.preBash.hooks` | unset | not in project/session (no tighten rule for this safety key) |
-| `safety.preBash.strict` | unset | not in project/session (no tighten rule for this safety key) |
+| `safety.preBash.hooks` | `[]` | not in project/session (no tighten rule for this safety key) |
+| `safety.preBash.strict` | `false` | not in project/session (no tighten rule for this safety key) |
 | `safety.preconditionOps` | unset | not in project/session (no tighten rule for this safety key) |
 | `python.path` | `null` | not in project/session (it chooses the executable that runs every guard) |
 
@@ -758,15 +748,13 @@ No config key.
 
 ### auto-review-overlay
 
-**Auto reviewer for overlay asks.** Every foreman overlay ask that is no self-modification (a child's included) goes to the review model before the human dialog: an allow lets the call go on, a deny with riskLevel high or critical is a block, defers, errors, timeouts and a missing model fall back to the dialog. The deterministic basic blockers run first and are not judged.
+**Gate review and dialog.** The gate decides every tool call: floors and defaults first, then self-modification rules (a dialog by rule, never model-cleared), then the review model against the policy. An allow continues, a deny is final, an ask or an unreachable review opens the owner dialog (a round session files ask.md; children and headless sessions are denied with what to report).
 
-No config key.
-
-### reviewer-rules-file
-
-**Reviewer rules file.** The auto reviewer judges overlay asks by the prose rules in `config/permissions.rules.md`; `safety.permissions.autoReview.rulesFile` in the user layer or an overlay replaces the file.
-
-No config key.
+| Key | Default | Layer |
+|---|---|---|
+| `gate.reviewTimeoutMs` | `15000` | tighten-only (lower only, minimum 100) |
+| `gate.tmpAccess` | `true` | tighten-only (only false is accepted) |
+| `gate.logMaxBytes` | `20971520` | any layer |
 
 ### herdr
 
@@ -849,7 +837,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [read-budgets](#read-budgets) | `/foreman budget` |
 | [waits](#waits) | `/foreman waits` |
 | [pr-ops](#pr-ops) | `/foreman prs` |
-| [bridge-isolation](#bridge-isolation) | `/foreman trust bridge` |
+| [bridge-isolation](#bridge-isolation) | `/foreman trust`, `/foreman trust bridge` |
 | [sessions](#sessions) | `/foreman session`, `foreman session` |
 | [remote-sessions](#remote-sessions) | `foreman session remote`, `foreman session pull`, `foreman session close-remote` |
 | [sync](#sync) | `/sync`, `foreman sync` |
@@ -857,6 +845,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [close](#close) | `/foreman close`, `foreman close`, `foreman worktree` |
 | [footer-ui](#footer-ui) | `/foreman cost`, `/foreman dialogs` |
 | [dialogs-cli](#dialogs-cli) | `foreman dialogs` |
+| [auto-review-overlay](#auto-review-overlay) | `/foreman perms`, `foreman perms` |
 | [radar](#radar) | `foreman radar` |
 | [resources](#resources) | `/foreman status` |
 
@@ -880,7 +869,7 @@ An overlay or a setup agent must not break these:
 - Tighten-only safety: the project and session layers may only make `safety.*` and the keys marked tighten-only stricter, so a cloned repository cannot loosen your guards.
 - Project trust: the project layer `.pi/foreman.json` is read only after Pi's project trust is resolved; project packages also load only after trust.
 - Role ids stay neutral (`foreman`, `planner`, `explorer`, `builder`, `reviewer`, `senior-reviewer`, `finalizer`); display names come only from config.
-- Setup owns the generated permission config and the `subagents` block in `settings.json`: put your rules into `foreman.json`, a hand edit of the generated files is overwritten.
+- Setup owns the `subagents` block in `settings.json`: put your rules into `foreman.json` and your policy file, a hand edit of the generated block is overwritten.
 - Children never open PRs and reach the foreman through `contact_supervisor`, never through pi-intercom.
 
 Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry):
@@ -892,6 +881,8 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `bridge.isolateClaudeConfig` | it loosens the host config isolation |
 | `bridge.promptCacheTtl` | the bridge cache TTL comes from the user or overlay config |
 | `providers.*.review` | it loosens: a review model approves asks |
+| `providers.*.roles.review` | it loosens: the gate's review model approves asks; user or overlay config only |
+| `roles.review` | it loosens: the gate's review model approves asks; user or overlay config only |
 | `providers.*.cache.ttlSeconds` | the cache policy comes from the user or overlay config |
 | `providers.*.cache.billing` | the cache policy comes from the user or overlay config |
 | `providers.*.cache.keepalive.intervalSeconds` | the cache policy comes from the user or overlay config |

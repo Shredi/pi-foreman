@@ -12,7 +12,7 @@ of one ledger item sends the next launch to `roles.reviewer.strong` (`rung_up` r
 security-shaped diff sends it to `ladder.reviewerClimb.securityRung` (reason `security`; see [ladder](ladder.md)).
 `senior-reviewer` never climbs. There is no climb on a finding: see [Why one reviewer](#why-one-reviewer).
 
-The permission auto reviewer is a separate path: it also judges a child's overlay ask (prompt line `requester: subagent <role>`, headless too); see [permissions](permissions.md#two-layers).
+The gate's permission review is a separate path: one review-model call judges a policy ask of any session kind, a child's included; see [permissions](permissions.md#the-review-call).
 
 ## Review occasions
 

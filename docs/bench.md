@@ -95,7 +95,7 @@ read,ls,grep,find,bash,foreman_ledger --system-prompt <reviewer>`, where the sys
 name="reviewer"/>` plus the body of `agents/reviewer.md`. The extension runs as a reviewer child (`PI_SUBAGENT_CHILD=1`
 and a launch binding with role `reviewer`), so its `before_agent_start` hook adds `instructions/reviewer.md` and
 `foreman_ledger` is registered, as in a session. A replay-provider probe showed this changes nothing else besides
-files in the cell's own temp agent dir (usage log, session marker). The permission system (`@gotgenes/pi-permission-system`) is not loaded.
+files in the cell's own temp agent dir (usage log, session marker).
 Models default to the claude-bridge reviewer rungs `claude-haiku-5-5`, `claude-sonnet-5-5` and `claude-opus-5-5`, all
 at `:medium`. Order: repeat outermost, then task, then model.
 
