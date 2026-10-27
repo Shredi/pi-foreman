@@ -9,6 +9,7 @@ Run:  python -m unittest discover -s tests/replay -v
 """
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -33,11 +34,11 @@ class TestChildScratch(ReplayCase):
         traces = rig.wait_trace(lambda t: any(r.get("event") == "child_scratch" for r in t.get("trace-" + sid, [])), timeout=30)
         pi.close()
         foreman = traces["trace-" + sid]
-        reviews = [r for r in foreman if r.get("event") == "review"]
-        # win32 has no programmatic scratch (scratchCommandAllowed is false there, ruling D5): the
-        # write is auto-allowed as write-in with no dialog instead of `child-scratch`.
-        want = "effect-write-in" if sys.platform == "win32" else "child-scratch"
-        self.assertTrue(any(r.get("decision") == want for r in reviews), reviews)
+        # the tool gate decides the child's scratch cp in the review layer (the child's own trace holds
+        # no foreman review record); its gate log line is the child-kind bash allow for the cp shape
+        log = rig.state_dir / "gate" / "log.jsonl"
+        lines = [json.loads(x) for x in log.read_text("utf-8").splitlines() if x.strip()]
+        self.assertTrue(any(r.get("kind") == "child" and r.get("tool") == "bash" and r.get("shape") == "cp <rel> <rel>" and r.get("verdict") == "allow" for r in lines), lines)
         [done] = [r for r in foreman if r.get("event") == "child_scratch"]
         self.assertEqual((done.get("role"), done.get("files"), done.get("bytes"), done.get("action")), ("builder", 1, 6, "removed"))
         root = rig.tmp / "pi-foreman-scratch"
