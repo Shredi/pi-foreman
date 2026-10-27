@@ -15,6 +15,7 @@ export type TraceRecord = Partial<Record<TraceField, string | number | boolean |
 // R39 `launch_sizing` keys likewise (base rung, declared and measured sizes, risk tags, files outside the workspace).
 // R52 `point` (the runtime compaction point in `compaction_point` and `compaction` records).
 // R62 `remote_pull` keys `machine`, `label`, `entries` and `error` (`skipped` and `ms` are pinned fields already).
+// R72 `mcp_child_direct` keys `provider` and `servers` (`count` is a pinned field already).
 const ALLOWED = new Set<string>([...TRACE_FIELDS, "machine", "label", "entries", "error", "surface", "code", "attempts", "source", "spent", "cold", "share", "idleSeconds", "trigger", "tokens", "min", "base", "declaredLines", "modules", "declaredModules", "risk", "outside", "point", "provider", "servers"]);
 const MAX_STRING = 120;
 const MAX_COMMAND = 200; // a denied command (lane 3h)
