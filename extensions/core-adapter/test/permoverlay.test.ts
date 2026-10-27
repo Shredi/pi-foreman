@@ -349,7 +349,7 @@ test("literal row 24 stays denied for a child: the permission system's own sourc
   const r = rules2(false);
   const cmd = `grep -n "externalDirectory" ${ag2}/extensions/pi-permission-system/config.json`;
   assert.equal(sh(r, world(ws, "child"), cmd), "deny");
-  assert.equal(sh(r, world(ws, "main"), cmd), "deny", "a path rule (paths.deny), not the write protection");
+  assert.equal(sh(r, world(ws, "main"), cmd), "pass", "the paths.deny row went with the removed package; only the child stays protected");
 });
 
 test("literal row 25: a child's own scratch dir is open on every overlay surface", () => {
