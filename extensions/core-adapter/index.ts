@@ -21,6 +21,7 @@ import { GateCache, GateHistory, gateReview, MAX_OWNER_MESSAGES } from "./gatere
 import type { GateReviewRequest } from "./gatereview.ts";
 import { scriptFacts } from "./scriptfact.ts";
 import { pathFacts } from "./pathfact.ts";
+import { webReadFacts } from "./webread.ts";
 import { gateLogFile, openGateLog } from "./gatelog.ts";
 import type { GateKind, GateLog } from "./gatelog.ts";
 import { awaitRuling, DEFAULT_ASK_TIMEOUT_MS, dialogBody, DIALOG_OPTIONS, silentDeny, STOP_TEXT, unreachableName, userDeny, writeRoundAsk } from "./gatedialog.ts";
@@ -2017,6 +2018,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         ownerMessages: gateOwnerMessages.get(gs.id) ?? [], history: rt.history.list(), payload,
         facts: [
           ...(surface === "bash" ? scriptFacts(payload, ctx.cwd, workspaceOf(ctx.cwd).root) : []),
+          ...webReadFacts(event.toolName, event.input, { cwd: ctx.cwd, scratch: roots?.scratch ?? [], platform }),
           ...pathFacts(event.toolName, event.input, payload, ctx.cwd, workspaceOf(ctx.cwd).root, [...(roots?.owned ?? []), ...(roots?.scratch ?? [])], gs.agentDir),
         ],
         ...(surface === "file" ? { pathKeys: Object.keys((event.input ?? {}) as object).filter((k) => typeof (event.input as Record<string, unknown>)[k] === "string") } : {}),

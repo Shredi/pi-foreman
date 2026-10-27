@@ -4,6 +4,7 @@
 import { contained, effectCtx, gitReadWrites, GIT_READ, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
 import { netUrlOk } from "./netread.ts";
+import { plainFetchUrl } from "./webread.ts";
 import type { GateRoots } from "./pathrules.ts";
 import type { ShellSegment } from "./shellast.ts";
 import type { Redirect, Segment } from "./shellchain.ts";
@@ -38,14 +39,14 @@ export const DEFAULT_RULES = [
   "default-git-read", "default-git-add", "default-git-commit", "default-git-fetch", "default-git-pull", "default-git-switch", "default-git-push", "default-gh-read",
 ] as const;
 
-/** Tools without a shell line: the own-tools enumeration and `fetch` GET/HEAD. Undefined = no default. */
+/** Tools without a shell line: the own-tools enumeration and `fetch` GET/HEAD of a plain URL (no query, no encoding; any other URL goes to the web-read review). Undefined = no default. */
 export function toolDefault(tool: string, input: unknown): string | undefined {
   if (OWN_TOOLS.has(tool)) return "default-own-tool";
   if (tool === "fetch") {
     const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
     const keys = Object.keys(i);
     const method = i.method === undefined ? "GET" : typeof i.method === "string" ? i.method.toUpperCase() : "";
-    if (typeof i.url === "string" && keys.every((k) => k === "url" || k === "method") && (method === "GET" || method === "HEAD") && netUrlOk(i.url)) return "default-fetch";
+    if (typeof i.url === "string" && keys.every((k) => k === "url" || k === "method") && (method === "GET" || method === "HEAD") && netUrlOk(i.url) && plainFetchUrl(i.url)) return "default-fetch";
   }
   return undefined;
 }
