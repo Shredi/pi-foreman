@@ -22,7 +22,7 @@ for (const d of [ws, owned, other, path.join(owned, "sub"), ag]) fs.mkdirSync(d,
 
 const rules: OverlayRules = buildOverlayRules(baseline, {}, {}, ag, ws, undefined, false);
 const run = (cwd: string, command: string): string => {
-  const ctx: MatchCtx = { cwd, home, platform: process.platform, role: "child", roundRoots: [owned] };
+  const ctx: MatchCtx = { cwd, home, platform: process.platform, role: "child", roundRoots: [owned], install: true };
   return checkToolCall(rules, "bash", { command }, ctx)?.kind ?? "pass";
 };
 

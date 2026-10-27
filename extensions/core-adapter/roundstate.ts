@@ -3,14 +3,14 @@
 //
 // The file keeps the handoff dir, the checkpointed plan's topic and version hash, the plan-review lineage of that plan,
 // the review counters and the revision rounds per chain. It never keeps an approval: on session_start the checkpoint
-// approval comes back only from the parent's `ruling.md` (parentApproval restore mode: first line APPROVED, ctime newer
+// approval comes back only from the parent's `ruling-plan.md` or `ruling.md` (parentApproval restore mode: first line APPROVED, ctime newer
 // than the ctime of both `<scratch>/plan-<topic>.md` and `<handoff>/plan.md`, and both plan files of one version hash). Any other field (`approved: true`) is
 // ignored. A different handoff dir or plan hash discards the whole file (re-ceremony). Counters restore only as
 // non-negative integers; a chain with a bad one starts fresh. The rulings a chain used and its last refusal are not kept; the caps-reset
 // watermark (`capsResetAt`, ms epoch of the last parent ruling/brief that lifted the caps) is, so a reload does not apply it twice.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { planVersionHash } from "./checkpoint.ts";
+import { PLAN_MAX_BYTES, PLAN_VERDICT_FILE, planVersionHash } from "./checkpoint.ts";
 import type { Verdict } from "./rounds.ts";
 import { initialRounds } from "./rounds.ts";
 import type { RoundState } from "./rounds.ts";
@@ -126,8 +126,20 @@ const ctimeOf = (f: string): number | null => {
   }
 };
 
+/** `<dir>/ruling-plan.md` (first line APPROVED, a regular file with a ctime newer than `after`, not written by this session), or null. */
+function planVerdictApproval(dir: string, after: number, self?: SelfRulings): string | null {
+  try {
+    const file = path.join(dir, PLAN_VERDICT_FILE);
+    const st = fs.lstatSync(file);
+    if (!st.isFile() || st.size > PLAN_MAX_BYTES || st.ctimeMs <= after || self?.has(file, st.mtimeMs)) return null;
+    return fs.readFileSync(file, "utf8").split(/\r?\n/, 1)[0].trim() === "APPROVED" ? file : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * The parent's ruling.md approves `plan` when it is newer (ctime) than both plan files and the scratch plan has the
+ * The parent's ruling-plan.md or ruling.md approves `plan` when it is newer (ctime) than both plan files and the scratch plan has the
  * version hash of the handoff plan.md the parent ruled on (planVersionHash: the body above any appendix); never a stored flag.
  */
 function approvalOf(dir: string, plan: { topic: string; path: string; hash: string }, review: unknown, self?: SelfRulings): Restored["approval"] {
@@ -142,7 +154,7 @@ function approvalOf(dir: string, plan: { topic: string; path: string; hash: stri
     return null;
   }
   if (parentHash !== plan.hash) return null;
-  const ruling = parentApproval([dir], Math.max(a, b), self, true);
+  const ruling = planVerdictApproval(dir, Math.max(a, b), self) ?? parentApproval([dir], Math.max(a, b), self, true);
   const at = ruling ? ctimeOf(ruling) : null;
   if (!ruling || at === null) return null;
   const r = review as Record<string, unknown> | null | undefined;

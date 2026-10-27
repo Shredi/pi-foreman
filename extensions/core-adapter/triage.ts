@@ -31,6 +31,9 @@ export function isTriaged(c: CeremonyState): boolean {
 
 /** `foreman_triage`: record a tier. Never lowers a recorded or escalated tier. */
 export function foremanTriage(c: CeremonyState, tier: Tier, reason: string): { state: CeremonyState } | { error: string } {
+  if (c.userTier && RANK[tier] > Math.max(RANK[c.userTier], RANK[c.tier])) {
+    return { error: `pi-foreman: the user set the tier to ${c.userTier} with /ceremony; foreman_triage never raises it above that. Go on at ${c.tier}, or ask the owner, who can set the tier with /ceremony.` };
+  }
   if (c.source !== "default" && RANK[tier] < RANK[c.tier]) {
     return { error: `pi-foreman: the tier is already ${c.tier} (${c.source === "auto" ? "escalated automatically" : `recorded by ${c.source === "ledger" ? "the ledger header" : c.source === "user" ? "the user" : "the foreman"}`}); foreman_triage never lowers a recorded or escalated tier. Go on at ${c.tier}, or ask the owner, who can set the tier with /ceremony.` };
   }

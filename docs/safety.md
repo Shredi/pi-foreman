@@ -100,7 +100,13 @@ worktrees, other children's scratch dirs, `pi-foreman/claude-config`) and off `g
 The git guard also denies a bash line whose quoted, escaped or `"a"+"b"` pieces spell a guarded path component (`.git`) that no single piece spells (`split literal reassembles a guarded token`; see [permissions](permissions.md#split-literals)).
 
 There is no `git fetch` allow row (`--upload-pack=<cmd>` runs code): it asks for every role; `npm ci` and `npm install`
-are allowed for the foreman only.
+are allowed for the foreman only. A child's `npm ci` or `npm install` asks unless its launch sets `install: true` (builder, finalizer); the ask text names the flag. The foreman's rows are unchanged.
+
+The `live.json` file in each handoff dir (`handoffs/*/live.json`, written by the adapter at session start) is write-ask next to `parent` and `child`, so neither the session's model nor a child can forge it.
+
+### Session files
+
+Pi session `*.jsonl` files are denied for write, edit, `foreman_move`, `foreman_copy` and shell write words (redirects, `tee`, `sed -i`, the destination of `cp` and `mv`), for the foreman and for children. The adapter appends its state entries itself. Reads stay allowed. The session's `subagent-artifacts` dir stays writable.
 
 A `$NAME` in a bash line resolves to a same-line assignment only inside a closed grammar: every statement (split on
 `;`, `&&`, `||`, newline) is a sole `NAME=<plain absolute path>` or a simple command from `mkdir cp mv cat ls tee touch

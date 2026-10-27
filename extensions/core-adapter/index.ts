@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { SteerWatch, foldSteer, pickupRuling, takeLateSteer } from "./steerwatch.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, userOverride } from "./ceremony.ts";
+import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, TIERS, userOverride } from "./ceremony.ts";
 import { checkTrivial, effectiveRequired, escalationNote, trivialBuilderPath } from "./trivial.ts";
 import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint } from "./config.ts";
@@ -32,7 +32,7 @@ import { dormantDoctorLine } from "./features.ts";
 import { profileDoctorLines } from "./profiledoctor.ts";
 import { collectOrientation } from "./orient.ts";
 import { ExplorerBrief } from "./builderbrief.ts";
-import { ChildReads, childReadLimits } from "./childreads.ts";
+import { ChildReads, childReadLimits, launchReadAllowance } from "./childreads.ts";
 import { bgWaitLocations, coordinationCall, finalizationCommand, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { roleToolDenied } from "./roledeny.ts";
 import { McpChild, configuredServers, registerChildToolSearch } from "./mcpchild.ts";
@@ -125,7 +125,9 @@ import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, waitNote, type Cac
 import { symbolSet } from "./symbols.ts";
 import { blockedConfirm, installBlockedShim, PERMISSIONS_DECISION, PERMISSIONS_UI_PROMPT, withBlocked } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
-import { builderLaunchRefusal, changedPlans, checkpointMode, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, PLAN_VERDICT_FILE, planSnapshot, planSummary, planVersionHash, readPlan, readPlanVerdict, sha256 } from "./checkpoint.ts";
+import { captureIdentity, IDENTITY_ENTRY, latestIdentity, restoreIdentity, writeLive } from "./identity.ts";
+import type { IdentityRestore } from "./identity.ts";
+import { builderLaunchRefusal, changedPlans, checkpointMode, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, PLAN_NAME, PLAN_VERDICT_FILE, planSnapshot, readPlanVerdictFile, planSummary, planVersionHash, readPlan, readPlanVerdict, sha256 } from "./checkpoint.ts";
 import { effectivePlannerMode, PLANNER_SELF_MESSAGE, plannerNotBelow, selfPlanRequired } from "./plannerself.ts";
 import type { PlanRecord } from "./checkpoint.ts";
 import type { EventBus } from "./herdr.ts";
@@ -158,10 +160,11 @@ import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
-import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
+import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, restorableApproval } from "./planstate.ts";
+import { PlanReviews, planFactsBlock, planPathsOf, planReviewCapLine, planReviewMax, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { chainsOf, restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
-import { planSizing, prependProbe, rungOfModel, sizingConfig, sizingTrace, takeSizing, topModel as sizingTopModel, type EntryPlan, type RungContext } from "./sizing.ts";
+import { planSizing, prependProbe, rungOfModel, sizingConfig, sizingTrace, takeLaunchFlags, takeSizing, topModel as sizingTopModel, type EntryPlan, type RungContext } from "./sizing.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
 import { asyncResultReads, asyncRunDirs, bashOutputLogs, recordBashOutputLog, childReadable, childSurface, hubWorkflowDirs, hubWorkflowReadable, mainWorkflowReadable, ownTaskReadable, ownUsageReadable, piScratchReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { CustomSeen, isSubagentWake } from "./idlecustom.ts";
@@ -298,6 +301,14 @@ interface Session {
   reviewCount: number;
   /** Foreman only: `[plan-review]` launches since the last user prompt, capped apart by ceremony.reviewRuns. */
   planReviewCount: number;
+  /** Foreman only: `[plan-review]` runs launched per plan topic in this session (ceremony.planReviewMax; persisted in the ceremony-state entry, planstate.ts). */
+  topicReviews: Record<string, number>;
+  /** Plan phase (persisted in the ceremony-state entry): .workflow-only writes, explorers without a ledger, no builder or finalizer. Entered by PI_FOREMAN_PLAN_PHASE=1 or /foreman plan; left by a checkpoint approval or /foreman plan off. */
+  planPhase: boolean;
+  /** The ceremony-state entry last appended or restored, as JSON (an identical state is not appended again). */
+  ceremonyEntry: string;
+  /** restoreCeremonyState has read the branch: before that, a tier change must not append an entry that shadows the one to restore. */
+  ceremonyRestored: boolean;
   /** Foreman only: item numbers of the last FAIL verdict, until a review passes (item-only re-review). */
   failItems: string[];
   /** Foreman only: critique raised and applied per review round (retro counter, rounds.ts CritiqueCounter). */
@@ -642,7 +653,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const tmpRoot = path.dirname(scratchRoot() ?? path.join(os.tmpdir(), "pi-foreman-scratch"));
     const computeOwned = (npmRoot: string | null): OwnedRoots => ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot });
     const owned = computeOwned(null);
-    const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o) : null);
+    // The Pi session files are written by the adapter only (pi.appendEntry): the current session's dir gets a write deny (permoverlay.ts sessionDir).
+    const sessionDir = (() => {
+      try {
+        const f = ctx.sessionManager.getSessionFile();
+        return typeof f === "string" && f && path.isAbsolute(f) ? path.dirname(f) : undefined;
+      } catch {
+        return undefined;
+      }
+    })();
+    const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o, sessionDir) : null);
     const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), busy: () => idleBusy(s, s.idleCtx), piIdleMode: () => piCacheWarmingIdle(), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, aboveFloor: () => idleAboveFloor(s) });
     let lastShared: ReturnType<PrBot["read"]> = null;
     const s: Session = {
@@ -775,6 +795,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewerFails: new ReviewerFails(),
       reviewCount: 0,
       planReviewCount: 0,
+      topicReviews: {},
+      planPhase: !isChild && process.env.PI_FOREMAN_PLAN_PHASE === "1",
+      ceremonyEntry: JSON.stringify(emptyCeremonyState()),
+      ceremonyRestored: false,
       failItems: [],
       critique: new CritiqueCounter(),
       budgetWarned: false,
@@ -947,10 +971,66 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.chains.clear(onTierChange(s.chains.state, next.source));
       persistRounds(s);
     }
+    persistCeremonyState(s);
+  }
+
+  /** Append the `pi-foreman-ceremony-state` session entry (planstate.ts) when the state differs from the last one appended or restored. */
+  function persistCeremonyState(s: Session): void {
+    if (s.isChild || !s.ceremonyRestored) return;
+    const data = buildCeremonyState({
+      plan: s.plan,
+      lineages: s.planReviews.all().map((l) => ({ path: l.path, hash: l.latest.hash, verdict: l.latest.verdict, model: l.latest.model, rounds: l.rounds, reviews: l.reviews })),
+      planReviews: s.topicReviews,
+      userTier: s.ceremony.userTier,
+      tier: s.ceremony.tier,
+      tierSource: s.ceremony.source,
+      planPhase: s.planPhase,
+    });
+    const json = JSON.stringify(data);
+    if (json === s.ceremonyEntry) return;
+    s.ceremonyEntry = json;
+    try {
+      pi.appendEntry(CEREMONY_ENTRY, data);
+    } catch {
+      // the session file is not writable now: the state stays in memory
+    }
+  }
+
+  /** session_start: what the latest ceremony-state entry of the branch brings back; an approval never on a fork. */
+  function restoreCeremonyState(s: Session, ctx: ExtensionContext, reason: string): void {
+    if (s.isChild) return;
+    const e = latestCeremonyState((ctx.sessionManager.getBranch?.() ?? []) as unknown[]);
+    s.ceremonyRestored = true;
+    if (!e) return persistCeremonyState(s); // a plan phase entered through the env is recorded at once
+    for (const l of e.lineages) s.planReviews.restore(l.path, { hash: l.hash, verdict: l.verdict, model: l.model, findings: Promise.resolve([]) }, l.rounds, l.reviews);
+    s.topicReviews = { ...e.planReviews };
+    s.planPhase = e.planPhase;
+    if (e.tier && e.tierSource && e.tierSource !== "default") {
+      // a reload never lowers the tier: the persisted effective tier (auto escalations included) or the user's, whichever is higher, unless the last change was /ceremony
+      const tier = e.tierSource === "user" || !e.userTier || TIERS.indexOf(e.tier) >= TIERS.indexOf(e.userTier) ? e.tier : e.userTier;
+      s.ceremony = { ...s.ceremony, tier, source: e.tierSource, triaged: true, ...(e.userTier ? { userTier: e.userTier } : {}) };
+    } else if (e.userTier) {
+      s.ceremony = { ...s.ceremony, tier: e.userTier, source: "user", triaged: true, userTier: e.userTier };
+    }
+    let approved = false;
+    if (reason !== "fork" && e.plan?.status === "approved") {
+      const o = planOpts(s, ctx);
+      const now = readPlan(e.plan.path, o);
+      const rec = restorableApproval(e.plan, "plan" in now ? now.plan.hash : null, roundStateDir(process.env));
+      if (rec) {
+        s.plan = rec;
+        approved = true;
+      }
+    }
+    s.trace?.emit({ event: "ceremony_state_restored", approval: approved ? "restored" : "none", lineages: e.lineages.length, ...(e.userTier ? { userTier: e.userTier } : {}) });
+    s.ceremonyEntry = JSON.stringify(e);
+    if (e.userTier) refreshLedgerTier(s); // records what the ledger says; it cannot raise the tier
+    persistCeremonyState(s);
   }
 
   /** Round session: rewrite `<handoff>/round-state.json` (roundstate.ts); never an approval flag. */
   function persistRounds(s: Session): void {
+    persistCeremonyState(s);
     const dir = roundStateDir(process.env);
     if (s.isChild || !s.roundStateOn || !dir) return;
     const plan = s.plan && s.plan.status !== "rejected" ? s.plan : null;
@@ -968,7 +1048,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** session_start of a round session: what the reload file may bring back; the approval only from the parent's ruling.md. */
-  function restoreRounds(s: Session, ctx: ExtensionContext): void {
+  function restoreRounds(s: Session, ctx: ExtensionContext, reason: string): void {
     const dir = roundStateDir(process.env);
     if (s.isChild) return;
     s.roundStateOn = true;
@@ -984,10 +1064,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.reviewCount = r.reviewCount;
     s.planReviewCount = r.planReviewCount;
     s.capsResetAt = r.capsResetAt;
-    const a = r.approval;
+    // The session entry (restoreCeremonyState) comes first; this file only fills in when it restored no approval, and never on a fork.
+    const a = s.plan?.status === "approved" || reason === "fork" ? null : r.approval;
     if (a) {
-      s.plan = { topic: a.topic, path: a.path, hash: a.hash, status: "approved", approvedAt: new Date(a.at).toISOString(), by: "rig", note: `restored after reload from ${a.ruling}` };
-      if (a.review) s.planReviews.restore(a.path, { hash: a.review.hash, verdict: a.review.verdict, model: a.review.model, findings: Promise.resolve([]) }, a.review.rounds);
+      s.plan = { topic: a.topic, path: a.path, hash: a.hash, status: "approved", approvedAt: new Date(a.at).toISOString(), by: "rig", source: path.basename(a.ruling) === PLAN_VERDICT_FILE ? "ruling-plan" : "ruling", note: `restored after reload from ${a.ruling}` };
+      if (a.review && !s.planReviews.lineage(a.path)) s.planReviews.restore(a.path, { hash: a.review.hash, verdict: a.review.verdict, model: a.review.model, findings: Promise.resolve([]) }, a.review.rounds);
     }
     s.trace?.emit({ event: "round_state_restored", approval: a ? "ruling" : "none" });
     persistRounds(s);
@@ -1012,14 +1093,36 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
   }
 
-  async function applyForemanModel(s: Session, ctx: ExtensionContext): Promise<void> {
+  /**
+   * session_start, after startSession: an opened session (handoff dir and child id in env, restored or given) appends its identity
+   * entry when it differs from the branch's latest and refreshes `<handoff>/live.json`; never in a child or on a fork.
+   */
+  function recordIdentity(s: Session, ctx: ExtensionContext, reason: string, restored: IdentityRestore): void {
+    if (restored.status === "restored") s.trace?.emit({ event: "identity_restored", reason });
+    else if (restored.status === "skipped") s.trace?.emit({ event: "identity_restore_skipped", reason: restored.reason });
+    if (s.isChild || process.env.PI_SUBAGENT_CHILD === "1" || reason === "fork") return;
+    const id = captureIdentity(process.env, s.id, pi.getSessionName?.());
+    if (!id) return;
+    const last = latestIdentity((ctx.sessionManager.getBranch?.() ?? []) as unknown[]);
+    if (JSON.stringify(last) !== JSON.stringify(id)) {
+      try {
+        pi.appendEntry(IDENTITY_ENTRY, id);
+      } catch {
+        // the session file is not writable now: the next start tries again
+      }
+    }
+    writeLive(id.handoff, id.child, s.id);
+  }
+
+  /** `restoredModel` (an identity restored this start): the model the session was opened on wins over the foreman role model. */
+  async function applyForemanModel(s: Session, ctx: ExtensionContext, restoredModel?: string | null): Promise<void> {
     const role = s.config.roles.foreman;
     const codemode = role && typeof role.codemode === "boolean" ? role.codemode : get(s.config.config, "roles.foreman.codemode") === true;
     if (codemode) {
       const active = pi.getActiveTools();
       if (!active.includes("codemode")) pi.setActiveTools([...active, "codemode"]);
     }
-    if (!role || typeof role.model !== "string") {
+    if (!restoredModel && (!role || typeof role.model !== "string")) {
       // Only worth a warning when the map names this provider; an empty map is a fresh install.
       const provider = ctx.model?.provider;
       if (role && typeof role.error === "string" && provider && get(s.config.config, `providers.${provider}`)) ctx.ui.notify(`pi-foreman: foreman model not applied: ${role.error}`, "warning");
@@ -1027,7 +1130,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (userPickedModel) return;
     // `foreman session open --model X` wins over the overlay/preset role model (model and thinking) for this session
-    const spec = foremanModelSpec(role.model, sessionModelOf(process.env), cliModelOf(process.argv));
+    const spec = restoredModel ? (cliModelOf(process.argv) ? null : restoredModel) : foremanModelSpec(role!.model as string, sessionModelOf(process.env), cliModelOf(process.argv));
     if (spec === null) return;
     const slash = spec.indexOf("/");
     const provider = slash > 0 ? spec.slice(0, slash) : ctx.model?.provider ?? "";
@@ -1044,7 +1147,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         applyingModel = false;
       }
     }
-    if (typeof role.thinking === "string" && role.thinking) pi.setThinkingLevel(role.thinking as Parameters<ExtensionAPI["setThinkingLevel"]>[0]);
+    if (role && typeof role.thinking === "string" && role.thinking) pi.setThinkingLevel(role.thinking as Parameters<ExtensionAPI["setThinkingLevel"]>[0]);
   }
 
   async function registerChildExtensions(s: Session, ctx: ExtensionContext): Promise<void> {
@@ -1146,9 +1249,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // ------------------------------------------------------------------ events
 
   pi.on("session_start", async (event, ctx) => {
+    // First: startSession, intercom and the sidebar read the identity env, and pi-intercom (loaded after this extension) reads PI_INTERCOM_STABLE_ID.
+    const restored = restoreIdentity({ env: process.env, reason: event.reason, piSessionId: ctx.sessionManager.getSessionId?.() ?? "", branch: (ctx.sessionManager.getBranch?.() ?? []) as unknown[], currentName: pi.getSessionName?.(), setSessionName: (name) => pi.setSessionName?.(name) });
     const s = await startSession(ctx);
+    recordIdentity(s, ctx, event.reason, restored);
     await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r), get(s.config.config, "mcp.directProviders"));
-    restoreRounds(s, ctx);
+    restoreCeremonyState(s, ctx, event.reason);
+    restoreRounds(s, ctx, event.reason);
     emitReady(pi.events as EventBus | undefined, core.claim);
     if (!s.isChild && process.env.PI_SUBAGENT_CHILD !== "1" && (ctx.mode === "tui" || ctx.mode === "rpc")) {
       pullBind = { s, ctx };
@@ -1159,7 +1266,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       await idleModel.onSessionStart(ctx.sessionManager.getBranch?.() ?? []); // before applyForemanModel: a downshift left open is closed first
     }
     review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [], recordUsage: (m) => { const x = sessions.get(s.id); if (x) appendUsage(x.usage.file, usageLine({ ...x.usage.line, role: "autoreview", launchId: null, kind: "foreman" }, m)); }, scratchDirs: (role) => sessions.get(s.id)?.scratch.live(role) ?? [], ownDirs: () => { const x = sessions.get(s.id); return x ? [...ownHandoffDirs(handoffsRoot(x), intercomIdOf(process.env, x.agentDir, x.id)), ...roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform)] : []; }, roundDirs: () => { const x = sessions.get(s.id); return x ? roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform) : []; }, ledgerFile: () => { const x = sessions.get(s.id); return x ? boundLedger(x.markerDir, x.usage.line.foremanSession) : null; }, ownedRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x).write : []; }, readOnlyRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x).read : []; }, ownReads: () => { const x = sessions.get(s.id); return x && !x.isChild ? [...ownUsageReadable(x.agentDir, platform, x.id, { dir: get(x.config.config, "trace.dir"), stateDir: x.markerDir }, x.usage.line.foremanSession), ...ownTaskReadable([x.cwd, workspaceOf(x.cwd).root, x.usage.line.workspace], x.usage.line.foremanSession, platform), ...asyncResultReads(x.childFiles, platform)] : []; }, ...reviewExtras(baseline, () => sessions.get(s.id)?.config.config, ctx) });
-    if (!s.isChild && (event.reason === "startup" || event.reason === "new")) await applyForemanModel(s, ctx);
+    if (!s.isChild && (event.reason === "startup" || event.reason === "new" || (event.reason === "resume" && restored.status === "restored"))) await applyForemanModel(s, ctx, restored.status === "restored" ? restored.entry.model : undefined);
     await registerChildExtensions(s, ctx);
     const orderNotice = s.isChild ? null : loadOrderNotice(s.cwd, s.agentDir, PKG_ROOT);
     if (orderNotice) notifyOnce(s, ctx, "load-order", orderNotice, "warning");
@@ -1611,6 +1718,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.budget.verdict = s.reviewGate.last; // R12 item 8: the recheck refusal names the real verdict
     const d = s.budget.check(READ_CLASS.has(toolName) ? toolName : "read", callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt, coordinationCall(toolName, input));
     if (d.kind === "remind") {
+      if (s.planPhase) return undefined; // the plan phase reads freely: no reminder
       s.readNotices.set(callId, d.text);
       s.trace?.emit({ event: "read_budget", phase: d.phase, count: d.count, action: "remind" });
     } else if (d.kind === "deny") {
@@ -1625,12 +1733,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function childReadCheck(s: Session | undefined, toolName: string, callId: string, input: unknown) {
     if (!s || !s.isChild) return undefined;
     const role = s.usage.line.role;
-    const d = s.childReads.check(toolName, callId, input, childReadLimits(s.config.config, role));
+    const limits = childReadLimits(s.config.config, role, launchBinding?.reads);
+    const d = s.childReads.check(toolName, callId, input, limits);
     if (d.kind === "warn") {
       s.readNotices.set(callId, d.text);
-      s.trace?.emit({ event: "child_read_budget", role, count: d.count, action: "warn" });
+      s.trace?.emit({ event: "child_read_budget", role, count: d.count, action: "warn", allowance: limits?.deny });
     } else if (d.kind === "deny") {
-      s.trace?.emit({ event: "child_read_budget", count: d.count, action: "deny", ...denyFields(d.reason, toolName, input, role) });
+      s.trace?.emit({ event: "child_read_budget", count: d.count, action: "deny", allowance: limits?.deny, ...denyFields(d.reason, toolName, input, role) });
       return { block: true as const, reason: d.reason };
     }
     return undefined;
@@ -1833,9 +1942,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const hub = hubWorkflowReadable(get(s.config.config, "paths.hubWorkflow"), platform);
     if (s.isChild) s.skillDirs ??= childSkillDirs(get(s.config.config, "roles"), launchBinding?.role, ctx.cwd, os.homedir());
     const skillDirs = s.isChild ? await s.skillDirs : undefined;
-    const mctx: MatchCtx = { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, ...(skillDirs?.length ? { skillDirs } : {}), ...(s.usage.line.workspace ? { foremanRoot: workspaceOf(s.usage.line.workspace).root } : {}), readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub, ownReads: [...ownUsageReadable(s.agentDir, platform, s.id, { dir: get(s.config.config, "trace.dir"), stateDir: s.markerDir }, s.usage.line.foremanSession), ...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...asyncResultReads(s.childFiles, platform)] }) };
+    const mctx: MatchCtx = { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ...(s.isChild && launchBinding?.install ? { install: true } : {}), ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, ...(skillDirs?.length ? { skillDirs } : {}), ...(s.usage.line.workspace ? { foremanRoot: workspaceOf(s.usage.line.workspace).root } : {}), readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub, ownReads: [...ownUsageReadable(s.agentDir, platform, s.id, { dir: get(s.config.config, "trace.dir"), stateDir: s.markerDir }, s.usage.line.foremanSession), ...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...asyncResultReads(s.childFiles, platform)] }) };
     const d0 = checkToolCall(s.overlay, toolName, input, mctx);
-    if (s.isChild && toolName === "bash" && typeof input.command === "string" && npmCiWorktreeLabel(input.command, mctx)) s.trace?.emit({ event: "overlay_allow", rule: "npm-ci-worktree", role: s.usage.line.role });
+    if (s.isChild && toolName === "bash" && typeof input.command === "string" && mctx.install && npmCiWorktreeLabel(input.command, mctx)) s.trace?.emit({ event: "overlay_allow", rule: "npm-ci-worktree", role: s.usage.line.role });
     // R16 item 4a: the self-ruling ask (ruling.ts selfRulingAsk) takes the place of an overlay ask that is no self-modification
     const d = d0 && (d0.kind === "deny" || d0.selfMod) ? d0 : (rulingAsk ?? d0);
     // R16 item 1: a foreman ask that is no self-modification goes to the auto reviewer first; allow lets the call go on to the later layers
@@ -2043,11 +2152,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (blocked) return { block: true, reason: blocked };
       let notices: string[] = [];
       let launchMcp: string[] | undefined;
+      let launchFlags: { reads?: number; install?: boolean } = {};
       const mcpNotes: string[] = [];
       let budgetNotes: string[] = [];
       // Counted and warned only once the launch passed every check (set at the end of the guard path).
       let pendingReviews = 0;
       let pendingPlanReviews = 0;
+      let pendingTopics = new Map<string, number>();
       let pendingWarn: Record<string, unknown> | null = null;
       let rounds: LaunchRounds | undefined;
       let kind: LaunchKind | undefined;
@@ -2074,6 +2185,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (sized.error && !s.isChild && actionOf(input) === null && sizingConfig(s.config.config).enabled) {
           s.trace?.emit({ event: "launch_refused", reason: "sizing_invalid", tier: s.ceremony.tier, ...launchDeny(input) });
           return { block: true, reason: sized.error };
+        }
+        // R46: `reads` and `install` leave every launch here; a single launch carries them in its binding (recordLaunchUsage).
+        const flags = takeLaunchFlags(input);
+        if (flags.error && !s.isChild && actionOf(input) === null) {
+          s.trace?.emit({ event: "launch_refused", reason: "launch_flag_invalid", tier: s.ceremony.tier, ...launchDeny(input) });
+          return { block: true, reason: flags.error };
+        }
+        mcpNotes.push(...flags.notes);
+        launchFlags = flags.entries.get(input) ?? {};
+        const flagRole = singleLaunchRole(input);
+        if (flagRole) {
+          const a = launchReadAllowance(s.config.config, flagRole, { reads: launchFlags.reads, files: sized.entries.get(input)?.size?.files.length });
+          if (a.clamped) mcpNotes.push(`pi-foreman: reads ${launchFlags.reads} is above the maximum; the read allowance is ${a.allowance}.`);
+          launchFlags = { ...launchFlags, reads: a.allowance };
         }
         const resolution = await currentRoles(s, ctx);
         const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
@@ -2189,6 +2314,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             s.trace?.emit({ event: "launch_refused", reason: rc.reason, tier: s.ceremony.tier, kind: rc.kind, count: rc.count, limit: cap, ...launchDeny(input) });
             return { block: true, reason: rc.text };
           }
+          // ceremony.planReviewMax: `[plan-review]` runs per plan topic per session; at the cap the owner decides at the checkpoint.
+          const topicMax = planReviewMax(get(s.config.config, "ceremony.planReviewMax"));
+          const adds = new Map<string, number>();
+          for (const [e, o] of occasions) {
+            if (o !== "plan-review" || typeof e.agent !== "string" || !REVIEW_ROLES.includes(e.agent)) continue;
+            for (const f of new Set(planReviewFiles(String(e.task ?? ""), null))) {
+              const m = PLAN_NAME.exec(f.split(/[\\/]/).pop() ?? "");
+              if (m) adds.set(m[1], (adds.get(m[1]) ?? 0) + 1);
+            }
+          }
+          const over = [...adds].find(([topic, n]) => (s.topicReviews[topic] ?? 0) + n > topicMax);
+          if (over) {
+            s.trace?.emit({ event: "launch_refused", reason: "plan_review_cap", tier: s.ceremony.tier, count: s.topicReviews[over[0]] ?? 0, limit: topicMax, ...launchDeny(input) });
+            return { block: true, reason: `pi-foreman: plan review launch refused [launch_refused:plan_review_cap]: ${s.topicReviews[over[0]] ?? 0} \`[plan-review]\` run(s) already ran for plan-${over[0]}.md in this session (ceremony.planReviewMax ${topicMax}). Call ${CHECKPOINT_TOOL} now: it opens with the latest verdict and the owner decides.` };
+          }
+          pendingTopics = adds;
           if (s.failItems.length > 0) for (const [e, occ] of occasions) if (occ === "item" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependReReview(e.task, s.failItems);
           // R39: builders launched with a strong risk tag (sizing.ts): the next item or pre-pr reviewer is asked for bypass probes.
           if (s.ladder.probeRisks.size > 0) for (const [e, occ] of occasions) if ((occ === "item" || occ === "pre-pr") && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependProbe(e.task, s.ladder.probeRisks);
@@ -2321,6 +2462,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         if (guard === "ledger_guard_spawn") {
           agents = subagentAgents(input);
+          // Plan phase: explorers research before any ledger exists; the core gate would ask for one, so it is not called for them.
+          if (s.planPhase && !s.isChild && agents.length > 0 && agents.every((a) => a === "explorer") && !boundLedger(s.markerDir, s.id)) {
+            s.trace?.emit({ event: "plan_phase_explorer", role: "explorer" });
+            continue;
+          }
           setCeremony(s, beforeSpawn(s.ceremony, agents, trivialBuilderPath(get(s.config.config, "ceremony.required"))));
         }
         // Children get the git guard in child mode from extensions/git-guard; main mode is the foreman lint.
@@ -2395,6 +2541,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const r of sizingRecords) s.trace?.emit(r);
       s.reviewCount += pendingReviews;
       s.planReviewCount += pendingPlanReviews;
+      for (const [topic, n] of pendingTopics) s.topicReviews[topic] = (s.topicReviews[topic] ?? 0) + n;
       if (pendingWarn) {
         s.budgetWarned = true;
         s.trace?.emit(pendingWarn);
@@ -2409,7 +2556,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         for (let i = 0; i < rounds.revisions; i++) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: kind });
         if (rounds.exempt) s.trace?.emit({ event: "revision_security_exempt", role: "builder", tier: s.ceremony.tier, count: rounds.exempt, after: s.chains.state.exempt ?? 0 });
       }
-      if (rounds || pendingReviews + pendingPlanReviews > 0) persistRounds(s);
+      if (rounds || pendingReviews + pendingPlanReviews > 0 || pendingTopics.size > 0) persistRounds(s);
       if (event.toolName === "subagent" && !s.isChild) {
         const lf = boundLedger(s.markerDir, s.id);
         const lg = (() => { try { return lf ? fs.readFileSync(lf, "utf8") : null; } catch { return null; } })();
@@ -2447,7 +2594,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         limits = { bottom, maxTurns: childMaxTurns(s.config.config, p, single), ...(bottom ? { strongAbove: strongAbove(s.config.config, p, single) } : {}) };
       }
       if (event.toolName === "subagent") {
-        const b = recordLaunchUsage(s, ctx, input, kind, limits, launchMcp);
+        const b = recordLaunchUsage(s, ctx, input, kind, limits, launchMcp, launchFlags);
         if (!s.isChild) s.widget.runs.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: b?.model ?? null });
       }
       if (event.toolName === "subagent" && !s.isChild && !isManagementCall(input)) s.pendingLaunches.add(event.toolCallId);
@@ -2668,7 +2815,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   function editModeOfSession(s: Session): { mode: EditMode; scratchDir: string } {
-    return { mode: editModeOf(get(s.config.config, "ceremony.foremanEdits")), scratchDir: scratchDirOf(get(s.config.config, "ceremony.scratchDir")) };
+    // The plan phase is readonly in every edit mode: only .workflow/ is writable.
+    return { mode: s.planPhase && !s.isChild ? "readonly" : editModeOf(get(s.config.config, "ceremony.foremanEdits")), scratchDir: scratchDirOf(get(s.config.config, "ceremony.scratchDir")) };
   }
 
   function planOpts(s: Session, ctx: ExtensionContext) {
@@ -2683,6 +2831,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Heavy tier: a builder launch needs the owner's approval of the current plan (checkpoint.ts). A refusal records nothing. */
   function builderPlanBlock(s: Session, ctx: ExtensionContext, input: Record<string, unknown>): string | undefined {
     const tier = s.ceremony.tier;
+    if (s.planPhase) {
+      const roles = launchRoles(s, input);
+      if (roles.includes("builder") || roles.includes("finalizer")) {
+        s.trace?.emit({ event: "launch_refused", reason: "plan_phase", tier, ...launchDeny(input) });
+        return launchRefusalText("plan_phase", s.plan, planOpts(s, ctx).scratchDir);
+      }
+    }
     if (tier !== "heavy" || !launchRoles(s, input).includes("builder")) return undefined;
     const o = planOpts(s, ctx);
     const reason = builderLaunchRefusal(s.plan, tier, s.plan ? currentPlanHash(s.plan, o) : null);
@@ -2724,6 +2879,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function onEditRefused(s: Session, mode: EditMode, kind: string): string {
     s.trace?.emit({ event: "foreman_edit_refused", mode, kind });
     if (mode === "bounded") return "";
+    if (s.planPhase) return " The plan phase is on: write the plan under .workflow/ and use explorers; code changes wait for a checkpoint approval or /foreman plan off.";
     s.ceremony = { ...s.ceremony, needsChange: true };
     if (s.ceremony.tier !== "trivial") return isTriaged(s.ceremony) ? "" : ` Record the tier with ${TRIAGE_TOOL}: this task needs a builder, so trivial counts as standard.`;
     setCeremony(s, escalate(s.ceremony, "standard", "auto", "edit mode refused a change"));
@@ -2935,7 +3091,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** D8: give a single-child launch its usage binding (role, launch id, kind) through extensionBindings. */
-  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, kind?: LaunchKind, ladder?: LadderLimits, mcp?: string[]): LaunchBinding | null {
+  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, kind?: LaunchKind, ladder?: LadderLimits, mcp?: string[], flags?: { reads?: number; install?: boolean }): LaunchBinding | null {
     const role = singleLaunchRole(input);
     if (!role) return null;
     const model = typeof input.model === "string" && input.model ? input.model : null;
@@ -2943,6 +3099,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     launchScratch(s, input, b);
     if (retroEnabled(get(s.config.config, "retro.enabled"), ctx.mode)) b.retro = true; // the child traces for the retro
     if (mcp) b.mcp = mcp;
+    if (flags?.reads !== undefined) b.reads = flags.reads;
+    if (flags?.install) b.install = true;
     bindLaunch(input, b);
     return b;
   }
@@ -3711,12 +3869,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "plan_version", tier, from: sha256(plan.bytes).slice(0, 16), to: plan.hash.slice(0, 16) }); // from = hash of the file bytes, to = version (body) hash
         // ceremony.planReview (planreview.ts): a [plan-review] verdict on these bytes first; a first FAIL goes back to the planner.
         let reviewed: string | null = null;
+        // ceremony.planReviewMax: at the cap the owner decides, whatever the latest verdict says and however stale it is.
+        let capNote = "";
         if (planReviewOn(s.config.config, tier)) {
           const cap = planReviewRounds(get(s.config.config, "ceremony.planReviewRounds"));
+          const used = s.topicReviews[plan.topic] ?? 0;
           const g = s.planReviews.gate(plan.path, planVersionHash(plan.bytes), cap);
-          if ("refusal" in g) return done("refused", null, planReviewRefusalText(g.refusal, plan.rel, tier, g.stale), true, g.refusal);
-          // Capped: the checkpoint opens on a FAIL with the open findings visible.
-          reviewed = planReviewSection(g.verdict, await g.verdict.findings, g.capped ? { rounds: g.rounds ?? cap, cap } : undefined);
+          if (used >= planReviewMax(get(s.config.config, "ceremony.planReviewMax"))) {
+            const l = s.planReviews.lineage(plan.path);
+            capNote = [planReviewCapLine(used), l && l.latest.hash !== plan.hash ? "plan changed since its last review" : ""].filter(Boolean).join("\n");
+            reviewed = [capNote, l ? planReviewSection(l.latest, await l.latest.findings) : ""].filter(Boolean).join("\n");
+          } else {
+            if ("refusal" in g) return done("refused", null, planReviewRefusalText(g.refusal, plan.rel, tier, g.stale), true, g.refusal);
+            // Capped: the checkpoint opens on a FAIL with the open findings visible.
+            reviewed = planReviewSection(g.verdict, await g.verdict.findings, g.capped ? { rounds: g.rounds ?? cap, cap } : undefined);
+          }
         }
         if (s.plan && s.plan.status === "approved" && s.plan.hash === plan.hash && s.plan.path === plan.path) {
           // No dialog ran: the trace carries by: null so a re-check never counts as another approval.
@@ -3736,7 +3903,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           answer = verdict.kind === "approve" ? "approve" : verdict.kind;
         } else if (parentMode) {
           const file = handoff ? path.join(handoff, PLAN_VERDICT_FILE) : null;
-          return done("pending", null, `${pendingText}${file ? ` The parent answers in ${file} (first line APPROVED, REVISE <text> or REJECT, written after the last plan edit; a ruling.md APPROVED there counts as APPROVED): wait with foreman_wait kind file on that path, then call ${CHECKPOINT_TOOL} again.` : ""}`);
+          return done("pending", null, `${capNote ? `${capNote}\n` : ""}${pendingText}${file ? ` The parent answers in ${file} (first line APPROVED, REVISE <text> or REJECT, written after the last plan edit; a ruling.md APPROVED there counts as APPROVED): wait with foreman_wait kind file on that path, then call ${CHECKPOINT_TOOL} again.` : ""}`);
         } else {
           if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return done("pending", null, pendingText);
           const title = `pi-foreman checkpoint: ${name} (${hash8})`;
@@ -3757,8 +3924,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return done("pending", null, `${name} changed while the owner was reviewing it, so the approval is not applied: the checkpoint stays pending. Call ${CHECKPOINT_TOOL} again so the owner approves the current version.`);
           }
           rec.status = "approved";
+          rec.source = !verdict ? "dialog" : handoff && readPlanVerdictFile(handoff, plan.path, selfRulingsFor(s)) ? "ruling-plan" : "ruling";
           rec.approvedAt = new Date().toISOString();
           rec.by = !verdict && ctx.mode === "tui" ? "user" : "rig";
+          if (s.planPhase) {
+            s.planPhase = false; // an approval ends the plan phase
+            s.trace?.emit({ event: "plan_phase", decision: "off", cause: "checkpoint" });
+          }
           return done("approve", rec.by, `The owner approved ${name} (${hash8}). Builders may launch at tier heavy while the file stays unchanged; any edit needs a new ${CHECKPOINT_TOOL}.`);
         }
         if (answer === "revise") {
@@ -3937,10 +4109,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman prs [list]",
+    description: "pi-foreman commands: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off] | /foreman prs [list]",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
       if (sub === "close") return close.command(args.trim().slice(sub.length), ctx);
+      if (sub === "plan") {
+        const s = await ensureSession(ctx);
+        if (s.isChild || rest.length > 1 || (rest[0] !== undefined && rest[0] !== "off")) {
+          ctx.ui.notify("Usage: /foreman plan | /foreman plan off (foreman session only)", "warning");
+          return;
+        }
+        s.planPhase = rest[0] !== "off";
+        s.trace?.emit({ event: "plan_phase", decision: s.planPhase ? "on" : "off", cause: "user" });
+        persistCeremonyState(s);
+        ctx.ui.notify(s.planPhase ? "pi-foreman: plan phase on. Changes only under .workflow/, explorers need no ledger, builders and finalizers wait for a checkpoint approval or /foreman plan off." : "pi-foreman: plan phase off.", "info");
+        return;
+      }
       if (sub === "prs") {
         const s = await ensureSession(ctx);
         if (s.isChild || rest.length > 1 || (rest[0] !== undefined && rest[0] !== "list")) {
@@ -4025,7 +4209,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       if (sub !== "doctor") {
-        ctx.ui.notify("Usage: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman flag-ask [note] | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list", "warning");
+        ctx.ui.notify("Usage: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman flag-ask [note] | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off]", "warning");
         return;
       }
       const s = await ensureSession(ctx);

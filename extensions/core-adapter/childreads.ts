@@ -21,16 +21,45 @@ export const CHILD_READ_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "f
 
 const posInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 1;
 
-/** Limits of `role`, or null (no budget). */
-export function childReadLimits(config: Json | undefined, role: string): ChildLimits | null {
+/** Per-launch allowance (R46): every file beyond 3 in `size.files` adds `perFile` to the deny, up to `max`. */
+export const DEFAULT_PER_FILE: Record<string, number> = { builder: 5, reviewer: 2 };
+export const DEFAULT_MAX_READS = 120;
+const FREE_FILES = 3;
+
+function roleEntry(config: Json | undefined, role: string): Record<string, unknown> | null {
   const all = get(config, "ceremony.childReads");
-  if (all === undefined) return DEFAULT_CHILD_READS[role] ?? null;
+  if (all === undefined) return DEFAULT_CHILD_READS[role] ? {} : null;
   const e = all && typeof all === "object" ? (all as Record<string, unknown>)[role] : undefined;
-  if (!e || typeof e !== "object") return null;
-  const o = e as Record<string, unknown>;
+  return e && typeof e === "object" ? (e as Record<string, unknown>) : null;
+}
+
+const maxOf = (o: Record<string, unknown>): number => (posInt(o.max) ? o.max : DEFAULT_MAX_READS);
+
+/**
+ * Limits of `role`, or null (no budget). `allowance` is the launch's deny (launchReadAllowance, carried in the binding); the warn
+ * moves with it. The deny never exceeds the role's `max`.
+ */
+export function childReadLimits(config: Json | undefined, role: string, allowance?: number): ChildLimits | null {
+  const o = roleEntry(config, role);
+  if (!o) return null;
   const d = DEFAULT_CHILD_READS[role] ?? { warn: 20, deny: 40 };
-  const deny = posInt(o.deny) ? o.deny : d.deny;
-  return { warn: Math.min(posInt(o.warn) ? o.warn : d.warn, deny), deny };
+  const base = posInt(o.deny) ? o.deny : d.deny;
+  const warn = Math.min(posInt(o.warn) ? o.warn : d.warn, base);
+  const deny = Math.min(maxOf(o), posInt(allowance) ? allowance : base);
+  return { warn: Math.max(1, Math.min(deny - (base - warn), deny)), deny };
+}
+
+/** The deny a launch asks for: an explicit `reads` (clamped to `max`), else the size formula; `allowance` is absent when nothing changes. */
+export function launchReadAllowance(config: Json | undefined, role: string, o: { files?: number; reads?: number }): { allowance?: number; clamped?: boolean } {
+  const e = roleEntry(config, role);
+  if (!e) return {};
+  const max = maxOf(e);
+  if (posInt(o.reads)) return o.reads > max ? { allowance: max, clamped: true } : { allowance: o.reads };
+  const files = o.files ?? 0;
+  if (files <= FREE_FILES) return {};
+  const base = childReadLimits(config, role)!.deny;
+  const perFile = posInt(e.perFile) ? e.perFile : DEFAULT_PER_FILE[role] ?? DEFAULT_PER_FILE.builder;
+  return { allowance: Math.min(max, base + perFile * (files - FREE_FILES)) };
 }
 
 // First words of commands that only read. Pipelines and && / ; chains count when every part is one.

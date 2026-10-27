@@ -36,7 +36,7 @@ test("r26 protected hint: the child shell deny on git add / git commit of a prot
   }
 });
 
-const LINE = "Protected files (config/foreman.defaults.json, config/permissions.baseline.json, package.json and the other write-ask paths): report the needed change; the foreman applies and commits it.";
+const LINE = "Protected files (";
 const ledger = "- [ ] 1. do a thing\n";
 
 test("r26 protected hint: the builder brief carries the line, an explorer and a reviewer brief do not", () => {

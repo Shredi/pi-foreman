@@ -39,7 +39,7 @@ if (posix) {
 
 const rules: OverlayRules = buildOverlayRules(baseline, {}, {}, ag, ws, undefined, false);
 const run = (cwd: string, command: string, roots = [owned]): string => {
-  const ctx: MatchCtx = { cwd, home, platform: process.platform, role: "child", roundRoots: roots };
+  const ctx: MatchCtx = { cwd, home, platform: process.platform, role: "child", install: true, roundRoots: roots };
   return checkToolCall(rules, "bash", { command }, ctx)?.kind ?? "pass";
 };
 
@@ -132,7 +132,7 @@ const WLINK = path.win32.join(WOWNED, "esc");
 const wHome = path.win32.join(SHORT_BASE, "home");
 const wrules = buildOverlayRules(baseline, {}, {}, path.win32.join(wHome, ".pi", "agent"), path.win32.join(SHORT_BASE, "ws"), undefined, false);
 const viaLink = (p: string): string => (p.toLowerCase() === WLINK.toLowerCase() || p.toLowerCase().startsWith(WLINK.toLowerCase() + "\\") ? WOTHER + p.slice(WLINK.length) : p);
-const wctx = (cwd = WOWNED): MatchCtx => ({ cwd, home: wHome, platform: "win32", role: "child", roundRoots: [WOWNED], exists: () => true, isDir: () => true, realpath: (p) => viaLink(path.win32.resolve(p)), realpathNative: (p) => toLong(viaLink(path.win32.resolve(p))), list: () => [] });
+const wctx = (cwd = WOWNED): MatchCtx => ({ cwd, home: wHome, platform: "win32", role: "child", install: true, roundRoots: [WOWNED], exists: () => true, isDir: () => true, realpath: (p) => viaLink(path.win32.resolve(p)), realpathNative: (p) => toLong(viaLink(path.win32.resolve(p))), list: () => [] });
 const wrun = (command: string, cwd?: string): string => checkToolCall(wrules, "bash", { command }, wctx(cwd))?.kind ?? "pass";
 
 test("expected-open (R10f): win32 child: cd bench/pi-lock && npm ci, --prefix=<root>/bench/pi-lock, cwd bench\\pi-lock with --package-lock-only", () => {

@@ -24,7 +24,7 @@ const wHome = path.win32.join(SHORT_BASE, "home");
 const rules = buildOverlayRules(baseline, {}, {}, path.win32.join(wHome, ".pi", "agent"), path.win32.join(SHORT_BASE, "ws"), undefined, false);
 // the JS realpath keeps the short name (identity, with the link resolved); the native one expands it
 const viaLink = (p: string): string => (p.toLowerCase() === LINK.toLowerCase() || p.toLowerCase().startsWith(LINK.toLowerCase() + "\\") ? OTHER + p.slice(LINK.length) : p);
-const ctx = (cwd = OWNED, roundRoots = [OWNED]): MatchCtx => ({ cwd, home: wHome, platform: "win32", role: "child", roundRoots, exists: () => true, isDir: () => true, realpath: (p) => viaLink(path.win32.resolve(p)), realpathNative: (p) => toLong(viaLink(path.win32.resolve(p))), list: () => [] });
+const ctx = (cwd = OWNED, roundRoots = [OWNED]): MatchCtx => ({ cwd, home: wHome, platform: "win32", role: "child", install: true, roundRoots, exists: () => true, isDir: () => true, realpath: (p) => viaLink(path.win32.resolve(p)), realpathNative: (p) => toLong(viaLink(path.win32.resolve(p))), list: () => [] });
 const decide = (command: string, c: MatchCtx = ctx()) => checkToolCall(rules, "bash", { command }, c);
 const run = (command: string, c: MatchCtx = ctx()): string => decide(command, c)?.kind ?? "pass";
 

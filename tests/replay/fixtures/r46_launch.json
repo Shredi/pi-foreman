@@ -1,0 +1,30 @@
+{
+ "foreman": {
+  "rd": [
+   { "tools": [ { "name": "subagent", "arguments": { "agent": "builder", "task": "[[replay:r46reads]] implement item 1", "reads": 4 } } ] },
+   { "text": "Done." }
+  ],
+  "noinst": [
+   { "tools": [ { "name": "subagent", "arguments": { "agent": "builder", "task": "[[replay:r46npm]] install" } } ] },
+   { "text": "Done." }
+  ],
+  "inst": [
+   { "tools": [ { "name": "subagent", "arguments": { "agent": "builder", "task": "[[replay:r46npm]] install", "install": true } } ] },
+   { "text": "Done." }
+  ]
+ },
+ "builder": {
+  "r46reads": [
+   { "tools": [ { "name": "read", "arguments": { "path": "a.txt" } } ] },
+   { "tools": [ { "name": "read", "arguments": { "path": "a.txt" } } ] },
+   { "tools": [ { "name": "read", "arguments": { "path": "a.txt" } } ] },
+   { "tools": [ { "name": "read", "arguments": { "path": "a.txt" } } ] },
+   { "tools": [ { "name": "bash", "arguments": { "command": "echo tests" } } ] },
+   { "text": "Files changed: none" }
+  ],
+  "r46npm": [
+   { "tools": [ { "name": "bash", "arguments": { "command": "npm ci" } } ] },
+   { "text": "child: npm finished" }
+  ]
+ }
+}

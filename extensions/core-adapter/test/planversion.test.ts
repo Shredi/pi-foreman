@@ -18,7 +18,8 @@ test("plan version: the exact appendix headings end the body", () => {
 });
 
 test("plan version: ## Decisions and near misses are plan body", () => {
-  for (const h of ["## Decisions", "## Rulings and more", "### Ruling", "## ruling", " ## Ruling", "## Decision Log", "## Decision log: x"]) {
+  // R46 item 3: `### Ruling`, `## ruling`, `## Decision Log` and `## Decision log: x` are appendix headings now (r46-appendix-headings.test.ts)
+  for (const h of ["## Decisions", "## Rulings and more", " ## Ruling", "#### Ruling", "## Decision logic"]) {
     assert.notEqual(v(`${BODY}\n${h}\nx\n`), v(BODY), h);
   }
 });
@@ -26,7 +27,7 @@ test("plan version: ## Decisions and near misses are plan body", () => {
 test("plan version: a heading starting ## Addendum is an appendix (prefix match)", () => {
   assert.equal(v(`${BODY}\n## Addendum\nx\n`), v(BODY));
   assert.equal(v(`${BODY}\n## Addendum 2: security review\nx\n`), v(BODY));
-  assert.equal(v(`${BODY}\n### Addendum\nx\n`) === v(BODY), false);
+  assert.equal(v(`${BODY}\n### Addendum\nx\n`), v(BODY)); // R46 item 3: level 2 or 3
 });
 
 test("plan version: a body edit is a new version; edits below the heading are not", () => {

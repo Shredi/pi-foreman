@@ -56,7 +56,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [different-model-rule](#different-model-rule) | review |  | on | Moves a reviewer launch off the foreman's own model to the next differing rung, else to `ceremony.reviewModel`. | on by default | [review](review.md#different-model-rule) |
 | [review-overrides](#review-overrides) | review |  | opt-in | Sets the thinking level and/or model of a reviewer launch per occasion (`item`, `plan-review`, `pre-pr`, `second-opinion`). | `{"ceremony": {"reviewByOccasion": {"pre-pr": {"thinking": "high"}}}}` | [review](review.md#per-occasion-overrides) |
 | [self-planning](#self-planning) | ceremony |  | on | `ceremony.planner: self` (default): the foreman writes the heavy plan itself and its approved checkpoint satisfies the planner step; `role` keeps the planner launch and falls back to `self` when the planner's rank is not below the foreman's. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
-| [checkpoint-verdict](#checkpoint-verdict) | ceremony |  | on | A session opened with a parent takes the plan checkpoint verdict from the parent-written `ruling-plan.md` (APPROVED, REVISE <text> or REJECT) instead of a dialog; `human` keeps the dialog for an attended session. | on by default | [ceremony](ceremony.md) |
+| [checkpoint-verdict](#checkpoint-verdict) | ceremony |  | on | A session opened with a parent takes the plan checkpoint verdict from the parent-written `ruling-plan.md` (APPROVED, REVISE <text> or REJECT) instead of a dialog; plan state, the user tier and the plan phase (`/foreman plan`, `--plan-first`) survive `/reload` and resume; `human` keeps the dialog for an attended session. | on by default | [ceremony](ceremony.md) |
 | [plan-review](#plan-review) | review | toggle | off | Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan version (the body above any ruling, decision-log or addendum appendix, so an appended ruling needs no new review); on for heavy by default, opt-in for trivial and standard. | `{"ceremony": {"planReview": {"standard": true}}}` | [review](review.md#plan-review) |
 | [findings](#findings) | review |  | on | Records every reviewer run's located findings locally, with `foreman findings` to list, dismiss or export them and `foreman retro models` to compare reviewer models. | on by default | [review](review.md#findings-store) |
 | [bench](#bench) | ops |  | opt-in | Measures harness changes over Harbor tasks in local Docker, and reviewer models over planted-defect diffs with `foreman bench review`. | `foreman bench review --tasks bench/review-samples --dry-run` | [bench](bench.md#running) |
@@ -86,7 +86,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [bridge-isolation](#bridge-isolation) | safety |  | on | With the Claude bridge, points `CLAUDE_CONFIG_DIR` at an empty folder so the host's Claude Code settings, hooks and plugins do not load into bridge turns. `bridge.promptCacheTtl` sets Claude Code's prompt-cache TTL for bridge turns: 1h for the foreman, 5m for subagents. | on by default | [safety](safety.md#bridge-isolation) |
 | [sessions](#sessions) | sessions |  | on | `/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom. The session runs on the `session-foreman` role's model (default: the opening session's own model) and never on a higher rank. | on by default | [sessions](sessions.md#session-commands) |
 | [remote-sessions](#remote-sessions) | sessions |  | opt-in | `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. By default (`returnPath` `pull`) the child appends its notices to an outbox file on that machine and the parent fetches them over its own SSH call, so the remote never connects back; `push` sends them by cross-machine pi-intercom notices instead. The parent mirrors the notices into files. `foreman session close-remote` (and `/foreman close`) closes such a child over the same SSH call. User or overlay config only. | `{"sessions": {"machines": {"alpha": {}}}}` | [sessions](sessions.md#remote-child-sessions) |
-| [round-state](#round-state) | sessions |  | on | In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns only from the parent's `ruling.md` newer than both the plan and the handoff plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
+| [round-state](#round-state) | sessions |  | on | In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns from the session's own state entry, or from the parent's `ruling-plan.md` or `ruling.md` newer than both the plan and the handoff plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
 | [remote-intercom](#remote-intercom) | sessions | toggle, relaxes safety | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [sync](#sync) | ops |  | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
 | [retro](#retro) | retro | toggle | on | `/retro` prints the session's friction metrics, writes permission-allow proposals and files findings to a local backlog read with `foreman backlog`. | on by default | [retro](retro.md#switches) |
@@ -332,7 +332,7 @@ Switch: `ceremony.reviewByOccasion` is non-empty.
 
 ### checkpoint-verdict
 
-**Plan checkpoint verdict by parent file.** A session opened with a parent takes the plan checkpoint verdict from the parent-written `ruling-plan.md` (APPROVED, REVISE <text> or REJECT) instead of a dialog; `human` keeps the dialog for an attended session.
+**Plan checkpoint verdict by parent file.** A session opened with a parent takes the plan checkpoint verdict from the parent-written `ruling-plan.md` (APPROVED, REVISE <text> or REJECT) instead of a dialog; plan state, the user tier and the plan phase (`/foreman plan`, `--plan-first`) survive `/reload` and resume; `human` keeps the dialog for an attended session.
 
 | Key | Default | Layer |
 |---|---|---|
@@ -346,6 +346,7 @@ Switch: `ceremony.planReview.standard` is true.
 
 | Key | Default | Layer |
 |---|---|---|
+| `ceremony.planReviewMax` | `4` | any layer |
 | `ceremony.planReview.trivial` | `false` | tighten-only (only true is accepted) |
 | `ceremony.planReview.standard` | `false` | tighten-only (only true is accepted) |
 | `ceremony.planReview.heavy` | `true` | tighten-only (only true is accepted) |
@@ -413,6 +414,8 @@ No config key.
 | `ceremony.foremanReads.after.deny` | unset | tighten-only (lower only, minimum 1) |
 | `ceremony.childReads.<x>.warn` | `builder`: `20`, `reviewer`: `15` | tighten-only (lower only) |
 | `ceremony.childReads.<x>.deny` | `builder`: `40`, `reviewer`: `30` | tighten-only (lower only) |
+| `ceremony.childReads.<x>.perFile` | `builder`: `5`, `reviewer`: `2` | tighten-only (lower only) |
+| `ceremony.childReads.<x>.max` | `builder`: `120`, `reviewer`: `120` | tighten-only (lower only) |
 | `ceremony.recheckBudget` | `3` | tighten-only (lower only, minimum 0) |
 
 ### launch-wait
@@ -657,7 +660,7 @@ Switch: `sessions.machines` is non-empty.
 
 ### round-state
 
-**Reload-safe round state.** In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns only from the parent's `ruling.md` newer than both the plan and the handoff plan.
+**Reload-safe round state.** In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns from the session's own state entry, or from the parent's `ruling-plan.md` or `ruling.md` newer than both the plan and the handoff plan.
 
 No config key.
 
@@ -840,7 +843,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [findings](#findings) | `foreman findings`, `foreman retro models` |
 | [bench](#bench) | `foreman bench`, `foreman bench review`, `foreman bench review-table` |
 | [bench-climb](#bench-climb) | `foreman bench review --mode climb --rungs <a>,<b>` |
-| [ceremony-tiers](#ceremony-tiers) | `/ceremony` |
+| [ceremony-tiers](#ceremony-tiers) | `/ceremony`, `/foreman plan` |
 | [read-budgets](#read-budgets) | `/foreman budget` |
 | [waits](#waits) | `/foreman waits` |
 | [pr-ops](#pr-ops) | `/foreman prs` |
