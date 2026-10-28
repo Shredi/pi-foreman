@@ -33,7 +33,8 @@ test("core.attributesFile: merge with the file under .workflow/ is not floored",
 });
 
 test("core.attributesFile: the main checkout's .workflow/ counts for a linked worktree", () => {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-attr-")));
+  // native realpath: the long form of the temp dir (no 8.3 `RUNNER~1`; a word with a tilde is never a literal path)
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-attr-")));
   try {
     const main = path.join(base, "main");
     const wt = path.join(base, "wt");

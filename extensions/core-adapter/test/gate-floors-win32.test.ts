@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pathFloors, type FloorEnv } from "../floors.ts";
+import { lineFloors, pathFloors, type FloorEnv } from "../floors.ts";
+import { parseShell } from "../shellast.ts";
 import type { Resolver } from "../pathnorm.ts";
 
 // A stubbed win32 file system: the long names exist, `RUNNER~1` is the 8.3 alias of `runneradmin`, `agentlink` is a symlink to the agent dir.
@@ -16,6 +17,10 @@ const TABLE = new Map<string, string>([
   ["c:\\links\\agentlink", "C:\\Users\\runneradmin\\.pi\\agent"],
 ]);
 const resolver: Resolver = (p) => TABLE.get(p.replace(/\//g, "\\").toLowerCase()) ?? null;
+
+TABLE.set("c:\\work", "C:\\work");
+TABLE.set("c:\\work\\repo", "C:\\work\\repo");
+TABLE.set("c:\\work\\repo~1", "C:\\work\\repo");
 
 const env: FloorEnv = {
   platform: "win32",
@@ -44,6 +49,13 @@ test("win32 sim: other files next to the auth file and under the link are not fl
   for (const p of ["C:/links/agentlink/other.json", "C:/Users/RUNNER~1/.pi/agent/settings.json", "~/.pi/agent/other.json"]) {
     assert.equal(pathFloors({ path: p }, env), null, p);
   }
+});
+
+test("win32 sim: core.attributesFile under .workflow/ in any spelling is not floored; outside is", () => {
+  const hit = (v: string) => lineFloors(`git -c core.attributesFile=${v} merge x`, parseShell(`git -c core.attributesFile=${v} merge x`, { cwd: env.cwd }), env)?.rule ?? null;
+  for (const v of ["C:/work/repo/.workflow/a", "c:/WORK/Repo/.workflow/a", "C:\\work\\repo\\.workflow\\a".replace(/\\/g, "/")]) assert.equal(hit(v), null, v);
+  assert.equal(hit("C:/work/repo/src/a"), "floor-git-attributes-file");
+  assert.equal(hit("C:/work/other/.workflow/a"), "floor-git-attributes-file");
 });
 
 test("win32 sim: the same spellings under the session's own short-name agent dir", () => {

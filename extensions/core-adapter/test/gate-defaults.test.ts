@@ -54,7 +54,8 @@ test("default-build-test: the manifest's runners at the worktree root only", () 
 test("default-write-in: worktree, scratch, tmp (tmpAccess); not outside, not for a child's tmp", () => {
   assert.equal(rule(sh("touch src/new.ts")), "default-write-in");
   assert.equal(rule(sh(`cat a.txt > ${shPath(scr)}/o.txt`)), "default-read");
-  assert.ok(rule(sh("cat a.txt > /tmp/pf41-o.txt")));
+  // a bare /tmp redirect is a default write on POSIX only (effects.ts: writes under /tmp are not a win32 default)
+  if (process.platform !== "win32") assert.ok(rule(sh("cat a.txt > /tmp/pf41-o.txt")));
   assert.notEqual(kind(sh("cat a.txt > /tmp/pf41-o.txt", { r: { tmpAccess: false } })), "allow");
   assert.notEqual(kind(sh("cat a.txt > /tmp/pf41-o.txt", { r: CHILD })), "allow");
   assert.ok(rule(sh(`cat a.txt > ${shPath(scr)}/o.txt`, { r: CHILD })));

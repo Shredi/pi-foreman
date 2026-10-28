@@ -29,7 +29,8 @@ type Outcome = { verdict: "allow" | "deny" | "ask"; layer: "floor" | "selfmod" |
 const cases: EvalCase[] = fs.readFileSync(fixtureFile, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
 const answers: Record<string, { verdict: string; entry: string }> = JSON.parse(fs.readFileSync(answersFile, "utf8"));
 
-const base = fs.realpathSync(mkTestTmp("pf41-eval-"));
+// native realpath: the long form of the temp dir; a shell word with an 8.3 tilde (`RUNNER~1`) is never a literal path (mrg-001 would stop at the floor)
+const base = fs.realpathSync.native(mkTestTmp("pf41-eval-"));
 const dir = (...p: string[]): string => path.join(base, ...p);
 const wt = dir("wt");
 const scr = dir("tmp", "pi-foreman-scratch", "mine");

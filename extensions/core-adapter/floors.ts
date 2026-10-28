@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ShellSegment } from "./shellast.ts";
-import { normPath, type Resolver } from "./pathnorm.ts";
+import { normPath, sameOrUnder, type Resolver } from "./pathnorm.ts";
 
 interface FloorKeys {
   keyPatterns: string[];
@@ -230,9 +230,14 @@ function attributesFloor(call: GitCall, value: string, env: FloorEnv): FloorHit 
   const alt = "Keep the attributes file under the repo's .workflow/ and use `git -c core.attributesFile=<repo>/.workflow/<file> merge ...`.";
   if (call.sub !== "merge") return hit("git-attributes-file", `\`-c core.attributesFile\` with \`git ${call.sub || "?"}\` can name a merge or filter driver that runs arbitrary commands; only merge is allowed. ${alt}`);
   const cwd = call.cwd ?? env.cwd;
+  const win = (env.platform ?? process.platform) === "win32";
+  // win32: root and candidate meet in the one long-name form of pathnorm (drive, 8.3, case, separators)
+  const wv = win && isWord(value) ? expandWord(value, env, true) : null;
   const abs = isWord(value) ? resolveWord(value, cwd, env) : null;
   const real = abs ? (realDeep(abs) ?? abs) : null;
-  const under = real !== null && repoRoots(cwd).some((r) => insideRoot(real, path.join(realDeep(r) ?? r, ".workflow"), env.platform));
+  const under = win
+    ? wv !== null && repoRoots(cwd).some((r) => sameOrUnder("win32", path.win32.join(r, ".workflow"), wv, cwd, env.resolver))
+    : real !== null && repoRoots(cwd).some((r) => insideRoot(real, path.join(realDeep(r) ?? r, ".workflow"), env.platform));
   if (!under) return hit("git-attributes-file", `The attributes file '${value}' is not under the repo's .workflow/ (or cannot be resolved); a merge driver it names runs arbitrary commands. ${alt}`);
   return null;
 }
