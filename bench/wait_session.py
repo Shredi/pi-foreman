@@ -520,6 +520,8 @@ def drive_rpc(args, row, env, status):
         status["waiter_end_ms"] = int(time.time() * 1000)
         pi.close()
         rpc_log.close()
+        # Pi's startup errors only reach stderr; keep them next to rpc.jsonl.
+        (Path(args.out) / "pi-stderr.log").write_text("\n".join(pi.stderr) + "\n", encoding="utf-8")
 
 
 def drive_print(args, row, env, status):
@@ -622,6 +624,7 @@ def versions(row):
     except (OSError, subprocess.SubprocessError, IndexError):
         v["pi"] = None
     for pkg in list(row.get("_packages") or []) + list(row.get("_version_packages") or []):
+        pkg = pkg.get("source") if isinstance(pkg, dict) else pkg
         try:
             meta = json.loads((Path(pkg) / "package.json").read_text("utf-8"))
             v[meta.get("name", pkg)] = meta.get("version")
