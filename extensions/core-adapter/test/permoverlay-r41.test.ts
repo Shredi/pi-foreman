@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOverlayRules, checkToolCall, ownStateRead, readBaseline, type Decision, type MatchCtx } from "../permoverlay.ts";
+import { shPath } from "./_shpath.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const agentDir = "/pf41/agent";
@@ -22,10 +23,11 @@ test("r41: egrep/fgrep/grep -E recursion never joins an own-read chain", () => {
   // resolved: on win32 a drive-less own-read pattern never equals the drive-resolved candidate (production patterns are absolute)
   const own = path.resolve(`${agentDir}/pi-foreman/state/usage/s1.jsonl`);
   const c: MatchCtx = { ...ctx(), ownReads: [own] };
-  assert.equal(ownStateRead(`cat ${own}; grep x ${own}`, c), true);
-  assert.equal(ownStateRead(`cat ${own}; egrep x /pf41/other.txt`, c), true);
+  const sh = shPath(own);
+  assert.equal(ownStateRead(`cat ${sh}; grep x ${sh}`, c), true);
+  assert.equal(ownStateRead(`cat ${sh}; egrep x /pf41/other.txt`, c), true);
   for (const unit of ["grep -r x /pf41", "egrep -r x /pf41", "fgrep -R x /pf41", "egrep -rn x /pf41", "grep -Er x /pf41", "grep -E -r x /pf41", "fgrep --recursive x /pf41", "egrep -d recurse x /pf41", "grep -P -R x /pf41", "grep -G --directories=recurse x /pf41"]) {
-    assert.equal(ownStateRead(`cat ${own}; ${unit}`, c), false, unit);
+    assert.equal(ownStateRead(`cat ${sh}; ${unit}`, c), false, unit);
   }
 });
 
