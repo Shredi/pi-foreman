@@ -90,8 +90,11 @@ function classOf(r: GateRoots, platform: string, abs: string, dir: Dir): string 
   if (dir === "read" && r.install.some(inside)) return "install";
   if (dir === "read" && r.handoffs.some(inside)) return "handoff";
   if (dir === "write") {
-    const base = px(platform).basename(abs);
-    if (r.handoffs.some((h) => under(platform, px(platform).dirname(abs), h, r.worktree) && under(platform, h, px(platform).dirname(abs), r.worktree) && inside(h)) && (base === "plan.md" || base === "result.md")) return "handoff";
+    const base = win ? px(platform).basename(abs).toLowerCase() : px(platform).basename(abs);
+    // win32: the directory may be spelled short (`RUNNER~1`) or in another case, so its long form counts too
+    const sameDir = (h: string, d: string): boolean => under(platform, d, h, r.worktree) && under(platform, h, d, r.worktree);
+    const dirs = win ? [px(platform).dirname(abs), px(platform).dirname(ra)] : [px(platform).dirname(abs)];
+    if (r.handoffs.some((h) => dirs.some((d) => sameDir(h, d) || (win && !h.includes("*") && sameDir(longRoot(h), d))) && inside(h)) && (base === "plan.md" || base === "result.md")) return "handoff";
   }
   if (r.child) return null;
   if (r.tmpAccess && r.tmp.some(inside) && !(r.scratchBase && inside(r.scratchBase))) return "tmp";
