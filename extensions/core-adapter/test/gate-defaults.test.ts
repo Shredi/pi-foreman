@@ -12,6 +12,7 @@ import type { FloorEnv } from "../floors.ts";
 import type { OpaqueReason, ShellSegment } from "../shellast.ts";
 import { r11Rig } from "./_r11rig.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { shPath } from "./_shpath.ts";
 
 const base = fs.realpathSync(mkTestTmp("pf41-def-"));
 const wt = path.join(base, "wt");
@@ -38,7 +39,7 @@ const kind = (r: GateResult): string => (!r ? "pass" : "allow" in r ? "allow" : 
 const CHILD = { child: true, role: "builder" };
 
 test("default-read: the effects.ts read class, pipes and cd inside the worktree", () => {
-  for (const l of ["ls", "ls -la src", "cat a.txt", "head -n 3 a.txt | wc -l", "grep -rn foo src", "egrep -n x a.txt", "fgrep x a.txt", "grep -E x a.txt", "rg foo src", "cd src && ls", `cat ${path.join(base, "pi", "x.d.ts")}`]) assert.match(rule(sh(l)) ?? "", /^default-read/, l);
+  for (const l of ["ls", "ls -la src", "cat a.txt", "head -n 3 a.txt | wc -l", "grep -rn foo src", "egrep -n x a.txt", "fgrep x a.txt", "grep -E x a.txt", "rg foo src", "cd src && ls", `cat ${shPath(path.join(base, "pi", "x.d.ts"))}`]) assert.match(rule(sh(l)) ?? "", /^default-read/, l);
   for (const l of ["egrep -R x .", "grep -ER x .", "fgrep --dereference-recursive x .", "grep -R x .", "rg -L x .", "find . -exec ls {} +", "diff -r a b", "cat /etc/hosts", "cd /etc && ls"]) assert.notEqual(kind(sh(l)), "allow", l);
 });
 
@@ -52,11 +53,11 @@ test("default-build-test: the manifest's runners at the worktree root only", () 
 
 test("default-write-in: worktree, scratch, tmp (tmpAccess); not outside, not for a child's tmp", () => {
   assert.equal(rule(sh("touch src/new.ts")), "default-write-in");
-  assert.equal(rule(sh(`cat a.txt > ${scr}/o.txt`)), "default-read");
+  assert.equal(rule(sh(`cat a.txt > ${shPath(scr)}/o.txt`)), "default-read");
   assert.ok(rule(sh("cat a.txt > /tmp/pf41-o.txt")));
   assert.notEqual(kind(sh("cat a.txt > /tmp/pf41-o.txt", { r: { tmpAccess: false } })), "allow");
   assert.notEqual(kind(sh("cat a.txt > /tmp/pf41-o.txt", { r: CHILD })), "allow");
-  assert.ok(rule(sh(`cat a.txt > ${scr}/o.txt`, { r: CHILD })));
+  assert.ok(rule(sh(`cat a.txt > ${shPath(scr)}/o.txt`, { r: CHILD })));
   assert.ok(rule(sh("touch src/new.ts", { r: CHILD })));
   assert.notEqual(kind(sh("touch /etc/pf41")), "allow");
   assert.notEqual(kind(sh("cat a.txt > /pf41/out.txt")), "allow");
@@ -100,8 +101,8 @@ test("git push: only the explicit own-branch shape; every other shape is no defa
 });
 
 test("default-gh-read: read-only gh/glab, no method, field, input or graphql; run download only into scratch", () => {
-  for (const l of ["gh pr view 12 --json state,title", "gh pr checks 12", "gh pr diff 12", "gh pr list --limit 5", "gh pr status", "gh run view 99 --log-failed", "gh run list -L 3 -b main", "gh api repos/a/b/pulls", "gh api repos/a/b/pulls --jq '.[].title'", "glab mr list", "glab ci status", `gh run download 99 -D ${scr}/dl`, `gh pr diff 12 > ${scr}/d.patch`, "gh pr view 12 | head -n 3"]) assert.ok(rule(sh(l))?.includes("default-gh-read") || /default-read/.test(rule(sh(l)) ?? ""), l);
-  for (const l of ["gh api -X POST repos/a/b/issues", "gh api repos/a/b/issues --method PATCH", "gh api graphql -f query=x", "gh api graphql", "gh api repos/a/b -f x=y", "gh api repos/a/b -F x=@f", "gh api repos/a/b --input f", "gh api repos/a/b -H 'X: y'", "gh api repos/a/b/pulls --jq env", "gh api", "gh pr create", "gh pr merge 1", "gh pr view 12 --web", "gh run download 99", "gh run download 99 -D /tmp/x", "gh run download 99 -D ../x", "gh release create v1", "gh auth token", "glab mr merge 1", `gh pr diff 12 > ${wt}/d.patch`, "gh pr diff 12 > /pf41/out", "gh pr view 12 | sh"]) assert.notEqual(kind(sh(l)), "allow", l);
+  for (const l of ["gh pr view 12 --json state,title", "gh pr checks 12", "gh pr diff 12", "gh pr list --limit 5", "gh pr status", "gh run view 99 --log-failed", "gh run list -L 3 -b main", "gh api repos/a/b/pulls", "gh api repos/a/b/pulls --jq '.[].title'", "glab mr list", "glab ci status", `gh run download 99 -D ${shPath(scr)}/dl`, `gh pr diff 12 > ${shPath(scr)}/d.patch`, "gh pr view 12 | head -n 3"]) assert.ok(rule(sh(l))?.includes("default-gh-read") || /default-read/.test(rule(sh(l)) ?? ""), l);
+  for (const l of ["gh api -X POST repos/a/b/issues", "gh api repos/a/b/issues --method PATCH", "gh api graphql -f query=x", "gh api graphql", "gh api repos/a/b -f x=y", "gh api repos/a/b -F x=@f", "gh api repos/a/b --input f", "gh api repos/a/b -H 'X: y'", "gh api repos/a/b/pulls --jq env", "gh api", "gh pr create", "gh pr merge 1", "gh pr view 12 --web", "gh run download 99", "gh run download 99 -D /tmp/x", "gh run download 99 -D ../x", "gh release create v1", "gh auth token", "glab mr merge 1", `gh pr diff 12 > ${shPath(wt)}/d.patch`, "gh pr diff 12 > /pf41/out", "gh pr view 12 | sh"]) assert.notEqual(kind(sh(l)), "allow", l);
 });
 
 test("opaque never defaults: every OpaqueReason, as a line and as a segment", () => {

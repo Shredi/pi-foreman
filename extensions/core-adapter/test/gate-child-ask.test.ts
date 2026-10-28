@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { r11Rig } from "./_r11rig.ts";
+import { shPath } from "./_shpath.ts";
 import { gateLogFile } from "../gatelog.ts";
 import { awaitRuling, writeRoundAsk } from "../gatedialog.ts";
 import { childAskDir, ChildAskWatch } from "../childask.ts";
@@ -314,7 +315,7 @@ test("floors: a child's tool writes under state/child-asks (write, edit, shell r
   };
   assert.match(await refused((b) => ["write", { path: path.join(b, "ruling-1.md"), content: "ALLOW\n" }]), /^pi-foreman: denied by the permission floor \(policy-file\)/);
   assert.match(await refused((b) => ["edit", { path: path.join(b, "ruling-2.md"), edits: [{ oldText: "a", newText: "b" }] }]), /^pi-foreman: denied by the permission floor \(policy-file\)/);
-  assert.match(await refused((b) => ["bash", { command: `echo ALLOW > ${path.join(b, "ruling-3.md")}` }]), /^pi-foreman: denied by the permission floor/);
-  assert.match(await refused((b) => ["bash", { command: `cp /tmp/x ${path.join(b, "ruling-4.md")}` }]), /^pi-foreman: denied by the permission floor/);
+  assert.match(await refused((b) => ["bash", { command: `echo ALLOW > ${shPath(path.join(b, "ruling-3.md"))}` }]), /^pi-foreman: denied by the permission floor/);
+  assert.match(await refused((b) => ["bash", { command: `cp /tmp/x ${shPath(path.join(b, "ruling-4.md"))}` }]), /^pi-foreman: denied by the permission floor/);
   assert.match(await refused((b) => ["write", { path: path.join(b, "ask.md"), content: "# Ask 9: x\n" }]), /^pi-foreman: denied by the permission floor \(policy-file\)/);
 });

@@ -39,7 +39,7 @@ test("script facts: the fact line format per interpreter form", () => {
   assert.deepEqual(scriptFacts("./scripts/clean.sh arg", root, root), ["script: scripts/clean.sh tracked-unchanged"]);
   assert.deepEqual(scriptFacts("sh -e scripts/edited.sh", root, root), ["script: scripts/edited.sh modified"]);
   assert.deepEqual(scriptFacts("node scripts/new.sh --x", root, root), ["script: scripts/new.sh untracked"]);
-  assert.deepEqual(scriptFacts(`bash ${path.join(outsideDir, "o.sh")}`, root, root), [`script: ${path.join(outsideDir, "o.sh")} outside-repo`]);
+  assert.deepEqual(scriptFacts(`bash '${path.join(outsideDir, "o.sh")}'`, root, root), [`script: ${path.join(outsideDir, "o.sh")} outside-repo`]);
 });
 
 test("script facts: no script file, no fact", () => {

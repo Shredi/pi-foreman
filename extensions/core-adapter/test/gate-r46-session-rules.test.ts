@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
+import { shPath } from "./_shpath.ts";
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
 
@@ -46,11 +47,11 @@ for (const child of [false, true]) {
     const forms: ((f: string) => [string, Record<string, unknown>])[] = [
       (f) => ["write", { path: f, content: "x" }],
       (f) => ["edit", { path: f, edits: [{ oldText: "{}", newText: "[]" }] }],
-      (f) => ["bash", { command: `echo x > ${f}` }],
-      (f) => ["bash", { command: `echo x >> ${f}` }],
-      (f) => ["bash", { command: `cp ${r.project}/a.jsonl ${f}` }],
-      (f) => ["bash", { command: `mv ${r.project}/a.jsonl ${f}` }],
-      (f) => ["bash", { command: `tee ${f}` }],
+      (f) => ["bash", { command: `echo x > ${shPath(f)}` }],
+      (f) => ["bash", { command: `echo x >> ${shPath(f)}` }],
+      (f) => ["bash", { command: `cp ${shPath(r.project)}/a.jsonl ${shPath(f)}` }],
+      (f) => ["bash", { command: `mv ${shPath(r.project)}/a.jsonl ${shPath(f)}` }],
+      (f) => ["bash", { command: `tee ${shPath(f)}` }],
       (f) => ["foreman_move", { src: path.join(r.project, "a.jsonl"), dst: f }],
       (f) => ["foreman_copy", { src: path.join(r.project, "a.jsonl"), dst: f }],
     ];
@@ -65,8 +66,8 @@ for (const child of [false, true]) {
   test(`${who}: reading a session file and writing other files below the session dir are not the floor`, async (t) => {
     const r = await rig(t, { child, reviewAllows: true });
     for (const [tool, input] of [
-      ["bash", { command: `cat ${r.file}` }],
-      ["bash", { command: `cp ${r.file} ${r.project}/copy.jsonl` }],
+      ["bash", { command: `cat ${shPath(r.file)}` }],
+      ["bash", { command: `cp ${shPath(r.file)} ${shPath(r.project)}/copy.jsonl` }],
       ["write", { path: path.join(r.sessionDir, "subagent-artifacts", "run1_output.md"), content: "x" }],
     ] as [string, Record<string, unknown>][]) {
       const res = await r.call(tool, input);
@@ -79,8 +80,8 @@ for (const child of [false, true]) {
     let moves = 0;
     for (const dir of [r.sessionDir, r.outer, r.sessions]) {
       const calls: [string, Record<string, unknown>][] = [
-        ["bash", { command: `mv ${dir} ${dir}.old` }],
-        ["bash", { command: `mv ${dir} ${path.join(r.project, "elsewhere")}` }],
+        ["bash", { command: `mv ${shPath(dir)} ${shPath(dir)}.old` }],
+        ["bash", { command: `mv ${shPath(dir)} ${shPath(path.join(r.project, "elsewhere"))}` }],
         ["foreman_move", { src: dir, dst: `${dir}.old` }],
         ["foreman_move", { src: dir, dst: path.join(r.project, "elsewhere") }],
       ];
@@ -113,7 +114,7 @@ for (const child of [false, true]) {
     const before = r.titles.length;
     for (const [tool, input] of [
       ["write", { path: live, content: "{}" }],
-      ["bash", { command: `echo {} > ${live}` }],
+      ["bash", { command: `echo {} > ${shPath(live)}` }],
     ] as [string, Record<string, unknown>][]) {
       const why = await blockedCall(r, tool, input);
       assert.ok(why, `${who}: ${tool} ${JSON.stringify(input)} was allowed`);

@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { lineFloors, type FloorEnv } from "../floors.ts";
 import { parseShell } from "../shellast.ts";
+import { shPath } from "./_shpath.ts";
 
 const env: FloorEnv = { cwd: "/w/repo", home: "/h/me", agentDir: "/h/me/.pi/agent", writeRoots: ["/w/repo", "/s/scr", "/tmp"], protectedBranches: ["release"], currentBranch: () => "feature/x", remoteHead: () => "trunk" };
 const hit = (line: string, e: FloorEnv = env) => lineFloors(line, parseShell(line, { cwd: e.cwd }), e);
@@ -41,9 +42,9 @@ test("core.attributesFile: the main checkout's .workflow/ counts for a linked wo
     fs.mkdirSync(wt);
     fs.writeFileSync(path.join(wt, ".git"), `gitdir: ${path.join(main, ".git", "worktrees", "wt")}\n`);
     const e: FloorEnv = { ...env, cwd: wt, writeRoots: [wt] };
-    assert.equal(hit(`git -c core.attributesFile=${main}/.workflow/a merge x`, e), null);
-    assert.equal(hit(`git -c core.attributesFile=${wt}/.workflow/a merge x`, e), null);
-    assert.equal(hit(`git -c core.attributesFile=${base}/a merge x`, e)?.rule, "floor-git-attributes-file");
+    assert.equal(hit(`git -c core.attributesFile=${shPath(main)}/.workflow/a merge x`, e), null);
+    assert.equal(hit(`git -c core.attributesFile=${shPath(wt)}/.workflow/a merge x`, e), null);
+    assert.equal(hit(`git -c core.attributesFile=${shPath(base)}/a merge x`, e)?.rule, "floor-git-attributes-file");
   } finally {
     fs.rmSync(base, { recursive: true, force: true });
   }
