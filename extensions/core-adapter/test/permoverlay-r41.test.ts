@@ -19,7 +19,8 @@ const bash = (command: string, role: "main" | "child" = "main", r = rules): Deci
 const tool = (name: string, input: Record<string, unknown>, role: "main" | "child" = "main", r = rules): Decision | null => checkToolCall(r, name, input, ctx(role));
 
 test("r41: egrep/fgrep/grep -E recursion never joins an own-read chain", () => {
-  const own = `${agentDir}/pi-foreman/state/usage/s1.jsonl`;
+  // resolved: on win32 a drive-less own-read pattern never equals the drive-resolved candidate (production patterns are absolute)
+  const own = path.resolve(`${agentDir}/pi-foreman/state/usage/s1.jsonl`);
   const c: MatchCtx = { ...ctx(), ownReads: [own] };
   assert.equal(ownStateRead(`cat ${own}; grep x ${own}`, c), true);
   assert.equal(ownStateRead(`cat ${own}; egrep x /pf41/other.txt`, c), true);

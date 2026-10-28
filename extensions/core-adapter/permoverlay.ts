@@ -82,6 +82,7 @@ import { probeFileHit } from "./splitliteral.ts";
 import { gitProtectedRead, gitReadWrites } from "./effects.ts";
 import { parseShell as parseAst } from "./shellast.ts";
 import { netReadCommand } from "./netread.ts";
+import { normPath } from "./pathnorm.ts";
 
 export interface PathRule {
   pattern: string;
@@ -3654,7 +3655,7 @@ export function ownStateRead(command: string, ctx0: MatchCtx): boolean {
     return pathCandidates(w, ctx).filter((x) => path.isAbsolute(x) || path.win32.isAbsolute(x)).every((x) => {
       const m = /\/pi-foreman\/state\/usage(?:\/(.*))?$/.exec(x.replace(/\\/g, "/"));
       // win32: the candidate is drive-resolved, the pattern may be drive-less
-      return !m || ownUsage.has(x) || (ctx.platform === "win32" && [...ownUsage].some((p) => pathMatches(p, x, ctx)));
+      return !m || ownUsage.has(x) || (ctx.platform === "win32" && [...ownUsage].some((p) => normPath("win32", p, ctx.cwd, defaults(ctx).realpath) === normPath("win32", x, ctx.cwd, defaults(ctx).realpath)));
     });
   };
   const vars = new Map<string, string>();
