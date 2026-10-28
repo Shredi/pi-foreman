@@ -565,6 +565,9 @@ class _BenchPi(BaseInstalledAgent):
         with tempfile.TemporaryDirectory(prefix="pf-bench-repo-") as tmp:
             tracked_copy(tmp)
             await environment.upload_dir(tmp, R_REPO)
+        # The adapter imports unbash (shellast.ts) from the repo's own node_modules; the tracked copy has none.
+        await self.exec_as_root(environment, command="set -e; " + NVM + retry_sh(
+            "npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix %s" % R_REPO))
         await self.exec_as_root(environment, command=AGENT_USER_SETUP)
         logs = shlex.quote(str(self.environment_logs_dir))
         await self.exec_as_root(environment, command="chmod -R a+rX %s; for d in %s %s; do [ ! -d $d ] || chmod -R a+rX $d; done; "
