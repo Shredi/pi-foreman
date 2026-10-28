@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import coreAdapter from "../index.ts";
 import { BINDING_NS, BINDINGS_ENV } from "../usage.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
+import { shPath } from "./_shpath.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Block = { block?: boolean; reason?: string } | undefined;
@@ -127,7 +128,7 @@ test("r18 child: a toolchain-probe line goes to the gate's review; allow -> a ga
 // R41: the selfmod-state-read rule (selfmod.ts) denies a child's read of another session's state dir; no model call.
 test("r18 child: a read of another session's state dir is denied by the selfmod-state-read rule, no review", async (t) => {
   const c = await childRig(t, V("deny", "secret-access", "another session's state"));
-  const r = await c.bash(OTHER_STATE.replace(/~\/\.pi\/agent(?=\/)/g, c.agentDir).replace(/\{agentDir\}/g, c.agentDir).replace(/\{other\}/g, "01a16999-other"));
+  const r = await c.bash(OTHER_STATE.replace(/~\/\.pi\/agent(?=\/)/g, shPath(c.agentDir)).replace(/\{agentDir\}/g, shPath(c.agentDir)).replace(/\{other\}/g, "01a16999-other"));
   assert.equal(r?.block, true);
   assert.match(r?.reason ?? "", /selfmod-state-read.*report this line to the foreman/);
   assert.equal(c.sent.length, 0);

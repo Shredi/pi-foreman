@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { gateDecide, type GateResult } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import type { FloorEnv } from "../floors.ts";
+import { shPath } from "./_shpath.ts";
 
 const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf41-selfmod-")));
 const wt = path.join(base, "wt");
@@ -51,8 +52,8 @@ test("owner: shell writes (redirect, cp, mv, rm, ln) on a protected file ask", (
   for (const line of ["echo x > .pi/settings.json", "echo x >> .pi/settings.json", "cp /x.json .pi/settings.json", "mv a.json .pi/settings.json", "rm .pi/settings.json", "rm -f .pi/settings.json", "ln -s /x .pi/settings.json", "cp -t .pi /x.json"]) {
     assert.ok(ruleOf(sh(line)).startsWith("ask:selfmod-project-"), line);
   }
-  assert.equal(ruleOf(sh(`echo x > ${agent}/settings.json`)), "ask:selfmod-agent-settings");
-  assert.equal(ruleOf(sh(`rm ${agent}/pi-foreman/state/live/other.json`)), "ask:selfmod-state");
+  assert.equal(ruleOf(sh(`echo x > ${shPath(agent)}/settings.json`)), "ask:selfmod-agent-settings");
+  assert.equal(ruleOf(sh(`rm ${shPath(agent)}/pi-foreman/state/live/other.json`)), "ask:selfmod-state");
   assert.equal(ruleOf(sh("cd .pi && rm settings.json")), "ask:selfmod-project-settings");
 });
 
@@ -66,7 +67,7 @@ test("a symlink or hard link inside .pi/scratch is the settings file", () => {
 
 test("a child is denied with the rule name and what to report; it never gets an ask", () => {
   const c = { child: true, role: "builder" };
-  for (const r of [g("write", { path: ".pi/settings.json", content: "x" }, c), sh("rm .pi/settings.json", c), sh(`echo x > ${agent}/settings.json`, c)]) {
+  for (const r of [g("write", { path: ".pi/settings.json", content: "x" }, c), sh("rm .pi/settings.json", c), sh(`echo x > ${shPath(agent)}/settings.json`, c)]) {
     assert.ok(r && "block" in r, ruleOf(r));
     assert.match(r.rule, /^selfmod-/);
     assert.match(r.reason, new RegExp(`self-modification rule ${r.rule}.*report this line to the foreman`));
@@ -77,7 +78,7 @@ test("a child's read of other sessions' state is denied; its own handoff dir and
   const c = { child: true, role: "builder" };
   const stateFile = path.join(agent, "pi-foreman", "state", "live", "o.json");
   assert.equal(ruleOf(g("read", { path: stateFile }, c)), "block:selfmod-state-read");
-  assert.equal(ruleOf(sh(`cat ${stateFile}`, c)), "block:selfmod-state-read");
+  assert.equal(ruleOf(sh(`cat ${shPath(stateFile)}`, c)), "block:selfmod-state-read");
   assert.equal(ruleOf(g("read", { path: path.join(hand, "plan.md") }, c)), "allow:path-read-handoff");
   assert.equal(ruleOf(g("read", { path: stateFile })), "allow:path-read-owned", "an owner read of state is no selfmod hit");
 });
