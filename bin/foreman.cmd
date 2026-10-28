@@ -67,7 +67,10 @@ shift
 goto collects
 :runsetup
 node "%PF_HERE%..\setup.mjs" %PF_ARGS%
-exit /b %ERRORLEVEL%
+set "PF_RC=%ERRORLEVEL%"
+if not "%PF_RC%"=="0" exit /b %PF_RC%
+node --no-warnings --experimental-strip-types "%PF_HERE%..\scripts\foreman_review_warn.mjs" %PF_ARGS% 2>nul
+exit /b 0
 :features
 shift
 set "PF_ARGS="

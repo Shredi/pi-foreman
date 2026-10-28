@@ -4,7 +4,13 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 sub="${1:-}"
 if [ "$sub" = "setup" ]; then
     shift
-    exec node "$here/../setup.mjs" "$@"
+    rc=0
+    node "$here/../setup.mjs" "$@" || rc=$?
+    # the no-review-model warning (item 26); best effort, needs Node >= 22.6
+    if [ "$rc" -eq 0 ]; then
+        node --no-warnings --experimental-strip-types "$here/../scripts/foreman_review_warn.mjs" "$@" 2>/dev/null || true
+    fi
+    exit "$rc"
 fi
 if [ "$sub" = "dialogs" ]; then
     shift

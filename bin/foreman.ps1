@@ -3,7 +3,11 @@ $sub = if ($args.Count -gt 0) { [string]$args[0] } else { '' }
 $rest = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
 if ($sub -eq 'setup') {
     & node (Join-Path $PSScriptRoot '..\setup.mjs') @rest
-    exit $LASTEXITCODE
+    $rc = $LASTEXITCODE
+    if ($rc -eq 0) {
+        & node --no-warnings --experimental-strip-types (Join-Path $PSScriptRoot '..\scripts\foreman_review_warn.mjs') @rest 2>$null
+    }
+    exit $rc
 }
 if ($sub -eq 'features') {
     & node (Join-Path $PSScriptRoot '..\scripts\foreman_features.mjs') @rest
