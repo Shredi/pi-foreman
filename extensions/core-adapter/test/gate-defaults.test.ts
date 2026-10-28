@@ -3,7 +3,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { gateDecide, type GateResult } from "../gate.ts";
 import { DEFAULT_RULES, OWN_TOOLS, segmentDefault, toolDefault } from "../defaults.ts";
@@ -12,8 +11,9 @@ import type { GateRoots } from "../pathrules.ts";
 import type { FloorEnv } from "../floors.ts";
 import type { OpaqueReason, ShellSegment } from "../shellast.ts";
 import { r11Rig } from "./_r11rig.ts";
+import { mkTestTmp } from "./_tmpbase.ts";
 
-const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf41-def-")));
+const base = fs.realpathSync(mkTestTmp("pf41-def-"));
 const wt = path.join(base, "wt");
 const scr = path.join(base, "tmp", "pi-foreman-scratch", "mine");
 const tmpDir = path.join(base, "tmp");

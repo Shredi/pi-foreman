@@ -5,7 +5,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { gateDecide } from "../gate.ts";
@@ -15,6 +14,7 @@ import { parseShell } from "../shellast.ts";
 import type { GateRoots } from "../pathrules.ts";
 import type { FloorEnv } from "../floors.ts";
 import type { GitFacts } from "../defaults.ts";
+import { mkTestTmp } from "./_tmpbase.ts";
 import { buildEval, findPrivate, main as permsMain } from "../../../scripts/foreman_perms.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -28,7 +28,7 @@ type Outcome = { verdict: "allow" | "deny" | "ask"; layer: "floor" | "selfmod" |
 const cases: EvalCase[] = fs.readFileSync(fixtureFile, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
 const answers: Record<string, { verdict: string; entry: string }> = JSON.parse(fs.readFileSync(answersFile, "utf8"));
 
-const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf41-eval-")));
+const base = fs.realpathSync(mkTestTmp("pf41-eval-"));
 const dir = (...p: string[]): string => path.join(base, ...p);
 const wt = dir("wt");
 const scr = dir("tmp", "pi-foreman-scratch", "mine");

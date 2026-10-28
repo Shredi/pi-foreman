@@ -2,13 +2,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { gateDecide } from "../gate.ts";
 import { pathDecide, under, type GateRoots } from "../pathrules.ts";
 import type { FloorEnv } from "../floors.ts";
+import { mkTestTmp } from "./_tmpbase.ts";
 
-const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf41-path-")));
+const base = fs.realpathSync(mkTestTmp("pf41-path-"));
 const wt = path.join(base, "wt");
 const scr = path.join(base, "tmp", "pi-foreman-scratch", "mine");
 const otherScr = path.join(base, "tmp", "pi-foreman-scratch", "theirs");

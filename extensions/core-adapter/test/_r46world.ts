@@ -47,7 +47,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
   fs.writeFileSync(path.join(ps, "package.json"), JSON.stringify({ name: "@gotgenes/pi-permission-system" }));
   fs.writeFileSync(path.join(ps, "src", "index.ts"), "export default () => undefined;\n");
   const roles = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
-  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, ceremony: { launchWait: "detach", default: "heavy", ...o.ceremony } }));
+  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "fake/review" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, ceremony: { launchWait: "detach", default: "heavy", ...o.ceremony } }));
   const sessionId = `r46-${++n}`;
   const sessionFile = path.join(agentDir, "sessions", "--project--", `2026_${sessionId}.jsonl`);
   const handoff = path.join(agentDir, "pi-foreman", "handoffs", "round");
@@ -105,7 +105,8 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       hasUI: true,
       isProjectTrusted: () => false,
       isIdle: () => true,
-      modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }) },
+      // the gate reviews the foreman's own subagent launches: the review model answers allow (no review model is a dialog)
+      modelRegistry: { find: (_p: string, id: string) => (id === "review" ? { id } : undefined), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: '{"verdict":"allow","entry":"read-only-inspection","reason":"stub"}' }], stopReason: "stop" }) },
       ui: { notify: (m: string) => void notes.push(m), confirm: async () => false, select: async () => state.answer, input: async () => undefined, setStatus: () => undefined, setWidget: () => undefined },
     };
     await handlers.get("session_start")!({ reason }, ctx);
