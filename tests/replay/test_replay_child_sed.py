@@ -36,10 +36,13 @@ class TestChildSed(ReplayCase):
         self.assertEqual(dialogs, [], dialogs)
         events = [r for recs_ in rig.traces().values() for r in recs_]
         reviews = [r for r in events if r.get("event") == "review"]
-        self.assertEqual([r.get("decision") for r in reviews], ["allow", "unreachable", "unreachable"], reviews)  # R41: the owner's subagent launch is allowed by the gate review, the sed chain is a gate default (no record), both writes reach the unreachable review and a child is denied
+        # ledger item 26: the owner's subagent launch is allowed by the gate default `default-role-launch` (a guard record, no review call), so it no longer shows as a review 'allow'
+        launch = [r for r in events if r.get("event") == "guard" and r.get("guard") == "gate" and r.get("toolFamily") == "subagent"]
+        self.assertTrue(any(r.get("decision") == "allowed" and r.get("rule") == "default-role-launch" for r in launch), launch)
+        self.assertEqual([r.get("decision") for r in reviews], ["unreachable", "unreachable"], reviews)  # R41: the sed chain is a gate default (no record), both writes reach the unreachable review and a child is denied
         self.assertIsNone(reviews[0].get("model"), reviews[0])
         self.assertEqual([r for r in events if r.get("event") == "review_defer_headless"], [])  # the old headless defer record is gone
-        self.assertEqual([r.get("role") for r in reviews[1:]], ["builder", "builder"], reviews)
+        self.assertEqual([r.get("role") for r in reviews], ["builder", "builder"], reviews)
         self.assertFalse((rig.project.parent / "made.txt").exists())
         self.assertFalse((rig.project / "written").exists())
         self.assertFalse((sub / "written").exists())

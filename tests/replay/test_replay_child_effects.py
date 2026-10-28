@@ -41,9 +41,12 @@ class TestChildEffects(ReplayCase):
         self.assertEqual(dialogs, [], dialogs)
         events = [r for recs_ in rig.traces().values() for r in recs_]
         reviews = [r for r in events if r.get("event") == "review"]
-        self.assertEqual([r.get("decision") for r in reviews], ["allow", "unreachable"], reviews)  # R41: the owner's subagent launch is allowed by the gate review; the sed read and test-restore is a gate default (no record); one write reaches the gate review, unreachable, and a child is denied
+        # ledger item 26: the owner's subagent launch is allowed by the gate default `default-role-launch` (a guard record, no review call), so it no longer shows as a review 'allow'
+        launch = [r for r in events if r.get("event") == "guard" and r.get("guard") == "gate" and r.get("toolFamily") == "subagent"]
+        self.assertTrue(any(r.get("decision") == "allowed" and r.get("rule") == "default-role-launch" for r in launch), launch)
+        self.assertEqual([r.get("decision") for r in reviews], ["unreachable"], reviews)  # R41: the sed read and test-restore is a gate default (no record); one write reaches the gate review, unreachable, and a child is denied
         self.assertTrue(all(r.get("model") is None for r in reviews), reviews)
-        self.assertEqual([r.get("class") for r in reviews], [None, None], reviews)
+        self.assertEqual([r.get("class") for r in reviews], [None], reviews)
         self.assertEqual([r for r in events if r.get("event") == "review_defer_headless"], [])
         self.assertEqual([r.get("segments") for r in events if r.get("event") == "chain_allow"], [])  # R41: the review link's chain_allow record is gone (old [3]); the gate defaults allow the chain with no record
         # R41 gap (slice 5): the test-file restore is no gate default; the unreachable review denies it for the child, so the file stays broken
