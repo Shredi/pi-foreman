@@ -3,6 +3,7 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { gateDecide, type GateResult } from "../gate.ts";
 import { DEFAULT_RULES, OWN_TOOLS, segmentDefault, toolDefault } from "../defaults.ts";
@@ -54,8 +55,17 @@ test("default-build-test: the manifest's runners at the worktree root only", () 
 test("default-write-in: worktree, scratch, tmp (tmpAccess); not outside, not for a child's tmp", () => {
   assert.equal(rule(sh("touch src/new.ts")), "default-write-in");
   assert.equal(rule(sh(`cat a.txt > ${shPath(scr)}/o.txt`)), "default-read");
-  // a bare /tmp redirect is a default write on POSIX only (effects.ts: writes under /tmp are not a win32 default)
-  if (process.platform !== "win32") assert.ok(rule(sh("cat a.txt > /tmp/pf41-o.txt")));
+  // a bare /tmp redirect is a default write on POSIX only (effects.ts:168, :651: writes under /tmp are not a win32 default)
+  if (process.platform === "win32") assert.notEqual(kind(sh("cat a.txt > /tmp/pf41-o.txt")), "allow");
+  else assert.ok(rule(sh("cat a.txt > /tmp/pf41-o.txt")));
+  // win32 (platform stubbed, so it runs everywhere): /tmp is no default write; the real temp dir (os.tmpdir()) is not an effect write root either
+  const w32: FloorEnv = { ...env, platform: "win32" };
+  const w32tmp = fs.realpathSync.native(os.tmpdir());
+  const w32g = (line: string, tmp: string): GateResult => gateDecide("bash", { command: line }, wt, { env: () => w32, roots: () => roots({ tmp: [tmp] }), facts: facts() });
+  assert.notEqual(kind(w32g("cat a.txt > /tmp/pf41-o.txt", w32tmp)), "allow");
+  // product gap: no default-allowed tmp on win32 (reported r41)
+  assert.notEqual(kind(w32g(`cat a.txt > ${shPath(path.join(w32tmp, "pf41-o.txt"))}`, w32tmp)), "allow");
+  assert.notEqual(kind(w32g("cat a.txt > C:/Users/x/AppData/Local/Temp/pf41-o.txt", "C:\\Users\\x\\AppData\\Local\\Temp")), "allow");
   assert.notEqual(kind(sh("cat a.txt > /tmp/pf41-o.txt", { r: { tmpAccess: false } })), "allow");
   assert.notEqual(kind(sh("cat a.txt > /tmp/pf41-o.txt", { r: CHILD })), "allow");
   assert.ok(rule(sh(`cat a.txt > ${shPath(scr)}/o.txt`, { r: CHILD })));
