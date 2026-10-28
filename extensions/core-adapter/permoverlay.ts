@@ -2943,7 +2943,8 @@ function floorDecision(rules: OverlayRules, words: string[], text: string, ctx: 
 function floorMatcher(rules: OverlayRules, ctx: MatchCtx): { word: (w: string, cwd: string | null, unknownCwd: boolean, cdTarget?: boolean) => boolean; ancestor: (w: string, cwd: string | null, unknownCwd: boolean) => boolean; text: (t: string) => boolean; folder: (cwd: string | null) => boolean; config: (w: string, cwd: string | null) => boolean } {
   const fold = foldsCase(ctx.platform);
   const norm = (s: string): string => {
-    const n = s.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/+$/, "");
+    // win32: a drive-less configured path (`/agent`) and its drive-resolved candidate (`D:\agent`) compare equal
+    const n = (ctx.platform === "win32" ? s.replace(/^[A-Za-z]:(?=[\\/]|$)/, "") : s).replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/+$/, "");
     return fold ? n.toLowerCase() : n;
   };
   const pats = floorPatterns(rules, ctx);
@@ -3652,7 +3653,8 @@ export function ownStateRead(command: string, ctx0: MatchCtx): boolean {
     if (!own(w)) return false;
     return pathCandidates(w, ctx).filter((x) => path.isAbsolute(x) || path.win32.isAbsolute(x)).every((x) => {
       const m = /\/pi-foreman\/state\/usage(?:\/(.*))?$/.exec(x.replace(/\\/g, "/"));
-      return !m || ownUsage.has(x);
+      // win32: the candidate is drive-resolved, the pattern may be drive-less
+      return !m || ownUsage.has(x) || (ctx.platform === "win32" && [...ownUsage].some((p) => pathMatches(p, x, ctx)));
     });
   };
   const vars = new Map<string, string>();

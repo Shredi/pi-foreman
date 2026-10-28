@@ -48,7 +48,8 @@ test("r41: a scan of /, the home directory or a parent of the workspace is denie
         assert.equal(d?.kind, "deny", `${name} ${root} ${role}`);
         assert.equal(d!.rule, "fs-scan", `${name} ${root}`);
         assert.match(d!.reason, /whole-filesystem scan/);
-        assert.match(d!.reason, new RegExp(`the worktree ${cwd}`));
+        // the reason names the resolved worktree (a drive-letter path on win32)
+        assert.match(d!.reason, new RegExp(`the worktree ${path.resolve(cwd).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
         assert.match(d!.reason, /\/tmp.*Pi install root.*global npm root.*bundled package roots/);
       }
     }
