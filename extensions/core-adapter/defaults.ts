@@ -35,12 +35,26 @@ export const OWN_TOOLS: ReadonlySet<string> = new Set([
 export const DEFAULT_RULES = [
   "default-own-tool", "default-assign", "default-read", "default-build-test", "default-write-in",
   "default-git-read", "default-git-add", "default-git-commit", "default-git-fetch", "default-git-pull", "default-git-switch", "default-git-push", "default-gh-read",
+  "default-role-launch",
 ] as const;
 
 /** Tools without a shell line: the own-tools enumeration. `fetch` has no default: every URL goes to the web-read review (ledger item 25). Undefined = no default. */
-export function toolDefault(tool: string, input: unknown): string | undefined {
+export function toolDefault(tool: string, input: unknown, opts: { child?: boolean } = {}): string | undefined {
   if (OWN_TOOLS.has(tool)) return "default-own-tool";
+  if (tool === "subagent" && opts.child === false && isRoleLaunch(input)) return "default-role-launch";
   return undefined;
+}
+
+/** The roles the foreman launches (ledger item 26). */
+export const LAUNCH_ROLES: ReadonlySet<string> = new Set(["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"]);
+
+/** A single launch of one named role: no `action` (management), no tasks / chain / workflow form. The adapter's role, ceremony and spawn gates run after the gate and can still refuse it. */
+function isRoleLaunch(input: unknown): boolean {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+  const i = input as Record<string, unknown>;
+  if (i.action !== undefined && i.action !== null && !(typeof i.action === "string" && i.action.trim() === "")) return false;
+  if (i.tasks !== undefined || i.chain !== undefined || i.workflow !== undefined) return false;
+  return typeof i.agent === "string" && LAUNCH_ROLES.has(i.agent);
 }
 
 const quote = (w: string): string => (/^[A-Za-z0-9_.\/,:@%+=^-]+$/.test(w) ? w : `'${w.replace(/'/g, "'\\''")}'`);

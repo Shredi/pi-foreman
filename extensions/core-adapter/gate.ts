@@ -142,7 +142,7 @@ export function gateDecide(toolName: string, input: unknown, cwd: string, deps: 
     // own tools carry free text (ledger notes, plans) that may quote a floor pattern: only their prose fields skip the floors
     const ph = OWN_TOOLS.has(toolName) ? fieldFloors(inp, "", env, true) : payloadFloors(toolName, inp, env);
     if (ph) return blocked(ph);
-    const rule = toolDefault(toolName, inp);
+    const rule = toolDefault(toolName, inp, { child: deps.roots ? deps.roots(cwd).child : undefined });
     return rule ? { allow: true, rule } : undefined;
   } catch (e) {
     return { block: true, rule: "gate-error", reason: `pi-foreman: the permission gate failed (${e instanceof Error ? e.message : String(e)}), so the call is denied. Report this to the user.` };

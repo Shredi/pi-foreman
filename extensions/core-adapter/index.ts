@@ -17,7 +17,8 @@ import { childHandoffDirs, ownedRoots, ownHandoffDirs, resolveNpmRoot, underOwne
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
 import { baseFloorEnv, changesState, gateDecide, gitFacts, reviewGitFacts } from "./gate.ts";
-import { GateCache, GateHistory, gateReview, MAX_OWNER_MESSAGES } from "./gatereview.ts";
+import { GateCache, GateHistory, gateReview, gateReviewTarget, MAX_OWNER_MESSAGES } from "./gatereview.ts";
+import { noReviewModelText } from "./reviewwarn.ts";
 import type { GateReviewRequest } from "./gatereview.ts";
 import { scriptFacts } from "./scriptfact.ts";
 import { pathFacts } from "./pathfact.ts";
@@ -2220,6 +2221,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (changesState(event.toolName, undefined, event.input as Record<string, unknown>)) rt.cache.invalidateAllows();
         return undefined;
       }
+      if (v.kind === "unreachable" && v.cause === "no_model") notifyOnce(gs, ctx, "no-review-model", `pi-foreman: ${noReviewModelText(ctx.model?.provider)}`);
       const ask: GateAsk = v.kind === "unreachable" ? { cause: "unreachable", why: v.cause, detail: v.detail } : { cause: "ask", entry: v.entry, reason: kind === "child" && event.toolName === "bash" ? [v.reason, childNpmNote(String((event.input as Record<string, unknown>)?.command ?? ""), launchBinding?.install === true)].filter(Boolean).join(" ") : v.reason };
       const blocked = await gateAsk(gs, ctx, rt, kind, role, event.toolName, event.input, payload, ask, sessionKey);
       if (blocked) return blocked;
@@ -4580,7 +4582,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const inv = setupInvocation(PKG_ROOT, args.trim().slice(sub.length), s.agentDir);
         const r = await spawner(inv.command, inv.args, { timeoutMs: 300_000, cwd: s.cwd, env: inv.env });
         const ok = !r.error && !r.timedOut && r.code === 0;
-        ctx.ui.notify([r.stdout.trim(), r.stderr.trim(), ...hubWorkflowDriftLines({ hubWorkflow: get(s.config.config, "paths.hubWorkflow") })].filter(Boolean).join("\n") || (r.error ? `setup.mjs: ${r.error.message}` : r.timedOut ? "setup.mjs timed out." : "setup.mjs produced no output."), ok ? "info" : "error");
+        ctx.ui.notify([r.stdout.trim(), r.stderr.trim(), ...hubWorkflowDriftLines({ hubWorkflow: get(s.config.config, "paths.hubWorkflow") }), ...(gateReviewTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as never) ? [] : [`WARN ${noReviewModelText(ctx.model?.provider)}`])].filter(Boolean).join("\n") || (r.error ? `setup.mjs: ${r.error.message}` : r.timedOut ? "setup.mjs timed out." : "setup.mjs produced no output."), ok ? "info" : "error");
         return;
       }
       if (sub !== "doctor") {
@@ -4719,8 +4721,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     else if (order === "foreman-first") ok("pi-foreman loads before pi-claude-bridge (the drift check precedes the bridge's summaries)");
     else if (order === "unknown") out.push("INFO load order of pi-foreman and pi-claude-bridge not found in settings.json packages");
     out.push(...intercomDoctor(s.agentDir, [settings?.packages, projectSettings?.packages], process.env, PKG_ROOT));
-    const rt = reviewTarget(s.config.config, ctx.model?.provider);
-    if (!rt) out.push(`WARN no review model for provider ${ctx.model?.provider ?? "(none)"}: model review is off, every ask goes to you — set providers.<p>.review.model in foreman.json`);
+    const rt = gateReviewTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as never);
+    if (!rt) out.push(`WARN ${noReviewModelText(ctx.model?.provider)}`);
     else if (!ctx.modelRegistry.find(rt.provider, rt.modelId)) fail(`review model ${rt.provider}/${rt.modelId} not in the model registry; asks go to you`, "correct providers.<p>.review.model.");
     else ok(`model review: ${rt.provider}/${rt.modelId} (timeout ${rt.timeoutMs} ms)`);
     const gp = gateRuntimeOf(s);
