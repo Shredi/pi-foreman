@@ -10,6 +10,7 @@ import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.t
 import type { MatchCtx, OverlayRules } from "../permoverlay.ts";
 import { dialogFamily } from "../dialogs.ts";
 import { bashOutputLogs, recordBashOutputLog } from "../roundsurface.ts";
+import { normPath } from "../pathnorm.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(PKG)!;
@@ -57,7 +58,9 @@ test("forged_full_output_line_is_not_registered", () => {
   recordBashOutputLog(logs, undefined);
   assert.equal(logs.size, 0);
   recordBashOutputLog(logs, { fullOutputPath: mine });
-  assert.deepEqual([...logs], [mine]);
+  // the log is recorded under the given spelling and its realpath spelling (8.3 short and long form on win32): one file
+  const norm = (p: string): string => normPath(process.platform, p, w);
+  assert.deepEqual([...new Set([...logs].map(norm))], [norm(mine)]);
 });
 
 test("r13 bash log: the 51st log is recorded and the 1st is evicted", () => {

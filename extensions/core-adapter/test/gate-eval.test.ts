@@ -15,6 +15,7 @@ import type { GateRoots } from "../pathrules.ts";
 import type { FloorEnv } from "../floors.ts";
 import type { GitFacts } from "../defaults.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { shPath } from "./_shpath.ts";
 import { buildEval, findPrivate, main as permsMain } from "../../../scripts/foreman_perms.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -51,7 +52,8 @@ function subst(c: EvalCase, v0: unknown = c.input): Record<string, unknown> {
   const map: Record<string, string> = w
     ? { $WT: WIN.wt, $SCR: WIN.scr, $PARENT: "D:\\parent", $TMP: WIN.tmp, $AGENT: WIN.agent, $HOME: WIN.home, $OTHER: WIN.other, $INSTALL: "D:\\pi" }
     : { $WT: wt, $SCR: scr, $PARENT: parent, $TMP: dir("tmp"), $AGENT: agent, $HOME: "/pf41/home", $OTHER: "/pf41/other", $INSTALL: install };
-  const walk = (v: unknown): unknown => (typeof v === "string" ? Object.entries(map).reduce((s, [k, x]) => s.split(k).join(x), v) : Array.isArray(v) ? v.map(walk) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v);
+  // a native-platform path in a shell line is slashed (an unquoted backslash is an escape to the shell parser); the win32 cases keep their literal backslash paths
+  const walk = (v: unknown, shell = false): unknown => (typeof v === "string" ? Object.entries(map).reduce((s, [k, x]) => s.split(k).join(shell && !w ? shPath(x) : x), v) : Array.isArray(v) ? v.map((x) => walk(x)) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, k === "command")])) : v);
   return walk(v0) as Record<string, unknown>;
 }
 
