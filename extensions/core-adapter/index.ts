@@ -2289,6 +2289,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (kind !== "owner") {
       const reason = silentDeny(kind, a);
+      if (kind === "headless") { // no UI: an immediate deny, the cause in the trace
+        const df = denyFields(detail, tool, input, role, [PKG_ROOT, ctx.cwd]);
+        gs.trace?.emit({ event: "dialog", guard: "gate", cause: a.cause, decision: "no-ui", rule, toolFamily: tool, ...df, ...dialogFields(df.command) });
+      }
       rt.log.record({ tool, layer: "dialog", verdict: "deny", rule, reason: "no-dialog", input: payload, role, kind });
       return { block: true as const, reason };
     }
