@@ -125,7 +125,8 @@ const fold = (c: EffectCtx, s: string): string => (plat(c) === "win32" || plat(c
 /** `p` lies inside `base` (equal allowed unless `strict`), same drive. */
 function within(c: EffectCtx, base: string, p: string, strict: boolean): boolean {
   const x = px(c);
-  const rel = x.relative(fold(c, x.resolve(base)), fold(c, x.resolve(p)));
+  // a drive-less root (`/tmp`) takes the drive of the session cwd on both sides
+  const rel = x.relative(fold(c, x.resolve(c.cwd, base)), fold(c, x.resolve(c.cwd, p)));
   if (rel === "") return !strict;
   return rel !== ".." && !rel.startsWith(".." + x.sep) && !x.isAbsolute(rel);
 }
@@ -179,7 +180,7 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
     const rb = alt ? (real(b) ?? b) : b;
     const [base, p] = within(c, b, abs, write) ? [b, abs] : alt && within(c, rb, alt, write) ? [rb, alt] : [null, null];
     if (base === null || p === null) continue;
-    if (write && hasGitPart(c, x.relative(x.resolve(base), p))) return false;
+    if (write && hasGitPart(c, x.relative(x.resolve(c.cwd, base), p))) return false;
     if (realInside(c, base, p, write, write)) return true;
   }
   return false;

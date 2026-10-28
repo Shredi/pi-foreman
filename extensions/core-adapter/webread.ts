@@ -7,6 +7,7 @@
 //   (d) the output goes into the scratch dir, or to stdout read only by a non-executing reader
 import * as path from "node:path";
 import { insideRoot } from "./floors.ts";
+import { sameOrUnder } from "./pathnorm.ts";
 import { parseShell } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
 
@@ -60,11 +61,16 @@ function urlCheck(raw: string): { url: string } | { why: string } {
   return { url: raw.length > MAX_URL ? `${raw.slice(0, MAX_URL)}...` : raw };
 }
 
+/** `abs` in `root`: win32 compares the normalised long forms against `cwd` (8.3, case, separators, a drive-less root); elsewhere lexically as before. */
+function inRoot(abs: string, root: string, cwd: string, ctx: WebReadCtx): boolean {
+  return (ctx.platform ?? process.platform) === "win32" ? sameOrUnder("win32", root, abs, cwd) : insideRoot(abs, root, ctx.platform);
+}
+
 /** A target path inside one of the scratch dirs (literal words only; a variable, `~` or glob is not). */
 function inScratch(word: string, cwd: string, ctx: WebReadCtx): boolean {
   if (!word || /[$`*?[\]{}~]/.test(word)) return false;
   const abs = path.resolve(cwd, word);
-  return ctx.scratch.some((s) => insideRoot(abs, s, ctx.platform));
+  return ctx.scratch.some((s) => inRoot(abs, s, cwd, ctx));
 }
 
 /** Check (d) for curl and wget: file targets inside scratch, or stdout read only by readers; null when it passes. */
@@ -74,7 +80,7 @@ function outputCheck(seg: ShellSegment, ctx: WebReadCtx, cwd: string, files: str
     if (f === "-") toStdout = true;
     else if (!inScratch(f, cwd, ctx)) return fail("(d) output file outside the scratch dir");
   }
-  if (remoteDir !== null && !ctx.scratch.some((s) => insideRoot(remoteDir, s, ctx.platform))) return fail("(d) remote-name output outside the scratch dir");
+  if (remoteDir !== null && !ctx.scratch.some((s) => inRoot(remoteDir, s, cwd, ctx))) return fail("(d) remote-name output outside the scratch dir");
   for (const r of seg.redirects) {
     if (r.op === "dup" || r.op === "<" || r.target === "/dev/null") continue;
     if (!inScratch(r.target, cwd, ctx)) return fail("(d) redirect outside the scratch dir");

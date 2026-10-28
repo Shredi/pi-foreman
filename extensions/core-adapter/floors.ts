@@ -536,7 +536,8 @@ function realDeep(abs: string): string | null {
   let cur = abs;
   for (let n = 0; n < 64; n++) {
     try {
-      const real = fs.realpathSync(cur);
+      // win32: the native realpath expands 8.3 short names (RUNNER~1), so a floored path in short form still meets its long-form floor
+      const real = process.platform === "win32" ? fs.realpathSync.native(cur) : fs.realpathSync(cur);
       return tail.length ? path.join(real, ...tail.reverse()) : real;
     } catch {
       const parent = path.dirname(cur);

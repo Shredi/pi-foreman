@@ -3,6 +3,7 @@
 // falls through to the review (`undefined`). Rule names are `path-<read|write>-<class>`.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { longForm } from "./pathnorm.ts";
 
 /** The roots of one session, resolved by index.ts at call time. All paths absolute. */
 export interface GateRoots {
@@ -37,12 +38,12 @@ export interface GateRoots {
 export type PathVerdict = { allow: true; rule: string } | undefined;
 
 const px = (platform: string): typeof path.posix => (platform === "win32" ? path.win32 : path.posix);
-const parts = (platform: string, p: string): string[] => px(platform).resolve(p).split(/[\\/]+/).filter(Boolean).map((s) => (platform === "win32" ? s.toLowerCase() : s));
+const parts = (platform: string, p: string, base?: string): string[] => px(platform).resolve(...(base ? [base, p] : [p])).split(/[\\/]+/).filter(Boolean).map((s) => (platform === "win32" ? s.toLowerCase() : s));
 
 /** `p` at or below `root` (`*` segments of the root match any one segment). Lexical. */
-export function under(platform: string, root: string, p: string): boolean {
-  const rs = parts(platform, root);
-  const ps = parts(platform, p);
+export function under(platform: string, root: string, p: string, base?: string): boolean {
+  const rs = parts(platform, root, base);
+  const ps = parts(platform, p, base);
   if (rs.length === 0 || ps.length < rs.length) return false;
   return rs.every((s, i) => s === "*" || s === ps[i]);
 }
@@ -57,17 +58,7 @@ export function realDefault(p: string): string | null {
 
 /** The real spelling of `abs`: its deepest existing ancestor through realpath, the rest appended. */
 export function realSpelling(platform: string, abs: string, real: (p: string) => string | null): string {
-  const x = px(platform);
-  const tail: string[] = [];
-  let e = abs;
-  for (;;) {
-    const r = real(e);
-    if (r !== null) return x.join(r, ...tail);
-    const d = x.dirname(e);
-    if (d === e) return abs;
-    tail.unshift(x.basename(e));
-    e = d;
-  }
+  return longForm(platform, abs, real);
 }
 
 /** The absolute form of a path word, or null (empty, `~`, NUL, a drive-relative `C:x`). */
@@ -83,10 +74,13 @@ type Dir = "read" | "write";
 function classOf(r: GateRoots, platform: string, abs: string, dir: Dir): string | null {
   const real = r.realpath ?? (platform === process.platform ? realDefault : () => null);
   const ra = realSpelling(platform, abs, real);
+  const win = platform === "win32";
+  // win32: a root and a path may spell one dir differently (8.3 `RUNNER~1`, case, a drive-less `/tmp`): resolve both against the worktree and compare long forms too
+  const longRoot = (root: string): string => realSpelling(platform, px(platform).resolve(r.worktree, root), real);
   const inside = (root: string): boolean => {
-    if (!under(platform, root, abs)) return false;
+    if (!under(platform, root, abs, r.worktree)) return win && !root.includes("*") && under(platform, longRoot(root), ra, r.worktree);
     if (ra === abs) return true;
-    return under(platform, root, ra) || (!root.includes("*") && under(platform, real(root) ?? root, ra));
+    return under(platform, root, ra, r.worktree) || (!root.includes("*") && under(platform, real(root) ?? root, ra, r.worktree)) || (win && !root.includes("*") && under(platform, longRoot(root), ra, r.worktree));
   };
   const gitFree = (root: string): boolean => !px(platform).relative(root, abs).split(/[\\/]/).includes(".git");
   const noWrite = dir === "write";
@@ -97,7 +91,7 @@ function classOf(r: GateRoots, platform: string, abs: string, dir: Dir): string 
   if (dir === "read" && r.handoffs.some(inside)) return "handoff";
   if (dir === "write") {
     const base = px(platform).basename(abs);
-    if (r.handoffs.some((h) => px(platform).dirname(abs) === px(platform).resolve(h) && inside(h)) && (base === "plan.md" || base === "result.md")) return "handoff";
+    if (r.handoffs.some((h) => under(platform, px(platform).dirname(abs), h, r.worktree) && under(platform, h, px(platform).dirname(abs), r.worktree) && inside(h)) && (base === "plan.md" || base === "result.md")) return "handoff";
   }
   if (r.child) return null;
   if (r.tmpAccess && r.tmp.some(inside) && !(r.scratchBase && inside(r.scratchBase))) return "tmp";

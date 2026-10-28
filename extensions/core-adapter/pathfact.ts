@@ -18,12 +18,18 @@ const MAX_FACTS = 5;
 
 const real = (p: string): string => {
   try {
-    return fs.realpathSync(p);
+    // win32: the native realpath expands 8.3 short names, so git's long-form toplevel and a short-form path compare equal
+    return process.platform === "win32" ? fs.realpathSync.native(p) : fs.realpathSync(p);
   } catch {
     return p;
   }
 };
-const inside = (p: string, root: string): boolean => p === root || p.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
+const fold = (p: string): string => (process.platform === "win32" ? p.replace(/\//g, "\\").toLowerCase() : p);
+const inside = (p: string, root: string): boolean => {
+  const a = fold(p);
+  const r = fold(root);
+  return a === r || a.startsWith(r.endsWith(path.sep) ? r : r + path.sep);
+};
 
 /** The nearest existing directory of `abs` (itself when a directory). */
 function existingDir(abs: string): string {
@@ -48,7 +54,7 @@ export function pathState(abs: string, worktree: string, agentDir: string | unde
     const top = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: existingDir(target), timeout: GIT_TIMEOUT_MS, stdio: ["ignore", "pipe", "ignore"] })
       .toString()
       .trim();
-    return top && real(top) !== real(worktree) ? "sibling-checkout" : "outside";
+    return top && fold(real(top)) !== fold(real(worktree)) ? "sibling-checkout" : "outside";
   } catch {
     return "outside";
   }
