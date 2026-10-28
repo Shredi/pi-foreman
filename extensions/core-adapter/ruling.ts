@@ -6,12 +6,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { shellWrites } from "./permoverlay.ts";
 import type { Decision } from "./permoverlay.ts";
+import { isRulingName, RULING_RE } from "./rulingname.ts";
 
-const RULING_RE = /^ruling(?:-(\d{1,6}))?\.md$/;
+export { isRulingName };
 const ASK_N_RE = /^ask-(\d{1,6})\s*$/;
-
-/** True for a `ruling.md` / `ruling-<n>.md` file name. */
-export const isRulingName = (name: string): boolean => RULING_RE.test(name);
 
 const BRIEF_RE = /^brief-[A-Za-z0-9._-]{1,64}\.md$/;
 

@@ -31,7 +31,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Tier } from "./ceremony.ts";
-import { isRulingName } from "./ruling.ts";
+import { isRulingName } from "./rulingname.ts";
 import { isSubagentWakeText } from "./idlecustom.ts";
 import { INTERCOM_WAKE_TEXT } from "./usage.ts";
 
