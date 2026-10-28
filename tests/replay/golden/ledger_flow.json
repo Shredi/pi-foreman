@@ -21,10 +21,6 @@
    "model": "foreman-fake/foreman"
   },
   {
-   "event": "review",
-   "decision": "allow"
-  },
-  {
    "event": "guard",
    "role": "foreman",
    "toolFamily": "subagent",
@@ -103,10 +99,6 @@
   {
    "event": "llm",
    "model": "foreman-fake/foreman"
-  },
-  {
-   "event": "review",
-   "decision": "allow"
   },
   {
    "event": "guard",
@@ -248,10 +240,6 @@
   {
    "event": "llm",
    "model": "foreman-fake/foreman"
-  },
-  {
-   "event": "review",
-   "decision": "allow"
   },
   {
    "event": "guard",
