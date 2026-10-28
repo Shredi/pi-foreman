@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ShellSegment } from "./shellast.ts";
+import { normPath, type Resolver } from "./pathnorm.ts";
 
 interface FloorKeys {
   keyPatterns: string[];
@@ -41,6 +42,8 @@ export interface FloorEnv {
   remoteHead?: (cwd: string) => string | null;
   /** A subagent child session: it never pushes (the foreman pushes). */
   child?: boolean;
+  /** realpath of an existing path for the long-name forms (tests stub it; default: the native realpath). */
+  resolver?: Resolver;
 }
 
 export interface FloorHit {
@@ -279,6 +282,16 @@ export function insideRoot(p: string, root: string, platform: string = process.p
 
 function resolveWord(word: string, cwd: string | null, env: FloorEnv): string | null {
   const win = env.platform === "win32";
+  const v = expandWord(word, env, win);
+  if (v === null) return null;
+  if (px_(win).isAbsolute(v)) return px_(win).normalize(v);
+  return cwd ? px_(win).resolve(cwd, v) : null;
+}
+
+const px_ = (win: boolean): typeof path.posix => (win ? path.win32 : path.posix);
+
+/** `word` with `~` and `$HOME` expanded and a glob or variable tail cut to its literal directory prefix; not yet made absolute. */
+function expandWord(word: string, env: FloorEnv, win: boolean = (env.platform ?? process.platform) === "win32"): string | null {
   const px = win ? path.win32 : path.posix;
   const w = word.replace(/^(["'])(.*)\1$/, "$2");
   const home = env.home ?? "";
@@ -297,8 +310,7 @@ function resolveWord(word: string, cwd: string | null, env: FloorEnv): string | 
     v = pre.endsWith("/") || pre.endsWith("\\") ? pre : px.dirname(pre === "" ? "." : pre);
     if (pre === "") return null;
   }
-  if (px.isAbsolute(v)) return px.normalize(v);
-  return cwd ? px.resolve(cwd, v) : null;
+  return v;
 }
 
 function systemRemoval(word: string, env: FloorEnv): boolean {
@@ -439,7 +451,7 @@ export function secretPath(word: string, env: FloorEnv): FloorHit | null {
   const bareEnv = !pathLike && ENV_BARE.test(x) && !ENV_EXEMPT.test(x);
   let bad = bareEnv || (pathLike && !/\.pub$/.test(x) && (GIT_CONFIG_FILE.test(x) || SECRET_DIRS.test(x) || SECRET_FILE.test(x) || SECRET_EXTRA.test(x) || (ENV_FILE.test(x) && !ENV_EXEMPT.test(x))));
   if (!bad && pathLike) {
-    const abs = resolveWord(x, env.cwd, env);
+    const abs = expandWord(x, env);
     if (abs !== null) {
       const mine = formsOf(abs, env);
       bad = authFiles(env).some((a) => formsOf(a, env).some((f) => mine.includes(f)));
@@ -553,7 +565,10 @@ function realDeep(abs: string): string | null {
 function formsOf(abs: string, env: FloorEnv): string[] {
   const fold = foldFor(env);
   const real = realDeep(abs);
-  return [...new Set([abs, ...(real ? [real] : [])].map((p) => {
+  const plat = env.platform ?? process.platform;
+  // the shared normaliser: lexical and long-name form (8.3, case, separators, drive, symlinks) from the injected resolver
+  const norm = [normPath(plat, abs, env.cwd, () => null), normPath(plat, abs, env.cwd, env.resolver)];
+  return [...new Set([abs, ...(real ? [real] : []), ...norm].map((p) => {
     const s = slash(p).replace(/(.)\/$/, "$1");
     return fold ? s.toLowerCase() : s;
   }))];
