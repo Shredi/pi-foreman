@@ -92,7 +92,11 @@ class TestParallelAsk(ReplayCase):
         self.assertTrue(any("first child finished" in n for n in notices), notices)
         self.assertTrue(any("second child finished" in n for n in notices), notices)
         t = rig.traces()
-        foreman = settle_between_results(shape(t.pop("trace-" + sid)))
+        raw = t.pop("trace-" + sid)
+        # ledger item 26: both role launches are allowed by the gate default `default-role-launch`, with no review call (the golden has no review records)
+        rules = [r.get("rule") for r in raw if r.get("event") == "guard" and r.get("guard") == "gate" and r.get("toolFamily") == "subagent"]
+        self.assertEqual(rules, ["default-role-launch", "default-role-launch"], rules)
+        foreman = settle_between_results(shape(raw))
         children = sorted((shape(v) for v in t.values() if v and v[0].get("role") == "child"), key=repr)
         self.assertEqual(len(children), 2, "adapter did not load in both children")
         sup = [r["decision"] for r in foreman if r["event"] == "supervisor_request"]
