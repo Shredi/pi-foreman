@@ -50,7 +50,7 @@ test("fetch POST reaches the review and writes a gate log record", async (t) => 
 
 test("a subagent launch reaches the review and its record carries tool subagent", async (t) => {
   const r = await rig(t, [V("allow", "read-only-inspection")]);
-  await r.call("subagent", { agent: "builder", task: "fix the thing" });
+  await r.call("subagent", { agent: "scout", task: "fix the thing" }); // a role launch is a default allow (item 26)
   assert.equal(r.reg.calls.length, 1);
   const rec = r.log().at(-1)!;
   assert.deepEqual([rec.layer, rec.verdict, rec.tool], ["review", "allow", "subagent"]);
@@ -140,7 +140,7 @@ test("foreman_copy floors its source too", () => {
 test("a payload tool with no review model and no UI denies within 1 s", async (t) => {
   const r = await r11Rig(t, {}, { ctx: { hasUI: false, mode: "print" } });
   const t0 = Date.now();
-  const res = await r.call("subagent", { agent: "builder", task: "fix the thing" });
+  const res = await r.call("subagent", { agent: "scout", task: "fix the thing" });
   assert.ok(res && res.block);
   assert.ok(Date.now() - t0 < 1000);
 });
@@ -149,7 +149,7 @@ test("a payload tool with no review model and no UI denies within 1 s", async (t
 test("an invalid review verdict in a headless session denies with policy_invalid_verdict", async (t) => {
   const reg = fakeRegistry(["not json"]);
   const r = await r11Rig(t, {}, { ctx: { hasUI: false, mode: "print", modelRegistry: reg.registry }, config });
-  const res = await r.call("subagent", { agent: "builder", task: "fix the thing" });
+  const res = await r.call("subagent", { agent: "scout", task: "fix the thing" });
   assert.ok(res && res.block);
   assert.match(res.reason ?? "", /policy_invalid_verdict/);
 });

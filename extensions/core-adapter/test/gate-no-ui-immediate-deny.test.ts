@@ -43,8 +43,8 @@ test("no UI + an unreachable review (failing provider; no review model): an imme
     assert.match(String(res?.reason), /the permission review is unreachable \(.*\); the call is denied/);
     assert.match(String(res?.reason), cause);
     assert.ok(r.events("review").some((e) => e.kind === "gate" && e.decision === "unreachable"), JSON.stringify(r.events("review")));
-    const launch = await r.launch({ agent: "explorer", task: "look around" });
-    assert.equal(launch.res?.block, true, "the foreman's own subagent launch");
+    const launch = await r.launch({ agent: "scout", task: "look around" });
+    assert.equal(launch.res?.block, true, "a subagent launch of an agent that is not a role (a role launch is a default allow, item 26)");
     assert.match(String(launch.res?.reason), /the permission review is unreachable/);
     const d = r.events("dialog").at(-1)!;
     assert.deepEqual([d.guard, d.cause, d.decision, d.toolFamily], ["gate", "unreachable", "no-ui", "subagent"]);
