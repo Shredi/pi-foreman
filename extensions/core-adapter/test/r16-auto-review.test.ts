@@ -44,7 +44,20 @@ const ui = { notify: () => undefined, confirm: async () => false, select: async 
 const config = (extra: Record<string, unknown> = {}) => ({ providers: { fake: { review: { model: "m", timeoutMs: 50 }, roles: Object.fromEntries(["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"].map((r) => [r, { model: `fake/${r}` }])) } }, ...extra });
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
-const rig = await r11Rig({ after }, {}, { ctx: { modelRegistry, ui }, config: config(), inTmp: true });
+// rig: handoff and agent dir below the test base, outside every gate tmp root on every OS (the review path is exercised);
+// withTmpRig: a rig in the OS temp dir for the one case that relies on the tmp class (os.tmpdir() is /tmp on Linux);
+// r11Rig sets process.env for its session, so the main rig's env is put back afterwards
+const rig = await r11Rig({ after }, {}, { ctx: { modelRegistry, ui }, config: config() });
+async function withTmpRig<T>(fn: (r: Rig) => Promise<T>): Promise<T> {
+  const keys = ["PI_CODING_AGENT_DIR", "PI_INTERCOM_SESSION_ID", "PI_SUBAGENT_CHILD"];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  try {
+    return await fn(await r11Rig({ after }, {}, { ctx: { modelRegistry, ui }, config: config(), inTmp: true }));
+  } finally {
+    for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+}
 // every top-level await stays above the first test(): node runs the root after hooks (the rig's shutdown) once the registered tests are done
 
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r16-ar-")));
@@ -65,13 +78,14 @@ interface Run {
   calls: number;
   recs: Record<string, unknown>[];
 }
-async function run(tool: string, input: Record<string, unknown>, o: { reply?: string | (() => Promise<Reply>) } = {}): Promise<Run> {
+async function run(tool: string, input: Record<string, unknown>, o: { reply?: string | (() => Promise<Reply>); rig?: Rig } = {}): Promise<Run> {
+  const rg = o.rig ?? rig;
   answer = typeof o.reply === "function" ? o.reply : text(o.reply ?? ALLOW);
   const d0 = dialogs;
   const c0 = calls;
-  const n0 = rig.trace().length;
-  const block = await rig.call(tool, input);
-  const recs = rig.trace().slice(n0);
+  const n0 = rg.trace().length;
+  const block = await rg.call(tool, input);
+  const recs = rg.trace().slice(n0);
   const g = recs.filter((x) => x.event === "guard" && x.guard === "gate");
   const dlg = recs.find((x) => x.event === "dialog" && x.guard === "gate");
   const last = g[g.length - 1];
@@ -123,6 +137,12 @@ test("r16 hard_deny auth_json_read: floor-secret-path, no model call", async () 
   assert.deepEqual([r.outcome, r.dialogs, r.calls, r.block?.block], ["blocked:floor-secret-path", 0, 0, true]);
 });
 
+test("r16 rig: the main rig's handoff and agent dir are outside the literal /tmp (the write root default-write-in uses), the tmp rig's in the OS temp dir", async () => {
+  const under = (p: string, root: string): boolean => p === root || p.startsWith(`${root}${path.sep}`);
+  assert.deepEqual([under(fs.realpathSync(H), "/tmp"), under(rig.agentDir, "/tmp")], [false, false]);
+  await withTmpRig(async (r) => assert.equal(under(r.agentDir, fs.realpathSync(os.tmpdir())), true));
+});
+
 test("r16 hard_deny cp_into_child_handoff_ruling: the gate's review allows (stub), the self_ruling guard still refuses", async () => {
   const r = await bash(FX.hardDeny[1].line);
   assert.deepEqual([r.outcome, r.block?.block, r.recs.some((x) => x.event === "guard" && x.guard === "self_ruling")], [OK, true, true], JSON.stringify(r.block));
@@ -161,7 +181,9 @@ for (const c of FX.selfModTool) {
   test(`r16 selfMod tool ${c.name}: ${TOOLS[c.name]?.[0]}, no model call`, async () => {
     const e = TOOLS[c.name];
     assert.ok(e, `no expectation for ${c.name}`);
-    const r = await run(c.tool, fillInput(c.input), { reply: ASK });
+    const r = c.name === "copy_tool_into_agent_foreman_json"
+      ? await withTmpRig((tr) => run(c.tool, fillInput(c.input, tr), { reply: ASK, rig: tr }))
+      : await run(c.tool, fillInput(c.input), { reply: ASK });
     assert.deepEqual([r.outcome, r.dialogs, r.calls, r.block?.block === true], [e[0], e[1], e[2], e[3] === true], JSON.stringify(r.block));
   });
 }
