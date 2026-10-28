@@ -110,7 +110,7 @@ def note_refusal(status, text):
 
 
 ROLE_IDS = ("senior-reviewer", "finalizer", "explorer", "planner", "builder", "reviewer", "foreman")
-FAKE_REVIEW_MODEL = "review-unreachable"  # never allows: the call reaches the dialog
+FAKE_REVIEW_MODEL = "review-allow"  # the gate reviews the foreman's own subagent launch; the fake review model allows (as tests/replay/driver.py)
 
 
 KEEP_ASK_LINES = re.compile(r"^\s*(tool|subagent|rule)\s*:", re.I)
@@ -175,7 +175,7 @@ def run_bench_retro(args, row, agent, status, runner=subprocess.run):
 
 def foreman_config(row):
     """The user-layer foreman.json for a foreman row: the row's roles (incl. builder.strong),
-    the review model (the row's review_model; the fake provider's non-allowing review model for
+    the review model (the row's review_model; the fake provider's allowing review model for
     fake rows; else none, so the harness picks the cheapest role-map model, review.ts), trace on, and the row's `project_commands` as
     safety.permissions.projectCommands. The row's `foreman_edits` becomes ceremony.foremanEdits; ceremony.requireTriage
     stays at its default. The row's `user_config` object is deep-merged in last, so a preset can set any knob."""

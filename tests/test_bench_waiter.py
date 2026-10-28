@@ -92,6 +92,12 @@ class RefusalTest(unittest.TestCase):
 
 
 class BuildWorldTest(unittest.TestCase):
+    def test_foreman_fake_row_names_the_allowing_review_model(self):
+        preset = json.loads((ROOT / "bench" / "presets" / "smoke.json").read_text())
+        r = next(x for x in preset["rows"] if x["id"] == "foreman-fake")
+        cfg = ws.foreman_config(dict(r, roles={"foreman": {"model": "%s/foreman" % r["provider"]}}, _fake=True))
+        self.assertEqual(cfg["providers"][r["provider"]]["review"]["model"], r["provider"] + "/review-allow")
+
     def test_review_strong_trace_and_schema(self):
         cfg = ws.foreman_config(row(_required_child_extensions=["/x/fake.ts"]))
         p = cfg["providers"]["p"]
@@ -101,7 +107,7 @@ class BuildWorldTest(unittest.TestCase):
         self.assertNotIn("ceremony", cfg)
         self.assertEqual(ws.foreman_config(row(review_model="p/other"))["providers"]["p"]["review"]["model"], "p/other")
         fake = ws.foreman_config(row(_fake=True))["providers"]["p"]["review"]["model"]
-        self.assertEqual(fake, "p/review-unreachable")
+        self.assertEqual(fake, "p/review-allow")  # was review-unreachable: the gate's review of the foreman's own subagent launch failed the cell
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "foreman.json").write_text(json.dumps(cfg))
             r = subprocess.run([sys.executable, str(ROOT / "scripts" / "foreman_config.py"), "validate", "--json",
