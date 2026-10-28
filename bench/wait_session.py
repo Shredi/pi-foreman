@@ -50,6 +50,7 @@ from driver import PiRpc  # noqa: E402
 ACTIVE_STATES = ("queued", "running")
 DIALOGS = ("select", "confirm", "input", "editor")
 REVIEW_DEFERS = ("review_defer_child", "review_defer_headless")
+GATE_DIALOG_DENIES = ("deny", "deny with reason", "dismissed", "no-ui")
 USAGE_LIMIT = re.compile(r"usage limit|limit reached|hit your (?:usage |session |weekly )?limit|quota exceeded", re.I)
 
 # A provider refusal (safety classifier) is an infrastructure error too, but it does not stop the run.
@@ -557,8 +558,10 @@ def drive_print(args, row, env, status):
 
 def count_review_denies(agent, status):
     """A child defer that review.ts answers as a deny opens no dialog, so it is counted from the trace: `review_defer_child`
-    with decision deny, and every `review_defer_headless` (always a deny)."""
+    with decision deny, and every `review_defer_headless` (always a deny). The gate's own dialogs (`dialog` records of guard gate
+    answered deny, dismissed or no-ui) count too, for those the RPC driver did not see as an extension_ui_request."""
     denies = []
+    gate_denied = []
     for f in sorted((agent / "pi-foreman" / "state").glob("trace-*.jsonl")):
         for line in f.read_text("utf-8").splitlines():
             try:
@@ -567,6 +570,10 @@ def count_review_denies(agent, status):
                 continue
             if rec.get("event") in REVIEW_DEFERS and rec.get("decision", "deny") == "deny":
                 denies.append({"method": rec["event"], "title": "", "role": rec.get("role", "?")})
+            elif rec.get("event") == "dialog" and rec.get("guard") == "gate" and rec.get("decision") in GATE_DIALOG_DENIES:
+                gate_denied.append({"method": "gate_dialog", "title": str(rec.get("toolFamily") or ""), "role": rec.get("role", "?")})
+    # an owner dialog the driver answered is both an RPC request and a trace record: add only the shortfall
+    denies.extend(gate_denied[len(status.get("asks_denied") or []):])
     status["asks"] = status.get("asks", 0) + len(denies)
     status.setdefault("asks_denied", []).extend(denies)
 

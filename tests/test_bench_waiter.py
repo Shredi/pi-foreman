@@ -278,6 +278,24 @@ class ReviewDenyCountTest(unittest.TestCase):
         self.assertEqual([d["method"] for d in status["asks_denied"]], ["confirm", "review_defer_child", "review_defer_headless"])
         self.assertEqual(status["asks_denied"][1]["role"], "builder")
 
+    def test_gate_dialog_deny_record_counts_as_one_denied_ask(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Path(tmp) / "agent"
+            state = agent / "pi-foreman" / "state"
+            state.mkdir(parents=True)
+            lines = [
+                {"event": "dialog", "guard": "gate", "cause": "ask", "decision": "deny with reason", "toolFamily": "bash", "role": "builder"},
+                {"event": "dialog", "guard": "gate", "cause": "ask", "decision": "parent-deny", "toolFamily": "bash", "role": "builder"},
+                {"event": "dialog", "guard": "gate", "cause": "ask", "decision": "allow once", "toolFamily": "bash"},
+            ]
+            (state / "trace-s1.jsonl").write_text("\n".join(json.dumps(r) for r in lines) + "\n", "utf-8")
+            status = {"asks": 0, "asks_denied": []}
+            ws.count_review_denies(agent, status)
+            self.assertEqual((status["asks"], [d["method"] for d in status["asks_denied"]]), (1, ["gate_dialog"]))
+            seen = {"asks": 1, "asks_denied": [{"method": "select", "title": "", "role": "builder"}]}  # the RPC driver saw it already
+            ws.count_review_denies(agent, seen)
+            self.assertEqual((seen["asks"], len(seen["asks_denied"])), (1, 1))
+
 
 if __name__ == "__main__":
     unittest.main()
