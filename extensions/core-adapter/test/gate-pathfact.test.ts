@@ -21,17 +21,20 @@ fs.writeFileSync(path.join(wt, "a.txt"), "a\n");
 const facts = (tool: string, input: unknown, command = "", owned: string[] = [], agentDir: string | undefined = agent): string[] =>
   pathFacts(tool, input, command, wt, wt, owned, agentDir);
 
+// shell lines carry forward-slash paths (a backslash is an escape in a POSIX shell line); the fact prints the resolved native form
+const sh = (p: string): string => p.replace(/\\/g, "/");
+
 test("sibling checkout: read tool and shell read commands", () => {
   assert.deepEqual(facts("read", { path: path.join(other, "main", "index.ts") }), [`path: ${path.join(other, "main", "index.ts")} sibling-checkout`]);
   assert.deepEqual(facts("read", { path: path.join(other, "notes.md") }), [`path: ${path.join(other, "notes.md")} sibling-checkout`]);
-  assert.deepEqual(facts("bash", {}, `find ${other} -maxdepth 2 -name '*.md'`), [`path: ${other} sibling-checkout`]);
-  assert.deepEqual(facts("bash", {}, `cat ${other}/notes.md | wc -l`), [`path: ${other}/notes.md sibling-checkout`]);
+  assert.deepEqual(facts("bash", {}, `find ${sh(other)} -maxdepth 2 -name '*.md'`), [`path: ${other} sibling-checkout`]);
+  assert.deepEqual(facts("bash", {}, `cat ${sh(other)}/notes.md | wc -l`), [`path: ${path.join(other, "notes.md")} sibling-checkout`]);
 });
 
 test("agent dir and plain outside dir", () => {
   assert.equal(facts("ls", { path: agent })[0], `path: ${agent} agent-dir`);
   assert.equal(facts("grep", { pattern: "x", path: plain })[0], `path: ${plain} outside`);
-  assert.equal(facts("bash", {}, `ls ${plain}`)[0], `path: ${plain} outside`);
+  assert.equal(facts("bash", {}, `ls ${sh(plain)}`)[0], `path: ${plain} outside`);
 });
 
 test("owned-root path: no fact", () => {
@@ -43,6 +46,6 @@ test("owned-root path: no fact", () => {
 test("git failure and non-read commands", () => {
   assert.equal(pathState(path.join(base, "missing", "f"), wt, agent), "outside");
   assert.equal(pathState(plain, wt, agent), "outside");
-  assert.deepEqual(facts("bash", {}, `rm ${other}/notes.md`), []);
+  assert.deepEqual(facts("bash", {}, `rm ${sh(other)}/notes.md`), []);
   assert.deepEqual(facts("write", { path: path.join(other, "x") }), []);
 });
