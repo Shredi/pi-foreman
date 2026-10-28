@@ -44,7 +44,7 @@ const ui = { notify: () => undefined, confirm: async () => false, select: async 
 const config = (extra: Record<string, unknown> = {}) => ({ providers: { fake: { review: { model: "m", timeoutMs: 50 }, roles: Object.fromEntries(["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"].map((r) => [r, { model: `fake/${r}` }])) } }, ...extra });
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
-const rig = await r11Rig({ after }, {}, { ctx: { modelRegistry, ui }, config: config() });
+const rig = await r11Rig({ after }, {}, { ctx: { modelRegistry, ui }, config: config(), inTmp: true });
 // every top-level await stays above the first test(): node runs the root after hooks (the rig's shutdown) once the registered tests are done
 
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r16-ar-")));

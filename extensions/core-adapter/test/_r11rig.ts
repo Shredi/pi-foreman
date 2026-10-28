@@ -1,6 +1,7 @@
 // Shared rig of the R11 P2 fixtures (r11-review-cap, r11-read-budget): the real adapter hooks (index.ts) with a fake
 // pi, a temp agent dir, and handoff dirs under `<agentDir>/pi-foreman/handoffs` keyed by this session's intercom id.
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import coreAdapter from "../index.ts";
 import { mkTestTmp, rmTestTmp, waitQuiet } from "./_tmpbase.ts";
@@ -11,10 +12,11 @@ export type Block = { block?: boolean; reason?: string } | undefined;
 let rigs = 0;
 
 /** `opts.ctx`: fields that replace the fake ctx's (ui, modelRegistry, ...); `opts.config`: top-level keys merged into the user foreman.json. */
-export async function r11Rig(t: { after(fn: () => void | Promise<void>): void }, ceremony: Record<string, unknown> = {}, opts: { ctx?: Record<string, unknown>; config?: Record<string, unknown>; child?: boolean; deps?: Record<string, unknown>; piExtra?: Record<string, unknown> } = {}) {
+export async function r11Rig(t: { after(fn: () => void | Promise<void>): void }, ceremony: Record<string, unknown> = {}, opts: { ctx?: Record<string, unknown>; config?: Record<string, unknown>; child?: boolean; deps?: Record<string, unknown>; piExtra?: Record<string, unknown>; inTmp?: boolean } = {}) {
   const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE", "PI_INTERCOM_SESSION_ID", "PI_INTERCOM_STABLE_ID", "HERDR_PANE_ID", "HERDR_ENV"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
-  const root = fs.realpathSync(mkTestTmp("pf-r11-p2-"));
+  // inTmp: the rig lives in the OS temp dir (a gate tmp root even on Linux, where mkTestTmp stays out of /tmp), for a case that relies on the tmp class
+  const root = fs.realpathSync(opts.inTmp ? fs.mkdtempSync(path.join(os.tmpdir(), "pf-r11-p2-")) : mkTestTmp("pf-r11-p2-"));
   let shutdown: (() => Promise<unknown>) | undefined;
   t.after(async () => {
     try { await shutdown?.(); } catch { /* best effort */ }
